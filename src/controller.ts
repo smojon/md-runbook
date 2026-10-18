@@ -116,6 +116,8 @@ export class RunbookController implements vscode.Disposable {
     const cfg = executionConfig();
     let stopped: vscode.NotebookCell | undefined;
     const runs: RunRecord[] = [];
+    const cells = executions.map((e) => e.cell);
+    for (const o of this.pipeline.observers) await o.onWillRunSequence?.(notebook, cells);
     for (const exec of executions) {
       if (stopped || exec.token.isCancellationRequested) {
         // Skipped: leave the cell's previous output untouched.

@@ -20,6 +20,36 @@ oc get pods -n "$NAMESPACE"     # still in deploy/, still logged in
 ```
 ````
 
+## Turning it on and off
+
+The mode is decided per runbook, in this order:
+
+1. **Toggle Session Mode** (notebook toolbar `$(terminal)`, the status bar, or the Command
+   Palette) switches only the current runbook. VS Code remembers the choice for this workspace.
+   Toggling back to what the runbook would get anyway removes the override.
+2. **`mode:` in the front matter** makes a runbook default to session (or isolated) mode for
+   everyone who opens it:
+
+   ```markdown
+   ---
+   mode: session
+   ---
+   ```
+3. **`mdRunbook.execution.mode`** is the default for everything else.
+
+Switching a runbook to isolated stops its sessions at once.
+
+## Starting clean
+
+After **Restart Session** (or **Stop Session**), the next cell runs in a new shell. It has only
+VS Code's environment plus the configured variables, which are applied again before every cell:
+`mdRunbook.execution.env`, the `.env` file, `mdRunbook.secrets.inject`, and whatever the cell
+references (`${secret:…}`, `${input:…}`, `${param:…}`). Everything earlier cells set is gone.
+
+To make every full run start clean, set `mdRunbook.session.resetOnRunAll` to `true`: **Run
+All** then begins in a fresh session. Running single cells, a range or **Resume Run** keeps the
+current session, since those usually rely on earlier steps.
+
 The same works for PowerShell:
 
 ````markdown
@@ -50,16 +80,18 @@ do **not** go back to that folder: a `cd` stays in effect, just like in a termin
 
 ## Status bar and commands
 
-While a session is running for the active runbook, the status bar shows
-`$(terminal) session: bash, pwsh`. Click it to restart.
+For the active runbook the status bar shows the mode: `$(debug-disconnect) isolated`, or
+`$(terminal) session: bash, pwsh` with the running shells. Its tooltip says whether the mode comes
+from the toggle, the front matter or the setting. Click it to switch, restart or stop.
 
 | Command | Description |
 | --- | --- |
+| **md-runbook: Toggle Session Mode** | Switch the current runbook between session and isolated mode. |
 | **md-runbook: Restart Session** | Kill this runbook's sessions and start fresh ones in the `.md` file's folder. |
 | **md-runbook: Stop Session** | Kill this runbook's sessions. The next cell starts a new one. |
 
-Sessions also end when the runbook is closed, when VS Code exits, and when
-`mdRunbook.execution.mode` is switched back to `isolated`.
+Sessions also end when the runbook is closed, when VS Code exits, and when the runbook is
+switched to isolated mode.
 
 ## Exit codes, exit, cancel and timeout
 
@@ -87,4 +119,5 @@ Sessions also end when the runbook is closed, when VS Code exits, and when
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `mdRunbook.execution.mode` | `"isolated"` | `isolated`: a new process for every cell. `session`: one long-lived bash and PowerShell process per runbook, so state carries over between cells. |
+| `mdRunbook.execution.mode` | `"isolated"` | Default mode. `isolated`: a new process for every cell. `session`: one long-lived bash and PowerShell process per runbook, so state carries over between cells. Overridden by front matter `mode:` and by the toggle. |
+| `mdRunbook.session.resetOnRunAll` | `false` | Start **Run All** in a fresh session. |

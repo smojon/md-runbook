@@ -34,4 +34,62 @@ export const tests: Test[] = [
       }
     },
   },
+  {
+    name: 'session mode: front matter turns it on, Toggle switches one runbook',
+    fn: async () => {
+      const set = isWin ? "$env:FOO = 'bar'" : 'export FOO=bar';
+      const get = isWin ? 'Write-Output "FOO=$env:FOO"' : 'echo "FOO=$FOO"';
+      const uri = writeFile('session-fm.md', `---\nmode: session\n---\n\n# FM\n\n\`\`\`${LANG}\n${set}\n\`\`\`\n\n\`\`\`${LANG}\n${get}\n\`\`\`\n`);
+      try {
+        const editor = await openRunbook(uri);
+        type ModeInfo = { mode: string; source: string };
+        const mode = (): Thenable<ModeInfo | undefined> => vscode.commands.executeCommand<ModeInfo>('mdRunbook._sessionMode', uri);
+        assert.deepEqual(await mode(), { mode: 'session', source: 'front matter' });
+        const [first, second] = [editor.notebook.cellAt(1), editor.notebook.cellAt(2)];
+        await runCells(editor, 1, 3);
+        assert.equal(await waitForRun(second), true, outputText(second));
+        assert.match(outputText(second), /FOO=bar/);
+
+        // Toggle off: this runbook now runs isolated, so FOO is not set any more.
+        assert.equal(await step('toggle', vscode.commands.executeCommand('mdRunbook.toggleSessionMode', uri)), 'isolated');
+        assert.deepEqual(await mode(), { mode: 'isolated', source: 'toggle' });
+        await runCells(editor, 2, 3);
+        await waitFor('isolated re-run', () => /FOO=\r?\n/.test(outputText(second)) && !/session/.test(outputText(second)));
+
+        // Toggle back: the override is dropped because it equals the front matter.
+        assert.equal(await step('toggle back', vscode.commands.executeCommand('mdRunbook.toggleSessionMode', uri)), 'session');
+        assert.deepEqual(await mode(), { mode: 'session', source: 'front matter' });
+        void first;
+      } finally {
+        await closeAll();
+      }
+    },
+  },
+  {
+    name: 'session mode: resetOnRunAll starts Run All in a fresh session',
+    fn: async () => {
+      await setConfig('execution.mode', 'session');
+      await setConfig('session.resetOnRunAll', true);
+      try {
+        // Cell 1 prints FOO (from an earlier run) and then sets it; Run All must not see the old value.
+        const body = isWin ? 'Write-Output "FOO=$env:FOO"\n$env:FOO = \'left-over\'' : 'echo "FOO=$FOO"\nexport FOO=left-over';
+        const uri = writeFile('session-reset.md', `\`\`\`${LANG}\n${body}\n\`\`\`\n\n\`\`\`${LANG}\necho second\n\`\`\`\n`);
+        const editor = await openRunbook(uri);
+        const first = editor.notebook.cellAt(0);
+        // A single-cell run keeps the session: the second run sees the value from the first.
+        await runCells(editor, 0, 1);
+        await runCells(editor, 0, 1);
+        await waitFor('single re-run keeps state', () => /FOO=left-over/.test(outputText(first)));
+        // Run All resets it.
+        await step('run all', vscode.commands.executeCommand('notebook.execute', editor.notebook.uri));
+        await waitFor('fresh session for Run All', () => /FOO=\r?\n/.test(outputText(first)) && /exit code 0/.test(outputText(first))).catch((e: Error) => {
+          throw new Error(`${e.message}; output: ${JSON.stringify(outputText(first))}`);
+        });
+      } finally {
+        await setConfig('session.resetOnRunAll', undefined);
+        await setConfig('execution.mode', undefined);
+        await closeAll();
+      }
+    },
+  },
 ];

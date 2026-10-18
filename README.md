@@ -87,7 +87,8 @@ Each has its own page with examples and settings:
 
 - **[Persistent session mode](docs/features/session.md):** one bash and one PowerShell process
   per runbook, so `oc login`, `cd`, exported variables and functions carry over between cells.
-  Restart or stop it from the Command Palette or the status bar.
+  Turn it on per runbook with the toolbar toggle or `mode: session` in the front matter, restart
+  or stop it from the status bar, and optionally start every Run All in a fresh session.
 - **[Secrets, inputs, parameters and `.env`](docs/features/secrets.md):** keep secrets in the OS
   keychain and reference them as `${secret:NAME}`. They reach the cell as environment variables,
   never as script text, and are redacted by exact value. `${input:NAME}` prompts once per session,

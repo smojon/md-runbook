@@ -73,22 +73,25 @@ function unquote(v: string): string {
 }
 
 /**
- * `params:` from YAML-style front matter (`---` ... `---` at the very top). Only this subset is
- * understood; other keys are ignored. Items are `- name` or `- name: default`.
- * Returns undefined when the text has no front matter.
+ * `params:` and `mode:` from YAML-style front matter (`---` ... `---` at the very top). Only this
+ * subset is understood; other keys are ignored. Param items are `- name` or `- name: default`;
+ * `mode` is `session` or `isolated`. Returns undefined when the text has no front matter.
  */
-export function parseFrontMatter(text: string): { params: RunbookParam[] } | undefined {
+export function parseFrontMatter(text: string): { params: RunbookParam[]; mode?: 'session' | 'isolated' } | undefined {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
   if (lines[0]?.trimEnd() !== '---') return undefined;
   const params: RunbookParam[] = [];
+  let mode: 'session' | 'isolated' | undefined;
   let inParams = false;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
-    if (/^(---|\.\.\.)\s*$/.test(line)) return { params };
+    if (/^(---|\.\.\.)\s*$/.test(line)) return mode ? { params, mode } : { params };
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
     if (!/^\s/.test(line) && !line.startsWith('-')) {
       // A top-level key.
       inParams = /^params\s*:\s*$/.test(line);
+      const m = /^mode\s*:\s*["']?(session|isolated)["']?\s*(#.*)?$/i.exec(line);
+      if (m) mode = m[1]!.toLowerCase() as 'session' | 'isolated';
       continue;
     }
     if (!inParams) continue;

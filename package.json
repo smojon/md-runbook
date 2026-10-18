@@ -169,6 +169,17 @@
         "title": "Stop Session",
         "category": "md-runbook",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "mdRunbook.toggleSessionMode",
+        "title": "Toggle Session Mode",
+        "category": "md-runbook",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "mdRunbook.sessionMenu",
+        "title": "Session…",
+        "category": "md-runbook"
       }
     ],
     "menus": {
@@ -221,6 +232,11 @@
           "command": "mdRunbook.runAllAsCopy",
           "when": "notebookType == md-runbook && config.mdRunbook.output.mode != copy",
           "group": "navigation/execute@98"
+        },
+        {
+          "command": "mdRunbook.toggleSessionMode",
+          "when": "notebookType == md-runbook",
+          "group": "navigation/execute@97"
         }
       ],
       "commandPalette": [
@@ -302,6 +318,14 @@
         },
         {
           "command": "mdRunbook.stopSession",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.toggleSessionMode",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.sessionMenu",
           "when": "notebookType == md-runbook"
         }
       ],
@@ -559,7 +583,12 @@
             "Each runbook keeps one shell process per shell (bash, PowerShell), so `cd`, variables, functions and logins carry over between cells. cmd cells still run isolated."
           ],
           "default": "isolated",
-          "markdownDescription": "How cells are run. `session` keeps one long-lived bash and PowerShell process per runbook, so state carries over between cells. See **md-runbook: Restart Session** / **Stop Session**."
+          "markdownDescription": "Default for how cells are run. `session` keeps one long-lived bash and PowerShell process per runbook, so state carries over between cells. A runbook can override this with `mode: session` / `mode: isolated` in its front matter, and **md-runbook: Toggle Session Mode** switches a single runbook."
+        },
+        "mdRunbook.session.resetOnRunAll": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on state left by earlier runs. Running single cells, ranges and **Resume Run** keep the session."
         }
       }
     }

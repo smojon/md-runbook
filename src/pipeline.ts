@@ -67,6 +67,8 @@ export interface RunRecord {
 }
 
 export interface RunObserver {
+  /** A run of `cells` (one cell, a range or Run All) is about to start. */
+  onWillRunSequence?(notebook: vscode.NotebookDocument, cells: vscode.NotebookCell[]): void | Promise<void>;
   onDidRunCell?(run: RunRecord): void | Promise<void>;
   /** A Run All / multi-cell run finished (or stopped). */
   onDidRunSequence?(notebook: vscode.NotebookDocument, runs: RunRecord[]): void | Promise<void>;

@@ -1,16 +1,30 @@
 /**
- * Persistent session mode (`mdRunbook.execution.mode: "session"`): each runbook keeps one shell
- * process per shell kind, so state carries over between cells.
+ * Persistent session mode: each runbook keeps one shell process per shell kind, so state carries
+ * over between cells. The mode is chosen per runbook: a toggle in the editor wins over `mode:` in
+ * the front matter, which wins over `mdRunbook.execution.mode`.
  */
 
 import * as vscode from 'vscode';
 import { SECTION } from './config';
+import { parseFrontMatter } from './core/secrets';
 import { SessionPool } from './core/session';
 import { CellExecutor, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
 
-function sessionMode(): boolean {
-  return vscode.workspace.getConfiguration(SECTION).get<string>('execution.mode', 'isolated') === 'session';
+type Mode = 'session' | 'isolated';
+type ModeSource = 'toggle' | 'front matter' | 'setting';
+
+const OVERRIDE_KEY = 'mdRunbook.sessionModeOverrides';
+
+function settingMode(): Mode {
+  return vscode.workspace.getConfiguration(SECTION).get<string>('execution.mode', 'isolated') === 'session' ? 'session' : 'isolated';
+}
+
+/** `mode:` from the runbook's front matter (first cell, if it is Markdown). */
+function frontMatterMode(nb: vscode.NotebookDocument): Mode | undefined {
+  const first = nb.cellCount > 0 ? nb.cellAt(0) : undefined;
+  if (!first || first.kind !== vscode.NotebookCellKind.Markup) return undefined;
+  return parseFrontMatter(first.document.getText())?.mode;
 }
 
 /** The runbook a command applies to: the given URI, else the active (or only visible) runbook editor. */
@@ -26,14 +40,28 @@ function activeRunbook(uri?: unknown): vscode.NotebookDocument | undefined {
 export function registerSessions(context: vscode.ExtensionContext, pipeline: RunPipeline): void {
   const pools = new Map<string, SessionPool>();
 
+  // Toggles are remembered per runbook (workspace state), so they survive a reload.
+  const overrides = (): Record<string, Mode> => context.workspaceState.get<Record<string, Mode>>(OVERRIDE_KEY, {});
+  const inheritedMode = (nb: vscode.NotebookDocument): { mode: Mode; source: ModeSource } => {
+    const fm = frontMatterMode(nb);
+    return fm ? { mode: fm, source: 'front matter' } : { mode: settingMode(), source: 'setting' };
+  };
+  const modeOf = (nb: vscode.NotebookDocument): { mode: Mode; source: ModeSource } => {
+    const o = overrides()[nb.uri.toString()];
+    return o ? { mode: o, source: 'toggle' } : inheritedMode(nb);
+  };
+
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  status.command = 'mdRunbook.restartSession';
-  status.tooltip = 'md-runbook: persistent shell session for this runbook. Click to restart.';
+  status.command = 'mdRunbook.sessionMenu';
   const updateStatus = (): void => {
     const nb = activeRunbook();
-    const labels = nb ? (pools.get(nb.uri.toString())?.labels() ?? []) : [];
-    if (labels.length === 0) return status.hide();
-    status.text = `$(terminal) session: ${labels.join(', ')}`;
+    if (!nb) return status.hide();
+    const { mode, source } = modeOf(nb);
+    const labels = pools.get(nb.uri.toString())?.labels() ?? [];
+    status.text = mode === 'isolated' ? '$(debug-disconnect) isolated' : `$(terminal) session${labels.length ? `: ${labels.join(', ')}` : ''}`;
+    status.tooltip =
+      `md-runbook: ${mode === 'session' ? 'persistent session (state carries over between cells)' : 'every cell runs in a new process'}` +
+      ` — set by ${source}. Click to switch, restart or stop.`;
     status.show();
   };
 
@@ -46,9 +74,17 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
   const disposePool = (key: string): void => {
     pools.get(key)?.dispose();
     pools.delete(key);
+    updateStatus();
   };
   const disposeAll = (): void => {
     for (const key of [...pools.keys()]) disposePool(key);
+  };
+  /** Stop sessions of runbooks that are no longer in session mode. */
+  const pruneIsolated = (): void => {
+    for (const nb of vscode.workspace.notebookDocuments) {
+      if (nb.notebookType === NOTEBOOK_TYPE && modeOf(nb).mode === 'isolated') disposePool(nb.uri.toString());
+    }
+    updateStatus();
   };
 
   const sessionExecutorFor = (nb: vscode.NotebookDocument): CellExecutor => ({
@@ -66,7 +102,19 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
       }),
   });
   const fallback = pipeline.executorFor;
-  pipeline.executorFor = (nb) => (sessionMode() ? sessionExecutorFor(nb) : fallback(nb));
+  pipeline.executorFor = (nb) => (modeOf(nb).mode === 'session' ? sessionExecutorFor(nb) : fallback(nb));
+
+  // Optionally start every Run All in a fresh session, so full runs never depend on leftovers.
+  pipeline.observers.push({
+    onWillRunSequence: (nb, cells) => {
+      const resetOnRunAll = vscode.workspace.getConfiguration(SECTION).get<boolean>('session.resetOnRunAll', false);
+      if (!resetOnRunAll || modeOf(nb).mode !== 'session' || cells.length < 2) return;
+      const codeCells = nb.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code).length;
+      if (cells.length < codeCells) return; // a range or Resume, not Run All
+      const stopped = pools.get(nb.uri.toString())?.stop() ?? [];
+      if (stopped.length) vscode.window.setStatusBarMessage('md-runbook: Run All starts in a fresh session', 5000);
+    },
+  });
 
   /** Runs `fn` on the runbook's sessions; returns the shells it acted on (empty if none). */
   const forActive = (uri: unknown, fn: (pool: SessionPool) => string[]): string[] => {
@@ -79,9 +127,40 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
     return fn(pool);
   };
 
+  /** Switch one runbook between session and isolated; returns the new mode. */
+  const toggle = async (uri?: unknown, to?: Mode): Promise<Mode | undefined> => {
+    const nb = activeRunbook(uri);
+    if (!nb) return undefined;
+    const next: Mode = to ?? (modeOf(nb).mode === 'session' ? 'isolated' : 'session');
+    const all = { ...overrides() };
+    // Store an override only when it differs from what the runbook would get anyway.
+    if (next === inheritedMode(nb).mode) delete all[nb.uri.toString()];
+    else all[nb.uri.toString()] = next;
+    await context.workspaceState.update(OVERRIDE_KEY, all);
+    if (next === 'isolated') disposePool(nb.uri.toString());
+    updateStatus();
+    vscode.window.setStatusBarMessage(`md-runbook: ${next === 'session' ? 'session mode on' : 'session mode off (isolated)'} for this runbook`, 5000);
+    return next;
+  };
+
   context.subscriptions.push(
     status,
     { dispose: disposeAll },
+    vscode.commands.registerCommand('mdRunbook.toggleSessionMode', (uri?: unknown, to?: Mode) => toggle(uri, to)),
+    vscode.commands.registerCommand('mdRunbook.sessionMenu', async () => {
+      const nb = activeRunbook();
+      if (!nb) return;
+      const { mode } = modeOf(nb);
+      const running = (pools.get(nb.uri.toString())?.labels() ?? []).length > 0;
+      const items = [
+        { label: mode === 'session' ? '$(debug-disconnect) Switch to isolated' : '$(terminal) Switch to session mode', id: 'toggle' },
+        ...(running ? [{ label: '$(debug-restart) Restart session', id: 'restart' }, { label: '$(debug-stop) Stop session', id: 'stop' }] : []),
+      ];
+      const pick = await vscode.window.showQuickPick(items, { title: 'md-runbook session' });
+      if (pick?.id === 'toggle') await toggle();
+      else if (pick?.id === 'restart') await vscode.commands.executeCommand('mdRunbook.restartSession');
+      else if (pick?.id === 'stop') await vscode.commands.executeCommand('mdRunbook.stopSession');
+    }),
     vscode.commands.registerCommand('mdRunbook.restartSession', (uri?: unknown) =>
       forActive(uri, (pool) => {
         const shells = pool.restart();
@@ -96,10 +175,19 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
         return shells;
       }),
     ),
+    vscode.commands.registerCommand('mdRunbook._sessionMode', (uri?: unknown) => {
+      const nb = activeRunbook(uri);
+      return nb ? modeOf(nb) : undefined;
+    }),
     vscode.workspace.onDidCloseNotebookDocument((nb) => disposePool(nb.uri.toString())),
     vscode.window.onDidChangeActiveNotebookEditor(updateStatus),
+    // Front matter edits can change the mode.
+    vscode.workspace.onDidChangeNotebookDocument((e) => {
+      if (e.notebook.notebookType === NOTEBOOK_TYPE && e.cellChanges.some((c) => c.cell.index === 0)) pruneIsolated();
+    }),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration(`${SECTION}.execution.mode`) && !sessionMode()) disposeAll();
+      if (e.affectsConfiguration(`${SECTION}.execution.mode`)) pruneIsolated();
     }),
   );
+  updateStatus();
 }

@@ -51,6 +51,9 @@ describe('front matter params', () => {
 
   it('accepts unindented items and ... as terminator', () => {
     assert.deepEqual(parseFrontMatter('---\nparams:\n- A\n- B: 2\n...\n'), { params: [{ name: 'A' }, { name: 'B', default: '2' }] });
+    assert.deepEqual(parseFrontMatter('---\nmode: session\n---\n'), { params: [], mode: 'session' });
+    assert.deepEqual(parseFrontMatter('---\r\nmode: "Isolated"  # comment\r\nparams:\r\n- A\r\n---\r\n'), { params: [{ name: 'A' }], mode: 'isolated' });
+    assert.deepEqual(parseFrontMatter('---\nmode: sometimes\n---\n'), { params: [] });
   });
 
   it('needs --- on the first line and a closing line', () => {
