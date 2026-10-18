@@ -75,3 +75,18 @@ test('approval: a denied proposal cannot be approved', async () => {
   assert.match(String((editor.notebook.cellAt(1).metadata?.mdRunbook as { info?: string } | undefined)?.info), /proposed/);
   await closeAll();
 });
+
+test('approval: a cell with by= but no proposed flag is still gated', async () => {
+  const uri = writeFile('approval-byonly.md', `\`\`\`${LANG} by=ai reason="probe"\necho should-not-run\n\`\`\`\n\n\`\`\`${LANG}\necho human\n\`\`\`\n`);
+  const editor = await openRunbook(uri);
+  try {
+    await runCells(editor, 0, 2);
+    await waitForRun(editor.notebook.cellAt(1));
+    assert.match(outputText(editor.notebook.cellAt(0)), /proposed/);
+    assert.doesNotMatch(outputText(editor.notebook.cellAt(0)), /should-not-run/);
+    assert.match(outputText(editor.notebook.cellAt(1)), /human/);
+  } finally {
+    await closeAll();
+  }
+});
+

@@ -48,7 +48,7 @@ test('params: front-matter default, Set Parameters values, Reset Inputs', async 
     };
     assert.match(await run(), /region=eu-west-1/);
 
-    await vscode.commands.executeCommand('mdRunbook.setParameters', { REGION: 'us-east-1' });
+    await vscode.commands.executeCommand('mdRunbook._test.setParameters', { REGION: 'us-east-1' });
     assert.match(await run(), /region=us-east-1/);
 
     await vscode.commands.executeCommand('mdRunbook.resetInputs');
@@ -64,7 +64,7 @@ test('params: front-matter default, Set Parameters values, Reset Inputs', async 
 
 test('stored secrets are injected as env vars and never persisted', async () => {
   const value = 's3cr3t-value-xyz';
-  await vscode.commands.executeCommand('mdRunbook.setSecret', 'MDRB_TEST_SECRET', value);
+  await vscode.commands.executeCommand('mdRunbook._test.setSecret', 'MDRB_TEST_SECRET', value);
   try {
     const uri = writeFile('secret.md', `\`\`\`${LANG}\n${lengthOf('len', '${secret:MDRB_TEST_SECRET}')}\n${echo('v=${secret:MDRB_TEST_SECRET}')}\n\`\`\`\n`);
     const editor = await openRunbook(uri);
@@ -77,7 +77,7 @@ test('stored secrets are injected as env vars and never persisted', async () => 
     assert.ok(await step('save', editor.notebook.save()));
     assert.doesNotMatch(read(uri), new RegExp(value));
   } finally {
-    await vscode.commands.executeCommand('mdRunbook.deleteSecret', 'MDRB_TEST_SECRET');
+    await vscode.commands.executeCommand('mdRunbook._test.deleteSecret', 'MDRB_TEST_SECRET');
     await closeAll();
   }
 });

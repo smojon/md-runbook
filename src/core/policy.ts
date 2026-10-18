@@ -13,6 +13,8 @@ import { createHash } from 'node:crypto';
 export interface CommandPolicy {
   /** Matched against each command of a line (split at `|`, `;`, `&&`, `||`, `&`). */
   allow: string[];
+  /** When set, each command must ALSO match one of these (a workspace policy can only narrow). */
+  allowAlso?: string[];
   /** Matched against each whole logical line. */
   deny: string[];
   /** Approving a `review` proposal needs the word `run` typed in. */
@@ -65,6 +67,20 @@ export const DEFAULT_DENY: string[] = [
 ];
 
 export const DEFAULT_POLICY: CommandPolicy = { allow: DEFAULT_ALLOW, deny: DEFAULT_DENY, requireTypedConfirmation: true };
+
+/**
+ * A policy file found in the workspace (which anyone who can change the repository controls) may
+ * only make `base` stricter: its deny rules are added, its allow list can only narrow the base one,
+ * and typed confirmation can't be turned off.
+ */
+export function restrictPolicy(base: CommandPolicy, workspace: CommandPolicy): CommandPolicy {
+  return {
+    allow: base.allow,
+    allowAlso: workspace.allow.length > 0 ? [...(base.allowAlso ?? []), ...workspace.allow] : base.allowAlso,
+    deny: [...base.deny, ...workspace.deny],
+    requireTypedConfirmation: base.requireTypedConfirmation || workspace.requireTypedConfirmation,
+  };
+}
 
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
@@ -145,13 +161,13 @@ export function commandLines(text: string): string[] {
 /** Harmless redirections that don't write files. */
 const HARMLESS_REDIRECT = /\s*(\d?>&\d|\d?>\s*\/dev\/null\b|\d?>\s*\$null\b|\d?>\s*nul\b)/gi;
 
-/** A command line is allowed when every command in it matches an allow pattern. */
-function lineAllowed(line: string, allow: { re: RegExp }[]): boolean {
+/** A command line is allowed when every command in it matches an allow pattern (and `also`, if given). */
+function lineAllowed(line: string, allow: { re: RegExp }[], also?: { re: RegExp }[]): boolean {
   const cleaned = line.replace(HARMLESS_REDIRECT, '');
   // Command substitution, process substitution, file redirection and injected secrets always need review.
   if (/\$\(|<\(|`|>|\$\{(secret|input):/i.test(cleaned)) return false;
   const parts = cleaned.split(/\|\||&&|[|;&]/).map((s) => s.trim()).filter((s) => s !== '');
-  return parts.length > 0 && parts.every((p) => allow.some(({ re }) => re.test(p)));
+  return parts.length > 0 && parts.every((p) => allow.some(({ re }) => re.test(p)) && (!also || also.some(({ re }) => re.test(p))));
 }
 
 /** Evaluate the whole text of a cell against a policy. */
@@ -159,12 +175,13 @@ export function evaluatePolicy(text: string, policy: CommandPolicy): PolicyResul
   const errors: string[] = [];
   const allow = compile(policy.allow, errors);
   const deny = compile(policy.deny, errors);
+  const also = policy.allowAlso ? compile(policy.allowAlso, errors) : undefined;
   const denied: PolicyResult['denied'] = [];
   const unlisted: string[] = [];
   for (const line of commandLines(text)) {
     const hit = deny.find(({ re }) => re.test(line));
     if (hit) denied.push({ line, pattern: hit.src });
-    else if (!lineAllowed(line, allow)) unlisted.push(line);
+    else if (!lineAllowed(line, allow, also)) unlisted.push(line);
   }
   const verdict: Verdict = denied.length > 0 ? 'denied' : unlisted.length > 0 ? 'review' : 'allowed';
   return { verdict, denied, unlisted, errors };
@@ -175,9 +192,30 @@ export function codeHash(code: string): string {
   return createHash('sha256').update(code.replace(/\r\n?/g, '\n'), 'utf8').digest('hex').slice(0, 32);
 }
 
+/** Fence info without the approval stamps and the `proposed` flag (what an approval covers). */
+export function approvalInfo(info: string): string {
+  return info
+    .replace(/(^|\s)approved-(?:by|at)=("[^"]*"|'[^']*'|\S*)/gi, ' ')
+    .replace(/(^|\s)proposed(?=\s|$)/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * What an approval is bound to: the code, the fence options (cwd=, env.X=, timeout=, by=, …) and
+ * the runbook it lives in. Changing any of them needs a new approval.
+ */
+export function approvalHash(code: string, info: string, runbook: string): string {
+  return codeHash(`${approvalInfo(info)}\u0000${runbook}\u0000${code.replace(/\r\n?/g, '\n')}`);
+}
+
 export interface ApprovalFacts {
   /** Current code of the cell. */
   code: string;
+  /** Current fence info string. */
+  info: string;
+  /** The runbook's path (approvals don't carry over to other files). */
+  runbook: string;
   /** Code as loaded from the file. */
   loadedCode: string;
   /** Hash stored when the cell was approved in this editor session. */
@@ -195,9 +233,9 @@ export type ApprovalStatus = { state: 'none' } | { state: 'approved' } | { state
 export function approvalStatus(state: 'none' | 'proposed' | 'approved', f: ApprovalFacts): ApprovalStatus {
   if (state === 'none') return { state: 'none' };
   if (state === 'proposed') return { state: 'proposed', why: 'proposed' };
-  const h = codeHash(f.code);
+  const h = approvalHash(f.code, f.info, f.runbook);
   if (f.approvedHash === h || f.approvedHere(h)) return { state: 'approved' };
-  const edited = f.approvedHash !== undefined || h !== codeHash(f.loadedCode);
+  const edited = f.approvedHash !== undefined || codeHash(f.code) !== codeHash(f.loadedCode);
   if (edited && f.resetOnEdit) return { state: 'proposed', why: 'changed' };
   // Approved in this session and edited since, with resetOnEdit off.
   if (f.approvedHash !== undefined) return { state: 'approved' };

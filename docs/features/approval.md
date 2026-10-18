@@ -65,9 +65,12 @@ Command substitution (`$(…)`, backticks, `<(…)`), redirection to a file (`>`
 cell runs (`no-confirm`, `cwd=`, `env.*`, `timeout=`, `continue-on-error`) are listed in the
 review dialog too.
 
-The policy file `.md-runbook-policy.json` is looked up next to the `.md` file, then in parent
-folders up to the workspace folder (the first one found wins). `mdRunbook.approval.policyFile`
-points to a specific file instead.
+A policy file `.md-runbook-policy.json` is looked up next to the `.md` file, then in parent
+folders up to the workspace folder (the first one found wins). Because anyone who can change the
+repository controls that file, it can only make the built-in policy **stricter**: its `deny`
+rules are added to the built-in ones, its `allow` list can only narrow the built-in one (a command
+must match both), and `requireTypedConfirmation` stays on. To replace the policy entirely, point
+`mdRunbook.approval.policyFile` (a user setting) at a file outside the workspace.
 
 ```json
 {
@@ -99,9 +102,16 @@ writing to `/dev/…` (other than `/dev/null`, `stdout`, `stderr`, `tty`), `mkfs
 fork bombs.
 
 The policy is a guard rail, not a sandbox: it reads the text, so a determined script can hide
-what it does. Read what you approve. A policy file in the workspace can be edited by an
-assistant too; for a policy it can't change, keep it outside the workspace and point
-`mdRunbook.approval.policyFile` (a user setting) at it.
+what it does. Read what you approve.
+
+## What an approval covers
+
+An approval is bound to the cell's **code**, its **fence options** (`cwd=`, `env.X=`, `timeout=`,
+`by=`, …) and the **runbook file**. Changing any of them, or copying the cell into another runbook,
+needs a new approval. Approvals are remembered on this machine only; an `approved-by=` stamp
+written into the file by someone (or something) else does not count unless
+`mdRunbook.approval.trustFileApprovals` is on. A cell with `by=` but no approval is always treated
+as a proposal, even if its `proposed` flag was removed.
 
 ## Read-only credentials
 

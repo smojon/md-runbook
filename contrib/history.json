@@ -54,7 +54,10 @@
       },
       "mdRunbook.output.mode": {
         "type": "string",
-        "enum": ["inPlace", "copy"],
+        "enum": [
+          "inPlace",
+          "copy"
+        ],
         "enumDescriptions": [
           "Run cells in the runbook itself and write outputs into it.",
           "Treat runbooks as templates: show Run All as Copy first in the notebook toolbar and suggest it when cells are run in place."
@@ -65,7 +68,8 @@
       "mdRunbook.output.copyFolder": {
         "type": "string",
         "default": "",
-        "markdownDescription": "Folder for **Run All as Copy**, relative to the runbook's folder (or absolute). Empty = next to the runbook. Cells of a copy still run in the original runbook's folder."
+        "markdownDescription": "Folder for **Run All as Copy**, relative to the runbook's folder (or absolute). Empty = next to the runbook. Cells of a copy still run in the original runbook's folder. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       }
     }
   }

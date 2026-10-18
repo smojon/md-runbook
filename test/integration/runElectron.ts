@@ -8,6 +8,7 @@ async function main(): Promise<void> {
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(__dirname, 'index.js'),
     launchArgs: ['--disable-extensions', '--disable-workspace-trust'],
+    extensionTestsEnv: { MD_RUNBOOK_TEST: '1' },
   });
 }
 

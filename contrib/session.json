@@ -69,7 +69,8 @@
       "mdRunbook.session.resetOnRunAll": {
         "type": "boolean",
         "default": true,
-        "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on (or exposes) state left by earlier runs. Single cells, ranges and **Resume Run** keep the session."
+        "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on (or exposes) state left by earlier runs. Single cells, ranges and **Resume Run** keep the session. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       }
     }
   }

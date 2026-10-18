@@ -54,12 +54,14 @@
       "mdRunbook.codeLens.enabled": {
         "type": "boolean",
         "default": false,
-        "markdownDescription": "Show **▶ Run** links above code blocks in the plain Markdown editor. Off by default: text-editor runs skip per-cell options and secret injection (proposed and assistant-written cells are refused, risky commands still ask)."
+        "markdownDescription": "Show **▶ Run** links above code blocks in the plain Markdown editor. Off by default: text-editor runs skip per-cell options and secret injection (proposed and assistant-written cells are refused, risky commands still ask). Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       },
       "mdRunbook.report.folder": {
         "type": "string",
         "default": "",
-        "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is."
+        "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       }
     }
   }

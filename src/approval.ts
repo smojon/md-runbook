@@ -9,7 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CodeMeta, formatLocalIso, isCodeMeta } from './core';
-import { ApprovalStatus, CommandPolicy, DEFAULT_POLICY, PolicyResult, approvalStatus, codeHash, evaluatePolicy, parsePolicy } from './core/policy';
+import { ApprovalStatus, CommandPolicy, DEFAULT_POLICY, PolicyResult, approvalHash, approvalStatus, evaluatePolicy, parsePolicy, restrictPolicy } from './core/policy';
 import { Proposal, approvedInfo, asProposed, proposalOf, withInfo } from './core/proposal';
 import { VAR_NAME_RE } from './core/secrets';
 import { tokenizeInfo } from './core/cellOptions';
@@ -21,7 +21,11 @@ import { NOTEBOOK_TYPE } from './serializer';
 
 /** Cell metadata key: hash of the code when it was approved in this editor session. */
 export const APPROVAL_KEY = 'mdRunbookApproval';
-const LEDGER_KEY = 'mdRunbook.approvedHashes';
+// v2: approvals are bound to code + fence options + runbook (older code-only entries no longer count).
+const LEDGER_KEY = 'mdRunbook.approvedHashes.v2';
+
+/** Identifies a runbook for approvals: its file path (or URI for unsaved ones). */
+const runbookKey = (nb: vscode.NotebookDocument): string => (nb.uri.scheme === 'file' ? nb.uri.fsPath : nb.uri.toString());
 const LEDGER_MAX = 5000;
 const POLICY_FILE = '.md-runbook-policy.json';
 /** The secrets feature stores values under this prefix. */
@@ -87,6 +91,8 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
     const c = cfg();
     const status = approvalStatus(proposal.state, {
       code: cell.document.getText(),
+      info: meta.info,
+      runbook: runbookKey(cell.notebook),
       loadedCode: meta.value,
       approvedHash,
       approvedHere: (h) => ledger?.has(h) ?? false,
@@ -160,6 +166,9 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
     const ws = vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath;
     const setting = c.get<string>('approval.policyFile', '').trim();
     let file: string | undefined;
+    // A policy file named in user settings is trusted as is; one found in the workspace can only
+    // add restrictions to the built-in policy.
+    const fromWorkspace = !setting;
     if (setting) {
       file = path.resolve(ws ?? workingDirectory(uri), setting.replace(/\$\{workspaceFolder\}/g, ws ?? ''));
     } else if (uri.scheme === 'file') {
@@ -187,7 +196,7 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
     const text = errors.join('\n');
     if (text && text !== this.policyWarned) void vscode.window.showWarningMessage(`md-runbook: problems in ${file} (built-in values used instead):\n${text}`);
     this.policyWarned = text;
-    return { policy, source: file };
+    return fromWorkspace ? { policy: restrictPolicy(DEFAULT_POLICY, policy), source: `built-in policy + ${file}` } : { policy, source: file };
   }
 
   // --- Commands ----------------------------------------------------------------------------
@@ -211,7 +220,7 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
       }
     }
     const info = approvedInfo(a.proposal.state === 'approved' ? asProposed(a.meta.info) : a.meta.info, userName(), formatLocalIso(new Date()));
-    const hash = codeHash(code);
+    const hash = approvalHash(code, info, runbookKey(cell.notebook));
     const edit = new vscode.WorkspaceEdit();
     edit.set(cell.notebook.uri, [
       vscode.NotebookEdit.updateCellMetadata(cell.index, { ...cell.metadata, [META_KEY]: withInfo(a.meta, info), [APPROVAL_KEY]: { hash } }),

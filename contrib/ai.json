@@ -134,7 +134,8 @@
       "mdRunbook.ai.proposerName": {
         "type": "string",
         "default": "ai",
-        "markdownDescription": "Written as `by=` in the fence of proposed cells, e.g. `bash proposed by=ai reason=\"…\"`."
+        "markdownDescription": "Written as `by=` in the fence of proposed cells, e.g. `bash proposed by=ai reason=\"…\"`. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       }
     }
   }

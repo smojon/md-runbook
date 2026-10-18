@@ -604,7 +604,8 @@
         "mdRunbook.redaction.applyToLiveOutput": {
           "type": "boolean",
           "default": true,
-          "description": "Also redact the output shown live in the editor, not only what is written to disk (on by default, so secrets never appear on screen)."
+          "description": "Also redact the output shown live in the editor, not only what is written to disk (on by default, so secrets never appear on screen). Can only be set in user settings, so a workspace cannot change it.",
+          "scope": "machine"
         },
         "mdRunbook.execution.stopOnFailure": {
           "type": "boolean",
@@ -623,7 +624,8 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Extra environment variables for every cell."
+          "description": "Extra environment variables for every cell. Can only be set in user settings, so a workspace cannot change it.",
+          "scope": "machine"
         },
         "mdRunbook.shell.bashPath": {
           "type": "string",
@@ -695,12 +697,14 @@
             "type": "string",
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
           },
-          "markdownDescription": "Names of stored secrets (**md-runbook: Set Secret**) passed to every cell as environment variables of the same name. Their values are always redacted."
+          "markdownDescription": "Names of stored secrets (**md-runbook: Set Secret**) passed to every cell as environment variables of the same name. Their values are always redacted. Can only be set in user settings, so a workspace cannot change it.",
+          "scope": "machine"
         },
         "mdRunbook.execution.envFile": {
           "type": "string",
           "default": "",
-          "markdownDescription": "A `.env` file whose `KEY=VALUE` lines are passed to every cell as environment variables, e.g. `.env` or `${workspaceFolder}/.env`. Relative paths are relative to the runbook's folder. A missing file is ignored."
+          "markdownDescription": "A `.env` file whose `KEY=VALUE` lines are passed to every cell as environment variables, e.g. `.env` or `${workspaceFolder}/.env`. Relative paths are relative to the runbook's folder. A missing file is ignored. Can only be set in user settings, so a workspace cannot change it.",
+          "scope": "machine"
         },
         "mdRunbook.redaction.redactKnownSecrets": {
           "type": "boolean",
@@ -711,7 +715,8 @@
         "mdRunbook.params.useDefaults": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Use a runbook parameter's front-matter default without asking. Parameters without a default are still asked for."
+          "markdownDescription": "Use a runbook parameter's front-matter default without asking. Parameters without a default are still asked for. Can only be set in user settings, so a workspace cannot change it.",
+          "scope": "machine"
         },
         "mdRunbook.progress.statusBar": {
           "type": "boolean",
@@ -721,12 +726,14 @@
         "mdRunbook.codeLens.enabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Show **▶ Run** links above code blocks in the plain Markdown editor. Off by default: text-editor runs skip per-cell options and secret injection (proposed and assistant-written cells are refused, risky commands still ask)."
+          "markdownDescription": "Show **▶ Run** links above code blocks in the plain Markdown editor. Off by default: text-editor runs skip per-cell options and secret injection (proposed and assistant-written cells are refused, risky commands still ask). Can only be set in user settings, so a workspace cannot change it.",
+          "scope": "machine"
         },
         "mdRunbook.report.folder": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is."
+          "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is. Can only be set in user settings, so a workspace cannot change it.",
+          "scope": "machine"
         },
         "mdRunbook.output.historySize": {
           "type": "integer",
@@ -750,7 +757,8 @@
         "mdRunbook.output.copyFolder": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Folder for **Run All as Copy**, relative to the runbook's folder (or absolute). Empty = next to the runbook. Cells of a copy still run in the original runbook's folder."
+          "markdownDescription": "Folder for **Run All as Copy**, relative to the runbook's folder (or absolute). Empty = next to the runbook. Cells of a copy still run in the original runbook's folder. Can only be set in user settings, so a workspace cannot change it.",
+          "scope": "machine"
         },
         "mdRunbook.execution.mode": {
           "type": "string",
@@ -768,7 +776,8 @@
         "mdRunbook.session.resetOnRunAll": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on (or exposes) state left by earlier runs. Single cells, ranges and **Resume Run** keep the session."
+          "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on (or exposes) state left by earlier runs. Single cells, ranges and **Resume Run** keep the session. Can only be set in user settings, so a workspace cannot change it.",
+          "scope": "machine"
         },
         "mdRunbook.cellOptions.enabled": {
           "type": "boolean",
@@ -849,7 +858,8 @@
         "mdRunbook.ai.proposerName": {
           "type": "string",
           "default": "ai",
-          "markdownDescription": "Written as `by=` in the fence of proposed cells, e.g. `bash proposed by=ai reason=\"…\"`."
+          "markdownDescription": "Written as `by=` in the fence of proposed cells, e.g. `bash proposed by=ai reason=\"…\"`. Can only be set in user settings, so a workspace cannot change it.",
+          "scope": "machine"
         },
         "mdRunbook.approval.enabled": {
           "type": "boolean",

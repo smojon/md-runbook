@@ -4,6 +4,14 @@ Runbooks often need tokens, passwords or values that differ per run. md-runbook 
 them to cells as **environment variables**. Values are never written into the script text, and
 secret values are redacted from the live view and from everything saved to the `.md` file.
 
+## Using a stored secret in a workspace
+
+Stored secrets live in the OS keychain for all of VS Code. The first time a runbook in a workspace
+references `${secret:NAME}`, md-runbook asks whether runbooks in that workspace may use it (the
+answer is remembered per workspace). Secrets you enter or store from that workspace are allowed
+there automatically. Redaction of secret values works by **exact match**: a script that prints a
+secret encoded or in parts is not caught, so only use secrets in runbooks you trust.
+
 ## References in cells
 
 Write a reference anywhere in a cell's source:

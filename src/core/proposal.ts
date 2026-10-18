@@ -35,7 +35,9 @@ export function proposalOf(info: string): Proposal {
     else if (key === 'approved-at' && t.value) p.approvedAt = t.value;
   }
   // An explicit `proposed` flag wins: re-proposing an approved cell makes it need approval again.
-  p.state = proposed ? 'proposed' : p.approvedBy ? 'approved' : 'none';
+  // A cell written by an assistant (`by=`) is a proposal until approved, even if something removed
+  // the `proposed` flag.
+  p.state = proposed ? 'proposed' : p.approvedBy ? 'approved' : p.by ? 'proposed' : 'none';
   return p;
 }
 
