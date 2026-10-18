@@ -9,6 +9,7 @@ import { isCodeMeta } from './core';
 import { parseCellOptions } from './core/cellOptions';
 import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from './core/confirm';
 import { runContextCommand } from './core/context';
+import { currentOs, osLabel } from './core/os';
 import { SECTION, executionConfig, redactionConfig } from './config';
 import { workingDirectory } from './controller';
 import { knownSecrets } from './knownSecrets';
@@ -181,6 +182,12 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
   // before secrets and inputs are asked for. `final` must be registered after every preparer that
   // changes plan.env (extension.ts: after approval.credentials).
   pipeline.preparers.push(optionsPreparer, confirmPreparer);
+  // os=: a block for another OS is an alternative, not a step to run here.
+  pipeline.excluders.push((cell) => {
+    if (!cfg().get<boolean>('cellOptions.enabled', true)) return undefined;
+    const os = parseCellOptions(infoOf(cell)).os;
+    return os && !os.includes(currentOs()) ? `this block is for ${osLabel(os)}` : undefined;
+  });
   const final: CellPreparer = {
     async prepare(plan, ctx) {
       if (plan.skip !== undefined) return;

@@ -22,6 +22,7 @@ renders normally elsewhere:
 | `env.NAME=value` | Set an environment variable for this cell. |
 | `name="Rotate token"` | Recorded as `name="Rotate token"` in the output marker. |
 | `expect="text"`, `expect=/regex/`, `expect-not=…`, `expect-exit=N` | Check the result; see [checks, retries and captured values](checks.md). |
+| `os=windows`, `os=linux,macos` | Only run this block on these systems; see [blocks for one OS](#blocks-for-one-os). |
 | `retry=10 every=15s` | Run again until it passes, up to 10 attempts; see [checks.md](checks.md). |
 | `capture=NAME`, `capture=NAME:/regex/`, `capture-secret=NAME` | Keep a value from the output for later cells (`${out:NAME}`); see [checks.md](checks.md). |
 
@@ -30,6 +31,35 @@ renders normally elsewhere:
 - Unknown tokens and pandoc-style `{…}` attributes are ignored. An invalid value
   (`timeout=abc`) fails the cell with a message.
 - Options are read from the file as it was opened. Cells added in the notebook have none.
+
+## Blocks for one OS
+
+One runbook can serve Windows, Linux and macOS users: write the step once per OS and mark each
+block with `os=`:
+
+````markdown
+Clear the cache:
+
+```pwsh os=windows
+Remove-Item "$env:LOCALAPPDATApp\cache" -Recurse -Force
+```
+
+```bash os=linux,macos
+rm -rf ~/.cache/app
+```
+````
+
+- Names: `windows`, `linux`, `macos` (also `win`, `mac`, `darwin`), comma-separated. Other
+  Unix-like systems count as `linux`.
+- A block for another OS is **not run and not recorded**: Run All, Resume Run and Run Below
+  pass over it, and it keeps whatever output it had (the output from the last time someone ran
+  it on that OS). Clicking ▶ on it says which OS it is for.
+- Blocks with `os=` that follow each other (with only text between them) are **alternatives of
+  one step**: progress and the HTML report count one step, judged by the block for this OS (in
+  the report: the block that has output). A group with no block for this OS counts as skipped.
+  Repeating an OS starts the next step, so two steps in a row each written for both systems
+  work as expected.
+- On GitHub or any Markdown viewer, readers simply see each block in turn.
 
 ## Runbook defaults in the front matter
 

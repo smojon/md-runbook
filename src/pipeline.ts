@@ -128,6 +128,11 @@ export const isolatedExecutor: CellExecutor = {
 /** Registry the controller consults; features register in extension.ts. */
 export class RunPipeline {
   readonly preparers: CellPreparer[] = [];
+  /**
+   * Cells that are not run at all and keep their output (not even recorded as skipped), e.g. a
+   * block for another OS. Each returns why, or undefined.
+   */
+  readonly excluders: ((cell: vscode.NotebookCell) => string | undefined)[] = [];
   readonly observers: RunObserver[] = [];
   /** Picks the executor per notebook (e.g. a persistent session). */
   executorFor: (notebook: vscode.NotebookDocument) => CellExecutor = () => isolatedExecutor;

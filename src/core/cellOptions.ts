@@ -1,4 +1,5 @@
 import { CellChecks, parseCapture, parseInterval, parseMatcher } from './checks';
+import { OsName, parseOsList } from './os';
 
 /**
  * Per-cell options in the fence info string, after the language word:
@@ -25,6 +26,8 @@ export interface CellOptions {
   name?: string;
   /** expect=, expect-not=, expect-exit=, capture=, capture-secret= (undefined when none is set). */
   checks?: CellChecks;
+  /** os=windows,linux: the block is only for these systems (an alternative of the blocks around it). */
+  os?: OsName[];
   /** retry=N: up to N attempts in all, `every` apart (default 5 s). */
   retry?: { attempts: number; everyMs: number };
   /** Recognized keys with invalid values. */
@@ -137,6 +140,10 @@ export function parseCellOptions(info: string): CellOptions {
       } catch (e) {
         opts.errors.push(`${k}=${value}: ${e instanceof Error ? e.message : String(e)}`);
       }
+    } else if (k === 'os') {
+      const os = parseOsList(value);
+      if (typeof os === 'string') opts.errors.push(`os=${value}: ${os}`);
+      else opts.os = os;
     } else if (k === 'retry') {
       const n = Number(value);
       if (!Number.isInteger(n) || n < 1) opts.errors.push(`retry=${value}: expected the number of attempts (1 or more)`);

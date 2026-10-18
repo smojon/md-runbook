@@ -27,6 +27,7 @@ import { workingDirectory } from './controller';
 import { knownSecrets } from './knownSecrets';
 import { parseCellOptions } from './core/cellOptions';
 import { parseFrontMatter } from './core/secrets';
+import { currentOs, osLabel } from './core/os';
 import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from './core/confirm';
 import { proposalOf } from './core/proposal';
 import { cellConfirmOption } from './safety';
@@ -153,6 +154,12 @@ class EditorRunner {
     if (opts.skip) {
       this.channel.show(true);
       this.channel.appendLine(`[md-runbook] skipped: ${path.basename(doc.uri.fsPath || doc.uri.path)}:${loc.line + 1} (skip option)`);
+      return true;
+    }
+    // A block for another OS is an alternative: pass over it (Run Below carries on).
+    const os = vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true) ? parseCellOptions(loc.info).os : undefined;
+    if (os && !os.includes(currentOs())) {
+      this.channel.appendLine(`[md-runbook] not run: this block is for ${osLabel(os)}`);
       return true;
     }
     const blocked = await textEditorGuard(loc);

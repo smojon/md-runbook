@@ -7,6 +7,8 @@ import * as os from 'node:os';
 import * as vscode from 'vscode';
 import { Progress, checklist, computeProgress, formatLocalIso, formatProgress, isCodeMeta, nextUncheckedOffset, outputBlockAttrs } from './core';
 import { isManualMark } from './core/progress';
+import { parseCellOptions } from './core/cellOptions';
+import { osGroups } from './core/os';
 import { SECTION } from './config';
 import { CONTROLLER_ID, RunbookController } from './controller';
 import { META_KEY, outputMeta } from './outputs';
@@ -32,11 +34,21 @@ function cellAttrs(cell: vscode.NotebookCell): Record<string, string> | undefine
 }
 
 export function notebookProgress(nb: vscode.NotebookDocument): Progress {
+  const cells = nb.getCells();
+  const optionsOn = vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true);
+  const slots = osGroups(
+    cells.map((c) => {
+      const meta: unknown = c.metadata?.[META_KEY];
+      const os = optionsOn && c.kind === vscode.NotebookCellKind.Code && isCodeMeta(meta) ? parseCellOptions(meta.info).os : undefined;
+      return { kind: c.kind === vscode.NotebookCellKind.Code ? 'code' : 'markup', ...(os ? { os } : {}) };
+    }),
+  );
   return computeProgress(
-    nb.getCells().map((c) => {
+    cells.map((c, i) => {
       if (c.kind !== vscode.NotebookCellKind.Code) return { kind: 'markup', tasks: checklist(c.document.getText()) };
       const attrs = cellAttrs(c);
-      return { kind: 'code', exit: attrs?.exit, partial: attrs?.lines !== undefined, check: attrs?.check };
+      const os = slots[i];
+      return { kind: 'code', exit: attrs?.exit, partial: attrs?.lines !== undefined, check: attrs?.check, ...(os ? { os } : {}) };
     }),
   );
 }

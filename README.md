@@ -119,6 +119,9 @@ Each has its own page with examples and settings:
 - **[Checks, retries and captured values](docs/features/checks.md):** `expect="Running"` or
   `expect=/regex/` fails a step whose output is wrong, `retry=10 every=15s` waits until it passes,
   and `capture="POD:/name: (\S+)/"` keeps a value from the output for later cells as `${out:POD}`.
+- **[Blocks for one OS](docs/features/safety.md#blocks-for-one-os):** mark alternatives with
+  `os=windows` / `os=linux,macos`; each user's run uses the block for their OS, and the
+  alternatives count as one step.
 - **[Secrets, inputs, parameters and `.env`](docs/features/secrets.md):** keep secrets in the OS
   keychain and reference them as `${secret:NAME}`. They reach the cell as environment variables,
   never as script text, and are redacted by exact value. `${input:NAME}` prompts once per session,

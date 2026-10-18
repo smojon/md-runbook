@@ -6,6 +6,7 @@
 import { isFenceClose, matchFenceOpen } from './fence';
 import type { FenceOpen } from './fence';
 import { OUTPUT_START_RE, parseAttrs } from './outputBlock';
+import type { OsSlot } from './os';
 
 export type StepState = 'done' | 'failed' | 'skipped' | 'pending';
 
@@ -17,6 +18,8 @@ export interface ProgressCell {
   partial?: boolean;
   /** `check=` attribute: the cell's expect=/capture= checks passed (`ok`) or not (`failed`). */
   check?: string;
+  /** An `os=` alternative: only the one for this OS counts (a group with none counts as skipped). */
+  os?: OsSlot;
   /** Task-list items of a markup cell, in order: true = checked. */
   tasks?: boolean[];
 }
@@ -55,6 +58,8 @@ export function isManualMark(attrs: Record<string, string> | undefined): boolean
 
 export function computeProgress(cells: readonly ProgressCell[]): Progress {
   const p: Progress = { total: 0, done: 0, failed: 0, skipped: 0, pending: 0, resume: [] };
+  const activeGroups = new Set(cells.filter((c) => c.os?.active).map((c) => c.os!.group));
+  const counted = new Set<number>();
   cells.forEach((c, i) => {
     if (c.kind === 'markup') {
       for (const checked of c.tasks ?? []) {
@@ -65,6 +70,14 @@ export function computeProgress(cells: readonly ProgressCell[]): Progress {
           p.firstPending ??= { cell: i, step: p.total };
         }
       }
+      return;
+    }
+    if (c.os && !c.os.active) {
+      // Another OS's alternative. If no alternative is for this OS, the step is skipped here.
+      if (activeGroups.has(c.os.group) || counted.has(c.os.group)) return;
+      counted.add(c.os.group);
+      p.total++;
+      p.skipped++;
       return;
     }
     p.total++;

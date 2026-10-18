@@ -5,7 +5,9 @@
 
 import { stripAnsi } from './ansi';
 import { escapeHtml, renderCodeBlock, renderInline, renderMarkdown } from './markdown';
+import { parseCellOptions } from './cellOptions';
 import { isCodeMeta } from './model';
+import { osGroups, osLabel } from './os';
 import { formatLocalIso } from './outputBlock';
 import { parse } from './parser';
 
@@ -68,6 +70,30 @@ export function renderReport(text: string, opts: ReportOptions): string {
   let step = 0;
   const counts: Record<Status, number> = { ok: 0, fail: 0, skip: 0, none: 0 };
 
+  // os= alternatives are one step: the one that ran (has output) stands for the group, the
+  // others are shown as alternatives for another OS.
+  const osOf = (i: number) => {
+    const meta = doc.cells[i]!.meta;
+    return isCodeMeta(meta) ? parseCellOptions(meta.info).os : undefined;
+  };
+  const slots = osGroups(doc.cells.map((c, i) => (isCodeMeta(c.meta) ? { kind: 'code' as const, os: osOf(i) } : { kind: 'markup' as const })));
+  const primary = new Map<number, number>();
+  slots.forEach((slot, i) => {
+    if (!slot) return;
+    const current = primary.get(slot.group);
+    if (current === undefined || (!doc.cells[current]!.output && doc.cells[i]!.output)) primary.set(slot.group, i);
+  });
+  /** Step number of each code cell: the alternatives of a group share one. */
+  const stepOf = new Map<number, number>();
+  const groupStep = new Map<number, number>();
+  doc.cells.forEach((c, i) => {
+    if (!isCodeMeta(c.meta)) return;
+    const slot = slots[i];
+    if (slot && groupStep.has(slot.group)) return void stepOf.set(i, groupStep.get(slot.group)!);
+    stepOf.set(i, ++step);
+    if (slot) groupStep.set(slot.group, step);
+  });
+
   for (const [index, cell] of doc.cells.entries()) {
     if (!isCodeMeta(cell.meta)) {
       let value = cell.value;
@@ -82,24 +108,28 @@ export function renderReport(text: string, opts: ReportOptions): string {
       body += renderMarkdown(value, redact);
       continue;
     }
-    step++;
+    const slot = slots[index];
+    const alternative = slot !== undefined && primary.get(slot.group) !== index;
+    const n = stepOf.get(index)!;
     const a = cell.output?.attrs ?? {};
-    const st = statusOf(a.exit, a.lines, a.check);
-    counts[st]++;
+    const st: Status = alternative ? 'skip' : statusOf(a.exit, a.lines, a.check);
+    if (!alternative) counts[st]++;
+    const mark = alternative ? `<span class="badge skip">${escapeHtml(`– for ${osLabel(osOf(index) ?? [])}`)}</span>` : badge(a.exit, a.lines, a.check);
+    const anchor = alternative ? `step-${n}-${index}` : `step-${n}`;
     const shell = cell.meta.lang;
     const code = redact(cell.value);
     const firstLine = code.split('\n').find((l) => l.trim() !== '')?.trim() ?? '';
     rows +=
-      `<tr class="${st}"><td><a href="#step-${step}">${step}</a></td><td><code>${escapeHtml(firstLine)}</code></td>` +
-      `<td>${escapeHtml(shell)}</td><td>${badge(a.exit, a.lines, a.check)}</td>` +
+      `<tr class="${st}"><td><a href="#${anchor}">${n}</a></td><td><code>${escapeHtml(firstLine)}</code></td>` +
+      `<td>${escapeHtml(shell)}</td><td>${mark}</td>` +
       `<td>${escapeHtml(a.ran ?? '')}</td><td>${escapeHtml(a.duration ?? '')}</td></tr>\n`;
 
-    body += `<section class="step ${st}" id="step-${step}">\n<div class="step-head">Step ${step}</div>\n`;
+    body += `<section class="step ${st}" id="${anchor}">\n<div class="step-head">Step ${n}${alternative ? ' (alternative)' : ''}</div>\n`;
     body += renderCodeBlock(code, shell);
     if (cell.output) {
       const meta = [a.ran && `ran ${a.ran}`, a.duration].filter(Boolean).map((s) => escapeHtml(s as string));
       body +=
-        `<div class="output"><div class="output-head">${badge(a.exit, a.lines, a.check)} ${meta.join(' · ')}</div>` +
+        `<div class="output"><div class="output-head">${mark} ${meta.join(' · ')}</div>` +
         `<pre>${escapeHtml(redact(stripAnsi(cell.output.text)))}</pre></div>\n`;
     }
     body += '</section>\n';

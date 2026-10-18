@@ -18,6 +18,9 @@
 - **Get started walkthrough:** *Help → Welcome → Get started with Markdown Runbook* walks
   through running steps, line runs, sessions, placeholders, checks and sharing.
   **md-runbook: Open Sample Runbook** opens a safe sample as an untitled runbook.
+- **Blocks for one OS:** `os=windows` or `os=linux,macos` on a block. Blocks for another OS are
+  not run (and keep their output), and adjacent alternatives count as one step, so one
+  runbook works on Windows, Linux and macOS.
 - **Step Through from This Line:** start stepping at the cursor line instead of the first line.
 - **Save after each run:** with `mdRunbook.output.saveAfterRun` on, the runbook is saved after
   every run, so outputs are on disk even if VS Code closes.

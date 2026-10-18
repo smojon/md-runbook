@@ -198,11 +198,27 @@ export class RunbookController implements vscode.Disposable {
     const cells = executions.map((e) => e.cell);
     /** Index of the last execution started (runCell ends its own, even when it throws). */
     let handled = -1;
+    const excluded: string[] = [];
+    const exclusion = (cell: vscode.NotebookCell): string | undefined => {
+      for (const f of this.pipeline.excluders) {
+        const why = f(cell);
+        if (why !== undefined) return why;
+      }
+      return undefined;
+    };
     try {
       for (const o of this.pipeline.observers) await o.onWillRunSequence?.(notebook, cells);
       for (let next = 0; next < executions.length; next++) {
         const exec = executions[next]!;
         handled = next;
+        const why = stopped ? undefined : exclusion(exec.cell);
+        if (why !== undefined) {
+          // Not run and not recorded: the cell keeps whatever output it had.
+          excluded.push(why);
+          exec.start();
+          exec.end(undefined);
+          continue;
+        }
         if (stopped || exec.token.isCancellationRequested) {
           // Skipped: leave the cell's previous output untouched.
           exec.start();
@@ -224,6 +240,11 @@ export class RunbookController implements vscode.Disposable {
           // Already ended.
         }
       }
+    }
+    if (executions.length === 1 && excluded[0] !== undefined) {
+      void vscode.window.showInformationMessage(`md-runbook: not run: ${excluded[0]}.`);
+    } else if (excluded.length > 0 && !stopped) {
+      vscode.window.setStatusBarMessage(`md-runbook: ${excluded.length} cell${excluded.length === 1 ? '' : 's'} for another OS not run`, 8000);
     }
     if (stopped && executions[executions.length - 1]!.cell !== stopped) {
       const why = runs[runs.length - 1]?.plan.stopSequence ? 'was not confirmed' : 'failed';
