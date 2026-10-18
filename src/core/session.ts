@@ -3,8 +3,9 @@
  * `cd`, variables, functions and logins carry over.
  *
  * Each cell is written to a temp script and sourced by a one-line command, followed by a
- * sentinel line `\n__MDRB_<id>__ <exit>\n` on stdout and on stderr. Seeing the sentinel on both
- * streams means the cell's output is complete; the sentinel itself is stripped.
+ * sentinel `<RS>__MDRB_<id>__ <exit>\n` on stdout and on stderr (RS = the ASCII record separator,
+ * \x1e). Seeing the sentinel on both streams means the cell's output is complete; the sentinel
+ * itself is stripped.
  */
 
 import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
@@ -17,10 +18,13 @@ import { ExecuteOptions, ExecuteResult, executeCell, nodeShellEnv } from './exec
 import { RunResult, killTree } from './runner';
 import { ResolvedShell, ShellEnv, ShellKind, resolveShell, shellKindForLanguage } from './shell';
 
+/** Starts the sentinel. Not a newline: the output keeps exactly the line endings the cell wrote. */
+export const SENTINEL_START = '\x1e';
+
 /**
- * Passes a stream through until the sentinel line for one cell, which it strips (with the
- * newline before it). Only a trailing partial line that could still become the sentinel is
- * held back.
+ * Passes a stream through until the sentinel for one cell, which it strips. Only a trailing
+ * piece that could still become the sentinel (from an RS character on) is held back, so complete
+ * lines are passed on at once and the other stream can't overtake their newline.
  */
 export class SentinelFilter {
   private pending = '';
@@ -32,7 +36,7 @@ export class SentinelFilter {
     marker: string,
     private readonly emit: (text: string) => void,
   ) {
-    this.needle = '\n' + marker + ' ';
+    this.needle = SENTINEL_START + marker + ' ';
   }
 
   get done(): boolean {
@@ -46,7 +50,7 @@ export class SentinelFilter {
     if (at >= 0) {
       this.send(p.slice(0, at));
       p = p.slice(at);
-      const end = p.indexOf('\n', 1);
+      const end = p.indexOf('\n');
       if (end >= 0) {
         const code = Number.parseInt(p.slice(this.needle.length, end), 10);
         this.code = Number.isNaN(code) ? 1 : code;
@@ -55,9 +59,9 @@ export class SentinelFilter {
       this.pending = p;
       return;
     }
-    // The needle has a single '\n', at its start: only the text from the last '\n' can be a prefix.
-    const nl = p.lastIndexOf('\n');
-    const hold = nl >= 0 && this.needle.startsWith(p.slice(nl)) ? nl : p.length;
+    // The needle has a single RS, at its start: only the text from the last RS can be a prefix.
+    const rs = p.lastIndexOf(SENTINEL_START);
+    const hold = rs >= 0 && this.needle.startsWith(p.slice(rs)) ? rs : p.length;
     this.send(p.slice(0, hold));
     this.pending = p.slice(hold);
   }
@@ -77,6 +81,11 @@ export interface SessionRunOptions {
   source: string;
   /** Environment variables set before the cell runs (they stay set afterwards). */
   env?: Record<string, string>;
+  /**
+   * Run this cell in another folder: the session changes to it before the cell and back
+   * afterwards, so a `cd` inside the cell does not carry over either.
+   */
+  cwd?: string;
   /** 0 = no timeout. */
   timeoutMs: number;
   signal?: AbortSignal;
@@ -93,9 +102,12 @@ export interface SessionResult extends RunResult {
 const EXIT_GRACE_MS = 1000;
 const DIR_ENV = 'MD_RUNBOOK_SESSION_DIR';
 const TERM_ENV = 'MD_RUNBOOK_TERM';
+/** Location stack for `cwd` cells in PowerShell, so a cell's own Push-Location is left alone. */
+const PWSH_STACK = '__mdrbCellCwd';
 
 const sq = (s: string): string => "'" + s.replace(/'/g, "'\\''") + "'";
-const psq = (s: string): string => "'" + s.replace(/'/g, "''") + "'";
+/** PowerShell also treats the typographic single quotes ‘ ’ ‚ ‛ as quotes: double them all. */
+const psq = (s: string): string => "'" + s.replace(/['‘’‚‛]/g, '$&$&') + "'";
 
 function sessionArgs(shell: ResolvedShell, platform: NodeJS.Platform): string[] {
   if (shell.kind === 'bash') return ['-s'];
@@ -116,35 +128,57 @@ function initCommand(kind: ShellKind): string {
     `$__mdrbDir = $env:${DIR_ENV}; Remove-Item Env:${DIR_ENV} -ErrorAction Ignore; ` +
     `if ($env:${TERM_ENV}) { $env:TERM = $env:${TERM_ENV} } else { Remove-Item Env:TERM -ErrorAction Ignore }; ` +
     `Remove-Item Env:${TERM_ENV} -ErrorAction Ignore; ` +
-    '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8\n'
+    // $OutputEncoding without a BOM: it is what native commands receive on stdin (`$null | cmd`).
+    '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = New-Object System.Text.UTF8Encoding $false\n'
   );
 }
 
-function cellCommand(kind: ShellKind, id: string, ext: string, withEnv: boolean): string {
+/**
+ * `pre` = the cell has a setup script (`<id>.pre<ext>`: its environment variables and, for a
+ * `cwd` cell, the change of folder). It is deleted right after it has been sourced, so values
+ * such as secrets don't stay on disk while the cell runs.
+ */
+function cellCommand(kind: ShellKind, id: string, ext: string, pre: boolean): string {
   const marker = `__MDRB_${id}__`;
   if (kind === 'bash') {
-    // stdin is the command stream, so the cell reads from /dev/null like an isolated run.
-    const env = withEnv ? `. "$__mdrb_dir/${id}.env${ext}" </dev/null; ` : '';
-    return (
-      `${env}. "$__mdrb_dir/${id}${ext}" </dev/null; __mdrb_rc=$?; ` +
-      `printf '\\n%s %s\\n' ${marker} "$__mdrb_rc"; printf '\\n%s %s\\n' ${marker} "$__mdrb_rc" >&2\n`
-    );
+    // stdin is the command stream, so the cell reads from /dev/null like an isolated run. The
+    // setup runs as an `if` condition so a failing `cd` doesn't end a session that has `set -e`.
+    const preFile = `"$__mdrb_dir/${id}.pre${ext}"`;
+    const run = `. "$__mdrb_dir/${id}${ext}" </dev/null; __mdrb_rc=$?`;
+    const body = pre
+      ? `__mdrb_cd=; if . ${preFile} </dev/null; then rm -f ${preFile} 2>/dev/null; ${run}; ` +
+        `else __mdrb_rc=$?; rm -f ${preFile} 2>/dev/null; fi; ` +
+        'if [ -n "$__mdrb_cd" ]; then cd -- "$__mdrb_cd" 2>/dev/null; __mdrb_cd=; fi; '
+      : `${run}; `;
+    return body + `printf '\\036%s %s\\n' ${marker} "$__mdrb_rc"; printf '\\036%s %s\\n' ${marker} "$__mdrb_rc" >&2\n`;
   }
   // Two lines: a terminating error aborts only the first, and the exit code follows the same rules
-  // as isolated mode (pwshWrapper): last native exit code, else 1 if the script failed.
-  const env = withEnv ? `. "$__mdrbDir/${id}.env${ext}"; ` : '';
+  // as isolated mode (pwshWrapper): last native exit code, else 1 if the script failed. The
+  // second line also leaves a `cwd` cell's folder (the setup pushed it on a private stack).
+  const preFile = `"$__mdrbDir/${id}.pre${ext}"`;
+  const setup = pre ? `. ${preFile}; Remove-Item -LiteralPath ${preFile} -Force -ErrorAction Ignore; ` : '';
   return (
-    `$global:LASTEXITCODE = 0; $__mdrbOk = $false; ${env}. "$__mdrbDir/${id}${ext}"; $__mdrbOk = $?\n` +
+    `$global:LASTEXITCODE = 0; $__mdrbOk = $false; $__mdrbPushed = $false; ${setup}. "$__mdrbDir/${id}${ext}"; $__mdrbOk = $?\n` +
+    `if ($__mdrbPushed) { Pop-Location -StackName ${PWSH_STACK} -ErrorAction Ignore; $__mdrbPushed = $false }; ` +
     '$__mdrbRc = if ($LASTEXITCODE) { $LASTEXITCODE } elseif (-not $__mdrbOk) { 1 } else { 0 }; ' +
-    `[Console]::Out.Write("\`n${marker} $__mdrbRc\`n"); [Console]::Error.Write("\`n${marker} $__mdrbRc\`n")\n`
+    `$__mdrbS = [string][char]30 + "${marker} $__mdrbRc\`n"; [Console]::Out.Write($__mdrbS); [Console]::Error.Write($__mdrbS)\n`
   );
 }
 
-function envScript(kind: ShellKind, env: Record<string, string>): string {
+/** A cell's setup script: its environment variables, then the change to its folder (if any). */
+export function preScript(kind: ShellKind, env: Record<string, string>, cwd: string | undefined, platform: NodeJS.Platform = process.platform): string {
   const lines: string[] = [];
   for (const [k, v] of Object.entries(env)) {
     if (kind === 'pwsh') lines.push(`[Environment]::SetEnvironmentVariable(${psq(k)}, ${psq(v)})`);
     else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) lines.push(`export ${k}=${sq(v)}`);
+  }
+  if (cwd !== undefined) {
+    if (kind === 'pwsh') {
+      lines.push(`Push-Location -LiteralPath ${psq(cwd)} -StackName ${PWSH_STACK} -ErrorAction Stop`, '$__mdrbPushed = $true');
+    } else {
+      // Last line, so its status is the setup's status. Git Bash takes C:/x/y paths.
+      lines.push('__mdrb_cd=$PWD', `cd -- ${sq(platform === 'win32' ? cwd.replace(/\\/g, '/') : cwd)}`);
+    }
   }
   return lines.join('\n');
 }
@@ -172,14 +206,16 @@ export class ShellSession {
 
   constructor(
     readonly shell: ResolvedShell,
+    /** The session's base folder (the runbook's folder): where it starts. */
     readonly cwd: string,
-    readonly env: Record<string, string> = {},
     private readonly platform: NodeJS.Platform = process.platform,
   ) {
     this.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-runbook-session-'));
     // Git Bash takes C:/x/y paths; backslashes could be read as escapes.
     const dirForShell = platform === 'win32' && shell.kind === 'bash' ? this.dir.replace(/\\/g, '/') : this.dir;
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...env, [DIR_ENV]: dirForShell };
+    // Only VS Code's environment: per-cell variables (secrets, inputs, execution.env) are set by
+    // each cell's setup script, so a restarted session starts clean.
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, [DIR_ENV]: dirForShell };
     if (shell.kind === 'pwsh') {
       // .NET reads terminfo once at startup; unless TERM is dumb it writes cursor-key mode codes
       // to stdout around every line it reads from stdin.
@@ -247,15 +283,15 @@ export class ShellSession {
       const id = randomBytes(12).toString('hex');
       const ext = this.shell.extension;
       const env = opts.env ?? {};
-      const withEnv = Object.keys(env).length > 0;
+      const pre = Object.keys(env).length > 0 || opts.cwd !== undefined;
       try {
         const script = path.join(this.dir, id + ext);
         files.push(script);
         fs.writeFileSync(script, this.shell.script(opts.source), 'utf8');
-        if (withEnv) {
-          const envFile = path.join(this.dir, `${id}.env${ext}`);
-          files.push(envFile);
-          fs.writeFileSync(envFile, this.shell.script(envScript(this.shell.kind, env)), 'utf8');
+        if (pre) {
+          const preFile = path.join(this.dir, `${id}.pre${ext}`);
+          files.push(preFile);
+          fs.writeFileSync(preFile, this.shell.script(preScript(this.shell.kind, env, opts.cwd, this.platform)), { encoding: 'utf8', mode: 0o600 });
         }
       } catch (e) {
         return finish({ exitCode: null, signal: null, error: e instanceof Error ? e.message : String(e) }, false);
@@ -283,7 +319,7 @@ export class ShellSession {
           this.kill();
         }, opts.timeoutMs);
       }
-      this.child.stdin.write(cellCommand(this.shell.kind, id, ext, withEnv));
+      this.child.stdin.write(cellCommand(this.shell.kind, id, ext, pre));
     });
   }
 
@@ -321,6 +357,15 @@ export class ShellSession {
   }
 }
 
+export interface SessionExecuteOptions extends ExecuteOptions {
+  /**
+   * The session's base folder (the runbook's folder): new sessions start here. A cell whose
+   * `cwd` differs (a `cwd=` option) runs in its folder for that cell only. Defaults to the `cwd`
+   * of the cell that starts the session.
+   */
+  baseCwd?: string;
+}
+
 /**
  * The sessions of one notebook: one per shell kind, started on first use and replaced after
  * they end. cmd has no session mode and runs isolated.
@@ -347,7 +392,7 @@ export class SessionPool {
     return s?.alive ? s : undefined;
   }
 
-  async execute(opts: ExecuteOptions): Promise<ExecuteResult> {
+  async execute(opts: SessionExecuteOptions): Promise<ExecuteResult> {
     const kind = shellKindForLanguage(opts.language);
     if (kind === undefined || kind === 'cmd') return executeCell(opts, this.shellEnv);
     const resolved = resolveShell(kind, opts.settings, this.shellEnv);
@@ -359,11 +404,15 @@ export class SessionPool {
     }
     if (!s) {
       if (this.started.has(kind)) opts.onStdout('[md-runbook] new session started\n');
-      s = this.start(resolved.shell, opts.cwd, opts.env);
+      s = this.start(resolved.shell, opts.baseCwd ?? opts.cwd);
     }
+    // A cell with its own folder (`cwd=`) runs there without moving the session; other cells
+    // run wherever earlier cells left it.
+    const cellCwd = path.resolve(opts.cwd) === path.resolve(s.cwd) ? undefined : opts.cwd;
     const r = await s.run({
       source: opts.source,
       env: opts.env,
+      cwd: cellCwd,
       timeoutMs: opts.timeoutMs,
       signal: opts.signal,
       onStdout: opts.onStdout,
@@ -376,12 +425,15 @@ export class SessionPool {
     return { ...result, shell: { ...resolved.shell, label: `${resolved.shell.label} session` } };
   }
 
-  /** Replace every running session with a fresh one in its original folder. Returns their labels. */
+  /**
+   * Replace every running session with a fresh one in its base folder, with only VS Code's
+   * environment. Returns their labels.
+   */
   restart(): string[] {
     const running = [...this.sessions.values()].filter((s) => s.alive);
     for (const s of running) {
       s.dispose();
-      this.start(s.shell, s.cwd, s.env);
+      this.start(s.shell, s.cwd);
     }
     return running.map((s) => s.shell.label);
   }
@@ -399,8 +451,8 @@ export class SessionPool {
     this.stop();
   }
 
-  private start(shell: ResolvedShell, cwd: string, env: Record<string, string> = {}): ShellSession {
-    const s = new ShellSession(shell, cwd, env);
+  private start(shell: ResolvedShell, cwd: string): ShellSession {
+    const s = new ShellSession(shell, cwd);
     s.onDidEnd = () => {
       if (this.sessions.get(shell.kind) === s) this.sessions.delete(shell.kind);
       this.onChange();

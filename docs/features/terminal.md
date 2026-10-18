@@ -36,14 +36,22 @@ run (redacted, with `exit=`, `ran=`, `ended=`, `duration=`).
 
 - One terminal per runbook and shell (bash, PowerShell). It is reused while the working directory
   and environment stay the same, and replaced when they change. It is closed with the runbook.
-- The cell's script runs as a child of the terminal shell, so `exit` in a cell ends the cell, not
-  the terminal, and variables don't carry over between cells (use [session mode](session.md)
-  for that).
+  It is a transient terminal: VS Code does not restore it (or its environment and scrollback)
+  after a reload.
+- The cell's script runs in a child process of the configured shell (`mdRunbook.shell.bashPath`
+  / `pwshPath`, or the one md-runbook finds), so `exit`, `cd`/`Set-Location` and variables in a
+  cell end with the cell instead of changing the terminal (use [session mode](session.md) to
+  carry state over). PowerShell runs it with `-NoProfile`, and on Windows with
+  `-ExecutionPolicy Bypass`, as normal runs do.
 - Output and exit code are captured through VS Code's terminal shell integration. The exit code
   follows the same rules as normal runs (for PowerShell: the last native command, `exit N`, or
-  an error).
-- Cancel sends Ctrl+C; if the command doesn't stop within 3 seconds the terminal is closed.
-  `timeoutSeconds` and the `timeout=` option work the same way.
+  an error). If the terminal reports the end of the command but no exit code was recorded (for
+  example because the output contained a fake shell-integration mark), the cell fails with
+  "result is unknown" and the next cell gets a new terminal.
+- Cancel sends Ctrl+C. If the command doesn't stop within 3 seconds, everything running in the
+  terminal is killed and the terminal is closed; a command that stops in time leaves the
+  terminal open for the next cell. `timeoutSeconds` and the `timeout=` option work the same
+  way, and both also apply while waiting for shell integration to start.
 
 ## Requirements and limits
 

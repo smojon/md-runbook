@@ -1,7 +1,9 @@
 /** Persistent session mode end to end: state set in one cell is visible in the next. */
 import { strict as assert } from 'node:assert';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LANG, Test, closeAll, isWin, openRunbook, outputText, runCells, setConfig, step, waitFor, waitForRun, writeFile } from './suite';
+import { LANG, Test, closeAll, isWin, openRunbook, outputText, runCells, setConfig, step, waitFor, waitForRun, work, writeFile } from './suite';
 
 export const tests: Test[] = [
   {
@@ -61,6 +63,28 @@ export const tests: Test[] = [
         assert.deepEqual(await mode(), { mode: 'session', source: 'front matter' });
         void first;
       } finally {
+        await closeAll();
+      }
+    },
+  },
+  {
+    name: 'session mode: cwd= applies to its own cell only',
+    fn: async () => {
+      await setConfig('execution.mode', 'session');
+      try {
+        fs.mkdirSync(path.join(work, 'session-cwd-sub'), { recursive: true });
+        const where = isWin ? '"WHERE=$((Get-Location).Path)"' : 'echo "WHERE=$(pwd)"';
+        const uri = writeFile('session-cwd.md', `\`\`\`${LANG} cwd=session-cwd-sub\n${where}\n\`\`\`\n\n\`\`\`${LANG}\n${where}\n\`\`\`\n`);
+        const editor = await openRunbook(uri);
+        const [first, second] = [editor.notebook.cellAt(0), editor.notebook.cellAt(1)];
+        await runCells(editor, 0, 2);
+        assert.equal(await waitForRun(first), true, outputText(first));
+        assert.equal(await waitForRun(second), true, outputText(second));
+        assert.match(outputText(first), /WHERE=.*session-cwd-sub/);
+        assert.doesNotMatch(outputText(second), /session-cwd-sub/, 'the next cell runs in the runbook folder');
+        assert.match(outputText(second), /session/);
+      } finally {
+        await setConfig('execution.mode', undefined);
         await closeAll();
       }
     },

@@ -4,8 +4,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { ExecuteResult, ShellSettings, exitLabel, nodeShellEnv, resolveShell } from '../src/core';
-import { SentinelFilter, SessionPool } from '../src/core/session';
+import { ExecuteOptions, ExecuteResult, ShellSettings, executeCell, exitLabel, nodeShellEnv, resolveShell } from '../src/core';
+import { SENTINEL_START, SentinelFilter, SessionPool } from '../src/core/session';
 
 const settings: ShellSettings = { pwshPath: process.env.MD_RUNBOOK_PWSH, bashPath: process.env.MD_RUNBOOK_BASH };
 const isWin = process.platform === 'win32';
@@ -16,14 +16,23 @@ interface Run extends ExecuteResult {
   stderr: string;
 }
 
-function runner(pool: SessionPool, cwd = process.cwd()) {
-  return async (language: string, source: string, extra: { timeoutMs?: number; signal?: AbortSignal; env?: Record<string, string> } = {}): Promise<Run> => {
+interface Extra {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  env?: Record<string, string>;
+  /** The cell's folder (a `cwd=` option); defaults to the base folder. */
+  cwd?: string;
+}
+
+function runner(pool: SessionPool, cwd = process.cwd(), baseCwd?: string) {
+  return async (language: string, source: string, extra: Extra = {}): Promise<Run> => {
     let stdout = '';
     let stderr = '';
     const r = await pool.execute({
       language,
       source,
-      cwd,
+      cwd: extra.cwd ?? cwd,
+      baseCwd,
       settings,
       timeoutMs: extra.timeoutMs ?? 60_000,
       signal: extra.signal,
@@ -37,6 +46,7 @@ function runner(pool: SessionPool, cwd = process.cwd()) {
 
 describe('SentinelFilter', () => {
   const marker = '__MDRB_abc123__';
+  const S = `${SENTINEL_START}${marker}`;
   const feed = (chunks: string[]): { out: string; code: number | undefined; emits: string[] } => {
     const emits: string[] = [];
     const f = new SentinelFilter(marker, (t) => emits.push(t));
@@ -44,15 +54,16 @@ describe('SentinelFilter', () => {
     return { out: emits.join(''), code: f.code, emits };
   };
 
-  it('strips the sentinel and the newline before it', () => {
-    assert.deepEqual(feed([`a\nb\n\n${marker} 3\n`]).out, 'a\nb\n');
-    assert.equal(feed([`a\nb\n\n${marker} 3\n`]).code, 3);
-    assert.equal(feed([`no newline\n${marker} 0\n`]).out, 'no newline');
-    assert.equal(feed([`\n${marker} 0\r\n`]).out, '');
+  it('strips the sentinel and keeps the output exactly', () => {
+    assert.deepEqual(feed([`a\nb\n${S} 3\n`]).out, 'a\nb\n');
+    assert.equal(feed([`a\nb\n${S} 3\n`]).code, 3);
+    assert.equal(feed([`no newline${S} 0\n`]).out, 'no newline');
+    assert.equal(feed([`blank line\n\n${S} 0\n`]).out, 'blank line\n\n');
+    assert.equal(feed([`${S} 0\r\n`]).out, '');
   });
 
   it('finds a sentinel split across chunks at every position', () => {
-    const text = `line 1\nline 2\n\n${marker} 42\nafter`;
+    const text = `line 1\nline 2\n${S} 42\nafter`;
     for (let i = 1; i < text.length; i++) {
       for (let j = i; j < text.length; j++) {
         const r = feed([text.slice(0, i), text.slice(i, j), text.slice(j)]);
@@ -62,16 +73,21 @@ describe('SentinelFilter', () => {
     }
   });
 
-  it('holds back only a partial line that could be a sentinel', () => {
+  it('passes complete lines on at once, so the other stream cannot overtake their newline', () => {
+    assert.deepEqual(feed(['failing native\n']).emits, ['failing native\n']);
+    assert.deepEqual(feed(['a\n', '\n', `${S} 0\n`]), { out: 'a\n\n', code: 0, emits: ['a\n', '\n'] });
+  });
+
+  it('holds back only a tail that could be a sentinel', () => {
     assert.deepEqual(feed(['abc']).emits, ['abc']);
     assert.deepEqual(feed(['abc\ndef']).emits, ['abc\ndef']);
-    assert.deepEqual(feed(['abc\n__MD']).emits, ['abc']);
-    assert.deepEqual(feed(['abc\n__MDRB_zzz']).emits, ['abc\n__MDRB_zzz']);
+    assert.deepEqual(feed([`abc\n${SENTINEL_START}__MD`]).emits, ['abc\n']);
+    assert.deepEqual(feed([`abc${SENTINEL_START}__MDRB_zzz`]).emits, [`abc${SENTINEL_START}__MDRB_zzz`]);
   });
 
   it('passes through look-alikes with another id', () => {
-    const fake = '\n__MDRB_ffffff__ 0\n';
-    const r = feed([`x${fake}y\n${marker} 0\n`]);
+    const fake = `\n${SENTINEL_START}__MDRB_ffffff__ 0\n__MDRB_abc123__ 1\n`;
+    const r = feed([`x${fake}y${S} 0\n`]);
     assert.equal(r.out, `x${fake}y`);
     assert.equal(r.code, 0);
   });
@@ -223,6 +239,160 @@ describe('pwsh session', { skip: !has('pwsh') && 'PowerShell not found' }, () =>
     assert.equal(next.exitCode, 0, next.stderr);
     assert.match(next.stdout, /^\[md-runbook\] new session started\r?\nagain/);
   });
+});
+
+/** A base folder (the runbook's folder) with subfolders whose names need quoting. */
+function folders(): { base: string; other: string; plain: string } {
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-base-')));
+  const other = path.join(base, "other dir it's ’q’");
+  const plain = path.join(base, 'plain');
+  for (const d of [other, path.join(other, 'sub'), plain]) fs.mkdirSync(d);
+  return { base, other, plain };
+}
+
+describe('bash session: cwd= cells, clean restart, setup file', { skip: !has('bash') && 'bash not found' }, () => {
+  const { base, other, plain } = folders();
+  const pool = new SessionPool();
+  const run = runner(pool, base, base);
+  after(() => pool.dispose());
+  const lines = (r: Run): string[] => r.stdout.trim().split('\n');
+  const pwd = async (extra?: Extra): Promise<string> => (await run('bash', 'pwd -P', extra)).stdout.trim();
+  const same = (actual: string, expected: string): void => {
+    if (!isWin) assert.equal(actual, expected); // Git Bash prints /c/... paths
+  };
+
+  it('a cell with its own folder runs there; the session stays where it was', async () => {
+    same(await pwd(), base);
+    const r = await run('bash', 'pwd -P\ncd sub\npwd -P', { cwd: other });
+    assert.equal(r.exitCode, 0, r.stderr);
+    if (!isWin) assert.deepEqual(lines(r), [other, path.join(other, 'sub')]);
+    same(await pwd(), base);
+    // A plain `cd` still carries over, and a cwd= cell comes back to it.
+    assert.equal((await run('bash', 'cd plain')).exitCode, 0);
+    same(await pwd(), plain);
+    assert.equal((await run('bash', 'true', { cwd: other })).exitCode, 0);
+    same(await pwd(), plain);
+    assert.equal(pool.labels().length, 1);
+  });
+
+  it('a missing folder fails the cell, not the session (also with set -e)', async () => {
+    await run('bash', 'set -e');
+    const r = await run('bash', 'echo ran', { cwd: path.join(base, 'missing') });
+    assert.notEqual(r.exitCode, 0);
+    assert.doesNotMatch(r.stdout, /ran/);
+    assert.equal(pool.labels().length, 1, 'session still running');
+    await run('bash', 'set +e');
+    same(await pwd(), plain);
+  });
+
+  it('removes the setup file (environment, folder) before the cell runs', async () => {
+    const r = await run('bash', 'ls "$__mdrb_dir"; echo "$MDRB_S"', { env: { MDRB_S: 'x' }, cwd: other });
+    assert.equal(r.exitCode, 0, r.stderr);
+    const out = lines(r);
+    assert.equal(out.pop(), 'x');
+    assert.deepEqual(
+      out.filter((f) => !/^[0-9a-f]{24}\.sh$/.test(f)),
+      [],
+      `only the cell script may be there: ${out.join(', ')}`,
+    );
+  });
+
+  it('restart starts in the base folder with only the VS Code environment', async () => {
+    pool.stop();
+    // The cell that starts the session has its own folder and a secret.
+    assert.equal((await run('bash', 'true', { cwd: other, env: { MDRB_SECRET: 's3cret' } })).exitCode, 0);
+    pool.restart();
+    const r = await run('bash', 'echo "${MDRB_SECRET:-unset}"\npwd -P');
+    assert.equal(lines(r)[0], 'unset');
+    same(lines(r)[1] ?? '', base);
+  });
+});
+
+describe('pwsh session: cwd= cells, setup file, quoting', { skip: !has('pwsh') && 'PowerShell not found' }, () => {
+  const { base, other, plain } = folders();
+  const pool = new SessionPool();
+  const run = runner(pool, base, base);
+  after(() => pool.dispose());
+  const real = (p: string): string => fs.realpathSync.native(p.trim());
+  const loc = async (extra?: Extra): Promise<string> => real((await run('pwsh', '(Get-Location).Path', extra)).stdout);
+
+  it('a cell with its own folder runs there; the session stays where it was', async () => {
+    assert.equal(await loc(), base);
+    const r = await run('pwsh', "(Get-Location).Path\nPush-Location sub\nSet-Location ..\nSet-Location sub\n(Get-Location).Path", { cwd: other });
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.deepEqual(r.stdout.trim().split(/\r?\n/).map(real), [other, path.join(other, 'sub')]);
+    assert.equal(await loc(), base);
+    assert.equal((await run('pwsh', 'Set-Location plain')).exitCode, 0);
+    assert.equal(await loc(), plain);
+    assert.equal((await run('pwsh', "'x'", { cwd: other })).exitCode, 0);
+    assert.equal(await loc(), plain);
+  });
+
+  it('a missing folder fails the cell, not the session', async () => {
+    const r = await run('pwsh', "'ran'", { cwd: path.join(base, 'missing') });
+    assert.equal(r.exitCode, 1);
+    assert.doesNotMatch(r.stdout, /ran/);
+    assert.equal(await loc(), plain);
+    assert.equal(pool.labels().length, 1);
+  });
+
+  it('environment values with typographic quotes cannot break out', async () => {
+    const value = "x’; Write-Output pwned; ’ ‘' ‚‛";
+    const r = await run('pwsh', '$env:MDRB_X', { env: { MDRB_X: value } });
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.equal(r.stdout.replace(/\r?\n$/, ''), value);
+  });
+
+  it('`$null | native` gives the command empty input (no BOM)', { skip: isWin && 'uses a POSIX cat' }, async () => {
+    const r = await run('pwsh', "$null | cat\n'done'", { timeoutMs: 15_000 });
+    assert.equal(r.timedOut, false);
+    assert.equal(r.stdout, 'done\n');
+  });
+
+  it('removes the setup file before the cell runs', async () => {
+    const r = await run('pwsh', '(Get-ChildItem -Name $__mdrbDir) -join ","', { env: { MDRB_S: 'x' }, cwd: other });
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.match(r.stdout.trim(), /^[0-9a-f]{24}\.ps1$/);
+  });
+
+  it('restart starts in the base folder with only the VS Code environment', async () => {
+    pool.stop();
+    assert.equal((await run('pwsh', "'x'", { cwd: other, env: { MDRB_SECRET: 's3cret' } })).exitCode, 0);
+    pool.restart();
+    const r = await run('pwsh', 'if ($env:MDRB_SECRET) { $env:MDRB_SECRET } else { "unset" }\n(Get-Location).Path');
+    const [secret, where] = r.stdout.trim().split(/\r?\n/);
+    assert.equal(secret, 'unset');
+    assert.equal(real(where ?? ''), base);
+  });
+});
+
+describe('session output equals isolated output', () => {
+  /** Both streams in the order they arrive, as the cell output shows them; colours removed. */
+  async function combined(run: (o: ExecuteOptions) => Promise<ExecuteResult>, language: string, source: string): Promise<string> {
+    let all = '';
+    await run({ language, source, cwd: process.cwd(), settings, timeoutMs: 60_000, onStdout: (t) => (all += t), onStderr: (t) => (all += t) });
+    return all.replace(/\x1b\[[0-9;]*m/g, '');
+  }
+  const pause = (kind: 'bash' | 'pwsh'): string => (kind === 'bash' ? 'sleep 0.3' : 'Start-Sleep -Milliseconds 300');
+  const nativeFail = isWin ? 'cmd /c "echo oc: unknown command 1>&2 & exit 1"' : 'sh -c "echo oc: unknown command >&2; exit 1"';
+  const cases: Array<{ kind: 'bash' | 'pwsh'; source: string; expected: string }> = [
+    { kind: 'pwsh', source: `Write-Host "failing native"\n${pause('pwsh')}\n${nativeFail}`, expected: 'failing native\noc: unknown command\n' },
+    { kind: 'pwsh', source: `Write-Error 'boom'\n${pause('pwsh')}\nWrite-Output 'after'`, expected: 'Write-Error: boom\nafter\n' },
+    { kind: 'bash', source: `echo out\n${pause('bash')}\necho err >&2\n${pause('bash')}\necho out2`, expected: 'out\nerr\nout2\n' },
+  ];
+  for (const c of cases) {
+    it(`${c.kind}: ${JSON.stringify(c.source.split('\n')[0])}`, { skip: !has(c.kind) && `${c.kind} not found` }, async () => {
+      const pool = new SessionPool();
+      try {
+        const isolated = await combined((o) => executeCell(o), c.kind, c.source);
+        const session = await combined((o) => pool.execute(o), c.kind, c.source);
+        if (c.kind === 'bash' || !isWin) assert.equal(isolated.replace(/\r\n/g, '\n'), c.expected);
+        assert.equal(session, isolated);
+      } finally {
+        pool.dispose();
+      }
+    });
+  }
 });
 
 describe('session pool fallbacks', () => {
