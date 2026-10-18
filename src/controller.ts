@@ -201,7 +201,7 @@ export class RunbookController implements vscode.Disposable {
     err.flush();
 
     if (result.error !== undefined) unflushed.push({ stream: 'stderr', text: result.error + '\n' });
-    if (result.timedOut) unflushed.push({ stream: 'stderr', text: `[md-runbook] timed out after ${formatDuration(cfg.timeoutMs)}; process tree killed\n` });
+    if (result.timedOut) unflushed.push({ stream: 'stderr', text: `[md-runbook] timed out after ${formatDuration(plan.timeoutMs)}; process tree killed\n` });
     await flush();
 
     const exit = skipped ? 'skipped' : exitLabel(result);

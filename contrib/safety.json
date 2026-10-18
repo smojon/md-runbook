@@ -1,0 +1,46 @@
+{
+  "configuration": {
+    "properties": {
+      "mdRunbook.execution.confirm": {
+        "type": "string",
+        "enum": ["patterns", "always", "never"],
+        "enumDescriptions": [
+          "Ask before running a cell that matches `mdRunbook.execution.confirmPatterns`.",
+          "Ask before running every cell.",
+          "Never ask (cells with the `confirm` option still ask)."
+        ],
+        "default": "patterns",
+        "markdownDescription": "When to show a confirmation dialog before running a cell. The `confirm` / `no-confirm` cell options override this per cell."
+      },
+      "mdRunbook.execution.confirmPatterns": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [
+          "\\b(delete|drain|cordon|scale\\s+.*--replicas=0)\\b",
+          "\\brm\\s+-[a-z]*r[a-z]*f",
+          "--force\\b",
+          "\\bRemove-Item\\b.*-Recurse",
+          "\\bdrop\\s+(table|database)\\b"
+        ],
+        "markdownDescription": "JavaScript regular expressions (case-insensitive) for risky commands. A cell whose text matches one asks for confirmation before it runs; declining records it as `exit=skipped`."
+      },
+      "mdRunbook.output.recordContext": {
+        "type": "object",
+        "default": {},
+        "additionalProperties": { "type": "string" },
+        "markdownDescription": "Commands whose first output line is recorded as an attribute of each output block, e.g. `{ \"context\": \"kubectl config current-context\" }` writes `context=prod-eu`. Run through the platform shell in the .md file's folder with a 5 s timeout; failures record `unknown`."
+      },
+      "mdRunbook.output.recordContextCacheSeconds": {
+        "type": "number",
+        "default": 30,
+        "minimum": 0,
+        "description": "Reuse recorded context values for this many seconds per runbook instead of running the commands before every cell. 0 = run them every time."
+      },
+      "mdRunbook.statusBar.contextAttr": {
+        "type": "string",
+        "default": "context",
+        "markdownDescription": "Which `mdRunbook.output.recordContext` attribute to show in the status bar for the active runbook."
+      }
+    }
+  }
+}
