@@ -174,7 +174,10 @@ test(`running a ${LANG} cell streams output; save persists it redacted`, async (
   const block = saved.slice(saved.indexOf('<!-- md-runbook:output start'));
   assert.match(block, /hello from md-runbook\nAuthorization: \[REDACTED\]\n/);
   assert.doesNotMatch(block, /abc\.def/);
-  assert.ok(saved.includes(fs.realpathSync(work)) || saved.includes(work), 'cwd should be the folder of the .md file');
+  // Windows: os.tmpdir() may be an 8.3 short path (RUNNER~1) and drive-letter case can differ.
+  const norm = (p: string): string => (isWin ? p.toLowerCase() : p);
+  const dirs = [work, fs.realpathSync(work), fs.realpathSync.native(work)].map(norm);
+  assert.ok(dirs.some((d) => norm(block).includes(d)), `cwd should be the folder of the .md file (${dirs.join(' | ')})`);
   assert.match(saved, /<!-- md-runbook:output end -->\n\nAfter\.\n$/);
   assert.doesNotMatch(saved, /exit code 0/, 'status line is not persisted');
   await closeAll();
