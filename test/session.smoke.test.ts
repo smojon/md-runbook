@@ -373,6 +373,20 @@ describe('session output equals isolated output', () => {
     await run({ language, source, cwd: process.cwd(), settings, timeoutMs: 60_000, onStdout: (t) => (all += t), onStderr: (t) => (all += t) });
     return all.replace(/\x1b\[[0-9;]*m/g, '');
   }
+  /**
+   * Windows PowerShell 5.1 names the script file and quotes the line that ran it in each error.
+   * Those differ by design (a temporary file, `&` vs. dot-sourcing), so blank them out there;
+   * PowerShell 7's concise errors have neither and are compared exactly.
+   */
+  const r = resolveShell('pwsh', settings, nodeShellEnv());
+  const windowsPowerShell = r.ok && r.shell.label === 'powershell';
+  const comparable = (kind: 'bash' | 'pwsh', out: string): string =>
+    kind === 'pwsh' && windowsPowerShell
+      ? out
+          .replace(/^.*?(?:cell|[0-9a-f]{24})\.ps1 : /gm, '<script> : ')
+          .replace(/^At line:\d+ char:\d+\r?\n\+ .*\r?\n\+ *~+\r?\n/gm, '')
+          .replace(/,(?:cell|[0-9a-f]{24})\.ps1(?=\r?$)/gm, ',<script>')
+      : out;
   const pause = (kind: 'bash' | 'pwsh'): string => (kind === 'bash' ? 'sleep 0.3' : 'Start-Sleep -Milliseconds 300');
   const nativeFail = isWin ? 'cmd /c "echo oc: unknown command 1>&2 & exit 1"' : 'sh -c "echo oc: unknown command >&2; exit 1"';
   const cases: Array<{ kind: 'bash' | 'pwsh'; source: string; expected: string }> = [
@@ -387,7 +401,7 @@ describe('session output equals isolated output', () => {
         const isolated = await combined((o) => executeCell(o), c.kind, c.source);
         const session = await combined((o) => pool.execute(o), c.kind, c.source);
         if (c.kind === 'bash' || !isWin) assert.equal(isolated.replace(/\r\n/g, '\n'), c.expected);
-        assert.equal(session, isolated);
+        assert.equal(comparable(c.kind, session), comparable(c.kind, isolated));
       } finally {
         pool.dispose();
       }
