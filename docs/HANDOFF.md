@@ -49,8 +49,10 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 
 - **Open VSX** (VSCodium, Cursor, Gitpod): create the namespace `smojon`, file the ownership
   claim, then add an `OVSX_PAT` secret or set up trusted publishing (`PUBLISHING.md`).
-- **npm package for the command-line runner** (`npx md-runbook run …`): needs an npm account.
-  Until then it runs from a clone as `node out/dist/cli.js` (`docs/features/cli.md`).
+- **npm token:** add the `NPM_TOKEN` secret (`PUBLISHING.md` → npm); the next release then
+  publishes the command line as `md-runbook` on npm. Until then: the GitHub Action, or
+  `node out/dist/cli.js` from a clone.
+- **Screenshots:** the shot list and a demo runbook are ready in `docs/screenshots.md`.
 
 ## Known gaps (small, documented or deliberate)
 
@@ -74,8 +76,5 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 
 ## Ideas for later
 
-1. PDF in the extension's **Export Report**, reusing the CLI's headless-browser printing.
-2. Fresh Marketplace screenshots of the newer features (line runs, checks, progress, CodeLens,
-   AI context).
-3. Shell choice per runbook, only with a safe design (e.g. picking among installed shells, never
+1. Shell choice per runbook, only with a safe design (e.g. picking among installed shells, never
    a path from the file).

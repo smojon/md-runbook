@@ -9,6 +9,8 @@
 - **npm package:** the command line is published as `md-runbook` (`npx md-runbook run …`).
 - **Export Report (PDF):** a new command next to Export Report (HTML) prints the report with the
   Chrome, Edge or Chromium already installed (`mdRunbook.report.browserPath` to pick one).
+- **Demo runbook** `examples/screenshots.runbook.md`: a realistic restart runbook that only
+  prints simulated output, for trying line runs, checks, retries and captures.
 - **Run from the web:** `examples/github/run-runbook.yml` adds a **Run workflow** button that
   runs a runbook and keeps its results; publishing the report to GitHub Pages is opt-in.
 
