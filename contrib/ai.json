@@ -68,44 +68,55 @@
     "properties": {
       "mdRunbook.ai.provider": {
         "type": "string",
-        "enum": ["off", "vscode", "anthropic"],
+        "enum": [
+          "off",
+          "vscode",
+          "anthropic"
+        ],
         "enumDescriptions": [
           "AI assistance is off: nothing is ever sent anywhere.",
           "VS Code's language models (GitHub Copilot or another installed provider).",
           "The Claude API with your own API key (stored in the OS keychain)."
         ],
         "default": "off",
-        "markdownDescription": "Where **Explain Output**, **Suggest Next Steps** and **Summarize Incident** send the (redacted) runbook. `off` (default) never sends anything and hides the AI buttons."
+        "markdownDescription": "Where **Explain Output**, **Suggest Next Steps** and **Summarize Incident** send the (redacted) runbook. `off` (default) never sends anything and hides the AI buttons. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       },
       "mdRunbook.ai.confirmBeforeSend": {
         "type": "boolean",
         "default": true,
-        "markdownDescription": "Ask before sending, showing the provider, model, size and whether names are pseudonymized, with **Preview** of the exact text."
+        "markdownDescription": "Ask before sending, showing the provider, model, size and whether names are pseudonymized, with **Preview** of the exact text. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       },
       "mdRunbook.ai.confirmOncePerSession": {
         "type": "boolean",
         "default": false,
-        "markdownDescription": "With `mdRunbook.ai.confirmBeforeSend`, ask only once per provider and VS Code session instead of before every send."
+        "markdownDescription": "With `mdRunbook.ai.confirmBeforeSend`, ask only once per provider and VS Code session instead of before every send. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       },
       "mdRunbook.ai.pseudonymize": {
         "type": "boolean",
         "default": true,
-        "markdownDescription": "Replace hostnames, IPs, URLs, emails and similar names with stable aliases before sending; aliases in the answer are mapped back locally."
+        "markdownDescription": "Replace hostnames, IPs, URLs, emails and similar names with stable aliases before sending; aliases in the answer are mapped back locally. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       },
       "mdRunbook.ai.vscodeModel": {
         "type": "string",
         "default": "",
-        "markdownDescription": "Preferred VS Code language model: an id, `vendor/family`, or part of the family or name. Empty = a Copilot Claude model, else any Copilot model, else any available model."
+        "markdownDescription": "Preferred VS Code language model: an id, `vendor/family`, or part of the family or name. Empty = a Copilot Claude model, else any Copilot model, else any available model. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       },
       "mdRunbook.ai.anthropicModel": {
         "type": "string",
         "default": "claude-sonnet-5-5",
-        "markdownDescription": "Claude model for the `anthropic` provider."
+        "markdownDescription": "Claude model for the `anthropic` provider. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       },
       "mdRunbook.ai.anthropicBaseUrl": {
         "type": "string",
         "default": "https://api.anthropic.com",
-        "markdownDescription": "Base URL of the Claude API, or of a gateway or proxy that speaks the same API. `HTTPS_PROXY` is not used; point this at a reachable gateway instead."
+        "markdownDescription": "Base URL of the Claude API, or of a gateway or proxy that speaks the same API. `HTTPS_PROXY` is not used; point this at a reachable gateway instead. Can only be set in user settings, so a workspace cannot change it.",
+        "scope": "machine"
       },
       "mdRunbook.ai.maxTokens": {
         "type": "integer",
