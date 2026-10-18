@@ -41,7 +41,7 @@ block with `os=`:
 Clear the cache:
 
 ```pwsh os=windows
-Remove-Item "$env:LOCALAPPDATApp\cache" -Recurse -Force
+Remove-Item "$env:LOCALAPPDATA\app\cache" -Recurse -Force
 ```
 
 ```bash os=linux,macos
