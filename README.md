@@ -42,6 +42,10 @@ md-runbook does **not** replace the normal Markdown editor. To open a file as a 
 - **Open With… → Markdown Runbook**,
 - the command **md-runbook: Open as Runbook**.
 
+New to it? **Help → Welcome → Get started with Markdown Runbook** is a short walkthrough, and
+**md-runbook: Open Sample Runbook** opens a safe sample to try (untitled, so nothing is written
+until you save it).
+
 To make it the default for some files, add for example
 `"workbench.editorAssociations": { "*.runbook.md": "md-runbook" }`.
 

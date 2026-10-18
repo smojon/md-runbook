@@ -2,6 +2,7 @@
 import { strict as assert } from 'node:assert';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as vscode from 'vscode';
 import { LANG, Test, closeAll, isWin, openRunbook, outputText, read, runCells, setConfig, waitFor, waitForRun, work, writeFile } from './suite';
 
 const where = isWin ? '"WHERE=$((Get-Location).Path)"' : 'echo "WHERE=$(pwd)"';
@@ -50,3 +51,19 @@ export const tests: Test[] = [
     },
   },
 ];
+
+tests.push({
+  name: 'Open Sample Runbook opens the bundled sample as an untitled runbook',
+  fn: async () => {
+    try {
+      await vscode.commands.executeCommand('mdRunbook.openSample');
+      const nb = await waitFor('the sample to open', () => vscode.window.activeNotebookEditor?.notebook);
+      assert.equal(nb.notebookType, 'md-runbook');
+      assert.equal(nb.isUntitled, true);
+      assert.ok(nb.getCells().some((c) => c.kind === vscode.NotebookCellKind.Code), 'has code cells');
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+      await closeAll();
+    }
+  },
+});

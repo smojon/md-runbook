@@ -17,6 +17,7 @@ import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
 import { registerSessions } from './session';
 import { registerTaskLists } from './taskLists';
 import { registerTerminal } from './terminal';
+import { registerWalkthrough } from './walkthrough';
 
 function targetUri(uri: unknown): vscode.Uri | undefined {
   if (uri instanceof vscode.Uri) return uri;
@@ -85,6 +86,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerAi(context);
   registerAiContext(context);
   registerTaskLists(context);
+  registerWalkthrough(context);
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {
       transientOutputs: false,

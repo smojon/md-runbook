@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
-import { it } from 'node:test';
+import { describe, it } from 'node:test';
 import { parseCellOptions } from '../src/core/cellOptions';
-import { quotePwsh, quoteSh, terminalCommandLine, terminalSignature } from '../src/core/terminalCommand';
+import { quotePwsh, quoteSh, terminalCommandLine, terminalInlineCommandLine, terminalSignature } from '../src/core/terminalCommand';
 
 it('quotes script paths for bash and PowerShell', () => {
   assert.equal(quoteSh("/tmp/it's here/cell.sh"), `'/tmp/it'\\''s here/cell.sh'`);
@@ -74,4 +74,20 @@ it('parseStatus reads the written exit code', async () => {
   assert.equal(parseStatus(''), undefined);
   assert.equal(parseStatus(undefined), undefined);
   assert.equal(parseStatus('x'), undefined);
+});
+
+describe('terminalInlineCommandLine', () => {
+  it('bash sources the script in the terminal shell and records $?', () => {
+    assert.equal(
+      terminalInlineCommandLine('bash', "/tmp/it's.sh", '/tmp/status'),
+      `. '/tmp/it'\\''s.sh'; printf '%s' $? > '/tmp/status'; sleep 0.5`,
+    );
+  });
+
+  it('PowerShell dot-sources the text as a script block (no execution policy) and uses the normal exit rules', () => {
+    const line = terminalInlineCommandLine('pwsh', '/t/cell.ps1', '/t/status');
+    assert.ok(line.startsWith("$global:LASTEXITCODE = 0; . ([scriptblock]::Create([System.IO.File]::ReadAllText('/t/cell.ps1')));"), line);
+    assert.ok(line.includes("Set-Content -NoNewline -Path '/t/status' -Value $(if ($LASTEXITCODE)"), line);
+    assert.doesNotMatch(line, /-Command|-ExecutionPolicy/);
+  });
 });

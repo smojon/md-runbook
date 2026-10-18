@@ -112,7 +112,13 @@ tests.push({
       const text = await step('show cell editor', vscode.window.showTextDocument(cell.document));
       text.selection = new vscode.Selection(1, 0, 1, 0);
       void vscode.commands.executeCommand('mdRunbook.stepThroughFromLine');
-      await waitFor('line 2 output', () => /two/.test(outputText(cell)));
+      // Wait for the pause itself: the output shows just before the run pauses.
+      const end = Date.now() + 30_000;
+      while ((await vscode.commands.executeCommand<{ index: number }>('mdRunbook._stepPaused'))?.index !== 1) {
+        if (Date.now() > end) throw new Error(`timed out waiting for the pause; output: ${JSON.stringify(outputText(cell))}`);
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      assert.match(outputText(cell), /two/);
       await vscode.commands.executeCommand('mdRunbook.stepContinue');
       assert.equal(await waitForRun(cell), true, outputText(cell));
       assert.doesNotMatch(outputText(cell), /one/);

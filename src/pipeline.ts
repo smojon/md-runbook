@@ -58,11 +58,16 @@ export interface PrepareContext {
   token: vscode.CancellationToken;
   /** The cell's outputs from before this run (they are cleared before preparers run). */
   previousOutputs?: readonly vscode.NotebookCellOutput[];
-  /**
-   * Line runs outside session mode: a shell kept for the lines of this run only, so `cd` and
-   * variables carry over from one line to the next. Stopped when the run ends.
-   */
-  lineShell?: SessionPool;
+  /** Set while the lines of a line run execute: what they share. */
+  lineRun?: LineRunScope;
+}
+
+/** What the lines of one line run share, so `cd` and variables carry over between them. */
+export interface LineRunScope {
+  /** Outside session mode: a shell kept for this run only (stopped when it ends). */
+  shell: SessionPool;
+  /** Run `fn` when the line run ends (e.g. close a terminal opened for it). */
+  onEnd(fn: () => void): void;
 }
 
 export interface CellPreparer {
@@ -116,7 +121,7 @@ export const isolatedExecutor: CellExecutor = {
       onStdout: io.onStdout,
       onStderr: io.onStderr,
     };
-    return ctx.lineShell ? ctx.lineShell.execute(opts) : executeCell(opts);
+    return ctx.lineRun ? ctx.lineRun.shell.execute(opts) : executeCell(opts);
   },
 };
 

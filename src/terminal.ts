@@ -15,7 +15,7 @@ import { ExecuteResult, isCodeMeta, nodeShellEnv, resolveShell, shellKindForLang
 import { parseCellOptions } from './core/cellOptions';
 import { proposalOf } from './core/proposal';
 import { killTree } from './core/runner';
-import { TerminalOutputFilter, descendants, parseStatus, terminalCommandLine, terminalSignature } from './core/terminalCommand';
+import { TerminalOutputFilter, descendants, parseStatus, terminalCommandLine, terminalInlineCommandLine, terminalSignature } from './core/terminalCommand';
 import { META_KEY } from './outputs';
 import { CellExecutor, CellPlan, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
 
@@ -149,7 +149,9 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
       let dir: string | undefined;
 
       try {
-        const key = `${ctx.notebook.uri.toString()}#${kind}`;
+        // A line run gets a terminal of its own, closed when the run ends: its lines run in that
+        // terminal's shell, so `cd` and variables carry over without changing the runbook's terminal.
+        const key = `${ctx.notebook.uri.toString()}#${kind}${ctx.lineRun ? '#lines' : ''}`;
         const signature = terminalSignature(kind, shell.command, plan.cwd, plan.env);
         let entry = terminals.get(key);
         if (entry && (entry.signature !== signature || entry.terminal.exitStatus !== undefined)) {
@@ -157,12 +159,16 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
           entry = undefined;
         }
         if (!entry) {
-          const name = `md-runbook: ${path.basename(ctx.notebook.uri.path)} (${shell.label})`;
+          const name = `md-runbook: ${path.basename(ctx.notebook.uri.path)} (${shell.label}${ctx.lineRun ? ', lines' : ''})`;
           // Transient: VS Code must not restore it (with its environment, which may hold secrets)
           // or its scrollback after a reload.
           const terminal = vscode.window.createTerminal({ name, shellPath: shell.command, cwd: plan.cwd, env: plan.env, isTransient: true });
           entry = { terminal, signature };
           terminals.set(key, entry);
+          ctx.lineRun?.onEnd(() => {
+            if (terminals.get(key)?.terminal === terminal) terminals.delete(key);
+            terminal.dispose();
+          });
         }
         const terminal = entry.terminal as TerminalWithIntegration;
         // Focus it: the user may need to type a password or answer a prompt.
@@ -184,7 +190,10 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
         // bash gets paths in the form its args use (forward slashes for Git Bash); pwsh native paths.
         const asArg = (p: string): string => (kind === 'bash' ? (shell.args(p)[0] ?? p) : p);
 
-        const execution = integration.executeCommand(terminalCommandLine(kind, shell.command, asArg(scriptPath), asArg(statusPath)));
+        const commandLine = ctx.lineRun
+          ? terminalInlineCommandLine(kind, asArg(scriptPath), asArg(statusPath))
+          : terminalCommandLine(kind, shell.command, asArg(scriptPath), asArg(statusPath));
+        const execution = integration.executeCommand(commandLine);
         const ended = new Promise<number | undefined>((resolve) => {
           const done = (code: number | undefined): void => {
             endSub.dispose();

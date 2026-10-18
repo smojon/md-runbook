@@ -65,11 +65,13 @@ inside a block, select it.
 `cd`, variables and functions carry over from one line to the next:
 
 - in [session mode](session.md), the lines run in the runbook's session, like any cell;
+- cells with the [`terminal` option](terminal.md) get a terminal of their own for the run,
+  named `md-runbook: <file> (<shell>, lines)`, and every line runs in that terminal's shell. It
+  is closed when the run ends, so the runbook's usual terminal is never changed;
 - otherwise, they share a shell that is started for this run and stopped when it ends.
 
-Two exceptions: **cmd cells** and cells with the **`terminal` option** run each line in its own
-process (a new child process of the terminal's shell, for terminal cells), so `cd` or a variable
-set on one line is gone on the next.
+The exception is **cmd cells**: each line runs in its own process, so `cd` or a variable set on
+one line is gone on the next.
 
 The cell's timeout (`timeout=` or `mdRunbook.execution.timeoutSeconds`) applies to each line on
 its own. Time spent paused doesn't count.

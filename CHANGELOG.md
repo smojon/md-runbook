@@ -13,6 +13,11 @@
   (`check=failed` on the marker), and `expect-exit=1` makes exit code 1 a pass.
 - **Retries:** `retry=10 every=15s` runs a cell again until it passes, for "wait until ready"
   steps. Only the last attempt's output is kept; the marker records `attempts=`.
+- **Terminal cells, line by line:** a line run of a `terminal` cell opens a terminal of its own
+  for the run, so `cd` and variables carry over between lines there too.
+- **Get started walkthrough:** *Help → Welcome → Get started with Markdown Runbook* walks
+  through running steps, line runs, sessions, placeholders, checks and sharing.
+  **md-runbook: Open Sample Runbook** opens a safe sample as an untitled runbook.
 - **Step Through from This Line:** start stepping at the cursor line instead of the first line.
 - **Save after each run:** with `mdRunbook.output.saveAfterRun` on, the runbook is saved after
   every run, so outputs are on disk even if VS Code closes.

@@ -351,6 +351,11 @@
         "title": "Step Through from This Line",
         "category": "md-runbook",
         "icon": "$(debug-step-into)"
+      },
+      {
+        "command": "mdRunbook.openSample",
+        "title": "Open Sample Runbook",
+        "category": "md-runbook"
       }
     ],
     "menus": {
@@ -1266,6 +1271,96 @@
         "command": "mdRunbook.stepStop",
         "key": "shift+f5",
         "when": "mdRunbook.stepPaused && !inDebugMode"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "gettingStarted",
+        "title": "Get started with Markdown Runbook",
+        "description": "Run the shell blocks of a Markdown file as a notebook and keep their output in the file.",
+        "steps": [
+          {
+            "id": "open",
+            "title": "Open a sample runbook",
+            "description": "A runbook is a Markdown file whose shell blocks you can run.\n[Open Sample Runbook](command:mdRunbook.openSample)",
+            "media": {
+              "markdown": "walkthrough/open.md"
+            },
+            "completionEvents": [
+              "onCommand:mdRunbook.openSample",
+              "onCommand:mdRunbook.openAsRunbook"
+            ]
+          },
+          {
+            "id": "run",
+            "title": "Run steps and keep their output",
+            "description": "Run a cell with ▶, or Run All. Save to write the output into the file.\n[Open Sample Runbook](command:mdRunbook.openSample)",
+            "media": {
+              "markdown": "walkthrough/run.md"
+            },
+            "completionEvents": [
+              "onCommand:notebook.cell.execute",
+              "onCommand:notebook.execute"
+            ]
+          },
+          {
+            "id": "lines",
+            "title": "Run a cell line by line",
+            "description": "Run only the line under the cursor, or step through a cell's lines like a debugger.",
+            "media": {
+              "markdown": "walkthrough/lines.md"
+            },
+            "completionEvents": [
+              "onCommand:mdRunbook.runLine",
+              "onCommand:mdRunbook.stepThroughLines",
+              "onCommand:mdRunbook.runLinesOneByOne"
+            ]
+          },
+          {
+            "id": "session",
+            "title": "Keep state between cells",
+            "description": "Session mode keeps one shell per runbook, so cd, variables and logins carry over.\n[Toggle Session Mode](command:mdRunbook.toggleSessionMode)",
+            "media": {
+              "markdown": "walkthrough/session.md"
+            },
+            "completionEvents": [
+              "onCommand:mdRunbook.toggleSessionMode",
+              "onCommand:mdRunbook.sessionModeOn",
+              "onCommand:mdRunbook.sessionModeOff"
+            ]
+          },
+          {
+            "id": "inputs",
+            "title": "Secrets, inputs and parameters",
+            "description": "Use ${secret:…}, ${input:…} and ${param:…} instead of values in the file.\n[Set a Secret](command:mdRunbook.setSecret)",
+            "media": {
+              "markdown": "walkthrough/inputs.md"
+            },
+            "completionEvents": [
+              "onCommand:mdRunbook.setSecret"
+            ]
+          },
+          {
+            "id": "checks",
+            "title": "Check results, wait, pass values on",
+            "description": "expect=, retry= and capture= make a runbook check itself.",
+            "media": {
+              "markdown": "walkthrough/checks.md"
+            }
+          },
+          {
+            "id": "share",
+            "title": "Share safely",
+            "description": "Export a redacted report, or copy the runbook for an AI with a leak check first.",
+            "media": {
+              "markdown": "walkthrough/share.md"
+            },
+            "completionEvents": [
+              "onCommand:mdRunbook.exportReport",
+              "onCommand:mdRunbook.copyForAi"
+            ]
+          }
+        ]
       }
     ]
   },

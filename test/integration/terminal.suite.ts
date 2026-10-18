@@ -76,3 +76,22 @@ test('terminal: assistant-written cells never run in a terminal', async () => {
     await closeAll();
   }
 });
+
+test('terminal: a line run keeps cd between lines in a terminal of its own, closed afterwards', async () => {
+  await setConfig('terminal.mode', 'perCell');
+  try {
+    const cd = isWin ? 'Set-Location $env:TEMP' : 'cd /tmp';
+    const where = isWin ? 'Write-Output "WHERE=$((Get-Location).Path)"' : 'echo "WHERE=$(pwd)"';
+    const uri = writeFile('term-lines.md', `\`\`\`${LANG} terminal\n${cd}\n${where}\n\`\`\`\n`);
+    const editor = await openRunbook(uri);
+    const cell = editor.notebook.cellAt(0);
+    void vscode.commands.executeCommand('mdRunbook.runLinesOneByOne', cell);
+    assert.equal(await waitForRun(cell, 60_000), true, outputText(cell));
+    const out = outputText(cell);
+    assert.match(out, isWin ? /WHERE=.*Temp/i : /WHERE=(\/private)?\/tmp/);
+    await waitFor('the line-run terminal to close', () => !vscode.window.terminals.some((t) => t.name.includes(', lines)')) || undefined, 10_000);
+  } finally {
+    await setConfig('terminal.mode', undefined);
+    await closeAll();
+  }
+});

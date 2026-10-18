@@ -53,6 +53,14 @@ run (redacted, with `exit=`, `ran=`, `ended=`, `duration=`).
   terminal open for the next cell. `timeoutSeconds` and the `timeout=` option work the same
   way, and both also apply while waiting for shell integration to start.
 
+## Line runs
+
+[Run Line or Selection, Run Lines One by One and Step Through](lines.md) work on terminal cells
+too. A line run opens a terminal of its own, `md-runbook: <file> (<shell>, lines)`, and runs
+each line directly in that terminal's shell, so `cd` and variables carry over from one line to
+the next. The terminal is closed when the run ends. A line that runs `exit` closes it early; the
+next line gets a new one.
+
 ## Requirements and limits
 
 - VS Code **1.93 or newer** with terminal shell integration enabled

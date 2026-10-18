@@ -55,6 +55,21 @@ export function terminalCommandLine(
   );
 }
 
+/**
+ * Like terminalCommandLine, but the script runs in the terminal's own shell, so `cd` and
+ * variables stay for the next command. Used for the lines of one line run, in a terminal opened
+ * for that run only. PowerShell dot-sources the file's text as a script block, which the
+ * execution policy doesn't apply to (the terminal shell wasn't started with `-ExecutionPolicy`).
+ */
+export function terminalInlineCommandLine(kind: Exclude<ShellKind, 'cmd'>, scriptArg: string, statusArg: string): string {
+  if (kind === 'bash') return `. ${quoteSh(scriptArg)}; printf '%s' $? > ${quoteSh(statusArg)}; sleep 0.5`;
+  return (
+    `$global:LASTEXITCODE = 0; . ([scriptblock]::Create([System.IO.File]::ReadAllText(${quotePwsh(scriptArg)}))); $mdrbOk = $?; ` +
+    `Set-Content -NoNewline -Path ${quotePwsh(statusArg)} -Value $(if ($LASTEXITCODE) { $LASTEXITCODE } elseif (-not $mdrbOk) { 1 } else { 0 }); ` +
+    'Start-Sleep -Milliseconds 500'
+  );
+}
+
 /** The exit code a terminal command wrote with terminalCommandLine, if any. */
 export function parseStatus(text: string | undefined): number | undefined {
   const n = Number((text ?? '').trim());

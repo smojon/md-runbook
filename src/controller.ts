@@ -495,7 +495,8 @@ export class RunbookController implements vscode.Disposable {
     const kind = shellKindForLanguage(plan.language) ?? 'bash';
     const steps = plan.steps ?? [];
     const lineShell = new SessionPool(undefined, undefined, '');
-    const stepCtx: PrepareContext = { ...ctx, lineShell };
+    const ends: (() => void)[] = [];
+    const stepCtx: PrepareContext = { ...ctx, lineRun: { shell: lineShell, onEnd: (fn) => ends.push(fn) } };
     let result: ExecuteResult = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
     try {
       for (let i = 0; i < steps.length; i++) {
@@ -524,6 +525,13 @@ export class RunbookController implements vscode.Disposable {
     } finally {
       run.onStep?.(undefined);
       lineShell.dispose();
+      for (const fn of ends) {
+        try {
+          fn();
+        } catch {
+          // Best effort (e.g. a terminal already closed).
+        }
+      }
     }
     return result;
   }
