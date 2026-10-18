@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { clearOutputBlocks } from './core';
 import { RunbookController } from './controller';
 import { RunPipeline } from './pipeline';
+import { registerProgress } from './progress';
 import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
 
 function targetUri(uri: unknown): vscode.Uri | undefined {
@@ -48,13 +49,15 @@ async function clearAllOutputs(uri?: unknown): Promise<void> {
 export function activate(context: vscode.ExtensionContext): void {
   const pipeline = new RunPipeline();
   // Feature modules register preparers/observers/executor on `pipeline` here.
+  const controller = new RunbookController(pipeline);
+  registerProgress(context, pipeline, controller);
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {
       transientOutputs: false,
       transientCellMetadata: {},
       transientDocumentMetadata: {},
     }),
-    new RunbookController(pipeline),
+    controller,
     vscode.commands.registerCommand('mdRunbook.openAsRunbook', async (uri?: unknown) => {
       const target = targetUri(uri);
       if (target) await vscode.commands.executeCommand('vscode.openWith', target, NOTEBOOK_TYPE);

@@ -37,6 +37,8 @@ export function workingDirectory(uri: vscode.Uri): string {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
 }
 
+export const CONTROLLER_ID = 'md-runbook-shell';
+
 export class RunbookController implements vscode.Disposable {
   private readonly controller: vscode.NotebookController;
   private executionOrder = 0;
@@ -44,7 +46,7 @@ export class RunbookController implements vscode.Disposable {
   private readonly queues = new Map<string, Promise<void>>();
 
   constructor(private readonly pipeline: RunPipeline = new RunPipeline()) {
-    this.controller = vscode.notebooks.createNotebookController('md-runbook-shell', NOTEBOOK_TYPE, 'md-runbook shell');
+    this.controller = vscode.notebooks.createNotebookController(CONTROLLER_ID, NOTEBOOK_TYPE, 'md-runbook shell');
     this.controller.description = 'sh/bash, pwsh/powershell, cmd';
     this.controller.supportedLanguages = [...SUPPORTED_LANGUAGE_IDS];
     this.controller.supportsExecutionOrder = true;
@@ -53,6 +55,37 @@ export class RunbookController implements vscode.Disposable {
 
   dispose(): void {
     this.controller.dispose();
+  }
+
+  /**
+   * Record an outcome without running the cell (e.g. a step marked done by hand). `attrs` are
+   * the marker attributes persisted on save; `text` becomes the output text.
+   */
+  async recordManual(cell: vscode.NotebookCell, attrs: Record<string, string>, text: string, success?: boolean): Promise<void> {
+    const exec = this.controller.createNotebookCellExecution(cell);
+    exec.start(Date.now());
+    const meta: OutputMetadata = { run: { attrs } };
+    await exec.clearOutput();
+    await exec.appendOutput([
+      new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout(text)], { [META_KEY]: meta }),
+      statusOutput(statusLine(attrs.exit, undefined), attrs),
+    ]);
+    exec.end(success, Date.now());
+  }
+
+  /** Clear the outputs of cells that are not queued or running. */
+  async clearOutputs(cells: readonly vscode.NotebookCell[]): Promise<void> {
+    for (const cell of cells) {
+      let exec: vscode.NotebookCellExecution;
+      try {
+        exec = this.controller.createNotebookCellExecution(cell);
+      } catch {
+        continue; // Already queued or running.
+      }
+      exec.start();
+      await exec.clearOutput();
+      exec.end(undefined);
+    }
   }
 
   private enqueue(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument): Promise<void> {
