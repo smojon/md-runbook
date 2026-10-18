@@ -111,7 +111,7 @@ export function pwshWrapper(scriptPath: string): string {
   const quoted = "'" + scriptPath.replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q) + "'";
   return [
     '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
-    '$OutputEncoding = [System.Text.Encoding]::UTF8',
+    '$OutputEncoding = New-Object System.Text.UTF8Encoding $false',
     '$global:LASTEXITCODE = 0',
     `& ${quoted}`,
     '$mdRunbookOk = $?',
