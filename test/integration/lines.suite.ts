@@ -71,15 +71,23 @@ export const tests: Test[] = [
         const cell = editor.notebook.cellAt(1);
         type Paused = { cell: number; index: number };
         const paused = (): Thenable<Paused | undefined> => vscode.commands.executeCommand<Paused>('mdRunbook._stepPaused');
+        // waitFor takes a synchronous check, and asking where the run is paused is a command.
+        const waitPaused = async (index: number): Promise<Paused> => {
+          const end = Date.now() + 30_000;
+          for (;;) {
+            const p = await paused();
+            if (p?.index === index) return p;
+            if (Date.now() > end) throw new Error(`timed out waiting for the pause before step ${index + 1}; output: ${JSON.stringify(outputText(cell))}`);
+            await new Promise((r) => setTimeout(r, 50));
+          }
+        };
         void vscode.commands.executeCommand('mdRunbook.stepThroughLines', cell);
-        let at: Paused | undefined;
-        await waitFor('pause before line 2', async () => (at = await paused())?.index === 1 || undefined);
-        assert.deepEqual(at, { cell: 1, index: 1 });
+        assert.deepEqual(await waitPaused(1), { cell: 1, index: 1 });
         await waitFor('line 1 output', () => /one/.test(outputText(cell)));
         assert.doesNotMatch(outputText(cell), /two/);
 
         await vscode.commands.executeCommand('mdRunbook.stepNext');
-        await waitFor('pause before line 3', async () => (await paused())?.index === 2 || undefined);
+        await waitPaused(2);
         assert.match(outputText(cell), /two/);
 
         await vscode.commands.executeCommand('mdRunbook.stepStop');
