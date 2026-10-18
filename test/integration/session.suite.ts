@@ -13,8 +13,8 @@ export const tests: Test[] = [
         const get = isWin ? 'Write-Output "FOO=$env:FOO"' : 'echo "FOO=$FOO"';
         const uri = writeFile('session.md', `# Session\n\n\`\`\`${LANG}\n${set}\n\`\`\`\n\n\`\`\`${LANG}\n${get}\n\`\`\`\n`);
         const editor = await openRunbook(uri);
-        const [first, second] = [editor.notebook.cellAt(1), editor.notebook.cellAt(3)];
-        await runCells(editor, 1, 4);
+        const [first, second] = [editor.notebook.cellAt(1), editor.notebook.cellAt(2)];
+        await runCells(editor, 1, 3);
         assert.equal(await waitForRun(first), true, outputText(first));
         assert.equal(await waitForRun(second), true, outputText(second));
         assert.match(outputText(second), /FOO=bar/);
@@ -22,9 +22,12 @@ export const tests: Test[] = [
         assert.doesNotMatch(outputText(first) + outputText(second), /__MDRB_/);
 
         // Stopping the session forgets the state.
-        await step('stop session', vscode.commands.executeCommand('mdRunbook.stopSession'));
-        await runCells(editor, 3, 4);
-        await waitFor('re-run in a new session', () => /FOO=\r?\n/.test(outputText(second)) && /exit code 0/.test(outputText(second)));
+        const stopped = await step('stop session', vscode.commands.executeCommand<string[]>('mdRunbook.stopSession', uri));
+        assert.deepEqual(stopped, [isWin ? 'pwsh' : 'bash'], 'stop should find the running session');
+        await runCells(editor, 2, 3);
+        await waitFor('re-run in a new session', () => /FOO=\r?\n/.test(outputText(second)) && /exit code 0/.test(outputText(second))).catch((e: Error) => {
+          throw new Error(`${e.message}; output: ${JSON.stringify(outputText(second))}`);
+        });
       } finally {
         await setConfig('execution.mode', undefined);
         await closeAll();

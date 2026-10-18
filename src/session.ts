@@ -13,9 +13,14 @@ function sessionMode(): boolean {
   return vscode.workspace.getConfiguration(SECTION).get<string>('execution.mode', 'isolated') === 'session';
 }
 
-function activeRunbook(): vscode.NotebookDocument | undefined {
-  const nb = vscode.window.activeNotebookEditor?.notebook;
-  return nb?.notebookType === NOTEBOOK_TYPE ? nb : undefined;
+/** The runbook a command applies to: the given URI, else the active (or only visible) runbook editor. */
+function activeRunbook(uri?: unknown): vscode.NotebookDocument | undefined {
+  const isRunbook = (nb: vscode.NotebookDocument | undefined): nb is vscode.NotebookDocument => nb?.notebookType === NOTEBOOK_TYPE;
+  if (uri instanceof vscode.Uri) return vscode.workspace.notebookDocuments.find((d) => isRunbook(d) && d.uri.toString() === uri.toString());
+  const active = vscode.window.activeNotebookEditor?.notebook;
+  if (isRunbook(active)) return active;
+  const visible = vscode.window.visibleNotebookEditors.map((e) => e.notebook).filter(isRunbook);
+  return visible.length === 1 ? visible[0] : undefined;
 }
 
 export function registerSessions(context: vscode.ExtensionContext, pipeline: RunPipeline): void {
@@ -63,21 +68,33 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
   const fallback = pipeline.executorFor;
   pipeline.executorFor = (nb) => (sessionMode() ? sessionExecutorFor(nb) : fallback(nb));
 
-  const forActive = (fn: (pool: SessionPool) => void): void => {
-    const nb = activeRunbook();
+  /** Runs `fn` on the runbook's sessions; returns the shells it acted on (empty if none). */
+  const forActive = (uri: unknown, fn: (pool: SessionPool) => string[]): string[] => {
+    const nb = activeRunbook(uri);
     const pool = nb && pools.get(nb.uri.toString());
-    if (!pool || pool.labels().length === 0) return void vscode.window.showInformationMessage('md-runbook: no session is running for this runbook.');
-    fn(pool);
+    if (!pool || pool.labels().length === 0) {
+      void vscode.window.showInformationMessage('md-runbook: no session is running for this runbook.');
+      return [];
+    }
+    return fn(pool);
   };
 
   context.subscriptions.push(
     status,
     { dispose: disposeAll },
-    vscode.commands.registerCommand('mdRunbook.restartSession', () =>
-      forActive((pool) => vscode.window.setStatusBarMessage(`md-runbook: restarted session (${pool.restart().join(', ')})`, 5000)),
+    vscode.commands.registerCommand('mdRunbook.restartSession', (uri?: unknown) =>
+      forActive(uri, (pool) => {
+        const shells = pool.restart();
+        vscode.window.setStatusBarMessage(`md-runbook: restarted session (${shells.join(', ')})`, 5000);
+        return shells;
+      }),
     ),
-    vscode.commands.registerCommand('mdRunbook.stopSession', () =>
-      forActive((pool) => vscode.window.setStatusBarMessage(`md-runbook: stopped session (${pool.stop().join(', ')})`, 5000)),
+    vscode.commands.registerCommand('mdRunbook.stopSession', (uri?: unknown) =>
+      forActive(uri, (pool) => {
+        const shells = pool.stop();
+        vscode.window.setStatusBarMessage(`md-runbook: stopped session (${shells.join(', ')})`, 5000);
+        return shells;
+      }),
     ),
     vscode.workspace.onDidCloseNotebookDocument((nb) => disposePool(nb.uri.toString())),
     vscode.window.onDidChangeActiveNotebookEditor(updateStatus),

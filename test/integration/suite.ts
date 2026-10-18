@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 
 export type Test = { name: string; fn: () => Promise<void> };
-let trace: (line: string) => void = () => undefined;
+export let trace: (line: string) => void = () => undefined;
 export function setTrace(fn: (line: string) => void): void {
   trace = fn;
 }
