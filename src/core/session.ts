@@ -176,8 +176,9 @@ export function preScript(kind: ShellKind, env: Record<string, string>, cwd: str
     if (kind === 'pwsh') {
       lines.push(`Push-Location -LiteralPath ${psq(cwd)} -StackName ${PWSH_STACK} -ErrorAction Stop`, '$__mdrbPushed = $true');
     } else {
-      // Last line, so its status is the setup's status. Git Bash takes C:/x/y paths.
-      lines.push('__mdrb_cd=$PWD', `cd -- ${sq(platform === 'win32' ? cwd.replace(/\\/g, '/') : cwd)}`);
+      // Last line, so its status is the setup's status. `|| return` because bash 3.2 (macOS) applies
+      // `set -e` inside a sourced file even in an `if` condition. Git Bash takes C:/x/y paths.
+      lines.push('__mdrb_cd=$PWD', `cd -- ${sq(platform === 'win32' ? cwd.replace(/\\/g, '/') : cwd)} || return 1`);
     }
   }
   return lines.join('\n');
@@ -265,7 +266,14 @@ export class ShellSession {
         clearTimeout(timer);
         opts.signal?.removeEventListener('abort', onAbort);
         this.current = undefined;
-        for (const f of files) fs.rm(f, { force: true }, () => undefined);
+        // Synchronous, so the next cell never sees this one's files.
+        for (const f of files) {
+          try {
+            fs.rmSync(f, { force: true });
+          } catch {
+            // Removed with the session folder at the latest.
+          }
+        }
         resolve({ ...r, timedOut, cancelled, ended, durationMs: Date.now() - started });
       };
       const onAbort = (): void => {
