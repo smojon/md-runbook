@@ -1,0 +1,66 @@
+{
+  "commands": [
+    {
+      "command": "mdRunbook.runCellInEditor",
+      "title": "Run Code Block in Text Editor",
+      "category": "md-runbook",
+      "icon": "$(play)"
+    },
+    {
+      "command": "mdRunbook.runCellsBelowInEditor",
+      "title": "Run Code Block and Below in Text Editor",
+      "category": "md-runbook",
+      "icon": "$(run-below)"
+    },
+    {
+      "command": "mdRunbook.exportReport",
+      "title": "Export Report (HTML)",
+      "category": "md-runbook",
+      "icon": "$(output)"
+    }
+  ],
+  "menus": {
+    "explorer/context": [
+      {
+        "command": "mdRunbook.exportReport",
+        "when": "resourceExtname == .md",
+        "group": "navigation@101"
+      }
+    ],
+    "notebook/toolbar": [
+      {
+        "command": "mdRunbook.exportReport",
+        "when": "notebookType == md-runbook",
+        "group": "navigation/execute@100"
+      }
+    ],
+    "commandPalette": [
+      {
+        "command": "mdRunbook.runCellInEditor",
+        "when": "editorLangId == markdown"
+      },
+      {
+        "command": "mdRunbook.runCellsBelowInEditor",
+        "when": "editorLangId == markdown"
+      },
+      {
+        "command": "mdRunbook.exportReport",
+        "when": "notebookType == md-runbook || resourceExtname == .md"
+      }
+    ]
+  },
+  "configuration": {
+    "properties": {
+      "mdRunbook.codeLens.enabled": {
+        "type": "boolean",
+        "default": true,
+        "markdownDescription": "Show **▶ Run** / **▶ Run below** and the last result above each runnable code block in the plain Markdown text editor."
+      },
+      "mdRunbook.report.folder": {
+        "type": "string",
+        "default": "",
+        "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is."
+      }
+    }
+  }
+}
