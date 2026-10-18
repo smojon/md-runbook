@@ -97,7 +97,8 @@ describe('pwsh smoke test', { skip: !has('pwsh') && 'PowerShell not found' }, ()
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-cwd-'));
     const r = await run('pwsh', "(Get-Location).Path\nWrite-Output 'ünïcödé ✓ 日本'", { cwd });
     assert.equal(r.exitCode, 0, r.stderr);
-    assert.equal(fs.realpathSync(r.stdout.split(/\r?\n/)[0]!.trim()), fs.realpathSync(cwd));
+    // .native expands Windows 8.3 short names (C:\Users\RUNNER~1) so both sides compare equal.
+    assert.equal(fs.realpathSync.native(r.stdout.split(/\r?\n/)[0]!.trim()), fs.realpathSync.native(cwd));
     assert.match(r.stdout, /ünïcödé ✓ 日本/);
   });
 

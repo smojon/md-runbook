@@ -1,7 +1,9 @@
 /** Entry point for --extensionTestsPath: runs the integration suite sequentially. */
 import { setTrace, tests } from './suite';
 
-export async function run(log: (line: string) => void = (line) => console.log(line)): Promise<void> {
+/** @vscode/test-electron calls run(testsRoot, callback); other harnesses may pass a logger first. */
+export async function run(...args: unknown[]): Promise<void> {
+  const log = typeof args[0] === 'function' ? (args[0] as (line: string) => void) : (line: string) => console.log(line);
   setTrace(log);
   const failures: string[] = [];
   for (const t of tests) {
