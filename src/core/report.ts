@@ -178,6 +178,7 @@ h1,h2,h3{border-bottom:1px solid var(--border);padding-bottom:.25em}
 h1.title{border:0}
 code,pre{font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 :not(pre)>code{background:var(--code);padding:.1em .35em;border-radius:4px}
+@media print{:root{--bg:#fff;--fg:#1f2328;--muted:#656d76;--border:#d0d7de;--code:#f6f8fa;--ok:#1a7f37;--fail:#cf222e;--skip:#9a6700;--link:#0969da}body{max-width:none;padding:0;font-size:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere}tr,.step-head{break-inside:avoid}.step-head{break-after:avoid}}
 pre{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:10px 12px;overflow:auto;margin:0;white-space:pre}
 .code{position:relative;margin:12px 0}
 .lang{position:absolute;top:4px;right:8px;font-size:11px;color:var(--muted)}

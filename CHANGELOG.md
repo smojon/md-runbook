@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Command line:** `md-runbook run file.md` (`out/dist/cli.js`) runs a runbook outside VS Code,
+  for CI, servers and scheduled checks, with the same cell options, checks and redaction. It
+  writes the outputs into the file and can write HTML, PDF (with an installed Chrome, Edge or
+  Chromium) and JUnit reports, plus a GitHub Actions job summary. Risky commands need `--yes`,
+  secrets come from environment variables, and proposed or assistant-written cells never run.
+- **Report:** prints cleanly (light colours, wrapped output) for PDF and paper.
 - **Line by line:** the dropdown next to a code cell's run button has three new commands.
   **Run Line or Selection** (`Ctrl+Alt+Enter`) runs the line under the cursor, or the selected
   text. **Run Lines One by One** runs each line in turn and stops at the first that fails.

@@ -41,31 +41,20 @@ npm run test:integration                   # needs a VS Code download (xvfb-run 
   not been tried by hand on Windows/macOS.
 - The controller's try/finally cleanup has no unit test (it needs VS Code).
 
-## Next features (agreed, in this order)
+## Done in the 2026-10-19 batch (not released yet)
 
-1. **Output checks:** `expect="text"` (contains) or `expect=/regex/`, plus `expect-exit=N` and
-   `expect-not="…"`. A step fails when its output isn't what the runbook expects.
-2. **Retry / wait until:** `retry=10 every=15s` for "wait until ready" steps. The saved output is
-   the last attempt's, with `attempts=4` on the marker and `attempt 4/10` on the status line.
-3. **Passing values between cells:** `capture=NAME` (trimmed stdout) or
-   `capture=NAME:/name: (\S+)/` (first group); later cells use `${out:NAME}`, passed as an
-   environment variable like the other placeholders and kept until the runbook closes.
-   `capture-secret=NAME` redacts the value everywhere and never saves it.
+Line runs (Run Line or Selection, Run Lines One by One, Step Through, Step Through from This
+Line, also for terminal cells), checks (`expect=`), retries (`retry=`), captured values
+(`capture=` / `${out:NAME}`), save after each run, front matter `cwd:` / `timeout:`, the Get
+started walkthrough, `os=` alternatives, and the command-line runner (`out/dist/cli.js`, with
+HTML/PDF/JUnit reports). See `CHANGELOG.md` under "Unreleased" and `docs/features/`.
 
 ## Ideas for later
 
-Ranked by expected usefulness:
-
-1. Save after each run (`mdRunbook.output.saveAfterRun`), so a crash or a closed window never
-   loses outputs.
-2. **Step Through from here:** start stepping at the cursor line instead of the first line.
-3. Shared state for line runs of `terminal` cells (today each line runs in its own child process).
-4. Per-runbook settings in front matter beyond `mode:` (`timeout:`, `shell:`, `cwd:`).
-5. A "Getting started" walkthrough (VS Code `walkthroughs` contribution) with a sample runbook.
-6. A command-line runner on `src/core` (already free of `vscode`): run runbooks in CI and commit
-   the filled-in file as an audit record, test that documented commands still work, scheduled
-   health checks, servers without VS Code, other editors. Secrets, prompts and approvals need
-   command-line equivalents; terminal mode stays VS Code only.
-
-Also: fresh Marketplace screenshots of the newer features (progress, CodeLens, AI context, line
-runs).
+1. Publish the command-line runner to npm (`npx md-runbook run …`): needs an npm account and a
+   package without the extension's files (or `bin` from the extension package as today).
+2. PDF in the extension's **Export Report**, using the CLI's headless-browser printing.
+3. Fresh Marketplace screenshots of the newer features (progress, CodeLens, AI context, line
+   runs, checks).
+4. Shell paths stay out of the front matter on purpose (a file must not choose the program that
+   runs cells); revisit only with a safe design (e.g. a choice among installed shells).

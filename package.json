@@ -57,6 +57,9 @@
     "virtualWorkspaces": false
   },
   "main": "./out/dist/extension.js",
+  "bin": {
+    "md-runbook": "out/dist/cli.js"
+  },
   "activationEvents": [
     "onLanguage:markdown"
   ],

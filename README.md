@@ -122,6 +122,10 @@ Each has its own page with examples and settings:
 - **[Blocks for one OS](docs/features/safety.md#blocks-for-one-os):** mark alternatives with
   `os=windows` / `os=linux,macos`; each user's run uses the block for their OS, and the
   alternatives count as one step.
+- **[Command line](docs/features/cli.md):** `md-runbook run deploy.md` runs a runbook without
+  VS Code (CI, servers, scheduled checks) and writes the outputs into the file, with HTML, PDF
+  and JUnit reports and a GitHub job summary. Risky commands need `--yes`; secrets come from
+  environment variables and are redacted.
 - **[Secrets, inputs, parameters and `.env`](docs/features/secrets.md):** keep secrets in the OS
   keychain and reference them as `${secret:NAME}`. They reach the cell as environment variables,
   never as script text, and are redacted by exact value. `${input:NAME}` prompts once per session,
