@@ -85,6 +85,19 @@ cancelled (`mdRunbook.execution.stopOnFailure`). Cells of one runbook never run 
 
 Each has its own page with examples and settings:
 
+- **[Working with an AI assistant](docs/features/approval.md):** the `.md` file is a safe
+  interface between you and an assistant. The assistant only ever **proposes** cells
+  (```` ```bash proposed by=ai reason="…" ````); they don't run until you approve them, a
+  command policy (`.md-runbook-policy.json`) blocks or flags risky commands, approved AI cells
+  run with read-only credentials and never inside a shared session, and the output marker
+  records who proposed and who approved each command.
+- **[Copy for AI, pseudonymization and leak check](docs/features/ai-context.md):** hand a runbook
+  to any assistant as redacted text with outputs marked as untrusted data, with hostnames, IPs,
+  namespaces and emails replaced by stable aliases (`host-1`, `ip-2`) that are mapped back when you
+  **Paste AI Proposal**. A leak check runs before anything is shared.
+- **[AI assistance](docs/features/ai.md):** **Explain Output**, **Suggest Next Steps** and
+  **Summarize Incident** with VS Code's language models (e.g. Claude via GitHub Copilot) or the
+  Claude API with your own key. Off by default; every send is confirmed and can be previewed.
 - **[Persistent session mode](docs/features/session.md):** one bash and one PowerShell process
   per runbook, so `oc login`, `cd`, exported variables and functions carry over between cells.
   Turn it on per runbook with the toolbar toggle or `mode: session` in the front matter, restart
@@ -192,10 +205,13 @@ the most secure choice. Turn things on as you need them:
 | Text-editor runs (CodeLens) | Off. When on, proposed and assistant-written cells are refused and risky commands still ask. |
 | Secrets | Passed as environment variables, never as script text; no `.env` file is loaded unless configured. |
 | History | Off (`historySize: 0`), so old outputs are not kept. |
+| AI | Provider `off`: nothing is sent until you choose one. Every send is confirmed, names are pseudonymized, and a leak check blocks sharing unless you choose otherwise. |
+| Proposals | Proposed cells never run until approved; approval resets when the code changes and is only trusted when made on this machine; the command policy applies; AI cells need read-only credentials (`approval.readOnlyOnly`) and always run isolated. |
 
 Settings that could weaken these (redaction on/off and default patterns, confirmation mode and
-patterns, `allowNoConfirmOption`, context commands, shell paths, known-secret redaction) can only
-be set in **user** settings: a repository's `.vscode/settings.json` cannot change them. The
+patterns, `allowNoConfirmOption`, context commands, shell paths, known-secret redaction, the AI
+provider, gateway URL and confirmations, pseudonymization, the leak check, and all approval
+settings) can only be set in **user** settings: a repository's `.vscode/settings.json` cannot change them. The
 extension is also disabled in untrusted workspaces (Restricted Mode).
 
 ## Settings

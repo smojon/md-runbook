@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Proposed cells with approval, an audit trail, a command policy and read-only credentials for
+  assistant-written cells (which never run inside a shared session).
+- Copy for AI / Paste AI Proposal with untrusted-output boundaries, pseudonymization and a leak
+  check; Check for Leaks.
+- AI assistance (Explain Output, Suggest Next Steps, Summarize Incident) via VS Code language
+  models or the Claude API. Off by default.
+- Secure defaults throughout; security-sensitive settings are user-settings only.
 - Persistent session mode (`mdRunbook.execution.mode: session`) with Restart/Stop Session, a
   per-runbook toggle, `mode:` in front matter and `mdRunbook.session.resetOnRunAll`.
 - Secrets in the OS keychain, `${secret:…}` / `${input:…}` / `${param:…}` references passed as
