@@ -28,6 +28,9 @@ export interface InfoToken {
   key: string;
   /** undefined for a bare flag. */
   value?: string;
+  /** Offsets of the whole token (key, `=` and value with its quotes) in the tokenized text. */
+  start: number;
+  end: number;
 }
 
 const isSpace = (c: string | undefined): boolean => c === ' ' || c === '\t';
@@ -50,7 +53,7 @@ export function tokenizeInfo(rest: string): InfoToken[] {
     while (i < n && !isSpace(rest[i]) && rest[i] !== '=') i++;
     const key = rest.slice(start, i);
     if (rest[i] !== '=') {
-      tokens.push({ key });
+      tokens.push({ key, start, end: i });
       continue;
     }
     i++;
@@ -65,12 +68,31 @@ export function tokenizeInfo(rest: string): InfoToken[] {
       while (i < n && !isSpace(rest[i])) i++;
       value = rest.slice(vs, i);
     }
-    if (key !== '') tokens.push({ key, value });
+    if (key !== '') tokens.push({ key, value, start, end: i });
   }
   return tokens;
 }
 
 const LANG_RE = /^\s*[^\s{]*/;
+
+/**
+ * Rewrite whole tokens of a fence info string (after the language word), leaving everything else
+ * (quoted values included) byte for byte. `replace` returns the new text for a token, `''` to drop
+ * it (with the whitespace before it), or undefined to keep it.
+ */
+export function rewriteInfoTokens(info: string, replace: (t: InfoToken) => string | undefined): string {
+  const off = (LANG_RE.exec(info)?.[0] ?? '').length;
+  let out = '';
+  let pos = 0;
+  for (const t of tokenizeInfo(info.slice(off))) {
+    const r = replace(t);
+    if (r === undefined) continue;
+    const before = info.slice(pos, off + t.start);
+    out += r === '' ? before.replace(/[ \t]+$/, '') : before + r;
+    pos = off + t.end;
+  }
+  return out + info.slice(pos);
+}
 
 export function parseCellOptions(info: string): CellOptions {
   const opts: CellOptions = { env: {}, errors: [] };

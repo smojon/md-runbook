@@ -8,12 +8,13 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { CodeMeta, formatLocalIso, isCodeMeta } from './core';
+import { CodeMeta, formatLocalIso, isCodeMeta, shellKindForLanguage } from './core';
+import { parseCellOptions } from './core/cellOptions';
 import { ApprovalStatus, CommandPolicy, DEFAULT_POLICY, PolicyResult, approvalHash, approvalStatus, evaluatePolicy, parsePolicy, restrictPolicy } from './core/policy';
 import { Proposal, approvedInfo, asProposed, proposalOf, withInfo } from './core/proposal';
-import { VAR_NAME_RE } from './core/secrets';
+import { VAR_NAME_RE, findRefs } from './core/secrets';
 import { tokenizeInfo } from './core/cellOptions';
-import { SECTION } from './config';
+import { SECTION, executionConfig } from './config';
 import { workingDirectory } from './controller';
 import { META_KEY } from './outputs';
 import { CellPlan, CellPreparer, PrepareContext, RunPipeline } from './pipeline';
@@ -115,6 +116,7 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
       if (!a) return;
       if (a.status.state === 'proposed' && gateEnabled()) {
         plan.skip = SKIP_REASON[a.status.why];
+        plan.skipExit = 'proposed'; // still to do: Resume Run picks it up once approved
         return; // Run All carries on with the other cells.
       }
       if (a.proposal.by) {
@@ -122,8 +124,8 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
         if (cfg().get<boolean>('approval.readOnlyOnly', true) && Object.keys(this.readOnlyEnvSetting()).length === 0) {
           throw new Error(
             `md-runbook: cells proposed by an assistant (by=${a.proposal.by}) only run with read-only credentials. ` +
-              'Set "mdRunbook.approval.readOnlyEnv" in your user settings, e.g. { "KUBECONFIG": "${secret:KUBECONFIG_READONLY}" } ' +
-              '(store the value with md-runbook: Set Secret), or set "mdRunbook.approval.readOnlyOnly" to false to run them with your normal credentials.',
+              'Set "mdRunbook.approval.readOnlyEnv" in your user settings, e.g. { "KUBECONFIG": "${secretFile:KUBECONFIG_READONLY}" } ' +
+              '(store a read-only kubeconfig with md-runbook: Set Secret), or set "mdRunbook.approval.readOnlyOnly" to false to run them without injected credentials.',
           );
         }
       }
@@ -140,22 +142,54 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
 
   readonly credentials: CellPreparer = {
     prepare: async (plan: CellPlan, { cell }: PrepareContext) => {
-      if (plan.skip !== undefined || !this.approvalOf(cell)?.proposal.by) return;
+      if (plan.skip !== undefined) return;
+      const a = this.approvalOf(cell);
+      if (!a?.proposal.by) return;
+      // Rebuild the environment from scratch: settings, the cell's own (approved) env.* options and
+      // its ${param:} / ${input:} values; nothing injected for your own cells (secrets.inject, .env)
+      // can reach a cell an assistant wrote. Then the read-only credentials on top.
+      const env: Record<string, string> = { ...executionConfig().env };
+      if (cfg().get<boolean>('cellOptions.enabled', true)) Object.assign(env, parseCellOptions(a.meta.info).env);
+      for (const ref of findRefs(cell.document.getText())) {
+        if (!ref.secret && plan.env[ref.name] !== undefined) env[ref.name] = plan.env[ref.name]!;
+      }
       for (const [name, template] of Object.entries(this.readOnlyEnvSetting())) {
         if (!VAR_NAME_RE.test(name)) throw new Error(`md-runbook: invalid variable name in mdRunbook.approval.readOnlyEnv: ${name}`);
-        const found: string[] = [];
-        let value = template;
-        for (const m of template.matchAll(/\$\{secret:([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
-          const secret = await this.context.secrets.get(SECRET_PREFIX + m[1]);
-          if (secret === undefined) throw new Error(`md-runbook: secret ${m[1]} (used in mdRunbook.approval.readOnlyEnv) is not set (md-runbook: Set Secret)`);
-          value = value.split(m[0]).join(secret);
-          found.push(secret);
-        }
-        plan.env[name] = value;
-        plan.secrets.push(value, ...found);
+        env[name] = await this.expandReadOnly(template, plan);
       }
+      plan.env = env;
+      const aiTimeout = Math.max(0, cfg().get<number>('approval.aiTimeoutSeconds', 120));
+      if (plan.timeoutMs === 0 && aiTimeout > 0) plan.timeoutMs = aiTimeout * 1000;
     },
   };
+
+  /**
+   * A readOnlyEnv value: `${secret:NAME}` is replaced by the stored value, `${secretFile:NAME}` by
+   * the path of a temporary file (0600, in its own 0700 folder) holding it, deleted after the cell.
+   */
+  private async expandReadOnly(template: string, plan: CellPlan): Promise<string> {
+    let value = template;
+    let usesFile = false;
+    for (const m of template.matchAll(/\$\{(secret|secretFile):([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+      const secret = await this.context.secrets.get(SECRET_PREFIX + m[2]);
+      if (secret === undefined) throw new Error(`md-runbook: secret ${m[2]} (used in mdRunbook.approval.readOnlyEnv) is not set (md-runbook: Set Secret)`);
+      plan.secrets.push(secret);
+      let replacement = secret;
+      if (m[1] === 'secretFile') {
+        usesFile = true;
+        const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'md-runbook-ro-'));
+        (plan.cleanup ??= []).push(() => fs.rmSync(dir, { recursive: true, force: true }));
+        await fs.promises.chmod(dir, 0o700);
+        replacement = path.join(dir, m[2]!);
+        await fs.promises.writeFile(replacement, secret, { mode: 0o600 });
+      }
+      value = value.split(m[0]).join(replacement);
+    }
+    // Values are redacted as a whole too (a token in a plain value, or one with a prefix);
+    // a temp file's path is not secret.
+    if (!usesFile) plan.secrets.push(value);
+    return value;
+  }
 
   // --- Policy ------------------------------------------------------------------------------
 
@@ -172,7 +206,8 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
     if (setting) {
       file = path.resolve(ws ?? workingDirectory(uri), setting.replace(/\$\{workspaceFolder\}/g, ws ?? ''));
     } else if (uri.scheme === 'file') {
-      for (let dir = path.dirname(uri.fsPath); ; ) {
+      // From the runbook's working folder (for a Run All as Copy: the original runbook's folder).
+      for (let dir = workingDirectory(uri); ; ) {
         const candidate = path.join(dir, POLICY_FILE);
         if (fs.existsSync(candidate)) {
           file = candidate;
@@ -211,7 +246,7 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
     const code = cell.document.getText();
     const found = a.proposal.by ? this.policyFor(cell.notebook.uri) : undefined;
     if (found) {
-      const r = evaluatePolicy(code, found.policy);
+      const r = evaluatePolicy(code, found.policy, shellKindForLanguage(cell.document.languageId) ?? 'bash');
       if (r.errors.length > 0) void vscode.window.showWarningMessage(`md-runbook: invalid policy pattern(s) ignored:\n${r.errors.join('\n')}`);
       const options = riskyOptions(a.meta.info);
       if (r.verdict === 'denied') return this.refuse(cell, r, found.source);

@@ -31,7 +31,7 @@ value is put into that variable:
 | --- | --- |
 | bash / sh | `${TOKEN}` |
 | PowerShell | `${env:TOKEN}` |
-| cmd | `%TOKEN%` |
+| cmd | `!TOKEN!` (and `@setlocal EnableDelayedExpansion` as the first line) |
 
 So the reference behaves exactly like a variable in that shell. Use it where a variable
 would expand: inside double quotes, not single quotes.
@@ -48,8 +48,10 @@ oc login --token="${secret:OC_TOKEN}" --server="${param:SERVER}"
 psql "postgresql://app:${input:DB_PASSWORD}@db/app"
 ```
 
-- **cmd:** `%NAME%` is expanded before cmd parses the line, so a value containing `&`, `|`,
-  `<`, `>` or `^` is interpreted by cmd. Put the reference inside double quotes (`"${secret:X}"`).
+- **cmd:** references become `!NAME!` (delayed expansion), which cmd expands *after* parsing the
+  line, so a value containing `&`, `|`, `<`, `>`, `^` or `%` is never run as cmd syntax. A cmd
+  cell with references therefore runs with `@setlocal EnableDelayedExpansion` prepended; in such
+  a cell a literal `!` must be written `^^!`. Cells without references are not changed.
 - One name can only be used with one kind in a cell (`${secret:X}` and `${input:X}` together is
   an error).
 - The source saved in the file keeps the `${secret:…}` reference; only the copy that runs is
@@ -136,12 +138,24 @@ LABEL='literal $text'
   the runbook's folder if no folder is open). A missing file is ignored.
 - `#` comments, an `export ` prefix, and single or double quotes are supported. Variable
   expansion and multi-line values are not.
-- With `mdRunbook.redaction.redactKnownSecrets` (on by default), every value from the file is
-  redacted as an exact match, except trivial ones (`true`, `false`, `yes`, `no`, `on`, `off`,
-  numbers up to 5 digits) that would otherwise mangle unrelated output.
+- With `mdRunbook.redaction.redactKnownSecrets` (on by default), values that look like secrets
+  are redacted as exact matches: values of keys named like credentials (`*_TOKEN`, `*_SECRET`,
+  `*PASSWORD*`, `*PASSWD*`, `*_KEY`, `*_KEY_*`, `*APIKEY*`, `*CREDENTIAL*`, `*PRIVATE*`,
+  `*_AUTH`, `*COOKIE*`, `*SESSION*`, `*_DSN`, connection strings), URLs with a password
+  (`scheme://user:pass@host`), and long random-looking values (16+ characters, letters and
+  digits, high entropy) whatever their key. Plain settings such as `REGION=eu-west-1` are not
+  redacted, so they don't mangle unrelated output for the rest of the session. Trivial values
+  (`true`, `false`, `yes`, `no`, `on`, `off`, numbers up to 5 digits) are never redacted. Name
+  secret keys accordingly, or store them with **Set Secret** instead.
 
 Environment variables are applied in this order (later wins): `mdRunbook.execution.env`, the
 `.env` file, `mdRunbook.secrets.inject`, references in the cell.
+
+**Cells written by an assistant** (`by=` in the fence) get none of this: no `.env` file, no
+`mdRunbook.secrets.inject`, and a `${secret:…}` or secret `${input:…}` reference fails the cell
+with a message. Their environment is rebuilt from `mdRunbook.execution.env`, their own `env.*`
+options and `${param:}` / non-secret `${input:}` values, plus `mdRunbook.approval.readOnlyEnv`
+(see [approval](approval.md#read-only-credentials)).
 
 ## Settings
 

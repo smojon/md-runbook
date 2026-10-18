@@ -11,7 +11,7 @@ describe('command policy', () => {
     for (const t of [
       'kubectl get pods -n prod',
       'kubectl -n prod describe deploy/api',
-      'oc logs -f api-1 --tail=50 | grep -i error',
+      'oc logs api-1 --tail=50 | grep -i error',
       'helm status api',
       'curl -sI https://example.com',
       'curl -skf -X GET https://example.com',
@@ -173,6 +173,140 @@ describe('approval binding and workspace policies', () => {
     assert.equal(evaluatePolicy('oc get pods', narrow).verdict, 'allowed');
     assert.equal(evaluatePolicy('kubectl get pods', narrow).verdict, 'review', 'narrowed allow list');
     assert.equal(evaluatePolicy('oc get secret x', narrow).verdict, 'denied', 'added deny');
+  });
+});
+
+describe('built-in policy rules (review findings)', () => {
+  const v = (t: string, shell: 'bash' | 'pwsh' | 'cmd' = 'bash'): string => evaluatePolicy(t, DEFAULT_POLICY, shell).verdict;
+  const expect = (want: string, list: string[], shell: 'bash' | 'pwsh' | 'cmd' = 'bash'): void => {
+    for (const t of list) assert.equal(v(t, shell), want, t);
+  };
+
+  it('a kubectl/oc flag cannot swallow the read verb', () => {
+    expect('review', [
+      'oc -n get scale statefulset/keycloak --replicas=0',
+      'kubectl -n logs apply -f https://x/y.yaml',
+      'oc -n status adm drain w --force',
+      'oc --namespace get rollout restart sts/x',
+      'kubectl --as get patch deploy x -p {}',
+      'kubectl --unknown get scale deploy/x',
+      'kubectl get pods; oc project foo',
+      'oc adm drain node-1',
+      'kubectl get pods --context x apply',
+    ]);
+    expect('allowed', [
+      'kubectl -n prod get pods -o wide',
+      'kubectl --namespace=prod --context=ro describe deploy/api',
+      'oc.exe get pods',
+      'kubectl.exe -n x get pods -l app=web',
+      'oc adm top nodes',
+      'oc adm policy who-can patch pods',
+      'kubectl auth can-i create pods',
+      'kubectl config view',
+      'kubectl get secret x',
+      'kubectl get secrets -o name',
+      'kubectl logs deploy/api -c proxy --tail=20',
+    ]);
+  });
+
+  it('sends secret-revealing, credential-switching and follow/watch commands to review', () => {
+    expect('review', [
+      'kubectl get secret x -o yaml',
+      'kubectl get cm,secret -o json',
+      'kubectl get secret x -ojsonpath={.data}',
+      "kubectl get secret x -o jsonpath='{.data.password}'",
+      'oc whoami -t',
+      'oc whoami --show-token',
+      'kubectl config view --raw',
+      'kubectl get pods --kubeconfig /x',
+      'kubectl get pods --token=abc',
+      'oc get pods --server=https://evil',
+      'kubectl --as=admin get pods',
+      'helm list --kube-token x',
+      'kubectl logs -f x',
+      'oc logs --follow x',
+      'kubectl get pods -w',
+      'kubectl get pods --watch',
+      'tail -f x',
+      'tail -fn 20 x',
+      'date -s 2020-01-01',
+      'yq --inplace .a=1 f',
+      'yq -i .a=1 f',
+      'sed -i s/a/b/ f',
+      'sort -o out x',
+      'uniq a b',
+      'ping x',
+    ]);
+    expect('review', ['Get-Content x -Wait', 'curl https://x -Me Post', 'curl https://x -Body $b', 'Invoke-RestMethod https://x -Method Post', 'iwr https://x -OutFile a'], 'pwsh');
+  });
+
+  it('never allows reading the environment or credential files', () => {
+    expect('review', [
+      'printenv',
+      'env',
+      'set',
+      'export -p',
+      'declare -p',
+      "printenv | tr 'A-Za-z' 'N-ZA-Mn-za-m'",
+      'echo $GITHUB_TOKEN | tr a-z n-za-m',
+      'echo "${DB_PASSWORD}"',
+      'cat ~/.kube/config',
+      'cat $HOME/.ssh/id_rsa',
+      'cat ~/.aws/credentials',
+      'cat ~/.azure/accessTokens.json',
+      'cat ~/.config/gcloud/application_default_credentials.json',
+      'cat .env',
+      'cat prod.kubeconfig',
+      'cat $KUBECONFIG',
+      "cat ~/'.kube'/config",
+      'cat /proc/self/environ',
+    ]);
+    expect('review', ['Get-ChildItem env:', 'gci env:', 'dir env:', 'ls env:', 'echo $env:TOKEN', 'Get-Content $env:USERPROFILE\\.kube\\config', '[Environment]::GetEnvironmentVariables()', 'Get-Variable'], 'pwsh');
+    expect('review', ['set', 'type %USERPROFILE%\\.kube\\config', 'echo %API_TOKEN%'], 'cmd');
+    // Even a policy that allows everything can't make these one-click.
+    const all = { allow: ['.*'], deny: [], requireTypedConfirmation: false };
+    for (const t of ['printenv', 'cat ~/.kube/config', 'oc -n get scale sts/x --replicas=0']) assert.equal(evaluatePolicy(t, all).verdict, 'review', t);
+  });
+
+  it('splits at separators outside quotes only, honouring escapes', () => {
+    // bash: "\"; rm x; \"" is one quoted string.
+    expect('allowed', ['echo "\\"; rm x; \\""', "grep -E 'CrashLoop|Error' x", "curl -s 'https://x/?a=1&b=2'", 'echo "a; b"', 'kubectl get pods -n ${NS}']);
+    expect('allowed', ["Get-Process | Select-String 'a|b'", "$ns = 'prod'", 'Get-Process | Where-Object { $_.CPU -gt 10 } | Select-Object Name', 'Get-Service | ForEach-Object { $_.Name }'], 'pwsh');
+    expect('review', ["echo \\'; rm -rf x; echo \\'", 'echo "\\\\"; rm x', 'ech""o x; rm y', 'echo {a,b}; rm x']);
+    expect('review', ['Get-Process | Where-Object { Remove-Item x; $true }', 'Get-Process | ForEach-Object { $_.Kill() }', '$x = Remove-Item y', '& { Remove-Item x }'], 'pwsh');
+    // cmd: single quotes are not quotes, ^ escapes, double quotes protect separators.
+    assert.equal(v("echo 'a & del x'", 'cmd'), 'review');
+    assert.equal(v('echo ^"& del x & echo ^"', 'cmd'), 'review');
+    assert.equal(v('echo "a & b"', 'cmd'), 'allowed');
+    // In bash `$var` as a command runs whatever it holds.
+    assert.equal(v('$CMD x'), 'review');
+  });
+
+  it('allows more read-only tools', () => {
+    expect('allowed', ['sort x | uniq -c | sort -rn', 'cut -d: -f1 x | wc -l', 'nslookup x', 'dig +short x', 'host x', 'ping -c 3 x', 'openssl x509 -in c.crt -noout -dates', 'echo | openssl s_client -connect x:443']);
+    expect('allowed', ['findstr foo x.txt', 'ping -n 2 x'], 'cmd');
+    expect('allowed', ['Invoke-RestMethod https://x/health', 'iwr https://x -UseBasicParsing', 'Get-Process | Format-Table -AutoSize | Out-String', 'curl.exe -s https://x'], 'pwsh');
+    expect('review', ['openssl x509 -in c.crt -out d.crt -noout', 'openssl x509 -in c.crt', 'ping -c 3 -t x']);
+  });
+});
+
+describe('approval tokens only touch whole tokens', () => {
+  it('a quoted reason that mentions "proposed" survives approval', () => {
+    const info = 'bash by=ai reason="undo the proposed change" proposed';
+    const approved = approvedInfo(info, 'me', 'now');
+    assert.equal(approved, 'bash by=ai reason="undo the proposed change" approved-by=me approved-at=now');
+    assert.equal(proposalOf(approved).state, 'approved');
+    assert.equal(proposalOf(approved).reason, 'undo the proposed change');
+    assert.equal(asProposed(approved), 'bash by=ai reason="undo the proposed change" proposed');
+    assert.equal(asProposed('bash reason="approved-by=x" approved-by=me by=ai'), 'bash reason="approved-by=x" proposed by=ai');
+    // Without a bare flag the stamp is appended; the quoted word stays.
+    assert.equal(approvedInfo('bash by=ai reason="proposed"', 'me', 'now'), 'bash by=ai reason="proposed" approved-by=me approved-at=now');
+  });
+
+  it('the approval hash keeps the reason text', () => {
+    const a = approvalHash('x', 'bash by=ai reason="undo the proposed change" proposed', '/r.md');
+    assert.equal(a, approvalHash('x', 'bash by=ai reason="undo the proposed change" approved-by=me approved-at=now', '/r.md'));
+    assert.notEqual(a, approvalHash('x', 'bash by=ai reason="undo the change"', '/r.md'));
   });
 });
 

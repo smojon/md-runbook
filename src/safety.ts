@@ -134,7 +134,28 @@ export function cellConfirmOption(info: string): boolean | undefined {
   return o === false && !c.get<boolean>('execution.allowNoConfirmOption', false) ? undefined : o;
 }
 
-/** Asks before running a cell that matches a risky pattern (or always/never, per settings and cell options). */
+/** Ask the user; on anything but Run the cell is recorded as declined and Run All stops. */
+async function askToRun(plan: CellPlan, cell: vscode.NotebookCell, match: string): Promise<void> {
+  const ctxLines = Object.keys(recordContextCommands())
+    .filter((k) => k in plan.attrs)
+    .map((k) => `${k}: ${plan.attrs[k]}`);
+  const message = match === '' ? `Run cell ${cell.index + 1}?` : `Cell ${cell.index + 1} contains a risky command: “${match.trim()}”`;
+  const detail = ctxLines.length > 0 ? `Context the cell will run in:\n${ctxLines.join('\n')}` : 'No context recorded (see mdRunbook.output.recordContext).';
+  const answer = await vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run');
+  if (answer !== 'Run') {
+    plan.skip = 'not confirmed';
+    plan.skipExit = 'declined'; // not done: progress keeps it pending, Resume Run offers it again
+    // Later steps usually depend on this one; don't carry on without it.
+    plan.stopSequence = true;
+  }
+}
+
+/**
+ * Decides whether a cell needs confirmation (a risky pattern, or always/never per settings and
+ * cell options). Without context recording it asks right away, before any secret or input prompt.
+ * With context recording the question waits for `finalPreparer`, so it can show the context
+ * computed with the cell's final environment (.env, secrets, read-only credentials).
+ */
 const confirmPreparer: CellPreparer = {
   async prepare(plan, { cell }) {
     if (plan.skip !== undefined) return;
@@ -147,25 +168,24 @@ const confirmPreparer: CellPreparer = {
     const mode = c.get<ConfirmMode>('execution.confirm', 'patterns');
     const match = confirmationFor(plan.source, mode, regexes, cellConfirmOption(infoOf(cell)));
     if (match === undefined) return;
-
-    const ctxLines = Object.keys(recordContextCommands())
-      .filter((k) => k in plan.attrs)
-      .map((k) => `${k}: ${plan.attrs[k]}`);
-    const message = match === '' ? `Run cell ${cell.index + 1}?` : `Cell ${cell.index + 1} contains a risky command: “${match.trim()}”`;
-    const detail = ctxLines.length > 0 ? `Current context:\n${ctxLines.join('\n')}` : 'No context recorded (see mdRunbook.output.recordContext).';
-    const answer = await vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run');
-    if (answer !== 'Run') {
-      plan.skip = 'not confirmed';
-      // Later steps usually depend on this one; don't carry on without it.
-      plan.stopSequence = true;
-    }
+    if (Object.keys(recordContextCommands()).length === 0) await askToRun(plan, cell, match);
+    else plan.confirm = match;
   },
 };
 
-export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPipeline): void {
+export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPipeline): { final: CellPreparer } {
   const recorder = new ContextRecorder();
-  // Order matters: options can skip the cell; the context is known before the confirmation shows it.
-  pipeline.preparers.push(optionsPreparer, recorder, confirmPreparer);
+  // Order matters: options can skip the cell; the confirmation (when no context is recorded) comes
+  // before secrets and inputs are asked for. `final` must be registered after every preparer that
+  // changes plan.env (extension.ts: after approval.credentials).
+  pipeline.preparers.push(optionsPreparer, confirmPreparer);
+  const final: CellPreparer = {
+    async prepare(plan, ctx) {
+      if (plan.skip !== undefined) return;
+      await recorder.prepare(plan, ctx);
+      if (plan.confirm !== undefined) await askToRun(plan, ctx.cell, plan.confirm);
+    },
+  };
   pipeline.observers.push({ onDidRunCell: (run) => recorder.noteRun(run.notebook, run.attrs) });
   context.subscriptions.push(
     recorder,
@@ -176,4 +196,5 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
     }),
   );
   recorder.refresh();
+  return { final };
 }

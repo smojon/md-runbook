@@ -6,8 +6,10 @@ you did by hand, and picks a stopped run up where it failed.
 ## Steps
 
 - **Code cells:** a cell is **done** when its output has `exit=0` or `exit=done`, **skipped**
-  with `exit=skipped`, **failed** with any other exit (non-zero, `timeout`, `cancelled`,
-  `error`, a signal) and **pending** when it has no output.
+  with `exit=skipped` (the `skip` option, or marked skipped), **pending** when it has no output
+  or `exit=declined` (its confirmation was answered with anything but Run) or `exit=proposed`
+  (an assistant's proposal waiting for approval), and **failed** with any other exit
+  (non-zero, `timeout`, `cancelled`, `error`, a signal).
 - **Checklist items:** GitHub task-list items in Markdown (`- [ ]`, `* [x]`, `1. [ ]`) count
   as steps too: `[x]` is done, `[ ]` is pending. Items inside fenced code blocks don't count.
 
@@ -41,8 +43,10 @@ oc adm drain node-3 --ignore-daemonsets
 <!-- md-runbook:output end -->
 ````
 
-`by` is your OS user name. **Unmark Step** removes a done/skipped mark again (it leaves real run
-output alone).
+`by` is your OS user name. **Unmark Step** removes a done/skipped mark again. It only clears
+outputs made by Mark Step (they carry `by=`); real run output, including a run recorded as
+`exit=skipped` by the `skip` option, is left alone. Marking a step also drops the run history
+kept from its previous output, so no stale `changed=` / history is saved.
 
 **Check Next Item** (`⋯` menu of a Markdown cell, or the Command Palette) changes the first
 `- [ ]` of the selected Markdown cell to `- [x]`; the cell is saved like any edited Markdown cell.
@@ -50,8 +54,10 @@ output alone).
 ## Resume Run
 
 **md-runbook: Resume Run** (notebook toolbar, Command Palette) runs the first failed or pending
-code cell and every failed or pending code cell after it, in order. Cells that are already done
-or marked skipped are not run again. Run All's stop-on-failure rule applies
+code cell and every failed or pending code cell after it, in order (declined and proposed cells
+are pending, so they are included). Cells that are already done or skipped are not run again.
+A proposed cell still needs approval; it is skipped again until it is approved, and unlike a
+declined confirmation it does not stop the run. Run All's stop-on-failure rule applies
 (`mdRunbook.execution.stopOnFailure`), so a typical flow is: Run All stops at a failing step →
 fix the step → Resume Run.
 

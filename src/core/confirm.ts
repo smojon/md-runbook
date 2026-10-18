@@ -8,6 +8,16 @@ export const DEFAULT_CONFIRM_PATTERNS = [
   '--force\\b',
   '\\bRemove-Item\\b.*-Recurse',
   '\\bdrop\\s+(table|database)\\b',
+  '\\brollout\\s+(restart|undo)\\b',
+  // Not PowerShell's -replace operator or a .Replace() method call.
+  '(?<![-.])\\bpatch\\b',
+  '(?<![-.])\\bapply\\b',
+  '(?<![-.])\\breplace\\b',
+  '\\badm\\s+policy\\s+(add|remove)',
+  '\\bset\\s+(env|image|resources)\\b',
+  '\\bhelm\\s+(upgrade|rollback|uninstall)\\b',
+  '\\bcurl\\b.*(-X\\s*|--request[\\s=]+)(PUT|POST|PATCH|DELETE)\\b',
+  '\\bInvoke-(RestMethod|WebRequest)\\b.*-Method\\s+(Put|Post|Patch|Delete)\\b',
 ];
 
 /** Patterns are case-insensitive JavaScript regular expressions. */

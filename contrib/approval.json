@@ -62,7 +62,14 @@
         "default": {},
         "scope": "machine",
         "additionalProperties": { "type": "string" },
-        "markdownDescription": "Environment variables for cells proposed by an assistant (`by=`), e.g. `{ \"KUBECONFIG\": \"${secret:KUBECONFIG_READONLY}\" }`. `${secret:NAME}` reads a stored secret (**md-runbook: Set Secret**). They override everything else and are redacted from output."
+        "markdownDescription": "The only credentials cells proposed by an assistant (`by=`) get, e.g. `{ \"KUBECONFIG\": \"${secretFile:KUBECONFIG_READONLY}\" }`. `${secret:NAME}` is replaced by a stored secret (**md-runbook: Set Secret**), `${secretFile:NAME}` by the path of a temporary file (0600, deleted after the cell) holding it. Such cells get no `.env` file, no `mdRunbook.secrets.inject` and no `${secret:}` references; values are redacted from output."
+      },
+      "mdRunbook.approval.aiTimeoutSeconds": {
+        "type": "number",
+        "default": 120,
+        "minimum": 0,
+        "scope": "machine",
+        "markdownDescription": "Timeout in seconds for cells proposed by an assistant (`by=`) that would otherwise run without a timeout (`#mdRunbook.execution.timeoutSeconds#` 0 and no `timeout=` option, or `timeout=0`). 0 = none."
       }
     }
   }

@@ -45,6 +45,18 @@ test('Mark Step Done / Skipped records a manual output that is saved', async () 
   await closeAll();
 });
 
+test('Unmark Step leaves a real run recorded as skipped alone', async () => {
+  const uri = writeFile('progress-unmark-real.md', `# Steps\n\n\`\`\`${LANG} skip\necho never\n\`\`\`\n`);
+  const editor = await openRunbook(uri);
+  const cell = editor.notebook.cellAt(1);
+  await runCells(editor, 1, 2);
+  await waitForRun(cell);
+  assert.match(outputText(cell), /skipped: skip option/);
+  await step('unmark', vscode.commands.executeCommand('mdRunbook.unmarkStep', cell));
+  assert.ok(cell.outputs.length > 0, 'the skip-option run keeps its output');
+  await closeAll();
+});
+
 test('Check Next Item ticks task-list items, which count as steps', async () => {
   const uri = writeFile('progress-checklist.md', `# Prep\n\n- [x] ask for access\n- [ ] announce\n- [ ] freeze deploys\n\n${fence('echo go')}`);
   const editor = await openRunbook(uri);

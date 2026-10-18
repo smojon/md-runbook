@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { checkNextItem, checklist, computeProgress, formatProgress, outputBlockAttrs, parse, stepState } from '../src/core';
+import { isManualMark } from '../src/core/progress';
 
 describe('step state', () => {
   it('maps exit attributes', () => {
@@ -10,6 +11,31 @@ describe('step state', () => {
     assert.equal(stepState('done'), 'done');
     assert.equal(stepState('skipped'), 'skipped');
     for (const e of ['1', '127', 'timeout', 'cancelled', 'error', 'SIGTERM']) assert.equal(stepState(e), 'failed', e);
+  });
+
+  it('a declined confirmation or a cell waiting for approval is still to do', () => {
+    assert.equal(stepState('declined'), 'pending');
+    assert.equal(stepState('proposed'), 'pending');
+    const p = computeProgress([
+      { kind: 'code', exit: '0' },
+      { kind: 'code', exit: 'proposed' },
+      { kind: 'code', exit: 'skipped' },
+      { kind: 'code', exit: 'declined' },
+    ]);
+    assert.equal(p.done + p.skipped, 2);
+    assert.equal(p.pending, 2);
+    assert.deepEqual(p.resume, [1, 3]);
+    assert.deepEqual(p.firstPending, { cell: 1, step: 2 });
+    assert.doesNotMatch(formatProgress(p), /pass/);
+  });
+
+  it('Unmark Step only clears marks made by hand', () => {
+    assert.ok(isManualMark({ exit: 'done', by: 'me' }));
+    assert.ok(isManualMark({ exit: 'skipped', by: 'me' }));
+    assert.ok(!isManualMark({ exit: 'skipped' }), 'a real run skipped by the skip option');
+    assert.ok(!isManualMark({ exit: '0', by: 'me' }));
+    assert.ok(!isManualMark({ exit: 'skipped', 'proposed-by': 'ai' }));
+    assert.ok(!isManualMark(undefined));
   });
 });
 

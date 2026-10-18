@@ -6,26 +6,33 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
 import { Progress, checklist, computeProgress, formatLocalIso, formatProgress, isCodeMeta, nextUncheckedOffset, outputBlockAttrs } from './core';
+import { isManualMark } from './core/progress';
 import { SECTION } from './config';
 import { CONTROLLER_ID, RunbookController } from './controller';
 import { META_KEY, outputMeta } from './outputs';
 import { RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
 
-/** Exit attribute of a code cell's current output, or undefined if it has none (or is running). */
-function cellExit(cell: vscode.NotebookCell): string | undefined {
-  let exit: string | undefined;
+/** Marker attributes of a code cell's current output, or undefined if it has none (or is running). */
+function cellAttrs(cell: vscode.NotebookCell): Record<string, string> | undefined {
+  let attrs: Record<string, string> | undefined;
   for (const o of cell.outputs) {
     const m = outputMeta(o);
     if (m?.persisted) {
       // Loaded from the file: the marker attributes are in the cell's raw output block.
       const meta: unknown = cell.metadata?.[META_KEY];
-      return (isCodeMeta(meta) && meta.output && outputBlockAttrs(meta.output.raw)?.exit) || 'done';
+      const fromFile = isCodeMeta(meta) && meta.output ? outputBlockAttrs(meta.output.raw) : undefined;
+      return fromFile?.exit ? fromFile : { ...fromFile, exit: 'done' };
     }
-    if (m?.run) exit ??= m.run.attrs.exit;
-    if (m?.status && m.attrs) exit = m.attrs.exit;
+    if (m?.run) attrs ??= m.run.attrs;
+    if (m?.status && m.attrs) attrs = m.attrs;
   }
-  return exit;
+  return attrs;
+}
+
+/** Exit attribute of a code cell's current output, or undefined if it has none (or is running). */
+function cellExit(cell: vscode.NotebookCell): string | undefined {
+  return cellAttrs(cell)?.exit;
 }
 
 export function notebookProgress(nb: vscode.NotebookDocument): Progress {
@@ -128,8 +135,8 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
     vscode.commands.registerCommand('mdRunbook.markStepDone', mark('done')),
     vscode.commands.registerCommand('mdRunbook.markStepSkipped', mark('skipped')),
     vscode.commands.registerCommand('mdRunbook.unmarkStep', async (arg?: unknown) => {
-      const marked = (c: vscode.NotebookCell): boolean => cellExit(c) === 'done' || cellExit(c) === 'skipped';
-      await clear(targetCells(arg, vscode.NotebookCellKind.Code).filter(marked));
+      // Only marks made by hand: a real run recorded as skipped (skip option) keeps its output.
+      await clear(targetCells(arg, vscode.NotebookCellKind.Code).filter((c) => isManualMark(cellAttrs(c))));
     }),
     vscode.commands.registerCommand('mdRunbook.checkNextItem', async (arg?: unknown) => {
       for (const cell of targetCells(arg, vscode.NotebookCellKind.Markup)) {

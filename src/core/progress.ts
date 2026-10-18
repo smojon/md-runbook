@@ -33,10 +33,16 @@ export interface Progress {
 
 /** State of a code cell from its output's exit attribute. */
 export function stepState(exit: string | undefined): StepState {
-  if (exit === undefined || exit === 'running') return 'pending';
+  // declined (confirmation answered No) and proposed (waiting for approval) are not done yet.
+  if (exit === undefined || exit === 'running' || exit === 'declined' || exit === 'proposed') return 'pending';
   if (exit === '0' || exit === 'done') return 'done';
   if (exit === 'skipped') return 'skipped';
   return 'failed';
+}
+
+/** Output written by Mark Step Done/Skipped (it carries `by=`), not a real run that was skipped. */
+export function isManualMark(attrs: Record<string, string> | undefined): boolean {
+  return !!attrs && (attrs.exit === 'done' || attrs.exit === 'skipped') && attrs.by !== undefined;
 }
 
 export function computeProgress(cells: readonly ProgressCell[]): Progress {
