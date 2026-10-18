@@ -1,10 +1,23 @@
 /** Entry point for --extensionTestsPath: runs the integration suite sequentially. */
-import { setTrace, tests } from './suite';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { Test, setTrace, tests as coreTests } from './suite';
+
+/** Core tests plus every feature's `*.suite.js` next to this file (each exports `tests: Test[]`). */
+function allTests(): Test[] {
+  const extra = fs
+    .readdirSync(__dirname)
+    .filter((f) => f.endsWith('.suite.js'))
+    .sort()
+    .flatMap((f) => (require(path.join(__dirname, f)) as { tests?: Test[] }).tests ?? []);
+  return [...coreTests, ...extra];
+}
 
 /** @vscode/test-electron calls run(testsRoot, callback); other harnesses may pass a logger first. */
 export async function run(...args: unknown[]): Promise<void> {
   const log = typeof args[0] === 'function' ? (args[0] as (line: string) => void) : (line: string) => console.log(line);
   setTrace(log);
+  const tests = allTests();
   const failures: string[] = [];
   for (const t of tests) {
     const started = Date.now();

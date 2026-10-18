@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { DEFAULT_PATTERNS, RedactionPattern, Redactor, ShellSettings, WriteOptions, createRedactor } from './core';
+import { knownSecrets } from './knownSecrets';
 
 export const SECTION = 'mdRunbook';
 
@@ -37,7 +38,8 @@ export function writeOptions(): WriteOptions {
     persistOutputs: c.get<boolean>('output.persist', true),
     maxOutputLines: Math.max(0, c.get<number>('output.maxLines', 2000)),
     stripAnsi: c.get<boolean>('output.stripAnsi', true),
-    redact: r.enabled ? (s: string) => r.redactor.redact(s) : undefined,
+    // Known secret values are always redacted on disk, even if pattern redaction is off.
+    redact: r.enabled ? (s: string) => knownSecrets.redact(r.redactor.redact(s)) : (s: string) => knownSecrets.redact(s),
   };
 }
 

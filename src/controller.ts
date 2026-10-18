@@ -4,9 +4,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ExecuteResult, LineBuffer, SUPPORTED_LANGUAGE_IDS, executeCell, exitLabel, formatDurationAttr, formatLocalIso, isSuccess } from './core';
+import { ExecuteResult, LineBuffer, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDurationAttr, formatLocalIso, isSuccess } from './core';
 import { ExecutionConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, statusLine, statusOutput } from './outputs';
+import { CellPlan, PrepareContext, RunPipeline, RunRecord } from './pipeline';
+import { knownSecrets } from './knownSecrets';
 import { NOTEBOOK_TYPE } from './serializer';
 
 const FLUSH_MS = 100;
@@ -41,7 +43,7 @@ export class RunbookController implements vscode.Disposable {
   /** Per-notebook queue so cells of one runbook never run concurrently. */
   private readonly queues = new Map<string, Promise<void>>();
 
-  constructor() {
+  constructor(private readonly pipeline: RunPipeline = new RunPipeline()) {
     this.controller = vscode.notebooks.createNotebookController('md-runbook-shell', NOTEBOOK_TYPE, 'md-runbook shell');
     this.controller.description = 'sh/bash, pwsh/powershell, cmd';
     this.controller.supportedLanguages = [...SUPPORTED_LANGUAGE_IDS];
@@ -80,6 +82,7 @@ export class RunbookController implements vscode.Disposable {
   private async runSequence(executions: vscode.NotebookCellExecution[], notebook: vscode.NotebookDocument): Promise<void> {
     const cfg = executionConfig();
     let stopped: vscode.NotebookCell | undefined;
+    const runs: RunRecord[] = [];
     for (const exec of executions) {
       if (stopped || exec.token.isCancellationRequested) {
         // Skipped: leave the cell's previous output untouched.
@@ -87,15 +90,17 @@ export class RunbookController implements vscode.Disposable {
         exec.end(undefined);
         continue;
       }
-      const ok = await this.runCell(exec, notebook, cfg);
-      if (!ok && cfg.stopOnFailure && executions.length > 1) stopped = exec.cell;
+      const run = await this.runCell(exec, notebook, cfg);
+      runs.push(run);
+      if (!run.success && !run.plan.continueOnError && cfg.stopOnFailure && executions.length > 1) stopped = exec.cell;
     }
     if (stopped && executions[executions.length - 1]!.cell !== stopped) {
       vscode.window.setStatusBarMessage(`md-runbook: stopped after cell ${stopped.index + 1} failed`, 8000);
     }
+    for (const o of this.pipeline.observers) await o.onDidRunSequence?.(notebook, runs);
   }
 
-  private async runCell(exec: vscode.NotebookCellExecution, notebook: vscode.NotebookDocument, cfg: ExecutionConfig): Promise<boolean> {
+  private async runCell(exec: vscode.NotebookCellExecution, notebook: vscode.NotebookDocument, cfg: ExecutionConfig): Promise<RunRecord> {
     const cell = exec.cell;
     const started = new Date();
     exec.executionOrder = ++this.executionOrder;
@@ -127,11 +132,41 @@ export class RunbookController implements vscode.Disposable {
     };
     const timer = setInterval(() => void flush(), FLUSH_MS);
 
-    const redaction = redactionConfig();
-    const liveRedact = redaction.enabled && redaction.applyToLiveOutput ? (t: string) => redaction.redactor.redact(t) : undefined;
+    let transcript = '';
     const sink = (stream: Chunk['stream']) => (text: string) => {
-      if (text !== '') unflushed.push({ stream, text });
+      if (text === '') return;
+      transcript += text;
+      unflushed.push({ stream, text });
     };
+
+    const ctx: PrepareContext = { cell, notebook, token: exec.token };
+    const plan: CellPlan = {
+      source: cell.document.getText(),
+      language: cell.document.languageId,
+      cwd: workingDirectory(notebook.uri),
+      env: { ...cfg.env },
+      timeoutMs: cfg.timeoutMs,
+      shell: cfg.shell,
+      attrs: {},
+      secrets: [],
+      continueOnError: false,
+    };
+    const failed = (error: string): ExecuteResult => ({ exitCode: null, signal: null, timedOut: false, cancelled: false, error, durationMs: 0 });
+    let prepareError: string | undefined;
+    try {
+      for (const p of this.pipeline.preparers) await p.prepare(plan, ctx);
+    } catch (e) {
+      prepareError = e instanceof Error ? e.message : String(e);
+    }
+    knownSecrets.add(plan.secrets);
+
+    const redaction = redactionConfig();
+    const liveRedact =
+      redaction.enabled && redaction.applyToLiveOutput
+        ? (t: string) => knownSecrets.redact(redaction.redactor.redact(t))
+        : plan.secrets.length > 0
+          ? (t: string) => knownSecrets.redact(t) // injected secrets never show, even live
+          : undefined;
     const out = new LineBuffer(sink('stdout'), liveRedact);
     const err = new LineBuffer(sink('stderr'), liveRedact);
     // Without live redaction there's nothing to protect, so don't hold back partial lines.
@@ -143,25 +178,21 @@ export class RunbookController implements vscode.Disposable {
     const abort = new AbortController();
     const cancelSub = exec.token.onCancellationRequested(() => abort.abort());
 
-    const cwd = workingDirectory(notebook.uri);
-    const failed = (error: string): ExecuteResult => ({ exitCode: null, signal: null, timedOut: false, cancelled: false, error, durationMs: 0 });
     let result: ExecuteResult;
-    try {
-      result = fs.existsSync(cwd)
-        ? await executeCell({
-            language: cell.document.languageId,
-            source: cell.document.getText(),
-            cwd,
-            settings: cfg.shell,
-            timeoutMs: cfg.timeoutMs,
-            env: cfg.env,
-            signal: abort.signal,
-            onStdout: write(out),
-            onStderr: write(err),
-          })
-        : failed(`Working directory not found: ${cwd}`);
-    } catch (e) {
-      result = failed(e instanceof Error ? e.message : String(e));
+    const skipped = prepareError === undefined && plan.skip !== undefined;
+    if (prepareError !== undefined) {
+      result = failed(prepareError);
+    } else if (plan.skip !== undefined) {
+      unflushed.push({ stream: 'stdout', text: `[md-runbook] skipped: ${plan.skip}\n` });
+      result = { exitCode: null, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
+    } else {
+      try {
+        result = fs.existsSync(plan.cwd)
+          ? await this.pipeline.executorFor(notebook).execute(plan, { signal: abort.signal, onStdout: write(out), onStderr: write(err) }, ctx)
+          : failed(`Working directory not found: ${plan.cwd}`);
+      } catch (e) {
+        result = failed(e instanceof Error ? e.message : String(e));
+      }
     }
 
     cancelSub.dispose();
@@ -173,16 +204,19 @@ export class RunbookController implements vscode.Disposable {
     if (result.timedOut) unflushed.push({ stream: 'stderr', text: `[md-runbook] timed out after ${formatDuration(cfg.timeoutMs)}; process tree killed\n` });
     await flush();
 
-    const exit = exitLabel(result);
+    const exit = skipped ? 'skipped' : exitLabel(result);
     const endedAt = new Date();
     const elapsed = endedAt.getTime() - started.getTime();
     const shellLabel = result.shell?.label;
     const status = [statusLine(exit, undefined, formatDuration(elapsed)), shellLabel].filter(Boolean).join(' · ');
-    const attrs = { exit, ran, ended: formatLocalIso(endedAt), duration: formatDurationAttr(elapsed) };
+    const attrs = { exit, ran, ended: formatLocalIso(endedAt), duration: formatDurationAttr(elapsed), ...plan.attrs };
     await exec.appendOutput([statusOutput(status, attrs)]);
 
-    const ok = isSuccess(result);
-    exec.end(ok, Date.now());
-    return ok;
+    // A skipped cell counts as success so Run All carries on.
+    const success = skipped || isSuccess(result);
+    exec.end(skipped ? undefined : success, Date.now());
+    const run: RunRecord = { cell, notebook, plan, result, success, attrs, output: transcript };
+    for (const o of this.pipeline.observers) await o.onDidRunCell?.(run);
+    return run;
   }
 }
