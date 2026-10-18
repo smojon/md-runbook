@@ -79,6 +79,30 @@ and timed-out cells are recorded as `exit=cancelled` / `exit=timeout`.
 **Run All** runs cells in order and stops at the first cell that fails, times out or is
 cancelled (`mdRunbook.execution.stopOnFailure`). Cells of one runbook never run concurrently.
 
+## More features
+
+Each has its own page with examples and settings:
+
+- **[Secrets, inputs, parameters and `.env`](docs/features/secrets.md):** keep secrets in the OS
+  keychain and reference them as `${secret:NAME}`. They reach the cell as environment variables,
+  never as script text, and are redacted by exact value. `${input:NAME}` prompts once per session,
+  front-matter `params:` make one runbook work for dev, test and prod, and a `.env` file can be
+  loaded per runbook.
+- **[Cell options, confirmations and context](docs/features/safety.md):** per-cell options in the
+  fence line (```` ```bash timeout=30 cwd=../infra continue-on-error ````), a confirmation
+  dialog before risky commands (`delete`, `drain`, `rm -rf`, `--force`, …), and the cluster
+  context (`kubectl config current-context`, `oc whoami --show-server`) recorded in each output
+  marker and shown in the status bar.
+- **[Progress, manual steps and Resume](docs/features/progress.md):** mark steps done or skipped
+  without running them, tick Markdown checklists, see `4/7 · ✗ step 5` in the status bar, and
+  **Resume Run** from the first failed or unrun step. Also Clear Outputs Above / Below.
+- **[Output history, run copies and diffs](docs/features/history.md):** keep the last N runs in a
+  collapsed `<details>` block, **Run All as Copy** into a timestamped `.md` (the original stays
+  a clean template), and **Compare With Previous Run**. Re-run outputs get `changed=yes|no`.
+- **[Run from the text editor and export a report](docs/features/codelens-report.md):** "▶ Run"
+  links above each block in the normal Markdown editor, and a self-contained HTML report with a
+  step summary table.
+
 ## Output format
 
 On save, each cell's output is written directly after its code block:
@@ -165,6 +189,8 @@ committing a runbook to a shared repository.
 | `mdRunbook.execution.env` | `{}` | Extra environment variables for every cell. |
 | `mdRunbook.shell.bashPath` | `""` | bash executable for `sh`/`bash` (e.g. `C:\\Program Files\\Git\\bin\\bash.exe`). |
 | `mdRunbook.shell.pwshPath` | `""` | PowerShell executable for `pwsh`/`powershell`. |
+
+The settings of the features above are listed on their own pages.
 
 ## Round-trip details
 
