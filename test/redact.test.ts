@@ -136,3 +136,13 @@ describe('redaction of real-world IAM/OpenShift output', () => {
     assert.equal(r.redact(cm), cm);
   });
 });
+
+it('key=value redaction leaves references intact', () => {
+  const r = createRedactor(DEFAULT_PATTERNS);
+  assert.equal(r.redact('client_secret=${secret:KC}'), 'client_secret=${secret:KC}');
+  assert.equal(r.redact('password="$(cat /run/pw)"'), 'password="$(cat /run/pw)"');
+  assert.equal(r.redact('$env:TOKEN; token=$env:TOKEN'), '$env:TOKEN; token=$env:TOKEN');
+  assert.equal(r.redact('set PASSWORD=%DB_PW%'), 'set PASSWORD=%DB_PW%');
+  assert.equal(r.redact('password=${secret:X}tail'), 'password=[REDACTED]}tail');
+  assert.equal(r.redact('password=$ecret123'), 'password=[REDACTED]');
+});

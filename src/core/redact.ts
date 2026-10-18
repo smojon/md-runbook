@@ -16,8 +16,11 @@ export interface RedactionPattern {
 const SECRET_KEYS =
   'password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|privatekey|client[_-]?key|credentials?|\\.key';
 
-/** A secret value may not be one of these words (e.g. `"token_type": "Bearer"`). */
-const NOT_A_VALUE = '(?!(?:Bearer|Basic|Negotiate|true|false|null|none)\\b)';
+// Placeholders and shell references (`${secret:X}`, `$(cmd)`, `$env:X`, `%X%`) are not values. A bare
+// `$NAME` is not exempt: the patterns are case-insensitive, so it could not be told from `$ecret`.
+const REFERENCE = '(?:\\$\\{[^}\\s]*\\}|\\$\\([^)\\r\\n]*\\)|\\$env:\\w+|%[A-Za-z_]\\w*%)(?![^\\s"\',;&])';
+/** A secret value may not be one of these words (e.g. `"token_type": "Bearer"`) or a reference. */
+const NOT_A_VALUE = `(?<!\\$\\{(?:secret|secretFile|input|param):)(?!(?:Bearer|Basic|Negotiate|true|false|null|none)\\b)(?!${REFERENCE})`;
 
 /** Marker pattern: redacts the values under `data:` / `stringData:` of Kubernetes Secret manifests. */
 const SECRET_MANIFESTS = 'k8s-secret-data';
