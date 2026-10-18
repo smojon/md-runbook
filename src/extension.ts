@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { clearOutputBlocks } from './core';
 import { RunbookController } from './controller';
 import { RunPipeline } from './pipeline';
+import { registerSafety } from './safety';
 import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
 
 function targetUri(uri: unknown): vscode.Uri | undefined {
@@ -48,6 +49,7 @@ async function clearAllOutputs(uri?: unknown): Promise<void> {
 export function activate(context: vscode.ExtensionContext): void {
   const pipeline = new RunPipeline();
   // Feature modules register preparers/observers/executor on `pipeline` here.
+  registerSafety(context, pipeline);
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {
       transientOutputs: false,
