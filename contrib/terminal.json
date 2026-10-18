@@ -1,0 +1,18 @@
+{
+  "configuration": {
+    "properties": {
+      "mdRunbook.terminal.mode": {
+        "type": "string",
+        "enum": ["off", "perCell", "always"],
+        "enumDescriptions": [
+          "Never run cells in a terminal; the `terminal` cell option is ignored.",
+          "Run cells marked ```bash terminal``` in a VS Code terminal, so prompts (passwords, confirmations) can be answered.",
+          "Run every bash/PowerShell cell in a VS Code terminal (cmd and assistant-written cells still run normally)."
+        ],
+        "default": "off",
+        "scope": "machine",
+        "markdownDescription": "Run cells in a real VS Code terminal so interactive prompts work. **Off by default.** Needs VS Code 1.93+ terminal shell integration (bash, zsh, PowerShell; not cmd). Assistant-written cells never run in a terminal. Can only be set in user settings."
+      }
+    }
+  }
+}

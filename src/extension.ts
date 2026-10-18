@@ -13,6 +13,7 @@ import { registerSafety } from './safety';
 import { registerSecrets } from './secrets';
 import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
 import { registerSessions } from './session';
+import { registerTerminal } from './terminal';
 
 function targetUri(uri: unknown): vscode.Uri | undefined {
   if (uri instanceof vscode.Uri) return uri;
@@ -65,6 +66,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerSecrets(context, pipeline);
   registerHistory(context, pipeline);
   registerSessions(context, pipeline);
+  registerTerminal(context, pipeline);
   // Last: read-only credentials of AI-proposed cells win over cell options and secrets.
   pipeline.preparers.push(approval.credentials);
   const controller = new RunbookController(pipeline);

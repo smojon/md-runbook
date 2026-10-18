@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Terminal mode (`mdRunbook.terminal.mode`, off by default): run cells in a VS Code terminal to
+  answer interactive prompts, with output and exit code still saved.
 - Proposed cells with approval, an audit trail, a command policy and read-only credentials for
   assistant-written cells (which never run inside a shared session).
 - Copy for AI / Paste AI Proposal with untrusted-output boundaries, pseudonymization and a leak

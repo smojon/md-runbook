@@ -16,6 +16,8 @@ export interface CellOptions {
   skip?: boolean;
   /** true = always confirm (`confirm`), false = never (`no-confirm`). */
   confirm?: boolean;
+  /** Run in a VS Code terminal (only honoured when `mdRunbook.terminal.mode` allows it). */
+  terminal?: boolean;
   env: Record<string, string>;
   name?: string;
   /** Recognized keys with invalid values. */
@@ -79,6 +81,7 @@ export function parseCellOptions(info: string): CellOptions {
       else if (k === 'skip') opts.skip = true;
       else if (k === 'confirm') opts.confirm = true;
       else if (k === 'no-confirm') opts.confirm = false;
+      else if (k === 'terminal') opts.terminal = true;
     } else if (k === 'timeout') {
       const s = Number(value.replace(/s$/i, ''));
       if (value.trim() === '' || !Number.isFinite(s) || s < 0) opts.errors.push(`timeout=${value}: expected seconds (0 = none)`);

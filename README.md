@@ -58,7 +58,8 @@ Run cells with the usual notebook controls: run cell, **Run All**, Run Above/Bel
   separate process, so variables and `cd` don't carry over between cells. Set
   `mdRunbook.execution.mode` to `session` to keep one shell per runbook instead
   ([session mode](docs/features/session.md)).
-- **No input:** stdin is closed, so interactive prompts fail fast instead of hanging. Use
+- **No input:** stdin is closed, so interactive prompts fail fast instead of hanging (or use
+  [terminal mode](docs/features/terminal.md)). Otherwise use
   non-interactive flags (`oc login --token=…`) or environment variables
   (`mdRunbook.execution.env`).
 - **Exit codes:**
@@ -98,6 +99,9 @@ Each has its own page with examples and settings:
 - **[AI assistance](docs/features/ai.md):** **Explain Output**, **Suggest Next Steps** and
   **Summarize Incident** with VS Code's language models (e.g. Claude via GitHub Copilot) or the
   Claude API with your own key. Off by default; every send is confirmed and can be previewed.
+- **[Terminal mode](docs/features/terminal.md):** run a cell in a real VS Code terminal so you can
+  answer password prompts and confirmations; output and exit code are still saved. Off by
+  default; enable it with `mdRunbook.terminal.mode` and mark cells with ```` ```bash terminal ````.
 - **[Persistent session mode](docs/features/session.md):** one bash and one PowerShell process
   per runbook, so `oc login`, `cd`, exported variables and functions carry over between cells.
   Turn it on per runbook with the toolbar toggle or `mode: session` in the front matter, restart
@@ -202,6 +206,7 @@ the most secure choice. Turn things on as you need them:
 | Redaction | On for saved **and** live output; known secret values are always redacted. |
 | Risky commands | Ask before running cells that match `mdRunbook.execution.confirmPatterns`; declining stops Run All. The `no-confirm` cell option is ignored unless `mdRunbook.execution.allowNoConfirmOption` is on. |
 | Execution | Each cell in its own process (`isolated`). In session mode, Run All starts in a fresh session. |
+| Terminal mode | Off. When on, assistant-written cells never run in a terminal; what you type never passes through md-runbook. |
 | Text-editor runs (CodeLens) | Off. When on, proposed and assistant-written cells are refused and risky commands still ask. |
 | Secrets | Passed as environment variables, never as script text; no `.env` file is loaded unless configured. |
 | History | Off (`historySize: 0`), so old outputs are not kept. |
@@ -210,8 +215,8 @@ the most secure choice. Turn things on as you need them:
 
 Settings that could weaken these (redaction on/off and default patterns, confirmation mode and
 patterns, `allowNoConfirmOption`, context commands, shell paths, known-secret redaction, the AI
-provider, gateway URL and confirmations, pseudonymization, the leak check, and all approval
-settings) can only be set in **user** settings: a repository's `.vscode/settings.json` cannot change them. The
+provider, gateway URL and confirmations, pseudonymization, the leak check, all approval
+settings and terminal mode) can only be set in **user** settings: a repository's `.vscode/settings.json` cannot change them. The
 extension is also disabled in untrusted workspaces (Restricted Mode).
 
 ## Settings
