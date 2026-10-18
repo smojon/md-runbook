@@ -22,14 +22,16 @@ test('terminal: the terminal option is ignored while terminal.mode is off (defau
 test('terminal: a terminal cell answers an interactive prompt and its output is saved', async () => {
   await setConfig('terminal.mode', 'perCell');
   try {
-    const body = isWin ? "$n = Read-Host 'Name'\nWrite-Output \"hello $n\"" : 'read -r -p "Name: " n\necho "hello $n"';
+    // `ready` shows the cell's own process is running, so typed input reaches it (not the outer shell).
+    const body = isWin ? "Write-Output 'ready'\n$n = Read-Host 'Name'\nWrite-Output \"hello $n\"" : 'echo ready\nread -r -p "Name: " n\necho "hello $n"';
     const uri = writeFile('term-prompt.md', `\`\`\`${LANG} terminal\n${body}\n\`\`\`\n\n\`\`\`${LANG} terminal\nexit 3\n\`\`\`\n`);
     const editor = await openRunbook(uri);
     const cell = editor.notebook.cellAt(0);
     const running = runCells(editor, 0, 1);
     const terminal = await waitFor('md-runbook terminal', () => vscode.window.terminals.find((t) => t.name.startsWith('md-runbook: term-prompt.md')), 20_000);
-    // Answer the prompt by typing into the terminal, as a user would.
-    await new Promise((r) => setTimeout(r, 2000));
+    // Answer the prompt by typing into the terminal, as a user would, once the cell is running.
+    await waitFor('cell to start', () => /ready/.test(outputText(cell)), 30_000);
+    await new Promise((r) => setTimeout(r, 1000));
     terminal.sendText('bob');
     const ok = await waitForRun(cell, 30_000);
     await step('execute', running);
