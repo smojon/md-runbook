@@ -53,8 +53,8 @@
     "properties": {
       "mdRunbook.codeLens.enabled": {
         "type": "boolean",
-        "default": true,
-        "markdownDescription": "Show **▶ Run** / **▶ Run below** and the last result above each runnable code block in the plain Markdown text editor."
+        "default": false,
+        "markdownDescription": "Show **▶ Run** links above code blocks in the plain Markdown editor. Off by default: text-editor runs skip per-cell options and secret injection (proposed and assistant-written cells are refused, risky commands still ask)."
       },
       "mdRunbook.report.folder": {
         "type": "string",

@@ -3,18 +3,25 @@
     "properties": {
       "mdRunbook.execution.confirm": {
         "type": "string",
-        "enum": ["patterns", "always", "never"],
+        "enum": [
+          "patterns",
+          "always",
+          "never"
+        ],
         "enumDescriptions": [
           "Ask before running a cell that matches `mdRunbook.execution.confirmPatterns`.",
           "Ask before running every cell.",
           "Never ask (cells with the `confirm` option still ask)."
         ],
         "default": "patterns",
-        "markdownDescription": "When to show a confirmation dialog before running a cell. The `confirm` / `no-confirm` cell options override this per cell."
+        "markdownDescription": "When to show a confirmation dialog before running a cell. The `confirm` / `no-confirm` cell options override this per cell. Can only be set in user settings, so a workspace cannot weaken it.",
+        "scope": "machine"
       },
       "mdRunbook.execution.confirmPatterns": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "default": [
           "\\b(delete|drain|cordon|scale\\s+.*--replicas=0)\\b",
           "\\brm\\s+-[a-z]*r[a-z]*f",
@@ -22,13 +29,17 @@
           "\\bRemove-Item\\b.*-Recurse",
           "\\bdrop\\s+(table|database)\\b"
         ],
-        "markdownDescription": "JavaScript regular expressions (case-insensitive) for risky commands. A cell whose text matches one asks for confirmation before it runs; declining records it as `exit=skipped`."
+        "markdownDescription": "JavaScript regular expressions (case-insensitive) for risky commands. A cell whose text matches one asks for confirmation before it runs; declining records it as `exit=skipped`. Can only be set in user settings, so a workspace cannot weaken it.",
+        "scope": "machine"
       },
       "mdRunbook.output.recordContext": {
         "type": "object",
         "default": {},
-        "additionalProperties": { "type": "string" },
-        "markdownDescription": "Commands whose first output line is recorded as an attribute of each output block, e.g. `{ \"context\": \"kubectl config current-context\" }` writes `context=prod-eu`. Run through the platform shell in the .md file's folder with a 5 s timeout; failures record `unknown`."
+        "additionalProperties": {
+          "type": "string"
+        },
+        "markdownDescription": "Commands whose first output line is recorded as an attribute of each output block, e.g. `{ \"context\": \"kubectl config current-context\" }` writes `context=prod-eu`. Run through the platform shell in the .md file's folder with a 5 s timeout; failures record `unknown`. Can only be set in user settings, so a workspace cannot weaken it.",
+        "scope": "machine"
       },
       "mdRunbook.output.recordContextCacheSeconds": {
         "type": "number",
@@ -40,6 +51,17 @@
         "type": "string",
         "default": "context",
         "markdownDescription": "Which `mdRunbook.output.recordContext` attribute to show in the status bar for the active runbook."
+      },
+      "mdRunbook.cellOptions.enabled": {
+        "type": "boolean",
+        "default": true,
+        "markdownDescription": "Apply per-cell options from the fence line (`timeout=`, `cwd=`, `env.NAME=`, `continue-on-error`, `skip`, `confirm`). Turn off to ignore options written in runbooks."
+      },
+      "mdRunbook.execution.allowNoConfirmOption": {
+        "type": "boolean",
+        "default": false,
+        "scope": "machine",
+        "markdownDescription": "Honour the `no-confirm` cell option. Off by default: a runbook (or an assistant editing it) must not be able to switch off the risky-command confirmation. Can only be set in user settings, so a workspace cannot weaken it."
       }
     }
   }

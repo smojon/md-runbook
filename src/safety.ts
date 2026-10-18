@@ -28,6 +28,7 @@ function infoOf(cell: vscode.NotebookCell): string {
 /** Applies the options written after the language word of the fence. */
 const optionsPreparer: CellPreparer = {
   prepare(plan, { cell, notebook }) {
+    if (!cfg().get<boolean>('cellOptions.enabled', true)) return;
     const o = parseCellOptions(infoOf(cell));
     if (o.errors.length > 0) throw new Error(`md-runbook: invalid cell option ${o.errors.join('; ')}`);
     if (o.timeoutSeconds !== undefined) plan.timeoutMs = o.timeoutSeconds * 1000;
@@ -122,6 +123,17 @@ class ContextRecorder implements CellPreparer, vscode.Disposable {
 
 let lastPatternErrors = '';
 
+/**
+ * The cell's own `confirm` / `no-confirm` option. `no-confirm` lets the file switch the safety net
+ * off, so it is ignored unless the user allows it in their own settings.
+ */
+export function cellConfirmOption(info: string): boolean | undefined {
+  const c = cfg();
+  if (!c.get<boolean>('cellOptions.enabled', true)) return undefined;
+  const o = parseCellOptions(info).confirm;
+  return o === false && !c.get<boolean>('execution.allowNoConfirmOption', false) ? undefined : o;
+}
+
 /** Asks before running a cell that matches a risky pattern (or always/never, per settings and cell options). */
 const confirmPreparer: CellPreparer = {
   async prepare(plan, { cell }) {
@@ -133,7 +145,7 @@ const confirmPreparer: CellPreparer = {
     lastPatternErrors = errorText;
 
     const mode = c.get<ConfirmMode>('execution.confirm', 'patterns');
-    const match = confirmationFor(plan.source, mode, regexes, parseCellOptions(infoOf(cell)).confirm);
+    const match = confirmationFor(plan.source, mode, regexes, cellConfirmOption(infoOf(cell)));
     if (match === undefined) return;
 
     const ctxLines = Object.keys(recordContextCommands())

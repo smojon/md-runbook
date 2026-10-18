@@ -18,7 +18,7 @@ renders normally elsewhere:
 | `continue-on-error` | **Run All** keeps going if this cell fails. |
 | `skip` | Never run the cell; it is recorded as `exit=skipped`. |
 | `confirm` | Always ask before running this cell. |
-| `no-confirm` | Never ask before running this cell, even if it matches a risky pattern. |
+| `no-confirm` | Never ask before running this cell, even if it matches a risky pattern. **Ignored** unless `mdRunbook.execution.allowNoConfirmOption` is on in your user settings. |
 | `env.NAME=value` | Set an environment variable for this cell. |
 | `name="Rotate token"` | Recorded as `name="Rotate token"` in the output marker. |
 
@@ -81,6 +81,8 @@ and after every run.
 
 | Setting | Default | Description |
 | --- | --- | --- |
+| `mdRunbook.cellOptions.enabled` | `true` | Apply the options above. Turn off to ignore options written in runbooks. |
+| `mdRunbook.execution.allowNoConfirmOption` | `false` | Honour `no-confirm`. User settings only. |
 | `mdRunbook.execution.confirm` | `"patterns"` | `patterns`: ask for cells matching a pattern. `always`: ask for every cell. `never`: never ask. Cell options `confirm` / `no-confirm` override it. |
 | `mdRunbook.execution.confirmPatterns` | see above | Regular expressions for risky commands (case-insensitive). |
 | `mdRunbook.output.recordContext` | `{}` | Attribute name → command whose first output line is recorded. |

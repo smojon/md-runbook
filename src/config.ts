@@ -28,7 +28,7 @@ export function redactionConfig(): RedactionConfig {
     void vscode.window.showWarningMessage(`md-runbook: invalid redaction pattern(s) ignored:\n${errors}`);
   }
   lastReportedErrors = errors;
-  return { enabled, applyToLiveOutput: c.get<boolean>('redaction.applyToLiveOutput', false), redactor };
+  return { enabled, applyToLiveOutput: c.get<boolean>('redaction.applyToLiveOutput', true), redactor };
 }
 
 export function writeOptions(): WriteOptions {

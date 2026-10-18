@@ -68,8 +68,8 @@
       },
       "mdRunbook.session.resetOnRunAll": {
         "type": "boolean",
-        "default": false,
-        "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on state left by earlier runs. Running single cells, ranges and **Resume Run** keep the session."
+        "default": true,
+        "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on (or exposes) state left by earlier runs. Single cells, ranges and **Resume Run** keep the session."
       }
     }
   }

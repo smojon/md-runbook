@@ -174,10 +174,29 @@ expressions, and each whole match is replaced. Use lookbehind to keep context:
 ]
 ```
 
-By default the live view in the editor is **not** redacted, so you can see what happened.
-Set `mdRunbook.redaction.applyToLiveOutput` to redact the live view too (redaction then works
-line by line as output arrives). Redaction is pattern-based, so review the output before
-committing a runbook to a shared repository.
+The live view in the editor is redacted too, so secrets don't appear on screen or in screen
+shares (redaction then works line by line as output arrives). Turn
+`mdRunbook.redaction.applyToLiveOutput` off to see raw output while debugging. Redaction is
+pattern-based, so review the output before committing a runbook to a shared repository.
+
+## Security defaults
+
+Every feature that changes behaviour can be switched off in the settings, and every default is
+the most secure choice. Turn things on as you need them:
+
+| Area | Secure default |
+| --- | --- |
+| Redaction | On for saved **and** live output; known secret values are always redacted. |
+| Risky commands | Ask before running cells that match `mdRunbook.execution.confirmPatterns`; declining stops Run All. The `no-confirm` cell option is ignored unless `mdRunbook.execution.allowNoConfirmOption` is on. |
+| Execution | Each cell in its own process (`isolated`). In session mode, Run All starts in a fresh session. |
+| Text-editor runs (CodeLens) | Off. When on, proposed and assistant-written cells are refused and risky commands still ask. |
+| Secrets | Passed as environment variables, never as script text; no `.env` file is loaded unless configured. |
+| History | Off (`historySize: 0`), so old outputs are not kept. |
+
+Settings that could weaken these (redaction on/off and default patterns, confirmation mode and
+patterns, `allowNoConfirmOption`, context commands, shell paths, known-secret redaction) can only
+be set in **user** settings: a repository's `.vscode/settings.json` cannot change them. The
+extension is also disabled in untrusted workspaces (Restricted Mode).
 
 ## Settings
 
@@ -189,7 +208,7 @@ committing a runbook to a shared repository.
 | `mdRunbook.redaction.enabled` | `true` | Redact secrets before writing output. |
 | `mdRunbook.redaction.useDefaultPatterns` | `true` | Use the built-in patterns listed above. |
 | `mdRunbook.redaction.patterns` | `[]` | Extra regexes (strings or `{ pattern, flags }`). |
-| `mdRunbook.redaction.applyToLiveOutput` | `false` | Also redact the output shown in the editor. |
+| `mdRunbook.redaction.applyToLiveOutput` | `true` | Also redact the output shown in the editor. |
 | `mdRunbook.execution.stopOnFailure` | `true` | Run All stops at the first failed cell. |
 | `mdRunbook.execution.timeoutSeconds` | `0` | Kill a cell's process tree after N seconds. `0` = no timeout. |
 | `mdRunbook.execution.env` | `{}` | Extra environment variables for every cell. |

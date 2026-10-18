@@ -164,7 +164,8 @@ test(`running a ${LANG} cell streams output; save persists it redacted`, async (
   assert.equal(await waitForRun(cell), true, outputText(cell));
   const live = outputText(cell);
   assert.match(live, /hello from md-runbook/);
-  assert.match(live, /Bearer abc\.def/, 'live view is not redacted by default');
+  assert.match(live, /Authorization: \[REDACTED\]/, 'live view is redacted by default');
+  assert.doesNotMatch(live, /abc\.def/);
   assert.match(live, /exit code 0/);
   assert.ok(await step('save', editor.notebook.save()));
 

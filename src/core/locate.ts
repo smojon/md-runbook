@@ -15,6 +15,8 @@ export interface CodeCellLocation {
   /** 0-based line of the closing fence. */
   closeLine: number;
   language: string;
+  /** The fence info string (language word plus options), e.g. for proposal state. */
+  info: string;
   source: string;
   /** Attributes of the cell's output block, if it has one. */
   outputAttrs?: Record<string, string>;
@@ -37,10 +39,11 @@ export function locateCodeCells(doc: ParsedDocument): CodeCellLocation[] {
         line: open,
         closeLine: open + 1 + countLines(m.body),
         language: m.lang,
+        info: m.info,
         source: cell.value,
         outputAttrs: cell.output?.attrs,
       });
-      line += countLines(m.lead + m.open + m.body + m.close + (m.output?.raw ?? '') + m.trail);
+      line += countLines(m.lead + m.open + m.body + m.close + (m.output?.raw ?? '') + (m.history?.raw ?? '') + m.trail);
     } else {
       line += countLines(m.lead + m.content + m.trail);
     }

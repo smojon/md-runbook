@@ -46,8 +46,8 @@ VS Code's environment plus the configured variables, which are applied again bef
 `mdRunbook.execution.env`, the `.env` file, `mdRunbook.secrets.inject`, and whatever the cell
 references (`${secret:…}`, `${input:…}`, `${param:…}`). Everything earlier cells set is gone.
 
-To make every full run start clean, set `mdRunbook.session.resetOnRunAll` to `true`: **Run
-All** then begins in a fresh session. Running single cells, a range or **Resume Run** keeps the
+Every full run starts clean: with `mdRunbook.session.resetOnRunAll` (on by default) **Run All**
+begins in a fresh session. Running single cells, a range or **Resume Run** keeps the
 current session, since those usually rely on earlier steps.
 
 The same works for PowerShell:
@@ -120,4 +120,4 @@ switched to isolated mode.
 | Setting | Default | Description |
 | --- | --- | --- |
 | `mdRunbook.execution.mode` | `"isolated"` | Default mode. `isolated`: a new process for every cell. `session`: one long-lived bash and PowerShell process per runbook, so state carries over between cells. Overridden by front matter `mode:` and by the toggle. |
-| `mdRunbook.session.resetOnRunAll` | `false` | Start **Run All** in a fresh session. |
+| `mdRunbook.session.resetOnRunAll` | `true` | Start **Run All** in a fresh session. |

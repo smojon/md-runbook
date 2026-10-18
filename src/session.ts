@@ -107,7 +107,7 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
   // Optionally start every Run All in a fresh session, so full runs never depend on leftovers.
   pipeline.observers.push({
     onWillRunSequence: (nb, cells) => {
-      const resetOnRunAll = vscode.workspace.getConfiguration(SECTION).get<boolean>('session.resetOnRunAll', false);
+      const resetOnRunAll = vscode.workspace.getConfiguration(SECTION).get<boolean>('session.resetOnRunAll', true);
       if (!resetOnRunAll || modeOf(nb).mode !== 'session' || cells.length < 2) return;
       const codeCells = nb.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code).length;
       if (cells.length < codeCells) return; // a range or Resume, not Run All

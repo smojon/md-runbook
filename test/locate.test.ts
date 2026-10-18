@@ -90,3 +90,20 @@ describe('outputSummary', () => {
     assert.equal(outputSummary({}, now), '✗ ?');
   });
 });
+
+describe('locateCodeCells with history', () => {
+  it('counts the lines of a history block after an output', () => {
+    const md = [
+      '```sh', 'echo a', '```',
+      '<!-- md-runbook:output start exit=0 -->', '```text', 'a', '```', '<!-- md-runbook:output end -->',
+      '<details><summary>md-runbook: 1 previous run</summary>', '',
+      '<!-- md-runbook:output start exit=1 -->', '```text', 'old', '```', '<!-- md-runbook:output end -->', '',
+      '</details>', '',
+      '```sh', 'echo b', '```', '',
+    ].join('\n');
+    const locs = locateCodeCells(parse(md));
+    assert.equal(locs.length, 2);
+    assert.equal(md.split('\n')[locs[1]!.line], '```sh');
+    assert.equal(locs[1]!.line, 18);
+  });
+});

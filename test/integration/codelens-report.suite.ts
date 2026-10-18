@@ -20,6 +20,10 @@ async function openText(uri: vscode.Uri): Promise<vscode.TextDocument> {
 test('CodeLens shows Run / Run below and the last result above runnable blocks', async () => {
   const uri = writeFile('lens.md', SAMPLE);
   await openText(uri);
+  // Off by default (text-editor runs skip the notebook's safety steps).
+  const byDefault = await step('lenses (default)', vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', uri, 10));
+  assert.equal(byDefault.filter((l) => l.command?.command.startsWith('mdRunbook.')).length, 0, 'CodeLens is off by default');
+  await setConfig('codeLens.enabled', true);
   const all = await step('lenses', vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', uri, 10));
   const ours = all.filter((l) => l.command?.command.startsWith('mdRunbook.') || /exit/.test(l.command?.title ?? ''));
   const titles = ours.map((l) => `${l.range.start.line}:${l.command?.title}`);
@@ -43,6 +47,7 @@ test('CodeLens shows Run / Run below and the last result above runnable blocks',
 test('running a block from the text editor writes its output block (unsaved)', async () => {
   const uri = writeFile('lens-run.md', SAMPLE);
   const doc = await openText(uri);
+  await setConfig('codeLens.enabled', true);
   const ok = await step('run cell', vscode.commands.executeCommand<boolean>('mdRunbook.runCellInEditor', uri, 1), 60_000);
   assert.equal(ok, true);
   const text = doc.getText();
@@ -57,6 +62,17 @@ test('running a block from the text editor writes its output block (unsaved)', a
   assert.doesNotMatch(doc.getText(), /\nold\n/);
   await step('revert', vscode.commands.executeCommand('workbench.action.files.revert'));
   await closeAll();
+
+  // Proposed (and assistant-written) cells never run from the text editor.
+  const proposed = writeFile('lens-proposed.md', `\`\`\`${LANG} proposed by=ai reason="probe"\necho should-not-run\n\`\`\`\n`);
+  const pdoc = await openText(proposed);
+  try {
+    assert.equal(await step('run proposed', vscode.commands.executeCommand<boolean>('mdRunbook.runCellInEditor', proposed, 0), 60_000), false);
+    assert.doesNotMatch(pdoc.getText(), /md-runbook:output start/);
+  } finally {
+    await setConfig('codeLens.enabled', undefined);
+    await closeAll();
+  }
 });
 
 test('Export Report writes a self-contained HTML file with the step table', async () => {

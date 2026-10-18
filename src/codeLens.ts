@@ -25,6 +25,26 @@ import {
 import { SECTION, executionConfig, redactionConfig, writeOptions } from './config';
 import { workingDirectory } from './controller';
 import { knownSecrets } from './knownSecrets';
+import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from './core/confirm';
+import { proposalOf } from './core/proposal';
+import { cellConfirmOption } from './safety';
+
+/**
+ * Text-editor runs skip the notebook's preparers (approval, policy, secrets), so they refuse
+ * proposed or AI-written cells and still ask before risky commands. Returns why a block may not run.
+ */
+async function textEditorGuard(loc: CodeCellLocation): Promise<string | undefined> {
+  const p = proposalOf(loc.info);
+  if (p.state === 'proposed') return 'this is a proposed cell; approve and run it in the runbook (notebook) view';
+  if (p.by) return 'cells written by an assistant only run in the runbook (notebook) view, where approval, policy and read-only credentials apply';
+  const c = vscode.workspace.getConfiguration(SECTION);
+  const { regexes } = compileConfirmPatterns(c.get<string[]>('execution.confirmPatterns', DEFAULT_CONFIRM_PATTERNS));
+  const match = confirmationFor(loc.source, c.get<ConfirmMode>('execution.confirm', 'patterns'), regexes, cellConfirmOption(loc.info));
+  if (match === undefined) return undefined;
+  const message = match === '' ? 'Run this block?' : `This block contains a risky command: “${match.trim()}”`;
+  const answer = await vscode.window.showWarningMessage(message, { modal: true }, 'Run');
+  return answer === 'Run' ? undefined : 'not confirmed';
+}
 
 export const RUN_CELL = 'mdRunbook.runCellInEditor';
 export const RUN_BELOW = 'mdRunbook.runCellsBelowInEditor';
@@ -72,16 +92,18 @@ class EditorRunner {
       const sub = token.onCancellationRequested(() => abort.abort());
       const cfg = executionConfig();
       try {
+        let allOk = true;
         for (const [k, idx] of targets.entries()) {
           if (abort.signal.aborted) return false;
           progress.report({ message: targets.length > 1 ? `block ${k + 1} of ${targets.length}` : 'running…' });
           const ok = await this.runOne(doc, idx, abort.signal);
+          allOk &&= ok;
           if (!ok && (abort.signal.aborted || (cfg.stopOnFailure && targets.length > 1))) {
             if (k < targets.length - 1) this.channel.appendLine('[md-runbook] stopped: a block failed');
             return false;
           }
         }
-        return true;
+        return allOk;
       } finally {
         sub.dispose();
       }
@@ -92,6 +114,12 @@ class EditorRunner {
     // Re-locate on every step: earlier steps (or the user) may have edited the document.
     const loc = locate(doc).find((l) => l.cellIndex === cellIndex);
     if (!loc) return false;
+    const blocked = await textEditorGuard(loc);
+    if (blocked) {
+      this.channel.show(true);
+      this.channel.appendLine(`[md-runbook] not run: ${blocked}`);
+      return false;
+    }
     const cfg = executionConfig();
     const started = new Date();
     const cwd = workingDirectory(doc.uri);
@@ -171,7 +199,7 @@ class RunbookCodeLensProvider implements vscode.CodeLensProvider {
   ) {}
 
   provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
-    if (!vscode.workspace.getConfiguration(SECTION, doc.uri).get<boolean>('codeLens.enabled', true)) return [];
+    if (!vscode.workspace.getConfiguration(SECTION, doc.uri).get<boolean>('codeLens.enabled', false)) return [];
     const running = this.runner.running.get(doc.uri.toString());
     const now = new Date();
     const lenses: vscode.CodeLens[] = [];
@@ -217,6 +245,14 @@ export function registerCodeLens(context: vscode.ExtensionContext): void {
   const runner = new EditorRunner();
   const refresh = new vscode.EventEmitter<void>();
   const command = (below: boolean) => async (uri?: unknown, cellIndex?: unknown) => {
+    if (!vscode.workspace.getConfiguration(SECTION).get<boolean>('codeLens.enabled', false)) {
+      const open = await vscode.window.showInformationMessage(
+        'md-runbook: running blocks from the text editor is off (mdRunbook.codeLens.enabled). Use Open as Runbook, or enable it.',
+        'Open Setting',
+      );
+      if (open) await vscode.commands.executeCommand('workbench.action.openSettings', 'mdRunbook.codeLens.enabled');
+      return false;
+    }
     const t = await resolveTarget(uri, cellIndex);
     return t ? runner.run(t.doc, t.cellIndex, below) : false;
   };

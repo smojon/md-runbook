@@ -2,6 +2,10 @@
 
 ## Run from the plain Markdown editor (CodeLens)
 
+This is **off by default**: turn on `mdRunbook.codeLens.enabled` to use it. Text-editor runs skip
+the notebook's per-cell options and secret injection, so for safety they refuse proposed and
+assistant-written cells, and still ask before risky commands.
+
 You don't have to open a file as a runbook to run it. In the normal Markdown text editor, each
 runnable code block (`sh`, `bash`, `pwsh`, `powershell`, `cmd`) gets a line of CodeLens above its
 opening fence:
@@ -77,7 +81,7 @@ and are run through the current redaction settings once more.
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `mdRunbook.codeLens.enabled` | `true` | Show Run / Run below / last result above runnable blocks in the Markdown text editor. |
+| `mdRunbook.codeLens.enabled` | `false` | Show Run / Run below / last result above runnable blocks in the Markdown text editor. |
 | `mdRunbook.report.folder` | `""` | Where reports are written. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or its folder outside a workspace); an absolute path is used as is. |
 
 For example, to collect all reports in a `reports` folder of the workspace:

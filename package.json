@@ -389,12 +389,14 @@
         "mdRunbook.redaction.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Redact secrets from output before it is written to the file."
+          "description": "Redact secrets from output before it is written to the file. Can only be set in user settings, so a workspace cannot weaken it.",
+          "scope": "machine"
         },
         "mdRunbook.redaction.useDefaultPatterns": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Use the built-in patterns: Bearer tokens, JWTs, `password`/`secret`/`token`/`api_key` key-value pairs, PEM private keys, `Authorization`/`Cookie` headers, URL credentials, OpenShift/GitHub/AWS tokens."
+          "markdownDescription": "Use the built-in patterns: Bearer tokens, JWTs, `password`/`secret`/`token`/`api_key` key-value pairs, PEM private keys, `Authorization`/`Cookie` headers, URL credentials, OpenShift/GitHub/AWS tokens. Can only be set in user settings, so a workspace cannot weaken it.",
+          "scope": "machine"
         },
         "mdRunbook.redaction.patterns": {
           "type": "array",
@@ -427,8 +429,8 @@
         },
         "mdRunbook.redaction.applyToLiveOutput": {
           "type": "boolean",
-          "default": false,
-          "description": "Also redact the output shown live in the editor, not only what is written to disk."
+          "default": true,
+          "description": "Also redact the output shown live in the editor, not only what is written to disk (on by default, so secrets never appear on screen)."
         },
         "mdRunbook.execution.stopOnFailure": {
           "type": "boolean",
@@ -452,14 +454,14 @@
         "mdRunbook.shell.bashPath": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
-          "markdownDescription": "Path to bash for `sh`/`bash` blocks. On Windows, Git Bash is found automatically (Program Files, LocalAppData, Scoop, next to `git.exe`); the WSL launcher is never used."
+          "scope": "machine",
+          "markdownDescription": "Path to bash for `sh`/`bash` blocks. On Windows, Git Bash is found automatically (Program Files, LocalAppData, Scoop, next to `git.exe`); the WSL launcher is never used. Can only be set in user settings, so a workspace cannot weaken it."
         },
         "mdRunbook.shell.pwshPath": {
           "type": "string",
           "default": "",
-          "scope": "machine-overridable",
-          "markdownDescription": "Path to PowerShell for `pwsh`/`powershell` blocks. Default: `pwsh` on PATH, falling back to Windows PowerShell (`powershell.exe`)."
+          "scope": "machine",
+          "markdownDescription": "Path to PowerShell for `pwsh`/`powershell` blocks. Default: `pwsh` on PATH, falling back to Windows PowerShell (`powershell.exe`). Can only be set in user settings, so a workspace cannot weaken it."
         },
         "mdRunbook.execution.confirm": {
           "type": "string",
@@ -474,7 +476,8 @@
             "Never ask (cells with the `confirm` option still ask)."
           ],
           "default": "patterns",
-          "markdownDescription": "When to show a confirmation dialog before running a cell. The `confirm` / `no-confirm` cell options override this per cell."
+          "markdownDescription": "When to show a confirmation dialog before running a cell. The `confirm` / `no-confirm` cell options override this per cell. Can only be set in user settings, so a workspace cannot weaken it.",
+          "scope": "machine"
         },
         "mdRunbook.execution.confirmPatterns": {
           "type": "array",
@@ -488,7 +491,8 @@
             "\\bRemove-Item\\b.*-Recurse",
             "\\bdrop\\s+(table|database)\\b"
           ],
-          "markdownDescription": "JavaScript regular expressions (case-insensitive) for risky commands. A cell whose text matches one asks for confirmation before it runs; declining records it as `exit=skipped`."
+          "markdownDescription": "JavaScript regular expressions (case-insensitive) for risky commands. A cell whose text matches one asks for confirmation before it runs; declining records it as `exit=skipped`. Can only be set in user settings, so a workspace cannot weaken it.",
+          "scope": "machine"
         },
         "mdRunbook.output.recordContext": {
           "type": "object",
@@ -496,7 +500,8 @@
           "additionalProperties": {
             "type": "string"
           },
-          "markdownDescription": "Commands whose first output line is recorded as an attribute of each output block, e.g. `{ \"context\": \"kubectl config current-context\" }` writes `context=prod-eu`. Run through the platform shell in the .md file's folder with a 5 s timeout; failures record `unknown`."
+          "markdownDescription": "Commands whose first output line is recorded as an attribute of each output block, e.g. `{ \"context\": \"kubectl config current-context\" }` writes `context=prod-eu`. Run through the platform shell in the .md file's folder with a 5 s timeout; failures record `unknown`. Can only be set in user settings, so a workspace cannot weaken it.",
+          "scope": "machine"
         },
         "mdRunbook.output.recordContextCacheSeconds": {
           "type": "number",
@@ -526,7 +531,8 @@
         "mdRunbook.redaction.redactKnownSecrets": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Redact the values loaded from `mdRunbook.execution.envFile` (exact match) from live and saved output. Stored secrets and secret inputs are always redacted."
+          "markdownDescription": "Redact the values loaded from `mdRunbook.execution.envFile` (exact match) from live and saved output. Stored secrets and secret inputs are always redacted. Can only be set in user settings, so a workspace cannot weaken it.",
+          "scope": "machine"
         },
         "mdRunbook.params.useDefaults": {
           "type": "boolean",
@@ -540,8 +546,8 @@
         },
         "mdRunbook.codeLens.enabled": {
           "type": "boolean",
-          "default": true,
-          "markdownDescription": "Show **▶ Run** / **▶ Run below** and the last result above each runnable code block in the plain Markdown text editor."
+          "default": false,
+          "markdownDescription": "Show **▶ Run** links above code blocks in the plain Markdown editor. Off by default: text-editor runs skip per-cell options and secret injection (proposed and assistant-written cells are refused, risky commands still ask)."
         },
         "mdRunbook.report.folder": {
           "type": "string",
@@ -587,8 +593,19 @@
         },
         "mdRunbook.session.resetOnRunAll": {
           "type": "boolean",
+          "default": true,
+          "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on (or exposes) state left by earlier runs. Single cells, ranges and **Resume Run** keep the session."
+        },
+        "mdRunbook.cellOptions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Apply per-cell options from the fence line (`timeout=`, `cwd=`, `env.NAME=`, `continue-on-error`, `skip`, `confirm`). Turn off to ignore options written in runbooks."
+        },
+        "mdRunbook.execution.allowNoConfirmOption": {
+          "type": "boolean",
           "default": false,
-          "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on state left by earlier runs. Running single cells, ranges and **Resume Run** keep the session."
+          "scope": "machine",
+          "markdownDescription": "Honour the `no-confirm` cell option. Off by default: a runbook (or an assistant editing it) must not be able to switch off the risky-command confirmation. Can only be set in user settings, so a workspace cannot weaken it."
         }
       }
     }
