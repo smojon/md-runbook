@@ -1,0 +1,93 @@
+# Run a runbook from the GitHub web UI: Actions → "Run a runbook" → Run workflow.
+#
+# Copy this file to .github/workflows/run-runbook.yml in your repository. The results (the
+# filled-in runbook, HTML and PDF report, JUnit) are kept as a workflow artifact, visible to
+# people who can read the repository. With "Publish the report to GitHub Pages" ticked, the
+# report also goes to the repository's Pages site, which is PUBLIC (also for private
+# repositories, except on GitHub Enterprise): only tick it for reports you could share with
+# anyone. Pages must be set to "GitHub Actions" (Settings → Pages → Source).
+#
+# Only people with write access can run a workflow by hand. For runbooks that change things,
+# add an environment with required reviewers (Settings → Environments) and set it below.
+name: Run a runbook
+
+on:
+  workflow_dispatch:
+    inputs:
+      runbook:
+        description: Runbook to run (path in the repository)
+        required: true
+        default: runbooks/health.md
+      params:
+        description: 'Parameters for ${param:NAME}, separated by ";" (e.g. TARGET=staging; REPLICAS=2)'
+        default: ''
+      os:
+        description: Runner
+        type: choice
+        options: [ubuntu-latest, windows-latest, macos-latest]
+        default: ubuntu-latest
+      yes:
+        description: Run risky commands (rm -rf, delete, --force, …)
+        type: boolean
+        default: false
+      publish:
+        description: Publish the report to GitHub Pages (public!)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ${{ inputs.os }}
+    # environment: production   # an environment with required reviewers approves each run
+    steps:
+      - uses: actions/checkout@v4
+      # "A=1; B=2" → one NAME=VALUE per line, as the action expects. Values come in through the
+      # environment, never through the script text.
+      - id: params
+        shell: bash
+        env:
+          PARAMS: ${{ inputs.params }}
+        run: |
+          delim="EOF_$RANDOM$RANDOM$RANDOM"
+          { echo "list<<$delim"; printf '%s' "$PARAMS" | tr ';' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; echo; echo "$delim"; } >> "$GITHUB_OUTPUT"
+      - uses: smojon/md-runbook@v0.3.0
+        with:
+          runbook: ${{ inputs.runbook }}
+          params: ${{ steps.params.outputs.list }}
+          yes: ${{ inputs.yes }}
+          out: site/runbook.md
+          report: site/index.html
+          pdf: site/report.pdf
+          junit: site/junit.xml
+        # Secrets for ${secret:NAME} come from the environment, e.g.:
+        # env:
+        #   API_TOKEN: ${{ secrets.API_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runbook-result
+          path: site/
+      - uses: actions/upload-pages-artifact@v3
+        if: always() && inputs.publish
+        with:
+          path: site/
+
+  pages:
+    needs: run
+    if: always() && inputs.publish && needs.run.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -19,16 +19,19 @@ It runs the code blocks in order and stops at the first failed step. It exits wi
 
 ## Getting it
 
-The runner is built with the extension, as `out/dist/cli.js` (Node.js 20 or newer, no other
-dependencies):
+It needs Node.js 20 or newer and nothing else (one bundled file).
 
-```sh
-git clone https://github.com/smojon/md-runbook && cd md-runbook
-npm ci && npm run compile
-node out/dist/cli.js run path/to/runbook.md
-```
+- **npm:** `npx md-runbook run runbook.md`, or `npm install -g md-runbook` (published with each
+  release once the npm package is set up; see `PUBLISHING.md`).
+- **GitHub Actions:** the [action](#github-action) builds it from its own source at the version
+  you pin.
+- **From a clone:**
 
-An npm package (`npx md-runbook run …`) is planned.
+  ```sh
+  git clone https://github.com/smojon/md-runbook && cd md-runbook
+  npm ci && npm run compile
+  node out/dist/cli.js run path/to/runbook.md
+  ```
 
 ## Options
 
@@ -69,8 +72,10 @@ An npm package (`npx md-runbook run …`) is planned.
 
 ## In CI
 
-GitHub Actions, on all three systems (PowerShell 7 and Git Bash are preinstalled on the
-runners):
+Any CI system: run `npx md-runbook run …` (or `node …/cli.js run …`) as a step, pass secrets
+as environment variables, and keep the runbook and reports as artifacts.
+
+### GitHub Action
 
 ```yaml
 jobs:
@@ -81,18 +86,44 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: node path/to/md-runbook/out/dist/cli.js run runbooks/smoke.md --report report.html --junit junit.xml
+      - uses: smojon/md-runbook@v0.3.0
+        with:
+          runbook: runbooks/smoke.md
+          params: |
+            TARGET=staging
+          report: report.html
+          pdf: report.pdf
+          junit: junit.xml
         env:
           API_TOKEN: ${{ secrets.API_TOKEN }}   # for ${secret:API_TOKEN}
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: runbook-${{ matrix.os }}, path: "runbooks/smoke.md\nreport.html\njunit.xml" }
+        with:
+          name: runbook-${{ matrix.os }}
+          path: |
+            runbooks/smoke.md
+            report.*
+            junit.xml
 ```
 
-On GitHub Actions the runner also adds a table of the steps to the job summary
-(`$GITHUB_STEP_SUMMARY`). Use `os=` blocks for the steps that differ per system.
+| Input | |
+|---|---|
+| `runbook` | The runbook, relative to the workspace (required). |
+| `params`, `inputs` | `NAME=VALUE` lines for `${param:…}` / `${input:…}`. |
+| `yes`, `keep-going` | `true` for `--yes` / `--keep-going`. |
+| `write` | `false` for `--check` (default `true`: the outputs go into the runbook in the workspace). |
+| `out`, `report`, `pdf`, `junit` | Files to write (folders are created). |
+| `session` | `true` / `false` for `--session` / `--isolated` (default: the front matter). |
+
+The action builds the runner from its own source at the ref you pin (`@v0.3.0`, or a commit
+SHA), so nothing is downloaded from a package registry. Inputs reach it through environment
+variables, never through a shell command line. On GitHub Actions the runner also adds a table of
+the steps to the job summary. This repository's CI runs
+[`examples/ci.runbook.md`](../../examples/ci.runbook.md) with it on all three systems.
+
+Use `os=` blocks for the steps that differ per system.
+
+To run a runbook from the GitHub web UI with a button, see [Runbooks on the web](web.md).
 
 The CI system still provides triggers, runners, secrets and artifacts; the runbook provides
 the steps, their checks, and a readable record of the run.

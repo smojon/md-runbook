@@ -86,12 +86,23 @@ shown as a small "front matter" block. Outputs are the redacted text stored in t
 run through the current redaction settings once more; code (the summary table, each step and
 other fenced blocks) and front matter go through the same redaction.
 
+## Export Report (PDF)
+
+**md-runbook: Export Report (PDF)** (Command Palette, Explorer context menu) writes the same
+report as `<name>.report.pdf`, printed by a Chromium-based browser that is already installed:
+Google Chrome, Microsoft Edge (on every Windows machine) or Chromium. Nothing is bundled or
+downloaded. The browser runs headless with a throwaway profile, so a browser you have open is not
+touched, and the report has print styles (light colours, wrapped output). It asks the same leak
+check as the HTML export. Without a browser it says so; the HTML export still works. The
+[command line](cli.md) has the same as `--pdf`.
+
 ## Settings
 
 | Setting | Default | Description |
 | --- | --- | --- |
 | `mdRunbook.codeLens.enabled` | `false` | Show Run / Run below / last result above runnable blocks in the Markdown text editor. |
 | `mdRunbook.report.folder` | `""` | Where reports are written. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or its folder outside a workspace); an absolute path is used as is. |
+| `mdRunbook.report.browserPath` | `""` | The browser **Export Report (PDF)** prints with (the program file). Empty = the first Chrome, Edge or Chromium found. User settings only. |
 
 For example, to collect all reports in a `reports` folder of the workspace:
 

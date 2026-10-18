@@ -17,6 +17,12 @@
       "title": "Export Report (HTML)",
       "category": "md-runbook",
       "icon": "$(output)"
+    },
+    {
+      "command": "mdRunbook.exportReportPdf",
+      "title": "Export Report (PDF)",
+      "category": "md-runbook",
+      "icon": "$(file-pdf)"
     }
   ],
   "menus": {
@@ -25,6 +31,11 @@
         "command": "mdRunbook.exportReport",
         "when": "resourceExtname == .md",
         "group": "navigation@101"
+      },
+      {
+        "command": "mdRunbook.exportReportPdf",
+        "when": "resourceExtname == .md",
+        "group": "navigation@102"
       }
     ],
     "notebook/toolbar": [
@@ -45,6 +56,10 @@
       },
       {
         "command": "mdRunbook.exportReport",
+        "when": "notebookType == md-runbook || resourceExtname == .md"
+      },
+      {
+        "command": "mdRunbook.exportReportPdf",
         "when": "notebookType == md-runbook || resourceExtname == .md"
       }
     ]

@@ -28,6 +28,22 @@ is set), and creates a GitHub release with the `.vsix` attached.
    `npx ovsx create-namespace smojon -p <token>`
 3. Add the token as the repository secret `OVSX_PAT`.
 
+### npm (the command-line runner)
+
+The Release workflow also publishes the command line as the npm package
+[`md-runbook`](https://www.npmjs.com/package/md-runbook) (`npx md-runbook run …`), with
+provenance, when the `NPM_TOKEN` secret is set. The package holds only `cli.js`, `cli/README.md`
+and `LICENSE` (laid out by `scripts/pack-cli.js` in `out/npm`).
+
+1. Sign in at <https://www.npmjs.com> (enable two-factor authentication).
+2. **Access Tokens → Generate New Token → Granular Access Token**: packages and scopes **Read
+   and write**, for all packages (the package doesn't exist before the first publish; after it,
+   the token can be limited to `md-runbook`). Pick an expiry.
+3. Add it as the repository secret `NPM_TOKEN`.
+
+The next tag then publishes the matching version. To check the package without publishing:
+`npm run compile && node scripts/pack-cli.js && (cd out/npm && npm pack --dry-run)`.
+
 ### Repository
 
 - The Marketplace page shows the README. Its screenshots use relative paths, which `vsce`

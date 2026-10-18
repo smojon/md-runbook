@@ -359,6 +359,12 @@
         "command": "mdRunbook.openSample",
         "title": "Open Sample Runbook",
         "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.exportReportPdf",
+        "title": "Export Report (PDF)",
+        "category": "md-runbook",
+        "icon": "$(file-pdf)"
       }
     ],
     "menus": {
@@ -377,6 +383,11 @@
           "command": "mdRunbook.exportReport",
           "when": "resourceExtname == .md",
           "group": "navigation@101"
+        },
+        {
+          "command": "mdRunbook.exportReportPdf",
+          "when": "resourceExtname == .md",
+          "group": "navigation@102"
         }
       ],
       "editor/title": [
@@ -601,6 +612,10 @@
         {
           "command": "mdRunbook.stepThroughFromLine",
           "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.exportReportPdf",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
         }
       ],
       "notebook/cell/title": [
@@ -859,6 +874,13 @@
             "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is. User settings only.",
             "scope": "machine",
             "order": 9
+          },
+          "mdRunbook.report.browserPath": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Browser that **Export Report (PDF)** prints with: Google Chrome, Microsoft Edge or Chromium (the program file). Empty = the first one found in the usual install locations. User settings only.",
+            "scope": "machine",
+            "order": 10
           }
         }
       },

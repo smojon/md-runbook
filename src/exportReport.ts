@@ -1,13 +1,18 @@
-/** "Export Report (HTML)": a runbook and its stored outputs as one self-contained HTML file. */
+/**
+ * "Export Report (HTML)": a runbook and its stored outputs as one self-contained HTML file.
+ * "Export Report (PDF)": the same report printed by an installed Chrome, Edge or Chromium.
+ */
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { findBrowser, htmlToPdf } from './cli/pdf';
 import { renderReport } from './core';
 import { confirmNoLeaks } from './aiCommands';
 import { SECTION, writeOptions } from './config';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
 
 export const EXPORT_REPORT = 'mdRunbook.exportReport';
+export const EXPORT_REPORT_PDF = 'mdRunbook.exportReportPdf';
 
 const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
 
@@ -41,8 +46,8 @@ function reportFolder(uri: vscode.Uri): vscode.Uri {
   return vscode.Uri.joinPath(base, ...setting.split(/[\\/]+/).filter(Boolean));
 }
 
-/** Write the report and offer to open it. Resolves to the report's URI. */
-export async function exportReport(arg?: unknown): Promise<vscode.Uri | undefined> {
+/** The report of the runbook a command applies to, and where to write it (`<name>.report.<ext>`). */
+async function prepareReport(arg: unknown, ext: 'html' | 'pdf'): Promise<{ html: string; out: vscode.Uri } | undefined> {
   const uri = targetUri(arg);
   if (!uri) {
     void vscode.window.showInformationMessage('md-runbook: open a Markdown file or runbook to export a report.');
@@ -58,14 +63,55 @@ export async function exportReport(arg?: unknown): Promise<vscode.Uri | undefine
   const html = renderReport(text, { generatedAt: new Date(), fallbackTitle: name, redact: writeOptions().redact });
   const folder = reportFolder(uri);
   await vscode.workspace.fs.createDirectory(folder);
-  const out = vscode.Uri.joinPath(folder, name.replace(/\.(md|markdown)$/i, '') + '.report.html');
-  await vscode.workspace.fs.writeFile(out, new TextEncoder().encode(html));
+  return { html, out: vscode.Uri.joinPath(folder, name.replace(/\.(md|markdown)$/i, '') + `.report.${ext}`) };
+}
+
+function offerToOpen(out: vscode.Uri): void {
   void vscode.window.showInformationMessage(`md-runbook: report written to ${vscode.workspace.asRelativePath(out)}`, 'Open').then((choice) => {
     if (choice === 'Open') void vscode.env.openExternal(out);
   });
-  return out;
+}
+
+/** Write the report and offer to open it. Resolves to the report's URI. */
+export async function exportReport(arg?: unknown): Promise<vscode.Uri | undefined> {
+  const r = await prepareReport(arg, 'html');
+  if (!r) return undefined;
+  await vscode.workspace.fs.writeFile(r.out, new TextEncoder().encode(r.html));
+  offerToOpen(r.out);
+  return r.out;
+}
+
+/** Print the report to PDF with an installed Chromium-based browser. Resolves to the PDF's URI. */
+export async function exportReportPdf(arg?: unknown): Promise<vscode.Uri | undefined> {
+  const configured = vscode.workspace.getConfiguration(SECTION).get<string>('report.browserPath', '').trim();
+  const browser = findBrowser(configured || undefined);
+  if (!browser) {
+    void vscode.window.showWarningMessage(
+      'md-runbook: Export Report (PDF) needs Google Chrome, Microsoft Edge or Chromium. Install one, or set mdRunbook.report.browserPath. Export Report (HTML) works without it.',
+    );
+    return undefined;
+  }
+  const r = await prepareReport(arg, 'pdf');
+  if (!r) return undefined;
+  if (r.out.scheme !== 'file') {
+    void vscode.window.showWarningMessage('md-runbook: PDF reports can only be written to a local folder; use Export Report (HTML) here.');
+    return undefined;
+  }
+  try {
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'md-runbook: printing the report to PDF…' }, () =>
+      htmlToPdf(r.html, r.out.fsPath, browser),
+    );
+  } catch (e) {
+    void vscode.window.showErrorMessage(`md-runbook: PDF export failed: ${e instanceof Error ? e.message : String(e)}`);
+    return undefined;
+  }
+  offerToOpen(r.out);
+  return r.out;
 }
 
 export function registerReport(context: vscode.ExtensionContext): void {
-  context.subscriptions.push(vscode.commands.registerCommand(EXPORT_REPORT, exportReport));
+  context.subscriptions.push(
+    vscode.commands.registerCommand(EXPORT_REPORT, exportReport),
+    vscode.commands.registerCommand(EXPORT_REPORT_PDF, exportReportPdf),
+  );
 }

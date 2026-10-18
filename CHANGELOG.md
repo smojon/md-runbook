@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **GitHub Action:** `uses: smojon/md-runbook@v0.3.0` runs a runbook in a workflow, with the
+  filled-in runbook and HTML, PDF and JUnit reports. It builds the runner from its own source
+  at the version you pin. This repository's CI now runs a runbook with it on Windows, macOS and
+  Linux.
+- **npm package:** the command line is published as `md-runbook` (`npx md-runbook run …`).
+- **Export Report (PDF):** a new command next to Export Report (HTML) prints the report with the
+  Chrome, Edge or Chromium already installed (`mdRunbook.report.browserPath` to pick one).
+- **Run from the web:** `examples/github/run-runbook.yml` adds a **Run workflow** button that
+  runs a runbook and keeps its results; publishing the report to GitHub Pages is opt-in.
+
 ## 0.2.0
 
 - **Line by line:** the dropdown next to a code cell's run button has new commands.

@@ -126,6 +126,9 @@ Each has its own page with examples and settings:
   VS Code (CI, servers, scheduled checks) and writes the outputs into the file, with HTML, PDF
   and JUnit reports and a GitHub job summary. Risky commands need `--yes`; secrets come from
   environment variables and are redacted.
+- **[On the web](docs/features/web.md):** a GitHub Actions workflow with a Run button
+  (`examples/github/run-runbook.yml`), the `smojon/md-runbook` GitHub Action, and running the
+  extension in GitHub Codespaces.
 - **[Secrets, inputs, parameters and `.env`](docs/features/secrets.md):** keep secrets in the OS
   keychain and reference them as `${secret:NAME}`. They reach the cell as environment variables,
   never as script text, and are redacted by exact value. `${input:NAME}` prompts once per session,

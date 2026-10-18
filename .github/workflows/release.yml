@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write # create the GitHub release
+  id-token: write # npm provenance: the package links back to this workflow run
 
 jobs:
   test:
@@ -36,6 +37,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          registry-url: https://registry.npmjs.org
       - run: npm ci
       - name: Check the tag matches package.json
         run: |
@@ -56,6 +58,14 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         if: env.OVSX_PAT != ''
         run: npx --yes ovsx@0.10.6 publish md-runbook.vsix
+      - name: Publish the command line to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: env.NODE_AUTH_TOKEN != ''
+        run: |
+          node scripts/build.js
+          node scripts/pack-cli.js
+          npm publish out/npm --access public --provenance
       - name: GitHub release with the .vsix
         env:
           GH_TOKEN: ${{ github.token }}

@@ -2,7 +2,7 @@
 import { strict as assert } from 'node:assert';
 import * as fs from 'node:fs';
 import * as vscode from 'vscode';
-import { LANG, Test, closeAll, read, setConfig, step, writeFile } from './suite';
+import { LANG, Test, closeAll, read, setConfig, step, trace, writeFile } from './suite';
 
 export const tests: Test[] = [];
 const test = (name: string, fn: () => Promise<void>): void => void tests.push({ name, fn });
@@ -113,5 +113,19 @@ test('Export Report writes a self-contained HTML file with the step table', asyn
   assert.match(html, /<tr class="none"><td><a href="#step-1">1<\/a><\/td><td><code>echo one<\/code>/);
   assert.match(html, /<tr class="fail">.*✗ exit 1/);
   assert.doesNotMatch(html, /<script|src=|href="http/);
+  await closeAll();
+});
+
+test('Export Report (PDF) prints the report with an installed Chrome or Edge', async () => {
+  const { findBrowser } = await import('../../src/cli/pdf');
+  if (!findBrowser(process.env.CHROME_PATH)) {
+    trace('    … no Chrome, Edge or Chromium here: PDF export not tested');
+    return;
+  }
+  const uri = writeFile('lens-pdf.md', SAMPLE);
+  const out = await step('export pdf', vscode.commands.executeCommand<vscode.Uri>('mdRunbook.exportReportPdf', uri), 120_000);
+  assert.ok(out, 'no PDF uri returned');
+  assert.equal(out.fsPath, uri.fsPath.replace(/\.md$/, '.report.pdf'));
+  assert.equal(fs.readFileSync(out.fsPath).subarray(0, 5).toString('latin1'), '%PDF-');
   await closeAll();
 });
