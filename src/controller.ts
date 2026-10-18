@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ExecuteResult, LineBuffer, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDurationAttr, formatLocalIso, isSuccess } from './core';
+import { ExecuteResult, HISTORY_KEY, LineBuffer, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDurationAttr, formatLocalIso, isSuccess } from './core';
 import { ExecutionConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, statusLine, statusOutput } from './outputs';
 import { CellPlan, PrepareContext, RunPipeline, RunRecord } from './pipeline';
@@ -62,15 +62,29 @@ export class RunbookController implements vscode.Disposable {
    * the marker attributes persisted on save; `text` becomes the output text.
    */
   async recordManual(cell: vscode.NotebookCell, attrs: Record<string, string>, text: string, success?: boolean): Promise<void> {
+    // The run history kept from an earlier run belongs to the output being replaced here; leaving
+    // it would write a stale changed=/history on save.
+    if (cell.metadata?.[HISTORY_KEY] !== undefined) {
+      const metadata: Record<string, unknown> = { ...cell.metadata };
+      delete metadata[HISTORY_KEY];
+      const edit = new vscode.WorkspaceEdit();
+      edit.set(cell.notebook.uri, [vscode.NotebookEdit.updateCellMetadata(cell.index, metadata)]);
+      await vscode.workspace.applyEdit(edit);
+    }
     const exec = this.controller.createNotebookCellExecution(cell);
     exec.start(Date.now());
-    const meta: OutputMetadata = { run: { attrs } };
-    await exec.clearOutput();
-    await exec.appendOutput([
-      new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout(text)], { [META_KEY]: meta }),
-      statusOutput(statusLine(attrs.exit, undefined), attrs),
-    ]);
-    exec.end(success, Date.now());
+    let ok: boolean | undefined = false;
+    try {
+      const meta: OutputMetadata = { run: { attrs } };
+      await exec.clearOutput();
+      await exec.appendOutput([
+        new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout(text)], { [META_KEY]: meta }),
+        statusOutput(statusLine(attrs.exit, undefined), attrs),
+      ]);
+      ok = success;
+    } finally {
+      exec.end(ok, Date.now());
+    }
   }
 
   /** Clear the outputs of cells that are not queued or running. */
@@ -117,18 +131,34 @@ export class RunbookController implements vscode.Disposable {
     let stopped: vscode.NotebookCell | undefined;
     const runs: RunRecord[] = [];
     const cells = executions.map((e) => e.cell);
-    for (const o of this.pipeline.observers) await o.onWillRunSequence?.(notebook, cells);
-    for (const exec of executions) {
-      if (stopped || exec.token.isCancellationRequested) {
-        // Skipped: leave the cell's previous output untouched.
-        exec.start();
-        exec.end(undefined);
-        continue;
+    /** Index of the last execution started (runCell ends its own, even when it throws). */
+    let handled = -1;
+    try {
+      for (const o of this.pipeline.observers) await o.onWillRunSequence?.(notebook, cells);
+      for (let next = 0; next < executions.length; next++) {
+        const exec = executions[next]!;
+        handled = next;
+        if (stopped || exec.token.isCancellationRequested) {
+          // Skipped: leave the cell's previous output untouched.
+          exec.start();
+          exec.end(undefined);
+          continue;
+        }
+        const run = await this.runCell(exec, notebook, cfg);
+        runs.push(run);
+        const failedHard = !run.success && !run.plan.continueOnError && cfg.stopOnFailure;
+        if ((failedHard || run.plan.stopSequence) && executions.length > 1) stopped = exec.cell;
       }
-      const run = await this.runCell(exec, notebook, cfg);
-      runs.push(run);
-      const failedHard = !run.success && !run.plan.continueOnError && cfg.stopOnFailure;
-      if ((failedHard || run.plan.stopSequence) && executions.length > 1) stopped = exec.cell;
+    } finally {
+      // Something threw: don't leave the remaining cells pending forever. (runCell ends its own.)
+      for (let i = handled + 1; i < executions.length; i++) {
+        try {
+          executions[i]!.start();
+          executions[i]!.end(undefined);
+        } catch {
+          // Already ended.
+        }
+      }
     }
     if (stopped && executions[executions.length - 1]!.cell !== stopped) {
       const why = runs[runs.length - 1]?.plan.stopSequence ? 'was not confirmed' : 'failed';
@@ -143,41 +173,6 @@ export class RunbookController implements vscode.Disposable {
     exec.executionOrder = ++this.executionOrder;
     exec.start(started.getTime());
 
-    const ran = formatLocalIso(started);
-    const runMeta = (exit: string): Record<string, unknown> => {
-      const m: OutputMetadata = { run: { attrs: { exit, ran } } };
-      return { [META_KEY]: m };
-    };
-
-    let unflushed: Chunk[] = [];
-    const previousOutputs = [...cell.outputs];
-    const live = new vscode.NotebookCellOutput([], runMeta('running'));
-    // Clear first so the live output is a new output, not an in-place replacement of the old one
-    // (in-place replacements keep the old metadata on the extension host side).
-    await exec.clearOutput();
-    await exec.appendOutput([live]);
-
-    let flushing = Promise.resolve();
-    const flush = (): Promise<void> => {
-      if (unflushed.length === 0) return flushing;
-      const items = toItems(unflushed);
-      unflushed = [];
-      flushing = flushing.then(() => exec.appendOutputItems(items, live)).then(
-        () => undefined,
-        () => undefined,
-      );
-      return flushing;
-    };
-    const timer = setInterval(() => void flush(), FLUSH_MS);
-
-    let transcript = '';
-    const sink = (stream: Chunk['stream']) => (text: string) => {
-      if (text === '') return;
-      transcript += text;
-      unflushed.push({ stream, text });
-    };
-
-    const ctx: PrepareContext = { cell, notebook, token: exec.token, previousOutputs };
     const plan: CellPlan = {
       source: cell.document.getText(),
       language: cell.document.languageId,
@@ -189,72 +184,140 @@ export class RunbookController implements vscode.Disposable {
       secrets: [],
       continueOnError: false,
     };
-    const failed = (error: string): ExecuteResult => ({ exitCode: null, signal: null, timedOut: false, cancelled: false, error, durationMs: 0 });
-    let prepareError: string | undefined;
-    try {
-      for (const p of this.pipeline.preparers) await p.prepare(plan, ctx);
-    } catch (e) {
-      prepareError = e instanceof Error ? e.message : String(e);
-    }
-    knownSecrets.add(plan.secrets);
-
-    const redaction = redactionConfig();
-    const liveRedact =
-      redaction.enabled && redaction.applyToLiveOutput
-        ? (t: string) => knownSecrets.redact(redaction.redactor.redact(t))
-        : plan.secrets.length > 0
-          ? (t: string) => knownSecrets.redact(t) // injected secrets never show, even live
-          : undefined;
-    const out = new LineBuffer(sink('stdout'), liveRedact);
-    const err = new LineBuffer(sink('stderr'), liveRedact);
-    // Without live redaction there's nothing to protect, so don't hold back partial lines.
-    const write = (b: LineBuffer) => (t: string) => {
-      b.write(t);
-      if (!liveRedact) b.flush();
+    let ended = false;
+    let timer: NodeJS.Timeout | undefined;
+    let cancelSub: vscode.Disposable | undefined;
+    const cleanup = async (): Promise<void> => {
+      const fns = plan.cleanup ?? [];
+      plan.cleanup = [];
+      for (const fn of fns) {
+        try {
+          await fn();
+        } catch {
+          // Best effort (e.g. a temp file already gone).
+        }
+      }
     };
+    try {
+      const ran = formatLocalIso(started);
+      const runMeta = (exit: string): Record<string, unknown> => {
+        const m: OutputMetadata = { run: { attrs: { exit, ran } } };
+        return { [META_KEY]: m };
+      };
 
-    const abort = new AbortController();
-    const cancelSub = exec.token.onCancellationRequested(() => abort.abort());
+      let unflushed: Chunk[] = [];
+      const previousOutputs = [...cell.outputs];
+      const live = new vscode.NotebookCellOutput([], runMeta('running'));
+      // Clear first so the live output is a new output, not an in-place replacement of the old one
+      // (in-place replacements keep the old metadata on the extension host side).
+      await exec.clearOutput();
+      await exec.appendOutput([live]);
 
-    let result: ExecuteResult;
-    const skipped = prepareError === undefined && plan.skip !== undefined;
-    if (prepareError !== undefined) {
-      result = failed(prepareError);
-    } else if (plan.skip !== undefined) {
-      unflushed.push({ stream: 'stdout', text: `[md-runbook] skipped: ${plan.skip}\n` });
-      result = { exitCode: null, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
-    } else {
+      let flushing = Promise.resolve();
+      const flush = (): Promise<void> => {
+        if (unflushed.length === 0) return flushing;
+        const items = toItems(unflushed);
+        unflushed = [];
+        flushing = flushing.then(() => exec.appendOutputItems(items, live)).then(
+          () => undefined,
+          () => undefined,
+        );
+        return flushing;
+      };
+      timer = setInterval(() => void flush(), FLUSH_MS);
+
+      let transcript = '';
+      const sink = (stream: Chunk['stream']) => (text: string) => {
+        if (text === '') return;
+        transcript += text;
+        unflushed.push({ stream, text });
+      };
+
+      const ctx: PrepareContext = { cell, notebook, token: exec.token, previousOutputs };
+      const failed = (error: string): ExecuteResult => ({ exitCode: null, signal: null, timedOut: false, cancelled: false, error, durationMs: 0 });
+      let prepareError: string | undefined;
       try {
-        result = fs.existsSync(plan.cwd)
-          ? await this.pipeline.executorFor(notebook).execute(plan, { signal: abort.signal, onStdout: write(out), onStderr: write(err) }, ctx)
-          : failed(`Working directory not found: ${plan.cwd}`);
+        for (const p of this.pipeline.preparers) await p.prepare(plan, ctx);
       } catch (e) {
-        result = failed(e instanceof Error ? e.message : String(e));
+        prepareError = e instanceof Error ? e.message : String(e);
+      }
+      knownSecrets.add(plan.secrets);
+
+      const redaction = redactionConfig();
+      const liveRedact =
+        redaction.enabled && redaction.applyToLiveOutput
+          ? (t: string) => knownSecrets.redact(redaction.redactor.redact(t))
+          : plan.secrets.length > 0
+            ? (t: string) => knownSecrets.redact(t) // injected secrets never show, even live
+            : undefined;
+      // Messages of our own (errors, skip reasons) may quote a value too: always redact them.
+      const message = (t: string): string => (liveRedact ? liveRedact(t) : knownSecrets.redact(t));
+      const out = new LineBuffer(sink('stdout'), liveRedact);
+      const err = new LineBuffer(sink('stderr'), liveRedact);
+      // Without live redaction there's nothing to protect, so don't hold back partial lines.
+      const write = (b: LineBuffer) => (t: string) => {
+        b.write(t);
+        if (!liveRedact) b.flush();
+      };
+
+      const abort = new AbortController();
+      cancelSub = exec.token.onCancellationRequested(() => abort.abort());
+
+      let result: ExecuteResult;
+      const skipped = prepareError === undefined && plan.skip !== undefined;
+      if (prepareError !== undefined) {
+        result = failed(prepareError);
+      } else if (plan.skip !== undefined) {
+        unflushed.push({ stream: 'stdout', text: message(`[md-runbook] skipped: ${plan.skip}\n`) });
+        result = { exitCode: null, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
+      } else {
+        try {
+          result = fs.existsSync(plan.cwd)
+            ? await this.pipeline.executorFor(notebook).execute(plan, { signal: abort.signal, onStdout: write(out), onStderr: write(err) }, ctx)
+            : failed(`Working directory not found: ${plan.cwd}`);
+        } catch (e) {
+          result = failed(e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      cancelSub.dispose();
+      clearInterval(timer);
+      await cleanup();
+      out.flush();
+      err.flush();
+
+      if (result.error !== undefined) unflushed.push({ stream: 'stderr', text: message(result.error + '\n') });
+      if (result.timedOut) unflushed.push({ stream: 'stderr', text: `[md-runbook] timed out after ${formatDuration(plan.timeoutMs)}; process tree killed\n` });
+      await flush();
+
+      // A preparer can record why it didn't run (declined, proposed) instead of a plain skip.
+      const exit = skipped ? (plan.skipExit ?? 'skipped') : exitLabel(result);
+      const endedAt = new Date();
+      const elapsed = endedAt.getTime() - started.getTime();
+      const shellLabel = result.shell?.label;
+      const status = [statusLine(exit, undefined, formatDuration(elapsed)), shellLabel].filter(Boolean).join(' · ');
+      const attrs = { exit, ran, ended: formatLocalIso(endedAt), duration: formatDurationAttr(elapsed), ...plan.attrs };
+      await exec.appendOutput([statusOutput(status, attrs)]);
+
+      // A cell that was not run counts as success so Run All carries on (a declined confirmation
+      // stops it through stopSequence).
+      const success = skipped || isSuccess(result);
+      ended = true;
+      exec.end(skipped ? undefined : success, Date.now());
+      const run: RunRecord = { cell, notebook, plan, result, success, attrs, output: transcript };
+      for (const o of this.pipeline.observers) await o.onDidRunCell?.(run);
+      return run;
+    } finally {
+      if (timer) clearInterval(timer);
+      cancelSub?.dispose();
+      await cleanup();
+      if (!ended) {
+        try {
+          exec.end(false, Date.now());
+        } catch {
+          // Already ended.
+        }
       }
     }
-
-    cancelSub.dispose();
-    clearInterval(timer);
-    out.flush();
-    err.flush();
-
-    if (result.error !== undefined) unflushed.push({ stream: 'stderr', text: result.error + '\n' });
-    if (result.timedOut) unflushed.push({ stream: 'stderr', text: `[md-runbook] timed out after ${formatDuration(plan.timeoutMs)}; process tree killed\n` });
-    await flush();
-
-    const exit = skipped ? 'skipped' : exitLabel(result);
-    const endedAt = new Date();
-    const elapsed = endedAt.getTime() - started.getTime();
-    const shellLabel = result.shell?.label;
-    const status = [statusLine(exit, undefined, formatDuration(elapsed)), shellLabel].filter(Boolean).join(' · ');
-    const attrs = { exit, ran, ended: formatLocalIso(endedAt), duration: formatDurationAttr(elapsed), ...plan.attrs };
-    await exec.appendOutput([statusOutput(status, attrs)]);
-
-    // A skipped cell counts as success so Run All carries on.
-    const success = skipped || isSuccess(result);
-    exec.end(skipped ? undefined : success, Date.now());
-    const run: RunRecord = { cell, notebook, plan, result, success, attrs, output: transcript };
-    for (const o of this.pipeline.observers) await o.onDidRunCell?.(run);
-    return run;
   }
 }

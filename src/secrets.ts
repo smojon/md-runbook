@@ -6,8 +6,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { shellKindForLanguage } from './core';
-import { RunbookParam, VAR_NAME_RE, findRefs, isRedactableValue, parseDotenv, parseFrontMatter, rewriteRefs } from './core/secrets';
+import { isCodeMeta, shellKindForLanguage } from './core';
+import { proposalOf } from './core/proposal';
+import { RunbookParam, VAR_NAME_RE, dotenvSecrets, findRefs, parseDotenv, parseFrontMatter, rewriteRefs } from './core/secrets';
+import { META_KEY } from './outputs';
 import { CellPlan, PrepareContext, RunPipeline } from './pipeline';
 import { SECTION } from './config';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -152,18 +154,24 @@ class SecretsFeature {
   async prepare(plan: CellPlan, ctx: PrepareContext): Promise<void> {
     if (plan.skip !== undefined) return;
     const c = vscode.workspace.getConfiguration(SECTION);
+    // Cells written by an assistant get none of your secrets: no .env file, no injected secrets,
+    // no ${secret:} / secret inputs. Their only credentials are mdRunbook.approval.readOnlyEnv.
+    const meta: unknown = ctx.cell.metadata?.[META_KEY];
+    const by = isCodeMeta(meta) ? proposalOf(meta.info).by : undefined;
 
     const envFile = c.get<string>('execution.envFile', '').trim();
-    if (envFile) {
+    if (envFile && !by) {
       const file = resolveEnvFile(envFile, plan.cwd, ctx.notebook.uri);
       if (fs.existsSync(file)) {
         const vars = parseDotenv(await fs.promises.readFile(file, 'utf8'));
         Object.assign(plan.env, vars);
-        if (c.get<boolean>('redaction.redactKnownSecrets', true)) plan.secrets.push(...Object.values(vars).filter(isRedactableValue));
+        // Only values that look like secrets (by name or by entropy): REGION=eu-west-1 must not be
+        // redacted everywhere for the rest of the session.
+        if (c.get<boolean>('redaction.redactKnownSecrets', true)) plan.secrets.push(...dotenvSecrets(vars));
       }
     }
 
-    for (const name of c.get<string[]>('secrets.inject', [])) {
+    for (const name of by ? [] : c.get<string[]>('secrets.inject', [])) {
       if (validateName(name)) throw new Error(`invalid secret name in mdRunbook.secrets.inject: ${name}`);
       const value = await this.secret(name, ctx);
       plan.env[name] = value;
@@ -173,6 +181,14 @@ class SecretsFeature {
     const shell = shellKindForLanguage(plan.language);
     if (!shell) return;
     const refs = findRefs(plan.source);
+    const secretRefs = by ? refs.filter((r) => r.secret) : [];
+    if (secretRefs.length > 0) {
+      const names = secretRefs.map((r) => (r.kind === 'secret' ? `\${secret:${r.name}}` : `\${input:${r.name}} (secret)`)).join(', ');
+      throw new Error(
+        `md-runbook: cells proposed by an assistant (by=${by}) cannot use secrets (${names}). ` +
+          'They only get the credentials in "mdRunbook.approval.readOnlyEnv".',
+      );
+    }
     for (const ref of refs) {
       const value =
         ref.kind === 'secret'

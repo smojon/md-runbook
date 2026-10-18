@@ -31,15 +31,28 @@ renders normally elsewhere:
 ## Confirming risky commands
 
 Before a cell whose text matches one of `mdRunbook.execution.confirmPatterns` runs, a modal
-dialog names the matching text and the current context (see below). Choosing anything other
-than **Run** skips the cell and records it as `exit=skipped`. In **Run All**, declining also
+dialog names the matching text and the context the cell will run in (see below). Choosing
+anything other than **Run** does not run the cell and records it as `exit=declined`; progress
+keeps such a step pending and **Resume Run** offers it again. In **Run All**, declining also
 stops the run, since later steps usually depend on the declined one. (A cell with the `skip`
-option does not stop Run All.)
+option is recorded as `exit=skipped`, counts as complete and does not stop Run All.)
+
+When the confirmation is asked:
+
+- Without `mdRunbook.output.recordContext`, right away, before any secret, input or parameter
+  is asked for, so a declined cell never prompts for anything.
+- With `mdRunbook.output.recordContext`, after the cell's environment is final (`.env` file,
+  secrets, inputs, the read-only credentials of assistant cells), so the context shown, and
+  recorded, is the cluster or server the cell will really use. Prompts for that cell's secrets,
+  inputs or parameters therefore come before the confirmation.
 
 The default patterns cover `delete`, `drain`, `cordon`, `scale … --replicas=0`, `rm -rf`,
-`--force`, `Remove-Item … -Recurse` and `drop table` / `drop database`. They are
-case-insensitive JavaScript regular expressions matched against the whole cell text,
-comments included.
+`--force`, `Remove-Item … -Recurse`, `drop table` / `drop database`, `rollout restart|undo`,
+`patch`, `apply`, `replace` (not PowerShell's `-replace` / `.Replace()`), `adm policy
+add…|remove…`, `set env|image|resources`, `helm upgrade|rollback|uninstall`, `curl -X` /
+`--request PUT|POST|PATCH|DELETE` and `Invoke-RestMethod|Invoke-WebRequest -Method
+Put|Post|Patch|Delete`. They are case-insensitive JavaScript regular expressions matched
+against the whole cell text, comments included.
 
 ```json
 "mdRunbook.execution.confirmPatterns": [
@@ -52,7 +65,8 @@ comments included.
 
 `mdRunbook.output.recordContext` maps attribute names to commands. Before a cell runs, each
 command's first output line is added to the output marker, so the saved runbook shows where
-it was run:
+it was run. The commands run with the cell's final environment (after the `.env` file,
+secrets and read-only credentials), so a `KUBECONFIG` set by any of them is the one recorded:
 
 ```json
 "mdRunbook.output.recordContext": {
@@ -66,8 +80,8 @@ it was run:
 ```
 
 - Commands run through the platform shell (`cmd.exe` on Windows, `/bin/sh` elsewhere) in the
-  folder of the `.md` file, with `mdRunbook.execution.env` and the cell's `env.*` options set,
-  and a 5 second timeout. A failing or silent command records `unknown`.
+  folder of the `.md` file, with the cell's environment (`mdRunbook.execution.env`, `env.*`
+  options, `.env`, secrets, read-only credentials) set, and a 5 second timeout. A failing or silent command records `unknown`.
 - Values are cached per runbook for `mdRunbook.output.recordContextCacheSeconds`.
 - Values pass through secret redaction like output does. Don't record commands that print
   secrets.

@@ -1,5 +1,7 @@
 import { strict as assert } from 'node:assert';
+import * as fs from 'node:fs';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { parseCellOptions, tokenizeInfo } from '../src/core/cellOptions';
 import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor, findRisky } from '../src/core/confirm';
@@ -53,7 +55,12 @@ describe('cell options', () => {
   });
 
   it('tokenizes', () => {
-    assert.deepEqual(tokenizeInfo(' a=1\tb  c="x y" =z'), [{ key: 'a', value: '1' }, { key: 'b' }, { key: 'c', value: 'x y' }]);
+    const toks = tokenizeInfo(' a=1\tb  c="x y" =z');
+    assert.deepEqual(
+      toks.map(({ key, value }) => (value === undefined ? { key } : { key, value })),
+      [{ key: 'a', value: '1' }, { key: 'b' }, { key: 'c', value: 'x y' }],
+    );
+    assert.deepEqual(toks.map((t) => [t.start, t.end]), [[1, 4], [5, 6], [8, 15]]);
   });
 });
 
@@ -76,6 +83,36 @@ describe('risky command confirmation', () => {
   for (const src of ['kubectl get pods', 'rm file.txt', 'echo deleted', 'kubectl scale deploy/web --replicas=3']) {
     it(`does not match ${src}`, () => assert.equal(findRisky(src, regexes), undefined));
   }
+
+  it('asks for changes made through the API (rollout, patch, apply, helm upgrade, write requests)', () => {
+    for (const src of [
+      'oc rollout restart deploy/x',
+      'kubectl rollout undo deploy/x',
+      'kubectl patch deploy x -p {}',
+      'kubectl apply -f x.yaml',
+      'kubectl replace -f x.yaml',
+      'oc adm policy add-cluster-role-to-user view -z sa',
+      'kubectl set image deploy/x c=img:2',
+      'helm upgrade api ./chart',
+      'curl -X POST https://x',
+      'curl --request DELETE https://x',
+      'Invoke-RestMethod https://x -Method Delete',
+    ]) {
+      assert.notEqual(findRisky(src, regexes), undefined, src);
+    }
+    for (const src of ["'a-b' -replace '-', '_'", '$s.Replace("a", "b")', 'curl -X GET https://x', 'helm list']) assert.equal(findRisky(src, regexes), undefined, src);
+  });
+
+  it('the default patterns in package.json and contrib/safety.json match the code', () => {
+    const root = path.resolve(__dirname, '..', '..');
+    for (const f of ['package.json', 'contrib/safety.json']) {
+      const json = JSON.parse(fs.readFileSync(path.join(root, f), 'utf8')) as { contributes?: unknown; configuration?: unknown };
+      const conf = (f === 'package.json' ? (json.contributes as { configuration: unknown }).configuration : json.configuration) as {
+        properties: Record<string, { default?: unknown }>;
+      };
+      assert.deepEqual(conf.properties['mdRunbook.execution.confirmPatterns']?.default, DEFAULT_CONFIRM_PATTERNS, f);
+    }
+  });
 
   it('returns the earliest match across patterns', () => {
     assert.equal(findRisky('git push --force\nkubectl delete ns x', regexes), '--force');

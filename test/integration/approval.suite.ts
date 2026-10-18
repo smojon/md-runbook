@@ -1,7 +1,8 @@
 /** Proposed cells: the gate, approval with audit trail, reset on edit, policy and read-only credentials. */
 import { strict as assert } from 'node:assert';
+import * as fs from 'node:fs';
 import * as vscode from 'vscode';
-import { LANG, Test, closeAll, openRunbook, outputText, read, runCells, selectKernel, setConfig, step, waitForRun, writeFile } from './suite';
+import { LANG, Test, closeAll, isWin, openRunbook, outputText, read, runCells, selectKernel, setConfig, step, waitForRun, writeFile } from './suite';
 
 export const tests: Test[] = [];
 const test = (name: string, fn: () => Promise<void>): void => void tests.push({ name, fn });
@@ -25,7 +26,7 @@ test('approval: Run All skips a proposed cell and runs the others', async () => 
   assert.match(outputText(c2!), /third cell/);
   assert.ok(await step('save', editor.notebook.save()));
   const saved = read(uri);
-  assert.match(saved, /exit=skipped/);
+  assert.match(saved, /exit=proposed/);
   assert.match(saved, /proposed by=ai/);
   await closeAll();
 });
@@ -86,6 +87,46 @@ test('approval: a cell with by= but no proposed flag is still gated', async () =
     assert.doesNotMatch(outputText(editor.notebook.cellAt(0)), /should-not-run/);
     assert.match(outputText(editor.notebook.cellAt(1)), /human/);
   } finally {
+    await closeAll();
+  }
+});
+
+test('approval: AI cells get none of your secrets, only readOnlyEnv', async () => {
+  await vscode.commands.executeCommand('mdRunbook._test.setSecret', 'MDRB_AI_INJECTED', 'injected-value-123');
+  writeFile('.env.ai', 'MDRB_AI_DOTENV=dotenv-value-123\n');
+  await setConfig('approval.enabled', false); // no approval step: this is about what the cell gets
+  await setConfig('approval.readOnlyEnv', { MDRB_AI_RO: 'ro-value', MDRB_AI_FILE: '${secretFile:MDRB_AI_INJECTED}' });
+  await setConfig('secrets.inject', ['MDRB_AI_INJECTED']);
+  await setConfig('execution.envFile', '.env.ai');
+  try {
+    const body = isWin
+      ? 'Write-Output "inj=[$env:MDRB_AI_INJECTED] env=[$env:MDRB_AI_DOTENV] ro=[$($env:MDRB_AI_RO.Length)]"'
+      : 'echo "inj=[$MDRB_AI_INJECTED] env=[$MDRB_AI_DOTENV] ro=[${#MDRB_AI_RO}]"\n' +
+        'echo "file=[$MDRB_AI_FILE] size=[$(wc -c < "$MDRB_AI_FILE" | tr -d \' \')] mode=[$(stat -c %a "$MDRB_AI_FILE" 2>/dev/null || stat -f %Lp "$MDRB_AI_FILE")]"';
+    const refused = isWin ? 'Write-Output "${secret:MDRB_AI_INJECTED}"' : 'echo "${secret:MDRB_AI_INJECTED}"';
+    const uri = writeFile('approval-ai-env.md', `# T\n\n${fence(' by=ai', body)}\n${fence(' by=ai', refused)}`);
+    const editor = await openRunbook(uri);
+    const [c0, c1] = editor.notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
+    await runCells(editor, c0!.index, c0!.index + 1);
+    assert.equal(await waitForRun(c0!), true, outputText(c0!));
+    assert.match(outputText(c0!), /inj=\[\] env=\[\] ro=\[8\]/);
+    if (!isWin) {
+      // ${secretFile:} gives a path to a 0600 file holding the value, removed after the cell.
+      const m = /file=\[(\S+)\] size=\[(\d+)\] mode=\[(\d+)\]/.exec(outputText(c0!));
+      assert.ok(m, outputText(c0!));
+      assert.equal(m[2], String('injected-value-123'.length));
+      assert.equal(m[3], '600');
+      assert.equal(fs.existsSync(m[1]!), false, 'temp file removed');
+    }
+    await runCells(editor, c1!.index, c1!.index + 1);
+    assert.equal(await waitForRun(c1!), false);
+    assert.match(outputText(c1!), /cannot use secrets/);
+  } finally {
+    await setConfig('approval.enabled', undefined);
+    await setConfig('approval.readOnlyEnv', undefined);
+    await setConfig('secrets.inject', undefined);
+    await setConfig('execution.envFile', undefined);
+    await vscode.commands.executeCommand('mdRunbook._test.deleteSecret', 'MDRB_AI_INJECTED');
     await closeAll();
   }
 });

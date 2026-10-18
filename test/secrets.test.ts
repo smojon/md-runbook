@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { envRef, findRefs, isRedactableValue, looksSecret, parseDotenv, parseFrontMatter, rewriteRefs } from '../src/core/secrets';
+import { dotenvSecrets, envRef, findRefs, isRedactableValue, looksLikeSecretValue, looksSecret, looksSecretKey, parseDotenv, parseFrontMatter, rewriteRefs } from '../src/core/secrets';
 
 describe('variable references', () => {
   it('finds unique references in order, with secrecy', () => {
@@ -27,8 +27,15 @@ describe('variable references', () => {
     const src = 'echo "${secret:TOKEN}x" ${input:pw:secret} ${param:P}';
     assert.equal(rewriteRefs(src, 'bash'), 'echo "${TOKEN}x" ${pw} ${P}');
     assert.equal(rewriteRefs(src, 'pwsh'), 'echo "${env:TOKEN}x" ${env:pw} ${env:P}');
-    assert.equal(rewriteRefs(src, 'cmd'), 'echo "%TOKEN%x" %pw% %P%');
-    assert.equal(envRef('A_1', 'cmd'), '%A_1%');
+    // cmd: delayed expansion (!NAME!), so a value like `p&calc` or `a>b` is never parsed as syntax.
+    assert.equal(rewriteRefs(src, 'cmd'), '@setlocal EnableDelayedExpansion\necho "!TOKEN!x" !pw! !P!');
+    assert.equal(envRef('A_1', 'cmd'), '!A_1!');
+  });
+
+  it('enables delayed expansion only in cmd scripts that had references, keeping the EOL', () => {
+    assert.equal(rewriteRefs('echo hi!\r\n', 'cmd'), 'echo hi!\r\n');
+    assert.equal(rewriteRefs('echo ${param:X}\r\necho y\r\n', 'cmd'), '@setlocal EnableDelayedExpansion\r\necho !X!\r\necho y\r\n');
+    assert.equal(rewriteRefs('echo ${param:X}', 'bash'), 'echo ${X}');
   });
 
   it('keeps line endings and other text', () => {
@@ -93,5 +100,31 @@ describe('.env parser', () => {
   it('skips trivial values for exact-match redaction', () => {
     assert.ok(!isRedactableValue('true') && !isRedactableValue('8080') && !isRedactableValue('OFF'));
     assert.ok(isRedactableValue('hunter2!') && isRedactableValue('123456'));
+  });
+
+  it('redacts only .env values that look like secrets (by key or by value)', () => {
+    const vars = parseDotenv(
+      [
+        'REGION=eu-west-1',
+        'NAMESPACE=shop-prod',
+        'API_URL=https://api.example.com/v1',
+        'LOG_LEVEL=debug',
+        'HOME_DIR=/home/me/projects/infra',
+        'DB_PASSWORD=hunter2',
+        'GITHUB_TOKEN=ghp_x',
+        'AWS_SECRET_ACCESS_KEY=abc',
+        'AWS_ACCESS_KEY_ID=AKIA1234',
+        'STRIPE_KEY=sk_live',
+        'CLIENT_CREDENTIALS=c1',
+        'DATABASE_URL=postgres://app:s3cr3t@db:5432/app',
+        'RANDOM_THING=Zx8kQ2mP9vL4tR7wB3nY6',
+        'ENABLED=true',
+        'MY_TOKEN=yes',
+      ].join('\n'),
+    );
+    assert.deepEqual(dotenvSecrets(vars).sort(), ['AKIA1234', 'Zx8kQ2mP9vL4tR7wB3nY6', 'abc', 'c1', 'ghp_x', 'hunter2', 'postgres://app:s3cr3t@db:5432/app', 'sk_live'].sort());
+    assert.ok(looksSecretKey('DB_PASSWORD') && looksSecretKey('MY_API_KEY') && looksSecretKey('KEY') && looksSecretKey('SESSION_COOKIE'));
+    assert.ok(!looksSecretKey('REGION') && !looksSecretKey('KEYCLOAK_URL') && !looksSecretKey('AUTHOR') && !looksSecretKey('MONKEY_COUNT'));
+    assert.ok(!looksLikeSecretValue('eu-west-1') && !looksLikeSecretValue('/very/long/path/to/some/dir123') && looksLikeSecretValue('Zx8kQ2mP9vL4tR7wB3nY6'));
   });
 });

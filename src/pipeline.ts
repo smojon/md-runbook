@@ -25,10 +25,19 @@ export interface CellPlan {
   secrets: string[];
   /** Run All keeps going if this cell fails. */
   continueOnError: boolean;
-  /** When set, the cell is not run; the reason is shown and recorded as exit=skipped. */
+  /** When set, the cell is not run; the reason is shown and recorded as exit=skipped (or `skipExit`). */
   skip?: string;
+  /**
+   * With `skip`: the exit label recorded instead of `skipped`. Progress counts `skipped` as
+   * complete; anything else (`declined`, `proposed`) stays pending and Resume Run picks it up.
+   */
+  skipExit?: string;
   /** With `skip`: also stop the rest of a Run All (e.g. a declined confirmation). */
   stopSequence?: boolean;
+  /** Set by an early preparer: the cell must be confirmed (text names the risky match, '' = always). */
+  confirm?: string;
+  /** Run after the cell finished (or was not run), e.g. to delete temporary credential files. */
+  cleanup?: (() => void | Promise<void>)[];
 }
 
 export interface PrepareContext {

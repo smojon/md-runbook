@@ -60,15 +60,19 @@ export function activate(context: vscode.ExtensionContext): void {
   const pipeline = new RunPipeline();
   // Feature modules register preparers/observers/executor on `pipeline` here. Preparers run in
   // registration order: the approval gate first, so proposed cells never prompt for anything;
-  // then safety, so skipped or declined cells never prompt for secrets.
+  // then safety (cell options, confirmation when no context is recorded), so skipped or declined
+  // cells never prompt for secrets.
   const approval = registerApproval(context, pipeline);
-  registerSafety(context, pipeline);
+  const safety = registerSafety(context, pipeline);
   registerSecrets(context, pipeline);
   registerHistory(context, pipeline);
   registerSessions(context, pipeline);
   registerTerminal(context, pipeline);
-  // Last: read-only credentials of AI-proposed cells win over cell options and secrets.
+  // Read-only credentials of AI-proposed cells win over cell options and secrets.
   pipeline.preparers.push(approval.credentials);
+  // Last, once the environment is final: record the context (cluster, ...) the cell really runs
+  // against, and ask for a pending confirmation showing it.
+  pipeline.preparers.push(safety.final);
   const controller = new RunbookController(pipeline);
   registerProgress(context, pipeline, controller);
   registerCodeLens(context);

@@ -27,9 +27,18 @@
           "\\brm\\s+-[a-z]*r[a-z]*f",
           "--force\\b",
           "\\bRemove-Item\\b.*-Recurse",
-          "\\bdrop\\s+(table|database)\\b"
+          "\\bdrop\\s+(table|database)\\b",
+          "\\brollout\\s+(restart|undo)\\b",
+          "(?<![-.])\\bpatch\\b",
+          "(?<![-.])\\bapply\\b",
+          "(?<![-.])\\breplace\\b",
+          "\\badm\\s+policy\\s+(add|remove)",
+          "\\bset\\s+(env|image|resources)\\b",
+          "\\bhelm\\s+(upgrade|rollback|uninstall)\\b",
+          "\\bcurl\\b.*(-X\\s*|--request[\\s=]+)(PUT|POST|PATCH|DELETE)\\b",
+          "\\bInvoke-(RestMethod|WebRequest)\\b.*-Method\\s+(Put|Post|Patch|Delete)\\b"
         ],
-        "markdownDescription": "JavaScript regular expressions (case-insensitive) for risky commands. A cell whose text matches one asks for confirmation before it runs; declining records it as `exit=skipped`. Can only be set in user settings, so a workspace cannot weaken it.",
+        "markdownDescription": "JavaScript regular expressions (case-insensitive) for risky commands. A cell whose text matches one asks for confirmation before it runs; declining records it as `exit=declined` (still pending for progress and Resume Run) and stops Run All. Can only be set in user settings, so a workspace cannot weaken it.",
         "scope": "machine"
       },
       "mdRunbook.output.recordContext": {
