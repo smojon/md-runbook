@@ -1,0 +1,42 @@
+{
+  "commands": [
+    {
+      "command": "mdRunbook.restartSession",
+      "title": "Restart Session",
+      "category": "md-runbook",
+      "icon": "$(debug-restart)"
+    },
+    {
+      "command": "mdRunbook.stopSession",
+      "title": "Stop Session",
+      "category": "md-runbook",
+      "icon": "$(debug-stop)"
+    }
+  ],
+  "menus": {
+    "commandPalette": [
+      {
+        "command": "mdRunbook.restartSession",
+        "when": "notebookType == md-runbook"
+      },
+      {
+        "command": "mdRunbook.stopSession",
+        "when": "notebookType == md-runbook"
+      }
+    ]
+  },
+  "configuration": {
+    "properties": {
+      "mdRunbook.execution.mode": {
+        "type": "string",
+        "enum": ["isolated", "session"],
+        "enumDescriptions": [
+          "Every cell runs in a new shell process.",
+          "Each runbook keeps one shell process per shell (bash, PowerShell), so `cd`, variables, functions and logins carry over between cells. cmd cells still run isolated."
+        ],
+        "default": "isolated",
+        "markdownDescription": "How cells are run. `session` keeps one long-lived bash and PowerShell process per runbook, so state carries over between cells. See **md-runbook: Restart Session** / **Stop Session**."
+      }
+    }
+  }
+}
