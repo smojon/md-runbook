@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { registerAi } from './ai/commands';
 import { registerApproval } from './approval';
+import { registerAiContext } from './aiCommands';
 import { registerCodeLens } from './codeLens';
 import { clearOutputBlocks } from './core';
 import { RunbookController } from './controller';
@@ -71,6 +72,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerCodeLens(context);
   registerReport(context);
   registerAi(context);
+  registerAiContext(context);
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {
       transientOutputs: false,

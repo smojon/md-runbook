@@ -19,7 +19,8 @@ import {
 import { SECTION } from '../config';
 import { META_KEY } from '../outputs';
 import { NOTEBOOK_TYPE } from '../serializer';
-import { buildContext } from './context';
+import { buildContextForNotebook as buildContext } from '../aiContextGlue';
+import { confirmNoLeaks } from '../aiCommands';
 import { ANTHROPIC_KEY, AiError, AiProvider, createProvider, fakeProvider, providerSetting, useFakeProvider } from './providers';
 
 function cfg(): vscode.WorkspaceConfiguration {
@@ -165,6 +166,8 @@ async function ask(nb: vscode.NotebookDocument, cells: number[] | undefined, bui
   const provider = await resolveProvider();
   if (!provider) return undefined;
   const ctx = await buildContext(extContext, nb, cells);
+  // Sending to a model is sharing: the same leak check as Copy for AI applies.
+  if (!(await confirmNoLeaks(ctx.text, 'Send'))) return undefined;
   const prompt = build(ctx.text);
   const pseudonymized = cfg().get<boolean>('ai.pseudonymize', true);
   if (!(await confirmSend(provider, prompt, pseudonymized, ctx.warnings))) return undefined;

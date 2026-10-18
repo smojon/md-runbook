@@ -3,6 +3,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CellInput, renderReport, serialize } from './core';
+import { confirmNoLeaks } from './aiCommands';
 import { SECTION, writeOptions } from './config';
 import { META_KEY, toOutputInput } from './outputs';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -63,7 +64,9 @@ export async function exportReport(arg?: unknown): Promise<vscode.Uri | undefine
     return undefined;
   }
   const name = path.posix.basename(uri.path);
-  const html = renderReport(await currentText(uri), { generatedAt: new Date(), fallbackTitle: name, redact: writeOptions().redact });
+  const text = await currentText(uri);
+  if (!(await confirmNoLeaks(text, 'Export'))) return undefined;
+  const html = renderReport(text, { generatedAt: new Date(), fallbackTitle: name, redact: writeOptions().redact });
   const folder = reportFolder(uri);
   await vscode.workspace.fs.createDirectory(folder);
   const out = vscode.Uri.joinPath(folder, name.replace(/\.(md|markdown)$/i, '') + '.report.html');
