@@ -20,7 +20,10 @@ The same file saved and opened as plain Markdown, with output blocks and redacte
 
 ## Install
 
-Build the `.vsix` and install it:
+From the Visual Studio Marketplace or Open VSX: search for **Markdown Runbook** in the Extensions
+view (once published; see [PUBLISHING.md](PUBLISHING.md)). Requires VS Code 1.93 or newer.
+
+Or build the `.vsix` yourself and install it:
 
 ```sh
 npm ci

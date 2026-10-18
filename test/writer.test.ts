@@ -231,3 +231,13 @@ describe('clearOutputBlocks', () => {
     assert.equal(clearOutputBlocks(src), src);
   });
 });
+
+describe('inserting new cells', () => {
+  it('does not add a second blank line before a block that already starts with one', () => {
+    const doc = parse('```sh\na\n```\n\nText\n');
+    const cells = untouched(doc);
+    cells.splice(1, 0, { kind: 'markup', value: 'New' });
+    assert.equal(serialize(doc.meta, cells, DEFAULT_WRITE_OPTIONS), '```sh\na\n```\n\nNew\n\nText\n');
+  });
+});
+

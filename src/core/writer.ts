@@ -44,23 +44,25 @@ export function serialize(doc: DocMeta | undefined, cells: readonly CellInput[],
           : undefined;
     const isNew = meta === undefined;
 
-    if (out !== '') {
-      if (!endsWithNewline(out)) out += eol;
-      // Keep new cells visually and structurally separate from their neighbours.
-      if ((isNew || prevWasNew) && !endsWithBlankLine(out)) out += eol;
-    }
-
+    if (out !== '' && !endsWithNewline(out)) out += eol;
     const skipLead = prevHadTrail && out !== '';
-    if (cell.kind === 'markup') {
-      out += renderMarkup(value, meta as MarkupMeta | undefined, eol, skipLead);
-    } else {
-      out += renderCode(value, cell.languageId, meta as CodeMeta | undefined, cell.output, eol, opts, skipLead);
-    }
+    const piece =
+      cell.kind === 'markup'
+        ? renderMarkup(value, meta as MarkupMeta | undefined, eol, skipLead)
+        : renderCode(value, cell.languageId, meta as CodeMeta | undefined, cell.output, eol, opts, skipLead);
+    // Keep new cells visually and structurally separate from their neighbours, unless the next
+    // cell already starts with a blank line of its own.
+    if (out !== '' && (isNew || prevWasNew) && !endsWithBlankLine(out) && !startsWithBlankLine(piece)) out += eol;
+    out += piece;
     prevWasNew = isNew;
     prevHadTrail = meta !== undefined && meta.trail !== '';
   }
 
   return (docMeta.bom ? '\uFEFF' : '') + out;
+}
+
+function startsWithBlankLine(s: string): boolean {
+  return /^[ \t]*(?:\r\n|\n|\r)/.test(s);
 }
 
 function endsWithBlankLine(s: string): boolean {

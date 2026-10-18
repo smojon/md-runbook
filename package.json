@@ -1,28 +1,61 @@
 {
   "name": "md-runbook",
-  "displayName": "md-runbook",
-  "description": "Open Markdown files as notebooks: run shell code blocks and store their output inside the same .md file.",
+  "displayName": "Markdown Runbook",
+  "description": "Run shell blocks in Markdown runbooks as a notebook and keep their output in the same .md file: PowerShell, cmd and bash on Windows, macOS and Linux, with secret redaction, approvals for AI-proposed commands and safe sharing with AI.",
   "version": "0.1.0",
   "publisher": "smojon",
+  "preview": true,
   "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#1f3a5f",
+    "theme": "dark"
+  },
+  "homepage": "https://github.com/smojon/md-runbook#readme",
+  "bugs": {
+    "url": "https://github.com/smojon/md-runbook/issues"
+  },
+  "qna": false,
   "repository": {
     "type": "git",
     "url": "https://github.com/smojon/md-runbook.git"
   },
   "engines": {
-    "vscode": "^1.85.0",
+    "vscode": "^1.93.0",
     "node": ">=20"
   },
   "categories": [
-    "Notebooks"
+    "Notebooks",
+    "Other"
   ],
   "keywords": [
+    "runbook",
     "markdown",
     "notebook",
-    "runbook",
     "shell",
-    "powershell"
+    "bash",
+    "powershell",
+    "pwsh",
+    "cmd",
+    "kubectl",
+    "oc",
+    "openshift",
+    "kubernetes",
+    "devops",
+    "sre",
+    "incident",
+    "troubleshooting",
+    "redaction",
+    "secrets",
+    "ai"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "md-runbook runs shell commands from Markdown files, so it is disabled in Restricted Mode."
+    },
+    "virtualWorkspaces": false
+  },
   "main": "./out/src/extension.js",
   "activationEvents": [
     "onLanguage:markdown"
