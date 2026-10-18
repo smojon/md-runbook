@@ -13,7 +13,10 @@ export interface ReportOptions {
   generatedAt: Date;
   /** Used when the document has no heading. */
   fallbackTitle?: string;
-  /** Applied to stored outputs once more (they were already redacted when written). */
+  /**
+   * Applied to stored outputs once more (they were already redacted when written), to the code of
+   * every step and fenced block, and to front matter.
+   */
   redact?: (text: string) => string;
 }
 
@@ -39,6 +42,15 @@ function firstHeading(markdown: string): string | undefined {
   return undefined;
 }
 
+/** YAML front matter (`---` ... `---` at the very top of the document) and the text after it. */
+function splitFrontMatter(value: string): { yaml: string; rest: string } | undefined {
+  const lines = value.split('\n');
+  if (lines[0]?.replace(/^\uFEFF/, '').trimEnd() !== '---') return undefined;
+  const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)[ \t]*$/.test(l));
+  if (end < 0) return undefined;
+  return { yaml: lines.slice(1, end).join('\n'), rest: lines.slice(end + 1).join('\n') };
+}
+
 export function renderReport(text: string, opts: ReportOptions): string {
   const doc = parse(text);
   const redact = (s: string): string => (opts.redact ? opts.redact(s) : s);
@@ -48,10 +60,18 @@ export function renderReport(text: string, opts: ReportOptions): string {
   let step = 0;
   const counts: Record<Status, number> = { ok: 0, fail: 0, skip: 0, none: 0 };
 
-  for (const cell of doc.cells) {
+  for (const [index, cell] of doc.cells.entries()) {
     if (!isCodeMeta(cell.meta)) {
-      title ??= firstHeading(cell.value);
-      body += renderMarkdown(cell.value);
+      let value = cell.value;
+      if (index === 0) {
+        const fm = splitFrontMatter(value);
+        if (fm) {
+          body += `<div class="front-matter">${renderCodeBlock(redact(fm.yaml), 'front matter')}</div>\n`;
+          value = fm.rest;
+        }
+      }
+      title ??= firstHeading(value);
+      body += renderMarkdown(value, redact);
       continue;
     }
     step++;
@@ -59,14 +79,15 @@ export function renderReport(text: string, opts: ReportOptions): string {
     const st = statusOf(a.exit);
     counts[st]++;
     const shell = cell.meta.lang;
-    const firstLine = cell.value.split('\n').find((l) => l.trim() !== '')?.trim() ?? '';
+    const code = redact(cell.value);
+    const firstLine = code.split('\n').find((l) => l.trim() !== '')?.trim() ?? '';
     rows +=
       `<tr class="${st}"><td><a href="#step-${step}">${step}</a></td><td><code>${escapeHtml(firstLine)}</code></td>` +
       `<td>${escapeHtml(shell)}</td><td>${badge(a.exit)}</td>` +
       `<td>${escapeHtml(a.ran ?? '')}</td><td>${escapeHtml(a.duration ?? '')}</td></tr>\n`;
 
     body += `<section class="step ${st}" id="step-${step}">\n<div class="step-head">Step ${step}</div>\n`;
-    body += renderCodeBlock(cell.value, shell);
+    body += renderCodeBlock(code, shell);
     if (cell.output) {
       const meta = [a.ran && `ran ${a.ran}`, a.duration].filter(Boolean).map((s) => escapeHtml(s as string));
       body +=

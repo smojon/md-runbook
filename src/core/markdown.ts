@@ -12,9 +12,14 @@ export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&${{ '&': 'amp', '<': 'lt', '>': 'gt', '"': 'quot', "'": '#39' }[c]};`);
 }
 
-/** Only http(s), mailto and scheme-less (relative or #anchor) links are kept. */
+/**
+ * Only http(s), mailto and scheme-less (relative or #anchor) links are kept. Protocol-relative
+ * links (`//host`, `\\host` and mixes) are dropped: from a file:// report they become UNC/SMB
+ * paths on Windows, and clicking one can leak NTLM credentials.
+ */
 export function safeUrl(url: string): string | undefined {
   if (/[\x00-\x20\x7f]/.test(url)) return undefined;
+  if (/^[\\/]{2}/.test(url)) return undefined;
   const scheme = /^([^/?#]*?):/.exec(url);
   if (scheme && !/^(https?|mailto)$/i.test(scheme[1]!)) return undefined;
   return url;
@@ -39,8 +44,18 @@ export function renderCodeBlock(code: string, lang: string): string {
   return `<div class="code">${label}<pre><code>${escapeHtml(code)}</code></pre></div>\n`;
 }
 
-export function renderMarkdown(text: string): string {
-  return renderBlocks(toLf(text).split('\n'));
+/** Applied to the text of fenced code blocks while rendering (redaction); set by renderMarkdown. */
+let codeTransform: (code: string) => string = (c) => c;
+
+/** `redactCode` is applied to fenced code blocks (secrets in commands must not reach a report). */
+export function renderMarkdown(text: string, redactCode?: (code: string) => string): string {
+  const saved = codeTransform;
+  codeTransform = redactCode ?? ((c) => c);
+  try {
+    return renderBlocks(toLf(text).split('\n'));
+  } finally {
+    codeTransform = saved;
+  }
 }
 
 function startsBlock(line: string): boolean {
@@ -69,7 +84,7 @@ function renderBlocks(lines: string[]): string {
       let j = i + 1;
       while (j < lines.length && !isFenceClose(lines[j]!, fence)) j++;
       const strip = (l: string): string => l.replace(new RegExp(`^[ \\t]{0,${fence.indent.length}}`), '');
-      html += renderCodeBlock(lines.slice(i + 1, j).map(strip).join('\n'), langOf(fence.info));
+      html += renderCodeBlock(codeTransform(lines.slice(i + 1, j).map(strip).join('\n')), langOf(fence.info));
       i = j + 1;
       continue;
     }

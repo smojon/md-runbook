@@ -132,3 +132,41 @@ export function describeHttpError(status: number, detail: string, model: string)
       return status >= 500 ? `the Anthropic API had an internal error (${status})${d}. Try again.` : `request failed with HTTP ${status}${d}.`;
   }
 }
+
+/** An API key must be a single run of printable ASCII (no spaces or control characters). */
+export function isValidApiKey(key: string): boolean {
+  return /^[\x21-\x7e]+$/.test(key);
+}
+
+/** A URL for messages: any `user:pass@` credentials removed (and never echoed). */
+export function urlForDisplay(raw: string): string {
+  try {
+    const u = new URL(raw.trim());
+    u.username = '';
+    u.password = '';
+    return u.toString().replace(/\/$/, '');
+  } catch {
+    // Not a URL: still drop anything that looks like credentials before an '@'.
+    return raw.trim().replace(/^([^/]*\/\/)?[^/@\s]*@/, '$1');
+  }
+}
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Why a base URL may not be used with the API key, or undefined if it is fine: it must parse,
+ * use https (http only for localhost / 127.0.0.1) and carry no embedded credentials.
+ */
+export function baseUrlProblem(baseUrl: string): string | undefined {
+  const raw = baseUrl.trim() || 'https://api.anthropic.com';
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return `mdRunbook.ai.anthropicBaseUrl is not a valid URL: ${urlForDisplay(raw)}`;
+  }
+  if (u.username !== '' || u.password !== '') return 'mdRunbook.ai.anthropicBaseUrl must not contain credentials (user:password@).';
+  if (u.protocol === 'https:') return undefined;
+  if (u.protocol === 'http:' && LOCAL_HOSTS.has(u.hostname)) return undefined;
+  return `mdRunbook.ai.anthropicBaseUrl must use https:// (http:// only for localhost): ${urlForDisplay(raw)}`;
+}

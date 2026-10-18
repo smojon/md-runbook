@@ -3,8 +3,8 @@
  * are written from their original bytes; edited and new cells are rebuilt.
  */
 
-import { addIndent, longestClosingRun, replaceLang } from './fence';
-import { fenceForLanguageId, languageIdForFence } from './languages';
+import { addIndent, isFenceClose, longestClosingRun, matchFenceOpen, replaceLang } from './fence';
+import { fenceForLanguageId, isRunnableFenceLang, languageIdForFence } from './languages';
 import { DocEol, endsWithNewline, toLf, trailingEol } from './lines';
 import {
   CellInput,
@@ -77,12 +77,43 @@ function joinLines(value: string, eol: string, indent = ''): string {
     .join(eol);
 }
 
+/**
+ * The closing fence line (without EOL) for a fence that `value` opens but never closes, else ''.
+ * Left open, such a fence would swallow the following cells (and their outputs) on reopen.
+ */
+export function unclosedFenceCloser(value: string): string {
+  let open: ReturnType<typeof matchFenceOpen> = null;
+  for (const line of value.split('\n')) {
+    if (open) {
+      if (isFenceClose(line, open)) open = null;
+    } else {
+      open = matchFenceOpen(line);
+    }
+  }
+  return open ? open.indent + open.char.repeat(open.len) : '';
+}
+
+/** Rebuilt markup text: lines joined with `eol`, plus a closing fence if one was left open. */
+function markupContent(value: string, eol: string, finalEol: string): string {
+  const closer = unclosedFenceCloser(value);
+  return joinLines(value, eol) + (closer === '' ? '' : eol + closer) + finalEol;
+}
+
 function renderMarkup(value: string, meta: MarkupMeta | undefined, eol: DocEol, skipLead: boolean): string {
-  if (!meta) return value === '' ? '' : joinLines(value, eol) + eol;
+  if (!meta) return value === '' ? '' : markupContent(value, eol, eol);
   const lead = skipLead ? '' : meta.lead;
   if (value === meta.value) return lead + meta.content + meta.trail;
-  const content = value === '' ? '' : joinLines(value, meta.eol) + meta.finalEol;
+  const content = value === '' ? '' : markupContent(value, meta.eol, meta.finalEol);
   return lead + content + meta.trail;
+}
+
+/**
+ * Whether a notebook code cell with this language is written as a runnable fence (and so parses
+ * back as a code cell). Other languages (a python cell added in the notebook, say) are written as
+ * fences the parser keeps inside markdown.
+ */
+export function writesAsCodeCell(languageId: string | undefined): boolean {
+  return isRunnableFenceLang(fenceForLanguageId(languageId ?? 'shellscript'));
 }
 
 function renderCode(

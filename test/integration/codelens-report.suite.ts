@@ -75,6 +75,33 @@ test('running a block from the text editor writes its output block (unsaved)', a
   }
 });
 
+test('text-editor runs honour skip, cwd= and timeout= and refuse ${param:} references', async () => {
+  const src =
+    `\`\`\`${LANG} skip\necho skipped-block\n\`\`\`\n\nA.\n\n` +
+    `\`\`\`${LANG} cwd=does-not-exist\necho in-missing\n\`\`\`\n\nB.\n\n` +
+    `\`\`\`${LANG} timeout=abc\necho bad-timeout\n\`\`\`\n\nC.\n\n` +
+    `\`\`\`${LANG}\necho \${param:NAMESPACE}\n\`\`\`\n`;
+  const uri = writeFile('lens-options.md', src);
+  const doc = await openText(uri);
+  await setConfig('codeLens.enabled', true);
+  try {
+    assert.equal(await step('run skip', vscode.commands.executeCommand<boolean>('mdRunbook.runCellInEditor', uri, 0), 60_000), true);
+    assert.equal(doc.getText(), src, 'a skipped block writes no output');
+    assert.equal(await step('run cwd', vscode.commands.executeCommand<boolean>('mdRunbook.runCellInEditor', uri, 2), 60_000), false);
+    assert.match(doc.getText(), /Working directory not found: [^\n]*does-not-exist/);
+    assert.equal(await step('run timeout', vscode.commands.executeCommand<boolean>('mdRunbook.runCellInEditor', uri, 4), 60_000), false);
+    assert.match(doc.getText(), /invalid cell option timeout=abc/);
+    assert.doesNotMatch(doc.getText(), /\nbad-timeout\n/);
+    const before = doc.getText();
+    assert.equal(await step('run param', vscode.commands.executeCommand<boolean>('mdRunbook.runCellInEditor', uri, 6), 60_000), false);
+    assert.equal(doc.getText(), before, 'a block with ${param:} references does not run');
+    await step('revert', vscode.commands.executeCommand('workbench.action.files.revert'));
+  } finally {
+    await setConfig('codeLens.enabled', undefined);
+    await closeAll();
+  }
+});
+
 test('Export Report writes a self-contained HTML file with the step table', async () => {
   const uri = writeFile('lens-report.md', SAMPLE.replace('# Lens', '# Report <x>'));
   const out = await step('export', vscode.commands.executeCommand<vscode.Uri>('mdRunbook.exportReport', uri));

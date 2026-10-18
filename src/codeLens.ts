@@ -22,9 +22,10 @@ import {
   parse,
   setCellOutput,
 } from './core';
-import { SECTION, executionConfig, redactionConfig, writeOptions } from './config';
+import { ExecutionConfig, SECTION, executionConfig, redactionConfig, writeOptions } from './config';
 import { workingDirectory } from './controller';
 import { knownSecrets } from './knownSecrets';
+import { parseCellOptions } from './core/cellOptions';
 import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from './core/confirm';
 import { proposalOf } from './core/proposal';
 import { cellConfirmOption } from './safety';
@@ -37,6 +38,9 @@ async function textEditorGuard(loc: CodeCellLocation): Promise<string | undefine
   const p = proposalOf(loc.info);
   if (p.state === 'proposed') return 'this is a proposed cell; approve and run it in the runbook (notebook) view';
   if (p.by) return 'cells written by an assistant only run in the runbook (notebook) view, where approval, policy and read-only credentials apply';
+  // Unresolved, a shell would misread these (bash: `${param:X}` is a substring expansion -> empty).
+  const ref = /\$\{(secret|input|param):[^}]*\}/.exec(loc.source);
+  if (ref) return `this block uses ${ref[0]}; \${secret:…}, \${input:…} and \${param:…} references are resolved only in the runbook (notebook) view`;
   const c = vscode.workspace.getConfiguration(SECTION);
   const { regexes } = compileConfirmPatterns(c.get<string[]>('execution.confirmPatterns', DEFAULT_CONFIRM_PATTERNS));
   const match = confirmationFor(loc.source, c.get<ConfirmMode>('execution.confirm', 'patterns'), regexes, cellConfirmOption(loc.info));
@@ -44,6 +48,31 @@ async function textEditorGuard(loc: CodeCellLocation): Promise<string | undefine
   const message = match === '' ? 'Run this block?' : `This block contains a risky command: “${match.trim()}”`;
   const answer = await vscode.window.showWarningMessage(message, { modal: true }, 'Run');
   return answer === 'Run' ? undefined : 'not confirmed';
+}
+
+interface RunOptions {
+  skip: boolean;
+  cwd: string;
+  timeoutMs: number;
+  env: Record<string, string>;
+  /** Invalid cell options: the block fails with this message instead of running. */
+  error?: string;
+}
+
+/**
+ * The fence options of a block (`skip`, `cwd=`, `timeout=`, `env.*`), applied like the notebook's
+ * options preparer: cwd relative to the .md file's folder, invalid options fail the block.
+ */
+function runOptions(info: string, baseDir: string, cfg: ExecutionConfig): RunOptions {
+  const out: RunOptions = { skip: false, cwd: baseDir, timeoutMs: cfg.timeoutMs, env: { ...cfg.env } };
+  if (!vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true)) return out;
+  const o = parseCellOptions(info);
+  if (o.errors.length > 0) out.error = `md-runbook: invalid cell option ${o.errors.join('; ')}`;
+  if (o.skip && out.error === undefined) out.skip = true;
+  if (o.timeoutSeconds !== undefined) out.timeoutMs = o.timeoutSeconds * 1000;
+  if (o.cwd !== undefined) out.cwd = path.resolve(baseDir, o.cwd);
+  Object.assign(out.env, o.env);
+  return out;
 }
 
 export const RUN_CELL = 'mdRunbook.runCellInEditor';
@@ -114,15 +143,21 @@ class EditorRunner {
     // Re-locate on every step: earlier steps (or the user) may have edited the document.
     const loc = locate(doc).find((l) => l.cellIndex === cellIndex);
     if (!loc) return false;
+    const cfg = executionConfig();
+    const opts = runOptions(loc.info, workingDirectory(doc.uri), cfg);
+    if (opts.skip) {
+      this.channel.show(true);
+      this.channel.appendLine(`[md-runbook] skipped: ${path.basename(doc.uri.fsPath || doc.uri.path)}:${loc.line + 1} (skip option)`);
+      return true;
+    }
     const blocked = await textEditorGuard(loc);
     if (blocked) {
       this.channel.show(true);
       this.channel.appendLine(`[md-runbook] not run: ${blocked}`);
       return false;
     }
-    const cfg = executionConfig();
     const started = new Date();
-    const cwd = workingDirectory(doc.uri);
+    const cwd = opts.cwd;
     const key = doc.uri.toString();
     this.running.set(key, cellIndex);
     this.changed.fire();
@@ -130,28 +165,33 @@ class EditorRunner {
     this.channel.show(true);
     this.channel.appendLine(`▶ ${path.basename(doc.uri.fsPath || doc.uri.path)}:${loc.line + 1} (${loc.language}) · ${formatLocalIso(started)}`);
 
+    // The output channel is also logged to disk, so known secrets are always redacted there;
+    // patterns too when live redaction is on.
     const redaction = redactionConfig();
     const liveRedact =
-      redaction.enabled && redaction.applyToLiveOutput ? (t: string) => knownSecrets.redact(redaction.redactor.redact(t)) : undefined;
+      redaction.enabled && redaction.applyToLiveOutput
+        ? (t: string) => knownSecrets.redact(redaction.redactor.redact(t))
+        : (t: string) => knownSecrets.redact(t);
     let transcript = '';
     const live = new LineBuffer((t) => this.channel.append(t), liveRedact);
     const write = (t: string): void => {
       transcript += t;
       live.write(t);
-      if (!liveRedact) live.flush();
     };
     const failed = (error: string): ExecuteResult => ({ exitCode: null, signal: null, timedOut: false, cancelled: false, error, durationMs: 0 });
 
     let result: ExecuteResult;
     try {
-      result = fs.existsSync(cwd)
+      result = opts.error !== undefined
+        ? failed(opts.error)
+        : fs.existsSync(cwd)
         ? await executeCell({
             language: loc.language,
             source: loc.source,
             cwd,
             settings: cfg.shell,
-            timeoutMs: cfg.timeoutMs,
-            env: cfg.env,
+            timeoutMs: opts.timeoutMs,
+            env: opts.env,
             signal,
             onStdout: write,
             onStderr: write,
@@ -163,7 +203,7 @@ class EditorRunner {
       if (this.running.get(key) === cellIndex) this.running.delete(key);
     }
     if (result.error !== undefined) write(result.error + '\n');
-    if (result.timedOut) write(`[md-runbook] timed out after ${cfg.timeoutMs / 1000}s; process tree killed\n`);
+    if (result.timedOut) write(`[md-runbook] timed out after ${opts.timeoutMs / 1000}s; process tree killed\n`);
     live.flush();
 
     const ended = new Date();

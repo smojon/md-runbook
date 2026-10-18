@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { CellInput, DEFAULT_WRITE_OPTIONS, WriteOptions, clearOutputBlocks, parse, serialize } from '../src/core';
+import { unclosedFenceCloser, writesAsCodeCell } from '../src/core/writer';
 import { untouched } from './helpers';
 
 const RAN = '2026-10-18T14:20:00+02:00';
@@ -241,3 +242,58 @@ describe('inserting new cells', () => {
   });
 });
 
+
+describe('markup cells that leave a fence open', () => {
+  const SRC = '# T\n\nIntro\n\n```bash\necho hi\n```\n<!-- md-runbook:output start exit=0 -->\n```text\nhi\n```\n<!-- md-runbook:output end -->\n';
+
+  it('an edited markup cell ending inside a fence gets a closing fence', () => {
+    const out = edit(SRC, (c) => {
+      c[0]!.value = '# T\n\nIntro\n\n```';
+    });
+    assert.equal(out, '# T\n\nIntro\n\n```\n```\n\n```bash\necho hi\n```\n<!-- md-runbook:output start exit=0 -->\n```text\nhi\n```\n<!-- md-runbook:output end -->\n');
+    const back = parse(out);
+    assert.equal(back.cells.filter((c) => c.kind === 'code').length, 1, 'code cell survives');
+    assert.equal(back.cells.find((c) => c.kind === 'code')?.output?.text, 'hi');
+  });
+
+  it('closes with the opening fence char, length and indent; CRLF kept', () => {
+    const doc = parse('Text\r\n\r\n```sh\r\necho\r\n```\r\n');
+    const cells = untouched(doc);
+    cells[0]!.value = 'Text\n  ~~~~python\n  x = 1';
+    assert.equal(serialize(doc.meta, cells, DEFAULT_WRITE_OPTIONS), 'Text\r\n  ~~~~python\r\n  x = 1\r\n  ~~~~\r\n\r\n```sh\r\necho\r\n```\r\n');
+  });
+
+  it('new markup cells are closed too; balanced fences are left alone', () => {
+    const doc = parse('```sh\na\n```\n');
+    const cells = untouched(doc);
+    cells.push({ kind: 'markup', value: 'x\n````md\n```\nstill open' });
+    cells.push({ kind: 'markup', value: '```js\nok()\n```' });
+    assert.equal(serialize(doc.meta, cells, DEFAULT_WRITE_OPTIONS), '```sh\na\n```\n\nx\n````md\n```\nstill open\n````\n\n```js\nok()\n```\n');
+  });
+
+  it('untouched markup with an unclosed fence stays byte-identical', () => {
+    const text = '```bash\necho\n```\n\nTail\n```\nnever closed\n';
+    assert.equal(serialize(parse(text).meta, untouched(parse(text)), DEFAULT_WRITE_OPTIONS), text);
+  });
+
+  it('unclosedFenceCloser', () => {
+    assert.equal(unclosedFenceCloser('a\n```'), '```');
+    assert.equal(unclosedFenceCloser('```\n```'), '');
+    assert.equal(unclosedFenceCloser('~~~\n```\n'), '~~~');
+    assert.equal(unclosedFenceCloser('plain'), '');
+  });
+});
+
+describe('writesAsCodeCell', () => {
+  it('only shell languages are written as runnable fences', () => {
+    for (const id of ['shellscript', 'powershell', 'bat', 'sh', 'bash', 'pwsh', 'cmd', undefined]) assert.equal(writesAsCodeCell(id), true, String(id));
+    for (const id of ['python', 'javascript', 'markdown', 'zsh']) assert.equal(writesAsCodeCell(id), false, id);
+  });
+
+  it('agrees with what the parser reads back', () => {
+    for (const id of ['shellscript', 'python', 'bat', 'json']) {
+      const out = serialize(undefined, [{ kind: 'code', value: 'x', languageId: id }], DEFAULT_WRITE_OPTIONS);
+      assert.equal(parse(out).cells.some((c) => c.kind === 'code'), writesAsCodeCell(id), id);
+    }
+  });
+});

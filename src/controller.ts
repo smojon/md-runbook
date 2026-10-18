@@ -8,6 +8,7 @@ import { ExecuteResult, LineBuffer, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDur
 import { ExecutionConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, statusLine, statusOutput } from './outputs';
 import { CellPlan, PrepareContext, RunPipeline, RunRecord } from './pipeline';
+import { copyOrigin } from './copyOrigins';
 import { knownSecrets } from './knownSecrets';
 import { NOTEBOOK_TYPE } from './serializer';
 
@@ -33,6 +34,9 @@ function formatDuration(ms: number): string {
 }
 
 export function workingDirectory(uri: vscode.Uri): string {
+  // A Run All as Copy copy made in another folder runs in the original runbook's folder.
+  const origin = copyOrigin(uri);
+  if (origin !== undefined) return origin;
   if (uri.scheme === 'file') return path.dirname(uri.fsPath);
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
 }
