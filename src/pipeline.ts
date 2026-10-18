@@ -4,8 +4,9 @@
  */
 
 import * as vscode from 'vscode';
-import { ExecuteResult, executeCell } from './core';
+import { ExecuteOptions, ExecuteResult, executeCell } from './core';
 import type { ShellSettings } from './core';
+import type { SessionPool } from './core/session';
 
 /** Everything needed to run one cell; preparers may change any of it. */
 export interface CellPlan {
@@ -38,6 +39,12 @@ export interface CellPlan {
   confirm?: string;
   /** Run after the cell finished (or was not run), e.g. to delete temporary credential files. */
   cleanup?: (() => void | Promise<void>)[];
+  /**
+   * Line runs: the commands run one after another instead of `source` (which then holds the
+   * lines they come from, for preparers that check it). A preparer that rewrites `source` must
+   * rewrite each step the same way.
+   */
+  steps?: string[];
 }
 
 export interface PrepareContext {
@@ -46,6 +53,11 @@ export interface PrepareContext {
   token: vscode.CancellationToken;
   /** The cell's outputs from before this run (they are cleared before preparers run). */
   previousOutputs?: readonly vscode.NotebookCellOutput[];
+  /**
+   * Line runs outside session mode: a shell kept for the lines of this run only, so `cd` and
+   * variables carry over from one line to the next. Stopped when the run ends.
+   */
+  lineShell?: SessionPool;
 }
 
 export interface CellPreparer {
@@ -83,10 +95,10 @@ export interface RunObserver {
   onDidRunSequence?(notebook: vscode.NotebookDocument, runs: RunRecord[]): void | Promise<void>;
 }
 
-/** Default executor: every cell in its own process. */
+/** Default executor: every cell in its own process (the lines of a line run share one). */
 export const isolatedExecutor: CellExecutor = {
-  execute: (plan, io) =>
-    executeCell({
+  execute: (plan, io, ctx) => {
+    const opts: ExecuteOptions = {
       language: plan.language,
       source: plan.source,
       cwd: plan.cwd,
@@ -96,7 +108,9 @@ export const isolatedExecutor: CellExecutor = {
       signal: io.signal,
       onStdout: io.onStdout,
       onStderr: io.onStderr,
-    }),
+    };
+    return ctx.lineShell ? ctx.lineShell.execute(opts) : executeCell(opts);
+  },
 };
 
 /** Registry the controller consults; features register in extension.ts. */

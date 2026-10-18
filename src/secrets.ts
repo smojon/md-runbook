@@ -199,7 +199,10 @@ class SecretsFeature {
       plan.env[ref.name] = value;
       if (ref.secret) plan.secrets.push(value);
     }
-    if (refs.length > 0) plan.source = rewriteRefs(plan.source, shell);
+    if (refs.length > 0) {
+      plan.source = rewriteRefs(plan.source, shell);
+      plan.steps = plan.steps?.map((step) => rewriteRefs(step, shell));
+    }
   }
 
   forget(nb: vscode.NotebookDocument): void {

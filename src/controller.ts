@@ -4,10 +4,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ExecuteResult, HISTORY_KEY, LineBuffer, isRunHistory, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDurationAttr, formatLocalIso, isSuccess } from './core';
+import { ExecuteResult, HISTORY_KEY, LineBuffer, isRunHistory, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDurationAttr, formatLocalIso, isSuccess, shellKindForLanguage } from './core';
+import { SessionPool } from './core/session';
+import { LineStep, echoCommand, formatLineRange } from './core/steps';
 import { ExecutionConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
-import { CellPlan, PrepareContext, RunPipeline, RunRecord } from './pipeline';
+import { CellPlan, ExecuteIO, PrepareContext, RunPipeline, RunRecord } from './pipeline';
 import { copyOrigin } from './copyOrigins';
 import { knownSecrets } from './knownSecrets';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -43,6 +45,29 @@ export function workingDirectory(uri: vscode.Uri): string {
 
 export const CONTROLLER_ID = 'md-runbook-shell';
 
+/** A run of some lines of one cell: Run Line or Selection, Run Lines One by One, Step Through. */
+export interface LineRun {
+  /** The lines the steps come from: what preparers (confirmation, secrets) see as the source. */
+  source: string;
+  /** Commands run one after another in one shell, stopping at the first that fails. */
+  steps: readonly LineStep[];
+  /** The steps are every command of the cell: running all of them is a full run (no `lines=`). */
+  coversCell: boolean;
+  /** Called before each step after the first; resolves false to stop there (Step Through). */
+  beforeStep?(index: number, token: vscode.CancellationToken): Promise<boolean>;
+  /** Step `index` starts, or (undefined) the run is over. */
+  onStep?(index: number | undefined): void;
+}
+
+/** `lines=` for a line run that did not run every command of the cell, else undefined. */
+function linesAttr(run: LineRun, ran: readonly number[]): string | undefined {
+  if (run.coversCell && ran.length === run.steps.length) return undefined;
+  const picked = ran.length > 0 ? ran.map((i) => run.steps[i]!) : run.steps;
+  const first = picked[0];
+  const last = picked[picked.length - 1];
+  return first && last ? formatLineRange(first.start, last.end) : undefined;
+}
+
 export class RunbookController implements vscode.Disposable {
   private readonly controller: vscode.NotebookController;
   private executionOrder = 0;
@@ -55,6 +80,11 @@ export class RunbookController implements vscode.Disposable {
     this.controller.supportedLanguages = [...SUPPORTED_LANGUAGE_IDS];
     this.controller.supportsExecutionOrder = true;
     this.controller.executeHandler = (cells, notebook) => this.enqueue(cells, notebook);
+  }
+
+  /** Run some lines of a cell, queued after the runbook's other runs like a normal run. */
+  runLines(cell: vscode.NotebookCell, run: LineRun): Promise<void> {
+    return this.enqueue([cell], cell.notebook, run);
   }
 
   dispose(): void {
@@ -106,7 +136,7 @@ export class RunbookController implements vscode.Disposable {
     }
   }
 
-  private enqueue(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument): Promise<void> {
+  private enqueue(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument, lineRun?: LineRun): Promise<void> {
     // Create executions up front so queued cells show as pending.
     const executions: vscode.NotebookCellExecution[] = [];
     for (const cell of cells) {
@@ -119,7 +149,7 @@ export class RunbookController implements vscode.Disposable {
     }
     const key = notebook.uri.toString();
     const next = (this.queues.get(key) ?? Promise.resolve())
-      .then(() => this.runSequence(executions, notebook))
+      .then(() => this.runSequence(executions, notebook, lineRun))
       .catch((e: unknown) => {
         void vscode.window.showErrorMessage(`md-runbook: ${e instanceof Error ? e.message : String(e)}`);
       });
@@ -130,7 +160,7 @@ export class RunbookController implements vscode.Disposable {
     return next;
   }
 
-  private async runSequence(executions: vscode.NotebookCellExecution[], notebook: vscode.NotebookDocument): Promise<void> {
+  private async runSequence(executions: vscode.NotebookCellExecution[], notebook: vscode.NotebookDocument, lineRun?: LineRun): Promise<void> {
     const cfg = executionConfig();
     let stopped: vscode.NotebookCell | undefined;
     const runs: RunRecord[] = [];
@@ -148,7 +178,7 @@ export class RunbookController implements vscode.Disposable {
           exec.end(undefined);
           continue;
         }
-        const run = await this.runCell(exec, notebook, cfg);
+        const run = await this.runCell(exec, notebook, cfg, lineRun);
         runs.push(run);
         const failedHard = !run.success && !run.plan.continueOnError && cfg.stopOnFailure;
         if ((failedHard || run.plan.stopSequence) && executions.length > 1) stopped = exec.cell;
@@ -171,14 +201,14 @@ export class RunbookController implements vscode.Disposable {
     for (const o of this.pipeline.observers) await o.onDidRunSequence?.(notebook, runs);
   }
 
-  private async runCell(exec: vscode.NotebookCellExecution, notebook: vscode.NotebookDocument, cfg: ExecutionConfig): Promise<RunRecord> {
+  private async runCell(exec: vscode.NotebookCellExecution, notebook: vscode.NotebookDocument, cfg: ExecutionConfig, lineRun?: LineRun): Promise<RunRecord> {
     const cell = exec.cell;
     const started = new Date();
     exec.executionOrder = ++this.executionOrder;
     exec.start(started.getTime());
 
     const plan: CellPlan = {
-      source: cell.document.getText(),
+      source: lineRun?.source ?? cell.document.getText(),
       language: cell.document.languageId,
       cwd: workingDirectory(notebook.uri),
       env: { ...cfg.env },
@@ -187,7 +217,10 @@ export class RunbookController implements vscode.Disposable {
       attrs: {},
       secrets: [],
       continueOnError: false,
+      ...(lineRun ? { steps: lineRun.steps.map((s) => s.text) } : {}),
     };
+    /** Line runs: indexes of the steps that ran. */
+    const ranSteps: number[] = [];
     let ended = false;
     let timer: NodeJS.Timeout | undefined;
     let cancelSub: vscode.Disposable | undefined;
@@ -276,9 +309,12 @@ export class RunbookController implements vscode.Disposable {
         result = { exitCode: null, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
       } else {
         try {
-          result = fs.existsSync(plan.cwd)
-            ? await this.pipeline.executorFor(notebook).execute(plan, { signal: abort.signal, onStdout: write(out), onStderr: write(err) }, ctx)
-            : failed(`Working directory not found: ${plan.cwd}`);
+          const io: ExecuteIO = { signal: abort.signal, onStdout: write(out), onStderr: write(err) };
+          result = !fs.existsSync(plan.cwd)
+            ? failed(`Working directory not found: ${plan.cwd}`)
+            : lineRun
+              ? await this.runSteps(lineRun, plan, io, ctx, ranSteps)
+              : await this.pipeline.executorFor(notebook).execute(plan, io, ctx);
         } catch (e) {
           result = failed(e instanceof Error ? e.message : String(e));
         }
@@ -303,8 +339,9 @@ export class RunbookController implements vscode.Disposable {
       const stored: unknown = cell.metadata?.[HISTORY_KEY];
       const history = isRunHistory(stored) ? stored.history : [];
       const earlier = earlierRuns(history.length);
-      const status = [statusLine(exit, undefined, formatDuration(elapsed)), shellLabel, earlier].filter(Boolean).join(' · ');
-      const attrs = { exit, ran, ended: formatLocalIso(endedAt), duration: formatDurationAttr(elapsed), ...plan.attrs };
+      const lines = lineRun && linesAttr(lineRun, ranSteps);
+      const status = [statusLine(exit, undefined, formatDuration(elapsed)), lines && `lines ${lines}`, shellLabel, earlier].filter(Boolean).join(' · ');
+      const attrs = { exit, ran, ended: formatLocalIso(endedAt), duration: formatDurationAttr(elapsed), ...(lines ? { lines } : {}), ...plan.attrs };
       const earlierOutput = earlierRunsOutput(history);
       await exec.appendOutput(earlierOutput ? [statusOutput(status, attrs), earlierOutput] : [statusOutput(status, attrs)]);
 
@@ -328,5 +365,44 @@ export class RunbookController implements vscode.Disposable {
         }
       }
     }
+  }
+
+  /**
+   * Runs the steps of a line run one after another, each shown as `$ command` before its output.
+   * Outside session mode they share a shell kept for this run only. Stops at the first step
+   * that fails, or when `beforeStep` says so.
+   */
+  private async runSteps(run: LineRun, plan: CellPlan, io: ExecuteIO, ctx: PrepareContext, ranSteps: number[]): Promise<ExecuteResult> {
+    const executor = this.pipeline.executorFor(ctx.notebook);
+    const kind = shellKindForLanguage(plan.language) ?? 'bash';
+    const steps = plan.steps ?? [];
+    const lineShell = new SessionPool(undefined, undefined, '');
+    const stepCtx: PrepareContext = { ...ctx, lineShell };
+    let result: ExecuteResult = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
+    try {
+      for (let i = 0; i < steps.length; i++) {
+        if (i > 0 && run.beforeStep && !(await run.beforeStep(i, ctx.token))) break;
+        if (io.signal.aborted) {
+          result = { ...result, exitCode: null, cancelled: true };
+          break;
+        }
+        run.onStep?.(i);
+        io.onStdout(echoCommand(kind, run.steps[i]!.text));
+        const r = await executor.execute({ ...plan, source: steps[i]! }, io, stepCtx);
+        ranSteps.push(i);
+        result = { ...r, durationMs: result.durationMs + r.durationMs };
+        if (!isSuccess(r)) {
+          const step = run.steps[i]!;
+          if (i < steps.length - 1 && !r.cancelled && !r.timedOut) {
+            io.onStderr(`[md-runbook] line ${formatLineRange(step.start, step.end)} failed; the lines after it were not run\n`);
+          }
+          break;
+        }
+      }
+    } finally {
+      run.onStep?.(undefined);
+      lineShell.dispose();
+    }
+    return result;
   }
 }

@@ -1,0 +1,39 @@
+{
+  "commands": [
+    { "command": "mdRunbook.runLine", "title": "Run Line or Selection", "category": "md-runbook", "icon": "$(play)" },
+    { "command": "mdRunbook.runLinesOneByOne", "title": "Run Lines One by One", "category": "md-runbook", "icon": "$(list-ordered)" },
+    { "command": "mdRunbook.stepThroughLines", "title": "Step Through Lines", "category": "md-runbook", "icon": "$(debug-step-into)" },
+    { "command": "mdRunbook.stepNext", "title": "Run Next Line", "category": "md-runbook", "icon": "$(debug-step-over)" },
+    { "command": "mdRunbook.stepContinue", "title": "Run Remaining Lines", "category": "md-runbook", "icon": "$(debug-continue)" },
+    { "command": "mdRunbook.stepStop", "title": "Stop Stepping", "category": "md-runbook", "icon": "$(debug-stop)" }
+  ],
+  "menus": {
+    "notebook/cell/execute": [
+      { "command": "mdRunbook.runLine", "when": "notebookType == md-runbook && notebookCellType == code", "group": "mdRunbook-lines@1" },
+      { "command": "mdRunbook.runLinesOneByOne", "when": "notebookType == md-runbook && notebookCellType == code", "group": "mdRunbook-lines@2" },
+      { "command": "mdRunbook.stepThroughLines", "when": "notebookType == md-runbook && notebookCellType == code", "group": "mdRunbook-lines@3" }
+    ],
+    "notebook/cell/title": [
+      { "command": "mdRunbook.stepNext", "when": "notebookType == md-runbook && mdRunbook.stepPaused && notebookCellExecutionState == executing", "group": "inline/cell@1" },
+      { "command": "mdRunbook.stepContinue", "when": "notebookType == md-runbook && mdRunbook.stepPaused && notebookCellExecutionState == executing", "group": "inline/cell@2" },
+      { "command": "mdRunbook.stepStop", "when": "notebookType == md-runbook && mdRunbook.stepPaused && notebookCellExecutionState == executing", "group": "inline/cell@3" }
+    ],
+    "editor/context": [
+      { "command": "mdRunbook.runLine", "when": "notebookType == md-runbook && resourceScheme == vscode-notebook-cell", "group": "mdRunbook@1" }
+    ],
+    "commandPalette": [
+      { "command": "mdRunbook.runLine", "when": "notebookType == md-runbook" },
+      { "command": "mdRunbook.runLinesOneByOne", "when": "notebookType == md-runbook" },
+      { "command": "mdRunbook.stepThroughLines", "when": "notebookType == md-runbook" },
+      { "command": "mdRunbook.stepNext", "when": "mdRunbook.stepPaused" },
+      { "command": "mdRunbook.stepContinue", "when": "mdRunbook.stepPaused" },
+      { "command": "mdRunbook.stepStop", "when": "mdRunbook.stepPaused" }
+    ]
+  },
+  "keybindings": [
+    { "command": "mdRunbook.runLine", "key": "ctrl+alt+enter", "mac": "cmd+alt+enter", "when": "notebookType == md-runbook && notebookCellEditorFocused && notebookCellType == code" },
+    { "command": "mdRunbook.stepNext", "key": "f10", "when": "mdRunbook.stepPaused && !inDebugMode" },
+    { "command": "mdRunbook.stepContinue", "key": "f5", "when": "mdRunbook.stepPaused && !inDebugMode" },
+    { "command": "mdRunbook.stepStop", "key": "shift+f5", "when": "mdRunbook.stepPaused && !inDebugMode" }
+  ]
+}

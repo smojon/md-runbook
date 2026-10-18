@@ -109,6 +109,9 @@ Each has its own page with examples and settings:
   per runbook, so `oc login`, `cd`, exported variables and functions carry over between cells.
   Turn it on per runbook with the toolbar toggle or `mode: session` in the front matter, restart
   or stop it from the status bar, and optionally start every Run All in a fresh session.
+- **[Line by line](docs/features/lines.md):** run only the line under the cursor or the selected
+  text (`Ctrl+Alt+Enter`), run a cell's lines one by one, or step through them with `F10`, like a
+  debugger. `cd` and variables carry over between lines; partial runs are saved with `lines=`.
 - **[Secrets, inputs, parameters and `.env`](docs/features/secrets.md):** keep secrets in the OS
   keychain and reference them as `${secret:NAME}`. They reach the cell as environment variables,
   never as script text, and are redacted by exact value. `${input:NAME}` prompts once per session,

@@ -387,6 +387,8 @@ export class SessionPool {
     /** Called when a session starts or ends. */
     private readonly onChange: () => void = () => undefined,
     private readonly shellEnv: ShellEnv = nodeShellEnv(),
+    /** Added to the shell's label in results (`bash session`). */
+    private readonly labelSuffix = ' session',
   ) {}
 
   /** Labels of the running sessions, e.g. ['bash', 'pwsh']. */
@@ -430,7 +432,7 @@ export class SessionPool {
       opts.onStderr(`[md-runbook] session ended (exit ${r.exitCode ?? r.signal}); the next cell starts a new session\n`);
     }
     const { ended: _ended, ...result } = r;
-    return { ...result, shell: { ...resolved.shell, label: `${resolved.shell.label} session` } };
+    return { ...result, shell: { ...resolved.shell, label: resolved.shell.label + this.labelSuffix } };
   }
 
   /**

@@ -7,6 +7,7 @@ import { clearOutputBlocks } from './core';
 import { RunbookController } from './controller';
 import { registerReport } from './exportReport';
 import { registerHistory } from './history';
+import { registerLineRuns } from './lineRuns';
 import { RunPipeline } from './pipeline';
 import { registerProgress } from './progress';
 import { registerSafety } from './safety';
@@ -76,6 +77,7 @@ export function activate(context: vscode.ExtensionContext): void {
   pipeline.preparers.push(safety.final);
   const controller = new RunbookController(pipeline);
   registerProgress(context, pipeline, controller);
+  registerLineRuns(context, controller);
   registerCodeLens(context);
   registerReport(context);
   registerAi(context);

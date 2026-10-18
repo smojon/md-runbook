@@ -13,6 +13,8 @@ export interface ProgressCell {
   kind: 'code' | 'markup';
   /** Exit attribute of the code cell's output; undefined = no output (or still running). */
   exit?: string;
+  /** The output is from a line run that did not run every line (`lines=`). */
+  partial?: boolean;
   /** Task-list items of a markup cell, in order: true = checked. */
   tasks?: boolean[];
 }
@@ -31,11 +33,12 @@ export interface Progress {
   resume: number[];
 }
 
-/** State of a code cell from its output's exit attribute. */
-export function stepState(exit: string | undefined): StepState {
+/** State of a code cell from its output's exit attribute (and whether only some lines ran). */
+export function stepState(exit: string | undefined, partial = false): StepState {
   // declined (confirmation answered No) and proposed (waiting for approval) are not done yet.
   if (exit === undefined || exit === 'running' || exit === 'declined' || exit === 'proposed') return 'pending';
-  if (exit === '0' || exit === 'done') return 'done';
+  // Some lines ran fine: the step is not done until all of it has run.
+  if (exit === '0' || exit === 'done') return partial ? 'pending' : 'done';
   if (exit === 'skipped') return 'skipped';
   return 'failed';
 }
@@ -60,7 +63,7 @@ export function computeProgress(cells: readonly ProgressCell[]): Progress {
       return;
     }
     p.total++;
-    const state = stepState(c.exit);
+    const state = stepState(c.exit, c.partial);
     p[state]++;
     if (state === 'failed') p.firstFailed ??= { cell: i, step: p.total };
     if (state === 'pending') p.firstPending ??= { cell: i, step: p.total };

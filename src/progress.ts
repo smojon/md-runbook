@@ -31,16 +31,13 @@ function cellAttrs(cell: vscode.NotebookCell): Record<string, string> | undefine
   return attrs;
 }
 
-/** Exit attribute of a code cell's current output, or undefined if it has none (or is running). */
-function cellExit(cell: vscode.NotebookCell): string | undefined {
-  return cellAttrs(cell)?.exit;
-}
-
 export function notebookProgress(nb: vscode.NotebookDocument): Progress {
   return computeProgress(
-    nb.getCells().map((c) =>
-      c.kind === vscode.NotebookCellKind.Code ? { kind: 'code', exit: cellExit(c) } : { kind: 'markup', tasks: checklist(c.document.getText()) },
-    ),
+    nb.getCells().map((c) => {
+      if (c.kind !== vscode.NotebookCellKind.Code) return { kind: 'markup', tasks: checklist(c.document.getText()) };
+      const attrs = cellAttrs(c);
+      return { kind: 'code', exit: attrs?.exit, partial: attrs?.lines !== undefined };
+    }),
   );
 }
 
@@ -52,11 +49,11 @@ function userName(): string {
   }
 }
 
-function isCell(v: unknown): v is vscode.NotebookCell {
+export function isCell(v: unknown): v is vscode.NotebookCell {
   return typeof v === 'object' && v !== null && 'notebook' in v && 'document' in v && typeof (v as { index?: unknown }).index === 'number';
 }
 
-function runbookEditor(nb?: vscode.NotebookDocument): vscode.NotebookEditor | undefined {
+export function runbookEditor(nb?: vscode.NotebookDocument): vscode.NotebookEditor | undefined {
   const editors = [vscode.window.activeNotebookEditor, ...vscode.window.visibleNotebookEditors];
   return editors.find((e) => e && e.notebook.notebookType === NOTEBOOK_TYPE && (!nb || e.notebook === nb));
 }
@@ -69,12 +66,14 @@ function targetCells(arg: unknown, kind: vscode.NotebookCellKind): vscode.Notebo
   return editor.selections.flatMap((r) => editor.notebook.getCells(r)).filter((c) => c.kind === kind);
 }
 
+/** Executions need this controller to be the notebook's selected kernel. */
+export async function selectRunbookKernel(context: vscode.ExtensionContext, nb: vscode.NotebookDocument): Promise<void> {
+  const notebookEditor = runbookEditor(nb);
+  if (notebookEditor) await vscode.commands.executeCommand('notebook.selectKernel', { notebookEditor, id: CONTROLLER_ID, extension: context.extension.id });
+}
+
 export function registerProgress(context: vscode.ExtensionContext, pipeline: RunPipeline, controller: RunbookController): void {
-  // Executions need this controller to be the notebook's selected kernel.
-  const ensureKernel = async (nb: vscode.NotebookDocument): Promise<void> => {
-    const notebookEditor = runbookEditor(nb);
-    if (notebookEditor) await vscode.commands.executeCommand('notebook.selectKernel', { notebookEditor, id: CONTROLLER_ID, extension: context.extension.id });
-  };
+  const ensureKernel = (nb: vscode.NotebookDocument): Promise<void> => selectRunbookKernel(context, nb);
 
   const mark = (exit: 'done' | 'skipped') => async (arg?: unknown) => {
     const cells = targetCells(arg, vscode.NotebookCellKind.Code);

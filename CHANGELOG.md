@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Line by line:** the dropdown next to a code cell's run button has three new commands.
+  **Run Line or Selection** (`Ctrl+Alt+Enter`) runs the line under the cursor, or the selected
+  text. **Run Lines One by One** runs each line in turn and stops at the first that fails.
+  **Step Through Lines** pauses before each line (`F10` next, `F5` the rest, `Shift+F5` stop).
+  Each line shows as `$ command` in the output, `cd` and variables carry over between lines, and
+  a run that didn't cover every line is saved with `lines=` and doesn't count as done.
+
 ## 0.1.2
 
 - **Checklists:** clicking a checkbox, or **Check Next Item**, now shows the tick right away.
