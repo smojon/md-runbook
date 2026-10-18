@@ -9,6 +9,7 @@ import { registerProgress } from './progress';
 import { registerSafety } from './safety';
 import { registerSecrets } from './secrets';
 import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
+import { registerSessions } from './session';
 
 function targetUri(uri: unknown): vscode.Uri | undefined {
   if (uri instanceof vscode.Uri) return uri;
@@ -58,6 +59,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerSafety(context, pipeline);
   registerSecrets(context, pipeline);
   registerHistory(context, pipeline);
+  registerSessions(context, pipeline);
   const controller = new RunbookController(pipeline);
   registerProgress(context, pipeline, controller);
   registerCodeLens(context);

@@ -54,8 +54,10 @@ Run cells with the usual notebook controls: run cell, **Run All**, Run Above/Bel
 | `sh`, `bash` | Git Bash (auto-detected or `mdRunbook.shell.bashPath`) | `bash` (falls back to `sh`) |
 
 - **Working directory:** the folder containing the `.md` file.
-- **How a cell runs:** each cell is written to a temporary script file and run as a separate
-  process, so variables don't carry over between cells.
+- **How a cell runs:** by default each cell is written to a temporary script file and run as a
+  separate process, so variables and `cd` don't carry over between cells. Set
+  `mdRunbook.execution.mode` to `session` to keep one shell per runbook instead
+  ([session mode](docs/features/session.md)).
 - **No input:** stdin is closed, so interactive prompts fail fast instead of hanging. Use
   non-interactive flags (`oc login --token=…`) or environment variables
   (`mdRunbook.execution.env`).
@@ -83,6 +85,9 @@ cancelled (`mdRunbook.execution.stopOnFailure`). Cells of one runbook never run 
 
 Each has its own page with examples and settings:
 
+- **[Persistent session mode](docs/features/session.md):** one bash and one PowerShell process
+  per runbook, so `oc login`, `cd`, exported variables and functions carry over between cells.
+  Restart or stop it from the Command Palette or the status bar.
 - **[Secrets, inputs, parameters and `.env`](docs/features/secrets.md):** keep secrets in the OS
   keychain and reference them as `${secret:NAME}`. They reach the cell as environment variables,
   never as script text, and are redacted by exact value. `${input:NAME}` prompts once per session,

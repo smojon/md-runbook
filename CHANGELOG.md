@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Persistent session mode (`mdRunbook.execution.mode: session`) with Restart/Stop Session.
 - Secrets in the OS keychain, `${secret:…}` / `${input:…}` / `${param:…}` references passed as
   environment variables, front-matter parameters, `.env` files and exact-value redaction.
 - Per-cell fence options (`timeout=`, `cwd=`, `env.X=`, `continue-on-error`, `skip`,
