@@ -19,6 +19,7 @@ import {
 } from './core';
 import { SECTION, writeOptions } from './config';
 import { workingDirectory } from './controller';
+import { copyOrigin, setCopyOrigin } from './copyOrigins';
 import { META_KEY, toOutputInput } from './outputs';
 import { CellPlan, PrepareContext, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -66,18 +67,14 @@ async function captureHistory(_plan: CellPlan, ctx: PrepareContext): Promise<voi
 
 // ---- Run All as Copy ---------------------------------------------------------------------------
 
-/** Copies made in another folder -> folder of the original, so cells still run where they belong. */
-const copyOrigins = new Map<string, string>();
 const copyHinted = new Set<string>();
 
 function isCopy(uri: vscode.Uri): boolean {
-  return copyOrigins.has(uri.toString()) || isCopyFileName(path.basename(uri.path));
+  return copyOrigin(uri) !== undefined || isCopyFileName(path.basename(uri.path));
 }
 
-function copyPreparer(plan: CellPlan, ctx: PrepareContext): void {
+function copyPreparer(_plan: CellPlan, ctx: PrepareContext): void {
   const uri = ctx.notebook.uri;
-  const origin = copyOrigins.get(uri.toString());
-  if (origin && plan.cwd === workingDirectory(uri)) plan.cwd = origin;
   if (cfg().get<string>('output.mode', 'inPlace') !== 'copy' || isCopy(uri) || copyHinted.has(uri.toString())) return;
   copyHinted.add(uri.toString());
   void vscode.window
@@ -144,7 +141,7 @@ async function runAllAsCopy(arg?: unknown): Promise<vscode.Uri | undefined> {
   let target = vscode.Uri.joinPath(folder, name);
   for (let n = 2; await exists(target); n++) target = vscode.Uri.joinPath(folder, name.replace(/\.md$/i, `-${n}.md`));
   await vscode.workspace.fs.writeFile(target, encoder.encode(text));
-  if (folder.toString() !== dir.toString()) copyOrigins.set(target.toString(), workingDirectory(source));
+  if (folder.toString() !== dir.toString()) setCopyOrigin(target, workingDirectory(source));
 
   await vscode.commands.executeCommand('vscode.openWith', target, NOTEBOOK_TYPE);
   const editor = await waitForEditor(target);

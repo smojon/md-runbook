@@ -5,7 +5,16 @@
 
 import * as vscode from 'vscode';
 import { SECTION } from '../config';
-import { SseParser, anthropicRequest, describeHttpError, errorMessage, interpretEvent } from '../core/anthropicStream';
+import {
+  SseParser,
+  anthropicRequest,
+  baseUrlProblem,
+  describeHttpError,
+  errorMessage,
+  interpretEvent,
+  isValidApiKey,
+  urlForDisplay,
+} from '../core/anthropicStream';
 
 export const ANTHROPIC_KEY = 'mdRunbook.ai.anthropicKey';
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
@@ -133,6 +142,10 @@ class AnthropicProvider implements AiProvider {
     if (!key) throw new AiError('no Anthropic API key is set. Run "md-runbook: Set Anthropic API Key".');
     const model = this.model();
     const base = cfg().get<string>('ai.anthropicBaseUrl', 'https://api.anthropic.com');
+    if (!isValidApiKey(key)) throw new AiError('the stored Anthropic API key is not valid. Run "md-runbook: Set Anthropic API Key" again.');
+    const problem = baseUrlProblem(base);
+    if (problem) throw new AiError(problem);
+    const shown = urlForDisplay(base.trim() || 'https://api.anthropic.com');
     const maxTokens = cfg().get<number>('ai.maxTokens', 4096);
     const abort = new AbortController();
     const sub = token.onCancellationRequested(() => abort.abort());
@@ -150,17 +163,18 @@ class AnthropicProvider implements AiProvider {
     } catch (e) {
       if (e instanceof AiError) throw e;
       if (token.isCancellationRequested) return '';
-      const cause = (e as { cause?: { code?: string } }).cause?.code;
-      throw new AiError(
-        `could not reach ${base}${cause ? ` (${cause})` : ''}: ${(e as Error).message}. Behind a proxy, set mdRunbook.ai.anthropicBaseUrl to a reachable gateway.`,
-      );
+      // Never include the raw error message: fetch/undici errors can quote header values (the key).
+      const cause = (e as { cause?: { code?: unknown } }).cause?.code;
+      const code = typeof cause === 'string' && /^[A-Z0-9_]+$/.test(cause) ? ` (${cause})` : '';
+      throw new AiError(`could not reach ${shown}${code}. Behind a proxy, set mdRunbook.ai.anthropicBaseUrl to a reachable gateway.`);
     } finally {
       sub.dispose();
     }
   }
 
   private post(req: ReturnType<typeof anthropicRequest>, signal: AbortSignal): Promise<Response> {
-    return fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal });
+    // redirect: 'error': the x-api-key header must never follow a redirect to another origin.
+    return fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal, redirect: 'error' });
   }
 }
 

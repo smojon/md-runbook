@@ -2,11 +2,10 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { CellInput, renderReport, serialize } from './core';
+import { renderReport } from './core';
 import { confirmNoLeaks } from './aiCommands';
 import { SECTION, writeOptions } from './config';
-import { META_KEY, toOutputInput } from './outputs';
-import { NOTEBOOK_TYPE } from './serializer';
+import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
 
 export const EXPORT_REPORT = 'mdRunbook.exportReport';
 
@@ -20,22 +19,12 @@ function targetUri(arg: unknown): vscode.Uri | undefined {
   return doc?.languageId === 'markdown' ? doc.uri : undefined;
 }
 
-/** The Markdown as it would be saved now: an open runbook's live outputs, an open editor's unsaved text, or the file. */
+/** The Markdown as it would be saved now (outputs always included): an open runbook's live outputs, an open editor's unsaved text, or the file. */
 async function currentText(uri: vscode.Uri): Promise<string> {
   const key = uri.toString();
   const nb = vscode.workspace.notebookDocuments.find((d) => d.notebookType === NOTEBOOK_TYPE && d.uri.toString() === key);
   if (nb) {
-    const cells: CellInput[] = nb.getCells().map((c) => {
-      const code = c.kind === vscode.NotebookCellKind.Code;
-      return {
-        kind: code ? 'code' : 'markup',
-        value: c.document.getText(),
-        languageId: c.document.languageId,
-        meta: c.metadata?.[META_KEY],
-        output: code ? toOutputInput(c.outputs) : undefined,
-      };
-    });
-    return serialize(nb.metadata?.[META_KEY], cells, writeOptions());
+    return notebookTextWithOutputs(nb);
   }
   const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === key);
   if (doc) return doc.getText();

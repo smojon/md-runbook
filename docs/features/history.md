@@ -72,7 +72,7 @@ template:
 3. saves the copy with its outputs.
 
 The original file is not changed. Cells of the copy run in the original runbook's folder, so
-relative paths keep working even when `mdRunbook.output.copyFolder` puts the copy elsewhere:
+relative paths (including `cwd=`, `.env` files and the context commands) keep working even when `mdRunbook.output.copyFolder` puts the copy elsewhere:
 
 ```json
 "mdRunbook.output.copyFolder": "runs"

@@ -3,8 +3,10 @@
 ## Run from the plain Markdown editor (CodeLens)
 
 This is **off by default**: turn on `mdRunbook.codeLens.enabled` to use it. Text-editor runs skip
-the notebook's per-cell options and secret injection, so for safety they refuse proposed and
-assistant-written cells, and still ask before risky commands.
+the notebook's approval, policy and secret injection, so for safety they refuse proposed and
+assistant-written cells, refuse blocks that use `${secret:…}`, `${input:…}` or `${param:…}`
+references (they are resolved only in the runbook view; a shell would silently misread them),
+and still ask before risky commands.
 
 You don't have to open a file as a runbook to run it. In the normal Markdown text editor, each
 runnable code block (`sh`, `bash`, `pwsh`, `powershell`, `cmd`) gets a line of CodeLens above its
@@ -34,7 +36,11 @@ yourself (or undo it).
 The run uses the same settings as the notebook: shells (`mdRunbook.shell.*`), timeout,
 environment (`mdRunbook.execution.env`), the folder of the `.md` file as working directory, and
 output cleanup, truncation and [secret redaction](../../README.md#secret-redaction) before the
-output goes into the document. Live output in the output channel is redacted only if
+output goes into the document. The per-block options `skip`, `cwd=` (relative to the `.md`
+file's folder), `timeout=` and `env.NAME=` apply as in the notebook (`mdRunbook.cellOptions.enabled`);
+a `skip` block is reported as skipped and not run, and a block with an invalid option fails
+with the error instead of running. Live output in the output channel always has known secret
+values redacted (VS Code also logs output channels to disk), and redaction patterns too when
 `mdRunbook.redaction.applyToLiveOutput` is on. Blocks of one file never run at the same time;
 clicking Run again queues the next run.
 
@@ -45,8 +51,8 @@ document's cells, the same as its cell index in the notebook view.
 
 Limits:
 
-- Extensions that hook into notebook runs (per-cell options, injected secrets, persistent
-  sessions) work in the notebook view only. Text-editor runs always run each block as its own
+- Extensions that hook into notebook runs (approval, policy, injected secrets, persistent
+  sessions, `continue-on-error`, `name=`) work in the notebook view only. Text-editor runs always run each block as its own
   process with the global settings.
 - VS Code normalizes the line endings of a document open as text, so a file with mixed line
   endings is saved with one kind. Open it as a runbook to keep mixed line endings byte for byte.
@@ -56,8 +62,8 @@ Limits:
 
 **md-runbook: Export Report (HTML)** (Command Palette, notebook toolbar, Explorer context menu)
 turns a runbook into a single HTML file, `<name>.report.html`, next to the `.md` file. It works on
-an open runbook (including outputs that aren't saved yet), on a file open as text, and on a file
-that isn't open. Afterwards, **Open** shows it in your browser.
+an open runbook (exactly as a save would write it, plus outputs that aren't saved yet, even with
+`mdRunbook.output.persist` off), on a file open as text, and on a file that isn't open. Afterwards, **Open** shows it in your browser.
 
 The report contains:
 
@@ -74,8 +80,11 @@ The file is self-contained: inline CSS with light and dark themes (following the
 `prefers-color-scheme`), no scripts, no external resources (images are shown as links), and a
 Content Security Policy that blocks anything else. Raw HTML in the Markdown is never passed
 through: it is shown as text. HTML comments and md-runbook markers are dropped. Only `http`,
-`https`, `mailto` and relative links are kept. Outputs are the redacted text stored in the file,
-and are run through the current redaction settings once more.
+`https`, `mailto` and relative links are kept; protocol-relative links (`//host/…`, `\\host\…`)
+are dropped, since from a local report they would open network (SMB) paths. YAML front matter is
+shown as a small "front matter" block. Outputs are the redacted text stored in the file, and are
+run through the current redaction settings once more; code (the summary table, each step and
+other fenced blocks) and front matter go through the same redaction.
 
 ## Settings
 

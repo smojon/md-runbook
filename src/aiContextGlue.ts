@@ -2,10 +2,11 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { CellInput, parse, serialize } from './core';
+import { parse } from './core';
+import { writesAsCodeCell } from './core/writer';
 import { AiContext, PseudonymMap, buildAiContext, emptyMap } from './core/aiContext';
 import { SECTION, writeOptions } from './config';
-import { META_KEY, toOutputInput } from './outputs';
+import { notebookTextWithOutputs } from './serializer';
 
 export const PSEUDONYM_MAP_KEY = 'mdRunbook.ai.pseudonymMap';
 
@@ -61,27 +62,20 @@ export async function savePseudonymMap(context: vscode.ExtensionContext, map: Ps
 
 /** An open runbook as Markdown, including outputs that are not saved (or not persisted) yet. */
 export function runbookText(notebook: vscode.NotebookDocument): string {
-  const cells: CellInput[] = notebook.getCells().map((c) => {
-    const code = c.kind === vscode.NotebookCellKind.Code;
-    return {
-      kind: code ? 'code' : 'markup',
-      value: c.document.getText(),
-      languageId: c.document.languageId,
-      meta: c.metadata?.[META_KEY],
-      output: code ? toOutputInput(c.outputs) : undefined,
-    };
-  });
-  return serialize(notebook.metadata?.[META_KEY], cells, { ...writeOptions(), persistOutputs: true });
+  return notebookTextWithOutputs(notebook);
 }
 
 /** Notebook cell indices → indices in the parsed text (the n-th code cell stays the n-th code cell). */
 export function parsedCodeIndices(notebook: vscode.NotebookDocument, markdown: string, cells: readonly number[]): number[] {
-  const nthCode = (idx: number): number => notebook.getCells().slice(0, idx).filter((c) => c.kind === vscode.NotebookCellKind.Code).length;
+  // Only code cells written as runnable fences parse back as code cells (a python cell added in
+  // the notebook is written as a fence inside markdown).
+  const parsesAsCode = (c: vscode.NotebookCell): boolean => c.kind === vscode.NotebookCellKind.Code && writesAsCodeCell(c.document.languageId);
+  const nthCode = (idx: number): number => notebook.getCells().slice(0, idx).filter(parsesAsCode).length;
   const codeIdx = parse(markdown)
     .cells.map((c, i) => (c.kind === 'code' ? i : -1))
     .filter((i) => i >= 0);
   return cells
-    .filter((i) => i >= 0 && i < notebook.cellCount && notebook.cellAt(i).kind === vscode.NotebookCellKind.Code)
+    .filter((i) => i >= 0 && i < notebook.cellCount && parsesAsCode(notebook.cellAt(i)))
     .map((i) => codeIdx[nthCode(i)])
     .filter((i): i is number => i !== undefined);
 }

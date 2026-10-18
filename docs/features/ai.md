@@ -29,7 +29,10 @@ removes it. The model is `mdRunbook.ai.anthropicModel` (default `claude-sonnet-5
 are capped at `mdRunbook.ai.maxTokens` tokens. Requests go straight from VS Code to
 `mdRunbook.ai.anthropicBaseUrl` (default `https://api.anthropic.com`); the `HTTPS_PROXY`
 environment variable is **not** used, so behind a corporate proxy point this setting at a
-reachable gateway that speaks the same API. On `api.anthropic.com`, models that support it use
+reachable gateway that speaks the same API. The base URL must use `https://` (`http://` only for
+`localhost` / `127.0.0.1`) and must not contain `user:password@`; redirects are not followed, so
+the key is never sent to another host. The key must be printable characters without spaces, and
+error messages never include it (or credentials from the URL). On `api.anthropic.com`, models that support it use
 the API's server-side refusal fallback; a declined request is reported as such.
 
 ## Commands

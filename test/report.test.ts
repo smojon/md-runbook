@@ -97,3 +97,28 @@ describe('renderReport', () => {
     assert.match(r, /token \[REDACTED\]/);
   });
 });
+
+describe('report hardening', () => {
+  it('drops protocol-relative and UNC links', () => {
+    for (const u of ['//evil.example/x', '\\\\evil\\share', '/\\evil/x', '\\/evil/x']) assert.equal(safeUrl(u), undefined, u);
+    assert.equal(safeUrl('/abs/path'), '/abs/path');
+    assert.equal(safeUrl('docs/x.md'), 'docs/x.md');
+    assert.doesNotMatch(renderMarkdown('[a](//evil.example/x) [b](\\\\evil\\share)'), /href/);
+  });
+
+  it('redacts code in the summary table, steps and fenced blocks', () => {
+    const r = renderReport('# R\n\n```bash\ncurl https://admin:Hunter2@sso.example\n```\n\n```text\nHunter2 here\n```\n', {
+      generatedAt: AT,
+      redact: (s) => s.replace(/Hunter2/g, '[REDACTED]'),
+    });
+    assert.doesNotMatch(r, /Hunter2/);
+    assert.equal(r.match(/\[REDACTED\]/g)?.length, 3);
+  });
+
+  it('renders front matter as a metadata block, not as a rule and text', () => {
+    const r = report('---\nparams:\n  - NAMESPACE: prod\n---\n# Title\n\n```sh\necho\n```\n');
+    assert.match(r, /<div class="front-matter"><div class="code"><span class="lang">front matter<\/span><pre><code>params:\n  - NAMESPACE: prod<\/code><\/pre><\/div>/);
+    assert.doesNotMatch(r, /<hr/);
+    assert.match(r, /<title>Title<\/title>/);
+  });
+});

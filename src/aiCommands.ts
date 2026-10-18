@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { DocMeta, isDocMeta, isRunnableFenceLang, languageIdForFence } from './core';
 import { AiContext, codeMetaFor, depseudonymize, extractFencedBlocks, proposalMarkdown } from './core/aiContext';
 import { LeakFinding, scanForLeaks, summarizeLeaks } from './core/leaks';
+import { pastedBy, pastedReason } from './core/pastedInfo';
 import { proposedInfo } from './core/proposal';
 import { aiSettings, buildMarkdownContext, getPseudonymMap, parsedCodeIndices, runbookText, savePseudonymMap } from './aiContextGlue';
 import { writeOptions } from './config';
@@ -158,13 +159,15 @@ export async function pasteAiProposal(context: vscode.ExtensionContext): Promise
   const eol = docMeta?.eol ?? '\n';
   const cells = blocks.map((b) => {
     const code = depseudonymize(b.code, map);
-    const reason = b.reason !== undefined ? depseudonymize(b.reason, map) : undefined;
+    // Nested quotes in reason= are tolerated; proposedInfo sanitizes reason and by= (kept as given).
+    const rawReason = b.lang ? pastedReason(b.info) : undefined;
+    const reason = rawReason !== undefined && rawReason.trim() !== '' ? depseudonymize(rawReason, map) : undefined;
     if (!isRunnableFenceLang(b.lang)) {
       return new vscode.NotebookCellData(vscode.NotebookCellKind.Markup, proposalMarkdown({ ...b, code, reason }), 'markdown');
     }
     // Always a proposed cell: it must be approved before it can run.
     const cell = new vscode.NotebookCellData(vscode.NotebookCellKind.Code, code, languageIdForFence(b.lang));
-    cell.metadata = { [META_KEY]: codeMetaFor(proposedInfo(b.lang, 'ai', reason), code, eol) };
+    cell.metadata = { [META_KEY]: codeMetaFor(proposedInfo(b.lang, pastedBy(b.info), reason), code, eol) };
     return cell;
   });
   const at = editor.selections.length ? Math.max(...editor.selections.map((r) => r.end)) : editor.notebook.cellCount;

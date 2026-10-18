@@ -5,8 +5,9 @@
 **md-runbook: Copy for AI** (notebook toolbar, Command Palette) copies the runbook as text that is
 safe to paste into an AI assistant. **Copy Cell for AI** (cell toolbar, Command Palette) copies only
 the selected code cells, with the headings above them for context and a note such as
-`(3 other steps omitted)`. Both use the current content of the runbook, including outputs that
-aren't saved yet. They also work on a Markdown file open as text (whole file).
+`(3 other steps omitted)`. Both use the current content of the runbook exactly as a save would
+write it (including run history and `changed=`), plus outputs that aren't saved yet, even with
+`mdRunbook.output.persist` off. They also work on a Markdown file open as text (whole file).
 
 Before anything is copied, a preview shows the size, the number of steps, how many names were
 pseudonymized and any warnings. Pick **Copy to Clipboard** to copy.
@@ -72,8 +73,12 @@ Proposal**. Every fenced code block in the clipboard is inserted below the selec
 aliases mapped back to the real names:
 
 - `sh`, `bash`, `pwsh`, `powershell` and `cmd` blocks become **proposed** code cells,
-  ```` ```bash proposed by=ai reason="…" ````, keeping the `reason` of the pasted block. They
-  must be approved before they can run. Pasted code never becomes a plain runnable cell.
+  ```` ```bash proposed by=ai reason="…" ````, keeping the `reason` and `by=` of the pasted block
+  (`by=ai` when it has none; quotes, backticks and line breaks are removed from both, so a reason
+  with nested quotes such as `reason="use the "real" token"` is kept whole as
+  `use the real token`). They must be approved before they can run. Pasted code never becomes a
+  plain runnable cell. Pasted blocks are inserted as top-level cells: the indentation of a block
+  that was inside a numbered list in the answer is not kept.
 - Blocks in other languages (YAML, JSON, …) become a Markdown cell with the code as a quoted,
   indented code block, so they can't be run.
 

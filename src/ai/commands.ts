@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import { PseudonymMap, depseudonymize } from '../core/aiContext';
+import { isValidApiKey } from '../core/anthropicStream';
 import {
   AiPrompt,
   explainOutputPrompt,
@@ -21,6 +22,7 @@ import { META_KEY } from '../outputs';
 import { NOTEBOOK_TYPE } from '../serializer';
 import { buildContextForNotebook as buildContext } from '../aiContextGlue';
 import { confirmNoLeaks } from '../aiCommands';
+import { isTestMode } from '../secrets';
 import { ANTHROPIC_KEY, AiError, AiProvider, createProvider, fakeProvider, providerSetting, useFakeProvider } from './providers';
 
 function cfg(): vscode.WorkspaceConfiguration {
@@ -54,9 +56,10 @@ async function setAnthropicKey(): Promise<boolean> {
     prompt: 'Stored in the OS keychain (VS Code SecretStorage). Used only when mdRunbook.ai.provider is "anthropic".',
     password: true,
     ignoreFocusOut: true,
-    validateInput: (v) => (v.trim() === '' ? 'Enter a key.' : undefined),
+    validateInput: (v) =>
+      v.trim() === '' ? 'Enter a key.' : isValidApiKey(v.trim()) ? undefined : 'The key may only contain printable characters (no spaces or control characters).',
   });
-  if (!key) return false;
+  if (!key || !isValidApiKey(key.trim())) return false;
   await extContext.secrets.store(ANTHROPIC_KEY, key.trim());
   void vscode.window.showInformationMessage('md-runbook: Anthropic API key stored in the OS keychain.');
   return true;
@@ -307,7 +310,9 @@ export function registerAi(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('mdRunbook.ai.summarizeIncident', summarizeIncident),
     vscode.commands.registerCommand('mdRunbook.ai.setAnthropicKey', setAnthropicKey),
     vscode.commands.registerCommand('mdRunbook.ai.clearAnthropicKey', clearAnthropicKey),
-    // Hidden, for integration tests: canned answers instead of a real model (undefined = off).
-    vscode.commands.registerCommand('mdRunbook._ai.useFakeProvider', (answer?: string) => useFakeProvider(answer)),
   );
+  // Hidden, for integration tests only: canned answers instead of a real model (undefined = off).
+  if (isTestMode(context)) {
+    context.subscriptions.push(vscode.commands.registerCommand('mdRunbook._ai.useFakeProvider', (answer?: string) => useFakeProvider(answer)));
+  }
 }

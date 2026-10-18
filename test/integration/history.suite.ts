@@ -1,5 +1,6 @@
 /** Output history, Run All as Copy and Compare With Previous Run. */
 import { strict as assert } from 'node:assert';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { LANG, Test, closeAll, isWin, openRunbook, outputText, read, runCells, setConfig, step, waitFor, writeFile } from './suite';
@@ -94,6 +95,22 @@ test('Run All as Copy writes a timestamped copy with outputs and leaves the orig
     assert.equal(path.dirname(copy2.fsPath), path.join(path.dirname(uri.fsPath), 'runs'));
     assert.match(read(copy2), /marker-content/);
     assert.equal(read(uri), src);
+  } finally {
+    await setConfig('output.copyFolder', undefined);
+    await closeAll();
+  }
+});
+
+test('Run All as Copy in copyFolder resolves cwd= against the original folder', async () => {
+  const src = `# Copy cwd\n\n\`\`\`${LANG} cwd=copysub\n${isWin ? 'Get-Content sub-marker.txt' : 'cat sub-marker.txt'}\n\`\`\`\n`;
+  const uri = writeFile('ascopy-cwd.md', src);
+  fs.mkdirSync(path.join(path.dirname(uri.fsPath), 'copysub'), { recursive: true });
+  writeFile('copysub/sub-marker.txt', 'sub-marker-content\n');
+  await setConfig('output.copyFolder', 'runs-cwd');
+  try {
+    const copy = await step('run all as copy (cwd)', vscode.commands.executeCommand<vscode.Uri>('mdRunbook.runAllAsCopy', uri), 60_000);
+    assert.equal(path.dirname(copy.fsPath), path.join(path.dirname(uri.fsPath), 'runs-cwd'));
+    assert.match(read(copy), /output start exit=0 [^\n]*-->\n```text\nsub-marker-content\n/);
   } finally {
     await setConfig('output.copyFolder', undefined);
     await closeAll();
