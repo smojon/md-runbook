@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import { SECTION } from './config';
+import { workingDirectory } from './controller';
 import { parseFrontMatter } from './core/secrets';
 import { SessionPool } from './core/session';
 import { isCodeMeta } from './core';
@@ -33,6 +34,18 @@ function frontMatterMode(nb: vscode.NotebookDocument): Mode | undefined {
 function isAssistantCell(cell: vscode.NotebookCell): boolean {
   const meta: unknown = cell.metadata?.[META_KEY];
   return isCodeMeta(meta) && proposalOf(meta.info).by !== undefined;
+}
+
+/**
+ * Whether a run covers the whole runbook: it starts at the first code cell and includes every
+ * code cell. A Resume Run that starts later (at a failed or pending step) keeps the session;
+ * resuming from the very first step is the same as Run All.
+ */
+export function isRunAll(nb: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[]): boolean {
+  const code = nb.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
+  if (code.length === 0 || cells[0]?.index !== code[0]?.index) return false;
+  const included = new Set(cells.map((c) => c.index));
+  return code.every((c) => included.has(c.index));
 }
 
 /** The runbook a command applies to: the given URI, else the active (or only visible) runbook editor. */
@@ -101,6 +114,9 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
         language: plan.language,
         source: plan.source,
         cwd: plan.cwd,
+        // Sessions start (and restart) in the runbook's folder; a cell with `cwd=` runs in its
+        // own folder without moving the session.
+        baseCwd: workingDirectory(nb.uri),
         settings: plan.shell,
         timeoutMs: plan.timeoutMs,
         env: plan.env,
@@ -125,8 +141,8 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
     onWillRunSequence: (nb, cells) => {
       const resetOnRunAll = vscode.workspace.getConfiguration(SECTION).get<boolean>('session.resetOnRunAll', true);
       if (!resetOnRunAll || modeOf(nb).mode !== 'session' || cells.length < 2) return;
-      const codeCells = nb.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code).length;
-      if (cells.length < codeCells) return; // a range or Resume, not Run All
+      if (!isRunAll(nb, cells)) return; // a single cell, a range or Resume Run
+
       const stopped = pools.get(nb.uri.toString())?.stop() ?? [];
       if (stopped.length) vscode.window.setStatusBarMessage('md-runbook: Run All starts in a fresh session', 5000);
     },

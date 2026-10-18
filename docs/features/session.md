@@ -41,14 +41,17 @@ Switching a runbook to isolated stops its sessions at once.
 
 ## Starting clean
 
-After **Restart Session** (or **Stop Session**), the next cell runs in a new shell. It has only
-VS Code's environment plus the configured variables, which are applied again before every cell:
-`mdRunbook.execution.env`, the `.env` file, `mdRunbook.secrets.inject`, and whatever the cell
-references (`${secret:…}`, `${input:…}`, `${param:…}`). Everything earlier cells set is gone.
+After **Restart Session** (or **Stop Session**), the next cell runs in a new shell, started in
+the `.md` file's folder with only VS Code's environment. The configured variables are applied
+again before every cell: `mdRunbook.execution.env`, the `.env` file, `mdRunbook.secrets.inject`,
+and whatever the cell references (`${secret:…}`, `${input:…}`, `${param:…}`). Everything
+earlier cells set is gone, including variables that only an earlier cell referenced.
 
 Every full run starts clean: with `mdRunbook.session.resetOnRunAll` (on by default) **Run All**
-begins in a fresh session. Running single cells, a range or **Resume Run** keeps the
-current session, since those usually rely on earlier steps.
+begins in a fresh session. A run counts as Run All when it starts at the first code cell and
+includes every code cell, so a **Resume Run** from the very first step resets too. Running
+single cells, a range or a **Resume Run** that starts later keeps the current session, since
+those usually rely on earlier steps.
 
 The same works for PowerShell:
 
@@ -76,7 +79,23 @@ Each runbook has its own sessions: one for `sh`/`bash` cells and one for `pwsh`/
 cells. A session starts in the folder of the `.md` file when its first cell runs. Later cells
 do **not** go back to that folder: a `cd` stays in effect, just like in a terminal.
 
-`mdRunbook.execution.env` and other per-cell variables are set before each cell and stay set.
+A cell with the `cwd=` option runs in that folder, for that cell only: the session changes to
+it before the cell and back to where it was afterwards, so a `cd` inside such a cell does not
+carry over either. If the folder doesn't exist, the cell fails and the session keeps running.
+
+````markdown
+```bash cwd=deploy
+make build          # runs in deploy/
+```
+
+```bash
+pwd                 # back where the session was
+```
+````
+
+`mdRunbook.execution.env` and other per-cell variables are set before each cell and stay set
+until the session ends. They are written to a temporary setup file that is deleted as soon as
+the shell has read it, before the cell's own commands run.
 
 ## Assistant-written cells
 
@@ -94,7 +113,7 @@ from the toggle, the front matter or the setting. Click it to switch, restart or
 | Command | Description |
 | --- | --- |
 | **md-runbook: Toggle Session Mode** | Switch the current runbook between session and isolated mode. |
-| **md-runbook: Restart Session** | Kill this runbook's sessions and start fresh ones in the `.md` file's folder. |
+| **md-runbook: Restart Session** | Kill this runbook's sessions and start fresh ones in the `.md` file's folder, with only VS Code's environment. |
 | **md-runbook: Stop Session** | Kill this runbook's sessions. The next cell starts a new one. |
 
 Sessions also end when the runbook is closed, when VS Code exits, and when the runbook is
@@ -117,8 +136,11 @@ switched to isolated mode.
 ## Caveats
 
 - Standard input: bash cells read from an empty input, as in isolated mode. In PowerShell cells,
-  a native command that waits for input (for example a login prompt) waits until you cancel the
-  cell. Pass credentials as arguments or environment variables instead.
+  native commands share the session's command stream as their standard input: a command that
+  waits for input (a login prompt, `cat` without arguments) can read the session's next internal
+  command and then hang until you cancel the cell. Pass credentials as arguments or environment
+  variables, or redirect input explicitly (`$null | oc login …`), or use
+  [terminal mode](terminal.md) for interactive commands.
 - Output that a background job prints between cells is discarded.
 - Commands that replace the shell or its output (`exec`, `exec >file`) affect all later cells.
 

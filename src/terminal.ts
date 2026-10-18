@@ -4,6 +4,7 @@
  * extension. Output and exit code come from VS Code's shell-integration API (VS Code 1.93+).
  */
 
+import { execFile } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -13,7 +14,8 @@ import { SECTION } from './config';
 import { ExecuteResult, isCodeMeta, nodeShellEnv, resolveShell, shellKindForLanguage } from './core';
 import { parseCellOptions } from './core/cellOptions';
 import { proposalOf } from './core/proposal';
-import { TerminalOutputFilter, parseStatus, terminalCommandLine, terminalSignature } from './core/terminalCommand';
+import { killTree } from './core/runner';
+import { TerminalOutputFilter, descendants, parseStatus, terminalCommandLine, terminalSignature } from './core/terminalCommand';
 import { META_KEY } from './outputs';
 import { CellExecutor, CellPlan, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
 
@@ -37,6 +39,33 @@ interface WindowWithIntegration {
 const INTEGRATION_TIMEOUT_MS = 10_000;
 const CANCEL_GRACE_MS = 3_000;
 const READ_GRACE_MS = 3_000;
+/** How long to wait for the exit-code file after the terminal reports the end of the command. */
+const STATUS_GRACE_MS = 1_000;
+
+/** Kill everything a terminal's shell started, then the shell (Ctrl+C was not enough). */
+function killTerminalTree(pid: number): void {
+  if (process.platform === 'win32') return killTree(pid, 'win32'); // taskkill /T walks the tree
+  execFile('ps', ['-A', '-o', 'pid=,ppid='], (err, stdout) => {
+    const pids = err ? [] : descendants(stdout, pid);
+    for (const p of [...pids.reverse(), pid]) {
+      try {
+        process.kill(p, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+  });
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function readStatus(file: string): string | undefined {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
 
 const terminalMode = (): Mode => {
   const m = vscode.workspace.getConfiguration(SECTION).get<string>('terminal.mode', 'off');
@@ -60,20 +89,23 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
   /** One terminal per runbook and shell kind, recreated when its cwd/env change. */
   const terminals = new Map<string, { terminal: vscode.Terminal; signature: string }>();
 
-  const waitForIntegration = (terminal: TerminalWithIntegration): Promise<ShellIntegration | undefined> => {
+  /** Waits up to 10 s for shell integration; gives up at once when `signal` aborts. */
+  const waitForIntegration = (terminal: TerminalWithIntegration, signal: AbortSignal): Promise<ShellIntegration | undefined> => {
     if (terminal.shellIntegration) return Promise.resolve(terminal.shellIntegration);
-    if (!win.onDidChangeTerminalShellIntegration) return Promise.resolve(undefined);
+    if (!win.onDidChangeTerminalShellIntegration || signal.aborted) return Promise.resolve(undefined);
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        sub.dispose();
-        resolve(terminal.shellIntegration);
-      }, INTEGRATION_TIMEOUT_MS);
-      const sub = win.onDidChangeTerminalShellIntegration!((e) => {
-        if (e.terminal !== terminal) return;
+      const done = (value: ShellIntegration | undefined): void => {
         clearTimeout(timer);
         sub.dispose();
-        resolve(e.shellIntegration);
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      };
+      const onAbort = (): void => done(undefined);
+      const timer = setTimeout(() => done(terminal.shellIntegration), INTEGRATION_TIMEOUT_MS);
+      const sub = win.onDidChangeTerminalShellIntegration!((e) => {
+        if (e.terminal === terminal) done(e.shellIntegration);
       });
+      signal.addEventListener('abort', onAbort);
     });
   };
 
@@ -86,54 +118,85 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
       if (!resolved.ok) return notRun(resolved.error);
       const shell = resolved.shell;
 
-      const key = `${ctx.notebook.uri.toString()}#${kind}`;
-      const signature = terminalSignature(kind, shell.command, plan.cwd, plan.env);
-      let entry = terminals.get(key);
-      if (entry && (entry.signature !== signature || entry.terminal.exitStatus !== undefined)) {
-        entry.terminal.dispose();
-        entry = undefined;
-      }
-      if (!entry) {
-        const name = `md-runbook: ${path.basename(ctx.notebook.uri.path)} (${shell.label})`;
-        const terminal = vscode.window.createTerminal({ name, shellPath: shell.command, cwd: plan.cwd, env: plan.env });
-        entry = { terminal, signature };
-        terminals.set(key, entry);
-      }
-      const terminal = entry.terminal as TerminalWithIntegration;
-      // Focus it: the user may need to type a password or answer a prompt.
-      terminal.show(false);
-
-      const integration = await waitForIntegration(terminal);
-      if (!integration) {
-        return notRun(
-          'Terminal shell integration did not start, so output and exit code cannot be captured. ' +
-            'Check `terminal.integrated.shellIntegration.enabled` and that the shell is supported (bash, zsh, PowerShell).',
-        );
-      }
-
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-runbook-term-'));
-      const scriptPath = path.join(dir, `cell-${crypto.randomBytes(4).toString('hex')}${shell.extension}`);
-      fs.writeFileSync(scriptPath, shell.script(plan.source), 'utf8');
-      const statusPath = path.join(dir, 'status');
-      // bash gets paths in the form its args use (forward slashes for Git Bash); pwsh native paths.
-      const asArg = (p: string): string => (kind === 'bash' ? (shell.args(p)[0] ?? p) : p);
       const started = Date.now();
       let timedOut = false;
-      let cancelled = false;
+      let cancelled = io.signal.aborted;
+      const result = (exitCode: number | null, error?: string): ExecuteResult => ({
+        exitCode,
+        signal: null,
+        timedOut,
+        cancelled,
+        durationMs: Date.now() - started,
+        shell: { ...shell, label: `${shell.label} terminal` },
+        ...(error !== undefined ? { error } : {}),
+      });
+      if (cancelled) return result(null);
+
+      // Cancel and timeout apply from the start, including the wait for shell integration.
+      const stop = new AbortController();
+      const onAbort = (): void => {
+        cancelled = true;
+        stop.abort();
+      };
+      io.signal.addEventListener('abort', onAbort);
+      const timer =
+        plan.timeoutMs > 0
+          ? setTimeout(() => {
+              timedOut = true;
+              stop.abort();
+            }, plan.timeoutMs)
+          : undefined;
+      let dir: string | undefined;
 
       try {
-        const execution = integration.executeCommand(terminalCommandLine(kind, asArg(scriptPath), asArg(statusPath)));
+        const key = `${ctx.notebook.uri.toString()}#${kind}`;
+        const signature = terminalSignature(kind, shell.command, plan.cwd, plan.env);
+        let entry = terminals.get(key);
+        if (entry && (entry.signature !== signature || entry.terminal.exitStatus !== undefined)) {
+          entry.terminal.dispose();
+          entry = undefined;
+        }
+        if (!entry) {
+          const name = `md-runbook: ${path.basename(ctx.notebook.uri.path)} (${shell.label})`;
+          // Transient: VS Code must not restore it (with its environment, which may hold secrets)
+          // or its scrollback after a reload.
+          const terminal = vscode.window.createTerminal({ name, shellPath: shell.command, cwd: plan.cwd, env: plan.env, isTransient: true });
+          entry = { terminal, signature };
+          terminals.set(key, entry);
+        }
+        const terminal = entry.terminal as TerminalWithIntegration;
+        // Focus it: the user may need to type a password or answer a prompt.
+        terminal.show(false);
+
+        const integration = await waitForIntegration(terminal, stop.signal);
+        if (stop.signal.aborted) return result(null);
+        if (!integration) {
+          return notRun(
+            'Terminal shell integration did not start, so output and exit code cannot be captured. ' +
+              'Check `terminal.integrated.shellIntegration.enabled` and that the shell is supported (bash, zsh, PowerShell).',
+          );
+        }
+
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-runbook-term-'));
+        const scriptPath = path.join(dir, `cell-${crypto.randomBytes(4).toString('hex')}${shell.extension}`);
+        fs.writeFileSync(scriptPath, shell.script(plan.source), 'utf8');
+        const statusPath = path.join(dir, 'status');
+        // bash gets paths in the form its args use (forward slashes for Git Bash); pwsh native paths.
+        const asArg = (p: string): string => (kind === 'bash' ? (shell.args(p)[0] ?? p) : p);
+
+        const execution = integration.executeCommand(terminalCommandLine(kind, shell.command, asArg(scriptPath), asArg(statusPath)));
         const ended = new Promise<number | undefined>((resolve) => {
-          const sub = win.onDidEndTerminalShellExecution!((e) => {
-            if (e.execution !== execution) return;
-            sub.dispose();
-            resolve(e.exitCode);
+          const done = (code: number | undefined): void => {
+            endSub.dispose();
+            closeSub.dispose();
+            resolve(code);
+          };
+          const endSub = win.onDidEndTerminalShellExecution!((e) => {
+            if (e.execution === execution) done(e.exitCode);
           });
           // A disposed terminal never reports the end.
-          const closed = vscode.window.onDidCloseTerminal((t) => {
-            if (t !== terminal) return;
-            closed.dispose();
-            resolve(undefined);
+          const closeSub = vscode.window.onDidCloseTerminal((t) => {
+            if (t === terminal) done(undefined);
           });
         });
         // read() must be called right away, or early output is lost.
@@ -147,43 +210,50 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
           if (rest) io.onStdout(rest);
         })();
 
+        // Ctrl+C; if the command has not ended after the grace period, kill what runs in the
+        // terminal and close it. A command that stops in time leaves the terminal reusable.
+        let finished = false;
+        let grace: NodeJS.Timeout | undefined;
         const interrupt = (): void => {
-          terminal.sendText('\x03', false); // Ctrl+C
-          setTimeout(() => {
-            if (terminals.get(key)?.terminal === terminal) {
-              terminals.delete(key);
-              terminal.dispose();
-            }
-          }, CANCEL_GRACE_MS).unref();
+          terminal.sendText('\x03', false);
+          grace = setTimeout(() => {
+            if (finished) return;
+            if (terminals.get(key)?.terminal === terminal) terminals.delete(key);
+            void Promise.resolve(terminal.processId)
+              .then((pid) => pid !== undefined && killTerminalTree(pid), () => undefined)
+              .then(() => terminal.dispose());
+          }, CANCEL_GRACE_MS);
         };
-        const onAbort = (): void => {
-          cancelled = true;
-          interrupt();
-        };
-        io.signal.addEventListener('abort', onAbort);
-        const timer =
-          plan.timeoutMs > 0
-            ? setTimeout(() => {
-                timedOut = true;
-                interrupt();
-              }, plan.timeoutMs)
-            : undefined;
+        stop.signal.addEventListener('abort', interrupt, { once: true });
 
         const reported = await ended;
-        let written: string | undefined;
-        try {
-          written = fs.readFileSync(statusPath, 'utf8');
-        } catch {
-          // Interrupted before the status was written.
+        finished = true;
+        clearTimeout(grace);
+        stop.signal.removeEventListener('abort', interrupt);
+
+        let written = readStatus(statusPath);
+        // The status is written right after the script ends; give it a moment if the end was
+        // reported first.
+        for (let waited = 0; written === undefined && !stop.signal.aborted && terminal.exitStatus === undefined && waited < STATUS_GRACE_MS; waited += 100) {
+          await sleep(100);
+          written = readStatus(statusPath);
         }
-        const exitCode = parseStatus(written) ?? reported;
+        // The stream finishes shortly after the end event; don't cut off the last lines.
+        await Promise.race([reading.catch(() => undefined), sleep(READ_GRACE_MS)]);
+
+        const status = parseStatus(written);
+        if (status !== undefined) return result(status);
+        if (stop.signal.aborted) return result(null);
+        // No exit code written: the terminal closed, or the end was reported early (output that
+        // imitates the shell-integration end mark). Never a success; and the command may still
+        // run there, so the next cell gets a new terminal.
+        if (terminals.get(key)?.terminal === terminal) terminals.delete(key);
+        if (reported !== undefined && reported !== 0) return result(reported);
+        return result(null, 'The terminal reported the end of the command without its exit code, so the result is unknown (the command may still be running in the terminal).');
+      } finally {
         clearTimeout(timer);
         io.signal.removeEventListener('abort', onAbort);
-        // The stream finishes shortly after the end event; don't cut off the last lines.
-        await Promise.race([reading.catch(() => undefined), new Promise((r) => setTimeout(r, READ_GRACE_MS))]);
-        return { exitCode: exitCode ?? null, signal: null, timedOut, cancelled, durationMs: Date.now() - started, shell: { ...shell, label: `${shell.label} terminal` } };
-      } finally {
-        fs.rm(dir, { recursive: true, force: true }, () => undefined);
+        if (dir !== undefined) fs.rm(dir, { recursive: true, force: true }, () => undefined);
       }
     },
   };

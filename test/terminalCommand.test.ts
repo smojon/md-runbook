@@ -6,8 +6,35 @@ import { quotePwsh, quoteSh, terminalCommandLine, terminalSignature } from '../s
 it('quotes script paths for bash and PowerShell', () => {
   assert.equal(quoteSh("/tmp/it's here/cell.sh"), `'/tmp/it'\\''s here/cell.sh'`);
   assert.equal(quotePwsh("C:\\Temp\\it's\\cell.ps1"), "'C:\\Temp\\it''s\\cell.ps1'");
-  assert.equal(terminalCommandLine('bash', 'C:/Users/A B/cell.sh', 'C:/T/status'), "bash 'C:/Users/A B/cell.sh'; printf '%s' $? > 'C:/T/status'; sleep 0.5");
-  assert.match(terminalCommandLine('pwsh', 'C:\\Users\\A B\\cell.ps1', 'C:\\T\\status'), /^\$global:LASTEXITCODE = 0; & 'C:\\Users\\A B\\cell\.ps1'; .*Set-Content -NoNewline -Path 'C:\\T\\status'/);
+  // Typographic single quotes are quotes to PowerShell too.
+  assert.equal(quotePwsh('x\u2019; calc; \u2018\u201A\u201B'), "'x\u2019\u2019; calc; \u2018\u2018\u201A\u201A\u201B\u201B'");
+});
+
+it('runs bash cells with the resolved bash, not the one on PATH', () => {
+  assert.equal(
+    terminalCommandLine('bash', 'C:\\Program Files\\Git\\bin\\bash.exe', 'C:/Users/A B/cell.sh', 'C:/T/status', 'win32'),
+    "'C:/Program Files/Git/bin/bash.exe' 'C:/Users/A B/cell.sh'; printf '%s' $? > 'C:/T/status'; sleep 0.5",
+  );
+  assert.match(terminalCommandLine('bash', "/opt/my bash/it's/bash", '/tmp/c.sh', '/tmp/s', 'linux'), /^'\/opt\/my bash\/it'\\''s\/bash' '\/tmp\/c\.sh'; /);
+});
+
+it('runs PowerShell cells in a child process (no -NonInteractive; Bypass on Windows)', () => {
+  const win = terminalCommandLine('pwsh', 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', "C:\\Users\\A B\\it's\\cell.ps1", 'C:\\T\\status', 'win32');
+  assert.match(win, /^\$global:LASTEXITCODE = 0; & 'C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe' -NoLogo -NoProfile -ExecutionPolicy Bypass -Command '/);
+  // The script path is quoted twice: once inside the wrapper, once for the -Command argument.
+  assert.ok(win.includes("& ''C:\\Users\\A B\\it''''s\\cell.ps1''"), win);
+  assert.match(win, /Set-Content -NoNewline -Path 'C:\\T\\status'/);
+  assert.doesNotMatch(win, /NonInteractive/);
+  const linux = terminalCommandLine('pwsh', '/usr/bin/pwsh', '/tmp/c.ps1', '/tmp/s', 'linux');
+  assert.doesNotMatch(linux, /ExecutionPolicy/);
+  assert.doesNotMatch(linux, /\\"/);
+});
+
+it('descendants walks the process tree from ps output', async () => {
+  const { descendants } = await import('../src/core/terminalCommand');
+  const ps = '  1     0\n 10     1\n 11    10\n 12    10\n 13    11\n 20     1\n bad line\n';
+  assert.deepEqual(descendants(ps, 10), [11, 12, 13]);
+  assert.deepEqual(descendants(ps, 13), []);
 });
 
 it('terminal signature changes with cwd or env, not with key order', () => {
