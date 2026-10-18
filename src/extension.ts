@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { clearOutputBlocks } from './core';
 import { RunbookController } from './controller';
+import { registerHistory } from './history';
 import { RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
 
@@ -47,6 +48,7 @@ async function clearAllOutputs(uri?: unknown): Promise<void> {
 
 export function activate(context: vscode.ExtensionContext): void {
   const pipeline = new RunPipeline();
+  registerHistory(context, pipeline);
   // Feature modules register preparers/observers/executor on `pipeline` here.
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {

@@ -33,6 +33,8 @@ export interface PrepareContext {
   cell: vscode.NotebookCell;
   notebook: vscode.NotebookDocument;
   token: vscode.CancellationToken;
+  /** The cell's outputs from before this run (they are cleared before preparers run). */
+  previousOutputs?: readonly vscode.NotebookCellOutput[];
 }
 
 export interface CellPreparer {

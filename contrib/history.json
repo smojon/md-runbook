@@ -1,0 +1,72 @@
+{
+  "commands": [
+    {
+      "command": "mdRunbook.runAllAsCopy",
+      "title": "Run All as Copy",
+      "category": "md-runbook",
+      "icon": "$(files)"
+    },
+    {
+      "command": "mdRunbook.compareWithPreviousRun",
+      "title": "Compare With Previous Run",
+      "category": "md-runbook",
+      "icon": "$(diff)"
+    }
+  ],
+  "menus": {
+    "notebook/toolbar": [
+      {
+        "command": "mdRunbook.runAllAsCopy",
+        "when": "notebookType == md-runbook && config.mdRunbook.output.mode == copy",
+        "group": "navigation/execute@1"
+      },
+      {
+        "command": "mdRunbook.runAllAsCopy",
+        "when": "notebookType == md-runbook && config.mdRunbook.output.mode != copy",
+        "group": "navigation/execute@98"
+      }
+    ],
+    "notebook/cell/title": [
+      {
+        "command": "mdRunbook.compareWithPreviousRun",
+        "when": "notebookType == md-runbook && notebookCellType == code && notebookCellHasOutputs",
+        "group": "md-runbook@1"
+      }
+    ],
+    "commandPalette": [
+      {
+        "command": "mdRunbook.runAllAsCopy",
+        "when": "notebookType == md-runbook || resourceExtname == .md"
+      },
+      {
+        "command": "mdRunbook.compareWithPreviousRun",
+        "when": "notebookType == md-runbook"
+      }
+    ]
+  },
+  "configuration": {
+    "properties": {
+      "mdRunbook.output.historySize": {
+        "type": "integer",
+        "default": 0,
+        "minimum": 0,
+        "markdownDescription": "When a cell is re-run, keep up to this many earlier outputs in a collapsed `<details>` block after the latest output. `0` = off (re-running drops any existing history)."
+      },
+      "mdRunbook.output.mode": {
+        "type": "string",
+        "enum": ["inPlace", "copy"],
+        "enumDescriptions": [
+          "Run cells in the runbook itself and write outputs into it.",
+          "Treat runbooks as templates: show Run All as Copy first in the notebook toolbar and suggest it when cells are run in place."
+        ],
+        "default": "inPlace",
+        "description": "Where runs are recorded."
+      },
+      "mdRunbook.output.copyFolder": {
+        "type": "string",
+        "default": "",
+        "markdownDescription": "Folder for **Run All as Copy**, relative to the runbook's folder (or absolute). Empty = next to the runbook. Cells of a copy still run in the original runbook's folder."
+      }
+    }
+  }
+}

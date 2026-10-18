@@ -6,8 +6,8 @@
 import { isFenceClose, langOf, matchFenceOpen, stripIndent } from './fence';
 import { isRunnableFenceLang, languageIdForFence } from './languages';
 import { BLANK_RE, Line, dominantEol, joinRaw, splitLines } from './lines';
-import type { CodeMeta, MarkupMeta, OutputMeta, ParsedCell, ParsedDocument, ParsedOutput } from './model';
-import { OUTPUT_END_RE, OUTPUT_START_RE, parseAttrs } from './outputBlock';
+import type { CodeMeta, HistoryEntry, HistoryMeta, MarkupMeta, OutputMeta, ParsedCell, ParsedDocument, ParsedOutput } from './model';
+import { HISTORY_CLOSE_RE, HISTORY_OPEN_RE, OUTPUT_END_RE, OUTPUT_START_RE, parseAttrs } from './outputBlock';
 
 export function parse(input: string): ParsedDocument {
   let text = input;
@@ -101,6 +101,11 @@ export function parse(input: string): ParsedDocument {
       meta.output = out.meta;
       cell.output = out.output;
       next = out.end;
+      const hist = parseHistoryBlock(lines, next);
+      if (hist) {
+        meta.history = hist.meta;
+        next = hist.end;
+      }
     }
     cells.push(cell);
     i = next;
@@ -150,4 +155,32 @@ function parseOutputBlock(
     output: { text, attrs: parseAttrs(start[1] ?? '') },
     end: e + 1,
   };
+}
+
+/**
+ * Recognize a history block (`<details>` with earlier output blocks, then `</details>`) starting
+ * at line `k`, optionally after blank lines. Only called directly after an output block.
+ */
+function parseHistoryBlock(lines: readonly Line[], k: number): { meta: HistoryMeta; end: number } | null {
+  let g = k;
+  while (g < lines.length && BLANK_RE.test(lines[g]!.text)) g++;
+  if (!lines[g] || !HISTORY_OPEN_RE.test(lines[g]!.text)) return null;
+  const entries: HistoryEntry[] = [];
+  let p = g + 1;
+  for (;;) {
+    const out = parseOutputBlock(lines, p);
+    if (!out) break;
+    entries.push({ raw: out.meta.raw.slice(out.meta.gap.length), ...out.output });
+    p = out.end;
+  }
+  while (p < lines.length && BLANK_RE.test(lines[p]!.text)) p++;
+  if (entries.length === 0 || !lines[p] || !HISTORY_CLOSE_RE.test(lines[p]!.text)) return null;
+  return { meta: { raw: joinRaw(lines.slice(k, p + 1)), gap: joinRaw(lines.slice(k, g)), entries }, end: p + 1 };
+}
+
+/** Parse the exact bytes of one output block (start marker through end marker). */
+export function parseOutputBlockRaw(raw: string): ParsedOutput | null {
+  const lines = splitLines(raw);
+  const out = parseOutputBlock(lines, 0);
+  return out && out.end === lines.length ? out.output : null;
 }
