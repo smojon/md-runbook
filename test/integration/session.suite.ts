@@ -92,4 +92,32 @@ export const tests: Test[] = [
       }
     },
   },
+  {
+    name: 'session mode: assistant-written cells run isolated, without the shared state',
+    fn: async () => {
+      await setConfig('execution.mode', 'session');
+      // Let the file's approval stamp count, and give AI cells (required) read-only credentials.
+      await setConfig('approval.trustFileApprovals', true);
+      await setConfig('approval.readOnlyEnv', { MDRB_READONLY: 'yes' });
+      try {
+        const set = isWin ? "$env:FOO = 'bar'" : 'export FOO=bar';
+        const get = isWin ? 'Write-Output "FOO=$env:FOO RO=$env:MDRB_READONLY"' : 'echo "FOO=$FOO RO=$MDRB_READONLY"';
+        const uri = writeFile(
+          'session-ai.md',
+          `\`\`\`${LANG}\n${set}\n\`\`\`\n\n\`\`\`${LANG} approved-by=me approved-at=now by=ai reason="probe"\n${get}\n\`\`\`\n`,
+        );
+        const editor = await openRunbook(uri);
+        const ai = editor.notebook.cellAt(1);
+        await runCells(editor, 0, 2);
+        assert.equal(await waitForRun(ai), true, outputText(ai));
+        assert.match(outputText(ai), /FOO= RO=yes/, 'AI cell must not see FOO from the shared session, but gets read-only env');
+        assert.doesNotMatch(outputText(ai), /session/, 'AI cell is not run in the session');
+      } finally {
+        await setConfig('approval.readOnlyEnv', undefined);
+        await setConfig('approval.trustFileApprovals', undefined);
+        await setConfig('execution.mode', undefined);
+        await closeAll();
+      }
+    },
+  },
 ];

@@ -8,6 +8,9 @@ import * as vscode from 'vscode';
 import { SECTION } from './config';
 import { parseFrontMatter } from './core/secrets';
 import { SessionPool } from './core/session';
+import { isCodeMeta } from './core';
+import { proposalOf } from './core/proposal';
+import { META_KEY } from './outputs';
 import { CellExecutor, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
 
@@ -25,6 +28,11 @@ function frontMatterMode(nb: vscode.NotebookDocument): Mode | undefined {
   const first = nb.cellCount > 0 ? nb.cellAt(0) : undefined;
   if (!first || first.kind !== vscode.NotebookCellKind.Markup) return undefined;
   return parseFrontMatter(first.document.getText())?.mode;
+}
+
+function isAssistantCell(cell: vscode.NotebookCell): boolean {
+  const meta: unknown = cell.metadata?.[META_KEY];
+  return isCodeMeta(meta) && proposalOf(meta.info).by !== undefined;
 }
 
 /** The runbook a command applies to: the given URI, else the active (or only visible) runbook editor. */
@@ -102,7 +110,15 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
       }),
   });
   const fallback = pipeline.executorFor;
-  pipeline.executorFor = (nb) => (modeOf(nb).mode === 'session' ? sessionExecutorFor(nb) : fallback(nb));
+  pipeline.executorFor = (nb) => {
+    if (modeOf(nb).mode !== 'session') return fallback(nb);
+    const session = sessionExecutorFor(nb);
+    return {
+      // Cells written by an assistant never join the shared shell: they must not see variables or
+      // logins from earlier cells, and they get their own (read-only) credentials instead.
+      execute: (plan, io, ctx) => (isAssistantCell(ctx.cell) ? fallback(nb) : session).execute(plan, io, ctx),
+    };
+  };
 
   // Optionally start every Run All in a fresh session, so full runs never depend on leftovers.
   pipeline.observers.push({

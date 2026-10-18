@@ -59,6 +59,18 @@ export function approvedInfo(info: string, user: string, at: string): string {
   return replaced === info ? `${info} ${stamp}` : replaced;
 }
 
+const approvalToken = (key: string): RegExp => new RegExp(`(^|\\s)${key}=("[^"]*"|'[^']*'|\\S*)`, 'i');
+
+/**
+ * The info string of an approved cell back as a proposal (to approve it again): the first
+ * `approved-by=…` token becomes `proposed` (or is dropped if the flag is already there) and
+ * `approved-at=…` is dropped.
+ */
+export function asProposed(info: string): string {
+  const hasFlag = /(^|\s)proposed(?=\s|$)/i.test(info);
+  return info.replace(approvalToken('approved-by'), hasFlag ? '' : '$1proposed').replace(approvalToken('approved-at'), '');
+}
+
 /** A copy of `meta` whose opening fence line carries `info` (same indent, fence and line ending). */
 export function withInfo(meta: CodeMeta, info: string): CodeMeta {
   const eol = /\r\n$/.test(meta.open) ? '\r\n' : /\n$/.test(meta.open) ? '\n' : /\r$/.test(meta.open) ? '\r' : meta.eol;

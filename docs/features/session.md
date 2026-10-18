@@ -78,6 +78,13 @@ do **not** go back to that folder: a `cd` stays in effect, just like in a termin
 
 `mdRunbook.execution.env` and other per-cell variables are set before each cell and stay set.
 
+## Assistant-written cells
+
+Cells written by an assistant (with `by=` in the fence line, see
+[approval](approval.md)) never run in the shared session, even in session mode. They run in their
+own process, so they can't see variables, functions or logins from earlier cells, and they get
+the read-only credentials from `mdRunbook.approval.readOnlyEnv` instead.
+
 ## Status bar and commands
 
 For the active runbook the status bar shows the mode: `$(debug-disconnect) isolated`, or

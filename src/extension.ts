@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { registerAi } from './ai/commands';
+import { registerApproval } from './approval';
 import { registerCodeLens } from './codeLens';
 import { clearOutputBlocks } from './core';
 import { RunbookController } from './controller';
@@ -56,11 +57,15 @@ async function clearAllOutputs(uri?: unknown): Promise<void> {
 export function activate(context: vscode.ExtensionContext): void {
   const pipeline = new RunPipeline();
   // Feature modules register preparers/observers/executor on `pipeline` here. Preparers run in
-  // registration order: safety first, so skipped or declined cells never prompt for secrets.
+  // registration order: the approval gate first, so proposed cells never prompt for anything;
+  // then safety, so skipped or declined cells never prompt for secrets.
+  const approval = registerApproval(context, pipeline);
   registerSafety(context, pipeline);
   registerSecrets(context, pipeline);
   registerHistory(context, pipeline);
   registerSessions(context, pipeline);
+  // Last: read-only credentials of AI-proposed cells win over cell options and secrets.
+  pipeline.preparers.push(approval.credentials);
   const controller = new RunbookController(pipeline);
   registerProgress(context, pipeline, controller);
   registerCodeLens(context);

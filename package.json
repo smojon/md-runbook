@@ -208,6 +208,28 @@
         "command": "mdRunbook.ai.clearAnthropicKey",
         "title": "Clear Anthropic API Key",
         "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.approveProposal",
+        "title": "Approve Proposed Cell",
+        "category": "md-runbook",
+        "icon": "$(check)"
+      },
+      {
+        "command": "mdRunbook.rejectProposal",
+        "title": "Reject Proposed Cell",
+        "category": "md-runbook",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "mdRunbook.approveAllProposals",
+        "title": "Approve All Proposals",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.revealProposal",
+        "title": "Go to Next Proposal",
+        "category": "md-runbook"
       }
     ],
     "menus": {
@@ -371,6 +393,22 @@
         },
         {
           "command": "mdRunbook.ai.summarizeIncident",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.approveProposal",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.rejectProposal",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.approveAllProposals",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.revealProposal",
           "when": "notebookType == md-runbook"
         }
       ],
@@ -731,6 +769,57 @@
           "type": "string",
           "default": "ai",
           "markdownDescription": "Written as `by=` in the fence of proposed cells, e.g. `bash proposed by=ai reason=\"…\"`."
+        },
+        "mdRunbook.approval.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "Proposed cells (fence `proposed`) are skipped until a human approves them. **Turning this off is insecure**: proposed cells, including ones written by an assistant, then run like any other cell."
+        },
+        "mdRunbook.approval.resetOnEdit": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "An approved cell whose code changed since it was approved needs approval again."
+        },
+        "mdRunbook.approval.trustFileApprovals": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Honour `approved-by=` stamps that came with the file (approved by a colleague, or written by anything that can edit the file). When off, a cell must have been approved on this machine (same code) before it runs."
+        },
+        "mdRunbook.approval.userName": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Name recorded as `approved-by=`. Empty = your OS user name."
+        },
+        "mdRunbook.approval.policy.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "Check cells proposed by an assistant (`by=`) against the command policy before they can be approved. When off, they are approved with one click."
+        },
+        "mdRunbook.approval.policyFile": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Command policy file. Empty = the nearest `.md-runbook-policy.json` next to the runbook or in a parent folder up to the workspace folder; built-in policy if there is none. `${workspaceFolder}` is expanded; relative paths are relative to the workspace folder."
+        },
+        "mdRunbook.approval.readOnlyOnly": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "Cells proposed by an assistant (`by=`) refuse to run unless `#mdRunbook.approval.readOnlyEnv#` is set, so they never run with your normal credentials."
+        },
+        "mdRunbook.approval.readOnlyEnv": {
+          "type": "object",
+          "default": {},
+          "scope": "machine",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Environment variables for cells proposed by an assistant (`by=`), e.g. `{ \"KUBECONFIG\": \"${secret:KUBECONFIG_READONLY}\" }`. `${secret:NAME}` reads a stored secret (**md-runbook: Set Secret**). They override everything else and are redacted from output."
         }
       }
     }
