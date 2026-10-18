@@ -81,6 +81,50 @@
         "command": "mdRunbook.setParameters",
         "title": "Set Parameters",
         "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.markStepDone",
+        "title": "Mark Step Done",
+        "category": "md-runbook",
+        "icon": "$(check)"
+      },
+      {
+        "command": "mdRunbook.markStepSkipped",
+        "title": "Mark Step Skipped",
+        "category": "md-runbook",
+        "icon": "$(debug-step-over)"
+      },
+      {
+        "command": "mdRunbook.unmarkStep",
+        "title": "Unmark Step",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.checkNextItem",
+        "title": "Check Next Item",
+        "category": "md-runbook",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "mdRunbook.resumeRun",
+        "title": "Resume Run",
+        "category": "md-runbook",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "mdRunbook.clearOutputsAbove",
+        "title": "Clear Outputs Above",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.clearOutputsBelow",
+        "title": "Clear Outputs Below",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.revealNextStep",
+        "title": "Go to Next Step",
+        "category": "md-runbook"
       }
     ],
     "menus": {
@@ -108,6 +152,11 @@
           "command": "mdRunbook.openAsText",
           "when": "notebookType == md-runbook",
           "group": "navigation/execute@99"
+        },
+        {
+          "command": "mdRunbook.resumeRun",
+          "when": "notebookType == md-runbook",
+          "group": "navigation/execute@10"
         }
       ],
       "commandPalette": [
@@ -130,6 +179,70 @@
         {
           "command": "mdRunbook.setParameters",
           "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.markStepDone",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.markStepSkipped",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.unmarkStep",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.checkNextItem",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.resumeRun",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.clearOutputsAbove",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.clearOutputsBelow",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.revealNextStep",
+          "when": "notebookType == md-runbook"
+        }
+      ],
+      "notebook/cell/title": [
+        {
+          "command": "mdRunbook.markStepDone",
+          "when": "notebookType == md-runbook && notebookCellType == code",
+          "group": "mdRunbook-progress@1"
+        },
+        {
+          "command": "mdRunbook.markStepSkipped",
+          "when": "notebookType == md-runbook && notebookCellType == code",
+          "group": "mdRunbook-progress@2"
+        },
+        {
+          "command": "mdRunbook.unmarkStep",
+          "when": "notebookType == md-runbook && notebookCellType == code",
+          "group": "mdRunbook-progress@3"
+        },
+        {
+          "command": "mdRunbook.checkNextItem",
+          "when": "notebookType == md-runbook && notebookCellType == markup",
+          "group": "mdRunbook-progress@1"
+        },
+        {
+          "command": "mdRunbook.clearOutputsAbove",
+          "when": "notebookType == md-runbook",
+          "group": "mdRunbook-clear@1"
+        },
+        {
+          "command": "mdRunbook.clearOutputsBelow",
+          "when": "notebookType == md-runbook",
+          "group": "mdRunbook-clear@2"
         }
       ]
     },
@@ -298,6 +411,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Use a runbook parameter's front-matter default without asking. Parameters without a default are still asked for."
+        },
+        "mdRunbook.progress.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show the active runbook's progress in the status bar (e.g. `4/7 · ✗ step 5`). Click it to go to the failed or next pending step."
         }
       }
     }

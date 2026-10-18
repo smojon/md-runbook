@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { clearOutputBlocks } from './core';
 import { RunbookController } from './controller';
 import { RunPipeline } from './pipeline';
+import { registerProgress } from './progress';
 import { registerSafety } from './safety';
 import { registerSecrets } from './secrets';
 import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
@@ -53,13 +54,15 @@ export function activate(context: vscode.ExtensionContext): void {
   // registration order: safety first, so skipped or declined cells never prompt for secrets.
   registerSafety(context, pipeline);
   registerSecrets(context, pipeline);
+  const controller = new RunbookController(pipeline);
+  registerProgress(context, pipeline, controller);
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {
       transientOutputs: false,
       transientCellMetadata: {},
       transientDocumentMetadata: {},
     }),
-    new RunbookController(pipeline),
+    controller,
     vscode.commands.registerCommand('mdRunbook.openAsRunbook', async (uri?: unknown) => {
       const target = targetUri(uri);
       if (target) await vscode.commands.executeCommand('vscode.openWith', target, NOTEBOOK_TYPE);

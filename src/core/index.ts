@@ -19,3 +19,4 @@ export { LineBuffer } from './lineBuffer';
 export { ShellEnv, ShellKind, ShellSettings, ResolvedShell, resolveShell, shellKindForLanguage, pwshWrapper } from './shell';
 export { RunResult, killTree, runProcess } from './runner';
 export { ExecuteOptions, ExecuteResult, executeCell, exitLabel, isSuccess, nodeShellEnv } from './execute';
+export { Progress, ProgressCell, StepState, checkNextItem, checklist, computeProgress, formatProgress, nextUncheckedOffset, outputBlockAttrs, stepState } from './progress';
