@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isCodeMeta, shellKindForLanguage } from './core';
+import type { Captured } from './core/checks';
 import { proposalOf } from './core/proposal';
 import { RunbookParam, VAR_NAME_RE, dotenvSecrets, findRefs, parseDotenv, parseFrontMatter, rewriteRefs } from './core/secrets';
 import { META_KEY } from './outputs';
@@ -50,6 +51,8 @@ class SecretsFeature {
   /** Per-notebook session values, cleared when the notebook closes or on Reset Inputs. */
   private readonly inputs = new Map<string, Map<string, string>>();
   private readonly params = new Map<string, Map<string, string>>();
+  /** Values captured from cell output (`capture=`), for `${out:NAME}`. */
+  private readonly outs = new Map<string, Map<string, Captured>>();
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -113,7 +116,7 @@ class SecretsFeature {
     return value;
   }
 
-  private session(map: Map<string, Map<string, string>>, nb: vscode.NotebookDocument): Map<string, string> {
+  private session<T>(map: Map<string, Map<string, T>>, nb: vscode.NotebookDocument): Map<string, T> {
     const key = nb.uri.toString();
     let m = map.get(key);
     if (!m) map.set(key, (m = new Map()));
@@ -190,14 +193,25 @@ class SecretsFeature {
       );
     }
     for (const ref of refs) {
-      const value =
-        ref.kind === 'secret'
-          ? await this.secret(ref.name, ctx)
-          : ref.kind === 'input'
-            ? await this.input(ref.name, ref.secret, ctx)
-            : await this.param(ref.name, ctx);
+      let value: string;
+      let secret = ref.secret;
+      if (ref.kind === 'out') {
+        const captured = this.session(this.outs, ctx.notebook).get(ref.name);
+        if (!captured) throw new Error(`md-runbook: \${out:${ref.name}} has no value yet; run the cell with capture=${ref.name} first`);
+        if (captured.secret && by) {
+          throw new Error(`md-runbook: cells proposed by an assistant (by=${by}) cannot use values captured as secret (\${out:${ref.name}}).`);
+        }
+        ({ value, secret } = captured);
+      } else {
+        value =
+          ref.kind === 'secret'
+            ? await this.secret(ref.name, ctx)
+            : ref.kind === 'input'
+              ? await this.input(ref.name, ref.secret, ctx)
+              : await this.param(ref.name, ctx);
+      }
       plan.env[ref.name] = value;
-      if (ref.secret) plan.secrets.push(value);
+      if (secret) plan.secrets.push(value);
     }
     if (refs.length > 0) {
       plan.source = rewriteRefs(plan.source, shell);
@@ -208,6 +222,13 @@ class SecretsFeature {
   forget(nb: vscode.NotebookDocument): void {
     this.inputs.delete(nb.uri.toString());
     this.params.delete(nb.uri.toString());
+    this.outs.delete(nb.uri.toString());
+  }
+
+  /** Keep values a cell captured (`capture=`) for later cells' `${out:NAME}`. */
+  capture(nb: vscode.NotebookDocument, values: readonly Captured[]): void {
+    const m = this.session(this.outs, nb);
+    for (const v of values) m.set(v.name, v);
   }
 
   /** Ask for every declared parameter (`values` only from the test helper, never from a command link). */
@@ -272,6 +293,7 @@ export function isTestMode(context: vscode.ExtensionContext): boolean {
 export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunPipeline): void {
   const f = new SecretsFeature(context);
   pipeline.preparers.push(f);
+  pipeline.observers.push({ onDidRunCell: (run) => run.captured && f.capture(run.notebook, run.captured) });
   if (isTestMode(context)) {
     context.subscriptions.push(
       vscode.commands.registerCommand('mdRunbook._test.setSecret', async (name: string, value: string) => {

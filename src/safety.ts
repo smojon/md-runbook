@@ -37,6 +37,8 @@ const optionsPreparer: CellPreparer = {
     if (o.skip) plan.skip = 'skip option';
     Object.assign(plan.env, o.env);
     if (o.name !== undefined) plan.attrs.name = o.name;
+    if (o.checks) plan.checks = o.checks;
+    if (o.retry) plan.retry = o.retry;
   },
 };
 

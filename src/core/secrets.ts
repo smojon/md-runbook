@@ -1,5 +1,6 @@
 /**
- * Variable references in cell source (`${secret:NAME}`, `${input:NAME}`, `${param:NAME}`), runbook
+ * Variable references in cell source (`${secret:NAME}`, `${input:NAME}`, `${param:NAME}`,
+ * `${out:NAME}` for a value captured from an earlier cell's output), runbook
  * parameters from front matter, and `.env` files. Values never go into the script text: each
  * reference is rewritten to the shell's own environment variable syntax and the value is passed
  * in the environment.
@@ -7,18 +8,18 @@
 
 import type { ShellKind } from './shell';
 
-export type RefKind = 'secret' | 'input' | 'param';
+export type RefKind = 'secret' | 'input' | 'param' | 'out';
 
 export interface VarRef {
   kind: RefKind;
   name: string;
-  /** Value must be masked when asked for and redacted from output. */
+  /** Value must be masked when asked for and redacted from output (for `out`: known once resolved). */
   secret: boolean;
 }
 
 export const VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-const REF_RE = /\$\{(secret|input|param):([A-Za-z_][A-Za-z0-9_]*)(:secret)?\}/g;
+const REF_RE = /\$\{(secret|input|param|out):([A-Za-z_][A-Za-z0-9_]*)(:secret)?\}/g;
 
 /** Inputs named like credentials are treated as secret without the `:secret` suffix. */
 export function looksSecret(name: string): boolean {

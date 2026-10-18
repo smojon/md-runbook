@@ -1,7 +1,10 @@
+import { CellChecks, parseCapture, parseInterval, parseMatcher } from './checks';
+
 /**
  * Per-cell options in the fence info string, after the language word:
  *
  *   ```bash timeout=30 cwd=../infra continue-on-error env.REGION=eu name="Rotate token"
+ *   ```bash expect="Running" retry=10 every=15s capture=POD:/^(web-\S+)/m
  *
  * Tokens are `key=value`, `key="quoted value"` (or single quotes) and bare flags. Unknown tokens
  * and pandoc `{…}` attributes are ignored. Backslashes are literal, so Windows paths work as is.
@@ -20,6 +23,10 @@ export interface CellOptions {
   terminal?: boolean;
   env: Record<string, string>;
   name?: string;
+  /** expect=, expect-not=, expect-exit=, capture=, capture-secret= (undefined when none is set). */
+  checks?: CellChecks;
+  /** retry=N: up to N attempts in all, `every` apart (default 5 s). */
+  retry?: { attempts: number; everyMs: number };
   /** Recognized keys with invalid values. */
   errors: string[];
 }
@@ -96,6 +103,8 @@ export function rewriteInfoTokens(info: string, replace: (t: InfoToken) => strin
 
 export function parseCellOptions(info: string): CellOptions {
   const opts: CellOptions = { env: {}, errors: [] };
+  const checks = (): CellChecks => (opts.checks ??= { captures: [] });
+  let every: number | undefined;
   for (const { key, value } of tokenizeInfo(info.replace(LANG_RE, ''))) {
     const k = key.toLowerCase();
     if (value === undefined) {
@@ -113,9 +122,32 @@ export function parseCellOptions(info: string): CellOptions {
       else opts.cwd = value;
     } else if (k === 'name') {
       opts.name = value;
+    } else if (k === 'expect' || k === 'expect-not') {
+      try {
+        checks()[k === 'expect' ? 'expect' : 'expectNot'] = parseMatcher(value);
+      } catch (e) {
+        opts.errors.push(`${k}=${value}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    } else if (k === 'expect-exit') {
+      if (!/^-?\d+$/.test(value.trim())) opts.errors.push(`expect-exit=${value}: expected an exit code`);
+      else checks().expectExit = Number(value);
+    } else if (k === 'capture' || k === 'capture-secret') {
+      try {
+        checks().captures.push(parseCapture(value, k === 'capture-secret'));
+      } catch (e) {
+        opts.errors.push(`${k}=${value}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    } else if (k === 'retry') {
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 1) opts.errors.push(`retry=${value}: expected the number of attempts (1 or more)`);
+      else opts.retry = { attempts: n, everyMs: 5000 };
+    } else if (k === 'every') {
+      every = parseInterval(value);
+      if (every === undefined) opts.errors.push(`every=${value}: expected a duration such as 15s, 500ms or 2m`);
     } else if (k.startsWith('env.') && key.length > 4) {
       opts.env[key.slice(4)] = value; // keep the variable's case
     }
   }
+  if (opts.retry && every !== undefined) opts.retry.everyMs = every;
   return opts;
 }

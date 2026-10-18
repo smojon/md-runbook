@@ -47,7 +47,7 @@ const PATTERN_DETECTORS: readonly Detector[] = [...DEFAULT_PATTERNS]
   .map((p) => ({ kind: p.name === 'pem-private-key' ? 'private-key' : (p.name ?? 'secret'), re: compilePattern(p) }));
 
 /** Values that are references, not secrets: `$TOKEN`, `${TOKEN}`, `$env:TOKEN`, `%TOKEN%`, `$(cmd)`. */
-const VARIABLE_REF = /^(?:(?:Bearer|Basic|token)\s+)?(?:\$\{?[A-Za-z_]\w*\}?|\$env:\w+|%\w+%|\$\(.*\)|\$\{(?:secret|input|param|secretFile):[\w:]+\})$/i;
+const VARIABLE_REF = /^(?:(?:Bearer|Basic|token)\s+)?(?:\$\{?[A-Za-z_]\w*\}?|\$env:\w+|%\w+%|\$\(.*\)|\$\{(?:secret|input|param|out|secretFile):[\w:]+\})$/i;
 
 /**
  * Variable references anywhere in the text (never secrets): md-runbook's own `${secret:NAME}`,
@@ -55,7 +55,7 @@ const VARIABLE_REF = /^(?:(?:Bearer|Basic|token)\s+)?(?:\$\{?[A-Za-z_]\w*\}?|\$e
  * `$VAR`, `$(command)`, PowerShell `$env:VAR` and cmd `%VAR%`.
  */
 const REFERENCE_RE =
-  /\$\{(?:secret|input|param|secretFile):[\w:]+\}|\$\{[A-Za-z_]\w*(?::?[-=?+][^}\n]*)?\}|\$\((?:[^()\n]|\([^()\n]*\))*\)|\$env:\w+|\$[A-Za-z_]\w*|%[A-Za-z_]\w*%/g;
+  /\$\{(?:secret|input|param|out|secretFile):[\w:]+\}|\$\{[A-Za-z_]\w*(?::?[-=?+][^}\n]*)?\}|\$\((?:[^()\n]|\([^()\n]*\))*\)|\$env:\w+|\$[A-Za-z_]\w*|%[A-Za-z_]\w*%/g;
 
 /** An auth scheme in front of a value (`Bearer $TOKEN`): the value is what counts. */
 const AUTH_SCHEME = /^(?:(?:Bearer|Basic|token)\s+)?/i;

@@ -8,6 +8,14 @@
   **Step Through Lines** pauses before each line (`F10` next, `F5` the rest, `Shift+F5` stop).
   Each line shows as `$ command` in the output, `cd` and variables carry over between lines, and
   a run that didn't cover every line is saved with `lines=` and doesn't count as done.
+- **Checks:** `expect="text"` or `expect=/regex/`, `expect-not=…` and `expect-exit=N` cell options.
+  A step whose output isn't what the runbook expects fails, even with exit code 0
+  (`check=failed` on the marker), and `expect-exit=1` makes exit code 1 a pass.
+- **Retries:** `retry=10 every=15s` runs a cell again until it passes, for "wait until ready"
+  steps. Only the last attempt's output is kept; the marker records `attempts=`.
+- **Captured values:** `capture=NAME` or `capture=NAME:/regex/` keeps a value from a cell's
+  output, and later cells use it as `${out:NAME}`. `capture-secret=NAME` redacts the value
+  everywhere and never saves it.
 
 ## 0.1.2
 

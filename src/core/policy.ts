@@ -395,7 +395,7 @@ function lineAllowed(line: string, c: Compiled, shell: PolicyShell, inBlock = fa
   if (depth > 8) return false;
   const cleaned = line.replace(HARMLESS_REDIRECT, '');
   // Command substitution, process substitution and injected secrets always need review.
-  if (/\$\(|<\(|`|\$\{(secret|input):/i.test(cleaned)) return false;
+  if (/\$\(|<\(|`|\$\{(secret|input|out):/i.test(cleaned)) return false;
   const scan = scanLine(cleaned, shell);
   // Redirection to a file (outside quotes).
   if (scan.skeleton.includes('>')) return false;

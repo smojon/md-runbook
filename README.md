@@ -112,6 +112,9 @@ Each has its own page with examples and settings:
 - **[Line by line](docs/features/lines.md):** run only the line under the cursor or the selected
   text (`Ctrl+Alt+Enter`), run a cell's lines one by one, or step through them with `F10`, like a
   debugger. `cd` and variables carry over between lines; partial runs are saved with `lines=`.
+- **[Checks, retries and captured values](docs/features/checks.md):** `expect="Running"` or
+  `expect=/regex/` fails a step whose output is wrong, `retry=10 every=15s` waits until it passes,
+  and `capture="POD:/name: (\S+)/"` keeps a value from the output for later cells as `${out:POD}`.
 - **[Secrets, inputs, parameters and `.env`](docs/features/secrets.md):** keep secrets in the OS
   keychain and reference them as `${secret:NAME}`. They reach the cell as environment variables,
   never as script text, and are redacted by exact value. `${input:NAME}` prompts once per session,

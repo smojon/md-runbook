@@ -21,6 +21,9 @@ renders normally elsewhere:
 | `no-confirm` | Never ask before running this cell, even if it matches a risky pattern. **Ignored** unless `mdRunbook.execution.allowNoConfirmOption` is on in your user settings. |
 | `env.NAME=value` | Set an environment variable for this cell. |
 | `name="Rotate token"` | Recorded as `name="Rotate token"` in the output marker. |
+| `expect="text"`, `expect=/regex/`, `expect-not=…`, `expect-exit=N` | Check the result; see [checks, retries and captured values](checks.md). |
+| `retry=10 every=15s` | Run again until it passes, up to 10 attempts; see [checks.md](checks.md). |
+| `capture=NAME`, `capture=NAME:/regex/`, `capture-secret=NAME` | Keep a value from the output for later cells (`${out:NAME}`); see [checks.md](checks.md). |
 
 - Values may be quoted with `"…"` or `'…'` to include spaces. Backslashes are taken literally,
   so Windows paths need no escaping.

@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import { ExecuteOptions, ExecuteResult, executeCell } from './core';
 import type { ShellSettings } from './core';
+import type { Captured, CellChecks } from './core/checks';
 import type { SessionPool } from './core/session';
 
 /** Everything needed to run one cell; preparers may change any of it. */
@@ -45,6 +46,10 @@ export interface CellPlan {
    * rewrite each step the same way.
    */
   steps?: string[];
+  /** Checks and captures on the result (cell options); not applied to line runs. */
+  checks?: CellChecks;
+  /** Run again until it passes: up to `attempts` in all, `everyMs` apart. Not for line runs. */
+  retry?: { attempts: number; everyMs: number };
 }
 
 export interface PrepareContext {
@@ -85,6 +90,8 @@ export interface RunRecord {
   attrs: Record<string, string>;
   /** Combined output text (live view, before persistence processing). */
   output: string;
+  /** Values captured for `${out:NAME}` (capture= options), when the run passed. */
+  captured?: Captured[];
 }
 
 export interface RunObserver {

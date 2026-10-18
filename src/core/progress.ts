@@ -15,6 +15,8 @@ export interface ProgressCell {
   exit?: string;
   /** The output is from a line run that did not run every line (`lines=`). */
   partial?: boolean;
+  /** `check=` attribute: the cell's expect=/capture= checks passed (`ok`) or not (`failed`). */
+  check?: string;
   /** Task-list items of a markup cell, in order: true = checked. */
   tasks?: boolean[];
 }
@@ -34,9 +36,12 @@ export interface Progress {
 }
 
 /** State of a code cell from its output's exit attribute (and whether only some lines ran). */
-export function stepState(exit: string | undefined, partial = false): StepState {
+export function stepState(exit: string | undefined, partial = false, check?: string): StepState {
   // declined (confirmation answered No) and proposed (waiting for approval) are not done yet.
   if (exit === undefined || exit === 'running' || exit === 'declined' || exit === 'proposed') return 'pending';
+  // Checks decide over the exit code (expect-exit=1 makes exit 1 a pass).
+  if (check === 'failed') return 'failed';
+  if (check === 'ok') return partial ? 'pending' : 'done';
   // Some lines ran fine: the step is not done until all of it has run.
   if (exit === '0' || exit === 'done') return partial ? 'pending' : 'done';
   if (exit === 'skipped') return 'skipped';
@@ -63,7 +68,7 @@ export function computeProgress(cells: readonly ProgressCell[]): Progress {
       return;
     }
     p.total++;
-    const state = stepState(c.exit, c.partial);
+    const state = stepState(c.exit, c.partial, c.check);
     p[state]++;
     if (state === 'failed') p.firstFailed ??= { cell: i, step: p.total };
     if (state === 'pending') p.firstPending ??= { cell: i, step: p.total };

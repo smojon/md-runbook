@@ -23,15 +23,19 @@ export interface ReportOptions {
 type Status = 'ok' | 'fail' | 'skip' | 'none';
 
 /** `lines` set: only some lines of the step ran (a line run); it is not done yet. */
-function statusOf(exit: string | undefined, lines?: string): Status {
+function statusOf(exit: string | undefined, lines?: string, check?: string): Status {
   if (exit === undefined) return 'none';
+  if (check === 'failed') return 'fail';
+  if (check === 'ok') return lines === undefined ? 'ok' : 'none';
   if (exit === '0' || exit === 'done') return lines === undefined ? 'ok' : 'none';
   if (exit === 'running' || exit === 'declined' || exit === 'proposed') return 'none';
   return exit === 'skipped' ? 'skip' : 'fail';
 }
 
-function badge(exit: string | undefined, lines?: string): string {
-  if (lines !== undefined && statusOf(exit, lines) === 'none') return `<span class="badge none">${escapeHtml(`– lines ${lines} ran`)}</span>`;
+function badge(exit: string | undefined, lines?: string, check?: string): string {
+  if (lines !== undefined && statusOf(exit, lines, check) === 'none') return `<span class="badge none">${escapeHtml(`– lines ${lines} ran`)}</span>`;
+  if (check === 'failed') return `<span class="badge fail">${escapeHtml('✗ check failed')}</span>`;
+  if (check === 'ok') return `<span class="badge ok">${escapeHtml(`✓ ${/^-?\d+$/.test(exit ?? '') ? `exit ${exit}` : (exit ?? '')}`)}</span>`;
   const st = statusOf(exit);
   const named = exit !== undefined && !/^-?\d+$/.test(exit);
   const text = st === 'none' ? (named ? `– ${exit}` : 'not run') : st === 'ok' ? (named ? `✓ ${exit}` : '✓ exit 0') : st === 'skip' ? '– skipped' : `✗ ${/^-?\d+$/.test(exit!) ? `exit ${exit}` : exit}`;
@@ -80,14 +84,14 @@ export function renderReport(text: string, opts: ReportOptions): string {
     }
     step++;
     const a = cell.output?.attrs ?? {};
-    const st = statusOf(a.exit, a.lines);
+    const st = statusOf(a.exit, a.lines, a.check);
     counts[st]++;
     const shell = cell.meta.lang;
     const code = redact(cell.value);
     const firstLine = code.split('\n').find((l) => l.trim() !== '')?.trim() ?? '';
     rows +=
       `<tr class="${st}"><td><a href="#step-${step}">${step}</a></td><td><code>${escapeHtml(firstLine)}</code></td>` +
-      `<td>${escapeHtml(shell)}</td><td>${badge(a.exit, a.lines)}</td>` +
+      `<td>${escapeHtml(shell)}</td><td>${badge(a.exit, a.lines, a.check)}</td>` +
       `<td>${escapeHtml(a.ran ?? '')}</td><td>${escapeHtml(a.duration ?? '')}</td></tr>\n`;
 
     body += `<section class="step ${st}" id="step-${step}">\n<div class="step-head">Step ${step}</div>\n`;
@@ -95,7 +99,7 @@ export function renderReport(text: string, opts: ReportOptions): string {
     if (cell.output) {
       const meta = [a.ran && `ran ${a.ran}`, a.duration].filter(Boolean).map((s) => escapeHtml(s as string));
       body +=
-        `<div class="output"><div class="output-head">${badge(a.exit, a.lines)} ${meta.join(' · ')}</div>` +
+        `<div class="output"><div class="output-head">${badge(a.exit, a.lines, a.check)} ${meta.join(' · ')}</div>` +
         `<pre>${escapeHtml(redact(stripAnsi(cell.output.text)))}</pre></div>\n`;
     }
     body += '</section>\n';

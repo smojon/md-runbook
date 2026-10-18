@@ -39,8 +39,8 @@ async function textEditorGuard(loc: CodeCellLocation): Promise<string | undefine
   if (p.state === 'proposed') return 'this is a proposed cell; approve and run it in the runbook (notebook) view';
   if (p.by) return 'cells written by an assistant only run in the runbook (notebook) view, where approval, policy and read-only credentials apply';
   // Unresolved, a shell would misread these (bash: `${param:X}` is a substring expansion -> empty).
-  const ref = /\$\{(secret|input|param):[^}]*\}/.exec(loc.source);
-  if (ref) return `this block uses ${ref[0]}; \${secret:…}, \${input:…} and \${param:…} references are resolved only in the runbook (notebook) view`;
+  const ref = /\$\{(secret|input|param|out):[^}]*\}/.exec(loc.source);
+  if (ref) return `this block uses ${ref[0]}; \${secret:…}, \${input:…}, \${param:…} and \${out:…} references are resolved only in the runbook (notebook) view`;
   const c = vscode.workspace.getConfiguration(SECTION);
   const { regexes } = compileConfirmPatterns(c.get<string[]>('execution.confirmPatterns', DEFAULT_CONFIRM_PATTERNS));
   const match = confirmationFor(loc.source, c.get<ConfirmMode>('execution.confirm', 'patterns'), regexes, cellConfirmOption(loc.info));

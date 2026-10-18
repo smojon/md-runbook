@@ -36,7 +36,7 @@ export function notebookProgress(nb: vscode.NotebookDocument): Progress {
     nb.getCells().map((c) => {
       if (c.kind !== vscode.NotebookCellKind.Code) return { kind: 'markup', tasks: checklist(c.document.getText()) };
       const attrs = cellAttrs(c);
-      return { kind: 'code', exit: attrs?.exit, partial: attrs?.lines !== undefined };
+      return { kind: 'code', exit: attrs?.exit, partial: attrs?.lines !== undefined, check: attrs?.check };
     }),
   );
 }

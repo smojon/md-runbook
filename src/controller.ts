@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ExecuteResult, HISTORY_KEY, LineBuffer, isRunHistory, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDurationAttr, formatLocalIso, isSuccess, shellKindForLanguage } from './core';
+import { CheckOutcome, evaluateChecks, hasChecks } from './core/checks';
 import { SessionPool } from './core/session';
 import { LineStep, echoCommand, formatLineRange } from './core/steps';
 import { ExecutionConfig, executionConfig, redactionConfig } from './config';
@@ -29,6 +30,22 @@ function toItems(chunks: readonly Chunk[]): vscode.NotebookCellOutputItem[] {
   return merged.map((c) =>
     c.stream === 'stdout' ? vscode.NotebookCellOutputItem.stdout(c.text) : vscode.NotebookCellOutputItem.stderr(c.text),
   );
+}
+
+/** Resolves true after `ms`, or false as soon as `signal` aborts. */
+function wait(ms: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve(false);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve(true);
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function formatDuration(ms: number): string {
@@ -244,7 +261,7 @@ export class RunbookController implements vscode.Disposable {
 
       let unflushed: Chunk[] = [];
       const previousOutputs = [...cell.outputs];
-      const live = new vscode.NotebookCellOutput([], runMeta('running'));
+      let live = new vscode.NotebookCellOutput([], runMeta('running'));
       // Clear first so the live output is a new output, not an in-place replacement of the old one
       // (in-place replacements keep the old metadata on the extension host side).
       await exec.clearOutput();
@@ -263,11 +280,23 @@ export class RunbookController implements vscode.Disposable {
       };
       timer = setInterval(() => void flush(), FLUSH_MS);
 
+      // What the current attempt printed (a retry starts them again).
       let transcript = '';
+      let stdoutText = '';
+      let attemptChunks: Chunk[] = [];
       const sink = (stream: Chunk['stream']) => (text: string) => {
         if (text === '') return;
         transcript += text;
+        if (stream === 'stdout') stdoutText += text;
+        attemptChunks.push({ stream, text });
         unflushed.push({ stream, text });
+      };
+      /** Replace the cell's output with a new live output holding `chunks`. */
+      const restartOutput = async (chunks: readonly Chunk[]): Promise<void> => {
+        await flush();
+        live = new vscode.NotebookCellOutput(chunks.length > 0 ? toItems(chunks) : [], runMeta('running'));
+        await exec.clearOutput();
+        await exec.appendOutput([live]);
       };
 
       const ctx: PrepareContext = { cell, notebook, token: exec.token, previousOutputs };
@@ -300,6 +329,39 @@ export class RunbookController implements vscode.Disposable {
       const abort = new AbortController();
       cancelSub = exec.token.onCancellationRequested(() => abort.abort());
 
+      // Checks, captures and retries apply to whole-cell runs, not to line runs.
+      const checks = lineRun ? undefined : plan.checks;
+      const attempts = lineRun ? 1 : (plan.retry?.attempts ?? 1);
+      let attempt = 0;
+      let outcome: CheckOutcome | undefined;
+      const judge = (r: ExecuteResult): CheckOutcome | undefined =>
+        hasChecks(checks) && r.exitCode !== null && r.error === undefined && !r.timedOut && !r.cancelled
+          ? evaluateChecks(checks, r.exitCode, transcript, stdoutText)
+          : undefined;
+      /** Run until it passes or the attempts are used up; only the last attempt's output is kept. */
+      const runAttempts = async (io: ExecuteIO): Promise<ExecuteResult> => {
+        const executor = this.pipeline.executorFor(notebook);
+        for (;;) {
+          attempt++;
+          const r = await executor.execute(plan, io, ctx);
+          out.flush();
+          err.flush();
+          outcome = judge(r);
+          const passed = outcome ? outcome.ok : isSuccess(r);
+          if (passed || attempt >= attempts || r.cancelled || abort.signal.aborted) return r;
+          const why = outcome?.failures[0] ?? (r.timedOut ? 'timed out' : (r.error ?? `exit code ${exitLabel(r)}`));
+          const every = plan.retry?.everyMs ?? 0;
+          unflushed.push({ stream: 'stderr', text: message(`[md-runbook] attempt ${attempt}/${attempts} failed (${why}); trying again in ${formatDuration(every)}\n`) });
+          await flush();
+          if (!(await wait(every, abort.signal))) return { ...r, exitCode: null, cancelled: true };
+          transcript = '';
+          stdoutText = '';
+          attemptChunks = [];
+          outcome = undefined;
+          await restartOutput([]);
+        }
+      };
+
       let result: ExecuteResult;
       const skipped = prepareError === undefined && plan.skip !== undefined;
       if (prepareError !== undefined) {
@@ -313,8 +375,12 @@ export class RunbookController implements vscode.Disposable {
           result = !fs.existsSync(plan.cwd)
             ? failed(`Working directory not found: ${plan.cwd}`)
             : lineRun
-              ? await this.runSteps(lineRun, plan, io, ctx, ranSteps)
-              : await this.pipeline.executorFor(notebook).execute(plan, io, ctx);
+              ? await this.runSteps(lineRun, plan, io, ctx, ranSteps, async () => {
+                  out.flush();
+                  err.flush();
+                  await flush();
+                })
+              : await runAttempts(io);
         } catch (e) {
           result = failed(e instanceof Error ? e.message : String(e));
         }
@@ -328,7 +394,15 @@ export class RunbookController implements vscode.Disposable {
 
       if (result.error !== undefined) unflushed.push({ stream: 'stderr', text: message(result.error + '\n') });
       if (result.timedOut) unflushed.push({ stream: 'stderr', text: `[md-runbook] timed out after ${formatDuration(plan.timeoutMs)}; process tree killed\n` });
+      for (const f of outcome && !outcome.ok ? outcome.failures : []) unflushed.push({ stream: 'stderr', text: message(`[md-runbook] check failed: ${f}\n`) });
       await flush();
+      // A value captured as a secret was shown before it was known: redraw the output without it.
+      const capturedSecrets = outcome?.ok ? outcome.captured.filter((c) => c.secret).map((c) => c.value) : [];
+      if (capturedSecrets.length > 0) {
+        knownSecrets.add(capturedSecrets);
+        transcript = knownSecrets.redact(transcript);
+        await restartOutput(attemptChunks.map((c) => ({ ...c, text: knownSecrets.redact(c.text) })));
+      }
 
       // A preparer can record why it didn't run (declined, proposed) instead of a plain skip.
       const exit = skipped ? (plan.skipExit ?? 'skipped') : exitLabel(result);
@@ -340,17 +414,37 @@ export class RunbookController implements vscode.Disposable {
       const history = isRunHistory(stored) ? stored.history : [];
       const earlier = earlierRuns(history.length);
       const lines = lineRun && linesAttr(lineRun, ranSteps);
-      const status = [statusLine(exit, undefined, formatDuration(elapsed)), lines && `lines ${lines}`, shellLabel, earlier].filter(Boolean).join(' · ');
-      const attrs = { exit, ran, ended: formatLocalIso(endedAt), duration: formatDurationAttr(elapsed), ...(lines ? { lines } : {}), ...plan.attrs };
+      const check = outcome ? (outcome.ok ? 'ok' : 'failed') : undefined;
+      const tries = attempts > 1 && attempt > 0 ? attempt : undefined;
+      const status = [
+        statusLine(exit, undefined, formatDuration(elapsed)),
+        check && `check ${check === 'ok' ? 'passed' : 'failed'}`,
+        tries && `attempt ${tries}/${attempts}`,
+        lines && `lines ${lines}`,
+        shellLabel,
+        earlier,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const attrs = {
+        exit,
+        ran,
+        ended: formatLocalIso(endedAt),
+        duration: formatDurationAttr(elapsed),
+        ...(check ? { check } : {}),
+        ...(tries ? { attempts: String(tries) } : {}),
+        ...(lines ? { lines } : {}),
+        ...plan.attrs,
+      };
       const earlierOutput = earlierRunsOutput(history);
       await exec.appendOutput(earlierOutput ? [statusOutput(status, attrs), earlierOutput] : [statusOutput(status, attrs)]);
 
       // A cell that was not run counts as success so Run All carries on (a declined confirmation
       // stops it through stopSequence).
-      const success = skipped || isSuccess(result);
+      const success = skipped || (outcome ? outcome.ok : isSuccess(result));
       ended = true;
       exec.end(skipped ? undefined : success, Date.now());
-      const run: RunRecord = { cell, notebook, plan, result, success, attrs, output: transcript };
+      const run: RunRecord = { cell, notebook, plan, result, success, attrs, output: transcript, ...(outcome?.ok ? { captured: outcome.captured } : {}) };
       for (const o of this.pipeline.observers) await o.onDidRunCell?.(run);
       return run;
     } finally {
@@ -372,7 +466,15 @@ export class RunbookController implements vscode.Disposable {
    * Outside session mode they share a shell kept for this run only. Stops at the first step
    * that fails, or when `beforeStep` says so.
    */
-  private async runSteps(run: LineRun, plan: CellPlan, io: ExecuteIO, ctx: PrepareContext, ranSteps: number[]): Promise<ExecuteResult> {
+  private async runSteps(
+    run: LineRun,
+    plan: CellPlan,
+    io: ExecuteIO,
+    ctx: PrepareContext,
+    ranSteps: number[],
+    /** Shows everything printed so far in the cell. */
+    showOutput: () => Promise<void>,
+  ): Promise<ExecuteResult> {
     const executor = this.pipeline.executorFor(ctx.notebook);
     const kind = shellKindForLanguage(plan.language) ?? 'bash';
     const steps = plan.steps ?? [];
@@ -381,7 +483,11 @@ export class RunbookController implements vscode.Disposable {
     let result: ExecuteResult = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
     try {
       for (let i = 0; i < steps.length; i++) {
-        if (i > 0 && run.beforeStep && !(await run.beforeStep(i, ctx.token))) break;
+        if (i > 0 && run.beforeStep) {
+          // The output of the line that just ran must be on screen while the run waits.
+          await showOutput();
+          if (!(await run.beforeStep(i, ctx.token))) break;
+        }
         if (io.signal.aborted) {
           result = { ...result, exitCode: null, cancelled: true };
           break;
