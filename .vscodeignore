@@ -1,5 +1,6 @@
 **
-!out/src/**/*.js
+!out/dist/extension.js
+!out/webview/index.js
 !images/icon.png
 !package.json
 !README.md

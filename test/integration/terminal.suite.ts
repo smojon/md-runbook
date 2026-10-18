@@ -6,13 +6,15 @@ import { LANG, Test, closeAll, isWin, openRunbook, outputText, read, runCells, s
 export const tests: Test[] = [];
 const test = (name: string, fn: () => Promise<void>): void => void tests.push({ name, fn });
 
-test('terminal: the terminal option is ignored while terminal.mode is off (default)', async () => {
+test('terminal: the terminal option runs normally, with a note, while terminal.mode is off (default)', async () => {
   const uri = writeFile('term-off.md', `\`\`\`${LANG} terminal\necho plain\n\`\`\`\n`);
   const editor = await openRunbook(uri);
   try {
     await runCells(editor, 0, 1);
     assert.equal(await waitForRun(editor.notebook.cellAt(0)), true);
-    assert.doesNotMatch(outputText(editor.notebook.cellAt(0)), /terminal/, 'ran normally, not in a terminal');
+    const out = outputText(editor.notebook.cellAt(0));
+    assert.match(out, /plain/);
+    assert.match(out, /terminal option ignored: set "mdRunbook.terminal.mode"/, 'explains why there is no terminal');
     assert.equal(vscode.window.terminals.filter((t) => t.name.startsWith('md-runbook:')).length, 0);
   } finally {
     await closeAll();

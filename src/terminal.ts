@@ -262,7 +262,17 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
   pipeline.executorFor = (nb) => {
     const base = fallback(nb);
     const mode = terminalMode();
-    if (mode === 'off') return base;
+    if (mode === 'off') {
+      // Say why a `terminal` cell gets no input instead of ignoring the option silently.
+      return {
+        execute: (plan, io, ctx) => {
+          if (wantsTerminal(ctx.cell)) {
+            io.onStderr('[md-runbook] terminal option ignored: set "mdRunbook.terminal.mode" to "perCell" in your user settings to answer prompts\n');
+          }
+          return base.execute(plan, io, ctx);
+        },
+      };
+    }
     return {
       execute: (plan, io, ctx) => {
         const asked = wantsTerminal(ctx.cell);

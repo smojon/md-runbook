@@ -95,13 +95,14 @@ export function terminalSignature(kind: string, command: string, cwd: string, en
   return JSON.stringify([kind, command, cwd, keys.map((k) => [k, env[k]])]);
 }
 
-const OSC_SHELL_INTEGRATION = /\x1b\](?:633|133);[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+/** Any OSC sequence: shell integration marks, but also window titles (`ESC ]0;C:\...\pwsh.exe BEL`). */
+const OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const COMMAND_STARTED = /\x1b\](?:633|133);C(?:\x07|\x1b\\)/;
 
 /**
  * Cleans the raw stream of a terminal command for the cell output: everything before the
- * "command started" mark (prompt, echoed command line) is dropped, and the remaining shell
- * integration marks are removed. Feed chunks in order; keeps state across chunk boundaries.
+ * "command started" mark (prompt, echoed command line) is dropped, and the remaining OSC
+ * sequences (shell integration marks, window titles) are removed. Feed chunks in order; keeps state across chunk boundaries.
  */
 export class TerminalOutputFilter {
   private started = false;
@@ -126,12 +127,12 @@ export class TerminalOutputFilter {
       this.pending = text.slice(cut);
       text = text.slice(0, cut);
     }
-    return text.replace(OSC_SHELL_INTEGRATION, '');
+    return text.replace(OSC, '');
   }
 
   /** Whatever is left at the end (only after the command started). */
   flush(): string {
-    const rest = this.started ? this.pending.replace(OSC_SHELL_INTEGRATION, '') : '';
+    const rest = this.started ? this.pending.replace(OSC, '') : '';
     this.pending = '';
     return rest;
   }

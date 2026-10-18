@@ -4,9 +4,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ExecuteResult, HISTORY_KEY, LineBuffer, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDurationAttr, formatLocalIso, isSuccess } from './core';
+import { ExecuteResult, HISTORY_KEY, LineBuffer, isRunHistory, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDurationAttr, formatLocalIso, isSuccess } from './core';
 import { ExecutionConfig, executionConfig, redactionConfig } from './config';
-import { META_KEY, OutputMetadata, statusLine, statusOutput } from './outputs';
+import { META_KEY, OutputMetadata, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
 import { CellPlan, PrepareContext, RunPipeline, RunRecord } from './pipeline';
 import { copyOrigin } from './copyOrigins';
 import { knownSecrets } from './knownSecrets';
@@ -299,9 +299,14 @@ export class RunbookController implements vscode.Disposable {
       const endedAt = new Date();
       const elapsed = endedAt.getTime() - started.getTime();
       const shellLabel = result.shell?.label;
-      const status = [statusLine(exit, undefined, formatDuration(elapsed)), shellLabel].filter(Boolean).join(' · ');
+      // The history preparer (history.ts) stored the earlier runs in the metadata before the run.
+      const stored: unknown = cell.metadata?.[HISTORY_KEY];
+      const history = isRunHistory(stored) ? stored.history : [];
+      const earlier = earlierRuns(history.length);
+      const status = [statusLine(exit, undefined, formatDuration(elapsed)), shellLabel, earlier].filter(Boolean).join(' · ');
       const attrs = { exit, ran, ended: formatLocalIso(endedAt), duration: formatDurationAttr(elapsed), ...plan.attrs };
-      await exec.appendOutput([statusOutput(status, attrs)]);
+      const earlierOutput = earlierRunsOutput(history);
+      await exec.appendOutput(earlierOutput ? [statusOutput(status, attrs), earlierOutput] : [statusOutput(status, attrs)]);
 
       // A cell that was not run counts as success so Run All carries on (a declined confirmation
       // stops it through stopSequence).

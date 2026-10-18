@@ -59,6 +59,14 @@ it('TerminalOutputFilter drops the prompt/command echo and shell integration mar
   assert.equal(out, 'Name: bob\r\nhello bob\r\n');
 });
 
+it('TerminalOutputFilter also drops window titles', async () => {
+  const { TerminalOutputFilter } = await import('../src/core/terminalCommand');
+  const f = new TerminalOutputFilter();
+  const raw = '\x1b]633;C\x07PowerShell 5.1\r\n\x1b]0;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\x07done\r\n';
+  const out = [raw.slice(0, 30), raw.slice(30, 50), raw.slice(50)].map((c) => f.push(c)).join('') + f.flush();
+  assert.equal(out, 'PowerShell 5.1\r\ndone\r\n');
+});
+
 it('parseStatus reads the written exit code', async () => {
   const { parseStatus } = await import('../src/core/terminalCommand');
   assert.equal(parseStatus('3'), 3);

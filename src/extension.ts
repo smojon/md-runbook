@@ -13,6 +13,7 @@ import { registerSafety } from './safety';
 import { registerSecrets } from './secrets';
 import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
 import { registerSessions } from './session';
+import { registerTaskLists } from './taskLists';
 import { registerTerminal } from './terminal';
 
 function targetUri(uri: unknown): vscode.Uri | undefined {
@@ -79,6 +80,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerReport(context);
   registerAi(context);
   registerAiContext(context);
+  registerTaskLists(context);
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {
       transientOutputs: false,

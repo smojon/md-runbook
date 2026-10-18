@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { checkNextItem, checklist, computeProgress, formatProgress, outputBlockAttrs, parse, stepState } from '../src/core';
+import { checkNextItem, checklist, taskItemAtLine, computeProgress, formatProgress, outputBlockAttrs, parse, stepState } from '../src/core';
 import { isManualMark } from '../src/core/progress';
 
 describe('step state', () => {
@@ -91,6 +91,15 @@ describe('checklist', () => {
     assert.equal(checkNextItem('- [x] a\n- [ ] b\n- [ ] c'), '- [x] a\n- [x] b\n- [ ] c');
     assert.equal(checkNextItem('- [x] a'), undefined);
     assert.equal(checkNextItem('no list'), undefined);
+  });
+
+  it('finds the item on a given line', () => {
+    const md = '# Steps\r\n- [x] one\r\n```\r\n- [ ] code\r\n```\r\n  * [ ] two\r\nplain\r\n';
+    assert.deepEqual(taskItemAtLine(md, 1), { offset: md.indexOf('[x]') + 1, checked: true });
+    assert.deepEqual(taskItemAtLine(md, 5), { offset: md.indexOf('[ ] two') + 1, checked: false });
+    assert.equal(taskItemAtLine(md, 3), undefined, 'inside a fence');
+    assert.equal(taskItemAtLine(md, 6), undefined, 'not an item');
+    assert.equal(taskItemAtLine(md, 99), undefined);
   });
 
   it('keeps CRLF and skips tilde fences', () => {

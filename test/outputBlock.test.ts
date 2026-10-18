@@ -7,6 +7,12 @@ describe('output text processing', () => {
     assert.equal(stripAnsi('\u001b[1;31mred\u001b[0m \u001b]8;;http://x\u0007link\u001b]8;;\u0007\u001b[2K'), 'red link');
   });
 
+  it('strips window titles that hold Windows paths', () => {
+    const title = '\u001b]0;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\u0007';
+    assert.equal(stripAnsi(`PowerShell 5.1\r\n${title}\\\r\n`), 'PowerShell 5.1\r\n\\\r\n');
+    assert.equal(stripAnsi('a\u001b]2;My Title (1)\u001b\\b'), 'ab');
+  });
+
   it('collapses carriage-return progress lines', () => {
     const t = processOutputText('10%\r50%\r100%\r\ndone\r\n', { stripAnsi: true, maxOutputLines: 0 });
     assert.equal(t, '100%\ndone');

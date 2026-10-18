@@ -9,7 +9,8 @@
     {
       "command": "mdRunbook.copyCellForAi",
       "title": "Copy Cell for AI",
-      "category": "md-runbook"
+      "category": "md-runbook",
+      "icon": "$(copy)"
     },
     {
       "command": "mdRunbook.pasteAiProposal",

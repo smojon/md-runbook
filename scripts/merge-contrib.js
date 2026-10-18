@@ -21,7 +21,12 @@ for (const f of fs.readdirSync(path.join(root, 'contrib')).filter((f) => f.endsW
     c.keybindings = c.keybindings || [];
     for (const k of frag.keybindings) if (!c.keybindings.some((x) => x.command === k.command && x.key === k.key)) c.keybindings.push(k);
   }
-  Object.assign(c.configuration.properties, frag.configuration?.properties || {});
+  // Settings are grouped into sections in package.json, which is the source of truth for their
+  // wording and order: only settings it doesn't have yet are added, to the last section.
+  const sections = [c.configuration].flat();
+  for (const [key, setting] of Object.entries(frag.configuration?.properties || {})) {
+    if (!sections.some((s) => key in s.properties)) sections[sections.length - 1].properties[key] = setting;
+  }
 }
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 console.log('merged contributions into package.json');

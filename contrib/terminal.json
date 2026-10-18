@@ -5,7 +5,7 @@
         "type": "string",
         "enum": ["off", "perCell", "always"],
         "enumDescriptions": [
-          "Never run cells in a terminal; the `terminal` cell option is ignored.",
+          "Never run cells in a terminal; a cell with the `terminal` option runs normally, with a note in its output.",
           "Run cells marked ```bash terminal``` in a VS Code terminal, so prompts (passwords, confirmations) can be answered.",
           "Run every bash/PowerShell cell in a VS Code terminal (cmd and assistant-written cells still run normally)."
         ],

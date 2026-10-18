@@ -39,6 +39,8 @@ No resources found in iam namespace.
 - On GitHub and in other Markdown viewers this renders as one collapsed line,
   **md-runbook: 2 previous runs**, that expands to the earlier outputs.
 - The newest earlier run comes first. The block is trimmed to `historySize` entries.
+- In the notebook, the cell's status line shows how many are kept (`exit code 0 · 1.2s · bash ·
+  2 earlier runs`); **Compare With Previous Run** shows the last one as a diff.
 - When the file is opened, the history stays with its cell; it does not become separate cells.
   A cell you don't re-run keeps its output and history byte for byte.
 - Entries loaded from the file are written back byte for byte when they move into the history.

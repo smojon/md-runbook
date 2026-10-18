@@ -78,22 +78,35 @@ export function formatProgress(p: Progress): string {
 /** `- [ ] item`, `* [x] item`, `1. [X] item`; group 1 is the box character. */
 const TASK_RE = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[([ xX])\](?=[ \t]|$)/;
 
-/** Task-list items outside fenced code blocks: offset of the box character and whether it is checked. */
-function taskItems(text: string): { offset: number; checked: boolean }[] {
-  const items: { offset: number; checked: boolean }[] = [];
+/** A task-list item: its line (0-based), the offset of its box character and whether it is checked. */
+interface TaskItem {
+  line: number;
+  offset: number;
+  checked: boolean;
+}
+
+/** Task-list items outside fenced code blocks. */
+function taskItems(text: string): TaskItem[] {
+  const items: TaskItem[] = [];
   let fence: FenceOpen | null = null;
   let pos = 0;
-  for (const line of text.split('\n')) {
+  text.split('\n').forEach((line, n) => {
     const l = line.endsWith('\r') ? line.slice(0, -1) : line;
     if (fence) {
       if (isFenceClose(l, fence)) fence = null;
     } else if ((fence = matchFenceOpen(l)) === null) {
       const m = TASK_RE.exec(l);
-      if (m) items.push({ offset: pos + m[0].length - 2, checked: m[1] !== ' ' });
+      if (m) items.push({ line: n, offset: pos + m[0].length - 2, checked: m[1] !== ' ' });
     }
     pos += line.length + 1;
-  }
+  });
   return items;
+}
+
+/** The task-list item on `line` (0-based) of a markup cell, if there is one. */
+export function taskItemAtLine(text: string, line: number): { offset: number; checked: boolean } | undefined {
+  const item = taskItems(text).find((i) => i.line === line);
+  return item && { offset: item.offset, checked: item.checked };
 }
 
 /** Task-list items of a markup cell in order: true = checked. */

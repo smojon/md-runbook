@@ -25,7 +25,9 @@ export const tests: Test[] = [
 
         // Stopping the session forgets the state.
         const stopped = await step('stop session', vscode.commands.executeCommand<string[]>('mdRunbook.stopSession', uri));
-        assert.deepEqual(stopped, [isWin ? 'pwsh' : 'bash'], 'stop should find the running session');
+        // Windows: pwsh, or Windows PowerShell (labelled powershell) when PowerShell 7 is not installed.
+        assert.equal(stopped?.length, 1, 'stop should find the running session');
+        assert.match(stopped?.[0] ?? "", isWin ? /^(pwsh|powershell)$/ : /^bash$/);
         await runCells(editor, 2, 3);
         await waitFor('re-run in a new session', () => /FOO=\r?\n/.test(outputText(second)) && /exit code 0/.test(outputText(second))).catch((e: Error) => {
           throw new Error(`${e.message}; output: ${JSON.stringify(outputText(second))}`);

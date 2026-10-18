@@ -68,4 +68,4 @@ run (redacted, with `exit=`, `ran=`, `ended=`, `duration=`).
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `mdRunbook.terminal.mode` | `"off"` | `off`: never use a terminal (the `terminal` option is ignored). `perCell`: cells with the `terminal` option. `always`: every bash/PowerShell cell (cmd and assistant-written cells still run normally). User settings only. |
+| `mdRunbook.terminal.mode` | `"off"` | `off`: never use a terminal (a `terminal` cell runs normally, with a note in its output). `perCell`: cells with the `terminal` option. `always`: every bash/PowerShell cell (cmd and assistant-written cells still run normally). User settings only. |

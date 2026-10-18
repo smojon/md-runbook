@@ -107,10 +107,10 @@ describe('risky command confirmation', () => {
     const root = path.resolve(__dirname, '..', '..');
     for (const f of ['package.json', 'contrib/safety.json']) {
       const json = JSON.parse(fs.readFileSync(path.join(root, f), 'utf8')) as { contributes?: unknown; configuration?: unknown };
-      const conf = (f === 'package.json' ? (json.contributes as { configuration: unknown }).configuration : json.configuration) as {
-        properties: Record<string, { default?: unknown }>;
-      };
-      assert.deepEqual(conf.properties['mdRunbook.execution.confirmPatterns']?.default, DEFAULT_CONFIRM_PATTERNS, f);
+      type Section = { properties: Record<string, { default?: unknown }> };
+      const conf = (f === 'package.json' ? (json.contributes as { configuration: unknown }).configuration : json.configuration) as Section | Section[];
+      const setting = [conf].flat().find((s) => 'mdRunbook.execution.confirmPatterns' in s.properties)?.properties['mdRunbook.execution.confirmPatterns'];
+      assert.deepEqual(setting?.default, DEFAULT_CONFIRM_PATTERNS, f);
     }
   });
 

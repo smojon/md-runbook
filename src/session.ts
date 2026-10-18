@@ -78,6 +78,8 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
     const nb = activeRunbook();
     if (!nb) return status.hide();
     const { mode, source } = modeOf(nb);
+    // The notebook toolbar shows "Session: on" or "Session: off" from this.
+    void vscode.commands.executeCommand('setContext', 'mdRunbook.sessionMode', mode);
     const labels = pools.get(nb.uri.toString())?.labels() ?? [];
     status.text = mode === 'isolated' ? '$(debug-disconnect) isolated' : `$(terminal) session${labels.length ? `: ${labels.join(', ')}` : ''}`;
     status.tooltip =
@@ -179,6 +181,9 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
     status,
     { dispose: disposeAll },
     vscode.commands.registerCommand('mdRunbook.toggleSessionMode', (uri?: unknown, to?: Mode) => toggle(uri, to)),
+    // Toolbar buttons that name the current mode; both switch it.
+    vscode.commands.registerCommand('mdRunbook.sessionModeOn', () => toggle()),
+    vscode.commands.registerCommand('mdRunbook.sessionModeOff', () => toggle()),
     vscode.commands.registerCommand('mdRunbook.sessionMenu', async () => {
       const nb = activeRunbook();
       if (!nb) return;

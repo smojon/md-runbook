@@ -19,6 +19,18 @@
       "icon": "$(terminal)"
     },
     {
+      "command": "mdRunbook.sessionModeOn",
+      "title": "Session: on",
+      "category": "md-runbook",
+      "icon": "$(terminal)"
+    },
+    {
+      "command": "mdRunbook.sessionModeOff",
+      "title": "Session: off",
+      "category": "md-runbook",
+      "icon": "$(debug-disconnect)"
+    },
+    {
       "command": "mdRunbook.sessionMenu",
       "title": "Session…",
       "category": "md-runbook"
@@ -41,12 +53,25 @@
       {
         "command": "mdRunbook.sessionMenu",
         "when": "notebookType == md-runbook"
+      },
+      {
+        "command": "mdRunbook.sessionModeOn",
+        "when": "false"
+      },
+      {
+        "command": "mdRunbook.sessionModeOff",
+        "when": "false"
       }
     ],
     "notebook/toolbar": [
       {
-        "command": "mdRunbook.toggleSessionMode",
-        "when": "notebookType == md-runbook",
+        "command": "mdRunbook.sessionModeOn",
+        "when": "notebookType == md-runbook && mdRunbook.sessionMode == session",
+        "group": "navigation/execute@97"
+      },
+      {
+        "command": "mdRunbook.sessionModeOff",
+        "when": "notebookType == md-runbook && mdRunbook.sessionMode != session",
         "group": "navigation/execute@97"
       }
     ]

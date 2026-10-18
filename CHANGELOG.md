@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.1
+
+- **Faster start:** the extension is now bundled into a single file, so it loads much faster
+  when VS Code opens a runbook.
+- **Clickable checklists:** `- [ ]` items in Markdown cells show as checkboxes; clicking one ticks
+  or unticks it in the file.
+- **Earlier runs in the notebook:** with `mdRunbook.output.historySize` set, a cell's status line
+  shows how many earlier runs are kept (`exit code 0 · 1.2s · bash · 2 earlier runs`), and a
+  collapsed section below it expands to their outputs.
+- **Tidier settings:** the settings are grouped into sections (Running cells, Saved output, Safety
+  and redaction, Secrets and environment, AI assistant, Assistant proposals), with the common
+  ones first.
+- **Session mode at a glance:** the notebook toolbar button now reads **Session: on** or
+  **Session: off** for the open runbook instead of "Toggle Session Mode"; clicking it switches.
+- **Terminal mode:** window-title codes (e.g. `]0;C:\WINDOWS\...\powershell.exe`) no longer
+  appear in the output.
+- **Terminal option explained:** a cell marked `terminal` while terminal mode is off now says so
+  in its output instead of being ignored silently.
+- **New icon**, and **Copy Cell for AI** in the cell toolbar is now an icon instead of text that
+  overlapped the other buttons.
+- New sample runbook, `examples/sample.runbook.md`, for trying every feature by hand.
+
 ## 0.1.0
 
 First release (preview).

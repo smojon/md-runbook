@@ -59,7 +59,7 @@ export class RunbookSerializer implements vscode.NotebookSerializer {
       const kind = c.kind === 'code' ? vscode.NotebookCellKind.Code : vscode.NotebookCellKind.Markup;
       const cell = new vscode.NotebookCellData(kind, c.value, c.languageId);
       cell.metadata = { [META_KEY]: c.meta };
-      if (c.output) cell.outputs = persistedOutputs(c.output);
+      if (c.output) cell.outputs = persistedOutputs(c.output, c.meta.kind === 'code' ? (c.meta.history?.entries ?? []) : []);
       return cell;
     });
     const data = new vscode.NotebookData(cells);

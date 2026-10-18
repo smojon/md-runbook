@@ -184,7 +184,7 @@ export async function pasteAiProposal(context: vscode.ExtensionContext): Promise
 
 function cellOutputText(cell: vscode.NotebookCell): string {
   return cell.outputs
-    .filter((o) => !outputMeta(o)?.status)
+    .filter((o) => !outputMeta(o)?.status && !outputMeta(o)?.earlier)
     .flatMap((o) => o.items.filter((i) => !i.mime.startsWith('image/')).map((i) => decoder.decode(i.data)))
     .join('');
 }

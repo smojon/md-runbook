@@ -123,6 +123,19 @@ echo "$GREETING from $(pwd)"
 ls package.json
 ```
 
+Environment variables for every cell come from your user settings. This prints `not set` until
+you add `"mdRunbook.execution.env": { "MDRB_DEMO": "from settings" }`:
+
+```bash
+echo "MDRB_DEMO=${MDRB_DEMO:-not set}"
+```
+
+A cell's own `env.` option wins over the setting:
+
+```bash env.MDRB_DEMO=from-the-cell
+echo "MDRB_DEMO=${MDRB_DEMO:-not set}"
+```
+
 ## 5. Parameters and inputs
 
 `TARGET` and `REPLICAS` come from the front matter; you're asked for them once, with the
@@ -228,3 +241,35 @@ $answer = Read-Host "Continue? [y/N]"
 if ($answer -ne 'y') { Write-Output 'Stopped by you'; exit 1 }
 Write-Output 'Continuing'
 ```
+
+## 12. Working with an AI assistant
+
+Optional. Nothing is sent anywhere unless you paste it yourself or turn on a provider.
+
+Run this cell first. It prints made-up internal names:
+
+```bash
+echo "api-7d4b9c8f6d-x2k9p on db01.corp.acme.lan (10.20.30.40): CrashLoopBackOff"
+echo "owner: alice@example.com"
+```
+
+**With any chat assistant (no setup):**
+
+1. Click **Copy for AI** in the notebook toolbar. The preview shows how many names were replaced;
+   choose **Copy to Clipboard**.
+2. Paste it into the assistant. The host, IP and email appear as placeholders such as `host-1`,
+   `ip-1` and `user-1@example.invalid` (the numbers carry on across copies in a session), and
+   outputs are marked as untrusted data. Names the detector doesn't recognize, such as short
+   two-part hostnames, can be added with `mdRunbook.ai.internalDomains`; project or customer
+   names go in `mdRunbook.ai.terms`.
+3. Ask it for the next step. Copy its whole answer and run **md-runbook: Paste AI Proposal**: its
+   commands are inserted as proposed cells with the real names restored, and they don't run until
+   you approve them (section 8).
+
+**md-runbook: Check for Leaks** (Command Palette) scans the runbook for secrets and internal names
+before you share it.
+
+**Built-in AI:** set `mdRunbook.ai.provider` in your user settings to `vscode` (GitHub Copilot or
+another VS Code model) or `anthropic` (the Claude API with your own key). Then **Explain Output**
+and **Suggest Next Steps** appear in a cell's `⋯` menu, and **Summarize Incident** in the Command
+Palette. Every send asks first and can show exactly what will be sent.

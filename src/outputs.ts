@@ -1,7 +1,8 @@
 /** Mapping between VS Code cell outputs and the core's persisted-output model. */
 
 import * as vscode from 'vscode';
-import type { OutputInput, ParsedOutput } from './core';
+import { escapeHtml } from './core';
+import type { HistoryEntry, OutputInput, ParsedOutput } from './core';
 
 export const META_KEY = 'mdRunbook';
 
@@ -18,6 +19,8 @@ export interface OutputMetadata {
   status?: boolean;
   /** Final marker attributes of a finished run, carried by its status output. */
   attrs?: Record<string, string>;
+  /** The collapsed list of earlier runs (output history); display only, never persisted. */
+  earlier?: boolean;
 }
 
 interface OutputLike {
@@ -38,6 +41,27 @@ export function statusLine(exit: string | undefined, ran: string | undefined, du
   return parts.join(' · ');
 }
 
+/** `2 earlier runs` for the status line (output history), or '' when there are none. */
+export function earlierRuns(count: number): string {
+  return count > 0 ? `${count} earlier run${count === 1 ? '' : 's'}` : '';
+}
+
+/**
+ * The earlier runs kept in the output history, newest first, as a collapsed section under the
+ * status line. Everything shown is escaped: the entries come from the file.
+ */
+export function earlierRunsOutput(entries: readonly HistoryEntry[]): vscode.NotebookCellOutput | undefined {
+  if (entries.length === 0) return undefined;
+  const runs = entries.map((e) => {
+    const head = escapeHtml(statusLine(e.attrs.exit, e.attrs.ran, e.attrs.duration) || 'earlier run');
+    const fence = '`'.repeat(Math.max(3, ...[...e.text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+    return `${head}\n\n${fence}text\n${e.text}\n${fence}`;
+  });
+  const md = `<details><summary>${earlierRuns(entries.length)}</summary>\n\n${runs.join('\n\n')}\n\n</details>\n`;
+  const meta: OutputMetadata = { earlier: true };
+  return new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.text(md, 'text/markdown')], { [META_KEY]: meta });
+}
+
 /**
  * VS Code only syncs a replaced output's items (not its metadata) to the extension host, so
  * metadata that must survive to save time goes on a newly appended output like this one.
@@ -48,12 +72,15 @@ export function statusOutput(text: string, attrs?: Record<string, string>): vsco
 }
 
 /** Outputs for a cell loaded from disk: the stored text plus a status line. */
-export function persistedOutputs(out: ParsedOutput): vscode.NotebookCellOutput[] {
+export function persistedOutputs(out: ParsedOutput, history: readonly HistoryEntry[] = []): vscode.NotebookCellOutput[] {
   const meta: OutputMetadata = { persisted: true };
   const outputs = [new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout(out.text)], { [META_KEY]: meta })];
   if (out.attrs.exit !== undefined || out.attrs.ran !== undefined) {
-    outputs.push(statusOutput(statusLine(out.attrs.exit, out.attrs.ran, out.attrs.duration)));
+    const status = [statusLine(out.attrs.exit, out.attrs.ran, out.attrs.duration), earlierRuns(history.length)].filter(Boolean).join(' · ');
+    outputs.push(statusOutput(status));
   }
+  const earlier = earlierRunsOutput(history);
+  if (earlier) outputs.push(earlier);
   return outputs;
 }
 
