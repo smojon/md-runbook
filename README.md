@@ -12,6 +12,12 @@ inside the same `.md` file. It runs natively on **Windows** (PowerShell, cmd, Gi
 - Output streams live into the cell. On save it is written right after the code block, and it
   is **redacted for secrets** first.
 
+![A runbook open as a notebook after Run All](docs/1-notebook.png)
+
+The same file saved and opened as plain Markdown, with output blocks and redacted secrets:
+
+![The saved Markdown with output blocks](docs/2-saved-markdown.png)
+
 ## Install
 
 Build the `.vsix` and install it:
