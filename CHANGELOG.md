@@ -1,40 +1,40 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
-- **Command line:** `md-runbook run file.md` (`out/dist/cli.js`) runs a runbook outside VS Code,
-  for CI, servers and scheduled checks, with the same cell options, checks and redaction. It
-  writes the outputs into the file and can write HTML, PDF (with an installed Chrome, Edge or
-  Chromium) and JUnit reports, plus a GitHub Actions job summary. Risky commands need `--yes`,
-  secrets come from environment variables, and proposed or assistant-written cells never run.
-- **Report:** prints cleanly (light colours, wrapped output) for PDF and paper.
-- **Line by line:** the dropdown next to a code cell's run button has three new commands.
-  **Run Line or Selection** (`Ctrl+Alt+Enter`) runs the line under the cursor, or the selected
-  text. **Run Lines One by One** runs each line in turn and stops at the first that fails.
-  **Step Through Lines** pauses before each line (`F10` next, `F5` the rest, `Shift+F5` stop).
-  Each line shows as `$ command` in the output, `cd` and variables carry over between lines, and
-  a run that didn't cover every line is saved with `lines=` and doesn't count as done.
-- **Checks:** `expect="text"` or `expect=/regex/`, `expect-not=…` and `expect-exit=N` cell options.
-  A step whose output isn't what the runbook expects fails, even with exit code 0
+- **Line by line:** the dropdown next to a code cell's run button has new commands.
+  **Run Line or Selection** (`Ctrl+Alt+Enter`, also in the cell's context menu) runs the line
+  under the cursor, or the selected text. **Run Lines One by One** runs each line in turn and
+  stops at the first that fails. **Step Through Lines** pauses before each line, like a debugger
+  (`F10` next, `F5` the rest, `Shift+F5` stop), and **Step Through from This Line** starts at
+  the cursor. Each line shows as `$ command` in the output, and `cd` and variables carry over
+  between lines, in `terminal` cells too. A run that didn't cover every line is saved with
+  `lines=` and doesn't count as done.
+- **Checks:** `expect="text"` or `expect=/regex/`, `expect-not=…` and `expect-exit=N` cell
+  options. A step whose output isn't what the runbook expects fails, even with exit code 0
   (`check=failed` on the marker), and `expect-exit=1` makes exit code 1 a pass.
 - **Retries:** `retry=10 every=15s` runs a cell again until it passes, for "wait until ready"
   steps. Only the last attempt's output is kept; the marker records `attempts=`.
-- **Terminal cells, line by line:** a line run of a `terminal` cell opens a terminal of its own
-  for the run, so `cd` and variables carry over between lines there too.
+- **Captured values:** `capture=NAME` or `capture=NAME:/regex/` keeps a value from a cell's
+  output, and later cells use it as `${out:NAME}`. `capture-secret=NAME` redacts the value
+  everywhere and never saves it.
+- **Blocks for one OS:** `os=windows` or `os=linux,macos` on a block. Blocks for another OS are
+  not run (and keep their output), and adjacent alternatives count as one step, so one runbook
+  works on Windows, Linux and macOS.
+- **Command line:** `md-runbook run file.md` (`out/dist/cli.js` in a clone of the repository)
+  runs a runbook outside VS Code, for CI, servers and scheduled checks, with the same cell
+  options, checks and redaction. It writes the outputs into the file and can write HTML, PDF
+  (with an installed Chrome, Edge or Chromium) and JUnit reports, plus a GitHub Actions job
+  summary. Risky commands need `--yes`, secrets come from environment variables, and proposed or
+  assistant-written cells never run.
 - **Get started walkthrough:** *Help → Welcome → Get started with Markdown Runbook* walks
   through running steps, line runs, sessions, placeholders, checks and sharing.
   **md-runbook: Open Sample Runbook** opens a safe sample as an untitled runbook.
-- **Blocks for one OS:** `os=windows` or `os=linux,macos` on a block. Blocks for another OS are
-  not run (and keep their output), and adjacent alternatives count as one step, so one
-  runbook works on Windows, Linux and macOS.
-- **Step Through from This Line:** start stepping at the cursor line instead of the first line.
 - **Save after each run:** with `mdRunbook.output.saveAfterRun` on, the runbook is saved after
   every run, so outputs are on disk even if VS Code closes.
 - **Runbook defaults:** `cwd:` and `timeout:` in the front matter set the folder and timeout for
   every cell of a runbook; a cell's own `cwd=` / `timeout=` still wins.
-- **Captured values:** `capture=NAME` or `capture=NAME:/regex/` keeps a value from a cell's
-  output, and later cells use it as `${out:NAME}`. `capture-secret=NAME` redacts the value
-  everywhere and never saves it.
+- **Report:** prints cleanly (light colours, wrapped output) for PDF and paper.
 
 ## 0.1.2
 

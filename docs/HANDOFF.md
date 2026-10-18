@@ -4,30 +4,53 @@ State of the project for whoever picks it up next (person or new Claude session)
 
 ## Where things are
 
-- `main` and `claude/md-runbook-vscode-extension-8f4yog` both contain everything. Version 0.1.0, not
-  published yet.
-- Tests: `npm test` (unit, ~410) and `npm run test:integration` (real VS Code, ~50 tests).
-  CI runs both on Windows, macOS and Linux on every push (`.github/workflows/ci.yml`).
-- Feature docs: `docs/features/*.md`. Store/release steps: `PUBLISHING.md`.
-- Security rule for every feature: it can be turned off in settings, the default is the most secure
-  choice, and settings that weaken security are `"scope": "machine"` (user settings only).
+- **Released:** 0.1.0, 0.1.1, 0.1.2 and 0.2.0 on the Visual Studio Marketplace (publisher
+  `smojon`) and as GitHub releases with the `.vsix` attached. Not on Open VSX yet.
+- **Branch:** everything is on `main`, which is the default branch. Work happens on short-lived
+  `feature/...` branches; CI must pass on all three systems before they are merged.
+- **Code:** `src/core` is pure (no `vscode`; `test/purity.test.ts` checks it), `src/*.ts` is the
+  VS Code layer, `src/cli` the command-line runner, `renderer/` the notebook renderer for
+  clickable checklists. Feature docs: `docs/features/*.md`. Store and release steps:
+  `PUBLISHING.md`.
+- **Security rule for every feature:** it can be turned off in settings, the default is the most
+  secure choice, and settings that weaken security are `"scope": "machine"` (user settings only).
+  A runbook file must never be able to weaken them either (e.g. no shell paths in front matter).
 
-## Run the tests locally
+## Run the tests
 
 ```sh
 npm ci
-npm test                                   # unit tests
-MD_RUNBOOK_PWSH=/path/to/pwsh npm test     # also the real PowerShell tests (value is a path)
-npm run test:integration                   # needs a VS Code download (xvfb-run on Linux)
+npm test                                   # compile + unit/smoke tests (~460; real shells, skipped if missing)
+MD_RUNBOOK_PWSH=/path/to/pwsh npm test     # also the PowerShell 7 tests (value is a path)
+npm run test:integration                   # ~65 end-to-end tests in a downloaded VS Code (xvfb-run on Linux)
 ```
 
-## To do before publishing (owner)
+CI (`.github/workflows/ci.yml`) runs both on Windows, macOS and Linux on every branch push.
+The integration run starts a second VS Code and slows the machine for about 5 minutes; on a
+laptop in use, prefer pushing a branch and letting CI run it. From a VS Code terminal, run it as
+`env -u ELECTRON_RUN_AS_NODE npm run test:integration`.
 
-1. GitHub: make `main` the default branch (Settings → General → Default branch), then delete the
-   `claude/...` branch if you like.
-2. Make the repository public, so the README screenshots show on the Marketplace.
-3. Create the publisher accounts and add the `VSCE_PAT` / `OVSX_PAT` secrets (see `PUBLISHING.md`).
-4. `git tag v0.1.0 && git push origin v0.1.0`: the release workflow tests, packages and publishes.
+Behaviour inside the notebook webview (checkbox clicks, redraws, the step-through highlight, cell
+toolbar buttons, the walkthrough's look) has no automated test: try it in a development window
+(`code --extensionDevelopmentPath=<repo> <file.md>`) before a release.
+
+## Releasing
+
+1. Bump `version` in `package.json`, turn `## Unreleased` in `CHANGELOG.md` into `## x.y.z`
+   (that section becomes the GitHub release notes), commit to `main`.
+2. `git tag vx.y.z && git push origin vx.y.z`. The Release workflow tests on all three systems,
+   packages the `.vsix` and creates the GitHub (pre-)release.
+3. **Marketplace: manual.** Download the `.vsix` from the GitHub release and upload it at
+   <https://marketplace.visualstudio.com/manage/publishers/smojon> (⋯ → Update). There is no
+   `VSCE_PAT` secret: creating an Azure DevOps organization for a token now needs an Azure
+   subscription. If one is added later, the workflow publishes by itself.
+
+## Open (owner)
+
+- **Open VSX** (VSCodium, Cursor, Gitpod): create the namespace `smojon`, file the ownership
+  claim, then add an `OVSX_PAT` secret or set up trusted publishing (`PUBLISHING.md`).
+- **npm package for the command-line runner** (`npx md-runbook run …`): needs an npm account.
+  Until then it runs from a clone as `node out/dist/cli.js` (`docs/features/cli.md`).
 
 ## Known gaps (small, documented or deliberate)
 
@@ -37,24 +60,18 @@ npm run test:integration                   # needs a VS Code download (xvfb-run 
   notebook closes).
 - With `safety.recordContext` on, a cell's secret prompts come before its confirmation
   (documented in `docs/features/safety.md`).
-- Terminal mode is tested through the integration suite and the pure command-line parts; it has
-  not been tried by hand on Windows/macOS.
+- Line runs: cmd cells run each line in its own process (no state between lines); checks,
+  retries and captures don't apply to line runs (documented in `docs/features/lines.md` and
+  `checks.md`).
+- Checklist boxes don't show in Restricted Mode: VS Code's sanitizer drops `<input>`.
+- Terminal mode is tested through the integration suite; it has not been tried by hand on
+  macOS.
 - The controller's try/finally cleanup has no unit test (it needs VS Code).
-
-## Done in the 2026-10-19 batch (not released yet)
-
-Line runs (Run Line or Selection, Run Lines One by One, Step Through, Step Through from This
-Line, also for terminal cells), checks (`expect=`), retries (`retry=`), captured values
-(`capture=` / `${out:NAME}`), save after each run, front matter `cwd:` / `timeout:`, the Get
-started walkthrough, `os=` alternatives, and the command-line runner (`out/dist/cli.js`, with
-HTML/PDF/JUnit reports). See `CHANGELOG.md` under "Unreleased" and `docs/features/`.
 
 ## Ideas for later
 
-1. Publish the command-line runner to npm (`npx md-runbook run …`): needs an npm account and a
-   package without the extension's files (or `bin` from the extension package as today).
-2. PDF in the extension's **Export Report**, using the CLI's headless-browser printing.
-3. Fresh Marketplace screenshots of the newer features (progress, CodeLens, AI context, line
-   runs, checks).
-4. Shell paths stay out of the front matter on purpose (a file must not choose the program that
-   runs cells); revisit only with a safe design (e.g. a choice among installed shells).
+1. PDF in the extension's **Export Report**, reusing the CLI's headless-browser printing.
+2. Fresh Marketplace screenshots of the newer features (line runs, checks, progress, CodeLens,
+   AI context).
+3. Shell choice per runbook, only with a safe design (e.g. picking among installed shells, never
+   a path from the file).
