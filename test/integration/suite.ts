@@ -169,7 +169,8 @@ test(`running a ${LANG} cell streams output; save persists it redacted`, async (
   assert.ok(await step('save', editor.notebook.save()));
 
   const saved = read(uri);
-  assert.match(saved, /```\n<!-- md-runbook:output start exit=0 ran=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d -->\n```text\n/);
+  const iso = '\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d[+-]\\d\\d:\\d\\d';
+  assert.match(saved, new RegExp('```\\n<!-- md-runbook:output start exit=0 ran=' + iso + ' ended=' + iso + ' duration=\\d+\\.\\d{3}s -->\\n```text\\n'));
   const block = saved.slice(saved.indexOf('<!-- md-runbook:output start'));
   assert.match(block, /hello from md-runbook\nAuthorization: \[REDACTED\]\n/);
   assert.doesNotMatch(block, /abc\.def/);

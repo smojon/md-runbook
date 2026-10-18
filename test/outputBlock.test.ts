@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { formatLocalIso, processOutputText, stripAnsi, truncateLines } from '../src/core';
+import { formatDurationAttr, formatLocalIso, processOutputText, stripAnsi, truncateLines } from '../src/core';
 
 describe('output text processing', () => {
   it('strips ANSI colours, OSC hyperlinks and cursor codes', () => {
@@ -40,5 +40,14 @@ describe('formatLocalIso', () => {
     assert.match(s, /^2026-10-18T14:20:05[+-]\d\d:\d\d$/);
     // Parsing it back yields the same instant.
     assert.equal(new Date(s).getTime(), new Date(2026, 9, 18, 14, 20, 5).getTime());
+  });
+});
+
+describe('formatDurationAttr', () => {
+  it('formats seconds with millisecond precision', () => {
+    assert.equal(formatDurationAttr(1234), '1.234s');
+    assert.equal(formatDurationAttr(0), '0.000s');
+    assert.equal(formatDurationAttr(61_005), '61.005s');
+    assert.equal(formatDurationAttr(-5), '0.000s');
   });
 });

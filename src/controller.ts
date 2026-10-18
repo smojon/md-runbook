@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ExecuteResult, LineBuffer, SUPPORTED_LANGUAGE_IDS, executeCell, exitLabel, formatLocalIso, isSuccess } from './core';
+import { ExecuteResult, LineBuffer, SUPPORTED_LANGUAGE_IDS, executeCell, exitLabel, formatDurationAttr, formatLocalIso, isSuccess } from './core';
 import { ExecutionConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, statusLine, statusOutput } from './outputs';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -174,9 +174,12 @@ export class RunbookController implements vscode.Disposable {
     await flush();
 
     const exit = exitLabel(result);
+    const endedAt = new Date();
+    const elapsed = endedAt.getTime() - started.getTime();
     const shellLabel = result.shell?.label;
-    const status = [statusLine(exit, undefined, formatDuration(result.durationMs)), shellLabel].filter(Boolean).join(' · ');
-    await exec.appendOutput([statusOutput(status, { exit, ran })]);
+    const status = [statusLine(exit, undefined, formatDuration(elapsed)), shellLabel].filter(Boolean).join(' · ');
+    const attrs = { exit, ran, ended: formatLocalIso(endedAt), duration: formatDurationAttr(elapsed) };
+    await exec.appendOutput([statusOutput(status, attrs)]);
 
     const ok = isSuccess(result);
     exec.end(ok, Date.now());

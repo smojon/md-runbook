@@ -52,7 +52,7 @@ export function persistedOutputs(out: ParsedOutput): vscode.NotebookCellOutput[]
   const meta: OutputMetadata = { persisted: true };
   const outputs = [new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout(out.text)], { [META_KEY]: meta })];
   if (out.attrs.exit !== undefined || out.attrs.ran !== undefined) {
-    outputs.push(statusOutput(statusLine(out.attrs.exit, out.attrs.ran)));
+    outputs.push(statusOutput(statusLine(out.attrs.exit, out.attrs.ran, out.attrs.duration)));
   }
   return outputs;
 }

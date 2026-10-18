@@ -101,6 +101,11 @@ function longestBacktickRun(lines: readonly string[]): number {
   return max;
 }
 
+/** Duration attribute in seconds with millisecond precision, e.g. 1.234s. */
+export function formatDurationAttr(ms: number): string {
+  return `${(Math.max(0, ms) / 1000).toFixed(3)}s`;
+}
+
 /** ISO 8601 timestamp in local time with UTC offset, e.g. 2026-10-18T14:20:00+02:00. */
 export function formatLocalIso(d: Date): string {
   const pad = (n: number): string => String(Math.abs(n)).padStart(2, '0');

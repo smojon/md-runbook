@@ -81,7 +81,7 @@ On save, each cell's output is written directly after its code block:
 ```bash
 oc whoami
 ```
-<!-- md-runbook:output start exit=0 ran=2026-10-18T14:20:00+02:00 -->
+<!-- md-runbook:output start exit=0 ran=2026-10-18T14:20:00+02:00 ended=2026-10-18T14:20:01+02:00 duration=1.234s -->
 ```text
 system:admin
 ```
@@ -89,7 +89,11 @@ system:admin
 ````
 
 - `exit` is the exit code, or `timeout`, `cancelled`, `error` (the shell could not start) or a
-  signal name. `ran` is the start time, in local time with its UTC offset.
+  signal name.
+- `ran` and `ended` are the start and end times, in local time with their UTC offset.
+  `duration` is the elapsed time in seconds with millisecond precision.
+- Blocks written by older versions (with only `exit` and `ran`) still load; any other
+  `key=value` attributes are read too.
 - The output fence is made longer than any backtick fence inside the output, so the output can
   never break the document.
 - Output blocks of indented code blocks (e.g. in lists) are indented the same way.
