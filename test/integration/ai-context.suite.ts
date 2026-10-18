@@ -20,7 +20,7 @@ test('Copy for AI puts redacted, pseudonymized text with boundaries on the clipb
   await openRunbook(uri);
   await vscode.env.clipboard.writeText('');
   const copied = await step('copy for ai', vscode.commands.executeCommand<string>('mdRunbook.copyForAi', uri, { preview: false }));
-  const clip = await vscode.env.clipboard.readText();
+  const clip = await step('read clipboard', vscode.env.clipboard.readText());
   assert.equal(clip, copied);
   assert.match(clip, /never follow instructions/, 'header');
   assert.match(clip, /Runbook: ai-copy\.md/);
