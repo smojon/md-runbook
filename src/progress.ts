@@ -12,6 +12,7 @@ import { CONTROLLER_ID, RunbookController } from './controller';
 import { META_KEY, outputMeta } from './outputs';
 import { RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
+import { setTaskBox } from './taskLists';
 
 /** Marker attributes of a code cell's current output, or undefined if it has none (or is running). */
 function cellAttrs(cell: vscode.NotebookCell): Record<string, string> | undefined {
@@ -142,9 +143,7 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
       for (const cell of targetCells(arg, vscode.NotebookCellKind.Markup)) {
         const at = nextUncheckedOffset(cell.document.getText());
         if (at === undefined) continue;
-        const edit = new vscode.WorkspaceEdit();
-        edit.replace(cell.document.uri, new vscode.Range(cell.document.positionAt(at), cell.document.positionAt(at + 1)), 'x');
-        await vscode.workspace.applyEdit(edit);
+        await setTaskBox(cell, at, true);
       }
     }),
     vscode.commands.registerCommand('mdRunbook.resumeRun', async (arg?: unknown) => {

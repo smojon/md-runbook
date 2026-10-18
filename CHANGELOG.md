@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- **Checklists:** clicking a checkbox, or **Check Next Item**, now shows the tick right away.
+  Before, the file changed but the box only looked ticked after reopening the runbook.
+- **Sample runbook:** the terminating-error example no longer leaves `$ErrorActionPreference =
+  'Stop'` set in session mode, which made the next cell's `Write-Error` fail and stopped Run All.
+
 ## 0.1.1
 
 - **Faster start:** the extension is now bundled into a single file, so it loads much faster

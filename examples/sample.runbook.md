@@ -82,8 +82,7 @@ exit 3
 A PowerShell terminating error fails the cell:
 
 ```pwsh continue-on-error
-$ErrorActionPreference = 'Stop'
-Get-Item 'C:\does\not\exist\md-runbook'
+Get-Item 'C:\does\not\exist\md-runbook' -ErrorAction Stop
 ```
 
 A non-terminating error alone does not fail the cell (exit 0), as in PowerShell itself:
