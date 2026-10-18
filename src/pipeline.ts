@@ -27,6 +27,8 @@ export interface CellPlan {
   continueOnError: boolean;
   /** When set, the cell is not run; the reason is shown and recorded as exit=skipped. */
   skip?: string;
+  /** With `skip`: also stop the rest of a Run All (e.g. a declined confirmation). */
+  stopSequence?: boolean;
 }
 
 export interface PrepareContext {

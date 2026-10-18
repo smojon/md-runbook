@@ -32,8 +32,9 @@ renders normally elsewhere:
 
 Before a cell whose text matches one of `mdRunbook.execution.confirmPatterns` runs, a modal
 dialog names the matching text and the current context (see below). Choosing anything other
-than **Run** skips the cell and records it as `exit=skipped`. In **Run All**, a skipped cell
-does not stop the run.
+than **Run** skips the cell and records it as `exit=skipped`. In **Run All**, declining also
+stops the run, since later steps usually depend on the declined one. (A cell with the `skip`
+option does not stop Run All.)
 
 The default patterns cover `delete`, `drain`, `cordon`, `scale … --replicas=0`, `rm -rf`,
 `--force`, `Remove-Item … -Recurse` and `drop table` / `drop database`. They are

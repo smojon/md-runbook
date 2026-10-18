@@ -142,7 +142,11 @@ const confirmPreparer: CellPreparer = {
     const message = match === '' ? `Run cell ${cell.index + 1}?` : `Cell ${cell.index + 1} contains a risky command: “${match.trim()}”`;
     const detail = ctxLines.length > 0 ? `Current context:\n${ctxLines.join('\n')}` : 'No context recorded (see mdRunbook.output.recordContext).';
     const answer = await vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run');
-    if (answer !== 'Run') plan.skip = 'not confirmed';
+    if (answer !== 'Run') {
+      plan.skip = 'not confirmed';
+      // Later steps usually depend on this one; don't carry on without it.
+      plan.stopSequence = true;
+    }
   },
 };
 

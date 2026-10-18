@@ -92,10 +92,12 @@ export class RunbookController implements vscode.Disposable {
       }
       const run = await this.runCell(exec, notebook, cfg);
       runs.push(run);
-      if (!run.success && !run.plan.continueOnError && cfg.stopOnFailure && executions.length > 1) stopped = exec.cell;
+      const failedHard = !run.success && !run.plan.continueOnError && cfg.stopOnFailure;
+      if ((failedHard || run.plan.stopSequence) && executions.length > 1) stopped = exec.cell;
     }
     if (stopped && executions[executions.length - 1]!.cell !== stopped) {
-      vscode.window.setStatusBarMessage(`md-runbook: stopped after cell ${stopped.index + 1} failed`, 8000);
+      const why = runs[runs.length - 1]?.plan.stopSequence ? 'was not confirmed' : 'failed';
+      vscode.window.setStatusBarMessage(`md-runbook: stopped after cell ${stopped.index + 1} ${why}`, 8000);
     }
     for (const o of this.pipeline.observers) await o.onDidRunSequence?.(notebook, runs);
   }
