@@ -66,6 +66,10 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 - Checklist boxes don't show in Restricted Mode: VS Code's sanitizer drops `<input>`.
 - Terminal mode is tested through the integration suite; it has not been tried by hand on
   macOS.
+- The integration test "terminal: a line run keeps cd between lines…" hung once on Linux CI
+  (1 of 5 runs, 2026-10-19; a re-run passed). On a timeout it now prints the cell's output and
+  the open terminals; if it happens again, check whether a line's end was never reported by the
+  terminal's shell integration.
 - The controller's try/finally cleanup has no unit test (it needs VS Code).
 
 ## Ideas for later

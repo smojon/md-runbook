@@ -86,7 +86,12 @@ test('terminal: a line run keeps cd between lines in a terminal of its own, clos
     const editor = await openRunbook(uri);
     const cell = editor.notebook.cellAt(0);
     void vscode.commands.executeCommand('mdRunbook.runLinesOneByOne', cell);
-    assert.equal(await waitForRun(cell, 60_000), true, outputText(cell));
+    // On a timeout, show how far it got (which line, what the terminal printed).
+    const ok = await waitForRun(cell, 60_000).catch((e: Error) => {
+      const terms = vscode.window.terminals.map((t) => t.name).join(', ');
+      throw new Error(`${e.message}; output so far: ${JSON.stringify(outputText(cell))}; terminals: ${terms}`);
+    });
+    assert.equal(ok, true, outputText(cell));
     const out = outputText(cell);
     assert.match(out, isWin ? /WHERE=.*Temp/i : /WHERE=(\/private)?\/tmp/);
     await waitFor('the line-run terminal to close', () => !vscode.window.terminals.some((t) => t.name.includes(', lines)')) || undefined, 10_000);
