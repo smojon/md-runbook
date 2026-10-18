@@ -12,6 +12,7 @@ import { CodeMeta, isCodeMeta } from './model';
 import type { DocEol } from './lines';
 import { longestClosingRun } from './fence';
 import { redactLeaks } from './leaks';
+import { REDACTED } from './redact';
 import { proposalOf } from './proposal';
 
 /** Boundaries around every output; the system prompt tells the model never to follow text inside. */
@@ -85,10 +86,63 @@ export const PUBLIC_HOSTS: readonly string[] = [
   'example.com',
   'example.org',
   'example.net',
+  'ghcr.io',
+  'redhat.io',
+  'openshift.io',
+  'openshift.com',
+  'okd.io',
+  'coreos.com',
+  'operatorframework.io',
+  'operatorhub.io',
+  'x-k8s.io',
+  'cert-manager.io',
+  'istio.io',
+  'prometheus.io',
+  'argoproj.io',
+  'strimzi.io',
+  'external-secrets.io',
+  'keycloak.org',
+  'apache.org',
+  'bitnami.com',
+  'tekton.dev',
+  'knative.dev',
+  'kyverno.io',
+  'velero.io',
+  'fluxcd.io',
 ];
 
+/**
+ * Last labels that make a two-label name (`db1.prod`, `sso.acme.eu`) a host. Names with three or
+ * more labels are hosts under any alphabetic last label (`worker-3.ocp.acme.de`).
+ */
+const HOST_TLDS = new Set(
+  (
+    'com net org io local internal corp lan cloud svc intra intranet int prod test dev stage staging qa uat home ' +
+    'localdomain priv private ad edu gov biz info ' +
+    'de ch at fr eu uk nl be es pl se dk fi cz lu li pt ie ca au jp cn ru br nz sg hk kr'
+  ).split(' '),
+);
+
+/** Last labels of file names, never hosts: `values.yaml`, `run.sh`, `app.config.json`. */
+const FILE_EXTENSIONS = new Set(
+  'yaml yml json sh ps1 psm1 cmd bat js ts py md txt log conf cfg ini xml html csv tar gz tgz zip pem crt cer key tf go java rb exe dll jar war so properties env toml lock sql'.split(' '),
+);
+
+/** First labels of reverse-DNS identifiers (Java packages, k8s API types): `org.keycloak.services`, `io.k8s.api.core`. */
+const REVERSE_DNS_FIRST = new Set(['com', 'org', 'net', 'io', 'java', 'javax', 'jakarta', 'jdk', 'kotlin', 'scala', 'android']);
+
+/** Field-path words: `pod.spec.containers`, `item.metadata.name` are paths, not hosts. */
+const FIELD_WORDS = new Set(['spec', 'status', 'metadata', 'containers', 'template', 'items', 'labels', 'annotations', 'selector', 'data', 'values']);
+
+/** Dotted words that only look like hosts. */
+const NOT_HOSTS = new Set(['asp.net', 'ado.net', 'vb.net']);
+
 /** Namespaces every cluster has; aliasing them only confuses the model. */
-const COMMON_NAMESPACES = new Set(['default', 'kube-system', 'kube-public', 'kube-node-lease']);
+const COMMON_NAMESPACES = new Set(['default', 'kube-system', 'kube-public', 'kube-node-lease', 'openshift']);
+const isCommonNamespace = (ns: string): boolean => {
+  const n = ns.toLowerCase();
+  return COMMON_NAMESPACES.has(n) || n.startsWith('kube-') || n.startsWith('openshift-') || /^\d+$/.test(n);
+};
 const K8S_TOOL = /\b(?:kubectl|oc|helm|kustomize|istioctl|velero|flux|argocd|kubens)\b/;
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -98,8 +152,29 @@ const IPV4_RE = new RegExp(`(?<![\\w.])${IPV4}(?!\\w|\\.\\d)`, 'g');
 const IPV6_RE = /(?<![\w:.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/gi;
 const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/(?:[^\s/@]*@)?([a-z0-9-]+(?:\.[a-z0-9-]+)*)/gi;
 const EMAIL_RE = /(?<![\w.%+-])[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?![\w-])/g;
-const HOST_RE = /(?<![\w.@-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|io|local|internal|corp|lan|cloud|svc)(?![\w-]|\.[a-z0-9])/gi;
-const NAMESPACE_RE = /(?<=(?:^|[ \t])-n[ \t]+["']?|--namespace(?:=|[ \t]+)["']?|\bnamespace:[ \t]*["']?)[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?![\w.-])/gim;
+/** Anything shaped like a host name with an alphabetic last label; `isHostName` decides. */
+const HOST_RE = /(?<![\w.@$%-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}(?![\w-]|\.[a-z0-9])/gi;
+const NS_NAME = '[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?![\\w.-])';
+/** `-n NAME`, `-n=NAME`, `-nNAME`: only on lines that run a Kubernetes tool. */
+const NS_FLAG_RE = new RegExp(`(?<=(?:^|[ \\t])-n(?:[ \\t]+|=)?["']?)${NS_NAME}`, 'gim');
+/** Forms that name a namespace wherever they appear. */
+const NS_RE = new RegExp(
+  '(?<=' +
+    [
+      `--namespace(?:=|[ \\t]+)["']?`,
+      `\\bnamespace:[ \\t]*["']?`,
+      `"namespace"[ \\t]*:[ \\t]*"`,
+      `\\bnamespace/`,
+      `\\b(?:namespaces?|projects?)[ \\t]+"`,
+      `\\boc[ \\t]+(?:new-)?project[ \\t]+["']?`,
+      `\\bkubens[ \\t]+["']?`,
+      `(?:\\$|\\b)(?:ns|namespace|\\w+_ns|\\w+_namespace)[ \\t]*=[ \\t]*["']?`,
+    ].join('|') +
+    `)${NS_NAME}`,
+  'gim',
+);
+/** `find -name`, `-newer`, `-not`…: `-n` glued to letters that are not a namespace. */
+const NOT_NS_FLAGS = new Set(['-name', '-newer', '-not', '-nouser', '-nogroup', '-noleaf', '-nowarn']);
 
 function isIPv6(s: string): boolean {
   const colons = s.split(':').length - 1;
@@ -118,6 +193,28 @@ const isPublicHost = (host: string): boolean => {
   const h = host.toLowerCase();
   return h === 'localhost' || PUBLIC_HOSTS.some((d) => h === d || h.endsWith('.' + d));
 };
+
+/** Is `tok`, found at `at` in `text`, a host name (and not a file name, version, package or key)? */
+function isHostName(tok: string, text: string, at: number): boolean {
+  const lower = tok.toLowerCase();
+  const labels = tok.split('.');
+  const last = (labels[labels.length - 1] ?? '').toLowerCase();
+  if (FILE_EXTENSIONS.has(last) || NOT_HOSTS.has(lower) || isPublicHost(lower)) return false;
+  if (labels.slice(0, -1).every((l) => /^\d+$/.test(l))) return false;
+  if (labels.length >= 3 && REVERSE_DNS_FIRST.has((labels[0] ?? '').toLowerCase())) return false;
+  if (HOST_TLDS.has(last)) return true;
+  if (labels.length < 3) return false;
+  // Unknown last label: rule out identifiers. CamelCase/Capitalized labels (`java.lang.String`).
+  if (labels.some((l) => /[a-z][A-Z]|^[A-Z][a-z]/.test(l))) return false;
+  if (labels.some((l) => FIELD_WORDS.has(l.toLowerCase()))) return false;
+  // A key at the start of a line: `spring.datasource.url: …`, `log.level.root=…`.
+  const lineStart = text.lastIndexOf('\n', at - 1) + 1;
+  const lineEnd = text.indexOf('\n', at);
+  const before = text.slice(lineStart, at);
+  const after = text.slice(at + tok.length, lineEnd < 0 ? undefined : lineEnd);
+  if (/^[ \t]*(?:-[ \t]+)?["']?$/.test(before) && /^["']?[ \t]*(?::(?:[ \t]|$)|=)/.test(after)) return false;
+  return true;
+}
 
 const isBoringIPv4 = (ip: string): boolean => ip === '0.0.0.0' || ip.startsWith('127.') || ip.startsWith('255.');
 
@@ -189,28 +286,45 @@ class Pseudonymizer {
       push((m.index ?? 0) + m[0].length - host.length, host.length, 'host');
     }
     for (const m of text.matchAll(EMAIL_RE)) if (!/@example\.invalid$/i.test(m[0])) push(m.index ?? 0, m[0].length, 'user');
-    for (const m of text.matchAll(HOST_RE)) if (!isPublicHost(m[0])) push(m.index ?? 0, m[0].length, 'host');
+    for (const m of text.matchAll(HOST_RE)) if (isHostName(m[0], text, m.index ?? 0)) push(m.index ?? 0, m[0].length, 'host');
     // Configured internal domains win over the public allowlist.
     if (this.domainRe) for (const m of text.matchAll(this.domainRe)) push(m.index ?? 0, m[0].length, 'host');
-    for (const m of text.matchAll(NAMESPACE_RE)) {
+    for (const m of text.matchAll(NS_FLAG_RE)) {
       const ns = m[0];
       const at = m.index ?? 0;
-      if (COMMON_NAMESPACES.has(ns.toLowerCase()) || /^\d+$/.test(ns)) continue;
-      const lineStart = text.lastIndexOf('\n', at) + 1;
+      if (isCommonNamespace(ns)) continue;
+      const lineStart = text.lastIndexOf('\n', at - 1) + 1;
       const before = text.slice(lineStart, at);
-      if (/(?:^|[ \t])-n[ \t]+["']?$/.test(before) && !K8S_TOOL.test(before)) continue;
+      if (!K8S_TOOL.test(before)) continue;
+      // Glued `-nNAME`: not for `find`'s `-name`, `-newer`, … .
+      if (/-n$/.test(before) && (NOT_NS_FLAGS.has(`-n${ns}`.toLowerCase()) || /\bfind\b/.test(before))) continue;
       push(at, ns.length, 'ns');
     }
+    for (const m of text.matchAll(NS_RE)) if (!isCommonNamespace(m[0])) push(m.index ?? 0, m[0].length, 'ns');
     for (const re of this.termRes) for (const m of text.matchAll(re)) push(m.index ?? 0, m[0].length, 'term');
     return out;
   }
 
-  /** Replace every real name in `text` by its alias; longer matches win over overlapping shorter ones. */
-  apply(text: string): string {
+  /** Non-overlapping candidates in text order; longer matches win over overlapping shorter ones. */
+  private choose(text: string): Candidate[] {
     const all = this.candidates(text).sort((a, b) => b.end - b.start - (a.end - a.start) || a.start - b.start);
     const chosen: Candidate[] = [];
     for (const c of all) if (!chosen.some((o) => c.start < o.end && o.start < c.end)) chosen.push(c);
-    chosen.sort((a, b) => a.start - b.start);
+    return chosen.sort((a, b) => a.start - b.start);
+  }
+
+  /**
+   * First pass: give every real name in `text` an alias without replacing anything, so a name
+   * is replaced everywhere (also before the place where it was recognized, e.g. a namespace
+   * named in a heading and learned from a later `-n`).
+   */
+  learn(text: string): void {
+    for (const c of this.choose(text)) if (c.prefix !== 'known') this.alias(text.slice(c.start, c.end), c.prefix);
+  }
+
+  /** Replace every real name in `text` by its alias. */
+  apply(text: string): string {
+    const chosen = this.choose(text);
     let out = '';
     let pos = 0;
     for (const c of chosen) {
@@ -260,9 +374,14 @@ export function truncateOutput(text: string, max: number): string {
 
 const INJECTION: readonly RegExp[] = [
   /\bignore\s+(?:all\s+|any\s+)?(?:previous|prior|above|all|earlier)\s+(?:instructions|prompts?|rules)/i,
+  // "ignore the previous instructions", "disregard the above", "forget all prior rules".
+  /\b(?:ignore|disregard|forget)\s+(?:(?:all|any|the|your|of)\s+)*(?:previous|prior|above|earlier|preceding|foregoing)(?:\s+(?:instructions?|prompts?|rules|messages?|directions?|context)\b|\s*(?:[.,;:!]|$))/i,
   /\byou are now\b/i,
   /\bsystem prompt\b/i,
-  /\brun (?:this|the following)\b/i,
+  /\b(?:run|execute) (?:this|the following)\b/i,
+  // "IMPORTANT for the AI assistant", "Note to the assistant" (AI/LLM case-sensitive: `ai-service` is not a hit).
+  /\b(?:IMPORTANT|[Ii]mportant|ATTENTION|[Aa]ttention|NOTE|[Nn]ote)\b[^\n]{0,30}?\b(?:to|for)\s+(?:the\s+|any\s+)?(?:AI|LLM|[Aa]ssistant|[Ll]anguage [Mm]odel)\b/,
+  /\bas an? (?:AI|LLM|(?:large )?language model)\b/i,
   /\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/i,
   /<\/?(?:system|assistant|user)>/i,
 ];
@@ -300,6 +419,13 @@ type Part = string | OutputPart;
 
 const HEADING = /^ {0,3}(#{1,6})[ \t]+\S/;
 
+const REDACTED_RUN = new RegExp(`${escapeRe(REDACTED)}(?:[ \\t]*${escapeRe(REDACTED)})+`, 'g');
+
+const attrText = (attrs: Record<string, string>): string =>
+  Object.entries(attrs)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(' ');
+
 function renderOutput(o: OutputPart): string {
   const body = o.max < 0 ? '(output omitted to fit the size limit)' : truncateOutput(o.text, o.max);
   return `${o.header}\n${UNTRUSTED_OPEN}\n${body}\n${UNTRUSTED_CLOSE}`;
@@ -321,11 +447,31 @@ export function buildAiContext(markdown: string, opts: AiContextOptions, map: Ps
   const warnings: string[] = [];
   const userRedact = opts.redact ?? ((t: string) => t);
   const leakOpts = { internalDomains: opts.internalDomains };
-  const clean = (t: string): string => redactLeaks(userRedact(t), leakOpts);
+  /** Adjacent markers (`[REDACTED][REDACTED]`) say nothing more than one. */
+  const collapse = (t: string): string => t.replace(REDACTED_RUN, REDACTED);
+  const clean = (t: string): string => collapse(redactLeaks(userRedact(t), leakOpts));
   const pseudo = opts.pseudonymize ? new Pseudonymizer(map, markdown, opts.terms ?? [], opts.internalDomains ?? []) : undefined;
   const alias = (t: string): string => (pseudo ? pseudo.apply(t) : t);
   /** Code and prose may contain our marker strings verbatim; break them. */
   const noMarkers = (t: string): string => t.replace(/<<<(?=(?:END )?UNTRUSTED)/gi, '‹‹‹');
+
+  if (pseudo) {
+    // Pass 1: learn every name in the whole document (title, prose, code, info strings, outputs
+    // and their attributes), so pass 2 replaces it everywhere, wherever it was first recognized.
+    if (opts.title) pseudo.learn(clean(opts.title));
+    for (const cell of doc.cells) {
+      if (cell.kind === 'markup') {
+        pseudo.learn(clean(cell.value));
+        continue;
+      }
+      if (isCodeMeta(cell.meta)) pseudo.learn(clean(cell.meta.info));
+      pseudo.learn(clean(cell.value));
+      if (cell.output) {
+        pseudo.learn(clean(attrText(cell.output.attrs)));
+        pseudo.learn(neutralizeBoundaries(clean(cell.output.text)));
+      }
+    }
+  }
 
   const filter = opts.cells ? new Set(opts.cells) : undefined;
   const parts: Part[] = [];
@@ -361,9 +507,7 @@ export function buildAiContext(markdown: string, opts: AiContextOptions, map: Ps
     const info = isCodeMeta(cell.meta) ? cell.meta.info.trim() : fenceForLanguageId(cell.languageId);
     parts.push(fenced(alias(clean(info)), noMarkers(alias(clean(cell.value)))));
     if (cell.output) {
-      const attrs = Object.entries(cell.output.attrs)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(' ');
+      const attrs = attrText(cell.output.attrs);
       const { text, flagged } = flagInjection(alias(neutralizeBoundaries(clean(cell.output.text))));
       for (const f of flagged) {
         warnings.push(`cell ${i}, output line ${f.line}: looks like instructions to the AI: ${f.text.trim().slice(0, 80)}`);

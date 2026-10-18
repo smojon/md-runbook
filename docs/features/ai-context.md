@@ -36,13 +36,16 @@ How the text is made safe:
 
 - **Redaction.** Code, prose and outputs go through the [secret redaction](../../README.md#secret-redaction)
   patterns and the known secret values of this session, then through the leak scanner (below):
-  anything it recognizes as a secret becomes `[REDACTED]` too.
+  anything it recognizes as a secret becomes `[REDACTED]` too. Adjacent markers are merged into
+  one `[REDACTED]`; variable references such as `${secret:API_TOKEN}` and the key of a
+  `key=value` pair are kept.
 - **Untrusted outputs.** Every output is wrapped in the boundary lines shown above. Text inside an
   output that imitates those boundaries is broken up (`<<<` becomes `‹‹‹`), so an output can't
   close its own block. Lines that look like instructions to the AI (`ignore previous
-  instructions`, `you are now`, `system prompt`, `run the following`, `curl … | sh`,
-  `<system>` tags, fake boundaries) are prefixed with `[flagged] ` and listed as warnings with
-  their cell and line.
+  instructions`, `ignore the previous instructions`, `disregard the above`, `you are now`,
+  `system prompt`, `run/execute the following`, `IMPORTANT for the AI assistant`, `as an AI`,
+  `curl … | sh`, `<system>` tags, fake boundaries) are prefixed with `[flagged] ` and listed as
+  warnings with their cell and line.
 - **Short outputs.** Each output is cut to `mdRunbook.ai.maxOutputLines` lines (first and last
   lines). Error lines from the cut middle (`error`, `fail`, `denied`, `forbidden`, `exception`,
   `timeout`, `refused`, `not found`) are kept: `… 120 lines omitted, 3 error lines kept:`.
@@ -54,15 +57,22 @@ How the text is made safe:
   | Found | Alias |
   | --- | --- |
   | IPv4 and IPv6 addresses (not `127.x`, `0.0.0.0`, `::1`) | `ip-1` |
-  | host names ending in `.com`, `.net`, `.org`, `.io`, `.local`, `.internal`, `.corp`, `.lan`, `.cloud`, `.svc`, and hosts under `mdRunbook.ai.internalDomains` | `host-1` |
+  | host names: three or more labels under any alphabetic TLD (`worker-3.ocp.acme.de`, `ldap01.ad.acme.int`), two labels under a common or internal TLD (`sso.acme.eu`, `db1.prod`, `x.intra`, `.corp`, `.lan`, `.svc`, country codes, …), and hosts under `mdRunbook.ai.internalDomains` | `host-1` |
   | the host of a URL (scheme, port and path are kept) | `https://host-2:3000/d/x` |
   | email addresses | `user-1@example.invalid` |
-  | Kubernetes namespaces after `-n` (in `kubectl`, `oc`, `helm`, … lines), `--namespace` and `namespace:` (not `default` or `kube-*`) | `ns-1` |
+  | Kubernetes namespaces: `-n X`, `-n=X`, `-nX` (in `kubectl`, `oc`, `helm`, … lines), `--namespace`, `oc project X`, `oc new-project X`, `kubens X`, `namespace: X`, `"namespace":"X"`, `namespace/X`, `namespaces "X"`, `project "X"`, `NAMESPACE=X`, `$ns = 'X'` (not `default`, `openshift`, `kube-*` or `openshift-*`) | `ns-1` |
   | the words in `mdRunbook.ai.terms` (case-insensitive, whole words) | `term-1` |
 
   Well-known public hosts (`github.com`, `kubernetes.io`, `k8s.io`, `docker.io`, `quay.io`,
-  `microsoft.com`, `google.com`, `pypi.org`, `example.com`, …) and `localhost` are kept. The
-  longest match wins (`db.acme.corp` becomes one host, not a host containing a term), and a new
+  `microsoft.com`, `google.com`, `pypi.org`, `example.com`, `openshift.io`, `redhat.io`, …) and
+  `localhost` are kept, and so are things that only look like host names: file names
+  (`values.yaml`, `deploy.sh`, `app.config.json`), versions, Java packages and API types
+  (`org.keycloak.services`, `io.k8s.api.core.v1.Pod`), field paths (`pod.spec.containers`) and
+  configuration keys at the start of a line (`spring.datasource.url:`).
+
+  Names are collected from the whole runbook first (title, prose, code, info strings, outputs
+  and their attributes) and then replaced everywhere, so a namespace learned from a later
+  `-n iam-prod` is also replaced in an earlier heading. The longest match wins (`db.acme.corp` becomes one host, not a host containing a term), and a new
   alias is never one that already appears in the runbook. The mapping is kept in VS Code's
   workspace state on your machine and never copied.
 
@@ -89,16 +99,23 @@ saved (after redaction) — and lists what it finds. Pick a finding to jump to i
 
 - the formats of the default [redaction patterns](../../README.md#secret-redaction) (headers,
   bearer tokens, JWTs, `password=…`, URL credentials, GitHub and OpenShift tokens, AWS key IDs),
-- private keys (`-----BEGIN … PRIVATE KEY-----`),
+- private keys (`-----BEGIN … PRIVATE KEY-----`, unless the body is already `[REDACTED]`),
+- secrets known by their context: Keycloak credentials (`{"type":"secret","value":"…"}`), a UUID
+  a few words after `secret` (`Client secret for portal: 6d0e…`), the values under `data:` /
+  `stringData:` of a `kind: Secret` manifest (YAML, JSON, and escaped JSON in
+  `last-applied-configuration`), and base64 that decodes to `-----BEGIN` or `{"auths"`,
 - cloud keys: GCP API keys (`AIza…`) and OAuth tokens (`ya29.…`), Azure storage keys
   (`AccountKey=`, `SharedAccessKey=`), SAS signatures (`sig=`) and client secrets, Slack tokens,
-- high-entropy tokens: 24 or more characters of `A-Z a-z 0-9 + / = _ -` with letters and digits
-  and a Shannon entropy of at least 4.0 bits per character,
+- high-entropy tokens: 24 or more characters of `A-Z a-z 0-9 + / _ -` (plus base64 `=` padding)
+  with letters and digits and a Shannon entropy of at least 4.0 bits per character; `key=value`
+  is split first, so only the value is tested and redacted,
 - host names under `mdRunbook.ai.internalDomains`.
 
-Not reported: `[REDACTED]`, variable references (`$TOKEN`, `${TOKEN}`, `$env:TOKEN`, `%TOKEN%`),
-plain 40- and 64-character hex strings (git commits, SHA-256 digests), UUIDs, lowercase
-dash-separated names (pod names) and paths. Secrets are shown masked (`AKIA…(20 chars)`);
+Not reported: `[REDACTED]`, variable references (`${secret:NAME}`, `${input:NAME}`,
+`${param:NAME}`, `${secretFile:NAME}`, `$TOKEN`, `${TOKEN}`, `$(command)`, `$env:TOKEN`,
+`%TOKEN%`), hex strings (git commits, SHA-256 digests), UUIDs (unless the key or the words
+before them say secret), `pod-template-hash` / `controller-revision-hash` values, lowercase
+dash-separated names (pod and ReplicaSet names) and paths. Secrets are shown masked (`AKIA…(20 chars)`);
 internal host names are shown in full.
 
 The same check runs automatically on the text that is about to leave the editor: before **Copy
