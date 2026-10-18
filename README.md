@@ -173,16 +173,19 @@ as it is.
 Output is redacted **before it is written to disk**, replacing matches with `[REDACTED]`. The
 built-in patterns cover:
 
-- Bearer tokens: `Bearer eyJ…` → `Bearer [REDACTED]`
-- JWTs (`eyJ….….…`)
-- secret key/value pairs, where the key contains `password`, `passwd`, `pwd`, `secret`, `token`,
-  `api_key`, `access_key`, `private_key` or `credentials`, in `key=value`, `key: value`,
-  `"key": "value"`, query-string and `--key=value` form
-- PEM private keys (the BEGIN/END lines are kept, the body is redacted). Certificates are not
-  touched.
-- `Authorization`, `Proxy-Authorization`, `Cookie` and `Set-Cookie` headers (e.g. `curl -v`)
+- Bearer tokens, JWTs, `Authorization` / `Proxy-Authorization` / `Cookie` / `Set-Cookie` headers
+- secret key/value pairs, where the key contains `password`, `pass`, `pwd`, `secret`, `token`,
+  `api_key`, `access_key`, `private_key`, `credentials` or ends in `.key`, in `key=value`,
+  `key: value`, `"key": "value"` (whole quoted value), query-string and `--key=value` form
+- secrets passed as flags: `--password value`, `--client-secret "…"`, `oc login -p …`,
+  `mysql -p…`, `curl -u user:…`
+- **Kubernetes Secrets**: every value under `data:` / `stringData:` of `oc get secret -o yaml|json`
+  (key names are kept), plus base64-encoded keys and docker configs anywhere
+- PEM private keys (the BEGIN/END lines are kept). Certificates are not touched.
+- Keycloak client secrets (`{"type":"secret","value":"…"}`, "client secret … <uuid>")
 - credentials in URLs (`https://user:[REDACTED]@host`)
-- OpenShift `sha256~…` tokens, GitHub tokens and AWS access key IDs
+- OpenShift `sha256~…`, GitHub, GitLab, npm, Slack, Anthropic/OpenAI, Google and Azure tokens and
+  AWS access key IDs
 
 Add your own patterns with `mdRunbook.redaction.patterns`. These are JavaScript regular
 expressions, and each whole match is replaced. Use lookbehind to keep context:

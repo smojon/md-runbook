@@ -127,3 +127,10 @@ describe('bash resolution', () => {
     assert.equal(r.shell.script('a\r\nb'), 'a\nb\n');
   });
 });
+
+describe('quoting hardening', () => {
+  it('pwsh wrapper doubles typographic single quotes too', async () => {
+    const { pwshWrapper } = await import('../src/core');
+    assert.match(pwshWrapper('C:\\T\\it’s\\cell.ps1'), /& 'C:\\T\\it’’s\\cell\.ps1'/);
+  });
+});

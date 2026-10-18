@@ -71,13 +71,27 @@ export async function executeCell(opts: ExecuteOptions, shellEnv: ShellEnv = nod
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-runbook-'));
   const scriptPath = path.join(dir, 'cell' + shell.extension);
+  let source = opts.source;
+  let cwd = opts.cwd;
+  const env: NodeJS.ProcessEnv = { ...process.env, ...opts.env };
+  let args = shell.args(scriptPath);
+  if (shell.kind === 'cmd' && /^[\\/]{2}/.test(cwd)) {
+    // cmd.exe can't start in a UNC folder (it silently falls back to C:\Windows); pushd maps a drive.
+    source = `pushd "${cwd}" >nul 2>&1 || (echo md-runbook: cannot open ${cwd} 1>&2 & exit /b 1)\r\n${source}\r\npopd`;
+    cwd = os.tmpdir();
+  }
+  if (shell.kind === 'bash' && shellEnv.platform === 'win32' && /['"\[\]*?{}$`]/.test(scriptPath)) {
+    // MSYS re-parses its command line with its own quoting rules; pass awkward paths via the environment.
+    env.MDRB_SCRIPT = (args[0] ?? scriptPath);
+    args = ['-c', '. "$MDRB_SCRIPT"'];
+  }
   try {
-    fs.writeFileSync(scriptPath, shell.script(opts.source), 'utf8');
+    fs.writeFileSync(scriptPath, shell.script(source), 'utf8');
     const result = await runProcess({
       command: shell.command,
-      args: shell.args(scriptPath),
-      cwd: opts.cwd,
-      env: { ...process.env, ...opts.env },
+      args,
+      cwd,
+      env,
       timeoutMs: opts.timeoutMs,
       signal: opts.signal,
       windowsVerbatimArguments: shell.windowsVerbatimArguments,

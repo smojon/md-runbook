@@ -107,7 +107,8 @@ function resolvePwsh(settings: ShellSettings, env: ShellEnv): ShellResolution {
  * code: the last native command's exit code, or 1 if the script ended in an error.
  */
 export function pwshWrapper(scriptPath: string): string {
-  const quoted = "'" + scriptPath.replace(/'/g, "''") + "'";
+  // PowerShell also treats the typographic single quotes as quote characters.
+  const quoted = "'" + scriptPath.replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q) + "'";
   return [
     '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
     '$OutputEncoding = [System.Text.Encoding]::UTF8',
