@@ -15,7 +15,7 @@ export function setTrace(fn: (line: string) => void): void {
 }
 
 /** Fail with a clear message instead of hanging the whole run. */
-async function step<T>(what: string, p: Thenable<T>, ms = 30_000): Promise<T> {
+export async function step<T>(what: string, p: Thenable<T>, ms = 30_000): Promise<T> {
   trace(`    … ${what}`);
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -31,14 +31,14 @@ export const tests: Test[] = [];
 const test = (name: string, fn: () => Promise<void>): void => void tests.push({ name, fn });
 
 const EXT_ID = 'smojon.md-runbook';
-const isWin = process.platform === 'win32';
+export const isWin = process.platform === 'win32';
 /** Shell used for execution tests: pwsh is the native Windows path, bash elsewhere. */
-const LANG = isWin ? 'pwsh' : 'bash';
+export const LANG = isWin ? 'pwsh' : 'bash';
 
-const FIXTURES = process.env.MD_RUNBOOK_FIXTURES ?? path.resolve(__dirname, '..', '..', '..', 'test', 'fixtures');
-const work = fs.mkdtempSync(path.join(os.tmpdir(), 'md-runbook-itest-'));
+export const FIXTURES = process.env.MD_RUNBOOK_FIXTURES ?? path.resolve(__dirname, '..', '..', '..', 'test', 'fixtures');
+export const work = fs.mkdtempSync(path.join(os.tmpdir(), 'md-runbook-itest-'));
 
-async function waitFor<T>(what: string, fn: () => T | undefined | false, ms = 30_000): Promise<T> {
+export async function waitFor<T>(what: string, fn: () => T | undefined | false, ms = 30_000): Promise<T> {
   const end = Date.now() + ms;
   for (;;) {
     const v = fn();
@@ -48,13 +48,13 @@ async function waitFor<T>(what: string, fn: () => T | undefined | false, ms = 30
   }
 }
 
-function writeFile(name: string, content: string | Uint8Array): vscode.Uri {
+export function writeFile(name: string, content: string | Uint8Array): vscode.Uri {
   const file = path.join(work, name);
   fs.writeFileSync(file, content);
   return vscode.Uri.file(file);
 }
 
-async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEditor> {
+export async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEditor> {
   await step(`open ${path.basename(uri.fsPath)}`, vscode.commands.executeCommand('mdRunbook.openAsRunbook', uri));
   const find = (): vscode.NotebookEditor | undefined =>
     [vscode.window.activeNotebookEditor, ...vscode.window.visibleNotebookEditors].find(
@@ -67,12 +67,12 @@ async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEditor> {
   });
 }
 
-async function closeAll(): Promise<void> {
+export async function closeAll(): Promise<void> {
   await step('close editors', vscode.commands.executeCommand('workbench.action.closeAllEditors'));
 }
 
 /** Make the notebook dirty without changing its content, then save. */
-async function touchAndSave(nb: vscode.NotebookDocument): Promise<void> {
+export async function touchAndSave(nb: vscode.NotebookDocument): Promise<void> {
   const insert = new vscode.WorkspaceEdit();
   insert.set(nb.uri, [vscode.NotebookEdit.insertCells(nb.cellCount, [new vscode.NotebookCellData(vscode.NotebookCellKind.Markup, 'tmp', 'markdown')])]);
   assert.ok(await step('insert cell', vscode.workspace.applyEdit(insert)));
@@ -83,28 +83,28 @@ async function touchAndSave(nb: vscode.NotebookDocument): Promise<void> {
   assert.ok(await step('save', nb.save()), 'save failed');
 }
 
-async function selectKernel(editor: vscode.NotebookEditor): Promise<void> {
+export async function selectKernel(editor: vscode.NotebookEditor): Promise<void> {
   await vscode.commands.executeCommand('notebook.selectKernel', { notebookEditor: editor, id: 'md-runbook-shell', extension: EXT_ID });
 }
 
-async function runCells(editor: vscode.NotebookEditor, start: number, end: number): Promise<void> {
+export async function runCells(editor: vscode.NotebookEditor, start: number, end: number): Promise<void> {
   await selectKernel(editor);
   await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start, end }], document: editor.notebook.uri });
 }
 
-async function waitForRun(cell: vscode.NotebookCell, ms = 30_000): Promise<boolean | undefined> {
+export async function waitForRun(cell: vscode.NotebookCell, ms = 30_000): Promise<boolean | undefined> {
   await waitFor(`cell ${cell.index} to finish`, () => cell.executionSummary?.timing?.endTime !== undefined, ms);
   return cell.executionSummary?.success;
 }
 
-function outputText(cell: vscode.NotebookCell): string {
+export function outputText(cell: vscode.NotebookCell): string {
   const dec = new TextDecoder();
   return cell.outputs.flatMap((o) => o.items.map((i) => dec.decode(i.data))).join('');
 }
 
-const read = (uri: vscode.Uri): string => fs.readFileSync(uri.fsPath, 'utf8');
+export const read = (uri: vscode.Uri): string => fs.readFileSync(uri.fsPath, 'utf8');
 
-async function setConfig(key: string, value: unknown): Promise<void> {
+export async function setConfig(key: string, value: unknown): Promise<void> {
   await vscode.workspace.getConfiguration('mdRunbook').update(key, value, vscode.ConfigurationTarget.Global);
 }
 
