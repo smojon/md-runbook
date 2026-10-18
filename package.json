@@ -24,7 +24,9 @@
     "powershell"
   ],
   "main": "./out/src/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
   "contributes": {
     "notebooks": [
       {
@@ -125,6 +127,24 @@
         "command": "mdRunbook.revealNextStep",
         "title": "Go to Next Step",
         "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.runCellInEditor",
+        "title": "Run Code Block in Text Editor",
+        "category": "md-runbook",
+        "icon": "$(play)"
+      },
+      {
+        "command": "mdRunbook.runCellsBelowInEditor",
+        "title": "Run Code Block and Below in Text Editor",
+        "category": "md-runbook",
+        "icon": "$(run-below)"
+      },
+      {
+        "command": "mdRunbook.exportReport",
+        "title": "Export Report (HTML)",
+        "category": "md-runbook",
+        "icon": "$(output)"
       }
     ],
     "menus": {
@@ -138,6 +158,11 @@
           "command": "mdRunbook.clearAllOutputs",
           "when": "resourceExtname == .md",
           "group": "navigation@100"
+        },
+        {
+          "command": "mdRunbook.exportReport",
+          "when": "resourceExtname == .md",
+          "group": "navigation@101"
         }
       ],
       "editor/title": [
@@ -157,6 +182,11 @@
           "command": "mdRunbook.resumeRun",
           "when": "notebookType == md-runbook",
           "group": "navigation/execute@10"
+        },
+        {
+          "command": "mdRunbook.exportReport",
+          "when": "notebookType == md-runbook",
+          "group": "navigation/execute@100"
         }
       ],
       "commandPalette": [
@@ -211,6 +241,18 @@
         {
           "command": "mdRunbook.revealNextStep",
           "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.runCellInEditor",
+          "when": "editorLangId == markdown"
+        },
+        {
+          "command": "mdRunbook.runCellsBelowInEditor",
+          "when": "editorLangId == markdown"
+        },
+        {
+          "command": "mdRunbook.exportReport",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
         }
       ],
       "notebook/cell/title": [
@@ -416,6 +458,16 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Show the active runbook's progress in the status bar (e.g. `4/7 · ✗ step 5`). Click it to go to the failed or next pending step."
+        },
+        "mdRunbook.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show **▶ Run** / **▶ Run below** and the last result above each runnable code block in the plain Markdown text editor."
+        },
+        "mdRunbook.report.folder": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is."
         }
       }
     }

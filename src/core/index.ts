@@ -20,3 +20,6 @@ export { ShellEnv, ShellKind, ShellSettings, ResolvedShell, resolveShell, shellK
 export { RunResult, killTree, runProcess } from './runner';
 export { ExecuteOptions, ExecuteResult, executeCell, exitLabel, isSuccess, nodeShellEnv } from './execute';
 export { Progress, ProgressCell, StepState, checkNextItem, checklist, computeProgress, formatProgress, nextUncheckedOffset, outputBlockAttrs, stepState } from './progress';
+export { CodeCellLocation, TextChange, locateCodeCells, minimalChange, outputSummary, setCellOutput } from './locate';
+export { escapeHtml, renderInline, renderMarkdown, safeUrl } from './markdown';
+export { ReportOptions, renderReport } from './report';

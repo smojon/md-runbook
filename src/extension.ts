@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
+import { registerCodeLens } from './codeLens';
 import { clearOutputBlocks } from './core';
 import { RunbookController } from './controller';
+import { registerReport } from './exportReport';
 import { RunPipeline } from './pipeline';
 import { registerProgress } from './progress';
 import { registerSafety } from './safety';
@@ -56,6 +58,8 @@ export function activate(context: vscode.ExtensionContext): void {
   registerSecrets(context, pipeline);
   const controller = new RunbookController(pipeline);
   registerProgress(context, pipeline, controller);
+  registerCodeLens(context);
+  registerReport(context);
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {
       transientOutputs: false,
