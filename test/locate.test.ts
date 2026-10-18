@@ -107,3 +107,12 @@ describe('locateCodeCells with history', () => {
     assert.equal(locs[1]!.line, 18);
   });
 });
+
+describe('outputSummary step states', () => {
+  it('marks pending and manual states without a failure cross', () => {
+    assert.match(outputSummary({ exit: 'declined' }), /^– declined/);
+    assert.match(outputSummary({ exit: 'proposed' }), /^– proposed/);
+    assert.match(outputSummary({ exit: 'done' }), /^✓ done/);
+    assert.match(outputSummary({ exit: '2' }), /^✗ exit 2/);
+  });
+});

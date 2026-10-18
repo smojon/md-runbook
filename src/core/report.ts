@@ -24,13 +24,15 @@ type Status = 'ok' | 'fail' | 'skip' | 'none';
 
 function statusOf(exit: string | undefined): Status {
   if (exit === undefined) return 'none';
-  if (exit === '0') return 'ok';
+  if (exit === '0' || exit === 'done') return 'ok';
+  if (exit === 'running' || exit === 'declined' || exit === 'proposed') return 'none';
   return exit === 'skipped' ? 'skip' : 'fail';
 }
 
 function badge(exit: string | undefined): string {
   const st = statusOf(exit);
-  const text = st === 'none' ? 'not run' : st === 'ok' ? '✓ exit 0' : st === 'skip' ? '– skipped' : `✗ ${/^-?\d+$/.test(exit!) ? `exit ${exit}` : exit}`;
+  const named = exit !== undefined && !/^-?\d+$/.test(exit);
+  const text = st === 'none' ? (named ? `– ${exit}` : 'not run') : st === 'ok' ? (named ? `✓ ${exit}` : '✓ exit 0') : st === 'skip' ? '– skipped' : `✗ ${/^-?\d+$/.test(exit!) ? `exit ${exit}` : exit}`;
   return `<span class="badge ${st}">${escapeHtml(text)}</span>`;
 }
 

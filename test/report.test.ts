@@ -122,3 +122,15 @@ describe('report hardening', () => {
     assert.match(r, /<title>Title<\/title>/);
   });
 });
+
+describe('renderReport step states', () => {
+  it('shows declined/proposed as not run and done as passed', () => {
+    const out = (exit: string): string =>
+      `\`\`\`bash\necho x\n\`\`\`\n<!-- md-runbook:output start exit=${exit} ran=2026-10-18T14:20:00+02:00 -->\n\`\`\`text\nx\n\`\`\`\n<!-- md-runbook:output end -->\n`;
+    const html = report(`# T\n\n${out('declined')}\n${out('proposed')}\n${out('done')}`);
+    assert.match(html, /3 steps · 1 passed · 0 failed · 2 not run/);
+    assert.match(html, /– declined/);
+    assert.match(html, /– proposed/);
+    assert.match(html, /✓ done/);
+  });
+});

@@ -87,7 +87,7 @@ export function minimalChange(a: string, b: string): TextChange {
 /** Short CodeLens summary of an output block, e.g. "✓ exit 0 · 1.2s · 5m ago". */
 export function outputSummary(attrs: Record<string, string>, now: Date = new Date()): string {
   const exit = attrs.exit ?? '?';
-  const parts = [`${exit === '0' ? '✓' : exit === 'skipped' ? '–' : '✗'} ${/^-?\d+$/.test(exit) ? `exit ${exit}` : exit}`];
+  const parts = [`${exit === '0' || exit === 'done' ? '✓' : ['skipped', 'declined', 'proposed', 'running'].includes(exit) ? '–' : '✗'} ${/^-?\d+$/.test(exit) ? `exit ${exit}` : exit}`];
   const secs = attrs.duration ? parseFloat(attrs.duration) : NaN;
   if (!isNaN(secs)) parts.push(secs < 60 ? `${secs.toFixed(1)}s` : `${Math.floor(secs / 60)}m${Math.round(secs % 60)}s`);
   const when = Date.parse(attrs.ended ?? attrs.ran ?? '');
