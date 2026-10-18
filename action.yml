@@ -1,0 +1,70 @@
+name: Run a Markdown runbook (md-runbook)
+description: Run the shell blocks of a Markdown runbook in order, keep their output in the file, and write HTML, PDF and JUnit reports.
+author: smojon
+branding:
+  icon: book-open
+  color: blue
+
+inputs:
+  runbook:
+    description: Path of the runbook (.md), relative to the workspace.
+    required: true
+  params:
+    description: Values for ${param:NAME}, one NAME=VALUE per line.
+    default: ''
+  inputs:
+    description: Values for ${input:NAME}, one NAME=VALUE per line (secrets belong in env instead).
+    default: ''
+  yes:
+    description: Run blocks that ask for a confirmation in VS Code (risky commands, `confirm`).
+    default: 'false'
+  keep-going:
+    description: Carry on after a failed step (the step still fails at the end).
+    default: 'false'
+  write:
+    description: Write the outputs into the runbook in the workspace (ignored when `out` is set).
+    default: 'true'
+  out:
+    description: Write the runbook with its outputs to this file instead.
+    default: ''
+  report:
+    description: Also write the HTML report to this file.
+    default: ''
+  pdf:
+    description: Also write the report as PDF (uses the Chrome or Edge installed on the runner).
+    default: ''
+  junit:
+    description: Also write a JUnit report to this file.
+    default: ''
+  session:
+    description: "`true`: one shell per kind for the whole runbook; `false`: one per block; empty: the front matter's mode."
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # Built from this action's own source at the ref you pinned (no download from a registry).
+    - name: Build md-runbook
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        if [ ! -f out/dist/cli.js ]; then
+          npm ci --no-audit --no-fund --ignore-scripts --loglevel=error
+          node scripts/build.js
+        fi
+    # Inputs reach the runner through the environment, never through the shell command line.
+    - name: Run ${{ inputs.runbook }}
+      shell: bash
+      env:
+        MDRB_RUNBOOK: ${{ inputs.runbook }}
+        MDRB_PARAMS: ${{ inputs.params }}
+        MDRB_INPUTS: ${{ inputs.inputs }}
+        MDRB_YES: ${{ inputs.yes }}
+        MDRB_KEEP_GOING: ${{ inputs.keep-going }}
+        MDRB_WRITE: ${{ inputs.write }}
+        MDRB_OUT: ${{ inputs.out }}
+        MDRB_REPORT: ${{ inputs.report }}
+        MDRB_PDF: ${{ inputs.pdf }}
+        MDRB_JUNIT: ${{ inputs.junit }}
+        MDRB_SESSION: ${{ inputs.session }}
+      run: node "$GITHUB_ACTION_PATH/scripts/action-run.js"

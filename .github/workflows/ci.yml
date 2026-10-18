@@ -18,6 +18,20 @@ jobs:
       - run: npm ci
       # Unit, round-trip, fuzz, redaction and shell smoke tests (pwsh + cmd natively on Windows).
       - run: npm test
+      # The command-line runner end to end, through this repository's own GitHub Action.
+      - name: Run a runbook with the command line
+        uses: ./
+        with:
+          runbook: examples/ci.runbook.md
+          out: ${{ runner.temp }}/runbook/ci.runbook.md
+          report: ${{ runner.temp }}/runbook/report.html
+          pdf: ${{ runner.temp }}/runbook/report.pdf
+          junit: ${{ runner.temp }}/runbook/junit.xml
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: runbook-${{ matrix.os }}
+          path: ${{ runner.temp }}/runbook/
       # End-to-end tests in a real VS Code.
       - name: Integration tests (Linux)
         if: runner.os == 'Linux'

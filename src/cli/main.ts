@@ -43,6 +43,12 @@ On GitHub Actions, a summary table is added to the job summary.
 
 class UsageError extends Error {}
 
+/** Write a file, creating its folder first (e.g. a fresh CI temp folder). */
+function writeFile(file: string, data: string): void {
+  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  fs.writeFileSync(file, data, 'utf8');
+}
+
 export interface ParsedArgs {
   options: Omit<CliOptions, 'env' | 'signal'>;
   pdf?: string;
@@ -135,10 +141,10 @@ export async function main(argv: readonly string[]): Promise<number> {
 
   const file = path.basename(options.file);
   const target = options.out ?? options.file;
-  if (options.write) fs.writeFileSync(target, summary.text, 'utf8');
+  if (options.write) writeFile(target, summary.text);
   const html = (): string => renderReport(summary.text, { generatedAt: new Date(), fallbackTitle: file });
-  if (options.report) fs.writeFileSync(options.report, html(), 'utf8');
-  if (options.junit) fs.writeFileSync(options.junit, junitReport(file, summary.steps), 'utf8');
+  if (options.report) writeFile(options.report, html());
+  if (options.junit) writeFile(options.junit, junitReport(file, summary.steps));
   const ghSummary = process.env.GITHUB_STEP_SUMMARY;
   if (ghSummary) fs.appendFileSync(ghSummary, markdownSummary(file, summary.steps) + '\n');
   let pdfFailed = false;
@@ -149,6 +155,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       pdfFailed = true;
     } else {
       try {
+        fs.mkdirSync(path.dirname(path.resolve(parsed.pdf)), { recursive: true });
         await htmlToPdf(html(), parsed.pdf, browser);
       } catch (e) {
         process.stderr.write(`md-runbook: PDF export failed: ${e instanceof Error ? e.message : String(e)}\n`);
