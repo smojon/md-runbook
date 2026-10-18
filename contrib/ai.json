@@ -1,0 +1,130 @@
+{
+  "commands": [
+    {
+      "command": "mdRunbook.ai.explainOutput",
+      "title": "Explain Output",
+      "category": "md-runbook",
+      "icon": "$(sparkle)"
+    },
+    {
+      "command": "mdRunbook.ai.suggestNextSteps",
+      "title": "Suggest Next Steps",
+      "category": "md-runbook",
+      "icon": "$(sparkle)"
+    },
+    {
+      "command": "mdRunbook.ai.summarizeIncident",
+      "title": "Summarize Incident",
+      "category": "md-runbook",
+      "icon": "$(notebook)"
+    },
+    {
+      "command": "mdRunbook.ai.setAnthropicKey",
+      "title": "Set Anthropic API Key",
+      "category": "md-runbook"
+    },
+    {
+      "command": "mdRunbook.ai.clearAnthropicKey",
+      "title": "Clear Anthropic API Key",
+      "category": "md-runbook"
+    }
+  ],
+  "menus": {
+    "notebook/toolbar": [
+      {
+        "command": "mdRunbook.ai.suggestNextSteps",
+        "when": "notebookType == md-runbook && config.mdRunbook.ai.provider != off",
+        "group": "navigation/execute@110"
+      }
+    ],
+    "notebook/cell/title": [
+      {
+        "command": "mdRunbook.ai.explainOutput",
+        "when": "notebookType == md-runbook && notebookCellType == code && notebookCellHasOutputs && config.mdRunbook.ai.provider != off",
+        "group": "md-runbook-ai@1"
+      },
+      {
+        "command": "mdRunbook.ai.suggestNextSteps",
+        "when": "notebookType == md-runbook && notebookCellType == code && config.mdRunbook.ai.provider != off",
+        "group": "md-runbook-ai@2"
+      }
+    ],
+    "commandPalette": [
+      {
+        "command": "mdRunbook.ai.explainOutput",
+        "when": "notebookType == md-runbook"
+      },
+      {
+        "command": "mdRunbook.ai.suggestNextSteps",
+        "when": "notebookType == md-runbook"
+      },
+      {
+        "command": "mdRunbook.ai.summarizeIncident",
+        "when": "notebookType == md-runbook"
+      }
+    ]
+  },
+  "configuration": {
+    "properties": {
+      "mdRunbook.ai.provider": {
+        "type": "string",
+        "enum": ["off", "vscode", "anthropic"],
+        "enumDescriptions": [
+          "AI assistance is off: nothing is ever sent anywhere.",
+          "VS Code's language models (GitHub Copilot or another installed provider).",
+          "The Claude API with your own API key (stored in the OS keychain)."
+        ],
+        "default": "off",
+        "markdownDescription": "Where **Explain Output**, **Suggest Next Steps** and **Summarize Incident** send the (redacted) runbook. `off` (default) never sends anything and hides the AI buttons."
+      },
+      "mdRunbook.ai.confirmBeforeSend": {
+        "type": "boolean",
+        "default": true,
+        "markdownDescription": "Ask before sending, showing the provider, model, size and whether names are pseudonymized, with **Preview** of the exact text."
+      },
+      "mdRunbook.ai.confirmOncePerSession": {
+        "type": "boolean",
+        "default": false,
+        "markdownDescription": "With `mdRunbook.ai.confirmBeforeSend`, ask only once per provider and VS Code session instead of before every send."
+      },
+      "mdRunbook.ai.pseudonymize": {
+        "type": "boolean",
+        "default": true,
+        "markdownDescription": "Replace hostnames, IPs, URLs, emails and similar names with stable aliases before sending; aliases in the answer are mapped back locally."
+      },
+      "mdRunbook.ai.vscodeModel": {
+        "type": "string",
+        "default": "",
+        "markdownDescription": "Preferred VS Code language model: an id, `vendor/family`, or part of the family or name. Empty = a Copilot Claude model, else any Copilot model, else any available model."
+      },
+      "mdRunbook.ai.anthropicModel": {
+        "type": "string",
+        "default": "claude-sonnet-5-5",
+        "markdownDescription": "Claude model for the `anthropic` provider."
+      },
+      "mdRunbook.ai.anthropicBaseUrl": {
+        "type": "string",
+        "default": "https://api.anthropic.com",
+        "markdownDescription": "Base URL of the Claude API, or of a gateway or proxy that speaks the same API. `HTTPS_PROXY` is not used; point this at a reachable gateway instead."
+      },
+      "mdRunbook.ai.maxTokens": {
+        "type": "integer",
+        "default": 4096,
+        "minimum": 256,
+        "markdownDescription": "Maximum length of an answer from the `anthropic` provider, in tokens (includes the model's thinking)."
+      },
+      "mdRunbook.ai.maxProposals": {
+        "type": "integer",
+        "default": 3,
+        "minimum": 1,
+        "maximum": 10,
+        "markdownDescription": "Maximum number of proposed cells **Suggest Next Steps** inserts."
+      },
+      "mdRunbook.ai.proposerName": {
+        "type": "string",
+        "default": "ai",
+        "markdownDescription": "Written as `by=` in the fence of proposed cells, e.g. `bash proposed by=ai reason=\"…\"`."
+      }
+    }
+  }
+}
