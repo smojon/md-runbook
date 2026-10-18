@@ -2,7 +2,18 @@
 export * from './model';
 export * from './lines';
 export * from './languages';
-export { parse } from './parser';
+export { parse, parseOutputBlockRaw } from './parser';
+export {
+  HISTORY_KEY,
+  RunHistory,
+  copyFileName,
+  formatHistoryBlock,
+  isCopyFileName,
+  isRunHistory,
+  loadedOutputEntry,
+  nextHistory,
+  withRunHistory,
+} from './history';
 export { clearOutputBlocks, serialize, toCellInputs } from './writer';
 export {
   OUTPUT_END_RE,

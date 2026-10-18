@@ -145,6 +145,18 @@
         "title": "Export Report (HTML)",
         "category": "md-runbook",
         "icon": "$(output)"
+      },
+      {
+        "command": "mdRunbook.runAllAsCopy",
+        "title": "Run All as Copy",
+        "category": "md-runbook",
+        "icon": "$(files)"
+      },
+      {
+        "command": "mdRunbook.compareWithPreviousRun",
+        "title": "Compare With Previous Run",
+        "category": "md-runbook",
+        "icon": "$(diff)"
       }
     ],
     "menus": {
@@ -187,6 +199,16 @@
           "command": "mdRunbook.exportReport",
           "when": "notebookType == md-runbook",
           "group": "navigation/execute@100"
+        },
+        {
+          "command": "mdRunbook.runAllAsCopy",
+          "when": "notebookType == md-runbook && config.mdRunbook.output.mode == copy",
+          "group": "navigation/execute@1"
+        },
+        {
+          "command": "mdRunbook.runAllAsCopy",
+          "when": "notebookType == md-runbook && config.mdRunbook.output.mode != copy",
+          "group": "navigation/execute@98"
         }
       ],
       "commandPalette": [
@@ -253,6 +275,14 @@
         {
           "command": "mdRunbook.exportReport",
           "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.runAllAsCopy",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.compareWithPreviousRun",
+          "when": "notebookType == md-runbook"
         }
       ],
       "notebook/cell/title": [
@@ -285,6 +315,11 @@
           "command": "mdRunbook.clearOutputsBelow",
           "when": "notebookType == md-runbook",
           "group": "mdRunbook-clear@2"
+        },
+        {
+          "command": "mdRunbook.compareWithPreviousRun",
+          "when": "notebookType == md-runbook && notebookCellType == code && notebookCellHasOutputs",
+          "group": "md-runbook@1"
         }
       ]
     },
@@ -468,6 +503,30 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is."
+        },
+        "mdRunbook.output.historySize": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "markdownDescription": "When a cell is re-run, keep up to this many earlier outputs in a collapsed `<details>` block after the latest output. `0` = off (re-running drops any existing history)."
+        },
+        "mdRunbook.output.mode": {
+          "type": "string",
+          "enum": [
+            "inPlace",
+            "copy"
+          ],
+          "enumDescriptions": [
+            "Run cells in the runbook itself and write outputs into it.",
+            "Treat runbooks as templates: show Run All as Copy first in the notebook toolbar and suggest it when cells are run in place."
+          ],
+          "default": "inPlace",
+          "description": "Where runs are recorded."
+        },
+        "mdRunbook.output.copyFolder": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder for **Run All as Copy**, relative to the runbook's folder (or absolute). Empty = next to the runbook. Cells of a copy still run in the original runbook's folder."
         }
       }
     }

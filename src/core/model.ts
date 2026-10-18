@@ -33,7 +33,25 @@ export interface OutputMeta {
   gap: string;
 }
 
-/** Original bytes of a code cell. raw = lead + open + body + close + output.raw + trail. */
+/** An earlier run of a cell, kept in the history block after its latest output. */
+export interface HistoryEntry {
+  /** Exact bytes of a block loaded from the file (start marker through end marker); written verbatim. */
+  raw?: string;
+  /** Output text as written to disk (already cleaned, redacted and truncated). */
+  text: string;
+  attrs: Record<string, string>;
+}
+
+export interface HistoryMeta {
+  /** Exact bytes of the history block (`<details>` through `</details>`), including `gap`. */
+  raw: string;
+  /** Blank lines between the latest output block and `<details>`. */
+  gap: string;
+  /** Newest first. */
+  entries: HistoryEntry[];
+}
+
+/** Original bytes of a code cell. raw = lead + open + body + close + output.raw + history.raw + trail. */
 export interface CodeMeta {
   kind: 'code';
   lead: string;
@@ -49,6 +67,7 @@ export interface CodeMeta {
   eol: DocEol;
   value: string;
   output?: OutputMeta;
+  history?: HistoryMeta;
 }
 
 export type CellMeta = MarkupMeta | CodeMeta;
@@ -75,8 +94,11 @@ export interface ParsedDocument {
 export type OutputInput =
   /** Write the output block that was loaded from the file, byte for byte. */
   | { kind: 'preserved' }
-  /** Write a freshly produced output (it is cleaned, redacted and truncated first). */
-  | { kind: 'new'; text: string; attrs: Record<string, string> };
+  /**
+   * Write a freshly produced output (it is cleaned, redacted and truncated first). `previous` adds
+   * `changed=yes|no`; `history` (newest first) is written after it as a history block.
+   */
+  | { kind: 'new'; text: string; attrs: Record<string, string>; previous?: HistoryEntry; history?: HistoryEntry[] };
 
 export interface CellInput {
   kind: 'markup' | 'code';
@@ -120,6 +142,24 @@ export function isMarkupMeta(v: unknown): v is MarkupMeta {
   );
 }
 
+export function isHistoryEntry(v: unknown): v is HistoryEntry {
+  if (typeof v !== 'object' || v === null) return false;
+  const m = v as Record<string, unknown>;
+  return (
+    (m.raw === undefined || isStr(m.raw)) &&
+    isStr(m.text) &&
+    typeof m.attrs === 'object' &&
+    m.attrs !== null &&
+    Object.values(m.attrs).every(isStr)
+  );
+}
+
+function isHistoryMeta(v: unknown): v is HistoryMeta {
+  if (typeof v !== 'object' || v === null) return false;
+  const m = v as Record<string, unknown>;
+  return isStr(m.raw) && isStr(m.gap) && Array.isArray(m.entries) && m.entries.every(isHistoryEntry);
+}
+
 function isOutputMeta(v: unknown): v is OutputMeta {
   if (typeof v !== 'object' || v === null) return false;
   const m = v as Record<string, unknown>;
@@ -143,7 +183,8 @@ export function isCodeMeta(v: unknown): v is CodeMeta {
     isStr(m.lang) &&
     (m.eol === '\n' || m.eol === '\r\n') &&
     isStr(m.value) &&
-    (m.output === undefined || isOutputMeta(m.output))
+    (m.output === undefined || isOutputMeta(m.output)) &&
+    (m.history === undefined || isHistoryMeta(m.history))
   );
 }
 

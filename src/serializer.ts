@@ -1,7 +1,7 @@
 /** VS Code adapter around the pure parser/writer in ./core. */
 
 import * as vscode from 'vscode';
-import { CellInput, parse, serialize } from './core';
+import { CellInput, HISTORY_KEY, parse, serialize, withRunHistory } from './core';
 import { writeOptions } from './config';
 import { META_KEY, persistedOutputs, toOutputInput } from './outputs';
 
@@ -32,7 +32,7 @@ export class RunbookSerializer implements vscode.NotebookSerializer {
       value: c.value,
       languageId: c.languageId,
       meta: c.metadata?.[META_KEY],
-      output: c.kind === vscode.NotebookCellKind.Code ? toOutputInput(c.outputs ?? []) : undefined,
+      output: c.kind === vscode.NotebookCellKind.Code ? withRunHistory(toOutputInput(c.outputs ?? []), c.metadata?.[HISTORY_KEY]) : undefined,
     }));
     return encoder.encode(serialize(data.metadata?.[META_KEY], cells, writeOptions()));
   }

@@ -19,6 +19,7 @@ import {
   isDocMeta,
   isMarkupMeta,
 } from './model';
+import { formatHistoryBlock } from './history';
 import { formatOutputBlock, processOutputText } from './outputBlock';
 import { parse } from './parser';
 
@@ -137,11 +138,15 @@ function renderOutput(
   opts: WriteOptions,
 ): string {
   if (!output) return '';
-  if (output.kind === 'preserved') return meta?.output?.raw ?? '';
+  if (output.kind === 'preserved') return meta?.output ? meta.output.raw + (meta.history?.raw ?? '') : '';
   if (!opts.persistOutputs) return '';
   const text = processOutputText(output.text, opts);
   const eol = meta?.eol ?? docEol;
-  return (meta?.output?.gap ?? '') + formatOutputBlock(text, output.attrs, meta?.indent ?? '', eol);
+  const indent = meta?.indent ?? '';
+  const attrs = output.previous ? { ...output.attrs, changed: output.previous.text === text ? 'no' : 'yes' } : output.attrs;
+  let s = (meta?.output?.gap ?? '') + formatOutputBlock(text, attrs, indent, eol);
+  if (output.history?.length) s += (meta?.history?.gap ?? '') + formatHistoryBlock(output.history, indent, eol);
+  return s;
 }
 
 /** Cells exactly as parsed, as the editor would hand them back if nothing changed. */

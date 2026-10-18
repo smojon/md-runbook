@@ -148,6 +148,7 @@ export class RunbookController implements vscode.Disposable {
     };
 
     let unflushed: Chunk[] = [];
+    const previousOutputs = [...cell.outputs];
     const live = new vscode.NotebookCellOutput([], runMeta('running'));
     // Clear first so the live output is a new output, not an in-place replacement of the old one
     // (in-place replacements keep the old metadata on the extension host side).
@@ -174,7 +175,7 @@ export class RunbookController implements vscode.Disposable {
       unflushed.push({ stream, text });
     };
 
-    const ctx: PrepareContext = { cell, notebook, token: exec.token };
+    const ctx: PrepareContext = { cell, notebook, token: exec.token, previousOutputs };
     const plan: CellPlan = {
       source: cell.document.getText(),
       language: cell.document.languageId,

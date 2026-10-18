@@ -15,6 +15,10 @@ import { toLf } from './lines';
 export const OUTPUT_START_RE = /^[ \t]*<!--[ \t]*md-runbook:output start\b(.*?)-->[ \t]*$/;
 export const OUTPUT_END_RE = /^[ \t]*<!--[ \t]*md-runbook:output end[ \t]*-->[ \t]*$/;
 
+/** History of earlier runs, directly after the latest output block (see ./history). */
+export const HISTORY_OPEN_RE = /^[ \t]*<details>[ \t]*<summary>[ \t]*md-runbook:[^<]*<\/summary>[ \t]*$/;
+export const HISTORY_CLOSE_RE = /^[ \t]*<\/details>[ \t]*$/;
+
 const ATTR_RE = /([\w-]+)=(?:"([^"]*)"|(\S+))/g;
 
 export function parseAttrs(s: string): Record<string, string> {

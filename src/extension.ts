@@ -3,6 +3,7 @@ import { registerCodeLens } from './codeLens';
 import { clearOutputBlocks } from './core';
 import { RunbookController } from './controller';
 import { registerReport } from './exportReport';
+import { registerHistory } from './history';
 import { RunPipeline } from './pipeline';
 import { registerProgress } from './progress';
 import { registerSafety } from './safety';
@@ -56,6 +57,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // registration order: safety first, so skipped or declined cells never prompt for secrets.
   registerSafety(context, pipeline);
   registerSecrets(context, pipeline);
+  registerHistory(context, pipeline);
   const controller = new RunbookController(pipeline);
   registerProgress(context, pipeline, controller);
   registerCodeLens(context);

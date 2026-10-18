@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { DEFAULT_WRITE_OPTIONS, parse, serialize } from '../src/core';
+import { CodeMeta, DEFAULT_WRITE_OPTIONS, loadedOutputEntry, nextHistory, parse, serialize, withRunHistory } from '../src/core';
 import { roundTrip, show, untouched } from './helpers';
 
 /** Small deterministic PRNG (mulberry32). */
@@ -47,6 +47,23 @@ function generate(r: () => number): string {
         for (let o = 0; o < ol; o++) lines.push(ind + text());
         if (r() < 0.95) lines.push(ind + of);
         if (r() < 0.95) lines.push(ind + '<!-- md-runbook:output end -->');
+        if (r() < 0.5) {
+          // History block, sometimes malformed.
+          if (r() < 0.2) lines.push('');
+          lines.push(ind + pick(['<details><summary>md-runbook: 2 previous runs</summary>', '<details><summary>md-runbook: 1 previous run</summary>', '<details>']));
+          const entries = Math.floor(r() * 3);
+          for (let h = 0; h < entries; h++) {
+            if (r() < 0.8) lines.push('');
+            if (r() < 0.1) lines.push(text());
+            lines.push(ind + `<!-- md-runbook:output start exit=${pick(['0', '1'])} ran=x -->`);
+            lines.push(ind + '```text');
+            if (r() < 0.7) lines.push(ind + text());
+            if (r() < 0.95) lines.push(ind + '```');
+            lines.push(ind + '<!-- md-runbook:output end -->');
+          }
+          if (r() < 0.8) lines.push('');
+          if (r() < 0.9) lines.push(pick([ind, '']) + '</details>');
+        }
       }
     } else {
       lines.push('');
@@ -86,6 +103,33 @@ describe('randomized documents', () => {
       assert.deepEqual(got, expected, `document #${k}\n  in:  ${show(src)}\n  out: ${show(out)}`);
       assert.equal(roundTrip(out), out);
     }
+  });
+
+  it('re-runs with history survive save + reload (1000 documents)', () => {
+    const r = rng(9001);
+    let withHistory = 0;
+    for (let k = 0; k < 1000; k++) {
+      const src = generate(r);
+      const doc = parse(src);
+      const cells = untouched(doc);
+      const expected: string[][] = [];
+      doc.cells.forEach((c, idx) => {
+        if (c.kind !== 'code') return;
+        const meta = c.meta as CodeMeta;
+        if (meta.history) withHistory++;
+        const previous = loadedOutputEntry(meta);
+        const history = nextHistory(previous, meta.history?.entries ?? [], 1 + (k % 3));
+        cells[idx]!.output = withRunHistory({ kind: 'new', text: `run ${k}`, attrs: { exit: '0' } }, { previous, history });
+        expected.push(history.map((e) => e.text));
+      });
+      const out = serialize(doc.meta, cells, DEFAULT_WRITE_OPTIONS);
+      const got = parse(out)
+        .cells.filter((c) => c.kind === 'code')
+        .map((c) => (c.meta as CodeMeta).history?.entries.map((e) => e.text) ?? []);
+      assert.deepEqual(got, expected, `document #${k}\n  in:  ${show(src)}\n  out: ${show(out)}`);
+      assert.equal(roundTrip(out), out);
+    }
+    assert.ok(withHistory > 50, `only ${withHistory} generated cells had a history block`);
   });
 
   it('new outputs survive save + reload (1000 documents)', () => {
