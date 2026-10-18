@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { registerAi } from './ai/commands';
 import { registerApproval } from './approval';
+import { registerAutoSave } from './autoSave';
 import { registerAiContext } from './aiCommands';
 import { registerCodeLens } from './codeLens';
 import { clearOutputBlocks } from './core';
@@ -78,6 +79,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const controller = new RunbookController(pipeline);
   registerProgress(context, pipeline, controller);
   registerLineRuns(context, controller);
+  registerAutoSave(pipeline);
   registerCodeLens(context);
   registerReport(context);
   registerAi(context);

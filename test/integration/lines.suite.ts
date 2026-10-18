@@ -101,3 +101,25 @@ export const tests: Test[] = [
     },
   },
 ];
+
+tests.push({
+  name: 'Step Through from This Line: starts at the cursor line',
+  fn: async () => {
+    const uri = writeFile('lines-from.md', `# From\n\n\`\`\`${LANG}\n${say('one')}\n${say('two')}\n${say('three')}\n\`\`\`\n`);
+    try {
+      const editor = await openRunbook(uri);
+      const cell = editor.notebook.cellAt(1);
+      const text = await step('show cell editor', vscode.window.showTextDocument(cell.document));
+      text.selection = new vscode.Selection(1, 0, 1, 0);
+      void vscode.commands.executeCommand('mdRunbook.stepThroughFromLine');
+      await waitFor('line 2 output', () => /two/.test(outputText(cell)));
+      await vscode.commands.executeCommand('mdRunbook.stepContinue');
+      assert.equal(await waitForRun(cell), true, outputText(cell));
+      assert.doesNotMatch(outputText(cell), /one/);
+      assert.match(outputText(cell), /three/);
+      assert.match(outputText(cell), /lines 2-3/);
+    } finally {
+      await closeAll();
+    }
+  },
+});

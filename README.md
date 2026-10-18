@@ -236,6 +236,7 @@ extension is also disabled in untrusted workspaces (Restricted Mode).
 | Setting | Default | Description |
 | --- | --- | --- |
 | `mdRunbook.output.persist` | `true` | Write new outputs into the file on save. Existing blocks are kept unless re-run or cleared. |
+| `mdRunbook.output.saveAfterRun` | `false` | Save the runbook after each run (a cell, a range, Run All, a line run), so outputs are on disk even if VS Code closes. |
 | `mdRunbook.output.maxLines` | `2000` | Max lines written per output (head + tail kept). `0` = unlimited. |
 | `mdRunbook.output.stripAnsi` | `true` | Strip ANSI escape codes from written output. |
 | `mdRunbook.redaction.enabled` | `true` | Redact secrets before writing output. |

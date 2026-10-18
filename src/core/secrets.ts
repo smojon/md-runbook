@@ -88,26 +88,49 @@ function unquote(v: string): string {
   return v;
 }
 
+export interface FrontMatter {
+  params: RunbookParam[];
+  mode?: 'session' | 'isolated';
+  /** `timeout:` in seconds: the default for this runbook's cells (0 = none). */
+  timeoutSeconds?: number;
+  /** `cwd:` as written: the runbook's working folder, relative to the .md file's folder. */
+  cwd?: string;
+}
+
 /**
- * `params:` and `mode:` from YAML-style front matter (`---` ... `---` at the very top). Only this
- * subset is understood; other keys are ignored. Param items are `- name` or `- name: default`;
- * `mode` is `session` or `isolated`. Returns undefined when the text has no front matter.
+ * `params:`, `mode:`, `timeout:` and `cwd:` from YAML-style front matter (`---` ... `---` at the
+ * very top). Only this subset is understood; other keys are ignored. Param items are `- name` or
+ * `- name: default`; `mode` is `session` or `isolated`; `timeout` is seconds (`120` or `120s`).
+ * Returns undefined when the text has no front matter.
  */
-export function parseFrontMatter(text: string): { params: RunbookParam[]; mode?: 'session' | 'isolated' } | undefined {
+export function parseFrontMatter(text: string): FrontMatter | undefined {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
   if (lines[0]?.trimEnd() !== '---') return undefined;
   const params: RunbookParam[] = [];
   let mode: 'session' | 'isolated' | undefined;
+  let timeoutSeconds: number | undefined;
+  let cwd: string | undefined;
   let inParams = false;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
-    if (/^(---|\.\.\.)\s*$/.test(line)) return mode ? { params, mode } : { params };
+    if (/^(---|\.\.\.)\s*$/.test(line)) {
+      return {
+        params,
+        ...(mode ? { mode } : {}),
+        ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}),
+        ...(cwd !== undefined ? { cwd } : {}),
+      };
+    }
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
     if (!/^\s/.test(line) && !line.startsWith('-')) {
       // A top-level key.
       inParams = /^params\s*:\s*$/.test(line);
       const m = /^mode\s*:\s*["']?(session|isolated)["']?\s*(#.*)?$/i.exec(line);
       if (m) mode = m[1]!.toLowerCase() as 'session' | 'isolated';
+      const t = /^timeout\s*:\s*["']?(\d+(?:\.\d+)?)s?["']?\s*(#.*)?$/i.exec(line);
+      if (t) timeoutSeconds = Number(t[1]);
+      const c = /^cwd\s*:\s*(.*?)\s*$/i.exec(line);
+      if (c && c[1] !== '') cwd = unquote(c[1]!.replace(/\s+#.*$/, ''));
       continue;
     }
     if (!inParams) continue;

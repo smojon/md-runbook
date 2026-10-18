@@ -31,6 +31,28 @@ renders normally elsewhere:
   (`timeout=abc`) fails the cell with a message.
 - Options are read from the file as it was opened. Cells added in the notebook have none.
 
+## Runbook defaults in the front matter
+
+Besides `params:` ([parameters](secrets.md)) and `mode:` ([session mode](session.md)), the front
+matter can set defaults for every cell of the runbook:
+
+```markdown
+---
+cwd: ../infra
+timeout: 300
+---
+```
+
+| Key | Effect |
+|---|---|
+| `cwd: ../infra` | The folder cells run in (and session mode starts in), relative to the `.md` file's folder. A cell's own `cwd=` is still relative to the `.md` file's folder. |
+| `timeout: 300` | Default timeout in seconds (`300s` works too) instead of `mdRunbook.execution.timeoutSeconds`. `0` = none. A cell's `timeout=` wins. |
+
+These apply in the runbook view and to the text editor's ▶ Run CodeLens. Shell paths can't be
+set in the front matter on purpose: a file from a repository must not choose which program runs
+your cells (that would get around the command policy for approved assistant cells). Set them in
+your user settings (`mdRunbook.shell.bashPath`, `mdRunbook.shell.pwshPath`).
+
 ## Confirming risky commands
 
 Before a cell whose text matches one of `mdRunbook.execution.confirmPatterns` runs, a modal

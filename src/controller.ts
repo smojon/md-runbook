@@ -8,6 +8,7 @@ import { ExecuteResult, HISTORY_KEY, LineBuffer, isRunHistory, SUPPORTED_LANGUAG
 import { CheckOutcome, evaluateChecks, hasChecks } from './core/checks';
 import { SessionPool } from './core/session';
 import { LineStep, echoCommand, formatLineRange } from './core/steps';
+import { FrontMatter, parseFrontMatter } from './core/secrets';
 import { ExecutionConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
 import { CellPlan, ExecuteIO, PrepareContext, RunPipeline, RunRecord } from './pipeline';
@@ -58,6 +59,19 @@ export function workingDirectory(uri: vscode.Uri): string {
   if (origin !== undefined) return origin;
   if (uri.scheme === 'file') return path.dirname(uri.fsPath);
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
+}
+
+/** The runbook's front matter (its first cell, when that is Markdown). */
+export function frontMatterOf(nb: vscode.NotebookDocument): FrontMatter | undefined {
+  const first = nb.cellCount > 0 ? nb.cellAt(0) : undefined;
+  return first?.kind === vscode.NotebookCellKind.Markup ? parseFrontMatter(first.document.getText()) : undefined;
+}
+
+/** Where the runbook's cells run: its `cwd:` (relative to the .md file's folder), else that folder. */
+export function runbookCwd(nb: vscode.NotebookDocument): string {
+  const base = workingDirectory(nb.uri);
+  const cwd = frontMatterOf(nb)?.cwd;
+  return cwd ? path.resolve(base, cwd) : base;
 }
 
 export const CONTROLLER_ID = 'md-runbook-shell';
@@ -224,12 +238,14 @@ export class RunbookController implements vscode.Disposable {
     exec.executionOrder = ++this.executionOrder;
     exec.start(started.getTime());
 
+    const fmTimeout = frontMatterOf(notebook)?.timeoutSeconds;
+    const fmTimeoutMs = fmTimeout !== undefined ? fmTimeout * 1000 : undefined;
     const plan: CellPlan = {
       source: lineRun?.source ?? cell.document.getText(),
       language: cell.document.languageId,
-      cwd: workingDirectory(notebook.uri),
+      cwd: runbookCwd(notebook),
       env: { ...cfg.env },
-      timeoutMs: cfg.timeoutMs,
+      timeoutMs: fmTimeoutMs ?? cfg.timeoutMs,
       shell: cfg.shell,
       attrs: {},
       secrets: [],

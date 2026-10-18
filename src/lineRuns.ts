@@ -11,7 +11,7 @@ import { LineRun, RunbookController } from './controller';
 import { isCell, runbookEditor, selectRunbookKernel } from './progress';
 import { NOTEBOOK_TYPE } from './serializer';
 
-type Mode = 'selection' | 'each' | 'step';
+type Mode = 'selection' | 'each' | 'step' | 'stepFrom';
 
 /** A Step Through run waiting before its next line. */
 interface Paused {
@@ -53,10 +53,17 @@ function planLineRun(mode: Mode, cell: vscode.NotebookCell, editor: vscode.TextE
   const doc = cell.document;
   const all = splitSteps(doc.getText(), kind);
   if (all.length === 0) return 'this cell has no commands to run.';
-  if (mode !== 'selection') return { source: doc.getText(), steps: all, coversCell: true };
+  if (mode === 'each' || mode === 'step') return { source: doc.getText(), steps: all, coversCell: true };
 
   const sel = editor?.selection;
   if (!sel) return 'put the cursor on a line of the cell, or select the text to run.';
+  if (mode === 'stepFrom') {
+    // From the command on the cursor line, or the next one after a blank or comment line.
+    const from = all.findIndex((s) => s.end >= sel.active.line);
+    if (from < 0) return `there is no command on or after line ${sel.active.line + 1}.`;
+    const steps = all.slice(from);
+    return { source: steps.map((s) => s.text).join('\n'), steps, coversCell: from === 0 };
+  }
   if (sel.isEmpty) {
     const step = stepAtLine(all, sel.active.line);
     if (!step) return `line ${sel.active.line + 1} has no command (it is blank or a comment).`;
@@ -132,7 +139,7 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
     const lineRun: LineRun = {
       ...plan,
       onStep: (i) => highlight(cell, i === undefined ? undefined : running, i === undefined ? undefined : plan.steps[i]),
-      ...(mode === 'step'
+      ...(mode === 'step' || mode === 'stepFrom'
         ? {
             beforeStep: (index: number, token: vscode.CancellationToken) =>
               runRest
@@ -174,6 +181,7 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
     vscode.commands.registerCommand('mdRunbook.runLine', (arg?: unknown) => run('selection', arg)),
     vscode.commands.registerCommand('mdRunbook.runLinesOneByOne', (arg?: unknown) => run('each', arg)),
     vscode.commands.registerCommand('mdRunbook.stepThroughLines', (arg?: unknown) => run('step', arg)),
+    vscode.commands.registerCommand('mdRunbook.stepThroughFromLine', (arg?: unknown) => run('stepFrom', arg)),
     vscode.commands.registerCommand('mdRunbook.stepNext', control('next')),
     vscode.commands.registerCommand('mdRunbook.stepContinue', control('rest')),
     vscode.commands.registerCommand('mdRunbook.stepStop', control('stop')),

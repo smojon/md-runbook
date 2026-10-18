@@ -60,10 +60,13 @@ export const tests: Test[] = [
   {
     name: 'capture=: later cells read ${out:NAME}; capture-secret= values are redacted',
     fn: async () => {
+      // The token is computed when the cell runs, so it is not in the cell's source (a real secret
+      // comes from a command's output).
+      const makeToken = isWin ? 'Write-Output "tok-$(4000 + 2)-9f8e"' : 'echo "tok-$((4000 + 2))-9f8e"';
       const uri = writeFile(
         'checks-capture.md',
         `# Capture\n\n${fence('capture="POD:/name: (\\S+)/"', say('name: web-42'))}${fence('', say('got ${out:POD}'))}` +
-          `${fence('capture-secret=TOK', say('tok-9f8e7d6c5b'))}${fence('', say('again ${out:TOK}'))}`,
+          `${fence('capture-secret=TOK', makeToken)}${fence('', say('again ${out:TOK}'))}`,
       );
       try {
         const editor = await openRunbook(uri);
@@ -71,10 +74,10 @@ export const tests: Test[] = [
         await runCells(editor, 1, 5);
         for (const c of cells) assert.equal(await waitForRun(c), true, outputText(c));
         assert.match(outputText(cells[1]!), /got web-42/);
-        assert.doesNotMatch(outputText(cells[2]!), /tok-9f8e7d6c5b/, 'the capturing cell is redrawn without the secret');
-        assert.doesNotMatch(outputText(cells[3]!), /tok-9f8e7d6c5b/);
+        assert.doesNotMatch(outputText(cells[2]!), /tok-4002-9f8e/, 'the capturing cell is redrawn without the secret');
+        assert.doesNotMatch(outputText(cells[3]!), /tok-4002-9f8e/);
         await touchAndSave(editor.notebook);
-        assert.doesNotMatch(read(uri), /tok-9f8e7d6c5b/);
+        assert.doesNotMatch(read(uri), /tok-4002-9f8e/);
       } finally {
         await closeAll();
       }

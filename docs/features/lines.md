@@ -8,6 +8,7 @@ the dropdown next to a code cell's run button, and in the Command Palette:
 | **Run Line or Selection** (`Ctrl+Alt+Enter`, `Cmd+Alt+Enter` on macOS, or the cell editor's context menu) | Runs only the line the cursor is on. With text selected, it runs exactly that text, even part of a line. |
 | **Run Lines One by One** | Runs every line of the cell in order, stopping at the first line that fails. |
 | **Step Through Lines** | Runs the first line, then pauses before each next one, like stepping in a debugger. |
+| **Step Through from This Line** (also in the cell editor's context menu) | The same, starting at the line the cursor is on (or the next command after it). The lines above it are not run, so the output is saved with `lines=`. |
 
 The output shows each line before its own output (`$ ls -la` in bash, `PS> Get-Date` in PowerShell,
 `> dir` in cmd), so the saved output is a readable record of what ran:

@@ -345,6 +345,12 @@
         "title": "Stop Stepping",
         "category": "md-runbook",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "mdRunbook.stepThroughFromLine",
+        "title": "Step Through from This Line",
+        "category": "md-runbook",
+        "icon": "$(debug-step-into)"
       }
     ],
     "menus": {
@@ -583,6 +589,10 @@
         {
           "command": "mdRunbook.stepStop",
           "when": "mdRunbook.stepPaused"
+        },
+        {
+          "command": "mdRunbook.stepThroughFromLine",
+          "when": "notebookType == md-runbook"
         }
       ],
       "notebook/cell/title": [
@@ -667,6 +677,11 @@
           "command": "mdRunbook.stepThroughLines",
           "when": "notebookType == md-runbook && notebookCellType == code",
           "group": "mdRunbook-lines@3"
+        },
+        {
+          "command": "mdRunbook.stepThroughFromLine",
+          "when": "notebookType == md-runbook && notebookCellType == code",
+          "group": "mdRunbook-lines@4"
         }
       ],
       "editor/context": [
@@ -674,6 +689,11 @@
           "command": "mdRunbook.runLine",
           "when": "notebookType == md-runbook && resourceScheme == vscode-notebook-cell",
           "group": "mdRunbook@1"
+        },
+        {
+          "command": "mdRunbook.stepThroughFromLine",
+          "when": "notebookType == md-runbook && resourceScheme == vscode-notebook-cell",
+          "group": "mdRunbook@2"
         }
       ]
     },
@@ -772,12 +792,18 @@
             "description": "Write cell outputs into the .md file on save, as an output block after each code block.",
             "order": 1
           },
+          "mdRunbook.output.saveAfterRun": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Save the runbook after each run (a cell, a range, Run All, a line run), so outputs are on disk even if VS Code closes. Untitled runbooks are not saved.",
+            "order": 2
+          },
           "mdRunbook.output.historySize": {
             "type": "integer",
             "default": 0,
             "minimum": 0,
             "markdownDescription": "When a cell is re-run, keep up to this many earlier outputs in a collapsed `<details>` block after the latest output. `0` = off (re-running drops any existing history).",
-            "order": 2
+            "order": 3
           },
           "mdRunbook.output.mode": {
             "type": "string",
@@ -791,40 +817,40 @@
             ],
             "default": "inPlace",
             "description": "Where runs are recorded.",
-            "order": 3
+            "order": 4
           },
           "mdRunbook.output.copyFolder": {
             "type": "string",
             "default": "",
             "markdownDescription": "Folder for **Run All as Copy**, relative to the runbook's folder (or absolute). Empty = next to the runbook. Cells of a copy still run in the original runbook's folder. User settings only.",
             "scope": "machine",
-            "order": 4
+            "order": 5
           },
           "mdRunbook.output.maxLines": {
             "type": "integer",
             "default": 2000,
             "minimum": 0,
             "description": "Maximum lines of output written to the file (head and tail are kept, with a note). 0 = unlimited.",
-            "order": 5
+            "order": 6
           },
           "mdRunbook.output.stripAnsi": {
             "type": "boolean",
             "default": true,
             "description": "Remove ANSI escape codes (colours, cursor movement) from output written to the file.",
-            "order": 6
+            "order": 7
           },
           "mdRunbook.progress.statusBar": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Show the active runbook's progress in the status bar (e.g. `4/7 · ✗ step 5`). Click it to go to the failed or next pending step.",
-            "order": 7
+            "order": 8
           },
           "mdRunbook.report.folder": {
             "type": "string",
             "default": "",
             "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is. User settings only.",
             "scope": "machine",
-            "order": 8
+            "order": 9
           }
         }
       },

@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import { SECTION } from './config';
-import { workingDirectory } from './controller';
+import { runbookCwd } from './controller';
 import { parseFrontMatter } from './core/secrets';
 import { SessionPool } from './core/session';
 import { isCodeMeta } from './core';
@@ -118,7 +118,7 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
         cwd: plan.cwd,
         // Sessions start (and restart) in the runbook's folder; a cell with `cwd=` runs in its
         // own folder without moving the session.
-        baseCwd: workingDirectory(nb.uri),
+        baseCwd: runbookCwd(nb),
         settings: plan.shell,
         timeoutMs: plan.timeoutMs,
         env: plan.env,

@@ -13,6 +13,11 @@
   (`check=failed` on the marker), and `expect-exit=1` makes exit code 1 a pass.
 - **Retries:** `retry=10 every=15s` runs a cell again until it passes, for "wait until ready"
   steps. Only the last attempt's output is kept; the marker records `attempts=`.
+- **Step Through from This Line:** start stepping at the cursor line instead of the first line.
+- **Save after each run:** with `mdRunbook.output.saveAfterRun` on, the runbook is saved after
+  every run, so outputs are on disk even if VS Code closes.
+- **Runbook defaults:** `cwd:` and `timeout:` in the front matter set the folder and timeout for
+  every cell of a runbook; a cell's own `cwd=` / `timeout=` still wins.
 - **Captured values:** `capture=NAME` or `capture=NAME:/regex/` keeps a value from a cell's
   output, and later cells use it as `${out:NAME}`. `capture-secret=NAME` redacts the value
   everywhere and never saves it.

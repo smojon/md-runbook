@@ -26,6 +26,7 @@ import { ExecutionConfig, SECTION, executionConfig, redactionConfig, writeOption
 import { workingDirectory } from './controller';
 import { knownSecrets } from './knownSecrets';
 import { parseCellOptions } from './core/cellOptions';
+import { parseFrontMatter } from './core/secrets';
 import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from './core/confirm';
 import { proposalOf } from './core/proposal';
 import { cellConfirmOption } from './safety';
@@ -63,8 +64,12 @@ interface RunOptions {
  * The fence options of a block (`skip`, `cwd=`, `timeout=`, `env.*`), applied like the notebook's
  * options preparer: cwd relative to the .md file's folder, invalid options fail the block.
  */
-function runOptions(info: string, baseDir: string, cfg: ExecutionConfig): RunOptions {
-  const out: RunOptions = { skip: false, cwd: baseDir, timeoutMs: cfg.timeoutMs, env: { ...cfg.env } };
+function runOptions(info: string, baseDir: string, cfg: ExecutionConfig, docText: string): RunOptions {
+  // Front matter `cwd:` and `timeout:` are the runbook's defaults, as in the notebook.
+  const fm = parseFrontMatter(docText);
+  const cwd = fm?.cwd ? path.resolve(baseDir, fm.cwd) : baseDir;
+  const timeoutMs = fm?.timeoutSeconds !== undefined ? fm.timeoutSeconds * 1000 : cfg.timeoutMs;
+  const out: RunOptions = { skip: false, cwd, timeoutMs, env: { ...cfg.env } };
   if (!vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true)) return out;
   const o = parseCellOptions(info);
   if (o.errors.length > 0) out.error = `md-runbook: invalid cell option ${o.errors.join('; ')}`;
@@ -144,7 +149,7 @@ class EditorRunner {
     const loc = locate(doc).find((l) => l.cellIndex === cellIndex);
     if (!loc) return false;
     const cfg = executionConfig();
-    const opts = runOptions(loc.info, workingDirectory(doc.uri), cfg);
+    const opts = runOptions(loc.info, workingDirectory(doc.uri), cfg, doc.getText());
     if (opts.skip) {
       this.channel.show(true);
       this.channel.appendLine(`[md-runbook] skipped: ${path.basename(doc.uri.fsPath || doc.uri.path)}:${loc.line + 1} (skip option)`);
