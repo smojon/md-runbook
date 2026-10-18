@@ -11,7 +11,7 @@ const test = (name: string, fn: () => Promise<void>): void => void tests.push({ 
 test('safety: continue-on-error keeps Run All going; skip is recorded', async () => {
   const uri = writeFile(
     'safety-continue.md',
-    `\`\`\`${LANG} continue-on-error\nexit 3\n\`\`\`\n\n\`\`\`${LANG} skip\necho never\n\`\`\`\n\n\`\`\`${LANG}\necho still runs\n\`\`\`\n`,
+    `\`\`\`${LANG} continue-on-error\nexit 3\n\`\`\`\n\n\`\`\`${LANG} skip\necho never\n\`\`\`\n\n\`\`\`${LANG}\necho 'still runs'\n\`\`\`\n`,
   );
   const editor = await openRunbook(uri);
   await selectKernel(editor);
@@ -61,7 +61,7 @@ test('safety: cwd and env options', async () => {
 test('safety: confirm=never runs risky cells without asking', async () => {
   await setConfig('execution.confirm', 'never');
   try {
-    const uri = writeFile('safety-never.md', `\`\`\`${LANG}\necho kubectl delete pod x\n\`\`\`\n`);
+    const uri = writeFile('safety-never.md', `\`\`\`${LANG}\necho 'kubectl delete pod x'\n\`\`\`\n`);
     const editor = await openRunbook(uri);
     await runCells(editor, 0, 1);
     assert.equal(await waitForRun(editor.notebook.cellAt(0)), true);
