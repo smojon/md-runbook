@@ -1,0 +1,167 @@
+{
+  "name": "md-runbook",
+  "displayName": "md-runbook",
+  "description": "Open Markdown files as notebooks: run shell code blocks and store their output inside the same .md file.",
+  "version": "0.1.0",
+  "publisher": "smojon",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smojon/md-runbook.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "Notebooks"
+  ],
+  "keywords": [
+    "markdown",
+    "notebook",
+    "runbook",
+    "shell",
+    "powershell"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "notebooks": [
+      {
+        "type": "md-runbook",
+        "displayName": "Markdown Runbook",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "mdRunbook.openAsRunbook",
+        "title": "Open as Runbook",
+        "category": "md-runbook",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "mdRunbook.openAsText",
+        "title": "Open as Markdown Text",
+        "category": "md-runbook",
+        "icon": "$(markdown)"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "mdRunbook.openAsRunbook",
+          "when": "resourceExtname == .md",
+          "group": "navigation@99"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "mdRunbook.openAsRunbook",
+          "when": "resourceLangId == markdown && activeEditor != workbench.editor.notebook",
+          "group": "navigation"
+        }
+      ],
+      "notebook/toolbar": [
+        {
+          "command": "mdRunbook.openAsText",
+          "when": "notebookType == md-runbook",
+          "group": "navigation/execute@99"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "mdRunbook.openAsRunbook",
+          "when": "resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.openAsText",
+          "when": "notebookType == md-runbook"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "md-runbook",
+      "properties": {
+        "mdRunbook.output.persist": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write cell outputs into the .md file on save, as an output block after each code block."
+        },
+        "mdRunbook.output.maxLines": {
+          "type": "integer",
+          "default": 2000,
+          "minimum": 0,
+          "description": "Maximum lines of output written to the file (head and tail are kept, with a note). 0 = unlimited."
+        },
+        "mdRunbook.output.stripAnsi": {
+          "type": "boolean",
+          "default": true,
+          "description": "Remove ANSI escape codes (colours, cursor movement) from output written to the file."
+        },
+        "mdRunbook.redaction.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Redact secrets from output before it is written to the file."
+        },
+        "mdRunbook.redaction.useDefaultPatterns": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Use the built-in patterns: Bearer tokens, JWTs, `password`/`secret`/`token`/`api_key` key-value pairs, PEM private keys, `Authorization`/`Cookie` headers, URL credentials, OpenShift/GitHub/AWS tokens."
+        },
+        "mdRunbook.redaction.patterns": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Additional JavaScript regular expressions; each whole match is replaced with `[REDACTED]`. Use lookbehind to keep context, e.g. `(?<=X-Api-Key: )\\\\S+`. Items are strings or `{ \"pattern\": \"...\", \"flags\": \"i\" }`.",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "pattern": {
+                    "type": "string"
+                  },
+                  "flags": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "pattern"
+                ]
+              }
+            ]
+          }
+        },
+        "mdRunbook.redaction.applyToLiveOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also redact the output shown live in the editor, not only what is written to disk."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "pretest": "npm run compile",
+    "test": "node --test \"out/test/**/*.test.js\"",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,39 @@
+/** VS Code adapter around the pure parser/writer in ./core. */
+
+import * as vscode from 'vscode';
+import { CellInput, parse, serialize } from './core';
+import { writeOptions } from './config';
+import { META_KEY, persistedOutputs, toOutputInput } from './outputs';
+
+export const NOTEBOOK_TYPE = 'md-runbook';
+
+// ignoreBOM keeps a BOM in the decoded text so the parser can record and restore it.
+const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
+const encoder = new TextEncoder();
+
+export class RunbookSerializer implements vscode.NotebookSerializer {
+  deserializeNotebook(content: Uint8Array): vscode.NotebookData {
+    const doc = parse(decoder.decode(content));
+    const cells = doc.cells.map((c) => {
+      const kind = c.kind === 'code' ? vscode.NotebookCellKind.Code : vscode.NotebookCellKind.Markup;
+      const cell = new vscode.NotebookCellData(kind, c.value, c.languageId);
+      cell.metadata = { [META_KEY]: c.meta };
+      if (c.output) cell.outputs = persistedOutputs(c.output);
+      return cell;
+    });
+    const data = new vscode.NotebookData(cells);
+    data.metadata = { [META_KEY]: doc.meta };
+    return data;
+  }
+
+  serializeNotebook(data: vscode.NotebookData): Uint8Array {
+    const cells: CellInput[] = data.cells.map((c) => ({
+      kind: c.kind === vscode.NotebookCellKind.Code ? 'code' : 'markup',
+      value: c.value,
+      languageId: c.languageId,
+      meta: c.metadata?.[META_KEY],
+      output: c.kind === vscode.NotebookCellKind.Code ? toOutputInput(c.outputs ?? []) : undefined,
+    }));
+    return encoder.encode(serialize(data.metadata?.[META_KEY], cells, writeOptions()));
+  }
+}

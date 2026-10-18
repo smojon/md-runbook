@@ -1,0 +1,2 @@
+# Fixtures must keep their exact bytes (CRLF, mixed EOLs, BOM) on every platform.
+test/fixtures/** -text
