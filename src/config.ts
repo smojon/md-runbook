@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { DEFAULT_PATTERNS, RedactionPattern, Redactor, WriteOptions, createRedactor } from './core';
+import { DEFAULT_PATTERNS, RedactionPattern, Redactor, ShellSettings, WriteOptions, createRedactor } from './core';
 
 export const SECTION = 'mdRunbook';
 
@@ -38,5 +38,29 @@ export function writeOptions(): WriteOptions {
     maxOutputLines: Math.max(0, c.get<number>('output.maxLines', 2000)),
     stripAnsi: c.get<boolean>('output.stripAnsi', true),
     redact: r.enabled ? (s: string) => r.redactor.redact(s) : undefined,
+  };
+}
+
+export interface ExecutionConfig {
+  timeoutMs: number;
+  stopOnFailure: boolean;
+  env: Record<string, string>;
+  shell: ShellSettings;
+}
+
+export function executionConfig(): ExecutionConfig {
+  const c = cfg();
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(c.get<Record<string, unknown>>('execution.env', {}))) {
+    if (v !== null && v !== undefined) env[k] = String(v);
+  }
+  return {
+    timeoutMs: Math.max(0, c.get<number>('execution.timeoutSeconds', 0)) * 1000,
+    stopOnFailure: c.get<boolean>('execution.stopOnFailure', true),
+    env,
+    shell: {
+      bashPath: c.get<string>('shell.bashPath', '') || undefined,
+      pwshPath: c.get<string>('shell.pwshPath', '') || undefined,
+    },
   };
 }

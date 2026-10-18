@@ -15,4 +15,20 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      # Unit, round-trip, fuzz, redaction and shell smoke tests (pwsh + cmd natively on Windows).
       - run: npm test
+      # End-to-end tests in a real VS Code.
+      - name: Integration tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:integration
+      - name: Integration tests
+        if: runner.os != 'Linux'
+        run: npm run test:integration
+      - name: Package
+        if: runner.os == 'Linux'
+        run: npx vsce package
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: vsix
+          path: '*.vsix'

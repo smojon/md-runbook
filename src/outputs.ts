@@ -12,10 +12,12 @@ const STDERR = 'application/vnd.code.notebook.stderr';
 export interface OutputMetadata {
   /** Loaded from the file: written back verbatim unless replaced. */
   persisted?: boolean;
-  /** Stream output of a run, carrying the attributes for the output marker. */
+  /** Stream output of a run; `attrs` are provisional (exit=running) until a status output follows. */
   run?: { attrs: Record<string, string> };
-  /** Status line (exit code, duration); shown live, never persisted as output text. */
+  /** Status line (exit code, duration); never persisted as output text. */
   status?: boolean;
+  /** Final marker attributes of a finished run, carried by its status output. */
+  attrs?: Record<string, string>;
 }
 
 interface OutputLike {
@@ -36,8 +38,12 @@ export function statusLine(exit: string | undefined, ran: string | undefined, du
   return parts.join(' · ');
 }
 
-export function statusOutput(text: string): vscode.NotebookCellOutput {
-  const meta: OutputMetadata = { status: true };
+/**
+ * VS Code only syncs a replaced output's items (not its metadata) to the extension host, so
+ * metadata that must survive to save time goes on a newly appended output like this one.
+ */
+export function statusOutput(text: string, attrs?: Record<string, string>): vscode.NotebookCellOutput {
+  const meta: OutputMetadata = { status: true, ...(attrs ? { attrs } : {}) };
   return new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.text(text)], { [META_KEY]: meta });
 }
 
@@ -61,11 +67,12 @@ export function toOutputInput(outputs: readonly OutputLike[]): OutputInput | und
     const m = outputMeta(o);
     if (m?.persisted) return { kind: 'preserved' };
     if (m?.run) {
-      attrs = m.run.attrs;
+      attrs ??= m.run.attrs;
       for (const item of o.items) {
         if (item.mime === STDOUT || item.mime === STDERR || item.mime === 'text/plain') text += decoder.decode(item.data);
       }
     }
+    if (m?.status && m.attrs) attrs = m.attrs;
   }
   return attrs ? { kind: 'new', text, attrs } : undefined;
 }

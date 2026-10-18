@@ -9,15 +9,18 @@ import { DocEol, endsWithNewline, toLf, trailingEol } from './lines';
 import {
   CellInput,
   CodeMeta,
+  DEFAULT_WRITE_OPTIONS,
   DocMeta,
   MarkupMeta,
   OutputInput,
+  ParsedDocument,
   WriteOptions,
   isCodeMeta,
   isDocMeta,
   isMarkupMeta,
 } from './model';
 import { formatOutputBlock, processOutputText } from './outputBlock';
+import { parse } from './parser';
 
 export function serialize(doc: DocMeta | undefined, cells: readonly CellInput[], opts: WriteOptions): string {
   const docMeta: DocMeta = isDocMeta(doc) ? doc : { bom: false, eol: '\n' };
@@ -139,4 +142,21 @@ function renderOutput(
   const text = processOutputText(output.text, opts);
   const eol = meta?.eol ?? docEol;
   return (meta?.output?.gap ?? '') + formatOutputBlock(text, output.attrs, meta?.indent ?? '', eol);
+}
+
+/** Cells exactly as parsed, as the editor would hand them back if nothing changed. */
+export function toCellInputs(doc: ParsedDocument, keepOutputs = true): CellInput[] {
+  return doc.cells.map((c) => ({
+    kind: c.kind,
+    value: c.value,
+    languageId: c.languageId,
+    meta: c.meta,
+    output: keepOutputs && c.output ? { kind: 'preserved' as const } : undefined,
+  }));
+}
+
+/** Remove every md-runbook output block from a Markdown text, leaving all other bytes alone. */
+export function clearOutputBlocks(text: string): string {
+  const doc = parse(text);
+  return serialize(doc.meta, toCellInputs(doc, false), DEFAULT_WRITE_OPTIONS);
 }

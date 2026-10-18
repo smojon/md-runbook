@@ -50,6 +50,12 @@
         "title": "Open as Markdown Text",
         "category": "md-runbook",
         "icon": "$(markdown)"
+      },
+      {
+        "command": "mdRunbook.clearAllOutputs",
+        "title": "Clear All Outputs",
+        "category": "md-runbook",
+        "icon": "$(clear-all)"
       }
     ],
     "menus": {
@@ -58,6 +64,11 @@
           "command": "mdRunbook.openAsRunbook",
           "when": "resourceExtname == .md",
           "group": "navigation@99"
+        },
+        {
+          "command": "mdRunbook.clearAllOutputs",
+          "when": "resourceExtname == .md",
+          "group": "navigation@100"
         }
       ],
       "editor/title": [
@@ -82,6 +93,10 @@
         {
           "command": "mdRunbook.openAsText",
           "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.clearAllOutputs",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
         }
       ]
     },
@@ -147,6 +162,37 @@
           "type": "boolean",
           "default": false,
           "description": "Also redact the output shown live in the editor, not only what is written to disk."
+        },
+        "mdRunbook.execution.stopOnFailure": {
+          "type": "boolean",
+          "default": true,
+          "description": "When running several cells (Run All, Run Above/Below), stop at the first cell that fails, times out or is cancelled."
+        },
+        "mdRunbook.execution.timeoutSeconds": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Kill a cell (and its whole process tree) after this many seconds. 0 = no timeout."
+        },
+        "mdRunbook.execution.env": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra environment variables for every cell."
+        },
+        "mdRunbook.shell.bashPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Path to bash for `sh`/`bash` blocks. On Windows, Git Bash is found automatically (Program Files, LocalAppData, Scoop, next to `git.exe`); the WSL launcher is never used."
+        },
+        "mdRunbook.shell.pwshPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Path to PowerShell for `pwsh`/`powershell` blocks. Default: `pwsh` on PATH, falling back to Windows PowerShell (`powershell.exe`)."
         }
       }
     }
@@ -156,11 +202,14 @@
     "watch": "tsc -watch -p .",
     "pretest": "npm run compile",
     "test": "node --test \"out/test/**/*.test.js\"",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test:integration": "npm run compile && node out/test/integration/runElectron.js",
+    "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
     "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.2",
     "typescript": "^5.9.3"
   }

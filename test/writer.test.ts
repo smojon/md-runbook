@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { CellInput, DEFAULT_WRITE_OPTIONS, WriteOptions, parse, serialize } from '../src/core';
+import { CellInput, DEFAULT_WRITE_OPTIONS, WriteOptions, clearOutputBlocks, parse, serialize } from '../src/core';
 import { untouched } from './helpers';
 
 const RAN = '2026-10-18T14:20:00+02:00';
@@ -214,5 +214,20 @@ describe('edited and new cells', () => {
       c[0]!.value = 'b';
     });
     assert.equal(out, '\uFEFF```sh\nb\n```\n');
+  });
+});
+
+describe('clearOutputBlocks', () => {
+  it('removes every output block and nothing else', () => {
+    const src = '# T\r\n\r\n```sh\r\na\r\n```\r\n<!-- md-runbook:output start exit=0 -->\r\n```text\r\na\r\n```\r\n<!-- md-runbook:output end -->\r\n\r\n```json\r\n{}\r\n```\r\n<!-- md-runbook:output start -->\r\n```text\r\n```\r\n<!-- md-runbook:output end -->\r\n';
+    assert.equal(
+      clearOutputBlocks(src),
+      '# T\r\n\r\n```sh\r\na\r\n```\r\n\r\n```json\r\n{}\r\n```\r\n<!-- md-runbook:output start -->\r\n```text\r\n```\r\n<!-- md-runbook:output end -->\r\n',
+    );
+  });
+
+  it('is a no-op without output blocks', () => {
+    const src = 'a\n\n```sh\nb\n```';
+    assert.equal(clearOutputBlocks(src), src);
   });
 });

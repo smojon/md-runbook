@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { CellInput, DEFAULT_WRITE_OPTIONS, ParsedDocument, WriteOptions, parse, serialize } from '../src/core';
+import { CellInput, DEFAULT_WRITE_OPTIONS, ParsedDocument, WriteOptions, parse, serialize, toCellInputs } from '../src/core';
 
 /** test/fixtures, resolved from out/test at runtime. */
 export const FIXTURES = path.resolve(__dirname, '..', '..', 'test', 'fixtures');
@@ -18,13 +18,8 @@ export function listFixtures(): string[] {
 
 /** Cells as VS Code would hand them back on save when nothing was touched. */
 export function untouched(doc: ParsedDocument): CellInput[] {
-  return doc.cells.map((c) => ({
-    kind: c.kind,
-    value: c.value,
-    languageId: c.languageId,
-    meta: JSON.parse(JSON.stringify(c.meta)) as unknown, // metadata survives as plain JSON
-    output: c.output ? { kind: 'preserved' as const } : undefined,
-  }));
+  // Metadata goes through VS Code as plain JSON; make sure nothing depends on object identity.
+  return toCellInputs(doc).map((c) => ({ ...c, meta: JSON.parse(JSON.stringify(c.meta)) as unknown }));
 }
 
 export function roundTripBytes(bytes: Uint8Array, opts: WriteOptions = DEFAULT_WRITE_OPTIONS): Uint8Array {
