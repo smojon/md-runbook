@@ -1,0 +1,14 @@
+{
+  "name": "md-runbook-spike-ssh",
+  "private": true,
+  "description": "Spike: run runbook cells over SSH with a pure-TypeScript SSH client, in Node, in a browser (through a relay) and later in React Native.",
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "@microsoft/dev-tunnels-ssh": "3.12.42",
+    "@microsoft/dev-tunnels-ssh-keys": "3.12.42"
+  }
+}

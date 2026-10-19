@@ -1,0 +1,58 @@
+name: Spike SSH
+# The SSH spike (spikes/ssh): run cells over SSH with a pure-TypeScript client against a
+# throwaway sshd on the runner. Not part of the extension's build or release.
+on:
+  push:
+    branches: ['spike/**']
+    paths: ['spikes/**', '.github/workflows/spike-ssh.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          cd spikes/ssh && npm ci --no-audit --no-fund
+      - name: Start a throwaway SSH server (port 2222, keys made here)
+        run: |
+          command -v /usr/sbin/sshd || (sudo apt-get update -q && sudo apt-get install -y -q openssh-server)
+          d="$RUNNER_TEMP/sshd"; mkdir -p "$d"; cd "$d"
+          ssh-keygen -q -t ecdsa -b 256 -N '' -f host_ecdsa
+          ssh-keygen -q -t ecdsa -b 256 -N '' -f client_ecdsa
+          cp client_ecdsa.pub authorized_keys
+          cat > sshd_config <<EOF
+          Port 2222
+          ListenAddress 127.0.0.1
+          HostKey $d/host_ecdsa
+          AuthorizedKeysFile $d/authorized_keys
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          UsePAM no
+          StrictModes no
+          PidFile $d/sshd.pid
+          EOF
+          /usr/sbin/sshd -f "$d/sshd_config" -E "$d/sshd.log"
+          sleep 1; ssh-keyscan -p 2222 127.0.0.1 2>/dev/null | head -2
+      - name: Step A (Node)
+        working-directory: spikes/ssh
+        env:
+          SSH_HOST: 127.0.0.1
+          SSH_PORT: '2222'
+          SSH_KEY_FILE: ${{ runner.temp }}/sshd/client_ecdsa
+          SSH_HOST_PUB: ${{ runner.temp }}/sshd/host_ecdsa.pub
+        run: |
+          export SSH_USER="$(whoami)"
+          node build.js
+          node dist/spikeA.js
+      - name: sshd log
+        if: always()
+        run: cat "$RUNNER_TEMP/sshd/sshd.log" || true
