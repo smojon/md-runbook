@@ -14,6 +14,11 @@ npm install --no-audit --no-fund --loglevel=error \
   @microsoft/dev-tunnels-ssh@3.12.42 @microsoft/dev-tunnels-ssh-keys@3.12.42 \
   buffer@^6.0.3 readable-stream@^4.5.2 events@^3.3.0 util@^0.12.5 process@^0.11.10
 
+# The client key, made by the SSH library (the format the app will use) and authorized on the
+# test server; the ssh-keygen key is only checked for the diagnostic.
+app_key="$(dirname "$SSH_KEY_FILE")/app_key"
+node "$here/ci/make-key.js" "$app_key" "$(dirname "$SSH_KEY_FILE")/authorized_keys" "$SSH_KEY_FILE"
+
 mkdir -p src
 cp "$here/src/remoteShell.ts" src/
 cp "$here/app-src/tcpStream.ts" "$here/app-src/empty.js" "$here/app-src/polyfills.ts" src/
@@ -27,7 +32,7 @@ registerRootComponent(App);
 TS
 
 # A package id for both platforms, and the test server's address as each one sees it.
-node -e '
+APP_KEY_FILE="$app_key" node -e '
 const fs = require("fs");
 const a = JSON.parse(fs.readFileSync("app.json", "utf8"));
 a.expo.name = "md-runbook spike"; a.expo.slug = "md-runbook-spike";
@@ -39,7 +44,7 @@ fs.writeFileSync("spike-config.json", JSON.stringify({
   androidHost: "10.0.2.2",    // Android emulator: the host machine
   port: Number(process.env.SSH_PORT || 2222),
   user: process.env.SSH_USER,
-  keyPem: fs.readFileSync(process.env.SSH_KEY_FILE, "utf8"),
+  keyPem: fs.readFileSync(process.env.APP_KEY_FILE, "utf8"),
   hostPub: fs.readFileSync(process.env.SSH_HOST_PUB, "utf8"),
 }, null, 2));
 '
