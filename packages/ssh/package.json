@@ -1,0 +1,31 @@
+{
+  "name": "@md-runbook/ssh",
+  "version": "0.3.2",
+  "description": "Runs md-runbook cells in a persistent shell on a remote host over SSH, in pure TypeScript (Node, browsers through a relay, React Native).",
+  "private": true,
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "node": ["dist/node.d.ts"]
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@md-runbook/core": "*",
+    "@microsoft/dev-tunnels-ssh": "3.12.42",
+    "@microsoft/dev-tunnels-ssh-keys": "3.12.42",
+    "buffer": "6.0.3"
+  }
+}

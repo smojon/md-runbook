@@ -1521,8 +1521,8 @@
     ]
   },
   "scripts": {
-    "compile": "tsc -b packages/core && tsc -p . && tsc -p tsconfig.renderer.json && node scripts/build.js",
-    "watch": "tsc -b packages/core && tsc -watch -p .",
+    "compile": "tsc -b packages/core packages/ssh && tsc -p . && tsc -p tsconfig.renderer.json && node scripts/build.js",
+    "watch": "tsc -b packages/core packages/ssh && tsc -watch -p .",
     "watch:bundle": "node scripts/build.js --watch",
     "pretest": "npm run compile",
     "test": "node --test \"out/test/**/*.test.js\"",
