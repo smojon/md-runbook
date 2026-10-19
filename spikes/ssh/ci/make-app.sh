@@ -16,8 +16,15 @@ npm install --no-audit --no-fund --loglevel=error \
 
 mkdir -p src
 cp "$here/src/remoteShell.ts" src/
-cp "$here/app-src/tcpStream.ts" "$here/app-src/empty.js" src/
+cp "$here/app-src/tcpStream.ts" "$here/app-src/empty.js" "$here/app-src/polyfills.ts" src/
 cp "$here/app-src/App.tsx" "$here/app-src/metro.config.js" .
+# The entry point loads the polyfills before the app and the SSH library.
+cat > index.ts <<'TS'
+import './src/polyfills';
+import { registerRootComponent } from 'expo';
+import App from './App';
+registerRootComponent(App);
+TS
 
 # A package id for both platforms, and the test server's address as each one sees it.
 node -e '

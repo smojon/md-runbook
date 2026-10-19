@@ -4,11 +4,6 @@
  * `SPIKE-C …` lines, which CI reads from the device log. The screen shows the same lines.
  */
 
-import { install } from 'react-native-quick-crypto';
-install(); // Node-style crypto (and Buffer) for the SSH library
-import { Buffer } from 'buffer';
-(globalThis as { Buffer?: unknown }).Buffer ??= Buffer;
-
 import { importKey } from '@microsoft/dev-tunnels-ssh-keys';
 import React, { useEffect, useState } from 'react';
 import { Platform, ScrollView, Text } from 'react-native';
