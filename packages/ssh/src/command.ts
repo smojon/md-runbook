@@ -41,7 +41,7 @@ export function cellCommand(source: string, id: string, opts: CellCommandOptions
   const marker = markerFor(id);
   const eof = `__MDRB_EOF_${id}`;
   const body = source.endsWith('\n') ? source : source + '\n';
-  const exports = Object.entries(opts.env ?? {})
+  const exportLines = Object.entries(opts.env ?? {})
     .filter(([k]) => VAR_NAME.test(k))
     .map(([k, v]) => `export ${k}=${sq(v)}\n`)
     .join('');
@@ -53,7 +53,7 @@ export function cellCommand(source: string, id: string, opts: CellCommandOptions
       : `__mdrb_cd=$PWD; if cd -- ${sq(opts.cwd)}; then ${run}; cd -- "$__mdrb_cd" 2>/dev/null; else __mdrb_rc=1; fi; `;
   return (
     `__mdrb_f=$(mktemp) && cat > "$__mdrb_f" <<'${eof}'\n${body}${eof}\n` +
-    exports +
+    exportLines +
     runIn +
     'rm -f "$__mdrb_f"; ' +
     printMarker(marker, '"$__mdrb_rc"')
