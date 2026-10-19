@@ -14,6 +14,13 @@ State of the project for whoever picks it up next (person or new Claude session)
   `src/node/` runs local processes. `src/*.ts` is the VS Code layer, `src/cli` the command-line runner, `renderer/` the notebook renderer for
   clickable checklists. Feature docs: `docs/features/*.md`. Store and release steps:
   `PUBLISHING.md`. GitHub Action: `action.yml` + `scripts/action-run.js`.
+- **SSH and the app:** `packages/ssh` (`@md-runbook/ssh`) runs cells in a remote shell over SSH
+  in pure TypeScript (its README); live tests run against an OpenSSH server CI starts
+  (`scripts/ci/start-sshd.sh`). `apps/mobile` is the Expo app (iOS, Android, web), a separate
+  npm project using the packages from their sources; `.github/workflows/app.yml` runs its gates,
+  the web build in Chromium and the release builds on an Android emulator and an iPhone
+  simulator with the Maestro flows in `apps/mobile/e2e/maestro`. Locally: `cd apps/mobile &&
+  npm ci && npm run check`. The spike that chose this stack: `spikes/ssh/README.md`.
 - **Examples:** `examples/sample.runbook.md` (the hand test drive, opened by **Open Sample
   Runbook**; sections 1–17 cover every feature), `examples/ci.runbook.md` (run by CI through the
   action), `examples/screenshots.runbook.md` (for `docs/screenshots.md`), and workflow templates
