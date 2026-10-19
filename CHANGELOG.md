@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
 
 - **Security fixes** from a review of the 0.2 and 0.3 features:
   - A value captured by a cell written by an assistant is no longer used by your own cells
