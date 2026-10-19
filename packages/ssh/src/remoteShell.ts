@@ -223,10 +223,12 @@ export class RemoteShell {
     c.check();
   }
 
+  /** The shell is gone: fail the running cell and close the connection (and its keep-alive timer). */
   private end(why: string): void {
     if (this.ended) return;
     this.ended = true;
     this.current?.fail(new ShellEndedError(why));
+    void this.session.close(SshDisconnectReason.byApplication).catch(() => undefined);
   }
 
   /**

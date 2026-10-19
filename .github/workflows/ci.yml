@@ -21,6 +21,7 @@ jobs:
       # @md-runbook/ssh against a real OpenSSH server (cancel, timeouts, reconnects, latency).
       - name: SSH tests
         if: runner.os != 'Windows'
+        timeout-minutes: 5
         run: |
           bash scripts/ci/start-sshd.sh
           export MD_RUNBOOK_SSH_TEST="127.0.0.1:2222:$(id -un)"
