@@ -4,9 +4,6 @@
  */
 const en = {
   appTitle: 'md-runbook',
-  runbooks: 'Runbooks',
-  sampleRunbook: 'Sample runbook',
-  cells: (n: number) => (n === 1 ? '1 cell' : `${n} cells`),
   commands: (n: number) => (n === 1 ? '1 command' : `${n} commands`),
   coreOk: 'Core OK',
   coreFailed: (why: string) => `Core check failed: ${why}`,

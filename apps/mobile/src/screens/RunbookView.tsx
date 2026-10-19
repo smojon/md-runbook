@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 import { useMemo } from 'react';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ParsedCell, parse } from '@md-runbook/core';
 import { t } from '../i18n';
 import { BUNDLED } from '../runbooks/sample';
@@ -10,18 +10,26 @@ import { colors, mono } from '../theme';
 export function RunbookView({ id }: { id: string | undefined }) {
   const runbook = BUNDLED.find((r) => r.id === id);
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
+  // Scroll views as the screen's root with automatic insets (see RunbookList).
   if (!runbook) {
     return (
-      <View style={styles.screen}>
+      <ScrollView style={styles.screen} contentContainerStyle={styles.content} contentInsetAdjustmentBehavior="automatic">
         <Text testID="runbook-not-found">{t.notFound}</Text>
-      </View>
+      </ScrollView>
     );
   }
   return (
-    <View style={styles.screen}>
+    <>
       <Stack.Screen options={{ title: runbook.title }} />
-      <FlatList data={cells} keyExtractor={(_, i) => String(i)} renderItem={({ item, index }) => <Cell cell={item} index={index} />} />
-    </View>
+      <FlatList
+        style={styles.screen}
+        contentContainerStyle={styles.content}
+        contentInsetAdjustmentBehavior="automatic"
+        data={cells}
+        keyExtractor={(_, i) => String(i)}
+        renderItem={({ item, index }) => <Cell cell={item} index={index} />}
+      />
+    </>
   );
 }
 
@@ -54,7 +62,8 @@ function Cell({ cell, index }: { cell: ParsedCell; index: number }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, padding: 12, backgroundColor: colors.background },
+  screen: { flex: 1, backgroundColor: colors.background },
+  content: { padding: 12 },
   markup: { fontSize: 15, lineHeight: 21, color: colors.text, marginVertical: 6 },
   code: { backgroundColor: colors.codeBackground, borderRadius: 6, padding: 10, marginVertical: 6 },
   lang: { fontSize: 11, color: colors.muted, marginBottom: 4 },

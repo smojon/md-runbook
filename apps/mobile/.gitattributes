@@ -1,0 +1,4 @@
+# LF in the working copy too (Prettier checks it, and the e2e shell scripts need it), whatever core.autocrlf says.
+* text=auto eol=lf
+*.png binary
+*.ico binary
