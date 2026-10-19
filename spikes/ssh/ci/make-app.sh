@@ -17,7 +17,8 @@ npm install --no-audit --no-fund --loglevel=error \
 # The client key, made by the SSH library (the format the app will use) and authorized on the
 # test server; the ssh-keygen key is only checked for the diagnostic.
 app_key="$(dirname "$SSH_KEY_FILE")/app_key"
-node "$here/ci/make-key.js" "$app_key" "$(dirname "$SSH_KEY_FILE")/authorized_keys" "$SSH_KEY_FILE"
+cp "$here/ci/make-key.js" .   # run from the app, whose node_modules has the SSH library
+node make-key.js "$app_key" "$(dirname "$SSH_KEY_FILE")/authorized_keys" "$SSH_KEY_FILE"
 
 mkdir -p src
 cp "$here/src/remoteShell.ts" src/
