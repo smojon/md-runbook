@@ -54,17 +54,45 @@ export function writeFile(name: string, content: string | Uint8Array): vscode.Ur
   return vscode.Uri.file(file);
 }
 
+/**
+ * Opens a file as a runbook and returns its editor. It waits for the editor itself, not for the
+ * open command's promise: on a busy macOS runner that promise sometimes never settles although
+ * the editor opened. If no editor shows within 45 s, it tries once more; slow opens are logged.
+ */
 export async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEditor> {
-  await step(`open ${path.basename(uri.fsPath)}`, vscode.commands.executeCommand('mdRunbook.openAsRunbook', uri));
+  const name = path.basename(uri.fsPath);
   const find = (): vscode.NotebookEditor | undefined =>
     [vscode.window.activeNotebookEditor, ...vscode.window.visibleNotebookEditors].find(
       (e) => e && e.notebook.uri.fsPath === uri.fsPath && e.notebook.notebookType === 'md-runbook',
     );
-  return waitFor('runbook editor', find).catch((e: Error) => {
+  const attempt = async (n: number): Promise<vscode.NotebookEditor> => {
+    trace(`    … open ${name}${n > 1 ? ` (attempt ${n})` : ''}`);
+    let failure: unknown;
+    void Promise.resolve(vscode.commands.executeCommand('mdRunbook.openAsRunbook', uri)).catch((e: unknown) => (failure = e));
+    const started = Date.now();
+    const editor = await waitFor(
+      `runbook editor for ${name}`,
+      () => {
+        if (failure !== undefined) throw failure instanceof Error ? failure : new Error(String(failure));
+        return find();
+      },
+      45_000,
+    );
+    const ms = Date.now() - started;
+    if (ms > 10_000) trace(`    ! opening ${name} took ${ms} ms`);
+    return editor;
+  };
+  try {
+    return await attempt(1).catch(async (e: Error) => {
+      if (!/timed out/.test(e.message)) throw e;
+      await closeAll();
+      return attempt(2);
+    });
+  } catch (e) {
     const seen = vscode.window.visibleNotebookEditors.map((v) => `${v.notebook.notebookType} ${v.notebook.uri.toString()}`);
     const docs = vscode.workspace.notebookDocuments.map((d) => `${d.notebookType} ${d.uri.toString()}`);
-    throw new Error(`${e.message}; wanted ${uri.toString()}; visible: [${seen.join(', ')}]; docs: [${docs.join(', ')}]`);
-  });
+    throw new Error(`${(e as Error).message}; wanted ${uri.toString()}; visible: [${seen.join(', ')}]; docs: [${docs.join(', ')}]`);
+  }
 }
 
 export async function closeAll(): Promise<void> {
