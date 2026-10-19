@@ -27,7 +27,8 @@ jobs:
           command -v /usr/sbin/sshd || (sudo apt-get update -q && sudo apt-get install -y -q openssh-server)
           d="$RUNNER_TEMP/sshd"; mkdir -p "$d"; cd "$d"
           ssh-keygen -q -t ecdsa -b 256 -N '' -f host_ecdsa
-          ssh-keygen -q -t ecdsa -b 256 -N '' -f client_ecdsa
+          # PKCS#8: the library can't read OpenSSH's newer private key format (finding of step A).
+          ssh-keygen -q -t ecdsa -b 256 -m PKCS8 -N '' -f client_ecdsa
           cp client_ecdsa.pub authorized_keys
           cat > sshd_config <<EOF
           Port 2222
@@ -53,6 +54,25 @@ jobs:
           export SSH_USER="$(whoami)"
           node build.js
           node dist/spikeA.js
+      - name: Step B (browser, through the relay)
+        working-directory: spikes/ssh
+        env:
+          SSH_KEY_FILE: ${{ runner.temp }}/sshd/client_ecdsa
+          SSH_HOST_PUB: ${{ runner.temp }}/sshd/host_ecdsa.pub
+          RELAY_TARGETS: 127.0.0.1:2222
+          RELAY_TARGET: 127.0.0.1:2222
+          RELAY_URL: ws://127.0.0.1:8022/ssh
+        run: |
+          export SSH_USER="$(whoami)"
+          export RELAY_TOKEN="$(openssl rand -hex 24)"
+          export CHROME_PATH="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
+          echo "Chrome: $CHROME_PATH ($($CHROME_PATH --version))"
+          node dist/relay.js > "$RUNNER_TEMP/relay.log" 2>&1 &
+          sleep 1
+          node dist/spikeB-driver.js
+      - name: Relay log
+        if: always()
+        run: cat "$RUNNER_TEMP/relay.log" || true
       - name: sshd log
         if: always()
         run: cat "$RUNNER_TEMP/sshd/sshd.log" || true

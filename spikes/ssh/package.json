@@ -9,6 +9,12 @@
   },
   "dependencies": {
     "@microsoft/dev-tunnels-ssh": "3.12.42",
-    "@microsoft/dev-tunnels-ssh-keys": "3.12.42"
+    "@microsoft/dev-tunnels-ssh-keys": "3.12.42",
+    "buffer": "^6.0.3",
+    "ws": "^8.18.0",
+    "puppeteer-core": "^24.0.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.12"
   }
 }

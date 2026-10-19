@@ -22,6 +22,8 @@ import {
   Stream,
 } from '@microsoft/dev-tunnels-ssh';
 import { exportPublicKey } from '@microsoft/dev-tunnels-ssh-keys';
+// The library's own Buffer, so this file also works where there is no global Buffer (browsers).
+import { Buffer } from 'buffer';
 
 const RS = '\x1e';
 
