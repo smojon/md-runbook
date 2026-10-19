@@ -289,10 +289,11 @@ echo "now in $(pwd)"
 ls package.json
 ```
 
-- **`▶` in front of a line** runs only that line. The output is saved with `lines=3`, and the
-  step stays pending in the progress until the whole cell has run.
-- **`☐` in front of lines 1 and 3**, then **Run Checked Lines** (the dropdown next to the cell's
-  ▶): only those two run, in order, saved as `lines=1,3`. **Uncheck All Lines** clears them.
+- **Hover line 3** and click **▶ Run line 3**: only that line runs. The output is saved with
+  `lines=3`, and the step stays pending in the progress until the whole cell has run.
+- **Hover lines 1 and 3** and click **☐ Check** on each: they get a ☑ in the margin, and
+  **Run 2 checked lines** appears under the cell. Click it: only those two run, in order, saved
+  as `lines=1,3`. **Uncheck All Lines** (the dropdown next to the cell's ▶) clears them.
 - **Right-click a line:** **Run This Line**, or **Step Through from This Line**. Select `pwd`
   first and the menu offers **Run Selection** instead: only the selection runs.
   `Ctrl+Alt+Enter` (`Cmd+Alt+Enter` on macOS) does the same from the keyboard.
@@ -305,8 +306,8 @@ ls package.json
   it stops before line 3. `F5` goes on. A breakpoint on a blank line or a comment stops at the
   next command.
 
-The `▶ ☐` buttons need VS Code's inlay hints on (`editor.inlayHints.enabled`);
-`mdRunbook.lines.buttons` and `mdRunbook.lines.breakpoints` turn them off.
+`mdRunbook.lines.buttons` set to `inline` shows `▶ ☐` in front of each line instead
+(`Ctrl+click`), and `off` hides them; `mdRunbook.lines.breakpoints` turns breakpoints off.
 
 A block, a continuation line or a here-doc counts as one line, so the `foreach` here is one step:
 
