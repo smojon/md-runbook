@@ -55,9 +55,10 @@ export function writeFile(name: string, content: string | Uint8Array): vscode.Ur
 }
 
 /**
- * Opens a file as a runbook and returns its editor. It waits for the editor itself, not for the
- * open command's promise: on a busy macOS runner that promise sometimes never settles although
- * the editor opened. If no editor shows within 45 s, it tries once more; slow opens are logged.
+ * Opens a file as a runbook and returns its editor. The open command's promise settles once VS
+ * Code has set the notebook up (kernel included), so it waits for it too, but on a busy macOS
+ * runner that promise sometimes never settles although the editor opened: then it goes on with
+ * the editor after 20 s. If no editor shows within 45 s, it tries once more; slow opens are logged.
  */
 export async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEditor> {
   const name = path.basename(uri.fsPath);
@@ -68,7 +69,10 @@ export async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEdito
   const attempt = async (n: number): Promise<vscode.NotebookEditor> => {
     trace(`    … open ${name}${n > 1 ? ` (attempt ${n})` : ''}`);
     let failure: unknown;
-    void Promise.resolve(vscode.commands.executeCommand('mdRunbook.openAsRunbook', uri)).catch((e: unknown) => (failure = e));
+    const settled = Promise.resolve(vscode.commands.executeCommand('mdRunbook.openAsRunbook', uri)).then(
+      () => true,
+      (e: unknown) => ((failure = e), true),
+    );
     const started = Date.now();
     const editor = await waitFor(
       `runbook editor for ${name}`,
@@ -78,6 +82,11 @@ export async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEdito
       },
       45_000,
     );
+    let timer: NodeJS.Timeout | undefined;
+    const done = await Promise.race([settled, new Promise<false>((r) => (timer = setTimeout(() => r(false), 20_000)))]);
+    clearTimeout(timer);
+    if (failure !== undefined) throw failure instanceof Error ? failure : new Error(String(failure));
+    if (!done) trace(`    ! the open command for ${name} did not finish; going on with its editor`);
     const ms = Date.now() - started;
     if (ms > 10_000) trace(`    ! opening ${name} took ${ms} ms`);
     return editor;
