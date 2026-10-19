@@ -1,7 +1,7 @@
-/** Line buttons (▶ ☐ inlay hints), Run Checked Lines, and breakpoints in runbook cells. */
+/** Line buttons (hover, or ▶ ☐ inlay hints), Run Checked Lines, and breakpoints in runbook cells. */
 import { strict as assert } from 'node:assert';
 import * as vscode from 'vscode';
-import { LANG, Test, closeAll, isWin, openRunbook, outputText, selectKernel, waitForRun, writeFile } from './suite';
+import { LANG, Test, closeAll, isWin, openRunbook, outputText, selectKernel, setConfig, waitForRun, writeFile } from './suite';
 
 const say = (s: string): string => (isWin ? `Write-Output '${s}'` : `echo ${s}`);
 const comment = '# a comment';
@@ -24,11 +24,57 @@ async function hintLabels(cell: vscode.NotebookCell): Promise<string[]> {
   return hints.map((h) => (typeof h.label === 'string' ? h.label : h.label.map((p) => p.value).join('')).trim());
 }
 
+/** The hover text on a line of a cell (markdown, with the command links). */
+async function hoverText(cell: vscode.NotebookCell, line: number): Promise<string> {
+  const hovers = (await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', cell.document.uri, new vscode.Position(line, 2))) ?? [];
+  return hovers.flatMap((h) => h.contents.map((c) => (typeof c === 'string' ? c : c.value))).join('\n');
+}
+
+const buttonsRunbook = (): string => `# Buttons\n\n\`\`\`${LANG}\n${say('one')}\n${say('two')}\n${say('three')}\n\`\`\`\n\n\`\`\`${LANG}\n${say('alone')}\n\`\`\`\n`;
+
 export const tests: Test[] = [
   {
-    name: 'line buttons: ▶ ☐ in front of each command; Run Checked Lines runs only the checked ones',
+    name: 'line buttons (hover, the default): ▶ Run line · ☐ Check in a hover, ☑ in the margin, Run N checked lines under the cell',
     fn: async () => {
-      const uri = writeFile('buttons.md', `# Buttons\n\n\`\`\`${LANG}\n${say('one')}\n${say('two')}\n${say('three')}\n\`\`\`\n\n\`\`\`${LANG}\n${say('alone')}\n\`\`\`\n`);
+      const uri = writeFile('hover-buttons.md', buttonsRunbook());
+      try {
+        const editor = await openRunbook(uri);
+        const [cell, single] = [editor.notebook.cellAt(1), editor.notebook.cellAt(2)];
+        const docUri = cell.document.uri.toString();
+        assert.deepEqual(await hintLabels(cell), [], 'no inlay hints in hover mode');
+        const hover = await hoverText(cell, 1);
+        assert.match(hover, /\[▶ Run line 2\]\(command:mdRunbook\.runLineAt\?/);
+        assert.match(hover, /\[☐ Check\]\(command:mdRunbook\.toggleLineCheck\?/);
+        assert.doesNotMatch(await hoverText(single, 0), /Run line/, 'no buttons in a one-command cell');
+        assert.deepEqual(await vscode.commands.executeCommand('mdRunbook._lineStatus', docUri), []);
+
+        await vscode.commands.executeCommand('mdRunbook.toggleLineCheck', docUri, 0);
+        await vscode.commands.executeCommand('mdRunbook.toggleLineCheck', docUri, 2);
+        assert.match(await hoverText(cell, 0), /☑ Uncheck/);
+        assert.deepEqual(await vscode.commands.executeCommand('mdRunbook._checkMarks', docUri), [0, 2]);
+        assert.deepEqual(await vscode.commands.executeCommand('mdRunbook._lineStatus', docUri), ['$(play) Run 2 checked lines']);
+
+        // What the status line item runs (it passes the cell's URI).
+        void vscode.commands.executeCommand('mdRunbook.runCheckedLines', docUri);
+        assert.equal(await waitForRun(cell), true, outputText(cell));
+        assert.match(outputText(cell), /one[\s\S]*three/);
+        assert.doesNotMatch(outputText(cell), /two/);
+
+        await setConfig('lines.buttons', 'off');
+        assert.equal(await hoverText(cell, 1), '', 'no hover with lines.buttons off');
+        assert.deepEqual(await hintLabels(cell), []);
+        assert.deepEqual(await vscode.commands.executeCommand('mdRunbook._checkMarks', docUri), []);
+      } finally {
+        await setConfig('lines.buttons', undefined);
+        await closeAll();
+      }
+    },
+  },
+  {
+    name: 'line buttons (inline): ▶ ☐ in front of each command; Run Checked Lines runs only the checked ones',
+    fn: async () => {
+      const uri = writeFile('buttons.md', buttonsRunbook());
+      await setConfig('lines.buttons', 'inline');
       try {
         const editor = await openRunbook(uri);
         const [cell, single] = [editor.notebook.cellAt(1), editor.notebook.cellAt(2)];
@@ -55,6 +101,7 @@ export const tests: Test[] = [
         assert.match(outputText(cell), /two/);
         assert.match(outputText(cell), /lines 2\b/);
       } finally {
+        await setConfig('lines.buttons', undefined);
         await closeAll();
       }
     },

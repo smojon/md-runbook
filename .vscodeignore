@@ -2,6 +2,7 @@
 !out/dist/extension.js
 !out/webview/index.js
 !images/icon.png
+!images/line-checked.svg
 !package.json
 !README.md
 !CHANGELOG.md

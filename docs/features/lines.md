@@ -2,8 +2,10 @@
 
 A cell normally runs as one script. You can also run its lines separately:
 
-- **`▶ ☐` in front of each command** (in cells with two or more): `▶` runs that command, `☐`
-  checks it for **Run Checked Lines**.
+- **Hover a command** (in cells with two or more): `▶ Run line 2 · ☐ Check` appears. `▶` runs
+  that command, `☐` checks it for **Run Checked Lines**; a plain click does it. Checked lines get
+  a ☑ in the margin, and **Run 2 checked lines** appears on the cell's status line, under the
+  cell.
 - **The dropdown next to the cell's run button:** **Run Lines One by One**, **Step Through
   Lines**; **Run Checked Lines** and **Uncheck All Lines** when lines are checked; **Run
   Selection** and **Step Through from Selection** when text is selected in the cell.
@@ -26,8 +28,16 @@ A cell normally runs as one script. You can also run its lines separately:
 When not every line of the cell ran, the output is saved with `lines=` and the cell lines that
 ran: `lines=3`, `lines=2-4`, or `lines=1,3` for checked lines that aren't next to each other.
 
-The `▶ ☐` buttons are VS Code *inlay hints* (the only clickable thing an extension can put inside
-code): they need `editor.inlayHints.enabled` on, and `mdRunbook.lines.buttons` turns them off.
+`mdRunbook.lines.buttons` chooses where the buttons are:
+
+| Value | Buttons |
+|---|---|
+| `hover` (default) | In a hover on the command, a plain click. Nothing in the code until you hover. |
+| `inline` | `▶ ☐` always in front of each command. They are VS Code *inlay hints*, which VS Code runs on `Ctrl+click` (`Cmd+click` on macOS) only, and which need `editor.inlayHints.enabled` on. |
+| `off` | None. The dropdown, the right-click menu and `Ctrl+Alt+Enter` still run lines. |
+
+VS Code doesn't let an extension put clickable buttons in the margin or next to the cell's run
+button, so the hover is the closest a plain-click button can get to the line.
 
 The output shows each line before its own output (`$ ls -la` in bash, `PS> Get-Date` in PowerShell,
 `> dir` in cmd), so the saved output is a readable record of what ran:

@@ -901,9 +901,19 @@
             "order": 10
           },
           "mdRunbook.lines.buttons": {
-            "type": "boolean",
-            "default": true,
-            "markdownDescription": "Show `▶ ☐` in front of each command of a code cell with two or more commands: ▶ runs that command, ☐ checks it for **Run Checked Lines**. They are inlay hints, so `editor.inlayHints.enabled` must be on.",
+            "type": "string",
+            "enum": [
+              "hover",
+              "inline",
+              "off"
+            ],
+            "enumDescriptions": [
+              "Rest the mouse on a command: `▶ Run line · ☐ Check` shows in a hover, a plain click runs or checks it. Checked lines get a ☑ in the margin, and the cell's status line has **Run N checked lines**.",
+              "`▶ ☐` always shown in front of each command (VS Code inlay hints: Ctrl+click, Cmd+click on macOS; `editor.inlayHints.enabled` must be on).",
+              "No line buttons. The cell's dropdown, the right-click menu and `Ctrl+Alt+Enter` still run lines."
+            ],
+            "default": "hover",
+            "markdownDescription": "Buttons for each command of a code cell with two or more commands: ▶ runs that command, ☐ checks it for **Run Checked Lines**.",
             "order": 11
           },
           "mdRunbook.lines.breakpoints": {

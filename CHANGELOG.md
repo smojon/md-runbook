@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Line buttons on hover, plain click:** rest the mouse on a command of a cell (with two or
+  more) and `▶ Run line 2 · ☐ Check` appears in a hover. A plain click runs or checks it (the
+  inline `▶ ☐` needed Ctrl+click). Checked lines get a ☑ in the margin, and the cell's status
+  line has **Run 2 checked lines**, one click to run them.
+- `mdRunbook.lines.buttons` is now `hover` (default), `inline` (the `▶ ☐` in front of each
+  command, as in 0.3.2 to 0.4.0) or `off`. An earlier `true` still means inline, `false` off.
+
 ## 0.4.0
 
 - **Regular expressions** in `expect=`, `expect-not=` and `capture=NAME:/…/` now use RE2 syntax,
