@@ -2,10 +2,10 @@
 
 A cell normally runs as one script. You can also run its lines separately:
 
-- **Hover a command** (in cells with two or more): `▶ Run line 2 · ☐ Check` appears. `▶` runs
-  that command, `☐` checks it for **Run Checked Lines**; a plain click does it. Checked lines get
-  a ☑ in the margin, and **Run 2 checked lines** appears on the cell's status line, under the
-  cell.
+- **Hover a command** (in cells with two or more) for its buttons and what you should know
+  before running it (see [below](#the-line-hover)); a plain click on a button does it. Checked
+  lines get a ☑ in the margin, and **Run 2 checked lines** appears on the cell's status line,
+  under the cell.
 - **The dropdown next to the cell's run button:** **Run Lines One by One**, **Step Through
   Lines**; **Run Checked Lines** and **Uncheck All Lines** when lines are checked; **Run
   Selection** and **Step Through from Selection** when text is selected in the cell.
@@ -28,17 +28,6 @@ A cell normally runs as one script. You can also run its lines separately:
 When not every line of the cell ran, the output is saved with `lines=` and the cell lines that
 ran: `lines=3`, `lines=2-4`, or `lines=1,3` for checked lines that aren't next to each other.
 
-`mdRunbook.lines.buttons` chooses where the buttons are:
-
-| Value | Buttons |
-|---|---|
-| `hover` (default) | In a hover on the command, a plain click. Nothing in the code until you hover. |
-| `inline` | `▶ ☐` always in front of each command. They are VS Code *inlay hints*, which VS Code runs on `Ctrl+click` (`Cmd+click` on macOS) only, and which need `editor.inlayHints.enabled` on. |
-| `off` | None. The dropdown, the right-click menu and `Ctrl+Alt+Enter` still run lines. |
-
-VS Code doesn't let an extension put clickable buttons in the margin or next to the cell's run
-button, so the hover is the closest a plain-click button can get to the line.
-
 The output shows each line before its own output (`$ ls -la` in bash, `PS> Get-Date` in PowerShell,
 `> dir` in cmd), so the saved output is a readable record of what ran:
 
@@ -60,6 +49,45 @@ web-7c9d…     1/1     Running   0          3d
 
 To try it, open [`examples/sample.runbook.md`](../../examples/sample.runbook.md) (section 13) or
 run **md-runbook: Open Sample Runbook**.
+
+## The line hover
+
+Rest the mouse on a command for a moment:
+
+```text
+▶ Run line 2 · ⏩ Run from here (2-4) · ⏯ Step from here
+☐ Check · ● Breakpoint · ⧉ Copy with values · ✦ Explain
+───────────────────────────────────────────────
+⚠ Asks before running: matches delete
+→ cluster: prod-eu · namespace: web (last known)
+${param:ns} = prod
+${out:POD} = no value yet: run the cell with capture=POD first
+```
+
+| | |
+|---|---|
+| **▶ Run line** | Runs only that command. |
+| **⏩ Run from here** / **⏯ Step from here** | Runs that command and the ones after it, straight through or pausing before each (`F10`, `F5`, `Shift+F5`). Not on the last command. |
+| **☐ Check** | Checks it for **Run Checked Lines** (☑ Uncheck when checked). |
+| **● Breakpoint** | Sets or removes a breakpoint on it, as a click in the margin does. Not with `mdRunbook.lines.breakpoints` off. |
+| **⧉ Copy with values** | Copies the command with the current `${param:…}`, `${out:…}` and `${input:…}` values filled in, to paste into a terminal. `${secret:…}`, secret inputs and values captured as secret stay as references. Without references it is **⧉ Copy**. |
+| **✦ Explain** | Asks the AI what the command does; the answer opens beside. Only with `mdRunbook.ai.provider` set, and it asks before sending, like **Explain Output**. |
+| **⚠ Asks before running** | The command matches `mdRunbook.execution.confirmPatterns` (or every run asks), so running it will ask first. |
+| **→ context** | Where it will run: the last values of `mdRunbook.output.recordContext` (cluster, server, …). Only when that is set. |
+| **`${…}` values** | The value each reference will have, or why there is none yet. Secret values are never shown (••••). |
+
+The hover only reads what md-runbook already knows: it never asks for a value or runs anything.
+
+`mdRunbook.lines.buttons` chooses where the buttons are:
+
+| Value | Buttons |
+|---|---|
+| `hover` (default) | In a hover on the command, a plain click. Nothing in the code until you hover. |
+| `inline` | `▶ ☐` always in front of each command. They are VS Code *inlay hints*, which VS Code runs on `Ctrl+click` (`Cmd+click` on macOS) only, and which need `editor.inlayHints.enabled` on. |
+| `off` | None. The dropdown, the right-click menu and `Ctrl+Alt+Enter` still run lines. |
+
+VS Code doesn't let an extension put clickable buttons in the margin or next to the cell's run
+button, so the hover is the closest a plain-click button can get to the line.
 
 ## Step Through
 

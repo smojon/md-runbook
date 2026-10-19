@@ -106,6 +106,11 @@ class ContextRecorder implements CellPreparer, vscode.Disposable {
     this.item.show();
   }
 
+  /** The last known context of a runbook (no command runs for it). */
+  known(notebook: vscode.NotebookDocument): Record<string, string> | undefined {
+    return Object.keys(recordContextCommands()).length > 0 ? this.last.get(notebook.uri.toString()) : undefined;
+  }
+
   /** After a run, the recorded attributes are the freshest values. */
   noteRun(notebook: vscode.NotebookDocument, attrs: Record<string, string>): void {
     const picked = Object.keys(recordContextCommands()).filter((k) => k in attrs);
@@ -179,7 +184,22 @@ const confirmPreparer: CellPreparer = {
   },
 };
 
-export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPipeline): { final: CellPreparer } {
+/** What a run of `source` in the cell would ask first, as `confirmationFor` (no message on bad patterns). */
+function confirmationOf(cell: vscode.NotebookCell, source: string): string | undefined {
+  const c = cfg();
+  const { regexes } = compileConfirmPatterns(c.get<string[]>('execution.confirmPatterns', DEFAULT_CONFIRM_PATTERNS));
+  return confirmationFor(source, c.get<ConfirmMode>('execution.confirm', 'patterns'), regexes, cellConfirmOption(infoOf(cell)));
+}
+
+export interface SafetyInfo {
+  final: CellPreparer;
+  /** undefined if running `source` in the cell won't ask; else the risky match ('' when it always asks). */
+  confirmation(cell: vscode.NotebookCell, source: string): string | undefined;
+  /** The last known context (cluster, ...) of a runbook, with `output.recordContext` set. */
+  context(notebook: vscode.NotebookDocument): Record<string, string> | undefined;
+}
+
+export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPipeline): SafetyInfo {
   const recorder = new ContextRecorder();
   // Order matters: options can skip the cell; the confirmation (when no context is recorded) comes
   // before secrets and inputs are asked for. `final` must be registered after every preparer that
@@ -208,5 +228,5 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
     }),
   );
   recorder.refresh();
-  return { final };
+  return { final, confirmation: confirmationOf, context: (nb) => recorder.known(nb) };
 }

@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import { isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
 import type { Captured } from '@md-runbook/core/checks';
 import { proposalOf } from '@md-runbook/core/proposal';
-import { RunbookParam, VAR_NAME_RE, dotenvSecrets, findRefs, parseDotenv, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
+import { RefKind, RunbookParam, VAR_NAME_RE, dotenvSecrets, findRefs, parseDotenv, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { META_KEY } from './outputs';
 import { CellPlan, PrepareContext, RunPipeline } from './pipeline';
 import { SECTION } from './config';
@@ -225,6 +225,45 @@ class SecretsFeature {
     }
   }
 
+  /**
+   * What each `${…}` reference in `source` stands for now, without asking for anything: the
+   * value, or why there is none yet. Secret values are never shown or copied.
+   */
+  peek(nb: vscode.NotebookDocument, source: string): RefValue[] {
+    let refs;
+    try {
+      refs = findRefs(source);
+    } catch {
+      return []; // a name used as two kinds: the run reports it
+    }
+    const known = (map: Map<string, Map<string, string>>, name: string): string | undefined => map.get(nb.uri.toString())?.get(name);
+    return refs.map((ref): RefValue => {
+      const r = { kind: ref.kind, name: ref.name };
+      switch (ref.kind) {
+        case 'secret':
+          return { ...r, secret: true, shown: this.names().includes(ref.name) ? undefined : 'not set: asked when it runs' };
+        case 'input': {
+          const v = known(this.inputs, ref.name);
+          if (v === undefined) return { ...r, secret: ref.secret, shown: 'asked when it runs' };
+          return ref.secret ? { ...r, secret: true } : { ...r, secret: false, value: v };
+        }
+        case 'param': {
+          const v = known(this.params, ref.name);
+          if (v !== undefined) return { ...r, secret: false, value: v };
+          const def = declaredParams(nb).find((p) => p.name === ref.name)?.default;
+          if (def !== undefined && vscode.workspace.getConfiguration(SECTION).get<boolean>('params.useDefaults', false)) return { ...r, secret: false, value: def };
+          return { ...r, secret: false, shown: def === undefined ? 'asked when it runs' : `asked when it runs (default ${def})` };
+        }
+        case 'out': {
+          const c = this.outs.get(nb.uri.toString())?.get(ref.name);
+          if (!c) return { ...r, secret: false, shown: `no value yet: run the cell with capture=${ref.name} first` };
+          if (c.secret) return { ...r, secret: true };
+          return { ...r, secret: false, value: c.value, ...(c.fromAssistant ? { note: 'captured by an assistant cell' } : {}) };
+        }
+      }
+    });
+  }
+
   forget(nb: vscode.NotebookDocument): void {
     this.inputs.delete(nb.uri.toString());
     this.params.delete(nb.uri.toString());
@@ -291,12 +330,30 @@ class SecretsFeature {
 
 const ALLOWED_KEY = 'mdRunbook.allowedSecrets';
 
+/** A `${kind:name}` reference as it stands now (see `peek`). */
+export interface RefValue {
+  kind: RefKind;
+  name: string;
+  /** Never shown or copied. */
+  secret: boolean;
+  /** The value a run would use now (never set for a secret). */
+  value?: string;
+  /** Why there is no value yet, e.g. "asked when it runs". */
+  shown?: string;
+  note?: string;
+}
+
+export interface SecretsInfo {
+  /** The references in `source` and their current values, without asking for anything. */
+  values(notebook: vscode.NotebookDocument, source: string): RefValue[];
+}
+
 /** Test-only helpers are registered only under the extension test runner (or the test harness). */
 export function isTestMode(context: vscode.ExtensionContext): boolean {
   return context.extensionMode === vscode.ExtensionMode.Test || process.env.MD_RUNBOOK_TEST === '1';
 }
 
-export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunPipeline): void {
+export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunPipeline): SecretsInfo {
   const f = new SecretsFeature(context);
   pipeline.preparers.push(f);
   pipeline.observers.push({
@@ -328,4 +385,5 @@ export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunP
       if (nb) f.forget(nb);
     }),
   );
+  return { values: (nb, source) => f.peek(nb, source) };
 }

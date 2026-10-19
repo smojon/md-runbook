@@ -408,6 +408,31 @@
         "title": "Step Through from Selection",
         "category": "md-runbook",
         "icon": "$(debug-step-into)"
+      },
+      {
+        "command": "mdRunbook.ai.explainLine",
+        "title": "Explain This Line",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.runFromLineAt",
+        "title": "Run from This Line",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.stepFromLineAt",
+        "title": "Step Through from This Line",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.toggleBreakpointAt",
+        "title": "Toggle Breakpoint on This Line",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.copyLineAt",
+        "title": "Copy Line with Values",
+        "category": "md-runbook"
       }
     ],
     "menus": {
@@ -686,6 +711,26 @@
         },
         {
           "command": "mdRunbook.stepThroughFromSelection",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.ai.explainLine",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.runFromLineAt",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.stepFromLineAt",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.toggleBreakpointAt",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.copyLineAt",
           "when": "false"
         }
       ],

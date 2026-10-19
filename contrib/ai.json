@@ -27,6 +27,11 @@
       "command": "mdRunbook.ai.clearAnthropicKey",
       "title": "Clear Anthropic API Key",
       "category": "md-runbook"
+    },
+    {
+      "command": "mdRunbook.ai.explainLine",
+      "title": "Explain This Line",
+      "category": "md-runbook"
     }
   ],
   "menus": {
@@ -61,6 +66,10 @@
       {
         "command": "mdRunbook.ai.summarizeIncident",
         "when": "notebookType == md-runbook"
+      },
+      {
+        "command": "mdRunbook.ai.explainLine",
+        "when": "false"
       }
     ]
   },

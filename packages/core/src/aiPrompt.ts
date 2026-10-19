@@ -42,6 +42,17 @@ export function explainOutputPrompt(runbook: string, cellLabel: string): AiPromp
   );
 }
 
+/**
+ * Explain one command of the last code block. The command is named by its line only: its text
+ * reaches the model through `runbook`, redacted and pseudonymized like the rest.
+ */
+export function explainLinePrompt(runbook: string, cellLabel: string, lines: string): AiPrompt {
+  return wrap(
+    runbook,
+    `Task: explain the command on line ${lines} of the LAST code block above (${cellLabel}). Say what it does, whether it only reads or also changes something (and what), what can go wrong, and what output to expect. Be brief. Do not propose other commands unless one is clearly safer.`,
+  );
+}
+
 /** Suggest up to `max` next diagnostic commands as proposed code blocks. */
 export function suggestNextStepsPrompt(runbook: string, max: number, upToCell?: string): AiPrompt {
   const n = Math.max(1, Math.floor(max));

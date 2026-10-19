@@ -69,7 +69,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // cells never prompt for secrets.
   const approval = registerApproval(context, pipeline);
   const safety = registerSafety(context, pipeline);
-  registerSecrets(context, pipeline);
+  const secrets = registerSecrets(context, pipeline);
   registerHistory(context, pipeline);
   registerSessions(context, pipeline);
   registerTerminal(context, pipeline);
@@ -80,7 +80,7 @@ export function activate(context: vscode.ExtensionContext): void {
   pipeline.preparers.push(safety.final);
   const controller = new RunbookController(pipeline);
   registerProgress(context, pipeline, controller);
-  registerLineRuns(context, controller);
+  registerLineRuns(context, controller, { safety, secrets });
   registerAutoSave(pipeline);
   registerCodeLens(context);
   registerReport(context);

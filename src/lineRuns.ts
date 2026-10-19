@@ -3,11 +3,13 @@
  * lines one by one, or step through them, pausing before each line like a debugger. Lines are
  * commands as `core/steps.ts` finds them; the controller runs them in one shell.
  *
- * In cells with two or more commands, each command has `▶ Run line · ☐ Check` buttons: ▶ runs
- * that command, ☐ / ☑ checks it for Run Checked Lines. By default they are in a hover on the line
- * (links in a hover take a plain click), checked lines get a ☑ in the margin, and the cell's
- * status line has "Run N checked lines". With `lines.buttons: inline` they are `▶ ☐` in front of
- * each command instead (inlay hints: always shown, but VS Code runs them on Ctrl+click only).
+ * In cells with two or more commands, each command has buttons. By default they are in a hover on
+ * the line (links in a hover take a plain click): Run line, Run / Step from here, Check, Breakpoint,
+ * Copy with values, Explain (with an AI provider set), then what the line would ask before running,
+ * the last known target context, and the current values of its `${…}` references. Checked lines
+ * get a ☑ in the margin, and the cell's status line has "Run N checked lines". With
+ * `lines.buttons: inline` they are `▶ ☐` in front of each command instead (inlay hints: always
+ * shown, but VS Code runs them on Ctrl+click only).
  *
  * Breakpoints (VS Code's red dots) in a cell make its runs pause before those lines: a normal run
  * of such a cell becomes a line run.
@@ -19,11 +21,19 @@ import { SECTION } from './config';
 import { LineStep, formatLineRange, formatLineRanges, splitSteps, stepAtLine } from '@md-runbook/core/steps';
 import { LineRun, RunbookController } from './controller';
 import { isCell, runbookEditor, selectRunbookKernel } from './progress';
+import type { SafetyInfo } from './safety';
+import type { SecretsInfo } from './secrets';
 import { NOTEBOOK_TYPE } from './serializer';
 
-type Mode = 'selection' | 'each' | 'step' | 'stepFrom' | 'at' | 'checked';
+type Mode = 'selection' | 'each' | 'step' | 'from' | 'stepFrom' | 'at' | 'checked';
 
-/** For `at`: the line (0-based) whose command runs; for `checked`: the checked commands' texts. */
+/** What other features know about a line, for its hover. */
+export interface LineInfo {
+  safety: Pick<SafetyInfo, 'confirmation' | 'context'>;
+  secrets: SecretsInfo;
+}
+
+/** For `at`, `from`, `stepFrom`: the line (0-based) to run or start at; for `checked`: the checked commands' texts. */
 interface PlanOptions {
   line?: number;
   checked?: ReadonlySet<string>;
@@ -56,9 +66,30 @@ function buttonsMode(): ButtonsMode {
   return 'hover';
 }
 
+const breakpointsOn = (): boolean => vscode.workspace.getConfiguration(SECTION).get<boolean>('lines.breakpoints', true);
+
+/** The breakpoints (enabled or not) on lines `start`..`end` of a cell. */
+function breakpointsIn(uri: vscode.Uri, start: number, end: number): vscode.SourceBreakpoint[] {
+  const key = uri.toString();
+  return vscode.debug.breakpoints.filter(
+    (b): b is vscode.SourceBreakpoint =>
+      b instanceof vscode.SourceBreakpoint && b.location.uri.toString() === key && b.location.range.start.line >= start && b.location.range.start.line <= end,
+  );
+}
+
+/** Inline code for the hover: one line, at most 60 characters. */
+function code(s: string): string {
+  const one = s.replace(/\r?\n/g, ' ⏎ ');
+  const short = one.length > 60 ? `${one.slice(0, 59)}…` : one;
+  const ticks = '`'.repeat(Math.max(0, ...[...short.matchAll(/`+/g)].map((m) => m[0].length)) + 1);
+  return `${ticks} ${short} ${ticks}`;
+}
+
+const escapeMd = (s: string): string => s.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
+
 /** Lines (0-based) of the cell that have an enabled breakpoint (none with `lines.breakpoints` off). */
 function breakpointLines(cell: vscode.NotebookCell): Set<number> {
-  if (!vscode.workspace.getConfiguration(SECTION).get<boolean>('lines.breakpoints', true)) return new Set();
+  if (!breakpointsOn()) return new Set();
   const uri = cell.document.uri.toString();
   return new Set(
     vscode.debug.breakpoints
@@ -112,16 +143,17 @@ function planLineRun(
   }
 
   const sel = editor?.selection;
-  if (!sel) return 'put the cursor on a line of the cell, or select the text to run.';
-  if (mode === 'stepFrom') {
-    // From the command on the cursor line (the selection's first line), or the next one after a
-    // blank or comment line.
-    const line = sel.isEmpty ? sel.active.line : sel.start.line;
+  if (mode === 'from' || mode === 'stepFrom') {
+    // From the given line or the cursor line (the selection's first line): its command, or the
+    // next one after a blank or comment line.
+    const line = opts.line ?? (sel && (sel.isEmpty ? sel.active.line : sel.start.line));
+    if (line === undefined) return 'put the cursor on a line of the cell, or select the text to run.';
     const from = all.findIndex((s) => s.end >= line);
     if (from < 0) return `there is no command on or after line ${line + 1}.`;
     const steps = all.slice(from);
     return { source: steps.map((s) => s.text).join('\n'), steps, coversCell: from === 0 };
   }
+  if (!sel) return 'put the cursor on a line of the cell, or select the text to run.';
   if (sel.isEmpty) {
     const step = stepAtLine(all, sel.active.line);
     if (!step) return `line ${sel.active.line + 1} has no command (it is blank or a comment).`;
@@ -138,7 +170,7 @@ function planLineRun(
   return { source: text, steps: [step], coversCell };
 }
 
-export function registerLineRuns(context: vscode.ExtensionContext, controller: RunbookController): void {
+export function registerLineRuns(context: vscode.ExtensionContext, controller: RunbookController, info: LineInfo): void {
   const paused = new Map<string, Paused>();
   const running = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
@@ -309,22 +341,97 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
     },
   };
 
-  /** `▶ Run line 2 · ☐ Check` on the line under the mouse: command links, so a plain click runs them. */
+  const aiOn = (): boolean => ['vscode', 'anthropic'].includes(vscode.workspace.getConfiguration(SECTION).get<string>('ai.provider', 'off'));
+  const HOVER_COMMANDS = [
+    'mdRunbook.runLineAt',
+    'mdRunbook.runFromLineAt',
+    'mdRunbook.stepFromLineAt',
+    'mdRunbook.toggleLineCheck',
+    'mdRunbook.toggleBreakpointAt',
+    'mdRunbook.copyLineAt',
+    'mdRunbook.ai.explainLine',
+  ];
+
+  /**
+   * The buttons of the command under the mouse (command links: a plain click runs them), then
+   * what it would ask before running, where it runs, and its `${…}` values. Nothing is asked for
+   * or run to build it.
+   */
   const hover: vscode.HoverProvider = {
     provideHover(document, position) {
       if (buttonsMode() !== 'hover') return undefined;
-      const step = stepAtLine(buttonSteps(document), position.line);
-      if (!step) return undefined;
+      const steps = buttonSteps(document);
+      const step = stepAtLine(steps, position.line);
+      const cell = step && cellByUri(document.uri.toString());
+      if (!step || !cell) return undefined;
       const uri = document.uri.toString();
+      const last = steps[steps.length - 1]!;
+      const lines = formatLineRange(step.start, step.end);
+      const link = (label: string, command: string, tip: string, args: unknown[] = [uri, step.start]): string =>
+        `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))} "${tip}")`;
+
+      const runs = [link(`▶ Run line ${lines}`, 'mdRunbook.runLineAt', 'Run only this command')];
+      if (step !== last) {
+        runs.push(link(`⏩ Run from here (${formatLineRange(step.start, last.end)})`, 'mdRunbook.runFromLineAt', 'Run this command and the ones after it'));
+        runs.push(link('⏯ Step from here', 'mdRunbook.stepFromLineAt', 'Run this command, then pause before each next one (F10 next, F5 continue)'));
+      }
       const on = checks.get(uri)?.has(step.text) ?? false;
-      const args = encodeURIComponent(JSON.stringify([uri, step.start]));
-      const md = new vscode.MarkdownString(
-        `[▶ Run line ${formatLineRange(step.start, step.end)}](command:mdRunbook.runLineAt?${args} "Run only this command") · ` +
-          `[${on ? '☑ Uncheck' : '☐ Check'}](command:mdRunbook.toggleLineCheck?${args} "${on ? 'Uncheck' : 'Check'} for Run Checked Lines")`,
+      const tools = [link(on ? '☑ Uncheck' : '☐ Check', 'mdRunbook.toggleLineCheck', `${on ? 'Uncheck' : 'Check'} for Run Checked Lines`)];
+      if (breakpointsOn()) {
+        const has = breakpointsIn(document.uri, step.start, step.end).length > 0;
+        tools.push(link(has ? '● Remove breakpoint' : '● Breakpoint', 'mdRunbook.toggleBreakpointAt', has ? 'Remove the breakpoint' : 'Pause before this command when the cell runs'));
+      }
+      const values = info.secrets.values(cell.notebook, step.text);
+      tools.push(
+        values.length > 0
+          ? link('⧉ Copy with values', 'mdRunbook.copyLineAt', 'Copy with the values filled in; secrets stay as references')
+          : link('⧉ Copy', 'mdRunbook.copyLineAt', 'Copy this command'),
       );
-      md.isTrusted = { enabledCommands: ['mdRunbook.runLineAt', 'mdRunbook.toggleLineCheck'] };
+      if (aiOn()) tools.push(link('✦ Explain', 'mdRunbook.ai.explainLine', 'Ask the AI what this command does (asks before sending)', [uri, step.start, lines]));
+
+      const facts: string[] = [];
+      const ask = info.safety.confirmation(cell, step.text);
+      if (ask !== undefined) facts.push(`⚠ Asks before running${ask.trim() ? `: matches ${code(ask.trim())}` : ''}`);
+      const where = info.safety.context(cell.notebook);
+      if (where && Object.keys(where).length > 0) facts.push(`→ ${Object.entries(where).map(([k, v]) => `${escapeMd(k)}: ${code(v)}`).join(' · ')} (last known)`);
+      for (const v of values) {
+        const now = v.value !== undefined ? code(v.value) : v.shown ? `*${escapeMd(v.shown)}*` : '•••• (secret)';
+        facts.push(`${code(`\${${v.kind}:${v.name}}`)} = ${now}${v.note ? ` *(${escapeMd(v.note)})*` : ''}`);
+      }
+
+      const md = new vscode.MarkdownString([runs.join(' · '), tools.join(' · '), ...(facts.length > 0 ? ['---', ...facts] : [])].join('\n\n'));
+      md.isTrusted = { enabledCommands: HOVER_COMMANDS };
       return new vscode.Hover(md, new vscode.Range(step.start, 0, step.end, document.lineAt(step.end).text.length));
     },
+  };
+
+  /** The command at a line, with its values filled in (secrets stay `${secret:…}`), on the clipboard. */
+  const copyLine = async (uri: unknown, line: unknown): Promise<string | undefined> => {
+    const cell = cellByUri(uri);
+    const step = cell && stepAtLine(buttonSteps(cell.document), Number(line));
+    if (!cell || !step) return undefined;
+    const values = new Map(info.secrets.values(cell.notebook, step.text).map((v) => [`${v.kind}:${v.name}`, v.value]));
+    const left = new Set<string>();
+    const text = step.text.replace(/\$\{(secret|input|param|out):([A-Za-z_][A-Za-z0-9_]*)(:secret)?\}/g, (whole: string, kind: string, name: string) => {
+      const v = values.get(`${kind}:${name}`);
+      if (v !== undefined) return v;
+      left.add(whole);
+      return whole;
+    });
+    await vscode.env.clipboard.writeText(text);
+    const n = formatLineRange(step.start, step.end);
+    vscode.window.setStatusBarMessage(`md-runbook: copied line ${n}${left.size > 0 ? `, left as is: ${[...left].join(', ')}` : ''}`, 5000);
+    return text;
+  };
+
+  const toggleBreakpoint = (uri: unknown, line: unknown): void => {
+    const cell = cellByUri(uri);
+    if (!cell || !breakpointsOn()) return;
+    const at = Number(line);
+    const step = stepAtLine(buttonSteps(cell.document), at) ?? { start: at, end: at };
+    const existing = breakpointsIn(cell.document.uri, step.start, step.end);
+    if (existing.length > 0) vscode.debug.removeBreakpoints(existing);
+    else vscode.debug.addBreakpoints([new vscode.SourceBreakpoint(new vscode.Location(cell.document.uri, new vscode.Position(step.start, 0)))]);
   };
 
   const paintChecks = (editors: readonly vscode.TextEditor[] = vscode.window.visibleTextEditors): void => {
@@ -390,6 +497,10 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
       if (checks.get(e.document.uri.toString())?.size) hintsChanged.fire();
     }),
     vscode.commands.registerCommand('mdRunbook.runLineAt', (uri: unknown, line: unknown) => run('at', String(uri), Number(line))),
+    vscode.commands.registerCommand('mdRunbook.runFromLineAt', (uri: unknown, line: unknown) => run('from', String(uri), Number(line))),
+    vscode.commands.registerCommand('mdRunbook.stepFromLineAt', (uri: unknown, line: unknown) => run('stepFrom', String(uri), Number(line))),
+    vscode.commands.registerCommand('mdRunbook.toggleBreakpointAt', toggleBreakpoint),
+    vscode.commands.registerCommand('mdRunbook.copyLineAt', copyLine),
     vscode.commands.registerCommand('mdRunbook.toggleLineCheck', (uri: unknown, line: unknown) => {
       const cell = cellByUri(uri);
       const kind = cell && shellKindForLanguage(cell.document.languageId);
