@@ -1,3 +1,5 @@
-// Browsers have no global Buffer; the SSH library uses one. esbuild injects this wherever
-// `Buffer` is used without an import.
+// Browsers have no global Buffer or process; the SSH library and its stream port use them.
+// esbuild injects these wherever `Buffer` or `process` is used without an import.
 export { Buffer } from 'buffer';
+import process from 'process/browser';
+export { process };

@@ -13,12 +13,18 @@ const dist = (f) => path.join(__dirname, 'dist', f);
 // packages the Node scripts load from node_modules.
 const external = ['node-rsa', 'puppeteer-core', 'ws'];
 
-// The library picks Web Crypto in a browser and never uses Node's modules there, but one of its
-// dependencies (vscode-jsonrpc) loads path/os/net/crypto at startup: give the page empty ones.
-const emptyNodeBuiltins = {
-  name: 'empty-node-builtins',
+// Node modules in the browser bundle. The library picks Web Crypto in a browser and never uses
+// crypto/net there, but it and vscode-jsonrpc load them at startup: those get empty modules.
+// Classes are extended from stream, events and util, so those get their browser ports.
+const browserNodeModules = {
+  name: 'browser-node-modules',
   setup(build) {
-    build.onResolve({ filter: /^(node:)?(crypto|net|stream|util|events|os|path|fs|child_process)$/ }, (a) => ({ path: a.path, namespace: 'empty' }));
+    const ports = { stream: 'readable-stream', events: 'events', util: 'util' };
+    build.onResolve({ filter: /^(node:)?(stream|events|util)$/ }, async (a) => {
+      const port = ports[a.path.replace(/^node:/, '')];
+      return build.resolve(port + '/', { resolveDir: __dirname, kind: a.kind });
+    });
+    build.onResolve({ filter: /^(node:)?(crypto|net|os|path|fs|child_process)$/ }, (a) => ({ path: a.path, namespace: 'empty' }));
     build.onLoad({ filter: /.*/, namespace: 'empty' }, () => ({ contents: 'module.exports = {};', loader: 'js' }));
   },
 };
@@ -39,7 +45,7 @@ const emptyNodeBuiltins = {
     logLevel: 'warning',
     external: ['node-rsa'],
     define: { global: 'globalThis' },
-    plugins: [emptyNodeBuiltins],
+    plugins: [browserNodeModules],
     inject: [src('buffer-shim.ts')],
   });
   fs.writeFileSync(dist('spikeB.html'), '<!doctype html><meta charset="utf-8"><title>md-runbook SSH spike</title><script src="/spikeB.js"></script>\n');
