@@ -9,7 +9,15 @@ import { extname, join, normalize } from 'node:path';
 import { chromium } from 'playwright';
 
 const dist = process.argv[2] ?? 'dist';
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.ico': 'image/x-icon', '.ttf': 'font/ttf' };
+const types = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.ttf': 'font/ttf',
+};
 
 const server = createServer(async (req, res) => {
   const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^([/\\])+/, '');
