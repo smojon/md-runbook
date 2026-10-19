@@ -5,6 +5,7 @@
  */
 
 import { importKey } from '@microsoft/dev-tunnels-ssh-keys';
+import { File, Paths } from 'expo-file-system';
 import React, { useEffect, useState } from 'react';
 import { Platform, ScrollView, Text } from 'react-native';
 import { RemoteShell } from './src/remoteShell';
@@ -43,16 +44,22 @@ async function runSpike(log: (line: string) => void): Promise<boolean> {
   const t2 = Date.now();
   for (let i = 0; i < 10; i++) await shell.run('true');
   check(`10 empty cells in ${Date.now() - t2} ms`, true);
-  // Report through the connection under test: CI (which is the SSH server) reads this file,
-  // since release builds don't show console output on iOS.
-  results.push(ok ? 'PASSED' : 'FAILED');
-  await shell.run(`cat > "$HOME/spike-c-result-${Platform.OS}.txt" <<'__SPIKE_EOF__'\n${results.join('\n')}\n__SPIKE_EOF__`);
   await shell.close();
   return ok;
 }
 
-/** Everything logged, for the result file. */
+/**
+ * Everything logged, also written to Documents/spike-result.txt after each line: iOS release
+ * builds don't show console output, and CI reads the file from the simulator.
+ */
 const results: string[] = [];
+function saveResults(): void {
+  try {
+    new File(Paths.document, 'spike-result.txt').write(results.join('\n') + '\n');
+  } catch (e) {
+    console.log(`SPIKE-C could not write the result file: ${String(e)}`);
+  }
+}
 
 export default function App(): React.JSX.Element {
   const [lines, setLines] = useState<string[]>([]);
@@ -60,6 +67,7 @@ export default function App(): React.JSX.Element {
     const log = (line: string): void => {
       console.log(`SPIKE-C ${line}`);
       results.push(line);
+      saveResults();
       setLines((l) => [...l, line]);
     };
     runSpike(log).then(
