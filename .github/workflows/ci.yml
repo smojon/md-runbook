@@ -18,6 +18,9 @@ jobs:
       - run: npm ci
       # Unit, round-trip, fuzz, redaction and shell smoke tests (pwsh + cmd natively on Windows).
       - run: npm test
+      - name: Lint the example runbooks
+        if: runner.os == 'Linux'
+        run: node out/dist/cli.js lint --strict examples/*.md
       # The command-line runner end to end, through this repository's own GitHub Action.
       - name: Run a runbook with the command line
         uses: ./
