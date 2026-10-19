@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.2
 
 - **Line buttons:** `▶ ☐` in front of each command of a cell (with two or more): `▶` runs that
   command, `☐` checks it, and **Run Checked Lines** runs the checked ones in order
