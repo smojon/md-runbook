@@ -133,6 +133,12 @@ jobs:
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
       - run: npm ci --no-audit --no-fund
+      # CocoaPods' downloads (Hermes and other prebuilt pods), so a stalled server doesn't fail the build.
+      - uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: cocoapods-${{ hashFiles('apps/mobile/package-lock.json') }}
+          restore-keys: cocoapods-
       - name: Build the simulator app (Release)
         run: bash e2e/build-ios.sh "$RUNNER_TEMP/ios"
       - uses: actions/upload-artifact@v7

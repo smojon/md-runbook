@@ -8,7 +8,14 @@ out="$(mkdir -p "$1" && cd "$1" && pwd)"
 cd "$(dirname "$0")/.."
 npx expo prebuild --platform ios --no-install --clean
 cd ios
-pod install
+# Pods download prebuilt binaries (Hermes from repo.reactnative.dev), which sometimes stall:
+# try three times (the workflow also caches CocoaPods' downloads).
+for attempt in 1 2 3; do
+  pod install && break
+  [ "$attempt" = 3 ] && exit 1
+  echo "pod install failed (attempt $attempt); trying again in 20 s"
+  sleep 20
+done
 ws="$(ls -d ./*.xcworkspace | head -1)"
 scheme="$(basename "$ws" .xcworkspace)"
 echo "workspace=$ws scheme=$scheme"
