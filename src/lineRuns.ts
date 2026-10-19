@@ -4,7 +4,7 @@
  * commands as `core/steps.ts` finds them; the controller runs them in one shell.
  *
  * In cells with two or more commands, each command has buttons. By default they are in a hover on
- * the line (links in a hover take a plain click): Run line, Run / Step from here, Check, Breakpoint,
+ * the line (links in a hover take a plain click): Run line, Run until here, Run / Step from here, Check, Breakpoint,
  * Copy with values, Explain (with an AI provider set), then what the line would ask before running,
  * the last known target context, and the current values of its `${…}` references. Checked lines
  * get a ☑ in the margin, and the cell's status line has "Run N checked lines". With
@@ -25,7 +25,7 @@ import type { SafetyInfo } from './safety';
 import type { SecretsInfo } from './secrets';
 import { NOTEBOOK_TYPE } from './serializer';
 
-type Mode = 'selection' | 'each' | 'step' | 'from' | 'stepFrom' | 'at' | 'checked';
+type Mode = 'selection' | 'each' | 'step' | 'from' | 'stepFrom' | 'to' | 'at' | 'checked';
 
 /** What other features know about a line, for its hover. */
 export interface LineInfo {
@@ -33,7 +33,7 @@ export interface LineInfo {
   secrets: SecretsInfo;
 }
 
-/** For `at`, `from`, `stepFrom`: the line (0-based) to run or start at; for `checked`: the checked commands' texts. */
+/** For `at`, `from`, `stepFrom`, `to`: the line (0-based) to run, start at or end at; for `checked`: the checked commands' texts. */
 interface PlanOptions {
   line?: number;
   checked?: ReadonlySet<string>;
@@ -135,6 +135,14 @@ function planLineRun(
     const step = opts.line === undefined ? undefined : stepAtLine(all, opts.line);
     if (!step) return 'that line has no command any more (the cell changed); run it again from its ▶.';
     return { source: step.text, steps: [step], coversCell: all.length === 1 };
+  }
+  if (mode === 'to') {
+    // Up to and including the command on that line (or the last one before it).
+    const to = opts.line === undefined ? -1 : all.findIndex((s) => s.end >= opts.line!);
+    const end = to < 0 ? all.length - 1 : all[to]!.start <= opts.line! ? to : to - 1;
+    if (opts.line === undefined || end < 0) return 'that line has no command any more (the cell changed); hover it again.';
+    const steps = all.slice(0, end + 1);
+    return { source: steps.map((s) => s.text).join('\n'), steps, coversCell: end === all.length - 1 };
   }
   if (mode === 'checked') {
     const steps = all.filter((s) => opts.checked?.has(s.text));
@@ -344,6 +352,7 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
   const aiOn = (): boolean => ['vscode', 'anthropic'].includes(vscode.workspace.getConfiguration(SECTION).get<string>('ai.provider', 'off'));
   const HOVER_COMMANDS = [
     'mdRunbook.runLineAt',
+    'mdRunbook.runToLineAt',
     'mdRunbook.runFromLineAt',
     'mdRunbook.stepFromLineAt',
     'mdRunbook.toggleLineCheck',
@@ -371,6 +380,7 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
         `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))} "${tip}")`;
 
       const runs = [link(`▶ Run line ${lines}`, 'mdRunbook.runLineAt', 'Run only this command')];
+      if (step !== steps[0]) runs.push(link(`⤒ Run until here (${formatLineRange(steps[0]!.start, step.end)})`, 'mdRunbook.runToLineAt', 'Run the commands before this one, then this one'));
       if (step !== last) {
         runs.push(link(`⏩ Run from here (${formatLineRange(step.start, last.end)})`, 'mdRunbook.runFromLineAt', 'Run this command and the ones after it'));
         runs.push(link('⏯ Step from here', 'mdRunbook.stepFromLineAt', 'Run this command, then pause before each next one (F10 next, F5 continue)'));
@@ -497,6 +507,7 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
       if (checks.get(e.document.uri.toString())?.size) hintsChanged.fire();
     }),
     vscode.commands.registerCommand('mdRunbook.runLineAt', (uri: unknown, line: unknown) => run('at', String(uri), Number(line))),
+    vscode.commands.registerCommand('mdRunbook.runToLineAt', (uri: unknown, line: unknown) => run('to', String(uri), Number(line))),
     vscode.commands.registerCommand('mdRunbook.runFromLineAt', (uri: unknown, line: unknown) => run('from', String(uri), Number(line))),
     vscode.commands.registerCommand('mdRunbook.stepFromLineAt', (uri: unknown, line: unknown) => run('stepFrom', String(uri), Number(line))),
     vscode.commands.registerCommand('mdRunbook.toggleBreakpointAt', toggleBreakpoint),

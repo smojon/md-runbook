@@ -55,7 +55,7 @@ run **md-runbook: Open Sample Runbook**.
 Rest the mouse on a command for a moment:
 
 ```text
-▶ Run line 2 · ⏩ Run from here (2-4) · ⏯ Step from here
+▶ Run line 2 · ⤒ Run until here (1-2) · ⏩ Run from here (2-4) · ⏯ Step from here
 ☐ Check · ● Breakpoint · ⧉ Copy with values · ✦ Explain
 ───────────────────────────────────────────────
 ⚠ Asks before running: matches delete
@@ -67,6 +67,7 @@ ${out:POD} = no value yet: run the cell with capture=POD first
 | | |
 |---|---|
 | **▶ Run line** | Runs only that command. |
+| **⤒ Run until here** | Runs the commands before it, then it, in order. Not on the first command. |
 | **⏩ Run from here** / **⏯ Step from here** | Runs that command and the ones after it, straight through or pausing before each (`F10`, `F5`, `Shift+F5`). Not on the last command. |
 | **☐ Check** | Checks it for **Run Checked Lines** (☑ Uncheck when checked). |
 | **● Breakpoint** | Sets or removes a breakpoint on it, as a click in the margin does. Not with `mdRunbook.lines.breakpoints` off. |

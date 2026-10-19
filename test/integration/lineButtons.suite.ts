@@ -55,7 +55,9 @@ export const tests: Test[] = [
         assert.match(first, /\[● Breakpoint\]\(command:mdRunbook\.toggleBreakpointAt\?/);
         assert.match(first, /\[⧉ Copy\]\(command:mdRunbook\.copyLineAt\?/);
         assert.doesNotMatch(first, /Explain/);
+        assert.doesNotMatch(first, /Run until here/, 'nothing before the first line');
         assert.doesNotMatch(await hoverText(cell, 2), /Run from here/, 'nothing after the last line');
+        assert.match(await hoverText(cell, 1), /\[⤒ Run until here \(1-2\)\]\(command:mdRunbook\.runToLineAt\?/);
 
         const bps = (): vscode.Breakpoint[] =>
           vscode.debug.breakpoints.filter((b) => b instanceof vscode.SourceBreakpoint && b.location.uri.toString() === docUri);
@@ -87,6 +89,14 @@ export const tests: Test[] = [
         assert.equal(await waitForRun(cell), true, outputText(cell));
         assert.match(outputText(cell), /one[\s\S]*three/);
         assert.doesNotMatch(outputText(cell), /two/);
+
+        // Run until here, from line 2: lines 1 and 2.
+        void vscode.commands.executeCommand('mdRunbook.runToLineAt', docUri, 1);
+        await new Promise((r) => setTimeout(r, 500));
+        assert.equal(await waitForRun(cell), true, outputText(cell));
+        assert.match(outputText(cell), /one[\s\S]*two/);
+        assert.doesNotMatch(outputText(cell), /three/);
+        assert.match(outputText(cell), /lines 1-2/);
 
         await setConfig('lines.buttons', 'off');
         assert.equal(await hoverText(cell, 1), '', 'no hover with lines.buttons off');

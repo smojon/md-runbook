@@ -433,6 +433,11 @@
         "command": "mdRunbook.copyLineAt",
         "title": "Copy Line with Values",
         "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.runToLineAt",
+        "title": "Run up to This Line",
+        "category": "md-runbook"
       }
     ],
     "menus": {
@@ -731,6 +736,10 @@
         },
         {
           "command": "mdRunbook.copyLineAt",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.runToLineAt",
           "when": "false"
         }
       ],

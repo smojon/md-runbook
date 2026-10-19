@@ -3,8 +3,8 @@
 ## Unreleased
 
 - **Line hover, plain click:** rest the mouse on a command of a cell (with two or more) for
-  **▶ Run line**, **⏩ Run from here**, **⏯ Step from here**, **☐ Check**, **● Breakpoint**,
-  **⧉ Copy with values** and, with an AI provider set, **✦ Explain**. Below the buttons: whether
+  **▶ Run line**, **⤒ Run until here**, **⏩ Run from here**, **⏯ Step from here**, **☐ Check**,
+  **● Breakpoint**, **⧉ Copy with values** and, with an AI provider set, **✦ Explain**. Below the buttons: whether
   it will ask before running (⚠), the last known target context (`output.recordContext`), and the
   current value of each `${param:…}`, `${out:…}`, `${input:…}` (secrets never shown). A plain
   click is enough; the inline `▶ ☐` needed Ctrl+click.
