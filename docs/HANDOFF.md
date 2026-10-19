@@ -4,8 +4,9 @@ State of the project for whoever picks it up next (person or new Claude session)
 
 ## Where things are
 
-- **Released:** 0.1.0, 0.1.1, 0.1.2 and 0.2.0 on the Visual Studio Marketplace (publisher
-  `smojon`) and as GitHub releases with the `.vsix` attached. Not on Open VSX yet.
+- **Released:** 0.1.0 to 0.3.0 as GitHub releases with the `.vsix` attached; the Visual Studio
+  Marketplace (publisher `smojon`) gets each one by a manual upload. Not on Open VSX or npm yet.
+  The GitHub Action is used as `smojon/md-runbook@v<version>` (the release tags).
 - **Branch:** everything is on `main`, which is the default branch. Work happens on short-lived
   `feature/...` branches; CI must pass on all three systems before they are merged.
 - **Code:** `src/core` is pure (no `vscode`; `test/purity.test.ts` checks it), `src/*.ts` is the

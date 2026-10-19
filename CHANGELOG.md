@@ -1,28 +1,31 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
-- **Terminal mode:** a cell no longer waits forever when VS Code's terminal never reports the end
-  of a command (seen occasionally on Linux): it ends a few seconds after the command has written
-  its exit code.
-- **Notifications:** `MD_RUNBOOK_NOTIFY_URL` (or `--notify URL`) posts a summary of a failed run
-  to Slack, Microsoft Teams (Workflows), Discord or Google Chat; `--notify-on always` also on
-  success. `examples/github/scheduled-check.yml` is a ready-made weekday health check.
 - **Checking runbooks:** invalid or unknown cell options, `${out:NAME}` without an earlier
   `capture=NAME`, undeclared `${param:NAME}` and ignored front matter values are underlined
   while you edit (`mdRunbook.lint.enabled`), and `md-runbook lint` checks files in CI, with
   GitHub annotations on pull requests.
-- **GitHub Action:** `uses: smojon/md-runbook@v0.3.0` runs a runbook in a workflow, with the
-  filled-in runbook and HTML, PDF and JUnit reports. It builds the runner from its own source
-  at the version you pin. This repository's CI now runs a runbook with it on Windows, macOS and
-  Linux.
-- **npm package:** the command line is published as `md-runbook` (`npx md-runbook run …`).
 - **Export Report (PDF):** a new command next to Export Report (HTML) prints the report with the
   Chrome, Edge or Chromium already installed (`mdRunbook.report.browserPath` to pick one).
-- **Demo runbook** `examples/screenshots.runbook.md`: a realistic restart runbook that only
-  prints simulated output, for trying line runs, checks, retries and captures.
+- **GitHub Action:** `uses: smojon/md-runbook@v0.3.0` runs a runbook in a workflow and keeps
+  the filled-in runbook and HTML, PDF and JUnit reports. It builds the runner from its own
+  source at the version you pin. This repository's CI runs a runbook with it on Windows, macOS
+  and Linux.
 - **Run from the web:** `examples/github/run-runbook.yml` adds a **Run workflow** button that
   runs a runbook and keeps its results; publishing the report to GitHub Pages is opt-in.
+- **Scheduled checks and notifications:** `examples/github/scheduled-check.yml` is a weekday
+  health check. `MD_RUNBOOK_NOTIFY_URL` (or `--notify URL`) posts a summary of a failed run to
+  Slack, Microsoft Teams (Workflows), Discord or Google Chat; `--notify-on always` also on
+  success.
+- **npm package (prepared):** the command line is packaged for npm as `md-runbook` and will be
+  published with the first release after the npm token is set up. Until then use the GitHub
+  Action, or `node out/dist/cli.js` from a clone.
+- **Terminal mode:** a cell no longer waits forever when VS Code's terminal never reports the end
+  of a command (seen occasionally on Linux): it ends a few seconds after the command has written
+  its exit code.
+- **Demo runbook** `examples/screenshots.runbook.md`: a realistic restart runbook that only
+  prints simulated output, for trying line runs, checks, retries and captures.
 
 ## 0.2.0
 
