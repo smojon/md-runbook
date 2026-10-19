@@ -1,0 +1,72 @@
+{
+  "name": "@md-runbook/mobile",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "dependencies": {
+    "@expo/metro-runtime": "58.0.14",
+    "@microsoft/dev-tunnels-ssh": "3.12.42",
+    "@microsoft/dev-tunnels-ssh-keys": "3.12.42",
+    "buffer": "6.0.3",
+    "events": "3.3.0",
+    "expo": "58.0.14",
+    "expo-constants": "58.0.12",
+    "expo-linking": "58.0.13",
+    "expo-router": "58.0.23",
+    "expo-status-bar": "58.0.3",
+    "process": "0.11.10",
+    "re2js": "2.8.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.0",
+    "react-native-nitro-modules": "0.37.1",
+    "react-native-quick-crypto": "1.1.8",
+    "react-native-safe-area-context": "5.10.1",
+    "react-native-screens": "4.30.0",
+    "react-native-tcp-socket": "6.4.3",
+    "react-native-web": "0.21.4",
+    "readable-stream": "4.7.0",
+    "util": "0.12.5"
+  },
+  "devDependencies": {
+    "@testing-library/react-native": "14.1.0",
+    "@types/jest": "30.0.0",
+    "@types/react": "19.3.0",
+    "eslint": "9.39.5",
+    "eslint-config-expo": "58.0.4",
+    "jest": "30.5.2",
+    "jest-expo": "58.0.11",
+    "playwright": "1.56.1",
+    "prettier": "3.6.2",
+    "typescript": "6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "test": "jest",
+    "check:deps": "expo install --check && expo-doctor",
+    "export:web": "expo export --platform web",
+    "check": "npm run typecheck && npm run lint && npm run format && npm test"
+  },
+  "private": true,
+  "jest": {
+    "preset": "jest-expo",
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/e2e/"
+    ],
+    "moduleNameMapper": {
+      "^@md-runbook/(core|ssh)$": "<rootDir>/../../packages/$1/src/index.ts",
+      "^@md-runbook/(core|ssh)/(.*)$": "<rootDir>/../../packages/$1/src/$2"
+    },
+    "moduleDirectories": [
+      "node_modules",
+      "<rootDir>/node_modules"
+    ]
+  }
+}

@@ -1,0 +1,153 @@
+name: App
+# The md-runbook app (apps/mobile: Expo, one code base for iOS, Android and web) on every change
+# to it or to the packages it uses: quality gates and the web build in a browser, then the release
+# build on an Android emulator and an iPhone simulator with the Maestro flows. Native from day
+# one: the user's other app ran web-only for months and piled up Hermes-only bugs.
+on:
+  push:
+    branches: ['**']
+    paths: ['apps/mobile/**', 'packages/core/src/**', 'packages/ssh/src/**', '.github/workflows/app.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MAESTRO_VERSION: 2.11.0
+  MAESTRO_SHA256: 5384593cb4e7a106489e75a821d157dd43f4e438df6bc308b72e82c685e1283a
+  MAESTRO_CLI_NO_ANALYTICS: '1'
+  MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true'
+
+defaults:
+  run:
+    working-directory: apps/mobile
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Format
+        run: npm run format
+      - name: Unit tests
+        run: npm test -- --ci
+      # Expo dependencies must match the SDK; expo-doctor checks config and native modules.
+      - name: Expo dependency check
+        run: npx expo install --check
+      - name: expo-doctor
+        run: npx expo-doctor
+      - name: Audit (runtime dependencies)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Web build
+        run: npx expo export --platform web
+      - name: Web smoke test (Chromium)
+        run: |
+          npx playwright install --with-deps chromium
+          node e2e/web-smoke.mjs dist
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: web
+          path: apps/mobile/web-*.png
+          if-no-files-found: ignore
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      # Room for node_modules + the Gradle build + the emulator image.
+      - name: Free disk space
+        working-directory: .
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/share/swift /usr/local/.ghcup /opt/ghc /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/go /opt/hostedtoolcache/PyPy /opt/hostedtoolcache/Ruby \
+            /usr/local/julia* /opt/az /opt/microsoft /opt/google /usr/local/share/powershell /usr/local/share/chromium || true
+          df -h /
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - uses: gradle/actions/setup-gradle@v6
+      - run: npm ci --no-audit --no-fund
+      - name: Build the release APK (x86_64)
+        run: bash e2e/build-android.sh "$RUNNER_TEMP/apk"
+      - name: Reclaim build space
+        run: rm -rf android node_modules/*/android/build node_modules/*/android/.cxx node_modules/@*/*/android/build node_modules/@*/*/android/.cxx
+      - name: Install Maestro
+        run: bash e2e/install-maestro.sh
+      - name: Enable KVM for the emulator
+        working-directory: .
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the flows on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          cores: 4
+          ram-size: 4096M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          disable-animations: true
+          working-directory: apps/mobile
+          script: bash e2e/android-run.sh "$RUNNER_TEMP/apk/app-release.apk" "$RUNNER_TEMP/maestro-out"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: maestro-android
+          path: ${{ runner.temp }}/maestro-out
+          if-no-files-found: warn
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Build the simulator app (Release)
+        run: bash e2e/build-ios.sh "$RUNNER_TEMP/ios"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: ios-build-log
+          path: ${{ runner.temp }}/ios/xcodebuild.log
+          if-no-files-found: ignore
+      - name: Install Maestro
+        run: bash e2e/install-maestro.sh
+      - name: Run the flows on the simulator
+        run: bash e2e/ios-run.sh "$RUNNER_TEMP/ios/app" "$RUNNER_TEMP/maestro-out"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: maestro-ios
+          path: ${{ runner.temp }}/maestro-out
+          if-no-files-found: warn

@@ -1,0 +1,21 @@
+# First launch: the shared core works on the device (parser/writer round trip, RE2), the sample
+# runbook opens and shows its cells with the saved output.
+appId: dev.mdrunbook.app
+name: smoke
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: core-status
+    timeout: 120000
+- assertVisible: 'Core OK'
+- takeScreenshot: 01-runbooks
+- tapOn:
+    id: runbook-sample
+- extendedWaitUntil:
+    visible:
+      id: cell-1-output
+    timeout: 30000
+- assertVisible: '.*uptime.*'
+- takeScreenshot: 02-runbook

@@ -1,0 +1,24 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "lib": ["ES2022", "DOM"],
+    "types": ["jest"],
+    "paths": {
+      "@md-runbook/core": ["../../packages/core/src/index.ts"],
+      "@md-runbook/core/*": ["../../packages/core/src/*"],
+      "@md-runbook/ssh": ["../../packages/ssh/src/index.ts"],
+      "@md-runbook/ssh/*": ["../../packages/ssh/src/*"],
+      "re2js": ["./node_modules/re2js"],
+      "buffer": ["./node_modules/buffer"],
+      "@microsoft/dev-tunnels-ssh": ["./node_modules/@microsoft/dev-tunnels-ssh"],
+      "@microsoft/dev-tunnels-ssh-keys": ["./node_modules/@microsoft/dev-tunnels-ssh-keys"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
+  "exclude": ["node_modules", "../../packages/*/src/node", "../../packages/ssh/src/node.ts"]
+}
