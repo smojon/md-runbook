@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Line by line:** **Run Line or Selection** and **Step Through from This Line** now show in
+  the right-click menu of a code cell (they were missing there).
+
 ## 0.3.1
 
 - **Security fixes** from a review of the 0.2 and 0.3 features:

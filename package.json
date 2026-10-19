@@ -710,12 +710,12 @@
       "editor/context": [
         {
           "command": "mdRunbook.runLine",
-          "when": "notebookType == md-runbook && resourceScheme == vscode-notebook-cell",
+          "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown",
           "group": "mdRunbook@1"
         },
         {
           "command": "mdRunbook.stepThroughFromLine",
-          "when": "notebookType == md-runbook && resourceScheme == vscode-notebook-cell",
+          "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown",
           "group": "mdRunbook@2"
         }
       ]
