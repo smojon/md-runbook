@@ -1,6 +1,7 @@
 name: macOS open probe
 # Investigation of runbooks that open slowly or never finish opening on macOS runners: the VS
-# Code integration tests several times in parallel, with and without the GPU, each ending with the
+# Code integration tests several times in parallel, with and without VS Code's AI features (round
+# 3; rounds 1-2 ruled out the extension, load and the GPU), each ending with the
 # probe's summary (test/integration/probe.ts: event-loop stalls and CPU of the extension host, the
 # window's round trip, the extension's own open work) and VS Code's own logs as an artifact.
 on:
@@ -17,8 +18,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        args: ['', '--disable-gpu']
-        run: [1, 2]
+        settings: ['', '{"chat.disableAIFeatures": true}']
+        run: [1, 2, 3]
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -29,20 +30,20 @@ jobs:
       - run: npm ci
       - name: Integration tests with the open probe
         env:
-          MD_RUNBOOK_VSCODE_ARGS: ${{ matrix.args }}
+          MD_RUNBOOK_VSCODE_SETTINGS: ${{ matrix.settings }}
         run: |
           sysctl -n hw.ncpu hw.memsize machdep.cpu.brand_string || true
           npm run test:integration 2>&1 | tee integration.log
       - name: Probe summary
         if: always()
         run: |
-          echo "VS Code arguments: '${{ matrix.args }}'"
+          echo "VS Code settings: '${{ matrix.settings }}'"
           grep -E '! opening|open probe:|^  [^ ].*: [0-9]+ ms, |stalls > 1 s|integration tests passed|✖' integration.log || true
           echo '--- webview / GPU lines in VS Code logs'
           grep -rhiE 'webview|service ?worker|gpu' .vscode-test/user-data/logs 2>/dev/null | sed -E 's/^[0-9: .-]+//' | sort | uniq -c | sort -rn | head -30 || true
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: vscode-logs-${{ matrix.run }}${{ matrix.args }}
+          name: vscode-logs-${{ matrix.run }}${{ matrix.settings && '-no-ai' || '' }}
           path: .vscode-test/user-data/logs
           if-no-files-found: warn
