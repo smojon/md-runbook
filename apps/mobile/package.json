@@ -51,7 +51,8 @@
     "test": "jest",
     "check:deps": "expo install --check && expo-doctor",
     "export:web": "expo export --platform web",
-    "check": "npm run typecheck && npm run lint && npm run format && npm test"
+    "check": "npm run typecheck && npm run lint && npm run format && npm test",
+    "audit": "node e2e/audit.mjs"
   },
   "private": true,
   "jest": {
@@ -68,5 +69,14 @@
       "node_modules",
       "<rootDir>/node_modules"
     ]
+  },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "react-native-tcp-socket"
+        ]
+      }
+    }
   }
 }

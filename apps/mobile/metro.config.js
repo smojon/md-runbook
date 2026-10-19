@@ -12,8 +12,8 @@ const root = path.resolve(__dirname, '../..');
 const config = getDefaultConfig(__dirname);
 
 config.watchFolders = [path.join(root, 'packages/core/src'), path.join(root, 'packages/ssh/src')];
-config.resolver.nodeModulesPaths = [path.join(__dirname, 'node_modules')];
-config.resolver.disableHierarchicalLookup = true;
+const appEntry = path.join(__dirname, 'index.ts');
+const fromPackages = (origin) => origin.startsWith(path.join(root, 'packages') + path.sep);
 
 const packages = {
   '@md-runbook/core': path.join(root, 'packages/core/src'),
@@ -37,6 +37,10 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       : context.resolveRequest(context, 'react-native-quick-crypto', platform);
   }
   if (aliases[bare] && aliases[bare] !== moduleName) return context.resolveRequest(context, aliases[bare], platform);
+  // A library imported by a shared package resolves as if the app imported it.
+  if (!moduleName.startsWith('.') && fromPackages(context.originModulePath)) {
+    return context.resolveRequest({ ...context, originModulePath: appEntry }, moduleName, platform);
+  }
   return context.resolveRequest(context, moduleName, platform);
 };
 

@@ -52,7 +52,7 @@ jobs:
       - name: expo-doctor
         run: npx expo-doctor
       - name: Audit (runtime dependencies)
-        run: npm audit --omit=dev --audit-level=high
+        run: npm run audit
       - name: Web build
         run: npx expo export --platform web
       - name: Web smoke test (Chromium)
