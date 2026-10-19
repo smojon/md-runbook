@@ -3,6 +3,9 @@
 Three groups of [cell options](safety.md#cell-options) make a runbook check its own results,
 wait for things to become ready, and pass values from one step to the next.
 
+To try them, open [`examples/sample.runbook.md`](../../examples/sample.runbook.md) (sections 14 and
+15) or run **md-runbook: Open Sample Runbook**.
+
 ## Checks: `expect=`
 
 By default a cell passes when it exits with code 0. Checks add conditions on its output:

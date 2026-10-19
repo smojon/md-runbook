@@ -19,3 +19,5 @@ kubectl logs "${out:POD}" --tail=20
 - `expect=` / `expect-not=` / `expect-exit=` fail a step whose output is wrong.
 - `retry=` runs it again until it passes.
 - `capture=` keeps a value for later cells as `${out:NAME}`.
+
+Sections 14 and 15 of the sample runbook (**md-runbook: Open Sample Runbook**) try each one.

@@ -20,7 +20,10 @@ jobs:
       - run: npm test
       - name: Lint the example runbooks
         if: runner.os == 'Linux'
-        run: node out/dist/cli.js lint --strict examples/*.md
+        # The sample has a misspelled option on purpose (a warning); the others must be clean.
+        run: |
+          node out/dist/cli.js lint --strict examples/ci.runbook.md examples/screenshots.runbook.md
+          node out/dist/cli.js lint examples/sample.runbook.md
       # The command-line runner end to end, through this repository's own GitHub Action.
       - name: Run a runbook with the command line
         uses: ./

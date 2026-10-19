@@ -1,7 +1,7 @@
 {
   "name": "md-runbook",
   "displayName": "Markdown Runbook",
-  "description": "Run shell blocks in Markdown runbooks as a notebook and keep their output in the same .md file: PowerShell, cmd and bash on Windows, macOS and Linux, with secret redaction, approvals for AI-proposed commands and safe sharing with AI.",
+  "description": "Run shell blocks in Markdown runbooks as a notebook and keep their output in the same .md file: PowerShell, cmd and bash on Windows, macOS and Linux. Step through lines, check outputs, retry until ready, redact secrets, approve AI-proposed commands, and run the same runbooks in CI from the command line.",
   "version": "0.3.0",
   "publisher": "smojon",
   "preview": true,
@@ -1378,6 +1378,18 @@
             "media": {
               "markdown": "walkthrough/checks.md"
             }
+          },
+          {
+            "id": "cli",
+            "title": "Problems, reports and the command line",
+            "description": "Problems are underlined while you edit; export an HTML or PDF report; run the same runbook in CI with md-runbook run.",
+            "media": {
+              "markdown": "walkthrough/cli.md"
+            },
+            "completionEvents": [
+              "onCommand:mdRunbook.exportReportPdf",
+              "onCommand:mdRunbook.exportReport"
+            ]
           },
           {
             "id": "share",

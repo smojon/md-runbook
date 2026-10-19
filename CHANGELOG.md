@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Sample runbook:** new sections 13 to 17 try line runs, checks and retries, captured values
+  (also secret ones), blocks for one OS, reports, problem markers and the command line.
+- **Walkthrough:** a new step for problems, reports and the command line.
+
 ## 0.3.0
 
 - **Checking runbooks:** invalid or unknown cell options, `${out:NAME}` without an earlier

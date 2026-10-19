@@ -4,6 +4,9 @@ Some mistakes only show when a runbook runs: a misspelled option is ignored, a `
 has nothing to read. md-runbook checks for them while you edit, and `md-runbook lint` checks
 files on the command line, for example on every pull request.
 
+Section 17 of [`examples/sample.runbook.md`](../../examples/sample.runbook.md) has a misspelled
+option on purpose, to show a marker.
+
 | Problem | Severity |
 |---|---|
 | An invalid cell option value (`timeout=abc`, `os=dos`, `expect=/(/`) | error |

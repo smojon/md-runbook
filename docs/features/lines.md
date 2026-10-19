@@ -1,6 +1,6 @@
 # Running a cell line by line
 
-A cell normally runs as one script. Three commands run its lines separately instead. They're in
+A cell normally runs as one script. Four commands run its lines separately instead. They're in
 the dropdown next to a code cell's run button, and in the Command Palette:
 
 | Command | What it does |
@@ -28,6 +28,9 @@ web-7c9d…     1/1     Running   0          3d
 ```
 <!-- md-runbook:output end -->
 ````
+
+To try it, open [`examples/sample.runbook.md`](../../examples/sample.runbook.md) (section 13) or
+run **md-runbook: Open Sample Runbook**.
 
 ## Step Through
 

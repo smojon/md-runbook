@@ -150,7 +150,7 @@ Each has its own page with examples and settings:
   a clean template), and **Compare With Previous Run**. Re-run outputs get `changed=yes|no`.
 - **[Run from the text editor and export a report](docs/features/codelens-report.md):** "▶ Run"
   links above each block in the normal Markdown editor, and a self-contained HTML report with a
-  step summary table.
+  step summary table, also as PDF (printed by the Chrome or Edge you have).
 
 ## Output format
 

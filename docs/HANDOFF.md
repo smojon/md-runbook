@@ -12,7 +12,11 @@ State of the project for whoever picks it up next (person or new Claude session)
 - **Code:** `src/core` is pure (no `vscode`; `test/purity.test.ts` checks it), `src/*.ts` is the
   VS Code layer, `src/cli` the command-line runner, `renderer/` the notebook renderer for
   clickable checklists. Feature docs: `docs/features/*.md`. Store and release steps:
-  `PUBLISHING.md`.
+  `PUBLISHING.md`. GitHub Action: `action.yml` + `scripts/action-run.js`.
+- **Examples:** `examples/sample.runbook.md` (the hand test drive, opened by **Open Sample
+  Runbook**; sections 1–17 cover every feature), `examples/ci.runbook.md` (run by CI through the
+  action), `examples/screenshots.runbook.md` (for `docs/screenshots.md`), and workflow templates
+  in `examples/github/`.
 - **Security rule for every feature:** it can be turned off in settings, the default is the most
   secure choice, and settings that weaken security are `"scope": "machine"` (user settings only).
   A runbook file must never be able to weaken them either (e.g. no shell paths in front matter).
@@ -21,9 +25,9 @@ State of the project for whoever picks it up next (person or new Claude session)
 
 ```sh
 npm ci
-npm test                                   # compile + unit/smoke tests (~460; real shells, skipped if missing)
+npm test                                   # compile + unit/smoke tests (~475; real shells, skipped if missing)
 MD_RUNBOOK_PWSH=/path/to/pwsh npm test     # also the PowerShell 7 tests (value is a path)
-npm run test:integration                   # ~65 end-to-end tests in a downloaded VS Code (xvfb-run on Linux)
+npm run test:integration                   # ~70 end-to-end tests in a downloaded VS Code (xvfb-run on Linux)
 ```
 
 CI (`.github/workflows/ci.yml`) runs both on Windows, macOS and Linux on every branch push.

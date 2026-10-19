@@ -8,3 +8,5 @@ The dropdown next to a cell's ▶ has:
   `Shift+F5` stop).
 
 `cd` and variables carry over from one line to the next.
+
+Try it on section 13 of the sample runbook (**md-runbook: Open Sample Runbook**).

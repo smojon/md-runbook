@@ -1,5 +1,6 @@
 ---
 title: md-runbook test drive
+timeout: 600
 params:
   - TARGET: staging
   - REPLICAS: "2"
@@ -8,7 +9,8 @@ params:
 # md-runbook test drive
 
 A safe runbook for trying the extension by hand. Nothing here changes your machine: every cell
-only prints text, sleeps or lists files.
+only prints text, sleeps, lists files or uses a file in the temp folder. Sections 13 to 17 show
+line runs, checks and retries, captured values, blocks for one OS, reports and the command line.
 
 Open it with right-click → **Open as Runbook** (or the notebook icon in the editor title bar),
 then run cells one by one or use **Run All**. Outputs are written into this file when you save;
@@ -134,6 +136,9 @@ A cell's own `env.` option wins over the setting:
 ```bash env.MDRB_DEMO=from-the-cell
 echo "MDRB_DEMO=${MDRB_DEMO:-not set}"
 ```
+
+The front matter's `timeout: 600` is the default timeout for every cell of this runbook; a
+cell's own `timeout=` (section 3) wins. `cwd:` there would set the folder cells run in.
 
 ## 5. Parameters and inputs
 
@@ -272,3 +277,131 @@ before you share it.
 another VS Code model) or `anthropic` (the Claude API with your own key). Then **Explain Output**
 and **Suggest Next Steps** appear in a cell's `⋯` menu, and **Summarize Incident** in the Command
 Palette. Every send asks first and can show exactly what will be sent.
+
+## 13. Line by line
+
+The dropdown next to a cell's ▶ runs parts of it. Try each on this cell:
+
+```bash
+echo "step one"
+cd ..
+echo "now in $(pwd)"
+ls package.json
+```
+
+- **Run Line or Selection** (`Ctrl+Alt+Enter`, or right-click in the cell): put the cursor on
+  line 3 and only that line runs. Select `pwd` and only that runs. The output is saved with
+  `lines=3`, and the step stays pending in the progress until the whole cell has run.
+- **Run Lines One by One:** each line shows as `$ command` before its output, and the `cd` on
+  line 2 carries over to line 3.
+- **Step Through Lines:** the next line is highlighted and the cell waits. `F10` runs it, `F5`
+  runs the rest, `Shift+F5` stops (the lines that ran are recorded).
+- **Step Through from This Line:** the same, starting at the cursor.
+
+A block, a continuation line or a here-doc counts as one line, so the `foreach` here is one step:
+
+```pwsh
+$items = 1..3
+foreach ($i in $items) {
+  Write-Output "item $i"
+}
+Write-Output "done"
+```
+
+## 14. Checks and retries
+
+Passes: the output contains the expected text.
+
+```bash expect="all good"
+echo "status: all good"
+```
+
+Fails although the exit code is 0, because the text is missing (`check=failed` in the output
+marker):
+
+```bash expect="all good" continue-on-error
+echo "status: degraded"
+```
+
+Passes with exit code 1, because that is the expected one:
+
+```bash expect-exit=1 expect="not found"
+echo "setting not found"
+exit 1
+```
+
+Waits until it passes: it fails twice, then passes on the third attempt, one second apart. Only
+the last attempt's output is kept, and the status line shows `attempt 3/4`:
+
+```bash retry=4 every=1s
+f="${TMPDIR:-/tmp}/md-runbook-sample-retry"
+n=$(( $(cat "$f" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$f"
+echo "attempt $n"
+if [ "$n" -lt 3 ]; then echo "not ready yet"; exit 1; fi
+rm -f "$f"; echo "ready"
+```
+
+## 15. Passing values between cells
+
+The first cell keeps the pod name from its output; the second one uses it as `${out:POD}`:
+
+```bash capture="POD:/^(web-\S+)/m"
+echo "NAME              READY   STATUS"
+echo "web-7c9d5b-x2kqp  1/1     Running"
+```
+
+```bash
+echo "logs of ${out:POD}"
+```
+
+A value captured with `capture-secret=` is redacted everywhere: in its own output (once the cell
+has finished), in later outputs and in the saved file.
+
+```bash capture-secret=SESSION_TOKEN
+echo "tok-$RANDOM$RANDOM-demo"
+```
+
+```bash
+echo "using token ${out:SESSION_TOKEN}"
+```
+
+## 16. Blocks for one OS
+
+Only the block for your system runs; the other one keeps whatever output it had. Together they
+count as one step in the progress:
+
+```pwsh os=windows
+Write-Output "Temp folder: $env:TEMP"
+```
+
+```bash os=linux,macos
+echo "Temp folder: ${TMPDIR:-/tmp}"
+```
+
+## 17. Reports, problems and the command line
+
+**Reports:** **md-runbook: Export Report (HTML)** (notebook toolbar) writes
+`sample.runbook.report.html` next to this file: every step with its result and output.
+**Export Report (PDF)** prints the same report with the Chrome or Edge installed on your
+machine.
+
+**Problems:** the next block has a misspelled option on purpose (`retires=3`). It is underlined
+on the cell and listed in the **Problems** panel; when it runs, the option is ignored.
+
+```bash retires=3
+echo "the misspelled option is ignored"
+```
+
+**Command line:** the same runbook runs without VS Code, for CI or scheduled checks. From the
+repository folder, after `npm run compile`:
+
+```text
+node out/dist/cli.js lint examples/sample.runbook.md
+node out/dist/cli.js run examples/sample.runbook.md --check --keep-going --report report.html
+```
+
+`lint` reports the misspelled option. `run --check` runs every cell without changing this file.
+Expect a few steps that don't run there: the risky command in section 7 needs `--yes`, the
+proposed cell in section 8 never runs from the command line, and section 5's inputs have no
+value unless you pass `--input`. The cells that fail on purpose (sections 3, 11 and 14) fail
+there too, so the run ends with exit code 1.

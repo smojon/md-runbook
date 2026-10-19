@@ -31,6 +31,10 @@ deployment "web" successfully rolled out
   `--yes`, and cells proposed or written by an AI assistant never run.
 - **Reports:** the filled-in runbook, `--report` (HTML), `--pdf` (with the Chrome or Edge already
   installed), `--junit` (one test case per step), and a job summary on GitHub Actions.
+- **Checks without running:** `md-runbook lint runbooks/*.md` reports invalid or unknown cell
+  options and placeholders with nothing behind them, with GitHub annotations on pull requests.
+- **Notifications:** with `MD_RUNBOOK_NOTIFY_URL` set, a failed run posts a summary to Slack,
+  Microsoft Teams (Workflows), Discord or Google Chat.
 - Exit code `0` when every step passed, `1` when one failed, `2` for wrong usage.
 
 Requires Node.js 20 or newer; no other dependencies. `md-runbook --help` lists every option.
