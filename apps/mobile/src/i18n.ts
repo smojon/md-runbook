@@ -1,6 +1,7 @@
 /**
- * All user-visible text goes through `t()`, so translations can be added later without touching
- * the screens (a lesson from the user's other app). English only for now.
+ * All user-visible text comes from here, so translations can be added later without touching the
+ * screens (ESLint's react/jsx-no-literals rejects text written in a screen). English only for
+ * now; a second language would add a catalog per language and pick one with expo-localization.
  */
 const en = {
   appTitle: 'md-runbook',
@@ -8,7 +9,7 @@ const en = {
   coreOk: 'Core OK',
   coreFailed: (why: string) => `Core check failed: ${why}`,
   notFound: 'Runbook not found',
-  output: 'Output',
+  outputExit: (exit: string) => `Output · exit ${exit}`,
 } as const;
 
 export type Strings = typeof en;

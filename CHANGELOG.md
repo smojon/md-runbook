@@ -8,6 +8,8 @@
   too).
 - The parser, writer and the rest of the core moved to a shared package (`packages/core`) that
   the coming phone and web app will use too. No change in behaviour.
+- Marketplace: listed under **Testing** (instead of Other), with the keywords checks, ci, junit
+  and lint.
 
 ## 0.3.2
 

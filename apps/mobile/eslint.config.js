@@ -13,4 +13,12 @@ module.exports = defineConfig([
       'react-hooks/exhaustive-deps': 'error',
     },
   },
+  {
+    // Text shown to the user comes from src/i18n.ts, not from the screens (ready for translations).
+    files: ['src/**/*.tsx'],
+    ignores: ['src/**/__tests__/**'],
+    rules: {
+      'react/jsx-no-literals': ['error', { noStrings: false, ignoreProps: true }],
+    },
+  },
 ]);

@@ -26,7 +26,7 @@
   },
   "categories": [
     "Notebooks",
-    "Other"
+    "Testing"
   ],
   "keywords": [
     "runbook",
@@ -47,7 +47,11 @@
     "troubleshooting",
     "redaction",
     "secrets",
-    "ai"
+    "ai",
+    "checks",
+    "ci",
+    "junit",
+    "lint"
   ],
   "capabilities": {
     "untrustedWorkspaces": {

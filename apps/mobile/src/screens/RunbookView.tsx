@@ -49,9 +49,7 @@ function Cell({ cell, index }: { cell: ParsedCell; index: number }) {
       </Text>
       {cell.output ? (
         <View testID={`cell-${index}-output`} style={styles.output}>
-          <Text style={styles.lang}>
-            {t.output} · exit {cell.output.attrs.exit ?? '?'}
-          </Text>
+          <Text style={styles.lang}>{t.outputExit(cell.output.attrs.exit ?? '?')}</Text>
           <Text style={styles.source} selectable>
             {cell.output.text}
           </Text>
