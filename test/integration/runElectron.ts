@@ -7,7 +7,8 @@ async function main(): Promise<void> {
   await runTests({
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(__dirname, 'index.js'),
-    launchArgs: ['--disable-extensions', '--disable-workspace-trust'],
+    // MD_RUNBOOK_VSCODE_ARGS: extra VS Code arguments for experiments (macos-open-probe.yml).
+    launchArgs: ['--disable-extensions', '--disable-workspace-trust', ...(process.env.MD_RUNBOOK_VSCODE_ARGS ?? '').split(' ').filter(Boolean)],
     extensionTestsEnv: { MD_RUNBOOK_TEST: '1' },
   });
 }

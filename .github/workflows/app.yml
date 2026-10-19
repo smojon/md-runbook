@@ -50,7 +50,7 @@ jobs:
         run: npm test -- --ci
       # Expo dependencies must match the SDK; expo-doctor checks config and native modules.
       - name: Expo dependency check
-        run: npx expo install --check
+        run: node e2e/check-deps.mjs
       - name: expo-doctor
         run: npx expo-doctor
       - name: Audit (runtime dependencies)
