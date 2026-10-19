@@ -89,6 +89,16 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
   now also ends a command a few seconds after its exit-code file appears; on a timeout the test
   prints the cell's output and the open terminals.
 - The controller's try/finally cleanup has no unit test (it needs VS Code).
+- **Opening a runbook sometimes hangs inside VS Code on macOS CI runners** (investigated
+  2026-10-19). The editor shows in ~100 ms, but `vscode.openWith` takes 5–20 s or never settles,
+  and a cell in such an editor may never run. Measured with the open probe
+  (`test/integration/probe.ts`, printed for every slow open): the extension host is idle (no
+  event-loop stalls, ~1 ms of our own parse/lint work), the window answers within ~100 ms, and
+  neither `--disable-gpu` nor `chat.disableAIFeatures` changes it. VS Code logs nothing about it.
+  It depends on the runner machine: from 0 to 8 slow opens per run in the same hour. The tests
+  close the editors and reopen, up to 3 times. To look again: Actions → **macOS open probe** →
+  Run workflow (three Macs, optional VS Code arguments and settings). Not seen on Windows or
+  Linux, nor reported by users.
 
 ## Ideas for later
 

@@ -57,11 +57,14 @@ export function writeFile(name: string, content: string | Uint8Array): vscode.Ur
 
 /**
  * Opens a file as a runbook and returns its editor. The open command's promise settles once VS
- * Code has set the notebook up (kernel included), so it waits for it too. On a busy macOS runner
- * that promise sometimes never settles although the editor opened, or no editor shows: then it
- * closes everything and opens once more (after 20 s, or 45 s without an editor). Slow opens are
- * logged.
+ * Code has set the notebook up (kernel included), so it waits for it too. On some macOS runners
+ * that promise never settles although the editor showed (inside VS Code: the probe found the
+ * extension idle, the window responsive, no GPU or chat involvement; docs/HANDOFF.md): then it
+ * closes everything and opens again, up to 3 times (after 20 s, or 45 s without an editor). Slow
+ * opens are logged with the probe's measurements.
  */
+const OPEN_ATTEMPTS = 3;
+
 export async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEditor> {
   const name = path.basename(uri.fsPath);
   const find = (): vscode.NotebookEditor | undefined =>
@@ -99,19 +102,22 @@ export async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEdito
       done = await Promise.race([settled, new Promise<false>((r) => (timer = setTimeout(() => r(false), 20_000)))]);
       clearTimeout(timer);
       if (failure !== undefined) throw failure instanceof Error ? failure : new Error(String(failure));
-      // Going on with such an editor left a cell that never ran (macOS, autosave.md): reopen once.
-      if (!done && n === 1) throw new Error(`timed out: the open command for ${name} did not finish`);
+      // Going on with such an editor left a cell that never ran (macOS, autosave.md): reopen.
+      if (!done && n < OPEN_ATTEMPTS) throw new Error(`timed out: the open command for ${name} did not finish`);
       return editor;
     } finally {
       await report();
     }
   };
   try {
-    return await attempt(1).catch(async (e: Error) => {
-      if (!/timed out/.test(e.message)) throw e;
-      await closeAll();
-      return attempt(2);
-    });
+    for (let n = 1; ; n++) {
+      try {
+        return await attempt(n);
+      } catch (e) {
+        if (n >= OPEN_ATTEMPTS || !/timed out/.test((e as Error).message)) throw e;
+        await closeAll();
+      }
+    }
   } catch (e) {
     const seen = vscode.window.visibleNotebookEditors.map((v) => `${v.notebook.notebookType} ${v.notebook.uri.toString()}`);
     const docs = vscode.workspace.notebookDocuments.map((d) => `${d.notebookType} ${d.uri.toString()}`);
