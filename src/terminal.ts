@@ -41,6 +41,13 @@ const CANCEL_GRACE_MS = 3_000;
 const READ_GRACE_MS = 3_000;
 /** How long to wait for the exit-code file after the terminal reports the end of the command. */
 const STATUS_GRACE_MS = 1_000;
+/**
+ * How long to wait for the end report once the exit-code file exists. The report normally comes
+ * about 0.5 s later (the command line ends with a short pause); when it never comes (shell
+ * integration can lose it, e.g. for a command sent right after the previous one), the file is
+ * enough.
+ */
+const END_REPORT_GRACE_MS = 3_000;
 
 /** Kill everything a terminal's shell started, then the shell (Ctrl+C was not enough). */
 function killTerminalTree(pid: number): void {
@@ -194,11 +201,16 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
           ? terminalInlineCommandLine(kind, asArg(scriptPath), asArg(statusPath))
           : terminalCommandLine(kind, shell.command, asArg(scriptPath), asArg(statusPath));
         const execution = integration.executeCommand(commandLine);
+        let stopWaiting = (): void => undefined;
         const ended = new Promise<number | undefined>((resolve) => {
           const done = (code: number | undefined): void => {
             endSub.dispose();
             closeSub.dispose();
             resolve(code);
+          };
+          stopWaiting = () => {
+            endSub.dispose();
+            closeSub.dispose();
           };
           const endSub = win.onDidEndTerminalShellExecution!((e) => {
             if (e.execution === execution) done(e.exitCode);
@@ -235,7 +247,21 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
         };
         stop.signal.addEventListener('abort', interrupt, { once: true });
 
-        const reported = await ended;
+        // The end report, or else the exit-code file the command line writes (plus a grace period).
+        let polling = true;
+        const byStatusFile = (async (): Promise<undefined> => {
+          while (polling) {
+            if (readStatus(statusPath) !== undefined) {
+              await sleep(END_REPORT_GRACE_MS);
+              return undefined;
+            }
+            await sleep(200);
+          }
+          return undefined;
+        })();
+        const reported = await Promise.race([ended, byStatusFile]);
+        polling = false;
+        stopWaiting();
         finished = true;
         clearTimeout(grace);
         stop.signal.removeEventListener('abort', interrupt);

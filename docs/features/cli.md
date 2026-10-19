@@ -50,7 +50,14 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--session` / `--isolated` | One shell process per shell for the whole runbook (like [session mode](session.md)), or one per block. Default: the front matter's `mode:`, else isolated. |
 | `--timeout SECONDS` | Default timeout per block. The front matter's `timeout:` and a block's `timeout=` win. |
 | `--bash PATH`, `--pwsh PATH` | The shells to use (default: as in the extension, e.g. Git Bash on Windows). |
+| `--notify URL` | Post a summary to a chat webhook when the run fails (see [Notifications](#notifications)). Prefer the environment variable `MD_RUNBOOK_NOTIFY_URL`. |
+| `--notify-on WHEN` | `failure` (default) or `always`; or `MD_RUNBOOK_NOTIFY_ON`. |
 | `--quiet` | Print only the summary line. |
+
+## Checking without running
+
+`md-runbook lint file.md…` checks runbooks without running anything; see
+[Checking runbooks](lint.md).
 
 ## What runs, what doesn't
 
@@ -127,6 +134,33 @@ To run a runbook from the GitHub web UI with a button, see [Runbooks on the web]
 
 The CI system still provides triggers, runners, secrets and artifacts; the runbook provides
 the steps, their checks, and a readable record of the run.
+
+## Notifications
+
+With `MD_RUNBOOK_NOTIFY_URL` set (or `--notify URL`), a failed run posts a short message to that
+webhook: which steps failed and why, and on GitHub Actions a link to the run. With
+`MD_RUNBOOK_NOTIFY_ON=always` (or `--notify-on always`) it also posts when everything passed.
+
+```text
+✗ health.md: 1 of 5 steps failed or did not run
+• Step 3 (line 20) failed: check failed: the output does not contain "Running"
+https://github.com/acme/ops/actions/runs/123456
+```
+
+The message format follows the webhook: **Slack** (`hooks.slack.com`), **Microsoft Teams**
+(a Workflows "post to a channel when a webhook request is received" flow: `*.logic.azure.com`,
+`*.powerplatform.com`), **Discord** and **Google Chat**. Any other URL gets `{"text": "…"}` as
+JSON (Mattermost, Rocket.Chat and most others take that).
+
+- The URL is a secret (whoever has it can post to your channel): keep it in a CI secret and pass
+  it through the environment. A command-line option can show up in process lists and logs.
+  md-runbook never prints it, also not in error messages.
+- It must be `https` (`http` only for `localhost`).
+- Step outputs are not sent, only the step numbers, lines and the reason they failed.
+- If the message can't be sent, the run says so; its exit code doesn't change.
+
+For a ready-made scheduled check (a morning health check that posts on failure), see
+[`examples/github/scheduled-check.yml`](../../examples/github/scheduled-check.yml).
 
 ## PDF
 

@@ -43,7 +43,11 @@ run (redacted, with `exit=`, `ran=`, `ended=`, `duration=`).
   cell end with the cell instead of changing the terminal (use [session mode](session.md) to
   carry state over). PowerShell runs it with `-NoProfile`, and on Windows with
   `-ExecutionPolicy Bypass`, as normal runs do.
-- Output and exit code are captured through VS Code's terminal shell integration. The exit code
+- Output and exit code are captured through VS Code's terminal shell integration. The command
+  also writes its exit code to a private temporary file; if shell integration never reports the
+  end of the command (it occasionally loses that report), the cell ends 3 seconds after that file
+  appears instead of waiting forever.
+- The exit code
   follows the same rules as normal runs (for PowerShell: the last native command, `exit N`, or
   an error). If the terminal reports the end of the command but no exit code was recorded (for
   example because the output contained a fake shell-integration mark), the cell fails with

@@ -7,12 +7,15 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { renderReport } from '../core';
+import { formatProblem, lintRunbook } from '../core/lint';
 import { CliOptions, junitReport, markdownSummary, runRunbook } from './run';
+import { notifyConfig, notifyText, runLink, sendNotification } from './notify';
 import { findBrowser, htmlToPdf } from './pdf';
 
 declare const MD_RUNBOOK_VERSION: string | undefined;
 
 const USAGE = `Usage: md-runbook run <file.md> [options]
+       md-runbook lint <file.md>... [--strict]
 
 Runs the bash, pwsh/powershell and cmd blocks of a Markdown runbook in order and writes their
 output into the file, as the VS Code extension does. Stops at the first failed step.
@@ -33,9 +36,16 @@ Options:
   --timeout SECONDS    Default timeout per block (the front matter and timeout= win)
   --bash PATH          bash to use (e.g. Git Bash on Windows)
   --pwsh PATH          PowerShell to use
+  --notify URL         Post a summary to a chat webhook (Slack, Teams Workflows, Discord, Google
+                       Chat); better: the environment variable MD_RUNBOOK_NOTIFY_URL
+  --notify-on WHEN     failure (default) or always; or MD_RUNBOOK_NOTIFY_ON
   --quiet              Only print the summary
   -h, --help           Show this help
   --version            Show the version
+
+lint checks runbooks without running them (invalid or unknown cell options, \${out:NAME}
+without an earlier capture=NAME, undeclared \${param:NAME}, ignored front matter values) and
+exits with 1 when it finds an error (with --strict: also a warning).
 
 \${secret:NAME} values come from the environment variable NAME and are redacted from output.
 On GitHub Actions, a summary table is added to the job summary.
@@ -53,6 +63,8 @@ export interface ParsedArgs {
   options: Omit<CliOptions, 'env' | 'signal'>;
   pdf?: string;
   browser?: string;
+  notify?: string;
+  notifyOn?: string;
   quiet: boolean;
 }
 
@@ -60,11 +72,13 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   const args = [...argv];
   if (args.length === 0 || args.includes('-h') || args.includes('--help')) return 'help';
   if (args.includes('--version')) return 'version';
-  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected "run")`);
+  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected "run" or "lint")`);
   args.shift();
   const o: ParsedArgs['options'] = { file: '', write: true, params: {}, inputs: {}, yes: false, keepGoing: false, shell: {} };
   let pdf: string | undefined;
   let browser: string | undefined;
+  let notify: string | undefined;
+  let notifyOn: string | undefined;
   let quiet = false;
   const value = (flag: string): string => {
     const v = args.shift();
@@ -85,6 +99,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
       case '--report': o.report = value(a); break;
       case '--pdf': pdf = value(a); break;
       case '--browser': browser = value(a); break;
+      case '--notify': notify = value(a); break;
+      case '--notify-on': notifyOn = value(a); break;
       case '--junit': o.junit = value(a); break;
       case '--param': pair(a, o.params); break;
       case '--input': pair(a, o.inputs); break;
@@ -108,10 +124,41 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
     }
   }
   if (!o.file) throw new UsageError('missing the runbook file');
-  return { options: o, ...(pdf ? { pdf } : {}), ...(browser ? { browser } : {}), quiet };
+  return { options: o, ...(pdf ? { pdf } : {}), ...(browser ? { browser } : {}), ...(notify ? { notify } : {}), ...(notifyOn ? { notifyOn } : {}), quiet };
+}
+
+/** `md-runbook lint`: print the problems of each file; 1 if any is an error (or, strict, a warning). */
+export function lint(argv: readonly string[], out: (line: string) => void = (l) => void process.stdout.write(l + '\n')): number {
+  const strict = argv.includes('--strict');
+  const files = argv.filter((a) => a !== '--strict');
+  const unknown = files.find((f) => f.startsWith('-'));
+  if (unknown || files.length === 0) {
+    process.stderr.write(`md-runbook: ${unknown ? `unknown option ${unknown}` : 'missing the runbook file(s)'}\n\n${USAGE}`);
+    return 2;
+  }
+  // On GitHub Actions, also annotations: they show on the file in pull requests.
+  const annotate = process.env.GITHUB_ACTIONS === 'true';
+  let failed = false;
+  let count = 0;
+  for (const file of files) {
+    if (!fs.existsSync(file)) {
+      out(`${file}: error: no such file`);
+      failed = true;
+      continue;
+    }
+    for (const p of lintRunbook(fs.readFileSync(file, 'utf8'))) {
+      count++;
+      out(formatProblem(file, p));
+      if (annotate) out(`::${p.severity} file=${file},line=${p.line + 1}::${p.message.replace(/\r?\n/g, ' ')}`);
+      if (p.severity === 'error' || strict) failed = true;
+    }
+  }
+  out(`${failed ? '✗' : '✓'} ${files.length} runbook${files.length === 1 ? '' : 's'} checked, ${count} problem${count === 1 ? '' : 's'}`);
+  return failed ? 1 : 0;
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
+  if (argv[0] === 'lint') return lint(argv.slice(1));
   let parsed: ReturnType<typeof parseArgs>;
   try {
     parsed = parseArgs(argv);
@@ -126,6 +173,12 @@ export async function main(argv: readonly string[]): Promise<number> {
   const { options, quiet } = parsed;
   if (!fs.existsSync(options.file)) {
     process.stderr.write(`md-runbook: no such file: ${options.file}\n`);
+    return 2;
+  }
+  // Checked before the run, so a typo doesn't surface only after a long runbook.
+  const notify = notifyConfig(parsed.notify ?? process.env.MD_RUNBOOK_NOTIFY_URL, parsed.notifyOn ?? process.env.MD_RUNBOOK_NOTIFY_ON);
+  if (typeof notify === 'string') {
+    process.stderr.write(`md-runbook: ${notify}\n`);
     return 2;
   }
   const abort = new AbortController();
@@ -161,6 +214,15 @@ export async function main(argv: readonly string[]): Promise<number> {
         process.stderr.write(`md-runbook: PDF export failed: ${e instanceof Error ? e.message : String(e)}\n`);
         pdfFailed = true;
       }
+    }
+  }
+
+  if (notify && (notify.on === 'always' || !summary.ok)) {
+    try {
+      await sendNotification(notify.url, notifyText(file, summary, runLink(process.env)));
+    } catch (e) {
+      // A failed notification doesn't change the result of the run.
+      process.stderr.write(`md-runbook: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }
 

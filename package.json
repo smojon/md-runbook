@@ -802,6 +802,12 @@
             "scope": "machine",
             "markdownDescription": "Path to PowerShell for `pwsh`/`powershell` blocks. Default: `pwsh` on PATH, falling back to Windows PowerShell (`powershell.exe`). User settings only.",
             "order": 9
+          },
+          "mdRunbook.lint.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Mark problems in runbooks while you edit: invalid or unknown cell options, `${out:NAME}` without an earlier `capture=NAME`, `${param:NAME}` not declared in the front matter, ignored front matter values. The same checks as `md-runbook lint`.",
+            "order": 10
           }
         }
       },

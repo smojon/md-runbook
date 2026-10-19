@@ -1,0 +1,45 @@
+# Run a runbook on a schedule (e.g. a morning health check) and post to a chat channel when it
+# fails. Copy to .github/workflows/scheduled-check.yml in your repository.
+#
+# Set the repository secret RUNBOOK_WEBHOOK to an incoming-webhook URL: Slack, Microsoft Teams
+# (a Workflows "post to a channel when a webhook request is received" flow), Discord or Google
+# Chat. The message lists the failed steps and links to the run. The results (filled-in
+# runbook, HTML and PDF report, JUnit) are kept as an artifact either way.
+#
+# GitHub runs scheduled workflows from the default branch only, may start them a few minutes
+# late, and turns them off after 60 days without activity in a public repository.
+name: Scheduled check
+
+on:
+  schedule:
+    - cron: '0 6 * * 1-5' # 06:00 UTC, Monday to Friday
+  workflow_dispatch: # also a "Run workflow" button, to try it
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: smojon/md-runbook@v0.3.0
+        with:
+          runbook: runbooks/health.md
+          params: |
+            TARGET=production
+          out: results/health.md
+          report: results/report.html
+          pdf: results/report.pdf
+          junit: results/junit.xml
+        env:
+          MD_RUNBOOK_NOTIFY_URL: ${{ secrets.RUNBOOK_WEBHOOK }}
+          # MD_RUNBOOK_NOTIFY_ON: always   # also post when everything passed
+          # Secrets for ${secret:NAME}, e.g.:
+          # API_TOKEN: ${{ secrets.API_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: health-check
+          path: results/
+          retention-days: 30

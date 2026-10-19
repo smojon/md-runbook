@@ -45,6 +45,14 @@ artifact **runbook-result**. The job summary shows a table of the steps.
   self-hosted runner, a VPN step, cloud credentials). Runbooks that need internal systems
   usually run on a [self-hosted runner](https://docs.github.com/actions/hosting-your-own-runners).
 
+## On a schedule
+
+[`examples/github/scheduled-check.yml`](../../examples/github/scheduled-check.yml) runs a runbook
+every weekday morning (and from a Run workflow button), keeps the results as an artifact, and
+posts to Slack, Teams, Discord or Google Chat when it fails
+([notifications](cli.md#notifications)). For a check on a machine of your own, run the command
+line from cron or Task Scheduler with `MD_RUNBOOK_NOTIFY_URL` set.
+
 ## Why there is no hosted "run" page
 
 A web page whose buttons run commands needs a server that executes them for remote users:

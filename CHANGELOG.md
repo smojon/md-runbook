@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Terminal mode:** a cell no longer waits forever when VS Code's terminal never reports the end
+  of a command (seen occasionally on Linux): it ends a few seconds after the command has written
+  its exit code.
+- **Notifications:** `MD_RUNBOOK_NOTIFY_URL` (or `--notify URL`) posts a summary of a failed run
+  to Slack, Microsoft Teams (Workflows), Discord or Google Chat; `--notify-on always` also on
+  success. `examples/github/scheduled-check.yml` is a ready-made weekday health check.
+- **Checking runbooks:** invalid or unknown cell options, `${out:NAME}` without an earlier
+  `capture=NAME`, undeclared `${param:NAME}` and ignored front matter values are underlined
+  while you edit (`mdRunbook.lint.enabled`), and `md-runbook lint` checks files in CI, with
+  GitHub annotations on pull requests.
 - **GitHub Action:** `uses: smojon/md-runbook@v0.3.0` runs a runbook in a workflow, with the
   filled-in runbook and HTML, PDF and JUnit reports. It builds the runner from its own source
   at the version you pin. This repository's CI now runs a runbook with it on Windows, macOS and

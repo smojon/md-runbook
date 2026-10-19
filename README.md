@@ -126,6 +126,9 @@ Each has its own page with examples and settings:
   VS Code (CI, servers, scheduled checks) and writes the outputs into the file, with HTML, PDF
   and JUnit reports and a GitHub job summary. Risky commands need `--yes`; secrets come from
   environment variables and are redacted.
+- **[Checking runbooks](docs/features/lint.md):** problems such as unknown cell options or
+  `${out:NAME}` without a capture are underlined while you edit; `md-runbook lint` checks files
+  in CI.
 - **[On the web](docs/features/web.md):** a GitHub Actions workflow with a Run button
   (`examples/github/run-runbook.yml`), the `smojon/md-runbook` GitHub Action, and running the
   extension in GitHub Codespaces.

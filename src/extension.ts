@@ -9,6 +9,7 @@ import { RunbookController } from './controller';
 import { registerReport } from './exportReport';
 import { registerHistory } from './history';
 import { registerLineRuns } from './lineRuns';
+import { registerLint } from './lint';
 import { RunPipeline } from './pipeline';
 import { registerProgress } from './progress';
 import { registerSafety } from './safety';
@@ -87,6 +88,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerAiContext(context);
   registerTaskLists(context);
   registerWalkthrough(context);
+  registerLint(context);
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {
       transientOutputs: false,
