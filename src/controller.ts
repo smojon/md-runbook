@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import { ExecuteResult, HISTORY_KEY, LineBuffer, isRunHistory, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDurationAttr, formatLocalIso, isSuccess, shellKindForLanguage } from './core';
 import { CheckOutcome, evaluateChecks, hasChecks } from './core/checks';
 import { SessionPool } from './core/session';
-import { LineStep, echoCommand, formatLineRange } from './core/steps';
+import { LineStep, echoCommand, formatLineRange, formatLineRanges } from './core/steps';
 import { FrontMatter, parseFrontMatter } from './core/secrets';
 import { proposalOf } from './core/proposal';
 import { isCodeMeta } from './core';
@@ -101,7 +101,7 @@ export interface LineRun {
   steps: readonly LineStep[];
   /** The steps are every command of the cell: running all of them is a full run (no `lines=`). */
   coversCell: boolean;
-  /** Called before each step after the first; resolves false to stop there (Step Through). */
+  /** Called before each step; resolves false to stop there (Step Through, breakpoints). */
   beforeStep?(index: number, token: vscode.CancellationToken): Promise<boolean>;
   /** Step `index` starts, or (undefined) the run is over. */
   onStep?(index: number | undefined): void;
@@ -116,9 +116,7 @@ export interface LineRun {
 function linesAttr(run: LineRun, ran: readonly number[]): string | undefined {
   if (run.coversCell && ran.length === run.steps.length) return undefined;
   const picked = ran.length > 0 ? ran.map((i) => run.steps[i]!) : run.steps;
-  const first = picked[0];
-  const last = picked[picked.length - 1];
-  return first && last ? formatLineRange(first.start, last.end) : undefined;
+  return picked.length > 0 ? formatLineRanges(picked) : undefined;
 }
 
 export class RunbookController implements vscode.Disposable {
@@ -127,7 +125,7 @@ export class RunbookController implements vscode.Disposable {
   /** Per-notebook queue so cells of one runbook never run concurrently. */
   private readonly queues = new Map<string, Promise<void>>();
 
-  constructor(private readonly pipeline: RunPipeline = new RunPipeline()) {
+  constructor(readonly pipeline: RunPipeline = new RunPipeline()) {
     this.controller = vscode.notebooks.createNotebookController(CONTROLLER_ID, NOTEBOOK_TYPE, 'md-runbook shell');
     this.controller.description = 'sh/bash, pwsh/powershell, cmd';
     this.controller.supportedLanguages = [...SUPPORTED_LANGUAGE_IDS];
@@ -247,7 +245,8 @@ export class RunbookController implements vscode.Disposable {
           exec.end(undefined);
           continue;
         }
-        const run = await this.runCell(exec, notebook, cfg, lineRun);
+        // A cell with breakpoints runs line by line and pauses at them.
+        const run = await this.runCell(exec, notebook, cfg, lineRun ?? this.pipeline.lineRunFor?.(exec.cell));
         runs.push(run);
         const failedHard = !run.success && !run.plan.continueOnError && cfg.stopOnFailure;
         if ((failedHard || run.plan.stopSequence) && executions.length > 1) stopped = exec.cell;
@@ -548,9 +547,9 @@ export class RunbookController implements vscode.Disposable {
     let result: ExecuteResult = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
     try {
       for (let i = 0; i < steps.length; i++) {
-        if (i > 0 && run.beforeStep) {
+        if (run.beforeStep) {
           // The output of the line that just ran must be on screen while the run waits.
-          await showOutput();
+          if (i > 0) await showOutput();
           if (!(await run.beforeStep(i, ctx.token))) break;
         }
         if (io.signal.aborted) {

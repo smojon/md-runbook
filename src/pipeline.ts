@@ -134,6 +134,11 @@ export class RunPipeline {
    */
   readonly excluders: ((cell: vscode.NotebookCell) => string | undefined)[] = [];
   readonly observers: RunObserver[] = [];
+  /**
+   * A line run for a normal run of `cell` (e.g. one that pauses at its breakpoints), or undefined
+   * to run the cell as one script.
+   */
+  lineRunFor?: (cell: vscode.NotebookCell) => import('./controller').LineRun | undefined;
   /** Picks the executor per notebook (e.g. a persistent session). */
   executorFor: (notebook: vscode.NotebookDocument) => CellExecutor = () => isolatedExecutor;
 }

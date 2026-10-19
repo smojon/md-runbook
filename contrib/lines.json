@@ -41,29 +41,78 @@
       "title": "Stop Stepping",
       "category": "md-runbook",
       "icon": "$(debug-stop)"
+    },
+    {
+      "command": "mdRunbook.runCheckedLines",
+      "title": "Run Checked Lines",
+      "category": "md-runbook",
+      "icon": "$(checklist)"
+    },
+    {
+      "command": "mdRunbook.clearCheckedLines",
+      "title": "Uncheck All Lines",
+      "category": "md-runbook"
+    },
+    {
+      "command": "mdRunbook.runLineAt",
+      "title": "Run This Line",
+      "category": "md-runbook"
+    },
+    {
+      "command": "mdRunbook.toggleLineCheck",
+      "title": "Check This Line",
+      "category": "md-runbook"
+    },
+    {
+      "command": "mdRunbook.runSelection",
+      "title": "Run Selection",
+      "category": "md-runbook",
+      "icon": "$(play)"
+    },
+    {
+      "command": "mdRunbook.runCursorLine",
+      "title": "Run This Line",
+      "category": "md-runbook",
+      "icon": "$(play)"
+    },
+    {
+      "command": "mdRunbook.stepThroughFromSelection",
+      "title": "Step Through from Selection",
+      "category": "md-runbook",
+      "icon": "$(debug-step-into)"
     }
   ],
   "menus": {
     "notebook/cell/execute": [
       {
-        "command": "mdRunbook.runLine",
-        "when": "notebookType == md-runbook && notebookCellType == code",
+        "command": "mdRunbook.runSelection",
+        "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.cellSelection",
         "group": "mdRunbook-lines@1"
+      },
+      {
+        "command": "mdRunbook.stepThroughFromSelection",
+        "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.cellSelection",
+        "group": "mdRunbook-lines@2"
       },
       {
         "command": "mdRunbook.runLinesOneByOne",
         "when": "notebookType == md-runbook && notebookCellType == code",
-        "group": "mdRunbook-lines@2"
+        "group": "mdRunbook-lines@3"
       },
       {
         "command": "mdRunbook.stepThroughLines",
         "when": "notebookType == md-runbook && notebookCellType == code",
-        "group": "mdRunbook-lines@3"
+        "group": "mdRunbook-lines@4"
       },
       {
-        "command": "mdRunbook.stepThroughFromLine",
-        "when": "notebookType == md-runbook && notebookCellType == code",
-        "group": "mdRunbook-lines@4"
+        "command": "mdRunbook.runCheckedLines",
+        "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.hasCheckedLines",
+        "group": "mdRunbook-lines@5"
+      },
+      {
+        "command": "mdRunbook.clearCheckedLines",
+        "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.hasCheckedLines",
+        "group": "mdRunbook-lines@6"
       }
     ],
     "notebook/cell/title": [
@@ -85,13 +134,23 @@
     ],
     "editor/context": [
       {
-        "command": "mdRunbook.runLine",
-        "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown",
+        "command": "mdRunbook.runSelection",
+        "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown && editorHasSelection",
+        "group": "mdRunbook@1"
+      },
+      {
+        "command": "mdRunbook.stepThroughFromSelection",
+        "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown && editorHasSelection",
+        "group": "mdRunbook@2"
+      },
+      {
+        "command": "mdRunbook.runCursorLine",
+        "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown && !editorHasSelection",
         "group": "mdRunbook@1"
       },
       {
         "command": "mdRunbook.stepThroughFromLine",
-        "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown",
+        "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown && !editorHasSelection",
         "group": "mdRunbook@2"
       }
     ],
@@ -123,6 +182,34 @@
       {
         "command": "mdRunbook.stepStop",
         "when": "mdRunbook.stepPaused"
+      },
+      {
+        "command": "mdRunbook.runCheckedLines",
+        "when": "notebookType == md-runbook"
+      },
+      {
+        "command": "mdRunbook.clearCheckedLines",
+        "when": "notebookType == md-runbook"
+      },
+      {
+        "command": "mdRunbook.runLineAt",
+        "when": "false"
+      },
+      {
+        "command": "mdRunbook.toggleLineCheck",
+        "when": "false"
+      },
+      {
+        "command": "mdRunbook.runSelection",
+        "when": "false"
+      },
+      {
+        "command": "mdRunbook.runCursorLine",
+        "when": "false"
+      },
+      {
+        "command": "mdRunbook.stepThroughFromSelection",
+        "when": "false"
       }
     ]
   },

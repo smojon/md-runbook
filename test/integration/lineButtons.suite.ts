@@ -1,0 +1,95 @@
+/** Line buttons (▶ ☐ inlay hints), Run Checked Lines, and breakpoints in runbook cells. */
+import { strict as assert } from 'node:assert';
+import * as vscode from 'vscode';
+import { LANG, Test, closeAll, isWin, openRunbook, outputText, selectKernel, waitForRun, writeFile } from './suite';
+
+const say = (s: string): string => (isWin ? `Write-Output '${s}'` : `echo ${s}`);
+const comment = '# a comment';
+
+type Paused = { cell: number; index: number };
+const paused = (): Thenable<Paused | undefined> => vscode.commands.executeCommand<Paused>('mdRunbook._stepPaused');
+async function waitPaused(index: number, cell: vscode.NotebookCell): Promise<void> {
+  const end = Date.now() + 30_000;
+  while ((await paused())?.index !== index) {
+    if (Date.now() > end) throw new Error(`no pause before step ${index + 1}; output: ${JSON.stringify(outputText(cell))}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+/** The text of the inlay hints of a cell, e.g. ['▶ ☐', '▶ ☑']. */
+async function hintLabels(cell: vscode.NotebookCell): Promise<string[]> {
+  const doc = cell.document;
+  const range = new vscode.Range(0, 0, doc.lineCount, 0);
+  const hints = (await vscode.commands.executeCommand<vscode.InlayHint[]>('vscode.executeInlayHintProvider', doc.uri, range)) ?? [];
+  return hints.map((h) => (typeof h.label === 'string' ? h.label : h.label.map((p) => p.value).join('')).trim());
+}
+
+export const tests: Test[] = [
+  {
+    name: 'line buttons: ▶ ☐ in front of each command; Run Checked Lines runs only the checked ones',
+    fn: async () => {
+      const uri = writeFile('buttons.md', `# Buttons\n\n\`\`\`${LANG}\n${say('one')}\n${say('two')}\n${say('three')}\n\`\`\`\n\n\`\`\`${LANG}\n${say('alone')}\n\`\`\`\n`);
+      try {
+        const editor = await openRunbook(uri);
+        const [cell, single] = [editor.notebook.cellAt(1), editor.notebook.cellAt(2)];
+        assert.deepEqual(await hintLabels(cell), ['▶ ☐', '▶ ☐', '▶ ☐']);
+        assert.deepEqual(await hintLabels(single), [], 'no buttons in a one-command cell');
+
+        const docUri = cell.document.uri.toString();
+        await vscode.commands.executeCommand('mdRunbook.toggleLineCheck', docUri, 0);
+        await vscode.commands.executeCommand('mdRunbook.toggleLineCheck', docUri, 2);
+        assert.deepEqual(await hintLabels(cell), ['▶ ☑', '▶ ☐', '▶ ☑']);
+
+        void vscode.commands.executeCommand('mdRunbook.runCheckedLines', cell);
+        assert.equal(await waitForRun(cell), true, outputText(cell));
+        const out = outputText(cell);
+        assert.match(out, /one/);
+        assert.match(out, /three/);
+        assert.doesNotMatch(out, /two/);
+        assert.match(out, /lines 1,3/);
+
+        // ▶ on the second line runs only that line.
+        void vscode.commands.executeCommand('mdRunbook.runLineAt', docUri, 1);
+        await new Promise((r) => setTimeout(r, 500));
+        assert.equal(await waitForRun(cell), true, outputText(cell));
+        assert.match(outputText(cell), /two/);
+        assert.match(outputText(cell), /lines 2\b/);
+      } finally {
+        await closeAll();
+      }
+    },
+  },
+  {
+    name: 'breakpoints: a normal run pauses before the line, F5 continues to the next one; one on a comment pauses at the next command',
+    fn: async () => {
+      const uri = writeFile('breakpoints.md', `# Breakpoints\n\n\`\`\`${LANG}\n${say('one')}\n${say('two')}\n${comment}\n${say('three')}\n\`\`\`\n`);
+      const editor = await openRunbook(uri);
+      const cell = editor.notebook.cellAt(1);
+      const at = (line: number): vscode.SourceBreakpoint => new vscode.SourceBreakpoint(new vscode.Location(cell.document.uri, new vscode.Position(line, 0)));
+      // Line 1 ("two"), and line 2 (the comment: it belongs to the command on line 3).
+      const bps = [at(1), at(2)];
+      vscode.debug.addBreakpoints(bps);
+      try {
+        // Not awaited: the run only ends once it is continued past its breakpoints.
+        await selectKernel(editor);
+        void vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 1, end: 2 }], document: editor.notebook.uri });
+        await waitPaused(1, cell);
+        assert.match(outputText(cell), /one/);
+        assert.doesNotMatch(outputText(cell), /two/);
+
+        await vscode.commands.executeCommand('mdRunbook.stepContinue'); // F5: to the next breakpoint
+        await waitPaused(2, cell);
+        assert.match(outputText(cell), /two/);
+        assert.doesNotMatch(outputText(cell), /three/);
+
+        await vscode.commands.executeCommand('mdRunbook.stepContinue');
+        assert.equal(await waitForRun(cell), true, outputText(cell));
+        assert.match(outputText(cell), /three/);
+        assert.doesNotMatch(outputText(cell), /lines /, 'every line ran: a full run');
+      } finally {
+        vscode.debug.removeBreakpoints(bps);
+        await closeAll();
+      }
+    },
+  },
+];

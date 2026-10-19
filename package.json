@@ -365,6 +365,45 @@
         "title": "Export Report (PDF)",
         "category": "md-runbook",
         "icon": "$(file-pdf)"
+      },
+      {
+        "command": "mdRunbook.runCheckedLines",
+        "title": "Run Checked Lines",
+        "category": "md-runbook",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "mdRunbook.clearCheckedLines",
+        "title": "Uncheck All Lines",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.runLineAt",
+        "title": "Run This Line",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.toggleLineCheck",
+        "title": "Check This Line",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.runSelection",
+        "title": "Run Selection",
+        "category": "md-runbook",
+        "icon": "$(play)"
+      },
+      {
+        "command": "mdRunbook.runCursorLine",
+        "title": "Run This Line",
+        "category": "md-runbook",
+        "icon": "$(play)"
+      },
+      {
+        "command": "mdRunbook.stepThroughFromSelection",
+        "title": "Step Through from Selection",
+        "category": "md-runbook",
+        "icon": "$(debug-step-into)"
       }
     ],
     "menus": {
@@ -616,6 +655,34 @@
         {
           "command": "mdRunbook.exportReportPdf",
           "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.runCheckedLines",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.clearCheckedLines",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.runLineAt",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.toggleLineCheck",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.runSelection",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.runCursorLine",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.stepThroughFromSelection",
+          "when": "false"
         }
       ],
       "notebook/cell/title": [
@@ -687,35 +754,55 @@
       ],
       "notebook/cell/execute": [
         {
-          "command": "mdRunbook.runLine",
-          "when": "notebookType == md-runbook && notebookCellType == code",
+          "command": "mdRunbook.runSelection",
+          "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.cellSelection",
           "group": "mdRunbook-lines@1"
+        },
+        {
+          "command": "mdRunbook.stepThroughFromSelection",
+          "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.cellSelection",
+          "group": "mdRunbook-lines@2"
         },
         {
           "command": "mdRunbook.runLinesOneByOne",
           "when": "notebookType == md-runbook && notebookCellType == code",
-          "group": "mdRunbook-lines@2"
+          "group": "mdRunbook-lines@3"
         },
         {
           "command": "mdRunbook.stepThroughLines",
           "when": "notebookType == md-runbook && notebookCellType == code",
-          "group": "mdRunbook-lines@3"
+          "group": "mdRunbook-lines@4"
         },
         {
-          "command": "mdRunbook.stepThroughFromLine",
-          "when": "notebookType == md-runbook && notebookCellType == code",
-          "group": "mdRunbook-lines@4"
+          "command": "mdRunbook.runCheckedLines",
+          "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.hasCheckedLines",
+          "group": "mdRunbook-lines@5"
+        },
+        {
+          "command": "mdRunbook.clearCheckedLines",
+          "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.hasCheckedLines",
+          "group": "mdRunbook-lines@6"
         }
       ],
       "editor/context": [
         {
-          "command": "mdRunbook.runLine",
-          "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown",
+          "command": "mdRunbook.runSelection",
+          "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown && editorHasSelection",
+          "group": "mdRunbook@1"
+        },
+        {
+          "command": "mdRunbook.stepThroughFromSelection",
+          "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown && editorHasSelection",
+          "group": "mdRunbook@2"
+        },
+        {
+          "command": "mdRunbook.runCursorLine",
+          "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown && !editorHasSelection",
           "group": "mdRunbook@1"
         },
         {
           "command": "mdRunbook.stepThroughFromLine",
-          "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown",
+          "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown && !editorHasSelection",
           "group": "mdRunbook@2"
         }
       ]
@@ -808,6 +895,18 @@
             "default": true,
             "markdownDescription": "Mark problems in runbooks while you edit: invalid or unknown cell options, `${out:NAME}` without an earlier `capture=NAME`, `${param:NAME}` not declared in the front matter, ignored front matter values. The same checks as `md-runbook lint`.",
             "order": 10
+          },
+          "mdRunbook.lines.buttons": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show `▶ ☐` in front of each command of a code cell with two or more commands: ▶ runs that command, ☐ checks it for **Run Checked Lines**. They are inlay hints, so `editor.inlayHints.enabled` must be on.",
+            "order": 11
+          },
+          "mdRunbook.lines.breakpoints": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Breakpoints in runbook cells: click the margin of a `bash`, `pwsh` or `cmd` cell to set one; a run of that cell then goes line by line and pauses before it (F10 next line, F5 continue, Shift+F5 stop). A breakpoint on a blank line, a comment or inside a block pauses before the next command. Off: no breakpoint margin in `bash` and `cmd` cells, and breakpoints are ignored (the PowerShell extension, if installed, still shows its own margin in `pwsh` cells).",
+            "order": 12
           }
         }
       },
@@ -1404,6 +1503,20 @@
             ]
           }
         ]
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "shellscript",
+        "when": "resourceExtname == .md && config.mdRunbook.lines.breakpoints"
+      },
+      {
+        "language": "powershell",
+        "when": "resourceExtname == .md && config.mdRunbook.lines.breakpoints"
+      },
+      {
+        "language": "bat",
+        "when": "resourceExtname == .md && config.mdRunbook.lines.breakpoints"
       }
     ]
   },

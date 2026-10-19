@@ -1,14 +1,33 @@
 # Running a cell line by line
 
-A cell normally runs as one script. Four commands run its lines separately instead. They're in
-the dropdown next to a code cell's run button, and in the Command Palette:
+A cell normally runs as one script. You can also run its lines separately:
+
+- **`▶ ☐` in front of each command** (in cells with two or more): `▶` runs that command, `☐`
+  checks it for **Run Checked Lines**.
+- **The dropdown next to the cell's run button:** **Run Lines One by One**, **Step Through
+  Lines**; **Run Checked Lines** and **Uncheck All Lines** when lines are checked; **Run
+  Selection** and **Step Through from Selection** when text is selected in the cell.
+- **Right-click in the cell's code:** **Run This Line** and **Step Through from This Line** (the
+  line you clicked), or **Run Selection** and **Step Through from Selection** when text is
+  selected.
+- **`Ctrl+Alt+Enter`** (`Cmd+Alt+Enter` on macOS): the selection, or else the line the cursor is
+  on.
+- **Breakpoints:** a cell with breakpoints runs line by line and pauses at them (see
+  [below](#breakpoints)).
 
 | Command | What it does |
 |---|---|
-| **Run Line or Selection** (`Ctrl+Alt+Enter`, `Cmd+Alt+Enter` on macOS, or the cell editor's context menu) | Runs only the line the cursor is on. With text selected, it runs exactly that text, even part of a line. |
+| **Run This Line** / **Run Selection** | Runs only that line, or exactly the selected text (even part of a line). |
 | **Run Lines One by One** | Runs every line of the cell in order, stopping at the first line that fails. |
+| **Run Checked Lines** | Runs the checked lines in order, in one shell, stopping at the first that fails. Checks are kept until you close the runbook; they aren't saved in the file. |
 | **Step Through Lines** | Runs the first line, then pauses before each next one, like stepping in a debugger. |
-| **Step Through from This Line** (also in the cell editor's context menu) | The same, starting at the line the cursor is on (or the next command after it). The lines above it are not run, so the output is saved with `lines=`. |
+| **Step Through from This Line** / **from Selection** | The same, starting at that line (or the next command after it). |
+
+When not every line of the cell ran, the output is saved with `lines=` and the cell lines that
+ran: `lines=3`, `lines=2-4`, or `lines=1,3` for checked lines that aren't next to each other.
+
+The `▶ ☐` buttons are VS Code *inlay hints* (the only clickable thing an extension can put inside
+code): they need `editor.inlayHints.enabled` on, and `mdRunbook.lines.buttons` turns them off.
 
 The output shows each line before its own output (`$ ls -la` in bash, `PS> Get-Date` in PowerShell,
 `> dir` in cmd), so the saved output is a readable record of what ran:
@@ -40,12 +59,29 @@ While a cell waits for its next line, that line is highlighted in the cell, the 
 | Key | Button | |
 |---|---|---|
 | `F10` | **Run Next Line** | Runs the highlighted line, then pauses again. |
-| `F5` | **Run Remaining Lines** | Runs the rest without pausing (still stopping at a failure). |
+| `F5` | **Run Remaining Lines** | Continues without stepping, until the next breakpoint (or a failure, or the end). |
 | `Shift+F5` | **Stop Stepping** | Ends the run here; the lines that ran are recorded. |
 
 The keys only apply while a cell is paused, and not during a debug session. The cell's own Stop
 button also ends the run where it is. While a cell is paused, the runbook's other cells wait,
 because they would share its shell.
+
+## Breakpoints
+
+Click in the margin to the left of a line in a `bash`, `pwsh` or `cmd` cell to set a breakpoint
+(the red dot, as in any VS Code editor). A run of that cell (its run button, Run All, Run Lines
+One by One, …) then goes line by line in one shell and **pauses before each line with a
+breakpoint**, highlighted as in Step Through: `F10` runs the next line, `F5` continues to the next
+breakpoint, `Shift+F5` stops. Cells without breakpoints run as usual.
+
+- Every enabled breakpoint in a runbook cell is used: one on a blank line, a comment or inside a
+  multi-line block pauses before the command at or after it. Disable or remove them in the
+  **Breakpoints** view of the Run and Debug side bar, like any breakpoint.
+- `mdRunbook.lines.breakpoints` turns breakpoints off: `bash` and `cmd` cells then have no
+  breakpoint margin, and breakpoints are ignored. If the PowerShell extension is installed, it
+  still shows its own margin in `pwsh` cells; md-runbook ignores those breakpoints too then.
+- md-runbook is not a debugger: it pauses *between* commands, it can't stop inside a running
+  command or show variables.
 
 ## What counts as a line
 

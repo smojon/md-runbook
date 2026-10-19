@@ -2,8 +2,16 @@
 
 ## Unreleased
 
-- **Line by line:** **Run Line or Selection** and **Step Through from This Line** now show in
-  the right-click menu of a code cell (they were missing there).
+- **Line buttons:** `▶ ☐` in front of each command of a cell (with two or more): `▶` runs that
+  command, `☐` checks it, and **Run Checked Lines** runs the checked ones in order
+  (`lines=1,3`). `mdRunbook.lines.buttons` turns them off.
+- **Breakpoints:** click the margin of a `bash`, `pwsh` or `cmd` cell to set one; running the
+  cell then pauses before that line (`F10` next line, `F5` continue to the next breakpoint,
+  `Shift+F5` stop). A breakpoint on a blank line or comment pauses at the next command.
+  `mdRunbook.lines.breakpoints` turns them off.
+- **Menus:** "…Selection" entries show only when text is selected; the right-click menu of a
+  code cell has **Run This Line** / **Step Through from This Line** (they were missing there).
+  `F5` while paused now continues to the next breakpoint.
 
 ## 0.3.1
 

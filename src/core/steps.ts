@@ -331,6 +331,20 @@ export function formatLineRange(start: number, end: number): string {
   return start === end ? String(start + 1) : `${start + 1}-${end + 1}`;
 }
 
+/**
+ * The lines of several commands for `lines=`: ranges joined by commas, adjacent ones merged
+ * (`2,4-6` for the commands on lines 2, 4-5 and 6).
+ */
+export function formatLineRanges(steps: readonly { start: number; end: number }[]): string {
+  const merged: [number, number][] = [];
+  for (const s of [...steps].sort((a, b) => a.start - b.start)) {
+    const last = merged[merged.length - 1];
+    if (last && s.start <= last[1] + 1) last[1] = Math.max(last[1], s.end);
+    else merged.push([s.start, s.end]);
+  }
+  return merged.map(([a, b]) => formatLineRange(a, b)).join(',');
+}
+
 /** What the output shows before a command run on its own: `$ ls -la`, `PS> Get-Date`. */
 export function echoCommand(kind: ShellKind, text: string): string {
   const prompt = kind === 'pwsh' ? 'PS> ' : kind === 'cmd' ? '> ' : '$ ';

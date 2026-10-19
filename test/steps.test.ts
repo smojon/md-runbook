@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { echoCommand, formatLineRange, splitSteps, stepAtLine } from '../src/core/steps';
+import { echoCommand, formatLineRange, formatLineRanges, splitSteps, stepAtLine } from '../src/core/steps';
 import type { ShellKind } from '../src/core';
 
 const texts = (src: string, kind: ShellKind): string[] => splitSteps(src, kind).map((s) => s.text);
@@ -151,6 +151,12 @@ describe('step helpers', () => {
     assert.equal(stepAtLine(steps, 0)?.text, 'echo a');
     assert.equal(stepAtLine(steps, 4), undefined);
     assert.equal(stepAtLine(steps, 5), undefined);
+  });
+
+  it('formatLineRanges joins commands, merging adjacent lines', () => {
+    assert.equal(formatLineRanges([{ start: 1, end: 1 }, { start: 3, end: 4 }, { start: 5, end: 5 }]), '2,4-6');
+    assert.equal(formatLineRanges([{ start: 4, end: 4 }, { start: 0, end: 1 }]), '1-2,5');
+    assert.equal(formatLineRanges([{ start: 2, end: 2 }]), '3');
   });
 
   it('formatLineRange is 1-based', () => {
