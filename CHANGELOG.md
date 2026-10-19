@@ -3,11 +3,12 @@
 ## Unreleased
 
 - **Line hover, plain click:** rest the mouse on a command of a cell (with two or more) for
-  **▶ Run line**, **⤒ Run until here**, **⏩ Run from here**, **⏯ Step from here**, **☐ Check**,
-  **● Breakpoint**, **⧉ Copy with values** and, with an AI provider set, **✦ Explain**. Below the buttons: whether
-  it will ask before running (⚠), the last known target context (`output.recordContext`), and the
-  current value of each `${param:…}`, `${out:…}`, `${input:…}` (secrets never shown). A plain
-  click is enough; the inline `▶ ☐` needed Ctrl+click.
+  **Run line**, **Run until here**, **Run from here**, **Step from here**, **Check**,
+  **Breakpoint**, **Copy with values** and, with an AI provider set, **Explain**, with VS Code's
+  own icons. Below the buttons: whether it will ask before running, the last known target
+  context (`output.recordContext`), and the current value of each `${param:…}`, `${out:…}`,
+  `${input:…}` (secrets never shown). A plain click is enough; the inline `▶ ☐` needed
+  Ctrl+click.
 - Checked lines get a ☑ in the margin, and the cell's status line has **Run 2 checked lines**,
   one click to run them.
 - `mdRunbook.lines.buttons` is now `hover` (default), `inline` (the `▶ ☐` in front of each

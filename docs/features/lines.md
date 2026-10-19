@@ -52,29 +52,29 @@ run **md-runbook: Open Sample Runbook**.
 
 ## The line hover
 
-Rest the mouse on a command for a moment:
+Rest the mouse on a command for a moment (each button has a VS Code icon in front):
 
 ```text
-▶ Run line 2 · ⤒ Run until here (1-2) · ⏩ Run from here (2-4) · ⏯ Step from here
-☐ Check · ● Breakpoint · ⧉ Copy with values · ✦ Explain
+Run line 2 · Run until here (1-2) · Run from here (2-4) · Step from here
+Check · Breakpoint · Copy with values · Explain
 ───────────────────────────────────────────────
-⚠ Asks before running: matches delete
-→ cluster: prod-eu · namespace: web (last known)
+Asks before running: matches delete
+cluster: prod-eu · namespace: web (last known)
 ${param:ns} = prod
 ${out:POD} = no value yet: run the cell with capture=POD first
 ```
 
 | | |
 |---|---|
-| **▶ Run line** | Runs only that command. |
-| **⤒ Run until here** | Runs the commands before it, then it, in order. Not on the first command. |
-| **⏩ Run from here** / **⏯ Step from here** | Runs that command and the ones after it, straight through or pausing before each (`F10`, `F5`, `Shift+F5`). Not on the last command. |
-| **☐ Check** | Checks it for **Run Checked Lines** (☑ Uncheck when checked). |
-| **● Breakpoint** | Sets or removes a breakpoint on it, as a click in the margin does. Not with `mdRunbook.lines.breakpoints` off. |
-| **⧉ Copy with values** | Copies the command with the current `${param:…}`, `${out:…}` and `${input:…}` values filled in, to paste into a terminal. `${secret:…}`, secret inputs and values captured as secret stay as references. Without references it is **⧉ Copy**. |
-| **✦ Explain** | Asks the AI what the command does; the answer opens beside. Only with `mdRunbook.ai.provider` set, and it asks before sending, like **Explain Output**. |
-| **⚠ Asks before running** | The command matches `mdRunbook.execution.confirmPatterns` (or every run asks), so running it will ask first. |
-| **→ context** | Where it will run: the last values of `mdRunbook.output.recordContext` (cluster, server, …). Only when that is set. |
+| **Run line** | Runs only that command. |
+| **Run until here** | Runs the commands before it, then it, in order. Not on the first command. |
+| **Run from here** / **Step from here** | Runs that command and the ones after it, straight through or pausing before each (`F10`, `F5`, `Shift+F5`). Not on the last command. |
+| **Check** | Checks it for **Run Checked Lines** (**Uncheck** when checked). |
+| **Breakpoint** | Sets or removes a breakpoint on it, as a click in the margin does. Not with `mdRunbook.lines.breakpoints` off. |
+| **Copy with values** | Copies the command with the current `${param:…}`, `${out:…}` and `${input:…}` values filled in, to paste into a terminal. `${secret:…}`, secret inputs and values captured as secret stay as references. Without references it is **Copy**. |
+| **Explain** | Asks the AI what the command does; the answer opens beside. Only with `mdRunbook.ai.provider` set, and it asks before sending, like **Explain Output**. |
+| **Asks before running** | The command matches `mdRunbook.execution.confirmPatterns` (or every run asks), so running it will ask first. |
+| **Context** | Where it will run: the last values of `mdRunbook.output.recordContext` (cluster, server, …). Only when that is set. |
 | **`${…}` values** | The value each reference will have, or why there is none yet. Secret values are never shown (••••). |
 
 The hover only reads what md-runbook already knows: it never asks for a value or runs anything.

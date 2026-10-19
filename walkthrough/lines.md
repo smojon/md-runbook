@@ -1,6 +1,6 @@
 # Line by line
 
-- **Hover a command** (cells with two or more): `▶ Run line` runs it, `☐ Check` checks it, with a
+- **Hover a command** (cells with two or more): **Run line** runs it, **Check** checks it, with a
   plain click; **Run N checked lines** under the cell (or **Run Checked Lines** in the dropdown
   next to the cell's run button) runs the checked ones.
 - **The dropdown** also has **Run Lines One by One** (each command in turn, stopping at the first

@@ -146,7 +146,7 @@ function planLineRun(
   }
   if (mode === 'checked') {
     const steps = all.filter((s) => opts.checked?.has(s.text));
-    if (steps.length === 0) return 'no lines are checked in this cell: hover a line and click ☐ Check first.';
+    if (steps.length === 0) return 'no lines are checked in this cell: hover a line and click Check first.';
     return { source: steps.map((s) => s.text).join('\n'), steps, coversCell: steps.length === all.length };
   }
 
@@ -379,31 +379,31 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
       const link = (label: string, command: string, tip: string, args: unknown[] = [uri, step.start]): string =>
         `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))} "${tip}")`;
 
-      const runs = [link(`▶ Run line ${lines}`, 'mdRunbook.runLineAt', 'Run only this command')];
-      if (step !== steps[0]) runs.push(link(`⤒ Run until here (${formatLineRange(steps[0]!.start, step.end)})`, 'mdRunbook.runToLineAt', 'Run the commands before this one, then this one'));
+      const runs = [link(`$(play) Run line ${lines}`, 'mdRunbook.runLineAt', 'Run only this command')];
+      if (step !== steps[0]) runs.push(link(`$(run-above) Run until here (${formatLineRange(steps[0]!.start, step.end)})`, 'mdRunbook.runToLineAt', 'Run the commands before this one, then this one'));
       if (step !== last) {
-        runs.push(link(`⏩ Run from here (${formatLineRange(step.start, last.end)})`, 'mdRunbook.runFromLineAt', 'Run this command and the ones after it'));
-        runs.push(link('⏯ Step from here', 'mdRunbook.stepFromLineAt', 'Run this command, then pause before each next one (F10 next, F5 continue)'));
+        runs.push(link(`$(run-below) Run from here (${formatLineRange(step.start, last.end)})`, 'mdRunbook.runFromLineAt', 'Run this command and the ones after it'));
+        runs.push(link('$(debug-step-into) Step from here', 'mdRunbook.stepFromLineAt', 'Run this command, then pause before each next one (F10 next, F5 continue)'));
       }
       const on = checks.get(uri)?.has(step.text) ?? false;
-      const tools = [link(on ? '☑ Uncheck' : '☐ Check', 'mdRunbook.toggleLineCheck', `${on ? 'Uncheck' : 'Check'} for Run Checked Lines`)];
+      const tools = [link(on ? '$(pass-filled) Uncheck' : '$(check) Check', 'mdRunbook.toggleLineCheck', `${on ? 'Uncheck' : 'Check'} for Run Checked Lines`)];
       if (breakpointsOn()) {
         const has = breakpointsIn(document.uri, step.start, step.end).length > 0;
-        tools.push(link(has ? '● Remove breakpoint' : '● Breakpoint', 'mdRunbook.toggleBreakpointAt', has ? 'Remove the breakpoint' : 'Pause before this command when the cell runs'));
+        tools.push(link(has ? '$(debug-breakpoint) Remove breakpoint' : '$(debug-breakpoint) Breakpoint', 'mdRunbook.toggleBreakpointAt', has ? 'Remove the breakpoint' : 'Pause before this command when the cell runs'));
       }
       const values = info.secrets.values(cell.notebook, step.text);
       tools.push(
         values.length > 0
-          ? link('⧉ Copy with values', 'mdRunbook.copyLineAt', 'Copy with the values filled in; secrets stay as references')
-          : link('⧉ Copy', 'mdRunbook.copyLineAt', 'Copy this command'),
+          ? link('$(copy) Copy with values', 'mdRunbook.copyLineAt', 'Copy with the values filled in; secrets stay as references')
+          : link('$(copy) Copy', 'mdRunbook.copyLineAt', 'Copy this command'),
       );
-      if (aiOn()) tools.push(link('✦ Explain', 'mdRunbook.ai.explainLine', 'Ask the AI what this command does (asks before sending)', [uri, step.start, lines]));
+      if (aiOn()) tools.push(link('$(sparkle) Explain', 'mdRunbook.ai.explainLine', 'Ask the AI what this command does (asks before sending)', [uri, step.start, lines]));
 
       const facts: string[] = [];
       const ask = info.safety.confirmation(cell, step.text);
-      if (ask !== undefined) facts.push(`⚠ Asks before running${ask.trim() ? `: matches ${code(ask.trim())}` : ''}`);
+      if (ask !== undefined) facts.push(`$(warning) Asks before running${ask.trim() ? `: matches ${code(ask.trim())}` : ''}`);
       const where = info.safety.context(cell.notebook);
-      if (where && Object.keys(where).length > 0) facts.push(`→ ${Object.entries(where).map(([k, v]) => `${escapeMd(k)}: ${code(v)}`).join(' · ')} (last known)`);
+      if (where && Object.keys(where).length > 0) facts.push(`$(cloud) ${Object.entries(where).map(([k, v]) => `${escapeMd(k)}: ${code(v)}`).join(' · ')} (last known)`);
       for (const v of values) {
         const now = v.value !== undefined ? code(v.value) : v.shown ? `*${escapeMd(v.shown)}*` : '•••• (secret)';
         facts.push(`${code(`\${${v.kind}:${v.name}}`)} = ${now}${v.note ? ` *(${escapeMd(v.note)})*` : ''}`);
@@ -411,6 +411,7 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
 
       const md = new vscode.MarkdownString([runs.join(' · '), tools.join(' · '), ...(facts.length > 0 ? ['---', ...facts] : [])].join('\n\n'));
       md.isTrusted = { enabledCommands: HOVER_COMMANDS };
+      md.supportThemeIcons = true; // $(play) etc.; values are escaped or in code spans, so a `$(…)` in them stays text
       return new vscode.Hover(md, new vscode.Range(step.start, 0, step.end, document.lineAt(step.end).text.length));
     },
   };

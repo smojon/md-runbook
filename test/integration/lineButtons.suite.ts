@@ -34,7 +34,7 @@ const buttonsRunbook = (): string => `# Buttons\n\n\`\`\`${LANG}\n${say('one')}\
 
 export const tests: Test[] = [
   {
-    name: 'line buttons (hover, the default): ▶ Run line · ☐ Check in a hover, ☑ in the margin, Run N checked lines under the cell',
+    name: 'line buttons (hover, the default): Run line, Run until / from here, Check, Breakpoint, Copy in a hover; ☑ in the margin; Run N checked lines under the cell',
     fn: async () => {
       const uri = writeFile('hover-buttons.md', `${buttonsRunbook()}\n\`\`\`${LANG}\n${say('delete ${param:ns}')}\n${say('x')}\n\`\`\`\n`);
       try {
@@ -43,44 +43,44 @@ export const tests: Test[] = [
         const docUri = cell.document.uri.toString();
         assert.deepEqual(await hintLabels(cell), [], 'no inlay hints in hover mode');
         const hover = await hoverText(cell, 1);
-        assert.match(hover, /\[▶ Run line 2\]\(command:mdRunbook\.runLineAt\?/);
-        assert.match(hover, /\[☐ Check\]\(command:mdRunbook\.toggleLineCheck\?/);
+        assert.match(hover, /\[\$\(play\) Run line 2\]\(command:mdRunbook\.runLineAt\?/);
+        assert.match(hover, /\[\$\(check\) Check\]\(command:mdRunbook\.toggleLineCheck\?/);
         assert.doesNotMatch(await hoverText(single, 0), /Run line/, 'no buttons in a one-command cell');
         assert.deepEqual(await vscode.commands.executeCommand('mdRunbook._lineStatus', docUri), []);
 
         // Run / Step from here (not on the last line), breakpoint, copy; no Explain without an AI provider.
         const first = await hoverText(cell, 0);
-        assert.match(first, /\[⏩ Run from here \(1-3\)\]\(command:mdRunbook\.runFromLineAt\?/);
-        assert.match(first, /\[⏯ Step from here\]\(command:mdRunbook\.stepFromLineAt\?/);
-        assert.match(first, /\[● Breakpoint\]\(command:mdRunbook\.toggleBreakpointAt\?/);
-        assert.match(first, /\[⧉ Copy\]\(command:mdRunbook\.copyLineAt\?/);
+        assert.match(first, /\[\$\(run-below\) Run from here \(1-3\)\]\(command:mdRunbook\.runFromLineAt\?/);
+        assert.match(first, /\[\$\(debug-step-into\) Step from here\]\(command:mdRunbook\.stepFromLineAt\?/);
+        assert.match(first, /\[\$\(debug-breakpoint\) Breakpoint\]\(command:mdRunbook\.toggleBreakpointAt\?/);
+        assert.match(first, /\[\$\(copy\) Copy\]\(command:mdRunbook\.copyLineAt\?/);
         assert.doesNotMatch(first, /Explain/);
         assert.doesNotMatch(first, /Run until here/, 'nothing before the first line');
         assert.doesNotMatch(await hoverText(cell, 2), /Run from here/, 'nothing after the last line');
-        assert.match(await hoverText(cell, 1), /\[⤒ Run until here \(1-2\)\]\(command:mdRunbook\.runToLineAt\?/);
+        assert.match(await hoverText(cell, 1), /\[\$\(run-above\) Run until here \(1-2\)\]\(command:mdRunbook\.runToLineAt\?/);
 
         const bps = (): vscode.Breakpoint[] =>
           vscode.debug.breakpoints.filter((b) => b instanceof vscode.SourceBreakpoint && b.location.uri.toString() === docUri);
         await vscode.commands.executeCommand('mdRunbook.toggleBreakpointAt', docUri, 1);
         assert.equal(bps().length, 1);
-        assert.match(await hoverText(cell, 1), /● Remove breakpoint/);
+        assert.match(await hoverText(cell, 1), /\$\(debug-breakpoint\) Remove breakpoint/);
         await vscode.commands.executeCommand('mdRunbook.toggleBreakpointAt', docUri, 1);
         assert.equal(bps().length, 0);
 
         // What a run would ask, and the values of ${…} references; Copy fills them in.
         const risky = editor.notebook.cellAt(3);
         const riskyUri = risky.document.uri.toString();
-        assert.match(await hoverText(risky, 0), /⚠ Asks before running: matches ` delete `/);
+        assert.match(await hoverText(risky, 0), /\$\(warning\) Asks before running: matches ` delete `/);
         assert.match(await hoverText(risky, 0), /` \$\{param:ns\} ` = \*asked when it runs\*/);
         await vscode.commands.executeCommand('mdRunbook._test.setParameters', { ns: 'prod' });
         assert.match(await hoverText(risky, 0), /` \$\{param:ns\} ` = ` prod `/);
-        assert.match(await hoverText(risky, 0), /\[⧉ Copy with values\]/);
+        assert.match(await hoverText(risky, 0), /\[\$\(copy\) Copy with values\]/);
         assert.equal(await vscode.commands.executeCommand('mdRunbook.copyLineAt', riskyUri, 0), say('delete prod'));
-        assert.doesNotMatch(await hoverText(risky, 1), /⚠/, 'a harmless line asks nothing');
+        assert.doesNotMatch(await hoverText(risky, 1), /Asks before running/, 'a harmless line asks nothing');
 
         await vscode.commands.executeCommand('mdRunbook.toggleLineCheck', docUri, 0);
         await vscode.commands.executeCommand('mdRunbook.toggleLineCheck', docUri, 2);
-        assert.match(await hoverText(cell, 0), /☑ Uncheck/);
+        assert.match(await hoverText(cell, 0), /\[\$\(pass-filled\) Uncheck\]/);
         assert.deepEqual(await vscode.commands.executeCommand('mdRunbook._checkMarks', docUri), [0, 2]);
         assert.deepEqual(await vscode.commands.executeCommand('mdRunbook._lineStatus', docUri), ['$(play) Run 2 checked lines']);
 

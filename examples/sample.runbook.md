@@ -289,16 +289,16 @@ echo "now in $(pwd)"
 ls package.json
 ```
 
-- **Hover line 3** and click **▶ Run line 3**: only that line runs. The output is saved with
+- **Hover line 3** and click **Run line 3**: only that line runs. The output is saved with
   `lines=3`, and the step stays pending in the progress until the whole cell has run.
-- **Hover lines 1 and 3** and click **☐ Check** on each: they get a ☑ in the margin, and
+- **Hover lines 1 and 3** and click **Check** on each: they get a ☑ in the margin, and
   **Run 2 checked lines** appears under the cell. Click it: only those two run, in order, saved
   as `lines=1,3`. **Uncheck All Lines** (the dropdown next to the cell's ▶) clears them.
-- **The hover has more:** **⤒ Run until here** on line 3 runs lines 1 to 3, **⏩ Run from here**
-  on line 2 runs lines 2 to 4, **⏯ Step from here** pauses before each, **● Breakpoint** sets one, **⧉ Copy** copies the line (with `${param:…}`
-  and `${out:…}` values filled in), and **✦ Explain** asks the AI about it when
-  `mdRunbook.ai.provider` is set. Below the buttons, the hover says if the line will ask before
-  running (⚠) and what its `${…}` references stand for right now.
+- **The hover has more:** **Run until here** on line 3 runs lines 1 to 3, **Run from here** on
+  line 2 runs lines 2 to 4, **Step from here** pauses before each, **Breakpoint** sets one,
+  **Copy** copies the line (with `${param:…}` and `${out:…}` values filled in), and **Explain**
+  asks the AI about it when `mdRunbook.ai.provider` is set. Below the buttons, the hover says if
+  the line will ask before running and what its `${…}` references stand for right now.
 - **Right-click a line:** **Run This Line**, or **Step Through from This Line**. Select `pwd`
   first and the menu offers **Run Selection** instead: only the selection runs.
   `Ctrl+Alt+Enter` (`Cmd+Alt+Enter` on macOS) does the same from the keyboard.
