@@ -96,3 +96,12 @@ kubectl logs "${out:POD}" --tail=20
 - Checks, retries and captures apply when the whole cell runs in the runbook view, including
   cells with the `terminal` option. [Line runs](lines.md) (Run Line or Selection, Run Lines One
   by One, Step Through) and the plain text editor's ▶ Run CodeLens ignore them.
+- `retry=` allows at most 100 attempts and `every=` at most 1 hour. A risky command's
+  confirmation says how many times the cell may run.
+- A regular expression from the runbook (`expect=`, `expect-not=`, `capture=NAME:/…/`) may run
+  for at most 1 second on the output; a pattern that takes longer (catastrophic backtracking)
+  is stopped and the check fails.
+- In bash, a placeholder becomes an unquoted `${NAME}`: quote it (`"${out:POD}"`) when the
+  value could contain spaces or `*`, as for any shell variable.
+- `${out:NAME}` values captured by a cell written by an assistant are not used by your own
+  cells (see [approval](approval.md)).

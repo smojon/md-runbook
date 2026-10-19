@@ -47,7 +47,7 @@ function lastSelectedLine(sel: vscode.Selection): number {
 }
 
 /** Builds what to run, or says why there is nothing to run. */
-function planLineRun(mode: Mode, cell: vscode.NotebookCell, editor: vscode.TextEditor | undefined): Omit<LineRun, 'beforeStep' | 'onStep'> | string {
+function planLineRun(mode: Mode, cell: vscode.NotebookCell, editor: vscode.TextEditor | undefined): Omit<LineRun, 'beforeStep' | 'onStep' | 'cellText'> | string {
   const kind = shellKindForLanguage(cell.document.languageId);
   if (cell.kind !== vscode.NotebookCellKind.Code || kind === undefined) return 'line runs need a bash, PowerShell or cmd code cell.';
   const doc = cell.document;
@@ -138,6 +138,7 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
     let runRest = false;
     const lineRun: LineRun = {
       ...plan,
+      cellText: cell.document.getText(),
       onStep: (i) => highlight(cell, i === undefined ? undefined : running, i === undefined ? undefined : plan.steps[i]),
       ...(mode === 'step' || mode === 'stepFrom'
         ? {

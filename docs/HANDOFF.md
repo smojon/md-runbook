@@ -30,7 +30,10 @@ MD_RUNBOOK_PWSH=/path/to/pwsh npm test     # also the PowerShell 7 tests (value 
 npm run test:integration                   # ~70 end-to-end tests in a downloaded VS Code (xvfb-run on Linux)
 ```
 
-CI (`.github/workflows/ci.yml`) runs both on Windows, macOS and Linux on every branch push.
+CI (`.github/workflows/ci.yml`) runs both on Windows, macOS and Linux on every branch push,
+plus the CLI on `examples/ci.runbook.md` (through the action) and `scripts/check-sample.js`,
+which checks that `examples/sample.runbook.md` still does what its text says. When you change
+the sample, update the expectations in that script.
 The integration run starts a second VS Code and slows the machine for about 5 minutes; on a
 laptop in use, prefer pushing a branch and letting CI run it. From a VS Code terminal, run it as
 `env -u ELECTRON_RUN_AS_NODE npm run test:integration`.

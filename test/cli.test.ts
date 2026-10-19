@@ -26,6 +26,8 @@ describe('cli: arguments', () => {
     assert.equal(p.options.timeoutSeconds, 30);
     assert.equal(p.pdf, 'r.pdf');
     assert.equal(p.options.junit, 'j.xml');
+    const j = parseArgs(['run', 'x.md', '--json', 'r.json']);
+    assert.ok(typeof j === 'object' && j.options.json === 'r.json');
   });
 
   it('help, version and usage errors', () => {
@@ -36,6 +38,14 @@ describe('cli: arguments', () => {
     assert.throws(() => parseArgs(['run']), /missing the runbook/);
     assert.throws(() => parseArgs(['run', 'x.md', '--param', 'NOEQUALS']), /NAME=VALUE/);
     assert.throws(() => parseArgs(['run', 'x.md', '--nope']), /unknown option/);
+  });
+});
+
+describe('cli: argument safety', () => {
+  it('-h, --help and --version only count as the first argument', () => {
+    assert.throws(() => parseArgs(['run', 'x.md', '--param', '-h']), /NAME=VALUE/);
+    assert.throws(() => parseArgs(['run', '--help']), /unknown option/);
+    assert.throws(() => parseArgs(['run', 'x.md', '-h']), /unknown option/);
   });
 });
 
@@ -95,6 +105,24 @@ describe('cli: running a runbook', { skip: !hasBash && 'bash not installed' }, (
     assert.match(r.text, /<!-- md-runbook:output start exit=0 /);
     assert.match(r.text, /hello world \[REDACTED\]/);
     assert.doesNotMatch(r.text + r.printed, /tok-cli-12345/);
+  });
+
+  it('redacts environment secrets from every step, holds back secret captures, survives bad placeholders', async () => {
+    const md = [
+      '```bash', 'echo "early $CLI_TOKEN"', '```', '',
+      '```bash', 'echo ${secret:CLI_TOKEN}', '```', '',
+      '```bash capture-secret=TOK', 'echo tok-held-98765', '```', '',
+      '```bash', 'echo ${input:X} ${param:X}', '```', '',
+    ].join('\n');
+    const r = await run(
+      md,
+      { keepGoing: true, extraSecrets: ['https://hooks.example/SECRET-URL'] },
+    );
+    assert.doesNotMatch(r.text + r.printed, /tok-cli-12345/, 'the env secret is redacted in the step before its reference');
+    assert.doesNotMatch(r.printed, /tok-held-98765/, 'a secret capture is not printed before it is known');
+    assert.equal(r.steps[3]!.status, 'not run');
+    assert.match(r.steps[3]!.message ?? '', /both input and param/);
+    assert.equal(r.redact('x https://hooks.example/SECRET-URL'), 'x [REDACTED]');
   });
 
   it('stops at a failure; risky commands need --yes; missing inputs fail clearly', async () => {

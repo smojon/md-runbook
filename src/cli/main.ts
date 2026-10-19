@@ -27,6 +27,7 @@ Options:
   --pdf FILE.pdf       Also write the report as PDF (needs Chrome, Edge or Chromium)
   --browser PATH       Browser for --pdf (default: CHROME_PATH, else one found on this machine)
   --junit FILE.xml     Also write a JUnit report (one test case per step)
+  --json FILE.json     Also write the step results as JSON (status, exit, message, output)
   --param NAME=VALUE   Value for \${param:NAME} (repeatable; default: the front matter's)
   --input NAME=VALUE   Value for \${input:NAME} (repeatable; default: environment variable NAME)
   --yes                Run blocks that ask for confirmation in VS Code (risky commands, confirm)
@@ -70,8 +71,9 @@ export interface ParsedArgs {
 
 export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'version' {
   const args = [...argv];
-  if (args.length === 0 || args.includes('-h') || args.includes('--help')) return 'help';
-  if (args.includes('--version')) return 'version';
+  // Only as the first argument: a value such as a parameter `-h` must not turn a run into help.
+  if (args.length === 0 || args[0] === '-h' || args[0] === '--help') return 'help';
+  if (args[0] === '--version') return 'version';
   if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected "run" or "lint")`);
   args.shift();
   const o: ParsedArgs['options'] = { file: '', write: true, params: {}, inputs: {}, yes: false, keepGoing: false, shell: {} };
@@ -102,6 +104,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
       case '--notify': notify = value(a); break;
       case '--notify-on': notifyOn = value(a); break;
       case '--junit': o.junit = value(a); break;
+      case '--json': o.json = value(a); break;
       case '--param': pair(a, o.params); break;
       case '--input': pair(a, o.inputs); break;
       case '--yes': o.yes = true; break;
@@ -181,23 +184,42 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stderr.write(`md-runbook: ${notify}\n`);
     return 2;
   }
+  // The cells don't need the webhook: keep it out of their environment, and redact it.
+  delete process.env.MD_RUNBOOK_NOTIFY_URL;
+  const send = async (text: string): Promise<void> => {
+    if (!notify) return;
+    try {
+      await sendNotification(notify.url, text);
+    } catch (e) {
+      // A failed notification doesn't change the result of the run.
+      process.stderr.write(`md-runbook: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+  };
   const abort = new AbortController();
   const onSignal = (): void => abort.abort();
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
-  const summary = await runRunbook(
-    { ...options, env: process.env, signal: abort.signal },
-    { out: (t) => void (quiet || process.stdout.write(t)), log: (l) => void (quiet || process.stdout.write(l + '\n')) },
-  );
+  let summary: Awaited<ReturnType<typeof runRunbook>>;
+  try {
+    summary = await runRunbook(
+      { ...options, env: process.env, signal: abort.signal, ...(notify ? { extraSecrets: [notify.url] } : {}) },
+      { out: (t) => void (quiet || process.stdout.write(t)), log: (l) => void (quiet || process.stdout.write(l + '\n')) },
+    );
+  } catch (e) {
+    // A run that breaks still raises the alarm.
+    await send(`✗ ${path.basename(options.file)}: the run stopped with an error${runLink(process.env) ? `\n${runLink(process.env)}` : ''}`);
+    throw e;
+  }
   process.off('SIGINT', onSignal);
   process.off('SIGTERM', onSignal);
 
   const file = path.basename(options.file);
   const target = options.out ?? options.file;
   if (options.write) writeFile(target, summary.text);
-  const html = (): string => renderReport(summary.text, { generatedAt: new Date(), fallbackTitle: file });
+  const html = (): string => renderReport(summary.text, { generatedAt: new Date(), fallbackTitle: file, redact: summary.redact });
   if (options.report) writeFile(options.report, html());
   if (options.junit) writeFile(options.junit, junitReport(file, summary.steps));
+  if (options.json) writeFile(options.json, JSON.stringify({ file, ok: summary.ok, steps: summary.steps }, null, 2) + '\n');
   const ghSummary = process.env.GITHUB_STEP_SUMMARY;
   if (ghSummary) fs.appendFileSync(ghSummary, markdownSummary(file, summary.steps) + '\n');
   let pdfFailed = false;
@@ -217,14 +239,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
   }
 
-  if (notify && (notify.on === 'always' || !summary.ok)) {
-    try {
-      await sendNotification(notify.url, notifyText(file, summary, runLink(process.env)));
-    } catch (e) {
-      // A failed notification doesn't change the result of the run.
-      process.stderr.write(`md-runbook: ${e instanceof Error ? e.message : String(e)}\n`);
-    }
-  }
+  if (notify && (notify.on === 'always' || !summary.ok)) await send(notifyText(file, summary, runLink(process.env)));
 
   const count = (s: string): number => summary.steps.filter((x) => x.status === s).length;
   const parts = [`${count('passed')} passed`, `${count('failed')} failed`];

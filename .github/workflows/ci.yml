@@ -33,6 +33,9 @@ jobs:
           report: ${{ runner.temp }}/runbook/report.html
           pdf: ${{ runner.temp }}/runbook/report.pdf
           junit: ${{ runner.temp }}/runbook/junit.xml
+      # The sample runbook still does what its text says (checks, retries, captures, os=, ...).
+      - name: Check the sample runbook
+        run: node scripts/check-sample.js
       - uses: actions/upload-artifact@v7
         if: always()
         with:

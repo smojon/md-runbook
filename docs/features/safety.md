@@ -78,7 +78,9 @@ timeout: 300
 | `cwd: ../infra` | The folder cells run in (and session mode starts in), relative to the `.md` file's folder. A cell's own `cwd=` is still relative to the `.md` file's folder. |
 | `timeout: 300` | Default timeout in seconds (`300s` works too) instead of `mdRunbook.execution.timeoutSeconds`. `0` = none. A cell's `timeout=` wins. |
 
-These apply in the runbook view and to the text editor's ▶ Run CodeLens. Shell paths can't be
+These apply in the runbook view and to the text editor's ▶ Run CodeLens, but not to cells
+written by an assistant (they run in the `.md` file's folder with the usual timeouts), and not
+when `mdRunbook.cellOptions.enabled` is off. Shell paths can't be
 set in the front matter on purpose: a file from a repository must not choose which program runs
 your cells (that would get around the command policy for approved assistant cells). Set them in
 your user settings (`mdRunbook.shell.bashPath`, `mdRunbook.shell.pwshPath`).

@@ -102,7 +102,8 @@ make these one-click):
   `-InFile`, `-OutFile`: in Windows PowerShell 5.1 `curl` is `Invoke-WebRequest`).
 
 Fence options that change how the cell runs (`no-confirm`, `cwd=`, `env.*`, `timeout=`,
-`continue-on-error`) are listed in the review dialog too.
+`continue-on-error`, `retry=`, `every=`, `expect=`, `expect-not=`, `expect-exit=`, `capture=`,
+`capture-secret=`) are listed in the review dialog too.
 
 A policy file `.md-runbook-policy.json` is looked up next to the `.md` file, then in parent
 folders up to the workspace folder (the first one found wins). Because anyone who can change the
@@ -182,6 +183,11 @@ such a cell gets:
   cell. Values from `readOnlyEnv` secrets are redacted from live and saved output.
 - Without another timeout (`mdRunbook.execution.timeoutSeconds` 0 and no `timeout=`), such a
   cell is stopped after `mdRunbook.approval.aiTimeoutSeconds` (default 120 seconds).
+- The front matter's `cwd:` and `timeout:` don't apply to it (approval shows the cell's own
+  options, not the front matter's): it runs in the `.md` file's folder.
+- A value it captures (`capture=`) is not used by your own cells: `${out:NAME}` in a cell of
+  yours fails if an assistant cell captured `NAME`, because your cells run with your
+  credentials. It may use non-secret values your cells captured.
 - In session mode, assistant cells never join the shared shell (see [session](session.md)).
 
 ### Example: a read-only OpenShift service account

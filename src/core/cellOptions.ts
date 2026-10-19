@@ -1,4 +1,4 @@
-import { CellChecks, parseCapture, parseInterval, parseMatcher } from './checks';
+import { CellChecks, MAX_EVERY_MS, MAX_RETRY, parseCapture, parseInterval, parseMatcher } from './checks';
 import { OsName, parseOsList } from './os';
 
 /**
@@ -146,11 +146,12 @@ export function parseCellOptions(info: string): CellOptions {
       else opts.os = os;
     } else if (k === 'retry') {
       const n = Number(value);
-      if (!Number.isInteger(n) || n < 1) opts.errors.push(`retry=${value}: expected the number of attempts (1 or more)`);
+      if (!Number.isInteger(n) || n < 1 || n > MAX_RETRY) opts.errors.push(`retry=${value}: expected the number of attempts (1 to ${MAX_RETRY})`);
       else opts.retry = { attempts: n, everyMs: 5000 };
     } else if (k === 'every') {
       every = parseInterval(value);
       if (every === undefined) opts.errors.push(`every=${value}: expected a duration such as 15s, 500ms or 2m`);
+      else if (every > MAX_EVERY_MS) opts.errors.push(`every=${value}: at most 1h`);
     } else if (k.startsWith('env.') && key.length > 4) {
       opts.env[key.slice(4)] = value; // keep the variable's case
     }

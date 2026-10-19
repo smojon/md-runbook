@@ -43,6 +43,7 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--pdf FILE.pdf` | Also write the report as PDF (see [PDF](#pdf)). |
 | `--browser PATH` | The browser for `--pdf`. |
 | `--junit FILE.xml` | Also write a JUnit report, one test case per step, for your CI's test view. |
+| `--json FILE.json` | Also write the results as JSON: per step its number, line, status (`passed`, `failed`, `skipped`, `not run`), exit, message and (redacted) output. |
 | `--param NAME=VALUE` | Value for `${param:NAME}` (repeatable). Without it, the front matter's default is used. |
 | `--input NAME=VALUE` | Value for `${input:NAME}` (repeatable). Without it, the environment variable `NAME`. |
 | `--yes` | Run blocks that ask for a confirmation in VS Code: risky commands and the `confirm` option. |
@@ -62,7 +63,10 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 ## What runs, what doesn't
 
 - **Placeholders** never prompt. `${secret:NAME}` and `${input:NAME}` come from the environment
-  variable `NAME` (`--input` wins for inputs). `${param:NAME}` comes from `--param` or the front
+  variable `NAME` (`--input` wins for inputs). Every secret value the runbook references is
+  known before the first step, so it is redacted even from a step that prints the environment
+  before the step that uses it. A block with `capture-secret=` prints its output only when it
+  has finished, redacted (a CI log can't be corrected afterwards). `${param:NAME}` comes from `--param` or the front
   matter's default. `${out:NAME}` comes from an earlier block's [capture=](checks.md). A missing
   value makes the step fail with a message that says what to pass. Secret values are redacted
   from everything printed and written, as are the default redaction patterns.
@@ -154,7 +158,10 @@ JSON (Mattermost, Rocket.Chat and most others take that).
 
 - The URL is a secret (whoever has it can post to your channel): keep it in a CI secret and pass
   it through the environment. A command-line option can show up in process lists and logs.
-  md-runbook never prints it, also not in error messages.
+  md-runbook never prints it, also not in error messages, removes `MD_RUNBOOK_NOTIFY_URL` from
+  the environment the cells get, and redacts the URL from outputs and reports. This protects
+  against accidents (`env`, `set -x`), not against a hostile runbook, which runs as your user
+  and could find it elsewhere: only notify from runbooks you trust.
 - It must be `https` (`http` only for `localhost`).
 - Step outputs are not sent, only the step numbers, lines and the reason they failed.
 - If the message can't be sent, the run says so; its exit code doesn't change.

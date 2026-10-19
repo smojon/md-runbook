@@ -201,6 +201,12 @@ class SecretsFeature {
         if (captured.secret && by) {
           throw new Error(`md-runbook: cells proposed by an assistant (by=${by}) cannot use values captured as secret (\${out:${ref.name}}).`);
         }
+        // An assistant cell's output must not steer a cell of yours, which runs with your credentials.
+        if (captured.fromAssistant && !by) {
+          throw new Error(
+            `md-runbook: \${out:${ref.name}} was captured by a cell written by an assistant, and your own cells don't use values an assistant cell produced. Capture it in a cell of your own.`,
+          );
+        }
         ({ value, secret } = captured);
       } else {
         value =
@@ -226,9 +232,9 @@ class SecretsFeature {
   }
 
   /** Keep values a cell captured (`capture=`) for later cells' `${out:NAME}`. */
-  capture(nb: vscode.NotebookDocument, values: readonly Captured[]): void {
+  capture(nb: vscode.NotebookDocument, values: readonly Captured[], fromAssistant: boolean): void {
     const m = this.session(this.outs, nb);
-    for (const v of values) m.set(v.name, v);
+    for (const v of values) m.set(v.name, { ...v, fromAssistant });
   }
 
   /** Ask for every declared parameter (`values` only from the test helper, never from a command link). */
@@ -293,7 +299,13 @@ export function isTestMode(context: vscode.ExtensionContext): boolean {
 export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunPipeline): void {
   const f = new SecretsFeature(context);
   pipeline.preparers.push(f);
-  pipeline.observers.push({ onDidRunCell: (run) => run.captured && f.capture(run.notebook, run.captured) });
+  pipeline.observers.push({
+    onDidRunCell: (run) => {
+      if (!run.captured) return;
+      const meta: unknown = run.cell.metadata?.[META_KEY];
+      f.capture(run.notebook, run.captured, isCodeMeta(meta) && proposalOf(meta.info).by !== undefined);
+    },
+  });
   if (isTestMode(context)) {
     context.subscriptions.push(
       vscode.commands.registerCommand('mdRunbook._test.setSecret', async (name: string, value: string) => {

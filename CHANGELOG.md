@@ -2,9 +2,32 @@
 
 ## Unreleased
 
+- **Security fixes** from a review of the 0.2 and 0.3 features:
+  - A value captured by a cell written by an assistant is no longer used by your own cells
+    (`${out:NAME}` fails there), and approval now lists `capture=`, `expect=`, `retry=` and
+    similar options.
+  - Regular expressions from a runbook (`expect=`, `capture=`) may run for at most 1 second, so
+    a runaway pattern can't freeze VS Code. `retry=` allows at most 100 attempts, `every=` at
+    most 1 hour, and a risky command's confirmation says how often it may run.
+  - Front matter `cwd:` and `timeout:` no longer apply to assistant cells, and follow
+    `mdRunbook.cellOptions.enabled`. The recorded context comes from the folder the cell runs in.
+  - A line run refuses to start if the cell changed while it waited.
+  - A `capture-secret=` value is redacted even when another capture of the cell failed.
+  - Command line: secrets from environment variables are redacted from every step (also before
+    the step that uses them); `capture-secret=` output is printed only once redacted; the
+    notification URL is kept out of the cells' environment and redacted; reports and step
+    titles are redacted; a malformed placeholder fails its step instead of stopping the run
+    (and its notification); `-h`/`--help`/`--version` only count as the first argument.
+  - Release workflow: test jobs get a read-only token; the npm token is only in the publish
+    step. The Run-workflow template's comments now say that Pages gets every result file, and
+    how to protect secrets with environment approvals.
+
 - **Sample runbook:** new sections 13 to 17 try line runs, checks and retries, captured values
   (also secret ones), blocks for one OS, reports, problem markers and the command line.
 - **Walkthrough:** a new step for problems, reports and the command line.
+- **Command line:** `--json FILE` writes the step results (status, exit code, message, output)
+  for scripts.
+- CI checks that the sample runbook still does what its text says (`scripts/check-sample.js`).
 
 ## 0.3.0
 

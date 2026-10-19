@@ -374,7 +374,7 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
 /** Fence options in a proposal that change where or how it runs. */
 function riskyOptions(info: string): string[] {
   return tokenizeInfo(info.replace(/^\s*[^\s{]*/, ''))
-    .filter((t) => /^(no-confirm|cwd|env\..+|continue-on-error|timeout)$/i.test(t.key))
+    .filter((t) => /^(no-confirm|cwd|env\..+|continue-on-error|timeout|retry|every|expect|expect-not|expect-exit|capture|capture-secret)$/i.test(t.key))
     .map((t) => (t.value === undefined ? t.key : `${t.key}=${t.value}`));
 }
 

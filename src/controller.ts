@@ -9,6 +9,9 @@ import { CheckOutcome, evaluateChecks, hasChecks } from './core/checks';
 import { SessionPool } from './core/session';
 import { LineStep, echoCommand, formatLineRange } from './core/steps';
 import { FrontMatter, parseFrontMatter } from './core/secrets';
+import { proposalOf } from './core/proposal';
+import { isCodeMeta } from './core';
+import { SECTION } from './config';
 import { ExecutionConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
 import { CellPlan, ExecuteIO, PrepareContext, RunPipeline, RunRecord } from './pipeline';
@@ -67,10 +70,24 @@ export function frontMatterOf(nb: vscode.NotebookDocument): FrontMatter | undefi
   return first?.kind === vscode.NotebookCellKind.Markup ? parseFrontMatter(first.document.getText()) : undefined;
 }
 
+/**
+ * The front matter's `cwd:` / `timeout:` for a cell, or none: they are runbook options, so
+ * `mdRunbook.cellOptions.enabled` turns them off too, and cells written by an assistant never get
+ * them (approval shows a cell's own options, not the front matter's).
+ */
+function runbookDefaults(nb: vscode.NotebookDocument, cell?: vscode.NotebookCell): FrontMatter | undefined {
+  if (!vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true)) return undefined;
+  if (cell) {
+    const meta: unknown = cell.metadata?.[META_KEY];
+    if (isCodeMeta(meta) && proposalOf(meta.info).by !== undefined) return undefined;
+  }
+  return frontMatterOf(nb);
+}
+
 /** Where the runbook's cells run: its `cwd:` (relative to the .md file's folder), else that folder. */
-export function runbookCwd(nb: vscode.NotebookDocument): string {
+export function runbookCwd(nb: vscode.NotebookDocument, cell?: vscode.NotebookCell): string {
   const base = workingDirectory(nb.uri);
-  const cwd = frontMatterOf(nb)?.cwd;
+  const cwd = runbookDefaults(nb, cell)?.cwd;
   return cwd ? path.resolve(base, cwd) : base;
 }
 
@@ -88,6 +105,11 @@ export interface LineRun {
   beforeStep?(index: number, token: vscode.CancellationToken): Promise<boolean>;
   /** Step `index` starts, or (undefined) the run is over. */
   onStep?(index: number | undefined): void;
+  /**
+   * The cell's text when the run was asked for. The run refuses to start if the cell changed
+   * while it waited in the queue: approval and checks look at the cell as it is when it runs.
+   */
+  cellText: string;
 }
 
 /** `lines=` for a line run that did not run every command of the cell, else undefined. */
@@ -259,12 +281,12 @@ export class RunbookController implements vscode.Disposable {
     exec.executionOrder = ++this.executionOrder;
     exec.start(started.getTime());
 
-    const fmTimeout = frontMatterOf(notebook)?.timeoutSeconds;
+    const fmTimeout = runbookDefaults(notebook, cell)?.timeoutSeconds;
     const fmTimeoutMs = fmTimeout !== undefined ? fmTimeout * 1000 : undefined;
     const plan: CellPlan = {
       source: lineRun?.source ?? cell.document.getText(),
       language: cell.document.languageId,
-      cwd: runbookCwd(notebook),
+      cwd: runbookCwd(notebook, cell),
       env: { ...cfg.env },
       timeoutMs: fmTimeoutMs ?? cfg.timeoutMs,
       shell: cfg.shell,
@@ -339,7 +361,11 @@ export class RunbookController implements vscode.Disposable {
       const ctx: PrepareContext = { cell, notebook, token: exec.token, previousOutputs };
       const failed = (error: string): ExecuteResult => ({ exitCode: null, signal: null, timedOut: false, cancelled: false, error, durationMs: 0 });
       let prepareError: string | undefined;
+      if (lineRun && cell.document.getText() !== lineRun.cellText) {
+        prepareError = 'md-runbook: the cell changed after this line run was started; run it again';
+      }
       try {
+        if (prepareError !== undefined) throw new Error(prepareError);
         for (const p of this.pipeline.preparers) await p.prepare(plan, ctx);
       } catch (e) {
         prepareError = e instanceof Error ? e.message : String(e);
@@ -434,7 +460,8 @@ export class RunbookController implements vscode.Disposable {
       for (const f of outcome && !outcome.ok ? outcome.failures : []) unflushed.push({ stream: 'stderr', text: message(`[md-runbook] check failed: ${f}\n`) });
       await flush();
       // A value captured as a secret was shown before it was known: redraw the output without it.
-      const capturedSecrets = outcome?.ok ? outcome.captured.filter((c) => c.secret).map((c) => c.value) : [];
+      // Also when another capture failed: a secret that matched is redacted anyway.
+      const capturedSecrets = outcome?.secretValues ?? [];
       if (capturedSecrets.length > 0) {
         knownSecrets.add(capturedSecrets);
         transcript = knownSecrets.redact(transcript);

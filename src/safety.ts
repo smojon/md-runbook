@@ -11,7 +11,7 @@ import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirma
 import { runContextCommand } from './core/context';
 import { currentOs, osLabel } from './core/os';
 import { SECTION, executionConfig, redactionConfig } from './config';
-import { workingDirectory } from './controller';
+import { runbookCwd, workingDirectory } from './controller';
 import { knownSecrets } from './knownSecrets';
 import { META_KEY } from './outputs';
 import { CellPlan, CellPreparer, PrepareContext, RunPipeline } from './pipeline';
@@ -61,14 +61,15 @@ class ContextRecorder implements CellPreparer, vscode.Disposable {
 
   async prepare(plan: CellPlan, { notebook }: PrepareContext): Promise<void> {
     if (plan.skip !== undefined) return;
-    Object.assign(plan.attrs, await this.values(notebook, plan.env));
+    Object.assign(plan.attrs, await this.values(notebook, plan.env, plan.cwd));
   }
 
   /** Context values for a notebook, cached for `recordContextCacheSeconds`. */
-  values(notebook: vscode.NotebookDocument, extraEnv: Record<string, string> = {}): Promise<Record<string, string>> {
+  values(notebook: vscode.NotebookDocument, extraEnv: Record<string, string> = {}, folder?: string): Promise<Record<string, string>> {
     const commands = recordContextCommands();
     if (Object.keys(commands).length === 0) return Promise.resolve({});
-    const cwd = workingDirectory(notebook.uri);
+    // Where the cell runs (front matter cwd:, a cell's cwd=), so the context matches it.
+    const cwd = folder ?? runbookCwd(notebook);
     const key = notebook.uri.toString();
     const sig = JSON.stringify([commands, cwd, extraEnv]);
     const ttl = Math.max(0, cfg().get<number>('output.recordContextCacheSeconds', 30)) * 1000;
@@ -143,7 +144,9 @@ async function askToRun(plan: CellPlan, cell: vscode.NotebookCell, match: string
     .filter((k) => k in plan.attrs)
     .map((k) => `${k}: ${plan.attrs[k]}`);
   const message = match === '' ? `Run cell ${cell.index + 1}?` : `Cell ${cell.index + 1} contains a risky command: “${match.trim()}”`;
-  const detail = ctxLines.length > 0 ? `Context the cell will run in:\n${ctxLines.join('\n')}` : 'No context recorded (see mdRunbook.output.recordContext).';
+  const retries = plan.retry && plan.retry.attempts > 1 ? `\n\nIt runs up to ${plan.retry.attempts} times (retry=) until it passes.` : '';
+  const detail =
+    (ctxLines.length > 0 ? `Context the cell will run in:\n${ctxLines.join('\n')}` : 'No context recorded (see mdRunbook.output.recordContext).') + retries;
   const answer = await vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run');
   if (answer !== 'Run') {
     plan.skip = 'not confirmed';

@@ -3,6 +3,7 @@
  * its output for later cells (`capture=NAME`, `capture=NAME:/regex/`, `capture-secret=NAME`).
  */
 
+import * as vm from 'node:vm';
 import { stripAnsi } from './ansi';
 import { VAR_NAME_RE } from './secrets';
 
@@ -29,6 +30,8 @@ export interface Captured {
   name: string;
   value: string;
   secret: boolean;
+  /** Captured by a cell written by an assistant (`by=`): the user's own cells don't use it. */
+  fromAssistant?: boolean;
 }
 
 export interface CheckOutcome {
@@ -37,6 +40,31 @@ export interface CheckOutcome {
   failures: string[];
   /** Captured values; only when everything else passed. */
   captured: Captured[];
+  /** Values of `capture-secret=` that matched, even when the run failed: they are redacted anyway. */
+  secretValues: string[];
+}
+
+/** How long a regular expression from the runbook may run on the output. */
+export const REGEX_TIMEOUT_MS = 1000;
+/** Most attempts `retry=` may ask for, and the longest wait between them. */
+export const MAX_RETRY = 100;
+export const MAX_EVERY_MS = 3_600_000;
+
+class RegexTimeout extends Error {}
+
+/**
+ * Run a regular expression that comes from the runbook with a time limit: a pattern with
+ * catastrophic backtracking (`/^(\w+\s?)*$/`) would otherwise freeze the process (in VS Code, the
+ * extension host). Returns the match, or null.
+ */
+function execLimited(re: RegExp, text: string): RegExpExecArray | null {
+  const context = vm.createContext({ re: new RegExp(re.source, re.flags.replace('g', '')), text });
+  try {
+    return vm.runInContext('re.exec(text)', context, { timeout: REGEX_TIMEOUT_MS }) as RegExpExecArray | null;
+  } catch (e) {
+    if ((e as { code?: string }).code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') throw new RegexTimeout(String(re));
+    throw e;
+  }
 }
 
 const REGEX_RE = /^\/([\s\S]*)\/([imsu]*)$/;
@@ -71,14 +99,25 @@ export function hasChecks(c: CellChecks | undefined): c is CellChecks {
 const clean = (s: string): string => stripAnsi(s).replace(/\r\n?/g, '\n');
 
 function matches(m: Matcher, text: string): boolean {
-  return m.kind === 'text' ? text.includes(m.text) : new RegExp(m.re.source, m.re.flags.replace('g', '')).test(text);
+  return m.kind === 'text' ? text.includes(m.text) : execLimited(m.re, text) !== null;
 }
+
+const tooSlow = (re: string): string => `the regular expression ${re} took longer than ${REGEX_TIMEOUT_MS / 1000} s on the output and was stopped`;
 
 /**
  * Judge a finished run. `output` is everything the cell printed (stdout and stderr), `stdout`
  * only its standard output (what captures read).
  */
 export function evaluateChecks(c: CellChecks, exitCode: number, output: string, stdout: string): CheckOutcome {
+  try {
+    return evaluate(c, exitCode, output, stdout);
+  } catch (e) {
+    if (!(e instanceof RegexTimeout)) throw e;
+    return { ok: false, failures: [tooSlow(e.message)], captured: [], secretValues: [] };
+  }
+}
+
+function evaluate(c: CellChecks, exitCode: number, output: string, stdout: string): CheckOutcome {
   const failures: string[] = [];
   const expected = c.expectExit ?? 0;
   let ok = exitCode === expected;
@@ -93,12 +132,13 @@ export function evaluateChecks(c: CellChecks, exitCode: number, output: string, 
     failures.push(c.expectNot.kind === 'text' ? `the output contains ${describeMatcher(c.expectNot)}` : `the output matches ${describeMatcher(c.expectNot)}`);
   }
   const captured: Captured[] = [];
+  const secretValues: string[] = [];
   if (ok) {
     const out = clean(stdout);
     for (const cap of c.captures) {
       let value: string | undefined;
       if (cap.pattern) {
-        const m = new RegExp(cap.pattern.source, cap.pattern.flags.replace('g', '')).exec(out);
+        const m = execLimited(cap.pattern, out);
         value = m ? (m[1] ?? m[0]) : undefined;
         if (value === undefined) failures.push(`capture ${cap.name}: nothing in the output matches ${String(cap.pattern)}`);
       } else {
@@ -109,13 +149,14 @@ export function evaluateChecks(c: CellChecks, exitCode: number, output: string, 
         }
       }
       if (value !== undefined) captured.push({ name: cap.name, value, secret: cap.secret });
+      if (value !== undefined && cap.secret) secretValues.push(value);
     }
     if (captured.length < c.captures.length) {
       ok = false;
       captured.length = 0;
     }
   }
-  return { ok, failures, captured };
+  return { ok, failures, captured, secretValues };
 }
 
 /** `15`, `15s`, `500ms`, `2m` → milliseconds, or undefined if invalid. */

@@ -41,6 +41,8 @@ export interface CliOptions {
   out?: string;
   report?: string;
   junit?: string;
+  /** Also write the step results as JSON (for scripts). */
+  json?: string;
   /** Values for `${param:NAME}` (else the front matter default). */
   params: Record<string, string>;
   /** Values for `${input:NAME}` (else the environment variable NAME). */
@@ -57,6 +59,8 @@ export interface CliOptions {
   /** Where `${secret:NAME}` and `${input:NAME}` values come from (process.env). */
   env: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  /** More values to redact everywhere (e.g. the notification URL). */
+  extraSecrets?: string[];
 }
 
 export type StepStatus = 'passed' | 'failed' | 'skipped' | 'not run';
@@ -80,6 +84,8 @@ export interface RunSummary {
   /** The runbook with the new outputs. */
   text: string;
   ok: boolean;
+  /** The run's redaction (patterns and every secret seen), for the reports. */
+  redact: (text: string) => string;
 }
 
 export interface CliIO {
@@ -122,6 +128,24 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   let text = original;
   const doc = parse(original);
   const locs = locateCodeCells(doc);
+  for (const v of o.extraSecrets ?? []) addSecret(v);
+  // Every secret the runbook uses is known before the first step: a step that prints the
+  // environment (env, set -x) before the step that references it must not show it either.
+  for (const loc of locs) {
+    if (!shellKindForLanguage(loc.language)) continue;
+    let refs: ReturnType<typeof findRefs> = [];
+    try {
+      refs = findRefs(loc.source);
+    } catch {
+      continue; // reported when the step runs
+    }
+    for (const ref of refs) {
+      if (!ref.secret) continue;
+      const v = ref.kind === 'secret' ? o.env[ref.name] : ref.kind === 'input' ? (o.inputs[ref.name] ?? o.env[ref.name]) : undefined;
+      if (v !== undefined) addSecret(v);
+    }
+  }
+
   const slots = osGroups(doc.cells.map((c) => (c.kind === 'code' ? { kind: 'code' as const, os: parseCellOptions(c.meta.kind === 'code' ? c.meta.info : '').os } : { kind: 'markup' as const })));
   const activeGroups = new Set(slots.filter((s) => s?.active).map((s) => s!.group));
   const stepOfGroup = new Map<number, number>();
@@ -146,7 +170,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         step: n,
         line: loc.line + 1,
         language: loc.language,
-        title: opts.name ?? firstLine,
+        title: redact(opts.name ?? firstLine),
         status,
         exit,
         durationMs: 0,
@@ -208,7 +232,14 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       // Placeholders: values come from the command line and the environment, never from prompts.
       const env: Record<string, string> = { ...opts.env };
       let missing: string | undefined;
-      for (const ref of findRefs(loc.source)) {
+      let refs: ReturnType<typeof findRefs>;
+      try {
+        refs = findRefs(loc.source);
+      } catch (e) {
+        notRun(e instanceof Error ? e.message : String(e), 'error');
+        continue;
+      }
+      for (const ref of refs) {
         let value: string | undefined;
         let secret = ref.secret;
         if (ref.kind === 'secret') value = o.env[ref.name];
@@ -237,7 +268,11 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         notRun(missing, 'error');
         continue;
       }
-      const source = findRefs(loc.source).length > 0 ? rewriteRefs(loc.source, kind) : loc.source;
+      const source = refs.length > 0 ? rewriteRefs(loc.source, kind) : loc.source;
+      // A value captured as a secret is only known once the cell has finished: hold back the
+      // output of such a cell and print it redacted afterwards (a CI log can't be redrawn).
+      const holdOutput = (opts.checks?.captures ?? []).some((c) => c.secret);
+      let held = '';
       const cwd = opts.cwd !== undefined ? path.resolve(mdDir, opts.cwd) : baseCwd;
       const timeoutS = opts.timeoutSeconds ?? fm?.timeoutSeconds ?? o.timeoutSeconds ?? 0;
       const attempts = opts.retry?.attempts ?? 1;
@@ -253,7 +288,8 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         attempt++;
         transcript = '';
         stdout = '';
-        const live = new LineBuffer((t) => io.out(t), redact);
+        held = '';
+        const live = new LineBuffer((t) => (holdOutput ? (held += t) : io.out(t)), redact);
         const sink = (isOut: boolean) => (t: string) => {
           transcript += t;
           if (isOut) stdout += t;
@@ -291,6 +327,9 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         io.log(`  attempt ${attempt}/${attempts} failed (${redact(why)}); trying again in ${every / 1000}s`);
         if (!(await sleep(every, o.signal))) break;
       }
+      // Secrets that matched are known now (even if another capture failed): print what was held back.
+      for (const v of outcome?.secretValues ?? []) addSecret(v);
+      if (holdOutput) io.out(redact(held));
       const add = (line: string): void => {
         transcript += line;
         io.out(redact(line));
@@ -298,12 +337,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       if (r.error !== undefined) add(r.error + '\n');
       if (r.timedOut) add(`[md-runbook] timed out after ${timeoutS}s; process tree killed\n`);
       for (const f of outcome && !outcome.ok ? outcome.failures : []) add(`[md-runbook] check failed: ${f}\n`);
-      if (outcome?.ok) {
-        for (const c of outcome.captured) {
-          captures.set(c.name, { value: c.value, secret: c.secret });
-          if (c.secret) addSecret(c.value);
-        }
-      }
+      if (outcome?.ok) for (const c of outcome.captured) captures.set(c.name, { value: c.value, secret: c.secret });
 
       const ended = new Date();
       const exit = exitLabel(r);
@@ -331,7 +365,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   }
 
   const ok = steps.every((s) => s.status === 'passed' || s.status === 'skipped');
-  return { steps, text, ok };
+  return { steps, text, ok, redact };
 }
 
 const xml = (s: string): string =>

@@ -115,3 +115,28 @@ describe('check= in progress, CodeLens and report', () => {
     ]);
   });
 });
+
+describe('security limits', () => {
+  it('a regex with catastrophic backtracking is stopped and fails the check', () => {
+    const c = parseCellOptions('bash expect=/^(\\w+\\s?)*$/').checks!;
+    const started = Date.now();
+    const r = evaluateChecks(c, 0, 'a'.repeat(40) + '!', '');
+    assert.equal(r.ok, false);
+    assert.match(r.failures[0]!, /took longer than 1 s/);
+    assert.ok(Date.now() - started < 5000);
+  });
+
+  it('retry= and every= are bounded', () => {
+    assert.match(parseCellOptions('bash retry=1000000').errors[0]!, /1 to 100/);
+    assert.match(parseCellOptions('bash retry=3 every=61m').errors[0]!, /at most 1h/);
+    assert.deepEqual(parseCellOptions('bash retry=100 every=60m').errors, []);
+  });
+
+  it('a secret capture that matched is reported for redaction even when another capture failed', () => {
+    const c = parseCellOptions('bash capture-secret=TOK capture=POD:/nothing-(\\S+)/').checks!;
+    const r = evaluateChecks(c, 0, 'tok-12345\n', 'tok-12345\n');
+    assert.equal(r.ok, false);
+    assert.deepEqual(r.captured, []);
+    assert.deepEqual(r.secretValues, ['tok-12345']);
+  });
+});

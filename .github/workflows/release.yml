@@ -4,9 +4,10 @@ on:
   push:
     tags: ['v*']
 
+# Read-only by default: the test jobs run dependencies and downloaded VS Code builds, so they get
+# no write token; only the publish job does.
 permissions:
-  contents: write # create the GitHub release
-  id-token: write # npm provenance: the package links back to this workflow run
+  contents: read
 
 jobs:
   test:
@@ -32,6 +33,9 @@ jobs:
   publish:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # npm provenance: the package links back to this workflow run
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -58,14 +62,16 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         if: env.OVSX_PAT != ''
         run: npx --yes ovsx@0.10.6 publish md-runbook.vsix
+      # Built without the npm token in the environment; only `npm publish` gets it.
+      - name: Lay out the npm package
+        run: |
+          node scripts/build.js
+          node scripts/pack-cli.js
       - name: Publish the command line to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         if: env.NODE_AUTH_TOKEN != ''
-        run: |
-          node scripts/build.js
-          node scripts/pack-cli.js
-          npm publish out/npm --access public --provenance
+        run: npm publish out/npm --access public --provenance
       - name: GitHub release with the .vsix
         env:
           GH_TOKEN: ${{ github.token }}
