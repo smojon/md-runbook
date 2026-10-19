@@ -40,6 +40,7 @@ const emptyNodeBuiltins = {
     external: ['node-rsa'],
     define: { global: 'globalThis' },
     plugins: [emptyNodeBuiltins],
+    inject: [src('buffer-shim.ts')],
   });
   fs.writeFileSync(dist('spikeB.html'), '<!doctype html><meta charset="utf-8"><title>md-runbook SSH spike</title><script src="/spikeB.js"></script>\n');
   console.log('built dist/spikeA.js, relay.js, spikeB.js(+html), spikeB-driver.js');
