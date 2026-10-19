@@ -29,8 +29,23 @@ xcrun simctl install "$udid" "$app" || exit 1
 xcrun simctl spawn "$udid" log stream --level info --predicate 'subsystem CONTAINS "dev.mdrunbook" OR process CONTAINS "mdrunbook"' >"$out/simulator.log" 2>&1 &
 log_pid=$!
 
-maestro --device "$udid" test --format junit --output "$out/maestro.xml" --test-output-dir "$out" "$here/maestro"
+# Right after a fresh simulator's first boot (it can spend minutes migrating its data), Maestro's
+# iOS driver sometimes doesn't start in time ("iOS driver not ready in time"), even with
+# MAESTRO_DRIVER_STARTUP_TIMEOUT raised: then try once more, now that the simulator has settled.
+# Only that error is retried; a failing flow fails the job.
+run_flows() {
+  maestro --device "$udid" test --format junit --output "$out/maestro.xml" --test-output-dir "$out" "$here/maestro" 2>&1 |
+    tee "$out/maestro-attempt-$1.log"
+  return "${PIPESTATUS[0]}"
+}
+run_flows 1
 status=$?
+if [ "$status" != 0 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-1.log"; then
+  echo "::warning::Maestro's iOS driver did not start in time; trying once more"
+  sleep 20
+  run_flows 2
+  status=$?
+fi
 
 kill "$log_pid" >/dev/null 2>&1
 gzip -f "$out/simulator.log"
