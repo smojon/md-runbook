@@ -56,9 +56,10 @@ export function writeFile(name: string, content: string | Uint8Array): vscode.Ur
 
 /**
  * Opens a file as a runbook and returns its editor. The open command's promise settles once VS
- * Code has set the notebook up (kernel included), so it waits for it too, but on a busy macOS
- * runner that promise sometimes never settles although the editor opened: then it goes on with
- * the editor after 20 s. If no editor shows within 45 s, it tries once more; slow opens are logged.
+ * Code has set the notebook up (kernel included), so it waits for it too. On a busy macOS runner
+ * that promise sometimes never settles although the editor opened, or no editor shows: then it
+ * closes everything and opens once more (after 20 s, or 45 s without an editor). Slow opens are
+ * logged.
  */
 export async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEditor> {
   const name = path.basename(uri.fsPath);
@@ -86,7 +87,9 @@ export async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEdito
     const done = await Promise.race([settled, new Promise<false>((r) => (timer = setTimeout(() => r(false), 20_000)))]);
     clearTimeout(timer);
     if (failure !== undefined) throw failure instanceof Error ? failure : new Error(String(failure));
-    if (!done) trace(`    ! the open command for ${name} did not finish; going on with its editor`);
+    // Going on with such an editor left a cell that never ran (macOS, autosave.md): reopen once.
+    if (!done && n === 1) throw new Error(`timed out: the open command for ${name} did not finish`);
+    if (!done) trace(`    ! the open command for ${name} did not finish again; going on with its editor`);
     const ms = Date.now() - started;
     if (ms > 10_000) trace(`    ! opening ${name} took ${ms} ms`);
     return editor;
