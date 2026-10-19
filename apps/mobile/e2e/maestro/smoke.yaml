@@ -11,6 +11,8 @@ name: smoke
       id: core-status
     timeout: 120000
 - assertVisible: 'Core OK'
+- assertVisible:
+    id: open-runbook
 - takeScreenshot: 01-runbooks
 - runFlow: subflows/dismiss-system-dialog.yaml
 - tapOn:

@@ -8,6 +8,8 @@ export const colors = {
   codeBackground: '#f6f8fa',
   ok: '#1a7f37',
   error: '#d1242f',
+  accent: '#0969da',
+  onAccent: '#ffffff',
 } as const;
 
 export const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, Menlo, Consolas, monospace' });

@@ -3,12 +3,12 @@ import { useMemo } from 'react';
 import { FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ParsedCell, parse } from '@md-runbook/core';
 import { t } from '../i18n';
-import { BUNDLED } from '../runbooks/sample';
+import { useRunbooks } from '../runbooks/store';
 import { colors, mono } from '../theme';
 
 /** Read-only view of a runbook's cells; running them over SSH comes next. */
 export function RunbookView({ id }: { id: string | undefined }) {
-  const runbook = BUNDLED.find((r) => r.id === id);
+  const runbook = useRunbooks().find((r) => r.id === id);
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
   // Scroll views as the screen's root with automatic insets (see RunbookList).
   if (!runbook) {

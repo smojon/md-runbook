@@ -9,6 +9,9 @@ const en = {
   coreOk: 'Core OK',
   coreFailed: (why: string) => `Core check failed: ${why}`,
   notFound: 'Runbook not found',
+  openRunbook: 'Open a runbook…',
+  fileTooLarge: (name: string) => `${name} is larger than 2 MB and was not opened`,
+  fileUnreadable: (name: string, why: string) => `${name} could not be read: ${why}`,
   outputExit: (exit: string) => `Output · exit ${exit}`,
 } as const;
 
