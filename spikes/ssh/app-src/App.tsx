@@ -43,15 +43,23 @@ async function runSpike(log: (line: string) => void): Promise<boolean> {
   const t2 = Date.now();
   for (let i = 0; i < 10; i++) await shell.run('true');
   check(`10 empty cells in ${Date.now() - t2} ms`, true);
+  // Report through the connection under test: CI (which is the SSH server) reads this file,
+  // since release builds don't show console output on iOS.
+  results.push(ok ? 'PASSED' : 'FAILED');
+  await shell.run(`cat > "$HOME/spike-c-result-${Platform.OS}.txt" <<'__SPIKE_EOF__'\n${results.join('\n')}\n__SPIKE_EOF__`);
   await shell.close();
   return ok;
 }
+
+/** Everything logged, for the result file. */
+const results: string[] = [];
 
 export default function App(): React.JSX.Element {
   const [lines, setLines] = useState<string[]>([]);
   useEffect(() => {
     const log = (line: string): void => {
       console.log(`SPIKE-C ${line}`);
+      results.push(line);
       setLines((l) => [...l, line]);
     };
     runSpike(log).then(

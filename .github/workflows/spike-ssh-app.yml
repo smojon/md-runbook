@@ -1,6 +1,7 @@
 name: Spike SSH app
-# Spike step C: the SSH shell code in a React Native (Expo) app, on an Android emulator, against
-# a throwaway sshd on the runner. Not part of the extension's build or release.
+# Spike step C: the SSH shell code in a React Native (Expo) app, on an Android emulator and an
+# iPhone simulator, against a throwaway sshd on the runner. Not part of the extension's build or
+# release.
 on:
   push:
     branches: ['spike/**']
@@ -23,15 +24,8 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - name: Start a throwaway SSH server (port 2222, keys made here)
-        run: |
-          d="$RUNNER_TEMP/sshd"; mkdir -p "$d"; cd "$d"
-          ssh-keygen -q -t ecdsa -b 256 -N '' -f host_ecdsa
-          ssh-keygen -q -t ecdsa -b 256 -m PKCS8 -N '' -f client_ecdsa
-          cp client_ecdsa.pub authorized_keys
-          printf '%s\n' "Port 2222" "ListenAddress 127.0.0.1" "HostKey $d/host_ecdsa" "AuthorizedKeysFile $d/authorized_keys" \
-            "PasswordAuthentication no" "KbdInteractiveAuthentication no" "UsePAM no" "StrictModes no" "PidFile $d/sshd.pid" > sshd_config
-          /usr/sbin/sshd -f "$d/sshd_config" -E "$d/sshd.log"
+      - name: Start a throwaway SSH server
+        run: bash spikes/ssh/ci/start-sshd.sh
       - name: Make the app
         env:
           SSH_KEY_FILE: ${{ runner.temp }}/sshd/client_ecdsa
@@ -60,6 +54,40 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           disable-animations: true
           script: bash spikes/ssh/ci/android-run.sh ${{ runner.temp }}/app/android/app/build/outputs/apk/release/app-release.apk
+      - name: sshd log
+        if: always()
+        run: cat "$RUNNER_TEMP/sshd/sshd.log" || true
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Start a throwaway SSH server
+        run: bash spikes/ssh/ci/start-sshd.sh
+      - name: Make the app
+        env:
+          SSH_KEY_FILE: ${{ runner.temp }}/sshd/client_ecdsa
+          SSH_HOST_PUB: ${{ runner.temp }}/sshd/host_ecdsa.pub
+          SSH_PORT: '2222'
+        run: |
+          export SSH_USER="$(whoami)"
+          bash spikes/ssh/ci/make-app.sh "$RUNNER_TEMP/app"
+      - name: Build the iOS app (release, simulator)
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          npx expo prebuild --platform ios --no-install
+          cd ios && pod install
+          ws="$(ls -d *.xcworkspace | head -1)"
+          scheme="${ws%.xcworkspace}"
+          xcodebuild -workspace "$ws" -scheme "$scheme" -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO -quiet
+          ls -d build/Build/Products/Release-iphonesimulator/*.app
+      - name: Run on the simulator
+        run: bash spikes/ssh/ci/ios-run.sh "$(ls -d "$RUNNER_TEMP"/app/ios/build/Build/Products/Release-iphonesimulator/*.app | head -1)"
       - name: sshd log
         if: always()
         run: cat "$RUNNER_TEMP/sshd/sshd.log" || true
