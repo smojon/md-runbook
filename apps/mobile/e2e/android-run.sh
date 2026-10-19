@@ -10,6 +10,10 @@ here="$(cd "$(dirname "$0")" && pwd)"
 
 adb wait-for-device
 adb shell getprop ro.build.version.release
+# A slow emulator's system apps time out ("Pixel Launcher isn't responding") and the dialog covers
+# the app under test: no crash or ANR dialogs, and close any already shown.
+adb shell settings put global hide_error_dialogs 1 || true
+adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
 adb install -r "$apk" || exit 1
 adb logcat -c || true
 adb logcat -v threadtime >"$out/logcat.txt" 2>&1 &

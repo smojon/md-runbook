@@ -5,12 +5,14 @@ name: smoke
 ---
 - launchApp:
     clearState: true
+- runFlow: subflows/dismiss-system-dialog.yaml
 - extendedWaitUntil:
     visible:
       id: core-status
     timeout: 120000
 - assertVisible: 'Core OK'
 - takeScreenshot: 01-runbooks
+- runFlow: subflows/dismiss-system-dialog.yaml
 - tapOn:
     id: runbook-sample
 - extendedWaitUntil:

@@ -1,0 +1,9 @@
+# An emulator's "<system app> isn't responding" dialog can cover the app (android-run.sh also
+# turns them off): answer "Wait". Does nothing when there is no such dialog (and on iOS).
+appId: dev.mdrunbook.app
+---
+- runFlow:
+    when:
+      visible: ".*isn't responding.*"
+    commands:
+      - tapOn: 'Wait'
