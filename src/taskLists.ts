@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import type { ToggleMessage } from '../renderer/taskListPlugin';
-import { taskItemAtLine } from './core';
+import { taskItemAtLine } from '@md-runbook/core';
 import { NOTEBOOK_TYPE } from './serializer';
 
 export const TASK_RENDERER_ID = 'md-runbook.taskLists';

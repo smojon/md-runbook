@@ -13,7 +13,6 @@ import {
   LineBuffer,
   WriteOptions,
   createRedactor,
-  executeCell,
   exitLabel,
   formatDurationAttr,
   formatLocalIso,
@@ -23,16 +22,17 @@ import {
   parse,
   setCellOutput,
   shellKindForLanguage,
-} from '../core';
-import type { ShellSettings } from '../core';
-import { parseCellOptions } from '../core/cellOptions';
-import { CheckOutcome, evaluateChecks, hasChecks } from '../core/checks';
-import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '../core/confirm';
-import { currentOs, osGroups, osLabel } from '../core/os';
-import { proposalOf } from '../core/proposal';
-import { REDACTED } from '../core/redact';
-import { findRefs, parseFrontMatter, rewriteRefs } from '../core/secrets';
-import { SessionPool } from '../core/session';
+} from '@md-runbook/core';
+import { executeCell } from '@md-runbook/core/node';
+import type { ShellSettings } from '@md-runbook/core';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { CheckOutcome, evaluateChecks, hasChecks } from '@md-runbook/core/checks';
+import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
+import { currentOs, osGroups, osLabel } from '@md-runbook/core/os';
+import { proposalOf } from '@md-runbook/core/proposal';
+import { REDACTED } from '@md-runbook/core/redact';
+import { findRefs, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
+import { SessionPool } from '@md-runbook/core/node/session';
 
 export interface CliOptions {
   file: string;

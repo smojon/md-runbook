@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { parseFrontMatter } from '../src/core/secrets';
+import { parseFrontMatter } from '@md-runbook/core/secrets';
 
 describe('front matter: timeout and cwd', () => {
   it('reads timeout (seconds) and cwd next to params and mode', () => {

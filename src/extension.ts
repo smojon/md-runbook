@@ -4,7 +4,7 @@ import { registerApproval } from './approval';
 import { registerAutoSave } from './autoSave';
 import { registerAiContext } from './aiCommands';
 import { registerCodeLens } from './codeLens';
-import { clearOutputBlocks } from './core';
+import { clearOutputBlocks } from '@md-runbook/core';
 import { RunbookController } from './controller';
 import { registerReport } from './exportReport';
 import { registerHistory } from './history';

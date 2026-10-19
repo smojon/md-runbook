@@ -5,11 +5,11 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { isCodeMeta } from './core';
-import { parseCellOptions } from './core/cellOptions';
-import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from './core/confirm';
-import { runContextCommand } from './core/context';
-import { currentOs, osLabel } from './core/os';
+import { isCodeMeta } from '@md-runbook/core';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
+import { runContextCommand } from '@md-runbook/core/node/context';
+import { currentOs, osLabel } from '@md-runbook/core/os';
 import { SECTION, executionConfig, redactionConfig } from './config';
 import { runbookCwd, workingDirectory } from './controller';
 import { knownSecrets } from './knownSecrets';

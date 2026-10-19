@@ -1,9 +1,9 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { parse } from '../src/core';
-import { approvedInfo, proposalOf, proposedInfo, withInfo } from '../src/core/proposal';
-import { buildAiContext, depseudonymize, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../src/core/aiContext';
-import type { CodeMeta } from '../src/core';
+import { parse } from '@md-runbook/core';
+import { approvedInfo, proposalOf, proposedInfo, withInfo } from '@md-runbook/core/proposal';
+import { buildAiContext, depseudonymize, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '@md-runbook/core/aiContext';
+import type { CodeMeta } from '@md-runbook/core';
 
 describe('proposal', () => {
   it('reads proposed / approved / none', () => {

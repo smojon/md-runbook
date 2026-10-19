@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { computeProgress, outputSummary, renderReport, stepState } from '../src/core';
+import { computeProgress, outputSummary, renderReport, stepState } from '@md-runbook/core';
 
 describe('partial line runs (lines=)', () => {
   it('a partial run that passed is not done; one that failed is failed', () => {

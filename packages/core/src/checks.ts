@@ -3,17 +3,17 @@
  * its output for later cells (`capture=NAME`, `capture=NAME:/regex/`, `capture-secret=NAME`).
  */
 
-import * as vm from 'node:vm';
+import { RE2JS } from 're2js';
 import { stripAnsi } from './ansi';
 import { VAR_NAME_RE } from './secrets';
 
 /** Text the output must contain, or a regular expression it must match. */
-export type Matcher = { kind: 'text'; text: string } | { kind: 'regex'; re: RegExp };
+export type Matcher = { kind: 'text'; text: string } | { kind: 'regex'; re: SafeRegex };
 
 export interface CaptureSpec {
   name: string;
   /** Without one, the whole trimmed stdout is captured. */
-  pattern?: RegExp;
+  pattern?: SafeRegex;
   /** Redacted everywhere and never saved. */
   secret: boolean;
 }
@@ -44,26 +44,47 @@ export interface CheckOutcome {
   secretValues: string[];
 }
 
-/** How long a regular expression from the runbook may run on the output. */
-export const REGEX_TIMEOUT_MS = 1000;
 /** Most attempts `retry=` may ask for, and the longest wait between them. */
 export const MAX_RETRY = 100;
 export const MAX_EVERY_MS = 3_600_000;
 
-class RegexTimeout extends Error {}
-
 /**
- * Run a regular expression that comes from the runbook with a time limit: a pattern with
- * catastrophic backtracking (`/^(\w+\s?)*$/`) would otherwise freeze the process (in VS Code, the
- * extension host). Returns the match, or null.
+ * A regular expression from the runbook. It runs on RE2 (linear time): a pattern with
+ * catastrophic backtracking (`/^(\w+\s?)*$/`) can't freeze the process (in VS Code, the
+ * extension host), and the same engine works in the app. RE2 has no look-around and no
+ * back-references; such a pattern is refused when the cell options are read.
  */
-function execLimited(re: RegExp, text: string): RegExpExecArray | null {
-  const context = vm.createContext({ re: new RegExp(re.source, re.flags.replace('g', '')), text });
-  try {
-    return vm.runInContext('re.exec(text)', context, { timeout: REGEX_TIMEOUT_MS }) as RegExpExecArray | null;
-  } catch (e) {
-    if ((e as { code?: string }).code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') throw new RegexTimeout(String(re));
-    throw e;
+export class SafeRegex {
+  private readonly re: RE2JS;
+
+  /** Flags i, m, s; u is accepted (RE2 always matches Unicode code points). Throws on an invalid pattern. */
+  constructor(
+    readonly source: string,
+    readonly flags: string,
+  ) {
+    let f = 0;
+    if (flags.includes('i')) f |= RE2JS.CASE_INSENSITIVE;
+    if (flags.includes('m')) f |= RE2JS.MULTILINE;
+    if (flags.includes('s')) f |= RE2JS.DOTALL;
+    try {
+      this.re = RE2JS.compile(source, f);
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      throw new Error(`invalid regular expression /${source}/${flags}: ${why} (look-around and back-references are not supported)`);
+    }
+  }
+
+  /** The first match: whole match then groups (undefined when a group didn't take part), or null. */
+  exec(text: string): (string | undefined)[] | null {
+    const m = this.re.matcher(text);
+    if (!m.find()) return null;
+    const groups: (string | undefined)[] = [];
+    for (let g = 0; g <= m.groupCount(); g++) groups.push(m.group(g) ?? undefined);
+    return groups;
+  }
+
+  toString(): string {
+    return `/${this.source}/${this.flags}`;
   }
 }
 
@@ -73,7 +94,7 @@ const REGEX_RE = /^\/([\s\S]*)\/([imsu]*)$/;
 export function parseMatcher(value: string): Matcher {
   const m = REGEX_RE.exec(value);
   if (!m) return { kind: 'text', text: value };
-  return { kind: 'regex', re: new RegExp(m[1]!, m[2]) };
+  return { kind: 'regex', re: new SafeRegex(m[1]!, m[2]!) };
 }
 
 export function describeMatcher(m: Matcher): string {
@@ -99,25 +120,14 @@ export function hasChecks(c: CellChecks | undefined): c is CellChecks {
 const clean = (s: string): string => stripAnsi(s).replace(/\r\n?/g, '\n');
 
 function matches(m: Matcher, text: string): boolean {
-  return m.kind === 'text' ? text.includes(m.text) : execLimited(m.re, text) !== null;
+  return m.kind === 'text' ? text.includes(m.text) : m.re.exec(text) !== null;
 }
-
-const tooSlow = (re: string): string => `the regular expression ${re} took longer than ${REGEX_TIMEOUT_MS / 1000} s on the output and was stopped`;
 
 /**
  * Judge a finished run. `output` is everything the cell printed (stdout and stderr), `stdout`
  * only its standard output (what captures read).
  */
 export function evaluateChecks(c: CellChecks, exitCode: number, output: string, stdout: string): CheckOutcome {
-  try {
-    return evaluate(c, exitCode, output, stdout);
-  } catch (e) {
-    if (!(e instanceof RegexTimeout)) throw e;
-    return { ok: false, failures: [tooSlow(e.message)], captured: [], secretValues: [] };
-  }
-}
-
-function evaluate(c: CellChecks, exitCode: number, output: string, stdout: string): CheckOutcome {
   const failures: string[] = [];
   const expected = c.expectExit ?? 0;
   let ok = exitCode === expected;
@@ -138,7 +148,7 @@ function evaluate(c: CellChecks, exitCode: number, output: string, stdout: strin
     for (const cap of c.captures) {
       let value: string | undefined;
       if (cap.pattern) {
-        const m = execLimited(cap.pattern, out);
+        const m = cap.pattern.exec(out);
         value = m ? (m[1] ?? m[0]) : undefined;
         if (value === undefined) failures.push(`capture ${cap.name}: nothing in the output matches ${String(cap.pattern)}`);
       } else {

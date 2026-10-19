@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { CellInput, parse, serialize } from '../src/core';
+import { CellInput, parse, serialize } from '@md-runbook/core';
 import {
   AiContextOptions,
   PseudonymMap,
@@ -15,8 +15,8 @@ import {
   neutralizeBoundaries,
   proposalMarkdown,
   truncateOutput,
-} from '../src/core/aiContext';
-import { proposalOf, proposedInfo } from '../src/core/proposal';
+} from '@md-runbook/core/aiContext';
+import { proposalOf, proposedInfo } from '@md-runbook/core/proposal';
 
 const BASE: AiContextOptions = { maxOutputLines: 80, maxChars: 100_000, pseudonymize: true };
 const out = (text: string, attrs = 'exit=0'): string =>

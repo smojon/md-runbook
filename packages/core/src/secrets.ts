@@ -6,7 +6,7 @@
  * in the environment.
  */
 
-import type { ShellKind } from './shell';
+import type { ShellKind } from './shellKind';
 
 export type RefKind = 'secret' | 'input' | 'param' | 'out';
 

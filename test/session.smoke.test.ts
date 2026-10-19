@@ -4,8 +4,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { ExecuteOptions, ExecuteResult, ShellSettings, executeCell, exitLabel, nodeShellEnv, resolveShell } from '../src/core';
-import { SENTINEL_START, SentinelFilter, SessionPool } from '../src/core/session';
+import { ExecuteOptions, ExecuteResult, ShellSettings, exitLabel } from '@md-runbook/core';
+import { executeCell, nodeShellEnv, resolveShell } from '@md-runbook/core/node';
+import { SENTINEL_START, SentinelFilter, SessionPool } from '@md-runbook/core/node/session';
 
 const settings: ShellSettings = { pwshPath: process.env.MD_RUNBOOK_PWSH, bashPath: process.env.MD_RUNBOOK_BASH };
 const isWin = process.platform === 'win32';

@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { baseUrlProblem, isValidApiKey, urlForDisplay } from '../src/core/anthropicStream';
+import { baseUrlProblem, isValidApiKey, urlForDisplay } from '@md-runbook/core/anthropicStream';
 
 describe('Anthropic key and base URL checks', () => {
   it('API keys must be printable ASCII without spaces', () => {

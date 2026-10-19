@@ -7,10 +7,10 @@
 import * as vscode from 'vscode';
 import { SECTION } from './config';
 import { runbookCwd } from './controller';
-import { parseFrontMatter } from './core/secrets';
-import { SessionPool } from './core/session';
-import { isCodeMeta } from './core';
-import { proposalOf } from './core/proposal';
+import { parseFrontMatter } from '@md-runbook/core/secrets';
+import { SessionPool } from '@md-runbook/core/node/session';
+import { isCodeMeta } from '@md-runbook/core';
+import { proposalOf } from '@md-runbook/core/proposal';
 import { META_KEY } from './outputs';
 import { CellExecutor, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';

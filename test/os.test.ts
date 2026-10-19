@@ -1,8 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { computeProgress, renderReport } from '../src/core';
-import { parseCellOptions } from '../src/core/cellOptions';
-import { currentOs, osGroups, osLabel, parseOsList } from '../src/core/os';
+import { computeProgress, renderReport } from '@md-runbook/core';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { currentOs, osGroups, osLabel, parseOsList } from '@md-runbook/core/os';
 
 describe('os= alternatives', () => {
   it('parses names and aliases', () => {

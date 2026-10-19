@@ -1,9 +1,9 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { computeProgress, outputSummary, renderReport, stepState } from '../src/core';
-import { findRefs } from '../src/core/secrets';
-import { evaluateChecks, parseCapture, parseInterval, parseMatcher } from '../src/core/checks';
-import { parseCellOptions } from '../src/core/cellOptions';
+import { computeProgress, outputSummary, renderReport, stepState } from '@md-runbook/core';
+import { findRefs } from '@md-runbook/core/secrets';
+import { evaluateChecks, parseCapture, parseInterval, parseMatcher } from '@md-runbook/core/checks';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
 
 describe('cell options: expect, retry, capture', () => {
   it('parses checks and retries', () => {
@@ -117,13 +117,26 @@ describe('check= in progress, CodeLens and report', () => {
 });
 
 describe('security limits', () => {
-  it('a regex with catastrophic backtracking is stopped and fails the check', () => {
+  it('a regex with catastrophic backtracking runs in linear time (RE2)', () => {
     const c = parseCellOptions('bash expect=/^(\\w+\\s?)*$/').checks!;
     const started = Date.now();
-    const r = evaluateChecks(c, 0, 'a'.repeat(40) + '!', '');
+    const r = evaluateChecks(c, 0, 'a'.repeat(50_000) + '!', '');
     assert.equal(r.ok, false);
-    assert.match(r.failures[0]!, /took longer than 1 s/);
-    assert.ok(Date.now() - started < 5000);
+    assert.match(r.failures[0]!, /does not match/);
+    assert.ok(Date.now() - started < 2000);
+  });
+
+  it('look-around and back-references are refused when the options are read', () => {
+    for (const re of ['/(?=x)/', '/(a)\\1/', '/(?<=a)b/']) {
+      const o = parseCellOptions(`bash expect=${re}`);
+      assert.match(o.errors.join('\n'), /look-around and back-references are not supported/, re);
+    }
+  });
+
+  it('captures and flags behave as before', () => {
+    const c = parseCellOptions('bash capture=POD:/^name:\\s*(\\S+)$/m expect=/READY/i').checks!;
+    const r = evaluateChecks(c, 0, 'ready', 'x\nname: web-42\n');
+    assert.deepEqual(r.captured, [{ name: 'POD', value: 'web-42', secret: false }]);
   });
 
   it('retry= and every= are bounded', () => {

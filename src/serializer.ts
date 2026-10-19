@@ -1,7 +1,7 @@
 /** VS Code adapter around the pure parser/writer in ./core. */
 
 import * as vscode from 'vscode';
-import { CellInput, HISTORY_KEY, parse, serialize, withRunHistory } from './core';
+import { CellInput, HISTORY_KEY, parse, serialize, withRunHistory } from '@md-runbook/core';
 import { writeOptions } from './config';
 import { META_KEY, persistedOutputs, toOutputInput } from './outputs';
 

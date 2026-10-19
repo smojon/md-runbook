@@ -1,7 +1,7 @@
 /** Progress: manual marks, checklist items, Resume Run, Clear Outputs Above/Below. */
 import { strict as assert } from 'node:assert';
 import * as vscode from 'vscode';
-import type { Progress } from '../../src/core';
+import type { Progress } from '@md-runbook/core';
 import { LANG, Test, closeAll, openRunbook, outputText, read, runCells, selectKernel, step, waitFor, waitForRun, writeFile } from './suite';
 
 export const tests: Test[] = [];

@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
-import { formatProblem, lintRunbook } from '../src/core/lint';
+import { formatProblem, lintRunbook } from '@md-runbook/core/lint';
 import { lint } from '../src/cli/main';
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';

@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { CodeMeta, DEFAULT_WRITE_OPTIONS, parse, serialize, toCellInputs } from '../src/core';
-import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '../src/core/aiContext';
+import { CodeMeta, DEFAULT_WRITE_OPTIONS, parse, serialize, toCellInputs } from '@md-runbook/core';
+import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '@md-runbook/core/aiContext';
 import {
   FINDINGS_HEADING,
   SYSTEM_PROMPT,
@@ -13,9 +13,9 @@ import {
   proposalMarkdown,
   suggestNextStepsPrompt,
   summarizeIncidentPrompt,
-} from '../src/core/aiPrompt';
-import { proposalOf } from '../src/core/proposal';
-import { SseParser, anthropicRequest, interpretEvent } from '../src/core/anthropicStream';
+} from '@md-runbook/core/aiPrompt';
+import { proposalOf } from '@md-runbook/core/proposal';
+import { SseParser, anthropicRequest, interpretEvent } from '@md-runbook/core/anthropicStream';
 
 describe('aiPrompt builders', () => {
   it('system prompt carries the safety contract', () => {

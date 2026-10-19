@@ -4,6 +4,9 @@
 const esbuild = require('esbuild');
 
 const watch = process.argv.includes('--watch');
+// The shared core is bundled from its sources, so this works without building packages/core first
+// (the GitHub Action runs only this script).
+const alias = { '@md-runbook/core': './packages/core/src' };
 
 const builds = [
   {
@@ -14,11 +17,12 @@ const builds = [
     format: 'cjs',
     target: 'node20',
     external: ['vscode'],
+    alias,
     sourcemap: true,
     minify: !watch,
   },
   {
-    // The command-line runner (md-runbook run file.md): src/core only, no vscode.
+    // The command-line runner (md-runbook run file.md): @md-runbook/core only, no vscode.
     entryPoints: ['src/cli/main.ts'],
     outfile: 'out/dist/cli.js',
     bundle: true,
@@ -26,6 +30,7 @@ const builds = [
     format: 'cjs',
     target: 'node20',
     banner: { js: '#!/usr/bin/env node' },
+    alias,
     define: { MD_RUNBOOK_VERSION: JSON.stringify(require('../package.json').version) },
     minify: !watch,
   },

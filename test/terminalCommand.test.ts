@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { parseCellOptions } from '../src/core/cellOptions';
-import { quotePwsh, quoteSh, terminalCommandLine, terminalInlineCommandLine, terminalSignature } from '../src/core/terminalCommand';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { quotePwsh, quoteSh, terminalCommandLine, terminalInlineCommandLine, terminalSignature } from '@md-runbook/core/terminalCommand';
 
 it('quotes script paths for bash and PowerShell', () => {
   assert.equal(quoteSh("/tmp/it's here/cell.sh"), `'/tmp/it'\\''s here/cell.sh'`);
@@ -31,7 +31,7 @@ it('runs PowerShell cells in a child process (no -NonInteractive; Bypass on Wind
 });
 
 it('descendants walks the process tree from ps output', async () => {
-  const { descendants } = await import('../src/core/terminalCommand');
+  const { descendants } = await import('@md-runbook/core/terminalCommand');
   const ps = '  1     0\n 10     1\n 11    10\n 12    10\n 13    11\n 20     1\n bad line\n';
   assert.deepEqual(descendants(ps, 10), [11, 12, 13]);
   assert.deepEqual(descendants(ps, 13), []);
@@ -50,7 +50,7 @@ it('parses the terminal cell option', () => {
 });
 
 it('TerminalOutputFilter drops the prompt/command echo and shell integration marks', async () => {
-  const { TerminalOutputFilter } = await import('../src/core/terminalCommand');
+  const { TerminalOutputFilter } = await import('@md-runbook/core/terminalCommand');
   const f = new TerminalOutputFilter();
   const raw = "'\n\x1b]633;E;bash '/tmp/x.sh';nonce\x07\x1b]633;C\x07Name: bob\r\nhello bob\r\n\x1b]633;D;0\x07";
   // Split at awkward places, including inside the escape sequences.
@@ -60,7 +60,7 @@ it('TerminalOutputFilter drops the prompt/command echo and shell integration mar
 });
 
 it('TerminalOutputFilter also drops window titles', async () => {
-  const { TerminalOutputFilter } = await import('../src/core/terminalCommand');
+  const { TerminalOutputFilter } = await import('@md-runbook/core/terminalCommand');
   const f = new TerminalOutputFilter();
   const raw = '\x1b]633;C\x07PowerShell 5.1\r\n\x1b]0;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\x07done\r\n';
   const out = [raw.slice(0, 30), raw.slice(30, 50), raw.slice(50)].map((c) => f.push(c)).join('') + f.flush();
@@ -68,7 +68,7 @@ it('TerminalOutputFilter also drops window titles', async () => {
 });
 
 it('parseStatus reads the written exit code', async () => {
-  const { parseStatus } = await import('../src/core/terminalCommand');
+  const { parseStatus } = await import('@md-runbook/core/terminalCommand');
   assert.equal(parseStatus('3'), 3);
   assert.equal(parseStatus(' 0\r\n'), 0);
   assert.equal(parseStatus(''), undefined);

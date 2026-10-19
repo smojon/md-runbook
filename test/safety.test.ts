@@ -3,9 +3,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
-import { parseCellOptions, tokenizeInfo } from '../src/core/cellOptions';
-import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor, findRisky } from '../src/core/confirm';
-import { CONTEXT_UNKNOWN, firstLine, runContextCommand } from '../src/core/context';
+import { parseCellOptions, tokenizeInfo } from '@md-runbook/core/cellOptions';
+import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor, findRisky } from '@md-runbook/core/confirm';
+import { CONTEXT_UNKNOWN, firstLine, runContextCommand } from '@md-runbook/core/node/context';
 
 describe('cell options', () => {
   it('no options', () => {

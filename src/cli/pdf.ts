@@ -8,8 +8,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { nodeShellEnv } from '../core';
-import type { ShellEnv } from '../core';
+import { nodeShellEnv } from '@md-runbook/core/node';
+import type { ShellEnv } from '@md-runbook/core';
 
 /** Where to look for a browser, in order: an explicit path, then the usual install locations. */
 export function browserCandidates(env: ShellEnv): string[] {

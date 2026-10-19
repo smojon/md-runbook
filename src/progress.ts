@@ -5,10 +5,10 @@
 
 import * as os from 'node:os';
 import * as vscode from 'vscode';
-import { Progress, checklist, computeProgress, formatLocalIso, formatProgress, isCodeMeta, nextUncheckedOffset, outputBlockAttrs } from './core';
-import { isManualMark } from './core/progress';
-import { parseCellOptions } from './core/cellOptions';
-import { osGroups } from './core/os';
+import { Progress, checklist, computeProgress, formatLocalIso, formatProgress, isCodeMeta, nextUncheckedOffset, outputBlockAttrs } from '@md-runbook/core';
+import { isManualMark } from '@md-runbook/core/progress';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { osGroups } from '@md-runbook/core/os';
 import { SECTION } from './config';
 import { CONTROLLER_ID, RunbookController } from './controller';
 import { META_KEY, outputMeta } from './outputs';

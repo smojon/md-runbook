@@ -98,9 +98,11 @@ kubectl logs "${out:POD}" --tail=20
   by One, Step Through) and the plain text editor's ▶ Run CodeLens ignore them.
 - `retry=` allows at most 100 attempts and `every=` at most 1 hour. A risky command's
   confirmation says how many times the cell may run.
-- A regular expression from the runbook (`expect=`, `expect-not=`, `capture=NAME:/…/`) may run
-  for at most 1 second on the output; a pattern that takes longer (catastrophic backtracking)
-  is stopped and the check fails.
+- Regular expressions from the runbook (`expect=`, `expect-not=`, `capture=NAME:/…/`) use
+  [RE2 syntax](https://github.com/google/re2/wiki/Syntax), which runs in linear time: no
+  pattern can freeze VS Code. Look-around (`(?=…)`, `(?<=…)`) and back-references (`\1`) are
+  not available; the cell shows an option error instead. Flags: `i`, `m`, `s` (`u` is accepted
+  and changes nothing).
 - In bash, a placeholder becomes an unquoted `${NAME}`: quote it (`"${out:POD}"`) when the
   value could contain spaces or `*`, as for any shell variable.
 - `${out:NAME}` values captured by a cell written by an assistant are not used by your own

@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { pastedBy, pastedReason } from '../src/core/pastedInfo';
-import { proposedInfo } from '../src/core/proposal';
+import { pastedBy, pastedReason } from '@md-runbook/core/pastedInfo';
+import { proposedInfo } from '@md-runbook/core/proposal';
 
 describe('pasted proposal info strings', () => {
   it('reason with nested quotes is kept whole', () => {

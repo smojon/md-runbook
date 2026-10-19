@@ -4,10 +4,11 @@
  */
 
 import * as vscode from 'vscode';
-import { ExecuteOptions, ExecuteResult, executeCell } from './core';
-import type { ShellSettings } from './core';
-import type { Captured, CellChecks } from './core/checks';
-import type { SessionPool } from './core/session';
+import { ExecuteOptions, ExecuteResult } from '@md-runbook/core';
+import { executeCell } from '@md-runbook/core/node';
+import type { ShellSettings } from '@md-runbook/core';
+import type { Captured, CellChecks } from '@md-runbook/core/checks';
+import type { SessionPool } from '@md-runbook/core/node/session';
 
 /** Everything needed to run one cell; preparers may change any of it. */
 export interface CellPlan {

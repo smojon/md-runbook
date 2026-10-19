@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { DEFAULT_WRITE_OPTIONS, locateCodeCells, minimalChange, outputSummary, parse, setCellOutput } from '../src/core';
+import { DEFAULT_WRITE_OPTIONS, locateCodeCells, minimalChange, outputSummary, parse, setCellOutput } from '@md-runbook/core';
 import { listFixtures, readFixture } from './helpers';
 
 const decoder = new TextDecoder('utf-8', { ignoreBOM: true });

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { DEFAULT_PATTERNS, RedactionPattern, Redactor, ShellSettings, WriteOptions, createRedactor } from './core';
+import { DEFAULT_PATTERNS, RedactionPattern, Redactor, ShellSettings, WriteOptions, createRedactor } from '@md-runbook/core';
 import { knownSecrets } from './knownSecrets';
 
 export const SECTION = 'mdRunbook';

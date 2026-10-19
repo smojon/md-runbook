@@ -2,9 +2,9 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { parse } from './core';
-import { writesAsCodeCell } from './core/writer';
-import { AiContext, PseudonymMap, buildAiContext, emptyMap } from './core/aiContext';
+import { parse } from '@md-runbook/core';
+import { writesAsCodeCell } from '@md-runbook/core/writer';
+import { AiContext, PseudonymMap, buildAiContext, emptyMap } from '@md-runbook/core/aiContext';
 import { SECTION, writeOptions } from './config';
 import { notebookTextWithOutputs } from './serializer';
 

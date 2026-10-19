@@ -5,8 +5,8 @@
  */
 
 import * as vscode from 'vscode';
-import { PseudonymMap, depseudonymize } from '../core/aiContext';
-import { isValidApiKey } from '../core/anthropicStream';
+import { PseudonymMap, depseudonymize } from '@md-runbook/core/aiContext';
+import { isValidApiKey } from '@md-runbook/core/anthropicStream';
 import {
   AiPrompt,
   explainOutputPrompt,
@@ -16,7 +16,7 @@ import {
   proposalCell,
   suggestNextStepsPrompt,
   summarizeIncidentPrompt,
-} from '../core/aiPrompt';
+} from '@md-runbook/core/aiPrompt';
 import { SECTION } from '../config';
 import { META_KEY } from '../outputs';
 import { NOTEBOOK_TYPE } from '../serializer';

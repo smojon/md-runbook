@@ -9,8 +9,9 @@ State of the project for whoever picks it up next (person or new Claude session)
   The GitHub Action is used as `smojon/md-runbook@v<version>` (the release tags).
 - **Branch:** everything is on `main`, which is the default branch. Work happens on short-lived
   `feature/...` branches; CI must pass on all three systems before they are merged.
-- **Code:** `src/core` is pure (no `vscode`; `test/purity.test.ts` checks it), `src/*.ts` is the
-  VS Code layer, `src/cli` the command-line runner, `renderer/` the notebook renderer for
+- **Code:** `packages/core` (`@md-runbook/core`, an npm workspace) is the shared core: its
+  `src/` is platform-neutral (no `vscode`, no Node modules; `test/purity.test.ts` checks it) and
+  `src/node/` runs local processes. `src/*.ts` is the VS Code layer, `src/cli` the command-line runner, `renderer/` the notebook renderer for
   clickable checklists. Feature docs: `docs/features/*.md`. Store and release steps:
   `PUBLISHING.md`. GitHub Action: `action.yml` + `scripts/action-run.js`.
 - **Examples:** `examples/sample.runbook.md` (the hand test drive, opened by **Open Sample

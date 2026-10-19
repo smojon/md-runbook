@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert';
 import { createRequire } from 'node:module';
 import { describe, it } from 'node:test';
 import { MarkdownIt, taskListPlugin } from '../renderer/taskListPlugin';
-import { taskItemAtLine } from '../src/core';
+import { taskItemAtLine } from '@md-runbook/core';
 
 // No type declarations for markdown-it; only render() is used here.
 const markdownIt = createRequire(__filename)('markdown-it') as new (o?: object) => MarkdownIt & { render(src: string): string };

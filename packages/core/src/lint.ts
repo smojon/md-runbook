@@ -10,7 +10,7 @@ import { isCodeMeta } from './model';
 import { parse } from './parser';
 import { locateCodeCells } from './locate';
 import { findRefs, parseFrontMatter } from './secrets';
-import { shellKindForLanguage } from './shell';
+import { shellKindForLanguage } from './shellKind';
 
 export type LintSeverity = 'error' | 'warning';
 

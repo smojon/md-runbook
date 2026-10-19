@@ -14,7 +14,7 @@ import {
   parse,
   serialize,
   withRunHistory,
-} from '../src/core';
+} from '@md-runbook/core';
 import { roundTrip, untouched } from './helpers';
 
 const block = (text: string, exit = '0', indent = '', eol = '\n'): string =>

@@ -6,7 +6,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { findBrowser, htmlToPdf } from './cli/pdf';
-import { renderReport } from './core';
+import { renderReport } from '@md-runbook/core';
 import { confirmNoLeaks } from './aiCommands';
 import { SECTION, writeOptions } from './config';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';

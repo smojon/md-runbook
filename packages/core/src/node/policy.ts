@@ -9,7 +9,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { stripApprovalTokens } from './proposal';
+import { stripApprovalTokens } from '../proposal';
 
 export interface CommandPolicy {
   /** Matched against each command of a line (split at `|`, `;`, `&&`, `||`, `&`). */

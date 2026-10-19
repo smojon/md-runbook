@@ -6,8 +6,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { renderReport } from '../core';
-import { formatProblem, lintRunbook } from '../core/lint';
+import { renderReport } from '@md-runbook/core';
+import { formatProblem, lintRunbook } from '@md-runbook/core/lint';
 import { CliOptions, junitReport, markdownSummary, runRunbook } from './run';
 import { notifyConfig, notifyText, runLink, sendNotification } from './notify';
 import { findBrowser, htmlToPdf } from './pdf';

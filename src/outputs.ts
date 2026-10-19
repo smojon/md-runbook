@@ -1,8 +1,8 @@
 /** Mapping between VS Code cell outputs and the core's persisted-output model. */
 
 import * as vscode from 'vscode';
-import { escapeHtml } from './core';
-import type { HistoryEntry, OutputInput, ParsedOutput } from './core';
+import { escapeHtml } from '@md-runbook/core';
+import type { HistoryEntry, OutputInput, ParsedOutput } from '@md-runbook/core';
 
 export const META_KEY = 'mdRunbook';
 

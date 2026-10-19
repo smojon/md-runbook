@@ -2,7 +2,7 @@
  * Exact secret values seen this session (injected secrets, .env values). They are redacted from
  * live output and from everything written to disk, in addition to the regex patterns.
  */
-import { REDACTED } from './core';
+import { REDACTED } from '@md-runbook/core';
 
 const MIN_LENGTH = 4;
 

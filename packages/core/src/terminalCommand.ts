@@ -1,6 +1,6 @@
 /** Command lines for running a cell's script file in an interactive terminal. */
 
-import type { ShellKind } from './shell';
+import type { ShellKind } from './shellKind';
 
 /** Quote for POSIX shells: single quotes, with embedded single quotes closed and escaped. */
 export function quoteSh(s: string): string {

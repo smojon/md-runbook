@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { CellInput, DEFAULT_WRITE_OPTIONS, ParsedDocument, WriteOptions, parse, serialize, toCellInputs } from '../src/core';
+import { CellInput, DEFAULT_WRITE_OPTIONS, ParsedDocument, WriteOptions, parse, serialize, toCellInputs } from '@md-runbook/core';
 
 /** test/fixtures, resolved from out/test at runtime. */
 export const FIXTURES = path.resolve(__dirname, '..', '..', 'test', 'fixtures');

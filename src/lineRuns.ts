@@ -12,9 +12,9 @@
  */
 
 import * as vscode from 'vscode';
-import { SUPPORTED_LANGUAGE_IDS, shellKindForLanguage } from './core';
+import { SUPPORTED_LANGUAGE_IDS, shellKindForLanguage } from '@md-runbook/core';
 import { SECTION } from './config';
-import { LineStep, formatLineRange, splitSteps, stepAtLine } from './core/steps';
+import { LineStep, formatLineRange, splitSteps, stepAtLine } from '@md-runbook/core/steps';
 import { LineRun, RunbookController } from './controller';
 import { isCell, runbookEditor, selectRunbookKernel } from './progress';
 import { NOTEBOOK_TYPE } from './serializer';

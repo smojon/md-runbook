@@ -14,7 +14,7 @@ import {
   interpretEvent,
   isValidApiKey,
   urlForDisplay,
-} from '../core/anthropicStream';
+} from '@md-runbook/core/anthropicStream';
 
 export const ANTHROPIC_KEY = 'mdRunbook.ai.anthropicKey';
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';

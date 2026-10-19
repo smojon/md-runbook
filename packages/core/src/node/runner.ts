@@ -2,6 +2,7 @@
 
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import type { RunResult } from '../result';
 
 export interface RunOptions {
   command: string;
@@ -14,17 +15,6 @@ export interface RunOptions {
   windowsVerbatimArguments?: boolean;
   onStdout(text: string): void;
   onStderr(text: string): void;
-}
-
-export interface RunResult {
-  exitCode: number | null;
-  /** Signal that ended the process (Unix), if any. */
-  signal: string | null;
-  timedOut: boolean;
-  cancelled: boolean;
-  /** Set when the process could not be started. */
-  error?: string;
-  durationMs: number;
 }
 
 /** Kill a process and all its descendants. */

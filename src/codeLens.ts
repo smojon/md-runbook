@@ -11,7 +11,6 @@ import {
   CodeCellLocation,
   ExecuteResult,
   LineBuffer,
-  executeCell,
   exitLabel,
   formatDurationAttr,
   formatLocalIso,
@@ -21,15 +20,16 @@ import {
   outputSummary,
   parse,
   setCellOutput,
-} from './core';
+} from '@md-runbook/core';
+import { executeCell } from '@md-runbook/core/node';
 import { ExecutionConfig, SECTION, executionConfig, redactionConfig, writeOptions } from './config';
 import { workingDirectory } from './controller';
 import { knownSecrets } from './knownSecrets';
-import { parseCellOptions } from './core/cellOptions';
-import { parseFrontMatter } from './core/secrets';
-import { currentOs, osLabel } from './core/os';
-import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from './core/confirm';
-import { proposalOf } from './core/proposal';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { parseFrontMatter } from '@md-runbook/core/secrets';
+import { currentOs, osLabel } from '@md-runbook/core/os';
+import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
+import { proposalOf } from '@md-runbook/core/proposal';
 import { cellConfirmOption } from './safety';
 
 /**

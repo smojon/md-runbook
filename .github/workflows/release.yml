@@ -51,7 +51,7 @@ jobs:
             exit 1
           fi
       - name: Package
-        run: npx vsce package --out md-runbook.vsix
+        run: npx vsce package --no-dependencies --out md-runbook.vsix
       - name: Publish to the Visual Studio Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}

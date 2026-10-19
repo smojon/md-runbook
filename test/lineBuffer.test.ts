@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { it } from 'node:test';
-import { LineBuffer } from '../src/core';
+import { LineBuffer } from '@md-runbook/core';
 
 it('LineBuffer passes whole lines to the transform', () => {
   const seen: string[] = [];
@@ -21,7 +21,7 @@ it('LineBuffer flushes very long partial lines', () => {
 });
 
 it('LineBuffer holds a private-key block until its END line, so it is redacted whole', async () => {
-  const { createRedactor, DEFAULT_PATTERNS } = await import('../src/core');
+  const { createRedactor, DEFAULT_PATTERNS } = await import('@md-runbook/core');
   const r = createRedactor(DEFAULT_PATTERNS);
   const seen: string[] = [];
   const b = new LineBuffer((t) => seen.push(t), (t) => r.redact(t));

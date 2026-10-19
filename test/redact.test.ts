@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { DEFAULT_PATTERNS, createRedactor } from '../src/core';
+import { DEFAULT_PATTERNS, createRedactor } from '@md-runbook/core';
 
 const r = createRedactor(DEFAULT_PATTERNS);
 const R = '[REDACTED]';

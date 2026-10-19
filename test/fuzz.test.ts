@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { CodeMeta, DEFAULT_WRITE_OPTIONS, loadedOutputEntry, nextHistory, parse, serialize, withRunHistory } from '../src/core';
+import { CodeMeta, DEFAULT_WRITE_OPTIONS, loadedOutputEntry, nextHistory, parse, serialize, withRunHistory } from '@md-runbook/core';
 import { roundTrip, show, untouched } from './helpers';
 
 /** Small deterministic PRNG (mulberry32). */

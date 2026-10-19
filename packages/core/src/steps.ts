@@ -8,7 +8,7 @@
  */
 
 import { splitLines } from './lines';
-import type { ShellKind } from './shell';
+import type { ShellKind } from './shellKind';
 
 export interface LineStep {
   /** First and last physical line of the command (0-based, in the cell). */

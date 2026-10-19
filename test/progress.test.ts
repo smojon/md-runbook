@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { checkNextItem, checklist, taskItemAtLine, computeProgress, formatProgress, outputBlockAttrs, parse, stepState } from '../src/core';
-import { isManualMark } from '../src/core/progress';
+import { checkNextItem, checklist, taskItemAtLine, computeProgress, formatProgress, outputBlockAttrs, parse, stepState } from '@md-runbook/core';
+import { isManualMark } from '@md-runbook/core/progress';
 
 describe('step state', () => {
   it('maps exit attributes', () => {

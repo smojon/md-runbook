@@ -295,8 +295,10 @@ npm test                  # compile + unit, round-trip, fuzz, redaction and shel
 npm run test:integration  # end-to-end tests in a downloaded VS Code
 ```
 
-- **Pure core:** the parser, serializer, redaction and shell selection live in `src/core` and
-  never import `vscode`.
+- **Shared core:** the parser, serializer, cell options, checks and redaction live in
+  `packages/core` (`@md-runbook/core`, an npm workspace). They never import `vscode` or Node
+  modules, so the phone and web app can use them too; running local processes is in
+  `@md-runbook/core/node`.
 - **VS Code layer:** `src/serializer.ts`, `src/controller.ts` and `src/extension.ts` are thin
   adapters over the core.
 - **Smoke tests:** these run real shells and skip any shell that isn't installed. On Windows they

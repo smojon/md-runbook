@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { formatDurationAttr, formatLocalIso, processOutputText, stripAnsi, truncateLines } from '../src/core';
+import { formatDurationAttr, formatLocalIso, processOutputText, stripAnsi, truncateLines } from '@md-runbook/core';
 
 describe('output text processing', () => {
   it('strips ANSI colours, OSC hyperlinks and cursor codes', () => {

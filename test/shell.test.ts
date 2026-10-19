@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { ShellEnv, resolveShell, shellKindForLanguage } from '../src/core';
+import { ShellEnv, shellKindForLanguage } from '@md-runbook/core';
+import { resolveShell } from '@md-runbook/core/node';
 
 function fakeEnv(platform: NodeJS.Platform, files: string[], env: Record<string, string> = {}, path: Record<string, string> = {}): ShellEnv {
   const set = new Set(files.map((f) => f.toLowerCase()));
@@ -130,7 +131,7 @@ describe('bash resolution', () => {
 
 describe('quoting hardening', () => {
   it('pwsh wrapper doubles typographic single quotes too', async () => {
-    const { pwshWrapper } = await import('../src/core');
+    const { pwshWrapper } = await import('@md-runbook/core/node');
     assert.match(pwshWrapper('C:\\T\\it’s\\cell.ps1'), /& 'C:\\T\\it’’s\\cell\.ps1'/);
   });
 });

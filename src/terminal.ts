@@ -11,11 +11,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { SECTION } from './config';
-import { ExecuteResult, isCodeMeta, nodeShellEnv, resolveShell, shellKindForLanguage } from './core';
-import { parseCellOptions } from './core/cellOptions';
-import { proposalOf } from './core/proposal';
-import { killTree } from './core/runner';
-import { TerminalOutputFilter, descendants, parseStatus, terminalCommandLine, terminalInlineCommandLine, terminalSignature } from './core/terminalCommand';
+import { ExecuteResult, isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
+import { nodeShellEnv, resolveShell } from '@md-runbook/core/node';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { proposalOf } from '@md-runbook/core/proposal';
+import { killTree } from '@md-runbook/core/node/runner';
+import { TerminalOutputFilter, descendants, parseStatus, terminalCommandLine, terminalInlineCommandLine, terminalSignature } from '@md-runbook/core/terminalCommand';
 import { META_KEY } from './outputs';
 import { CellExecutor, CellPlan, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
 

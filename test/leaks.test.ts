@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { base64Prefix, isHighEntropyToken, maskSecret, redactLeaks, scanForLeaks, shannonEntropy, summarizeLeaks } from '../src/core/leaks';
+import { base64Prefix, isHighEntropyToken, maskSecret, redactLeaks, scanForLeaks, shannonEntropy, summarizeLeaks } from '@md-runbook/core/leaks';
 
 const kinds = (text: string, domains?: string[]): string[] => scanForLeaks(text, { internalDomains: domains }).map((f) => f.kind);
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Regular expressions** in `expect=`, `expect-not=` and `capture=NAME:/…/` now use RE2 syntax,
+  which runs in linear time instead of being stopped after 1 second. Look-around and
+  back-references are not available: such a cell shows an option error (the linter reports it
+  too).
+- The parser, writer and the rest of the core moved to a shared package (`packages/core`) that
+  the coming phone and web app will use too. No change in behaviour.
+
 ## 0.3.2
 
 - **Line buttons:** `▶ ☐` in front of each command of a cell (with two or more): `▶` runs that

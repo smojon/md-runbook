@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { echoCommand, formatLineRange, formatLineRanges, splitSteps, stepAtLine } from '../src/core/steps';
-import type { ShellKind } from '../src/core';
+import { echoCommand, formatLineRange, formatLineRanges, splitSteps, stepAtLine } from '@md-runbook/core/steps';
+import type { ShellKind } from '@md-runbook/core';
 
 const texts = (src: string, kind: ShellKind): string[] => splitSteps(src, kind).map((s) => s.text);
 const ranges = (src: string, kind: ShellKind): [number, number][] => splitSteps(src, kind).map((s) => [s.start, s.end]);

@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { SECTION } from './config';
-import { LintProblem, lintRunbook } from './core/lint';
+import { LintProblem, lintRunbook } from '@md-runbook/core/lint';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
 
 const DELAY_MS = 300;

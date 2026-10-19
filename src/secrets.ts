@@ -6,10 +6,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { isCodeMeta, shellKindForLanguage } from './core';
-import type { Captured } from './core/checks';
-import { proposalOf } from './core/proposal';
-import { RunbookParam, VAR_NAME_RE, dotenvSecrets, findRefs, parseDotenv, parseFrontMatter, rewriteRefs } from './core/secrets';
+import { isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
+import type { Captured } from '@md-runbook/core/checks';
+import { proposalOf } from '@md-runbook/core/proposal';
+import { RunbookParam, VAR_NAME_RE, dotenvSecrets, findRefs, parseDotenv, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { META_KEY } from './outputs';
 import { CellPlan, PrepareContext, RunPipeline } from './pipeline';
 import { SECTION } from './config';

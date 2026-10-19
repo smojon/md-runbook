@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { CellInput, DEFAULT_WRITE_OPTIONS, WriteOptions, clearOutputBlocks, parse, serialize } from '../src/core';
-import { unclosedFenceCloser, writesAsCodeCell } from '../src/core/writer';
+import { CellInput, DEFAULT_WRITE_OPTIONS, WriteOptions, clearOutputBlocks, parse, serialize } from '@md-runbook/core';
+import { unclosedFenceCloser, writesAsCodeCell } from '@md-runbook/core/writer';
 import { untouched } from './helpers';
 
 const RAN = '2026-10-18T14:20:00+02:00';

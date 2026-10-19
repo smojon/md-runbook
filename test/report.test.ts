@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { renderInline, renderMarkdown, renderReport, safeUrl } from '../src/core';
+import { renderInline, renderMarkdown, renderReport, safeUrl } from '@md-runbook/core';
 
 const AT = new Date(2026, 9, 18, 14, 30, 0);
 const report = (text: string): string => renderReport(text, { generatedAt: AT });

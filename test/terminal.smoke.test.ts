@@ -9,8 +9,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
-import { ShellSettings, nodeShellEnv, resolveShell } from '../src/core';
-import { terminalCommandLine } from '../src/core/terminalCommand';
+import { ShellSettings } from '@md-runbook/core';
+import { nodeShellEnv, resolveShell } from '@md-runbook/core/node';
+import { terminalCommandLine } from '@md-runbook/core/terminalCommand';
 
 const settings: ShellSettings = { pwshPath: process.env.MD_RUNBOOK_PWSH, bashPath: process.env.MD_RUNBOOK_BASH };
 const isWin = process.platform === 'win32';

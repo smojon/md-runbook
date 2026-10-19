@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { parse } from '../src/core';
+import { parse } from '@md-runbook/core';
 import { listFixtures, readFixture, roundTrip, roundTripBytes, show } from './helpers';
 
 describe('byte-identical round trip of fixtures', () => {

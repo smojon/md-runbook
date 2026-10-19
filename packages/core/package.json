@@ -1,0 +1,34 @@
+{
+  "name": "@md-runbook/core",
+  "version": "0.3.2",
+  "description": "Platform-neutral core of md-runbook: Markdown runbook parser, writer, cell options, checks, redaction, lint. Node-only process running in @md-runbook/core/node.",
+  "private": true,
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "node": ["dist/node/index.d.ts"],
+      "dist/*": ["dist/*"],
+      "*": ["dist/*"]
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "re2js": "2.8.8"
+  }
+}

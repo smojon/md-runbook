@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { dotenvSecrets, envRef, findRefs, isRedactableValue, looksLikeSecretValue, looksSecret, looksSecretKey, parseDotenv, parseFrontMatter, rewriteRefs } from '../src/core/secrets';
+import { dotenvSecrets, envRef, findRefs, isRedactableValue, looksLikeSecretValue, looksSecret, looksSecretKey, parseDotenv, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 
 describe('variable references', () => {
   it('finds unique references in order, with secrecy', () => {

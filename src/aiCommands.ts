@@ -1,11 +1,11 @@
 /** Commands: Copy for AI, Paste AI Proposal, Check for Leaks (and the leak check before sharing). */
 
 import * as vscode from 'vscode';
-import { DocMeta, isDocMeta, isRunnableFenceLang, languageIdForFence } from './core';
-import { AiContext, codeMetaFor, depseudonymize, extractFencedBlocks, proposalMarkdown } from './core/aiContext';
-import { LeakFinding, scanForLeaks, summarizeLeaks } from './core/leaks';
-import { pastedBy, pastedReason } from './core/pastedInfo';
-import { proposedInfo } from './core/proposal';
+import { DocMeta, isDocMeta, isRunnableFenceLang, languageIdForFence } from '@md-runbook/core';
+import { AiContext, codeMetaFor, depseudonymize, extractFencedBlocks, proposalMarkdown } from '@md-runbook/core/aiContext';
+import { LeakFinding, scanForLeaks, summarizeLeaks } from '@md-runbook/core/leaks';
+import { pastedBy, pastedReason } from '@md-runbook/core/pastedInfo';
+import { proposedInfo } from '@md-runbook/core/proposal';
 import { aiSettings, buildMarkdownContext, getPseudonymMap, parsedCodeIndices, runbookText, savePseudonymMap } from './aiContextGlue';
 import { writeOptions } from './config';
 import { META_KEY, outputMeta } from './outputs';

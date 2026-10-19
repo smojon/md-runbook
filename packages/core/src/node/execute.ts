@@ -3,25 +3,12 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { RunResult, runProcess } from './runner';
-import { ResolvedShell, ShellEnv, ShellSettings, resolveShell, shellKindForLanguage } from './shell';
+import { runProcess } from './runner';
+import { ShellEnv, resolveShell, shellKindForLanguage } from './shell';
+import type { ExecuteOptions, ExecuteResult } from '../result';
 
-export interface ExecuteOptions {
-  /** Fence language or VS Code language id. */
-  language: string;
-  source: string;
-  cwd: string;
-  settings: ShellSettings;
-  timeoutMs: number;
-  env?: Record<string, string>;
-  signal?: AbortSignal;
-  onStdout(text: string): void;
-  onStderr(text: string): void;
-}
-
-export interface ExecuteResult extends RunResult {
-  shell?: ResolvedShell;
-}
+export type { ExecuteOptions, ExecuteResult } from '../result';
+export { exitLabel, isSuccess } from '../result';
 
 function findOnPath(command: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   const dirs = (env.PATH ?? env.Path ?? '').split(path.delimiter).filter(Boolean);
@@ -106,17 +93,4 @@ export async function executeCell(opts: ExecuteOptions, shellEnv: ShellEnv = nod
       // A killed process may still hold the file briefly on Windows; it's in the temp dir anyway.
     }
   }
-}
-
-/** Exit attribute for the output marker: the exit code, or why there is none. */
-export function exitLabel(r: RunResult): string {
-  if (r.timedOut) return 'timeout';
-  if (r.cancelled) return 'cancelled';
-  if (r.error !== undefined) return 'error';
-  if (r.exitCode !== null) return String(r.exitCode);
-  return r.signal ?? 'unknown';
-}
-
-export function isSuccess(r: RunResult): boolean {
-  return !r.timedOut && !r.cancelled && r.error === undefined && r.exitCode === 0;
 }

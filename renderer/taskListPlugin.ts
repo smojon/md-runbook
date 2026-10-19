@@ -33,7 +33,7 @@ export interface ToggleMessage {
 
 export const TASK_CLASS = 'mdrb-task';
 
-/** Same rule as TASK_RE in src/core/progress.ts: `[ ]`, `[x]` or `[X]`, then a space or the end. */
+/** Same rule as TASK_RE in packages/core/src/progress.ts: `[ ]`, `[x]` or `[X]`, then a space or the end. */
 const BOX_RE = /^\[([ xX])\](?=[ \t]|$)/;
 
 /**
@@ -44,7 +44,7 @@ export function taskListPlugin(md: MarkdownIt, register: (src: string) => number
   md.core.ruler.after('inline', 'mdrb_task_lists', (state) => {
     const tokens = state.tokens;
     let src: number | undefined;
-    // Items in blockquotes aren't steps for the extension (src/core/progress.ts), so no checkbox.
+    // Items in blockquotes aren't steps for the extension (packages/core/src/progress.ts), so no checkbox.
     let quoted = 0;
     for (let i = 0; i < tokens.length; i++) {
       const inline = tokens[i]!;

@@ -50,7 +50,7 @@ jobs:
         run: npm run test:integration
       - name: Package
         if: runner.os == 'Linux'
-        run: npx vsce package
+        run: npx vsce package --no-dependencies
       - name: Check the npm package of the command line
         if: runner.os == 'Linux'
         run: |

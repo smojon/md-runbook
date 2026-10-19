@@ -16,7 +16,7 @@ import {
   nextHistory,
   processOutputText,
   serialize,
-} from './core';
+} from '@md-runbook/core';
 import { SECTION, writeOptions } from './config';
 import { workingDirectory } from './controller';
 import { copyOrigin, setCopyOrigin } from './copyOrigins';

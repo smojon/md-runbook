@@ -8,7 +8,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
-import { ExecuteResult, ShellSettings, exitLabel, executeCell, nodeShellEnv, resolveShell } from '../src/core';
+import { ExecuteResult, ShellSettings, exitLabel } from '@md-runbook/core';
+import { executeCell, nodeShellEnv, resolveShell } from '@md-runbook/core/node';
 
 const settings: ShellSettings = { pwshPath: process.env.MD_RUNBOOK_PWSH, bashPath: process.env.MD_RUNBOOK_BASH };
 const isWin = process.platform === 'win32';
