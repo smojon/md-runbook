@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import { SECTION } from './config';
 import { LintProblem, lintRunbook } from '@md-runbook/core/lint';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
+import { timed } from './timings';
 
 const DELAY_MS = 300;
 
@@ -85,10 +86,10 @@ export function registerLint(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     collection,
     { dispose: () => timers.forEach((t) => clearTimeout(t)) },
-    vscode.workspace.onDidOpenNotebookDocument((nb) => isRunbook(nb) && lintNotebook(nb)),
+    vscode.workspace.onDidOpenNotebookDocument((nb) => isRunbook(nb) && timed('lint', nb.uri.fsPath, () => lintNotebook(nb))),
     vscode.workspace.onDidChangeNotebookDocument((e) => isRunbook(e.notebook) && later(e.notebook.uri.toString(), () => lintNotebook(e.notebook))),
     vscode.workspace.onDidCloseNotebookDocument((nb) => isRunbook(nb) && clearNotebook(nb)),
-    vscode.workspace.onDidOpenTextDocument(lintText),
+    vscode.workspace.onDidOpenTextDocument((doc) => timed('lint text', doc.uri.fsPath, () => lintText(doc))),
     vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'markdown' && later(e.document.uri.toString(), () => lintText(e.document))),
     vscode.workspace.onDidCloseTextDocument((doc) => doc.uri.scheme !== 'vscode-notebook-cell' && collection.delete(doc.uri)),
     vscode.workspace.onDidChangeConfiguration((e) => {

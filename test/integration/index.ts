@@ -2,6 +2,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Test, setTrace, tests as coreTests } from './suite';
+import { summary } from './probe';
 
 /** Core tests plus every feature's `*.suite.js` next to this file (each exports `tests: Test[]`). */
 function allTests(): Test[] {
@@ -30,6 +31,7 @@ export async function run(...args: unknown[]): Promise<void> {
       failures.push(`${t.name}: ${msg}`);
     }
   }
+  log(`\n${summary()}`);
   log(`\n${tests.length - failures.length}/${tests.length} integration tests passed`);
   if (failures.length) throw new Error(`${failures.length} integration test(s) failed:\n${failures.join('\n\n')}`);
 }

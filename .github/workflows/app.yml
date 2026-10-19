@@ -21,6 +21,8 @@ env:
   MAESTRO_SHA256: 5384593cb4e7a106489e75a821d157dd43f4e438df6bc308b72e82c685e1283a
   MAESTRO_CLI_NO_ANALYTICS: '1'
   MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true'
+  # The iOS driver didn't start within Maestro's default on a slow runner: 3 minutes.
+  MAESTRO_DRIVER_STARTUP_TIMEOUT: '180000'
 
 defaults:
   run:
@@ -96,6 +98,19 @@ jobs:
         run: rm -rf android node_modules/*/android/build node_modules/*/android/.cxx node_modules/@*/*/android/build node_modules/@*/*/android/.cxx
       - name: Install Maestro
         run: bash e2e/install-maestro.sh
+      # The emulator runner downloads the emulator itself, once; a broken download ("Error on
+      # ZipFile unknown archive") failed a run. Install it here with retries; the runner then finds
+      # it up to date.
+      - name: Install the Android emulator
+        working-directory: .
+        run: |
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          for attempt in 1 2 3; do
+            "$sdk" --install emulator --channel=0 >/dev/null && "$ANDROID_HOME/emulator/emulator" -version | head -1 && exit 0
+            echo "emulator install failed (attempt $attempt); trying again in 20 s"
+            sleep 20
+          done
+          exit 1
       - name: Enable KVM for the emulator
         working-directory: .
         run: |

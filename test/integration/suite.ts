@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { measureOpen } from './probe';
 
 export type Test = { name: string; fn: () => Promise<void> };
 export let trace: (line: string) => void = () => undefined;
@@ -75,24 +76,35 @@ export async function openRunbook(uri: vscode.Uri): Promise<vscode.NotebookEdito
       (e: unknown) => ((failure = e), true),
     );
     const started = Date.now();
-    const editor = await waitFor(
-      `runbook editor for ${name}`,
-      () => {
-        if (failure !== undefined) throw failure instanceof Error ? failure : new Error(String(failure));
-        return find();
-      },
-      45_000,
-    );
-    let timer: NodeJS.Timeout | undefined;
-    const done = await Promise.race([settled, new Promise<false>((r) => (timer = setTimeout(() => r(false), 20_000)))]);
-    clearTimeout(timer);
-    if (failure !== undefined) throw failure instanceof Error ? failure : new Error(String(failure));
-    // Going on with such an editor left a cell that never ran (macOS, autosave.md): reopen once.
-    if (!done && n === 1) throw new Error(`timed out: the open command for ${name} did not finish`);
-    if (!done) trace(`    ! the open command for ${name} did not finish again; going on with its editor`);
-    const ms = Date.now() - started;
-    if (ms > 10_000) trace(`    ! opening ${name} took ${ms} ms`);
-    return editor;
+    const measured = measureOpen(name);
+    let editorMs: number | undefined;
+    let done = false;
+    // Measured in every case, including an editor that never shows (the probe's line says where the time went).
+    const report = async (): Promise<void> => {
+      const r = await measured({ settled: done, attempts: n });
+      const where = editorMs === undefined ? 'no editor' : `editor after ${editorMs} ms`;
+      if (r.ms > 5000 || !done) trace(`    ! opening ${name}: ${r.ms} ms, ${where}, ${done ? 'settled' : 'NOT settled'}; ${r.detail}`);
+    };
+    try {
+      const editor = await waitFor(
+        `runbook editor for ${name}`,
+        () => {
+          if (failure !== undefined) throw failure instanceof Error ? failure : new Error(String(failure));
+          return find();
+        },
+        45_000,
+      );
+      editorMs = Date.now() - started;
+      let timer: NodeJS.Timeout | undefined;
+      done = await Promise.race([settled, new Promise<false>((r) => (timer = setTimeout(() => r(false), 20_000)))]);
+      clearTimeout(timer);
+      if (failure !== undefined) throw failure instanceof Error ? failure : new Error(String(failure));
+      // Going on with such an editor left a cell that never ran (macOS, autosave.md): reopen once.
+      if (!done && n === 1) throw new Error(`timed out: the open command for ${name} did not finish`);
+      return editor;
+    } finally {
+      await report();
+    }
   };
   try {
     return await attempt(1).catch(async (e: Error) => {

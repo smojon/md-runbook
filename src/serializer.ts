@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { CellInput, HISTORY_KEY, parse, serialize, withRunHistory } from '@md-runbook/core';
 import { writeOptions } from './config';
 import { META_KEY, persistedOutputs, toOutputInput } from './outputs';
+import { timed } from './timings';
 
 export const NOTEBOOK_TYPE = 'md-runbook';
 
@@ -54,6 +55,10 @@ export function notebookTextWithOutputs(notebook: vscode.NotebookDocument): stri
 
 export class RunbookSerializer implements vscode.NotebookSerializer {
   deserializeNotebook(content: Uint8Array): vscode.NotebookData {
+    return timed('parse', '', () => this.deserialize(content));
+  }
+
+  private deserialize(content: Uint8Array): vscode.NotebookData {
     const doc = parse(decoder.decode(content));
     const cells = doc.cells.map((c) => {
       const kind = c.kind === 'code' ? vscode.NotebookCellKind.Code : vscode.NotebookCellKind.Markup;
