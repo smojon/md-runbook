@@ -280,7 +280,7 @@ Palette. Every send asks first and can show exactly what will be sent.
 
 ## 13. Line by line
 
-The dropdown next to a cell's ▶ runs parts of it. Try each on this cell:
+You can run parts of a cell. Try each on this cell:
 
 ```bash
 echo "step one"
@@ -289,14 +289,24 @@ echo "now in $(pwd)"
 ls package.json
 ```
 
-- **Run Line or Selection** (`Ctrl+Alt+Enter`, or right-click in the cell): put the cursor on
-  line 3 and only that line runs. Select `pwd` and only that runs. The output is saved with
-  `lines=3`, and the step stays pending in the progress until the whole cell has run.
-- **Run Lines One by One:** each line shows as `$ command` before its output, and the `cd` on
-  line 2 carries over to line 3.
-- **Step Through Lines:** the next line is highlighted and the cell waits. `F10` runs it, `F5`
-  runs the rest, `Shift+F5` stops (the lines that ran are recorded).
-- **Step Through from This Line:** the same, starting at the cursor.
+- **`▶` in front of a line** runs only that line. The output is saved with `lines=3`, and the
+  step stays pending in the progress until the whole cell has run.
+- **`☐` in front of lines 1 and 3**, then **Run Checked Lines** (the dropdown next to the cell's
+  ▶): only those two run, in order, saved as `lines=1,3`. **Uncheck All Lines** clears them.
+- **Right-click a line:** **Run This Line**, or **Step Through from This Line**. Select `pwd`
+  first and the menu offers **Run Selection** instead: only the selection runs.
+  `Ctrl+Alt+Enter` (`Cmd+Alt+Enter` on macOS) does the same from the keyboard.
+- **Run Lines One by One** (dropdown): each line shows as `$ command` before its output, and the
+  `cd` on line 2 carries over to line 3.
+- **Step Through Lines** (dropdown): the next line is highlighted and the cell waits. `F10` runs
+  it, `F5` runs on to the next breakpoint (or the end), `Shift+F5` stops (the lines that ran are
+  recorded).
+- **Breakpoint:** click in the margin left of line 3 (a red dot), then run the whole cell with ▶:
+  it stops before line 3. `F5` goes on. A breakpoint on a blank line or a comment stops at the
+  next command.
+
+The `▶ ☐` buttons need VS Code's inlay hints on (`editor.inlayHints.enabled`);
+`mdRunbook.lines.buttons` and `mdRunbook.lines.breakpoints` turn them off.
 
 A block, a continuation line or a here-doc counts as one line, so the `foreach` here is one step:
 
