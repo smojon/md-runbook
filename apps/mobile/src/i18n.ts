@@ -15,6 +15,25 @@ const en = {
   outputExit: (exit: string) => `Output · exit ${exit}`,
   output: 'Output',
 
+  // Saving runbooks
+  saveToFile: 'Save to the file',
+  download: 'Download',
+  saved: 'Saved',
+  unsaved: 'Not saved to the file',
+  savedInApp: 'Kept in the app',
+  saveUnavailable: 'This runbook was opened as a copy and cannot be saved back to its file.',
+  saveNotAllowed: 'The browser did not allow writing to the file.',
+  fileLinkLost: 'The link to the file is gone: open the file again.',
+  saveFailed: (why: string) => `Not saved: ${why}`,
+  conflictTitle: 'The file changed since it was opened',
+  conflictBody: 'It was edited elsewhere (or synced from another device). Saving now would replace those changes.',
+  overwrite: 'Overwrite the file',
+  loadFileVersion: "Load the file's version",
+  forget: 'Remove',
+  forgetConfirm: 'Remove from the app?',
+  forgetUnsaved: 'Remove from the app? Its changes are not saved to the file.',
+  cancel: 'Cancel',
+
   // Hosts
   hosts: 'Hosts',
   hostsTitle: 'Hosts',

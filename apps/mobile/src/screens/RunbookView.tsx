@@ -5,6 +5,7 @@ import { parse, taskItems } from '@md-runbook/core';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId } from '@md-runbook/ssh';
 import { CodeCell } from '../cells/CodeCell';
+import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
@@ -148,6 +149,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
         keyExtractor={(_, i) => String(i)}
         ListHeaderComponent={
           <View>
+            <SaveBar runbook={runbook} />
             <HostPicker hosts={hosts} selected={host} onSelect={setHostId} />
             {transportIssue ? (
               <Text testID="transport-issue" style={styles.warning}>

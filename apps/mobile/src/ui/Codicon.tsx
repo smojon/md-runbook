@@ -27,6 +27,10 @@ const GLYPHS = {
   'chevron-right': 0xeab6,
   copy: 0xebcc,
   server: 0xeb50,
+  save: 0xeb4b,
+  trash: 0xea81,
+  'desktop-download': 0xea78,
+  'circle-filled': 0xea71,
 } as const;
 
 export type CodiconName = keyof typeof GLYPHS;
