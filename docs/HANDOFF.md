@@ -63,6 +63,13 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 
 ## Open (owner)
 
+- **VS Code issue about slow notebook opens:** review the draft in
+  [investigations/notebook-open-slow.md](investigations/notebook-open-slow.md) (section "Issue
+  draft", with a tested one-line fix), then file it on microsoft/vscode. No existing issue was found.
+  Before filing, check the patched build for a Markdown flash during an open
+  (`scripts/open-probe`).
+- **CI and slow opens:** decide whether the integration tests start VS Code with
+  `--disable-renderer-backgrounding` (a macOS A/B on 2026-10-20 was inconclusive: 2 vs 0 slow opens).
 - **Open VSX** (VSCodium, Cursor, Gitpod): create the namespace `smojon`, file the ownership
   claim, then add an `OVSX_PAT` secret or set up trusted publishing (`PUBLISHING.md`).
 - **npm token:** add the `NPM_TOKEN` secret (`PUBLISHING.md` → npm); the next release then
