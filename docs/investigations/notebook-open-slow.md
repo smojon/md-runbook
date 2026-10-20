@@ -352,16 +352,27 @@ The same symptom ("opening a notebook sometimes takes 5-20 s or never settles") 
 
 ## Open questions and next steps
 
-- [ ] Review this document and the issue draft (user); file the issue only after approval.
+Status on 2026-10-20, end of session:
+
+- [x] Cause found and confirmed (webview process at Idle priority while hidden), with and without
+      md-runbook.
+- [x] Workaround tested: `--disable-renderer-backgrounding`, alternating pairs.
+- [x] One-line VS Code fix tested: opacity instead of `visibility: hidden`, alternating pairs.
+- [x] Searched for an existing issue: none found (section "Issue draft").
+- [x] md-runbook: slow-open hint (more than 10 s, once per session, Learn More, Don't Show Again),
+      with an integration test; [troubleshooting page](../troubleshooting.md), linked from the
+      README; changelog.
+- [x] Probe scripts kept in the repo: [scripts/open-probe](../../scripts/open-probe/README.md).
+- [ ] Review this write-up and the issue draft (user); file the issue only after approval.
+- [ ] Before filing: watch the patched VS Code during an open (screenshots), to check no Markdown
+      flashes at a wrong position.
 - [ ] Try the workaround in the user's own VS Code: add `--disable-renderer-backgrounding` to the
       shortcut, then compare opens with and without it, alternating.
-- [ ] Add `--disable-renderer-backgrounding` to md-runbook's CI integration tests, and check on
-      macOS CI whether the open hangs of 2026-10-19 disappear (alternating with and without).
-- [ ] Add a troubleshooting note to the md-runbook docs: the symptom, that it is VS Code, and the
-      workaround.
+- [ ] Decide on CI: add `--disable-renderer-backgrounding` to the integration tests now, or first
+      rerun the macOS A/B probe (Actions → macOS open probe → `ab`) on a busier day.
+- [ ] Optional: offer the fix as a pull request to microsoft/vscode once the issue is filed.
 - Open: whether the "window detected unresponsive" hang (series 1, open 2) is the same cause or a
   second effect of heavy load; it did not recur in later series.
-- Open: the exact Chromium rule that puts the webview's process at Idle (all its frames hidden, as
-  VS Code sets during warmup, is the likely trigger, not verified in Chromium's source).
-- Open: whether the same happens on macOS and Linux, where Chromium lowers background renderer
-  priority differently.
+- Open: the exact Chromium rule that puts the webview's process at Idle (the frame being hidden is
+  the likely trigger; the patch result supports it, Chromium's source was not read).
+- Open: how much the same affects macOS and Linux users.
