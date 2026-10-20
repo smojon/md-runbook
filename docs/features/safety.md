@@ -53,7 +53,9 @@ rm -rf ~/.cache/app
   Unix-like systems count as `linux`.
 - A block for another OS is **not run and not recorded**: Run All, Resume Run and Run Below
   pass over it, and it keeps whatever output it had (the output from the last time someone ran
-  it on that OS). Clicking ▶ on it says which OS it is for.
+  it on that OS). Its status line says so (`⊘ For macOS · not run on Windows`); VS Code shows
+  ▶ on every code cell and cannot hide it for one, so clicking it only repeats which OS the
+  block is for.
 - Blocks with `os=` that follow each other (with only text between them) are **alternatives of
   one step**: progress and the HTML report count one step, judged by the block for this OS (in
   the report: the block that has output). A group with no block for this OS counts as skipped.

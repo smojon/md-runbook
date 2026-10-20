@@ -9,7 +9,7 @@ import { isCodeMeta } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
 import { runContextCommand } from '@md-runbook/core/node/context';
-import { currentOs, osLabel } from '@md-runbook/core/os';
+import { OsName, currentOs, osLabel } from '@md-runbook/core/os';
 import { SECTION, executionConfig, redactionConfig } from './config';
 import { runbookCwd, workingDirectory } from './controller';
 import { knownSecrets } from './knownSecrets';
@@ -206,11 +206,28 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
   // changes plan.env (extension.ts: after approval.credentials).
   pipeline.preparers.push(optionsPreparer, confirmPreparer);
   // os=: a block for another OS is an alternative, not a step to run here.
-  pipeline.excluders.push((cell) => {
+  const otherOs = (cell: vscode.NotebookCell): readonly OsName[] | undefined => {
     if (!cfg().get<boolean>('cellOptions.enabled', true)) return undefined;
     const os = parseCellOptions(infoOf(cell)).os;
-    return os && !os.includes(currentOs()) ? `this block is for ${osLabel(os)}` : undefined;
+    return os && !os.includes(currentOs()) ? os : undefined;
+  };
+  pipeline.excluders.push((cell) => {
+    const os = otherOs(cell);
+    return os ? `this block is for ${osLabel(os)}` : undefined;
   });
+  // VS Code shows ▶ on every code cell and cannot hide it for one; the cell says it is not for
+  // this system instead, before anyone clicks.
+  const osItemsChanged = new vscode.EventEmitter<void>();
+  const osItems: vscode.NotebookCellStatusBarItemProvider = {
+    onDidChangeCellStatusBarItems: osItemsChanged.event,
+    provideCellStatusBarItems(cell) {
+      const os = otherOs(cell);
+      if (!os) return [];
+      const item = new vscode.NotebookCellStatusBarItem(`$(circle-slash) For ${osLabel(os)} · not run on ${osLabel([currentOs()])}`, vscode.NotebookCellStatusBarAlignment.Left);
+      item.tooltip = `This block is written for ${osLabel(os)}. Run All and Run Below pass over it; ▶ does not run it here.`;
+      return [item];
+    },
+  };
   const final: CellPreparer = {
     async prepare(plan, ctx) {
       if (plan.skip !== undefined) return;
@@ -221,10 +238,13 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
   pipeline.observers.push({ onDidRunCell: (run) => recorder.noteRun(run.notebook, run.attrs) });
   context.subscriptions.push(
     recorder,
+    osItemsChanged,
+    vscode.notebooks.registerNotebookCellStatusBarItemProvider(NOTEBOOK_TYPE, osItems),
     vscode.window.onDidChangeActiveNotebookEditor(() => recorder.refresh()),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration(`${SECTION}.output.recordContext`)) recorder.reset();
       else if (e.affectsConfiguration(`${SECTION}.statusBar.contextAttr`)) recorder.refresh();
+      if (e.affectsConfiguration(`${SECTION}.cellOptions.enabled`)) osItemsChanged.fire();
     }),
   );
   recorder.refresh();

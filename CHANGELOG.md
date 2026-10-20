@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A block for another OS says so before you click it:** its status line reads
+  `⊘ For macOS · not run on Windows`. VS Code shows ▶ on every code cell and cannot hide it
+  for one, so clicking it still only reports which OS the block is for.
 - **Tools installed by a runbook are found by its next step (Windows):** every cell inherited
   VS Code's `PATH`, read once when VS Code started, so a runbook that installed Git or uv with
   `winget` in one step failed to find it in the next until VS Code was restarted. Each cell now
