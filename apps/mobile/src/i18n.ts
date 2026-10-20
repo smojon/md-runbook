@@ -58,6 +58,9 @@ const en = {
   relaySaved: 'Relay saved',
   relayNotConfigured: 'No relay is configured: set its address and token under Hosts.',
   relayRefused: (url: string) => `The relay at ${url} refused the connection (address, token or target not allowed).`,
+  relayUnreachable: (url: string) => `The relay at ${url} did not answer (address, network, or the page's origin not allowed).`,
+  relayTooOld: (url: string) => `The relay at ${url} is older than this app: update it.`,
+  relayTooNew: (url: string) => `The relay at ${url} is newer than this app: update the app.`,
 
   // Running cells
   runOn: 'Run on',

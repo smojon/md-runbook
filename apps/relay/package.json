@@ -1,0 +1,25 @@
+{
+  "name": "@md-runbook/relay",
+  "version": "1.0.0",
+  "description": "Lets the md-runbook web app reach SSH servers: a WebSocket-to-TCP relay with an allowlist and tokens. It only ever sees encrypted SSH traffic.",
+  "license": "MIT",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/src/main.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/src/main.js",
+    "test": "npm run build && node --test \"dist/test/**/*.test.js\""
+  },
+  "dependencies": {
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/ws": "8.18.2",
+    "typescript": "6.0.3"
+  }
+}

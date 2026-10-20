@@ -6,7 +6,7 @@ name: App
 on:
   push:
     branches: ['**']
-    paths: ['apps/mobile/**', 'packages/core/src/**', 'packages/ssh/src/**', '.github/workflows/app.yml']
+    paths: ['apps/mobile/**', 'apps/relay/**', 'packages/core/src/**', 'packages/ssh/src/**', '.github/workflows/app.yml']
   workflow_dispatch:
 
 permissions:
@@ -64,6 +64,17 @@ jobs:
         run: |
           npx playwright install --with-deps chromium
           node e2e/web-smoke.mjs dist
+      # The web app runs a cell through the relay (apps/relay) on the runner's SSH server.
+      - name: Web run through the relay (Chromium)
+        run: |
+          token="$(openssl rand -hex 24)"
+          (cd ../relay && npm ci --no-audit --no-fund && npm run build)
+          RELAY_TOKEN="$token" RELAY_TARGETS=127.0.0.1:2222 RELAY_ORIGINS=http://127.0.0.1:8081 RELAY_PORT=8022 \
+            nohup node ../relay/dist/src/main.js >"$RUNNER_TEMP/relay.log" 2>&1 &
+          sleep 1
+          RELAY_URL=ws://127.0.0.1:8022 RELAY_TOKEN="$token" SSH_USER="$(id -un)" WEB_PORT=8081 node e2e/web-run.mjs dist \
+            || { cat "$RUNNER_TEMP/relay.log"; tail -40 "$RUNNER_TEMP/sshd/sshd.log"; exit 1; }
+          cat "$RUNNER_TEMP/relay.log"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

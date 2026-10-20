@@ -3,37 +3,10 @@
 // console error.
 //
 //   node e2e/web-smoke.mjs [dist-dir]
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
 import { chromium } from 'playwright';
+import { serveDist } from './serve-dist.mjs';
 
-const dist = process.argv[2] ?? 'dist';
-const types = {
-  '.html': 'text/html',
-  '.js': 'text/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.ttf': 'font/ttf',
-};
-
-const server = createServer(async (req, res) => {
-  const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^([/\\])+/, '');
-  for (const file of [join(dist, path), join(dist, 'index.html')]) {
-    try {
-      const body = await readFile(file);
-      res.writeHead(200, { 'content-type': types[extname(file)] ?? 'application/octet-stream' });
-      return res.end(body);
-    } catch {
-      // try the single-page fallback
-    }
-  }
-  res.writeHead(404).end();
-});
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const url = `http://127.0.0.1:${server.address().port}/`;
+const { server, url } = await serveDist(process.argv[2] ?? 'dist');
 
 const browser = await chromium.launch();
 const page = await browser.newPage();

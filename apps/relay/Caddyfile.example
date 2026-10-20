@@ -1,0 +1,4 @@
+relay.example.net {
+	# Caddy passes WebSocket upgrades through and sets X-Forwarded-For to the browser's address.
+	reverse_proxy relay:8022
+}

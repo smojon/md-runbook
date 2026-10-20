@@ -1,0 +1,5 @@
+node_modules
+dist
+*.md
+compose.example.yml
+Caddyfile.example

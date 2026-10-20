@@ -1,0 +1,68 @@
+name: Relay
+# The web app's relay (apps/relay): its tests, then the container image built and started the
+# way a user runs it, probed from outside. The browser run through the relay is in the App workflow.
+on:
+  push:
+    branches: ['**']
+    paths: ['apps/relay/**', '.github/workflows/relay.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: apps/relay
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/relay/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Tests
+        run: npm test
+      - name: Audit (runtime dependencies)
+        run: npm audit --omit=dev --audit-level=low
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the image
+        run: docker build -t md-runbook-relay .
+      - name: Refuses to start without a token
+        run: |
+          set +e
+          docker run --rm -e RELAY_TARGETS=web1:22 md-runbook-relay
+          code=$?
+          set -e
+          test "$code" = 2
+      - name: Starts, answers, refuses a wrong token
+        run: |
+          docker run -d --name relay -p 127.0.0.1:8022:8022 --read-only --cap-drop ALL \
+            -e RELAY_TOKEN="$(openssl rand -hex 24)" -e RELAY_TARGETS=web1.example.net:22 md-runbook-relay
+          for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:8022/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8022/v1/server-info | tee info.json
+          grep -q '"protocol":1' info.json
+          status="$(curl -s -o /dev/null -w '%{http_code}' -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+            -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+            -H 'Sec-WebSocket-Protocol: mdrb-relay.v1, token.wrong-token-wrong-token-wrong' \
+            'http://127.0.0.1:8022/v1/ssh?target=web1.example.net:22')"
+          echo "wrong token: $status"
+          test "$status" = 401
+          test "$(docker inspect -f '{{.Config.User}}' md-runbook-relay)" = node
+      - name: Relay log
+        if: always()
+        run: docker logs relay || true
