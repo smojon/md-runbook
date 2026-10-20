@@ -66,8 +66,14 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 - **VS Code issue about slow notebook opens:** review the draft in
   [investigations/notebook-open-slow.md](investigations/notebook-open-slow.md) (section "Issue
   draft", with a tested one-line fix), then file it on microsoft/vscode. No existing issue was found.
-  Before filing, check the patched build for a Markdown flash during an open
-  (`scripts/open-probe`).
+  The draft now explains the Chromium mechanism (read from source on 2026-10-20: hidden
+  cross-origin iframe → child widget hidden → process `kBestEffort` → `IDLE_PRIORITY_CLASS` plus
+  EcoQoS) and the fix should be `opacity: 0; pointer-events: none` (a transparent webview cannot
+  flash, but it would take clicks). Nothing elegant exists on the extension side: the warmup is
+  unconditional, no setting skips it, `argv.json` cannot carry the flag; the only lever (raising
+  the webview process's priority from the extension host, Windows only) is documented and not
+  recommended. Optional A/B left: the flag plus `--disable-background-timer-throttling`, to see
+  whether timer throttling of hidden frames explains the residual ~1 s with the flag alone.
 - **CI and slow opens:** decide whether the integration tests start VS Code with
   `--disable-renderer-backgrounding` (a macOS A/B on 2026-10-20 was inconclusive: 2 vs 0 slow opens).
 - **Open VSX** (VSCodium, Cursor, Gitpod): create the namespace `smojon`, file the ownership

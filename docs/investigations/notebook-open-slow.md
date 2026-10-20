@@ -19,6 +19,14 @@ while direct reads of the same file at the same moment took 50 to 100 ms.
   pairs, and the same with all extensions disabled.
 - **Fix for VS Code, tested:** hiding the webview with `opacity: 0` instead of `visibility: hidden`
   during the warmup cut the wait from 9.8 to 62.7 s to 0 to 1.1 s in 6 alternating pairs.
+- **Why, from Chromium's source (read 2026-10-20):** CSS `visibility: hidden` on an out-of-process
+  iframe makes Blink report the frame as "not rendered", the browser process then hides the frame's
+  widget, the renderer process has no visible widget left and gets `IDLE_PRIORITY_CLASS` plus
+  Windows EcoQoS ("efficiency mode"). Section "Why a hidden frame becomes an Idle process".
+- **Without patching VS Code:** nothing elegant. The warmup is unconditional, no setting skips it,
+  and `argv.json` cannot carry the flag (checked in the 1.142.0 build). The one lever an extension
+  has is to raise the webview process's priority itself from the extension host (Windows only,
+  permitted, a hack); section "What md-runbook can do".
 - **Recommendation:** file the VS Code issue below after review; meanwhile, start VS Code with
   `--disable-renderer-backgrounding`. md-runbook itself can do little: VS Code would need to keep
   the webview at normal priority, show code cells before the Markdown renderers are ready, or time
@@ -239,9 +247,54 @@ as hidden, so its process keeps normal priority. Original and patched builds alt
 | 5 | 48.6 s | 1.0 s | 13.2 s | 63 ms |
 | 6 | 9.8 s | 1.1 s | 24 ms | 54 ms |
 
-Not checked yet: whether pre-rendered Markdown can flash at a wrong position (the reason for
-`visibility = 'hidden'` per VS Code's comment); opacity 0 should hide it the same way, but the
-patched build has not been looked at during an open yet.
+A flash is not possible with `opacity: 0`: the element is painted fully transparent, so nothing of
+the pre-rendered Markdown can appear, whatever its position (the reason for `visibility = 'hidden'`
+per VS Code's comment). The one real difference is hit-testing: a `visibility: hidden` element
+takes no pointer events, an `opacity: 0` element does, so during the warmup the transparent webview
+could swallow a click on the empty cell area. `pointer-events: none` for the same span closes that;
+the patched build has not been looked at by eye during an open yet.
+
+## Why a hidden frame becomes an Idle process
+
+Read on 2026-10-20 in Chromium's `main` branch (not the exact revision in Electron's VS Code
+1.142.0, but this code has been stable for years). The webview is an `<iframe>` with the origin
+`vscode-webview://…`, which is cross-origin to the window (`vscode-file://…`), so with site
+isolation it runs in its own renderer process. The chain from VS Code's one CSS line to the process
+priority:
+
+1. `third_party/blink/renderer/core/layout/layout_embedded_content.cc`, `StyleDidChange`: if the
+   iframe's computed `visibility` is not `visible`, `embedded_content_view->Hide()`; otherwise
+   `Show()`. CSS `display` is not looked at here; `opacity` is not either, so `opacity: 0` keeps
+   the frame "shown".
+2. `third_party/blink/renderer/core/frame/remote_frame_view.cc`: `Hide()` sets the frame
+   self-invisible and reports `FrameVisibility::kNotRendered` to the browser process
+   (`VisibilityChanged`); shown frames report `kRenderedInViewport` or `kRenderedOutOfViewport`.
+3. `content/browser/renderer_host/cross_process_frame_connector.cc`, `OnVisibilityChanged`:
+   `visible = visibility != kNotRendered`; when not visible, `view_->Hide()`.
+4. `render_widget_host_view_child_frame.cc`, `Hide()`: `host()->WasHidden()`, so the process's
+   count of visible clients drops.
+5. `render_process_host_impl.cc`, `UpdateProcessPriority`: the priority is computed from
+   `visible_clients_ > 0`, media streams, foreground service workers, pending views and a few
+   boosts; with none of them, the process is `kBestEffort`. It is applied through
+   `child_process_launcher_->SetProcessPriority` only when the computed value changes.
+   `--disable-renderer-backgrounding` acts in `ComputeAppliedPriority`: it forces `visible = true`
+   for every renderer (and ignores priority overrides on desktop), which is why the flag works.
+6. `base/process/process_win.cc`, `SetPriority`: `kBestEffort` → `IDLE_PRIORITY_CLASS` (what the
+   sampler saw: base priority 4), and, with `kUseEcoQoSForBackgroundProcess` (on by default), the
+   EcoQoS power-throttling state too, so on Windows 11 the process also runs as "efficiency mode"
+   (lower clock, efficiency cores where present). Normal/visible is `NORMAL_PRIORITY_CLASS`.
+
+Two consequences:
+
+- Nothing inside the webview can change this: the priority is driven by the parent's CSS and by
+  media streams; a kernel preload or renderer script in the webview has no handle on it.
+- Hiding the frame also throttles its JavaScript timers. Chromium's `features.cc` states the
+  rule: "1 wake up per second in a background page or hidden cross-origin frame". The webview
+  preload's dimension updates and other steps use `setTimeout`, so each hop can cost up to 1 s
+  while the frame is hidden. This is a likely reason why the waits with the flag were 1.0 to 1.6 s
+  in 7 of 12 pairs while the opacity patch gave 0.0 s in 4 of 6: the flag fixes the CPU priority
+  but the frame stays "hidden" for the timer throttling; `opacity: 0` removes both. Not tested;
+  the test would be the flag plus `--disable-background-timer-throttling` against the flag alone.
 
 ## What md-runbook can do, and workarounds
 
@@ -249,11 +302,47 @@ md-runbook cannot make the cells show earlier: every notebook waits for the hidd
 extension API changes that. Its own renderer is one 1.5 KB file in the chain; removing it would
 save well under 0.1 s.
 
+Checked in the 1.142.0 build on 2026-10-20, looking for a setting or a file shape that avoids the
+hidden phase:
+
+- The warmup always runs: `_attachModel` awaits `_warmupWithMarkdownRenderer` unconditionally, and
+  the no-view-state path sends the first 5 Markdown cells (`viewCells.filter(kind ===
+  Markup).slice(0, 5)`), whatever their edit state or collapsed state. No runbook has fewer than one
+  Markdown cell, and even an empty request still round-trips through the Idle process.
+- No setting touches it. The only "warmup" in the bundle, `workbench.notebook.viewportWarmup`, is a
+  contribution that pre-renders outputs after the view model is attached, i.e. after the wait.
+- `argv.json` passes exactly five Chromium switches (`mainImpl.js`): `disable-hardware-acceleration`,
+  `force-color-profile`, `disable-lcd-text`, `proxy-bypass-list`, `remote-debugging-port` (Linux also
+  `force-renderer-accessibility`, `password-store`). VS Code itself never passes
+  `--disable-renderer-backgrounding` or `--disable-background-timer-throttling`.
+- The webview process keeps normal priority if any other visible frame lives in the same process.
+  The back-layer webviews of one notebook type share an origin (`BackLayerWebView.getOriginStore`),
+  so a second runbook opened next to a visible one warms up at normal priority. Extension webviews
+  (`createWebviewPanel`) have their own origins and cannot serve as that visible frame.
+
+The one lever an extension has: the extension host is a normal-priority process of the same user,
+and Windows lets it raise the priority class of VS Code's sandboxed renderer processes. Checked on
+2026-10-20 from Node 22: `os.getPriority(pid)` reads a renderer's class and `os.setPriority(pid, …)`
+succeeds on it (tested as a no-op, setting the current value). A "priority nudge" would: while a
+runbook editor has no visible range (the state `openTiming.ts` already tracks), list the children of
+the main process (`process.ppid` from the extension host) with `Get-CimInstance Win32_Process`, and
+set every `--type=renderer` child at priority class Idle to Normal. Chromium re-applies its own value
+only when its inputs change, so the nudge holds until the webview is shown, when Chromium sets Normal
+anyway. Against it: Windows only (on macOS Chromium uses a task policy that `nice` cannot undo; on
+Linux an unprivileged process cannot raise priority); it spawns PowerShell during every slow open
+(about 1 s on an idle machine, more under load); it briefly un-backgrounds every hidden renderer of
+that VS Code, hidden windows included; it does nothing about the timer throttling; and an extension
+that spawns PowerShell to change process priorities is the kind of thing a security review flags.
+If ever done, it would be an opt-in `"scope": "machine"` setting, off by default, and the advantage
+over the flag would be that it applies however VS Code was started (file association, `code .`,
+Start menu), not only from one patched shortcut.
+
 | Option | Who | Effect | Cost |
 | --- | --- | --- | --- |
 | Start VS Code with `--disable-renderer-backgrounding` (add it to the shortcut's target, after Code.exe) | User | Waits of 0 to 1.6 s instead of 8 to 26 s in the test | Applies only when VS Code starts from that shortcut; `argv.json` does not accept this switch (VS Code passes only 5 Chromium switches through: disable-hardware-acceleration, force-color-profile, disable-lcd-text, proxy-bypass-list, remote-debugging-port); hidden pages and background windows keep full priority |
 | Disable the built-in Mermaid extension (`@builtin mermaid` in the Extensions view) | User | About 2 to 3 s less | No Mermaid diagrams in Markdown previews and notebooks |
-| Pass `--disable-renderer-backgrounding` in md-runbook's CI integration tests | md-runbook | Likely removes the macOS CI open hangs of 2026-10-19 | None for users; to be confirmed on CI |
+| Pass `--disable-renderer-backgrounding` in md-runbook's CI integration tests (`test/integration/runElectron.ts`, `launchArgs`; `MD_RUNBOOK_VSCODE_ARGS` already does it ad hoc) | md-runbook | Likely removes the macOS CI open hangs of 2026-10-19 | None for users; to be confirmed on CI |
+| Raise the webview process's priority from the extension host while a runbook waits (see above) | md-runbook, opt-in | Probably the same as the flag, without a shortcut change; untested | Windows only, spawns PowerShell, acts on VS Code's processes behind Chromium's back |
 | Document the symptom and the workaround (docs/features, troubleshooting) | md-runbook | Users know it is VS Code and how to avoid it | None |
 | Report it to VS Code | md-runbook | A fix for everyone: keep the webview's process at normal priority while it warms up, or show code cells before the Markdown renderers are ready | The issue draft below |
 
@@ -292,9 +381,11 @@ Does this issue occur when all extensions are disabled?: Yes
 
 When other processes keep the CPU busy (here: Windows Defender scans, an installer, the search indexer; 77-100% CPU), opening a notebook shows the notebook toolbar and a progress bar, but **no cell at all, code cells included, for 8 to 64 s** (in one series, twice not within 60 s). The VS Code window itself is idle meanwhile.
 
-The back-layer webview's renderer process runs at Windows priority class **Idle** while the notebook warms up, because `_warmupWithMarkdownRenderer` sets the webview to `visibility: hidden` until the list is attached. The list is attached only after the webview has loaded the Markdown renderer and every renderer that extends it, so an Idle-priority process on a busy machine blocks the whole editor.
+The back-layer webview's renderer process runs at Windows priority class **Idle** (plus EcoQoS) while the notebook warms up, because `_warmupWithMarkdownRenderer` sets the webview to `visibility: hidden` until the list is attached. The list is attached only after the webview has loaded the Markdown renderer and every renderer that extends it, so an Idle-priority process on a busy machine blocks the whole editor.
 
-**A tested one-line fix:** hide the webview with `opacity: 0` instead of `visibility: hidden` during the warmup. In 6 alternating pairs the wait went from 9.8-62.7 s to 0-1.1 s (table below). Starting VS Code with `--disable-renderer-backgrounding` has the same effect.
+Why `visibility: hidden` does that: the webview is a cross-origin out-of-process iframe. In Blink, `LayoutEmbeddedContent::StyleDidChange` calls `Hide()` on the frame view when `visibility != visible`, the frame reports `FrameVisibility::kNotRendered`, `CrossProcessFrameConnector::OnVisibilityChanged` hides the child widget (`WasHidden`), the process has no visible client left, and `RenderProcessHostImpl::UpdateProcessPriority` sets `kBestEffort`, which on Windows is `IDLE_PRIORITY_CLASS` and EcoQoS (`base/process/process_win.cc`). A hidden cross-origin frame also gets its timers throttled to one wake-up per second. `opacity` is not part of that rule.
+
+**A tested one-line fix:** hide the webview with `opacity: 0` instead of `visibility: hidden` during the warmup. In 6 alternating pairs the wait went from 9.8-62.7 s to 0-1.1 s (table below). Starting VS Code with `--disable-renderer-backgrounding` has nearly the same effect (it keeps the CPU priority, not the timer throttling).
 
 ## Steps to reproduce
 
@@ -329,7 +420,7 @@ The webview stays invisible to the user, but Chromium no longer treats its frame
 
 "Wait" = webview present to first cell row, measured in a fresh VS Code per open (Playwright).
 
-Not verified: that pre-rendered Markdown never flashes at a wrong position with opacity 0 (the reason given in the comment for `visibility: hidden`).
+With opacity 0 nothing can flash (the element is painted fully transparent), so the reason given in the comment for `visibility: hidden` still holds. The one difference is hit-testing: adding `pointer-events: none` for the same span keeps the transparent webview from taking clicks during the warmup.
 
 ## More measurements
 
@@ -373,6 +464,11 @@ Status on 2026-10-20, end of session:
 - [ ] Optional: offer the fix as a pull request to microsoft/vscode once the issue is filed.
 - Open: whether the "window detected unresponsive" hang (series 1, open 2) is the same cause or a
   second effect of heavy load; it did not recur in later series.
-- Open: the exact Chromium rule that puts the webview's process at Idle (the frame being hidden is
-  the likely trigger; the patch result supports it, Chromium's source was not read).
+- [x] The exact Chromium rule that puts the webview's process at Idle: read from Chromium's source
+      on 2026-10-20 (section "Why a hidden frame becomes an Idle process").
+- [x] Looked for a way around it without patching VS Code (settings, file shape, argv.json, the
+      webview's own scripts): none; only the Windows-only priority nudge from the extension host,
+      not recommended (section "What md-runbook can do").
+- [ ] Optional: test whether the flag plus `--disable-background-timer-throttling` removes the
+      residual ~1 s that the flag alone leaves (timer throttling of hidden cross-origin frames).
 - Open: how much the same affects macOS and Linux users.
