@@ -52,11 +52,17 @@ try {
   });
   await page.getByTestId('open-runbook').click();
   await page.getByText('Deploy test').first().waitFor({ timeout: 10_000 });
-  await page.getByTestId('save-state').filter({ hasText: /^Saved$/ }).waitFor({ timeout: 10_000 });
+  await page
+    .getByTestId('save-state')
+    .filter({ hasText: /^Saved$/ })
+    .waitFor({ timeout: 10_000 });
   await page.getByTestId('task-0').click();
   await page.getByTestId('save-state').filter({ hasText: 'Not saved to the file' }).waitFor({ timeout: 5_000 });
   await page.getByTestId('save-runbook').click();
-  await page.getByTestId('save-state').filter({ hasText: /^Saved$/ }).waitFor({ timeout: 10_000 });
+  await page
+    .getByTestId('save-state')
+    .filter({ hasText: /^Saved$/ })
+    .waitFor({ timeout: 10_000 });
   const saved = await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
     return (await (await root.getFileHandle('deploy.md')).getFile()).text();
@@ -64,7 +70,10 @@ try {
   if (!saved.includes('- [x] Ticked in the browser')) throw new Error(`not saved to the file: ${JSON.stringify(saved)}`);
   await page.goto(url);
   await page.getByRole('link', { name: 'Deploy test' }).click();
-  await page.getByTestId('save-state').filter({ hasText: /^Saved$/ }).waitFor({ timeout: 10_000 });
+  await page
+    .getByTestId('save-state')
+    .filter({ hasText: /^Saved$/ })
+    .waitFor({ timeout: 10_000 });
   await page.locator('[data-testid="task-0"][aria-checked="true"]').waitFor({ timeout: 5_000 });
   await page.screenshot({ path: 'web-04-saved.png' });
   console.log('web: a runbook file opens, saves back to the file, and is remembered after a reload');
