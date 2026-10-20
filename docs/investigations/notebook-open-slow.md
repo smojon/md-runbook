@@ -1,7 +1,7 @@
 # Runbooks open slowly or blank: investigation
 
 Investigated 2026-10-19 and 2026-10-20 on Windows 11 with VS Code 1.142.0. Status: cause confirmed,
-workaround found, VS Code issue drafted (not filed yet).
+workaround found, a one-line fix for VS Code tested, VS Code issue drafted (not filed yet).
 
 ## Summary
 
@@ -17,6 +17,8 @@ while direct reads of the same file at the same moment took 50 to 100 ms.
   while VS Code keeps it hidden, so under load it gets almost no CPU. Starting VS Code with
   `--disable-renderer-backgrounding` cut the wait from 8 to 64 s to 0 to 1.6 s in 6 alternating
   pairs, and the same with all extensions disabled.
+- **Fix for VS Code, tested:** hiding the webview with `opacity: 0` instead of `visibility: hidden`
+  during the warmup cut the wait from 9.8 to 62.7 s to 0 to 1.1 s in 6 alternating pairs.
 - **Recommendation:** file the VS Code issue below after review; meanwhile, start VS Code with
   `--disable-renderer-backgrounding`. md-runbook itself can do little: VS Code would need to keep
   the webview at normal priority, show code cells before the Markdown renderers are ready, or time
@@ -207,6 +209,40 @@ During each control wait, the webview's process was at priority class Idle in ev
 Pair 1's control is unexplained: it was the first launch of a fresh profile, and no webview
 appeared at all within 75 s, unlike every other open. It is left out of the comparison.
 
+## A one-line fix in VS Code, tested
+
+Making the webview transparent instead of invisible during the warmup removes the wait, with no
+command-line flag. In a copy of VS Code 1.142.0, two statements of `_warmupWithMarkdownRenderer`
+(`notebookEditorWidget.ts`) were changed (in the built, minified `workbench.desktop.main.js`):
+
+```diff
+- this._webview.element.style.visibility = 'hidden';
++ this._webview.element.style.opacity = '0';
+  await this._warmupViewportMarkdownCells(viewModel, viewState);
+  ...
+  this._list.attachViewModel(viewModel);
+  ...
+- this._webview.element.style.visibility = 'visible';
++ this._webview.element.style.opacity = '';
+```
+
+The webview stays invisible to the user (fully transparent), but Chromium no longer treats its frame
+as hidden, so its process keeps normal priority. Original and patched builds alternating, built-in
+.ipynb, all extensions disabled, 20 October 2026, 07:18 to 07:25:
+
+| Pair | Wait, original | Wait, patched | Markdown renderer file, original | patched |
+| --- | --- | --- | --- | --- |
+| 1 | 62.7 s | 0.0 s | 9.2 s | 17 ms |
+| 2 | 56.6 s | 0.0 s | 11.1 s | 39 ms |
+| 3 | 17.0 s | 1.1 s | 13 ms | 74 ms |
+| 4 | 15.2 s | 0.0 s | 7.8 s | 15 ms |
+| 5 | 48.6 s | 1.0 s | 13.2 s | 63 ms |
+| 6 | 9.8 s | 1.1 s | 24 ms | 54 ms |
+
+Not checked yet: whether pre-rendered Markdown can flash at a wrong position (the reason for
+`visibility = 'hidden'` per VS Code's comment); opacity 0 should hide it the same way, but the
+patched build has not been looked at during an open yet.
+
 ## What md-runbook can do, and workarounds
 
 md-runbook cannot make the cells show earlier: every notebook waits for the hidden webview, and no
@@ -227,6 +263,22 @@ To be filed on github.com/microsoft/vscode from the user's GitHub account, after
 Nothing below names the user, the company or local paths. The review copy with comments is the
 Claude Doc "Runbooks open slowly or blank: investigation and VS Code issue draft".
 
+**Is it already known?** No, as far as GitHub's search shows (searched 2026-10-20): no issue in
+microsoft/vscode or electron/electron mentions the webview's process priority, `visibility: hidden`
+during the warmup, or `--disable-renderer-backgrounding` for notebooks. Related but different:
+
+| Issue | State | Why it is not this |
+| --- | --- | --- |
+| [#161520 Markup cell initialize fail on window reload](https://github.com/microsoft/vscode/issues/161520) | closed, fixed 2022 | Same code path (`initializeMarkup`), but a failure on reload, not a slow open under load |
+| [#125993 Webview Service Worker Error in registration](https://github.com/microsoft/vscode/issues/125993) | open | The service worker fails to register; here it registers and runs, slowly |
+| [#129477 Notebook: Invisible markdown cells](https://github.com/microsoft/vscode/issues/129477) | closed, fixed 2021 | Cells with zero height, not a delayed list |
+| [#145284 Can't show cells after opening ipynb](https://github.com/microsoft/vscode/issues/145284) | closed, info needed | No cause found; 2022, Jupyter extension |
+| [#147253 Rendering extremely slow](https://github.com/microsoft/vscode/issues/147253) | closed, not planned | Slow scrolling and outputs in large notebooks |
+
+On macOS CI (3 runners, each with and without the flag, alternating order), the runners were hardly
+slow that day: 2 opens over 5 s without the flag (5.8 and 5.9 s), none with it. Consistent with the
+fix, but not proof for macOS.
+
 **Title:** Notebook shows no cells for 10-60 s under CPU load: the back-layer webview's process
 runs at Idle priority while hidden during warmup
 
@@ -240,7 +292,9 @@ Does this issue occur when all extensions are disabled?: Yes
 
 When other processes keep the CPU busy (here: Windows Defender scans, an installer, the search indexer; 77-100% CPU), opening a notebook shows the notebook toolbar and a progress bar, but **no cell at all, code cells included, for 8 to 64 s** (in one series, twice not within 60 s). The VS Code window itself is idle meanwhile.
 
-The back-layer webview's renderer process runs at Windows priority class **Idle** while the notebook warms up, because the webview is kept hidden until the list is attached. The list is attached only after the webview has loaded the Markdown renderer and every renderer that extends it, so an Idle-priority process on a busy machine blocks the whole editor. Starting VS Code with `--disable-renderer-backgrounding` removes the wait.
+The back-layer webview's renderer process runs at Windows priority class **Idle** while the notebook warms up, because `_warmupWithMarkdownRenderer` sets the webview to `visibility: hidden` until the list is attached. The list is attached only after the webview has loaded the Markdown renderer and every renderer that extends it, so an Idle-priority process on a busy machine blocks the whole editor.
+
+**A tested one-line fix:** hide the webview with `opacity: 0` instead of `visibility: hidden` during the warmup. In 6 alternating pairs the wait went from 9.8-62.7 s to 0-1.1 s (table below). Starting VS Code with `--disable-renderer-backgrounding` has the same effect.
 
 ## Steps to reproduce
 
@@ -249,22 +303,37 @@ The back-layer webview's renderer process runs at Windows priority class **Idle*
 3. The editor and toolbar appear; no cell is shown for seconds to a minute.
 4. Repeat with `code --disable-extensions --disable-renderer-backgrounding`: cells show within about 1 s.
 
-## Measurements
+## The fix
 
-Each open launches a fresh VS Code (Playwright), opens the file, records every second whether `.notebook-editor .webview` and cell rows exist, and reads the webview frame's resource timings. Control and flag opens alternate, so load changes hit both. "Wait" = webview present to first cell row.
+In `src/vs/workbench/contrib/notebook/browser/notebookEditorWidget.ts`, `_warmupWithMarkdownRenderer`:
 
-All extensions disabled, built-in .ipynb, 5 pairs:
+```diff
+- this._webview.element.style.visibility = 'hidden';
++ this._webview.element.style.opacity = '0';
+  await this._warmupViewportMarkdownCells(viewModel, viewState);
+  ...
+- this._webview.element.style.visibility = 'visible';
++ this._webview.element.style.opacity = '';
+```
 
-| Pair | Wait, control | Wait, flag | markdown-language-features/notebook-out/index.js load, control | flag |
+The webview stays invisible to the user, but Chromium no longer treats its frame as hidden, so its process keeps normal priority. Tested by patching the built 1.142.0 `workbench.desktop.main.js` (the two minified statements) and alternating original and patched builds, all extensions disabled, built-in .ipynb:
+
+| Pair | Wait, original | Wait, patched | notebook-out/index.js load, original | patched |
 |---|---|---|---|---|
-| 1 | 9.8 s | 1.3 s | 452 ms | 43 ms |
-| 2 | 8.7 s | 1.1 s | 3.2 s | 25 ms |
-| 3 | 12.0 s | 0.0 s | 9.5 s | 35 ms |
-| 4 | 23.0 s | 0.0 s | 1.6 s | 15 ms |
-| 5 | 9.8 s | 1.1 s | 4.1 s | 53 ms |
+| 1 | 62.7 s | 0.0 s | 9.2 s | 17 ms |
+| 2 | 56.6 s | 0.0 s | 11.1 s | 39 ms |
+| 3 | 17.0 s | 1.1 s | 13 ms | 74 ms |
+| 4 | 15.2 s | 0.0 s | 7.8 s | 15 ms |
+| 5 | 48.6 s | 1.0 s | 13.2 s | 63 ms |
+| 6 | 9.8 s | 1.1 s | 24 ms | 54 ms |
 
-The same with an extension's notebook type (6 pairs): control 8.0-63.9 s, flag 0.0-1.6 s.
+"Wait" = webview present to first cell row, measured in a fresh VS Code per open (Playwright).
 
+Not verified: that pre-rendered Markdown never flashes at a wrong position with opacity 0 (the reason given in the comment for `visibility: hidden`).
+
+## More measurements
+
+- The same with `--disable-renderer-backgrounding` instead of the patch (all extensions disabled): 8.7-23.0 s vs 0-3.4 s; with an extension's notebook type: 8.0-63.9 s vs 0.0-1.6 s.
 - Process priority, sampled every 2-5 s during control waits: window process **Normal** in every sample; webview process **Idle** (base priority 4) in 61 of 67 samples, Normal only in the sample where the cells appear. In a 64 s wait the webview process got 0.19 s of CPU in 27 s.
 - The window's CPU profile during a slow open: main thread idle for 11 s of the wait.
 - Direct reads of the same 185 KB file from another process at the same moment: 54-98 ms (so not disk or antivirus).
@@ -272,17 +341,13 @@ The same with an extension's notebook type (6 pairs): control 8.0-63.9 s, flag 0
 
 ## Where in the code
 
-- `notebookEditorWidget.ts` `_warmupWithMarkdownRenderer`: hides the webview (`visibility = 'hidden'`), awaits `_resolveWebview()` and `_warmupViewportMarkdownCells()` (`initializeMarkup` -> `initializedMarkup`), and only then calls `this._list.attachViewModel(viewModel)`.
+- `notebookEditorWidget.ts` `_warmupWithMarkdownRenderer`: hides the webview, awaits `_resolveWebview()` and `_warmupViewportMarkdownCells()` (`initializeMarkup` -> `initializedMarkup`), and only then calls `this._list.attachViewModel(viewModel)`.
 - `webviewPreloads.ts` `Renderer._load`: imports and activates the Markdown renderer, then awaits every renderer that `extends` it.
 - No timeout on `_resolveWebview` or `initializeMarkup`; only the webview service worker's 30 s `resolveTimeout` per request.
 
-## Suggestions
+Other options, if opacity is not wanted: attach the list (at least code cells) without waiting for the Markdown renderers, or give the warmup a timeout.
 
-- Keep the webview's process at normal priority during warmup (e.g. keep the iframe "visible" to Chromium while it is out of view, rather than `visibility: hidden`), or
-- attach the list (at least code cells) without waiting for the Markdown renderers, and lay out Markdown cells when they are ready, or
-- give the warmup a timeout.
-
-The same symptom ("opening a notebook sometimes takes 5-20 s or never settles") was also seen on macOS CI runners (GitHub Actions), not yet re-tested with the flag.
+The same symptom ("opening a notebook sometimes takes 5-20 s or never settles") was also seen on macOS CI runners (GitHub Actions). On a day with little slowness there, 3 runners with and without the flag gave 2 opens over 5 s without it and none with it: consistent, but not conclusive for macOS.
 ````
 
 ## Open questions and next steps
