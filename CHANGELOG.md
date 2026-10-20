@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Syntax reference** (`docs/syntax.md`): the whole file format on one page, written from the
+  parser: fence info-string grammar, every cell option with its value type, placeholders, front
+  matter keys, output markers and their attributes, and a checklist for an assistant that
+  writes runbooks. Linked from the README, the CLI README and the default **Copy for AI** header.
 - **Settings regrouped** (no key changed): editor settings (code lens, lint, line buttons,
   breakpoints) have their own group **Editor and lines**; the context recording settings and
   the status bar ones sit under **Saved output**; `execution.refreshPath` under **Running

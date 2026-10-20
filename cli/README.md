@@ -39,7 +39,9 @@ deployment "web" successfully rolled out
 
 Requires Node.js 20 or newer; no other dependencies. `md-runbook --help` lists every option.
 Full documentation:
-[docs/features/cli.md](https://github.com/smojon/md-runbook/blob/main/docs/features/cli.md).
+[docs/features/cli.md](https://github.com/smojon/md-runbook/blob/main/docs/features/cli.md);
+the file format (cell options, placeholders, output markers):
+[docs/syntax.md](https://github.com/smojon/md-runbook/blob/main/docs/syntax.md).
 
 On GitHub Actions you can also use the action, which builds the runner from its own source:
 

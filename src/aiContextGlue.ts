@@ -16,7 +16,8 @@ export const DEFAULT_COPY_HEADER =
   'Names like host-1, ip-2, ns-1, term-1 and user-1@example.invalid are placeholders: use them exactly as written. ' +
   'Propose next steps as fenced code blocks whose info string is `<lang> proposed by=ai reason="…"` ' +
   '(lang: bash, sh, pwsh, powershell or cmd), one step per block. Never claim to have run anything: ' +
-  'you only propose, a person reviews and runs each step.';
+  'you only propose, a person reviews and runs each step. The file format (cell options, placeholders, ' +
+  'output markers) is documented at https://github.com/smojon/md-runbook/blob/main/docs/syntax.md';
 
 export interface AiSettings {
   copyForAiEnabled: boolean;

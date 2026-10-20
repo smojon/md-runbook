@@ -52,6 +52,10 @@ To make it the default for some files, add for example
 Run cells with the usual notebook controls: run cell, **Run All**, Run Above/Below.
 **md-runbook: Open as Markdown Text** switches back to the text editor.
 
+Everything md-runbook reads from a file (fence options, placeholders, front matter) and writes
+into it (output markers) is on one page: the [syntax reference](docs/syntax.md). Hand it to an
+AI assistant that writes runbooks for you.
+
 ### Shells
 
 | Fence | Windows | macOS / Linux |
