@@ -11,7 +11,7 @@ import { t } from '../i18n';
 import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
 import { getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { fingerprint } from '../ssh/fingerprint';
-import { LineMode, planLines } from '../ssh/lineRuns';
+import { LineMode, isStepping, planLines } from '../ssh/lineRuns';
 import { runCell } from '../ssh/runCell';
 import { transportReady } from '../ssh/transport';
 import { mono, themedStyles } from '../theme';
@@ -30,6 +30,16 @@ interface Running extends RunRequest {
   live: string;
   abort: AbortController;
   step?: { start: number; end: number };
+  /** Step through: waiting before this command until Run next, Continue or Stop. */
+  paused?: Paused;
+}
+
+interface Paused {
+  step: { start: number; end: number };
+  next(): void;
+  /** Run the rest without pausing. */
+  cont(): void;
+  stop(): void;
 }
 
 interface Trust {
@@ -94,12 +104,40 @@ export function RunbookView({ id }: { id: string | undefined }) {
     setTrust(undefined);
     setRunning({ ...request, live: '', abort });
     const update = (f: (r: Running) => Running): void => setRunning((r) => (r && r.cellIndex === cellIndex ? f(r) : r));
+    // Step through: the first command runs at once, then the run waits before each of the others.
+    let auto = false;
+    const beforeStep =
+      isStepping(mode) && lines
+        ? (i: number): Promise<boolean> =>
+            i === 0 || auto
+              ? Promise.resolve(true)
+              : new Promise<boolean>((resolve) => {
+                  const go = (yes: boolean): void => {
+                    update((r) => ({ ...r, paused: undefined }));
+                    resolve(yes);
+                  };
+                  abort.signal.addEventListener('abort', () => go(false), { once: true });
+                  update((r) => ({
+                    ...r,
+                    paused: {
+                      step: lines.steps[i]!,
+                      next: () => go(true),
+                      cont: () => {
+                        auto = true;
+                        go(true);
+                      },
+                      stop: () => go(false),
+                    },
+                  }));
+                })
+        : undefined;
     const outcome = await runCell({
       host: on,
       text: runbook.text,
       cellIndex,
       signal: abort.signal,
       lines,
+      beforeStep,
       latestText: () => getRunbook(runbook.id)?.text ?? runbook.text,
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
       onOutput: (text) => update((r) => ({ ...r, live: (r.live + text).slice(-LIVE_CHARS) })),
@@ -183,7 +221,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
               busy={running !== undefined && running.cellIndex !== index}
               checked={checks.get(index) ?? EMPTY}
               onRun={(mode, line) => void run({ cellIndex: index, mode, line }, host)}
-              onStop={() => running?.abort.abort()}
+              onStop={() => (running?.paused ? running.paused.stop() : running?.abort.abort())}
               onToggleCheck={(step) => toggleCheck(index, step)}
             />
           )

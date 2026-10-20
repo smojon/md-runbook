@@ -19,6 +19,8 @@ export interface CellRun {
   live: string;
   /** Lines (0-based) of the command running now, in a line run. */
   step?: { start: number; end: number };
+  /** Step through, waiting before this command. */
+  paused?: { step: { start: number; end: number }; next(): void; cont(): void };
 }
 
 export interface CodeCellProps {
@@ -116,7 +118,10 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
         <View style={styles.editor}>
           {lines.map((tokens, n) => {
             const inSel = sel !== undefined && n >= sel.start && n <= sel.end;
-            const inRun = running?.step !== undefined && n >= running.step.start && n <= running.step.end;
+            const paused = running?.paused?.step;
+            const inRun = paused
+              ? n >= paused.start && n <= paused.end
+              : running?.step !== undefined && n >= running.step.start && n <= running.step.end;
             const step = stepAtLine(steps, n);
             const isChecked = step !== undefined && step.start === n && p.checked.has(step.text);
             return (
@@ -125,7 +130,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                   testID={`cell-${index}-line-${n}`}
                   onPress={() => tapLine(n)}
                   disabled={!can.ok || running !== undefined}
-                  style={[styles.line, inSel && styles.lineSelected, inRun && styles.lineRunning]}
+                  style={[styles.line, inSel && styles.lineSelected, inRun && (paused ? styles.linePaused : styles.lineRunning)]}
                 >
                   <View style={styles.mark}>{isChecked ? <Codicon name="pass-filled" size={12} color={c.accent} /> : null}</View>
                   <Text style={styles.source}>{tokenText(tokens, c)}</Text>
@@ -153,17 +158,33 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
             <Text testID={`cell-${index}-why`} style={styles.statusText}>
               {t.notRunnable[can.why](can.detail)}
             </Text>
-          ) : checkedSteps.length > 0 && runnable && !running ? (
-            <Pressable
-              testID={`cell-${index}-run-checked`}
-              accessibilityRole="button"
-              disabled={p.busy}
-              onPress={() => p.onRun('checked', 0)}
-              style={styles.statusButton}
-            >
-              <Codicon name="play" size={12} color={c.link} />
-              <Text style={styles.statusLink}>{t.runChecked(checkedSteps.length)}</Text>
-            </Pressable>
+          ) : runnable && !running ? (
+            <View style={styles.statusButtons}>
+              {steps.length > 1 ? (
+                <Pressable
+                  testID={`cell-${index}-step`}
+                  accessibilityRole="button"
+                  disabled={p.busy}
+                  onPress={() => p.onRun('step', 0)}
+                  style={[styles.statusButton, p.busy && styles.disabled]}
+                >
+                  <Codicon name="debug-step-over" size={12} color={c.link} />
+                  <Text style={styles.statusLink}>{t.stepThrough}</Text>
+                </Pressable>
+              ) : null}
+              {checkedSteps.length > 0 ? (
+                <Pressable
+                  testID={`cell-${index}-run-checked`}
+                  accessibilityRole="button"
+                  disabled={p.busy}
+                  onPress={() => p.onRun('checked', 0)}
+                  style={[styles.statusButton, p.busy && styles.disabled]}
+                >
+                  <Codicon name="play" size={12} color={c.link} />
+                  <Text style={styles.statusLink}>{t.runChecked(checkedSteps.length)}</Text>
+                </Pressable>
+              ) : null}
+            </View>
           ) : null}
         </View>
         <Text style={styles.statusText} numberOfLines={1}>
@@ -172,7 +193,32 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
       </View>
       {running ? (
         <View testID={`cell-${index}-live`} style={styles.output}>
-          <Text style={styles.outputHeader}>{running.step ? t.runningLine(lineLabel(running.step)) : t.running}</Text>
+          {running.paused ? (
+            <View testID={`cell-${index}-paused`} style={styles.stepBar}>
+              <Codicon name="debug-pause" size={14} color={c.warning} />
+              <Text style={styles.outputHeader}>{t.pausedBefore(lineLabel(running.paused.step))}</Text>
+              <Pressable
+                testID={`cell-${index}-step-next`}
+                accessibilityRole="button"
+                onPress={running.paused.next}
+                style={styles.statusButton}
+              >
+                <Codicon name="debug-step-over" size={14} color={c.link} />
+                <Text style={styles.statusLink}>{t.runNext}</Text>
+              </Pressable>
+              <Pressable
+                testID={`cell-${index}-step-continue`}
+                accessibilityRole="button"
+                onPress={running.paused.cont}
+                style={styles.statusButton}
+              >
+                <Codicon name="debug-continue" size={14} color={c.link} />
+                <Text style={styles.statusLink}>{t.continueRun}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Text style={styles.outputHeader}>{running.step ? t.runningLine(lineLabel(running.step)) : t.running}</Text>
+          )}
           {running.live !== '' ? (
             <Text style={styles.outputText} selectable>
               {running.live}
@@ -237,6 +283,7 @@ function LineActions(p: {
             p.onAct('from', p.step.start),
           )
         : null}
+      {p.step.start !== last.start ? action('step-from', 'debug-step-over', t.stepFromHere, () => p.onAct('stepFrom', p.step.start)) : null}
       {action('check', p.checked ? 'pass-filled' : 'circle-large-outline', p.checked ? t.uncheckLine : t.checkLine, p.onToggleCheck, true)}
       <Pressable
         testID={`${id}-close`}
@@ -286,6 +333,9 @@ const useStyles = themedStyles((c) => ({
   line: { flexDirection: 'row', paddingRight: 8, minHeight: 20 },
   lineSelected: { backgroundColor: c.lineHighlight },
   lineRunning: { backgroundColor: c.dark ? '#4b4b18' : '#ffff6680' },
+  linePaused: { backgroundColor: c.dark ? '#264f78' : '#cce5ff' },
+  statusButtons: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  stepBar: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   mark: { width: 18, alignItems: 'center', justifyContent: 'center' },
   source: { flex: 1, fontFamily: mono, fontSize: 13, lineHeight: 20, color: c.syntax.operator },
   actions: {

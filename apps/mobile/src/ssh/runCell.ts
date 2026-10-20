@@ -46,6 +46,8 @@ export interface RunCellParams {
   lines?: LinePlan;
   /** A line run starts command `index` of `lines.steps`, or (undefined) is over. */
   onStep?(index: number | undefined): void;
+  /** Called before command `index` of a line run; resolves false to stop before it (Step Through). */
+  beforeStep?(index: number): Promise<boolean>;
   /**
    * The runbook as it is when the run ends (other edits, e.g. a ticked task box, happened meanwhile):
    * the output block goes into that text. Default: `text`.
@@ -99,6 +101,9 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
       result = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
       const steps = p.lines.steps;
       for (let i = 0; i < steps.length; i++) {
+        // Step through: wait for the user before the next command; false stops the run here
+        // (what ran so far is the result, as in the extension).
+        if (p.beforeStep && !(await p.beforeStep(i))) break;
         if (p.signal?.aborted) {
           result = { ...result, exitCode: null, cancelled: true };
           break;

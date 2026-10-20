@@ -12,7 +12,11 @@ export interface LinePlan {
   coversCell: boolean;
 }
 
-export type LineMode = 'at' | 'to' | 'from' | 'checked';
+/** step: every command, pausing before each after the first; stepFrom: the same from a line. */
+export type LineMode = 'at' | 'to' | 'from' | 'checked' | 'step' | 'stepFrom';
+
+/** Step Through and Step from here pause between commands. */
+export const isStepping = (mode: LineMode | undefined): boolean => mode === 'step' || mode === 'stepFrom';
 
 /** The commands of a bash cell (blank and comment lines are not commands). */
 export function cellSteps(source: string): LineStep[] {
@@ -33,7 +37,8 @@ export function planLines(source: string, mode: LineMode, line: number, checked:
     if (end < 0) return undefined;
     return { steps: all.slice(0, end + 1), coversCell: end === all.length - 1 };
   }
-  if (mode === 'from') {
+  if (mode === 'step') return { steps: all, coversCell: true };
+  if (mode === 'from' || mode === 'stepFrom') {
     const from = all.findIndex((s) => s.end >= line);
     if (from < 0) return undefined;
     return { steps: all.slice(from), coversCell: from === 0 };

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { parse } from '@md-runbook/core';
 import { addHost, resetHosts } from '../hosts/store';
-import { getRunbook, resetRunbooks } from '../runbooks/store';
+import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { RunbookView } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
 
@@ -96,6 +96,73 @@ describe('the VS Code-like runbook view', () => {
     await waitFor(() => expect(mockConnection.calls).toHaveLength(1));
     expect(mockConnection.calls[0]?.source).toBe('uptime');
     await waitFor(() => expect(parse(getRunbook('sample')!.text).cells[1]?.output?.attrs.lines).toBe('1'));
+  });
+
+  it('Step through runs the first command, then waits before each of the others', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    script([{ stdout: 'up\n' }, { stdout: 'disk\n' }]);
+    await render(<RunbookView id="sample" />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-step'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-paused')).toBeTruthy());
+    expect(mockConnection.calls.map((c) => c.source)).toEqual(['uptime']);
+    expect(screen.getByText('Paused before line 2')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-step-next'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-output')).toBeTruthy());
+    expect(mockConnection.calls.map((c) => c.source)).toEqual(['uptime', 'df -h /']);
+    const out = parse(getRunbook('sample')!.text).cells[1]?.output;
+    expect(out?.attrs.lines).toBeUndefined();
+    expect(out?.text).toBe('$ uptime\nup\n$ df -h /\ndisk');
+  });
+
+  it('Stop while paused keeps what ran; the output says which lines', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    script([{ stdout: 'up\n' }]);
+    await render(<RunbookView id="sample" />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-step'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-paused')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-stop'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-output')).toBeTruthy());
+    expect(mockConnection.calls).toHaveLength(1);
+    expect(parse(getRunbook('sample')!.text).cells[1]?.output?.attrs).toMatchObject({ exit: '0', lines: '1' });
+  });
+
+  it('Continue runs the rest without pausing; Step from here starts at a line', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const text = '# T\n\n```bash\necho a\necho b\necho c\n```\n';
+    const r = addRunbook('t.md', text);
+    script([{ stdout: 'a\n' }, { stdout: 'b\n' }, { stdout: 'c\n' }]);
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-step'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-paused')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-step-continue'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-output')).toBeTruthy());
+    expect(mockConnection.calls.map((c) => c.source)).toEqual(['echo a', 'echo b', 'echo c']);
+
+    script([{ stdout: 'b\n' }, { stdout: 'c\n' }]);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-line-1'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-line-1-step-from'));
+    });
+    await waitFor(() => expect(screen.getByText('Paused before line 3')).toBeTruthy());
+    expect(mockConnection.calls.map((c) => c.source)).toEqual(['echo b']);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-step-next'));
+    });
+    await waitFor(() => expect(parse(getRunbook(r.id)!.text).cells[1]?.output?.attrs.lines).toBe('2-3'));
   });
 
   it('without a host there is no run button and no line actions are open', async () => {
