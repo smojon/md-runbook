@@ -34,7 +34,11 @@ log_pid=$!
 # MAESTRO_DRIVER_STARTUP_TIMEOUT raised: then try once more, now that the simulator has settled.
 # Only that error is retried; a failing flow fails the job.
 run_flows() {
-  maestro --device "$udid" test --format junit --output "$out/maestro.xml" --test-output-dir "$out" "$here/maestro" 2>&1 |
+  # The SSH server for run-cell.yaml is the runner's own (e2e/start-ssh-test-server.sh); the
+  # simulator shares the Mac's network.
+  maestro --device "$udid" test --format junit --output "$out/maestro.xml" --test-output-dir "$out" \
+    -e SSH_HOST=127.0.0.1 -e SSH_PORT=2222 -e SSH_USER="$(id -un)" -e KEY_URL=http://127.0.0.1:8077/authorize \
+    "$here/maestro" 2>&1 |
     tee "$out/maestro-attempt-$1.log"
   return "${PIPESTATUS[0]}"
 }

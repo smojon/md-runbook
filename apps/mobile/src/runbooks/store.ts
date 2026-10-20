@@ -34,6 +34,14 @@ export function addRunbook(fileName: string, text: string): Runbook {
   return r;
 }
 
+/** Replace a runbook's text (after a cell ran: the new output block is in it). */
+export function updateRunbookText(id: string, text: string): void {
+  const bump = (r: Runbook): Runbook => (r.id === id ? { ...r, text } : r);
+  opened = opened.map(bump);
+  all = all.map(bump);
+  listeners.forEach((l) => l());
+}
+
 export function getRunbook(id: string | undefined): Runbook | undefined {
   return all.find((r) => r.id === id);
 }

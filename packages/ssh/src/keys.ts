@@ -7,6 +7,12 @@
 import { KeyPair, SshAlgorithms } from '@microsoft/dev-tunnels-ssh';
 import { KeyFormat, exportPrivateKey, exportPublicKey, importKey } from '@microsoft/dev-tunnels-ssh-keys';
 
+/**
+ * `KeyFormat` is a const enum: tsc inlines it, but Babel (Metro, Jest) leaves `KeyFormat.Pkcs8`
+ * as a read of an export that does not exist at run time. The value, with the type.
+ */
+const PKCS8 = 5 as KeyFormat;
+
 export async function generateKey(): Promise<KeyPair> {
   const alg = SshAlgorithms.publicKey.ecdsaSha2Nistp256;
   if (!alg) throw new Error('ECDSA P-256 is not available on this platform');
@@ -15,12 +21,13 @@ export async function generateKey(): Promise<KeyPair> {
 
 /** `ecdsa-sha2-nistp256 AAAA… comment`, for `authorized_keys`. */
 export async function publicKeyLine(key: KeyPair, comment = 'md-runbook'): Promise<string> {
-  return `${await exportPublicKey(key)} ${comment}`.trim();
+  // The library ends the line with a newline; the comment belongs on the same line.
+  return `${(await exportPublicKey(key)).trim()} ${comment}`.trim();
 }
 
 /** PKCS#8 PEM, unencrypted: store it in the platform's secure storage, not in a plain file. */
 export function privateKeyPem(key: KeyPair): Promise<string> {
-  return exportPrivateKey(key, null, KeyFormat.Pkcs8);
+  return exportPrivateKey(key, null, PKCS8);
 }
 
 export function importPrivateKey(pem: string): Promise<KeyPair> {

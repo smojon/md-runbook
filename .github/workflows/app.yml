@@ -46,8 +46,11 @@ jobs:
         run: npm run lint
       - name: Format
         run: npm run format
-      - name: Unit tests
-        run: npm test -- --ci
+      # The runner's own OpenSSH server, for the live test of the app's SSH runner.
+      - name: Start the SSH test server
+        run: bash e2e/start-ssh-test-server.sh
+      - name: Unit tests (and the live SSH test)
+        run: npm test -- --ci || { cat "$RUNNER_TEMP/sshd/sshd.log"; exit 1; }
       # Expo dependencies must match the SDK; expo-doctor checks config and native modules.
       - name: Expo dependency check
         run: node e2e/check-deps.mjs
@@ -117,6 +120,9 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      # The SSH server the run-cell flow connects to (as 10.0.2.2:2222 from the emulator).
+      - name: Start the SSH test server
+        run: bash e2e/start-ssh-test-server.sh
       - name: Run the flows on the emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -130,6 +136,9 @@ jobs:
           disable-animations: true
           working-directory: apps/mobile
           script: bash e2e/android-run.sh "$RUNNER_TEMP/apk/app-release.apk" "$RUNNER_TEMP/maestro-out"
+      - name: Collect the SSH server logs
+        if: always()
+        run: cp "$RUNNER_TEMP"/sshd/*.log "$RUNNER_TEMP/maestro-out/" 2>/dev/null || true
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -164,8 +173,14 @@ jobs:
           if-no-files-found: ignore
       - name: Install Maestro
         run: bash e2e/install-maestro.sh
+      # The SSH server the run-cell flow connects to (127.0.0.1:2222; the simulator shares the Mac's network).
+      - name: Start the SSH test server
+        run: bash e2e/start-ssh-test-server.sh
       - name: Run the flows on the simulator
         run: bash e2e/ios-run.sh "$RUNNER_TEMP/ios/app" "$RUNNER_TEMP/maestro-out"
+      - name: Collect the SSH server logs
+        if: always()
+        run: cp "$RUNNER_TEMP"/sshd/*.log "$RUNNER_TEMP/maestro-out/" 2>/dev/null || true
       - uses: actions/upload-artifact@v7
         if: always()
         with:

@@ -13,15 +13,31 @@ export class TcpSocketStream extends BaseStream {
 
   /**
    * No Nagle delay: cells and end-of-cell markers are small writes (the spike measured ~170 ms per
-   * cell on the iOS simulator against ~10 ms on Android).
+   * cell on the iOS simulator against ~10 ms on Android). A connection that neither succeeds nor
+   * fails within `timeoutMs` (a firewall that drops packets) is given up.
    */
-  static connect(host: string, port: number): Promise<TcpSocketStream> {
+  static connect(host: string, port: number, timeoutMs = 20_000): Promise<TcpSocketStream> {
     return new Promise((resolve, reject) => {
+      let settled = false;
       const socket = TcpSocket.createConnection({ host, port }, () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         socket.setNoDelay(true);
         resolve(new TcpSocketStream(socket));
       });
-      socket.once('error', reject);
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        reject(new Error(`connecting to ${host}:${port} timed out after ${Math.round(timeoutMs / 1000)} s`));
+      }, timeoutMs);
+      socket.once('error', (e) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      });
     });
   }
 

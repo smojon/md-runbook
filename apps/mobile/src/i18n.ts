@@ -13,6 +13,76 @@ const en = {
   fileTooLarge: (name: string) => `${name} is larger than 2 MB and was not opened`,
   fileUnreadable: (name: string, why: string) => `${name} could not be read: ${why}`,
   outputExit: (exit: string) => `Output · exit ${exit}`,
+  output: 'Output',
+
+  // Hosts
+  hosts: 'Hosts',
+  hostsTitle: 'Hosts',
+  addHost: 'Add a host',
+  noHosts: 'No hosts yet. Add one to run cells over SSH.',
+  newHostTitle: 'New host',
+  editHostTitle: 'Host',
+  hostName: 'Name',
+  hostNamePlaceholder: 'web-1',
+  hostHostname: 'Host name or IP',
+  hostHostnamePlaceholder: 'server.example.net',
+  hostPort: 'Port',
+  hostUsername: 'User',
+  hostUsernamePlaceholder: 'deploy',
+  save: 'Save',
+  deleteHost: 'Delete this host',
+  forgetHostKey: 'Forget the trusted host key',
+  hostKeyTrusted: 'Host key trusted',
+  hostKeyNotTrusted: 'Host key not trusted yet',
+  hostErrors: {
+    nameMissing: 'Give the host a name.',
+    hostnameMissing: 'Enter the host name or IP address (no spaces).',
+    portInvalid: 'The port must be a number from 1 to 65535.',
+    usernameMissing: 'Enter the user to log in as (no spaces).',
+  },
+
+  // The app's key
+  appKeyTitle: "This app's SSH key",
+  appKeyHelp: 'The key was made on this device and stays here. Add its public key to ~/.ssh/authorized_keys on each host:',
+  appKeyLoading: 'Making the key…',
+  appKeyFailed: (why: string) => `The key could not be made: ${why}`,
+  copy: 'Copy',
+  copied: 'Copied',
+
+  // Relay (web)
+  relayTitle: 'Relay (web)',
+  relayHelp: 'A browser cannot open SSH connections itself: the web app goes through your relay, which only sees encrypted traffic.',
+  relayUrl: 'Relay address',
+  relayUrlPlaceholder: 'wss://relay.example.net',
+  relayToken: 'Relay token',
+  relaySaved: 'Relay saved',
+  relayNotConfigured: 'No relay is configured: set its address and token under Hosts.',
+  relayRefused: (url: string) => `The relay at ${url} refused the connection (address, token or target not allowed).`,
+
+  // Running cells
+  runOn: 'Run on',
+  addHostToRun: 'Add a host to run cells',
+  run: 'Run',
+  stop: 'Stop',
+  running: 'Running…',
+  busy: 'Another cell is running',
+  cellGone: 'The cell is no longer in the runbook',
+  notRunnable: {
+    language: (_detail?: string) => 'Only bash and sh cells run over SSH',
+    os: (_detail?: string) => 'For Windows · not run over SSH',
+    skip: (_detail?: string) => 'Skipped (skip option)',
+    invalid: (detail?: string) => `Invalid options: ${detail ?? ''}`,
+  },
+  timedOutNote: (seconds: number) => `[md-runbook] timed out after ${seconds}s; the cell's processes were stopped`,
+  checkFailedNote: (why: string) => `[md-runbook] check failed: ${why}`,
+  newShell: 'A new shell was opened: the folder and variables of earlier cells are gone.',
+  trustTitle: (host: string) => `First connection to ${host}`,
+  trustChangedTitle: (host: string) => `The host key of ${host} has changed`,
+  trustBody:
+    'Compare this fingerprint with the one shown on the server (ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub) before trusting it.',
+  trustChangedBody: 'Another machine may be answering at this address. Trust the new key only if you know why it changed.',
+  trustAccept: 'Trust and run',
+  trustDecline: 'Cancel',
 } as const;
 
 export type Strings = typeof en;

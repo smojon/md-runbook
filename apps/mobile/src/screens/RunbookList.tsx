@@ -33,9 +33,16 @@ export function RunbookList() {
       keyExtractor={(r) => r.id}
       ListHeaderComponent={
         <View style={styles.header}>
-          <Pressable testID="open-runbook" accessibilityRole="button" onPress={() => void open()} style={styles.button}>
-            <Text style={styles.buttonText}>{t.openRunbook}</Text>
-          </Pressable>
+          <View style={styles.buttons}>
+            <Pressable testID="open-runbook" accessibilityRole="button" onPress={() => void open()} style={styles.button}>
+              <Text style={styles.buttonText}>{t.openRunbook}</Text>
+            </Pressable>
+            <Link href={{ pathname: '/hosts', params: {} }} asChild>
+              <Pressable testID="hosts" accessibilityRole="link" style={styles.secondary}>
+                <Text style={styles.secondaryText}>{t.hosts}</Text>
+              </Pressable>
+            </Link>
+          </View>
           {error ? (
             <Text testID="open-error" role="alert" style={styles.error}>
               {error}
@@ -64,8 +71,11 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16 },
   header: { paddingVertical: 12 },
+  buttons: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   button: { alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6, backgroundColor: colors.accent },
   buttonText: { fontSize: 15, color: colors.onAccent },
+  secondary: { paddingVertical: 8, paddingHorizontal: 6 },
+  secondaryText: { fontSize: 15, color: colors.accent },
   error: { fontSize: 13, color: colors.error, marginTop: 8 },
   row: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
   title: { fontSize: 17, color: colors.text },

@@ -19,7 +19,11 @@ adb logcat -c || true
 adb logcat -v threadtime >"$out/logcat.txt" 2>&1 &
 logcat_pid=$!
 
-maestro test --format junit --output "$out/maestro.xml" --test-output-dir "$out" "$here/maestro"
+# The SSH server for run-cell.yaml is the runner's own (e2e/start-ssh-test-server.sh); the
+# emulator reaches the runner's loopback as 10.0.2.2.
+maestro test --format junit --output "$out/maestro.xml" --test-output-dir "$out" \
+  -e SSH_HOST=10.0.2.2 -e SSH_PORT=2222 -e SSH_USER="$(id -un)" -e KEY_URL=http://127.0.0.1:8077/authorize \
+  "$here/maestro"
 status=$?
 
 kill "$logcat_pid" >/dev/null 2>&1

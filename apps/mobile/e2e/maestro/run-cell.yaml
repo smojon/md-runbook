@@ -1,0 +1,77 @@
+# A cell runs over SSH on a real OpenSSH server (the runner's, see e2e/*-run.sh): the app's key is
+# made on the device, its public key goes to the server through e2e/key-server.mjs, a host is
+# added, the host key is trusted on first contact, the first cell of the sample runs and its new
+# output block shows.
+appId: dev.mdrunbook.app
+name: run-cell
+env:
+  SSH_HOST: 127.0.0.1
+  SSH_PORT: '2222'
+  SSH_USER: runner
+  KEY_URL: http://127.0.0.1:8077/authorize
+---
+- launchApp:
+    clearState: true
+- runFlow: subflows/dismiss-system-dialog.yaml
+- extendedWaitUntil:
+    visible:
+      id: core-status
+    timeout: 120000
+- tapOn:
+    id: hosts
+# Making the key can take a moment on an emulator.
+- extendedWaitUntil:
+    visible:
+      id: app-public-key
+      text: 'ecdsa-sha2-nistp256 .*'
+    timeout: 60000
+- copyTextFrom:
+    id: app-public-key
+- runScript: scripts/authorize-key.js
+- tapOn:
+    id: add-host
+- tapOn:
+    id: host-name
+- inputText: ci
+- tapOn:
+    id: host-hostname
+- inputText: ${SSH_HOST}
+- tapOn:
+    id: host-port
+- eraseText
+- inputText: ${SSH_PORT}
+- tapOn:
+    id: host-username
+- inputText: ${SSH_USER}
+- hideKeyboard
+- tapOn:
+    id: host-save
+- assertVisible:
+    id: add-host
+- takeScreenshot: 03-hosts
+# Back to the home screen the same way on both platforms: a relaunch (state is kept).
+- launchApp
+- runFlow: subflows/dismiss-system-dialog.yaml
+- tapOn:
+    id: runbook-sample
+- extendedWaitUntil:
+    visible:
+      id: cell-1-run
+    timeout: 30000
+- tapOn:
+    id: cell-1-run
+- extendedWaitUntil:
+    visible:
+      id: trust-accept
+    timeout: 60000
+- assertVisible:
+    id: trust-fingerprint
+    text: 'SHA256:.*'
+- takeScreenshot: 04-trust
+- tapOn:
+    id: trust-accept
+- extendedWaitUntil:
+    visible: 'Output · ✓ exit 0 .* just now'
+    timeout: 60000
+- assertVisible: '.*load average.*'
+- takeScreenshot: 05-ran
