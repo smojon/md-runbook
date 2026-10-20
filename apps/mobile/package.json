@@ -7,6 +7,7 @@
     "@microsoft/dev-tunnels-ssh": "3.12.42",
     "@microsoft/dev-tunnels-ssh-keys": "3.12.42",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@vscode/codicons": "0.0.45",
     "buffer": "6.0.3",
     "events": "3.3.0",
     "expo": "58.0.16",
@@ -14,6 +15,7 @@
     "expo-constants": "58.0.12",
     "expo-document-picker": "58.0.4",
     "expo-file-system": "58.0.10",
+    "expo-font": "58.0.9",
     "expo-linking": "58.0.13",
     "expo-router": "58.0.24",
     "expo-secure-store": "58.0.2",
@@ -67,6 +69,7 @@
       "/e2e/"
     ],
     "moduleNameMapper": {
+      "\\.ttf$": "<rootDir>/src/testing/asset.js",
       "^buffer$": "<rootDir>/src/testing/nodeBuffer.js",
       "^@md-runbook/(core|ssh)$": "<rootDir>/../../packages/$1/src/index.ts",
       "^@md-runbook/(core|ssh)/(.*)$": "<rootDir>/../../packages/$1/src/$2"

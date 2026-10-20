@@ -47,8 +47,18 @@ try {
   await page.screenshot({ path: 'web-01-runbooks.png' });
   await page.getByTestId('runbook-sample').click();
   await page.getByTestId('cell-1-output').waitFor({ timeout: 30_000 });
+  // Markdown cells are rendered (no "# " source), the icon font is in, code lines are tappable.
+  await page.getByRole('heading', { name: 'Service' }).waitFor({ timeout: 10_000 });
+  if ((await page.getByText('## Service').count()) > 0) throw new Error('Markdown shown as source');
+  await page.waitForFunction(() => document.fonts.check('16px codicon'), null, { timeout: 15_000 });
+  await page.getByTestId('task-0').click();
+  await page.locator('[data-testid="task-0"][aria-checked="true"]').waitFor({ timeout: 5_000 });
+  await page.getByTestId('cell-1-line-1').click();
+  await page.getByTestId('cell-1-line-1-actions').waitFor({ timeout: 5_000 });
   await page.screenshot({ path: 'web-02-runbook.png' });
-  console.log('web: core OK, sample runbook opens');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.screenshot({ path: 'web-03-runbook-dark.png' });
+  console.log('web: core OK, sample runbook opens, Markdown rendered, task box and line actions work');
 } catch (e) {
   failed = true;
   console.error(e);

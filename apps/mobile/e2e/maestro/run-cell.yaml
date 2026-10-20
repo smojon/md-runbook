@@ -71,3 +71,13 @@ name: run-cell
     timeout: 60000
 - assertVisible: '.*load average.*'
 - takeScreenshot: 05-ran
+# A line run: tap the first line, Run line 1; its output block says which lines ran.
+- tapOn:
+    id: cell-1-line-0
+- tapOn:
+    id: cell-1-line-0-run
+- extendedWaitUntil:
+    visible: 'Output · ✓ exit 0 · lines 1 .* just now'
+    timeout: 60000
+- assertVisible: '.*\$ uptime.*'
+- takeScreenshot: 06-line-run

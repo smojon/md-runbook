@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { checkNextItem, checklist, taskItemAtLine, computeProgress, formatProgress, outputBlockAttrs, parse, stepState } from '@md-runbook/core';
+import { checkNextItem, checklist, taskItemAtLine, computeProgress, formatProgress, outputBlockAttrs, parse, stepState, taskItems } from '@md-runbook/core';
 import { isManualMark } from '@md-runbook/core/progress';
 
 describe('step state', () => {
@@ -85,6 +85,14 @@ describe('checklist', () => {
   it('finds task-list items, skipping fenced code', () => {
     const md = '# Steps\n\n- [x] one\n* [ ] two\n  + [X] nested\n1. [ ] three\n- [] not\n- [ ]no space\n```md\n- [ ] in code\n```\n[ ] bare\n';
     assert.deepEqual(checklist(md), [true, false, true, false]);
+  });
+
+  it('lists the items with the offset of their box character', () => {
+    const md = 'intro\n- [ ] a\n```\n- [x] code\n```\n  2. [X] b\n';
+    assert.deepEqual(taskItems(md), [
+      { line: 1, offset: md.indexOf('[ ] a') + 1, checked: false },
+      { line: 5, offset: md.indexOf('[X] b') + 1, checked: true },
+    ]);
   });
 
   it('checks the first unchecked item only', () => {

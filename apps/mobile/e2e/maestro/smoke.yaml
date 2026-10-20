@@ -22,4 +22,9 @@ name: smoke
       id: cell-1-output
     timeout: 30000
 - assertVisible: '.*uptime.*'
+# Markdown cells are rendered, not shown as source.
+- assertVisible: 'Service'
+- assertNotVisible: '## Service'
+- tapOn:
+    id: task-0
 - takeScreenshot: 02-runbook

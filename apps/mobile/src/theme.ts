@@ -1,15 +1,117 @@
-import { Platform } from 'react-native';
+/**
+ * Colours of VS Code's default themes (Light Modern and Dark Modern), so a runbook looks the way
+ * it does in the editor. The phone's light or dark setting picks one; screens get their styles
+ * through `themedStyles`, which builds each style sheet once per palette.
+ */
+import { ImageStyle, Platform, StyleSheet, TextStyle, ViewStyle, useColorScheme } from 'react-native';
 
-export const colors = {
+export interface Palette {
+  dark: boolean;
+  background: string;
+  text: string;
+  muted: string;
+  border: string;
+  /** Code cells and other code blocks (the notebook's cell editor). */
+  codeBackground: string;
+  /** Inline `code` in Markdown. */
+  inlineCode: string;
+  ok: string;
+  error: string;
+  warning: string;
+  accent: string;
+  onAccent: string;
+  link: string;
+  /** Line numbers and gutter glyphs at rest. */
+  gutter: string;
+  /** The line whose actions are open. */
+  lineHighlight: string;
+  quoteBorder: string;
+  syntax: {
+    comment: string;
+    keyword: string;
+    control: string;
+    string: string;
+    variable: string;
+    number: string;
+    command: string;
+    operator: string;
+  };
+}
+
+export const light: Palette = {
+  dark: false,
   background: '#ffffff',
-  text: '#1f2328',
-  muted: '#59636e',
-  border: '#d1d9e0',
-  codeBackground: '#f6f8fa',
-  ok: '#1a7f37',
-  error: '#d1242f',
-  accent: '#0969da',
+  text: '#3b3b3b',
+  muted: '#616161',
+  border: '#e5e5e5',
+  codeBackground: '#f8f8f8',
+  inlineCode: '#ebebeb',
+  ok: '#388a34',
+  error: '#e51400',
+  warning: '#bf8803',
+  accent: '#005fb8',
   onAccent: '#ffffff',
-} as const;
+  link: '#005fb8',
+  gutter: '#6e7681',
+  lineHighlight: '#e8f2ff',
+  quoteBorder: '#d0d7de',
+  syntax: {
+    comment: '#008000',
+    keyword: '#0000ff',
+    control: '#af00db',
+    string: '#a31515',
+    variable: '#001080',
+    number: '#098658',
+    command: '#795e26',
+    operator: '#3b3b3b',
+  },
+};
+
+export const dark: Palette = {
+  dark: true,
+  background: '#1f1f1f',
+  text: '#cccccc',
+  muted: '#9d9d9d',
+  border: '#3c3c3c',
+  codeBackground: '#181818',
+  inlineCode: '#2b2b2b',
+  ok: '#73c991',
+  error: '#f14c4c',
+  warning: '#cca700',
+  accent: '#0078d4',
+  onAccent: '#ffffff',
+  link: '#4daafc',
+  gutter: '#6e7681',
+  lineHighlight: '#2a2d2e',
+  quoteBorder: '#454545',
+  syntax: {
+    comment: '#6a9955',
+    keyword: '#569cd6',
+    control: '#c586c0',
+    string: '#ce9178',
+    variable: '#9cdcfe',
+    number: '#b5cea8',
+    command: '#dcdcaa',
+    operator: '#d4d4d4',
+  },
+};
+
+export function usePalette(): Palette {
+  return useColorScheme() === 'dark' ? dark : light;
+}
+
+/** A hook giving the style sheet built by `make` for the current palette (built once per palette). */
+export function themedStyles<T extends { [K in keyof T]: ViewStyle | TextStyle | ImageStyle }>(make: (c: Palette) => T): () => T {
+  const built = new Map<Palette, T>();
+  return function useThemedStyles(): T {
+    const c = usePalette();
+    let s = built.get(c);
+    if (!s) {
+      s = StyleSheet.create(make(c));
+      built.set(c, s);
+    }
+    return s;
+  };
+}
 
 export const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, Menlo, Consolas, monospace' });

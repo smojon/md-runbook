@@ -15,11 +15,13 @@ import {
   setCellOutput,
 } from '@md-runbook/core';
 import { evaluateChecks } from '@md-runbook/core/checks';
-import type { SessionRunResult } from '@md-runbook/ssh';
+import { echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core/steps';
+import type { RemoteRunOptions, SessionRunResult } from '@md-runbook/ssh';
 import type { Host } from '../hosts/store';
 import { t } from '../i18n';
 import { runnability } from './cells';
 import { Connection, connectionFor } from './connections';
+import type { LinePlan } from './lineRuns';
 
 /** A cell without `timeout=` is stopped after this long. */
 export const DEFAULT_TIMEOUT_MS = 10 * 60_000;
@@ -40,6 +42,15 @@ export interface RunCellParams {
   signal?: AbortSignal;
   /** Output as it arrives (stdout and stderr in order of arrival). */
   onOutput?(text: string): void;
+  /** Run only these commands of the cell (a line run), one after another, stopping at the first failure. */
+  lines?: LinePlan;
+  /** A line run starts command `index` of `lines.steps`, or (undefined) is over. */
+  onStep?(index: number | undefined): void;
+  /**
+   * The runbook as it is when the run ends (other edits, e.g. a ticked task box, happened meanwhile):
+   * the output block goes into that text. Default: `text`.
+   */
+  latestText?(): string;
   /** Tests: a connection instead of the host's real one. */
   connection?: Connection;
 }
@@ -68,24 +79,49 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     transcript += text;
     p.onOutput?.(text);
   };
+  const runOpts: RemoteRunOptions = {
+    env: opts.env,
+    cwd: opts.cwd,
+    timeoutMs: opts.timeoutSeconds === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutSeconds * 1000,
+    signal: p.signal,
+    onStdout: (text) => {
+      stdout += text;
+      write(text);
+    },
+    onStderr: write,
+  };
   let result: SessionRunResult;
+  /** Steps of a line run that ran (indexes into p.lines.steps). */
+  const ran: number[] = [];
   try {
-    result = await conn.session.run(cell.value, {
-      env: opts.env,
-      cwd: opts.cwd,
-      timeoutMs: opts.timeoutSeconds === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutSeconds * 1000,
-      signal: p.signal,
-      onStdout: (text) => {
-        stdout += text;
-        write(text);
-      },
-      onStderr: write,
-    });
+    if (!p.lines) result = await conn.session.run(cell.value, runOpts);
+    else {
+      result = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
+      const steps = p.lines.steps;
+      for (let i = 0; i < steps.length; i++) {
+        if (p.signal?.aborted) {
+          result = { ...result, exitCode: null, cancelled: true };
+          break;
+        }
+        p.onStep?.(i);
+        write(echoCommand('bash', steps[i]!.text));
+        const r = await conn.session.run(steps[i]!.text, runOpts);
+        ran.push(i);
+        result = { ...r, durationMs: result.durationMs + r.durationMs, newShell: result.newShell || r.newShell };
+        if (r.exitCode !== 0) {
+          if (i < steps.length - 1 && !r.cancelled && !r.timedOut)
+            write(t.lineFailedNote(formatLineRange(steps[i]!.start, steps[i]!.end)) + '\n');
+          break;
+        }
+      }
+    }
   } catch (e) {
+    p.onStep?.(undefined);
     if (conn.unknownHostKey) return { kind: 'trust', hostKey: conn.unknownHostKey, changed: conn.changed ?? false };
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }
 
+  p.onStep?.(undefined);
   if (result.error !== undefined) write(result.error + '\n');
   if (result.timedOut) write(t.timedOutNote(opts.timeoutSeconds ?? DEFAULT_TIMEOUT_MS / 1000) + '\n');
   const ended = new Date();
@@ -100,8 +136,15 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     attrs.check = outcome.ok ? 'ok' : 'failed';
     for (const f of outcome.failures) write(t.checkFailedNote(f) + '\n');
   }
+  // `lines=` when a line run did not run every command of the cell (as the extension writes it).
+  if (p.lines && !(p.lines.coversCell && ran.length === p.lines.steps.length)) {
+    const picked = ran.length > 0 ? ran.map((i) => p.lines!.steps[i]!) : p.lines.steps;
+    attrs.lines = formatLineRanges(picked);
+  }
+  const base = p.latestText?.() ?? p.text;
+  if (parse(base).cells[p.cellIndex]?.value !== cell.value) return { kind: 'error', message: t.cellChanged };
   const text =
-    setCellOutput(p.text, p.cellIndex, { kind: 'new', text: transcript, attrs }, { ...DEFAULT_WRITE_OPTIONS, redact: redactor.redact }) ??
-    p.text;
+    setCellOutput(base, p.cellIndex, { kind: 'new', text: transcript, attrs }, { ...DEFAULT_WRITE_OPTIONS, redact: redactor.redact }) ??
+    base;
   return { kind: 'done', text, result, attrs, summary: outputSummary(attrs, ended) };
 }

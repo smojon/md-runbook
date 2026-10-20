@@ -1,35 +1,46 @@
 import { Link, Stack } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { ParsedCell, isCodeMeta, outputSummary, parse } from '@md-runbook/core';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { parse, taskItems } from '@md-runbook/core';
+import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId } from '@md-runbook/ssh';
+import { CodeCell } from '../cells/CodeCell';
 import { Host, getHost, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
-import { updateRunbookText, useRunbooks } from '../runbooks/store';
-import { runnability } from '../ssh/cells';
+import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
+import { getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { fingerprint } from '../ssh/fingerprint';
+import { LineMode, planLines } from '../ssh/lineRuns';
 import { runCell } from '../ssh/runCell';
 import { transportReady } from '../ssh/transport';
-import { colors, mono } from '../theme';
+import { mono, themedStyles } from '../theme';
 
 /** Output kept on screen while a cell runs; the output block written afterwards has its own limit. */
 const LIVE_CHARS = 20_000;
 
-interface Running {
+/** What to run: the whole cell, or some of its commands (`mode` and the line it was asked on). */
+interface RunRequest {
   cellIndex: number;
+  mode?: LineMode;
+  line?: number;
+}
+
+interface Running extends RunRequest {
   live: string;
   abort: AbortController;
+  step?: { start: number; end: number };
 }
 
 interface Trust {
-  cellIndex: number;
+  request: RunRequest;
   hostKey: string;
   fingerprint: string;
   changed: boolean;
 }
 
-/** A runbook's cells; bash cells run on the chosen host over SSH and get their output block. */
+/** A runbook drawn like VS Code's notebook: Markdown cells rendered, code cells that run over SSH. */
 export function RunbookView({ id }: { id: string | undefined }) {
+  const styles = useStyles();
   const runbook = useRunbooks().find((r) => r.id === id);
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
   const hosts = useHosts();
@@ -39,6 +50,8 @@ export function RunbookView({ id }: { id: string | undefined }) {
   const [trust, setTrust] = useState<Trust | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
   const [transportIssue, setTransportIssue] = useState<string | undefined>();
+  /** Checked commands per cell index (their texts), for this screen's life, as in the extension's session. */
+  const [checks, setChecks] = useState<ReadonlyMap<number, ReadonlySet<string>>>(new Map());
   useEffect(() => {
     let live = true;
     void transportReady().then((why) => live && setTransportIssue(why));
@@ -47,41 +60,80 @@ export function RunbookView({ id }: { id: string | undefined }) {
     };
   }, []);
 
-  const run = async (cellIndex: number, on: Host | undefined): Promise<void> => {
+  // Task boxes: box k on screen is the k-th task item of the file. If the renderer and the file
+  // scan ever disagree on the count, the boxes stay read-only rather than tick the wrong line.
+  const tasks = useMemo(() => {
+    const first: number[] = [];
+    let n = 0;
+    for (const c of cells) {
+      first.push(n);
+      if (c.kind === 'markup') n += countTaskBoxes(c.value);
+    }
+    return { first, aligned: runbook !== undefined && n === taskItems(runbook.text).length };
+  }, [cells, runbook]);
+  const toggleTask = useCallback(
+    (k: number): void => {
+      const current = getRunbook(id);
+      if (!current) return;
+      const item = taskItems(current.text)[k];
+      if (!item) return;
+      updateRunbookText(current.id, current.text.slice(0, item.offset) + (item.checked ? ' ' : 'x') + current.text.slice(item.offset + 1));
+    },
+    [id],
+  );
+
+  const run = async (request: RunRequest, on: Host | undefined): Promise<void> => {
     if (!runbook || !on || running) return;
+    const { cellIndex, mode, line } = request;
+    const cell = cells[cellIndex];
+    const lines = mode && cell ? planLines(cell.value, mode, line ?? 0, checks.get(cellIndex)) : undefined;
+    if (mode && !lines) return;
     const abort = new AbortController();
     setNotice(undefined);
     setTrust(undefined);
-    setRunning({ cellIndex, live: '', abort });
+    setRunning({ ...request, live: '', abort });
+    const update = (f: (r: Running) => Running): void => setRunning((r) => (r && r.cellIndex === cellIndex ? f(r) : r));
     const outcome = await runCell({
       host: on,
       text: runbook.text,
       cellIndex,
       signal: abort.signal,
-      onOutput: (text) => setRunning((r) => (r && r.cellIndex === cellIndex ? { ...r, live: (r.live + text).slice(-LIVE_CHARS) } : r)),
+      lines,
+      latestText: () => getRunbook(runbook.id)?.text ?? runbook.text,
+      onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
+      onOutput: (text) => update((r) => ({ ...r, live: (r.live + text).slice(-LIVE_CHARS) })),
     });
     setRunning(undefined);
     if (outcome.kind === 'done') {
       updateRunbookText(runbook.id, outcome.text);
       if (outcome.result.newShell) setNotice(t.newShell);
     } else if (outcome.kind === 'trust') {
-      setTrust({ cellIndex, hostKey: outcome.hostKey, fingerprint: await fingerprint(outcome.hostKey), changed: outcome.changed });
+      setTrust({ request, hostKey: outcome.hostKey, fingerprint: await fingerprint(outcome.hostKey), changed: outcome.changed });
     } else setNotice(outcome.message);
   };
   const acceptTrust = (): void => {
     if (!trust || !host) return;
     pinHostKey(host.id, hostKeyId(trust.hostKey));
-    const { cellIndex } = trust;
+    const { request } = trust;
     setTrust(undefined);
     // The pinned key is on the host as the store has it now, not on the `host` of this render.
-    void run(cellIndex, getHost(host.id));
+    void run(request, getHost(host.id));
   };
+  const toggleCheck = (cellIndex: number, step: LineStep): void =>
+    setChecks((m) => {
+      const next = new Set(m.get(cellIndex));
+      if (next.has(step.text)) next.delete(step.text);
+      else next.add(step.text);
+      return new Map(m).set(cellIndex, next);
+    });
 
   // Scroll views as the screen's root with automatic insets (see RunbookList).
   if (!runbook) {
     return (
       <ScrollView style={styles.screen} contentContainerStyle={styles.content} contentInsetAdjustmentBehavior="automatic">
-        <Text testID="runbook-not-found">{t.notFound}</Text>
+        <Text testID="runbook-not-found" style={styles.text}>
+          {t.notFound}
+        </Text>
       </ScrollView>
     );
   }
@@ -110,23 +162,39 @@ export function RunbookView({ id }: { id: string | undefined }) {
             {trust && host ? <TrustCard host={host} trust={trust} onAccept={acceptTrust} onDecline={() => setTrust(undefined)} /> : null}
           </View>
         }
-        renderItem={({ item, index }) => (
-          <Cell
-            cell={item}
-            index={index}
-            canRun={host !== undefined}
-            running={running?.cellIndex === index ? running : undefined}
-            busy={running !== undefined && running.cellIndex !== index}
-            onRun={() => void run(index, host)}
-            onStop={() => running?.abort.abort()}
-          />
-        )}
+        renderItem={({ item, index }) =>
+          item.kind === 'markup' ? (
+            <View style={styles.markup}>
+              <MarkdownView
+                testID={`cell-${index}`}
+                markdown={item.value}
+                firstTask={tasks.first[index]}
+                onToggleTask={tasks.aligned ? toggleTask : undefined}
+              />
+            </View>
+          ) : (
+            <CodeCell
+              cell={item}
+              index={index}
+              canRun={host !== undefined}
+              running={running?.cellIndex === index ? running : undefined}
+              busy={running !== undefined && running.cellIndex !== index}
+              checked={checks.get(index) ?? EMPTY}
+              onRun={(mode, line) => void run({ cellIndex: index, mode, line }, host)}
+              onStop={() => running?.abort.abort()}
+              onToggleCheck={(step) => toggleCheck(index, step)}
+            />
+          )
+        }
       />
     </>
   );
 }
 
+const EMPTY: ReadonlySet<string> = new Set();
+
 function HostPicker({ hosts, selected, onSelect }: { hosts: readonly Host[]; selected: Host | undefined; onSelect(id: string): void }) {
+  const styles = useStyles();
   if (hosts.length === 0) {
     return (
       <Link href={{ pathname: '/hosts', params: {} }} asChild>
@@ -160,6 +228,7 @@ function HostPicker({ hosts, selected, onSelect }: { hosts: readonly Host[]; sel
 }
 
 function TrustCard({ host, trust, onAccept, onDecline }: { host: Host; trust: Trust; onAccept(): void; onDecline(): void }) {
+  const styles = useStyles();
   return (
     <View testID="trust-host" style={styles.trust}>
       <Text style={styles.trustTitle}>{trust.changed ? t.trustChangedTitle(host.name) : t.trustTitle(host.name)}</Text>
@@ -179,104 +248,27 @@ function TrustCard({ host, trust, onAccept, onDecline }: { host: Host; trust: Tr
   );
 }
 
-interface CellProps {
-  cell: ParsedCell;
-  index: number;
-  canRun: boolean;
-  running: Running | undefined;
-  busy: boolean;
-  onRun(): void;
-  onStop(): void;
-}
-
-function Cell({ cell, index, canRun, running, busy, onRun, onStop }: CellProps) {
-  if (cell.kind === 'markup') {
-    return (
-      <Text testID={`cell-${index}`} style={styles.markup}>
-        {cell.value}
-      </Text>
-    );
-  }
-  const can = runnability(cell);
-  return (
-    <View testID={`cell-${index}`} style={styles.code}>
-      <View style={styles.cellHeader}>
-        <Text style={styles.lang}>{isCodeMeta(cell.meta) ? cell.meta.lang : cell.languageId}</Text>
-        {!can.ok ? (
-          <Text testID={`cell-${index}-why`} style={styles.lang}>
-            {t.notRunnable[can.why](can.detail)}
-          </Text>
-        ) : running ? (
-          <Pressable testID={`cell-${index}-stop`} accessibilityRole="button" onPress={onStop} style={styles.stop}>
-            <Text style={styles.buttonText}>{t.stop}</Text>
-          </Pressable>
-        ) : canRun ? (
-          <Pressable
-            testID={`cell-${index}-run`}
-            accessibilityRole="button"
-            disabled={busy}
-            onPress={onRun}
-            style={[styles.run, busy && styles.disabled]}
-          >
-            <Text style={styles.buttonText}>{t.run}</Text>
-          </Pressable>
-        ) : null}
-      </View>
-      <Text style={styles.source} selectable>
-        {cell.value}
-      </Text>
-      {running ? (
-        <View testID={`cell-${index}-live`} style={styles.output}>
-          <Text style={styles.lang}>{t.running}</Text>
-          {running.live !== '' ? (
-            <Text style={styles.source} selectable>
-              {running.live}
-            </Text>
-          ) : null}
-        </View>
-      ) : cell.output ? (
-        <View testID={`cell-${index}-output`} style={styles.output}>
-          <Text style={styles.lang}>
-            {t.output}
-            {' · '}
-            {outputSummary(cell.output.attrs)}
-          </Text>
-          <Text style={styles.source} selectable>
-            {cell.output.text}
-          </Text>
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 12 },
+const useStyles = themedStyles((c) => ({
+  screen: { flex: 1, backgroundColor: c.background },
+  content: { padding: 12, paddingBottom: 48 },
+  text: { color: c.text },
   picker: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingVertical: 8 },
-  pickerLabel: { fontSize: 13, color: colors.muted },
-  chip: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 14, borderWidth: 1, borderColor: colors.border },
-  chipOn: { backgroundColor: colors.accent, borderColor: colors.accent },
-  chipText: { fontSize: 14, color: colors.text },
-  chipTextOn: { color: colors.onAccent },
-  link: { fontSize: 15, color: colors.accent },
-  warning: { fontSize: 13, color: colors.error, marginVertical: 6 },
-  trust: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, marginVertical: 8 },
-  trustTitle: { fontSize: 16, color: colors.text, marginBottom: 6 },
-  trustBody: { fontSize: 13, color: colors.muted, lineHeight: 18 },
-  fingerprint: { fontFamily: mono, fontSize: 13, color: colors.text, marginVertical: 10 },
+  pickerLabel: { fontSize: 13, color: c.muted },
+  chip: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 14, borderWidth: 1, borderColor: c.border },
+  chipOn: { backgroundColor: c.accent, borderColor: c.accent },
+  chipText: { fontSize: 14, color: c.text },
+  chipTextOn: { color: c.onAccent },
+  link: { fontSize: 15, color: c.link },
+  warning: { fontSize: 13, color: c.error, marginVertical: 6 },
+  trust: { borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 12, marginVertical: 8 },
+  trustTitle: { fontSize: 16, color: c.text, marginBottom: 6 },
+  trustBody: { fontSize: 13, color: c.muted, lineHeight: 18 },
+  fingerprint: { fontFamily: mono, fontSize: 13, color: c.text, marginVertical: 10 },
   actions: { flexDirection: 'row', gap: 12, alignItems: 'center' },
-  button: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6, backgroundColor: colors.accent },
-  buttonText: { fontSize: 15, color: colors.onAccent },
+  button: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6, backgroundColor: c.accent },
+  buttonText: { fontSize: 15, color: c.onAccent },
   secondary: { paddingVertical: 8, paddingHorizontal: 6 },
-  secondaryText: { fontSize: 15, color: colors.accent },
-  markup: { fontSize: 15, lineHeight: 21, color: colors.text, marginVertical: 6 },
-  code: { backgroundColor: colors.codeBackground, borderRadius: 6, padding: 10, marginVertical: 6 },
-  cellHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, minHeight: 28 },
-  lang: { fontSize: 11, color: colors.muted, flexShrink: 1 },
-  run: { paddingVertical: 4, paddingHorizontal: 12, borderRadius: 6, backgroundColor: colors.accent },
-  stop: { paddingVertical: 4, paddingHorizontal: 12, borderRadius: 6, backgroundColor: colors.error },
-  disabled: { opacity: 0.4 },
-  source: { fontFamily: mono, fontSize: 13, color: colors.text },
-  output: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border, marginTop: 8, paddingTop: 6 },
-});
+  secondaryText: { fontSize: 15, color: c.link },
+  // Markdown cells line up with the code of code cells (past the run gutter).
+  markup: { marginVertical: 6, paddingLeft: 34 + 8 },
+}));

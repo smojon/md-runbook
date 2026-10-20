@@ -6,10 +6,11 @@ import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { appPublicKeyLine } from '../ssh/appKey';
 import { getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
-import { colors, mono } from '../theme';
+import { mono, themedStyles } from '../theme';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
 export function HostList() {
+  const styles = useStyles();
   const hosts = useHosts();
   return (
     <FlatList
@@ -41,6 +42,7 @@ export function HostList() {
 }
 
 function HostRow({ host }: { host: Host }) {
+  const styles = useStyles();
   return (
     <Link href={{ pathname: '/hosts/[id]', params: { id: host.id } }} asChild>
       <Pressable testID={`host-${host.id}`} accessibilityRole="link" aria-label={host.name} style={styles.row}>
@@ -56,6 +58,7 @@ function HostRow({ host }: { host: Host }) {
 }
 
 function AppKeySection() {
+  const styles = useStyles();
   const [line, setLine] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [copied, setCopied] = useState(false);
@@ -101,6 +104,7 @@ function AppKeySection() {
 }
 
 function RelaySection() {
+  const styles = useStyles();
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
   const [saved, setSaved] = useState(false);
@@ -157,7 +161,7 @@ function RelaySection() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themedStyles((colors) => ({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 32 },
   header: { paddingVertical: 12 },
@@ -197,4 +201,4 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   error: { fontSize: 13, color: colors.error, marginTop: 8 },
-});
+}));

@@ -100,14 +100,14 @@ export function formatProgress(p: Progress): string {
 const TASK_RE = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[([ xX])\](?=[ \t]|$)/;
 
 /** A task-list item: its line (0-based), the offset of its box character and whether it is checked. */
-interface TaskItem {
+export interface TaskItem {
   line: number;
   offset: number;
   checked: boolean;
 }
 
-/** Task-list items outside fenced code blocks. */
-function taskItems(text: string): TaskItem[] {
+/** Task-list items outside fenced code blocks, in order (the boxes a Markdown view shows). */
+export function taskItems(text: string): TaskItem[] {
   const items: TaskItem[] = [];
   let fence: FenceOpen | null = null;
   let pos = 0;

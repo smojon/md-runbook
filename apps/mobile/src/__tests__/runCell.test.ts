@@ -1,6 +1,7 @@
 import { parse } from '@md-runbook/core';
 import type { Host } from '../hosts/store';
 import { runnability } from '../ssh/cells';
+import { planLines } from '../ssh/lineRuns';
 import { runCell } from '../ssh/runCell';
 import { fakeConnection } from '../testing/fakeConnection';
 
@@ -105,5 +106,57 @@ describe('runCell', () => {
     const r = await p;
     expect(r.kind === 'done' && r.attrs.exit).toBe('cancelled');
     expect(r.kind === 'done' && r.attrs.check).toBeUndefined();
+  });
+});
+
+describe('line runs over SSH', () => {
+  const text = ['# Steps', '', '```bash', 'cd /srv', 'make \\', '  build', 'echo done', '```', ''].join('\n');
+
+  it('runs the chosen commands one by one, echoed, and writes lines=', async () => {
+    const conn = fakeConnection([{ stdout: 'built\n' }, { stdout: 'done\n' }]);
+    const steps: number[] = [];
+    const r = await runCell({
+      host,
+      text,
+      cellIndex: 1,
+      connection: conn,
+      lines: planLines(parse(text).cells[1]!.value, 'from', 1),
+      onStep: (i) => steps.push(i ?? -1),
+    });
+    expect(conn.calls.map((c) => c.source)).toEqual(['make \\\n  build', 'echo done']);
+    expect(steps).toEqual([0, 1, -1]);
+    expect(r.kind === 'done' && r.attrs.lines).toBe('2-4');
+    const out = r.kind === 'done' ? parse(r.text).cells[1]?.output : undefined;
+    expect(out?.text).toBe('$ make \\\n    build\nbuilt\n$ echo done\ndone');
+    expect(out?.attrs.lines).toBe('2-4');
+  });
+
+  it('stops at the first failing command and says so', async () => {
+    const conn = fakeConnection([{ exitCode: 0 }, { stderr: 'no rule\n', exitCode: 2 }, { stdout: 'never\n' }]);
+    const r = await runCell({ host, text, cellIndex: 1, connection: conn, lines: planLines(parse(text).cells[1]!.value, 'to', 3) });
+    expect(conn.calls).toHaveLength(2);
+    expect(r.kind === 'done' && r.attrs).toMatchObject({ exit: '2', lines: '1-3' });
+  });
+
+  it('every command of the cell is a full run: no lines=', async () => {
+    const r = await runCell({
+      host,
+      text,
+      cellIndex: 1,
+      connection: fakeConnection([{}]),
+      lines: planLines(parse(text).cells[1]!.value, 'to', 3),
+    });
+    expect(r.kind === 'done' && r.attrs.lines).toBeUndefined();
+  });
+
+  it('writes into the runbook as it is at the end of the run', async () => {
+    const later = text.replace('# Steps', '# Steps\n\n- [x] ticked meanwhile');
+    const r = await runCell({ host, text, cellIndex: 1, connection: fakeConnection([{ stdout: 'ok\n' }]), latestText: () => later });
+    expect(r.kind === 'done' && r.text.includes('- [x] ticked meanwhile')).toBe(true);
+    expect(r.kind === 'done' && parse(r.text).cells[1]?.output?.text).toBe('ok');
+    const changed = text.replace('echo done', 'echo changed');
+    expect(await runCell({ host, text, cellIndex: 1, connection: fakeConnection([{}]), latestText: () => changed })).toMatchObject({
+      kind: 'error',
+    });
   });
 });

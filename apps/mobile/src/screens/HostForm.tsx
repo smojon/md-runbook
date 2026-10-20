@@ -4,10 +4,11 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import { HostInput, addHost, getHost, pinHostKey, removeHost, updateHost, validateHost } from '../hosts/store';
 import { t } from '../i18n';
 import { disconnect } from '../ssh/connections';
-import { colors } from '../theme';
+import { themedStyles, usePalette } from '../theme';
 
 /** Add (`id` undefined) or edit a host. */
 export function HostForm({ id }: { id: string | undefined }) {
+  const styles = useStyles();
   const existing = getHost(id);
   const [name, setName] = useState(existing?.name ?? '');
   const [hostname, setHostname] = useState(existing?.hostname ?? '');
@@ -103,6 +104,8 @@ function Field(p: {
   placeholder?: string;
   keyboard?: 'number-pad';
 }) {
+  const styles = useStyles();
+  const colors = usePalette();
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{p.label}</Text>
@@ -122,7 +125,7 @@ function Field(p: {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themedStyles((colors) => ({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { padding: 16, paddingBottom: 48 },
   field: { marginBottom: 14 },
@@ -150,4 +153,4 @@ const styles = StyleSheet.create({
   link: { paddingVertical: 10 },
   linkText: { fontSize: 15, color: colors.accent },
   deleteText: { fontSize: 15, color: colors.error },
-});
+}));

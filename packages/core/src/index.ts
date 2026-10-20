@@ -34,7 +34,7 @@ export { LineBuffer } from './lineBuffer';
 export { ShellEnv, ShellKind, ShellResolution, ShellSettings, ResolvedShell, shellKindForLanguage } from './shellKind';
 export { ExecuteOptions, ExecuteResult, RunResult, exitLabel, isSuccess } from './result';
 export { SENTINEL_START, SentinelFilter } from './sentinel';
-export { Progress, ProgressCell, StepState, checkNextItem, checklist, taskItemAtLine, computeProgress, formatProgress, nextUncheckedOffset, outputBlockAttrs, stepState } from './progress';
+export { Progress, ProgressCell, StepState, checkNextItem, checklist, taskItemAtLine, computeProgress, formatProgress, nextUncheckedOffset, outputBlockAttrs, stepState, TaskItem, taskItems } from './progress';
 export { CodeCellLocation, TextChange, locateCodeCells, minimalChange, outputSummary, setCellOutput } from './locate';
 export { escapeHtml, renderInline, renderMarkdown, safeUrl } from './markdown';
 export { ReportOptions, renderReport } from './report';

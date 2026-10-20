@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "dev.mdrunbook.app"
@@ -25,7 +25,7 @@
       "output": "single",
       "bundler": "metro"
     },
-    "plugins": ["expo-router", "react-native-quick-crypto", "expo-secure-store"],
+    "plugins": ["expo-router", "react-native-quick-crypto", "expo-secure-store", "expo-font"],
     "scheme": "mdrunbook",
     "runtimeVersion": {
       "policy": "appVersion"

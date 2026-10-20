@@ -6,9 +6,11 @@ import { checkCore } from '../coreCheck';
 import { t } from '../i18n';
 import { openRunbookFile } from '../runbooks/openFile';
 import { useRunbooks } from '../runbooks/store';
-import { colors } from '../theme';
+import { themedStyles, usePalette } from '../theme';
 
 export function RunbookList() {
+  const styles = useStyles();
+  const colors = usePalette();
   const core = useMemo(() => checkCore(), []);
   const runbooks = useRunbooks();
   const items = useMemo(
@@ -67,7 +69,7 @@ export function RunbookList() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themedStyles((colors) => ({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16 },
   header: { paddingVertical: 12 },
@@ -81,4 +83,4 @@ const styles = StyleSheet.create({
   title: { fontSize: 17, color: colors.text },
   meta: { fontSize: 13, color: colors.muted, marginTop: 2 },
   status: { fontSize: 13, paddingVertical: 16 },
-});
+}));
