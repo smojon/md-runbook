@@ -287,6 +287,12 @@ The settings of the features above are listed on their own pages.
 - An unclosed fence makes the rest of the file Markdown, as in CommonMark.
 - The file must be valid UTF-8 for a byte-identical round trip.
 
+## Troubleshooting
+
+- **A runbook opens slowly or stays empty** when the computer is busy: a VS Code notebook
+  behaviour; start VS Code with `--disable-renderer-backgrounding`
+  ([details](docs/troubleshooting.md#a-runbook-opens-slowly-or-stays-empty)).
+
 ## Development
 
 ```sh

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { registerAi } from './ai/commands';
 import { registerApproval } from './approval';
 import { registerAutoSave } from './autoSave';
+import { registerOpenTiming } from './openTiming';
 import { registerAiContext } from './aiCommands';
 import { registerCodeLens } from './codeLens';
 import { clearOutputBlocks } from '@md-runbook/core';
@@ -82,6 +83,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerProgress(context, pipeline, controller);
   registerLineRuns(context, controller, { safety, secrets });
   registerAutoSave(pipeline);
+  registerOpenTiming(context);
   registerCodeLens(context);
   registerReport(context);
   registerAi(context);

@@ -3,7 +3,9 @@ name: macOS open probe
 # macOS runners in parallel, each ending with the open probe's summary (test/integration/probe.ts:
 # extension-host stalls and CPU, the window's round trip, the extension's own open work) and VS
 # Code's logs as an artifact. For investigating opens that hang (docs/HANDOFF.md); optional extra
-# VS Code arguments and user settings for experiments.
+# VS Code arguments and user settings for experiments. With "ab", each runner runs the tests twice,
+# with and without --disable-renderer-backgrounding (order alternating by runner), so the two are
+# compared on the same machine (docs/investigations/notebook-open-slow.md).
 on:
   workflow_dispatch:
     inputs:
@@ -15,6 +17,10 @@ on:
         description: 'VS Code user settings as JSON (e.g. {"chat.disableAIFeatures": true})'
         type: string
         default: ''
+      ab:
+        description: 'Run twice per runner: with and without --disable-renderer-backgrounding'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,7 +32,7 @@ jobs:
       matrix:
         run: [1, 2, 3]
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -38,12 +44,34 @@ jobs:
           MD_RUNBOOK_VSCODE_ARGS: ${{ inputs.args }}
           MD_RUNBOOK_VSCODE_SETTINGS: ${{ inputs.settings }}
         run: |
+          set -o pipefail
           sysctl -n hw.ncpu hw.memsize machdep.cpu.brand_string || true
-          npm run test:integration 2>&1 | tee integration.log
+          if [ "${{ inputs.ab }}" != "true" ]; then
+            npm run test:integration 2>&1 | tee integration.log
+            exit "${PIPESTATUS[0]}"
+          fi
+          order="off on"
+          if [ $(( ${{ matrix.run }} % 2 )) -eq 0 ]; then order="on off"; fi
+          status=0
+          for mode in $order; do
+            flag=""
+            if [ "$mode" = on ]; then flag="--disable-renderer-backgrounding"; fi
+            export MD_RUNBOOK_VSCODE_ARGS="${{ inputs.args }} $flag"
+            echo "=== flag $mode" | tee -a integration.log
+            start=$(date +%s)
+            npm run test:integration 2>&1 | tee -a integration.log || status=1
+            echo "=== flag $mode took $(( $(date +%s) - start )) s" | tee -a integration.log
+          done
+          exit $status
       - name: Probe summary
         if: always()
         run: |
-          grep -E '! opening|open probe:|^  [^ ].*: [0-9]+ ms, |stalls > 1 s|integration tests passed|✖' integration.log || true
+          grep -E '=== flag|! opening|open probe:|^  [^ ].*: [0-9]+ ms, |stalls > 1 s|integration tests passed|✖' integration.log || true
+          if grep -q '=== flag' integration.log; then
+            echo; echo "slow opens (> 5 s) per mode:"
+            awk '/^=== flag (on|off)$/ {mode=$3} /! opening/ {n[mode]++} END {print "  flag off: " n["off"]+0 "
+  flag on:  " n["on"]+0}' integration.log
+          fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:
