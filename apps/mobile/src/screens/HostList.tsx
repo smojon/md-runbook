@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
-import { appPublicKeyLine } from '../ssh/appKey';
+import { KeyStorage, appKeyInfo, appPublicKeyLine } from '../ssh/appKey';
 import { getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { mono, themedStyles } from '../theme';
 
@@ -62,11 +62,16 @@ function AppKeySection() {
   const [line, setLine] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [copied, setCopied] = useState(false);
+  const [storage, setStorage] = useState<KeyStorage | undefined>();
   useEffect(() => {
     let live = true;
     appPublicKeyLine().then(
       (l) => live && setLine(l),
       (e: unknown) => live && setError(e instanceof Error ? e.message : String(e)),
+    );
+    appKeyInfo().then(
+      (k) => live && setStorage(k.storage),
+      () => undefined,
     );
     return () => {
       live = false;
@@ -90,6 +95,11 @@ function AppKeySection() {
           {line ?? t.appKeyLoading}
         </Text>
       )}
+      {storage ? (
+        <Text testID="app-key-storage" style={styles.help}>
+          {t.appKeyStorage[storage]}
+        </Text>
+      ) : null}
       <Pressable
         testID="copy-public-key"
         accessibilityRole="button"

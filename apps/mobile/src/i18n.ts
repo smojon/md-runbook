@@ -46,6 +46,12 @@ const en = {
   appKeyHelp: 'The key was made on this device and stays here. Add its public key to ~/.ssh/authorized_keys on each host:',
   appKeyLoading: 'Making the key…',
   appKeyFailed: (why: string) => `The key could not be made: ${why}`,
+  appKeyStorage: {
+    hardware: "The private key was made in this device's secure hardware and cannot be read out, not even by the app.",
+    keystore: "The private key is in this device's keystore and never handed to the app.",
+    'secure-store': "The private key is kept in this device's secure storage.",
+    browser: "The private key is kept in this browser's storage for this site.",
+  },
   copy: 'Copy',
   copied: 'Copied',
 

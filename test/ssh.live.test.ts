@@ -7,7 +7,8 @@ import { strict as assert } from 'node:assert';
 import * as fs from 'node:fs';
 import { after, before, describe, it } from 'node:test';
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
-import { RemoteSession, RemoteShell, generateKey, hostKeyId, publicKeyLine } from '@md-runbook/ssh';
+import { generateKeyPairSync, sign as nodeSign } from 'node:crypto';
+import { ExternalKeyPair, RemoteSession, RemoteShell, generateKey, hostKeyId, publicKeyLine } from '@md-runbook/ssh';
 import { connectTcp } from '@md-runbook/ssh/node';
 
 const spec = process.env.MD_RUNBOOK_SSH_TEST;
@@ -102,5 +103,29 @@ describe('ssh: live server', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }
     const ms = (Date.now() - started) / n;
     console.log(`ssh: ${ms.toFixed(1)} ms per cell`);
     assert.ok(ms < 500);
+  });
+
+  it('logs in with a key held outside JavaScript (as the phones keep theirs in hardware)', async () => {
+    const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    const jwk = publicKey.export({ format: 'jwk' });
+    let signed = 0;
+    const external = await ExternalKeyPair.create({
+      publicKey: new Uint8Array(Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x!, 'base64url'), Buffer.from(jwk.y!, 'base64url')])),
+      sign: async (data) => {
+        signed++;
+        return new Uint8Array(nodeSign('sha256', data, privateKey));
+      },
+    });
+    fs.appendFileSync(process.env.MD_RUNBOOK_SSH_AUTHORIZED_KEYS!, (await publicKeyLine(external, 'external')) + '\n');
+    const hw = await RemoteShell.connect(await open(), { ...opts(), key: external });
+    try {
+      let out = '';
+      const r = await hw.run('echo from-hardware-key', { onStdout: (t) => (out += t) });
+      assert.equal(r.exitCode, 0);
+      assert.equal(out, 'from-hardware-key\n');
+      assert.equal(signed, 1);
+    } finally {
+      hw.close();
+    }
   });
 });

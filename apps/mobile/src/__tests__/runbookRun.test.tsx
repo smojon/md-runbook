@@ -12,7 +12,10 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
 }));
 jest.mock('../ssh/transport', () => ({ openTransport: jest.fn(), transportReady: async () => undefined }));
-jest.mock('../ssh/appKey', () => ({ appPublicKeyLine: async () => 'ecdsa-sha2-nistp256 AAAAtest md-runbook-app' }));
+jest.mock('../ssh/appKey', () => ({
+  appPublicKeyLine: async () => 'ecdsa-sha2-nistp256 AAAAtest md-runbook-app',
+  appKeyInfo: async () => ({ pair: {}, storage: 'hardware' }),
+}));
 let script: FakeRun[] = [];
 let mockConnection = fakeConnection();
 jest.mock('../ssh/connections', () => ({

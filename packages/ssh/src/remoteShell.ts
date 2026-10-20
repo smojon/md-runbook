@@ -15,6 +15,7 @@ import {
   SshClientSession,
   SshDisconnectReason,
   SshExtendedDataType,
+  SshAlgorithms,
   SshSessionConfiguration,
   Stream,
 } from '@microsoft/dev-tunnels-ssh';
@@ -22,6 +23,7 @@ import { exportPublicKey } from '@microsoft/dev-tunnels-ssh-keys';
 // The library's own Buffer, so this file also works where there is no global Buffer (browsers).
 import { Buffer } from 'buffer';
 import { CellCommandOptions, SHELL_COMMAND, cellCommand, helloCommand, markerFor, randomId, stopCommand } from './command';
+import { ExternalAwareEcdsaP256 } from './externalKey';
 
 export interface ConnectOptions {
   username: string;
@@ -110,6 +112,8 @@ export class RemoteShell {
   /** Connect over `stream`, check the host key, authenticate with `key`, start the shell. */
   static async connect(stream: Stream, opts: ConnectOptions): Promise<RemoteShell> {
     const config = new SshSessionConfiguration();
+    // Keys held by the device's keystore (ExternalKeyPair) sign through it; other keys as before.
+    if (SshAlgorithms.publicKey.ecdsaSha2Nistp256) config.publicKeyAlgorithms.unshift(new ExternalAwareEcdsaP256());
     config.keepAliveTimeoutInSeconds = opts.keepAliveSeconds ?? 15;
     const session = new SshClientSession(config);
     session.onAuthenticating((e: SshAuthenticatingEventArgs) => {

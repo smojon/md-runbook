@@ -7,3 +7,4 @@ export { CellCommandOptions, SHELL_COMMAND, cellCommand, helloCommand, markerFor
 export { ConnectOptions, RemoteRunOptions, RemoteRunResult, RemoteShell, ShellEndedError } from './remoteShell';
 export { RemoteSession, SessionRunResult } from './session';
 export { generateKey, hostKeyId, importPrivateKey, privateKeyPem, publicKeyLine } from './keys';
+export { ECDSA_P256, ExternalAwareEcdsaP256, ExternalKeyPair, ExternalP256Key, derToRs } from './externalKey';
