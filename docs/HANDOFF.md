@@ -97,8 +97,12 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
   neither `--disable-gpu` nor `chat.disableAIFeatures` changes it. VS Code logs nothing about it.
   It depends on the runner machine: from 0 to 8 slow opens per run in the same hour. The tests
   close the editors and reopen, up to 3 times. To look again: Actions → **macOS open probe** →
-  Run workflow (three Macs, optional VS Code arguments and settings). Not seen on Windows or
-  Linux, nor reported by users.
+  Run workflow (three Macs, optional VS Code arguments and settings).
+  **Update 2026-10-20:** reproduced on Windows under CPU load and explained: VS Code shows no cell
+  until the notebook's hidden webview has loaded the Markdown renderers, and that webview's
+  process runs at Idle priority while hidden. `--disable-renderer-backgrounding` removes the wait
+  (0-1.6 s instead of 8-64 s, alternating pairs). Details, measurements and the VS Code issue
+  draft: [investigations/notebook-open-slow.md](investigations/notebook-open-slow.md).
 
 ## Ideas for later
 
