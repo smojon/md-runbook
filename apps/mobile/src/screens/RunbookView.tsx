@@ -1,7 +1,7 @@
 import { Link, Stack } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { ParsedCell, outputSummary, parse } from '@md-runbook/core';
+import { ParsedCell, isCodeMeta, outputSummary, parse } from '@md-runbook/core';
 import { hostKeyId } from '@md-runbook/ssh';
 import { Host, getHost, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
@@ -201,7 +201,7 @@ function Cell({ cell, index, canRun, running, busy, onRun, onStop }: CellProps) 
   return (
     <View testID={`cell-${index}`} style={styles.code}>
       <View style={styles.cellHeader}>
-        <Text style={styles.lang}>{cell.languageId}</Text>
+        <Text style={styles.lang}>{isCodeMeta(cell.meta) ? cell.meta.lang : cell.languageId}</Text>
         {!can.ok ? (
           <Text testID={`cell-${index}-why`} style={styles.lang}>
             {t.notRunnable[can.why](can.detail)}

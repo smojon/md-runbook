@@ -1,14 +1,10 @@
 # A cell runs over SSH on a real OpenSSH server (the runner's, see e2e/*-run.sh): the app's key is
 # made on the device, its public key goes to the server through e2e/key-server.mjs, a host is
 # added, the host key is trusted on first contact, the first cell of the sample runs and its new
-# output block shows.
+# output block shows. SSH_HOST, SSH_PORT, SSH_USER and KEY_URL come from the command line
+# (e2e/*-run.sh); defaults here would win over them.
 appId: dev.mdrunbook.app
 name: run-cell
-env:
-  SSH_HOST: 127.0.0.1
-  SSH_PORT: '2222'
-  SSH_USER: runner
-  KEY_URL: http://127.0.0.1:8077/authorize
 ---
 - launchApp:
     clearState: true
