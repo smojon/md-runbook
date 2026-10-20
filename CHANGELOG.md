@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 - **A block for another OS says so before you click it:** its status line reads
   `⊘ For macOS · not run on Windows`. VS Code shows ▶ on every code cell and cannot hide it
