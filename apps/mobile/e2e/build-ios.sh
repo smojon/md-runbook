@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the iOS Simulator app (Release, unsigned) the Maestro flows run against, from source.
+# Build the iOS Simulator app (Release, ad-hoc signed) the Maestro flows run against, from source.
 # Expects `npm ci` done in apps/mobile.
 #
 #   bash e2e/build-ios.sh <out-dir>   -> <out-dir>/app/<name>.app, <out-dir>/xcodebuild.log
@@ -19,9 +19,12 @@ done
 ws="$(ls -d ./*.xcworkspace | head -1)"
 scheme="$(basename "$ws" .xcworkspace)"
 echo "workspace=$ws scheme=$scheme"
+# Ad-hoc signed ("-", no Apple team needed on the simulator), not unsigned: the Keychain, where the
+# app keeps its SSH key, refuses an app without an application identifier ("A required
+# entitlement isn't present", expo-secure-store on an unsigned build).
 xcodebuild -workspace "$ws" -scheme "$scheme" -configuration Release \
   -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$out/dd" \
-  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ONLY_ACTIVE_ARCH=YES ARCHS=arm64 COMPILER_INDEX_STORE_ENABLE=NO \
+  CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO ONLY_ACTIVE_ARCH=YES ARCHS=arm64 COMPILER_INDEX_STORE_ENABLE=NO \
   build >"$out/xcodebuild.log" 2>&1 || true
 grep -q '\*\* BUILD SUCCEEDED \*\*' "$out/xcodebuild.log" || {
   echo "::error::xcodebuild failed; last errors:"
