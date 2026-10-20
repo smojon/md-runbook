@@ -63,17 +63,14 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 
 ## Open (owner)
 
-- **VS Code issue about slow notebook opens:** review the draft in
-  [investigations/notebook-open-slow.md](investigations/notebook-open-slow.md) (section "Issue
-  draft", with a tested one-line fix), then file it on microsoft/vscode. No existing issue was found.
-  The draft now explains the Chromium mechanism (read from source on 2026-10-20: hidden
-  cross-origin iframe → child widget hidden → process `kBestEffort` → `IDLE_PRIORITY_CLASS` plus
-  EcoQoS) and the fix should be `opacity: 0; pointer-events: none` (a transparent webview cannot
-  flash, but it would take clicks). Nothing elegant exists on the extension side: the warmup is
-  unconditional, no setting skips it, `argv.json` cannot carry the flag; the only lever (raising
-  the webview process's priority from the extension host, Windows only) is documented and not
-  recommended. Optional A/B left: the flag plus `--disable-background-timer-throttling`, to see
-  whether timer throttling of hidden frames explains the residual ~1 s with the flag alone.
+- **VS Code issue about slow notebook opens:** filed on 2026-10-20 as
+  [microsoft/vscode#342813](https://github.com/microsoft/vscode/issues/342813), with a tested
+  one-line fix (`opacity: 0; pointer-events: none` instead of `visibility: hidden` during the
+  warmup). Watch it for questions; if it gets a go, offer the fix as a pull request. Background,
+  measurements and the Chromium mechanism:
+  [investigations/notebook-open-slow.md](investigations/notebook-open-slow.md). Optional A/B left:
+  the flag plus `--disable-background-timer-throttling`, to see whether timer throttling of hidden
+  frames explains the residual ~1 s with the flag alone.
 - **Open VSX** (VSCodium, Cursor, Gitpod): create the namespace `smojon`, file the ownership
   claim, then add an `OVSX_PAT` secret or set up trusted publishing (`PUBLISHING.md`).
 - **npm token:** add the `NPM_TOKEN` secret (`PUBLISHING.md` → npm); the next release then

@@ -1,7 +1,8 @@
 # Runbooks open slowly or blank: investigation
 
 Investigated 2026-10-19 and 2026-10-20 on Windows 11 with VS Code 1.142.0. Status: cause confirmed,
-workaround found, a one-line fix for VS Code tested, VS Code issue drafted (not filed yet).
+workaround found, a one-line fix for VS Code tested, VS Code issue filed:
+[microsoft/vscode#342813](https://github.com/microsoft/vscode/issues/342813).
 
 ## Summary
 
@@ -348,9 +349,8 @@ Start menu), not only from one patched shortcut.
 
 ## Issue draft
 
-To be filed on github.com/microsoft/vscode from the user's GitHub account, after their approval.
-Nothing below names the user, the company or local paths. The review copy with comments is the
-Claude Doc "Runbooks open slowly or blank: investigation and VS Code issue draft".
+Filed on 2026-10-20 as [microsoft/vscode#342813](https://github.com/microsoft/vscode/issues/342813)
+with the text below. Nothing in it names the user, the company or local paths.
 
 **Is it already known?** No, as far as GitHub's search shows (searched 2026-10-20): no issue in
 microsoft/vscode or electron/electron mentions the webview's process priority, `visibility: hidden`
@@ -454,15 +454,14 @@ Status on 2026-10-20, end of session:
       with an integration test; [troubleshooting page](../troubleshooting.md), linked from the
       README; changelog.
 - [x] Probe scripts kept in the repo: [scripts/open-probe](../../scripts/open-probe/README.md).
-- [ ] Review this write-up and the issue draft (user); file the issue only after approval.
-- [ ] Before filing: watch the patched VS Code during an open (screenshots), to check no Markdown
-      flashes at a wrong position.
+- [x] Issue filed: [microsoft/vscode#342813](https://github.com/microsoft/vscode/issues/342813)
+      (2026-10-20). Watch it for questions from the VS Code team.
 - [ ] Try the workaround in the user's own VS Code: add `--disable-renderer-backgrounding` to the
       shortcut, then compare opens with and without it, alternating.
 - [x] CI: the integration tests start VS Code with `--disable-renderer-backgrounding` since
       2026-10-20 (`runElectron.ts`); the macOS open probe can still run without it
       (`keep_backgrounding`, `ab`).
-- [ ] Optional: offer the fix as a pull request to microsoft/vscode once the issue is filed.
+- [ ] Optional: offer the fix as a pull request to microsoft/vscode, if the issue gets a go.
 - Open: whether the "window detected unresponsive" hang (series 1, open 2) is the same cause or a
   second effect of heavy load; it did not recur in later series.
 - [x] The exact Chromium rule that puts the webview's process at Idle: read from Chromium's source
