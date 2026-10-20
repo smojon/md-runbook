@@ -3,9 +3,11 @@ name: macOS open probe
 # macOS runners in parallel, each ending with the open probe's summary (test/integration/probe.ts:
 # extension-host stalls and CPU, the window's round trip, the extension's own open work) and VS
 # Code's logs as an artifact. For investigating opens that hang (docs/HANDOFF.md); optional extra
-# VS Code arguments and user settings for experiments. With "ab", each runner runs the tests twice,
-# with and without --disable-renderer-backgrounding (order alternating by runner), so the two are
-# compared on the same machine (docs/investigations/notebook-open-slow.md).
+# VS Code arguments and user settings for experiments. The test suite starts VS Code with
+# --disable-renderer-backgrounding (test/integration/runElectron.ts); "keep_backgrounding" leaves
+# that out, to observe VS Code's own behaviour. With "ab", each runner runs the tests twice, with
+# and without the flag (order alternating by runner), so the two are compared on the same machine
+# (docs/investigations/notebook-open-slow.md).
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +19,10 @@ on:
         description: 'VS Code user settings as JSON (e.g. {"chat.disableAIFeatures": true})'
         type: string
         default: ''
+      keep_backgrounding:
+        description: 'Start VS Code without --disable-renderer-backgrounding (its default)'
+        type: boolean
+        default: false
       ab:
         description: 'Run twice per runner: with and without --disable-renderer-backgrounding'
         type: boolean
@@ -43,6 +49,7 @@ jobs:
         env:
           MD_RUNBOOK_VSCODE_ARGS: ${{ inputs.args }}
           MD_RUNBOOK_VSCODE_SETTINGS: ${{ inputs.settings }}
+          MD_RUNBOOK_VSCODE_KEEP_BACKGROUNDING: ${{ inputs.keep_backgrounding && '1' || '' }}
         run: |
           set -o pipefail
           sysctl -n hw.ncpu hw.memsize machdep.cpu.brand_string || true
@@ -54,9 +61,8 @@ jobs:
           if [ $(( ${{ matrix.run }} % 2 )) -eq 0 ]; then order="on off"; fi
           status=0
           for mode in $order; do
-            flag=""
-            if [ "$mode" = on ]; then flag="--disable-renderer-backgrounding"; fi
-            export MD_RUNBOOK_VSCODE_ARGS="${{ inputs.args }} $flag"
+            # "on": the suite's default (--disable-renderer-backgrounding); "off": VS Code's default.
+            export MD_RUNBOOK_VSCODE_KEEP_BACKGROUNDING=$([ "$mode" = off ] && echo 1)
             echo "=== flag $mode" | tee -a integration.log
             start=$(date +%s)
             npm run test:integration 2>&1 | tee -a integration.log || status=1

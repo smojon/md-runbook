@@ -13,11 +13,18 @@ async function main(): Promise<void> {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(JSON.parse(settings), null, 2));
   }
+  // VS Code shows a notebook's cells only after its hidden webview has loaded the Markdown
+  // renderers, and Chromium runs that webview at idle priority while it is hidden, so on a busy
+  // runner an open can take 5-20 s or never settle (docs/investigations/notebook-open-slow.md).
+  // The flag keeps the webview at normal priority; it only affects this test VS Code.
+  // MD_RUNBOOK_VSCODE_KEEP_BACKGROUNDING=1 leaves it out, to observe VS Code's own behaviour
+  // (macos-open-probe.yml).
+  const backgrounding = process.env.MD_RUNBOOK_VSCODE_KEEP_BACKGROUNDING ? [] : ['--disable-renderer-backgrounding'];
   await runTests({
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(__dirname, 'index.js'),
     // MD_RUNBOOK_VSCODE_ARGS: extra VS Code arguments for experiments (macos-open-probe.yml).
-    launchArgs: ['--disable-extensions', '--disable-workspace-trust', ...(process.env.MD_RUNBOOK_VSCODE_ARGS ?? '').split(' ').filter(Boolean)],
+    launchArgs: ['--disable-extensions', '--disable-workspace-trust', ...backgrounding, ...(process.env.MD_RUNBOOK_VSCODE_ARGS ?? '').split(' ').filter(Boolean)],
     extensionTestsEnv: { MD_RUNBOOK_TEST: '1' },
   });
 }

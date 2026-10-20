@@ -17,7 +17,8 @@
   once that this is VS Code delaying notebooks on a busy computer, and how to avoid it (start VS
   Code with `--disable-renderer-backgrounding`), with **Learn More** and **Don't Show Again**. See
   [Troubleshooting](docs/troubleshooting.md) and the
-  [investigation](docs/investigations/notebook-open-slow.md).
+  [investigation](docs/investigations/notebook-open-slow.md). The integration tests now start
+  their VS Code with that flag, so a busy CI runner no longer fails a test for it.
 
 ## 0.4.0
 

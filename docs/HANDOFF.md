@@ -74,8 +74,6 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
   the webview process's priority from the extension host, Windows only) is documented and not
   recommended. Optional A/B left: the flag plus `--disable-background-timer-throttling`, to see
   whether timer throttling of hidden frames explains the residual ~1 s with the flag alone.
-- **CI and slow opens:** decide whether the integration tests start VS Code with
-  `--disable-renderer-backgrounding` (a macOS A/B on 2026-10-20 was inconclusive: 2 vs 0 slow opens).
 - **Open VSX** (VSCodium, Cursor, Gitpod): create the namespace `smojon`, file the ownership
   claim, then add an `OVSX_PAT` secret or set up trusted publishing (`PUBLISHING.md`).
 - **npm token:** add the `NPM_TOKEN` secret (`PUBLISHING.md` → npm); the next release then
@@ -116,6 +114,11 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
   process runs at Idle priority while hidden. `--disable-renderer-backgrounding` removes the wait
   (0-1.6 s instead of 8-64 s, alternating pairs). Details, measurements and the VS Code issue
   draft: [investigations/notebook-open-slow.md](investigations/notebook-open-slow.md).
+  Since 2026-10-20 the integration tests start VS Code with that flag
+  (`test/integration/runElectron.ts`; `MD_RUNBOOK_VSCODE_KEEP_BACKGROUNDING=1` leaves it out), so
+  CI no longer sees these hangs by design; the retry and the probe stay in place and will show
+  any slow open that remains. To observe VS Code's own behaviour: the macOS open probe workflow
+  with "keep_backgrounding" or "ab".
 
 ## Ideas for later
 

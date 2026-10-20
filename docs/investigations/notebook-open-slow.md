@@ -341,7 +341,7 @@ Start menu), not only from one patched shortcut.
 | --- | --- | --- | --- |
 | Start VS Code with `--disable-renderer-backgrounding` (add it to the shortcut's target, after Code.exe) | User | Waits of 0 to 1.6 s instead of 8 to 26 s in the test | Applies only when VS Code starts from that shortcut; `argv.json` does not accept this switch (VS Code passes only 5 Chromium switches through: disable-hardware-acceleration, force-color-profile, disable-lcd-text, proxy-bypass-list, remote-debugging-port); hidden pages and background windows keep full priority |
 | Disable the built-in Mermaid extension (`@builtin mermaid` in the Extensions view) | User | About 2 to 3 s less | No Mermaid diagrams in Markdown previews and notebooks |
-| Pass `--disable-renderer-backgrounding` in md-runbook's CI integration tests (`test/integration/runElectron.ts`, `launchArgs`; `MD_RUNBOOK_VSCODE_ARGS` already does it ad hoc) | md-runbook | Likely removes the macOS CI open hangs of 2026-10-19 | None for users; to be confirmed on CI |
+| Pass `--disable-renderer-backgrounding` in md-runbook's CI integration tests (`test/integration/runElectron.ts`; done 2026-10-20, `MD_RUNBOOK_VSCODE_KEEP_BACKGROUNDING=1` leaves it out) | md-runbook | Likely removes the macOS CI open hangs of 2026-10-19 | None for users; CI's open probe will show any slow open that remains |
 | Raise the webview process's priority from the extension host while a runbook waits (see above) | md-runbook, opt-in | Probably the same as the flag, without a shortcut change; untested | Windows only, spawns PowerShell, acts on VS Code's processes behind Chromium's back |
 | Document the symptom and the workaround (docs/features, troubleshooting) | md-runbook | Users know it is VS Code and how to avoid it | None |
 | Report it to VS Code | md-runbook | A fix for everyone: keep the webview's process at normal priority while it warms up, or show code cells before the Markdown renderers are ready | The issue draft below |
@@ -459,8 +459,9 @@ Status on 2026-10-20, end of session:
       flashes at a wrong position.
 - [ ] Try the workaround in the user's own VS Code: add `--disable-renderer-backgrounding` to the
       shortcut, then compare opens with and without it, alternating.
-- [ ] Decide on CI: add `--disable-renderer-backgrounding` to the integration tests now, or first
-      rerun the macOS A/B probe (Actions → macOS open probe → `ab`) on a busier day.
+- [x] CI: the integration tests start VS Code with `--disable-renderer-backgrounding` since
+      2026-10-20 (`runElectron.ts`); the macOS open probe can still run without it
+      (`keep_backgrounding`, `ab`).
 - [ ] Optional: offer the fix as a pull request to microsoft/vscode once the issue is filed.
 - Open: whether the "window detected unresponsive" hang (series 1, open 2) is the same cause or a
   second effect of heavy load; it did not recur in later series.
