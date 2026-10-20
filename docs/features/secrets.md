@@ -151,6 +151,14 @@ LABEL='literal $text'
 Environment variables are applied in this order (later wins): `mdRunbook.execution.env`, the
 `.env` file, `mdRunbook.secrets.inject`, references in the cell.
 
+**Tools installed by the runbook.** Cells inherit VS Code's `PATH`, read once when VS Code
+started. On Windows, each cell also gets the `PATH` folders added to the registry since then
+(appended, so the inherited order wins; `mdRunbook.execution.refreshPath` turns it off), so a
+step can install Git or uv with `winget` and the next step can use it. On macOS and Linux most
+installers write into a folder that is already on the `PATH`; when one adds a new folder
+through your shell profile (uv, cargo, nvm), restart VS Code or start the cell with
+`export PATH="$HOME/.local/bin:$PATH"`.
+
 **Cells written by an assistant** (`by=` in the fence) get none of this: no `.env` file, no
 `mdRunbook.secrets.inject`, and a `${secret:…}` or secret `${input:…}` reference fails the cell
 with a message. Their environment is rebuilt from `mdRunbook.execution.env`, their own `env.*`
@@ -163,5 +171,6 @@ options and `${param:}` / non-secret `${input:}` values, plus `mdRunbook.approva
 | --- | --- | --- |
 | `mdRunbook.secrets.inject` | `[]` | Stored secrets passed to every cell as environment variables. |
 | `mdRunbook.execution.envFile` | `""` | `.env` file loaded into every cell's environment (e.g. `.env`, `${workspaceFolder}/.env`). |
+| `mdRunbook.execution.refreshPath` | `true` | Windows: add the `PATH` folders installed since VS Code started to each cell and new session. |
 | `mdRunbook.redaction.redactKnownSecrets` | `true` | Redact the `.env` file's values from live and saved output. |
 | `mdRunbook.params.useDefaults` | `false` | Use front-matter defaults without asking. |
