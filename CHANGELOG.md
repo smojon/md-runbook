@@ -5,14 +5,19 @@
 - **Line hover, plain click:** rest the mouse on a command of a cell (with two or more) for
   **Run line**, **Run lines 1-N** (up to and including it), **Run lines N-end**, **Step from
   here**, **Check**, **Breakpoint**, **Copy with values** and, with an AI provider set,
-  **Explain**, with VS Code's own icons. Below the buttons: whether it will ask before running, the last known target
-  context (`output.recordContext`), and the current value of each `${param:…}`, `${out:…}`,
-  `${input:…}` (secrets never shown). A plain click is enough; the inline `▶ ☐` needed
-  Ctrl+click.
+  **Explain**, with VS Code's own icons. Below the buttons: whether it will ask before running,
+  the last known target context (`output.recordContext`), and the current value of each
+  `${param:…}`, `${out:…}`, `${input:…}` (secrets never shown). A plain click is enough; the
+  inline `▶ ☐` needed Ctrl+click.
 - Checked lines get a ☑ in the margin, and the cell's status line has **Run 2 checked lines**,
   one click to run them.
 - `mdRunbook.lines.buttons` is now `hover` (default), `inline` (the `▶ ☐` in front of each
   command, as in 0.3.2 to 0.4.0) or `off`. An earlier `true` still means inline, `false` off.
+- **Slow opens explained:** when a runbook takes more than 10 s to show its cells, md-runbook says
+  once that this is VS Code delaying notebooks on a busy computer, and how to avoid it (start VS
+  Code with `--disable-renderer-backgrounding`), with **Learn More** and **Don't Show Again**. See
+  [Troubleshooting](docs/troubleshooting.md) and the
+  [investigation](docs/investigations/notebook-open-slow.md).
 
 ## 0.4.0
 
