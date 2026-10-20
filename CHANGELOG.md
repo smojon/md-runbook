@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 - **Line hover, plain click:** rest the mouse on a command of a cell (with two or more) for
   **Run line**, **Run lines 1-N** (up to and including it), **Run lines N-end**, **Step from
