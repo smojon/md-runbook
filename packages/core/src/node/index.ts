@@ -5,4 +5,5 @@
  */
 export { RunOptions, killTree, runProcess } from './runner';
 export { executeCell, nodeShellEnv } from './execute';
+export { expandWindowsVars, freshenPath, mergePath, parseRegQuery, registryPath } from './freshPath';
 export { gitBashCandidates, pwshWrapper, resolveShell } from './shell';

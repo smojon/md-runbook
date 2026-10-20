@@ -27,6 +27,11 @@ export interface ShellSettings {
   bashPath?: string;
   /** Explicit PowerShell executable. */
   pwshPath?: string;
+  /**
+   * Windows: add the PATH directories installed since VS Code started (read from the registry,
+   * as a new terminal would) to each cell's environment. On unless `false`.
+   */
+  refreshPath?: boolean;
 }
 
 export interface ShellEnv {

@@ -61,6 +61,11 @@ Run cells with the usual notebook controls: run cell, **Run All**, Run Above/Bel
 | `sh`, `bash` | Git Bash (auto-detected or `mdRunbook.shell.bashPath`) | `bash` (falls back to `sh`) |
 
 - **Working directory:** the folder containing the `.md` file.
+- **Programs installed during the session (Windows):** each cell gets the `PATH` directories
+  added since VS Code started, read from the registry as a new terminal does, so a runbook can
+  install a tool in one step and use it in the next without restarting VS Code. Directories are
+  only appended; the inherited `PATH` keeps its order. `mdRunbook.execution.refreshPath` turns it
+  off; a [session](docs/features/session.md) keeps the `PATH` it started with.
 - **How a cell runs:** by default each cell is written to a temporary script file and run as a
   separate process, so variables and `cd` don't carry over between cells. Set
   `mdRunbook.execution.mode` to `session` to keep one shell per runbook instead
@@ -264,6 +269,7 @@ extension is also disabled in untrusted workspaces (Restricted Mode).
 | `mdRunbook.redaction.applyToLiveOutput` | `true` | Also redact the output shown in the editor. |
 | `mdRunbook.execution.stopOnFailure` | `true` | Run All stops at the first failed cell. |
 | `mdRunbook.execution.timeoutSeconds` | `0` | Kill a cell's process tree after N seconds. `0` = no timeout. |
+| `mdRunbook.execution.refreshPath` | `true` | Windows: add the `PATH` directories installed since VS Code started to each cell. |
 | `mdRunbook.execution.env` | `{}` | Extra environment variables for every cell. |
 | `mdRunbook.shell.bashPath` | `""` | bash executable for `sh`/`bash` (e.g. `C:\\Program Files\\Git\\bin\\bash.exe`). |
 | `mdRunbook.shell.pwshPath` | `""` | PowerShell executable for `pwsh`/`powershell`. |

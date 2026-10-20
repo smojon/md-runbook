@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Tools installed by a runbook are found by its next step (Windows):** every cell inherited
+  VS Code's `PATH`, read once when VS Code started, so a runbook that installed Git or uv with
+  `winget` in one step failed to find it in the next until VS Code was restarted. Each cell now
+  also gets the `PATH` directories added since then, read from the registry (Machine, then User)
+  as a new terminal does. They are only appended, so the inherited `PATH` keeps its order and its
+  own entries (a virtualenv, a `PATH` set before starting VS Code) still win.
+  `mdRunbook.execution.refreshPath` (default on) turns it off. Isolated cells only: a session
+  keeps the `PATH` it started with.
+
 ## 0.5.0
 
 - **Line hover, plain click:** rest the mouse on a command of a cell (with two or more) for

@@ -3,6 +3,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { freshenPath } from './freshPath';
 import { runProcess } from './runner';
 import { ShellEnv, resolveShell, shellKindForLanguage } from './shell';
 import type { ExecuteOptions, ExecuteResult } from '../result';
@@ -61,6 +62,7 @@ export async function executeCell(opts: ExecuteOptions, shellEnv: ShellEnv = nod
   let source = opts.source;
   let cwd = opts.cwd;
   const env: NodeJS.ProcessEnv = { ...process.env, ...opts.env };
+  if (opts.settings.refreshPath !== false) await freshenPath(env, shellEnv.platform);
   let args = shell.args(scriptPath);
   if (shell.kind === 'cmd' && /^[\\/]{2}/.test(cwd)) {
     // cmd.exe can't start in a UNC folder (it silently falls back to C:\Windows); pushd maps a drive.

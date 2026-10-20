@@ -63,6 +63,7 @@ export function executionConfig(): ExecutionConfig {
     shell: {
       bashPath: c.get<string>('shell.bashPath', '') || undefined,
       pwshPath: c.get<string>('shell.pwshPath', '') || undefined,
+      refreshPath: c.get<boolean>('execution.refreshPath', true),
     },
   };
 }
