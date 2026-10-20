@@ -989,9 +989,22 @@
             "order": 1
           },
           "mdRunbook.output.saveAfterRun": {
-            "type": "boolean",
-            "default": false,
-            "markdownDescription": "Save the runbook after each run (a cell, a range, Run All, a line run), so outputs are on disk even if VS Code closes. Untitled runbooks are not saved.",
+            "type": [
+              "string",
+              "boolean"
+            ],
+            "enum": [
+              "copies",
+              true,
+              false
+            ],
+            "enumDescriptions": [
+              "Save run copies (Run All as Copy) after each run; runbooks run in place are saved only when you save them.",
+              "Save every runbook after each run.",
+              "Never save after a run."
+            ],
+            "default": "copies",
+            "markdownDescription": "Save the runbook after each run (a cell, a range, Run All, a line run), so outputs are on disk even if VS Code closes. `copies` saves only run copies, the files **Run All as Copy** makes as the record of a run; `true` also saves runbooks run in place, which writes their output into the file without an explicit save. Untitled runbooks are not saved.",
             "order": 2
           },
           "mdRunbook.output.historySize": {

@@ -84,6 +84,11 @@ With `"mdRunbook.output.mode": "copy"`, **Run All as Copy** moves to the front o
 toolbar, and running cells in place in a runbook shows a one-time hint offering a copy instead.
 Running in place still works.
 
+A copy is the record of a run, so it is saved after every run (the initial Run All, and any cell
+re-run in it later): `mdRunbook.output.saveAfterRun` is `"copies"` by default. A runbook run in
+place is saved only when you save it, so nothing is written into your file without that step;
+`true` saves those too, `false` never saves after a run.
+
 ## Settings
 
 | Setting | Default | Description |
@@ -91,3 +96,4 @@ Running in place still works.
 | `mdRunbook.output.historySize` | `0` | Earlier outputs kept per cell when it is re-run. `0` = off. |
 | `mdRunbook.output.mode` | `"inPlace"` | `"copy"` makes **Run All as Copy** the primary action and hints at it when cells are run in place. |
 | `mdRunbook.output.copyFolder` | `""` | Folder for run copies, relative to the runbook's folder (or absolute). Empty = next to the runbook. |
+| `mdRunbook.output.saveAfterRun` | `"copies"` | Save after each run: `"copies"` only run copies, `true` every runbook, `false` never. |

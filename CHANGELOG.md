@@ -13,6 +13,10 @@
   one click to run them.
 - `mdRunbook.lines.buttons` is now `hover` (default), `inline` (the `▶ ☐` in front of each
   command, as in 0.3.2 to 0.4.0) or `off`. An earlier `true` still means inline, `false` off.
+- **Run copies are saved after each run:** `mdRunbook.output.saveAfterRun` is now `"copies"` by
+  default, so a file made by **Run All as Copy** has its outputs on disk after every run, also
+  when a cell in it is re-run later. Runbooks run in place are still saved only when you save
+  them; `true` saves those too (as before), `false` never saves after a run.
 - **Slow opens explained:** when a runbook takes more than 10 s to show its cells, md-runbook says
   once that this is VS Code delaying notebooks on a busy computer, and how to avoid it (start VS
   Code with `--disable-renderer-backgrounding`), with **Learn More** and **Don't Show Again**. See

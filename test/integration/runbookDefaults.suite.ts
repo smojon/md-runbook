@@ -50,6 +50,31 @@ export const tests: Test[] = [
       }
     },
   },
+  {
+    name: 'output.saveAfterRun default "copies": a run copy is saved after a run, a runbook run in place is not',
+    fn: async () => {
+      const cell = `\`\`\`${LANG}\n${isWin ? 'Write-Output saved-now' : 'echo saved-now'}\n\`\`\`\n`;
+      // Named like a copy of Run All as Copy (`copyFileName`), which is how a reopened copy is recognised.
+      const copy = writeFile('copy-default.20261020-120000.md', `# Copy\n\n${cell}`);
+      const inPlace = writeFile('inplace-default.md', `# In place\n\n${cell}`);
+      try {
+        let editor = await openRunbook(copy);
+        await runCells(editor, 1, 2);
+        assert.equal(await waitForRun(editor.notebook.cellAt(1)), true);
+        await waitFor('the copy to be saved', () => /saved-now/.test(read(copy)) && !editor.notebook.isDirty);
+        await closeAll();
+
+        editor = await openRunbook(inPlace);
+        await runCells(editor, 1, 2);
+        assert.equal(await waitForRun(editor.notebook.cellAt(1)), true);
+        await new Promise((r) => setTimeout(r, 1500));
+        assert.ok(editor.notebook.isDirty, 'the in-place runbook was saved after the run');
+        assert.doesNotMatch(read(inPlace), /saved-now/);
+      } finally {
+        await closeAll();
+      }
+    },
+  },
 ];
 
 tests.push({

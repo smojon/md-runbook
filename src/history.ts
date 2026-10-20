@@ -69,7 +69,8 @@ async function captureHistory(_plan: CellPlan, ctx: PrepareContext): Promise<voi
 
 const copyHinted = new Set<string>();
 
-function isCopy(uri: vscode.Uri): boolean {
+/** Whether the runbook is a run copy: made by Run All as Copy this session, or named like one. */
+export function isCopy(uri: vscode.Uri): boolean {
   return copyOrigin(uri) !== undefined || isCopyFileName(path.basename(uri.path));
 }
 
