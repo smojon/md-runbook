@@ -48,16 +48,16 @@ export const tests: Test[] = [
         assert.doesNotMatch(await hoverText(single, 0), /Run line/, 'no buttons in a one-command cell');
         assert.deepEqual(await vscode.commands.executeCommand('mdRunbook._lineStatus', docUri), []);
 
-        // Run / Step from here (not on the last line), breakpoint, copy; no Explain without an AI provider.
+        // Run lines from here / Step from here (not on the last line), breakpoint, copy; no Explain without an AI provider.
         const first = await hoverText(cell, 0);
-        assert.match(first, /\[\$\(run-below\) Run from here \(1-3\)\]\(command:mdRunbook\.runFromLineAt\?/);
+        assert.match(first, /\[\$\(run-below\) Run lines 1-3\]\(command:mdRunbook\.runFromLineAt\?/);
         assert.match(first, /\[\$\(debug-step-into\) Step from here\]\(command:mdRunbook\.stepFromLineAt\?/);
         assert.match(first, /\[\$\(debug-breakpoint\) Breakpoint\]\(command:mdRunbook\.toggleBreakpointAt\?/);
         assert.match(first, /\[\$\(copy\) Copy\]\(command:mdRunbook\.copyLineAt\?/);
         assert.doesNotMatch(first, /Explain/);
-        assert.doesNotMatch(first, /Run until here/, 'nothing before the first line');
-        assert.doesNotMatch(await hoverText(cell, 2), /Run from here/, 'nothing after the last line');
-        assert.match(await hoverText(cell, 1), /\[\$\(run-above\) Run until here \(1-2\)\]\(command:mdRunbook\.runToLineAt\?/);
+        assert.doesNotMatch(first, /runToLineAt/, 'no Run lines 1-N on the first line');
+        assert.doesNotMatch(await hoverText(cell, 2), /runFromLineAt/, 'no Run lines N-end on the last line');
+        assert.match(await hoverText(cell, 1), /\[\$\(run-above\) Run lines 1-2\]\(command:mdRunbook\.runToLineAt\?/);
 
         const bps = (): vscode.Breakpoint[] =>
           vscode.debug.breakpoints.filter((b) => b instanceof vscode.SourceBreakpoint && b.location.uri.toString() === docUri);
@@ -90,7 +90,7 @@ export const tests: Test[] = [
         assert.match(outputText(cell), /one[\s\S]*three/);
         assert.doesNotMatch(outputText(cell), /two/);
 
-        // Run until here, from line 2: lines 1 and 2.
+        // Run lines 1-2, from line 2: lines 1 and 2.
         void vscode.commands.executeCommand('mdRunbook.runToLineAt', docUri, 1);
         await new Promise((r) => setTimeout(r, 500));
         assert.equal(await waitForRun(cell), true, outputText(cell));

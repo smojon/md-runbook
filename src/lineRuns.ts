@@ -4,7 +4,8 @@
  * commands as `core/steps.ts` finds them; the controller runs them in one shell.
  *
  * In cells with two or more commands, each command has buttons. By default they are in a hover on
- * the line (links in a hover take a plain click): Run line, Run until here, Run / Step from here, Check, Breakpoint,
+ * the line (links in a hover take a plain click): Run line, Run lines 1-N (up to and including it),
+ * Run lines N-end, Step from here, Check, Breakpoint,
  * Copy with values, Explain (with an AI provider set), then what the line would ask before running,
  * the last known target context, and the current values of its `${…}` references. Checked lines
  * get a ☑ in the margin, and the cell's status line has "Run N checked lines". With
@@ -380,9 +381,9 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
         `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))} "${tip}")`;
 
       const runs = [link(`$(play) Run line ${lines}`, 'mdRunbook.runLineAt', 'Run only this command')];
-      if (step !== steps[0]) runs.push(link(`$(run-above) Run until here (${formatLineRange(steps[0]!.start, step.end)})`, 'mdRunbook.runToLineAt', 'Run the commands before this one, then this one'));
+      if (step !== steps[0]) runs.push(link(`$(run-above) Run lines ${formatLineRange(steps[0]!.start, step.end)}`, 'mdRunbook.runToLineAt', 'Run the commands before this one, and this one'));
       if (step !== last) {
-        runs.push(link(`$(run-below) Run from here (${formatLineRange(step.start, last.end)})`, 'mdRunbook.runFromLineAt', 'Run this command and the ones after it'));
+        runs.push(link(`$(run-below) Run lines ${formatLineRange(step.start, last.end)}`, 'mdRunbook.runFromLineAt', 'Run this command and the ones after it'));
         runs.push(link('$(debug-step-into) Step from here', 'mdRunbook.stepFromLineAt', 'Run this command, then pause before each next one (F10 next, F5 continue)'));
       }
       const on = checks.get(uri)?.has(step.text) ?? false;

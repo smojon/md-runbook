@@ -55,7 +55,7 @@ run **md-runbook: Open Sample Runbook**.
 Rest the mouse on a command for a moment (each button has a VS Code icon in front):
 
 ```text
-Run line 2 · Run until here (1-2) · Run from here (2-4) · Step from here
+Run line 2 · Run lines 1-2 · Run lines 2-4 · Step from here
 Check · Breakpoint · Copy with values · Explain
 ───────────────────────────────────────────────
 Asks before running: matches delete
@@ -67,8 +67,8 @@ ${out:POD} = no value yet: run the cell with capture=POD first
 | | |
 |---|---|
 | **Run line** | Runs only that command. |
-| **Run until here** | Runs the commands before it, then it, in order. Not on the first command. |
-| **Run from here** / **Step from here** | Runs that command and the ones after it, straight through or pausing before each (`F10`, `F5`, `Shift+F5`). Not on the last command. |
+| **Run lines 1-2** (run-above icon) | Runs the commands before it and it, in order: on line 2, lines 1 and 2. Not on the first command. |
+| **Run lines 2-4** (run-below icon) / **Step from here** | Runs that command and the ones after it, straight through or pausing before each (`F10`, `F5`, `Shift+F5`). Not on the last command. |
 | **Check** | Checks it for **Run Checked Lines** (**Uncheck** when checked). |
 | **Breakpoint** | Sets or removes a breakpoint on it, as a click in the margin does. Not with `mdRunbook.lines.breakpoints` off. |
 | **Copy with values** | Copies the command with the current `${param:…}`, `${out:…}` and `${input:…}` values filled in, to paste into a terminal. `${secret:…}`, secret inputs and values captured as secret stay as references. Without references it is **Copy**. |
