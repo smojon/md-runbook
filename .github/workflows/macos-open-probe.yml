@@ -69,8 +69,7 @@ jobs:
           grep -E '=== flag|! opening|open probe:|^  [^ ].*: [0-9]+ ms, |stalls > 1 s|integration tests passed|✖' integration.log || true
           if grep -q '=== flag' integration.log; then
             echo; echo "slow opens (> 5 s) per mode:"
-            awk '/^=== flag (on|off)$/ {mode=$3} /! opening/ {n[mode]++} END {print "  flag off: " n["off"]+0 "
-  flag on:  " n["on"]+0}' integration.log
+            awk '/^=== flag (on|off)$/ {mode=$3} /! opening/ {n[mode]++} END {print "  flag off: " n["off"]+0; print "  flag on:  " n["on"]+0}' integration.log
           fi
       - uses: actions/upload-artifact@v7
         if: always()
