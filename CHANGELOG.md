@@ -8,8 +8,10 @@
   also gets the `PATH` directories added since then, read from the registry (Machine, then User)
   as a new terminal does. They are only appended, so the inherited `PATH` keeps its order and its
   own entries (a virtualenv, a `PATH` set before starting VS Code) still win.
-  `mdRunbook.execution.refreshPath` (default on) turns it off. Isolated cells only: a session
-  keeps the `PATH` it started with.
+  The shell itself is looked up on it too, so a PowerShell 7 installed by an earlier step runs
+  the next `pwsh` cell. A session gets the directories when it starts (**Restart Session** starts
+  a new one); a running session keeps its `PATH`. `mdRunbook.execution.refreshPath` (default on)
+  turns it off.
 
 ## 0.5.0
 

@@ -48,28 +48,28 @@ export function mergePath(current: string, fresh: readonly string[]): string {
   return [current.replace(/;+$/, ''), ...added].filter(Boolean).join(';');
 }
 
-function regQuery(key: string): Promise<string> {
-  return new Promise((resolve) => {
+/** The output of `reg query <key> /v Path`, or "" if `reg` fails or is missing. */
+export type RegQuery = (key: string) => Promise<string>;
+
+const regQuery: RegQuery = (key) =>
+  new Promise((resolve) => {
     execFile('reg', ['query', key, '/v', 'Path'], { windowsHide: true, timeout: 5000 }, (error, stdout) =>
       resolve(error ? '' : String(stdout)),
     );
   });
-}
 
-let cache: { at: number; dirs: string[] } | undefined;
+/** The unexpanded Machine and User `Path` values, read together; expanded per call (`env` differs between cells). */
+let cache: { at: number; values: string[] } | undefined;
 /** Run All starts many cells in a row; reading the registry once every few seconds is enough. */
 const CACHE_MS = 3000;
 
-/** The Machine then the User PATH directories from the registry, expanded; [] if unreadable. */
-export async function registryPath(env: NodeJS.ProcessEnv, now: number = Date.now()): Promise<string[]> {
-  if (cache && now - cache.at < CACHE_MS) return cache.dirs;
-  const dirs: string[] = [];
-  for (const key of KEYS) {
-    const value = parseRegQuery(await regQuery(key));
-    dirs.push(...expandWindowsVars(value, env).split(';').filter((d) => d.trim()));
+/** The Machine then the User PATH directories from the registry, expanded with `env`; [] if unreadable. */
+export async function registryPath(env: NodeJS.ProcessEnv, now: number = Date.now(), query: RegQuery = regQuery): Promise<string[]> {
+  if (!cache || now - cache.at >= CACHE_MS) {
+    const values = await Promise.all(KEYS.map(async (key) => parseRegQuery(await query(key))));
+    cache = { at: now, values };
   }
-  cache = { at: now, dirs };
-  return dirs;
+  return cache.values.flatMap((value) => expandWindowsVars(value, env).split(';').filter((d) => d.trim()));
 }
 
 /**

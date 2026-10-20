@@ -177,7 +177,7 @@ describe('bash session', { skip: !has('bash') && 'bash not found' }, () => {
 
   it('restart and stop', async () => {
     await run('bash', 'X=1');
-    assert.deepEqual(pool.restart(), [pool.labels()[0]]);
+    assert.deepEqual(await pool.restart(), [pool.labels()[0]]);
     assert.equal((await run('bash', 'echo "${X:-unset}"')).stdout, 'unset\n');
     assert.equal(pool.stop().length, 1);
     assert.deepEqual(pool.labels(), []);
@@ -302,7 +302,7 @@ describe('bash session: cwd= cells, clean restart, setup file', { skip: !has('ba
     pool.stop();
     // The cell that starts the session has its own folder and a secret.
     assert.equal((await run('bash', 'true', { cwd: other, env: { MDRB_SECRET: 's3cret' } })).exitCode, 0);
-    pool.restart();
+    await pool.restart();
     const r = await run('bash', 'echo "${MDRB_SECRET:-unset}"\npwd -P');
     assert.equal(lines(r)[0], 'unset');
     same(lines(r)[1] ?? '', base);
@@ -359,7 +359,7 @@ describe('pwsh session: cwd= cells, setup file, quoting', { skip: !has('pwsh') &
   it('restart starts in the base folder with only the VS Code environment', async () => {
     pool.stop();
     assert.equal((await run('pwsh', "'x'", { cwd: other, env: { MDRB_SECRET: 's3cret' } })).exitCode, 0);
-    pool.restart();
+    await pool.restart();
     const r = await run('pwsh', 'if ($env:MDRB_SECRET) { $env:MDRB_SECRET } else { "unset" }\n(Get-Location).Path');
     const [secret, where] = r.stdout.trim().split(/\r?\n/);
     assert.equal(secret, 'unset');

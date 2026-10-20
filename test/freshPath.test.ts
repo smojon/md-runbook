@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { expandWindowsVars, freshenPath, mergePath, parseRegQuery } from '@md-runbook/core/node';
+import { expandWindowsVars, freshenPath, mergePath, parseRegQuery, registryPath } from '@md-runbook/core/node';
 
 describe('fresh PATH on Windows', () => {
   it('reads the Path value of reg query, plain or expandable', () => {
@@ -27,6 +27,22 @@ describe('fresh PATH on Windows', () => {
     assert.equal(mergePath(current, fresh), current.replace(/;+$/, '') + ';C:\\Users\\me\\.local\\bin');
     assert.equal(mergePath(current, ['C:\\Windows\\system32']), current, 'unchanged when nothing is new');
     assert.equal(mergePath('', ['C:\\a']), 'C:\\a');
+  });
+
+  it('reads the registry once per few seconds, both keys together, and expands for each cell', async () => {
+    const asked: string[] = [];
+    const query = async (key: string): Promise<string> => {
+      asked.push(key);
+      return key.startsWith('HKLM') ? '    Path    REG_EXPAND_SZ    %SystemRoot%\\system32\r\n' : '    Path    REG_EXPAND_SZ    %USERPROFILE%\\bin\r\n';
+    };
+    const t0 = 1_000_000;
+    assert.deepEqual(await registryPath({ SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\a' }, t0, query), ['C:\\Windows\\system32', 'C:\\Users\\a\\bin']);
+    assert.equal(asked.length, 2, 'Machine and User, one query each');
+    // Within the cache window: no new query, but expanded with this cell's environment.
+    assert.deepEqual(await registryPath({ SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\b' }, t0 + 1000, query), ['C:\\Windows\\system32', 'C:\\Users\\b\\bin']);
+    assert.equal(asked.length, 2);
+    await registryPath({ SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\b' }, t0 + 3000, query);
+    assert.equal(asked.length, 4, 'read again after the cache window');
   });
 
   it('updates the PATH key in whatever case the env object has, on Windows only', async () => {

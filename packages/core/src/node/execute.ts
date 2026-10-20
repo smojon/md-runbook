@@ -7,6 +7,7 @@ import { freshenPath } from './freshPath';
 import { runProcess } from './runner';
 import { ShellEnv, resolveShell, shellKindForLanguage } from './shell';
 import type { ExecuteOptions, ExecuteResult } from '../result';
+import type { ShellSettings } from '../shellKind';
 
 export type { ExecuteOptions, ExecuteResult } from '../result';
 export { exitLabel, isSuccess } from '../result';
@@ -27,10 +28,11 @@ function findOnPath(command: string, env: NodeJS.ProcessEnv = process.env): stri
   return undefined;
 }
 
-export function nodeShellEnv(): ShellEnv {
+/** This process's platform and file system, looking programs up on `env`'s PATH (VS Code's by default). */
+export function nodeShellEnv(env: NodeJS.ProcessEnv = process.env): ShellEnv {
   return {
     platform: process.platform,
-    env: process.env,
+    env,
     exists: (f) => {
       try {
         return fs.statSync(f).isFile();
@@ -38,8 +40,26 @@ export function nodeShellEnv(): ShellEnv {
         return false;
       }
     },
-    which: (c) => findOnPath(c),
+    which: (c) => findOnPath(c, env),
   };
+}
+
+/**
+ * The environment a cell (or a session) starts with: VS Code's plus `extra`, with the PATH
+ * directories installed since VS Code started unless `settings.refreshPath` is off.
+ */
+export async function cellEnv(settings: ShellSettings, extra: NodeJS.ProcessEnv | undefined, platform: NodeJS.Platform): Promise<NodeJS.ProcessEnv> {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
+  if (settings.refreshPath !== false) await freshenPath(env, platform);
+  return env;
+}
+
+/**
+ * `shellEnv` looking programs up on `env`'s PATH, so a PowerShell 7 installed by an earlier cell
+ * is found. A `shellEnv` with its own lookup (tests) is kept as it is.
+ */
+export function shellEnvOn(shellEnv: ShellEnv, env: NodeJS.ProcessEnv): ShellEnv {
+  return shellEnv.env === process.env ? { ...shellEnv, env, which: (c) => findOnPath(c, env) } : shellEnv;
 }
 
 export async function executeCell(opts: ExecuteOptions, shellEnv: ShellEnv = nodeShellEnv()): Promise<ExecuteResult> {
@@ -53,7 +73,8 @@ export async function executeCell(opts: ExecuteOptions, shellEnv: ShellEnv = nod
   });
   const kind = shellKindForLanguage(opts.language);
   if (!kind) return fail(`No shell for language '${opts.language}'.`);
-  const resolved = resolveShell(kind, opts.settings, shellEnv);
+  const env = await cellEnv(opts.settings, opts.env, shellEnv.platform);
+  const resolved = resolveShell(kind, opts.settings, shellEnvOn(shellEnv, env));
   if (!resolved.ok) return fail(resolved.error);
   const shell = resolved.shell;
 
@@ -61,8 +82,6 @@ export async function executeCell(opts: ExecuteOptions, shellEnv: ShellEnv = nod
   const scriptPath = path.join(dir, 'cell' + shell.extension);
   let source = opts.source;
   let cwd = opts.cwd;
-  const env: NodeJS.ProcessEnv = { ...process.env, ...opts.env };
-  if (opts.settings.refreshPath !== false) await freshenPath(env, shellEnv.platform);
   let args = shell.args(scriptPath);
   if (shell.kind === 'cmd' && /^[\\/]{2}/.test(cwd)) {
     // cmd.exe can't start in a UNC folder (it silently falls back to C:\Windows); pushd maps a drive.

@@ -151,7 +151,7 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
   });
 
   /** Runs `fn` on the runbook's sessions; returns the shells it acted on (empty if none). */
-  const forActive = (uri: unknown, fn: (pool: SessionPool) => string[]): string[] => {
+  const forActive = (uri: unknown, fn: (pool: SessionPool) => string[] | Promise<string[]>): string[] | Promise<string[]> => {
     const nb = activeRunbook(uri);
     const pool = nb && pools.get(nb.uri.toString());
     if (!pool || pool.labels().length === 0) {
@@ -199,8 +199,8 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
       else if (pick?.id === 'stop') await vscode.commands.executeCommand('mdRunbook.stopSession');
     }),
     vscode.commands.registerCommand('mdRunbook.restartSession', (uri?: unknown) =>
-      forActive(uri, (pool) => {
-        const shells = pool.restart();
+      forActive(uri, async (pool) => {
+        const shells = await pool.restart();
         vscode.window.setStatusBarMessage(`md-runbook: restarted session (${shells.join(', ')})`, 5000);
         return shells;
       }),

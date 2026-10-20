@@ -1206,7 +1206,7 @@
           "mdRunbook.execution.refreshPath": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Windows: give each cell the `PATH` directories added since VS Code started (read from the registry, as a new terminal does), so a tool a runbook just installed is found without restarting VS Code. Directories are only added, at the end: the inherited `PATH` keeps its order. Isolated cells only; a session reads it when it starts.",
+            "markdownDescription": "Windows: give each cell the `PATH` directories added since VS Code started (read from the registry, as a new terminal does), so a tool a runbook just installed is found without restarting VS Code. Directories are only added, at the end: the inherited `PATH` keeps its order. A session gets them when it starts (**Restart Session** starts a new one); a running session keeps its `PATH`.",
             "order": 0
           },
           "mdRunbook.execution.env": {

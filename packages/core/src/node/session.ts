@@ -14,10 +14,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { executeCell, nodeShellEnv } from './execute';
+import { cellEnv, executeCell, nodeShellEnv, shellEnvOn } from './execute';
 import { killTree } from './runner';
 import { ResolvedShell, ShellEnv, ShellKind, resolveShell, shellKindForLanguage } from './shell';
 import type { ExecuteOptions, ExecuteResult, RunResult } from '../result';
+import type { ShellSettings } from '../shellKind';
 import { SentinelFilter } from '../sentinel';
 
 export { SENTINEL_START, SentinelFilter } from '../sentinel';
@@ -155,13 +156,15 @@ export class ShellSession {
     /** The session's base folder (the runbook's folder): where it starts. */
     readonly cwd: string,
     private readonly platform: NodeJS.Platform = process.platform,
+    /** The environment to start with: VS Code's (with the fresh PATH, see `cellEnv`). */
+    env: NodeJS.ProcessEnv = process.env,
   ) {
     this.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-runbook-session-'));
     // Git Bash takes C:/x/y paths; backslashes could be read as escapes.
     const dirForShell = platform === 'win32' && shell.kind === 'bash' ? this.dir.replace(/\\/g, '/') : this.dir;
     // Only VS Code's environment: per-cell variables (secrets, inputs, execution.env) are set by
     // each cell's setup script, so a restarted session starts clean.
-    const spawnEnv: NodeJS.ProcessEnv = { ...process.env, [DIR_ENV]: dirForShell };
+    const spawnEnv: NodeJS.ProcessEnv = { ...env, [DIR_ENV]: dirForShell };
     if (shell.kind === 'pwsh') {
       // .NET reads terminfo once at startup; unless TERM is dumb it writes cursor-key mode codes
       // to stdout around every line it reads from stdin.
@@ -327,6 +330,8 @@ export class SessionPool {
   private readonly sessions = new Map<ShellKind, ShellSession>();
   /** Kinds that have had a session, so a replacement can be announced. */
   private readonly started = new Set<ShellKind>();
+  /** The settings of the last cell, for the environment of a restarted session. */
+  private settings: ShellSettings = {};
 
   constructor(
     /** Called when a session starts or ends. */
@@ -350,7 +355,11 @@ export class SessionPool {
   async execute(opts: SessionExecuteOptions): Promise<ExecuteResult> {
     const kind = shellKindForLanguage(opts.language);
     if (kind === undefined || kind === 'cmd') return executeCell(opts, this.shellEnv);
-    const resolved = resolveShell(kind, opts.settings, this.shellEnv);
+    this.settings = opts.settings;
+    // VS Code's environment with the fresh PATH: the shell is looked up on it, and a new session
+    // starts with it (a running one keeps the PATH it started with).
+    const env = await cellEnv(opts.settings, undefined, this.shellEnv.platform);
+    const resolved = resolveShell(kind, opts.settings, shellEnvOn(this.shellEnv, env));
     if (!resolved.ok) return executeCell(opts, this.shellEnv); // reports the error
     let s = this.sessions.get(kind);
     if (s && (!s.alive || s.shell.command !== resolved.shell.command)) {
@@ -359,7 +368,7 @@ export class SessionPool {
     }
     if (!s) {
       if (this.started.has(kind)) opts.onStdout('[md-runbook] new session started\n');
-      s = this.start(resolved.shell, opts.baseCwd ?? opts.cwd);
+      s = this.start(resolved.shell, opts.baseCwd ?? opts.cwd, env);
     }
     // A cell with its own folder (`cwd=`) runs there without moving the session; other cells
     // run wherever earlier cells left it.
@@ -382,13 +391,15 @@ export class SessionPool {
 
   /**
    * Replace every running session with a fresh one in its base folder, with only VS Code's
-   * environment. Returns their labels.
+   * environment (and the fresh PATH). Returns their labels.
    */
-  restart(): string[] {
+  async restart(): Promise<string[]> {
     const running = [...this.sessions.values()].filter((s) => s.alive);
+    if (running.length === 0) return [];
+    const env = await cellEnv(this.settings, undefined, this.shellEnv.platform);
     for (const s of running) {
       s.dispose();
-      this.start(s.shell, s.cwd);
+      this.start(s.shell, s.cwd, env);
     }
     return running.map((s) => s.shell.label);
   }
@@ -406,8 +417,8 @@ export class SessionPool {
     this.stop();
   }
 
-  private start(shell: ResolvedShell, cwd: string): ShellSession {
-    const s = new ShellSession(shell, cwd);
+  private start(shell: ResolvedShell, cwd: string, env: NodeJS.ProcessEnv): ShellSession {
+    const s = new ShellSession(shell, cwd, this.shellEnv.platform, env);
     s.onDidEnd = () => {
       if (this.sessions.get(shell.kind) === s) this.sessions.delete(shell.kind);
       this.onChange();

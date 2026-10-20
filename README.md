@@ -64,8 +64,9 @@ Run cells with the usual notebook controls: run cell, **Run All**, Run Above/Bel
 - **Programs installed during the session (Windows):** each cell gets the `PATH` directories
   added since VS Code started, read from the registry as a new terminal does, so a runbook can
   install a tool in one step and use it in the next without restarting VS Code. Directories are
-  only appended; the inherited `PATH` keeps its order. `mdRunbook.execution.refreshPath` turns it
-  off; a [session](docs/features/session.md) keeps the `PATH` it started with.
+  only appended; the inherited `PATH` keeps its order. A [session](docs/features/session.md) gets
+  them when it starts and keeps its `PATH` while it runs. `mdRunbook.execution.refreshPath` turns
+  it off.
 - **How a cell runs:** by default each cell is written to a temporary script file and run as a
   separate process, so variables and `cd` don't carry over between cells. Set
   `mdRunbook.execution.mode` to `session` to keep one shell per runbook instead
