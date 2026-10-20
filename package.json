@@ -927,32 +927,44 @@
             "markdownDescription": "Apply per-cell options from the fence line (`timeout=`, `cwd=`, `env.NAME=`, `continue-on-error`, `skip`, `confirm`). Turn off to ignore options written in runbooks.",
             "order": 6
           },
-          "mdRunbook.codeLens.enabled": {
-            "type": "boolean",
-            "default": false,
-            "markdownDescription": "Show **▶ Run** links above code blocks in the plain Markdown editor. Off by default: text-editor runs skip per-cell options and secret injection (proposed and assistant-written cells are refused, risky commands still ask). User settings only.",
-            "scope": "machine",
-            "order": 7
-          },
           "mdRunbook.shell.bashPath": {
             "type": "string",
             "default": "",
             "scope": "machine",
             "markdownDescription": "Path to bash for `sh`/`bash` blocks. On Windows, Git Bash is found automatically (Program Files, LocalAppData, Scoop, next to `git.exe`); the WSL launcher is never used. User settings only.",
-            "order": 8
+            "order": 7
           },
           "mdRunbook.shell.pwshPath": {
             "type": "string",
             "default": "",
             "scope": "machine",
             "markdownDescription": "Path to PowerShell for `pwsh`/`powershell` blocks. Default: `pwsh` on PATH, falling back to Windows PowerShell (`powershell.exe`). User settings only.",
+            "order": 8
+          },
+          "mdRunbook.execution.refreshPath": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Windows: give each cell the `PATH` directories added since VS Code started (read from the registry, as a new terminal does), so a tool a runbook just installed is found without restarting VS Code. Directories are only added, at the end: the inherited `PATH` keeps its order. A session gets them when it starts (**Restart Session** starts a new one); a running session keeps its `PATH`.",
             "order": 9
+          }
+        }
+      },
+      {
+        "title": "Editor and lines",
+        "order": 2,
+        "properties": {
+          "mdRunbook.codeLens.enabled": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Show **▶ Run** links above code blocks in the plain Markdown editor. Off by default: text-editor runs skip per-cell options and secret injection (proposed and assistant-written cells are refused, risky commands still ask). User settings only.",
+            "scope": "machine",
+            "order": 1
           },
           "mdRunbook.lint.enabled": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Mark problems in runbooks while you edit: invalid or unknown cell options, `${out:NAME}` without an earlier `capture=NAME`, `${param:NAME}` not declared in the front matter, ignored front matter values. The same checks as `md-runbook lint`.",
-            "order": 10
+            "order": 2
           },
           "mdRunbook.lines.buttons": {
             "type": "string",
@@ -968,19 +980,19 @@
             ],
             "default": "hover",
             "markdownDescription": "Buttons for each command of a code cell with two or more commands: ▶ runs that command, ☐ checks it for **Run Checked Lines**.",
-            "order": 11
+            "order": 3
           },
           "mdRunbook.lines.breakpoints": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Breakpoints in runbook cells: click the margin of a `bash`, `pwsh` or `cmd` cell to set one; a run of that cell then goes line by line and pauses before it (F10 next line, F5 continue, Shift+F5 stop). A breakpoint on a blank line, a comment or inside a block pauses before the next command. Off: no breakpoint margin in `bash` and `cmd` cells, and breakpoints are ignored (the PowerShell extension, if installed, still shows its own margin in `pwsh` cells).",
-            "order": 12
+            "order": 4
           }
         }
       },
       {
         "title": "Saved output",
-        "order": 2,
+        "order": 3,
         "properties": {
           "mdRunbook.output.persist": {
             "type": "boolean",
@@ -1048,31 +1060,54 @@
             "description": "Remove ANSI escape codes (colours, cursor movement) from output written to the file.",
             "order": 7
           },
+          "mdRunbook.output.recordContext": {
+            "type": "object",
+            "default": {},
+            "additionalProperties": {
+              "type": "string"
+            },
+            "markdownDescription": "Commands whose first output line is recorded as an attribute of each output block, e.g. `{ \"context\": \"kubectl config current-context\" }` writes `context=prod-eu`. Run through the platform shell in the .md file's folder with a 5 s timeout; failures record `unknown`. User settings only.",
+            "scope": "machine",
+            "order": 8
+          },
+          "mdRunbook.output.recordContextCacheSeconds": {
+            "type": "number",
+            "default": 30,
+            "minimum": 0,
+            "description": "Reuse recorded context values for this many seconds per runbook instead of running the commands before every cell. 0 = run them every time.",
+            "order": 9
+          },
           "mdRunbook.progress.statusBar": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Show the active runbook's progress in the status bar (e.g. `4/7 · ✗ step 5`). Click it to go to the failed or next pending step.",
-            "order": 8
+            "order": 10
+          },
+          "mdRunbook.statusBar.contextAttr": {
+            "type": "string",
+            "default": "context",
+            "markdownDescription": "Which `mdRunbook.output.recordContext` attribute to show in the status bar for the active runbook.",
+            "order": 11
           },
           "mdRunbook.report.folder": {
             "type": "string",
             "default": "",
             "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is. User settings only.",
             "scope": "machine",
-            "order": 9
+            "order": 12
           },
           "mdRunbook.report.browserPath": {
             "type": "string",
             "default": "",
             "markdownDescription": "Browser that **Export Report (PDF)** prints with: Google Chrome, Microsoft Edge or Chromium (the program file). Empty = the first one found in the usual install locations. User settings only.",
             "scope": "machine",
-            "order": 10
+            "order": 13
           }
         }
       },
       {
         "title": "Safety and redaction",
-        "order": 3,
+        "order": 4,
         "properties": {
           "mdRunbook.execution.confirm": {
             "type": "string",
@@ -1173,42 +1208,13 @@
               ]
             },
             "order": 7
-          },
-          "mdRunbook.output.recordContext": {
-            "type": "object",
-            "default": {},
-            "additionalProperties": {
-              "type": "string"
-            },
-            "markdownDescription": "Commands whose first output line is recorded as an attribute of each output block, e.g. `{ \"context\": \"kubectl config current-context\" }` writes `context=prod-eu`. Run through the platform shell in the .md file's folder with a 5 s timeout; failures record `unknown`. User settings only.",
-            "scope": "machine",
-            "order": 8
-          },
-          "mdRunbook.output.recordContextCacheSeconds": {
-            "type": "number",
-            "default": 30,
-            "minimum": 0,
-            "description": "Reuse recorded context values for this many seconds per runbook instead of running the commands before every cell. 0 = run them every time.",
-            "order": 9
-          },
-          "mdRunbook.statusBar.contextAttr": {
-            "type": "string",
-            "default": "context",
-            "markdownDescription": "Which `mdRunbook.output.recordContext` attribute to show in the status bar for the active runbook.",
-            "order": 10
           }
         }
       },
       {
         "title": "Secrets and environment",
-        "order": 4,
+        "order": 5,
         "properties": {
-          "mdRunbook.execution.refreshPath": {
-            "type": "boolean",
-            "default": true,
-            "markdownDescription": "Windows: give each cell the `PATH` directories added since VS Code started (read from the registry, as a new terminal does), so a tool a runbook just installed is found without restarting VS Code. Directories are only added, at the end: the inherited `PATH` keeps its order. A session gets them when it starts (**Restart Session** starts a new one); a running session keeps its `PATH`.",
-            "order": 0
-          },
           "mdRunbook.execution.env": {
             "type": "object",
             "default": {},
@@ -1255,7 +1261,7 @@
       },
       {
         "title": "AI assistant",
-        "order": 5,
+        "order": 6,
         "properties": {
           "mdRunbook.ai.provider": {
             "type": "string",
@@ -1302,26 +1308,34 @@
             "markdownDescription": "Maximum length of an answer from the `anthropic` provider, in tokens (includes the model's thinking).",
             "order": 5
           },
+          "mdRunbook.ai.maxProposals": {
+            "type": "integer",
+            "default": 3,
+            "minimum": 1,
+            "maximum": 10,
+            "markdownDescription": "Maximum number of proposed cells **Suggest Next Steps** inserts.",
+            "order": 6
+          },
           "mdRunbook.ai.confirmBeforeSend": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Ask before sending, showing the provider, model, size and whether names are pseudonymized, with **Preview** of the exact text. User settings only.",
             "scope": "machine",
-            "order": 6
+            "order": 7
           },
           "mdRunbook.ai.confirmOncePerSession": {
             "type": "boolean",
             "default": false,
             "markdownDescription": "With `mdRunbook.ai.confirmBeforeSend`, ask only once per provider and VS Code session instead of before every send. User settings only.",
             "scope": "machine",
-            "order": 7
+            "order": 8
           },
           "mdRunbook.ai.pseudonymize": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Replace hostnames, IPs, URLs, emails and similar names with stable aliases before sending; aliases in the answer are mapped back locally. User settings only.",
             "scope": "machine",
-            "order": 8
+            "order": 9
           },
           "mdRunbook.ai.internalDomains": {
             "type": "array",
@@ -1330,7 +1344,7 @@
             },
             "default": [],
             "markdownDescription": "Internal DNS suffixes, e.g. `corp.example.com`. Hosts under them are always pseudonymized and reported by **Check for Leaks**.",
-            "order": 9
+            "order": 10
           },
           "mdRunbook.ai.terms": {
             "type": "array",
@@ -1339,13 +1353,26 @@
             },
             "default": [],
             "markdownDescription": "Extra words to pseudonymize (case-insensitive, whole words): cluster, customer or project names.",
-            "order": 10
+            "order": 11
           },
+          "mdRunbook.leaks.checkBeforeShare": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Scan for possible leaks (secrets, keys, high-entropy tokens, internal domains) before **Copy for AI** and **Export Report (HTML)**. If anything is found, nothing is copied or exported unless you choose **Copy Anyway** / **Export Anyway**. User settings only.",
+            "scope": "machine",
+            "order": 12
+          }
+        }
+      },
+      {
+        "title": "Copy for AI",
+        "order": 7,
+        "properties": {
           "mdRunbook.ai.copyForAi.enabled": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Enable **Copy for AI**, **Copy Cell for AI** and **Paste AI Proposal**. When off, the commands only show a message.",
-            "order": 11
+            "order": 1
           },
           "mdRunbook.ai.copyHeader": {
             "type": "string",
@@ -1353,42 +1380,27 @@
             "editPresentation": "multilineText",
             "markdownDescription": "Instructions put before the runbook text by **Copy for AI**. Empty = no header. User settings only.",
             "scope": "machine",
-            "order": 12
+            "order": 2
           },
           "mdRunbook.ai.maxChars": {
             "type": "number",
             "default": 60000,
             "minimum": 1000,
             "markdownDescription": "Maximum length of the text copied for AI. Outputs of the oldest runs are shortened first; code is only cut as a last resort.",
-            "order": 13
+            "order": 3
           },
           "mdRunbook.ai.maxOutputLines": {
             "type": "number",
             "default": 80,
             "minimum": 0,
             "markdownDescription": "Maximum lines per output in text copied for AI (first and last lines, plus error lines from the middle). `0` = unlimited.",
-            "order": 14
-          },
-          "mdRunbook.ai.maxProposals": {
-            "type": "integer",
-            "default": 3,
-            "minimum": 1,
-            "maximum": 10,
-            "markdownDescription": "Maximum number of proposed cells **Suggest Next Steps** inserts.",
-            "order": 15
-          },
-          "mdRunbook.leaks.checkBeforeShare": {
-            "type": "boolean",
-            "default": true,
-            "markdownDescription": "Scan for possible leaks (secrets, keys, high-entropy tokens, internal domains) before **Copy for AI** and **Export Report (HTML)**. If anything is found, nothing is copied or exported unless you choose **Copy Anyway** / **Export Anyway**. User settings only.",
-            "scope": "machine",
-            "order": 16
+            "order": 4
           }
         }
       },
       {
         "title": "Assistant proposals",
-        "order": 6,
+        "order": 8,
         "properties": {
           "mdRunbook.approval.enabled": {
             "type": "boolean",

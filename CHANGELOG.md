@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Settings regrouped** (no key changed): editor settings (code lens, lint, line buttons,
+  breakpoints) have their own group **Editor and lines**; the context recording settings and
+  the status bar ones sit under **Saved output**; `execution.refreshPath` under **Running
+  cells**; the four **Copy for AI** settings have their own group, leaving **AI assistant** with
+  the model and privacy settings.
+
 ## 0.6.0
 
 - **A block for another OS says so before you click it:** its status line reads
