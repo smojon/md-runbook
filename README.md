@@ -4,6 +4,8 @@ Open Markdown files as VS Code notebooks: run the shell code blocks and store th
 inside the same `.md` file. It runs natively on **Windows** (PowerShell, cmd, Git Bash; no WSL),
 **macOS** and **Linux**.
 
+![Run All on a runbook, then the same file as plain Markdown with the output saved in it](docs/demo.gif)
+
 - The file stays plain Markdown. Opening and saving without running anything leaves it
   **byte-for-byte unchanged**: CRLF/LF (even mixed), blank lines, `` ``` `` vs `~~~` fences, info
   strings and annotations, BOM, and a missing trailing newline are all kept.
@@ -20,8 +22,10 @@ The same file saved and opened as plain Markdown, with output blocks and redacte
 
 ## Install
 
-From the Visual Studio Marketplace or Open VSX: search for **Markdown Runbook** in the Extensions
-view (once published; see [PUBLISHING.md](PUBLISHING.md)). Requires VS Code 1.93 or newer.
+Search for **Markdown Runbook** in the Extensions view. It is on the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=smojon.md-runbook)
+(VS Code) and on [Open VSX](https://open-vsx.org/extension/smojon/md-runbook) (Cursor, Windsurf,
+VSCodium). Requires VS Code 1.93 or newer.
 
 Or build the `.vsix` yourself and install it:
 
@@ -32,6 +36,19 @@ code --install-extension md-runbook-0.1.0.vsix
 ```
 
 You can also use **Extensions view → ⋯ → Install from VSIX…**.
+
+## Compared with Runme
+
+[Runme](https://runme.dev) also opens Markdown as a notebook, and it does things md-runbook does
+not (cloud console views, a web interface, a larger community). The differences that matter most:
+
+| | md-runbook | Runme |
+|---|---|---|
+| Where the output goes | Into the runbook itself, under each block, so the file is its own record of what ran (or into a timestamped copy with **Run All as Copy**) | Into a separate Session Outputs file, off by default ([docs](https://docs.runme.dev/usage/auto-save)) |
+| Windows | Native: PowerShell, cmd and Git Bash, no WSL | Needs WSL 2 ([docs](https://docs.runme.dev/installation/windows)); PowerShell support is "rudimentary" ([limitations](https://docs.runme.dev/resources/limitations)) |
+| One runbook for several OSes | `os=windows`, `os=linux,macos` blocks: each OS runs its own | Open request ([runme#960](https://github.com/runmedev/runme/issues/960)) |
+
+As of October 2026, from Runme's documentation and issue tracker.
 
 ## Usage
 

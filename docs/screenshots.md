@@ -4,6 +4,13 @@ The README shows `docs/1-notebook.png` and `docs/2-saved-markdown.png`. The shot
 newer features. They all use [`examples/screenshots.runbook.md`](../examples/screenshots.runbook.md),
 which only prints simulated `kubectl` output, so it runs anywhere and changes nothing.
 
+## The demo GIF
+
+`docs/demo.gif` (top of the README) is recorded, not drawn: `scripts/demo-gif/record.js` drives a
+throwaway VS Code with the dev build through Run All, Save and Reopen as Text Editor, and
+`scripts/demo-gif/make_gif.py` turns the frames into the GIF. Usage is at the top of each script.
+Record it again when the notebook view changes visibly.
+
 ## Setup
 
 - A development window with the current build:
