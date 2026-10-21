@@ -4,7 +4,7 @@ State of the project for whoever picks it up next (person or new Claude session)
 
 ## Where things are
 
-- **Released:** 0.1.0 to 0.3.0 as GitHub releases with the `.vsix` attached; the Visual Studio
+- **Released:** 0.1.0 to 0.6.0 as GitHub releases with the `.vsix` attached; the Visual Studio
   Marketplace (publisher `smojon`) gets each one by a manual upload. Not on Open VSX or npm yet.
   The GitHub Action is used as `smojon/md-runbook@v<version>` (the release tags).
 - **Branch:** everything is on `main`, which is the default branch. Work happens on short-lived
@@ -21,6 +21,16 @@ State of the project for whoever picks it up next (person or new Claude session)
   the web build in Chromium and the release builds on an Android emulator and an iPhone
   simulator with the Maestro flows in `apps/mobile/e2e/maestro`. Locally: `cd apps/mobile &&
   npm ci && npm run check`. The spike that chose this stack: `spikes/ssh/README.md`.
+  The app draws runbooks like VS Code's notebook with native components (Markdown from the
+  core's `renderMarkdown` HTML, `src/markdown/`; code cells with line actions and step through,
+  `src/cells/`), remembers runbooks and saves them back to their file (`src/runbooks/`), and
+  honours `host=` cells. Its own native code is in `apps/mobile/modules/`: `hardware-key` (the
+  SSH key in the Secure Enclave or Android Keystore; the SSH layer signs through
+  `ExternalKeyPair`) and `document-access` (iOS: open a file in place, keep a bookmark). These
+  are only compiled by the Android and iOS jobs of the App workflow.
+- **Relay:** `apps/relay` lets the web app reach SSH servers (WebSocket to TCP, protocol v1,
+  allowlist and tokens; its README). Separate npm project with a Dockerfile; the Relay workflow
+  tests it and probes the container, and the App workflow runs a cell from Chromium through it.
 - **Examples:** `examples/sample.runbook.md` (the hand test drive, opened by **Open Sample
   Runbook**; sections 1–17 cover every feature), `examples/ci.runbook.md` (run by CI through the
   action), `examples/screenshots.runbook.md` (for `docs/screenshots.md`), and workflow templates
@@ -77,6 +87,9 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
   publishes the command line as `md-runbook` on npm. Until then: the GitHub Action, or
   `node out/dist/cli.js` from a clone.
 - **Screenshots:** the shot list and a demo runbook are ready in `docs/screenshots.md`.
+- **App store builds:** `apps/mobile/eas.json` is ready; the steps that need the owner's Expo,
+  Apple and Google accounts, and the encryption export question, are in
+  `apps/mobile/STORE.md`. Nothing has been built for the stores yet.
 
 ## Known gaps (small, documented or deliberate)
 
@@ -96,6 +109,11 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
   (2026-10-19). Likely cause: shell integration lost the end report of a command. Terminal mode
   now also ends a command a few seconds after its exit-code file appears; on a timeout the test
   prints the cell's output and the open terminals.
+- The integration test "terminal: a terminal cell answers an interactive prompt and its output
+  is saved" failed twice on Linux CI (2026-10-21), on commits that only touched the app; the
+  next runs passed. Rerun the failed job; look into it if it keeps coming back.
+- The app's iOS flow once failed with "Element not found: host-name" after tapping Add host;
+  a rerun passed.
 - The controller's try/finally cleanup has no unit test (it needs VS Code).
 - **Opening a runbook sometimes hangs inside VS Code on macOS CI runners** (investigated
   2026-10-19). The editor shows in ~100 ms, but `vscode.openWith` takes 5–20 s or never settles,
