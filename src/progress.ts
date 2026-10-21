@@ -48,7 +48,10 @@ export function notebookProgress(nb: vscode.NotebookDocument): Progress {
       if (c.kind !== vscode.NotebookCellKind.Code) return { kind: 'markup', tasks: checklist(c.document.getText()) };
       const attrs = cellAttrs(c);
       const os = slots[i];
-      return { kind: 'code', exit: attrs?.exit, partial: attrs?.lines !== undefined, check: attrs?.check, ...(os ? { os } : {}) };
+      const meta: unknown = c.metadata?.[META_KEY];
+      // host= blocks never run here (see safety.ts): skipped, not pending forever.
+      const elsewhere = isCodeMeta(meta) && parseCellOptions(meta.info).host !== undefined;
+      return { kind: 'code', exit: attrs?.exit, partial: attrs?.lines !== undefined, check: attrs?.check, ...(os ? { os } : {}), ...(elsewhere ? { elsewhere } : {}) };
     }),
   );
 }

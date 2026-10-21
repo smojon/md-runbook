@@ -165,6 +165,25 @@ describe('the VS Code-like runbook view', () => {
     await waitFor(() => expect(parse(getRunbook(r.id)!.text).cells[1]?.output?.attrs.lines).toBe('2-3'));
   });
 
+  it('a host= cell runs on that host, whichever is selected; an unknown name says so', async () => {
+    const { connectionFor } = jest.requireMock<{ connectionFor: jest.Mock }>('../ssh/connections');
+    connectionFor.mockClear();
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const db = addHost({ name: 'DB', hostname: 'db1', port: 22, username: 'ops' });
+    const r = addRunbook('t.md', '# T\n\n```bash host=db\necho on-db\n```\n\n```bash host=gone\necho x\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-output')).toBeTruthy());
+    expect(connectionFor.mock.calls[0]?.[0]).toMatchObject({ id: db.id, hostname: 'db1' });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-2-run'));
+    });
+    expect(screen.getByTestId('run-notice').props.children).toMatch(/runs on the host gone .*no host with that name/);
+    expect(connectionFor).toHaveBeenCalledTimes(1);
+  });
+
   it('without a host there is no run button and no line actions are open', async () => {
     await render(<RunbookView id="sample" />);
     expect(screen.queryByTestId('cell-1-run')).toBeNull();

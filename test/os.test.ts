@@ -4,6 +4,21 @@ import { computeProgress, renderReport } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { currentOs, osGroups, osLabel, parseOsList } from '@md-runbook/core/os';
 
+describe('host= blocks', () => {
+  it('parse; an empty name is an error', () => {
+    assert.equal(parseCellOptions('bash host=web-1 timeout=5').host, 'web-1');
+    assert.equal(parseCellOptions('bash host="web 1"').host, 'web 1');
+    assert.deepEqual(parseCellOptions('bash host=').errors, ['host: empty name']);
+    assert.equal(parseCellOptions('bash').host, undefined);
+  });
+
+  it('count as skipped where cells run locally', () => {
+    const p = computeProgress([{ kind: 'code', exit: '0' }, { kind: 'code', elsewhere: true }, { kind: 'code' }]);
+    assert.deepEqual([p.total, p.done, p.skipped, p.pending], [3, 1, 1, 1]);
+    assert.deepEqual(p.resume, [2]);
+  });
+});
+
 describe('os= alternatives', () => {
   it('parses names and aliases', () => {
     assert.deepEqual(parseOsList('linux, macOS,darwin'), ['linux', 'macos']);

@@ -187,6 +187,12 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         }
         continue;
       }
+      if (opts.host) {
+        // Runs on a remote host from the md-runbook app; the CLI runs cells on this machine.
+        io.log(`– ${where}: runs on the host ${opts.host} (md-runbook app), skipped here`);
+        steps.push(result('skipped', 'skipped', { message: `runs on the host ${opts.host}` }));
+        continue;
+      }
       if (stopped) {
         steps.push(result('not run', 'not run', { message: 'an earlier step failed' }));
         continue;

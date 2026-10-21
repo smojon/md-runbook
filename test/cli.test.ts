@@ -126,6 +126,16 @@ describe('cli: running a runbook', { skip: !hasBash && 'bash not installed' }, (
     assert.equal(r.redact('x https://hooks.example/SECRET-URL'), 'x [REDACTED]');
   });
 
+  it('never runs a host= block on this machine: skipped, its output untouched', async () => {
+    const r = await run('```bash host=web-1\ntouch should-not-exist\necho remote\n```\n\n```bash\necho local\n```\n');
+    assert.equal(r.ok, true, r.printed);
+    assert.deepEqual(r.steps.map((s) => s.status), ['skipped', 'passed']);
+    assert.match(r.steps[0]!.message ?? '', /runs on the host web-1/);
+    assert.match(r.printed, /runs on the host web-1 \(md-runbook app\), skipped here/);
+    assert.doesNotMatch(r.text, /remote\n<!-- md-runbook:output end/);
+    assert.equal((r.text.match(/md-runbook:output start/g) ?? []).length, 1);
+  });
+
   it('stops at a failure; risky commands need --yes; missing inputs fail clearly', async () => {
     const failed = await run('```bash\nexit 4\n```\n\n```bash\necho never\n```\n');
     assert.equal(failed.ok, false);

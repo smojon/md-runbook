@@ -104,6 +104,7 @@ const en = {
   timedOutNote: (seconds: number) => `[md-runbook] timed out after ${seconds}s; the cell's processes were stopped`,
   checkFailedNote: (why: string) => `[md-runbook] check failed: ${why}`,
   lineFailedNote: (lines: string) => `[md-runbook] line ${lines} failed; the lines after it were not run`,
+  noHostNamed: (name: string) => `This cell runs on the host ${name} (host=), and there is no host with that name. Add it under Hosts.`,
   cellChanged: 'The cell changed while it ran: its output was not written',
 
   // Code cells (the VS Code-like view)

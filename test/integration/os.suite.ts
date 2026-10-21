@@ -39,4 +39,30 @@ export const tests: Test[] = [
       }
     },
   },
+  {
+    name: 'host=: a block for a remote host never runs on this machine, also with cell options off',
+    fn: async () => {
+      const lang = isWin ? 'pwsh' : 'bash';
+      const marker = 'host-block-ran';
+      const uri = writeFile('host-block.md', `# Remote\n\n\`\`\`${lang} host=web-1\necho ${marker}\n\`\`\`\n\n\`\`\`${lang}\necho after\n\`\`\`\n`);
+      const options = vscode.workspace.getConfiguration('mdRunbook');
+      try {
+        const editor = await openRunbook(uri);
+        const [remote, after] = editor.notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code) as [vscode.NotebookCell, vscode.NotebookCell];
+        await runCells(editor, 0, editor.notebook.cellCount);
+        assert.equal(await waitForRun(after), true, outputText(after));
+        assert.equal(remote.outputs.length, 0, 'the host= block is not run');
+        const p = await vscode.commands.executeCommand<Progress & { skipped: number }>('mdRunbook._progress', uri);
+        assert.deepEqual([p?.total, p?.done, p?.skipped, p?.pending], [2, 1, 1, 0]);
+
+        await options.update('cellOptions.enabled', false, vscode.ConfigurationTarget.Global);
+        await runCells(editor, remote.index, remote.index + 1);
+        await new Promise((r) => setTimeout(r, 1000));
+        assert.equal(remote.outputs.length, 0, 'not even with cell options off');
+      } finally {
+        await options.update('cellOptions.enabled', undefined, vscode.ConfigurationTarget.Global);
+        await closeAll();
+      }
+    },
+  },
 ];

@@ -1,7 +1,8 @@
 import { Link, Stack } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
-import { parse, taskItems } from '@md-runbook/core';
+import { isCodeMeta, parse, taskItems } from '@md-runbook/core';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId } from '@md-runbook/ssh';
 import { CodeCell } from '../cells/CodeCell';
@@ -44,6 +45,8 @@ interface Paused {
 
 interface Trust {
   request: RunRequest;
+  /** The host that showed the key (the cell's host= one, or the selected one). */
+  hostId: string;
   hostKey: string;
   fingerprint: string;
   changed: boolean;
@@ -94,9 +97,18 @@ export function RunbookView({ id }: { id: string | undefined }) {
   );
 
   const run = async (request: RunRequest, on: Host | undefined): Promise<void> => {
-    if (!runbook || !on || running) return;
+    if (!runbook || running) return;
     const { cellIndex, mode, line } = request;
     const cell = cells[cellIndex];
+    // host=NAME: that host, whichever is selected (as the store has it now: a key may just have been pinned).
+    const named = cell && isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).host : undefined;
+    const match = named === undefined ? on : hosts.find((h) => h.name.toLowerCase() === named.toLowerCase());
+    const target = match && (getHost(match.id) ?? match);
+    if (named !== undefined && !target) {
+      setNotice(t.noHostNamed(named));
+      return;
+    }
+    if (!target) return;
     const lines = mode && cell ? planLines(cell.value, mode, line ?? 0, checks.get(cellIndex)) : undefined;
     if (mode && !lines) return;
     const abort = new AbortController();
@@ -132,7 +144,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
                 })
         : undefined;
     const outcome = await runCell({
-      host: on,
+      host: target,
       text: runbook.text,
       cellIndex,
       signal: abort.signal,
@@ -147,17 +159,24 @@ export function RunbookView({ id }: { id: string | undefined }) {
       updateRunbookText(runbook.id, outcome.text);
       if (outcome.result.newShell) setNotice(t.newShell);
     } else if (outcome.kind === 'trust') {
-      setTrust({ request, hostKey: outcome.hostKey, fingerprint: await fingerprint(outcome.hostKey), changed: outcome.changed });
+      setTrust({
+        request,
+        hostId: target.id,
+        hostKey: outcome.hostKey,
+        fingerprint: await fingerprint(outcome.hostKey),
+        changed: outcome.changed,
+      });
     } else setNotice(outcome.message);
   };
   const acceptTrust = (): void => {
-    if (!trust || !host) return;
-    pinHostKey(host.id, hostKeyId(trust.hostKey));
-    const { request } = trust;
+    if (!trust) return;
+    pinHostKey(trust.hostId, hostKeyId(trust.hostKey));
+    const { request, hostId } = trust;
     setTrust(undefined);
-    // The pinned key is on the host as the store has it now, not on the `host` of this render.
-    void run(request, getHost(host.id));
+    // The pinned key is on the host as the store has it now, not on the hosts of this render.
+    void run(request, getHost(hostId));
   };
+  const trustHost = trust ? hosts.find((h) => h.id === trust.hostId) : undefined;
   const toggleCheck = (cellIndex: number, step: LineStep): void =>
     setChecks((m) => {
       const next = new Set(m.get(cellIndex));
@@ -199,7 +218,9 @@ export function RunbookView({ id }: { id: string | undefined }) {
                 {notice}
               </Text>
             ) : null}
-            {trust && host ? <TrustCard host={host} trust={trust} onAccept={acceptTrust} onDecline={() => setTrust(undefined)} /> : null}
+            {trust && trustHost ? (
+              <TrustCard host={trustHost} trust={trust} onAccept={acceptTrust} onDecline={() => setTrust(undefined)} />
+            ) : null}
           </View>
         }
         renderItem={({ item, index }) =>

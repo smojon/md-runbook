@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`host=NAME` blocks** are for the md-runbook app, which runs them on that host over SSH. The
+  extension and the CLI run cells on this machine, so they never run one, even with cell
+  options turned off: Run All passes over it, ▶ does nothing, the cell's status line says
+  "Runs on NAME · not run here", and progress counts it as skipped. Before, the option was
+  unknown and such a block would have run locally.
 - **Syntax reference** (`docs/syntax.md`): the whole file format on one page, written from the
   parser: fence info-string grammar, every cell option with its value type, placeholders, front
   matter keys, output markers and their attributes, and a checklist for an assistant that

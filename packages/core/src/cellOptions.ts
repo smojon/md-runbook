@@ -28,6 +28,11 @@ export interface CellOptions {
   checks?: CellChecks;
   /** os=windows,linux: the block is only for these systems (an alternative of the blocks around it). */
   os?: OsName[];
+  /**
+   * host=NAME: the block runs on that host over SSH (a host of the md-runbook app, by name).
+   * The extension and the CLI run cells locally, so they never run such a block.
+   */
+  host?: string;
   /** retry=N: up to N attempts in all, `every` apart (default 5 s). */
   retry?: { attempts: number; everyMs: number };
   /** Recognized keys with invalid values. */
@@ -144,6 +149,9 @@ export function parseCellOptions(info: string): CellOptions {
       const os = parseOsList(value);
       if (typeof os === 'string') opts.errors.push(`os=${value}: ${os}`);
       else opts.os = os;
+    } else if (k === 'host') {
+      if (value.trim() === '') opts.errors.push('host: empty name');
+      else opts.host = value.trim();
     } else if (k === 'retry') {
       const n = Number(value);
       if (!Number.isInteger(n) || n < 1 || n > MAX_RETRY) opts.errors.push(`retry=${value}: expected the number of attempts (1 to ${MAX_RETRY})`);

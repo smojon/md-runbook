@@ -215,12 +215,26 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
     const os = otherOs(cell);
     return os ? `this block is for ${osLabel(os)}` : undefined;
   });
+  // host=: the block runs on a remote host (from the md-runbook app). The extension runs cells on
+  // this machine, so it never runs one, whatever cellOptions.enabled says.
+  const remoteHost = (cell: vscode.NotebookCell): string | undefined =>
+    cell.kind === vscode.NotebookCellKind.Code ? parseCellOptions(infoOf(cell)).host : undefined;
+  pipeline.excluders.push((cell) => {
+    const host = remoteHost(cell);
+    return host ? `this block runs on the host ${host} (from the md-runbook app), not on this machine` : undefined;
+  });
   // VS Code shows ▶ on every code cell and cannot hide it for one; the cell says it is not for
   // this system instead, before anyone clicks.
   const osItemsChanged = new vscode.EventEmitter<void>();
   const osItems: vscode.NotebookCellStatusBarItemProvider = {
     onDidChangeCellStatusBarItems: osItemsChanged.event,
     provideCellStatusBarItems(cell) {
+      const host = remoteHost(cell);
+      if (host) {
+        const item = new vscode.NotebookCellStatusBarItem(`$(remote) Runs on ${host} · not run here`, vscode.NotebookCellStatusBarAlignment.Left);
+        item.tooltip = `host=${host}: this block runs on that host from the md-runbook app. Run All and Run Below pass over it; ▶ does not run it on this machine.`;
+        return [item];
+      }
       const os = otherOs(cell);
       if (!os) return [];
       const item = new vscode.NotebookCellStatusBarItem(`$(circle-slash) For ${osLabel(os)} · not run on ${osLabel([currentOs()])}`, vscode.NotebookCellStatusBarAlignment.Left);

@@ -107,6 +107,7 @@ Tokens are separated by spaces or tabs. There are three forms:
 | `capture=NAME` or `capture=NAME:/regex/flags` | variable name | Keep stdout (trimmed), or the first group of the first match (the whole match without a group), as `${out:NAME}` for later cells. Several allowed. |
 | `capture-secret=…` | as `capture=` | The same, redacted everywhere and never written to disk. |
 | `os=LIST` | `windows`, `linux`, `macos`, comma-separated; also `win`, `win32`, `mac`, `osx`, `darwin` | Run only on these systems. Adjacent `os=` blocks with no OS repeated are alternatives of one step. |
+| `host=NAME` | a host's name in the md-runbook app; quote it if it has spaces | The md-runbook app runs the block on that host over SSH, whichever host is selected. The VS Code extension and the CLI run cells on the local machine, so they never run such a block: it counts as skipped. |
 | `retry=N` | integer 1 to 100 | Run up to N times in all until it passes. |
 | `every=D` | `15s`, `500ms`, `2m`, or seconds as a number; at most 1 hour | Wait between attempts (default 5 s). Only with `retry=`. |
 | `proposed` | flag | The cell was written by an assistant or a colleague and needs approval before it runs. |
@@ -238,7 +239,8 @@ A runbook's **steps** are its cells plus GitHub task-list items in Markdown (`- 
 - **pending** with no output, `exit=declined`, `exit=proposed`, or a partial `lines=` run;
 - **failed** with `check=failed` or any other exit.
 
-A group of adjacent `os=` blocks is one step, judged by the block for the current OS. Run All
+A group of adjacent `os=` blocks is one step, judged by the block for the current OS. A
+`host=` block is skipped in the extension and the CLI. Run All
 runs cells in order and stops at the first failure unless the cell has `continue-on-error`.
 Cells of one runbook never run concurrently.
 

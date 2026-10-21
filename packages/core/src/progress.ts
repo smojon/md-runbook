@@ -20,6 +20,8 @@ export interface ProgressCell {
   check?: string;
   /** An `os=` alternative: only the one for this OS counts (a group with none counts as skipped). */
   os?: OsSlot;
+  /** A `host=` block where cells run locally (the extension, the CLI): never run here, counted as skipped. */
+  elsewhere?: boolean;
   /** Task-list items of a markup cell, in order: true = checked. */
   tasks?: boolean[];
 }
@@ -81,6 +83,10 @@ export function computeProgress(cells: readonly ProgressCell[]): Progress {
       return;
     }
     p.total++;
+    if (c.elsewhere) {
+      p.skipped++;
+      return;
+    }
     const state = stepState(c.exit, c.partial, c.check);
     p[state]++;
     if (state === 'failed') p.firstFailed ??= { cell: i, step: p.total };
