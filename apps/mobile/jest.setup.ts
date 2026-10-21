@@ -15,6 +15,14 @@ jest.mock('expo-secure-store', () => ({
 
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => true) }));
 
+// The app's copies of runbooks (the documents folder does not exist in Jest): in memory.
+const mockDocs = new Map<string, string>();
+jest.mock('./src/storage/docs', () => ({
+  readDoc: async (id: string) => mockDocs.get(id),
+  writeDoc: async (id: string, text: string) => void mockDocs.set(id, text),
+  deleteDoc: async (id: string) => void mockDocs.delete(id),
+}));
+
 jest.mock('react-native-tcp-socket', () => ({
   __esModule: true,
   default: {

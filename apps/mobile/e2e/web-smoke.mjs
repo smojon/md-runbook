@@ -51,7 +51,8 @@ try {
     await w.close();
   });
   await page.getByTestId('open-runbook').click();
-  await page.getByText('Deploy test').first().waitFor({ timeout: 10_000 });
+  // The list screen stays mounted (hidden) behind the runbook: wait for the visible title.
+  await page.getByText('Deploy test').filter({ visible: true }).first().waitFor({ timeout: 10_000 });
   await page
     .getByTestId('save-state')
     .filter({ hasText: /^Saved$/ })
