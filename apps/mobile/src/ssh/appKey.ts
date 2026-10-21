@@ -20,7 +20,7 @@ const KEY = 'app-key.pkcs8';
 const ALIAS = 'ssh-app-key';
 const COMMENT = 'md-runbook-app';
 
-/** hardware: Secure Enclave / TEE / StrongBox; keystore: the platform keystore without such hardware (simulator). */
+/** hardware: Secure Enclave / TEE / StrongBox; keystore: the platform keystore without such hardware. */
 export type KeyStorage = 'hardware' | 'keystore' | 'secure-store' | 'browser';
 
 export interface AppKey {

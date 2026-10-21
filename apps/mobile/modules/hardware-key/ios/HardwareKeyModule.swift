@@ -4,7 +4,7 @@ import Foundation
 import Security
 
 /// The app's SSH key: a P-256 key made in the Secure Enclave, or a Keychain key where there is no
-/// Secure Enclave (the simulator). The private key is never exported; JavaScript gets the public
+/// Secure Enclave (the simulator on Apple Silicon Macs has one). The private key is never exported; JavaScript gets the public
 /// key and signatures.
 public final class HardwareKeyModule: Module {
   public func definition() -> ModuleDefinition {

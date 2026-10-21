@@ -146,6 +146,10 @@ Each has its own page with examples and settings:
 - **[On the web](docs/features/web.md):** a GitHub Actions workflow with a Run button
   (`examples/github/run-runbook.yml`), the `smojon/md-runbook` GitHub Action, and running the
   extension in GitHub Codespaces.
+- **[Phone and browser app](docs/app.md)** (in development, not in the stores yet): the same
+  runbooks on iPhone, Android and the web, run on your servers over SSH, with the SSH key kept
+  in the phone's secure hardware. `host=NAME` cells are for the app: the extension and the CLI
+  never run them.
 - **[Secrets, inputs, parameters and `.env`](docs/features/secrets.md):** keep secrets in the OS
   keychain and reference them as `${secret:NAME}`. They reach the cell as environment variables,
   never as script text, and are redacted by exact value. `${input:NAME}` prompts once per session,

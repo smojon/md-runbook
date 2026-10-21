@@ -2,7 +2,7 @@
  * The app's SSH key in the phone's secure hardware: the Secure Enclave on iPhones, Android
  * Keystore (StrongBox when the phone has one) on Android. The private key is made there and never
  * leaves it; the app gets the public key and asks the hardware to sign. Where there is no such
- * hardware (the iOS simulator) the key is a Keychain key, still never handed to JavaScript.
+ * hardware (an Intel Mac's simulator, an old phone) the key is a Keychain key, still never handed to JavaScript.
  * Absent on the web and in Jest (null).
  */
 import { requireOptionalNativeModule } from 'expo-modules-core';

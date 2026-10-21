@@ -21,7 +21,7 @@ name: run-cell
       id: app-public-key
       text: 'ecdsa-sha2-nistp256 .*'
     timeout: 60000
-# Where the key is kept (hardware on Android; the Keychain on the simulator, which has no Secure Enclave).
+# Where the key is kept (the Secure Enclave or Android Keystore; the simulator on Apple Silicon has one).
 - assertVisible:
     id: app-key-storage
 - copyTextFrom:

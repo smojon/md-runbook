@@ -21,6 +21,8 @@ State of the project for whoever picks it up next (person or new Claude session)
   the web build in Chromium and the release builds on an Android emulator and an iPhone
   simulator with the Maestro flows in `apps/mobile/e2e/maestro`. Locally: `cd apps/mobile &&
   npm ci && npm run check`. The spike that chose this stack: `spikes/ssh/README.md`.
+  What it does, with screenshots: [app.md](app.md) (the images in `docs/app/` come from an App
+  workflow run's artifacts; refresh them from a newer run when screens change).
   The app draws runbooks like VS Code's notebook with native components (Markdown from the
   core's `renderMarkdown` HTML, `src/markdown/`; code cells with line actions and step through,
   `src/cells/`), remembers runbooks and saves them back to their file (`src/runbooks/`), and
