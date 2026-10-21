@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
 - **`host=NAME` blocks** are for the md-runbook app, which runs them on that host over SSH. The
   extension and the CLI run cells on this machine, so they never run one, even with cell
@@ -16,6 +16,10 @@
   the status bar ones sit under **Saved output**; `execution.refreshPath` under **Running
   cells**; the four **Copy for AI** settings have their own group, leaving **AI assistant** with
   the model and privacy settings.
+- **On Open VSX** as well as the Visual Studio Marketplace, so Cursor, Windsurf and VSCodium can
+  install it; each release now publishes to both.
+- **README**: a demo GIF at the top (Run All, a retried check, then the same file as plain
+  Markdown with the output saved in it), store links, and a comparison with Runme.
 
 ## 0.6.0
 
