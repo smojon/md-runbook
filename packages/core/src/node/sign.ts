@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { SIGNATURE_NAMESPACE, armorSignature, unarmorSignature } from '../signing';
+import { Manifest, SIGNATURE_NAMESPACE, armorSignature, unarmorSignature } from '../signing';
 
 /** sha256 of the manifest, hex: what logs show and what a server's `revoked` file lists. */
 export function manifestHash(manifest: string): string {
@@ -74,7 +74,8 @@ export async function sshVerify(manifest: string, signature: string, allowedSign
     const sig = path.join(dir, 'manifest.sig');
     fs.writeFileSync(sig, armorSignature(signature), 'utf8');
     const found = await run(sshKeygen, ['-Y', 'find-principals', '-s', sig, '-f', allowedSigners], '');
-    const principals = found.code === 0 ? found.stdout.split(/\r?\n/).filter(Boolean) : [];
+    // One allowed_signers line may name several principals (a,b): try each, as the gate does.
+    const principals = found.code === 0 ? found.stdout.split(/[\r\n,]+/).filter(Boolean) : [];
     if (principals.length === 0) throw new Error(`no key in ${allowedSigners} made this signature`);
     let why = '';
     for (const p of principals) {
@@ -86,6 +87,30 @@ export async function sshVerify(manifest: string, signature: string, allowedSign
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * A gate runs a signed cell's commands one by one (Step through, Run lines 1-N): each must be a
+ * whole command that bash reads without errors or warnings on its own, else a command could run
+ * text the reviewer saw as here-doc data or a function body. Problems as "cell N, command K: …";
+ * undefined when `bash` can't be started (not checked).
+ */
+export async function checkSignedSteps(m: Manifest, bash: string): Promise<string[] | undefined> {
+  const problems: string[] = [];
+  for (const c of m.cells) {
+    if (c.steps.length < 2) continue;
+    for (let k = 0; k < c.steps.length; k++) {
+      let r: Run;
+      try {
+        r = await run(bash, ['--norc', '--noprofile', '-n'], c.steps[k]!);
+      } catch {
+        return undefined;
+      }
+      const why = r.stderr.trim().split(/\r?\n/)[0];
+      if (r.code !== 0 || why) problems.push(`cell ${c.n}, command ${k + 1} (${c.steps[k]!.split('\n')[0]}): ${why || `bash -n exit ${r.code}`}`);
+    }
+  }
+  return problems;
 }
 
 /** The comment of a key's public half (`… user@host`), the default signer name; undefined if none. */

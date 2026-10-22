@@ -234,7 +234,8 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
 
   it('refuses revoked and expired runbooks, and runbooks for other scopes', async () => {
     const [m, s, hash] = await signed(RUNBOOK, { patterns: PATTERNS });
-    fs.writeFileSync(path.join(dir, 'revoked'), `${'0'.repeat(64)}\n${hash}\n`);
+    // Written by hand on Windows, copied from md-runbook verify: CRLF, upper case, a sha256: prefix.
+    fs.writeFileSync(path.join(dir, 'revoked'), `${'0'.repeat(64)}\r\n sha256:${hash.toUpperCase()} \r\n`);
     writeConf([`revoked = ${path.join(dir, 'revoked')}`, 'scopes = web staging']);
     try {
       const g = start();
@@ -288,6 +289,38 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.equal((await g.request('run', '1')).out, 'tampered\n');
     assert.match((await g.request('run', '2')).err, /changed on disk since it was checked/);
     assert.match((await g.request('run', '2')).err, /no signed runbook loaded/);
+    await g.close();
+  });
+
+  it('a reused request id does not let a later step replace an earlier one still queued', async () => {
+    const g = start();
+    await g.hello();
+    const [m, s] = await signed(fence('bash', 'sleep 1') + fence('bash', 'echo a\necho b\necho c'), {});
+    await g.request('load', m, s);
+    // While cell 1 runs, steps 0 and 1 of cell 2 wait in the shell's queue under one id.
+    const busy = g.request('run', '1');
+    g.child.stdin!.write('step 0000beef 2 0\nstep 0000beef 2 1\n');
+    await busy;
+    assert.deepEqual([(await g.reply('0000beef')).out, (await g.reply('0000beef')).out], ['a\n', 'b\n']);
+    assert.match((await g.request('step', '2', '01')).err, /bad step request/);
+    await g.close();
+  });
+
+  it("a runbook can't set PATH and the like, and doesn't see the previous runbook's values", async () => {
+    const g = start();
+    await g.hello();
+    const manifest = formatManifest(manifestOf(RUNBOOK, { patterns: PATTERNS })).replace(/^env GREETING /m, 'env PATH ');
+    assert.match(manifest, /^env PATH /m);
+    const bad = await g.request('load', toBase64(manifest), await sshSign(manifest, key));
+    assert.match(bad.err, /sets PATH, a name the gate doesn't let a runbook set/);
+    const [m, s] = await signed(RUNBOOK, { patterns: PATTERNS });
+    await g.request('load', m, s);
+    await g.request('param', 'TARGET', toBase64('web-1'));
+    assert.equal((await g.request('run', '5')).out, 'target=web-1\n');
+    assert.equal((await g.request('run', '2')).out, 'hello from tmp \n');
+    const [m2, s2] = await signed(fence('bash', 'echo "[${TARGET-unset}] [${GREETING-unset}]"'), { name: 'ops/other' });
+    await g.request('load', m2, s2);
+    assert.equal((await g.request('run', '1')).out, '[unset] [unset]\n');
     await g.close();
   });
 

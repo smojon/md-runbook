@@ -287,7 +287,10 @@ const en = {
   newSecretValue: (name: string) => `New value of ${name}`,
 
   // Signed runbooks (md-runbook-gate)
-  signedTitle: (name: string, version: number, signer: string) => `Signed runbook ${name}, version ${version}, by ${signer}`,
+  signedTitle: (name: string, version: number) => `Signed runbook ${name}, version ${version}`,
+  // The signer's name is written in the file next to the signature; only a gate checks the key.
+  signedClaim: (signer: string) => `The file says it was signed by ${signer}; this app doesn't check that.`,
+  signedVerified: (host: string, principal: string) => `✓ md-runbook-gate on ${host} checked the signature: signed by ${principal}.`,
   signedUntil: (date: string) => `Valid until ${date}.`,
   signedBody: 'Servers that run md-runbook-gate check the signature and run only the signed blocks.',
   signedChanged: (n: number) =>

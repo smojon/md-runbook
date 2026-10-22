@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+Security fixes from a review of the assistant, signed runbooks and md-runbook-gate:
+
+- **An AI answer can no longer add a runnable cell.** Summarize Incident and Explain Output →
+  Insert as Note put the model's text into the runbook; a ```` ```bash ```` block in it (for
+  example from a prompt injection in a server's output) became an ordinary cell that ran without
+  approval. Code in AI text is now kept as a `text` block. (Extension and app.)
+- **The signer's name is no longer presented as checked.** It is written in the file next to the
+  signature, and nothing checked it outside a gate: `md-runbook verify` now says "signed by X (as
+  the file says)" and "signature: NOT checked" without `--allowed-signers`, and the app shows the
+  signer a gate accepted once a block ran through it. A signer name can't end the HTML comment.
+- **Line runs of signed blocks split like bash.** A here-doc whose delimiter has quotes
+  (`<<E"O"F`) or a function whose body starts on the next line was split into wrong commands, so
+  Step through could run here-doc text as a command. Signing now also checks each command with
+  `bash -n` where bash is installed.
+- **md-runbook-gate:** a client could replace a queued command by reusing a request id (running a
+  later command before an earlier one); the client's locale could change what a parameter pattern
+  matches; one runbook's parameters stayed set for the next; `PATH`, `IFS`, `BASH_ENV`, `LD_*`
+  and similar names are refused as parameters and `env.*`; the revoked list tolerates CRLF, upper
+  case and a `sha256:` prefix.
+- **Signing** refuses those names too, patterns with JavaScript-only syntax (`\d`, `(?…)`, lazy
+  `*?`), `${param:X:…}`, and impossible dates. `verify --allowed-signers` accepts a signer line
+  with several principals.
+
 ## 0.9.1
 
 - **The toolbar's Run, Values, Assistant, Share and Help show.** In 0.9.0 VS Code drew them as

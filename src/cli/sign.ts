@@ -6,7 +6,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { locateCodeCells, parse } from '@md-runbook/core';
-import { keyComment, manifestHash, sshSign, sshVerify } from '@md-runbook/core/node';
+import { checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign, sshVerify } from '@md-runbook/core/node';
 import { ManifestMeta, buildManifest, formatManifest, parseManifest, readSignature, signedStatus, withSignature } from '@md-runbook/core/signing';
 
 export const SIGN_USAGE = `Usage: md-runbook sign <file.md> --key KEY [options]
@@ -26,9 +26,10 @@ patterns and counts the version up.
   --pattern NAME=RE    What \${param:NAME} may be: a POSIX extended regex for the whole value
   --out FILE           Write the signed runbook to FILE instead
 
-verify shows what a runbook's signature covers and which blocks changed since signing. With
---allowed-signers (a server's allowed_signers file) it also checks the signature as the gate
-would. Exit code 0 when everything is signed (and the signature verifies).
+verify shows what a runbook's signature covers and which blocks changed since signing. Only
+with --allowed-signers (a server's allowed_signers file) does it check the signature as the gate
+would; without it, the signer's name is just what the file says. Exit code 0 when everything is
+signed (and, with --allowed-signers, the signature verifies).
 `;
 
 class SignUsageError extends Error {}
@@ -140,6 +141,14 @@ export async function signCommand(argv: readonly string[], out: Out = stdout, ss
     out(`✗ not signed`);
     return 1;
   }
+  const bash = resolveShell('bash', {}, nodeShellEnv());
+  const stepProblems = bash.ok ? await checkSignedSteps(built.manifest, bash.shell.command) : undefined;
+  if (stepProblems?.length) {
+    for (const p of stepProblems) out(`${a.file}: error: ${p}`);
+    out('✗ not signed: a server runs these commands one by one; make each a whole command (or end the cell differently)');
+    return 1;
+  }
+  if (!stepProblems) out('  note: bash not found, so the commands were not checked one by one (bash -n)');
   const manifest = formatManifest(built.manifest);
   let signature: string;
   try {
@@ -189,7 +198,8 @@ export async function verifyCommand(argv: readonly string[], out: Out = stdout, 
     return 1;
   }
   const m = status.manifest;
-  out(`${file}: ${m.name} version ${m.version}, signed by ${status.block.signer} on ${status.block.signed}`);
+  // The signer's name and date are what the file says; only the key check below proves who signed.
+  out(`${file}: ${m.name} version ${m.version}, signed by ${status.block.signer} (as the file says) on ${status.block.signed}`);
   out(`  scopes: ${m.scopes.length ? m.scopes.join(' ') : 'none (only servers that accept any scope)'}`);
   if (m.expires) out(`  expires: ${m.expires}${m.expires < today() ? ' (expired)' : ''}`);
   for (const [name, re] of Object.entries(m.patterns)) out(`  parameter ${name}: ${re}`);
@@ -208,7 +218,12 @@ export async function verifyCommand(argv: readonly string[], out: Out = stdout, 
       out(`  signature: ${e instanceof Error ? e.message : String(e)}`);
       ok = false;
     }
+  } else {
+    out('  signature: NOT checked (anyone can write a signer name): add --allowed-signers FILE to check it as the gate does');
   }
-  out(`${ok ? '✓' : '✗'} ${status.cells.size} signed block${status.cells.size === 1 ? '' : 's'}, ${status.changed.length} changed`);
+  out(
+    `${ok ? '✓' : '✗'} ${status.cells.size} signed block${status.cells.size === 1 ? '' : 's'}, ${status.changed.length} changed` +
+      (allowed ? '' : ', signature not checked'),
+  );
   return ok ? 0 : 1;
 }

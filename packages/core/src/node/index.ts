@@ -7,4 +7,4 @@ export { RunOptions, killTree, runProcess } from './runner';
 export { cellEnv, executeCell, nodeShellEnv, shellEnvOn } from './execute';
 export { RegQuery, expandWindowsVars, freshenPath, mergePath, parseRegQuery, registryPath } from './freshPath';
 export { gitBashCandidates, pwshWrapper, resolveShell } from './shell';
-export { SignOptions, keyComment, manifestHash, sshSign, sshVerify } from './sign';
+export { SignOptions, checkSignedSteps, keyComment, manifestHash, sshSign, sshVerify } from './sign';

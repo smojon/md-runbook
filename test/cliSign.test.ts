@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { parseManifest, readSignature } from '@md-runbook/core/signing';
+import { checkSignedSteps, nodeShellEnv, resolveShell } from '@md-runbook/core/node';
 import { parseSignArgs, signCommand, verifyCommand } from '../src/cli/sign';
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';
@@ -35,7 +36,7 @@ describe('cli: sign and verify', () => {
     const f = file('restart-api.runbook.md', '# Restart\n\n' + fence('bash', 'systemctl restart ${param:SERVICE}') + fence('pwsh', 'Get-Date'));
     lines.length = 0;
     assert.equal(await signCommand([f, '--key', key, '--scope', 'web', '--pattern', 'SERVICE=[a-z-]+', '--expires-in', '30'], out), 0, lines.join('\n'));
-    assert.match(lines[0]!, /^✓ restart-api version 1 signed by release@example.net: 1 block, scopes web, until \d{4}-\d{2}-\d{2}/);
+    assert.match(lines.find((l) => l.startsWith('✓'))!, /^✓ restart-api version 1 signed by release@example.net: 1 block, scopes web, until \d{4}-\d{2}-\d{2}/);
     const block = readSignature(fs.readFileSync(f, 'utf8'))!;
     assert.equal(block.signer, 'release@example.net');
     lines.length = 0;
@@ -67,6 +68,32 @@ describe('cli: sign and verify', () => {
     lines.length = 0;
     assert.equal(await verifyCommand([g, '--allowed-signers', allowed], out), 1);
     assert.match(lines.join('\n'), /signature: no key in .* made this signature/);
+
+    // Without the allowed signers, the signer's name is only what the file says.
+    lines.length = 0;
+    assert.equal(await verifyCommand([g], out), 0);
+    assert.match(lines[0]!, /signed by mallory \(as the file says\)/);
+    assert.match(lines.join('\n'), /signature: NOT checked/);
+    assert.match(lines.at(-1)!, /✓ 1 signed block, 0 changed, signature not checked/);
+  });
+
+  it('refuses to sign commands a gate would run one by one but bash would read differently', async () => {
+    // Before the fix the here-doc ended at "E" and its data ran as the next command.
+    const ok = file('heredoc.md', fence('bash', 'cat > notes.txt <<E"O"F\nE\nrm -rf /srv/data\nEOF\necho done'));
+    lines.length = 0;
+    assert.equal(await signCommand([ok, '--key', key], out), 0, lines.join('\n'));
+    const steps = parseManifest(readSignature(fs.readFileSync(ok, 'utf8'))!.manifest).cells[0]!.steps;
+    assert.deepEqual(steps, ['cat > notes.txt <<E"O"F\nE\nrm -rf /srv/data\nEOF', 'echo done']);
+    // Should the scanner still split a command wrongly, bash -n catches it before signing.
+    const bash = resolveShell('bash', {}, nodeShellEnv());
+    if (!bash.ok) return;
+    const split = parseManifest(readSignature(fs.readFileSync(ok, 'utf8'))!.manifest);
+    split.cells[0]!.steps = ['cat > notes.txt <<EOF', 'rm -rf /srv/data', 'EOF', 'echo $((1 +'];
+    const problems = await checkSignedSteps(split, bash.shell.command);
+    // (A lone "EOF" is a valid command name to bash -n; the here-doc's warning is what counts.)
+    assert.equal(problems?.length, 2, problems?.join('\n'));
+    assert.match(problems![0]!, /^cell 1, command 1 \(cat > notes\.txt <<EOF\): .*here-document/);
+    assert.match(problems![1]!, /^cell 1, command 4 /);
   });
 
   it('refuses what it can not sign, and bad arguments', async () => {

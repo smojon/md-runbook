@@ -9,6 +9,7 @@ import { PseudonymMap, depseudonymize } from '@md-runbook/core/aiContext';
 import { isValidApiKey } from '@md-runbook/core/anthropicStream';
 import {
   AiPrompt,
+  aiNoteMarkdown,
   explainLinePrompt,
   explainOutputPrompt,
   extractProposals,
@@ -243,7 +244,7 @@ async function explainOutput(arg?: unknown): Promise<vscode.Uri | undefined> {
   );
   void vscode.window.showInformationMessage(`md-runbook: explanation of ${label} opened beside. It was not added to the runbook.`, 'Insert as Note').then(async (choice) => {
     if (choice !== 'Insert as Note') return;
-    const note = new vscode.NotebookCellData(vscode.NotebookCellKind.Markup, `> **AI note on ${label}** (draft by ${answer.provider.label}, not verified)\n\n${text}`, 'markdown');
+    const note = new vscode.NotebookCellData(vscode.NotebookCellKind.Markup, aiNoteMarkdown(label, answer.provider.label, text), 'markdown');
     await insertCells(nb, cell.index + 1, [note]);
   });
   return doc.uri;

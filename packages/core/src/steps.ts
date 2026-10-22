@@ -27,6 +27,36 @@ interface Scanner {
 
 const SPACE = /[ \t]/;
 const WORD = /[A-Za-z0-9_]/;
+const FUNCTION_HEADER = /^[ \t]*(function[ \t]+[^\s()]+([ \t]*\([ \t]*\))?|[^\s()=;&|<>]+[ \t]*\([ \t]*\))[ \t]*$/;
+
+/**
+ * The delimiter of a here-doc whose `<<` ends at `from`, as bash reads it: the whole next word
+ * with its quotes and backslashes removed (`E"O"F` and `'E'OF` are both EOF).
+ */
+function heredocWord(text: string, from: number): { word: string; strip: boolean; end: number } | undefined {
+  let i = from;
+  const strip = text[i] === '-';
+  if (strip) i++;
+  while (i < text.length && SPACE.test(text[i]!)) i++;
+  let word = '';
+  while (i < text.length && !/[\s;&|<>()]/.test(text[i]!)) {
+    const c = text[i]!;
+    if (c === "'" || c === '"') {
+      const close = text.indexOf(c, i + 1);
+      if (close < 0) return undefined;
+      const inner = text.slice(i + 1, close);
+      word += c === '"' ? inner.replace(/\\([\\"$`])/g, '$1') : inner;
+      i = close + 1;
+    } else if (c === '\\') {
+      word += text[i + 1] ?? '';
+      i += 2;
+    } else {
+      word += c;
+      i++;
+    }
+  }
+  return word === '' ? undefined : { word, strip, end: i };
+}
 
 /** bash and sh. */
 class BashScanner implements Scanner {
@@ -89,10 +119,10 @@ class BashScanner implements Scanner {
         this.quote = "$'";
         i++;
       } else if (c === '<' && text.startsWith('<<', i) && text[i + 2] !== '<') {
-        const m = /^<<(-)?[ \t]*(?:'([^']*)'|"([^"]*)"|\\?([^\s;&|<>()'"]+))/.exec(text.slice(i));
-        if (m) {
-          this.heredocs.push({ word: m[2] ?? m[3] ?? m[4] ?? '', strip: m[1] === '-' });
-          i += m[0].length;
+        const doc = heredocWord(text, i + 2);
+        if (doc) {
+          this.heredocs.push({ word: doc.word, strip: doc.strip });
+          i = doc.end;
           tail = 'x';
           cmdPos = false;
           continue;
@@ -128,6 +158,8 @@ class BashScanner implements Scanner {
     }
     // Code after a trailing operator continues on the next line.
     if (this.quote === '' && (tail.endsWith('|') || tail.endsWith('&&'))) this.cont = true;
+    // A function header (`name()`, `function name`) takes its body from the next lines.
+    if (this.quote === '' && FUNCTION_HEADER.test(text.replace(/[ \t]+#.*$/, ''))) this.cont = true;
     this.inHeredoc = this.heredocs.length > 0;
     return code;
   }

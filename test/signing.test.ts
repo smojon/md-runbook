@@ -93,6 +93,24 @@ describe('signing: the manifest', () => {
     assert.deepEqual(errorsOf('# only prose\n\n' + fence('pwsh', 'Get-Date')), ['no bash or sh cells to sign']);
   });
 
+  it('refuses names that change how the shell runs the code, JS-only patterns, odd placeholders and impossible dates', () => {
+    const all = errorsOf(
+      fence('bash env.LD_PRELOAD=/tmp/x.so env.LC_ALL=C', 'echo ${param:PATH} ${param:ID} ${param:N}') + fence('bash', 'echo ${param:ID:secret}'),
+      { patterns: { PATH: '/usr/bin', ID: '\\d+', N: '[0-9]+?' }, expires: '2026-02-31' },
+    ).join('\n');
+    for (const re of [
+      /expires 2026-02-31: expected a date/,
+      /\$\{param:PATH\}: PATH can't be a parameter/,
+      /pattern for ID: \\d\+ uses JavaScript-only syntax/,
+      /pattern for N: \[0-9\]\+\? uses JavaScript-only syntax/,
+      /cell 1 .*env\.LD_PRELOAD can't be set by a signed runbook/,
+      /cell 1 .*env\.LC_ALL can't be set by a signed runbook/,
+      /cell 2 .*\$\{param:ID:secret\} is not a plain \$\{param:NAME\}/,
+    ])
+      assert.match(all, re);
+    assert.deepEqual(errorsOf(fence('bash env.MODE=fast', 'echo ${param:ID}'), { patterns: { ID: '[a-z][a-z0-9-]{0,30}|[0-9]{1,6}' }, expires: '2028-02-29' }), []);
+  });
+
   it('parseManifest refuses malformed and newer manifests', () => {
     assert.throws(() => parseManifest('md-runbook-manifest 2\nend\n'), /newer version/);
     assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nversion 1\n'), /no end/);

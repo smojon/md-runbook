@@ -566,10 +566,13 @@ describe('a signed runbook', () => {
     signature: 'U1NIU0lH',
   });
 
-  it('shows who signed which version, and the blocks changed since', async () => {
+  it('shows which version is signed, the signer only as what the file says, and the blocks changed since', async () => {
     const r = addRunbook('restart.md', signed);
     await render(<RunbookView id={r.id} />);
-    expect(screen.getByText('Signed runbook ops/restart, version 7, by ops@example.net')).toBeTruthy();
+    expect(screen.getByText('Signed runbook ops/restart, version 7')).toBeTruthy();
+    // Anyone can write a signer name next to a junk signature: the app doesn't vouch for it.
+    expect(screen.getByTestId('signed-claim').props.children).toBe("The file says it was signed by ops@example.net; this app doesn't check that.");
+    expect(screen.queryByTestId('signed-verified')).toBeNull();
     expect(screen.getByText(/^Valid until 2027-04-30\./)).toBeTruthy();
     expect(screen.queryByTestId('signed-changed')).toBeNull();
     const changed = addRunbook('changed.md', signed.replace('restart api', 'stop api'));

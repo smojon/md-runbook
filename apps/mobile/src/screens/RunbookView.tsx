@@ -155,6 +155,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setQueued(false);
   };
   const [notice, setNotice] = useState<string | undefined>();
+  // Who a gate said signed this runbook's manifest (the file's own signer name is only a claim).
+  const [gateChecked, setGateChecked] = useState<{ manifest: string; host: string; principal: string } | undefined>();
+  const verified = signed && gateChecked?.manifest === signed.block.manifest ? gateChecked : undefined;
   const [transportIssue, setTransportIssue] = useState<string | undefined>();
   /** Checked commands per cell index (their texts), for this screen's life, as in the extension's session. */
   const [checks, setChecks] = useState<ReadonlyMap<number, ReadonlySet<string>>>(new Map());
@@ -288,6 +291,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setRunning(undefined);
     if (outcome.kind === 'done') {
       updateRunbookText(runbook.id, outcome.text);
+      if (outcome.result.signedBy && signed) setGateChecked({ manifest: signed.block.manifest, host: target.name, principal: outcome.result.signedBy });
       for (const c of outcome.captured) captures.current = { ...captures.current, [c.name]: c };
       if (outcome.result.newShell) setNotice(t.newShell);
       // Run all stops at the first failure, unless the cell says continue-on-error.
@@ -627,7 +631,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             <DiffSheet diff={diff} onClose={() => setDiff(undefined)} />
             <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />
             <SaveBar runbook={runbook} />
-            {signed ? <SignedBanner status={signed} /> : null}
+            {signed ? <SignedBanner status={signed} verified={verified} /> : null}
             {params.length > 0 ? (
               <ParamsCard specs={params} values={paramValues} onChange={(name, value) => setParamValue(runbook.id, name, value)} />
             ) : null}
@@ -959,12 +963,21 @@ function ParamsCard({
 }
 
 /** A signed runbook: who signed which version, and the blocks changed since (a gate refuses those). */
-function SignedBanner({ status }: { status: SignedStatus }) {
+function SignedBanner({ status, verified }: { status: SignedStatus; verified: { host: string; principal: string } | undefined }) {
   const styles = useStyles();
   const m = status.manifest;
   return (
     <View testID="signed-banner" style={styles.signed}>
-      <Text style={styles.signedTitle}>{t.signedTitle(m.name, m.version, status.block.signer)}</Text>
+      <Text style={styles.signedTitle}>{t.signedTitle(m.name, m.version)}</Text>
+      {verified ? (
+        <Text testID="signed-verified" style={styles.signedBody}>
+          {t.signedVerified(verified.host, verified.principal)}
+        </Text>
+      ) : (
+        <Text testID="signed-claim" style={styles.signedBody}>
+          {t.signedClaim(status.block.signer)}
+        </Text>
+      )}
       <Text style={styles.signedBody}>{m.expires ? t.signedUntil(m.expires) + ' ' + t.signedBody : t.signedBody}</Text>
       {status.changed.length > 0 ? (
         <Text testID="signed-changed" style={styles.warning}>

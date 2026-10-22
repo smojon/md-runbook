@@ -26,6 +26,22 @@ export const MANIFEST_HEADER = 'md-runbook-manifest 1';
 export const RUNBOOK_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 export const SCOPE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** A real calendar day (the gate compares dates as text: 2026-99-99 would never expire). */
+const isDate = (s: string): boolean => DATE_RE.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+
+/**
+ * Names a parameter or env.* value may not have: they change how the shell or the programs it
+ * starts read the signed code. md-runbook-gate refuses the same (is_reserved).
+ */
+export function isReservedVar(name: string): boolean {
+  return (
+    /^(PATH|IFS|ENV|BASH_ENV|CDPATH|GLOBIGNORE|HOME|SHELL|SHELLOPTS|BASHOPTS|PS[1-4]|PROMPT_COMMAND|PWD|OLDPWD|TMPDIR|LANG|LANGUAGE)$/.test(name) ||
+    /^(LC_|LD_|DYLD_|BASH_FUNC_|__mdrb_)/.test(name)
+  );
+}
+
+/** JavaScript-only regex syntax, which the gate's `grep -E` reads differently (or not at all). */
+const NOT_POSIX_ERE = /\\[dDwWsSbB1-9]|\(\?|[*+?}]\?/;
 
 export interface ManifestMeta {
   name: string;
@@ -112,11 +128,15 @@ export function buildManifest(text: string, meta: ManifestMeta): { manifest: Man
   const errors: string[] = [];
   if (!RUNBOOK_NAME_RE.test(meta.name)) errors.push(`name "${meta.name}": use letters, digits and . _ / - (at most 100)`);
   if (!Number.isInteger(meta.version) || meta.version < 1) errors.push(`version ${meta.version}: expected a positive whole number`);
-  if (meta.expires !== undefined && !DATE_RE.test(meta.expires)) errors.push(`expires ${meta.expires}: expected YYYY-MM-DD`);
+  if (meta.expires !== undefined && !isDate(meta.expires)) errors.push(`expires ${meta.expires}: expected a date, YYYY-MM-DD`);
   for (const s of meta.scopes) if (!SCOPE_RE.test(s)) errors.push(`scope "${s}": use letters, digits and . _ - (at most 64)`);
   for (const [name, re] of Object.entries(meta.patterns)) {
     if (!VAR_NAME_RE.test(name)) errors.push(`pattern for "${name}": not a parameter name`);
+    else if (isReservedVar(name)) errors.push(`\${param:${name}}: ${name} can't be a parameter of a signed runbook (it changes how the shell runs the code)`);
     if (re === '' || /[\r\n]/.test(re)) errors.push(`pattern for ${name}: empty or more than one line`);
+    else if (NOT_POSIX_ERE.test(re)) {
+      errors.push(`pattern for ${name}: ${re} uses JavaScript-only syntax (\\d, \\w, (?…), lazy *?, back-references); servers check it with grep -E: use [0-9], [A-Za-z0-9_], …`);
+    }
   }
   const cells: ManifestCell[] = [];
   for (const c of bashCells(text)) {
@@ -134,8 +154,13 @@ export function buildManifest(text: string, meta: ManifestMeta): { manifest: Man
     } catch (e) {
       errors.push(`${where}: ${e instanceof Error ? e.message : String(e)}`);
     }
+    // `${param:X:secret}` and the like aren't references: bash would read them as ${param:offset:length}.
+    for (const m of c.value.matchAll(/\$\{(secret|input|param|out):[^}\s]*/g)) {
+      if (!/^\$\{(secret|input|param|out):[A-Za-z_][A-Za-z0-9_]*$/.test(m[0])) errors.push(`${where}: ${m[0]}} is not a plain \${${m[1]}:NAME} and can't be signed`);
+    }
     for (const [k, v] of Object.entries(opts.env)) {
       if (!VAR_NAME_RE.test(k)) errors.push(`${where}: env.${k} is not a variable name`);
+      else if (isReservedVar(k)) errors.push(`${where}: env.${k} can't be set by a signed runbook (it changes how the shell runs the code)`);
       if (/\$\{(secret|input|param|out):/.test(v)) errors.push(`${where}: env.${k} can't use placeholders in a signed runbook`);
     }
     cells.push({
@@ -265,9 +290,12 @@ const BLOCK_RE = /^<!-- md-runbook:signature v1 signer=(\S+) signed=(\d{4}-\d{2}
 
 const wrap = (b64: string): string => b64.replace(/.{1,76}/g, '$&\n').trimEnd();
 
+/** A signer name as the block can hold it: one word, nothing that would end the HTML comment (`--`, `>`). */
+export const signerLabel = (name: string): string => name.replace(/[^\w@.+-]+/g, '_').replace(/-{2,}/g, '-') || 'unknown';
+
 export function formatSignatureBlock(b: SignatureBlock): string {
   return (
-    `<!-- md-runbook:signature v1 signer=${b.signer.replace(/\s+/g, '_')} signed=${b.signed}\n` +
+    `<!-- md-runbook:signature v1 signer=${signerLabel(b.signer)} signed=${b.signed}\n` +
     `manifest\n${wrap(toBase64(b.manifest))}\nsignature\n${wrap(b.signature)}\n-->`
   );
 }

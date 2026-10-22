@@ -61,6 +61,28 @@ describe('splitSteps: bash', () => {
     ]);
   });
 
+  it("a here-doc's delimiter is its whole word without quotes, as bash reads it", () => {
+    // Signed steps are what a gate runs one by one: a wrong split runs here-doc text as commands.
+    for (const op of ['<<E"O"F', "<<'E'OF", '<<E\\OF', '<< "EOF"', '<<-EOF']) {
+      const src = `cat > notes.txt ${op}\nE\nrm -rf /srv/data\nEOF\necho after`;
+      assert.deepEqual(texts(src, 'bash'), [`cat > notes.txt ${op}\nE\nrm -rf /srv/data\nEOF`, 'echo after'], op);
+    }
+  });
+
+  it('a function header keeps its body on the next lines', () => {
+    for (const head of ['cleanup()', 'cleanup ()', 'function cleanup', 'function cleanup()', 'cleanup()  # tidy up']) {
+      const src = `${head}\n{\n  rm -rf "$WORK"\n}\ntrap cleanup EXIT`;
+      assert.deepEqual(ranges(src, 'bash'), [
+        [0, 3],
+        [4, 4],
+      ], head);
+    }
+    assert.deepEqual(ranges('arr=()\necho ${#arr[@]}', 'bash'), [
+      [0, 0],
+      [1, 1],
+    ]);
+  });
+
   it('does not treat words that look like keywords as keywords', () => {
     assert.deepEqual(ranges('echo done\necho if\ngrep -c fi file\necho $#\necho {a,b}', 'bash'), [
       [0, 0],

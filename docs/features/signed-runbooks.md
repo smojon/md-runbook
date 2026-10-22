@@ -49,8 +49,13 @@ missing patterns; the key comes from `mdRunbook.signing.key`, or it asks).
 - **Signing again** keeps the name, scopes and patterns and counts the version up. Options given
   now win. `--expires` is not carried over.
 - `verify` prints what the signature covers, the manifest's sha256, and any block changed since
-  signing (with its line); with `--allowed-signers` it also checks the signature as the gate
-  would. Exit code 0 when everything is signed.
+  signing (with its line). Only with `--allowed-signers` does it check the signature as the gate
+  would: without it, the signer's name is just what the file says (anyone can write a name next
+  to a signature), and it says so. Exit code 0 when everything is signed.
+- Signing refuses what a server would read differently: parameter or `env.*` names such as
+  `PATH`, `IFS`, `BASH_ENV`, `LD_*` or `LC_*`; patterns with JavaScript-only syntax (`\d`,
+  `(?…)`, lazy `*?`); and, where bash is installed, a block whose commands don't each read as a
+  whole command on their own (`bash -n`), since a server may run them one by one.
 - The editor and `md-runbook lint` warn about blocks changed since signing.
 
 ### From a repository
@@ -155,8 +160,10 @@ credentials.
 ## Running
 
 The app needs no setting: it finds the gate when it connects (its answer to the app's first
-line). A signed runbook shows **Signed runbook NAME, version N, by SIGNER** and any blocks
-changed since signing. Parameter values are typed under **Parameters** on the runbook; the app
+line). A signed runbook shows **Signed runbook NAME, version N** and any blocks changed since
+signing. The signer's name is shown as what the file says until a gate has checked the signature;
+after the first block that ran through a gate, the banner shows the signer that gate accepted.
+Parameter values are typed under **Parameters** on the runbook; the app
 checks them against the signed patterns as you type, and the gate checks them again. Through
 the gate a signed block runs as "block N of this manifest"; on
 a server without the gate the same block runs as usual. A refused block ends with exit 126 and
@@ -164,8 +171,10 @@ the gate's reason in its output, for example
 `md-runbook-gate: this server runs signed runbooks only (this cell is not signed, or changed since signing)`.
 
 The gate keeps one shell per connection, as the app does elsewhere, so folders and variables
-carry over between blocks. Cancelling works: the app's stop request on a second channel reaches
-the gate, which stops the running block of that connection's shell only.
+carry over between blocks; loading another runbook unsets the previous one's parameters and
+`env.*` values. Cancelling works: the app's stop request on a second channel reaches the gate,
+which stops the running block of that connection's shell only. The gate checks parameter
+patterns in the C locale, whatever locale the client's SSH session sends.
 
 ## The log
 
@@ -174,6 +183,10 @@ One JSON line per event, to syslog (tag `md-runbook-gate`) or a file: `session`,
 `end` (exit code), `unsigned` (hash of the code), `refused` (the reason), `stop`. Each carries
 the time, the account, the client address and the key: its fingerprint with
 `ExposeAuthInfo yes` in `sshd_config`, or the name given with `--who=NAME`.
+
+The `end` events are written by the account's own shell, and a log file must be writable by the
+account, so a block (or unsigned text where it is allowed) could add lines of its own. For a log
+the account can't touch, use syslog and forward it off the server.
 
 ## Limits
 
@@ -185,5 +198,9 @@ the time, the account, the client address and the key: its fingerprint with
 - The prose is not signed: an altered instruction such as "now run X by hand" is not stopped,
   but the gate would still refuse X.
 - One signer per runbook; no version floors (revoke by hash instead).
+- "In order" means the gate runs a block's commands in their order; it doesn't see their exit
+  codes, so a client could go on after a failed command. The app stops at a failure.
+- A key with `--unsigned=allow` runs code as the same account as everyone else's keys: keep
+  stricter keys on another account (one account per policy).
 - The gate runs on Linux and macOS servers (POSIX `sh`, OpenSSH 8.2+, `awk`, `base64`,
   `mkfifo`, `pkill`).

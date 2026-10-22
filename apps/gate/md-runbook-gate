@@ -23,6 +23,12 @@ set -u
 # No filename expansion anywhere (principals such as *@example.net, scopes); turned on only to list the parameters.
 set -f
 umask 077
+# The gate's own checks (grep -E on parameter patterns, sed, awk) in the C locale: sshd may pass
+# the client's LANG and LC_* (AcceptEnv), which would change what a pattern matches. The cells'
+# shell gets the session's LC_ALL back (empty is the same as unset).
+session_lc_all=${LC_ALL-}
+LC_ALL=C
+export LC_ALL
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}
 GATE_PROTOCOL=1
 REFUSED=126
@@ -119,10 +125,20 @@ is_id() {
   [ ${#1} -le 64 ]
 }
 is_num() {
-  case $1 in '' | *[!0-9]*) return 1 ;; esac
+  # No leading zeros: $((08 + 1)) is octal (or an error) in sh.
+  case $1 in '' | *[!0-9]* | 0?*) return 1 ;; esac
   [ ${#1} -le 6 ]
 }
 is_var() { case $1 in '' | [0-9]* | *[!A-Za-z0-9_]*) return 1 ;; esac; }
+# Names a parameter or env.* value may not set: they change how the shell or the programs it
+# starts read the signed code (also refused when signing).
+is_reserved() {
+  case $1 in
+    PATH | IFS | ENV | BASH_ENV | CDPATH | GLOBIGNORE | HOME | SHELL | SHELLOPTS | BASHOPTS | PS1 | PS2 | PS3 | PS4 | \
+      PROMPT_COMMAND | PWD | OLDPWD | TMPDIR | LC_* | LANG | LANGUAGE | LD_* | DYLD_* | BASH_FUNC_* | __mdrb_*) return 0 ;;
+  esac
+  return 1
+}
 
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -193,9 +209,9 @@ mkdir "$work/params"
 # The shell the cells run in: bash as a login shell (the account's PATH), else sh. It reads
 # only what this gate writes; the cells themselves read /dev/null.
 if command -v bash >/dev/null 2>&1; then
-  bash -l <"$work/in" &
+  LC_ALL=$session_lc_all bash -l <"$work/in" &
 else
-  sh -l <"$work/in" &
+  LC_ALL=$session_lc_all sh -l <"$work/in" &
 fi
 child=$!
 : >"$state/pids/$child"
@@ -208,6 +224,11 @@ mname=
 mversion=
 step_cell=
 step_next=
+# Run files are numbered by the gate, not named by the client's request id: a reused id would
+# replace code still waiting in the shell's queue (running a later step before an earlier one).
+runs=0
+# The names exported to the shell for the loaded runbook, unset when the next one loads.
+: >"$work/exported"
 
 # The manifest's items: field N of its first `KEY ...` line in cell $2 (or at the top with '').
 mfield() { awk -v key="$1" -v cell="$2" -v f="$3" '$1 == "cell" { c = $2 } $1 == key && (cell == "" || c == cell) { print $f; exit }' "$work/manifest"; }
@@ -222,6 +243,11 @@ do_load() {
   set +f
   rm -f "$work"/params/*
   set -f
+  # The previous runbook's parameters and env.* values don't carry over to this one.
+  if [ -s "$work/exported" ]; then
+    printf 'unset %s\n' "$(sort -u "$work/exported" | tr '\n' ' ')" >&4
+    : >"$work/exported"
+  fi
   printf '%s' "$2" | b64d >"$work/manifest" 2>/dev/null || {
     refuse "$rid" "the manifest is not base64"
     return
@@ -260,7 +286,8 @@ do_load() {
       refuse "$rid" "can't read the revoked list $revoked"
       return
     }
-    if grep -qx "$mhash" "$revoked"; then
+    # One hash per line, as md-runbook verify prints it; tolerant of CRLF, blanks, upper case and a sha256: prefix.
+    if tr -d '\r \t' <"$revoked" | tr 'A-F' 'a-f' | sed 's/^sha256://' | grep -qx "$mhash"; then
       refuse "$rid" "$mname version $mversion was withdrawn (revoked)"
       return
     fi
@@ -283,6 +310,12 @@ do_load() {
     refuse "$rid" "$mname is for ${mscopes:-no scope}; this server or key accepts ${key_scopes:-$scopes}"
     return
   }
+  for n in $(awk '$1 == "param" || $1 == "env" { print $2 }' "$work/manifest"); do
+    if ! is_var "$n" || is_reserved "$n"; then
+      refuse "$rid" "$mname sets $n, a name the gate doesn't let a runbook set"
+      return
+    fi
+  done
   loaded=1
   step_cell=
   log_event event load id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal"
@@ -326,17 +359,22 @@ do_param() {
 emit_run() {
   rid=$1
   cell=$2
+  file=$3
   {
     set +f
     for f in "$work"/params/*; do
       set -f
-      [ -f "$f" ] && printf 'export %s=%s\n' "${f##*/}" "$(sq "$(cat "$f")")"
+      [ -f "$f" ] || continue
+      printf 'export %s=%s\n' "${f##*/}" "$(sq "$(cat "$f")")"
+      printf '%s\n' "${f##*/}" >>"$work/exported"
     done
     awk -v cell="$cell" '$1 == "cell" { c = $2 } $1 == "env" && c == cell { print $2, $3 }' "$work/manifest" |
       while read -r k v; do
-        is_var "$k" && printf 'export %s=%s\n' "$k" "$(sq "$(printf '%s' "$v" | b64d)")"
+        is_var "$k" && ! is_reserved "$k" || continue
+        printf 'export %s=%s\n' "$k" "$(sq "$(printf '%s' "$v" | b64d)")"
+        printf '%s\n' "$k" >>"$work/exported"
       done
-    printf '__mdrb_id=%s\n__mdrb_f=%s\n' "$rid" "$(sq "$work/run-$rid")"
+    printf '__mdrb_id=%s\n__mdrb_f=%s\n' "$rid" "$(sq "$file")"
     cwd64=$(mfield cwd "$cell" 2)
     if [ -n "$cwd64" ]; then
       printf '__mdrb_dir=%s\n' "$(sq "$(printf '%s' "$cwd64" | b64d)")"
@@ -408,12 +446,13 @@ do_run() {
     step_cell=$cell
     step_next=$((k + 1))
   fi
-  printf '%s' "$code64" | b64d >"$work/run-$rid" || {
+  runs=$((runs + 1))
+  printf '%s' "$code64" | b64d >"$work/run-$runs" || {
     refuse "$rid" "bad cell in the manifest"
     return
   }
   log_event event run id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal" cell "$cell" step "$k"
-  emit_run "$rid" "$cell"
+  emit_run "$rid" "$cell" "$work/run-$runs"
 }
 
 do_raw() {

@@ -10,7 +10,8 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { parse, shellKindForLanguage } from '@md-runbook/core';
 import { findRefs } from '@md-runbook/core/secrets';
-import { keyComment, manifestHash, sshSign } from '@md-runbook/core/node';
+import { checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign } from '@md-runbook/core/node';
+import { executionConfig } from './config';
 import { ManifestMeta, RUNBOOK_NAME_RE, SCOPE_RE, buildManifest, formatManifest, parseManifest, readSignature, withSignature } from '@md-runbook/core/signing';
 import { NOTEBOOK_TYPE } from './serializer';
 
@@ -113,6 +114,14 @@ async function signRunbook(uri?: unknown): Promise<void> {
   const built = buildManifest(text, meta);
   if ('errors' in built) {
     return void vscode.window.showErrorMessage(`md-runbook: can't sign this runbook: ${built.errors.slice(0, 3).join('; ')}${built.errors.length > 3 ? ' …' : ''}`, { modal: true });
+  }
+  const bash = resolveShell('bash', executionConfig().shell, nodeShellEnv());
+  const stepProblems = bash.ok ? await checkSignedSteps(built.manifest, bash.shell.command) : undefined;
+  if (stepProblems?.length) {
+    return void vscode.window.showErrorMessage(
+      `md-runbook: can't sign this runbook: servers run a cell's commands one by one, and bash doesn't read these on their own: ${stepProblems.slice(0, 3).join('; ')}`,
+      { modal: true },
+    );
   }
   const key = await pickKey();
   if (!key) return;

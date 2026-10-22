@@ -119,8 +119,10 @@ environment.
 
 ## Signed runbooks
 
-A runbook signed with **Sign Runbook** or `md-runbook sign` shows who signed which version, and
-any blocks changed since. On a server whose key is restricted to md-runbook-gate, the app runs
+A runbook signed with **Sign Runbook** or `md-runbook sign` shows which version is signed, and
+any blocks changed since. The signer's name is only what the file says until a gate has checked
+the signature; then the banner shows the signer that gate accepted. On a server whose key is
+restricted to md-runbook-gate, the app runs
 the signed blocks by their number in the signed manifest, and the gate refuses anything else;
 the app finds the gate by itself. See [signed runbooks](features/signed-runbooks.md).
 

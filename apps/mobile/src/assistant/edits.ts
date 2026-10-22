@@ -20,7 +20,7 @@ import {
   extractFencedBlocks,
   proposalMarkdown as quotedProposal,
 } from '@md-runbook/core/aiContext';
-import { extractProposals, findingsMarkdown, isFindingsCell, proposalCell } from '@md-runbook/core/aiPrompt';
+import { aiNoteMarkdown, extractProposals, findingsMarkdown, isFindingsCell, proposalCell } from '@md-runbook/core/aiPrompt';
 import { pastedBy, pastedReason } from '@md-runbook/core/pastedInfo';
 import { proposedInfo } from '@md-runbook/core/proposal';
 
@@ -75,7 +75,7 @@ export function insertPasted(text: string, clipboard: string, map: PseudonymMap,
 /** Explain Output, kept: the explanation as a quoted note after the cell. */
 export function insertNote(text: string, after: number, label: string, provider: string, explanation: string): string {
   return insert(text, after + 1, [
-    { kind: 'markup', value: `> **AI note on ${label}** (draft by ${provider}, not verified)\n\n${explanation}` },
+    { kind: 'markup', value: aiNoteMarkdown(label, provider, explanation) },
   ]);
 }
 
