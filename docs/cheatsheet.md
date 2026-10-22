@@ -92,6 +92,7 @@ secret values are redacted from the output.
 | --- | --- | --- | --- |
 | **Export Report (HTML)** / **Export Report (PDF)** | Share ▾, right-click the file in the Explorer | Send the result of a run to someone without VS Code: a change record, an incident report, an audit. | ⋯ More → Share (through the share sheet; in a browser: download, print to PDF) |
 | **Sign Runbook** | Share ▾ | Release a runbook for a support team: servers restricted to md-runbook-gate run only signed runbooks, unchanged. See [signed runbooks](https://github.com/smojon/md-runbook/blob/main/docs/features/signed-runbooks.md). | shows who signed it and which blocks changed |
+| **Open in the App** | Share ▾ | Continue on your phone: copies a link that opens this runbook (its GitHub or GitLab file) in the md-runbook app. It warns when the phone would get an older version (changes not committed or not pushed). | **Open a link…** on the start screen; mdrunbook://open?url=… links |
 | Save | Ctrl+S | Outputs are written into the `.md` file: commit it, and the run is in Git. | **Save to the file** (or **Download** in browsers that can't write files) |
 
 ## Only in the app
@@ -115,6 +116,9 @@ secret values are redacted from the output.
 | `md-runbook lint file.md` | Catch typos in cell options and missing values before anyone runs it, in a pull request. |
 | `md-runbook sign file.md --key KEY` | Release a runbook for servers with md-runbook-gate, from your machine or from CI. |
 | `md-runbook verify file.md` | Check what a signature covers and which blocks changed since signing. |
+
+Moving a runbook between VS Code and the app:
+[switching](https://github.com/smojon/md-runbook/blob/main/docs/switching.md).
 
 More: [command line](https://github.com/smojon/md-runbook/blob/main/docs/features/cli.md),
 [file format](https://github.com/smojon/md-runbook/blob/main/docs/syntax.md), and the feature

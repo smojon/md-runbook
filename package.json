@@ -394,6 +394,12 @@
         "icon": "$(workspace-trusted)"
       },
       {
+        "command": "mdRunbook.openInApp",
+        "title": "Open in the App",
+        "category": "md-runbook",
+        "icon": "$(device-mobile)"
+      },
+      {
         "command": "mdRunbook.runCheckedLines",
         "title": "Run Checked Lines",
         "category": "md-runbook",
@@ -555,6 +561,10 @@
         },
         {
           "command": "mdRunbook.signRunbook",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.openInApp",
           "when": "notebookType == md-runbook || resourceExtname == .md"
         },
         {
@@ -1015,6 +1025,10 @@
         {
           "command": "mdRunbook.signRunbook",
           "group": "2_sign@1"
+        },
+        {
+          "command": "mdRunbook.openInApp",
+          "group": "3_app@1"
         }
       ],
       "mdRunbook.toolbar.help": [

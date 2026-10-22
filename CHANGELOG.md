@@ -8,6 +8,13 @@
   Started** (the walkthrough) and **Cheat Sheet** in Help.
 - **Cheat sheet** (`docs/cheatsheet.md`, Help ▸ Cheat Sheet): every action of the extension, the
   app and the command line, where it is, and when it matters to you.
+- **Open in the App** (Share ▾) copies a link that opens the runbook in the md-runbook app on a
+  phone (its GitHub or GitLab file), and warns when the phone would get an older version. See
+  `docs/switching.md` for moving runbooks between VS Code and the app.
+- **The app** (in development) got the extension's features and names: one-tap Run all /
+  Continue / Run again with progress, ⋯ More with every action (searchable), a cell's ⋯, steps,
+  sessions, Run All as Copy, reports and sharing, secrets and inputs, the assistant, and
+  approving proposals with the same policy; proposals no longer run there unapproved.
 - **Set Inputs** asks for every `${input:NAME}` of the runbook, the current values filled in, to
   set or change them before running; **Set Parameters** also covers parameters the cells use
   without declaring them.

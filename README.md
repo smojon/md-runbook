@@ -180,7 +180,9 @@ Each has its own page with examples and settings:
 - **[Phone and browser app](docs/app.md)** (in development, not in the stores yet): the same
   runbooks on iPhone, Android and the web, run on your servers over SSH, with the SSH key kept
   in the phone's secure hardware. `host=NAME` cells are for the app: the extension and the CLI
-  never run them.
+  never run them. [Moving between VS Code and the app](docs/switching.md): a synced folder,
+  **Open in the App** from VS Code, **Share Runbook** from the app; the run carries on where it
+  stopped.
 - **[Signed runbooks](docs/features/signed-runbooks.md):** sign a runbook (**Sign Runbook**, or
   `md-runbook sign`) and ship it anywhere; servers whose support keys are restricted to
   `md-runbook-gate` run only runbooks signed by keys they trust, unchanged, with scopes,

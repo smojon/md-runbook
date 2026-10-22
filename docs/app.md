@@ -18,6 +18,35 @@ tick is written to the file. Code cells have syntax colours, their saved output 
 for the last run. The line under each cell shows its language and options. The app follows the
 phone's light or dark setting, with VS Code's default colours.
 
+## One tap to run, everything else one tap away
+
+The top of a runbook has one button that does the obvious thing: **▶ Run all**, then
+**▶ Continue** after a stop (from the failed or pending step on), **↻ Run again** when every step
+is done, **■ Stop** while it runs; next to it how far the runbook is ("3 of 7 steps done · step 4
+failed"). It stops at the first failure (unless the cell has `continue-on-error`), leaves
+proposals out and says so, and pauses for a host key, a secret or an input as a single cell does.
+
+**⋯ More** lists every other action in the extension's groups and names (Run, Steps, Values,
+Assistant, Share, Help), each with when it matters, and a search field: type part of a name
+(Ctrl/⌘+K opens it with a keyboard). A cell's **⋯**, or a long press on it, has the cell's own
+actions: Run Cell, Step Through Lines, Mark Step Done / Skipped, Clear Outputs Above / Below,
+Explain Output, Approve / Reject a proposal. The [cheat sheet](cheatsheet.md) has them all.
+
+## Assistant, proposals and reports
+
+- **Assistant** (⋯ More → Assistant): Suggest Next Steps, Explain Output, Summarize Incident
+  with Claude and your own Anthropic API key (kept in the phone's keychain). As in the
+  extension, nothing is sent before you confirm, with the size, the leak check and a preview;
+  outputs are redacted and names pseudonymized with a map that stays on the device; suggestions
+  arrive as proposed cells. **Copy for AI** and **Paste AI Proposal** work with any chat
+  assistant through the clipboard; **Check for Leaks** lists secrets and internal names in the
+  runbook.
+- **Proposals** never run until approved on this device. **Approve** uses the extension's
+  built-in command policy: allowed commands in one tap, others after typing `run`, denied ones
+  not at all. The card says which account the cell will run as.
+- **Share**: Export Report (HTML or PDF) and Share Runbook through the share sheet; in a browser
+  the report downloads and the PDF goes through print.
+
 ## Hosts and the app's key
 
 <img src="app/ios-hosts.png" width="320" alt="The Hosts screen: one host, and the app's public SSH key with a Copy button">
@@ -95,6 +124,11 @@ The app keeps every runbook you open, with its outputs, until you remove it. A r
 from a file stays linked to it, and **Save to the file** writes it back. That works on Android,
 on iOS, and in Chrome and Edge; other browsers download the file instead. If the file changed
 elsewhere since it was opened, the app asks whether to overwrite it or load that version.
+
+**Open a link…** on the start screen opens a runbook from an `https` address (a GitHub or
+GitLab file page works too), and `mdrunbook://open?url=…` links (what VS Code's **Open in the
+App** copies) open it directly. **⋯ More → Share Runbook** hands the file on. More in
+[Moving between VS Code and the app](switching.md).
 
 ## Try it
 

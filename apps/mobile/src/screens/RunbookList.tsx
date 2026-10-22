@@ -1,10 +1,11 @@
 import { Link, router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { parse } from '@md-runbook/core';
 import { checkCore } from '../coreCheck';
 import { t } from '../i18n';
 import { openRunbookFile } from '../runbooks/openFile';
+import { openRunbookLink } from '../runbooks/openLink';
 import { forgetOrigin } from '../runbooks/files';
 import { Runbook, hasUnsavedChanges, removeRunbook, useRunbooks } from '../runbooks/store';
 import { themedStyles, usePalette } from '../theme';
@@ -20,6 +21,16 @@ export function RunbookList() {
     [runbooks],
   );
   const [error, setError] = useState<string | undefined>();
+  /** Open a link…: the address being typed (undefined: the field is closed). */
+  const [link, setLink] = useState<string | undefined>();
+  const openLink = async (): Promise<void> => {
+    if (!link) return;
+    setError(undefined);
+    const r = await openRunbookLink(link);
+    if (r.kind === 'error') return setError(r.message);
+    setLink(undefined);
+    router.push({ pathname: '/runbook/[id]', params: { id: r.runbook.id } });
+  };
   const open = async (): Promise<void> => {
     setError(undefined);
     const r = await openRunbookFile();
@@ -41,12 +52,47 @@ export function RunbookList() {
             <Pressable testID="open-runbook" accessibilityRole="button" onPress={() => void open()} style={styles.button}>
               <Text style={styles.buttonText}>{t.openRunbook}</Text>
             </Pressable>
+            <Pressable
+              testID="open-link"
+              accessibilityRole="button"
+              onPress={() => setLink(link === undefined ? '' : undefined)}
+              style={styles.secondary}
+            >
+              <Text style={styles.secondaryText}>{t.openLink}</Text>
+            </Pressable>
             <Link href={{ pathname: '/hosts', params: {} }} asChild>
               <Pressable testID="hosts" accessibilityRole="link" style={styles.secondary}>
                 <Text style={styles.secondaryText}>{t.hosts}</Text>
               </Pressable>
             </Link>
           </View>
+          {link !== undefined ? (
+            <View style={styles.buttons}>
+              <TextInput
+                testID="open-link-url"
+                accessibilityLabel={t.openLink}
+                style={styles.linkInput}
+                value={link}
+                onChangeText={setLink}
+                placeholder={t.openLinkPlaceholder}
+                placeholderTextColor={colors.muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                autoFocus
+                onSubmitEditing={() => void openLink()}
+              />
+              <Pressable
+                testID="open-link-go"
+                accessibilityRole="button"
+                disabled={link.trim() === ''}
+                onPress={() => void openLink()}
+                style={styles.button}
+              >
+                <Text style={styles.buttonText}>{t.open}</Text>
+              </Pressable>
+            </View>
+          ) : null}
           {error ? (
             <Text testID="open-error" role="alert" style={styles.error}>
               {error}
@@ -126,6 +172,16 @@ function RunbookRow({ item }: { item: Runbook & { cells: number } }) {
 
 const useStyles = themedStyles((colors) => ({
   rowMain: { flexDirection: 'row', alignItems: 'center' },
+  linkInput: {
+    flex: 1,
+    minWidth: 200,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    borderRadius: 6,
+    padding: 10,
+    fontSize: 15,
+    color: colors.text,
+  },
   rowLink: { flex: 1 },
   remove: { padding: 8 },
   confirm: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 8 },
