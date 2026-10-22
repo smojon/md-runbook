@@ -8,8 +8,8 @@
  * with `(?-i)`). A key that is present replaces the built-in list for that key.
  */
 
-import { createHash } from 'node:crypto';
-import { stripApprovalTokens } from '../proposal';
+import { sha256Hex } from './sha256';
+import { stripApprovalTokens } from './proposal';
 
 export interface CommandPolicy {
   /** Matched against each command of a line (split at `|`, `;`, `&&`, `||`, `&`). */
@@ -449,7 +449,7 @@ export function evaluatePolicy(text: string, policy: CommandPolicy, shell: Polic
 
 /** Fingerprint of a cell's code, independent of line endings. */
 export function codeHash(code: string): string {
-  return createHash('sha256').update(code.replace(/\r\n?/g, '\n'), 'utf8').digest('hex').slice(0, 32);
+  return sha256Hex(code.replace(/\r\n?/g, '\n')).slice(0, 32);
 }
 
 /** Fence info without the approval stamps and the `proposed` flag (what an approval covers). */

@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CodeMeta, formatLocalIso, isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { ApprovalStatus, CommandPolicy, DEFAULT_POLICY, PolicyResult, approvalHash, approvalStatus, evaluatePolicy, parsePolicy, restrictPolicy } from '@md-runbook/core/node/policy';
+import { ApprovalStatus, CommandPolicy, DEFAULT_POLICY, PolicyResult, approvalHash, approvalStatus, evaluatePolicy, parsePolicy, restrictPolicy } from '@md-runbook/core/policy';
 import { Proposal, approvedInfo, asProposed, proposalOf, withInfo } from '@md-runbook/core/proposal';
 import { VAR_NAME_RE, findRefs } from '@md-runbook/core/secrets';
 import { tokenizeInfo } from '@md-runbook/core/cellOptions';

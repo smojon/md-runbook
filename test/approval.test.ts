@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { CellInput, CodeMeta, DEFAULT_WRITE_OPTIONS, parse, serialize } from '@md-runbook/core';
-import { DEFAULT_POLICY, approvalHash, approvalStatus, codeHash, commandLines, evaluatePolicy, parsePolicy, restrictPolicy } from '@md-runbook/core/node/policy';
+import { DEFAULT_POLICY, approvalHash, approvalStatus, codeHash, commandLines, evaluatePolicy, parsePolicy, restrictPolicy } from '@md-runbook/core/policy';
 import { approvedInfo, asProposed, proposalOf, withInfo } from '@md-runbook/core/proposal';
 
 const verdict = (text: string): string => evaluatePolicy(text, DEFAULT_POLICY).verdict;
