@@ -3,3 +3,6 @@ dist
 *.md
 compose.example.yml
 Caddyfile.example
+relay-token.txt
+compose.yml
+Caddyfile

@@ -1,0 +1,65 @@
+name: Pages
+# The web app on GitHub Pages, from a commit on main whose App workflow passed (or by hand).
+# It only deploys to its own domain: the app keeps its SSH key in the origin's localStorage, and
+# <user>.github.io is shared with every other Pages site of the account. Set the domain under
+# Settings → Pages → Custom domain and the same origin as the repository variable
+# WEB_APP_ORIGIN (https://app.example.net); until then the job is skipped.
+on:
+  workflow_run:
+    workflows: [App]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: apps/mobile
+
+jobs:
+  deploy:
+    if: vars.WEB_APP_ORIGIN != '' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/configure-pages@v6
+        id: pages
+      - name: Pages serves the app's own domain
+        env:
+          ORIGIN: ${{ steps.pages.outputs.origin }}
+          WANTED: ${{ vars.WEB_APP_ORIGIN }}
+        run: |
+          echo "Pages origin: $ORIGIN"
+          test "$ORIGIN" = "$WANTED" || { echo "::error::Pages serves $ORIGIN, not WEB_APP_ORIGIN ($WANTED)"; exit 1; }
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      # One page: Pages answers unknown paths (/runbook/…) with 404.html, so that is the app too.
+      - name: Web build
+        run: |
+          npx expo export --platform web
+          cp dist/index.html dist/404.html
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: apps/mobile/dist
+      - uses: actions/deploy-pages@v5
+        id: deploy

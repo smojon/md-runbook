@@ -33,6 +33,12 @@ State of the project for whoever picks it up next (person or new Claude session)
 - **Relay:** `apps/relay` lets the web app reach SSH servers (WebSocket to TCP, protocol v1,
   allowlist and tokens; its README). Separate npm project with a Dockerfile; the Relay workflow
   tests it and probes the container, and the App workflow runs a cell from Chromium through it.
+  Its README has the steps for a free Oracle Cloud VM.
+- **Web app hosting:** `.github/workflows/pages.yml` deploys the web build to GitHub Pages after
+  a green App run on main. It does nothing until the repository variable `WEB_APP_ORIGIN` is
+  set, and it refuses to deploy unless Pages serves exactly that origin. The reason: the app
+  keeps its SSH key in the origin's localStorage, and `smojon.github.io` is shared with the
+  account's other Pages sites.
 - **Examples:** `examples/sample.runbook.md` (the hand test drive, opened by **Open Sample
   Runbook**; sections 1–17 cover every feature), `examples/ci.runbook.md` (run by CI through the
   action), `examples/screenshots.runbook.md` (for `docs/screenshots.md`), and workflow templates
