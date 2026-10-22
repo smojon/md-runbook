@@ -210,6 +210,14 @@ export async function verifyCommand(argv: readonly string[], out: Out = stdout, 
     out(`${file}:${(lines.get(i) ?? 0) + 1}: changed since signing: servers that only run signed runbooks refuse this block`);
     ok = false;
   }
+  for (const i of status.moved) {
+    out(`${file}:${(lines.get(i) ?? 0) + 1}: moved since signing: signed as block ${status.cells.get(i)!.n}, after blocks that now come later`);
+    ok = false;
+  }
+  if (status.missing.length > 0) {
+    out(`  signed block${status.missing.length === 1 ? '' : 's'} ${status.missing.join(', ')} of ${m.cells.length} not in the file as signed (deleted or changed)`);
+    ok = false;
+  }
   if (m.expires && m.expires < today()) ok = false;
   if (allowed) {
     try {

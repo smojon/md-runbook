@@ -984,6 +984,16 @@ function SignedBanner({ status, verified }: { status: SignedStatus; verified: { 
           {t.signedChanged(status.changed.length)}
         </Text>
       ) : null}
+      {status.missing.length > 0 ? (
+        <Text testID="signed-missing" style={styles.warning}>
+          {t.signedMissing(status.missing, status.manifest.cells.length)}
+        </Text>
+      ) : null}
+      {status.moved.length > 0 ? (
+        <Text testID="signed-moved" style={styles.warning}>
+          {t.signedMoved(status.moved.length)}
+        </Text>
+      ) : null}
     </View>
   );
 }

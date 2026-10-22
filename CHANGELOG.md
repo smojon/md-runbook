@@ -24,6 +24,15 @@ Security fixes from a review of the assistant, signed runbooks and md-runbook-ga
 - **Signing** refuses those names too, patterns with JavaScript-only syntax (`\d`, `(?…)`, lazy
   `*?`), `${param:X:…}`, and impossible dates. `verify --allowed-signers` accepts a signer line
   with several principals.
+- **Deleted and reordered signed blocks are reported.** Blocks match their signature by content,
+  so removing a backup step or swapping two `cd` blocks showed "0 changed". Lint, the editor,
+  `verify` (which now fails) and the app name the missing blocks and the moved ones.
+- **Signing refuses blocks GitHub doesn't show as code:** a bash block inside an HTML comment, or
+  fences indented 4 spaces or more, which a reviewer of the rendered pull request would miss.
+- **The app doesn't take a signed block's parameter values from the front matter**, which isn't
+  signed: they are typed on the runbook.
+- The signature block is the last one outside code blocks (an example in a code block isn't
+  read as the signature); a repeated command (two `sleep 5`) runs as the right signed step.
 
 ## 0.9.1
 

@@ -267,6 +267,26 @@ describe('runCell: parameters', () => {
     await runCell({ host, text: signed, cellIndex: 0, connection: conn, params: { SERVICE: 'api-gw' } });
     expect(conn.calls[0]).toMatchObject({ source: 'systemctl restart ${SERVICE}', signed: { cell: 1, params: { SERVICE: 'api-gw' } } });
   });
+
+  it("a signed cell doesn't take the front matter's default: the front matter isn't signed", async () => {
+    const plain = '```bash\nsystemctl restart ${param:SERVICE}\n```\n';
+    const built = buildManifest(plain, { name: 'ops/x', version: 1, scopes: [], patterns: { SERVICE: '[a-z-]+' } });
+    if ('errors' in built) throw new Error(built.errors.join('; '));
+    // Someone changed the default to another service after signing: the signature still holds.
+    const signed = withSignature('---\nparams:\n  - SERVICE: payments\n---\n\n' + plain, {
+      signer: 'ops',
+      signed: '2026-10-22',
+      manifest: formatManifest(built.manifest),
+      signature: 'U1NI',
+    });
+    const conn = fakeConnection([{}]);
+    const cellIndex = parse(signed).cells.findIndex((c) => c.kind === 'code');
+    expect(await runCell({ host, text: signed, cellIndex, connection: conn })).toEqual({
+      kind: 'error',
+      message: "Type a value for SERVICE under Parameters: a signed runbook doesn't use the default from the file (payments), which isn't signed.",
+    });
+    expect(conn.calls).toEqual([]);
+  });
 });
 
 describe('runCell: secrets and inputs', () => {

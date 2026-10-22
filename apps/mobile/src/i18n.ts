@@ -260,6 +260,8 @@ const en = {
   paramsTitle: 'Parameters',
   paramPattern: (pattern: string) => `Must match ${pattern}`,
   paramMissing: (name: string) => `Enter a value for ${name} under Parameters`,
+  paramSignedDefault: (name: string, value: string) =>
+    `Type a value for ${name} under Parameters: a signed runbook doesn't use the default from the file (${value}), which isn't signed.`,
   paramNewline: (name: string) => `The value of ${name} must be one line`,
   paramMismatch: (name: string, pattern: string) => `The value of ${name} doesn't match its pattern ${pattern}`,
   refUnsupported: (kind: string, name: string) =>
@@ -297,6 +299,10 @@ const en = {
     n === 1
       ? '1 block changed since signing: servers that run signed runbooks only refuse it.'
       : `${n} blocks changed since signing: servers that run signed runbooks only refuse them.`,
+  signedMissing: (blocks: readonly number[], of: number) =>
+    `Signed block${blocks.length === 1 ? '' : 's'} ${blocks.join(', ')} of ${of} ${blocks.length === 1 ? "isn't" : "aren't"} in the file as signed (deleted or changed): check nothing you rely on was removed.`,
+  signedMoved: (n: number) =>
+    `${n} block${n === 1 ? '' : 's'} moved since signing: the order differs from the one that was reviewed.`,
 
   // Code cells (the VS Code-like view)
   runCell: 'Run cell',

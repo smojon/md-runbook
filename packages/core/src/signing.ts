@@ -12,6 +12,7 @@
  */
 
 import { parseCellOptions } from './cellOptions';
+import { FenceOpen, isFenceClose, langOf, matchFenceOpen } from './fence';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
 import { VAR_NAME_RE, findRefs, rewriteRefs } from './secrets';
@@ -123,6 +124,36 @@ function bashCells(text: string): { index: number; info: string; value: string }
   return out;
 }
 
+/**
+ * Fences a reviewer reading the rendered file (a pull request on GitHub) would not see as code
+ * that runs: a bash block inside an HTML comment, and fences indented 4 spaces or more (CommonMark
+ * reads those as an indented code block, or doesn't close a block there). The parser accepts both.
+ */
+function hiddenFences(text: string): string[] {
+  const problems: string[] = [];
+  let open: FenceOpen | null = null;
+  let inComment = false;
+  text.split(/\r?\n/).forEach((line, i) => {
+    if (open) {
+      if (isFenceClose(line, open)) {
+        if (/^( {4}|\t| {0,3}\t)/.test(line)) problems.push(`line ${i + 1}: a closing fence indented 4 spaces or more (indent fences less, so GitHub shows the same blocks)`);
+        open = null;
+      }
+      return;
+    }
+    const f = matchFenceOpen(line);
+    if (f) {
+      if (/^( {4}|\t| {0,3}\t)/.test(f.indent)) problems.push(`line ${i + 1}: a fence indented 4 spaces or more (indent fences less, so GitHub shows the same blocks)`);
+      if (inComment && shellKindForLanguage(langOf(f.info)) === 'bash') problems.push(`line ${i + 1}: a bash block inside an HTML comment (<!-- … -->) is hidden on GitHub but would be signed`);
+      open = f;
+      return;
+    }
+    // Comment state from the prose between fences: the last <!-- or --> on the line wins.
+    for (const m of line.matchAll(/<!--|-->/g)) inComment = m[0] === '<!--';
+  });
+  return problems;
+}
+
 /** The manifest of a runbook, or the reasons it can't be signed (each names the cell). */
 export function buildManifest(text: string, meta: ManifestMeta): { manifest: Manifest } | { errors: string[] } {
   const errors: string[] = [];
@@ -138,6 +169,7 @@ export function buildManifest(text: string, meta: ManifestMeta): { manifest: Man
       errors.push(`pattern for ${name}: ${re} uses JavaScript-only syntax (\\d, \\w, (?…), lazy *?, back-references); servers check it with grep -E: use [0-9], [A-Za-z0-9_], …`);
     }
   }
+  errors.push(...hiddenFences(withoutSignature(text)));
   const cells: ManifestCell[] = [];
   for (const c of bashCells(text)) {
     const n = cells.length + 1;
@@ -300,9 +332,32 @@ export function formatSignatureBlock(b: SignatureBlock): string {
   );
 }
 
+/**
+ * The signature block: the last one outside code blocks (it goes at the end; prose added after
+ * signing doesn't hide it). A block-shaped example inside a code block is not the signature.
+ */
+function findBlock(text: string): RegExpExecArray | undefined {
+  // Offsets of the lines that are inside fenced code.
+  const inCode = new Set<number>();
+  let open: FenceOpen | null = null;
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    const bare = line.replace(/\r$/, '');
+    if (open) {
+      inCode.add(offset);
+      if (isFenceClose(bare, open)) open = null;
+    } else open = matchFenceOpen(bare);
+    offset += line.length + 1;
+  }
+  const re = new RegExp(BLOCK_RE.source, 'gm');
+  let last: RegExpExecArray | undefined;
+  for (let m = re.exec(text); m; m = re.exec(text)) if (!inCode.has(m.index)) last = m;
+  return last;
+}
+
 /** The file's signature block, or undefined when it has none (or a malformed one). */
 export function readSignature(text: string): SignatureBlock | undefined {
-  const m = BLOCK_RE.exec(text);
+  const m = findBlock(text);
   if (!m) return undefined;
   const manifest = fromBase64(m[3]!.replace(/\s+/g, ''));
   if (manifest === undefined) return undefined;
@@ -311,7 +366,7 @@ export function readSignature(text: string): SignatureBlock | undefined {
 
 /** The text without its signature block (and the blank line before it). */
 export function withoutSignature(text: string): string {
-  const m = BLOCK_RE.exec(text);
+  const m = findBlock(text);
   if (!m) return text;
   const before = text.slice(0, m.index).replace(/(\r?\n)[ \t]*(\r?\n)+$/, '$1');
   return before + text.slice(m.index + m[0].length).replace(/^\r?\n/, '');
@@ -357,6 +412,10 @@ export interface SignedStatus {
   cells: Map<number, SignedCell>;
   /** Indexes of bash/sh cells that are not in the manifest (new, or changed since signing). */
   changed: number[];
+  /** Manifest numbers of signed cells no longer in the file (deleted, or changed: see `changed`). */
+  missing: number[];
+  /** Indexes of signed cells now before a cell that was signed ahead of them (blocks reordered). */
+  moved: number[];
 }
 
 /**
@@ -376,6 +435,8 @@ export function signedStatus(text: string): SignedStatus | undefined {
   const free = [...manifest.cells];
   const cells = new Map<number, SignedCell>();
   const changed: number[] = [];
+  const moved: number[] = [];
+  let highest = 0;
   for (const c of bashCells(text)) {
     const code = rewriteRefs(c.value, 'bash');
     const k = free.findIndex((m) => m.info === c.info && m.code === code);
@@ -385,11 +446,19 @@ export function signedStatus(text: string): SignedStatus | undefined {
     }
     const m = free.splice(k, 1)[0]!;
     cells.set(c.index, { n: m.n, lines: m.lines, steps: m.steps, needs: m.needs });
+    // The shell carries cd, variables and set -e from block to block: the signed order matters.
+    if (m.n < highest) moved.push(c.index);
+    highest = Math.max(highest, m.n);
   }
-  return { block, manifest, cells, changed };
+  return { block, manifest, cells, changed, missing: free.map((m) => m.n), moved };
 }
 
-/** The signed step a line-run command maps to (by its text as the gate runs it), or -1. */
-export function signedStepIndex(cell: SignedCell, stepText: string): number {
-  return cell.steps.indexOf(rewriteRefs(stepText, 'bash'));
+/**
+ * The signed step a line-run command maps to (by its text as the gate runs it), or -1. `at`, the
+ * command's position in the cell, decides between commands that repeat (two `sleep 5`).
+ */
+export function signedStepIndex(cell: SignedCell, stepText: string, at?: number): number {
+  const text = rewriteRefs(stepText, 'bash');
+  if (at !== undefined && cell.steps[at] === text) return at;
+  return cell.steps.indexOf(text);
 }

@@ -98,13 +98,21 @@ U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg…
 
 Because the manifest holds the code as signed, a later app version can't change what an old
 signature covers. Clients compare the file's blocks with it: a block whose code or options
-changed is **unsigned**, and a strict server refuses it. Moving blocks or adding prose keeps
-them signed.
+changed is **unsigned**, and a strict server refuses it. Adding prose keeps blocks signed. A
+block that was moved stays signed, but the editor, `md-runbook lint`, `verify` and the app warn
+that the order differs from the one reviewed, and they name signed blocks that are missing from
+the file (a deleted backup step, say), since the shell carries folders and variables from block
+to block.
+
+Signing refuses a bash block inside an HTML comment, and code fences indented 4 spaces or more:
+GitHub's rendered view doesn't show those as code that runs, so a reviewer reading a pull
+request there could miss them.
 
 **Parameters.** `${param:NAME}` reaches the shell as an environment variable, never as text in
 the code. Each needs a pattern (`--pattern NAME=REGEX`, a POSIX extended regular expression the
-whole value must match); the gate checks the value and refuses newlines. `${secret:}`,
-`${input:}` and `${out:}` can't be signed yet.
+whole value must match); the gate checks the value and refuses newlines. The front matter isn't
+signed, so the app doesn't take a signed block's parameter values from its defaults: they are
+typed on the runbook. `${secret:}`, `${input:}` and `${out:}` can't be signed yet.
 
 **Line runs.** A signed block runs whole, or its commands in order (Step through, Run lines 1-N).
 Single lines and ranges (Run line, Run lines N-end, checked lines) need `lines=any` on the block

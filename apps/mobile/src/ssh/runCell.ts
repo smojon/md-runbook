@@ -22,7 +22,7 @@ import { Captured, evaluateChecks } from '@md-runbook/core/checks';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { rewriteRefs } from '@md-runbook/core/secrets';
 import { signedStatus, signedStepIndex } from '@md-runbook/core/signing';
-import { echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core/steps';
+import { LineStep, echoCommand, formatLineRange, formatLineRanges, splitSteps } from '@md-runbook/core/steps';
 import type { RemoteRunOptions, SessionRunResult, SignedRun } from '@md-runbook/ssh';
 import type { Host } from '../hosts/store';
 import { checkParam, refsOf, runbookParams } from '../runbooks/params';
@@ -104,6 +104,11 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   const refs = refsOf(cell.value);
   const byAssistant = isCodeMeta(cell.meta) && proposalOf(cell.meta.info).by !== undefined;
   const specs = refs.some((r) => r.kind === 'param') ? runbookParams(p.text) : [];
+  // A signed cell goes to md-runbook-gate as its number in the manifest (where the host runs the
+  // gate; elsewhere it runs as usual). A changed cell, or a command that isn't one of the signed
+  // ones, goes as plain text, which a gate that only runs signed cells refuses.
+  const status = signedStatus(p.text);
+  const signedCell = status?.cells.get(p.cellIndex);
   const paramEnv: Record<string, string> = {};
   const secretEnv: Record<string, string> = {};
   /** Values to redact as exact matches, longest first (a secret containing another goes whole). */
@@ -131,8 +136,10 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     }
     const spec = specs.find((s) => s.name === ref.name) ?? { name: ref.name };
     const typed = p.params?.[ref.name];
-    const value = typed !== undefined && typed !== '' ? typed : spec.default;
-    if (value === undefined) return { kind: 'error', message: t.paramMissing(ref.name) };
+    // The front matter isn't signed: a signed cell doesn't take its default (anyone could change
+    // staging to prod there); the value is typed on the Parameters card.
+    const value = typed !== undefined && typed !== '' ? typed : signedCell ? undefined : spec.default;
+    if (value === undefined) return { kind: 'error', message: signedCell && spec.default !== undefined ? t.paramSignedDefault(ref.name, spec.default) : t.paramMissing(ref.name) };
     const bad = checkParam(spec, value);
     if (bad)
       return { kind: 'error', message: bad === 'newline' ? t.paramNewline(ref.name) : t.paramMismatch(ref.name, spec.pattern ?? '') };
@@ -169,18 +176,15 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     },
     onStderr: write,
   };
-  // A signed cell goes to md-runbook-gate as its number in the manifest (where the host runs the
-  // gate; elsewhere it runs as usual). A changed cell, or a command that isn't one of the signed
-  // ones, goes as plain text, which a gate that only runs signed cells refuses.
-  const status = signedStatus(p.text);
-  const signedCell = status?.cells.get(p.cellIndex);
-  const signed = (stepText?: string): SignedRun | undefined => {
+  // A command's position among the cell's commands tells repeated ones apart (two `sleep 5`).
+  const cellSteps = signedCell ? splitSteps(cell.value, 'bash') : [];
+  const signed = (step?: LineStep): SignedRun | undefined => {
     if (!status || !signedCell) return undefined;
     const params = Object.fromEntries(signedCell.needs.map((n) => [n, paramEnv[n] ?? '']));
     const base = { manifest: status.block.manifest, signature: status.block.signature, cell: signedCell.n, params };
-    if (stepText === undefined) return base;
-    const step = signedStepIndex(signedCell, stepText);
-    return step < 0 ? undefined : { ...base, step };
+    if (step === undefined) return base;
+    const k = signedStepIndex(signedCell, step.text, cellSteps.findIndex((s) => s.start === step.start));
+    return k < 0 ? undefined : { ...base, step: k };
   };
   let result: SessionRunResult;
   /** Steps of a line run that ran (indexes into p.lines.steps). */
@@ -200,7 +204,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
         }
         p.onStep?.(i);
         write(echoCommand('bash', steps[i]!.text));
-        const r = await conn.session.run(asRun(steps[i]!.text), runOpts, signed(steps[i]!.text));
+        const r = await conn.session.run(asRun(steps[i]!.text), runOpts, signed(steps[i]!));
         ran.push(i);
         result = { ...r, durationMs: result.durationMs + r.durationMs, newShell: result.newShell || r.newShell };
         if (r.exitCode !== 0) {
