@@ -17,6 +17,7 @@ import {
   outputSummary,
   parse,
   setCellOutput,
+  markStderr,
 } from '@md-runbook/core';
 import { Captured, evaluateChecks } from '@md-runbook/core/checks';
 import { proposalOf } from '@md-runbook/core/proposal';
@@ -27,7 +28,7 @@ import { RemoteRunOptions, SessionRunResult, SignedRun, wrongPlatform } from '@m
 import { Host, setHostPlatform } from '../hosts/store';
 import { checkParam, refsOf, runbookParams } from '../runbooks/params';
 import { readSecret } from '../secrets/store';
-import { historySize } from '../settings/store';
+import { historySize, outputSettings } from '../settings/store';
 import { t } from '../i18n';
 import { runnability } from './cells';
 import { Connection, connectionFor } from './connections';
@@ -170,22 +171,28 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
 
   const started = new Date();
   let transcript = '';
+  // The same with stderr lines marked: what the file gets (stderr=) and the screen shows in red.
+  let saved = '';
   let stdout = '';
-  const write = (text: string): void => {
+  const write = (text: string, stream: 'stdout' | 'stderr'): void => {
     transcript += text;
-    p.onOutput?.(hideKnown(text));
+    const shown = stream === 'stderr' ? markStderr(text) : text;
+    saved += shown;
+    p.onOutput?.(hideKnown(shown));
   };
+  // Settings → Force colours: programs colour their output although it isn't a terminal.
+  const forced: Record<string, string> = outputSettings().forceColor ? { FORCE_COLOR: '1', CLICOLOR_FORCE: '1' } : {};
   const runOpts: RemoteRunOptions = {
     shell: kind,
-    env: { ...opts.env, ...paramEnv, ...secretEnv },
+    env: { ...forced, ...opts.env, ...paramEnv, ...secretEnv },
     cwd: opts.cwd,
     timeoutMs: opts.timeoutSeconds === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutSeconds * 1000,
     signal: p.signal,
     onStdout: (text) => {
       stdout += text;
-      write(text);
+      write(text, 'stdout');
     },
-    onStderr: write,
+    onStderr: (text) => write(text, 'stderr'),
   };
   // A command's position among the cell's commands tells repeated ones apart (two `sleep 5`).
   const cellSteps = signedCell ? splitSteps(cell.value, 'bash') : [];
@@ -226,13 +233,13 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
           break;
         }
         p.onStep?.(i);
-        write(echoCommand(kind, steps[i]!.text));
+        write(echoCommand(kind, steps[i]!.text), 'stdout');
         const r = await conn.session.run(asRun(steps[i]!.text), runOpts, signed(steps[i]!));
         ran.push(i);
         result = { ...r, durationMs: result.durationMs + r.durationMs, newShell: result.newShell || r.newShell };
         if (r.exitCode !== 0) {
           if (i < steps.length - 1 && !r.cancelled && !r.timedOut)
-            write(t.lineFailedNote(formatLineRange(steps[i]!.start, steps[i]!.end)) + '\n');
+            write(t.lineFailedNote(formatLineRange(steps[i]!.start, steps[i]!.end)) + '\n', 'stderr');
           break;
         }
       }
@@ -244,8 +251,8 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   }
 
   p.onStep?.(undefined);
-  if (result.error !== undefined) write(result.error + '\n');
-  if (result.timedOut) write(t.timedOutNote(opts.timeoutSeconds ?? DEFAULT_TIMEOUT_MS / 1000) + '\n');
+  if (result.error !== undefined) write(result.error + '\n', 'stderr');
+  if (result.timedOut) write(t.timedOutNote(opts.timeoutSeconds ?? DEFAULT_TIMEOUT_MS / 1000) + '\n', 'stderr');
   const ended = new Date();
   const attrs: Record<string, string> = {
     exit: exitLabel(result),
@@ -257,7 +264,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   if (opts.checks && result.exitCode !== null && !result.timedOut && !result.cancelled) {
     const outcome = evaluateChecks(opts.checks, result.exitCode, transcript, stdout);
     attrs.check = outcome.ok ? 'ok' : 'failed';
-    for (const f of outcome.failures) write(t.checkFailedNote(f) + '\n');
+    for (const f of outcome.failures) write(t.checkFailedNote(f) + '\n', 'stderr');
     // capture=: kept for later cells' ${out:NAME}; capture-secret= values are redacted from here on.
     captured = outcome.captured.map((c) => ({ ...c, fromAssistant: byAssistant }));
     for (const v of outcome.secretValues) {
@@ -285,7 +292,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
       // runs kept after it when history is on.
       {
         kind: 'new',
-        text: transcript,
+        text: saved,
         attrs,
         ...(previous ? { previous } : {}),
         history: nextHistory(previous, older, p.historySize ?? historySize()),

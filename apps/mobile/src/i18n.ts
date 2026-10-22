@@ -194,6 +194,13 @@ const en = {
   diffTitle: (label: string, before: string, after: string) => `${label}: ${before} → ${after}`,
   diffSame: 'The output is the same as in the previous run.',
   noEarlierRun: 'No earlier run is kept: turn on Hosts → Output history, then run the cell again.',
+  colorsTitle: 'Output colours',
+  colorLevels: 'Log levels in colour',
+  colorLevelsHelp: 'ERROR and FAILED red, WARN yellow, INFO blue, DEBUG grey, OK and PASSED green, as log viewers show them.',
+  stderrInRed: 'Errors (stderr) in red',
+  stderrInRedHelp: 'What a cell writes to stderr, also when the runbook is opened again.',
+  forceColor: 'Ask programs for colours',
+  forceColorHelp: 'Cells get FORCE_COLOR=1 and CLICOLOR_FORCE=1. The file keeps plain text.',
   historyTitle: 'Output history',
   historyHelp:
     'Earlier runs each cell keeps in the file (collapsed under its latest output), for Compare With Previous Run. 0 keeps only the latest, as the extension does by default.',

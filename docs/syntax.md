@@ -190,7 +190,8 @@ system:admin
   are read and shown too. Running the cell again replaces the whole block, attributes included.
 - The output fence is a backtick fence with `text`, longer than any backtick run inside the
   output, so output can never break the document. Its indentation matches the code block's.
-- stdout and stderr are merged in arrival order. Before writing, ANSI codes are stripped,
+- stdout and stderr are merged in arrival order; `stderr=` lists the lines that came from stderr,
+  so both clients show them in red again when the file is opened. Before writing, ANSI codes are stripped,
   carriage-return progress lines are collapsed, secrets are redacted, and long output is cut in
   the middle with `… [md-runbook: N lines truncated] …`.
 - Re-running a cell replaces its block. Blocks of cells that did not run are kept byte for byte.
@@ -208,6 +209,7 @@ system:admin
 | `attempts` | the number of attempts made with `retry=` |
 | `changed` | `yes` or `no`: whether the output differs from the previous run (absent on a first run) |
 | `lines` | the 1-based lines of the cell that ran (`2-3`), when not the whole cell ran; such a step is not done yet |
+| `stderr` | the 1-based lines of the output that came from stderr (`3,5-7`); absent when none did |
 | `proposed-by`, `approved-by` | audit trail of an approved assistant cell |
 | `by` | the OS user who marked the step done or skipped by hand; the output body is `[md-runbook] marked done by NAME` |
 | any other, e.g. `context`, `server` | the first output line of a context command configured by the user (`kubectl config current-context`), recorded before the cell ran |

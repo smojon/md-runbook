@@ -1,4 +1,4 @@
-import { parse } from '@md-runbook/core';
+import { STDERR_MARK, parse } from '@md-runbook/core';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { Host, addHost, getHost } from '../hosts/store';
 import { runnability } from '../ssh/cells';
@@ -40,7 +40,10 @@ describe('runCell', () => {
     expect(r.kind).toBe('done');
     if (r.kind !== 'done') return;
     expect(conn.calls[0]).toMatchObject({ source: 'echo ok; echo warn >&2', opts: { timeoutMs: 5000, env: { A: '1' }, cwd: '/srv' } });
-    expect(live.join('')).toBe('ok\nwarn\n');
+    // The stderr line is marked, so the screen shows it in red; the file records it as stderr=2.
+    expect(live.join('')).toBe(`ok\n${STDERR_MARK}warn\n`);
+    expect(r.attrs.stderr).toBeUndefined();
+    expect(parse(r.text).cells[1]?.output?.attrs.stderr).toBe('2');
     expect(r.attrs).toMatchObject({ exit: '0', check: 'ok' });
     expect(r.attrs.duration).toMatch(/^\d+\.\d{3}s$/);
     expect(r.summary).toMatch(/^✓ exit 0/);

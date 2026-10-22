@@ -11,6 +11,8 @@ import {
   parseLineSet,
   setCellOutput,
   splitStderrMarks,
+  styledSpans,
+  ansiSpans,
 } from '@md-runbook/core';
 
 /** The coloured words of a line, as `level:word`. */
@@ -58,6 +60,20 @@ describe('output colours: ANSI for VS Code', () => {
     assert.equal(colorizeAnsi('boom ERROR x', { levels: true, stderr: true }), '\u001b[31mboom \u001b[31mERROR\u001b[0;31m x\u001b[0m');
     assert.equal(colorizeAnsi('WARN', { levels: false, stderr: true }), '\u001b[31mWARN\u001b[0m');
     assert.equal(colorizeAnsi('INFO', { levels: false, stderr: false }), 'INFO');
+  });
+});
+
+describe('output colours: styled spans (the app)', () => {
+  it('level words, stderr in red, and a program\'s own ANSI colours', () => {
+    assert.deepEqual(styledSpans('x FATAL y', { levels: true, stderr: false }), [{ text: 'x ' }, { text: 'FATAL', color: 'magenta', bold: true }, { text: ' y' }]);
+    assert.deepEqual(styledSpans('boom WARN', { levels: true, stderr: true }), [{ text: 'boom ', color: 'red' }, { text: 'WARN', color: 'yellow' }]);
+    assert.deepEqual(styledSpans('ERROR', { levels: false, stderr: false }), [{ text: 'ERROR' }]);
+    assert.deepEqual(styledSpans('\u001b[1;32mok\u001b[0m and \u001b[38;5;1mred\u001b[39m\u001b[2K', { levels: true, stderr: true }), [
+      { text: 'ok', color: 'green', bold: true },
+      { text: ' and ' },
+      { text: 'red', color: 'red' },
+    ]);
+    assert.deepEqual(ansiSpans('\u001b[94mtrace\u001b[0m'), [{ text: 'trace', color: 'brightBlue' }]);
   });
 });
 

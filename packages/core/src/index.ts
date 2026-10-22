@@ -38,4 +38,22 @@ export { Progress, ProgressCell, StepState, checkNextItem, checklist, taskItemAt
 export { CodeCellLocation, TextChange, locateCodeCells, minimalChange, outputSummary, setCellOutput } from './locate';
 export { escapeHtml, renderInline, renderMarkdown, safeUrl } from './markdown';
 export { ReportOptions, renderReport } from './report';
-export { LEVEL_SGR, LEVEL_WORDS, OutputLevel, OutputSpan, STDERR_MARK, colorizeAnsi, colorizeSaved, formatLineSet, levelSpans, markStderr, parseLineSet, splitStderrMarks } from './outputColors';
+export {
+  ColorOptions,
+  LEVEL_SGR,
+  LEVEL_WORDS,
+  OutputLevel,
+  OutputSpan,
+  STDERR_MARK,
+  StyledSpan,
+  TermColor,
+  ansiSpans,
+  colorizeAnsi,
+  colorizeSaved,
+  formatLineSet,
+  levelSpans,
+  markStderr,
+  parseLineSet,
+  splitStderrMarks,
+  styledSpans,
+} from './outputColors';

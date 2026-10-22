@@ -1,13 +1,13 @@
 import * as Clipboard from 'expo-clipboard';
 import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Platform, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { KeyStorage, appKeyInfo, appPublicKeyLine } from '../ssh/appKey';
 import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
-import { HISTORY_SIZES, setHistorySize, useHistorySize } from '../settings/store';
+import { HISTORY_SIZES, setHistorySize, setOutputSetting, useHistorySize, useOutputSettings } from '../settings/store';
 import { getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { mono, themedStyles } from '../theme';
 
@@ -39,6 +39,7 @@ export function HostList() {
           <AppKeySection />
           <SecretsSection />
           <HistorySection />
+          <ColorSection />
           {Platform.OS === 'web' ? <RelaySection /> : null}
         </>
       }
@@ -142,6 +143,36 @@ function HistorySection() {
           </Pressable>
         ))}
       </View>
+    </View>
+  );
+}
+
+/** How output is coloured (the extension's mdRunbook.output.colorLevels, stderrInRed, forceColor). */
+function ColorSection() {
+  const styles = useStyles();
+  const s = useOutputSettings();
+  const rows = [
+    { key: 'colorLevels', label: t.colorLevels, help: t.colorLevelsHelp },
+    { key: 'stderrInRed', label: t.stderrInRed, help: t.stderrInRedHelp },
+    { key: 'forceColor', label: t.forceColor, help: t.forceColorHelp },
+  ] as const;
+  return (
+    <View testID="color-settings" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.colorsTitle}</Text>
+      {rows.map((r) => (
+        <View key={r.key} style={styles.switchRow}>
+          <View style={styles.switchText}>
+            <Text style={styles.switchLabel}>{r.label}</Text>
+            <Text style={styles.help}>{r.help}</Text>
+          </View>
+          <Switch
+            testID={`setting-${r.key}`}
+            accessibilityLabel={r.label}
+            value={s[r.key]}
+            onValueChange={(on) => setOutputSetting(r.key, on)}
+          />
+        </View>
+      ))}
     </View>
   );
 }
@@ -331,6 +362,9 @@ const useStyles = themedStyles((colors) => ({
   section: { marginTop: 28 },
   sectionTitle: { fontSize: 17, color: colors.text, marginBottom: 6 },
   help: { fontSize: 13, color: colors.muted, lineHeight: 18, marginTop: 4 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
+  switchText: { flex: 1 },
+  switchLabel: { fontSize: 15, color: colors.text },
   key: {
     fontFamily: mono,
     fontSize: 12,

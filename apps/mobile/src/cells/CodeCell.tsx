@@ -5,6 +5,7 @@
  * mark beside them, a status line (checked-lines run, language and options) and the output.
  */
 import { ParsedCell, isCodeMeta, outputSummary, shellKindForLanguage } from '@md-runbook/core';
+import { OutputText } from './OutputText';
 import type { RemotePlatform } from '@md-runbook/ssh';
 import { LineStep, stepAtLine } from '@md-runbook/core/steps';
 import { ReactNode, memo, useMemo, useState } from 'react';
@@ -258,11 +259,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
           ) : (
             <Text style={styles.outputHeader}>{running.step ? t.runningLine(lineLabel(running.step)) : t.running}</Text>
           )}
-          {running.live !== '' ? (
-            <Text style={styles.outputText} selectable>
-              {running.live}
-            </Text>
-          ) : null}
+          {running.live !== '' ? <OutputText style={styles.outputText} text={running.live} /> : null}
         </View>
       ) : cell.output ? (
         <View testID={`cell-${index}-output`} style={styles.output}>
@@ -272,9 +269,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
             {outputSummary(cell.output.attrs)}
           </Text>
           {cell.output.text !== '' ? (
-            <Text style={styles.outputText} selectable>
-              {cell.output.text}
-            </Text>
+            <OutputText style={styles.outputText} text={cell.output.text} stderr={cell.output.attrs.stderr} />
           ) : null}
         </View>
       ) : null}

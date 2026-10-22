@@ -234,3 +234,86 @@ export function colorizeSaved(text: string, stderrAttr: string | undefined, leve
 
 /** Plain text of a line (ANSI removed), for places that can't show colours. */
 export const plainLine = (line: string): string => stripAnsi(line);
+
+// ---- styled spans, for clients that draw colours themselves (the app) ----
+
+/** The terminal's colour names (the theme decides the actual colours). */
+export type TermColor = 'red' | 'green' | 'yellow' | 'blue' | 'magenta' | 'cyan' | 'grey' | 'brightBlue' | 'white' | 'black';
+
+export interface StyledSpan {
+  text: string;
+  color?: TermColor;
+  bold?: boolean;
+}
+
+const LEVEL_STYLE: Record<OutputLevel, { color: TermColor; bold?: boolean }> = {
+  critical: { color: 'magenta', bold: true },
+  error: { color: 'red' },
+  warning: { color: 'yellow' },
+  info: { color: 'blue' },
+  debug: { color: 'grey' },
+  trace: { color: 'brightBlue' },
+  success: { color: 'green' },
+};
+
+const SGR_COLORS: Record<number, TermColor> = {
+  30: 'black',
+  31: 'red',
+  32: 'green',
+  33: 'yellow',
+  34: 'blue',
+  35: 'magenta',
+  36: 'cyan',
+  37: 'white',
+  90: 'grey',
+  91: 'red',
+  92: 'green',
+  93: 'yellow',
+  94: 'brightBlue',
+  95: 'magenta',
+  96: 'cyan',
+  97: 'white',
+};
+
+/** A line's own ANSI colours (SGR: the 16 colours, bold, resets); other escape codes are dropped. */
+export function ansiSpans(line: string): StyledSpan[] {
+  const spans: StyledSpan[] = [];
+  let color: TermColor | undefined;
+  let bold = false;
+  const push = (text: string): void => {
+    const t = stripAnsi(text);
+    if (t !== '') spans.push({ text: t, ...(color ? { color } : {}), ...(bold ? { bold } : {}) });
+  };
+  let at = 0;
+  for (const m of line.matchAll(/\u001b\[([0-9;]*)m/g)) {
+    push(line.slice(at, m.index));
+    at = m.index! + m[0].length;
+    const codes = m[1] === '' ? [0] : m[1]!.split(';').map(Number);
+    for (let i = 0; i < codes.length; i++) {
+      const c = codes[i]!;
+      if (c === 0) [color, bold] = [undefined, false];
+      else if (c === 1) bold = true;
+      else if (c === 22) bold = false;
+      else if (c === 39) color = undefined;
+      else if (SGR_COLORS[c]) color = SGR_COLORS[c];
+      else if (c === 38 && codes[i + 1] === 5) {
+        const n = codes[i + 2] ?? -1;
+        color = n >= 0 && n < 8 ? SGR_COLORS[30 + n] : n >= 8 && n < 16 ? SGR_COLORS[82 + n] : color;
+        i += 2;
+      } else if (c === 38 && codes[i + 1] === 2) i += 4;
+    }
+  }
+  push(line.slice(at));
+  return spans;
+}
+
+/**
+ * How to draw one line: its own ANSI colours if it has any, else stderr in red and level words
+ * in their colours (as colorizeAnsi does for VS Code).
+ */
+export function styledSpans(line: string, opts: ColorOptions): StyledSpan[] {
+  if (ANSI_IN_LINE.test(line)) return ansiSpans(line);
+  const base: Pick<StyledSpan, 'color'> = opts.stderr ? { color: 'red' } : {};
+  if (!opts.levels) return [{ text: line, ...base }];
+  return levelSpans(line).map((s) => (s.level ? { text: s.text, ...LEVEL_STYLE[s.level] } : { text: s.text, ...base }));
+}

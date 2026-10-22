@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **stderr shows in VS Code.** What a cell wrote to stderr was saved but never shown: VS Code
+  draws one item of each output, and the stderr items sat next to stdout ones. Now each stretch
+  of one stream is an output of its own, in order.
+- **Coloured output, in VS Code and the app:** stderr in red, also when a runbook is opened again
+  (the output block's new `stderr=` attribute lists those lines), and log levels in the colours
+  log viewers use (Grafana's levels, VS Code's log rules, syslog, Nevis, klog): `FATAL` purple,
+  `ERROR`/`FAILED` red, `WARN` yellow, `INFO`/`NOTICE` blue, `DEBUG` grey, `TRACE` light blue,
+  `OK`/`PASSED`/`SUCCESS` green. A program's own ANSI colours win; the file keeps plain text.
+  New settings `mdRunbook.output.colorLevels`, `stderrInRed` (both on) and `forceColor` (off:
+  asks programs for colours with `FORCE_COLOR=1`, `CLICOLOR_FORCE=1`); the app has the same.
 - **The app runs runbooks on Windows servers** (OpenSSH Server): `pwsh`, `powershell` and `cmd`
   cells, with nothing to set up. The app finds Windows PowerShell there by itself; PowerShell
   cells share one session (variables, functions, the folder), `cmd` cells each run in a

@@ -3,6 +3,7 @@
  * it does in the editor. The phone's light or dark setting picks one; screens get their styles
  * through `themedStyles`, which builds each style sheet once per palette.
  */
+import type { TermColor } from '@md-runbook/core';
 import { ImageStyle, Platform, StyleSheet, TextStyle, ViewStyle, useColorScheme } from 'react-native';
 
 export interface Palette {
@@ -26,6 +27,8 @@ export interface Palette {
   /** The line whose actions are open. */
   lineHighlight: string;
   quoteBorder: string;
+  /** VS Code's terminal colours, for coloured output (log levels, stderr, a program's own colours). */
+  terminal: Record<TermColor, string>;
   syntax: {
     comment: string;
     keyword: string;
@@ -55,6 +58,18 @@ export const light: Palette = {
   gutter: '#6e7681',
   lineHighlight: '#e8f2ff',
   quoteBorder: '#d0d7de',
+  terminal: {
+    black: '#000000',
+    red: '#cd3131',
+    green: '#00bc00',
+    yellow: '#949800',
+    blue: '#0451a5',
+    magenta: '#bc05bc',
+    cyan: '#0598bc',
+    white: '#555555',
+    grey: '#666666',
+    brightBlue: '#0451a5',
+  },
   syntax: {
     comment: '#008000',
     keyword: '#0000ff',
@@ -84,6 +99,18 @@ export const dark: Palette = {
   gutter: '#6e7681',
   lineHighlight: '#2a2d2e',
   quoteBorder: '#454545',
+  terminal: {
+    black: '#000000',
+    red: '#f14c4c',
+    green: '#23d18b',
+    yellow: '#f5f543',
+    blue: '#3b8eea',
+    magenta: '#d670d6',
+    cyan: '#29b8db',
+    white: '#e5e5e5',
+    grey: '#8a8a8a',
+    brightBlue: '#7cb7ff',
+  },
   syntax: {
     comment: '#6a9955',
     keyword: '#569cd6',
