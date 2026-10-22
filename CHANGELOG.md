@@ -1,11 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.9.1
 
 - **The toolbar's Run, Values, Assistant, Share and Help show.** In 0.9.0 VS Code drew them as
   blank 21-pixel buttons (it shows an extension's submenu in the notebook toolbar as a bare icon,
   and dropped the icon). They are now labeled buttons, each opening a list of its actions to
   click or type in; the toolbar's **⋯** has the same five menus as submenus.
+- **README:** a new demo GIF and screenshots, with the current toolbar.
 
 ## 0.9.0
 

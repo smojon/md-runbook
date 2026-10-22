@@ -56,7 +56,7 @@ jobs:
         run: |
           delim="EOF_$RANDOM$RANDOM$RANDOM"
           { echo "list<<$delim"; printf '%s' "$PARAMS" | tr ';' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; echo; echo "$delim"; } >> "$GITHUB_OUTPUT"
-      - uses: smojon/md-runbook@v0.9.0
+      - uses: smojon/md-runbook@v0.9.1
         with:
           runbook: ${{ inputs.runbook }}
           params: ${{ steps.params.outputs.list }}
