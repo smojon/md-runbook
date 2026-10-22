@@ -56,9 +56,12 @@ class Shell {
 describe('ssh: Windows servers (Windows PowerShell)', { skip: process.platform !== 'win32' && 'Windows only' }, () => {
   let sh: Shell;
   let dir: string;
+  let tmp: string;
   before(() => {
     sh = new Shell();
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb win ü-'));
+    // Long paths, as PowerShell reports them (CI runners give os.tmpdir() in 8.3 form, RUNNER~1).
+    dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb win ü-')));
+    tmp = fs.realpathSync.native(os.tmpdir());
   });
   after(() => {
     sh.child.kill();
@@ -91,8 +94,8 @@ describe('ssh: Windows servers (Windows PowerShell)', { skip: process.platform !
   });
 
   it('env values come from the command stream; cwd= runs in a folder and comes back', async () => {
-    const r = await sh.ps('"$env:API_TOKEN|$((Get-Location).Path)"', { env: { API_TOKEN: "s3cr'et ü" }, cwd: os.tmpdir() });
-    assert.equal(r.out, `s3cr'et ü|${os.tmpdir().replace(/\\$/, '')}\n`);
+    const r = await sh.ps('"$env:API_TOKEN|$((Get-Location).Path)"', { env: { API_TOKEN: "s3cr'et ü" }, cwd: tmp });
+    assert.equal(r.out, `s3cr'et ü|${tmp.replace(/\\$/, '')}\n`);
     assert.equal((await sh.ps('(Get-Location).Path')).out, `${dir}\n`);
     const bad = await sh.ps("'ran'", { cwd: path.join(dir, 'missing') });
     assert.equal(bad.code, 1);
