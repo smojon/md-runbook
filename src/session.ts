@@ -13,6 +13,7 @@ import { isCodeMeta } from '@md-runbook/core';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { META_KEY } from './outputs';
 import { CellExecutor, RunPipeline } from './pipeline';
+import { setContext } from './contextKeys';
 import { NOTEBOOK_TYPE } from './serializer';
 
 type Mode = 'session' | 'isolated';
@@ -79,7 +80,7 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
     if (!nb) return status.hide();
     const { mode, source } = modeOf(nb);
     // The notebook toolbar shows "Session: on" or "Session: off" from this.
-    void vscode.commands.executeCommand('setContext', 'mdRunbook.sessionMode', mode);
+    setContext('mdRunbook.sessionMode', mode);
     const labels = pools.get(nb.uri.toString())?.labels() ?? [];
     status.text = mode === 'isolated' ? '$(debug-disconnect) isolated' : `$(terminal) session${labels.length ? `: ${labels.join(', ')}` : ''}`;
     status.tooltip =

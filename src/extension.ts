@@ -21,6 +21,7 @@ import { registerSigning } from './signing';
 import { registerOpenInApp } from './openInApp';
 import { registerTaskLists } from './taskLists';
 import { registerTerminal } from './terminal';
+import { registerToolbarButtons } from './toolbarButtons';
 import { registerWalkthrough } from './walkthrough';
 
 function targetUri(uri: unknown): vscode.Uri | undefined {
@@ -92,6 +93,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerAiContext(context);
   registerTaskLists(context);
   registerWalkthrough(context);
+  registerToolbarButtons(context);
   registerLint(context);
   registerSigning(context);
   registerOpenInApp(context);

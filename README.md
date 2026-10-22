@@ -67,7 +67,8 @@ To make it the default for some files, add for example
 `"workbench.editorAssociations": { "*.runbook.md": "md-runbook" }`.
 
 Run cells with the usual notebook controls: run cell, **Run All**, Run Above/Below.
-Everything else is in the runbook's toolbar, so you never need the command palette:
+Everything else is in the runbook's toolbar, so you never need the command palette. Each ▾ button
+opens a list of its actions (type to filter); the toolbar's **⋯** has the same menus:
 
 | Toolbar | What's in it |
 | --- | --- |

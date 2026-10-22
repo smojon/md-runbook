@@ -101,9 +101,13 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
   it as the Pages custom domain and as the repository variable `WEB_APP_ORIGIN`; `pages.yml`
   then deploys. The relay needs a server too: the Oracle Cloud Always Free steps in
   `apps/relay/README.md` (the sign-up asks for the owner's card).
-- **Not tried by hand yet** (CI covers them, a person hasn't): the runbook toolbar dropdowns in
-  VS Code (Run, Values, Assistant, Share, Help), the app on a real phone (the native menu, the
-  share sheet, the hardware key), and a real Claude request from the app's assistant.
+- **Not tried by hand yet** (CI covers them, a person hasn't): the app on a real phone (the
+  native menu, the share sheet, the hardware key), and a real Claude request from the app's
+  assistant. The toolbar's Run, Values, Assistant, Share and Help buttons were checked in a
+  development window (2026-10-22) after 0.9.0 shipped them blank: VS Code draws an extension's
+  submenu in the notebook toolbar as a bare icon, so they are commands that open lists
+  (`src/toolbarButtons.ts`). Menus test only package.json; look at the toolbar itself after
+  changing it.
 - **npm token:** add the `NPM_TOKEN` secret (`PUBLISHING.md` → npm); the next release then
   publishes the command line as `md-runbook` on npm. Until then: the GitHub Action, or
   `node out/dist/cli.js` from a clone.

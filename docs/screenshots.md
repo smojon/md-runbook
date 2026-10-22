@@ -7,9 +7,12 @@ which only prints simulated `kubectl` output, so it runs anywhere and changes no
 ## The demo GIF
 
 `docs/demo.gif` (top of the README) is recorded, not drawn: `scripts/demo-gif/record.js` drives a
-throwaway VS Code with the dev build through Run All, Save and Reopen as Text Editor, and
-`scripts/demo-gif/make_gif.py` turns the frames into the GIF. Usage is at the top of each script.
-Record it again when the notebook view changes visibly.
+throwaway VS Code with the dev build through Run All, Save and Open as Markdown Text, then selects
+the first saved output block; `scripts/demo-gif/make_gif.py` turns the frames into the GIF.
+`scripts/demo-gif/stills.js` takes the README's two stills (`docs/1-notebook.png`,
+`docs/2-saved-markdown.png`) the same way. Usage is at the top of each script (playwright-core
+installed outside the repo, `NODE_PATH` pointing at its `node_modules`). Take them again when the
+notebook view or its toolbar changes visibly.
 
 ## Setup
 

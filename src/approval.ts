@@ -18,6 +18,7 @@ import { SECTION, executionConfig } from './config';
 import { workingDirectory } from './controller';
 import { META_KEY } from './outputs';
 import { CellPlan, CellPreparer, PrepareContext, RunPipeline } from './pipeline';
+import { setContext } from './contextKeys';
 import { NOTEBOOK_TYPE } from './serializer';
 
 /** Cell metadata key: hash of the code when it was approved in this editor session. */
@@ -365,7 +366,7 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
     const nb = vscode.window.activeNotebookEditor?.notebook;
     const n = nb?.notebookType === NOTEBOOK_TYPE && gateEnabled() ? this.pending(nb).length : 0;
     // Shows the proposal commands in the toolbar's Assistant menu and the cells' ⋯ menus.
-    void vscode.commands.executeCommand('setContext', 'mdRunbook.hasProposals', n > 0);
+    setContext('mdRunbook.hasProposals', n > 0);
     if (n === 0) return void this.item.hide();
     this.item.text = `$(shield) ${n} proposal${n === 1 ? '' : 's'}`;
     this.item.tooltip = 'Cells waiting for approval — click to go to the next one';

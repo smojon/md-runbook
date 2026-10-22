@@ -1,48 +1,22 @@
 // Records the README demo: opens a demo runbook as a notebook in a throwaway VS Code with the dev
-// build, clicks Run All, saves, reopens the file as plain Markdown, and writes a screenshot every
-// ~250 ms to <outDir>/frames (frames.json has the timestamps). Then make_gif.py builds the GIF.
-// Needs playwright-core (npm install it outside the repo and run from there), a compiled build
-// (npm run compile) and Windows: the demo blocks are PowerShell. Usage:
+// build, clicks Run All, saves, opens the file as plain Markdown, selects the first saved output
+// block, and writes a screenshot every ~250 ms to <outDir>/frames (frames.json has the timestamps).
+// Then make_gif.py builds the GIF. Needs playwright-core (npm install it outside the repo and point
+// NODE_PATH at its node_modules), a compiled build (npm run compile) and Windows: the demo blocks
+// are PowerShell. Usage:
 //   node record.js <repo> <outDir> <Code.exe>
-const { _electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { launch, sleep } = require('./vscode');
 
 const [repo, out, exe] = process.argv.slice(2);
 const work = path.join(out, 'work');
-const ud = path.join(out, 'ud');
 const framesDir = path.join(out, 'frames');
 for (const d of [work, framesDir]) fs.rmSync(d, { recursive: true, force: true });
 fs.mkdirSync(work, { recursive: true });
 fs.mkdirSync(framesDir, { recursive: true });
-fs.mkdirSync(path.join(ud, 'User'), { recursive: true });
 fs.rmSync(path.join(os.tmpdir(), 'md-runbook-gif'), { force: true });
-fs.writeFileSync(
-  path.join(ud, 'User', 'settings.json'),
-  JSON.stringify(
-    {
-      'workbench.editorAssociations': { '*.md': 'md-runbook' },
-      'workbench.startupEditor': 'none',
-      'workbench.colorTheme': 'Default Dark Modern',
-      'workbench.welcomePage.walkthroughs.openOnInstall': false,
-      'workbench.secondarySideBar.defaultVisibility': 'hidden',
-      'workbench.tips.enabled': false,
-      'security.workspace.trust.enabled': false,
-      'window.restoreWindows': 'none',
-      'window.commandCenter': false,
-      'chat.disableAIFeatures': true,
-      'editor.minimap.enabled': false,
-      'breadcrumbs.enabled': false,
-      'notebook.globalToolbar': true,
-      'mdRunbook.params.useDefaults': true,
-      'update.mode': 'none',
-      'extensions.autoCheckUpdates': false,
-    },
-    null,
-    2,
-  ),
-);
 const runbook = path.join(work, 'restart-checkout.md');
 fs.writeFileSync(
   runbook,
@@ -80,41 +54,12 @@ fs.writeFileSync(
   ].join('\n'),
 );
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 (async () => {
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  const app = await _electron.launch({
-    executablePath: exe,
-    env,
-    args: [
-      runbook,
-      `--extensionDevelopmentPath=${repo}`,
-      `--user-data-dir=${ud}`,
-      `--extensions-dir=${path.join(out, 'ext')}`,
-      '--disable-workspace-trust',
-      '--skip-release-notes',
-      '--skip-welcome',
-      '--disable-telemetry',
-      '--disable-renderer-backgrounding',
-    ],
-  });
+  const { win, close } = await launch({ repo, out, exe, file: runbook, width: 1000, height: 940 });
   const frames = [];
   let recording = false;
   let loop;
   try {
-    const win = await app.firstWindow();
-    await app.evaluate(({ BrowserWindow }) => {
-      const w = BrowserWindow.getAllWindows()[0];
-      w.setSize(1000, 940);
-      w.center();
-    });
-    const shot = (name) => win.screenshot({ path: path.join(out, name) });
-    const cell = win.locator('.cell-list-container .code-cell-row').first();
-    await cell.waitFor({ timeout: 90_000 }).catch(async (e) => { await shot('debug.png'); throw e; });
-    await sleep(4000); // extension activation, kernel, first render
-
     // A visible pointer: Playwright moves the real mouse, but screenshots don't show it.
     await win.evaluate(() => {
       const c = document.createElement('div');
@@ -190,17 +135,40 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await progress(3);
     await sleep(2500);
 
-    // Save, then show the same file as plain Markdown: the output is in the file.
+    // Save, then show the same file as plain Markdown and select the first saved output block:
+    // the output is in the file.
     await win.keyboard.press('Control+S');
-    await sleep(800);
-    await win.keyboard.press('F1');
+    await sleep(400);
+    await win.keyboard.press('Control+Alt+Shift+M');
+    await win.locator('.monaco-editor .view-line', { hasText: 'md-runbook:output start' }).first().waitFor({ timeout: 15_000 });
     await sleep(300);
-    await win.keyboard.type('Reopen Editor With Text Editor', { delay: 25 });
-    await sleep(500);
-    await win.keyboard.press('Enter');
-    await moveTo(940, 880, 500);
-    await win.locator('.monaco-editor .view-line', { hasText: 'md-runbook:output start' }).first().waitFor({ timeout: 15_000 }).catch(() => {});
-    await sleep(4000);
+    // Monaco reuses line elements, so DOM order isn't screen order: take the topmost start line
+    // and the first end line below it.
+    const topmost = async (text, below) => {
+      const boxes = [];
+      for (const l of await win.locator('.monaco-editor .view-line', { hasText: text }).all()) {
+        const b = await l.boundingBox();
+        if (b && b.y > below) boxes.push({ l, b });
+      }
+      boxes.sort((a, b) => a.b.y - b.b.y);
+      return boxes[0];
+    };
+    const { b: sb } = await topmost('md-runbook:output start', -1);
+    const { l: endLine, b: eb } = await topmost('md-runbook:output end', sb.y);
+    const endText = await endLine.textContent();
+    // The end of the "output end" line: measure its text rather than the (full-width) line box.
+    const endX = await endLine.evaluate((el) => {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      return r.getBoundingClientRect().right;
+    });
+    await moveTo(sb.x + 2, sb.y + sb.height / 2, 400);
+    await win.mouse.down();
+    await moveTo(endX, eb.y + eb.height / 2, 700);
+    await win.mouse.up();
+    await moveTo(endX + 120, eb.y + eb.height + 60, 250); // off the text, so the selection reads
+    console.log(`selected through: ${endText.trim()}`);
+    await sleep(300); // make_gif.py holds the last frame
     recording = false;
     await loop;
     fs.writeFileSync(path.join(out, 'frames.json'), JSON.stringify(frames, null, 1));
@@ -208,9 +176,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     console.log(`ok ${frames.length} frames over ${frames.at(-1).t} ms`);
   } finally {
     recording = false;
-    const pid = app.process().pid;
-    await Promise.race([app.close(), sleep(10_000)]);
-    try { require('child_process').execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' }); } catch {}
+    await close();
   }
 })().catch((e) => {
   console.error(e);

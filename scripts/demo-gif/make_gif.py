@@ -8,7 +8,7 @@ from PIL import Image, ImageChops
 
 run, out = sys.argv[1], sys.argv[2]
 TOP = 30  # custom title bar ("[Extension Development Host] …")
-CAP_MS, LAST_MS, SPEED = 1000, 4000, 1.3
+CAP_MS, LAST_MS, SPEED = 1000, 3000, 1.3
 
 frames = json.load(open(f"{run}/frames.json"))
 images, durations = [], []

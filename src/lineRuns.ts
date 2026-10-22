@@ -24,6 +24,7 @@ import { LineRun, RunbookController } from './controller';
 import { isCell, runbookEditor, selectRunbookKernel } from './progress';
 import type { SafetyInfo } from './safety';
 import type { SecretsInfo } from './secrets';
+import { setContext } from './contextKeys';
 import { NOTEBOOK_TYPE } from './serializer';
 
 type Mode = 'selection' | 'each' | 'step' | 'from' | 'stepFrom' | 'to' | 'at' | 'checked';
@@ -224,7 +225,7 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
   };
   const updateUi = (): void => {
     const p = activePaused();
-    void vscode.commands.executeCommand('setContext', PAUSED_KEY, p !== undefined);
+    setContext(PAUSED_KEY, p !== undefined);
     if (!p) return status.hide();
     const step = p.steps[p.index]!;
     status.text = `$(debug-pause) line ${formatLineRange(step.start, step.end)} next (${p.index + 1}/${p.steps.length})`;
@@ -476,10 +477,10 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
   const updateSelectionKey = (): void => {
     const e = vscode.window.activeTextEditor;
     const inCell = e !== undefined && cellByUri(e.document.uri.toString())?.kind === vscode.NotebookCellKind.Code;
-    void vscode.commands.executeCommand('setContext', SELECTION_KEY, inCell && !e.selection.isEmpty);
+    setContext(SELECTION_KEY, inCell && !e.selection.isEmpty);
   };
   const updateCheckedKey = (): void => {
-    void vscode.commands.executeCommand('setContext', CHECKED_KEY, [...checks.values()].some((s) => s.size > 0));
+    setContext(CHECKED_KEY, [...checks.values()].some((s) => s.size > 0));
   };
   hintsChanged.event(updateCheckedKey);
   hintsChanged.event(() => paintChecks());

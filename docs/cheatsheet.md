@@ -4,7 +4,8 @@ Every action, where to find it, and when it matters to you. **App** says whether
 app (iPhone, Android, browser) has it too.
 
 In VS Code everything starts from the **toolbar at the top of a runbook**: a few buttons, then
-the **Run**, **Values**, **Assistant**, **Share** and **Help** dropdowns. A cell's own actions
+the **Run**, **Values**, **Assistant**, **Share** and **Help** buttons; each opens a list of its
+actions to click or type in (the same menus are in the toolbar's **⋯**). A cell's own actions
 are in its **⋯** menu, and each line of a code cell shows its actions when you hover it. If you
 know what you want, Ctrl+Shift+P (⌘⇧P) and type part of its name.
 

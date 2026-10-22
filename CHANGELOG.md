@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **The toolbar's Run, Values, Assistant, Share and Help show.** In 0.9.0 VS Code drew them as
+  blank 21-pixel buttons (it shows an extension's submenu in the notebook toolbar as a bare icon,
+  and dropped the icon). They are now labeled buttons, each opening a list of its actions to
+  click or type in; the toolbar's **⋯** has the same five menus as submenus.
+
 ## 0.9.0
 
 - **Every command is in the runbook's toolbar**, no command palette needed: **Run**, **Values**,

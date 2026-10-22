@@ -467,6 +467,36 @@
         "command": "mdRunbook.runToLineAt",
         "title": "Run up to This Line",
         "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.menu.run",
+        "title": "Run",
+        "category": "md-runbook",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "mdRunbook.menu.values",
+        "title": "Values",
+        "category": "md-runbook",
+        "icon": "$(key)"
+      },
+      {
+        "command": "mdRunbook.menu.assistant",
+        "title": "Assistant",
+        "category": "md-runbook",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "mdRunbook.menu.share",
+        "title": "Share",
+        "category": "md-runbook",
+        "icon": "$(export)"
+      },
+      {
+        "command": "mdRunbook.menu.help",
+        "title": "Help",
+        "category": "md-runbook",
+        "icon": "$(question)"
       }
     ],
     "menus": {
@@ -521,29 +551,54 @@
           "group": "navigation/execute@97"
         },
         {
-          "submenu": "mdRunbook.toolbar.run",
+          "command": "mdRunbook.menu.run",
           "when": "notebookType == md-runbook",
           "group": "navigation/execute@90"
         },
         {
-          "submenu": "mdRunbook.toolbar.values",
+          "command": "mdRunbook.menu.values",
           "when": "notebookType == md-runbook",
           "group": "navigation/execute@91"
         },
         {
-          "submenu": "mdRunbook.toolbar.assistant",
+          "command": "mdRunbook.menu.assistant",
           "when": "notebookType == md-runbook",
           "group": "navigation/execute@92"
         },
         {
-          "submenu": "mdRunbook.toolbar.share",
+          "command": "mdRunbook.menu.share",
           "when": "notebookType == md-runbook",
           "group": "navigation/execute@93"
         },
         {
-          "submenu": "mdRunbook.toolbar.help",
+          "command": "mdRunbook.menu.help",
           "when": "notebookType == md-runbook",
           "group": "navigation/execute@120"
+        },
+        {
+          "submenu": "mdRunbook.toolbar.run",
+          "when": "notebookType == md-runbook",
+          "group": "z_menus@1"
+        },
+        {
+          "submenu": "mdRunbook.toolbar.values",
+          "when": "notebookType == md-runbook",
+          "group": "z_menus@2"
+        },
+        {
+          "submenu": "mdRunbook.toolbar.assistant",
+          "when": "notebookType == md-runbook",
+          "group": "z_menus@3"
+        },
+        {
+          "submenu": "mdRunbook.toolbar.share",
+          "when": "notebookType == md-runbook",
+          "group": "z_menus@4"
+        },
+        {
+          "submenu": "mdRunbook.toolbar.help",
+          "when": "notebookType == md-runbook",
+          "group": "z_menus@5"
         }
       ],
       "commandPalette": [
@@ -781,6 +836,26 @@
         },
         {
           "command": "mdRunbook.runToLineAt",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.menu.run",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.menu.values",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.menu.assistant",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.menu.share",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.menu.help",
           "when": "false"
         }
       ],
