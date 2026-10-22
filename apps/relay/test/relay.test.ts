@@ -3,7 +3,7 @@ import { AddressInfo, Server, createServer } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 import { WebSocket } from 'ws';
 import { RelayConfig, isTargetSpec, loadConfig } from '../src/config';
-import { LogEvent, Relay, SUBPROTOCOL, createRelay } from '../src/relay';
+import { LogEvent, Relay, SUBPROTOCOL, createRelay, isInternal } from '../src/relay';
 
 const TOKEN = 'a-test-token-of-at-least-24-chars';
 
@@ -157,16 +157,36 @@ describe('relay', () => {
     }
   });
 
-  it('a wildcard host allows any host on that port only', async () => {
-    const { relay, url } = await startRelay({ targets: [`*:${portOf(echo)}`] });
+  it("a wildcard host allows that port only, and never the relay's own or a private network", async () => {
+    const logs: LogEvent[] = [];
+    const { relay, url } = await startRelay({ targets: [`*:${portOf(echo)}`] }, logs);
     try {
+      assert.equal(await open(url, '127.0.0.1:1'), 403);
+      assert.equal(await open(url, `127.0.0.1:${portOf(echo)}`), 403);
+      assert.equal(await open(url, `[::1]:${portOf(echo)}`), 403);
+      // A name that resolves to an internal address: the connection is refused at lookup.
       const ws = await open(url, `localhost:${portOf(echo)}`);
       assert.ok(ws instanceof WebSocket);
-      ws.close();
-      assert.equal(await open(url, '127.0.0.1:1'), 403);
+      await new Promise((r) => ws.on('close', r));
+      assert.ok(logs.some((l) => l.event === 'close' && /internal address|EINTERNAL/.test(String(l.why))), JSON.stringify(logs));
     } finally {
       await relay.close();
     }
+    // Listed by name or address, an internal server is fine: the operator chose it.
+    const listed = await startRelay({ targets: [`*:22`, target] });
+    try {
+      const ws = await open(listed.url, target);
+      assert.ok(ws instanceof WebSocket);
+      ws.close();
+    } finally {
+      await listed.relay.close();
+    }
+  });
+
+  it('knows internal addresses', () => {
+    for (const a of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1'])
+      assert.ok(isInternal(a), a);
+    for (const a of ['8.8.8.8', '172.32.0.1', '100.128.0.1', '2001:db8::1', '::ffff:8.8.8.8']) assert.ok(!isInternal(a), a);
   });
 });
 

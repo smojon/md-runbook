@@ -139,7 +139,11 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     // The front matter isn't signed: a signed cell doesn't take its default (anyone could change
     // staging to prod there); the value is typed on the Parameters card.
     const value = typed !== undefined && typed !== '' ? typed : signedCell ? undefined : spec.default;
-    if (value === undefined) return { kind: 'error', message: signedCell && spec.default !== undefined ? t.paramSignedDefault(ref.name, spec.default) : t.paramMissing(ref.name) };
+    if (value === undefined)
+      return {
+        kind: 'error',
+        message: signedCell && spec.default !== undefined ? t.paramSignedDefault(ref.name, spec.default) : t.paramMissing(ref.name),
+      };
     const bad = checkParam(spec, value);
     if (bad)
       return { kind: 'error', message: bad === 'newline' ? t.paramNewline(ref.name) : t.paramMismatch(ref.name, spec.pattern ?? '') };
@@ -152,11 +156,15 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
 
   let conn: Connection;
   try {
-    conn = p.connection ?? (await connectionFor(p.host));
+    conn = p.connection ?? (await connectionFor(p.host, p.runbookId ?? ''));
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }
   conn.unknownHostKey = undefined;
+  // Secrets an earlier cell exported stay readable in this runbook's shell: redact those too.
+  for (const v of conn.secrets ?? []) if (!known.includes(v)) known.push(v);
+  for (const v of known) conn.secrets?.add(v);
+  known.sort((a, b) => b.length - a.length);
 
   const started = new Date();
   let transcript = '';
@@ -183,7 +191,11 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     const params = Object.fromEntries(signedCell.needs.map((n) => [n, paramEnv[n] ?? '']));
     const base = { manifest: status.block.manifest, signature: status.block.signature, cell: signedCell.n, params };
     if (step === undefined) return base;
-    const k = signedStepIndex(signedCell, step.text, cellSteps.findIndex((s) => s.start === step.start));
+    const k = signedStepIndex(
+      signedCell,
+      step.text,
+      cellSteps.findIndex((s) => s.start === step.start),
+    );
     return k < 0 ? undefined : { ...base, step: k };
   };
   let result: SessionRunResult;
@@ -237,7 +249,11 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     for (const f of outcome.failures) write(t.checkFailedNote(f) + '\n');
     // capture=: kept for later cells' ${out:NAME}; capture-secret= values are redacted from here on.
     captured = outcome.captured.map((c) => ({ ...c, fromAssistant: byAssistant }));
-    for (const v of outcome.secretValues) if (v.length >= 4) known.push(v);
+    for (const v of outcome.secretValues) {
+      if (v.length < 4) continue;
+      known.push(v);
+      conn.secrets?.add(v);
+    }
     known.sort((a, b) => b.length - a.length);
   }
   // `lines=` when a line run did not run every command of the cell (as the extension writes it).

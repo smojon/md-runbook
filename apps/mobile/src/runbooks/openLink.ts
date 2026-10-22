@@ -24,7 +24,13 @@ export function rawRunbookUrl(link: string): string | undefined {
 
 /** `deploy.md` from `…/runbooks/deploy.md?x=1`; `runbook.md` when the link has no file name. */
 function fileNameOf(url: string): string {
-  const last = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() ?? '');
+  const raw = new URL(url).pathname.split('/').filter(Boolean).pop() ?? '';
+  let last: string;
+  try {
+    last = decodeURIComponent(raw);
+  } catch {
+    last = raw; // a stray % in the name
+  }
   return /\.(md|markdown)$/i.test(last) ? last : `${last || 'runbook'}.md`;
 }
 
@@ -38,6 +44,9 @@ export async function openRunbookLink(
   try {
     const res = await fetcher(url);
     if (!res.ok) return { kind: 'error', message: t.linkFailed(`HTTP ${res.status}`) };
+    // Too large: refused before reading it, where the server says its size.
+    if (Number(res.headers?.get('content-length') ?? 0) > MAX_RUNBOOK_BYTES)
+      return { kind: 'error', message: t.fileTooLarge(fileNameOf(url)) };
     text = await res.text();
   } catch (e) {
     return { kind: 'error', message: t.linkFailed(e instanceof Error ? e.message : String(e)) };

@@ -90,7 +90,7 @@ To update the relay: `git pull && sudo docker compose up -d --build`. Git ignore
 | `RELAY_TOKEN` | required | The token clients send. At least 24 characters. |
 | `RELAY_TOKENS` | | More tokens, comma-separated, for example one per person. |
 | `RELAY_TOKEN_FILE` | | A file with tokens, one per line, for Docker secrets. |
-| `RELAY_TARGETS` | required | `host:port` pairs, comma-separated. `*:22` allows any host on port 22. |
+| `RELAY_TARGETS` | required | `host:port` pairs, comma-separated. `*:22` allows any public host on port 22; a server on the relay itself or a private network (127.x, 10.x, 192.168.x, …) must be listed by name or address. |
 | `RELAY_ORIGINS` | any | Page origins allowed to connect, such as `https://runbooks.example.net`. |
 | `RELAY_HOST` | `127.0.0.1` | Address to listen on. The container uses `0.0.0.0`. |
 | `RELAY_PORT` | `8022` | Port to listen on. |

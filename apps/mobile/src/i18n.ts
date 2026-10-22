@@ -114,6 +114,10 @@ const en = {
   timedOutNote: (seconds: number) => `[md-runbook] timed out after ${seconds}s; the cell's processes were stopped`,
   checkFailedNote: (why: string) => `[md-runbook] check failed: ${why}`,
   lineFailedNote: (lines: string) => `[md-runbook] line ${lines} failed; the lines after it were not run`,
+  otherHostTitle: (name: string) => `This cell runs on ${name}`,
+  otherHostBody: (name: string, selected: string | undefined) =>
+    `The runbook says host=${name} for this cell${selected ? `, not ${selected}, the host you selected` : ''}. Run it on ${name}? Check that the runbook comes from someone you trust.`,
+  otherHostAccept: (name: string) => `Run on ${name}`,
   noHostNamed: (name: string) => `This cell runs on the host ${name} (host=), and there is no host with that name. Add it under Hosts.`,
   cellChanged: 'The cell changed while it ran: its output was not written',
   outMissing: (name: string) => `\${out:${name}} has no value yet: run the cell with capture=${name} first`,
@@ -301,8 +305,7 @@ const en = {
       : `${n} blocks changed since signing: servers that run signed runbooks only refuse them.`,
   signedMissing: (blocks: readonly number[], of: number) =>
     `Signed block${blocks.length === 1 ? '' : 's'} ${blocks.join(', ')} of ${of} ${blocks.length === 1 ? "isn't" : "aren't"} in the file as signed (deleted or changed): check nothing you rely on was removed.`,
-  signedMoved: (n: number) =>
-    `${n} block${n === 1 ? '' : 's'} moved since signing: the order differs from the one that was reviewed.`,
+  signedMoved: (n: number) => `${n} block${n === 1 ? '' : 's'} moved since signing: the order differs from the one that was reviewed.`,
 
   // Code cells (the VS Code-like view)
   runCell: 'Run cell',

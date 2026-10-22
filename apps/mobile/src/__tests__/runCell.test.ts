@@ -283,7 +283,8 @@ describe('runCell: parameters', () => {
     const cellIndex = parse(signed).cells.findIndex((c) => c.kind === 'code');
     expect(await runCell({ host, text: signed, cellIndex, connection: conn })).toEqual({
       kind: 'error',
-      message: "Type a value for SERVICE under Parameters: a signed runbook doesn't use the default from the file (payments), which isn't signed.",
+      message:
+        "Type a value for SERVICE under Parameters: a signed runbook doesn't use the default from the file (payments), which isn't signed.",
     });
     expect(conn.calls).toEqual([]);
   });
@@ -331,6 +332,14 @@ describe('runCell: secrets and inputs', () => {
     });
     expect(live.join('')).toBe('sent [REDACTED] to api.example.net\n');
     expect(r.kind === 'done' && parse(r.text).cells[0]?.output?.text).toBe('sent [REDACTED] to api.example.net');
+  });
+
+  it('a secret an earlier cell exported is redacted from a later cell that prints it', async () => {
+    const two = text + '\n```bash\nenv | grep TOKEN\n```\n';
+    const conn = fakeConnection([{}, { stdout: 'API_TOKEN=s3cr3t-token-value\n' }]);
+    await runCell({ host, text: two, cellIndex: 0, connection: conn, readSecret, inputs: { HOST: 'h' } });
+    const r = await runCell({ host, text: two, cellIndex: 1, connection: conn, readSecret });
+    expect(r.kind === 'done' && parse(r.text).cells[1]?.output?.text).toBe('API_TOKEN=[REDACTED]');
   });
 });
 

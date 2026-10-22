@@ -25,6 +25,7 @@ export function fakeConnection(
     calls,
     unknownHostKey: undefined as string | undefined,
     changed: undefined as boolean | undefined,
+    secrets: new Set<string>(),
     session: {
       isConnected: true,
       async run(source: string, opts: RemoteRunOptions = {}, signed?: SignedRun): Promise<SessionRunResult> {

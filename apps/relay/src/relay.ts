@@ -15,7 +15,8 @@
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { IncomingMessage, Server, createServer } from 'node:http';
-import { Socket, connect } from 'node:net';
+import { LookupFunction, Socket, connect, isIP } from 'node:net';
+import { lookup as dnsLookup } from 'node:dns';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { RelayConfig } from './config';
 
@@ -59,19 +60,23 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
     for (const t of tokenDigests) ok = timingSafeEqual(d, t) || ok;
     return ok;
   };
-  const targetOk = (target: string): boolean => {
+  /** 'listed': the host is named in the targets; 'any': only `*:port` allows it (public addresses only). */
+  const targetOk = (target: string): 'listed' | 'any' | undefined => {
     const at = target.lastIndexOf(':');
-    if (at <= 0) return false;
+    if (at <= 0) return undefined;
     const host = target.slice(0, at).toLowerCase();
     const port = target.slice(at + 1);
-    return config.targets.some((t) => {
-      const tat = t.lastIndexOf(':');
-      const th = t.slice(0, tat).toLowerCase();
-      return t.slice(tat + 1) === port && (th === '*' || th === host);
-    });
+    const rules = config.targets.map((t) => [t.slice(0, t.lastIndexOf(':')).toLowerCase(), t.slice(t.lastIndexOf(':') + 1)] as const);
+    if (rules.some(([th, tp]) => tp === port && th === host)) return 'listed';
+    return rules.some(([th, tp]) => tp === port && th === '*') ? 'any' : undefined;
   };
 
   const failures = new Map<string, number[]>();
+  const recordFailure = (client: string, now: number): void => {
+    // Many clients (rotating addresses): drop the expired entries before the map grows further.
+    if (failures.size >= 10_000) for (const c of [...failures.keys()]) failedRecently(c, now);
+    failures.set(client, [...(failures.get(client) ?? []), now]);
+  };
   const failedRecently = (client: string, now: number): number => {
     const list = (failures.get(client) ?? []).filter((t) => now - t < config.failWindowMs);
     if (list.length > 0) failures.set(client, list);
@@ -133,23 +138,33 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
     if (!offered.includes(SUBPROTOCOL)) return refuse(400, 'protocol version', client);
     const given = offered.find((p) => p.startsWith('token.'))?.slice('token.'.length) ?? '';
     if (!tokenOk(given)) {
-      failures.set(client, [...(failures.get(client) ?? []), now]);
+      recordFailure(client, now);
       return refuse(401, 'token', client);
     }
     const target = url.searchParams.get('target') ?? '';
-    if (!targetOk(target)) return refuse(403, `target ${target}`, client);
+    const allowed = targetOk(target);
+    if (!allowed) return refuse(403, `target ${target}`, client);
+    const literal = target.slice(0, target.lastIndexOf(':')).replace(/^\[(.*)\]$/, '$1');
+    if (allowed === 'any' && isIP(literal) && isInternal(literal)) return refuse(403, `target ${target} (internal address)`, client);
     if (sockets.size >= config.maxConnections) return refuse(429, 'relay full', client);
     if ((perClient.get(client) ?? 0) >= config.maxPerClient) return refuse(429, 'client limit', client);
-    wss.handleUpgrade(req, socket, head, (ws) => pipe(ws, client, target));
+    wss.handleUpgrade(req, socket, head, (ws) => pipe(ws, client, target, allowed === 'any'));
   });
 
-  function pipe(ws: WebSocket, client: string, target: string): void {
+  function pipe(ws: WebSocket, client: string, target: string, publicOnly: boolean): void {
     const at = target.lastIndexOf(':');
     const host = target.slice(0, at).replace(/^\[(.*)\]$/, '$1');
     const started = Date.now();
     let up = 0;
     let down = 0;
-    const tcp = connect({ host, port: Number(target.slice(at + 1)), timeout: config.connectTimeoutMs });
+    // Allowed only by `*:port`: a name that resolves to the relay's own or a private network is refused.
+    const lookup: LookupFunction = (hostname, options, callback) =>
+      dnsLookup(hostname, options, (err, address, family) => {
+        const all = Array.isArray(address) ? address.map((a) => a.address) : [address];
+        if (!err && all.some((a) => isInternal(a))) return callback(Object.assign(new Error('internal address'), { code: 'EINTERNAL' }), address, family);
+        callback(err, address, family);
+      });
+    const tcp = connect({ host, port: Number(target.slice(at + 1)), timeout: config.connectTimeoutMs, ...(publicOnly ? { lookup } : {}) });
     const pair = { ws, tcp };
     sockets.add(pair);
     perClient.set(client, (perClient.get(client) ?? 0) + 1);
@@ -216,6 +231,17 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
         server.closeAllConnections();
       }),
   };
+}
+
+/** Loopback, private, link-local, carrier-grade NAT and unspecified addresses (IPv4, IPv6, mapped). */
+export function isInternal(address: string): boolean {
+  const a = address.toLowerCase().replace(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/, '$1');
+  const v4 = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(a);
+  if (v4) {
+    const [x, y] = [Number(v4[1]), Number(v4[2])];
+    return x === 0 || x === 10 || x === 127 || (x === 169 && y === 254) || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 100 && y >= 64 && y <= 127);
+  }
+  return a === '::' || a === '::1' || /^f[cd]/.test(a) || /^fe[89ab]/.test(a);
 }
 
 function defaultLog(e: LogEvent): void {

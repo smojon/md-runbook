@@ -5,6 +5,7 @@ import { addHost, resetHosts } from '../hosts/store';
 import { resetApprovals } from '../approvals/store';
 import { resetParamValues } from '../runbooks/params';
 import { readSecret } from '../secrets/store';
+import { autorunAsked } from '../runbooks/autorun';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { RunbookView, copyStamp } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
@@ -184,6 +185,8 @@ describe('sessions and Run All as Copy', () => {
     });
     await waitFor(() => expect(mockConnection.calls).toHaveLength(1));
     expect(disconnect).toHaveBeenCalledTimes(1);
+    // Only this runbook's shell on that host: other runbooks keep theirs.
+    expect(disconnect).toHaveBeenCalledWith(expect.any(String), r.id);
     const iso = addRunbook('i.md', '---\nmode: isolated\n---\n\n```bash\necho one\n```\n');
     await render(<RunbookView id={iso.id} />);
     await act(async () => {
@@ -203,6 +206,9 @@ describe('sessions and Run All as Copy', () => {
     await menu('runAllAsCopy');
     const pushed = router.push.mock.calls[0]?.[0] as { params: { id: string; autorun: string } };
     expect(pushed.params.autorun).toBe('1');
+    // The app asked for this run; the same link from outside (autorun=1 alone) runs nothing.
+    expect(autorunAsked(pushed.params.id)).toBe(true);
+    expect(autorunAsked(r.id)).toBe(false);
     const copy = getRunbook(pushed.params.id)!;
     expect(copy.fileName).toMatch(/^deploy\.\d{8}-\d{6}\.md$/);
     expect(parse(copy.text).cells[1]?.output).toBeUndefined();
@@ -210,6 +216,7 @@ describe('sessions and Run All as Copy', () => {
     script([{ stdout: 'new\n' }]);
     await render(<RunbookView id={copy.id} autorun />);
     await waitFor(() => expect(parse(getRunbook(copy.id)!.text).cells[1]?.output?.text).toBe('new'));
+    expect(autorunAsked(copy.id)).toBe(false);
   });
 
   it('Share: the report as HTML or PDF, and the runbook, through the share sheet', async () => {
@@ -571,7 +578,9 @@ describe('a signed runbook', () => {
     await render(<RunbookView id={r.id} />);
     expect(screen.getByText('Signed runbook ops/restart, version 7')).toBeTruthy();
     // Anyone can write a signer name next to a junk signature: the app doesn't vouch for it.
-    expect(screen.getByTestId('signed-claim').props.children).toBe("The file says it was signed by ops@example.net; this app doesn't check that.");
+    expect(screen.getByTestId('signed-claim').props.children).toBe(
+      "The file says it was signed by ops@example.net; this app doesn't check that.",
+    );
     expect(screen.queryByTestId('signed-verified')).toBeNull();
     expect(screen.getByText(/^Valid until 2027-04-30\./)).toBeTruthy();
     expect(screen.queryByTestId('signed-changed')).toBeNull();
@@ -726,7 +735,7 @@ describe('the VS Code-like runbook view', () => {
     await waitFor(() => expect(parse(getRunbook(r.id)!.text).cells[1]?.output?.attrs.lines).toBe('2-3'));
   });
 
-  it('a host= cell runs on that host, whichever is selected; an unknown name says so', async () => {
+  it('a host= cell runs on that host, whichever is selected, once you agree; an unknown name says so', async () => {
     const { connectionFor } = jest.requireMock<{ connectionFor: jest.Mock }>('../ssh/connections');
     connectionFor.mockClear();
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
@@ -736,13 +745,26 @@ describe('the VS Code-like runbook view', () => {
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-1-run'));
     });
+    // A runbook from someone else could name your production server: asked first, nothing ran.
+    expect(screen.getByTestId('other-host')).toBeTruthy();
+    expect(connectionFor).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('other-host-accept'));
+    });
     await waitFor(() => expect(screen.getByTestId('cell-1-output')).toBeTruthy());
     expect(connectionFor.mock.calls[0]?.[0]).toMatchObject({ id: db.id, hostname: 'db1' });
+    // Asked once per host while the runbook is open.
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    expect(screen.queryByTestId('other-host')).toBeNull();
+    await waitFor(() => expect(connectionFor).toHaveBeenCalledTimes(2));
+    connectionFor.mockClear();
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-2-run'));
     });
     expect(screen.getByTestId('run-notice').props.children).toMatch(/runs on the host gone .*no host with that name/);
-    expect(connectionFor).toHaveBeenCalledTimes(1);
+    expect(connectionFor).not.toHaveBeenCalled();
   });
 
   it('without a host there is no run button and no line actions are open', async () => {

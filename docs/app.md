@@ -70,7 +70,9 @@ says so.
 <img src="app/ios-line-run.png" width="320" alt="A cell after a line run: Output · exit 0 · lines 1, with the command echoed">
 
 The ▷ beside a cell runs it in a shell on the selected host; the shell stays open between
-cells, as in the extension's session mode. Tapping a line opens its actions:
+cells, as in the extension's session mode. Each runbook has its own shell on a host, so one
+runbook can't read another's secrets or change the commands its cells run with. Tapping a line
+opens its actions:
 
 - **Run line**, **Run lines 1-N** and **Run lines N-end**.
 - **Step from here**, or **Step through** for the whole cell. A command runs, then the app waits
@@ -78,7 +80,9 @@ cells, as in the extension's session mode. Tapping a line opens its actions:
 - **Check**, to mark lines and run only those.
 
 The output block records which lines ran (`lines=`), as the extension writes it. A cell with
-`host=NAME` always runs on that host, whichever one is selected.
+`host=NAME` runs on that host, whichever one is selected; the first time a runbook sends a cell
+to a host other than the selected one, the app asks (a runbook from a link could otherwise
+choose your production server), and an approval card names the host the cell runs on.
 
 The app runs `sh` and `bash` cells on Linux and macOS servers. `pwsh`, `powershell` and `cmd`
 cells, and blocks marked `os=windows`, are shown with their saved output but not run: use VS

@@ -90,10 +90,10 @@ describe('cli: sign and verify', () => {
     const split = parseManifest(readSignature(fs.readFileSync(ok, 'utf8'))!.manifest);
     split.cells[0]!.steps = ['cat > notes.txt <<EOF', 'rm -rf /srv/data', 'EOF', 'echo $((1 +'];
     const problems = await checkSignedSteps(split, bash.shell.command);
-    // (A lone "EOF" is a valid command name to bash -n; the here-doc's warning is what counts.)
-    assert.equal(problems?.length, 2, problems?.join('\n'));
-    assert.match(problems![0]!, /^cell 1, command 1 \(cat > notes\.txt <<EOF\): .*here-document/);
-    assert.match(problems![1]!, /^cell 1, command 4 /);
+    // A syntax error is caught everywhere. An unterminated here-doc only where bash -n warns about
+    // it (Git Bash does; Linux and macOS bash don't), so the scanner itself must get here-docs right.
+    assert.ok(problems?.some((p) => /^cell 1, command 4 \(echo \$\(\(1 \+\): /.test(p)), problems?.join('\n'));
+    assert.ok(problems!.every((p) => /^cell 1, command (1|4) /.test(p)), problems!.join('\n'));
   });
 
   it('refuses what it can not sign, and bad arguments', async () => {

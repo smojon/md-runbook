@@ -35,4 +35,18 @@ describe('opening a runbook from a link', () => {
       message: expect.stringMatching(/^Not a runbook link/),
     });
   });
+
+  it('a huge file is refused before it is read; a stray % in the name does not stop the download', async () => {
+    const read = jest.fn(async () => 'x');
+    const huge = (async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-length': '999999999' }),
+      text: read,
+    })) as unknown as typeof fetch;
+    expect(await openRunbookLink('https://x.example.net/big.md', huge)).toMatchObject({ kind: 'error' });
+    expect(read).not.toHaveBeenCalled();
+    const ok = (async () => ({ ok: true, status: 200, text: async () => '# T\n' })) as unknown as typeof fetch;
+    expect(await openRunbookLink('https://x.example.net/100%.md', ok)).toMatchObject({ kind: 'opened', runbook: { fileName: '100%.md' } });
+  });
 });

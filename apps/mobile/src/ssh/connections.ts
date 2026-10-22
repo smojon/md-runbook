@@ -1,8 +1,10 @@
 /**
- * One SSH session per host, kept between cells (the folder and variables carry over, as in the
- * extension's session mode) and reopened by the session itself after the phone slept or the
- * network changed. The host key is checked before any credential is sent: unknown or changed keys
- * end the connection and are reported here, so the screen can ask the user.
+ * One SSH session per host and runbook, kept between cells (the folder and variables carry over,
+ * as in the extension's session mode) and reopened by the session itself after the phone slept or
+ * the network changed. Each runbook has its own shell: a runbook from a link or a colleague can't
+ * read another runbook's secrets or redefine the commands its cells run with. The host key is
+ * checked before any credential is sent: unknown or changed keys end the connection and are
+ * reported here, so the screen can ask the user.
  */
 import { RemoteSession, hostKeyId } from '@md-runbook/ssh';
 import type { Host } from '../hosts/store';
@@ -15,24 +17,36 @@ export interface Connection {
   unknownHostKey?: string;
   /** True when a key was trusted and the server showed another: not a first contact. */
   changed?: boolean;
+  /**
+   * Secret values this shell was given: an exported secret stays readable by later cells of the
+   * runbook, so their output is redacted with all of these (as the extension does per session).
+   */
+  secrets?: Set<string>;
 }
 
 interface Entry extends Connection {
+  hostId: string;
+  runbookId: string;
   signature: string;
 }
 
 const signatureOf = (h: Host): string => `${h.hostname}:${h.port}:${h.username}:${h.hostKey ?? ''}`;
+const keyOf = (hostId: string, runbookId: string): string => `${hostId}\n${runbookId}`;
 const entries = new Map<string, Entry>();
 
-/** The host's connection, made on first use; replaced when its address, user or trusted key changed. */
-export async function connectionFor(host: Host): Promise<Connection> {
+/** The connection of a runbook to a host, made on first use; replaced when the host's address, user or trusted key changed. */
+export async function connectionFor(host: Host, runbookId: string): Promise<Connection> {
   const signature = signatureOf(host);
-  const existing = entries.get(host.id);
+  const id = keyOf(host.id, runbookId);
+  const existing = entries.get(id);
   if (existing?.signature === signature) return existing;
   if (existing) void existing.session.close().catch(() => undefined);
   const key = await appKey();
   const entry: Entry = {
+    hostId: host.id,
+    runbookId,
     signature,
+    secrets: new Set(),
     session: new RemoteSession(() => openTransport(host), {
       username: host.username,
       key,
@@ -44,20 +58,27 @@ export async function connectionFor(host: Host): Promise<Connection> {
       },
     }),
   };
-  entries.set(host.id, entry);
+  entries.set(id, entry);
   return entry;
 }
 
-export function isConnected(hostId: string): boolean {
-  return entries.get(hostId)?.session.isConnected ?? false;
+const matching = (hostId: string, runbookId?: string): Entry[] =>
+  [...entries.values()].filter((e) => e.hostId === hostId && (runbookId === undefined || e.runbookId === runbookId));
+
+/** Whether the host has an open shell (for this runbook, or for any). */
+export function isConnected(hostId: string, runbookId?: string): boolean {
+  return matching(hostId, runbookId).some((e) => e.session.isConnected);
 }
 
-export async function disconnect(hostId: string): Promise<void> {
-  const e = entries.get(hostId);
-  entries.delete(hostId);
-  await e?.session.close().catch(() => undefined);
+/** Close the host's shell for this runbook, or all its shells (the host was edited or removed). */
+export async function disconnect(hostId: string, runbookId?: string): Promise<void> {
+  const gone = matching(hostId, runbookId);
+  for (const e of gone) entries.delete(keyOf(e.hostId, e.runbookId));
+  await Promise.all(gone.map((e) => e.session.close().catch(() => undefined)));
 }
 
 export async function disconnectAll(): Promise<void> {
-  await Promise.all([...entries.keys()].map(disconnect));
+  const all = [...entries.values()];
+  entries.clear();
+  await Promise.all(all.map((e) => e.session.close().catch(() => undefined)));
 }

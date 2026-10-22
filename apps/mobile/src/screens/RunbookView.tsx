@@ -1,5 +1,6 @@
 import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
 import { FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   DEFAULT_WRITE_OPTIONS,
@@ -133,6 +134,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const host = hosts.find((h) => h.id === hostId) ?? hosts[0];
   const [running, setRunning] = useState<Running | undefined>();
   const [trust, setTrust] = useState<Trust | undefined>();
+  // A cell whose host= names a host other than the selected one waits for a yes, once per host
+  // while the runbook is open (a shared runbook could otherwise pick your production server).
+  const [otherHost, setOtherHost] = useState<{ request: RunRequest; target: Host; selected: Host | undefined } | undefined>();
+  const hostsAllowed = useRef(new Set<string>());
   /** Secrets to store and inputs to type before a cell can run. */
   const [asking, setAsking] = useState<{ request: RunRequest; hostId: string; needs: NeededValue[] } | undefined>();
   /** ${input:NAME} values for as long as this runbook is open (as in the extension's session). */
@@ -204,15 +209,18 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const run = async (request: RunRequest, on: Host | undefined): Promise<void> => {
     if (!runbook || busy.current) return;
     busy.current = true;
+    let waiting: boolean | void = false;
     try {
-      await runOne(request, on);
+      waiting = await runOne(request, on);
     } finally {
       busy.current = false;
     }
-    // Run all / Continue: on to the next cell, after this render has caught up.
-    if (queue.current) setTimeout(() => runNext(), 0);
+    // Run all / Continue: on to the next cell, after this render has caught up; not while a card
+    // waits for an answer (its answer runs this cell again, and the queue goes on from there).
+    if (queue.current && !waiting) setTimeout(() => runNext(), 0);
   };
-  const runOne = async (request: RunRequest, on: Host | undefined): Promise<void> => {
+  /** Runs a cell; true when it waits for an answer on a card (another host, trust, missing values). */
+  const runOne = async (request: RunRequest, on: Host | undefined): Promise<boolean | void> => {
     if (!runbook) return;
     const { cellIndex, mode, line } = request;
     const cell = cells[cellIndex];
@@ -226,6 +234,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       return;
     }
     if (!target) return clearQueue();
+    if (named !== undefined && target.id !== on?.id && !hostsAllowed.current.has(target.id)) {
+      setOtherHost({ request, target, selected: on });
+      return true;
+    }
     // A whole cell with breakpoints runs command by command, pausing before each breakpoint.
     const breaks = !mode && cell ? breakpoints.get(cellIndex) : undefined;
     const atBreaks = breaks !== undefined && breaks.size > 0;
@@ -272,7 +284,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 })
         : undefined;
     // Session off: this cell gets a shell of its own.
-    if (sessionMode === 'isolated') await disconnect(target.id);
+    if (sessionMode === 'isolated') await disconnect(target.id, runbook.id);
     const outcome = await runCell({
       host: target,
       text: runbook.text,
@@ -291,7 +303,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setRunning(undefined);
     if (outcome.kind === 'done') {
       updateRunbookText(runbook.id, outcome.text);
-      if (outcome.result.signedBy && signed) setGateChecked({ manifest: signed.block.manifest, host: target.name, principal: outcome.result.signedBy });
+      if (outcome.result.signedBy && signed)
+        setGateChecked({ manifest: signed.block.manifest, host: target.name, principal: outcome.result.signedBy });
       for (const c of outcome.captured) captures.current = { ...captures.current, [c.name]: c };
       if (outcome.result.newShell) setNotice(t.newShell);
       // Run all stops at the first failure, unless the cell says continue-on-error.
@@ -309,8 +322,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         fingerprint: await fingerprint(outcome.hostKey),
         changed: outcome.changed,
       });
-    } else if (outcome.kind === 'needs') setAsking({ request, hostId: target.id, needs: outcome.needs });
-    else {
+      return true;
+    } else if (outcome.kind === 'needs') {
+      setAsking({ request, hostId: target.id, needs: outcome.needs });
+      return true;
+    } else {
       clearQueue();
       setNotice(outcome.message);
     }
@@ -399,6 +415,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (!runbook) return;
     const base = (runbook.fileName ?? `${runbook.title}.md`).replace(/(\.\d{8}-\d{6})?\.md$/i, '');
     const copy = addRunbook(`${base}.${copyStamp(new Date())}.md`, clearOutputBlocks(runbook.text));
+    askAutorun(copy.id);
     router.push({ pathname: '/runbook/[id]', params: { id: copy.id, autorun: '1' } });
   };
   const actions: AppAction[] = runbook
@@ -418,9 +435,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           },
         },
         {
-          ...meta('restartSession', 'run', hosts.some((h) => isConnected(h.id)) ? undefined : t.noSessionOpen),
+          ...meta('restartSession', 'run', hosts.some((h) => isConnected(h.id, runbook.id)) ? undefined : t.noSessionOpen),
           run: () => {
-            for (const h of hosts) if (isConnected(h.id)) void disconnect(h.id);
+            for (const h of hosts) void disconnect(h.id, runbook.id);
           },
         },
         sessionMode === 'session'
@@ -551,6 +568,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   useEffect(() => {
     if (!autorun || autorunDone.current || !runbook || !host) return;
     autorunDone.current = true;
+    forgetAutorun(runbook.id);
     runSequence('start');
   });
   const runRef = useRef(run);
@@ -580,6 +598,19 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     void run(request, getHost(hostId));
   };
   const trustHost = trust ? hosts.find((h) => h.id === trust.hostId) : undefined;
+  const allowOtherHost = (): void => {
+    if (!otherHost) return;
+    hostsAllowed.current.add(otherHost.target.id);
+    const { request, selected } = otherHost;
+    setOtherHost(undefined);
+    void run(request, selected);
+  };
+  /** The host a cell runs on: its host= one, else the selected one. */
+  const hostOfCell = (index: number): Host | undefined => {
+    const c = cells[index];
+    const named = c && isCodeMeta(c.meta) ? parseCellOptions(c.meta.info).host : undefined;
+    return named === undefined ? host : hosts.find((h) => h.name.toLowerCase() === named.toLowerCase());
+  };
   const toggleBreakpoint = (cellIndex: number, step: LineStep): void =>
     setBreakpoints((m) => {
       const next = new Set(m.get(cellIndex));
@@ -665,6 +696,28 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 }}
               />
             ) : null}
+            {otherHost ? (
+              <View testID="other-host" style={styles.trust}>
+                <Text style={styles.trustTitle}>{t.otherHostTitle(otherHost.target.name)}</Text>
+                <Text style={styles.trustBody}>{t.otherHostBody(otherHost.target.name, otherHost.selected?.name)}</Text>
+                <View style={styles.actions}>
+                  <Pressable testID="other-host-accept" accessibilityRole="button" onPress={allowOtherHost} style={styles.button}>
+                    <Text style={styles.buttonText}>{t.otherHostAccept(otherHost.target.name)}</Text>
+                  </Pressable>
+                  <Pressable
+                    testID="other-host-decline"
+                    accessibilityRole="button"
+                    onPress={() => {
+                      clearQueue();
+                      setOtherHost(undefined);
+                    }}
+                    style={styles.secondary}
+                  >
+                    <Text style={styles.secondaryText}>{t.trustDecline}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
             {trust && trustHost ? (
               <TrustCard
                 host={trustHost}
@@ -713,7 +766,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                     reason={proposalOf(item.meta.info).reason}
                     result={approving.result}
                     typed={DEFAULT_POLICY.requireTypedConfirmation}
-                    runsAs={host ? `${host.username}@${host.name}` : undefined}
+                    runsAs={((h) => (h ? `${h.username}@${h.name}` : undefined))(hostOfCell(index))}
                     onApprove={() => decide(true)}
                     onReject={() => decide(false)}
                     onCancel={() => setApproving(undefined)}

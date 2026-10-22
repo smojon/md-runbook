@@ -33,6 +33,16 @@ Security fixes from a review of the assistant, signed runbooks and md-runbook-ga
   signed: they are typed on the runbook.
 - The signature block is the last one outside code blocks (an example in a code block isn't
   read as the signature); a repeated command (two `sleep 5`) runs as the right signed step.
+- **The app gives each runbook its own shell on a host.** One shell per host was shared by every
+  runbook, so a cell of one runbook could print another's secrets or redefine the commands the
+  next cells run with. A secret given to an earlier cell is also redacted from later cells.
+- **`host=` asks before it switches hosts.** A cell naming a host other than the selected one
+  waits for a yes (once per host while the runbook is open); approval cards name the cell's host.
+  Run all waits at that question, and at the trust and missing-value questions, instead of
+  going on to the next cell.
+- `autorun=1` in a link no longer starts Run all (only Run All as Copy does); the gate passes
+  unsigned text to the shell without writing it (with its secrets) to disk; a link's runbook
+  is refused by its size before it is read; the relay's `*:22` reaches public hosts only.
 
 ## 0.9.1
 

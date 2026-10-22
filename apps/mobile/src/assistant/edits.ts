@@ -74,9 +74,7 @@ export function insertPasted(text: string, clipboard: string, map: PseudonymMap,
 
 /** Explain Output, kept: the explanation as a quoted note after the cell. */
 export function insertNote(text: string, after: number, label: string, provider: string, explanation: string): string {
-  return insert(text, after + 1, [
-    { kind: 'markup', value: aiNoteMarkdown(label, provider, explanation) },
-  ]);
+  return insert(text, after + 1, [{ kind: 'markup', value: aiNoteMarkdown(label, provider, explanation) }]);
 }
 
 /** Summarize Incident: the findings section, in place of an earlier one, else at the end. */
