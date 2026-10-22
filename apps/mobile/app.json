@@ -25,7 +25,7 @@
       "output": "single",
       "bundler": "metro"
     },
-    "plugins": ["expo-router", "react-native-quick-crypto", "expo-secure-store", "expo-font"],
+    "plugins": ["expo-router", "react-native-quick-crypto", "expo-secure-store", "expo-font", "expo-status-bar"],
     "scheme": "mdrunbook",
     "runtimeVersion": {
       "policy": "appVersion"
