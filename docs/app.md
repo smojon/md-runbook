@@ -106,8 +106,12 @@ environment.
   runbook is open. Names ending in `_PASSWORD`, `_TOKEN` or `_SECRET`, and
   `${input:NAME:secret}`, are masked.
 - Secret values are redacted from the live output and from the saved output block.
-- `${out:NAME}` (a value captured by an earlier cell) is not supported in the app yet; such a
-  cell says so instead of running.
+- **Captured values:** a cell with `capture=NAME` keeps a value from its output for this
+  session, and later cells use it as `${out:NAME}` (`capture-secret=` values are redacted). As
+  in the extension, your own cells don't use a value an assistant's cell captured.
+- **Breakpoints:** tap a line → **Breakpoint** (a red dot). The cell then runs command by
+  command and pauses before it: **Run next** goes one command on, **Continue** to the next
+  breakpoint. Breakpoints last while the runbook is open.
 
 ## Signed runbooks
 

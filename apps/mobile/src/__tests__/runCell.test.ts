@@ -237,7 +237,7 @@ describe('runCell: parameters', () => {
     expect(conn.calls[0]?.source).toBe('echo "${TARGET} in ${REGION}"');
   });
 
-  it('a missing value, or a placeholder the app has no store for, stops before anything runs', async () => {
+  it('a missing value, or a capture that has no value yet, stops before anything runs', async () => {
     const conn = fakeConnection([{}]);
     expect(await runCell({ host, text, cellIndex, connection: conn })).toEqual({
       kind: 'error',
@@ -245,7 +245,7 @@ describe('runCell: parameters', () => {
     });
     const out = '```bash\necho ${out:POD}\n```\n';
     const r = await runCell({ host, text: out, cellIndex: 0, connection: conn });
-    expect(r).toMatchObject({ kind: 'error', message: expect.stringMatching(/^\$\{out:POD\} is not supported in the app yet/) });
+    expect(r).toMatchObject({ kind: 'error', message: expect.stringMatching(/^\$\{out:POD\} has no value yet/) });
     expect(conn.calls).toHaveLength(0);
   });
 
@@ -311,5 +311,33 @@ describe('runCell: secrets and inputs', () => {
     });
     expect(live.join('')).toBe('sent [REDACTED] to api.example.net\n');
     expect(r.kind === 'done' && parse(r.text).cells[0]?.output?.text).toBe('sent [REDACTED] to api.example.net');
+  });
+});
+
+describe('runCell: capture= and ${out:NAME}', () => {
+  const text =
+    '```bash capture=POD:/^(web-\\S+)/m\nkubectl get pods\n```\n\n```bash\nkubectl logs ${out:POD}\n```\n\n```bash by=ai approved-by=x\necho ${out:POD}\n```\n';
+
+  it('a capture is returned and the next cell gets it in the environment', async () => {
+    const conn = fakeConnection([{ stdout: 'web-7f9 Running\n' }, {}]);
+    const r = await runCell({ host, text, cellIndex: 0, connection: conn });
+    expect(r.kind === 'done' && r.captured).toEqual([{ name: 'POD', value: 'web-7f9', secret: false, fromAssistant: false }]);
+    const captures = r.kind === 'done' ? Object.fromEntries(r.captured.map((c) => [c.name, c])) : {};
+    await runCell({ host, text, cellIndex: 1, connection: conn, captures });
+    expect(conn.calls[1]).toMatchObject({ source: 'kubectl logs ${POD}', opts: { env: { POD: 'web-7f9' } } });
+  });
+
+  it('without a capture, or one an assistant cell made, your cell does not run', async () => {
+    const conn = fakeConnection([{}]);
+    expect(await runCell({ host, text, cellIndex: 1, connection: conn })).toEqual({
+      kind: 'error',
+      message: '${out:POD} has no value yet: run the cell with capture=POD first',
+    });
+    const fromAi = { POD: { name: 'POD', value: 'x', secret: false, fromAssistant: true } };
+    expect(await runCell({ host, text, cellIndex: 1, connection: conn, captures: fromAi })).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/captured by a cell an assistant wrote/),
+    });
+    expect(conn.calls).toHaveLength(0);
   });
 });

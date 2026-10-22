@@ -35,6 +35,7 @@ const GLYPHS = {
   'desktop-download': 0xea78,
   'circle-filled': 0xea71,
   ellipsis: 0xea7c,
+  sparkle: 0xec10,
 } as const;
 
 export type CodiconName = keyof typeof GLYPHS;

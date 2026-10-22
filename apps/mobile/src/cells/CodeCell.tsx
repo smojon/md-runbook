@@ -28,6 +28,11 @@ export interface CodeCellProps {
   index: number;
   /** The runbook it is in (approvals made on this device count). */
   runbookId?: string;
+  /** Commands (their first line) with a breakpoint: a run of the cell pauses before them. */
+  breakpoints?: ReadonlySet<number>;
+  onToggleBreakpoint?(step: LineStep): void;
+  /** The assistant explains one command (shown when there is an assistant). */
+  onExplainLine?(step: LineStep): void;
   /** Shown under the cell (the approval card of a proposal). */
   below?: ReactNode;
   /** A host is chosen: runs are possible. */
@@ -130,6 +135,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
               : running?.step !== undefined && n >= running.step.start && n <= running.step.end;
             const step = stepAtLine(steps, n);
             const isChecked = step !== undefined && step.start === n && p.checked.has(step.text);
+            const isBreak = step !== undefined && step.start === n && (p.breakpoints?.has(n) ?? false);
             return (
               <View key={n}>
                 <Pressable
@@ -138,7 +144,15 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                   disabled={!can.ok || running !== undefined}
                   style={[styles.line, inSel && styles.lineSelected, inRun && (paused ? styles.linePaused : styles.lineRunning)]}
                 >
-                  <View style={styles.mark}>{isChecked ? <Codicon name="pass-filled" size={12} color={c.accent} /> : null}</View>
+                  <View style={styles.mark}>
+                    {isBreak ? (
+                      <View testID={`cell-${index}-line-${n}-dot`}>
+                        <Codicon name="circle-filled" size={10} color={c.error} />
+                      </View>
+                    ) : isChecked ? (
+                      <Codicon name="pass-filled" size={12} color={c.accent} />
+                    ) : null}
+                  </View>
                   <Text style={styles.source}>{tokenText(tokens, c)}</Text>
                 </Pressable>
                 {sel && n === sel.end && !running ? (
@@ -150,6 +164,9 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                     checked={p.checked.has(sel.text)}
                     onAct={act}
                     onToggleCheck={() => p.onToggleCheck(sel)}
+                    breakpoint={p.breakpoints?.has(sel.start) ?? false}
+                    {...(p.onToggleBreakpoint ? { onToggleBreakpoint: () => p.onToggleBreakpoint!(sel) } : {})}
+                    {...(p.onExplainLine ? { onExplain: () => p.onExplainLine!(sel) } : {})}
                     onClose={() => setSelected(undefined)}
                   />
                 ) : null}
@@ -269,6 +286,9 @@ function LineActions(p: {
   checked: boolean;
   onAct(mode: LineMode, line: number): void;
   onToggleCheck(): void;
+  breakpoint: boolean;
+  onToggleBreakpoint?(): void;
+  onExplain?(): void;
   onClose(): void;
 }) {
   const styles = useStyles();
@@ -303,6 +323,10 @@ function LineActions(p: {
         : null}
       {p.step.start !== last.start ? action('step-from', 'debug-step-over', t.stepFromHere, () => p.onAct('stepFrom', p.step.start)) : null}
       {action('check', p.checked ? 'pass-filled' : 'circle-large-outline', p.checked ? t.uncheckLine : t.checkLine, p.onToggleCheck, true)}
+      {p.onToggleBreakpoint
+        ? action('breakpoint', 'circle-filled', p.breakpoint ? t.removeBreakpoint : t.addBreakpoint, p.onToggleBreakpoint, true)
+        : null}
+      {p.onExplain ? action('explain', 'sparkle', t.explainLine, p.onExplain, true) : null}
       <Pressable
         testID={`${id}-close`}
         accessibilityRole="button"

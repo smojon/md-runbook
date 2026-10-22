@@ -116,6 +116,10 @@ const en = {
   lineFailedNote: (lines: string) => `[md-runbook] line ${lines} failed; the lines after it were not run`,
   noHostNamed: (name: string) => `This cell runs on the host ${name} (host=), and there is no host with that name. Add it under Hosts.`,
   cellChanged: 'The cell changed while it ran: its output was not written',
+  outMissing: (name: string) => `\${out:${name}} has no value yet: run the cell with capture=${name} first`,
+  outFromAssistant: (name: string) =>
+    `\${out:${name}} was captured by a cell an assistant wrote, and your own cells don’t use values an assistant cell produced: capture it in a cell of your own`,
+  outSecretForAssistant: (name: string) => `Cells proposed by an assistant can’t use values captured as secret (\${out:${name}})`,
 
   // All actions (the ⋯ sheet, Ctrl/⌘+K)
   moreActions: '⋯ More',
@@ -199,6 +203,7 @@ const en = {
   aiCopy: 'Copy',
   aiWhatExplain: (label: string) => `explaining ${label}`,
   aiWhatSuggest: 'suggesting next steps',
+  lineOf: (lines: string, cell: string) => `line ${lines} of ${cell}`,
   aiWhatSummary: 'drafting findings',
   aiExplanationTitle: (label: string) => `Explanation of ${label}`,
   aiSuggested: (n: number) =>
@@ -289,6 +294,9 @@ const en = {
   runLinesTo: (lines: string) => `Run lines ${lines}`,
   runLinesFrom: (lines: string) => `Run lines ${lines}`,
   checkLine: 'Check',
+  addBreakpoint: 'Breakpoint',
+  removeBreakpoint: 'Remove breakpoint',
+  explainLine: 'Explain',
   uncheckLine: 'Uncheck',
   runChecked: (n: number) => (n === 1 ? 'Run 1 checked line' : `Run ${n} checked lines`),
   lineActions: (lines: string) => `Line ${lines}`,

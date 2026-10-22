@@ -379,6 +379,52 @@ describe('the assistant (Claude with your key)', () => {
   });
 });
 
+describe('breakpoints and Explain on a line', () => {
+  it('a cell with a breakpoint pauses before that line; Continue runs the rest', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    script([{ stdout: 'a\n' }, { stdout: 'b\n' }, { stdout: 'c\n' }]);
+    const r = addRunbook('b.md', '# B\n\n```bash\necho a\necho b\necho c\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-line-1'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-line-1-breakpoint'));
+    });
+    expect(screen.getByTestId('cell-1-line-1-dot')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-line-1'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-paused')).toBeTruthy());
+    expect(mockConnection.calls.map((c) => c.source)).toEqual(['echo a']);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-step-continue'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(3));
+    const out = parse(getRunbook(r.id)!.text).cells[1]?.output;
+    expect(out?.attrs.exit).toBe('0');
+    expect(out?.attrs.lines).toBeUndefined();
+  });
+
+  it('Explain on a line asks about that command', async () => {
+    const claude = jest.requireMock<{ askClaude: jest.Mock }>('../assistant/claude');
+    await jest.requireActual<{ setApiKey(k: string): Promise<void> }>('../assistant/claude').setApiKey('sk-ant-test');
+    claude.askClaude.mockResolvedValueOnce('It prints b.');
+    const r = addRunbook('x.md', '# X\n\n```bash\necho a\necho b\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-line-1'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-line-1-explain'));
+    });
+    await waitFor(() => expect(screen.getByTestId('ai-confirm-title').props.children).toMatch(/for explaining line 2 of cell 2\?$/));
+  });
+});
+
 describe('runbook parameters', () => {
   beforeEach(() => resetParamValues());
   const text = '---\nparams:\n  - REGION: eu-west-1\n---\n\n# Deploy\n\n```bash\necho "${param:TARGET} ${param:REGION}"\n```\n';

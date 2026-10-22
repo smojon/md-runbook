@@ -7,7 +7,13 @@
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useRef, useState } from 'react';
 import { parse } from '@md-runbook/core';
-import { AiPrompt, explainOutputPrompt, suggestNextStepsPrompt, summarizeIncidentPrompt } from '@md-runbook/core/aiPrompt';
+import {
+  AiPrompt,
+  explainLinePrompt,
+  explainOutputPrompt,
+  suggestNextStepsPrompt,
+  summarizeIncidentPrompt,
+} from '@md-runbook/core/aiPrompt';
 import { PseudonymMap, depseudonymize } from '@md-runbook/core/aiContext';
 import { scanForLeaks } from '@md-runbook/core/leaks';
 import { t } from '../i18n';
@@ -17,7 +23,7 @@ import { PROVIDER_LABEL, askClaude, clearApiKey, hasApiKey, setApiKey } from './
 import { copyText, prepareContext, pseudonymMap } from './context';
 import { insertNote, insertPasted, insertSuggestions, withFindings } from './edits';
 
-export type AskKind = 'explain' | 'suggest' | 'summarize';
+export type AskKind = 'explain' | 'explainLine' | 'suggest' | 'summarize';
 
 /** Code cells up to and including `index` (parsed indexes): the context of a cell's question. */
 function cellsUpTo(text: string, index: number): number[] {
@@ -46,11 +52,12 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
     setStep(undefined);
   };
 
-  const ask = async (kind: AskKind, cell?: number): Promise<void> => {
+  /** `lines`: for explainLine, the command's lines as shown ("3" or "3-5"). */
+  const ask = async (kind: AskKind, cell?: number, lines?: string): Promise<void> => {
     const text = latest();
     if (!runbook || text === undefined) return;
     if (!(await hasApiKey())) {
-      next.current = () => void ask(kind, cell);
+      next.current = () => void ask(kind, cell, lines);
       return setStep({ kind: 'key' });
     }
     const label = cell === undefined ? '' : `cell ${cell + 1}`;
@@ -58,11 +65,16 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
     const prompt: AiPrompt =
       kind === 'explain'
         ? explainOutputPrompt(ctx.text, label)
-        : kind === 'suggest'
-          ? suggestNextStepsPrompt(ctx.text, 3, cell === undefined ? undefined : label)
-          : summarizeIncidentPrompt(ctx.text);
-    const what = kind === 'explain' ? t.aiWhatExplain(label) : kind === 'suggest' ? t.aiWhatSuggest : t.aiWhatSummary;
-    next.current = () => void send(kind, cell, label, prompt, what, ctx.map);
+        : kind === 'explainLine'
+          ? explainLinePrompt(ctx.text, label, lines ?? '1')
+          : kind === 'suggest'
+            ? suggestNextStepsPrompt(ctx.text, 3, cell === undefined ? undefined : label)
+            : summarizeIncidentPrompt(ctx.text);
+    // What the sheet calls it: "cell 3", or "line 2 of cell 3".
+    const shown = kind === 'explainLine' ? t.lineOf(lines ?? '1', label) : label;
+    const what =
+      kind === 'explain' || kind === 'explainLine' ? t.aiWhatExplain(shown) : kind === 'suggest' ? t.aiWhatSuggest : t.aiWhatSummary;
+    next.current = () => void send(kind, cell, shown, prompt, what, ctx.map);
     setStep({
       kind: 'confirm',
       what,
@@ -100,6 +112,11 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
       return notify(t.aiEmpty);
     }
     const now = latest() ?? '';
+    if (kind === 'explainLine') {
+      const text = depseudonymize(answer, map).trim();
+      // As in the extension: shown, not added to the runbook.
+      return setStep({ kind: 'answer', title: t.aiExplanationTitle(label), markdown: text, canInsert: false });
+    }
     if (kind === 'explain') {
       const text = depseudonymize(answer, map).trim();
       lastExplain.current = { cell: cell ?? 0, label, text };
@@ -184,7 +201,7 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
   return {
     sheet,
     hasKey,
-    ask: (kind: AskKind, cell?: number) => void ask(kind, cell),
+    ask: (kind: AskKind, cell?: number, lines?: string) => void ask(kind, cell, lines),
     copyForAi: (cell?: number) => void copyForAi(cell),
     paste: (after?: number) => void paste(after),
     checkLeaks,

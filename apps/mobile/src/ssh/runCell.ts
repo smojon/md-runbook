@@ -11,11 +11,13 @@ import {
   exitLabel,
   formatDurationAttr,
   formatLocalIso,
+  isCodeMeta,
   outputSummary,
   parse,
   setCellOutput,
 } from '@md-runbook/core';
-import { evaluateChecks } from '@md-runbook/core/checks';
+import { Captured, evaluateChecks } from '@md-runbook/core/checks';
+import { proposalOf } from '@md-runbook/core/proposal';
 import { rewriteRefs } from '@md-runbook/core/secrets';
 import { signedStatus, signedStepIndex } from '@md-runbook/core/signing';
 import { echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core/steps';
@@ -33,7 +35,7 @@ export const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 export type RunOutcome =
   /** The cell ran (or failed): `text` is the runbook with the new output block. */
-  | { kind: 'done'; text: string; result: SessionRunResult; attrs: Record<string, string>; summary: string }
+  | { kind: 'done'; text: string; result: SessionRunResult; attrs: Record<string, string>; summary: string; captured: Captured[] }
   /** The server's key is not trusted yet (or changed): nothing was sent; ask, pin, run again. */
   | { kind: 'trust'; hostKey: string; changed: boolean }
   /** Nothing ran: the cell needs secrets or inputs that are not there yet; ask, then run again. */
@@ -74,6 +76,8 @@ export interface RunCellParams {
   params?: Record<string, string>;
   /** Values typed for `${input:NAME}` while the runbook is open. */
   inputs?: Record<string, string>;
+  /** Values earlier cells captured this session (capture=), for . */
+  captures?: Readonly<Record<string, Captured>>;
   /** A stored secret's value (default: the secure store). */
   readSecret?(name: string): Promise<string | undefined>;
   /** Tests: a connection instead of the host's real one. */
@@ -91,10 +95,9 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
 
   // Placeholders become environment variables, as in the extension: a value is never part of the
   // script. ${param:} comes from the Parameters card, ${secret:} from the secure store, ${input:}
-  // from what was typed for this runbook; ${out:} (a captured value) isn't supported yet.
+  // from what was typed for this runbook, ${out:} from an earlier cell's capture= this session.
   const refs = refsOf(cell.value);
-  const out = refs.find((r) => r.kind === 'out');
-  if (out) return { kind: 'error', message: t.refUnsupported(out.kind, out.name) };
+  const byAssistant = isCodeMeta(cell.meta) && proposalOf(cell.meta.info).by !== undefined;
   const specs = refs.some((r) => r.kind === 'param') ? runbookParams(p.text) : [];
   const paramEnv: Record<string, string> = {};
   const secretEnv: Record<string, string> = {};
@@ -102,6 +105,16 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   const known: string[] = [];
   const needs: NeededValue[] = [];
   for (const ref of refs) {
+    if (ref.kind === 'out') {
+      const c = p.captures?.[ref.name];
+      if (!c) return { kind: 'error', message: t.outMissing(ref.name) };
+      // An assistant cell's output must not steer a cell of yours; an assistant cell gets no secret value.
+      if (c.fromAssistant && !byAssistant) return { kind: 'error', message: t.outFromAssistant(ref.name) };
+      if (c.secret && byAssistant) return { kind: 'error', message: t.outSecretForAssistant(ref.name) };
+      secretEnv[ref.name] = c.value;
+      if (c.secret && c.value.length >= 4) known.push(c.value);
+      continue;
+    }
     if (ref.kind === 'secret' || ref.kind === 'input') {
       const value = ref.kind === 'secret' ? await (p.readSecret ?? readSecret)(ref.name) : p.inputs?.[ref.name];
       if (value === undefined) needs.push({ kind: ref.kind, name: ref.name, masked: ref.secret });
@@ -208,10 +221,15 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     ended: formatLocalIso(ended),
     duration: formatDurationAttr(ended.getTime() - started.getTime()),
   };
+  let captured: Captured[] = [];
   if (opts.checks && result.exitCode !== null && !result.timedOut && !result.cancelled) {
     const outcome = evaluateChecks(opts.checks, result.exitCode, transcript, stdout);
     attrs.check = outcome.ok ? 'ok' : 'failed';
     for (const f of outcome.failures) write(t.checkFailedNote(f) + '\n');
+    // capture=: kept for later cells' ${out:NAME}; capture-secret= values are redacted from here on.
+    captured = outcome.captured.map((c) => ({ ...c, fromAssistant: byAssistant }));
+    for (const v of outcome.secretValues) if (v.length >= 4) known.push(v);
+    known.sort((a, b) => b.length - a.length);
   }
   // `lines=` when a line run did not run every command of the cell (as the extension writes it).
   if (p.lines && !(p.lines.coversCell && ran.length === p.lines.steps.length)) {
@@ -227,5 +245,5 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
       { kind: 'new', text: transcript, attrs },
       { ...DEFAULT_WRITE_OPTIONS, redact: (s) => redactor.redact(hideKnown(s)) },
     ) ?? base;
-  return { kind: 'done', text, result, attrs, summary: outputSummary(attrs, ended) };
+  return { kind: 'done', text, result, attrs, summary: outputSummary(attrs, ended), captured };
 }

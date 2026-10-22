@@ -14,6 +14,7 @@ import {
   taskItems,
 } from '@md-runbook/core';
 import { isManualMark } from '@md-runbook/core/progress';
+import type { Captured } from '@md-runbook/core/checks';
 import { DEFAULT_POLICY, PolicyResult, evaluatePolicy } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
@@ -38,7 +39,7 @@ import { saveRunbook } from '../runbooks/save';
 import { exportReport, shareRunbook } from '../share/export';
 import { Runbook, addRunbook, getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { fingerprint } from '../ssh/fingerprint';
-import { LineMode, isStepping, planLines } from '../ssh/lineRuns';
+import { LineMode, isStepping, lineLabel, planLines } from '../ssh/lineRuns';
 import { runnability } from '../ssh/cells';
 import { disconnect, isConnected } from '../ssh/connections';
 import { NeededValue, runCell } from '../ssh/runCell';
@@ -140,6 +141,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     inputs.current = next;
     setTypedInputs(next);
   };
+  /** Values cells captured (capture=) this session, for later cells' . */
+  const captures = useRef<Record<string, Captured>>({});
   /** A cell is running (a ref: Run all starts the next one before React re-renders). */
   const busy = useRef(false);
   /** Run all / Continue: the cells still to run, the host, and the proposals left out. */
@@ -153,6 +156,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [transportIssue, setTransportIssue] = useState<string | undefined>();
   /** Checked commands per cell index (their texts), for this screen's life, as in the extension's session. */
   const [checks, setChecks] = useState<ReadonlyMap<number, ReadonlySet<string>>>(new Map());
+  /** Breakpoints per cell index (the first line of each command), for this screen's life as in the extension's session. */
+  const [breakpoints, setBreakpoints] = useState<ReadonlyMap<number, ReadonlySet<number>>>(new Map());
   /**
    * session: one shell per host for the whole runbook (cd and variables carry over); isolated:
    * each cell in a fresh shell. The front matter's `mode:` decides, as in the extension; without
@@ -216,7 +221,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       return;
     }
     if (!target) return clearQueue();
-    const lines = mode && cell ? planLines(cell.value, mode, line ?? 0, checks.get(cellIndex)) : undefined;
+    // A whole cell with breakpoints runs command by command, pausing before each breakpoint.
+    const breaks = !mode && cell ? breakpoints.get(cellIndex) : undefined;
+    const atBreaks = breaks !== undefined && breaks.size > 0;
+    const lines = cell && (mode || atBreaks) ? planLines(cell.value, mode ?? 'step', line ?? 0, checks.get(cellIndex)) : undefined;
     if (mode && !lines) return;
     const abort = new AbortController();
     setNotice(undefined);
@@ -224,11 +232,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setRunning({ ...request, live: '', abort });
     const update = (f: (r: Running) => Running): void => setRunning((r) => (r && r.cellIndex === cellIndex ? f(r) : r));
     // Step through: the first command runs at once, then the run waits before each of the others.
+    // At breakpoints: the run waits before each command with one; Run next then waits before the
+    // command after it too, Continue goes on to the next breakpoint.
     let auto = false;
+    let stepOn = false;
+    const pauses = (i: number): boolean => (atBreaks ? stepOn || breaks.has(lines!.steps[i]!.start) : i > 0 && !auto);
     const beforeStep =
-      isStepping(mode) && lines
+      (isStepping(mode) || atBreaks) && lines
         ? (i: number): Promise<boolean> =>
-            i === 0 || auto
+            !pauses(i)
               ? Promise.resolve(true)
               : new Promise<boolean>((resolve) => {
                   const go = (yes: boolean): void => {
@@ -240,9 +252,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                     ...r,
                     paused: {
                       step: lines.steps[i]!,
-                      next: () => go(true),
+                      next: () => {
+                        stepOn = true;
+                        go(true);
+                      },
                       cont: () => {
                         auto = true;
+                        stepOn = false;
                         go(true);
                       },
                       stop: () => go(false),
@@ -261,6 +277,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       beforeStep,
       params: paramValues,
       runbookId: runbook.id,
+      captures: captures.current,
       inputs: Object.fromEntries(Object.entries(inputs.current).map(([k, v]) => [k, v.value])),
       latestText: () => getRunbook(runbook.id)?.text ?? runbook.text,
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
@@ -269,6 +286,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setRunning(undefined);
     if (outcome.kind === 'done') {
       updateRunbookText(runbook.id, outcome.text);
+      for (const c of outcome.captured) captures.current = { ...captures.current, [c.name]: c };
       if (outcome.result.newShell) setNotice(t.newShell);
       // Run all stops at the first failure, unless the cell says continue-on-error.
       const passed = outcome.attrs.exit === '0' && outcome.attrs.check !== 'failed';
@@ -434,7 +452,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         ...(params.length > 0 ? [{ ...meta('setParameters', 'values'), run: () => list.current?.scrollToOffset({ offset: 0 }) }] : []),
         {
           ...meta('resetInputs', 'values', Object.keys(typedInputs).length > 0 ? undefined : t.noInputsYet),
-          run: () => updateInputs({}),
+          run: () => {
+            updateInputs({});
+            captures.current = {};
+          },
         },
         { ...meta('secrets', 'values'), run: () => router.push('/hosts') },
         runbook.origin
@@ -536,6 +557,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     void run(request, getHost(hostId));
   };
   const trustHost = trust ? hosts.find((h) => h.id === trust.hostId) : undefined;
+  const toggleBreakpoint = (cellIndex: number, step: LineStep): void =>
+    setBreakpoints((m) => {
+      const next = new Set(m.get(cellIndex));
+      if (next.has(step.start)) next.delete(step.start);
+      else next.add(step.start);
+      return new Map(m).set(cellIndex, next);
+    });
   const toggleCheck = (cellIndex: number, step: LineStep): void =>
     setChecks((m) => {
       const next = new Set(m.get(cellIndex));
@@ -647,6 +675,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               onRun={(mode, line) => void run({ cellIndex: index, mode, line }, host)}
               onStop={stopSequence}
               onToggleCheck={(step) => toggleCheck(index, step)}
+              breakpoints={breakpoints.get(index) ?? NO_BREAKS}
+              onToggleBreakpoint={(step) => toggleBreakpoint(index, step)}
+              onExplainLine={(step) => assistant.ask('explainLine', index, lineLabel(step))}
               onActions={() => setCellSheet(cellActions(index))}
               runbookId={runbook.id}
               below={
@@ -674,6 +705,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
+const NO_BREAKS: ReadonlySet<number> = new Set();
 
 /**
  * The one obvious action, for anyone opening the runbook: Run all, then Continue after a stop,

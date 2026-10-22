@@ -44,7 +44,7 @@ action by the same groups, with a search field (Ctrl/⌘+K with a keyboard).
 | **Run lines 1-N** / **Run lines N-end** | line hover | Run a block up to a point, or from a point on, after fixing one command. | tap a line |
 | **Step from here** / **Step Through Lines** | line hover; the cell's run dropdown | Risky changes: run one command, look at the result, then decide to continue. While it waits, the cell shows **Run Next Line** (F10), **Run Remaining Lines** (F5) and **Stop Stepping** (Shift+F5). | tap a line → Step from here / Step through, then Run next / Continue |
 | **Check** a line, **Run Checked Lines**, **Uncheck All Lines** | line hover; the cell's run dropdown | Pick a few commands out of a long block and run just those, in order. | tap a line → Check, then Run checked |
-| **Breakpoint** | line hover | The cell should run on its own but pause before one dangerous command. | — |
+| **Breakpoint** | line hover | The cell should run on its own but pause before one dangerous command. | tap a line → Breakpoint (a red dot); Run next / Continue while paused |
 | **Run Lines One by One** | the cell's run dropdown | Find which line of a block fails: stops at the first failing line and says which. | — |
 | **Run Selection**, **Step Through from Selection** | the cell's run dropdown, right-click in the code | You selected part of a command (a long pipeline) and want to try just that. | — |
 | **Run This Line**, **Step Through from This Line** | right-click in the code | The same as the line hover, from the keyboard focus or when you prefer menus. | — |
@@ -78,7 +78,7 @@ secret values are redacted from the output.
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
 | **Suggest Next Steps** | Assistant ▾, cell ⋯ | You're stuck in an incident: get proposed commands as cells that only run after you approve them. Needs an AI provider. | ⋯ More → Assistant, or the cell’s ⋯ (Claude with your own key; every send confirmed, with the leak check) |
-| **Explain Output** / **Explain** (a line) | cell ⋯ / line hover | An error or an output you don't understand: get it explained next to the runbook. | the cell’s ⋯ → Explain Output |
+| **Explain Output** / **Explain** (a line) | cell ⋯ / line hover | An error or an output you don't understand: get it explained next to the runbook. | the cell’s ⋯ → Explain Output; tap a line → Explain |
 | **Summarize Incident** | Assistant ▾ | Write the findings of an incident at the end of the runbook, as a draft to edit. | ⋯ More → Assistant, or the cell’s ⋯ (Claude with your own key; every send confirmed, with the leak check) |
 | **Copy for AI** / **Copy Cell for AI** | Assistant ▾ / the cell's copy icon | Use the chat assistant you already have: copy the runbook with names pseudonymized and secrets removed. | ⋯ More → Copy for AI; the cell’s ⋯ → Copy Cell for AI |
 | **Paste AI Proposal** | Assistant ▾ | Bring the assistant's answer back: its code blocks become proposed cells, with the real names restored. | ⋯ More → Paste AI Proposal (or the cell’s ⋯, to insert after it) |
