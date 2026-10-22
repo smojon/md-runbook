@@ -18,6 +18,7 @@ let mockConnection = fakeConnection();
 jest.mock('../ssh/connections', () => ({
   connectionFor: jest.fn(async () => mockConnection),
   disconnect: jest.fn(async () => undefined),
+  isConnected: jest.fn(() => false),
 }));
 
 const script = (runs: FakeRun[]) => (mockConnection = fakeConnection(runs));
@@ -72,6 +73,33 @@ describe('Run all / Continue (the one-tap action)', () => {
     expect(mockConnection.calls.map((c) => c.source)).toEqual(['echo two', 'echo three']);
     await waitFor(() => expect(screen.getByTestId('run-primary')).toHaveTextContent('↻ Run again'));
     expect(screen.getByTestId('run-progress')).toHaveTextContent('3 of 3 steps done');
+  });
+});
+
+describe('⋯ More: every action, by group or by search', () => {
+  it('lists the actions with when they matter; typing narrows them; Clear All Outputs clears', async () => {
+    const r = addRunbook(
+      'done.md',
+      '# Done\n\n```bash\necho hi\n```\n<!-- md-runbook:output start exit=0 -->\n```text\nhi\n```\n<!-- md-runbook:output end -->\n',
+    );
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    expect(screen.getByTestId('actions-sheet')).toBeTruthy();
+    for (const g of ['Run', 'Values', 'Share', 'Help']) expect(screen.getByText(g)).toBeTruthy();
+    // Without a host Run All is shown, but says why it can't run.
+    expect(screen.getByTestId('action-runAll').props.accessibilityState).toMatchObject({ disabled: true });
+    expect(screen.getAllByText('Nothing to run: add a host first.').length).toBeGreaterThan(0);
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('actions-search'), 'clear out');
+    });
+    expect(screen.queryByTestId('action-resumeRun')).toBeNull();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-clearAllOutputs'));
+    });
+    expect(parse(getRunbook(r.id)!.text).cells[1]?.output).toBeUndefined();
+    expect(screen.queryByTestId('actions-sheet')).toBeNull();
   });
 });
 

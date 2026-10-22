@@ -5,7 +5,12 @@ app (iPhone, Android, browser) has it too.
 
 In VS Code everything starts from the **toolbar at the top of a runbook**: a few buttons, then
 the **Run**, **Values**, **Assistant**, **Share** and **Help** dropdowns. A cell's own actions
-are in its **⋯** menu, and each line of a code cell shows its actions when you hover it.
+are in its **⋯** menu, and each line of a code cell shows its actions when you hover it. If you
+know what you want, Ctrl+Shift+P (⌘⇧P) and type part of its name.
+
+In the app, the top of a runbook has one button that does the obvious thing (**▶ Run all**, then
+**▶ Continue** after a stop, **↻ Run again** when all is done), and **⋯ More** lists every other
+action by the same groups, with a search field (Ctrl/⌘+K with a keyboard).
 
 ## Opening a runbook
 
@@ -13,21 +18,21 @@ are in its **⋯** menu, and each line of a code cell shows its actions when you
 | --- | --- | --- | --- |
 | **Open as Runbook** | right-click a `.md` in the Explorer; the notebook icon of a Markdown editor | You have a Markdown file with shell blocks and want to run them step by step, with the output kept in the file. | **Open a runbook…** on the start screen |
 | **Open as Markdown Text** | toolbar (Markdown icon) | You want to edit the raw file: fix a typo in prose, rearrange sections, review the diff. | — |
-| **Open Sample Runbook** | Help ▾ | You're new and want to try every feature on a safe file. Nothing is written until you save it. | the sample is on the start screen |
+| **Open Sample Runbook** | Help ▾ | You're new and want to try every feature on a safe file. Nothing is written until you save it. | on the start screen; ⋯ More → Help |
 | **Get Started** | Help ▾ | A short tour of the main features, the first time you use it. | — |
-| **Cheat Sheet** | Help ▾ | This page, inside VS Code: "is there a button for…?" | — |
+| **Cheat Sheet** | Help ▾ | This page, inside VS Code: "is there a button for…?" | ⋯ More → Help (opens this page) |
 
 ## Running
 
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
-| **Run cell** / **Run All** / Run Above / Run Below | the cell's ▷, the toolbar's Run All (VS Code's own) | The normal way: run one step, or the whole procedure top to bottom. Run All stops at the first failure. | ▷ on each cell |
-| **Resume Run** | toolbar, Run ▾ | A step failed, you fixed the cause: carry on from the failed step without re-running the ones that worked. | — |
+| **Run cell** / **Run All** / Run Above / Run Below | the cell's ▷, the toolbar's Run All (VS Code's own) | The normal way: run one step, or the whole procedure top to bottom. Run All stops at the first failure. | ▷ on each cell; **▶ Run all** at the top of the runbook |
+| **Resume Run** | toolbar, Run ▾ | A step failed, you fixed the cause: carry on from the failed step without re-running the ones that worked. | **▶ Continue** at the top after a stop; ⋯ More → Resume Run |
 | **Run All as Copy** | Run ▾ | The runbook is a template (a release checklist, an incident procedure): every run goes into a new dated copy, so the original stays clean and each run has its own record. | — |
-| **Go to Next Step** | Run ▾ | A long runbook: jump to the first step that isn't done yet. | — |
+| **Go to Next Step** | Run ▾ | A long runbook: jump to the first step that isn't done yet. | ⋯ More → Go to Next Step |
 | **Session: on / off** | toolbar | **On**: one shell for the whole runbook, so `cd`, variables and logins carry over from cell to cell, as in a terminal. **Off**: every cell starts clean, so the result never depends on an earlier cell. | always one shell per host |
-| **Session…**, **Restart Session**, **Stop Session** | Run ▾ | The session got into a bad state (wrong folder, a stuck login): start again from a clean shell without closing the runbook. | — |
-| **Clear All Outputs** | Run ▾, right-click the file in the Explorer | Before sharing or committing a runbook as a template, without the last run's output. | — |
+| **Session…**, **Restart Session**, **Stop Session** | Run ▾ | The session got into a bad state (wrong folder, a stuck login): start again from a clean shell without closing the runbook. | ⋯ More → Restart Session |
+| **Clear All Outputs** | Run ▾, right-click the file in the Explorer | Before sharing or committing a runbook as a template, without the last run's output. | ⋯ More → Clear All Outputs |
 | **Clear Outputs Above** / **Clear Outputs Below** | cell ⋯ | You rerun the second half of a procedure and want to see clearly what ran this time. | — |
 | **Run Code Block in Text Editor** / **Run Code Block and Below in Text Editor** | ▶ Run above each block in the plain Markdown editor (turn on `mdRunbook.codeLens.enabled`) | You prefer editing the raw file and want to run a block without switching to the runbook view. | — |
 
@@ -60,7 +65,7 @@ are in its **⋯** menu, and each line of a code cell shows its actions when you
 | --- | --- | --- | --- |
 | **Set Parameters** | Values ▾ | One runbook for several targets (`${param:NAMESPACE}`, `${param:REGION}`): set them once before running, instead of answering a prompt per cell. | the **Parameters** card on the runbook |
 | **Set Inputs** | Values ▾ | Values that differ per run (a ticket number, a user name, `${input:NAME}`): set or change them before running. | asked when a cell needs one; the **Inputs** card shows, changes and clears them |
-| **Reset Inputs** | Values ▾ | You start a new run with other values: forget this runbook's inputs and parameters, so they're asked again. | **Clear all inputs** on the Inputs card |
+| **Reset Inputs** | Values ▾ | You start a new run with other values: forget this runbook's inputs and parameters, so they're asked again. | **Clear all inputs** on the Inputs card; ⋯ More → Reset Inputs |
 | **Set Secret** | Values ▾ | Store a token or password once (`${secret:NAME}`) in the OS keychain, instead of pasting it into commands. Setting it again changes it. | asked the first time; **Hosts → Secrets → Add a secret / Change** |
 | **List Secrets** | Values ▾ | See which secrets are stored (never their values) and copy a `${secret:NAME}` reference to write into a cell. | Hosts → Secrets |
 | **Delete Secret** | Values ▾ | A token was rotated or should no longer be used on this machine. | Hosts → Secrets → **Forget** |

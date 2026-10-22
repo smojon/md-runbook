@@ -1,7 +1,7 @@
-import { Link, Stack } from 'expo-router';
+import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { isCodeMeta, parse, taskItems } from '@md-runbook/core';
+import { FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ParsedCell, clearOutputBlocks, isCodeMeta, parse, taskItems } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, signedStatus } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
@@ -14,14 +14,20 @@ import { Host, getHost, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
 import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } from '../runbooks/params';
+import { canDownload } from '../runbooks/files';
+import { saveRunbook } from '../runbooks/save';
 import { getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { fingerprint } from '../ssh/fingerprint';
 import { LineMode, isStepping, planLines } from '../ssh/lineRuns';
 import { runnability } from '../ssh/cells';
+import { disconnect, isConnected } from '../ssh/connections';
 import { NeededValue, runCell } from '../ssh/runCell';
 import { storeSecret } from '../secrets/store';
 import { transportReady } from '../ssh/transport';
 import { mono, themedStyles, usePalette } from '../theme';
+import { ActionGroup, ActionsSheet, AppAction } from '../ui/ActionsSheet';
+
+const CHEAT_SHEET_URL = 'https://github.com/smojon/md-runbook/blob/main/docs/cheatsheet.md';
 
 /** Output kept on screen while a cell runs; the output block written afterwards has its own limit. */
 const LIVE_CHARS = 20_000;
@@ -250,6 +256,68 @@ export function RunbookView({ id }: { id: string | undefined }) {
     setNotice(undefined);
     runNext();
   };
+  const [showActions, setShowActions] = useState(false);
+  const list = useRef<FlatList<ParsedCell>>(null);
+  // Ctrl/⌘+K opens the actions with a keyboard (the browser, an iPad with a keyboard).
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowActions(true);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+  const action = (id: keyof typeof t.actions, group: ActionGroup, run: () => void, disabled?: string): AppAction => ({
+    id,
+    title: t.actions[id][0],
+    hint: t.actions[id][1],
+    group,
+    run,
+    ...(disabled ? { disabled } : {}),
+  });
+  const actions: AppAction[] = runbook
+    ? [
+        queued || running
+          ? action('stop', 'run', () => stopSequence())
+          : action('runAll', 'run', () => runSequence('start'), host ? undefined : t.noRunNow),
+        action(
+          'resumeRun',
+          'run',
+          () => runSequence('resume'),
+          !host ? t.noRunNow : progress?.resume.length ? undefined : t.nothingToResume,
+        ),
+        action('nextStep', 'run', () => {
+          const at = progress?.firstFailed?.cell ?? progress?.firstPending?.cell;
+          if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
+        }),
+        action(
+          'restartSession',
+          'run',
+          () => {
+            for (const h of hosts) if (isConnected(h.id)) void disconnect(h.id);
+          },
+          hosts.some((h) => isConnected(h.id)) ? undefined : t.noSessionOpen,
+        ),
+        action('clearAllOutputs', 'run', () => updateRunbookText(runbook.id, clearOutputBlocks(runbook.text))),
+        action('hosts', 'run', () => router.push('/hosts')),
+        ...(params.length > 0 ? [action('setParameters', 'values', () => list.current?.scrollToOffset({ offset: 0 }))] : []),
+        action('resetInputs', 'values', () => updateInputs({}), Object.keys(typedInputs).length > 0 ? undefined : t.noInputsYet),
+        action('secrets', 'values', () => router.push('/hosts')),
+        runbook.origin
+          ? action('save', 'share', () => void saveFromMenu())
+          : action('download', 'share', () => void saveFromMenu(), canDownload ? undefined : t.saveUnavailable),
+        action('cheatSheet', 'help', () => void Linking.openURL(CHEAT_SHEET_URL)),
+        action('sample', 'help', () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } })),
+      ]
+    : [];
+  const saveFromMenu = async (): Promise<void> => {
+    if (!runbook) return;
+    const r = await saveRunbook(runbook.id);
+    setNotice(r.kind === 'conflict' ? t.conflictTitle : r.kind === 'error' ? r.message : r.kind === 'downloaded' ? undefined : t.saved);
+  };
   const stopSequence = (): void => {
     clearQueue();
     if (running?.paused) running.paused.stop();
@@ -304,6 +372,8 @@ export function RunbookView({ id }: { id: string | undefined }) {
     <>
       <Stack.Screen options={{ title: runbook.title }} />
       <FlatList
+        ref={list}
+        onScrollToIndexFailed={(info) => list.current?.scrollToOffset({ offset: info.averageItemLength * info.index })}
         style={styles.screen}
         contentContainerStyle={styles.content}
         contentInsetAdjustmentBehavior="automatic"
@@ -311,7 +381,15 @@ export function RunbookView({ id }: { id: string | undefined }) {
         keyExtractor={(_, i) => String(i)}
         ListHeaderComponent={
           <View>
-            <RunBar progress={progress} canRun={host !== undefined} running={queued} onRun={runSequence} onStop={stopSequence} />
+            <RunBar
+              progress={progress}
+              canRun={host !== undefined}
+              running={queued}
+              onRun={runSequence}
+              onStop={stopSequence}
+              onMore={() => setShowActions(true)}
+            />
+            <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
             <SaveBar runbook={runbook} />
             {signed ? <SignedBanner status={signed} /> : null}
             {params.length > 0 ? (
@@ -402,15 +480,22 @@ function RunBar({
   running,
   onRun,
   onStop,
+  onMore,
 }: {
   progress: Progress | undefined;
   canRun: boolean;
   running: boolean;
   onRun(from: 'start' | 'resume'): void;
   onStop(): void;
+  onMore(): void;
 }) {
   const styles = useStyles();
-  if (!progress || progress.total === 0) return null;
+  const more = (
+    <Pressable testID="more-actions" accessibilityRole="button" onPress={onMore} style={styles.more}>
+      <Text style={styles.secondaryText}>{t.moreActions}</Text>
+    </Pressable>
+  );
+  if (!progress || progress.total === 0) return <View style={styles.runBar}>{more}</View>;
   const complete = progress.done + progress.skipped;
   const fresh = complete === 0 && progress.failed === 0;
   const finished = progress.pending === 0 && progress.failed === 0;
@@ -438,6 +523,7 @@ function RunBar({
           </Pressable>
         ) : null}
       </View>
+      {more}
     </View>
   );
 }
@@ -709,6 +795,7 @@ const useStyles = themedStyles((c) => ({
     alignItems: 'center',
   },
   runStop: { backgroundColor: c.error },
+  more: { paddingVertical: 8, paddingHorizontal: 6 },
   runPrimaryText: { fontSize: 17, fontWeight: '600', color: c.onAccent },
   runProgress: { fontSize: 14, color: c.text },
   inputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4 },

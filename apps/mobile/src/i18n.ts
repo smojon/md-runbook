@@ -109,6 +109,33 @@ const en = {
   noHostNamed: (name: string) => `This cell runs on the host ${name} (host=), and there is no host with that name. Add it under Hosts.`,
   cellChanged: 'The cell changed while it ran: its output was not written',
 
+  // All actions (the ⋯ sheet, Ctrl/⌘+K)
+  moreActions: '⋯ More',
+  searchActions: 'Search actions',
+  close: 'Close',
+  noActions: (q: string) => `No action matches “${q}”.`,
+  actionGroups: { run: 'Run', values: 'Values', assistant: 'Assistant', share: 'Share', help: 'Help' },
+  actions: {
+    runAll: ['Run All', 'Run the whole procedure top to bottom; it stops at the first failure.'],
+    resumeRun: ['Resume Run', 'A step failed and you fixed the cause: carry on from it without re-running what worked.'],
+    stop: ['Stop', 'Stop the running cell and the rest of Run All.'],
+    nextStep: ['Go to Next Step', 'Jump to the first step that isn’t done yet.'],
+    restartSession: ['Restart Session', 'The shell got into a bad state (wrong folder, a stuck login): start again from a clean one.'],
+    clearAllOutputs: ['Clear All Outputs', 'Before sharing or saving the runbook as a template, without the last run’s output.'],
+    hosts: ['Hosts and SSH Key', 'Add a server, trust its key, or copy this app’s public key to it.'],
+    setParameters: ['Set Parameters', 'One runbook for several targets: set the values before running.'],
+    resetInputs: ['Reset Inputs', 'A new run with other values: forget the inputs typed for this runbook.'],
+    secrets: ['Secrets', 'Add, change or forget the tokens and passwords the runbooks use.'],
+    save: ['Save to the File', 'Write the outputs into the .md file, so VS Code and Git see this run.'],
+    download: ['Download', 'Keep a copy of the runbook with its outputs.'],
+    cheatSheet: ['Cheat Sheet', 'Every action of the app and VS Code, and when it matters.'],
+    sample: ['Open Sample Runbook', 'Try every feature on a safe runbook.'],
+  },
+  noRunNow: 'Nothing to run: add a host first.',
+  nothingToResume: 'Nothing to resume: no step failed or is pending.',
+  noSessionOpen: 'No session is open for this runbook.',
+  noInputsYet: 'No inputs typed yet.',
+
   // Run all / Continue
   runAll: '▶ Run all',
   continueRunbook: '▶ Continue',

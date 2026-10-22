@@ -21,6 +21,7 @@ let mockConnection = fakeConnection();
 jest.mock('../ssh/connections', () => ({
   connectionFor: jest.fn(async () => mockConnection),
   disconnect: jest.fn(async () => undefined),
+  isConnected: jest.fn(() => false),
 }));
 
 beforeEach(() => {
