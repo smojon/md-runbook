@@ -2,7 +2,7 @@
   "name": "md-runbook",
   "displayName": "Markdown Runbook",
   "description": "Run shell blocks in Markdown runbooks as a notebook and keep their output in the same .md file: PowerShell, cmd and bash on Windows, macOS and Linux. Step through lines, check outputs, retry until ready, redact secrets, approve AI-proposed commands, and run the same runbooks in CI from the command line.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "publisher": "smojon",
   "preview": true,
   "license": "MIT",

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 - **Signed runbooks.** **md-runbook: Sign Runbook** (or `md-runbook sign`) signs a runbook's
   bash blocks with an SSH key (`ssh-keygen -Y sign`) and writes the signature at the end of the
@@ -12,6 +12,8 @@
   changed since signing. New cell option `lines=any` (single lines of a signed block may run)
   and setting `mdRunbook.signing.key`. See `docs/features/signed-runbooks.md`.
 - **Lint:** `host=` is a known cell option (it was reported as unknown).
+- **The md-runbook app** (in development, not in the stores yet) runs signed runbooks through
+  md-runbook-gate, shows who signed them, and asks for `${param:NAME}` values on the runbook.
 
 ## 0.7.0
 
