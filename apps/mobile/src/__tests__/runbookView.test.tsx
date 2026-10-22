@@ -103,6 +103,61 @@ describe('⋯ More: every action, by group or by search', () => {
   });
 });
 
+describe("a cell's ⋯ (or long press): steps and outputs", () => {
+  const out = (exit: string) => `<!-- md-runbook:output start exit=${exit} -->\n\`\`\`text\nx\n\`\`\`\n<!-- md-runbook:output end -->\n`;
+  const text =
+    '# T\n\n- [ ] ticket\n\n```bash\necho one\n```\n' + out('0') + '\n```bash\necho two\n```\n' + out('1') + '\n```bash\necho three\n```\n';
+  const open = async (cell: number, id: string) => {
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(`cell-${cell}-actions`));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(`action-${id}`));
+    });
+  };
+  const attrs = (rb: string, cell: number) => parse(getRunbook(rb)!.text).cells[cell]?.output?.attrs;
+
+  it('Mark Step Done / Skipped write the extension’s manual marks; Unmark removes only those', async () => {
+    const r = addRunbook('t.md', text);
+    await render(<RunbookView id={r.id} />);
+    // Cells: 0 heading + task list, 1 one (exit 0), 2 two (exit 1), 3 three.
+    await open(3, 'markDone');
+    expect(attrs(r.id, 3)).toMatchObject({ exit: 'done', by: 'app' });
+    await open(2, 'markSkipped');
+    expect(attrs(r.id, 2)).toMatchObject({ exit: 'skipped', by: 'app' });
+    expect(screen.getByTestId('run-progress')).toHaveTextContent('3 of 4 steps done');
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-actions'));
+    });
+    expect(screen.getByTestId('action-unmarkStep').props.accessibilityState).toMatchObject({ disabled: true });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-unmarkStep'));
+    });
+    expect(attrs(r.id, 1)).toMatchObject({ exit: '0' });
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Close'));
+    });
+    await open(3, 'unmarkStep');
+    expect(attrs(r.id, 3)).toBeUndefined();
+  });
+
+  it('Clear Outputs Above / Below; Check Next Item ticks the checklist', async () => {
+    const r = addRunbook('t.md', text);
+    await render(<RunbookView id={r.id} />);
+    await open(2, 'clearBelow');
+    expect([attrs(r.id, 1)?.exit, attrs(r.id, 2)]).toEqual(['0', undefined]);
+    await open(2, 'clearAbove');
+    expect(attrs(r.id, 1)).toBeUndefined();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-checkNextItem'));
+    });
+    expect(getRunbook(r.id)!.text).toContain('- [x] ticket');
+  });
+});
+
 describe('runbook parameters', () => {
   beforeEach(() => resetParamValues());
   const text = '---\nparams:\n  - REGION: eu-west-1\n---\n\n# Deploy\n\n```bash\necho "${param:TARGET} ${param:REGION}"\n```\n';

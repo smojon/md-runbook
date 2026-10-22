@@ -33,7 +33,7 @@ action by the same groups, with a search field (Ctrl/⌘+K with a keyboard).
 | **Session: on / off** | toolbar | **On**: one shell for the whole runbook, so `cd`, variables and logins carry over from cell to cell, as in a terminal. **Off**: every cell starts clean, so the result never depends on an earlier cell. | always one shell per host |
 | **Session…**, **Restart Session**, **Stop Session** | Run ▾ | The session got into a bad state (wrong folder, a stuck login): start again from a clean shell without closing the runbook. | ⋯ More → Restart Session |
 | **Clear All Outputs** | Run ▾, right-click the file in the Explorer | Before sharing or committing a runbook as a template, without the last run's output. | ⋯ More → Clear All Outputs |
-| **Clear Outputs Above** / **Clear Outputs Below** | cell ⋯ | You rerun the second half of a procedure and want to see clearly what ran this time. | — |
+| **Clear Outputs Above** / **Clear Outputs Below** | cell ⋯ | You rerun the second half of a procedure and want to see clearly what ran this time. | the cell’s ⋯ (or a long press) |
 | **Run Code Block in Text Editor** / **Run Code Block and Below in Text Editor** | ▶ Run above each block in the plain Markdown editor (turn on `mdRunbook.codeLens.enabled`) | You prefer editing the raw file and want to run a block without switching to the runbook view. | — |
 
 ## Line by line
@@ -55,8 +55,8 @@ action by the same groups, with a search field (Ctrl/⌘+K with a keyboard).
 
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
-| **Mark Step Done** / **Mark Step Skipped** / **Unmark Step** | cell ⋯ | Steps you do by hand (call the vendor, check a dashboard): record them, so progress and Resume Run know where you are. | — |
-| **Check Next Item** | ⋯ of a Markdown cell | Tick the next `- [ ]` item of a checklist without editing the text. | tap the task box |
+| **Mark Step Done** / **Mark Step Skipped** / **Unmark Step** | cell ⋯ | Steps you do by hand (call the vendor, check a dashboard): record them, so progress and Resume Run know where you are. | the cell’s ⋯ (or a long press) |
+| **Check Next Item** | ⋯ of a Markdown cell | Tick the next `- [ ]` item of a checklist without editing the text. | tap the task box; ⋯ More → Check Next Item |
 | **Compare With Previous Run** | cell ⋯ | "Was it like this yesterday?": diff the output with the run before (with output history turned on). | — |
 
 ## Values: parameters, inputs, secrets

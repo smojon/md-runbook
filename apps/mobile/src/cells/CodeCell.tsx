@@ -36,6 +36,8 @@ export interface CodeCellProps {
   onRun(mode?: LineMode, line?: number): void;
   onStop(): void;
   onToggleCheck(step: LineStep): void;
+  /** The cell's own actions (⋯ on its status line, or a long press). */
+  onActions?(): void;
 }
 
 export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
@@ -76,7 +78,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
   };
 
   return (
-    <View testID={`cell-${index}`} style={styles.cell}>
+    <Pressable testID={`cell-${index}`} style={styles.cell} onLongPress={p.onActions} delayLongPress={400} accessible={false}>
       <View style={styles.row}>
         <View style={styles.gutter}>
           {running ? (
@@ -190,6 +192,17 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
         <Text style={styles.statusText} numberOfLines={1}>
           {info}
         </Text>
+        {p.onActions ? (
+          <Pressable
+            testID={`cell-${index}-actions`}
+            accessibilityRole="button"
+            accessibilityLabel={t.cellActions}
+            onPress={p.onActions}
+            hitSlop={8}
+          >
+            <Codicon name="ellipsis" size={14} color={c.link} />
+          </Pressable>
+        ) : null}
       </View>
       {running ? (
         <View testID={`cell-${index}-live`} style={styles.output}>
@@ -239,7 +252,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
           ) : null}
         </View>
       ) : null}
-    </View>
+    </Pressable>
   );
 });
 

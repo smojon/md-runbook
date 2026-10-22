@@ -20,8 +20,8 @@ export interface AppAction {
   disabled?: string;
 }
 
-export type ActionGroup = 'run' | 'values' | 'assistant' | 'share' | 'help';
-const GROUPS: readonly ActionGroup[] = ['run', 'values', 'assistant', 'share', 'help'];
+export type ActionGroup = 'run' | 'steps' | 'values' | 'assistant' | 'share' | 'help';
+const GROUPS: readonly ActionGroup[] = ['run', 'steps', 'values', 'assistant', 'share', 'help'];
 
 /** Actions whose title, hint or group contain every word of `query`, case-insensitively. */
 export function matchActions(actions: readonly AppAction[], query: string): AppAction[] {

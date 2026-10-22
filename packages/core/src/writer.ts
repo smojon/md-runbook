@@ -193,6 +193,13 @@ export function toCellInputs(doc: ParsedDocument, keepOutputs = true): CellInput
   }));
 }
 
+/** Remove the output blocks of the cells `clear` picks (by cell index), leaving all other bytes alone. */
+export function clearCellOutputs(text: string, clear: (cellIndex: number) => boolean): string {
+  const doc = parse(text);
+  const cells = toCellInputs(doc).map((c, i) => (clear(i) ? { ...c, output: undefined } : c));
+  return serialize(doc.meta, cells, DEFAULT_WRITE_OPTIONS);
+}
+
 /** Remove every md-runbook output block from a Markdown text, leaving all other bytes alone. */
 export function clearOutputBlocks(text: string): string {
   const doc = parse(text);

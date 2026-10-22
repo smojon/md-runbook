@@ -1,7 +1,19 @@
 import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { ParsedCell, clearOutputBlocks, isCodeMeta, parse, taskItems } from '@md-runbook/core';
+import {
+  DEFAULT_WRITE_OPTIONS,
+  ParsedCell,
+  checkNextItem,
+  clearCellOutputs,
+  clearOutputBlocks,
+  formatLocalIso,
+  isCodeMeta,
+  parse,
+  setCellOutput,
+  taskItems,
+} from '@md-runbook/core';
+import { isManualMark } from '@md-runbook/core/progress';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, signedStatus } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
@@ -302,6 +314,12 @@ export function RunbookView({ id }: { id: string | undefined }) {
           hosts.some((h) => isConnected(h.id)) ? undefined : t.noSessionOpen,
         ),
         action('clearAllOutputs', 'run', () => updateRunbookText(runbook.id, clearOutputBlocks(runbook.text))),
+        action(
+          'checkNextItem',
+          'steps',
+          () => write(checkNextItem(runbook.text)),
+          checkNextItem(runbook.text) === undefined ? t.noTaskLeft : undefined,
+        ),
         action('hosts', 'run', () => router.push('/hosts')),
         ...(params.length > 0 ? [action('setParameters', 'values', () => list.current?.scrollToOffset({ offset: 0 }))] : []),
         action('resetInputs', 'values', () => updateInputs({}), Object.keys(typedInputs).length > 0 ? undefined : t.noInputsYet),
@@ -313,6 +331,43 @@ export function RunbookView({ id }: { id: string | undefined }) {
         action('sample', 'help', () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } })),
       ]
     : [];
+  // A code cell's own actions (its ⋯, or a long press), as in a cell's ⋯ menu in VS Code.
+  const [cellFor, setCellFor] = useState<number | undefined>();
+  const write = (next: string | undefined): void => {
+    if (runbook && next !== undefined) updateRunbookText(runbook.id, next);
+  };
+  const mark = (index: number, exit: 'done' | 'skipped'): void => {
+    if (!runbook) return;
+    // As the extension marks it: a manual output with who marked it (`by=`), counted by progress.
+    write(
+      setCellOutput(
+        runbook.text,
+        index,
+        { kind: 'new', text: t.markedBy(exit), attrs: { exit, ran: formatLocalIso(new Date()), by: 'app' } },
+        DEFAULT_WRITE_OPTIONS,
+      ),
+    );
+  };
+  const cellActions = (index: number): AppAction[] => {
+    const cell = cells[index];
+    if (!runbook || !cell || cell.kind !== 'code') return [];
+    const can = runnability(cell);
+    const why = !host ? t.noRunNow : can.ok ? undefined : t.notRunnable[can.why](can.detail);
+    return [
+      action('runCell', 'run', () => void run({ cellIndex: index }, host), why),
+      action('stepThrough', 'run', () => void run({ cellIndex: index, mode: 'step', line: 0 }, host), why),
+      action('markDone', 'steps', () => mark(index, 'done')),
+      action('markSkipped', 'steps', () => mark(index, 'skipped')),
+      action(
+        'unmarkStep',
+        'steps',
+        () => write(clearCellOutputs(runbook.text, (i) => i === index)),
+        isManualMark(cell.output?.attrs) ? undefined : t.notManualMark,
+      ),
+      action('clearAbove', 'run', () => write(clearCellOutputs(runbook.text, (i) => i < index))),
+      action('clearBelow', 'run', () => write(clearCellOutputs(runbook.text, (i) => i >= index))),
+    ];
+  };
   const saveFromMenu = async (): Promise<void> => {
     if (!runbook) return;
     const r = await saveRunbook(runbook.id);
@@ -390,6 +445,11 @@ export function RunbookView({ id }: { id: string | undefined }) {
               onMore={() => setShowActions(true)}
             />
             <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
+            <ActionsSheet
+              actions={cellFor === undefined ? [] : cellActions(cellFor)}
+              visible={cellFor !== undefined}
+              onClose={() => setCellFor(undefined)}
+            />
             <SaveBar runbook={runbook} />
             {signed ? <SignedBanner status={signed} /> : null}
             {params.length > 0 ? (
@@ -459,6 +519,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
               onRun={(mode, line) => void run({ cellIndex: index, mode, line }, host)}
               onStop={stopSequence}
               onToggleCheck={(step) => toggleCheck(index, step)}
+              onActions={() => setCellFor(index)}
             />
           )
         }

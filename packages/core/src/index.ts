@@ -18,7 +18,7 @@ export {
   nextHistory,
   withRunHistory,
 } from './history';
-export { clearOutputBlocks, serialize, toCellInputs } from './writer';
+export { clearCellOutputs, clearOutputBlocks, serialize, toCellInputs } from './writer';
 export {
   OUTPUT_END_RE,
   OUTPUT_START_RE,
