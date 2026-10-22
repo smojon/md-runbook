@@ -1,6 +1,6 @@
 import { Link, Stack } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { isCodeMeta, parse, taskItems } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, signedStatus } from '@md-runbook/core/signing';
@@ -11,12 +11,13 @@ import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
+import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } from '../runbooks/params';
 import { getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { fingerprint } from '../ssh/fingerprint';
 import { LineMode, isStepping, planLines } from '../ssh/lineRuns';
 import { runCell } from '../ssh/runCell';
 import { transportReady } from '../ssh/transport';
-import { mono, themedStyles } from '../theme';
+import { mono, themedStyles, usePalette } from '../theme';
 
 /** Output kept on screen while a cell runs; the output block written afterwards has its own limit. */
 const LIVE_CHARS = 20_000;
@@ -59,6 +60,8 @@ export function RunbookView({ id }: { id: string | undefined }) {
   const runbook = useRunbooks().find((r) => r.id === id);
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
   const signed = useMemo(() => (runbook ? signedStatus(runbook.text) : undefined), [runbook]);
+  const params = useMemo(() => (runbook ? runbookParams(runbook.text) : []), [runbook]);
+  const paramValues = useParamValues(runbook?.id ?? '');
   const hosts = useHosts();
   const [hostId, setHostId] = useState<string | undefined>();
   const host = hosts.find((h) => h.id === hostId) ?? hosts[0];
@@ -152,6 +155,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
       signal: abort.signal,
       lines,
       beforeStep,
+      params: paramValues,
       latestText: () => getRunbook(runbook.id)?.text ?? runbook.text,
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
       onOutput: (text) => update((r) => ({ ...r, live: (r.live + text).slice(-LIVE_CHARS) })),
@@ -210,6 +214,9 @@ export function RunbookView({ id }: { id: string | undefined }) {
           <View>
             <SaveBar runbook={runbook} />
             {signed ? <SignedBanner status={signed} /> : null}
+            {params.length > 0 ? (
+              <ParamsCard specs={params} values={paramValues} onChange={(name, value) => setParamValue(runbook.id, name, value)} />
+            ) : null}
             <HostPicker hosts={hosts} selected={host} onSelect={setHostId} />
             {transportIssue ? (
               <Text testID="transport-issue" style={styles.warning}>
@@ -256,6 +263,52 @@ export function RunbookView({ id }: { id: string | undefined }) {
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
+
+/** The runbook's `${param:NAME}` values: typed here, the default as placeholder, checked against a signed pattern. */
+function ParamsCard({
+  specs,
+  values,
+  onChange,
+}: {
+  specs: readonly ParamSpec[];
+  values: Record<string, string>;
+  onChange(name: string, value: string): void;
+}) {
+  const styles = useStyles();
+  const colors = usePalette();
+  return (
+    <View testID="params" style={styles.params}>
+      <Text style={styles.paramsTitle}>{t.paramsTitle}</Text>
+      {specs.map((s) => {
+        const value = values[s.name] ?? '';
+        const bad = value === '' ? undefined : checkParam(s, value);
+        return (
+          <View key={s.name} style={styles.param}>
+            <Text style={styles.paramName}>{s.name}</Text>
+            <TextInput
+              testID={`param-${s.name}`}
+              accessibilityLabel={s.name}
+              style={styles.paramInput}
+              value={value}
+              onChangeText={(v) => onChange(s.name, v)}
+              placeholder={s.default}
+              placeholderTextColor={colors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {s.pattern !== undefined ? (
+              <Text testID={`param-${s.name}-hint`} style={bad ? styles.warning : styles.paramHint}>
+                {bad === 'newline' ? t.paramNewline(s.name) : t.paramPattern(s.pattern)}
+              </Text>
+            ) : bad === 'newline' ? (
+              <Text style={styles.warning}>{t.paramNewline(s.name)}</Text>
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
 
 /** A signed runbook: who signed which version, and the blocks changed since (a gate refuses those). */
 function SignedBanner({ status }: { status: SignedStatus }) {
@@ -341,6 +394,20 @@ const useStyles = themedStyles((c) => ({
   chipTextOn: { color: c.onAccent },
   link: { fontSize: 15, color: c.link },
   warning: { fontSize: 13, color: c.error, marginVertical: 6 },
+  params: { marginVertical: 6 },
+  paramsTitle: { fontSize: 13, color: c.muted, marginBottom: 4 },
+  param: { marginBottom: 8 },
+  paramName: { fontFamily: mono, fontSize: 13, color: c.text, marginBottom: 2 },
+  paramInput: {
+    borderWidth: 1,
+    borderColor: c.border,
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    fontSize: 15,
+    color: c.text,
+  },
+  paramHint: { fontSize: 12, color: c.muted, marginTop: 2 },
   signed: { borderLeftWidth: 3, borderLeftColor: c.accent, paddingLeft: 10, paddingVertical: 4, marginVertical: 6 },
   signedTitle: { fontSize: 14, color: c.text },
   signedBody: { fontSize: 12, color: c.muted, lineHeight: 17, marginTop: 2 },

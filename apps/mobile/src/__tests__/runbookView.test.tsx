@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { parse } from '@md-runbook/core';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { addHost, resetHosts } from '../hosts/store';
+import { resetParamValues } from '../runbooks/params';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { RunbookView } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
@@ -24,6 +25,31 @@ beforeEach(() => {
   resetHosts();
   resetRunbooks();
   script([{ stdout: 'ok\n' }]);
+});
+
+describe('runbook parameters', () => {
+  beforeEach(() => resetParamValues());
+  const text = '---\nparams:\n  - REGION: eu-west-1\n---\n\n# Deploy\n\n```bash\necho "${param:TARGET} ${param:REGION}"\n```\n';
+
+  it('are typed on the runbook, the default as placeholder, and reach the cell', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const r = addRunbook('deploy.md', text);
+    await render(<RunbookView id={r.id} />);
+    expect(screen.getByTestId('param-REGION').props.placeholder).toBe('eu-west-1');
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('param-TARGET'), 'web-1');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(1));
+    expect(mockConnection.calls[0]?.opts.env).toMatchObject({ TARGET: 'web-1', REGION: 'eu-west-1' });
+  });
+
+  it('a runbook without parameters has no card', async () => {
+    await render(<RunbookView id="sample" />);
+    expect(screen.queryByTestId('params')).toBeNull();
+  });
 });
 
 describe('a signed runbook', () => {

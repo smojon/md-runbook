@@ -15,10 +15,12 @@ import {
   setCellOutput,
 } from '@md-runbook/core';
 import { evaluateChecks } from '@md-runbook/core/checks';
+import { rewriteRefs } from '@md-runbook/core/secrets';
 import { signedStatus, signedStepIndex } from '@md-runbook/core/signing';
 import { echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core/steps';
 import type { RemoteRunOptions, SessionRunResult, SignedRun } from '@md-runbook/ssh';
 import type { Host } from '../hosts/store';
+import { checkParam, refsOf, runbookParams } from '../runbooks/params';
 import { t } from '../i18n';
 import { runnability } from './cells';
 import { Connection, connectionFor } from './connections';
@@ -54,6 +56,8 @@ export interface RunCellParams {
    * the output block goes into that text. Default: `text`.
    */
   latestText?(): string;
+  /** Values typed for the runbook's `${param:NAME}` (else the front matter's defaults are used). */
+  params?: Record<string, string>;
   /** Tests: a connection instead of the host's real one. */
   connection?: Connection;
 }
@@ -66,6 +70,25 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   const can = runnability(cell);
   if (!can.ok) return { kind: 'error', message: t.notRunnable[can.why](can.detail) };
   const opts = can.options;
+
+  // ${param:NAME} becomes ${NAME} and its value goes in the environment, as in the extension: the
+  // value is never part of the script. Other placeholders need stores the app doesn't have yet.
+  const refs = refsOf(cell.value);
+  const other = refs.find((r) => r.kind !== 'param');
+  if (other) return { kind: 'error', message: t.refUnsupported(other.kind, other.name) };
+  const specs = refs.length > 0 ? runbookParams(p.text) : [];
+  const paramEnv: Record<string, string> = {};
+  for (const ref of refs) {
+    const spec = specs.find((s) => s.name === ref.name) ?? { name: ref.name };
+    const typed = p.params?.[ref.name];
+    const value = typed !== undefined && typed !== '' ? typed : spec.default;
+    if (value === undefined) return { kind: 'error', message: t.paramMissing(ref.name) };
+    const bad = checkParam(spec, value);
+    if (bad)
+      return { kind: 'error', message: bad === 'newline' ? t.paramNewline(ref.name) : t.paramMismatch(ref.name, spec.pattern ?? '') };
+    paramEnv[ref.name] = value;
+  }
+  const asRun = (source: string): string => (refs.length > 0 ? rewriteRefs(source, 'bash') : source);
 
   let conn: Connection;
   try {
@@ -83,7 +106,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     p.onOutput?.(text);
   };
   const runOpts: RemoteRunOptions = {
-    env: opts.env,
+    env: { ...opts.env, ...paramEnv },
     cwd: opts.cwd,
     timeoutMs: opts.timeoutSeconds === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutSeconds * 1000,
     signal: p.signal,
@@ -100,7 +123,8 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   const signedCell = status?.cells.get(p.cellIndex);
   const signed = (stepText?: string): SignedRun | undefined => {
     if (!status || !signedCell) return undefined;
-    const base = { manifest: status.block.manifest, signature: status.block.signature, cell: signedCell.n };
+    const params = Object.fromEntries(signedCell.needs.map((n) => [n, paramEnv[n] ?? '']));
+    const base = { manifest: status.block.manifest, signature: status.block.signature, cell: signedCell.n, params };
     if (stepText === undefined) return base;
     const step = signedStepIndex(signedCell, stepText);
     return step < 0 ? undefined : { ...base, step };
@@ -109,7 +133,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   /** Steps of a line run that ran (indexes into p.lines.steps). */
   const ran: number[] = [];
   try {
-    if (!p.lines) result = await conn.session.run(cell.value, runOpts, signed());
+    if (!p.lines) result = await conn.session.run(asRun(cell.value), runOpts, signed());
     else {
       result = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
       const steps = p.lines.steps;
@@ -123,7 +147,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
         }
         p.onStep?.(i);
         write(echoCommand('bash', steps[i]!.text));
-        const r = await conn.session.run(steps[i]!.text, runOpts, signed(steps[i]!.text));
+        const r = await conn.session.run(asRun(steps[i]!.text), runOpts, signed(steps[i]!.text));
         ran.push(i);
         result = { ...r, durationMs: result.durationMs + r.durationMs, newShell: result.newShell || r.newShell };
         if (r.exitCode !== 0) {

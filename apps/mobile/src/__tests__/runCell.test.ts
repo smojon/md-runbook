@@ -188,3 +188,68 @@ describe('runCell: signed runbooks', () => {
     expect(conn.calls.map((c) => c.signed)).toEqual([undefined, undefined]);
   });
 });
+
+describe('runCell: parameters', () => {
+  const text = [
+    '---',
+    'params:',
+    '  - REGION: eu-west-1',
+    '---',
+    '',
+    '```bash',
+    'echo "${param:TARGET} in ${param:REGION}"',
+    'echo done',
+    '```',
+    '',
+  ].join('\n');
+  // Cells: front matter (markup), the bash cell.
+  const cellIndex = 1;
+
+  it('${param:NAME} runs as ${NAME} with the typed value, or the default, in the environment', async () => {
+    const conn = fakeConnection([{}]);
+    const r = await runCell({ host, text, cellIndex, connection: conn, params: { TARGET: 'web-1', REGION: '' } });
+    expect(r.kind).toBe('done');
+    expect(conn.calls[0]).toMatchObject({
+      source: 'echo "${TARGET} in ${REGION}"\necho done',
+      opts: { env: { TARGET: 'web-1', REGION: 'eu-west-1' } },
+    });
+  });
+
+  it('a line run sends each command rewritten the same way', async () => {
+    const conn = fakeConnection([{}]);
+    const cell = parse(text).cells[cellIndex]!;
+    await runCell({ host, text, cellIndex, connection: conn, params: { TARGET: 'x' }, lines: planLines(cell.value, 'at', 0) });
+    expect(conn.calls[0]?.source).toBe('echo "${TARGET} in ${REGION}"');
+  });
+
+  it('a missing value, or a placeholder the app has no store for, stops before anything runs', async () => {
+    const conn = fakeConnection([{}]);
+    expect(await runCell({ host, text, cellIndex, connection: conn })).toEqual({
+      kind: 'error',
+      message: 'Enter a value for TARGET under Parameters',
+    });
+    const secret = '```bash\necho ${secret:TOKEN}\n```\n';
+    const r = await runCell({ host, text: secret, cellIndex: 0, connection: conn });
+    expect(r).toMatchObject({ kind: 'error', message: expect.stringMatching(/^\$\{secret:TOKEN\} is not supported in the app yet/) });
+    expect(conn.calls).toHaveLength(0);
+  });
+
+  it('a signed runbook: values must match the signed pattern, and go to the gate with the run', async () => {
+    const plain = '```bash\nsystemctl restart ${param:SERVICE}\n```\n';
+    const built = buildManifest(plain, { name: 'ops/x', version: 1, scopes: [], patterns: { SERVICE: '[a-z-]+' } });
+    if ('errors' in built) throw new Error(built.errors.join('; '));
+    const signed = withSignature(plain, {
+      signer: 'ops',
+      signed: '2026-10-22',
+      manifest: formatManifest(built.manifest),
+      signature: 'U1NI',
+    });
+    const conn = fakeConnection([{}]);
+    expect(await runCell({ host, text: signed, cellIndex: 0, connection: conn, params: { SERVICE: 'api; reboot' } })).toEqual({
+      kind: 'error',
+      message: "The value of SERVICE doesn't match its pattern [a-z-]+",
+    });
+    await runCell({ host, text: signed, cellIndex: 0, connection: conn, params: { SERVICE: 'api-gw' } });
+    expect(conn.calls[0]).toMatchObject({ source: 'systemctl restart ${SERVICE}', signed: { cell: 1, params: { SERVICE: 'api-gw' } } });
+  });
+});

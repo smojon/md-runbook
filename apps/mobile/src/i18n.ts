@@ -107,6 +107,15 @@ const en = {
   noHostNamed: (name: string) => `This cell runs on the host ${name} (host=), and there is no host with that name. Add it under Hosts.`,
   cellChanged: 'The cell changed while it ran: its output was not written',
 
+  // Parameters (${param:NAME})
+  paramsTitle: 'Parameters',
+  paramPattern: (pattern: string) => `Must match ${pattern}`,
+  paramMissing: (name: string) => `Enter a value for ${name} under Parameters`,
+  paramNewline: (name: string) => `The value of ${name} must be one line`,
+  paramMismatch: (name: string, pattern: string) => `The value of ${name} doesn't match its pattern ${pattern}`,
+  refUnsupported: (kind: string, name: string) =>
+    `\${${kind}:${name}} is not supported in the app yet: this cell runs in VS Code or the command line`,
+
   // Signed runbooks (md-runbook-gate)
   signedTitle: (name: string, version: number, signer: string) => `Signed runbook ${name}, version ${version}, by ${signer}`,
   signedUntil: (date: string) => `Valid until ${date}.`,

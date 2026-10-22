@@ -112,19 +112,27 @@ jobs:
         run: rm -rf android node_modules/*/android/build node_modules/*/android/.cxx node_modules/@*/*/android/build node_modules/@*/*/android/.cxx
       - name: Install Maestro
         run: bash e2e/install-maestro.sh
-      # The emulator runner downloads the emulator itself, once; a broken download ("Error on
-      # ZipFile unknown archive") failed a run. Install it here with retries; the runner then finds
-      # it up to date.
-      - name: Install the Android emulator
+      # The emulator runner downloads the emulator and the system image itself, once; a broken
+      # download ("Error on ZipFile unknown archive") failed runs, for both. Install them here with
+      # retries; the runner then finds them up to date.
+      - name: Install the Android emulator and system image
         working-directory: .
         run: |
           sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          for attempt in 1 2 3; do
-            "$sdk" --install emulator --channel=0 >/dev/null && "$ANDROID_HOME/emulator/emulator" -version | head -1 && exit 0
-            echo "emulator install failed (attempt $attempt); trying again in 20 s"
-            sleep 20
-          done
-          exit 1
+          install() {
+            for attempt in 1 2 3; do
+              "$sdk" --install "$1" --channel=0 >/dev/null && return 0
+              echo "$1: install failed (attempt $attempt); trying again in 20 s"
+              sleep 20
+            done
+            return 1
+          }
+          yes | "$sdk" --licenses >/dev/null || true
+          install emulator || exit 1
+          "$ANDROID_HOME/emulator/emulator" -version | head -1
+          # The image the emulator step below asks for (api-level, target, arch).
+          install 'system-images;android-34;google_apis;x86_64' || exit 1
+          test -d "$ANDROID_HOME/system-images/android-34/google_apis/x86_64"
       - name: Enable KVM for the emulator
         working-directory: .
         run: |

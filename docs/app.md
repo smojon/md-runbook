@@ -61,6 +61,14 @@ A browser can't open SSH connections, so the web app goes through a small relay 
 yourself ([apps/relay](../apps/relay/README.md)). SSH still runs in the browser: the relay only
 sees encrypted traffic, and it only connects to the servers on its list.
 
+## Parameters
+
+A runbook whose cells use `${param:NAME}` shows a **Parameters** card: one field per parameter,
+with the front matter's default as placeholder. The values are remembered per runbook. As in
+the extension, a value never becomes part of the script: `${param:NAME}` runs as `${NAME}` and
+the value is passed in the environment. `${secret:}`, `${input:}` and `${out:}` are not
+supported in the app yet; such a cell says so instead of running.
+
 ## Signed runbooks
 
 A runbook signed with **Sign Runbook** or `md-runbook sign` shows who signed which version, and

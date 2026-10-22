@@ -156,7 +156,9 @@ credentials.
 
 The app needs no setting: it finds the gate when it connects (its answer to the app's first
 line). A signed runbook shows **Signed runbook NAME, version N, by SIGNER** and any blocks
-changed since signing. Through the gate a signed block runs as "block N of this manifest"; on
+changed since signing. Parameter values are typed under **Parameters** on the runbook; the app
+checks them against the signed patterns as you type, and the gate checks them again. Through
+the gate a signed block runs as "block N of this manifest"; on
 a server without the gate the same block runs as usual. A refused block ends with exit 126 and
 the gate's reason in its output, for example
 `md-runbook-gate: this server runs signed runbooks only (this cell is not signed, or changed since signing)`.
@@ -182,9 +184,6 @@ the time, the account, the client address and the key: its fingerprint with
   design.
 - The prose is not signed: an altered instruction such as "now run X by hand" is not stopped,
   but the gate would still refuse X.
-- The app does not ask for parameter values yet, so signed blocks that use `${param:}` are
-  refused there ("needs a value for the parameter …") until it does; blocks without parameters
-  run.
 - One signer per runbook; no version floors (revoke by hash instead).
 - The gate runs on Linux and macOS servers (POSIX `sh`, OpenSSH 8.2+, `awk`, `base64`,
   `mkfifo`, `pkill`).
