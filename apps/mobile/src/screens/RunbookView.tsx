@@ -334,9 +334,7 @@ function InputsCard({
       {Object.entries(inputs).map(([name, input]) => (
         <View key={name} style={styles.param}>
           <View style={styles.inputRow}>
-            <Text style={styles.paramName}>
-              {`${name} = ${input.masked ? '••••••' : input.value}`}
-            </Text>
+            <Text style={styles.paramName}>{`${name} = ${input.masked ? '••••••' : input.value}`}</Text>
             <View style={styles.actions}>
               <Pressable
                 testID={`input-change-${name}`}
