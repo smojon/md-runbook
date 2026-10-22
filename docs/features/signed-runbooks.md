@@ -69,6 +69,7 @@ The policy:
 ```
 # /etc/md-runbook/gate.conf
 unsigned = refuse          # refuse | allow
+scopes   = web staging     # scopes of signed runbooks this server accepts; * = any
 revoked  = /etc/md-runbook/revoked     # manifest hashes, one per line
 log      = syslog          # or a file path
 ```
@@ -86,6 +87,28 @@ The server's owner chooses, per server and per key:
 
 Before running anything, the app asks the gate for its policy. If the server takes only signed
 runbooks, the app says so ("This server runs signed runbooks only").
+
+## Shipping runbooks, and scopes
+
+A signed runbook holds no secrets, and any change to it breaks the signature. So it can be
+shipped by any channel (email, a website, a chat, the app's own list of runbooks), and anyone
+who can reach a gated account can run it from anywhere, without a central server.
+
+Two keys do different jobs:
+
+- **The publisher's signing key** says the runbook is approved. It grants no access by itself.
+- **The engineer's SSH key** gets them into a server, and only into a gated account.
+
+Without limits, every signed runbook would run on every server that trusts its signer. A
+runbook written for staging could then run on production. **Scopes** narrow that:
+
+- The manifest names the runbook's scopes: `scope db-restart staging`.
+- Each server lists the scopes it accepts (`scopes = staging web` in `gate.conf`), and a key's
+  line can narrow them further (`--scopes=web`).
+- A runbook runs only if it shares a scope with both the server and the key. A runbook without
+  scopes runs only on servers with `scopes = *`.
+
+Expiry and revocation (below) limit how long a shipped runbook stays valid.
 
 ## Kubernetes and cloud APIs
 
@@ -109,6 +132,7 @@ md-runbook-manifest 1
 name ops/restart-api
 version 7
 expires 2027-04-30
+scope web staging
 param TARGET ^[a-z0-9-]{1,32}$
 param REPLICAS ^[0-9]{1,2}$
 front timeout=300 mode=session
@@ -117,8 +141,8 @@ cell 2 bash lines=any <base64 of the code>
 ```
 
 - **Covered:** each code cell's code, language and fence options; the front matter that changes
-  how cells run (`params:`, `mode:`, `timeout:`, `cwd:`, `shell:`); the name, version and
-  expiry date.
+  how cells run (`params:`, `mode:`, `timeout:`, `cwd:`, `shell:`); the name, version, expiry
+  date and scopes.
 - **Not covered:** the prose, outputs, ticked boxes and output markers. Signing the prose would
   break the signature at every tick. The prose cannot make the gate run anything.
 - The signature is `ssh-keygen -Y sign -n md-runbook` over the manifest (SSHSIG). It goes at the
@@ -172,8 +196,8 @@ would run unsigned code, so signed runbooks do it differently:
   `step 2`, `lines 2 3-5`), and `stop` (stops this account's own running cell, as the app does
   over a second channel today).
 - **Checks, in order:** the manifest's format, the signature (`find-principals`, then `verify`),
-  the manifest hash against `revoked`, `expires`, the parameter patterns, then the requested
-  cell and lines.
+  the manifest hash against `revoked`, `expires`, the scopes (the server's and the key's), the
+  parameter patterns, then the requested cell and lines.
 - **Log:** one JSON line per event: time, account, key fingerprint (from
   `ExposeAuthInfo yes`), runbook name, version, manifest hash, signer, cell, lines, exit code,
   duration, and signed or unsigned. Parameter values are logged; secrets never are.
