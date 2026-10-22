@@ -80,6 +80,10 @@ cells, as in the extension's session mode. Tapping a line opens its actions:
 The output block records which lines ran (`lines=`), as the extension writes it. A cell with
 `host=NAME` always runs on that host, whichever one is selected.
 
+The app runs `sh` and `bash` cells on Linux and macOS servers. `pwsh`, `powershell` and `cmd`
+cells, and blocks marked `os=windows`, are shown with their saved output but not run: use VS
+Code or the command line for those.
+
 <img src="app/web-line-actions-dark.png" width="720" alt="The web app in dark mode: a code line tapped, with Run line 2, Run lines 1-2 and Check under it">
 
 ## In a browser, through the relay
@@ -141,3 +145,13 @@ App** copies) open it directly. **⋯ More → Share Runbook** hands the file on
 - **Android or iOS:** `npx expo run:android` or `npx expo run:ios` in `apps/mobile` builds the
   app for an emulator or a connected device. The phone builds need the Android SDK or Xcode.
 - **Store builds:** not published yet. The steps are in [apps/mobile/STORE.md](../apps/mobile/STORE.md).
+
+## Not there yet
+
+- Windows servers: PowerShell and cmd cells don't run over SSH (see above).
+- The app is in English only; its texts are in one file (`apps/mobile/src/i18n.ts`), ready for
+  translation.
+- The web app isn't hosted yet: it needs its own domain, because it keeps its SSH key in the
+  site's local storage, which any other site served from the same address could read.
+- Signed runbooks: one signer, no version floors, and `${input:}` / `${out:}` can't be signed
+  yet ([details](features/signed-runbooks.md)).

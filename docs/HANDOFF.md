@@ -97,8 +97,13 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
   [investigations/notebook-open-slow.md](investigations/notebook-open-slow.md). Optional A/B left:
   the flag plus `--disable-background-timer-throttling`, to see whether timer throttling of hidden
   frames explains the residual ~1 s with the flag alone.
-- **Open VSX** (VSCodium, Cursor, Gitpod): create the namespace `smojon`, file the ownership
-  claim, then add an `OVSX_PAT` secret or set up trusted publishing (`PUBLISHING.md`).
+- **Web app domain:** pick one (a free js.org, is-a.dev or eu.org name, or a ~$10 domain), set
+  it as the Pages custom domain and as the repository variable `WEB_APP_ORIGIN`; `pages.yml`
+  then deploys. The relay needs a server too: the Oracle Cloud Always Free steps in
+  `apps/relay/README.md` (the sign-up asks for the owner's card).
+- **Not tried by hand yet** (CI covers them, a person hasn't): the runbook toolbar dropdowns in
+  VS Code (Run, Values, Assistant, Share, Help), the app on a real phone (the native menu, the
+  share sheet, the hardware key), and a real Claude request from the app's assistant.
 - **npm token:** add the `NPM_TOKEN` secret (`PUBLISHING.md` → npm); the next release then
   publishes the command line as `md-runbook` on npm. Until then: the GitHub Action, or
   `node out/dist/cli.js` from a clone.
@@ -155,3 +160,11 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 
 1. Shell choice per runbook, only with a safe design (e.g. picking among installed shells, never
    a path from the file).
+2. Signed runbooks: two signers (author and reviewer), version floors (a server refuses versions
+   older than a given one), and signing cells that use `${input:}` or `${out:}`. Limits today:
+   `docs/features/signed-runbooks.md`.
+3. App on Windows servers: PowerShell and cmd cells over SSH (the app runs only `sh` and `bash`).
+4. App translations: the texts are in `apps/mobile/src/i18n.ts`, English only; which languages
+   is the owner's choice.
+5. Cloud console views (AWS, GCP), which Runme has (README, "Compared with Runme").
+6. Terminal mode for `cmd` cells (`docs/features/terminal.md`: not supported).
