@@ -1,5 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { addHost, getHost, hostLabel, loadHosts, pinHostKey, removeHost, resetHosts, updateHost, validateHost } from '../hosts/store';
+import {
+  addHost,
+  getHost,
+  hostLabel,
+  loadHosts,
+  pinHostKey,
+  removeHost,
+  resetHosts,
+  setHostPlatform,
+  updateHost,
+  validateHost,
+} from '../hosts/store';
 import { t } from '../i18n';
 
 const input = { name: ' web-1 ', hostname: 'web1.example.net ', port: 22, username: 'deploy' };
@@ -46,6 +57,15 @@ describe('hosts', () => {
     expect(getHost(h.id)?.hostKey).toBeUndefined();
     removeHost(h.id);
     expect(getHost(h.id)).toBeUndefined();
+  });
+
+  it("remembers what the server runs, until the host's address changes", () => {
+    const h = addHost(input);
+    setHostPlatform(h.id, 'windows');
+    updateHost(h.id, { ...input, name: 'renamed' });
+    expect(getHost(h.id)?.platform).toBe('windows');
+    updateHost(h.id, { ...input, hostname: 'other.example.net' });
+    expect(getHost(h.id)?.platform).toBeUndefined();
   });
 
   it('validates what the form sends', () => {

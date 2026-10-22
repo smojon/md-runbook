@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **The app runs runbooks on Windows servers** (OpenSSH Server): `pwsh`, `powershell` and `cmd`
+  cells, with nothing to set up. The app finds Windows PowerShell there by itself; PowerShell
+  cells share one session (variables, functions, the folder), `cmd` cells each run in a
+  `cmd.exe` of their own, as in VS Code. `os=` blocks follow the server, and Hosts shows what
+  each server runs.
+
 Security fixes from a review of the assistant, signed runbooks and md-runbook-gate:
 
 - **An AI answer can no longer add a runnable cell.** Summarize Incident and Explain Output →

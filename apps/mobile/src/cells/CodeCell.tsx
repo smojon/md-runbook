@@ -63,7 +63,8 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
     [cell.value, isBash],
   );
   const shell = can.ok ? can.shell : undefined;
-  const steps = useMemo(() => (shell ? cellSteps(cell.value, shell) : []), [cell.value, shell]);
+  // The React Compiler memoizes this (a manual useMemo over the union-typed verdict confuses it).
+  const steps = shell === undefined ? [] : cellSteps(cell.value, shell);
   const [selected, setSelected] = useState<LineStep | undefined>();
   // The selection is a command of the current text (an edit may have moved it).
   const sel = selected && steps.find((s) => s.start === selected.start && s.text === selected.text);

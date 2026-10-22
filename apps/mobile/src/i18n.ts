@@ -59,6 +59,8 @@ const en = {
   forgetHostKey: 'Forget the trusted host key',
   hostKeyTrusted: 'Host key trusted',
   hostKeyNotTrusted: 'Host key not trusted yet',
+  // What the server runs, once the app has connected (it decides which cells run there).
+  hostPlatform: { posix: 'Linux or macOS (bash, sh)', windows: 'Windows (PowerShell, cmd)' },
   hostErrors: {
     nameMissing: 'Give the host a name.',
     hostnameMissing: 'Enter the host name or IP address (no spaces).',

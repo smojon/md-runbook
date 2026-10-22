@@ -41,7 +41,8 @@ const isHost = (v: unknown): v is Host => {
     typeof h.hostname === 'string' &&
     typeof h.port === 'number' &&
     typeof h.username === 'string' &&
-    (h.hostKey === undefined || typeof h.hostKey === 'string')
+    (h.hostKey === undefined || typeof h.hostKey === 'string') &&
+    (h.platform === undefined || h.platform === 'posix' || h.platform === 'windows')
   );
 };
 const isHostList = (v: unknown): v is Host[] => Array.isArray(v) && v.every(isHost);
@@ -89,7 +90,13 @@ export function updateHost(id: string, input: HostInput): Host | undefined {
   if (!old) return undefined;
   const next = clean(input);
   const sameServer = next.hostname === old.hostname && next.port === old.port;
-  const h: Host = { id, ...next, ...(sameServer && old.hostKey ? { hostKey: old.hostKey } : {}) };
+  // Another address may be another server: its key and what it runs are learnt again.
+  const h: Host = {
+    id,
+    ...next,
+    ...(sameServer && old.hostKey ? { hostKey: old.hostKey } : {}),
+    ...(sameServer && old.platform ? { platform: old.platform } : {}),
+  };
   publish(hosts.map((x) => (x.id === id ? h : x)));
   return h;
 }

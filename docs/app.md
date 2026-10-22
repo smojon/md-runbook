@@ -84,9 +84,13 @@ The output block records which lines ran (`lines=`), as the extension writes it.
 to a host other than the selected one, the app asks (a runbook from a link could otherwise
 choose your production server), and an approval card names the host the cell runs on.
 
-The app runs `sh` and `bash` cells on Linux and macOS servers. `pwsh`, `powershell` and `cmd`
-cells, and blocks marked `os=windows`, are shown with their saved output but not run: use VS
-Code or the command line for those.
+The app runs `sh` and `bash` cells on Linux and macOS servers, and `pwsh`, `powershell` and `cmd`
+cells on Windows servers (OpenSSH Server, the Windows feature). Nothing to set up: on a Windows
+server the app finds Windows PowerShell by itself, and **Hosts** shows what each server runs
+after the first connection. As in VS Code, PowerShell cells share one session (variables,
+functions and the folder carry over) and `cmd` cells each run in a `cmd.exe` of their own.
+`os=` blocks follow the server: `os=windows` runs on Windows servers, `os=linux,macos` on the
+others. A cell for the other kind of server shows why it doesn't run there.
 
 <img src="app/web-line-actions-dark.png" width="720" alt="The web app in dark mode: a code line tapped, with Run line 2, Run lines 1-2, Check, Breakpoint and Explain under it">
 
@@ -154,7 +158,6 @@ App** copies) open it directly. **⋯ More → Share Runbook** hands the file on
 
 ## Not there yet
 
-- Windows servers: PowerShell and cmd cells don't run over SSH (see above).
 - The app is in English only; its texts are in one file (`apps/mobile/src/i18n.ts`), ready for
   translation.
 - The web app isn't hosted yet: it needs its own domain, because it keeps its SSH key in the

@@ -56,6 +56,7 @@ function HostRow({ host }: { host: Host }) {
           {hostLabel(host)}
           {' · '}
           {host.hostKey ? t.hostKeyTrusted : t.hostKeyNotTrusted}
+          {host.platform ? ` · ${t.hostPlatform[host.platform]}` : ''}
         </Text>
       </Pressable>
     </Link>

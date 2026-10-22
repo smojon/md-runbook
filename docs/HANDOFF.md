@@ -167,8 +167,7 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 2. Signed runbooks: two signers (author and reviewer), version floors (a server refuses versions
    older than a given one), and signing cells that use `${input:}` or `${out:}`. Limits today:
    `docs/features/signed-runbooks.md`.
-3. App on Windows servers: PowerShell and cmd cells over SSH (the app runs only `sh` and `bash`).
-4. App translations: the texts are in `apps/mobile/src/i18n.ts`, English only; which languages
+3. App translations: the texts are in `apps/mobile/src/i18n.ts`, English only; which languages
    is the owner's choice.
-5. Cloud console views (AWS, GCP), which Runme has (README, "Compared with Runme").
-6. Terminal mode for `cmd` cells (`docs/features/terminal.md`: not supported).
+4. Cloud console views (AWS, GCP), which Runme has (README, "Compared with Runme").
+5. Terminal mode for `cmd` cells (`docs/features/terminal.md`: not supported).
