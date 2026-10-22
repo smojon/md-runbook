@@ -21,7 +21,7 @@ import { DEFAULT_POLICY, PolicyResult, evaluatePolicy } from '@md-runbook/core/p
 import { proposalOf } from '@md-runbook/core/proposal';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { SignedStatus, signedStatus } from '@md-runbook/core/signing';
+import { SignedStatus, signedStatus, signerNames } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
 import type { Progress } from '@md-runbook/core';
 import { LineStep } from '@md-runbook/core/steps';
@@ -1032,7 +1032,7 @@ function SignedBanner({ status, verified }: { status: SignedStatus; verified: { 
         </Text>
       ) : (
         <Text testID="signed-claim" style={styles.signedBody}>
-          {t.signedClaim(status.block.signer)}
+          {t.signedClaim(signerNames(status.block))}
         </Text>
       )}
       <Text style={styles.signedBody}>{m.expires ? t.signedUntil(m.expires) + ' ' + t.signedBody : t.signedBody}</Text>

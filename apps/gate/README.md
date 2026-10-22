@@ -29,7 +29,7 @@ restrict,command="/usr/local/bin/md-runbook-gate" ecdsa-sha2-nistp256 AAAA… al
 ```
 
 `restrict` turns off port, agent and X11 forwarding and the pty. Options on the command:
-`--unsigned=allow|refuse` and `--scopes=a,b` override `gate.conf` for that key, `--who=NAME` is
+`--unsigned=allow|refuse`, `--scopes=a,b` and `--signers=N` override `gate.conf` for that key, `--who=NAME` is
 the name logged for it, `--config=FILE` reads another config.
 
 With SSH certificates, put the restriction into the certificate instead:

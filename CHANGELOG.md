@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Two signers for signed runbooks (four eyes):** a reviewer adds a signature to the signed
+  manifest with **Co-sign Runbook** or `md-runbook sign --cosign`, unchanged; md-runbook-gate with
+  `signers = 2` (or `--signers=2` on a key) runs only runbooks signed by two distinct trusted
+  signers. `verify --allowed-signers` checks every signature; the app shows all signers.
+- **Version floors:** `floors = FILE` in gate.conf (`ops/restart-api 7`) refuses older versions
+  of a runbook at once, instead of listing each one's hash in `revoked`.
 - **Terminal mode for `cmd` cells:** they run from a PowerShell terminal (cmd.exe has no shell
   integration), each in a `cmd.exe` of its own, so prompts like `set /p`, `pause` or `choice` can
   be answered there; `terminal.mode: always` now includes them.

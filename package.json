@@ -394,6 +394,12 @@
         "icon": "$(workspace-trusted)"
       },
       {
+        "command": "mdRunbook.cosignRunbook",
+        "title": "Co-sign Runbook",
+        "category": "md-runbook",
+        "icon": "$(workspace-trusted)"
+      },
+      {
         "command": "mdRunbook.openInApp",
         "title": "Open in the App",
         "category": "md-runbook",
@@ -1100,6 +1106,10 @@
         {
           "command": "mdRunbook.signRunbook",
           "group": "2_sign@1"
+        },
+        {
+          "command": "mdRunbook.cosignRunbook",
+          "group": "2_sign@2"
         },
         {
           "command": "mdRunbook.openInApp",

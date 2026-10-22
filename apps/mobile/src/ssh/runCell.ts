@@ -209,7 +209,14 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     if (!status || !signedCell) return undefined;
     // Every value the signed cell uses: ${param:}, ${input:} and ${out:} (the gate checks each against its signed pattern).
     const params = Object.fromEntries(signedCell.needs.map((n) => [n, paramEnv[n] ?? secretEnv[n] ?? '']));
-    const base = { manifest: status.block.manifest, signature: status.block.signature, cell: signedCell.n, params };
+    const cosignatures = (status.block.cosigners ?? []).map((c) => c.signature);
+    const base = {
+      manifest: status.block.manifest,
+      signature: status.block.signature,
+      ...(cosignatures.length ? { cosignatures } : {}),
+      cell: signedCell.n,
+      params,
+    };
     if (step === undefined) return base;
     const k = signedStepIndex(
       signedCell,

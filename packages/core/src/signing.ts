@@ -326,9 +326,22 @@ export interface SignatureBlock {
   manifest: string;
   /** The SSHSIG blob, base64 (the armored signature without its BEGIN/END lines). */
   signature: string;
+  /**
+   * More signatures of the same manifest (a reviewer's, made with `sign --cosign`); a server can
+   * ask for several signers (`signers = 2` in gate.conf). Names and dates are what the file says.
+   */
+  cosigners?: Cosigner[];
 }
 
-const BLOCK_RE = /^<!-- md-runbook:signature v1 signer=(\S+) signed=(\d{4}-\d{2}-\d{2})\r?\nmanifest\r?\n([A-Za-z0-9+/=\r\n]+?)\r?\nsignature\r?\n([A-Za-z0-9+/=\r\n]+?)\r?\n-->[ \t]*$/m;
+export interface Cosigner {
+  signer: string;
+  signed: string;
+  signature: string;
+}
+
+const BLOCK_RE =
+  /^<!-- md-runbook:signature v1 signer=(\S+) signed=(\d{4}-\d{2}-\d{2})\r?\nmanifest\r?\n([A-Za-z0-9+/=\r\n]+?)\r?\nsignature\r?\n([A-Za-z0-9+/=\r\n]+?)((?:\r?\ncosign signer=\S+ signed=\d{4}-\d{2}-\d{2}\r?\n[A-Za-z0-9+/=\r\n]+?)*)\r?\n-->[ \t]*$/m;
+const COSIGN_RE = /cosign signer=(\S+) signed=(\d{4}-\d{2}-\d{2})\r?\n([A-Za-z0-9+/=\r\n]+?)(?=\r?\ncosign |$)/g;
 
 const wrap = (b64: string): string => b64.replace(/.{1,76}/g, '$&\n').trimEnd();
 
@@ -338,7 +351,9 @@ export const signerLabel = (name: string): string => name.replace(/[^\w@.+-]+/g,
 export function formatSignatureBlock(b: SignatureBlock): string {
   return (
     `<!-- md-runbook:signature v1 signer=${signerLabel(b.signer)} signed=${b.signed}\n` +
-    `manifest\n${wrap(toBase64(b.manifest))}\nsignature\n${wrap(b.signature)}\n-->`
+    `manifest\n${wrap(toBase64(b.manifest))}\nsignature\n${wrap(b.signature)}\n` +
+    (b.cosigners ?? []).map((c) => `cosign signer=${signerLabel(c.signer)} signed=${c.signed}\n${wrap(c.signature)}\n`).join('') +
+    '-->'
   );
 }
 
@@ -371,7 +386,33 @@ export function readSignature(text: string): SignatureBlock | undefined {
   if (!m) return undefined;
   const manifest = fromBase64(m[3]!.replace(/\s+/g, ''));
   if (manifest === undefined) return undefined;
-  return { signer: m[1]!, signed: m[2]!, manifest, signature: m[4]!.replace(/\s+/g, '') };
+  const cosigners = [...(m[5] ?? '').trim().matchAll(COSIGN_RE)].map((c) => ({ signer: c[1]!, signed: c[2]!, signature: c[3]!.replace(/\s+/g, '') }));
+  return { signer: m[1]!, signed: m[2]!, manifest, signature: m[4]!.replace(/\s+/g, ''), ...(cosigners.length ? { cosigners } : {}) };
+}
+
+/**
+ * Whether `text` still makes exactly the manifest `block` signed, so a second signer (a
+ * reviewer) can sign that manifest as it is: co-signing never changes what was signed.
+ */
+export function cosignable(text: string, block: SignatureBlock): boolean {
+  let m: Manifest;
+  try {
+    m = parseManifest(block.manifest);
+  } catch {
+    return false;
+  }
+  const built = buildManifest(text, { name: m.name, version: m.version, ...(m.expires ? { expires: m.expires } : {}), scopes: m.scopes, patterns: m.patterns });
+  return !('errors' in built) && formatManifest(built.manifest) === block.manifest;
+}
+
+/** Every signature of a block, the first signer's first (what a gate gets with the manifest). */
+export function allSignatures(b: SignatureBlock): string[] {
+  return [b.signature, ...(b.cosigners ?? []).map((c) => c.signature)];
+}
+
+/** The signers' names as the file gives them (only a gate's check proves who signed). */
+export function signerNames(b: SignatureBlock): string[] {
+  return [b.signer, ...(b.cosigners ?? []).map((c) => c.signer)];
 }
 
 /** The text without its signature block (and the blank line before it). */

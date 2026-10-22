@@ -52,7 +52,9 @@ export function signedReply(output: string): { principal: string; hash: string }
 const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64');
 
 /** Gate requests (one line each; see apps/gate/md-runbook-gate). `signature` is the SSHSIG blob, base64. */
-export const gateLoadCommand = (id: string, manifest: string, signature: string): string => `load ${id} ${b64(manifest)} ${signature}\n`;
+/** `signatures`: every signature of the manifest (author, co-signers); a server may need several signers. */
+export const gateLoadCommand = (id: string, manifest: string, signatures: string | readonly string[]): string =>
+  `load ${id} ${b64(manifest)} ${(typeof signatures === 'string' ? [signatures] : signatures).join(' ')}\n`;
 export const gateParamCommand = (id: string, name: string, value: string): string => `param ${id} ${name} ${b64(value)}\n`;
 export const gateRunCommand = (id: string, cell: number, step?: number): string =>
   step === undefined ? `run ${id} ${Math.trunc(cell)}\n` : `step ${id} ${Math.trunc(cell)} ${Math.trunc(step)}\n`;

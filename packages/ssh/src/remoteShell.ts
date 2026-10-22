@@ -224,9 +224,9 @@ export class RemoteShell {
    * md-runbook-gate: check and keep a signed manifest for the cells that follow. Resolves with
    * the principal whose signature the gate accepted; rejects with the gate's reason.
    */
-  async loadSigned(manifest: string, signature: string): Promise<{ principal: string; hash: string }> {
+  async loadSigned(manifest: string, signatures: string | readonly string[]): Promise<{ principal: string; hash: string }> {
     let out = '';
-    const err = await this.request((id) => gateLoadCommand(id, manifest, signature), (t) => (out += t));
+    const err = await this.request((id) => gateLoadCommand(id, manifest, signatures), (t) => (out += t));
     const reply = signedReply(out);
     if (err !== undefined || !reply) throw new Error(err ?? 'the gate did not confirm the signature');
     return reply;

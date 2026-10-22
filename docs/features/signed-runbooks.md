@@ -148,6 +148,8 @@ release-ci@example.net namespaces="md-runbook",valid-before="20270101" ssh-ed255
 unsigned = refuse          # refuse (default) | allow
 scopes   = web staging     # signed runbooks for these scopes run here; * (default) = any
 revoked  = /etc/md-runbook/revoked     # manifest hashes, one per line
+floors   = /etc/md-runbook/floors      # NAME LOWEST-VERSION, one per line
+signers  = 1               # distinct trusted signers a runbook needs: 1 (default) to 5
 log      = syslog          # (default) or a file
 ```
 
@@ -166,7 +168,18 @@ lists the ones the server accepts, and `--scopes=a,b` on a key's line narrows th
 runs only if it shares a scope with both; a runbook without scopes runs only where `scopes = *`.
 
 **Withdrawing a release:** add its manifest hash (`md-runbook verify` shows it) to `revoked`,
-let it expire, or remove the signer from `allowed_signers`.
+let it expire, or remove the signer from `allowed_signers`. To withdraw all older releases of a
+runbook at once, give it a **version floor**: the `floors` file has lines like
+`ops/restart-api 7`, and the gate then refuses versions 1 to 6 of `ops/restart-api`.
+
+**Two signers (four eyes).** With `signers = 2` in `gate.conf` (or `--signers=2` on a key's line)
+a runbook needs signatures from two distinct signers in `allowed_signers`, say its author and a
+reviewer. The author signs (`md-runbook sign`, Sign Runbook); the reviewer then adds a signature
+to the same manifest with `md-runbook sign FILE --key KEY --cosign` or **Co-sign Runbook** (Share
+▾). Co-signing changes nothing that was signed and is refused if the blocks changed since. Two
+signatures of one key, or a signature from a key the server doesn't trust, count once or not at
+all. `md-runbook verify --allowed-signers FILE` checks every signature; the gate logs all
+signers, and the app shows them.
 
 **Kubernetes and cloud APIs.** For runbooks that call `kubectl`, `oc` or a cloud CLI, the gate
 runs on a bastion host that holds the credentials (a kubeconfig for a service account, say):
@@ -213,7 +226,6 @@ the account can't touch, use syslog and forward it off the server.
   design.
 - The prose is not signed: an altered instruction such as "now run X by hand" is not stopped,
   but the gate would still refuse X.
-- One signer per runbook; no version floors (revoke by hash instead).
 - "In order" means the gate runs a block's commands in their order; it doesn't see their exit
   codes, so a client could go on after a failed command. The app stops at a failure.
 - A key with `--unsigned=allow` runs code as the same account as everyone else's keys: keep

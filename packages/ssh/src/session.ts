@@ -26,6 +26,8 @@ export interface SignedRun {
   /** The manifest text exactly as signed, and its SSHSIG blob (base64). */
   manifest: string;
   signature: string;
+  /** Co-signers' signatures of the same manifest (`sign --cosign`). */
+  cosignatures?: readonly string[];
   /** The cell's number in the manifest, and (for a line run) the command's index among its signed commands. */
   cell: number;
   step?: number;
@@ -97,10 +99,12 @@ export class RemoteSession {
   /** Load the manifest into this shell's gate and set the cell's parameters; the gate's reason if it refused. */
   private async prepare(shell: RemoteShell, s: SignedRun): Promise<string | undefined> {
     try {
-      if (this.loaded?.shell !== shell || this.loaded.manifest !== s.manifest || this.loaded.signature !== s.signature) {
+      const signatures = [s.signature, ...(s.cosignatures ?? [])];
+      const signature = signatures.join(' ');
+      if (this.loaded?.shell !== shell || this.loaded.manifest !== s.manifest || this.loaded.signature !== signature) {
         this.loaded = undefined;
-        const { principal } = await shell.loadSigned(s.manifest, s.signature);
-        this.loaded = { shell, manifest: s.manifest, signature: s.signature, principal, params: new Map() };
+        const { principal } = await shell.loadSigned(s.manifest, signatures);
+        this.loaded = { shell, manifest: s.manifest, signature, principal, params: new Map() };
       }
       for (const [name, value] of Object.entries(s.params ?? {})) {
         if (this.loaded.params.get(name) === value) continue;

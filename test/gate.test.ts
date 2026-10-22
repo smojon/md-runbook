@@ -261,6 +261,44 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     }
   });
 
+  it('signers = 2 needs two distinct trusted signers; floors withdraw older versions', async () => {
+    const reviewer = path.join(dir, 'reviewer');
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'review@example.net', '-f', reviewer]);
+    const signers = path.join(dir, 'allowed_signers');
+    const original = fs.readFileSync(signers, 'utf8');
+    const pub = fs.readFileSync(reviewer + '.pub', 'utf8').trim().split(' ').slice(0, 2).join(' ');
+    fs.writeFileSync(signers, original + `review@example.net namespaces="md-runbook" ${pub}\n`);
+    fs.writeFileSync(path.join(dir, 'floors'), '# lowest versions\r\nops/test 3\r\nother/name 99\r\n');
+    writeConf(['signers = 2', `floors = ${path.join(dir, 'floors')}`]);
+    try {
+      const manifest = formatManifest(manifestOf(RUNBOOK, { patterns: PATTERNS, version: 3 }));
+      const [a, b, stranger] = [await sshSign(manifest, key), await sshSign(manifest, reviewer), await sshSign(manifest, otherKey)];
+      const g = start();
+      await g.hello();
+      assert.match((await g.request('load', toBase64(manifest), a)).err, /needs 2 signers here; signed by ops@example\.net/);
+      // The same signer twice, or a stranger, doesn't make a second signer.
+      assert.match((await g.request('load', toBase64(manifest), a, a, stranger)).err, /needs 2 signers/);
+      const both = await g.request('load', toBase64(manifest), a, b);
+      assert.equal(both.code, 0, both.err);
+      assert.match(both.out, /\x1e__MDRB_SIGNED__ ops@example\.net,review@example\.net [0-9a-f]{64}\n/);
+      assert.equal((await g.request('run', '1')).out, 'one kept\n');
+      // Version 2 is below the floor (3) for ops/test.
+      const old = formatManifest(manifestOf(RUNBOOK, { patterns: PATTERNS, version: 2 }));
+      const r = await g.request('load', toBase64(old), await sshSign(old, key), await sshSign(old, reviewer));
+      assert.match(r.err, /ops\/test version 2 is older than the lowest version this server runs \(3\)/);
+      await g.close();
+      // A key's --signers=1 lowers it for that key.
+      const one = start('--signers=1');
+      await one.hello();
+      assert.equal((await one.request('load', toBase64(manifest), a)).code, 0);
+      await one.close();
+      assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"signer":"ops@example.net,review@example.net"/);
+    } finally {
+      fs.writeFileSync(signers, original);
+      writeConf([]);
+    }
+  });
+
   it('a stop request stops the running cell of its own session only', { skip: !hasPkill() && 'no pkill (Git for Windows)' }, async () => {
     const g = start();
     const pid = (await g.hello()).code;

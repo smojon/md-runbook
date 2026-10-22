@@ -44,12 +44,14 @@ fatal() {
 config=/etc/md-runbook/gate.conf
 key_unsigned=
 key_scopes=
+key_signers=
 who=
 for a in "$@"; do
   case $a in
     --config=*) config=${a#*=} ;;
     --unsigned=allow | --unsigned=refuse) key_unsigned=${a#*=} ;;
     --scopes=*) key_scopes=$(printf '%s' "${a#*=}" | tr ',' ' ') ;;
+    --signers=*) key_signers=${a#*=} ;;
     --who=*) who=${a#*=} ;;
     *) fatal "unknown option $a" ;;
   esac
@@ -59,6 +61,8 @@ unsigned=refuse
 scopes='*'
 allowed_signers=/etc/md-runbook/allowed_signers
 revoked=
+floors=
+signers=1
 log=syslog
 if [ -e "$config" ]; then
   [ -r "$config" ] || fatal "can't read $config"
@@ -72,6 +76,8 @@ if [ -e "$config" ]; then
       scopes) scopes=$v ;;
       allowed_signers) allowed_signers=$v ;;
       revoked) revoked=$v ;;
+      floors) floors=$v ;;
+      signers) signers=$v ;;
       log) log=$v ;;
       *) fatal "$config: unknown setting \"$k\"" ;;
     esac
@@ -80,6 +86,8 @@ fi
 [ -n "$key_unsigned" ] && unsigned=$key_unsigned
 case $unsigned in allow | refuse) ;; *) fatal "unsigned = $unsigned: expected allow or refuse" ;; esac
 [ -z "$scopes" ] && scopes='*'
+[ -n "$key_signers" ] && signers=$key_signers
+case $signers in [1-5]) ;; *) fatal "signers = $signers: expected 1 to 5" ;; esac
 if [ "$log" != syslog ]; then
   touch "$log" 2>/dev/null && [ -w "$log" ] || fatal "can't write the log $log"
 fi
@@ -235,12 +243,20 @@ runs=0
 # The manifest's items: field N of its first `KEY ...` line in cell $2 (or at the top with '').
 mfield() { awk -v key="$1" -v cell="$2" -v f="$3" '$1 == "cell" { c = $2 } $1 == key && (cell == "" || c == cell) { print $f; exit }' "$work/manifest"; }
 
+# load ID MANIFEST SIGNATURE [SIGNATURE ...]: up to 5 signatures of the one manifest (author,
+# reviewer, ...); the server's `signers` says how many distinct trusted signers it needs.
 do_load() {
   rid=$1
-  [ $# -eq 3 ] && is_b64 "$2" && is_b64 "$3" || {
+  shift
+  ok=
+  [ $# -ge 2 ] && [ $# -le 6 ] && ok=1
+  for a in "$@"; do is_b64 "$a" || ok=; done
+  [ -n "$ok" ] || {
     refuse "$rid" "bad load request"
     return
   }
+  manifest64=$1
+  shift
   loaded=
   set +f
   rm -f "$work"/params/*
@@ -250,7 +266,7 @@ do_load() {
     printf 'unset %s\n' "$(sort -u "$work/exported" | tr '\n' ' ')" >&4
     : >"$work/exported"
   fi
-  printf '%s' "$2" | b64d >"$work/manifest" 2>/dev/null || {
+  printf '%s' "$manifest64" | b64d >"$work/manifest" 2>/dev/null || {
     refuse "$rid" "the manifest is not base64"
     return
   }
@@ -258,31 +274,50 @@ do_load() {
     refuse "$rid" "not an md-runbook manifest, or a newer version than this gate reads"
     return
   }
-  {
-    echo '-----BEGIN SSH SIGNATURE-----'
-    printf '%s' "$3" | fold -w 70
-    echo
-    echo '-----END SSH SIGNATURE-----'
-  } >"$work/manifest.sig"
   [ -r "$allowed_signers" ] || {
     refuse "$rid" "this server trusts no signers yet ($allowed_signers)"
     return
   }
-  principal=
-  # One allowed_signers line may name several principals (a,b): try each.
-  for p in $(ssh-keygen -Y find-principals -s "$work/manifest.sig" -f "$allowed_signers" 2>/dev/null | tr ',' ' '); do
-    if ssh-keygen -Y verify -f "$allowed_signers" -I "$p" -n md-runbook -s "$work/manifest.sig" <"$work/manifest" >/dev/null 2>&1; then
-      principal=$p
-      break
-    fi
+  # Each signature that verifies counts once per principal (two signatures of one key are one
+  # signer); a signature from a key this server doesn't trust counts for nothing.
+  principals=
+  count=0
+  for sig in "$@"; do
+    {
+      echo '-----BEGIN SSH SIGNATURE-----'
+      printf '%s' "$sig" | fold -w 70
+      echo
+      echo '-----END SSH SIGNATURE-----'
+    } >"$work/manifest.sig"
+    found=
+    # One allowed_signers line may name several principals (a,b): try each.
+    for p in $(ssh-keygen -Y find-principals -s "$work/manifest.sig" -f "$allowed_signers" 2>/dev/null | tr ',' ' '); do
+      if ssh-keygen -Y verify -f "$allowed_signers" -I "$p" -n md-runbook -s "$work/manifest.sig" <"$work/manifest" >/dev/null 2>&1; then
+        found=$p
+        break
+      fi
+    done
+    [ -n "$found" ] || continue
+    case " $principals " in
+      *" $found "*) ;;
+      *)
+        principals="${principals:+$principals }$found"
+        count=$((count + 1))
+        ;;
+    esac
   done
-  [ -n "$principal" ] || {
+  [ "$count" -gt 0 ] || {
     refuse "$rid" "the signature is not from a trusted signer (or the runbook was changed after signing)"
     return
   }
+  principal=$(printf '%s' "$principals" | tr ' ' ',')
   mhash=$(sha256 "$work/manifest")
   mname=$(mfield name '' 2)
   mversion=$(mfield version '' 2)
+  [ "$count" -ge "$signers" ] || {
+    refuse "$rid" "$mname version $mversion needs $signers signers here; signed by $principal"
+    return
+  }
   if [ -n "$revoked" ]; then
     [ -r "$revoked" ] || {
       refuse "$rid" "can't read the revoked list $revoked"
@@ -291,6 +326,18 @@ do_load() {
     # One hash per line, as md-runbook verify prints it; tolerant of CRLF, blanks, upper case and a sha256: prefix.
     if tr -d '\r \t' <"$revoked" | tr 'A-F' 'a-f' | sed 's/^sha256://' | grep -qx "$mhash"; then
       refuse "$rid" "$mname version $mversion was withdrawn (revoked)"
+      return
+    fi
+  fi
+  # Version floors: `NAME LOWEST` per line; versions of that runbook below LOWEST are withdrawn.
+  if [ -n "$floors" ]; then
+    [ -r "$floors" ] || {
+      refuse "$rid" "can't read the floors list $floors"
+      return
+    }
+    floor=$(tr -d '\r' <"$floors" | awk -v n="$mname" '{ sub(/#.*/, "") } $1 == n && $2 ~ /^[0-9]+$/ { print $2; exit }')
+    if [ -n "$floor" ] && [ "$mversion" -lt "$floor" ]; then
+      refuse "$rid" "$mname version $mversion is older than the lowest version this server runs ($floor)"
       return
     fi
   fi

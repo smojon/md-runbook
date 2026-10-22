@@ -7,7 +7,20 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { locateCodeCells, parse } from '@md-runbook/core';
 import { checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign, sshVerify } from '@md-runbook/core/node';
-import { ManifestMeta, buildManifest, formatManifest, parseManifest, readSignature, signedStatus, withSignature } from '@md-runbook/core/signing';
+import {
+  ManifestMeta,
+  SignatureBlock,
+  allSignatures,
+  buildManifest,
+  cosignable,
+  formatManifest,
+  parseManifest,
+  readSignature,
+  signedStatus,
+  signerLabel,
+  signerNames,
+  withSignature,
+} from '@md-runbook/core/signing';
 
 export const SIGN_USAGE = `Usage: md-runbook sign <file.md> --key KEY [options]
        md-runbook verify <file.md> [--allowed-signers FILE]
@@ -26,6 +39,8 @@ patterns and counts the version up.
   --pattern NAME=RE    What \${param:NAME}, \${input:NAME} or \${out:NAME} may be: a POSIX
                        extended regex for the whole value
   --out FILE           Write the signed runbook to FILE instead
+  --cosign             Add your signature to the signed runbook as it is (a reviewer's, for
+                       servers that need two signers); refused if it changed since signing
 
 verify shows what a runbook's signature covers and which blocks changed since signing. Only
 with --allowed-signers (a server's allowed_signers file) does it check the signature as the gate
@@ -52,6 +67,8 @@ interface SignArgs {
   scopes?: string[];
   patterns: Record<string, string>;
   out?: string;
+  /** Add a signature to the manifest as it is (a reviewer's), instead of signing a new version. */
+  cosign?: boolean;
 }
 
 export function parseSignArgs(argv: readonly string[]): SignArgs {
@@ -69,6 +86,7 @@ export function parseSignArgs(argv: readonly string[]): SignArgs {
       case '--signer': a.signer = value(f); break;
       case '--name': a.name = value(f); break;
       case '--out': a.out = value(f); break;
+      case '--cosign': a.cosign = true; break;
       case '--version': {
         const n = Number(value(f));
         if (!Number.isInteger(n) || n < 1) throw new SignUsageError('--version expects a positive whole number');
@@ -129,6 +147,7 @@ export async function signCommand(argv: readonly string[], out: Out = stdout, ss
       return undefined;
     }
   })();
+  if (a.cosign) return cosignCommand(a, text, prev?.block, out, sshKeygen);
   const meta: ManifestMeta = {
     name: a.name ?? prev?.manifest.name ?? defaultName(a.file),
     version: a.version ?? (prev ? prev.manifest.version + 1 : 1),
@@ -170,6 +189,37 @@ export async function signCommand(argv: readonly string[], out: Out = stdout, ss
   return 0;
 }
 
+/** `sign --cosign`: one more signature of the signed manifest, unchanged (author and reviewer). */
+async function cosignCommand(a: SignArgs, text: string, block: SignatureBlock | undefined, out: Out, sshKeygen?: string): Promise<number> {
+  if (!block) {
+    out(`✗ ${a.file} is not signed yet: sign it first, then a second signer adds --cosign`);
+    return 1;
+  }
+  if (a.name || a.version || a.expires || a.scopes || Object.keys(a.patterns).length) {
+    out('✗ --cosign signs the manifest as it is: --name, --version, --expires, --scope and --pattern belong to signing');
+    return 1;
+  }
+  if (!cosignable(text, block)) {
+    out(`✗ ${a.file} changed since ${block.signer} signed it: sign it again (a new version), then co-sign that`);
+    return 1;
+  }
+  let signature: string;
+  try {
+    signature = await sshSign(block.manifest, a.key, { sshKeygen });
+  } catch (e) {
+    out(`✗ ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+  const signer = a.signer ?? keyComment(a.key) ?? 'unknown';
+  const cosigners = [...(block.cosigners ?? []).filter((c) => c.signer !== signerLabel(signer)), { signer, signed: today(), signature }];
+  const target = a.out ?? a.file;
+  const next = { ...block, cosigners };
+  fs.writeFileSync(target, withSignature(text, next), 'utf8');
+  const m = parseManifest(block.manifest);
+  out(`✓ ${m.name} version ${m.version} co-signed by ${signer}: signed by ${signerNames(next).join(', ')} · written to ${target}`);
+  return 0;
+}
+
 /** `md-runbook verify`: 0 when every block is signed (and, with --allowed-signers, the signature verifies). */
 export async function verifyCommand(argv: readonly string[], out: Out = stdout, sshKeygen?: string): Promise<number> {
   if (argv.includes('-h') || argv.includes('--help')) return void process.stdout.write(SIGN_USAGE), 0;
@@ -200,7 +250,8 @@ export async function verifyCommand(argv: readonly string[], out: Out = stdout, 
   }
   const m = status.manifest;
   // The signer's name and date are what the file says; only the key check below proves who signed.
-  out(`${file}: ${m.name} version ${m.version}, signed by ${status.block.signer} (as the file says) on ${status.block.signed}`);
+  const cos = (status.block.cosigners ?? []).map((c) => `, co-signed by ${c.signer} on ${c.signed}`).join('');
+  out(`${file}: ${m.name} version ${m.version}, signed by ${status.block.signer} on ${status.block.signed}${cos} (as the file says)`);
   out(`  scopes: ${m.scopes.length ? m.scopes.join(' ') : 'none (only servers that accept any scope)'}`);
   if (m.expires) out(`  expires: ${m.expires}${m.expires < today() ? ' (expired)' : ''}`);
   for (const [name, re] of Object.entries(m.patterns)) out(`  parameter ${name}: ${re}`);
@@ -221,12 +272,23 @@ export async function verifyCommand(argv: readonly string[], out: Out = stdout, 
   }
   if (m.expires && m.expires < today()) ok = false;
   if (allowed) {
-    try {
-      out(`  signature: good, by ${await sshVerify(status.block.manifest, status.block.signature, allowed, sshKeygen)} (${allowed})`);
-    } catch (e) {
-      out(`  signature: ${e instanceof Error ? e.message : String(e)}`);
-      ok = false;
+    // Each signature (the author's, then co-signers'), as the gate checks them; a server with
+    // `signers = 2` needs two distinct signers among them.
+    const sigs = allSignatures(status.block);
+    const names = signerNames(status.block);
+    const verified = new Set<string>();
+    for (let i = 0; i < sigs.length; i++) {
+      const label = sigs.length > 1 ? `signature ${i + 1} (${names[i]})` : 'signature';
+      try {
+        const by = await sshVerify(status.block.manifest, sigs[i]!, allowed, sshKeygen);
+        verified.add(by);
+        out(`  ${label}: good, by ${by} (${allowed})`);
+      } catch (e) {
+        out(`  ${label}: ${e instanceof Error ? e.message : String(e)}`);
+        ok = false;
+      }
     }
+    if (sigs.length > 1) out(`  signers: ${verified.size} distinct (${[...verified].join(', ') || 'none'})`);
   } else {
     out('  signature: NOT checked (anyone can write a signer name): add --allowed-signers FILE to check it as the gate does');
   }

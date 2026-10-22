@@ -12,7 +12,19 @@ import { parse, shellKindForLanguage } from '@md-runbook/core';
 import { findRefs } from '@md-runbook/core/secrets';
 import { checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign } from '@md-runbook/core/node';
 import { executionConfig } from './config';
-import { ManifestMeta, RUNBOOK_NAME_RE, SCOPE_RE, buildManifest, formatManifest, parseManifest, readSignature, withSignature } from '@md-runbook/core/signing';
+import {
+  ManifestMeta,
+  RUNBOOK_NAME_RE,
+  SCOPE_RE,
+  buildManifest,
+  cosignable,
+  formatManifest,
+  parseManifest,
+  readSignature,
+  signerLabel,
+  signerNames,
+  withSignature,
+} from '@md-runbook/core/signing';
 import { NOTEBOOK_TYPE } from './serializer';
 
 const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
@@ -151,6 +163,52 @@ async function signRunbook(uri?: unknown): Promise<void> {
   if (choice) await vscode.env.clipboard.writeText(hash);
 }
 
+/**
+ * Co-sign Runbook: a second signer (a reviewer) signs the manifest as it is, for servers that
+ * need two signers (`signers = 2` in gate.conf). Refused when the runbook changed since signing.
+ */
+async function cosignRunbook(uri?: unknown): Promise<void> {
+  const target = targetUri(uri);
+  if (!target || target.scheme !== 'file') return void vscode.window.showErrorMessage('md-runbook: open a signed runbook (a .md file) to co-sign.');
+  await saveIfOpen(target);
+  const text = decoder.decode(await vscode.workspace.fs.readFile(target));
+  const block = readSignature(text);
+  if (!block) return void vscode.window.showErrorMessage('md-runbook: this runbook is not signed yet. Sign it first (Sign Runbook); a second signer then co-signs it.');
+  if (!cosignable(text, block)) {
+    return void vscode.window.showErrorMessage(
+      `md-runbook: the runbook changed since ${block.signer} signed it, so its signature no longer covers it. Sign it again (a new version), then co-sign that.`,
+      { modal: true },
+    );
+  }
+  const m = parseManifest(block.manifest);
+  const go = await vscode.window.showInformationMessage(
+    `md-runbook: co-sign ${m.name} version ${m.version}, signed by ${signerNames(block).join(', ')}? Your signature says you reviewed these ${m.cells.length} block${m.cells.length === 1 ? '' : 's'}.`,
+    { modal: true },
+    'Co-sign',
+  );
+  if (go !== 'Co-sign') return;
+  const key = await pickKey();
+  if (!key) return;
+  let signature: string;
+  try {
+    signature = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'md-runbook: co-signing (touch your security key if it blinks)' },
+      () => sshSign(block.manifest, key, { interactive: false }),
+    );
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    return void vscode.window.showErrorMessage(`md-runbook: ${why}. A key with a passphrase signs through the SSH agent: add it (ssh-add) and choose its .pub file.`);
+  }
+  const signer = keyComment(key) ?? os.userInfo().username;
+  const cosigners = [...(block.cosigners ?? []).filter((c) => c.signer !== signerLabel(signer)), { signer, signed: new Date().toISOString().slice(0, 10), signature }];
+  const next = { ...block, cosigners };
+  await vscode.workspace.fs.writeFile(target, encoder.encode(withSignature(text, next)));
+  void vscode.window.showInformationMessage(`md-runbook: ${m.name} version ${m.version} is signed by ${signerNames(next).join(', ')}.`);
+}
+
 export function registerSigning(context: vscode.ExtensionContext): void {
-  context.subscriptions.push(vscode.commands.registerCommand('mdRunbook.signRunbook', signRunbook));
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mdRunbook.signRunbook', signRunbook),
+    vscode.commands.registerCommand('mdRunbook.cosignRunbook', cosignRunbook),
+  );
 }

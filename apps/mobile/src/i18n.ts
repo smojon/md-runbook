@@ -307,8 +307,10 @@ const en = {
   // Signed runbooks (md-runbook-gate)
   signedTitle: (name: string, version: number) => `Signed runbook ${name}, version ${version}`,
   // The signer's name is written in the file next to the signature; only a gate checks the key.
-  signedClaim: (signer: string) => `The file says it was signed by ${signer}; this app doesn't check that.`,
-  signedVerified: (host: string, principal: string) => `✓ md-runbook-gate on ${host} checked the signature: signed by ${principal}.`,
+  signedClaim: (signers: readonly string[]) =>
+    `The file says it was signed by ${signers.length > 1 ? `${signers[0]} and co-signed by ${signers.slice(1).join(', ')}` : signers[0]}; this app doesn't check that.`,
+  signedVerified: (host: string, principals: string) =>
+    `✓ md-runbook-gate on ${host} checked the signature${principals.includes(',') ? 's' : ''}: signed by ${principals.split(',').join(', ')}.`,
   signedUntil: (date: string) => `Valid until ${date}.`,
   signedBody: 'Servers that run md-runbook-gate check the signature and run only the signed blocks.',
   signedChanged: (n: number) =>

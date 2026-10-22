@@ -14,5 +14,11 @@ allowed_signers = /etc/md-runbook/allowed_signers
 # Withdrawn releases: manifest sha256 hashes, one per line (md-runbook verify shows a runbook's).
 # revoked = /etc/md-runbook/revoked
 
+# Version floors: `NAME LOWEST` per line; older versions of that runbook are refused.
+# floors = /etc/md-runbook/floors
+
+# How many distinct signers from allowed_signers a runbook needs (author and reviewer: 2).
+signers = 1
+
 # syslog (tag md-runbook-gate), or a file the account can append to.
 log = syslog

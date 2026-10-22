@@ -72,7 +72,7 @@ describe('cli: sign and verify', () => {
     // Without the allowed signers, the signer's name is only what the file says.
     lines.length = 0;
     assert.equal(await verifyCommand([g], out), 0);
-    assert.match(lines[0]!, /signed by mallory \(as the file says\)/);
+    assert.match(lines[0]!, /signed by mallory on \d{4}-\d{2}-\d{2} \(as the file says\)/);
     assert.match(lines.join('\n'), /signature: NOT checked/);
     assert.match(lines.at(-1)!, /✓ 1 signed block, 0 changed, signature not checked/);
   });
@@ -94,6 +94,43 @@ describe('cli: sign and verify', () => {
     // it (Git Bash does; Linux and macOS bash don't), so the scanner itself must get here-docs right.
     assert.ok(problems?.some((p) => /^cell 1, command 4 \(echo \$\(\(1 \+\): /.test(p)), problems?.join('\n'));
     assert.ok(problems!.every((p) => /^cell 1, command (1|4) /.test(p)), problems!.join('\n'));
+  });
+
+  it('a second signer co-signs the manifest as it is; verify checks every signature', async () => {
+    const reviewer = path.join(dir, 'reviewer');
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'review@example.net', '-f', reviewer]);
+    const pub = fs.readFileSync(reviewer + '.pub', 'utf8').trim().split(' ').slice(0, 2).join(' ');
+    const both = path.join(dir, 'both_signers');
+    fs.writeFileSync(both, fs.readFileSync(allowed, 'utf8') + `review@example.net namespaces="md-runbook" ${pub}\n`);
+    const f = file('two.md', fence('bash', 'systemctl restart api'));
+    assert.equal(await signCommand([f, '--key', key, '--name', 'ops/two'], out), 0);
+    const before = readSignature(fs.readFileSync(f, 'utf8'))!;
+    lines.length = 0;
+    assert.equal(await signCommand([f, '--key', reviewer, '--cosign'], out), 0, lines.join('\n'));
+    assert.match(lines.at(-1)!, /✓ ops\/two version 1 co-signed by review@example.net: signed by release@example.net, review@example.net/);
+    const after = readSignature(fs.readFileSync(f, 'utf8'))!;
+    assert.equal(after.manifest, before.manifest, 'co-signing keeps the manifest');
+    assert.equal(after.signature, before.signature);
+    assert.deepEqual(after.cosigners?.map((c) => c.signer), ['review@example.net']);
+    // Co-signing again replaces that signer's signature instead of adding one.
+    assert.equal(await signCommand([f, '--key', reviewer, '--cosign'], out), 0);
+    assert.equal(readSignature(fs.readFileSync(f, 'utf8'))!.cosigners?.length, 1);
+    lines.length = 0;
+    assert.equal(await verifyCommand([f, '--allowed-signers', both], out), 0, lines.join('\n'));
+    assert.match(lines.join('\n'), /signature 2 \(review@example\.net\): good, by review@example\.net/);
+    assert.match(lines.join('\n'), /signers: 2 distinct/);
+    // A server that trusts only the first key sees one good signature and one it doesn't know.
+    lines.length = 0;
+    assert.equal(await verifyCommand([f, '--allowed-signers', allowed], out), 1);
+    // Changed since signing: no co-signature; options that change the manifest aren't co-signing.
+    fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('restart api', 'stop api'));
+    lines.length = 0;
+    assert.equal(await signCommand([f, '--key', reviewer, '--cosign'], out), 1);
+    assert.match(lines.join('\n'), /changed since release@example\.net signed it/);
+    assert.equal(await signCommand([f, '--key', reviewer, '--cosign', '--version', '9'], out), 1);
+    // Signing a new version starts without co-signers.
+    assert.equal(await signCommand([f, '--key', key], out), 0);
+    assert.equal(readSignature(fs.readFileSync(f, 'utf8'))!.cosigners, undefined);
   });
 
   it('refuses what it can not sign, and bad arguments', async () => {
