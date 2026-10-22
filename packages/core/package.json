@@ -1,6 +1,6 @@
 {
   "name": "@md-runbook/core",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Platform-neutral core of md-runbook: Markdown runbook parser, writer, cell options, checks, redaction, lint. Node-only process running in @md-runbook/core/node.",
   "private": true,
   "license": "MIT",

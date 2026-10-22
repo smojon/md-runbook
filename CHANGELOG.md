@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
 
 - **Every command is in the runbook's toolbar**, no command palette needed: **Run**, **Values**,
   **Assistant**, **Share** and **Help** dropdowns next to Resume Run and the session switch.
@@ -13,8 +13,9 @@
   `docs/switching.md` for moving runbooks between VS Code and the app.
 - **The app** (in development) got the extension's features and names: one-tap Run all /
   Continue / Run again with progress, ⋯ More with every action (searchable), a cell's ⋯, steps,
-  sessions, Run All as Copy, reports and sharing, secrets and inputs, the assistant, and
-  approving proposals with the same policy; proposals no longer run there unapproved.
+  sessions, Run All as Copy, reports and sharing, secrets and inputs, the assistant, approving
+  proposals with the same policy, `${out:NAME}` captures, breakpoints, Explain on a line, and
+  output history with Compare With Previous Run; proposals no longer run there unapproved.
 - **Set Inputs** asks for every `${input:NAME}` of the runbook, the current values filled in, to
   set or change them before running; **Set Parameters** also covers parameters the cells use
   without declaring them.
