@@ -13,7 +13,7 @@ jest.mock('expo-secure-store', () => ({
   deleteItemAsync: async (k: string) => void mockSecrets.delete(k),
 }));
 
-jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => true) }));
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => true), getStringAsync: jest.fn(async () => '') }));
 // Reports and sharing (native: a PDF renderer and the share sheet).
 jest.mock('expo-print', () => ({ printToFileAsync: jest.fn(async () => ({ uri: 'file:///cache/print.pdf' })) }));
 jest.mock('expo-sharing', () => ({ shareAsync: jest.fn(async () => undefined), isAvailableAsync: jest.fn(async () => true) }));

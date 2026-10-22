@@ -16,6 +16,7 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('../ssh/transport', () => ({ openTransport: jest.fn(), transportReady: async () => undefined }));
 jest.mock('../share/export', () => ({ exportReport: jest.fn(async () => undefined), shareRunbook: jest.fn(async () => undefined) }));
+jest.mock('../assistant/claude', () => ({ ...jest.requireActual('../assistant/claude'), askClaude: jest.fn() }));
 let mockConnection = fakeConnection();
 jest.mock('../ssh/connections', () => ({
   connectionFor: jest.fn(async () => mockConnection),
@@ -309,6 +310,72 @@ describe('approving proposals (the extension’s policy)', () => {
     expect(screen.queryByTestId('approve-card')).toBeNull();
     expect(screen.queryByTestId('cell-1-why')).toBeNull();
     expect(screen.queryByTestId('cell-2-why')).toBeNull();
+  });
+});
+
+describe('the assistant (Claude with your key)', () => {
+  const claude = jest.requireMock<{ askClaude: jest.Mock }>('../assistant/claude');
+  const press = async (id: string) => {
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(id));
+    });
+  };
+
+  it('asks for the key once, shows what goes out with the leak check, then inserts proposals', async () => {
+    const text =
+      '# Incident\n\n```bash\ncurl -s https://db1.acme-prod.io/health\n```\n<!-- md-runbook:output start exit=1 -->\n```text\nerror token=ghp_abcdefghijklmnopqrstuvwxyz0123456789\n```\n<!-- md-runbook:output end -->\n';
+    const r = addRunbook('i.md', text);
+    claude.askClaude.mockResolvedValueOnce('```bash proposed by=ai reason="check"\nsystemctl status api\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await press('more-actions');
+    await press('action-suggestNextSteps');
+    await waitFor(() => expect(screen.getByTestId('ai-key')).toBeTruthy());
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('ai-key'), 'sk-ant-test');
+    });
+    await press('ai-key-save');
+    await waitFor(() => expect(screen.getByTestId('ai-confirm-title')).toBeTruthy());
+    expect(screen.getByTestId('ai-confirm-title').props.children).toMatch(
+      /^Send [\d,]+ characters of this runbook to Claude for suggesting next steps\?/,
+    );
+    expect(claude.askClaude).not.toHaveBeenCalled();
+    // What goes out: the token redacted, the internal host replaced by a placeholder.
+    await press('ai-preview-toggle');
+    const preview = screen.getByTestId('ai-preview').props.children as string;
+    expect(preview).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+    expect(preview).not.toContain('db1.acme-prod.io');
+    await press('ai-send');
+    await waitFor(() => expect(screen.getByTestId('run-notice').props.children).toMatch(/^Inserted 1 proposed cell/));
+    const added = parse(getRunbook(r.id)!.text).cells.filter((c) => c.kind === 'code')[1];
+    expect(added?.value).toBe('systemctl status api');
+    expect(screen.getByTestId('cell-2-why').props.children).toMatch(/^Proposed by ai/);
+  });
+
+  it('Check for Leaks lists what is in the file itself (before any redaction)', async () => {
+    const r = addRunbook('l.md', '# L\n\n```bash\nexport GH=ghp_abcdefghijklmnopqrstuvwxyz0123456789\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await press('more-actions');
+    await press('action-checkForLeaks');
+    expect(screen.getByTestId('leaks-title').props.children).toMatch(/found 1 possible secret/);
+  });
+
+  it('Explain Output shows the answer; Insert as note puts it after the cell', async () => {
+    const r = addRunbook(
+      'e.md',
+      '# E\n\n```bash\necho hi\n```\n<!-- md-runbook:output start exit=0 -->\n```text\nhi\n```\n<!-- md-runbook:output end -->\n',
+    );
+    claude.askClaude.mockResolvedValueOnce('It printed **hi**.');
+    await jest.requireActual<{ setApiKey(k: string): Promise<void> }>('../assistant/claude').setApiKey('sk-ant-test');
+    await render(<RunbookView id={r.id} />);
+    await press('cell-1-actions');
+    await press('action-explainOutput');
+    await waitFor(() => expect(screen.getByTestId('ai-send')).toBeTruthy());
+    await press('ai-send');
+    await waitFor(() => expect(screen.getByTestId('ai-insert')).toBeTruthy());
+    await press('ai-insert');
+    expect(getRunbook(r.id)!.text).toMatch(
+      /> \*\*AI note on cell 2\*\* \(draft by Claude \(Anthropic API\), not verified\)\n\nIt printed \*\*hi\*\*\./,
+    );
   });
 });
 

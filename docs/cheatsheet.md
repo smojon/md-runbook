@@ -77,14 +77,14 @@ secret values are redacted from the output.
 
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
-| **Suggest Next Steps** | Assistant ▾, cell ⋯ | You're stuck in an incident: get proposed commands as cells that only run after you approve them. Needs an AI provider. | — |
-| **Explain Output** / **Explain** (a line) | cell ⋯ / line hover | An error or an output you don't understand: get it explained next to the runbook. | — |
-| **Summarize Incident** | Assistant ▾ | Write the findings of an incident at the end of the runbook, as a draft to edit. | — |
-| **Copy for AI** / **Copy Cell for AI** | Assistant ▾ / the cell's copy icon | Use the chat assistant you already have: copy the runbook with names pseudonymized and secrets removed. | — |
-| **Paste AI Proposal** | Assistant ▾ | Bring the assistant's answer back: its code blocks become proposed cells, with the real names restored. | — |
-| **Check for Leaks** | Assistant ▾ | Before you share a runbook or its output: find tokens, keys and internal host names in it. | — |
+| **Suggest Next Steps** | Assistant ▾, cell ⋯ | You're stuck in an incident: get proposed commands as cells that only run after you approve them. Needs an AI provider. | ⋯ More → Assistant, or the cell’s ⋯ (Claude with your own key; every send confirmed, with the leak check) |
+| **Explain Output** / **Explain** (a line) | cell ⋯ / line hover | An error or an output you don't understand: get it explained next to the runbook. | the cell’s ⋯ → Explain Output |
+| **Summarize Incident** | Assistant ▾ | Write the findings of an incident at the end of the runbook, as a draft to edit. | ⋯ More → Assistant, or the cell’s ⋯ (Claude with your own key; every send confirmed, with the leak check) |
+| **Copy for AI** / **Copy Cell for AI** | Assistant ▾ / the cell's copy icon | Use the chat assistant you already have: copy the runbook with names pseudonymized and secrets removed. | ⋯ More → Copy for AI; the cell’s ⋯ → Copy Cell for AI |
+| **Paste AI Proposal** | Assistant ▾ | Bring the assistant's answer back: its code blocks become proposed cells, with the real names restored. | ⋯ More → Paste AI Proposal (or the cell’s ⋯, to insert after it) |
+| **Check for Leaks** | Assistant ▾ | Before you share a runbook or its output: find tokens, keys and internal host names in it. | ⋯ More → Check for Leaks |
 | **Approve Proposed Cell** / **Reject Proposed Cell**, **Approve All Proposals**, **Go to Next Proposal** | cell ⋯ and the cell's status line / Assistant ▾ (when there are proposals) | Commands written by an assistant or a colleague never run until you read and approve them. | the cell’s ⋯ → Approve / Reject; ⋯ More → Assistant (the extension’s built-in policy, approvals kept on the device) |
-| **Set Anthropic API Key** / **Clear Anthropic API Key** | Assistant ▾ | Using Claude directly as the AI provider. | — |
+| **Set Anthropic API Key** / **Clear Anthropic API Key** | Assistant ▾ | Using Claude directly as the AI provider. | ⋯ More → Assistant |
 
 ## Share
 

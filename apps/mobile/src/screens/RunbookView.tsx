@@ -24,6 +24,8 @@ import type { Progress } from '@md-runbook/core';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId } from '@md-runbook/ssh';
 import { approvalOf, approveCell, rejectCell } from '../approvals/store';
+import { AssistantSheet } from '../assistant/AssistantSheet';
+import { useAssistant } from '../assistant/useAssistant';
 import { ApproveCard } from '../cells/ApproveCard';
 import { CodeCell } from '../cells/CodeCell';
 import { SaveBar } from '../cells/SaveBar';
@@ -318,6 +320,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     runNext();
   };
   const [showActions, setShowActions] = useState(false);
+  const assistant = useAssistant(runbook, setNotice);
   const list = useRef<FlatList<ParsedCell>>(null);
   // Ctrl/⌘+K opens the actions with a keyboard (the browser, an iPad with a keyboard).
   useEffect(() => {
@@ -406,6 +409,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           run: () => write(checkNextItem(runbook.text)),
         },
         { ...meta('hosts', 'run'), run: () => router.push('/hosts') },
+        { ...meta('suggestNextSteps', 'assistant'), run: () => assistant.ask('suggest') },
+        { ...meta('summarizeIncident', 'assistant'), run: () => assistant.ask('summarize') },
+        { ...meta('copyForAi', 'assistant'), run: () => assistant.copyForAi() },
+        { ...meta('pasteAiProposal', 'assistant'), run: () => assistant.paste() },
+        { ...meta('checkForLeaks', 'assistant'), run: () => assistant.checkLeaks() },
+        assistant.hasKey
+          ? { ...meta('clearAnthropicKey', 'assistant'), run: () => assistant.clearKey() }
+          : { ...meta('setAnthropicKey', 'assistant'), run: () => assistant.setKey() },
         {
           ...meta('nextProposal', 'assistant', pendingProposals(runbook.text).length > 0 ? undefined : t.noProposals),
           run: () => {
@@ -467,6 +478,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : []),
       { ...meta('runCell', 'run', why), run: () => void run({ cellIndex: index }, host) },
       { ...meta('stepThrough', 'run', why), run: () => void run({ cellIndex: index, mode: 'step', line: 0 }, host) },
+      { ...meta('explainOutput', 'assistant', cell.output ? undefined : t.noOutputToExplain), run: () => assistant.ask('explain', index) },
+      { ...meta('suggestNextSteps', 'assistant'), run: () => assistant.ask('suggest', index) },
+      { ...meta('copyCellForAi', 'assistant'), run: () => assistant.copyForAi(index) },
+      { ...meta('pasteAiProposal', 'assistant'), run: () => assistant.paste(index) },
       { ...meta('markDone', 'steps'), run: () => mark(index, 'done') },
       { ...meta('markSkipped', 'steps'), run: () => mark(index, 'skipped') },
       {
@@ -561,6 +576,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               onMore={() => setShowActions(true)}
             />
             <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
+            <AssistantSheet {...assistant.sheet} />
             <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />
             <SaveBar runbook={runbook} />
             {signed ? <SignedBanner status={signed} /> : null}

@@ -142,6 +142,18 @@ const en = {
     cheatSheet: ['Cheat Sheet', 'Every action of the app and VS Code, and when it matters.'],
     sample: ['Open Sample Runbook', 'Try every feature on a safe runbook.'],
     checkNextItem: ['Check Next Item', 'Tick the next box of a checklist without editing the text.'],
+    suggestNextSteps: ['Suggest Next Steps', 'Stuck in an incident: get proposed commands that only run after you approve them.'],
+    summarizeIncident: ['Summarize Incident', 'Write the findings at the end of the runbook, as a draft to edit.'],
+    explainOutput: ['Explain Output', 'An error or an output you don’t understand: get it explained.'],
+    copyForAi: ['Copy for AI', 'Use the chat assistant you already have: copy the runbook with names pseudonymized and outputs redacted.'],
+    copyCellForAi: ['Copy Cell for AI', 'The same for this cell only.'],
+    pasteAiProposal: [
+      'Paste AI Proposal',
+      'Bring the assistant’s answer back: its code blocks become proposed cells, real names restored.',
+    ],
+    checkForLeaks: ['Check for Leaks', 'Before you share the runbook or its output: find tokens, keys and internal names in it.'],
+    setAnthropicKey: ['Set Anthropic API Key', 'Use Claude with your own key for the assistant.'],
+    clearAnthropicKey: ['Clear Anthropic API Key', 'Remove the key from this device.'],
     approveProposal: ['Approve Proposed Cell', 'Read what an assistant or a colleague proposed; once approved it can run.'],
     rejectProposal: ['Reject Proposed Cell', 'Remove a proposal you don’t want.'],
     nextProposal: ['Go to Next Proposal', 'Jump to the next cell waiting for your approval.'],
@@ -159,6 +171,43 @@ const en = {
   noSessionOpen: 'No session is open for this runbook.',
   noInputsYet: 'No inputs typed yet.',
   cellActions: 'Cell actions',
+  // Assistant (Claude, the user's own key)
+  aiKeyTitle: 'Anthropic API key',
+  aiKeyHelp:
+    'The assistant uses Claude with your own key. It is kept in this device’s keychain, and nothing is sent until you confirm each request.',
+  aiSendTitle: (chars: number, what: string) => `Send ${chars.toLocaleString('en-US')} characters of this runbook to Claude for ${what}?`,
+  aiSendBody:
+    'Outputs are redacted and marked as untrusted; host names, addresses and the like are replaced by placeholders that stay on this device. Nothing is run: suggestions arrive as proposed cells that need your approval.',
+  aiLeaksFound: (n: number) =>
+    n === 1 ? 'The leak check found 1 possible secret or internal name:' : `The leak check found ${n} possible secrets or internal names:`,
+  leakLine: (line: number, kind: string, preview: string) => `line ${line} · ${kind} · ${preview}`,
+  noLeaks: 'The leak check found nothing.',
+  aiInjection: 'Some lines look like instructions to the AI; they are sent marked as untrusted data:',
+  aiSendAnyway: (send: string) => `${send} anyway`,
+  aiPreview: 'Preview',
+  aiHidePreview: 'Hide preview',
+  aiAsking: (what: string) => `Asking Claude: ${what}…`,
+  aiAnswerNote: 'Written by Claude: it may be wrong. Not added to the runbook unless you insert it.',
+  aiInsertNote: 'Insert as note',
+  aiSend: 'Send',
+  aiCopy: 'Copy',
+  aiWhatExplain: (label: string) => `explaining ${label}`,
+  aiWhatSuggest: 'suggesting next steps',
+  aiWhatSummary: 'drafting findings',
+  aiExplanationTitle: (label: string) => `Explanation of ${label}`,
+  aiSuggested: (n: number) =>
+    n === 0
+      ? 'Claude proposed no commands.'
+      : `Inserted ${n} proposed cell${n === 1 ? '' : 's'}: review and approve each one before it runs.`,
+  aiFindingsDone: 'The “Findings (AI draft)” section is at the end of the runbook: review it before sharing.',
+  aiEmpty: 'Claude returned an empty answer.',
+  aiFailed: (why: string) => `The assistant failed: ${why}`,
+  copiedForAi: (chars: number) =>
+    `Copied ${chars.toLocaleString('en-US')} characters for an AI assistant (names pseudonymized, outputs redacted).`,
+  pastedNone: 'The clipboard has no fenced code blocks.',
+  pasted: (n: number) => `Inserted ${n} proposed cell${n === 1 ? '' : 's'}: review and approve each one before it runs.`,
+  aiKeyCleared: 'The Anthropic API key is removed from this device.',
+  noOutputToExplain: 'Run the cell first: there is no output to explain.',
   // Approving proposals (the extension's command policy)
   approveTitle: (by: string) => `Proposed by ${by}`,
   approveReason: (reason: string) => `Reason given: ${reason}`,
