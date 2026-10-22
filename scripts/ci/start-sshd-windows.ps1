@@ -31,10 +31,21 @@ $config = Join-Path $d 'sshd_config'
   'StrictModes no'
 ) | Set-Content -Path $config -Encoding ascii
 $log = Join-Path $d 'sshd.log'
-# The Windows service, with this config: logins as the runner's user, through cmd.exe (the default shell).
+# Config errors first: the service only says it failed.
+& $sshd -t -f $config
+if ($LASTEXITCODE) { throw "sshd -t: the config is not valid ($config)" }
+# The Windows service, with this config: logins as the runner's user, through cmd.exe (the default
+# shell). Its command line set in the registry (sc.exe's quoting rules mangle quoted paths).
 Stop-Service sshd -ErrorAction SilentlyContinue
-sc.exe config sshd binPath= "`"$sshd`" -f `"$config`" -E `"$log`"" | Out-Null
-Start-Service sshd
+Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\sshd' -Name ImagePath -Value "`"$sshd`" -f `"$config`" -E `"$log`""
+try {
+  Start-Service sshd
+} catch {
+  Write-Host "sshd did not start: $_"
+  if (Test-Path $log) { Get-Content $log }
+  Get-WinEvent -LogName 'OpenSSH/Operational' -MaxEvents 20 -ErrorAction SilentlyContinue | Format-List TimeCreated, Message
+  exit 1
+}
 for ($i = 0; $i -lt 20; $i++) {
   if ((Test-NetConnection 127.0.0.1 -Port 2222 -WarningAction SilentlyContinue).TcpTestSucceeded) {
     Write-Host 'sshd is listening on 127.0.0.1:2222'
