@@ -57,7 +57,7 @@ action by the same groups, with a search field (Ctrl/⌘+K with a keyboard).
 | --- | --- | --- | --- |
 | **Mark Step Done** / **Mark Step Skipped** / **Unmark Step** | cell ⋯ | Steps you do by hand (call the vendor, check a dashboard): record them, so progress and Resume Run know where you are. | the cell’s ⋯ (or a long press) |
 | **Check Next Item** | ⋯ of a Markdown cell | Tick the next `- [ ]` item of a checklist without editing the text. | tap the task box; ⋯ More → Check Next Item |
-| **Compare With Previous Run** | cell ⋯ | "Was it like this yesterday?": diff the output with the run before (with output history turned on). | — |
+| **Compare With Previous Run** | cell ⋯ | "Was it like this yesterday?": diff the output with the run before (with output history turned on). | the cell’s ⋯ → Compare With Previous Run (with Hosts → Output history on) |
 
 ## Values: parameters, inputs, secrets
 

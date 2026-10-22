@@ -425,6 +425,37 @@ describe('breakpoints and Explain on a line', () => {
   });
 });
 
+describe('Compare With Previous Run', () => {
+  it('needs a kept earlier run; then shows the diff against it', async () => {
+    const block = (ran: string, out: string) =>
+      `<!-- md-runbook:output start exit=0 ran=${ran} -->\n\`\`\`text\n${out}\n\`\`\`\n<!-- md-runbook:output end -->\n`;
+    const none = addRunbook('n.md', '# N\n\n```bash\necho hi\n```\n' + block('2026-10-22T10:00:00+02:00', 'pods: 3'));
+    await render(<RunbookView id={none.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-actions'));
+    });
+    expect(screen.getByTestId('action-compareWithPrevious').props.accessibilityState).toMatchObject({ disabled: true });
+    const kept = addRunbook(
+      'k.md',
+      '# K\n\n```bash\necho hi\n```\n' +
+        block('2026-10-22T10:00:00+02:00', 'pods: 3\nready') +
+        '\n<details><summary>md-runbook: 1 previous run</summary>\n\n' +
+        block('2026-10-21T10:00:00+02:00', 'pods: 2\nready') +
+        '\n</details>\n',
+    );
+    await render(<RunbookView id={kept.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-compareWithPrevious'));
+    });
+    expect(screen.getByTestId('diff-sheet')).toBeTruthy();
+    expect(screen.getByTestId('diff-removed').props.children).toBe('- pods: 2');
+    expect(screen.getByTestId('diff-added').props.children).toBe('+ pods: 3');
+  });
+});
+
 describe('runbook parameters', () => {
   beforeEach(() => resetParamValues());
   const text = '---\nparams:\n  - REGION: eu-west-1\n---\n\n# Deploy\n\n```bash\necho "${param:TARGET} ${param:REGION}"\n```\n';

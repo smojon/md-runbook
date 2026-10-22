@@ -173,6 +173,7 @@ const en = {
     markDone: ['Mark Step Done', 'A step you did by hand (a call, a dashboard check): record it, so progress and Continue know.'],
     markSkipped: ['Mark Step Skipped', 'A step that doesn’t apply this time: Continue passes over it.'],
     unmarkStep: ['Unmark Step', 'Undo a Done or Skipped mark made by hand.'],
+    compareWithPrevious: ['Compare With Previous Run', '“Was it like this before?”: the previous output against this one, line by line.'],
     clearAbove: ['Clear Outputs Above', 'Start over from here: forget the results of the steps before this one.'],
     clearBelow: ['Clear Outputs Below', 'Rerun from here and see clearly what ran this time.'],
   },
@@ -181,6 +182,13 @@ const en = {
   noSessionOpen: 'No session is open for this runbook.',
   noInputsYet: 'No inputs typed yet.',
   cellActions: 'Cell actions',
+  diffTitle: (label: string, before: string, after: string) => `${label}: ${before} → ${after}`,
+  diffSame: 'The output is the same as in the previous run.',
+  noEarlierRun: 'No earlier run is kept: turn on Hosts → Output history, then run the cell again.',
+  historyTitle: 'Output history',
+  historyHelp:
+    'Earlier runs each cell keeps in the file (collapsed under its latest output), for Compare With Previous Run. 0 keeps only the latest, as the extension does by default.',
+  historyKeep: (n: number) => (n === 0 ? 'Latest only' : `${n} earlier`),
   // Assistant (Claude, the user's own key)
   aiKeyTitle: 'Anthropic API key',
   aiKeyHelp:

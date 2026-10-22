@@ -7,6 +7,7 @@ import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { KeyStorage, appKeyInfo, appPublicKeyLine } from '../ssh/appKey';
 import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
+import { HISTORY_SIZES, setHistorySize, useHistorySize } from '../settings/store';
 import { getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { mono, themedStyles } from '../theme';
 
@@ -37,6 +38,7 @@ export function HostList() {
         <>
           <AppKeySection />
           <SecretsSection />
+          <HistorySection />
           {Platform.OS === 'web' ? <RelaySection /> : null}
         </>
       }
@@ -117,6 +119,32 @@ function AppKeySection() {
 }
 
 /** The stored `${secret:NAME}` names (never their values), each with Forget. */
+/** How many earlier runs each cell keeps in the file (the extension's mdRunbook.output.historySize). */
+function HistorySection() {
+  const styles = useStyles();
+  const size = useHistorySize();
+  return (
+    <View testID="history-setting" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.historyTitle}</Text>
+      <Text style={styles.help}>{t.historyHelp}</Text>
+      <View style={styles.chips}>
+        {HISTORY_SIZES.map((n) => (
+          <Pressable
+            key={n}
+            testID={`history-${n}`}
+            accessibilityRole="button"
+            accessibilityState={{ selected: n === size }}
+            onPress={() => setHistorySize(n)}
+            style={[styles.chip, n === size && styles.chipOn]}
+          >
+            <Text style={[styles.chipText, n === size && styles.chipTextOn]}>{t.historyKeep(n)}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function SecretsSection() {
   const styles = useStyles();
   const names = useSecretNames();
@@ -322,6 +350,11 @@ const useStyles = themedStyles((colors) => ({
     marginTop: 4,
   },
   error: { fontSize: 13, color: colors.error, marginTop: 8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  chip: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 14, borderWidth: 1, borderColor: colors.border },
+  chipOn: { backgroundColor: colors.accent, borderColor: colors.accent },
+  chipText: { fontSize: 14, color: colors.text },
+  chipTextOn: { color: colors.onAccent },
   secretRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8 },
   secretName: { fontFamily: mono, fontSize: 14, color: colors.text },
   secretActions: { flexDirection: 'row', gap: 16 },

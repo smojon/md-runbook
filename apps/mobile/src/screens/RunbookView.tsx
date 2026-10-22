@@ -28,6 +28,8 @@ import { approvalOf, approveCell, rejectCell } from '../approvals/store';
 import { AssistantSheet } from '../assistant/AssistantSheet';
 import { useAssistant } from '../assistant/useAssistant';
 import { ApproveCard } from '../cells/ApproveCard';
+import { DiffSheet } from '../cells/DiffSheet';
+import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell } from '../cells/CodeCell';
 import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, pinHostKey, useHosts } from '../hosts/store';
@@ -467,6 +469,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       ]
     : [];
   // A code cell's own actions (its ⋯, or a long press), as in a cell's ⋯ menu in VS Code.
+  const [diff, setDiff] = useState<{ title: string; lines: DiffLine[] } | undefined>();
   /** The open cell sheet: its actions, built when its ⋯ was tapped (a handler, not during render). */
   const [cellSheet, setCellSheet] = useState<AppAction[] | undefined>();
   const write = (next: string | undefined): void => {
@@ -508,6 +511,22 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       {
         ...meta('unmarkStep', 'steps', isManualMark(cell.output?.attrs) ? undefined : t.notManualMark),
         run: () => write(clearCellOutputs(runbook.text, (i) => i === index)),
+      },
+      {
+        ...meta(
+          'compareWithPrevious',
+          'run',
+          cell.output && isCodeMeta(cell.meta) && cell.meta.history?.entries[0] ? undefined : t.noEarlierRun,
+        ),
+        run: () => {
+          const before = isCodeMeta(cell.meta) ? cell.meta.history?.entries[0] : undefined;
+          if (!before || !cell.output) return;
+          const when = (a: Record<string, string>): string => a.ran ?? a.ended ?? '?';
+          setDiff({
+            title: t.diffTitle(`cell ${index + 1}`, when(before.attrs), when(cell.output.attrs)),
+            lines: lineDiff(before.text, cell.output.text),
+          });
+        },
       },
       { ...meta('clearAbove', 'run'), run: () => write(clearCellOutputs(runbook.text, (i) => i < index)) },
       { ...meta('clearBelow', 'run'), run: () => write(clearCellOutputs(runbook.text, (i) => i >= index)) },
@@ -605,6 +624,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             />
             <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
             <AssistantSheet {...assistant.sheet} />
+            <DiffSheet diff={diff} onClose={() => setDiff(undefined)} />
             <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />
             <SaveBar runbook={runbook} />
             {signed ? <SignedBanner status={signed} /> : null}

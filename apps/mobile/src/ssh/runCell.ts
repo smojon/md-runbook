@@ -12,6 +12,8 @@ import {
   formatDurationAttr,
   formatLocalIso,
   isCodeMeta,
+  loadedOutputEntry,
+  nextHistory,
   outputSummary,
   parse,
   setCellOutput,
@@ -25,6 +27,7 @@ import type { RemoteRunOptions, SessionRunResult, SignedRun } from '@md-runbook/
 import type { Host } from '../hosts/store';
 import { checkParam, refsOf, runbookParams } from '../runbooks/params';
 import { readSecret } from '../secrets/store';
+import { historySize } from '../settings/store';
 import { t } from '../i18n';
 import { runnability } from './cells';
 import { Connection, connectionFor } from './connections';
@@ -76,6 +79,8 @@ export interface RunCellParams {
   params?: Record<string, string>;
   /** Values typed for `${input:NAME}` while the runbook is open. */
   inputs?: Record<string, string>;
+  /** Earlier runs to keep in the file (default: the app setting). */
+  historySize?: number;
   /** Values earlier cells captured this session (capture=), for . */
   captures?: Readonly<Record<string, Captured>>;
   /** A stored secret's value (default: the secure store). */
@@ -237,12 +242,23 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     attrs.lines = formatLineRanges(picked);
   }
   const base = p.latestText?.() ?? p.text;
+  const meta = parse(base).cells[p.cellIndex]?.meta;
+  const previous = isCodeMeta(meta) ? loadedOutputEntry(meta) : undefined;
+  const older = isCodeMeta(meta) ? (meta.history?.entries ?? []) : [];
   if (parse(base).cells[p.cellIndex]?.value !== cell.value) return { kind: 'error', message: t.cellChanged };
   const text =
     setCellOutput(
       base,
       p.cellIndex,
-      { kind: 'new', text: transcript, attrs },
+      // As the extension writes it: changed=yes|no against the output it replaces, and the earlier
+      // runs kept after it when history is on.
+      {
+        kind: 'new',
+        text: transcript,
+        attrs,
+        ...(previous ? { previous } : {}),
+        history: nextHistory(previous, older, p.historySize ?? historySize()),
+      },
       { ...DEFAULT_WRITE_OPTIONS, redact: (s) => redactor.redact(hideKnown(s)) },
     ) ?? base;
   return { kind: 'done', text, result, attrs, summary: outputSummary(attrs, ended), captured };

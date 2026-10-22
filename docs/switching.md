@@ -49,5 +49,4 @@ where it is in each client.
 | --- | --- |
 | runs on this machine (bash, PowerShell, cmd), terminal mode, the text editor's ▶ Run | runs on your servers over SSH, `host=` blocks, the SSH key in the phone's secure hardware |
 | **Sign Runbook**, `md-runbook sign` / `verify` (the app shows signatures and runs signed runbooks) | the relay for running from a browser |
-| output history and **Compare With Previous Run** | |
 | the command line for CI (`md-runbook run`) | |

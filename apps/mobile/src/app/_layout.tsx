@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { loadApprovals } from '../approvals/store';
+import { loadSettings } from '../settings/store';
 import { loadHosts } from '../hosts/store';
 import { loadRunbooks } from '../runbooks/store';
 import { t } from '../i18n';
@@ -16,6 +17,7 @@ export default function RootLayout() {
   useEffect(() => {
     void loadHosts();
     void loadApprovals();
+    void loadSettings();
     void loadRunbooks();
   }, []);
   return (
