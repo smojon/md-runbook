@@ -166,4 +166,3 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
    a path from the file).
 3. App translations: the texts are in `apps/mobile/src/i18n.ts`, English only; which languages
    is the owner's choice.
-4. Cloud console views (AWS, GCP), which Runme has (README, "Compared with Runme").

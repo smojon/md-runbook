@@ -1344,6 +1344,12 @@
             "markdownDescription": "Ask programs for colours although their output is not a terminal: cells get `FORCE_COLOR=1` and `CLICOLOR_FORCE=1` (Node tools, many CLIs, macOS/BSD tools). The colours show in the output; the file keeps plain text unless `#mdRunbook.output.stripAnsi#` is off. Some tools need their own flag (`ls --color=always`, `git -c color.ui=always`).",
             "order": 7
           },
+          "mdRunbook.output.cloudViews": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "When a cell prints JSON from the AWS or Google Cloud CLI (`aws ec2 describe-instances`, `gcloud compute instances list --format=json`, …), show a table of the resources under the output with a link to each in the cloud console: EC2 instances, EKS clusters, Compute Engine instances, GKE clusters, Cloud Run services. Display only.",
+            "order": 7
+          },
           "mdRunbook.output.recordContext": {
             "type": "object",
             "default": {},

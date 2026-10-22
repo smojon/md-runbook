@@ -1,7 +1,8 @@
 /** Mapping between VS Code cell outputs and the core's persisted-output model. */
 
 import * as vscode from 'vscode';
-import { colorizeSaved, escapeHtml } from '@md-runbook/core';
+import { colorizeSaved, escapeHtml, parseLineSet } from '@md-runbook/core';
+import { cloudView, cloudViewMarkdown } from '@md-runbook/core/cloudViews';
 import { colorConfig } from './config';
 import type { HistoryEntry, OutputInput, ParsedOutput } from '@md-runbook/core';
 
@@ -24,6 +25,8 @@ export interface OutputMetadata {
   text?: string;
   /** The collapsed list of earlier runs (output history); display only, never persisted. */
   earlier?: boolean;
+  /** A cloud console table of the output (cloudViews.ts); display only, never persisted. */
+  cloud?: boolean;
 }
 
 interface OutputLike {
@@ -65,6 +68,14 @@ export function earlierRunsOutput(entries: readonly HistoryEntry[]): vscode.Note
   return new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.text(md, 'text/markdown')], { [META_KEY]: meta });
 }
 
+/** The cloud console table of an output's resources (AWS, Google Cloud), if it has any. */
+export function cloudOutput(stdout: string): vscode.NotebookCellOutput | undefined {
+  const view = colorConfig().cloud ? cloudView(stdout) : undefined;
+  if (!view) return undefined;
+  const meta: OutputMetadata = { cloud: true };
+  return new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.text(cloudViewMarkdown(view), 'text/markdown')], { [META_KEY]: meta });
+}
+
 /**
  * VS Code only syncs a replaced output's items (not its metadata) to the extension host, so
  * metadata that must survive to save time goes on a newly appended output like this one.
@@ -81,6 +92,15 @@ export function persistedOutputs(out: ParsedOutput, history: readonly HistoryEnt
   const colors = colorConfig();
   const shown = colorizeSaved(out.text, out.attrs.stderr, colors.levels, colors.stderrRed);
   const outputs = [new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout(shown)], { [META_KEY]: meta })];
+  // The cloud console table, from the saved output without its stderr lines.
+  const errLines = parseLineSet(out.attrs.stderr);
+  const cloud = cloudOutput(
+    out.text
+      .split('\n')
+      .filter((_, i) => !errLines.has(i))
+      .join('\n'),
+  );
+  if (cloud) outputs.push(cloud);
   if (out.attrs.exit !== undefined || out.attrs.ran !== undefined) {
     const status = [statusLine(out.attrs.exit, out.attrs.ran, out.attrs.duration), earlierRuns(history.length)].filter(Boolean).join(' · ');
     outputs.push(statusOutput(status));

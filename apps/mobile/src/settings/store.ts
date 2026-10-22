@@ -17,13 +17,17 @@ export interface Settings {
   stderrInRed: boolean;
   /** Cells get FORCE_COLOR=1 and CLICOLOR_FORCE=1, so programs colour their output. */
   forceColor: boolean;
+  /** AWS / Google Cloud JSON output: a list of the resources with console links (mdRunbook.output.cloudViews). */
+  cloudViews: boolean;
 }
 
-const DEFAULTS: Settings = { historySize: 0, colorLevels: true, stderrInRed: true, forceColor: false };
+const DEFAULTS: Settings = { historySize: 0, colorLevels: true, stderrInRed: true, forceColor: false, cloudViews: true };
 
 /** Saved settings, older ones (only historySize) completed with the defaults. */
 const isSaved = (v: unknown): v is Partial<Settings> =>
   typeof v === 'object' && v !== null && typeof (v as Settings).historySize === 'number';
+
+type OutputFlag = 'colorLevels' | 'stderrInRed' | 'forceColor' | 'cloudViews';
 
 let settings: Settings = DEFAULTS;
 const listeners = new Set<() => void>();
@@ -32,12 +36,13 @@ const emit = (): void => listeners.forEach((l) => l());
 export async function loadSettings(): Promise<void> {
   const saved = await getJson(KEY, isSaved);
   if (saved) {
-    const flag = (k: 'colorLevels' | 'stderrInRed' | 'forceColor'): boolean => (typeof saved[k] === 'boolean' ? saved[k] : DEFAULTS[k]);
+    const flag = (k: OutputFlag): boolean => (typeof saved[k] === 'boolean' ? saved[k] : DEFAULTS[k]);
     settings = {
       historySize: saved.historySize ?? 0,
       colorLevels: flag('colorLevels'),
       stderrInRed: flag('stderrInRed'),
       forceColor: flag('forceColor'),
+      cloudViews: flag('cloudViews'),
     };
   }
   emit();
@@ -56,7 +61,7 @@ export function setHistorySize(n: number): void {
   update({ historySize: Math.max(0, Math.min(10, Math.floor(n))) });
 }
 
-export function setOutputSetting(key: 'colorLevels' | 'stderrInRed' | 'forceColor', on: boolean): void {
+export function setOutputSetting(key: OutputFlag, on: boolean): void {
   update({ [key]: on });
 }
 

@@ -4,8 +4,11 @@
  * command's actions (Run line, Run lines 1-N, Run lines N-end, Check), checked commands get a
  * mark beside them, a status line (checked-lines run, language and options) and the output.
  */
-import { ParsedCell, isCodeMeta, outputSummary, shellKindForLanguage } from '@md-runbook/core';
+import { ParsedCell, isCodeMeta, outputSummary, parseLineSet, shellKindForLanguage } from '@md-runbook/core';
 import { OutputText } from './OutputText';
+import { CloudView } from './CloudView';
+import { cloudView } from '@md-runbook/core/cloudViews';
+import { useOutputSettings } from '../settings/store';
 import type { RemotePlatform } from '@md-runbook/ssh';
 import { LineStep, stepAtLine } from '@md-runbook/core/steps';
 import { ReactNode, memo, useMemo, useState } from 'react';
@@ -59,6 +62,19 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
   const c = usePalette();
   const can = runnability(cell, p.runbookId, p.platform);
   const isBash = cell.kind === 'code' && shellKindForLanguage(cell.languageId) === 'bash';
+  // AWS / Google Cloud JSON in the saved output (without its stderr lines): a list with console links.
+  const showCloud = useOutputSettings().cloudViews;
+  const saved = cell.output;
+  const cloud = useMemo(() => {
+    if (!showCloud || !saved) return undefined;
+    const errLines = parseLineSet(saved.attrs.stderr);
+    return cloudView(
+      saved.text
+        .split('\n')
+        .filter((_, i) => !errLines.has(i))
+        .join('\n'),
+    );
+  }, [showCloud, saved]);
   const lines = useMemo(
     () => (isBash ? highlightBash(cell.value) : cell.value.split('\n').map((l): Token[] => [{ text: l, kind: 'plain' }])),
     [cell.value, isBash],
@@ -271,6 +287,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
           {cell.output.text !== '' ? (
             <OutputText style={styles.outputText} text={cell.output.text} stderr={cell.output.attrs.stderr} />
           ) : null}
+          {cloud ? <CloudView testID={`cell-${index}-cloud`} view={cloud} /> : null}
         </View>
       ) : null}
       {p.below}

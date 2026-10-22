@@ -44,9 +44,10 @@ export function writeOptions(): WriteOptions {
 }
 
 /** How output is coloured on screen (the file keeps plain text). */
-export function colorConfig(): { levels: boolean; stderrRed: boolean; force: boolean } {
+export function colorConfig(): { levels: boolean; stderrRed: boolean; force: boolean; cloud: boolean } {
   const c = cfg();
   return {
+    cloud: c.get<boolean>('output.cloudViews', true),
     levels: c.get<boolean>('output.colorLevels', true),
     stderrRed: c.get<boolean>('output.stderrInRed', true),
     force: c.get<boolean>('output.forceColor', false),

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Cloud console views:** JSON from the AWS or Google Cloud CLI gets a table of its resources
+  under the output, each with a link to it in the console: EC2 instances, EKS clusters,
+  Compute Engine instances, GKE clusters, Cloud Run services (recognized by the JSON's shape).
+  Display only; setting `mdRunbook.output.cloudViews` (on), and in the app under Hosts.
 - **Two signers for signed runbooks (four eyes):** a reviewer adds a signature to the signed
   manifest with **Co-sign Runbook** or `md-runbook sign --cosign`, unchanged; md-runbook-gate with
   `signers = 2` (or `--signers=2` on a key) runs only runbooks signed by two distinct trusted

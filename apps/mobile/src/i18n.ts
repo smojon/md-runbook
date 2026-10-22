@@ -201,6 +201,11 @@ const en = {
   stderrInRedHelp: 'What a cell writes to stderr, also when the runbook is opened again.',
   forceColor: 'Ask programs for colours',
   forceColorHelp: 'Cells get FORCE_COLOR=1 and CLICOLOR_FORCE=1. The file keeps plain text.',
+  cloudViews: 'Cloud console lists',
+  cloudViewsHelp:
+    'AWS and Google Cloud JSON output (EC2, EKS, Compute Engine, GKE, Cloud Run) gets a list with a link to each resource in the console.',
+  cloudTitle: (title: string, n: number) => `${title} (${n})`,
+  cloudOpen: 'Open in console',
   historyTitle: 'Output history',
   historyHelp:
     'Earlier runs each cell keeps in the file (collapsed under its latest output), for Compare With Previous Run. 0 keeps only the latest, as the extension does by default.',

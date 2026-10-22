@@ -155,6 +155,7 @@ function ColorSection() {
     { key: 'colorLevels', label: t.colorLevels, help: t.colorLevelsHelp },
     { key: 'stderrInRed', label: t.stderrInRed, help: t.stderrInRedHelp },
     { key: 'forceColor', label: t.forceColor, help: t.forceColorHelp },
+    { key: 'cloudViews', label: t.cloudViews, help: t.cloudViewsHelp },
   ] as const;
   return (
     <View testID="color-settings" style={styles.section}>

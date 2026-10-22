@@ -26,7 +26,7 @@ import { proposalOf } from '@md-runbook/core/proposal';
 import { isCodeMeta } from '@md-runbook/core';
 import { SECTION } from './config';
 import { ExecutionConfig, colorConfig, executionConfig, redactionConfig } from './config';
-import { META_KEY, OutputMetadata, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
+import { META_KEY, OutputMetadata, cloudOutput, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
 import { CellPlan, ExecuteIO, PrepareContext, RunPipeline, RunRecord } from './pipeline';
 import { copyOrigin } from './copyOrigins';
 import { knownSecrets } from './knownSecrets';
@@ -544,6 +544,9 @@ export class RunbookController implements vscode.Disposable {
       const earlierOutput = earlierRunsOutput(history);
       // The text to save: what was shown, without colours, its stderr lines marked (stderr=).
       const saved = shown.map((c) => (c.stream === 'stderr' ? markStderr(c.text) : c.text)).join('');
+      // AWS / Google Cloud JSON: a table of the resources with console links, under the output.
+      const cloud = cloudOutput(shown.filter((c) => c.stream === 'stdout').map((c) => c.text).join(''));
+      if (cloud) await exec.appendOutput([cloud]);
       await exec.appendOutput(earlierOutput ? [statusOutput(status, attrs, saved), earlierOutput] : [statusOutput(status, attrs, saved)]);
 
       // A cell that was not run counts as success so Run All carries on (a declined confirmation

@@ -40,7 +40,7 @@ You can also use **Extensions view → ⋯ → Install from VSIX…**.
 ## Compared with Runme
 
 [Runme](https://runme.dev) also opens Markdown as a notebook, and it does things md-runbook does
-not (cloud console views, a web interface, a larger community). The differences that matter most:
+not (a web interface of its own, a larger community). The differences that matter most:
 
 | | md-runbook | Runme |
 |---|---|---|
@@ -206,6 +206,10 @@ Each has its own page with examples and settings:
   green, Nevis's `5-NOTICE` and Kubernetes' `E1022 …` lines included. A program's own colours
   win; the file keeps plain text. Settings: `mdRunbook.output.colorLevels`, `stderrInRed`,
   `forceColor` (also in the app, under Hosts).
+- **Cloud console views:** when a cell prints JSON from the AWS or Google Cloud CLI
+  (`aws ec2 describe-instances`, `gcloud compute instances list --format=json`, …), a table of
+  the EC2 instances, EKS clusters, Compute Engine instances, GKE clusters or Cloud Run services
+  shows under the output, each with a link to it in the console. Display only (also in the app).
 - **[Output history, run copies and diffs](docs/features/history.md):** keep the last N runs in a
   collapsed `<details>` block, **Run All as Copy** into a timestamped `.md` (the original stays
   a clean template), and **Compare With Previous Run**. Re-run outputs get `changed=yes|no`.
@@ -319,6 +323,7 @@ extension is also disabled in untrusted workspaces (Restricted Mode).
 | `mdRunbook.output.stripAnsi` | `true` | Strip ANSI escape codes from written output. |
 | `mdRunbook.output.colorLevels` | `true` | Colour log levels in the output as log viewers do: `FATAL`/`CRITICAL` purple, `ERROR`/`FAILED` red, `WARN` yellow, `INFO`/`NOTICE` blue, `DEBUG` grey, `TRACE` light blue, `OK`/`PASSED`/`SUCCESS` green. Display only. |
 | `mdRunbook.output.stderrInRed` | `true` | Show stderr in red, also when the file is opened again (the block's `stderr=` lists those lines). |
+| `mdRunbook.output.cloudViews` | `true` | AWS / Google Cloud JSON output (EC2, EKS, Compute Engine, GKE, Cloud Run) gets a table with a console link per resource. Display only. |
 | `mdRunbook.output.forceColor` | `false` | Cells get `FORCE_COLOR=1` and `CLICOLOR_FORCE=1`, so programs colour their output although it isn't a terminal. |
 | `mdRunbook.redaction.enabled` | `true` | Redact secrets before writing output. |
 | `mdRunbook.redaction.useDefaultPatterns` | `true` | Use the built-in patterns listed above. |

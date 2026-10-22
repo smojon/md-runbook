@@ -6,6 +6,7 @@ import { resetApprovals } from '../approvals/store';
 import { resetParamValues } from '../runbooks/params';
 import { readSecret } from '../secrets/store';
 import { autorunAsked } from '../runbooks/autorun';
+import { resetSettings, setOutputSetting } from '../settings/store';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { RunbookView, copyStamp } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
@@ -592,6 +593,40 @@ describe('a signed runbook', () => {
   it('an unsigned runbook has no banner', async () => {
     await render(<RunbookView id="sample" />);
     expect(screen.queryByTestId('signed-banner')).toBeNull();
+  });
+});
+
+describe('cloud console lists', () => {
+  it('AWS JSON in a saved output gets a list with a console link; the setting turns it off', async () => {
+    const json = JSON.stringify({
+      Reservations: [
+        {
+          Instances: [
+            {
+              InstanceId: 'i-0abc',
+              InstanceType: 't3.micro',
+              State: { Name: 'running' },
+              Placement: { AvailabilityZone: 'eu-central-1b' },
+              Tags: [{ Key: 'Name', Value: 'web-1' }],
+            },
+          ],
+        },
+      ],
+    });
+    const r = addRunbook(
+      'aws.md',
+      '# A\n\n```bash\naws ec2 describe-instances\n```\n<!-- md-runbook:output start exit=0 -->\n```text\n' +
+        json +
+        '\n```\n<!-- md-runbook:output end -->\n',
+    );
+    await render(<RunbookView id={r.id} />);
+    expect(screen.getByTestId('cell-1-cloud')).toBeTruthy();
+    expect(screen.getByText('EC2 instances (1)')).toBeTruthy();
+    expect(screen.getByText('web-1')).toBeTruthy();
+    setOutputSetting('cloudViews', false);
+    await render(<RunbookView id={r.id} />);
+    expect(screen.queryByTestId('cell-1-cloud')).toBeNull();
+    resetSettings();
   });
 });
 
