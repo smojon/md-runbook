@@ -365,6 +365,12 @@
         "icon": "$(debug-step-into)"
       },
       {
+        "command": "mdRunbook.getStarted",
+        "title": "Get Started",
+        "category": "md-runbook",
+        "icon": "$(book)"
+      },
+      {
         "command": "mdRunbook.openSample",
         "title": "Open Sample Runbook",
         "category": "md-runbook"
@@ -493,21 +499,6 @@
           "group": "navigation/execute@10"
         },
         {
-          "command": "mdRunbook.exportReport",
-          "when": "notebookType == md-runbook",
-          "group": "navigation/execute@100"
-        },
-        {
-          "command": "mdRunbook.runAllAsCopy",
-          "when": "notebookType == md-runbook && config.mdRunbook.output.mode == copy",
-          "group": "navigation/execute@1"
-        },
-        {
-          "command": "mdRunbook.runAllAsCopy",
-          "when": "notebookType == md-runbook && config.mdRunbook.output.mode != copy",
-          "group": "navigation/execute@98"
-        },
-        {
           "command": "mdRunbook.sessionModeOn",
           "when": "notebookType == md-runbook && mdRunbook.sessionMode == session",
           "group": "navigation/execute@97"
@@ -518,14 +509,29 @@
           "group": "navigation/execute@97"
         },
         {
-          "command": "mdRunbook.ai.suggestNextSteps",
-          "when": "notebookType == md-runbook && config.mdRunbook.ai.provider != off",
-          "group": "navigation/execute@110"
+          "submenu": "mdRunbook.toolbar.run",
+          "when": "notebookType == md-runbook",
+          "group": "navigation/execute@90"
         },
         {
-          "command": "mdRunbook.copyForAi",
+          "submenu": "mdRunbook.toolbar.values",
           "when": "notebookType == md-runbook",
-          "group": "navigation/execute@110"
+          "group": "navigation/execute@91"
+        },
+        {
+          "submenu": "mdRunbook.toolbar.assistant",
+          "when": "notebookType == md-runbook",
+          "group": "navigation/execute@92"
+        },
+        {
+          "submenu": "mdRunbook.toolbar.share",
+          "when": "notebookType == md-runbook",
+          "group": "navigation/execute@93"
+        },
+        {
+          "submenu": "mdRunbook.toolbar.help",
+          "when": "notebookType == md-runbook",
+          "group": "navigation/execute@120"
         }
       ],
       "commandPalette": [
@@ -827,6 +833,16 @@
           "command": "mdRunbook.stepStop",
           "when": "notebookType == md-runbook && mdRunbook.stepPaused && notebookCellExecutionState == executing",
           "group": "inline/cell@3"
+        },
+        {
+          "command": "mdRunbook.approveProposal",
+          "group": "mdRunbook-proposal@1",
+          "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.hasProposals"
+        },
+        {
+          "command": "mdRunbook.rejectProposal",
+          "group": "mdRunbook-proposal@2",
+          "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.hasProposals"
         }
       ],
       "notebook/cell/execute": [
@@ -881,6 +897,128 @@
           "command": "mdRunbook.stepThroughFromLine",
           "when": "resourceScheme == vscode-notebook-cell && resourceExtname == .md && editorLangId != markdown && !editorHasSelection",
           "group": "mdRunbook@2"
+        }
+      ],
+      "mdRunbook.toolbar.run": [
+        {
+          "command": "mdRunbook.resumeRun",
+          "group": "1_run@1"
+        },
+        {
+          "command": "mdRunbook.runAllAsCopy",
+          "group": "1_run@2"
+        },
+        {
+          "command": "mdRunbook.revealNextStep",
+          "group": "1_run@3"
+        },
+        {
+          "command": "mdRunbook.sessionMenu",
+          "group": "2_session@1"
+        },
+        {
+          "command": "mdRunbook.restartSession",
+          "group": "2_session@2"
+        },
+        {
+          "command": "mdRunbook.stopSession",
+          "group": "2_session@3"
+        },
+        {
+          "command": "mdRunbook.clearAllOutputs",
+          "group": "3_outputs@1"
+        }
+      ],
+      "mdRunbook.toolbar.values": [
+        {
+          "command": "mdRunbook.setParameters",
+          "group": "1_runbook@1"
+        },
+        {
+          "command": "mdRunbook.setInputs",
+          "group": "1_runbook@2"
+        },
+        {
+          "command": "mdRunbook.resetInputs",
+          "group": "1_runbook@3"
+        },
+        {
+          "command": "mdRunbook.setSecret",
+          "group": "2_secrets@1"
+        },
+        {
+          "command": "mdRunbook.listSecrets",
+          "group": "2_secrets@2"
+        },
+        {
+          "command": "mdRunbook.deleteSecret",
+          "group": "2_secrets@3"
+        }
+      ],
+      "mdRunbook.toolbar.assistant": [
+        {
+          "command": "mdRunbook.ai.suggestNextSteps",
+          "group": "1_ask@1",
+          "when": "notebookType == md-runbook && config.mdRunbook.ai.provider != off"
+        },
+        {
+          "command": "mdRunbook.ai.summarizeIncident",
+          "group": "1_ask@2",
+          "when": "notebookType == md-runbook && config.mdRunbook.ai.provider != off"
+        },
+        {
+          "command": "mdRunbook.copyForAi",
+          "group": "2_share@1"
+        },
+        {
+          "command": "mdRunbook.pasteAiProposal",
+          "group": "2_share@2"
+        },
+        {
+          "command": "mdRunbook.checkForLeaks",
+          "group": "2_share@3"
+        },
+        {
+          "command": "mdRunbook.revealProposal",
+          "group": "3_proposals@1",
+          "when": "mdRunbook.hasProposals"
+        },
+        {
+          "command": "mdRunbook.approveAllProposals",
+          "group": "3_proposals@2",
+          "when": "mdRunbook.hasProposals"
+        },
+        {
+          "command": "mdRunbook.ai.setAnthropicKey",
+          "group": "4_setup@1"
+        },
+        {
+          "command": "mdRunbook.ai.clearAnthropicKey",
+          "group": "4_setup@2"
+        }
+      ],
+      "mdRunbook.toolbar.share": [
+        {
+          "command": "mdRunbook.exportReport",
+          "group": "1_report@1"
+        },
+        {
+          "command": "mdRunbook.exportReportPdf",
+          "group": "1_report@2"
+        },
+        {
+          "command": "mdRunbook.signRunbook",
+          "group": "2_sign@1"
+        }
+      ],
+      "mdRunbook.toolbar.help": [
+        {
+          "command": "mdRunbook.getStarted",
+          "group": "1_help@1"
+        },
+        {
+          "command": "mdRunbook.openSample",
+          "group": "1_help@2"
         }
       ]
     },
@@ -1648,6 +1786,33 @@
       {
         "language": "bat",
         "when": "resourceExtname == .md && config.mdRunbook.lines.breakpoints"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "mdRunbook.toolbar.run",
+        "label": "Run",
+        "icon": "$(run-all)"
+      },
+      {
+        "id": "mdRunbook.toolbar.values",
+        "label": "Values",
+        "icon": "$(key)"
+      },
+      {
+        "id": "mdRunbook.toolbar.assistant",
+        "label": "Assistant",
+        "icon": "$(sparkle)"
+      },
+      {
+        "id": "mdRunbook.toolbar.share",
+        "label": "Share",
+        "icon": "$(export)"
+      },
+      {
+        "id": "mdRunbook.toolbar.help",
+        "label": "Help",
+        "icon": "$(question)"
       }
     ]
   },

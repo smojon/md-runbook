@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Every command is in the runbook's toolbar**, no command palette needed: **Run**, **Values**,
+  **Assistant**, **Share** and **Help** dropdowns next to Resume Run and the session switch.
+  Approve and Reject are in a cell's ⋯ menu while the runbook has proposals. New: **Get
+  Started** (the walkthrough) in Help.
+- **Set Inputs** asks for every `${input:NAME}` of the runbook, the current values filled in, to
+  set or change them before running; **Set Parameters** also covers parameters the cells use
+  without declaring them.
+
 ## 0.8.0
 
 - **Signed runbooks.** **md-runbook: Sign Runbook** (or `md-runbook sign`) signs a runbook's

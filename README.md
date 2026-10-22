@@ -67,7 +67,20 @@ To make it the default for some files, add for example
 `"workbench.editorAssociations": { "*.runbook.md": "md-runbook" }`.
 
 Run cells with the usual notebook controls: run cell, **Run All**, Run Above/Below.
-**md-runbook: Open as Markdown Text** switches back to the text editor.
+Everything else is in the runbook's toolbar, so you never need the command palette:
+
+| Toolbar | What's in it |
+| --- | --- |
+| **Resume Run**, **Session: on/off**, the Markdown icon | resume where a run stopped, switch session mode, open as text |
+| **Run** ▾ | Resume Run, Run All as Copy, Go to Next Step, Session…, Restart / Stop Session, Clear All Outputs |
+| **Values** ▾ | Set Parameters, Set Inputs, Reset Inputs, Set / List / Delete Secret |
+| **Assistant** ▾ | Suggest Next Steps, Summarize Incident, Copy for AI, Paste AI Proposal, Check for Leaks, proposals, the API key |
+| **Share** ▾ | Export Report (HTML, PDF), Sign Runbook |
+| **Help** ▾ | Get Started, Open Sample Runbook |
+
+A cell's **⋯** menu has its own actions (mark the step done or skipped, clear outputs above or
+below, compare with the previous run, explain the output, approve or reject a proposal), and
+each line of a code cell has its run buttons when you hover it.
 
 Everything md-runbook reads from a file (fence options, placeholders, front matter) and writes
 into it (output markers) is on one page: the [syntax reference](docs/syntax.md). Hand it to an

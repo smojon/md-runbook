@@ -364,6 +364,8 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
     this.changed.fire();
     const nb = vscode.window.activeNotebookEditor?.notebook;
     const n = nb?.notebookType === NOTEBOOK_TYPE && gateEnabled() ? this.pending(nb).length : 0;
+    // Shows the proposal commands in the toolbar's Assistant menu and the cells' ⋯ menus.
+    void vscode.commands.executeCommand('setContext', 'mdRunbook.hasProposals', n > 0);
     if (n === 0) return void this.item.hide();
     this.item.text = `$(shield) ${n} proposal${n === 1 ? '' : 's'}`;
     this.item.tooltip = 'Cells waiting for approval — click to go to the next one';
