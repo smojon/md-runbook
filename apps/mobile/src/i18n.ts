@@ -100,6 +100,8 @@ const en = {
     os: (_detail?: string) => 'For Windows · not run over SSH',
     skip: (_detail?: string) => 'Skipped (skip option)',
     invalid: (detail?: string) => `Invalid options: ${detail ?? ''}`,
+    proposed: (detail?: string) =>
+      `Proposed by ${detail ?? 'someone'} · not approved: it doesn't run until it is (Approve Proposed Cell in VS Code)`,
   },
   timedOutNote: (seconds: number) => `[md-runbook] timed out after ${seconds}s; the cell's processes were stopped`,
   checkFailedNote: (why: string) => `[md-runbook] check failed: ${why}`,

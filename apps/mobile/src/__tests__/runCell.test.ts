@@ -162,6 +162,21 @@ describe('line runs over SSH', () => {
   });
 });
 
+describe('runCell: proposed cells', () => {
+  it('a proposal, or an approval stamp that came with the file, never runs', async () => {
+    const conn = fakeConnection([{}]);
+    for (const info of [
+      'bash proposed by=ai reason="check"',
+      'bash proposed',
+      'bash approved-by=mallory approved-at=2026-01-01T00:00:00Z by=ai',
+    ]) {
+      const r = await runCell({ host, text: '```' + info + '\nrm -rf /tmp/x\n```\n', cellIndex: 0, connection: conn });
+      expect(r).toMatchObject({ kind: 'error', message: expect.stringMatching(/^Proposed by (ai|someone) · not approved/) });
+    }
+    expect(conn.calls).toHaveLength(0);
+  });
+});
+
 describe('runCell: signed runbooks', () => {
   const plain = ['```bash', 'echo one', 'echo two', '```', '', '```bash', 'echo other', '```', ''].join('\n');
   const built = buildManifest(plain, { name: 'ops/x', version: 2, scopes: [], patterns: {} });
