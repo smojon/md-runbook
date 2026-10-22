@@ -69,7 +69,9 @@ next line gets a new one.
 
 - VS Code **1.93 or newer** with terminal shell integration enabled
   (`terminal.integrated.shellIntegration.enabled`, on by default). Supported shells: bash
-  (including Git Bash), zsh and PowerShell. **cmd is not supported.**
+  (including Git Bash), zsh and PowerShell. **cmd** cells run too: cmd.exe has no shell
+  integration, so they run from a PowerShell terminal, each in a `cmd.exe` of its own (as cmd
+  cells always do), and prompts such as `set /p`, `pause` or `choice` are answered there.
 - If shell integration does not start within 10 seconds, the cell fails with an explanation
   instead of running blind.
 - Prompts and anything else the program prints become part of the saved output (redacted).
@@ -80,4 +82,4 @@ next line gets a new one.
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `mdRunbook.terminal.mode` | `"off"` | `off`: never use a terminal (a `terminal` cell runs normally, with a note in its output). `perCell`: cells with the `terminal` option. `always`: every bash/PowerShell cell (cmd and assistant-written cells still run normally). User settings only. |
+| `mdRunbook.terminal.mode` | `"off"` | `off`: never use a terminal (a `terminal` cell runs normally, with a note in its output). `perCell`: cells with the `terminal` option. `always`: every bash, PowerShell and cmd cell (assistant-written cells still run normally). User settings only. |

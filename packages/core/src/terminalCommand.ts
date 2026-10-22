@@ -70,6 +70,20 @@ export function terminalInlineCommandLine(kind: Exclude<ShellKind, 'cmd'>, scrip
   );
 }
 
+/**
+ * A `cmd` cell in a terminal: cmd.exe has no shell integration, so the terminal is PowerShell
+ * (which has) and the cell's batch file runs from it in a cmd.exe of its own, as cmd cells always
+ * do. Prompts (`set /p`, `pause`, `choice`) are answered in the terminal; PowerShell reports the
+ * end, and the batch file's exit code goes to `statusArg`. Typed into a PowerShell terminal.
+ */
+export function terminalCmdCommandLine(comspec: string, scriptArg: string, statusArg: string): string {
+  return (
+    `$global:LASTEXITCODE = 0; & ${quotePwsh(comspec)} /d /c ${quotePwsh(scriptArg)}; ` +
+    `Set-Content -NoNewline -Path ${quotePwsh(statusArg)} -Value $(if ($LASTEXITCODE) { $LASTEXITCODE } else { 0 }); ` +
+    'Start-Sleep -Milliseconds 500'
+  );
+}
+
 /** The exit code a terminal command wrote with terminalCommandLine, if any. */
 export function parseStatus(text: string | undefined): number | undefined {
   const n = Number((text ?? '').trim());

@@ -1,7 +1,11 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { quotePwsh, quoteSh, terminalCommandLine, terminalInlineCommandLine, terminalSignature } from '@md-runbook/core/terminalCommand';
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { quotePwsh, quoteSh, terminalCmdCommandLine, terminalCommandLine, terminalInlineCommandLine, terminalSignature } from '@md-runbook/core/terminalCommand';
 
 it('quotes script paths for bash and PowerShell', () => {
   assert.equal(quoteSh("/tmp/it's here/cell.sh"), `'/tmp/it'\\''s here/cell.sh'`);
@@ -90,4 +94,21 @@ describe('terminalInlineCommandLine', () => {
     assert.ok(line.includes("Set-Content -NoNewline -Path '/t/status' -Value $(if ($LASTEXITCODE)"), line);
     assert.doesNotMatch(line, /-Command|-ExecutionPolicy/);
   });
+});
+
+it('runs cmd cells from a PowerShell terminal, in a cmd.exe of their own, and records the exit code', { skip: process.platform !== 'win32' && 'Windows only' }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mdrb term it's "));
+  try {
+    const script = path.join(dir, 'cell.cmd');
+    const status = path.join(dir, 'status');
+    fs.writeFileSync(script, '@echo off\r\necho from cmd\r\nexit /b 3\r\n');
+    const line = terminalCmdCommandLine(process.env.ComSpec ?? 'C:\Windows\System32\cmd.exe', script, status);
+    assert.match(line, /^\$global:LASTEXITCODE = 0; & '.*cmd\.exe' \/d \/c '.*it''s .*cell\.cmd'; Set-Content -NoNewline -Path '/);
+    // What a PowerShell terminal does with the typed line.
+    const r = spawnSync('powershell', ['-NoLogo', '-NoProfile', '-Command', line], { encoding: 'utf8' });
+    assert.match(r.stdout, /from cmd/);
+    assert.equal(fs.readFileSync(status, 'utf8'), '3');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

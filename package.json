@@ -1163,11 +1163,11 @@
             "enumDescriptions": [
               "Never run cells in a terminal; a cell with the `terminal` option runs normally, with a note in its output.",
               "Run cells marked ```bash terminal``` in a VS Code terminal, so prompts (passwords, confirmations) can be answered.",
-              "Run every bash/PowerShell cell in a VS Code terminal (cmd and assistant-written cells still run normally)."
+              "Run every bash, PowerShell and cmd cell in a VS Code terminal (assistant-written cells still run normally)."
             ],
             "default": "off",
             "scope": "machine",
-            "markdownDescription": "Run cells in a real VS Code terminal so interactive prompts work. **Off by default.** Needs VS Code 1.93+ terminal shell integration (bash, zsh, PowerShell; not cmd). Assistant-written cells never run in a terminal. User settings only.",
+            "markdownDescription": "Run cells in a real VS Code terminal so interactive prompts work. **Off by default.** Needs VS Code 1.93+ terminal shell integration (bash, zsh, PowerShell; cmd cells run from a PowerShell terminal). Assistant-written cells never run in a terminal. User settings only.",
             "order": 4
           },
           "mdRunbook.session.resetOnRunAll": {

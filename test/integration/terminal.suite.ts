@@ -59,6 +59,30 @@ test('terminal: a terminal cell answers an interactive prompt and its output is 
   }
 });
 
+test('terminal: a cmd cell runs from a PowerShell terminal and answers a prompt (Windows)', async () => {
+  if (!isWin) return;
+  await setConfig('terminal.mode', 'perCell');
+  try {
+    const uri = writeFile('term-cmd.md', '```cmd terminal\necho ready\nset /p n=Name: \necho hello %n%\nexit /b 4\n```\n');
+    const editor = await openRunbook(uri);
+    const cell = editor.notebook.cellAt(0);
+    const running = runCells(editor, 0, 1);
+    const terminal = await waitFor('md-runbook terminal', () => vscode.window.terminals.find((t) => t.name.startsWith('md-runbook: term-cmd.md')), 20_000);
+    await waitFor('cell to start', () => /ready/.test(outputText(cell)), 30_000);
+    await new Promise((r) => setTimeout(r, 1000));
+    terminal.sendText('ann');
+    const ok = await waitForRun(cell, 30_000);
+    await step('execute', running);
+    assert.equal(ok, false, outputText(cell));
+    assert.match(outputText(cell), /hello ann/);
+    assert.match(outputText(cell), /exit code 4/);
+    assert.match(outputText(cell), /cmd terminal/, 'status line names the cmd terminal');
+  } finally {
+    await setConfig('terminal.mode', undefined);
+    await closeAll();
+  }
+});
+
 test('terminal: assistant-written cells never run in a terminal', async () => {
   await setConfig('terminal.mode', 'perCell');
   await setConfig('approval.trustFileApprovals', true);

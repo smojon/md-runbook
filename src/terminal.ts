@@ -16,7 +16,15 @@ import { nodeShellEnv, resolveShell } from '@md-runbook/core/node';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { killTree } from '@md-runbook/core/node/runner';
-import { TerminalOutputFilter, descendants, parseStatus, terminalCommandLine, terminalInlineCommandLine, terminalSignature } from '@md-runbook/core/terminalCommand';
+import {
+  TerminalOutputFilter,
+  descendants,
+  parseStatus,
+  terminalCmdCommandLine,
+  terminalCommandLine,
+  terminalInlineCommandLine,
+  terminalSignature,
+} from '@md-runbook/core/terminalCommand';
 import { META_KEY } from './outputs';
 import { CellExecutor, CellPlan, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
 
@@ -119,12 +127,18 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
 
   const terminalExecutor: CellExecutor = {
     async execute(plan: CellPlan, io: ExecuteIO, ctx: PrepareContext): Promise<ExecuteResult> {
-      const kind = shellKindForLanguage(plan.language);
-      if (kind === undefined || kind === 'cmd') return notRun('cmd cells cannot run in a terminal (no shell integration); remove the terminal option.');
+      const cellKind = shellKindForLanguage(plan.language);
+      if (cellKind === undefined) return notRun('this cell has no shell to run in a terminal.');
       if (!win.onDidEndTerminalShellExecution) return notRun('Terminal mode needs VS Code 1.93 or newer (terminal shell integration).');
+      // cmd.exe has no shell integration: a cmd cell runs from a PowerShell terminal, in a cmd.exe
+      // of its own (as cmd cells always do), its batch file written as for a normal run.
+      const cmd = cellKind === 'cmd' ? resolveShell('cmd', plan.shell, nodeShellEnv()) : undefined;
+      if (cmd && !cmd.ok) return notRun(cmd.error);
+      const kind = cellKind === 'cmd' ? 'pwsh' : cellKind;
       const resolved = resolveShell(kind, plan.shell, nodeShellEnv());
       if (!resolved.ok) return notRun(resolved.error);
       const shell = resolved.shell;
+      const script = cmd?.ok ? cmd.shell : shell;
 
       const started = Date.now();
       let timedOut = false;
@@ -135,7 +149,7 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
         timedOut,
         cancelled,
         durationMs: Date.now() - started,
-        shell: { ...shell, label: `${shell.label} terminal` },
+        shell: { ...script, label: `${script.label} terminal` },
         ...(error !== undefined ? { error } : {}),
       });
       if (cancelled) return result(null);
@@ -192,15 +206,17 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
         }
 
         dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-runbook-term-'));
-        const scriptPath = path.join(dir, `cell-${crypto.randomBytes(4).toString('hex')}${shell.extension}`);
-        fs.writeFileSync(scriptPath, shell.script(plan.source), 'utf8');
+        const scriptPath = path.join(dir, `cell-${crypto.randomBytes(4).toString('hex')}${script.extension}`);
+        fs.writeFileSync(scriptPath, script.script(plan.source), 'utf8');
         const statusPath = path.join(dir, 'status');
         // bash gets paths in the form its args use (forward slashes for Git Bash); pwsh native paths.
         const asArg = (p: string): string => (kind === 'bash' ? (shell.args(p)[0] ?? p) : p);
 
-        const commandLine = ctx.lineRun
-          ? terminalInlineCommandLine(kind, asArg(scriptPath), asArg(statusPath))
-          : terminalCommandLine(kind, shell.command, asArg(scriptPath), asArg(statusPath));
+        const commandLine = cmd?.ok
+          ? terminalCmdCommandLine(cmd.shell.command, scriptPath, statusPath)
+          : ctx.lineRun
+            ? terminalInlineCommandLine(kind, asArg(scriptPath), asArg(statusPath))
+            : terminalCommandLine(kind, shell.command, asArg(scriptPath), asArg(statusPath));
         const execution = integration.executeCommand(commandLine);
         let stopWaiting = (): void => undefined;
         const ended = new Promise<number | undefined>((resolve) => {
@@ -317,7 +333,6 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
         if (proposalOf(cellInfo(ctx.cell)).by !== undefined) {
           return asked ? Promise.resolve(notRun('cells written by an assistant never run in a terminal.')) : base.execute(plan, io, ctx);
         }
-        if (mode === 'always' && !asked && shellKindForLanguage(plan.language) === 'cmd') return base.execute(plan, io, ctx);
         return terminalExecutor.execute(plan, io, ctx);
       },
     };

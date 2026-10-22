@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Terminal mode for `cmd` cells:** they run from a PowerShell terminal (cmd.exe has no shell
+  integration), each in a `cmd.exe` of its own, so prompts like `set /p`, `pause` or `choice` can
+  be answered there; `terminal.mode: always` now includes them.
 - **Signed runbooks can use `${input:NAME}` and `${out:NAME}`**, each with a pattern like a
   parameter: the app sends the typed or captured value to md-runbook-gate, which checks it
   against the signed pattern. Sign Runbook asks for the missing patterns. Secrets
