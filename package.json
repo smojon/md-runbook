@@ -371,6 +371,12 @@
         "icon": "$(book)"
       },
       {
+        "command": "mdRunbook.openCheatSheet",
+        "title": "Cheat Sheet",
+        "category": "md-runbook",
+        "icon": "$(list-unordered)"
+      },
+      {
         "command": "mdRunbook.openSample",
         "title": "Open Sample Runbook",
         "category": "md-runbook"
@@ -1017,8 +1023,12 @@
           "group": "1_help@1"
         },
         {
-          "command": "mdRunbook.openSample",
+          "command": "mdRunbook.openCheatSheet",
           "group": "1_help@2"
+        },
+        {
+          "command": "mdRunbook.openSample",
+          "group": "1_help@3"
         }
       ]
     },

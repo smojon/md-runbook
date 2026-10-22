@@ -76,11 +76,12 @@ Everything else is in the runbook's toolbar, so you never need the command palet
 | **Values** ▾ | Set Parameters, Set Inputs, Reset Inputs, Set / List / Delete Secret |
 | **Assistant** ▾ | Suggest Next Steps, Summarize Incident, Copy for AI, Paste AI Proposal, Check for Leaks, proposals, the API key |
 | **Share** ▾ | Export Report (HTML, PDF), Sign Runbook |
-| **Help** ▾ | Get Started, Open Sample Runbook |
+| **Help** ▾ | Get Started, Cheat Sheet, Open Sample Runbook |
 
 A cell's **⋯** menu has its own actions (mark the step done or skipped, clear outputs above or
 below, compare with the previous run, explain the output, approve or reject a proposal), and
-each line of a code cell has its run buttons when you hover it.
+each line of a code cell has its run buttons when you hover it. The
+**[cheat sheet](docs/cheatsheet.md)** lists every action, where it is, and when it matters.
 
 Everything md-runbook reads from a file (fence options, placeholders, front matter) and writes
 into it (output markers) is on one page: the [syntax reference](docs/syntax.md). Hand it to an

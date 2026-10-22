@@ -5,7 +5,9 @@
 - **Every command is in the runbook's toolbar**, no command palette needed: **Run**, **Values**,
   **Assistant**, **Share** and **Help** dropdowns next to Resume Run and the session switch.
   Approve and Reject are in a cell's ⋯ menu while the runbook has proposals. New: **Get
-  Started** (the walkthrough) in Help.
+  Started** (the walkthrough) and **Cheat Sheet** in Help.
+- **Cheat sheet** (`docs/cheatsheet.md`, Help ▸ Cheat Sheet): every action of the extension, the
+  app and the command line, where it is, and when it matters to you.
 - **Set Inputs** asks for every `${input:NAME}` of the runbook, the current values filled in, to
   set or change them before running; **Set Parameters** also covers parameters the cells use
   without declaring them.

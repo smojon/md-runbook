@@ -12,6 +12,10 @@ export function registerWalkthrough(context: vscode.ExtensionContext): void {
       const nb = await vscode.workspace.openNotebookDocument(NOTEBOOK_TYPE, data);
       await vscode.window.showNotebookDocument(nb);
     }),
+    // Every action with when it matters (docs/cheatsheet.md, shipped with the extension).
+    vscode.commands.registerCommand('mdRunbook.openCheatSheet', () =>
+      vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.joinPath(context.extensionUri, 'docs', 'cheatsheet.md')),
+    ),
     // The Get Started page, from the toolbar's Help menu (menus can't pass the walkthrough's id).
     vscode.commands.registerCommand('mdRunbook.getStarted', () =>
       vscode.commands.executeCommand('workbench.action.openWalkthrough', `${context.extension.id}#gettingStarted`, false),

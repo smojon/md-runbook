@@ -1,0 +1,115 @@
+# md-runbook cheat sheet
+
+Every action, where to find it, and when it matters to you. **App** says whether the md-runbook
+app (iPhone, Android, browser) has it too.
+
+In VS Code everything starts from the **toolbar at the top of a runbook**: a few buttons, then
+the **Run**, **Values**, **Assistant**, **Share** and **Help** dropdowns. A cell's own actions
+are in its **⋯** menu, and each line of a code cell shows its actions when you hover it.
+
+## Opening a runbook
+
+| Action | Where | When it matters to you | App |
+| --- | --- | --- | --- |
+| **Open as Runbook** | right-click a `.md` in the Explorer; the notebook icon of a Markdown editor | You have a Markdown file with shell blocks and want to run them step by step, with the output kept in the file. | **Open a runbook…** on the start screen |
+| **Open as Markdown Text** | toolbar (Markdown icon) | You want to edit the raw file: fix a typo in prose, rearrange sections, review the diff. | — |
+| **Open Sample Runbook** | Help ▾ | You're new and want to try every feature on a safe file. Nothing is written until you save it. | the sample is on the start screen |
+| **Get Started** | Help ▾ | A short tour of the main features, the first time you use it. | — |
+| **Cheat Sheet** | Help ▾ | This page, inside VS Code: "is there a button for…?" | — |
+
+## Running
+
+| Action | Where | When it matters to you | App |
+| --- | --- | --- | --- |
+| **Run cell** / **Run All** / Run Above / Run Below | the cell's ▷, the toolbar's Run All (VS Code's own) | The normal way: run one step, or the whole procedure top to bottom. Run All stops at the first failure. | ▷ on each cell |
+| **Resume Run** | toolbar, Run ▾ | A step failed, you fixed the cause: carry on from the failed step without re-running the ones that worked. | — |
+| **Run All as Copy** | Run ▾ | The runbook is a template (a release checklist, an incident procedure): every run goes into a new dated copy, so the original stays clean and each run has its own record. | — |
+| **Go to Next Step** | Run ▾ | A long runbook: jump to the first step that isn't done yet. | — |
+| **Session: on / off** | toolbar | **On**: one shell for the whole runbook, so `cd`, variables and logins carry over from cell to cell, as in a terminal. **Off**: every cell starts clean, so the result never depends on an earlier cell. | always one shell per host |
+| **Session…**, **Restart Session**, **Stop Session** | Run ▾ | The session got into a bad state (wrong folder, a stuck login): start again from a clean shell without closing the runbook. | — |
+| **Clear All Outputs** | Run ▾, right-click the file in the Explorer | Before sharing or committing a runbook as a template, without the last run's output. | — |
+| **Clear Outputs Above** / **Clear Outputs Below** | cell ⋯ | You rerun the second half of a procedure and want to see clearly what ran this time. | — |
+| **Run Code Block in Text Editor** / **Run Code Block and Below in Text Editor** | ▶ Run above each block in the plain Markdown editor (turn on `mdRunbook.codeLens.enabled`) | You prefer editing the raw file and want to run a block without switching to the runbook view. | — |
+
+## Line by line
+
+| Action | Where | When it matters to you | App |
+| --- | --- | --- | --- |
+| **Run line** (▷ on the line) | hover a line | Run one command of a block, for example only the check, not the change. | tap a line → **Run line** |
+| **Run lines 1-N** / **Run lines N-end** | line hover | Run a block up to a point, or from a point on, after fixing one command. | tap a line |
+| **Step from here** / **Step Through Lines** | line hover; the cell's run dropdown | Risky changes: run one command, look at the result, then decide to continue. While it waits, the cell shows **Run Next Line** (F10), **Run Remaining Lines** (F5) and **Stop Stepping** (Shift+F5). | tap a line → Step from here / Step through, then Run next / Continue |
+| **Check** a line, **Run Checked Lines**, **Uncheck All Lines** | line hover; the cell's run dropdown | Pick a few commands out of a long block and run just those, in order. | tap a line → Check, then Run checked |
+| **Breakpoint** | line hover | The cell should run on its own but pause before one dangerous command. | — |
+| **Run Lines One by One** | the cell's run dropdown | Find which line of a block fails: stops at the first failing line and says which. | — |
+| **Run Selection**, **Step Through from Selection** | the cell's run dropdown, right-click in the code | You selected part of a command (a long pipeline) and want to try just that. | — |
+| **Run This Line**, **Step Through from This Line** | right-click in the code | The same as the line hover, from the keyboard focus or when you prefer menus. | — |
+| **Copy with values** | line hover | Paste a command into a terminal or a ticket with the parameters filled in (secrets stay as references). | — |
+| **Run Line or Selection**: Ctrl+Alt+Enter (⌘⌥Enter) | in a cell | Run the line under the cursor or the selection without the mouse. | — |
+
+## Steps and progress
+
+| Action | Where | When it matters to you | App |
+| --- | --- | --- | --- |
+| **Mark Step Done** / **Mark Step Skipped** / **Unmark Step** | cell ⋯ | Steps you do by hand (call the vendor, check a dashboard): record them, so progress and Resume Run know where you are. | — |
+| **Check Next Item** | ⋯ of a Markdown cell | Tick the next `- [ ]` item of a checklist without editing the text. | tap the task box |
+| **Compare With Previous Run** | cell ⋯ | "Was it like this yesterday?": diff the output with the run before (with output history turned on). | — |
+
+## Values: parameters, inputs, secrets
+
+| Action | Where | When it matters to you | App |
+| --- | --- | --- | --- |
+| **Set Parameters** | Values ▾ | One runbook for several targets (`${param:NAMESPACE}`, `${param:REGION}`): set them once before running, instead of answering a prompt per cell. | the **Parameters** card on the runbook |
+| **Set Inputs** | Values ▾ | Values that differ per run (a ticket number, a user name, `${input:NAME}`): set or change them before running. | asked when a cell needs one; the **Inputs** card shows, changes and clears them |
+| **Reset Inputs** | Values ▾ | You start a new run with other values: forget this runbook's inputs and parameters, so they're asked again. | **Clear all inputs** on the Inputs card |
+| **Set Secret** | Values ▾ | Store a token or password once (`${secret:NAME}`) in the OS keychain, instead of pasting it into commands. Setting it again changes it. | asked the first time; **Hosts → Secrets → Add a secret / Change** |
+| **List Secrets** | Values ▾ | See which secrets are stored (never their values) and copy a `${secret:NAME}` reference to write into a cell. | Hosts → Secrets |
+| **Delete Secret** | Values ▾ | A token was rotated or should no longer be used on this machine. | Hosts → Secrets → **Forget** |
+
+Values never become part of the script: they reach the shell as environment variables, and
+secret values are redacted from the output.
+
+## Assistant (AI)
+
+| Action | Where | When it matters to you | App |
+| --- | --- | --- | --- |
+| **Suggest Next Steps** | Assistant ▾, cell ⋯ | You're stuck in an incident: get proposed commands as cells that only run after you approve them. Needs an AI provider. | — |
+| **Explain Output** / **Explain** (a line) | cell ⋯ / line hover | An error or an output you don't understand: get it explained next to the runbook. | — |
+| **Summarize Incident** | Assistant ▾ | Write the findings of an incident at the end of the runbook, as a draft to edit. | — |
+| **Copy for AI** / **Copy Cell for AI** | Assistant ▾ / the cell's copy icon | Use the chat assistant you already have: copy the runbook with names pseudonymized and secrets removed. | — |
+| **Paste AI Proposal** | Assistant ▾ | Bring the assistant's answer back: its code blocks become proposed cells, with the real names restored. | — |
+| **Check for Leaks** | Assistant ▾ | Before you share a runbook or its output: find tokens, keys and internal host names in it. | — |
+| **Approve Proposed Cell** / **Reject Proposed Cell**, **Approve All Proposals**, **Go to Next Proposal** | cell ⋯ and the cell's status line / Assistant ▾ (when there are proposals) | Commands written by an assistant or a colleague never run until you read and approve them. | — |
+| **Set Anthropic API Key** / **Clear Anthropic API Key** | Assistant ▾ | Using Claude directly as the AI provider. | — |
+
+## Share
+
+| Action | Where | When it matters to you | App |
+| --- | --- | --- | --- |
+| **Export Report (HTML)** / **Export Report (PDF)** | Share ▾, right-click the file in the Explorer | Send the result of a run to someone without VS Code: a change record, an incident report, an audit. | — |
+| **Sign Runbook** | Share ▾ | Release a runbook for a support team: servers restricted to md-runbook-gate run only signed runbooks, unchanged. See [signed runbooks](https://github.com/smojon/md-runbook/blob/main/docs/features/signed-runbooks.md). | shows who signed it and which blocks changed |
+| Save | Ctrl+S | Outputs are written into the `.md` file: commit it, and the run is in Git. | **Save to the file** (or **Download** in browsers that can't write files) |
+
+## Only in the app
+
+| Action | Where | When it matters to you |
+| --- | --- | --- |
+| **Add a host**, edit, **Delete this host** | Hosts | Each server you run on, once: name, address, user. |
+| **Run on** (host chips) | top of a runbook | Pick the server the cells run on. A cell with `host=NAME` always runs on that one. |
+| **Trust and run** | shown on the first connection | Check the server's fingerprint before anything is sent. If a known server's key changes, the app stops and tells you. |
+| **Forget the trusted host key** | Hosts → a host | The server was reinstalled and has a new key on purpose. |
+| **This app's SSH key → Copy** | Hosts | Put the app's public key into `~/.ssh/authorized_keys` on each server. On phones the private key stays in secure hardware. |
+| **Relay** address and token | Hosts (browser only) | The browser can't open SSH connections itself: it goes through your relay. |
+| **Remove** a runbook | start screen | Take a runbook off the app (it asks if it has unsaved changes). |
+
+## Command line
+
+| Command | When it matters to you |
+| --- | --- |
+| `md-runbook run file.md` | Run a runbook in CI, on a server or on a schedule, with the outputs written into the file (`--report`, `--junit`, `--param`, `--notify`). |
+| `md-runbook lint file.md` | Catch typos in cell options and missing values before anyone runs it, in a pull request. |
+| `md-runbook sign file.md --key KEY` | Release a runbook for servers with md-runbook-gate, from your machine or from CI. |
+| `md-runbook verify file.md` | Check what a signature covers and which blocks changed since signing. |
+
+More: [command line](https://github.com/smojon/md-runbook/blob/main/docs/features/cli.md),
+[file format](https://github.com/smojon/md-runbook/blob/main/docs/syntax.md), and the feature
+pages linked from the [README](https://github.com/smojon/md-runbook#more-features).

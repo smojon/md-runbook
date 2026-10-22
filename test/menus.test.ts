@@ -1,7 +1,8 @@
 /**
  * Every command has a visible place, so new users find it without the command palette: the
  * runbook toolbar (its buttons and dropdowns), a cell's menus, the editor's context menu, the
- * explorer. The few that live elsewhere are listed with where they are.
+ * explorer. The few that live elsewhere are listed with where they are. And the cheat sheet
+ * (docs/cheatsheet.md, Help ▸ Cheat Sheet) names every one.
  */
 import { strict as assert } from 'node:assert';
 import * as fs from 'node:fs';
@@ -43,6 +44,23 @@ describe('menus', () => {
     }
     const hidden = commands.map((c) => c.command).filter((c) => !shown.has(c) && !(c in ELSEWHERE));
     assert.deepEqual(hidden, [], 'give these a menu place (the toolbar dropdowns are the default)');
+  });
+
+  it('the cheat sheet names every command (by its title, or by the label it has in the line hover)', () => {
+    const sheet = fs.readFileSync(path.resolve(__dirname, '..', '..', 'docs', 'cheatsheet.md'), 'utf8');
+    // Shown under another label: the line hover's links, the one Session: on / off button.
+    const LABELS: Record<string, string> = {
+      'mdRunbook.toggleSessionMode': 'Session: on / off',
+      'mdRunbook.sessionModeOff': 'Session: on / off',
+      'mdRunbook.toggleLineCheck': '**Check** a line',
+      'mdRunbook.ai.explainLine': '**Explain** (a line)',
+      'mdRunbook.runFromLineAt': 'Run lines N-end',
+      'mdRunbook.runToLineAt': 'Run lines 1-N',
+      'mdRunbook.toggleBreakpointAt': '**Breakpoint**',
+      'mdRunbook.copyLineAt': '**Copy with values**',
+    };
+    const missing = commands.filter((c) => !sheet.includes(LABELS[c.command] ?? c.title)).map((c) => `${c.command} (${c.title})`);
+    assert.deepEqual(missing, [], 'add these to docs/cheatsheet.md, with when they matter');
   });
 
   it('menus only name commands and submenus that exist, and every submenu is placed and filled', () => {
