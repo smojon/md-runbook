@@ -35,18 +35,9 @@ $log = Join-Path $d 'sshd.log'
 # Config errors first: the service only says it failed.
 & $sshd -t -f $config
 if ($LASTEXITCODE) { throw "sshd -t: the config is not valid ($config)" }
-# The Windows service, with this config: logins as the runner's user, through cmd.exe (the default
-# shell). Its command line set in the registry (sc.exe's quoting rules mangle quoted paths).
-Stop-Service sshd -ErrorAction SilentlyContinue
-Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\sshd' -Name ImagePath -Value "`"$sshd`" -f `"$config`" -E `"$log`""
-try {
-  Start-Service sshd
-} catch {
-  Write-Host "sshd did not start: $_"
-  if (Test-Path $log) { Get-Content $log }
-  Get-WinEvent -LogName 'OpenSSH/Operational' -MaxEvents 20 -ErrorAction SilentlyContinue | Format-List TimeCreated, Message
-  exit 1
-}
+# sshd as this user, not as the Windows service: it then accepts logins of this user only, which
+# is all the tests need (the service with this config fails to start on the runners, without a reason).
+Start-Process -FilePath $sshd -ArgumentList @('-f', "`"$config`"", '-E', "`"$log`"") -WindowStyle Hidden
 for ($i = 0; $i -lt 20; $i++) {
   if ((Test-NetConnection 127.0.0.1 -Port 2222 -WarningAction SilentlyContinue).TcpTestSucceeded) {
     Write-Host 'sshd is listening on 127.0.0.1:2222'
