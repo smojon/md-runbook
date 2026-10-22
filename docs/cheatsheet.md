@@ -28,9 +28,9 @@ action by the same groups, with a search field (Ctrl/⌘+K with a keyboard).
 | --- | --- | --- | --- |
 | **Run cell** / **Run All** / Run Above / Run Below | the cell's ▷, the toolbar's Run All (VS Code's own) | The normal way: run one step, or the whole procedure top to bottom. Run All stops at the first failure. | ▷ on each cell; **▶ Run all** at the top of the runbook |
 | **Resume Run** | toolbar, Run ▾ | A step failed, you fixed the cause: carry on from the failed step without re-running the ones that worked. | **▶ Continue** at the top after a stop; ⋯ More → Resume Run |
-| **Run All as Copy** | Run ▾ | The runbook is a template (a release checklist, an incident procedure): every run goes into a new dated copy, so the original stays clean and each run has its own record. | — |
+| **Run All as Copy** | Run ▾ | The runbook is a template (a release checklist, an incident procedure): every run goes into a new dated copy, so the original stays clean and each run has its own record. | ⋯ More → Run All as Copy (the copy opens and runs) |
 | **Go to Next Step** | Run ▾ | A long runbook: jump to the first step that isn't done yet. | ⋯ More → Go to Next Step |
-| **Session: on / off** | toolbar | **On**: one shell for the whole runbook, so `cd`, variables and logins carry over from cell to cell, as in a terminal. **Off**: every cell starts clean, so the result never depends on an earlier cell. | always one shell per host |
+| **Session: on / off** | toolbar | **On**: one shell for the whole runbook, so `cd`, variables and logins carry over from cell to cell, as in a terminal. **Off**: every cell starts clean, so the result never depends on an earlier cell. | ⋯ More → Session: on / off (the front matter’s mode: decides at first) |
 | **Session…**, **Restart Session**, **Stop Session** | Run ▾ | The session got into a bad state (wrong folder, a stuck login): start again from a clean shell without closing the runbook. | ⋯ More → Restart Session |
 | **Clear All Outputs** | Run ▾, right-click the file in the Explorer | Before sharing or committing a runbook as a template, without the last run's output. | ⋯ More → Clear All Outputs |
 | **Clear Outputs Above** / **Clear Outputs Below** | cell ⋯ | You rerun the second half of a procedure and want to see clearly what ran this time. | the cell’s ⋯ (or a long press) |

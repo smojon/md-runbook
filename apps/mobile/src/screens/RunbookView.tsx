@@ -14,6 +14,7 @@ import {
   taskItems,
 } from '@md-runbook/core';
 import { isManualMark } from '@md-runbook/core/progress';
+import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, signedStatus } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
@@ -28,7 +29,7 @@ import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
 import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } from '../runbooks/params';
 import { canDownload } from '../runbooks/files';
 import { saveRunbook } from '../runbooks/save';
-import { getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
+import { addRunbook, getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { fingerprint } from '../ssh/fingerprint';
 import { LineMode, isStepping, planLines } from '../ssh/lineRuns';
 import { runnability } from '../ssh/cells';
@@ -77,7 +78,13 @@ interface Trust {
 }
 
 /** A runbook drawn like VS Code's notebook: Markdown cells rendered, code cells that run over SSH. */
-export function RunbookView({ id }: { id: string | undefined }) {
+/** `yyyyMMdd-HHmmss`, local time: the extension's name for a run copy. */
+export function copyStamp(d: Date): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+export function RunbookView({ id, autorun = false }: { id: string | undefined; autorun?: boolean }) {
   const styles = useStyles();
   const runbook = useRunbooks().find((r) => r.id === id);
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
@@ -113,6 +120,14 @@ export function RunbookView({ id }: { id: string | undefined }) {
   const [transportIssue, setTransportIssue] = useState<string | undefined>();
   /** Checked commands per cell index (their texts), for this screen's life, as in the extension's session. */
   const [checks, setChecks] = useState<ReadonlyMap<number, ReadonlySet<string>>>(new Map());
+  /**
+   * session: one shell per host for the whole runbook (cd and variables carry over); isolated:
+   * each cell in a fresh shell. The front matter's `mode:` decides, as in the extension; without
+   * one the app keeps the session (a new connection per cell costs time on a phone).
+   */
+  const [sessionMode, setSessionMode] = useState<'session' | 'isolated'>(
+    () => (runbook && parseFrontMatter(runbook.text)?.mode) || 'session',
+  );
   useEffect(() => {
     let live = true;
     void transportReady().then((why) => live && setTransportIssue(why));
@@ -202,6 +217,8 @@ export function RunbookView({ id }: { id: string | undefined }) {
                   }));
                 })
         : undefined;
+    // Session off: this cell gets a shell of its own.
+    if (sessionMode === 'isolated') await disconnect(target.id);
     const outcome = await runCell({
       host: target,
       text: runbook.text,
@@ -290,6 +307,13 @@ export function RunbookView({ id }: { id: string | undefined }) {
     run,
     ...(disabled ? { disabled } : {}),
   });
+  /** Run All as Copy: the runbook without outputs under a dated name, opened and run at once. */
+  const runAsCopy = (): void => {
+    if (!runbook) return;
+    const base = (runbook.fileName ?? `${runbook.title}.md`).replace(/(\.\d{8}-\d{6})?\.md$/i, '');
+    const copy = addRunbook(`${base}.${copyStamp(new Date())}.md`, clearOutputBlocks(runbook.text));
+    router.push({ pathname: '/runbook/[id]', params: { id: copy.id, autorun: '1' } });
+  };
   const actions: AppAction[] = runbook
     ? [
         queued || running
@@ -313,6 +337,10 @@ export function RunbookView({ id }: { id: string | undefined }) {
           },
           hosts.some((h) => isConnected(h.id)) ? undefined : t.noSessionOpen,
         ),
+        sessionMode === 'session'
+          ? action('sessionOff', 'run', () => setSessionMode('isolated'))
+          : action('sessionOn', 'run', () => setSessionMode('session')),
+        action('runAllAsCopy', 'run', () => runAsCopy(), host ? undefined : t.noRunNow),
         action('clearAllOutputs', 'run', () => updateRunbookText(runbook.id, clearOutputBlocks(runbook.text))),
         action(
           'checkNextItem',
@@ -378,6 +406,13 @@ export function RunbookView({ id }: { id: string | undefined }) {
     if (running?.paused) running.paused.stop();
     else running?.abort.abort();
   };
+  // Run All as Copy opened this copy: run it once, as soon as a host is there.
+  const autorunDone = useRef(false);
+  useEffect(() => {
+    if (!autorun || autorunDone.current || !runbook || !host) return;
+    autorunDone.current = true;
+    runSequence('start');
+  });
   const runRef = useRef(run);
   // Run all calls the newest render's run (its runbook text and values), not the first one's.
   useEffect(() => {

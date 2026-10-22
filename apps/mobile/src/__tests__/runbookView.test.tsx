@@ -5,7 +5,7 @@ import { addHost, resetHosts } from '../hosts/store';
 import { resetParamValues } from '../runbooks/params';
 import { readSecret } from '../secrets/store';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
-import { RunbookView } from '../screens/RunbookView';
+import { RunbookView, copyStamp } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
 
 jest.mock('expo-router', () => ({
@@ -155,6 +155,62 @@ describe("a cell's ⋯ (or long press): steps and outputs", () => {
       fireEvent.press(screen.getByTestId('action-checkNextItem'));
     });
     expect(getRunbook(r.id)!.text).toContain('- [x] ticket');
+  });
+});
+
+describe('sessions and Run All as Copy', () => {
+  const { disconnect } = jest.requireMock<{ disconnect: jest.Mock }>('../ssh/connections');
+  const { router } = jest.requireMock<{ router: { push: jest.Mock } }>('expo-router');
+  const menu = async (id: string) => {
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(`action-${id}`));
+    });
+  };
+
+  it('Session: off gives each cell a fresh shell; mode: isolated in the front matter starts that way', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const r = addRunbook('s.md', '# S\n\n```bash\necho one\n```\n');
+    await render(<RunbookView id={r.id} />);
+    disconnect.mockClear();
+    await menu('sessionOff');
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(1));
+    expect(disconnect).toHaveBeenCalledTimes(1);
+    const iso = addRunbook('i.md', '---\nmode: isolated\n---\n\n```bash\necho one\n```\n');
+    await render(<RunbookView id={iso.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    expect(screen.getByTestId('action-sessionOn')).toBeTruthy();
+  });
+
+  it('Run All as Copy makes a dated copy without outputs and opens it to run; the copy runs at once', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const r = addRunbook(
+      'deploy.md',
+      '# D\n\n```bash\necho one\n```\n<!-- md-runbook:output start exit=0 -->\n```text\nold\n```\n<!-- md-runbook:output end -->\n',
+    );
+    await render(<RunbookView id={r.id} />);
+    router.push.mockClear();
+    await menu('runAllAsCopy');
+    const pushed = router.push.mock.calls[0]?.[0] as { params: { id: string; autorun: string } };
+    expect(pushed.params.autorun).toBe('1');
+    const copy = getRunbook(pushed.params.id)!;
+    expect(copy.fileName).toMatch(/^deploy\.\d{8}-\d{6}\.md$/);
+    expect(parse(copy.text).cells[1]?.output).toBeUndefined();
+    expect(parse(getRunbook(r.id)!.text).cells[1]?.output?.text).toBe('old');
+    script([{ stdout: 'new\n' }]);
+    await render(<RunbookView id={copy.id} autorun />);
+    await waitFor(() => expect(parse(getRunbook(copy.id)!.text).cells[1]?.output?.text).toBe('new'));
+  });
+
+  it('copyStamp is the extension’s yyyyMMdd-HHmmss', () => {
+    expect(copyStamp(new Date(2026, 9, 22, 8, 5, 9))).toBe('20261022-080509');
   });
 });
 
