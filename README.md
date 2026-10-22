@@ -167,6 +167,10 @@ Each has its own page with examples and settings:
   runbooks on iPhone, Android and the web, run on your servers over SSH, with the SSH key kept
   in the phone's secure hardware. `host=NAME` cells are for the app: the extension and the CLI
   never run them.
+- **[Signed runbooks](docs/features/signed-runbooks.md):** sign a runbook (**Sign Runbook**, or
+  `md-runbook sign`) and ship it anywhere; servers whose support keys are restricted to
+  `md-runbook-gate` run only runbooks signed by keys they trust, unchanged, with scopes,
+  expiry, revocation and a log of every run.
 - **[Secrets, inputs, parameters and `.env`](docs/features/secrets.md):** keep secrets in the OS
   keychain and reference them as `${secret:NAME}`. They reach the cell as environment variables,
   never as script text, and are redacted by exact value. `${input:NAME}` prompts once per session,

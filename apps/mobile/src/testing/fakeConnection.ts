@@ -1,5 +1,5 @@
 /** A Connection whose session runs cells in a scripted way, for tests without a server. */
-import type { RemoteRunOptions, RemoteSession, SessionRunResult } from '@md-runbook/ssh';
+import type { RemoteRunOptions, RemoteSession, SessionRunResult, SignedRun } from '@md-runbook/ssh';
 import type { Connection } from '../ssh/connections';
 
 export interface FakeRun {
@@ -18,8 +18,8 @@ export interface FakeRun {
 
 export function fakeConnection(
   script: FakeRun[] = [{ stdout: 'hello\n', exitCode: 0 }],
-): Connection & { calls: { source: string; opts: RemoteRunOptions }[] } {
-  const calls: { source: string; opts: RemoteRunOptions }[] = [];
+): Connection & { calls: { source: string; opts: RemoteRunOptions; signed?: SignedRun }[] } {
+  const calls: { source: string; opts: RemoteRunOptions; signed?: SignedRun }[] = [];
   let i = 0;
   const conn = {
     calls,
@@ -27,8 +27,8 @@ export function fakeConnection(
     changed: undefined as boolean | undefined,
     session: {
       isConnected: true,
-      async run(source: string, opts: RemoteRunOptions = {}): Promise<SessionRunResult> {
-        calls.push({ source, opts });
+      async run(source: string, opts: RemoteRunOptions = {}, signed?: SignedRun): Promise<SessionRunResult> {
+        calls.push({ source, opts, ...(signed ? { signed } : {}) });
         const step = script[Math.min(i++, script.length - 1)] ?? {};
         if (step.unknownHostKey) {
           conn.unknownHostKey = step.unknownHostKey;

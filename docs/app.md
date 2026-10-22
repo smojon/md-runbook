@@ -61,6 +61,13 @@ A browser can't open SSH connections, so the web app goes through a small relay 
 yourself ([apps/relay](../apps/relay/README.md)). SSH still runs in the browser: the relay only
 sees encrypted traffic, and it only connects to the servers on its list.
 
+## Signed runbooks
+
+A runbook signed with **Sign Runbook** or `md-runbook sign` shows who signed which version, and
+any blocks changed since. On a server whose key is restricted to md-runbook-gate, the app runs
+the signed blocks by their number in the signed manifest, and the gate refuses anything else;
+the app finds the gate by itself. See [signed runbooks](features/signed-runbooks.md).
+
 ## Saving
 
 <img src="app/web-saved.png" width="720" alt="A runbook opened from a file, with Saved and Save to the file">

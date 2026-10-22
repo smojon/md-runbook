@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Signed runbooks.** **md-runbook: Sign Runbook** (or `md-runbook sign`) signs a runbook's
+  bash blocks with an SSH key (`ssh-keygen -Y sign`) and writes the signature at the end of the
+  file, invisible on screen. Servers whose support keys are restricted to the new
+  **md-runbook-gate** (`apps/gate`, one POSIX `sh` script) run only runbooks signed by keys
+  they trust, unchanged, with scopes, expiry dates, revoked releases, patterns for
+  `${param:NAME}`, and a JSON log of every run; unsigned blocks can be allowed per server or per
+  key. `md-runbook verify` shows what a signature covers; lint and the editor warn about blocks
+  changed since signing. New cell option `lines=any` (single lines of a signed block may run)
+  and setting `mdRunbook.signing.key`. See `docs/features/signed-runbooks.md`.
+- **Lint:** `host=` is a known cell option (it was reported as unknown).
+
 ## 0.7.0
 
 - **`host=NAME` blocks** are for the md-runbook app, which runs them on that host over SSH. The

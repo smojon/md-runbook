@@ -60,6 +60,23 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 `md-runbook lint file.md…` checks runbooks without running anything; see
 [Checking runbooks](lint.md).
 
+## Signing runbooks
+
+`md-runbook sign file.md --key KEY` signs a runbook for servers that run md-runbook-gate, and
+`md-runbook verify file.md [--allowed-signers FILE]` shows what a signature covers and which
+blocks changed since; see [Signed runbooks](signed-runbooks.md).
+
+| Option of `sign` | Meaning |
+| --- | --- |
+| `--key KEY` | Private key, or a `.pub` whose key is in the SSH agent (`ssh-keygen -Y sign`) |
+| `--signer NAME` | Name shown as the signer (default: the key's comment) |
+| `--name NAME` | Runbook name, e.g. `ops/restart-api` (default: the file name) |
+| `--version N` | Version (default: the previous one + 1, else 1) |
+| `--expires DATE`, `--expires-in DAYS` | Last day it may run (UTC) |
+| `--scope NAME` | Where it may run (repeatable) |
+| `--pattern NAME=RE` | What `${param:NAME}` may be: a POSIX extended regex for the whole value |
+| `--out FILE` | Write the signed runbook to FILE instead |
+
 ## What runs, what doesn't
 
 - **Placeholders** never prompt. `${secret:NAME}` and `${input:NAME}` come from the environment

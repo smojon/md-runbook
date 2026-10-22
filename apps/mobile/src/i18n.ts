@@ -107,6 +107,15 @@ const en = {
   noHostNamed: (name: string) => `This cell runs on the host ${name} (host=), and there is no host with that name. Add it under Hosts.`,
   cellChanged: 'The cell changed while it ran: its output was not written',
 
+  // Signed runbooks (md-runbook-gate)
+  signedTitle: (name: string, version: number, signer: string) => `Signed runbook ${name}, version ${version}, by ${signer}`,
+  signedUntil: (date: string) => `Valid until ${date}.`,
+  signedBody: 'Servers that run md-runbook-gate check the signature and run only the signed blocks.',
+  signedChanged: (n: number) =>
+    n === 1
+      ? '1 block changed since signing: servers that run signed runbooks only refuse it.'
+      : `${n} blocks changed since signing: servers that run signed runbooks only refuse them.`,
+
   // Code cells (the VS Code-like view)
   runCell: 'Run cell',
   stopCell: 'Stop',

@@ -108,6 +108,7 @@ Tokens are separated by spaces or tabs. There are three forms:
 | `capture-secret=…` | as `capture=` | The same, redacted everywhere and never written to disk. |
 | `os=LIST` | `windows`, `linux`, `macos`, comma-separated; also `win`, `win32`, `mac`, `osx`, `darwin` | Run only on these systems. Adjacent `os=` blocks with no OS repeated are alternatives of one step. |
 | `host=NAME` | a host's name in the md-runbook app; quote it if it has spaces | The md-runbook app runs the block on that host over SSH, whichever host is selected. The VS Code extension and the CLI run cells on the local machine, so they never run such a block: it counts as skipped. |
+| `lines=any` | the word `any` | In a signed runbook: servers with md-runbook-gate also run single lines and ranges of this block (otherwise only the whole block, or its commands in order). See [signed runbooks](features/signed-runbooks.md). |
 | `retry=N` | integer 1 to 100 | Run up to N times in all until it passes. |
 | `every=D` | `15s`, `500ms`, `2m`, or seconds as a number; at most 1 hour | Wait between attempts (default 5 s). Only with `retry=`. |
 | `proposed` | flag | The cell was written by an assistant or a colleague and needs approval before it runs. |
@@ -261,6 +262,29 @@ new approval. A command policy (`.md-runbook-policy.json` next to the runbook) c
 commands before they are approved. Approved assistant cells never run in a terminal or a shared
 session, and values they capture are not used by the user's own cells.
 
+## Signature block
+
+`md-runbook sign` (or **Sign Runbook** in VS Code) writes one HTML comment at the end of the
+file; it is invisible on screen and kept byte for byte like the rest of the Markdown:
+
+```
+<!-- md-runbook:signature v1 signer=NAME signed=YYYY-MM-DD
+manifest
+BASE64 (wrapped at 76 columns)
+signature
+BASE64 (wrapped at 76 columns)
+-->
+```
+
+The manifest is the signed text: `md-runbook-manifest 1`, then one item per line (`name`,
+`version`, `expires`, `scope`, `param NAME PATTERN`, and per bash/sh block `cell N all|any`,
+`info`, `code`, `needs NAME`, `cwd`, `env NAME VALUE`, `step`), values that can hold anything in
+base64, then `end`. `code` and `step` are the block's code and its commands with
+`${param:NAME}` written as `${NAME}`. The signature is OpenSSH's SSHSIG over the manifest with
+namespace `md-runbook`, without its armor lines. A block is signed while its fence info string
+and code equal a manifest cell's; signing again replaces the block. Never write or edit it by
+hand: change the runbook and sign it again.
+
 ## Writing a runbook as an assistant
 
 - Use only `sh`, `bash`, `pwsh`, `powershell` or `cmd` fences for steps. Put one command or one
@@ -268,6 +292,8 @@ session, and values they capture are not used by the user's own cells.
 - When adding steps to someone else's runbook, write them as proposals:
   `<lang> proposed by=ai reason="…"`. Never remove the `proposed` flag or write `approved-by=`.
 - Never write output blocks yourself: they record what actually ran. Never claim a step ran.
+- Never write or change a signature block. Editing a block of a signed runbook makes it unsigned
+  (servers that only run signed runbooks refuse it until a publisher signs it again): say so.
 - Never put a credential in the code. Reference it as `${secret:NAME}` or `${input:NAME:secret}`
   and let the user supply it.
 - Prefer read-only diagnostics. Risky commands (`delete`, `drain`, `rm -rf`, `--force`, …) ask

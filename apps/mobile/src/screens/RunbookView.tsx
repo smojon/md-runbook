@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { isCodeMeta, parse, taskItems } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { SignedStatus, signedStatus } from '@md-runbook/core/signing';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId } from '@md-runbook/ssh';
 import { CodeCell } from '../cells/CodeCell';
@@ -57,6 +58,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
   const styles = useStyles();
   const runbook = useRunbooks().find((r) => r.id === id);
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
+  const signed = useMemo(() => (runbook ? signedStatus(runbook.text) : undefined), [runbook]);
   const hosts = useHosts();
   const [hostId, setHostId] = useState<string | undefined>();
   const host = hosts.find((h) => h.id === hostId) ?? hosts[0];
@@ -207,6 +209,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
         ListHeaderComponent={
           <View>
             <SaveBar runbook={runbook} />
+            {signed ? <SignedBanner status={signed} /> : null}
             <HostPicker hosts={hosts} selected={host} onSelect={setHostId} />
             {transportIssue ? (
               <Text testID="transport-issue" style={styles.warning}>
@@ -253,6 +256,23 @@ export function RunbookView({ id }: { id: string | undefined }) {
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
+
+/** A signed runbook: who signed which version, and the blocks changed since (a gate refuses those). */
+function SignedBanner({ status }: { status: SignedStatus }) {
+  const styles = useStyles();
+  const m = status.manifest;
+  return (
+    <View testID="signed-banner" style={styles.signed}>
+      <Text style={styles.signedTitle}>{t.signedTitle(m.name, m.version, status.block.signer)}</Text>
+      <Text style={styles.signedBody}>{m.expires ? t.signedUntil(m.expires) + ' ' + t.signedBody : t.signedBody}</Text>
+      {status.changed.length > 0 ? (
+        <Text testID="signed-changed" style={styles.warning}>
+          {t.signedChanged(status.changed.length)}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
 
 function HostPicker({ hosts, selected, onSelect }: { hosts: readonly Host[]; selected: Host | undefined; onSelect(id: string): void }) {
   const styles = useStyles();
@@ -321,6 +341,9 @@ const useStyles = themedStyles((c) => ({
   chipTextOn: { color: c.onAccent },
   link: { fontSize: 15, color: c.link },
   warning: { fontSize: 13, color: c.error, marginVertical: 6 },
+  signed: { borderLeftWidth: 3, borderLeftColor: c.accent, paddingLeft: 10, paddingVertical: 4, marginVertical: 6 },
+  signedTitle: { fontSize: 14, color: c.text },
+  signedBody: { fontSize: 12, color: c.muted, lineHeight: 17, marginTop: 2 },
   trust: { borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 12, marginVertical: 8 },
   trustTitle: { fontSize: 16, color: c.text, marginBottom: 6 },
   trustBody: { fontSize: 13, color: c.muted, lineHeight: 18 },

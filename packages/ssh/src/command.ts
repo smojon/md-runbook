@@ -8,6 +8,8 @@
  * reach us separately and stderr could otherwise still be on its way when stdout ends.
  */
 
+import { Buffer } from 'buffer';
+
 /** Started by the `exec` request: bash as a login shell (for the user's PATH), else sh. */
 export const SHELL_COMMAND = 'command -v bash >/dev/null 2>&1 && exec bash -l || exec sh -l';
 
@@ -19,10 +21,43 @@ export const sq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 const printMarker = (marker: string, value: string): string =>
   `printf '\\036%s %s\\n' ${marker} ${value} >&2; printf '\\036%s %s\\n' ${marker} ${value}\n`;
 
-/** First line sent: reports the shell's process id (for cancelling) as its marker value. */
+/**
+ * First line sent: reports the shell's process id (for cancelling) as its marker value. A plain
+ * shell runs it as is (`:` does nothing); md-runbook-gate recognizes it and answers with its
+ * banner first (`gateBanner`).
+ */
 export function helloCommand(id: string): string {
-  return printMarker(markerFor(id), '"$$"');
+  return `: mdrb-gate-hello ${id}; ` + printMarker(markerFor(id), '"$$"');
 }
+
+/** What md-runbook-gate said about itself in its answer to the hello. */
+export interface GateInfo {
+  protocol: number;
+  /** Whether this server (for this key) runs cells that are not signed. */
+  unsigned: 'allow' | 'refuse';
+}
+
+/** The gate's banner in the output before the hello's marker; undefined for a plain shell. */
+export function gateBanner(output: string): GateInfo | undefined {
+  const m = /\x1e__MDRB_GATE__ (\d+) unsigned=(allow|refuse)\n/.exec(output);
+  return m ? { protocol: Number(m[1]), unsigned: m[2] as 'allow' | 'refuse' } : undefined;
+}
+
+/** The gate's answer to a load: the principal whose signature it accepted, and the manifest's sha256. */
+export function signedReply(output: string): { principal: string; hash: string } | undefined {
+  const m = /\x1e__MDRB_SIGNED__ (\S+) ([0-9a-f]{64})\n/.exec(output);
+  return m ? { principal: m[1]!, hash: m[2]! } : undefined;
+}
+
+const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64');
+
+/** Gate requests (one line each; see apps/gate/md-runbook-gate). `signature` is the SSHSIG blob, base64. */
+export const gateLoadCommand = (id: string, manifest: string, signature: string): string => `load ${id} ${b64(manifest)} ${signature}\n`;
+export const gateParamCommand = (id: string, name: string, value: string): string => `param ${id} ${name} ${b64(value)}\n`;
+export const gateRunCommand = (id: string, cell: number, step?: number): string =>
+  step === undefined ? `run ${id} ${Math.trunc(cell)}\n` : `step ${id} ${Math.trunc(cell)} ${Math.trunc(step)}\n`;
+/** An unsigned cell, for a gate that allows them: the text a plain shell would get. */
+export const gateRawCommand = (id: string, text: string): string => `raw ${id} ${b64(text)}\n`;
 
 export interface CellCommandOptions {
   /** Exported before the cell runs (and kept for later cells, as in a local session). */

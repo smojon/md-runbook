@@ -33,6 +33,11 @@ export interface CellOptions {
    * The extension and the CLI run cells locally, so they never run such a block.
    */
   host?: string;
+  /**
+   * lines=any: in a signed runbook, single lines and ranges of this block may run on a server
+   * with md-runbook-gate (otherwise only the whole block, or its commands in order).
+   */
+  lines?: 'any';
   /** retry=N: up to N attempts in all, `every` apart (default 5 s). */
   retry?: { attempts: number; everyMs: number };
   /** Recognized keys with invalid values. */
@@ -152,6 +157,9 @@ export function parseCellOptions(info: string): CellOptions {
     } else if (k === 'host') {
       if (value.trim() === '') opts.errors.push('host: empty name');
       else opts.host = value.trim();
+    } else if (k === 'lines') {
+      if (value.toLowerCase() !== 'any') opts.errors.push(`lines=${value}: expected lines=any`);
+      else opts.lines = 'any';
     } else if (k === 'retry') {
       const n = Number(value);
       if (!Number.isInteger(n) || n < 1 || n > MAX_RETRY) opts.errors.push(`retry=${value}: expected the number of attempts (1 to ${MAX_RETRY})`);

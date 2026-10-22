@@ -15,8 +15,9 @@ import {
   setCellOutput,
 } from '@md-runbook/core';
 import { evaluateChecks } from '@md-runbook/core/checks';
+import { signedStatus, signedStepIndex } from '@md-runbook/core/signing';
 import { echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core/steps';
-import type { RemoteRunOptions, SessionRunResult } from '@md-runbook/ssh';
+import type { RemoteRunOptions, SessionRunResult, SignedRun } from '@md-runbook/ssh';
 import type { Host } from '../hosts/store';
 import { t } from '../i18n';
 import { runnability } from './cells';
@@ -92,11 +93,23 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     },
     onStderr: write,
   };
+  // A signed cell goes to md-runbook-gate as its number in the manifest (where the host runs the
+  // gate; elsewhere it runs as usual). A changed cell, or a command that isn't one of the signed
+  // ones, goes as plain text, which a gate that only runs signed cells refuses.
+  const status = signedStatus(p.text);
+  const signedCell = status?.cells.get(p.cellIndex);
+  const signed = (stepText?: string): SignedRun | undefined => {
+    if (!status || !signedCell) return undefined;
+    const base = { manifest: status.block.manifest, signature: status.block.signature, cell: signedCell.n };
+    if (stepText === undefined) return base;
+    const step = signedStepIndex(signedCell, stepText);
+    return step < 0 ? undefined : { ...base, step };
+  };
   let result: SessionRunResult;
   /** Steps of a line run that ran (indexes into p.lines.steps). */
   const ran: number[] = [];
   try {
-    if (!p.lines) result = await conn.session.run(cell.value, runOpts);
+    if (!p.lines) result = await conn.session.run(cell.value, runOpts, signed());
     else {
       result = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
       const steps = p.lines.steps;
@@ -110,7 +123,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
         }
         p.onStep?.(i);
         write(echoCommand('bash', steps[i]!.text));
-        const r = await conn.session.run(steps[i]!.text, runOpts);
+        const r = await conn.session.run(steps[i]!.text, runOpts, signed(steps[i]!.text));
         ran.push(i);
         result = { ...r, durationMs: result.durationMs + r.durationMs, newShell: result.newShell || r.newShell };
         if (r.exitCode !== 0) {

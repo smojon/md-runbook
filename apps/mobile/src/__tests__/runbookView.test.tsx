@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { parse } from '@md-runbook/core';
+import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { addHost, resetHosts } from '../hosts/store';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { RunbookView } from '../screens/RunbookView';
@@ -23,6 +24,34 @@ beforeEach(() => {
   resetHosts();
   resetRunbooks();
   script([{ stdout: 'ok\n' }]);
+});
+
+describe('a signed runbook', () => {
+  const plain = '# Restart\n\n```bash\nsystemctl restart api\n```\n';
+  const built = buildManifest(plain, { name: 'ops/restart', version: 7, expires: '2027-04-30', scopes: [], patterns: {} });
+  if ('errors' in built) throw new Error(built.errors.join('; '));
+  const signed = withSignature(plain, {
+    signer: 'ops@example.net',
+    signed: '2026-10-22',
+    manifest: formatManifest(built.manifest),
+    signature: 'U1NIU0lH',
+  });
+
+  it('shows who signed which version, and the blocks changed since', async () => {
+    const r = addRunbook('restart.md', signed);
+    await render(<RunbookView id={r.id} />);
+    expect(screen.getByText('Signed runbook ops/restart, version 7, by ops@example.net')).toBeTruthy();
+    expect(screen.getByText(/^Valid until 2027-04-30\./)).toBeTruthy();
+    expect(screen.queryByTestId('signed-changed')).toBeNull();
+    const changed = addRunbook('changed.md', signed.replace('restart api', 'stop api'));
+    await render(<RunbookView id={changed.id} />);
+    expect(screen.getByTestId('signed-changed').props.children).toMatch(/^1 block changed since signing/);
+  });
+
+  it('an unsigned runbook has no banner', async () => {
+    await render(<RunbookView id="sample" />);
+    expect(screen.queryByTestId('signed-banner')).toBeNull();
+  });
 });
 
 describe('the VS Code-like runbook view', () => {

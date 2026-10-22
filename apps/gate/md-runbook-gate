@@ -1,0 +1,475 @@
+#!/bin/sh
+# md-runbook-gate: the only program an SSH key restricted with
+#   restrict,command="/usr/local/bin/md-runbook-gate" ssh-ed25519 AAAA... alice@support
+# may start. It runs the cells of runbooks signed by a key in allowed_signers (and, if this
+# server or key allows it, unsigned cells), in one persistent shell per connection, and logs
+# every request. See README.md next to this file and docs/features/signed-runbooks.md.
+#
+# Options (in the authorized_keys command): --config=FILE (default /etc/md-runbook/gate.conf),
+# --unsigned=allow|refuse and --scopes=a,b (override the config for this key), --who=NAME (the
+# name logged for this key; default: the key's fingerprint, with ExposeAuthInfo yes in sshd).
+#
+# The client (the md-runbook app) speaks a line protocol on stdin; replies end with the same
+# end-of-cell marker as a plain shell session (\036__MDRB_<id>__ <exit>, on stdout and stderr).
+#   : mdrb-gate-hello ID; ...           -> banner \036__MDRB_GATE__ 1 unsigned=allow|refuse, marker with the shell's pid
+#   load ID MANIFEST SIGNATURE        -> base64; checks the signature and policy; \036__MDRB_SIGNED__ PRINCIPAL HASH
+#   param ID NAME VALUE               -> base64 value, checked against the manifest's pattern
+#   run ID CELL | step ID CELL K      -> runs a signed cell, or its K-th command (0-based)
+#   raw ID TEXT                       -> base64 shell text, only where unsigned cells are allowed
+# A second connection whose command is `pkill -TERM|-KILL -P PID 2>/dev/null; true` stops the
+# running cell of this account's shell PID (what the app sends to cancel).
+
+set -u
+# No filename expansion anywhere (principals such as *@example.net, scopes); turned on only to list the parameters.
+set -f
+umask 077
+PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}
+GATE_PROTOCOL=1
+REFUSED=126
+
+say() { printf 'md-runbook-gate: %s\n' "$*" >&2; }
+fatal() {
+  say "$*"
+  exit 2
+}
+
+# ---- options and configuration ----
+
+config=/etc/md-runbook/gate.conf
+key_unsigned=
+key_scopes=
+who=
+for a in "$@"; do
+  case $a in
+    --config=*) config=${a#*=} ;;
+    --unsigned=allow | --unsigned=refuse) key_unsigned=${a#*=} ;;
+    --scopes=*) key_scopes=$(printf '%s' "${a#*=}" | tr ',' ' ') ;;
+    --who=*) who=${a#*=} ;;
+    *) fatal "unknown option $a" ;;
+  esac
+done
+
+unsigned=refuse
+scopes='*'
+allowed_signers=/etc/md-runbook/allowed_signers
+revoked=
+log=syslog
+if [ -e "$config" ]; then
+  [ -r "$config" ] || fatal "can't read $config"
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%%#*}
+    case $line in *=*) ;; *) continue ;; esac
+    k=$(printf '%s' "${line%%=*}" | tr -d ' \t')
+    v=$(printf '%s' "${line#*=}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    case $k in
+      unsigned) unsigned=$v ;;
+      scopes) scopes=$v ;;
+      allowed_signers) allowed_signers=$v ;;
+      revoked) revoked=$v ;;
+      log) log=$v ;;
+      *) fatal "$config: unknown setting \"$k\"" ;;
+    esac
+  done <"$config"
+fi
+[ -n "$key_unsigned" ] && unsigned=$key_unsigned
+case $unsigned in allow | refuse) ;; *) fatal "unsigned = $unsigned: expected allow or refuse" ;; esac
+[ -z "$scopes" ] && scopes='*'
+if [ "$log" != syslog ]; then
+  touch "$log" 2>/dev/null && [ -w "$log" ] || fatal "can't write the log $log"
+fi
+
+account=$(id -un 2>/dev/null || echo "?")
+client=${SSH_CLIENT:-}
+client=${client%% *}
+if [ -z "$who" ] && [ -n "${SSH_USER_AUTH:-}" ] && [ -r "$SSH_USER_AUTH" ]; then
+  who=$(sed -n 's/^publickey //p' "$SSH_USER_AUTH" | head -n 1 | ssh-keygen -lf - 2>/dev/null | awk '{ print $2 }')
+fi
+
+# ---- helpers ----
+
+json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')"; }
+
+# log_event KEY VALUE ...: one JSON line (syslog tag md-runbook-gate, or the log file).
+log_event() {
+  entry="{\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"account\":$(json_str "$account"),\"who\":$(json_str "$who"),\"client\":$(json_str "$client")"
+  while [ $# -ge 2 ]; do
+    entry="$entry,\"$1\":$(json_str "$2")"
+    shift 2
+  done
+  entry="$entry}"
+  if [ "$log" = syslog ]; then
+    logger -t md-runbook-gate -- "$entry" 2>/dev/null || true
+  else
+    printf '%s\n' "$entry" >>"$log" 2>/dev/null || true
+  fi
+}
+
+# POSIX single quotes.
+sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+if printf 'eA==' | base64 -d >/dev/null 2>&1; then
+  b64d() { base64 -d; }
+else
+  b64d() { base64 -D; }
+fi
+
+is_b64() { case $1 in *[!A-Za-z0-9+/=]*) return 1 ;; esac; }
+is_id() {
+  case $1 in '' | *[!0-9a-f]*) return 1 ;; esac
+  [ ${#1} -le 64 ]
+}
+is_num() {
+  case $1 in '' | *[!0-9]*) return 1 ;; esac
+  [ ${#1} -le 6 ]
+}
+is_var() { case $1 in '' | [0-9]* | *[!A-Za-z0-9_]*) return 1 ;; esac; }
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d ' ' -f 1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d ' ' -f 1
+  else
+    openssl dgst -sha256 -r "$1" | cut -d ' ' -f 1
+  fi
+}
+
+marker() {
+  printf '\036__MDRB_%s__ %s\n' "$1" "$2" >&2
+  printf '\036__MDRB_%s__ %s\n' "$1" "$2"
+}
+
+# refuse ID REASON: the reason on stderr, logged, and exit 126 as the request's result.
+refuse() {
+  rid=$1
+  shift
+  say "$*"
+  log_event event refused id "$rid" reason "$*"
+  marker "$rid" "$REFUSED"
+}
+
+# Does a scope list (space-separated, or *) contain $2?
+has_scope() {
+  [ "$1" = '*' ] && return 0
+  for s in $1; do [ "$s" = "$2" ] && return 0; done
+  return 1
+}
+
+state="${HOME:-/tmp}/.md-runbook-gate"
+mkdir -p "$state/pids" 2>/dev/null && chmod 700 "$state" || fatal "can't create $state"
+
+# ---- stopping a running cell (a second connection) ----
+
+cmd=${SSH_ORIGINAL_COMMAND:-}
+case $cmd in
+  'pkill -TERM -P '*' 2>/dev/null; true' | 'pkill -KILL -P '*' 2>/dev/null; true')
+    sig=${cmd#pkill -}
+    sig=${sig%% *}
+    pid=${cmd#pkill -"$sig" -P }
+    pid=${pid%% *}
+    is_num "$pid" || fatal "bad stop request"
+    # Only a shell this gate started for this account.
+    [ -f "$state/pids/$pid" ] || fatal "no md-runbook session $pid"
+    log_event event stop pid "$pid" signal "$sig"
+    pkill -"$sig" -P "$pid" 2>/dev/null
+    exit 0
+    ;;
+esac
+
+# ---- a session ----
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/md-runbook-gate.XXXXXX") || fatal "can't create a work folder"
+child=
+cleanup() {
+  [ -n "$child" ] && kill "$child" 2>/dev/null
+  [ -n "$child" ] && rm -f "$state/pids/$child"
+  rm -rf "$work"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+mkfifo "$work/in" || fatal "can't create a pipe"
+mkdir "$work/params"
+
+# The shell the cells run in: bash as a login shell (the account's PATH), else sh. It reads
+# only what this gate writes; the cells themselves read /dev/null.
+if command -v bash >/dev/null 2>&1; then
+  bash -l <"$work/in" &
+else
+  sh -l <"$work/in" &
+fi
+child=$!
+: >"$state/pids/$child"
+log_event event session unsigned "$unsigned" scopes "$scopes" key_scopes "$key_scopes"
+
+loaded=
+principal=
+mhash=
+mname=
+mversion=
+step_cell=
+step_next=
+
+# The manifest's items: field N of its first `KEY ...` line in cell $2 (or at the top with '').
+mfield() { awk -v key="$1" -v cell="$2" -v f="$3" '$1 == "cell" { c = $2 } $1 == key && (cell == "" || c == cell) { print $f; exit }' "$work/manifest"; }
+
+do_load() {
+  rid=$1
+  [ $# -eq 3 ] && is_b64 "$2" && is_b64 "$3" || {
+    refuse "$rid" "bad load request"
+    return
+  }
+  loaded=
+  set +f
+  rm -f "$work"/params/*
+  set -f
+  printf '%s' "$2" | b64d >"$work/manifest" 2>/dev/null || {
+    refuse "$rid" "the manifest is not base64"
+    return
+  }
+  [ "$(head -n 1 "$work/manifest")" = 'md-runbook-manifest 1' ] || {
+    refuse "$rid" "not an md-runbook manifest, or a newer version than this gate reads"
+    return
+  }
+  {
+    echo '-----BEGIN SSH SIGNATURE-----'
+    printf '%s' "$3" | fold -w 70
+    echo
+    echo '-----END SSH SIGNATURE-----'
+  } >"$work/manifest.sig"
+  [ -r "$allowed_signers" ] || {
+    refuse "$rid" "this server trusts no signers yet ($allowed_signers)"
+    return
+  }
+  principal=
+  # One allowed_signers line may name several principals (a,b): try each.
+  for p in $(ssh-keygen -Y find-principals -s "$work/manifest.sig" -f "$allowed_signers" 2>/dev/null | tr ',' ' '); do
+    if ssh-keygen -Y verify -f "$allowed_signers" -I "$p" -n md-runbook -s "$work/manifest.sig" <"$work/manifest" >/dev/null 2>&1; then
+      principal=$p
+      break
+    fi
+  done
+  [ -n "$principal" ] || {
+    refuse "$rid" "the signature is not from a trusted signer (or the runbook was changed after signing)"
+    return
+  }
+  mhash=$(sha256 "$work/manifest")
+  mname=$(mfield name '' 2)
+  mversion=$(mfield version '' 2)
+  if [ -n "$revoked" ]; then
+    [ -r "$revoked" ] || {
+      refuse "$rid" "can't read the revoked list $revoked"
+      return
+    }
+    if grep -qx "$mhash" "$revoked"; then
+      refuse "$rid" "$mname version $mversion was withdrawn (revoked)"
+      return
+    fi
+  fi
+  expires=$(mfield expires '' 2)
+  if [ -n "$expires" ] && awk -v a="$(date -u +%Y-%m-%d)" -v b="$expires" 'BEGIN { exit !(a > b) }'; then
+    refuse "$rid" "$mname version $mversion expired on $expires"
+    return
+  fi
+  mscopes=$(awk '$1 == "scope" { sub(/^scope +/, ""); print; exit }' "$work/manifest")
+  ok=
+  if [ -z "$mscopes" ]; then
+    [ "$scopes" = '*' ] && { [ -z "$key_scopes" ] || [ "$key_scopes" = '*' ]; } && ok=1
+  else
+    for s in $mscopes; do
+      has_scope "$scopes" "$s" && { [ -z "$key_scopes" ] || has_scope "$key_scopes" "$s"; } && ok=1
+    done
+  fi
+  [ -n "$ok" ] || {
+    refuse "$rid" "$mname is for ${mscopes:-no scope}; this server or key accepts ${key_scopes:-$scopes}"
+    return
+  }
+  loaded=1
+  step_cell=
+  log_event event load id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal"
+  printf '\036__MDRB_SIGNED__ %s %s\n' "$principal" "$mhash"
+  marker "$rid" 0
+}
+
+do_param() {
+  rid=$1
+  # An empty value is an empty base64 field.
+  [ $# -eq 2 ] && set -- "$1" "$2" ""
+  [ $# -eq 3 ] && is_var "$2" && is_b64 "$3" || {
+    refuse "$rid" "bad param request"
+    return
+  }
+  [ -n "$loaded" ] || {
+    refuse "$rid" "no signed runbook loaded"
+    return
+  }
+  pat64=$(awk -v n="$2" '$1 == "param" && $2 == n { print $3; exit }' "$work/manifest")
+  [ -n "$pat64" ] || {
+    refuse "$rid" "$mname has no parameter $2"
+    return
+  }
+  pat=$(printf '%s' "$pat64" | b64d)
+  printf '%s' "$3" | b64d >"$work/value" 2>/dev/null || {
+    refuse "$rid" "bad value for $2"
+    return
+  }
+  # One line, matching the whole pattern.
+  if [ "$(wc -l <"$work/value" | tr -d ' ')" != 0 ] || ! printf '%s\n' "$(cat "$work/value")" | grep -Eqx -e "$pat"; then
+    refuse "$rid" "the value of $2 doesn't match its pattern $pat"
+    return
+  fi
+  mv "$work/value" "$work/params/$2"
+  log_event event param id "$rid" runbook "$mname" name "$2" value "$(cat "$work/params/$2")"
+  marker "$rid" 0
+}
+
+# Write the commands that run "$work/run-ID" in the shell, with the cell's cwd= and environment.
+emit_run() {
+  rid=$1
+  cell=$2
+  {
+    set +f
+    for f in "$work"/params/*; do
+      set -f
+      [ -f "$f" ] && printf 'export %s=%s\n' "${f##*/}" "$(sq "$(cat "$f")")"
+    done
+    awk -v cell="$cell" '$1 == "cell" { c = $2 } $1 == "env" && c == cell { print $2, $3 }' "$work/manifest" |
+      while read -r k v; do
+        is_var "$k" && printf 'export %s=%s\n' "$k" "$(sq "$(printf '%s' "$v" | b64d)")"
+      done
+    printf '__mdrb_id=%s\n__mdrb_f=%s\n' "$rid" "$(sq "$work/run-$rid")"
+    cwd64=$(mfield cwd "$cell" 2)
+    if [ -n "$cwd64" ]; then
+      printf '__mdrb_dir=%s\n' "$(sq "$(printf '%s' "$cwd64" | b64d)")"
+      cat <<'EOF'
+__mdrb_cd=$PWD; if cd -- "$__mdrb_dir"; then . "$__mdrb_f" </dev/null; __mdrb_rc=$?; cd -- "$__mdrb_cd" 2>/dev/null; else __mdrb_rc=1; fi
+EOF
+    else
+      cat <<'EOF'
+. "$__mdrb_f" </dev/null; __mdrb_rc=$?
+EOF
+    fi
+    echo 'rm -f "$__mdrb_f"'
+    if [ "$log" = syslog ]; then
+      cat <<'EOF'
+logger -t md-runbook-gate -- "{\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event\":\"end\",\"id\":\"$__mdrb_id\",\"exit\":$__mdrb_rc}" 2>/dev/null
+EOF
+    else
+      printf '__mdrb_log=%s\n' "$(sq "$log")"
+      cat <<'EOF'
+printf '%s\n' "{\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event\":\"end\",\"id\":\"$__mdrb_id\",\"exit\":$__mdrb_rc}" >>"$__mdrb_log" 2>/dev/null
+EOF
+    fi
+    cat <<'EOF'
+printf '\036%s %s\n' "__MDRB_${__mdrb_id}__" "$__mdrb_rc" >&2; printf '\036%s %s\n' "__MDRB_${__mdrb_id}__" "$__mdrb_rc"
+EOF
+  } >&4
+}
+
+# do_run ID CELL [K]: a whole signed cell, or its K-th command.
+do_run() {
+  rid=$1
+  cell=$2
+  k=${3:-}
+  [ -n "$loaded" ] || {
+    refuse "$rid" "no signed runbook loaded"
+    return
+  }
+  mode=$(mfield cell "$cell" 3)
+  [ -n "$mode" ] || {
+    refuse "$rid" "$mname has no signed cell $cell"
+    return
+  }
+  for p in $(awk -v cell="$cell" '$1 == "cell" { c = $2 } $1 == "needs" && c == cell { print $2 }' "$work/manifest"); do
+    [ -f "$work/params/$p" ] || {
+      refuse "$rid" "$mname needs a value for the parameter $p"
+      return
+    }
+  done
+  if [ -z "$k" ]; then
+    code64=$(mfield code "$cell" 2)
+    step_cell=
+  else
+    # Commands run in order (Step through, Run lines 1-N) unless the cell is signed with lines=any.
+    if [ "$mode" != any ] && [ "$k" != 0 ] && ! { [ "$step_cell" = "$cell" ] && [ "$k" = "$step_next" ]; }; then
+      refuse "$rid" "cell $cell runs whole or its lines in order; single lines need lines=any in the signed runbook"
+      return
+    fi
+    code64=$(awk -v cell="$cell" -v k="$k" '$1 == "cell" { c = $2; i = 0 } $1 == "step" && c == cell { if (i == k) { print $2; exit } i++ }' "$work/manifest")
+    [ -n "$code64" ] || {
+      refuse "$rid" "cell $cell has no command $k"
+      return
+    }
+    step_cell=$cell
+    step_next=$((k + 1))
+  fi
+  printf '%s' "$code64" | b64d >"$work/run-$rid" || {
+    refuse "$rid" "bad cell in the manifest"
+    return
+  }
+  log_event event run id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal" cell "$cell" step "$k"
+  emit_run "$rid" "$cell"
+}
+
+do_raw() {
+  rid=$1
+  [ $# -eq 2 ] && is_b64 "$2" || {
+    refuse "$rid" "bad raw request"
+    return
+  }
+  [ "$unsigned" = allow ] || {
+    refuse "$rid" "this server runs signed runbooks only (this cell is not signed, or changed since signing)"
+    return
+  }
+  printf '%s' "$2" | b64d >"$work/raw" 2>/dev/null || {
+    refuse "$rid" "bad raw request"
+    return
+  }
+  log_event event unsigned id "$rid" hash "$(sha256 "$work/raw")"
+  cat "$work/raw" >&4
+}
+
+serve() {
+  while IFS= read -r line; do
+    [ ${#line} -le 4000000 ] || {
+      say "request too long"
+      continue
+    }
+    # shellcheck disable=SC2086
+    set -- $line
+    verb=${1:-}
+    [ $# -ge 1 ] && shift
+    if [ "$verb" = : ]; then
+      # : mdrb-gate-hello ID; printf ...: the app's first line (a plain shell runs it as is).
+      rid=${2:-}
+      rid=${rid%;}
+      if [ "${1:-}" = mdrb-gate-hello ] && is_id "$rid"; then
+        printf '\036__MDRB_GATE__ %s unsigned=%s\n' "$GATE_PROTOCOL" "$unsigned"
+        marker "$rid" "$child"
+      else
+        say "this account runs md-runbook-gate: connect with the md-runbook app"
+      fi
+      continue
+    fi
+    rid=${1:-}
+    is_id "$rid" || {
+      say "this account runs md-runbook-gate: connect with the md-runbook app"
+      continue
+    }
+    case $verb in
+      load) do_load "$@" ;;
+      param) do_param "$@" ;;
+      run) if [ $# -eq 2 ] && is_num "$2"; then do_run "$1" "$2"; else refuse "$rid" "bad run request"; fi ;;
+      step) if [ $# -eq 3 ] && is_num "$2" && is_num "$3"; then do_run "$1" "$2" "$3"; else refuse "$rid" "bad step request"; fi ;;
+      raw) do_raw "$@" ;;
+      *) refuse "$rid" "unknown request $verb" ;;
+    esac
+  done
+}
+
+exec 3<&0
+serve <&3 4>"$work/in" &
+server=$!
+wait "$child"
+kill "$server" 2>/dev/null
+log_event event end-session
+exit 0

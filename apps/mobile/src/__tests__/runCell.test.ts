@@ -1,4 +1,5 @@
 import { parse } from '@md-runbook/core';
+import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import type { Host } from '../hosts/store';
 import { runnability } from '../ssh/cells';
 import { planLines } from '../ssh/lineRuns';
@@ -158,5 +159,32 @@ describe('line runs over SSH', () => {
     expect(await runCell({ host, text, cellIndex: 1, connection: fakeConnection([{}]), latestText: () => changed })).toMatchObject({
       kind: 'error',
     });
+  });
+});
+
+describe('runCell: signed runbooks', () => {
+  const plain = ['```bash', 'echo one', 'echo two', '```', '', '```bash', 'echo other', '```', ''].join('\n');
+  const built = buildManifest(plain, { name: 'ops/x', version: 2, scopes: [], patterns: {} });
+  if ('errors' in built) throw new Error(built.errors.join('; '));
+  const manifest = formatManifest(built.manifest);
+  const signed = withSignature(plain, { signer: 'ops@example.net', signed: '2026-10-22', manifest, signature: 'U1NIU0lH' });
+
+  it('a signed cell goes to the session with its number in the manifest', async () => {
+    const conn = fakeConnection([{ stdout: 'other\n' }]);
+    await runCell({ host, text: signed, cellIndex: 1, connection: conn });
+    expect(conn.calls[0]).toMatchObject({ source: 'echo other', signed: { manifest, signature: 'U1NIU0lH', cell: 2 } });
+  });
+
+  it('a line run sends each command as its signed step', async () => {
+    const conn = fakeConnection([{}, {}]);
+    await runCell({ host, text: signed, cellIndex: 0, connection: conn, lines: planLines('echo one\necho two', 'from', 1) });
+    expect(conn.calls.map((c) => c.signed?.step)).toEqual([1]);
+  });
+
+  it('a cell changed since signing, or an unsigned runbook, goes as plain text', async () => {
+    const conn = fakeConnection([{}, {}]);
+    await runCell({ host, text: signed.replace('echo other', 'echo changed'), cellIndex: 1, connection: conn });
+    await runCell({ host, text: plain, cellIndex: 1, connection: conn });
+    expect(conn.calls.map((c) => c.signed)).toEqual([undefined, undefined]);
   });
 });

@@ -1,2 +1,5 @@
 # Fixtures must keep their exact bytes (CRLF, mixed EOLs, BOM) on every platform.
 test/fixtures/** -text
+# Shell scripts copied to servers from any checkout must keep LF.
+apps/gate/md-runbook-gate text eol=lf
+apps/gate/gate.conf.example text eol=lf

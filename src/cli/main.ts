@@ -11,11 +11,14 @@ import { formatProblem, lintRunbook } from '@md-runbook/core/lint';
 import { CliOptions, junitReport, markdownSummary, runRunbook } from './run';
 import { notifyConfig, notifyText, runLink, sendNotification } from './notify';
 import { findBrowser, htmlToPdf } from './pdf';
+import { signCommand, verifyCommand } from './sign';
 
 declare const MD_RUNBOOK_VERSION: string | undefined;
 
 const USAGE = `Usage: md-runbook run <file.md> [options]
        md-runbook lint <file.md>... [--strict]
+       md-runbook sign <file.md> --key KEY [options]   (see md-runbook sign --help)
+       md-runbook verify <file.md> [--allowed-signers FILE]
 
 Runs the bash, pwsh/powershell and cmd blocks of a Markdown runbook in order and writes their
 output into the file, as the VS Code extension does. Stops at the first failed step.
@@ -74,7 +77,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   // Only as the first argument: a value such as a parameter `-h` must not turn a run into help.
   if (args.length === 0 || args[0] === '-h' || args[0] === '--help') return 'help';
   if (args[0] === '--version') return 'version';
-  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected "run" or "lint")`);
+  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected run, lint, sign or verify)`);
   args.shift();
   const o: ParsedArgs['options'] = { file: '', write: true, params: {}, inputs: {}, yes: false, keepGoing: false, shell: {} };
   let pdf: string | undefined;
@@ -162,6 +165,8 @@ export function lint(argv: readonly string[], out: (line: string) => void = (l) 
 
 export async function main(argv: readonly string[]): Promise<number> {
   if (argv[0] === 'lint') return lint(argv.slice(1));
+  if (argv[0] === 'sign') return signCommand(argv.slice(1));
+  if (argv[0] === 'verify') return verifyCommand(argv.slice(1));
   let parsed: ReturnType<typeof parseArgs>;
   try {
     parsed = parseArgs(argv);

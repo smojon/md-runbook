@@ -1,0 +1,18 @@
+# /etc/md-runbook/gate.conf: the policy of md-runbook-gate on this server.
+# A key's own options (--unsigned=, --scopes=) override it for that key.
+
+# Blocks that are not signed (or changed since signing): refuse, or allow (still logged).
+unsigned = refuse
+
+# Signed runbooks for these scopes run here, space-separated; * = any (runbooks without scopes
+# run only where this is *).
+scopes = *
+
+# The publishers' keys (OpenSSH allowed_signers format, namespaces="md-runbook").
+allowed_signers = /etc/md-runbook/allowed_signers
+
+# Withdrawn releases: manifest sha256 hashes, one per line (md-runbook verify shows a runbook's).
+# revoked = /etc/md-runbook/revoked
+
+# syslog (tag md-runbook-gate), or a file the account can append to.
+log = syslog

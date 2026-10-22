@@ -2,7 +2,8 @@
  * Static checks on a runbook, before anything runs: invalid or unknown cell options, `every=`
  * without `retry=`, `${out:NAME}` with no earlier `capture=NAME`, `${param:NAME}` not declared
  * in the front matter, a name used as two kinds of placeholder, front matter values that are
- * ignored. Used by `md-runbook lint` and by the editor's problem markers.
+ * ignored, blocks changed since the runbook was signed. Used by `md-runbook lint` and by the
+ * editor's problem markers.
  */
 
 import { parseCellOptions, tokenizeInfo } from './cellOptions';
@@ -11,6 +12,7 @@ import { parse } from './parser';
 import { locateCodeCells } from './locate';
 import { findRefs, parseFrontMatter } from './secrets';
 import { shellKindForLanguage } from './shellKind';
+import { signedStatus } from './signing';
 
 export type LintSeverity = 'error' | 'warning';
 
@@ -26,7 +28,7 @@ export interface LintProblem {
 const KNOWN_OPTIONS = new Set([
   // cellOptions.ts
   'timeout', 'cwd', 'continue-on-error', 'skip', 'confirm', 'no-confirm', 'terminal', 'name',
-  'expect', 'expect-not', 'expect-exit', 'capture', 'capture-secret', 'os', 'retry', 'every',
+  'expect', 'expect-not', 'expect-exit', 'capture', 'capture-secret', 'os', 'host', 'lines', 'retry', 'every',
   // proposal.ts (assistant proposals and approvals)
   'proposed', 'by', 'reason', 'approved', 'approved-by', 'approved-at',
 ]);
@@ -98,6 +100,22 @@ export function lintRunbook(text: string): LintProblem[] {
       }
     }
     for (const c of opts.checks?.captures ?? []) captured.add(c.name);
+  }
+
+  // A signed runbook whose blocks changed since signing.
+  const signed = signedStatus(text);
+  if (signed) {
+    for (const loc of locs.filter((l) => signed.changed.includes(l.cellIndex))) {
+      problems.push({
+        severity: 'warning',
+        line: loc.line,
+        cell: { index: loc.cellIndex },
+        message: 'block changed since the runbook was signed: servers that only run signed runbooks refuse it (sign the runbook again)',
+      });
+    }
+  } else {
+    const at = text.split(/\r?\n/).findIndex((l) => l.startsWith('<!-- md-runbook:signature'));
+    if (at >= 0) problems.push({ severity: 'error', line: at, message: 'the signature block is damaged (sign the runbook again)' });
   }
   return problems.sort((a, b) => a.line - b.line);
 }

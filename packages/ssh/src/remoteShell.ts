@@ -22,7 +22,22 @@ import {
 import { exportPublicKey } from '@microsoft/dev-tunnels-ssh-keys';
 // The library's own Buffer, so this file also works where there is no global Buffer (browsers).
 import { Buffer } from 'buffer';
-import { CellCommandOptions, SHELL_COMMAND, cellCommand, helloCommand, markerFor, randomId, stopCommand } from './command';
+import {
+  CellCommandOptions,
+  GateInfo,
+  SHELL_COMMAND,
+  cellCommand,
+  gateBanner,
+  gateLoadCommand,
+  gateParamCommand,
+  gateRawCommand,
+  gateRunCommand,
+  helloCommand,
+  markerFor,
+  randomId,
+  signedReply,
+  stopCommand,
+} from './command';
 import { ExternalAwareEcdsaP256 } from './externalKey';
 
 export interface ConnectOptions {
@@ -90,6 +105,7 @@ export class RemoteShell {
   private runningId: string | undefined;
   private ended = false;
   private pid = 0;
+  private gateInfo: GateInfo | undefined;
   private readonly decoderOut = new TextDecoder();
   private readonly decoderErr = new TextDecoder();
 
@@ -128,7 +144,10 @@ export class RemoteShell {
       const channel = await session.openChannel();
       const shell = new RemoteShell(session, channel);
       if (!(await channel.request(execRequest(SHELL_COMMAND)))) throw new Error('the server refused to start a shell');
-      shell.pid = (await shell.exchange(randomId(), helloCommand)) ?? 0;
+      // md-runbook-gate (a restricted key's forced command) announces itself before the marker.
+      let greeting = '';
+      shell.pid = (await shell.exchange(randomId(), helloCommand, (t) => (greeting += t))) ?? 0;
+      shell.gateInfo = gateBanner(greeting);
       return shell;
     };
     const closeAll = async (): Promise<void> => {
@@ -148,8 +167,61 @@ export class RemoteShell {
     return !this.ended;
   }
 
-  /** Run one bash cell in the remote shell; output streams to `onStdout`/`onStderr` as it arrives. */
+  /** md-runbook-gate's banner when this account runs through it; undefined for a plain shell. */
+  get gate(): GateInfo | undefined {
+    return this.gateInfo;
+  }
+
+  /**
+   * Run one bash cell in the remote shell; output streams to `onStdout`/`onStderr` as it arrives.
+   * Through md-runbook-gate the cell goes as an unsigned request, which the gate refuses (exit 126,
+   * its reason on stderr) unless it allows unsigned cells.
+   */
   async run(source: string, opts: RemoteRunOptions = {}): Promise<RemoteRunResult> {
+    const text = (id: string): string => (this.gateInfo ? gateRawCommand(id, cellCommand(source, id, opts)) : cellCommand(source, id, opts));
+    return this.runText(text, opts);
+  }
+
+  /**
+   * md-runbook-gate: check and keep a signed manifest for the cells that follow. Resolves with
+   * the principal whose signature the gate accepted; rejects with the gate's reason.
+   */
+  async loadSigned(manifest: string, signature: string): Promise<{ principal: string; hash: string }> {
+    let out = '';
+    const err = await this.request((id) => gateLoadCommand(id, manifest, signature), (t) => (out += t));
+    const reply = signedReply(out);
+    if (err !== undefined || !reply) throw new Error(err ?? 'the gate did not confirm the signature');
+    return reply;
+  }
+
+  /** md-runbook-gate: a parameter's value for the loaded manifest; rejects with the gate's reason. */
+  async setParam(name: string, value: string): Promise<void> {
+    const err = await this.request((id) => gateParamCommand(id, name, value));
+    if (err !== undefined) throw new Error(err);
+  }
+
+  /** md-runbook-gate: run signed cell `cell` of the loaded manifest, or its command `step` (0-based). */
+  async runSigned(cell: number, step: number | undefined, opts: RemoteRunOptions = {}): Promise<RemoteRunResult> {
+    if (!this.gateInfo) throw new Error('not an md-runbook-gate session');
+    return this.runText((id) => gateRunCommand(id, cell, step), opts);
+  }
+
+  /** A short gate request: undefined when it succeeded, else the gate's reason. */
+  private async request(text: (id: string) => string, onOut?: (t: string) => void): Promise<string | undefined> {
+    if (this.runningId !== undefined) throw new Error('the shell is busy');
+    if (!this.gateInfo) throw new Error('not an md-runbook-gate session');
+    let err = '';
+    const id = randomId();
+    this.runningId = id;
+    try {
+      const code = await this.exchange(id, text, onOut, (t) => (err += t));
+      return code === 0 ? undefined : err.trim().replace(/^md-runbook-gate: /, '') || `refused (exit ${code})`;
+    } finally {
+      this.runningId = undefined;
+    }
+  }
+
+  private async runText(text: (id: string) => string, opts: RemoteRunOptions): Promise<RemoteRunResult> {
     if (this.runningId !== undefined) throw new Error('the shell is busy');
     const started = Date.now();
     const result = (r: Partial<RemoteRunResult>): RemoteRunResult => ({
@@ -177,7 +249,7 @@ export class RemoteShell {
     const onAbort = (): void => stop('cancel');
     opts.signal?.addEventListener('abort', onAbort);
     try {
-      const code = await this.exchange(id, (i) => cellCommand(source, i, opts), opts.onStdout, opts.onStderr);
+      const code = await this.exchange(id, text, opts.onStdout, opts.onStderr);
       return result({ exitCode: timedOut || cancelled ? null : code, timedOut, cancelled });
     } catch (e) {
       if (!(e instanceof ShellEndedError)) throw e;

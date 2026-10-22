@@ -1,50 +1,114 @@
-# Signed runbooks (design)
+# Signed runbooks
 
-**Status:** proposal, not built. Comments welcome before any code.
+An ops team signs runbooks; a support team runs them from the [md-runbook app](../app.md). A
+server set up for this runs **only signed runbooks, unchanged**, for the support team's SSH
+keys, and logs every run. Other servers and other keys are not affected: unsigned runbooks run
+there as before, and a server's owner can allow them on the gated keys too.
 
-## Goal
-
-An ops team publishes runbooks. A support team runs them on servers from the app. A server set
-up for this runs only those published runbooks, unchanged, for the support team's accounts.
-
-The server's owner decides. Without the gate, or with the gate set to allow unsigned runbooks,
-any runbook runs, as it does today.
-
-## Why the server decides
-
-The app could refuse unsigned runbooks, but the support engineer's SSH key also works with plain
-`ssh server 'anything'`. A check in the client only prevents accidents. The check that holds is
-on the server: the account's key may only start one program, the **gate**, and the gate decides
-what runs.
+The check is on the server because it has to be: a support engineer's key also works with plain
+`ssh server 'anything'`, so a check in the app alone would only prevent accidents. A key may be
+restricted to one program, **md-runbook-gate**, and the gate decides what runs.
 
 ```
-publisher                      support engineer               server
-md-runbook sign  ──.md file──▶ app ──SSH (any command)──────▶ sshd: forced command
-(signature in the file)                                       └▶ md-runbook-gate
-                                                                 verify, check policy,
-                                                                 run cells, log
+publisher                       support engineer                 server
+md-runbook sign  ──.md file───▶ md-runbook app ──SSH──────────▶ sshd: forced command
+(signature block in the file)   (any channel: mail, a site, …)   └▶ md-runbook-gate
+                                                                    checks signature and policy,
+                                                                    runs the signed blocks, logs
 ```
 
-## What exists already
+A signed runbook holds no secrets and any change breaks its signature, so it can be shipped by
+any channel. Two keys do different jobs: the **publisher's signing key** says the runbook is
+approved and grants no access by itself; the **engineer's SSH key** gets into the server, and
+only into a gated account.
 
-- **Azure Automation:** Hybrid Runbook Workers can be set to run only signed runbooks (GPG on
-  Linux). It is the same idea, but tied to Azure and its agent on each machine.
-- **Rundeck, AWX, StackStorm:** support teams run predefined jobs with access rules and an
-  audit log. A central server holds the jobs and the credentials, and it has to be installed
-  and run.
-- **PowerShell `AllSigned`:** runs signed scripts only. It is a client setting, and Microsoft
-  itself says execution policy is not a security boundary.
-- **Forced-command wrappers:** an old SSH technique (rrsync, gitolite). Each wrapper allows a
-  fixed list of commands, so every new command means changing the wrapper on every server.
+## What exists elsewhere
 
-What is new here: the runbook stays a Markdown file that you read and run, the server needs one
-script and a list of signers, and a new release reaches every server without being deployed to
-them, because the signature carries the trust.
+Azure Automation can run only signed runbooks on its hybrid workers (tied to Azure and its
+agent). Rundeck, AWX and StackStorm let support teams run predefined jobs, from a central server
+that holds the jobs and the credentials. PowerShell's `AllSigned` is a client setting, which
+Microsoft says is not a security boundary. Forced-command wrappers are an old SSH technique,
+with a fixed list of commands per wrapper. Here the runbook stays a Markdown file, the server
+needs one script and a list of signers, and a new release reaches every server without being
+deployed to them, because the signature carries the trust.
 
-## Server setup
+## Signing
 
-The support key may only start the gate (`restrict` also turns off port, agent and X11
-forwarding and the pty):
+```sh
+md-runbook sign restart-api.runbook.md --key ~/.ssh/id_ed25519 \
+  --scope web --pattern 'SERVICE=[a-z][a-z0-9-]{0,30}' --expires-in 90
+md-runbook verify restart-api.runbook.md --allowed-signers /etc/md-runbook/allowed_signers
+```
+
+or **md-runbook: Sign Runbook** in VS Code (it asks for the name, scopes, days of validity and
+missing patterns; the key comes from `mdRunbook.signing.key`, or it asks).
+
+- Signing uses `ssh-keygen -Y sign` (OpenSSH 8.2 or newer) with any key it can use: a key file,
+  a FIDO `sk-` key, or a `.pub` whose key is in the SSH agent. Keys with a passphrase sign on
+  the command line (it asks), or through the agent in VS Code.
+- **Signing again** keeps the name, scopes and patterns and counts the version up. Options given
+  now win. `--expires` is not carried over.
+- `verify` prints what the signature covers, the manifest's sha256, and any block changed since
+  signing (with its line); with `--allowed-signers` it also checks the signature as the gate
+  would. Exit code 0 when everything is signed.
+- The editor and `md-runbook lint` warn about blocks changed since signing.
+
+### From a repository
+
+Runbooks are reviewed in pull requests. On merge to a protected branch, a workflow signs them
+with a key from the repository's secrets and publishes them. Servers trust only that key, so the
+review becomes the release (the [command line](cli.md#getting-it) on the runner):
+
+```yaml
+- run: |
+    printf '%s\n' "$SIGNING_KEY" > key && chmod 600 key
+    for f in runbooks/*.md; do md-runbook sign "$f" --key key; done
+    rm key
+  env:
+    SIGNING_KEY: ${{ secrets.RUNBOOK_SIGNING_KEY }}
+```
+
+## What is signed
+
+The signature covers what the gate runs, not what changes when someone runs the runbook:
+
+| Covered | Not covered |
+| --- | --- |
+| each `bash`/`sh` block's code, fence options, `cwd=` and `env.*` | prose, outputs, ticked boxes, output markers |
+| each block's commands for line runs | other languages' blocks (the gate runs bash) |
+| the name, version, expiry date, scopes, parameter patterns | |
+
+The signer signs a **manifest**: one item per line, values in base64, so the gate never parses
+Markdown. It travels in the file, in an HTML comment at the end (invisible on screen, like the
+output markers), next to the signature:
+
+```
+<!-- md-runbook:signature v1 signer=ops@example.net signed=2026-10-22
+manifest
+bWQtcnVuYm9vay1tYW5pZmVzdCAxCm5hbWUgb3BzL3Jlc3RhcnQtYXBpCnZlcnNpb24gMwpzY29w…
+signature
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg…
+-->
+```
+
+Because the manifest holds the code as signed, a later app version can't change what an old
+signature covers. Clients compare the file's blocks with it: a block whose code or options
+changed is **unsigned**, and a strict server refuses it. Moving blocks or adding prose keeps
+them signed.
+
+**Parameters.** `${param:NAME}` reaches the shell as an environment variable, never as text in
+the code. Each needs a pattern (`--pattern NAME=REGEX`, a POSIX extended regular expression the
+whole value must match); the gate checks the value and refuses newlines. `${secret:}`,
+`${input:}` and `${out:}` can't be signed yet.
+
+**Line runs.** A signed block runs whole, or its commands in order (Step through, Run lines 1-N).
+Single lines and ranges (Run line, Run lines N-end, checked lines) need `lines=any` on the block
+when it is signed, because skipping a line can skip a safety check.
+
+## Setting up a server
+
+The gate is one POSIX `sh` script: [apps/gate](../../apps/gate/README.md) has the install steps.
+In short:
 
 ```
 # ~/.ssh/authorized_keys of the account the support team uses
@@ -52,194 +116,75 @@ restrict,command="/usr/local/bin/md-runbook-gate" ecdsa-sha2-nistp256 AAAA… al
 restrict,command="/usr/local/bin/md-runbook-gate --unsigned=allow" ssh-ed25519 AAAA… bob@ops
 ```
 
-With SSH certificates, the CA puts the same restriction in each certificate, and the servers
-need no `authorized_keys` edits:
-`ssh-keygen -s ca -I alice -n support -O clear -O force-command=/usr/local/bin/md-runbook-gate alice.pub`.
-
-The trusted publishers, in OpenSSH's own `allowed_signers` format:
-
 ```
-# /etc/md-runbook/allowed_signers
-ops@example.net namespaces="md-runbook" ecdsa-sha2-nistp256 AAAA…
+# /etc/md-runbook/allowed_signers (OpenSSH's own format)
+ops@example.net namespaces="md-runbook" ssh-ed25519 AAAA…
 release-ci@example.net namespaces="md-runbook",valid-before="20270101" ssh-ed25519 AAAA…
 ```
 
-The policy:
-
 ```
 # /etc/md-runbook/gate.conf
-unsigned = refuse          # refuse | allow
-scopes   = web staging     # scopes of signed runbooks this server accepts; * = any
+unsigned = refuse          # refuse (default) | allow
+scopes   = web staging     # signed runbooks for these scopes run here; * (default) = any
 revoked  = /etc/md-runbook/revoked     # manifest hashes, one per line
-log      = syslog          # or a file path
+log      = syslog          # (default) or a file
 ```
 
-## Unsigned runbooks
+With SSH certificates the CA puts the restriction into each certificate, and servers need no
+`authorized_keys` edits: `ssh-keygen -s ca -I alice -n support -O clear -O force-command=/usr/local/bin/md-runbook-gate alice.pub`.
 
-The server's owner chooses, per server and per key:
-
-| Setup | Unsigned runbooks | What you get |
+| Setup | Unsigned blocks | What you get |
 | --- | --- | --- |
-| No gate (today) | run | Full shell access for the key. |
-| Gate, `unsigned = allow` | run | No interactive shells or forwarding, and every cell is logged with a hash of its code. Signed runbooks still show who signed them. |
-| Gate, `unsigned = refuse` (default) | refused | Only runbooks signed by `allowed_signers`. |
-| `--unsigned=allow` or `--unsigned=refuse` on a key's line | per key | Overrides `gate.conf` for that key, for example ops may, support may not. |
+| No gate | run | Full shell access for the key, as today. |
+| Gate, `unsigned = allow` | run | No interactive shell or forwarding; every block is logged with a hash of its code. |
+| Gate, `unsigned = refuse` | refused | Only runbooks signed by `allowed_signers`. |
+| `--unsigned=allow` / `--unsigned=refuse` on a key's line | per key | Overrides `gate.conf` for that key. |
 
-Before running anything, the app asks the gate for its policy. If the server takes only signed
-runbooks, the app says so ("This server runs signed runbooks only").
+**Scopes** keep a runbook for staging off production: the manifest names its scopes, `gate.conf`
+lists the ones the server accepts, and `--scopes=a,b` on a key's line narrows them. A runbook
+runs only if it shares a scope with both; a runbook without scopes runs only where `scopes = *`.
 
-## Shipping runbooks, and scopes
+**Withdrawing a release:** add its manifest hash (`md-runbook verify` shows it) to `revoked`,
+let it expire, or remove the signer from `allowed_signers`.
 
-A signed runbook holds no secrets, and any change to it breaks the signature. So it can be
-shipped by any channel (email, a website, a chat, the app's own list of runbooks), and anyone
-who can reach a gated account can run it from anywhere, without a central server.
+**Kubernetes and cloud APIs.** For runbooks that call `kubectl`, `oc` or a cloud CLI, the gate
+runs on a bastion host that holds the credentials (a kubeconfig for a service account, say):
+support engineers run the signed runbooks against the cluster without ever holding its
+credentials.
 
-Two keys do different jobs:
+## Running
 
-- **The publisher's signing key** says the runbook is approved. It grants no access by itself.
-- **The engineer's SSH key** gets them into a server, and only into a gated account.
+The app needs no setting: it finds the gate when it connects (its answer to the app's first
+line). A signed runbook shows **Signed runbook NAME, version N, by SIGNER** and any blocks
+changed since signing. Through the gate a signed block runs as "block N of this manifest"; on
+a server without the gate the same block runs as usual. A refused block ends with exit 126 and
+the gate's reason in its output, for example
+`md-runbook-gate: this server runs signed runbooks only (this cell is not signed, or changed since signing)`.
 
-Without limits, every signed runbook would run on every server that trusts its signer. A
-runbook written for staging could then run on production. **Scopes** narrow that:
+The gate keeps one shell per connection, as the app does elsewhere, so folders and variables
+carry over between blocks. Cancelling works: the app's stop request on a second channel reaches
+the gate, which stops the running block of that connection's shell only.
 
-- The manifest names the runbook's scopes: `scope db-restart staging`.
-- Each server lists the scopes it accepts (`scopes = staging web` in `gate.conf`), and a key's
-  line can narrow them further (`--scopes=web`).
-- A runbook runs only if it shares a scope with both the server and the key. A runbook without
-  scopes runs only on servers with `scopes = *`.
+## The log
 
-Expiry and revocation (below) limit how long a shipped runbook stays valid.
-
-## Kubernetes and cloud APIs
-
-Many runbooks call `kubectl`, `oc` or a cloud CLI, not commands on the server itself. For those,
-the gate runs on a bastion host that holds the credentials, for example a kubeconfig for a
-service account. Support engineers can then run the signed runbooks against the cluster
-without ever holding its credentials.
-
-## What is signed
-
-The signature covers what runs, and not the parts that change because someone ran the runbook.
-That is the same split as [approval](approval.md): code and fence options, but not outputs or
-ticked boxes.
-
-The client builds a **manifest** from the Markdown, and that is what gets signed. The manifest
-code lives in `@md-runbook/core`, so every client builds it the same way. It is line-based, so
-the gate never parses Markdown:
-
-```
-md-runbook-manifest 1
-name ops/restart-api
-version 7
-expires 2027-04-30
-scope web staging
-param TARGET ^[a-z0-9-]{1,32}$
-param REPLICAS ^[0-9]{1,2}$
-front timeout=300 mode=session
-cell 1 bash timeout=60 <base64 of the code>
-cell 2 bash lines=any <base64 of the code>
-```
-
-- **Covered:** each code cell's code, language and fence options; the front matter that changes
-  how cells run (`params:`, `mode:`, `timeout:`, `cwd:`, `shell:`); the name, version, expiry
-  date and scopes.
-- **Not covered:** the prose, outputs, ticked boxes and output markers. Signing the prose would
-  break the signature at every tick. The prose cannot make the gate run anything.
-- The signature is `ssh-keygen -Y sign -n md-runbook` over the manifest (SSHSIG). It goes at the
-  end of the `.md` file as an HTML comment, which stays invisible on screen like the output
-  markers:
-
-  ```
-  <!-- md-runbook:signature signer=ops@example.net signed=2026-10-22
-  -----BEGIN SSH SIGNATURE-----
-  …
-  -----END SSH SIGNATURE-----
-  -->
-  ```
-
-- Clients rebuild the manifest from the file. If it no longer matches the signature (a cell was
-  edited), they show the runbook as **unsigned**, and a strict server refuses it.
-
-## Parameters, inputs and secrets
-
-Today `${param:NAME}` is pasted into the code. With a value like `x; rm -rf /`, a signed cell
-would run unsigned code, so signed runbooks do it differently:
-
-- `md-runbook sign` rewrites `${param:NAME}` to `${MDRB_PARAM_NAME}` in the manifest. The
-  signed code is therefore exactly what runs.
-- The client sends the values. The gate checks each value against the pattern signed in the
-  manifest and sets it as an environment variable. A shell expands a variable's value but never
-  runs it as code. A parameter without a pattern cannot be signed.
-- `${input:NAME}` works the same way. `${secret:NAME}` also becomes a variable: it has no
-  pattern but a length limit, and its value is never logged.
-- `${out:NAME}` (a value captured from an earlier cell) is not supported in the first version.
-  `sign` refuses runbooks that use it.
-
-## Running cells, lines and steps
-
-- **Whole cell:** always allowed.
-- **Step through:** allowed. The gate runs the cell's lines in order, one per request, and
-  keeps track of where it is, so no line can be skipped.
-- **Single lines or ranges** (`Run line`, `Run lines N-end`, `Check`): only if the signed cell
-  has `lines=any`, because skipping a line can skip a safety check.
-- One persistent shell per connection, as in the app today
-  ([remoteShell.ts](../../packages/ssh/src/remoteShell.ts)). The gate starts it, so cells share
-  their folder and variables.
-
-## The gate
-
-- **Language:** one POSIX `sh` file that calls `ssh-keygen` (OpenSSH 8.2 or newer for
-  `-Y find-principals`), `base64` and `sha256sum` or `shasum`. Installing it means copying one
-  file, with no Node.js on the servers. Linux and macOS first; Windows servers later.
-- **Requests** (the SSH command, `SSH_ORIGINAL_COMMAND`): `hello` (version and policy),
-  `session` (stdin: the manifest, the signature and parameter values, then `run 2`,
-  `step 2`, `lines 2 3-5`), and `stop` (stops this account's own running cell, as the app does
-  over a second channel today).
-- **Checks, in order:** the manifest's format, the signature (`find-principals`, then `verify`),
-  the manifest hash against `revoked`, `expires`, the scopes (the server's and the key's), the
-  parameter patterns, then the requested cell and lines.
-- **Log:** one JSON line per event: time, account, key fingerprint (from
-  `ExposeAuthInfo yes`), runbook name, version, manifest hash, signer, cell, lines, exit code,
-  duration, and signed or unsigned. Parameter values are logged; secrets never are.
-- **Tests:** in CI against the runner's own OpenSSH server, like the app's live SSH test.
-
-## Releasing runbooks to a support team
-
-- **By hand:** `md-runbook sign restart-api.runbook.md --key ~/.ssh/id_ed25519` (it calls
-  `ssh-keygen`, and a YubiKey `sk-` key works too). Then share the file.
-- **From a repository:** runbooks are reviewed in pull requests. On merge to a protected
-  branch, a workflow signs them with a key from the repository's secrets and publishes them.
-  The gate trusts only that key (`release-ci@…` above), so the review becomes the release.
-- **Withdrawing a release:** add its manifest hash to `revoked` (shown by
-  `md-runbook verify`), wait for `expires`, or remove the signer from `allowed_signers`.
-
-## Changes per client
-
-| Where | Change |
-| --- | --- |
-| `@md-runbook/core` | Builds the manifest. Reads and writes the signature block. Verifies SSHSIG, for the badge. |
-| Command line | `md-runbook sign`, and `md-runbook verify`, which prints the signer, the version and the manifest hash. |
-| The app | Gate mode in `@md-runbook/ssh`. A "Signed by …" or "Unsigned" badge, and the server's policy shown before running. The relay doesn't change. |
-| Extension | **Sign Runbook** and a signed/unsigned status. A lint warning for parameters without a pattern. The extension doesn't run SSH itself, so it needs no gate mode. |
+One JSON line per event, to syslog (tag `md-runbook-gate`) or a file: `session`, `load`
+(runbook, version, manifest hash, signer), `param` (name and value), `run` (block and command),
+`end` (exit code), `unsigned` (hash of the code), `refused` (the reason), `stop`. Each carries
+the time, the account, the client address and the key: its fingerprint with
+`ExposeAuthInfo yes` in `sshd_config`, or the name given with `--who=NAME`.
 
 ## Limits
 
-- The gate controls what the account can start, not what a signed cell does when it runs. The
+- The gate controls what the account can start, not what a signed block does once it runs: the
   review before signing is the real control. Root access goes through `sudo` rules for the
   gate's account.
-- It covers only the keys that are forced to use the gate. Admin accounts with full shells are
-  unaffected, by design.
-- The prose is not signed. An altered instruction such as "now run X by hand" is not stopped,
+- Only keys forced to use the gate are covered. Admin accounts with full shells are not, by
+  design.
+- The prose is not signed: an altered instruction such as "now run X by hand" is not stopped,
   but the gate would still refuse X.
-
-## Open questions
-
-1. **Two signers:** should a server be able to require two signatures (`signers = 2`)?
-2. **Verifying in the app:** the app's badge needs SSHSIG verification in TypeScript, for
-   ECDSA P-256 and Ed25519. Ed25519 is not in every browser's WebCrypto. Could the badge rely
-   on the gate's `hello` instead?
-3. **Version floors:** should `gate.conf` also accept "at least version N of runbook X"
-   (`min-version ops/restart-api 7`), so older signed versions stop working without listing
-   their hashes?
-4. **`${out:}`:** should a later version let the gate capture values itself, so runbooks that
-   pass output between cells can be signed?
+- The app does not ask for parameter values yet, so signed blocks that use `${param:}` are
+  refused there ("needs a value for the parameter …") until it does; blocks without parameters
+  run.
+- One signer per runbook; no version floors (revoke by hash instead).
+- The gate runs on Linux and macOS servers (POSIX `sh`, OpenSSH 8.2+, `awk`, `base64`,
+  `mkfifo`, `pkill`).

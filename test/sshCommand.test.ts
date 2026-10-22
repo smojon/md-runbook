@@ -5,7 +5,33 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { SentinelFilter } from '@md-runbook/core';
-import { cellCommand, helloCommand, markerFor, sq, stopCommand } from '@md-runbook/ssh';
+import {
+  cellCommand,
+  gateBanner,
+  gateLoadCommand,
+  gateParamCommand,
+  gateRawCommand,
+  gateRunCommand,
+  helloCommand,
+  markerFor,
+  signedReply,
+  sq,
+  stopCommand,
+} from '@md-runbook/ssh';
+
+describe('ssh: md-runbook-gate requests', () => {
+  it('one line each, values in base64; the banner and the load reply are recognized', () => {
+    assert.equal(gateLoadCommand('ab', 'm\n', 'U1NI'), `load ab ${Buffer.from('m\n').toString('base64')} U1NI\n`);
+    assert.equal(gateParamCommand('ab', 'T', "x y'"), `param ab T ${Buffer.from("x y'").toString('base64')}\n`);
+    assert.equal(gateRunCommand('ab', 3), 'run ab 3\n');
+    assert.equal(gateRunCommand('ab', 3, 0), 'step ab 3 0\n');
+    assert.equal(gateRawCommand('ab', 'echo\n'), 'raw ab ZWNobwo=\n');
+    assert.deepEqual(gateBanner('motd\n\x1e__MDRB_GATE__ 1 unsigned=refuse\n'), { protocol: 1, unsigned: 'refuse' });
+    assert.equal(gateBanner('plain shell\n'), undefined);
+    assert.deepEqual(signedReply(`\x1e__MDRB_SIGNED__ ops@example.net ${'a'.repeat(64)}\n`), { principal: 'ops@example.net', hash: 'a'.repeat(64) });
+    assert.match(helloCommand('h'), /^: mdrb-gate-hello h; /);
+  });
+});
 
 // The commands are plain POSIX shell: run them in a local bash, as the remote shell would.
 const bash = process.platform === 'win32' ? undefined : 'bash';

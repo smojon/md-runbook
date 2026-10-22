@@ -371,6 +371,12 @@
         "icon": "$(file-pdf)"
       },
       {
+        "command": "mdRunbook.signRunbook",
+        "title": "Sign Runbook",
+        "category": "md-runbook",
+        "icon": "$(workspace-trusted)"
+      },
+      {
         "command": "mdRunbook.runCheckedLines",
         "title": "Run Checked Lines",
         "category": "md-runbook",
@@ -528,6 +534,10 @@
         },
         {
           "command": "mdRunbook.clearAllOutputs",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.signRunbook",
           "when": "notebookType == md-runbook || resourceExtname == .md"
         },
         {
@@ -1475,6 +1485,19 @@
             "scope": "machine",
             "markdownDescription": "Name recorded as `approved-by=`. Empty = your OS user name.",
             "order": 10
+          }
+        }
+      },
+      {
+        "title": "Signing",
+        "order": 9,
+        "properties": {
+          "mdRunbook.signing.key": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "markdownDescription": "SSH key for **md-runbook: Sign Runbook**: a key file, or a `.pub` file whose key is in the SSH agent (needed for keys with a passphrase). Empty = ask each time. See [signed runbooks](https://github.com/smojon/md-runbook/blob/main/docs/features/signed-runbooks.md).",
+            "order": 1
           }
         }
       }
