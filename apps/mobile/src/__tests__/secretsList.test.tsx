@@ -37,4 +37,24 @@ describe('Hosts → Secrets', () => {
     await waitFor(() => expect(screen.queryByText('DB_PASSWORD')).toBeNull());
     expect(await readSecret('DB_PASSWORD')).toBeUndefined();
   });
+
+  it('Add a secret stores one before any cell asks for it; a bad name is refused', async () => {
+    await render(<HostList />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('add-secret'));
+    });
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('new-secret-name'), 'bad-name');
+      fireEvent.changeText(screen.getByTestId('new-secret-value'), 'v-1234');
+    });
+    expect(screen.getByTestId('save-new-secret').props.accessibilityState).toMatchObject({ disabled: true });
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('new-secret-name'), 'GH_TOKEN');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('save-new-secret'));
+    });
+    expect(await readSecret('GH_TOKEN')).toBe('v-1234');
+    await waitFor(() => expect(screen.getByText('GH_TOKEN')).toBeTruthy());
+  });
 });

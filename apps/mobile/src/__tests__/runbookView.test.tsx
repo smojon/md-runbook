@@ -82,6 +82,33 @@ describe('secrets and inputs', () => {
     });
     await waitFor(() => expect(mockConnection.calls).toHaveLength(2));
     expect(screen.queryByTestId('needs')).toBeNull();
+
+    // The Inputs card shows what was typed; Change replaces it, Clear makes the next run ask.
+    expect(screen.getByText('USER = ops')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('input-change-USER'));
+    });
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('input-value-USER'), 'dev');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('input-save-USER'));
+    });
+    await waitFor(() => expect(screen.getByText('USER = dev')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(3));
+    expect(mockConnection.calls[2]?.opts.env).toMatchObject({ USER: 'dev' });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('input-clear-USER'));
+    });
+    expect(screen.queryByTestId('inputs')).toBeNull();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('needs')).toBeTruthy());
+    expect(screen.queryByTestId('need-API_KEY')).toBeNull();
   });
 
   it('cancelling runs nothing and says so', async () => {

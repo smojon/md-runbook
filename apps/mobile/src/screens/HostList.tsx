@@ -2,6 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { KeyStorage, appKeyInfo, appPublicKeyLine } from '../ssh/appKey';
@@ -129,6 +130,14 @@ function SecretsSection() {
     await storeSecret(editing.name, editing.value);
     setEditing(undefined);
   };
+  /** A new secret being typed (before any cell asks for it). */
+  const [adding, setAdding] = useState<{ name: string; value: string } | undefined>();
+  const addable = adding !== undefined && VAR_NAME_RE.test(adding.name) && adding.value !== '';
+  const add = async (): Promise<void> => {
+    if (!adding || !addable) return;
+    await storeSecret(adding.name, adding.value);
+    setAdding(undefined);
+  };
   return (
     <View testID="secrets" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.secretsTitle}</Text>
@@ -172,6 +181,45 @@ function SecretsSection() {
           ) : null}
         </View>
       ))}
+      {adding ? (
+        <View testID="add-secret-form">
+          <Text style={styles.label}>{t.secretName}</Text>
+          <TextInput
+            testID="new-secret-name"
+            accessibilityLabel={t.secretName}
+            style={styles.input}
+            value={adding.name}
+            onChangeText={(name) => setAdding({ ...adding, name })}
+            autoCapitalize="characters"
+            autoCorrect={false}
+          />
+          {adding.name !== '' && !VAR_NAME_RE.test(adding.name) ? <Text style={styles.error}>{t.badSecretName}</Text> : null}
+          <Text style={styles.label}>{t.secretValue}</Text>
+          <TextInput
+            testID="new-secret-value"
+            accessibilityLabel={t.secretValue}
+            style={styles.input}
+            value={adding.value}
+            onChangeText={(value) => setAdding({ ...adding, value })}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <Pressable
+            testID="save-new-secret"
+            accessibilityRole="button"
+            disabled={!addable}
+            onPress={() => void add()}
+            style={[styles.button, !addable && styles.disabled]}
+          >
+            <Text style={styles.buttonText}>{t.save}</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <Pressable testID="add-secret" accessibilityRole="button" onPress={() => setAdding({ name: '', value: '' })} style={styles.button}>
+          <Text style={styles.buttonText}>{t.addSecret}</Text>
+        </Pressable>
+      )}
     </View>
   );
 }

@@ -127,6 +127,13 @@ const en = {
   secretsHelp: 'Values for ${secret:NAME}, stored in this device’s keychain. Change a value, or forget it to be asked again.',
   secretsNone: 'None stored yet: a cell that uses one asks for it.',
   forgetSecret: 'Forget',
+  inputsTitle: 'Inputs (while this runbook is open)',
+  clearInput: 'Clear',
+  clearInputs: 'Clear all inputs',
+  addSecret: 'Add a secret',
+  secretName: 'Name (used as ${secret:NAME})',
+  secretValue: 'Value',
+  badSecretName: 'Letters, digits and _, not starting with a digit',
   changeSecret: 'Change',
   newSecretValue: (name: string) => `New value of ${name}`,
 

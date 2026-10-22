@@ -92,6 +92,10 @@ ends in `_PASSWORD`, `_TOKEN` or `_SECRET`.
 Cancelling the input box fails the cell with `input NAME cancelled`; nothing is run. Run All
 stops there as with any failure.
 
+**md-runbook: Set Inputs** asks for every input the runbook uses, with the current value filled
+in, to set or change them before running (a secret input is masked and never shown; leaving it
+empty keeps the current value).
+
 **md-runbook: Reset Inputs** forgets the inputs and parameter values of the active runbook, so
 they are asked again.
 
@@ -113,8 +117,8 @@ params:
 
 Each item is `- NAME` or `- NAME: default`; other keys are ignored. The first time a cell uses
 `${param:NAME}`, you're asked for it with the default filled in. **md-runbook: Set Parameters**
-asks for all declared parameters at once. Values last until the runbook is closed or
-**Reset Inputs** is run. With `mdRunbook.params.useDefaults` on, parameters that have a default
+asks for all of them at once (the declared ones and any other the cells use). Values last until
+the runbook is closed or **Reset Inputs** is run. With `mdRunbook.params.useDefaults` on, parameters that have a default
 are not asked for. Parameters are not secret and not redacted.
 
 Front matter is plain Markdown to md-runbook; it is saved byte for byte like everything else.

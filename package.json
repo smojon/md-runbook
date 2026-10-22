@@ -136,6 +136,11 @@
         "category": "md-runbook"
       },
       {
+        "command": "mdRunbook.setInputs",
+        "title": "Set Inputs",
+        "category": "md-runbook"
+      },
+      {
         "command": "mdRunbook.markStepDone",
         "title": "Mark Step Done",
         "category": "md-runbook",
@@ -546,6 +551,10 @@
         },
         {
           "command": "mdRunbook.setParameters",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.setInputs",
           "when": "notebookType == md-runbook"
         },
         {

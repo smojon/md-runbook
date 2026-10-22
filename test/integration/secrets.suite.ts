@@ -62,6 +62,24 @@ test('params: front-matter default, Set Parameters values, Reset Inputs', async 
   }
 });
 
+test('inputs: values set with Set Inputs are used without asking, and can be changed', async () => {
+  try {
+    const uri = writeFile('inputs.md', `# Inputs\n\n\`\`\`${LANG}\n${echo('who=${input:WHO}')}\n\`\`\`\n`);
+    const editor = await openRunbook(uri);
+    const cell = editor.notebook.getCells().find((c) => c.kind === vscode.NotebookCellKind.Code)!;
+    await vscode.commands.executeCommand('mdRunbook._test.setInputs', { WHO: 'ops-team' });
+    await runCells(editor, cell.index, cell.index + 1);
+    assert.equal(await waitForRun(cell), true, outputText(cell));
+    assert.match(outputText(cell), /who=ops-team/);
+    await vscode.commands.executeCommand('mdRunbook._test.setInputs', { WHO: 'support' });
+    await runCells(editor, cell.index, cell.index + 1);
+    assert.equal(await waitForRun(cell), true, outputText(cell));
+    assert.match(outputText(cell), /who=support/);
+  } finally {
+    await closeAll();
+  }
+});
+
 test('stored secrets are injected as env vars and never persisted', async () => {
   const value = 's3cr3t-value-xyz';
   await vscode.commands.executeCommand('mdRunbook._test.setSecret', 'MDRB_TEST_SECRET', value);

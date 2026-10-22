@@ -71,7 +71,13 @@ export function RunbookView({ id }: { id: string | undefined }) {
   /** Secrets to store and inputs to type before a cell can run. */
   const [asking, setAsking] = useState<{ request: RunRequest; hostId: string; needs: NeededValue[] } | undefined>();
   /** ${input:NAME} values for as long as this runbook is open (as in the extension's session). */
-  const inputs = useRef<Record<string, string>>({});
+  const [typedInputs, setTypedInputs] = useState<Readonly<Record<string, TypedInput>>>({});
+  // The runs read the latest values (a run started right after typing them sees them).
+  const inputs = useRef(typedInputs);
+  const updateInputs = (next: Readonly<Record<string, TypedInput>>): void => {
+    inputs.current = next;
+    setTypedInputs(next);
+  };
   const [notice, setNotice] = useState<string | undefined>();
   const [transportIssue, setTransportIssue] = useState<string | undefined>();
   /** Checked commands per cell index (their texts), for this screen's life, as in the extension's session. */
@@ -161,7 +167,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
       lines,
       beforeStep,
       params: paramValues,
-      inputs: inputs.current,
+      inputs: Object.fromEntries(Object.entries(inputs.current).map(([k, v]) => [k, v.value])),
       latestText: () => getRunbook(runbook.id)?.text ?? runbook.text,
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
       onOutput: (text) => update((r) => ({ ...r, live: (r.live + text).slice(-LIVE_CHARS) })),
@@ -184,11 +190,13 @@ export function RunbookView({ id }: { id: string | undefined }) {
   const provide = async (values: Record<string, string>): Promise<void> => {
     if (!asking) return;
     const { request, hostId, needs } = asking;
+    let next = inputs.current;
     for (const n of needs) {
       const v = values[n.name] ?? '';
       if (n.kind === 'secret') await storeSecret(n.name, v);
-      else inputs.current = { ...inputs.current, [n.name]: v };
+      else next = { ...next, [n.name]: { value: v, masked: n.masked } };
     }
+    updateInputs(next);
     setAsking(undefined);
     void run(request, getHost(hostId));
   };
@@ -246,6 +254,14 @@ export function RunbookView({ id }: { id: string | undefined }) {
                 {notice}
               </Text>
             ) : null}
+            {Object.keys(typedInputs).length > 0 ? (
+              <InputsCard
+                inputs={typedInputs}
+                onChange={(name, value) => updateInputs({ ...inputs.current, [name]: { ...inputs.current[name]!, value } })}
+                onClear={(name) => updateInputs(Object.fromEntries(Object.entries(inputs.current).filter(([k]) => k !== name)))}
+                onClearAll={() => updateInputs({})}
+              />
+            ) : null}
             {asking ? (
               <NeedsCard
                 needs={asking.needs}
@@ -291,6 +307,82 @@ export function RunbookView({ id }: { id: string | undefined }) {
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
+
+/** An `${input:NAME}` value typed while this runbook is open. */
+interface TypedInput {
+  value: string;
+  masked: boolean;
+}
+
+/** The inputs typed so far: seen (masked ones as dots), changed, cleared (then asked again). */
+function InputsCard({
+  inputs,
+  onChange,
+  onClear,
+  onClearAll,
+}: {
+  inputs: Readonly<Record<string, TypedInput>>;
+  onChange(name: string, value: string): void;
+  onClear(name: string): void;
+  onClearAll(): void;
+}) {
+  const styles = useStyles();
+  const [editing, setEditing] = useState<{ name: string; value: string } | undefined>();
+  return (
+    <View testID="inputs" style={styles.params}>
+      <Text style={styles.paramsTitle}>{t.inputsTitle}</Text>
+      {Object.entries(inputs).map(([name, input]) => (
+        <View key={name} style={styles.param}>
+          <View style={styles.inputRow}>
+            <Text style={styles.paramName}>
+              {`${name} = ${input.masked ? '••••••' : input.value}`}
+            </Text>
+            <View style={styles.actions}>
+              <Pressable
+                testID={`input-change-${name}`}
+                accessibilityRole="button"
+                onPress={() => setEditing({ name, value: input.masked ? '' : input.value })}
+              >
+                <Text style={styles.secondaryText}>{t.changeSecret}</Text>
+              </Pressable>
+              <Pressable testID={`input-clear-${name}`} accessibilityRole="button" onPress={() => onClear(name)}>
+                <Text style={styles.secondaryText}>{t.clearInput}</Text>
+              </Pressable>
+            </View>
+          </View>
+          {editing?.name === name ? (
+            <View style={styles.inputRow}>
+              <TextInput
+                testID={`input-value-${name}`}
+                accessibilityLabel={name}
+                style={[styles.paramInput, styles.grow]}
+                value={editing.value}
+                onChangeText={(value) => setEditing({ name, value })}
+                secureTextEntry={input.masked}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Pressable
+                testID={`input-save-${name}`}
+                accessibilityRole="button"
+                onPress={() => {
+                  onChange(name, editing.value);
+                  setEditing(undefined);
+                }}
+                style={styles.button}
+              >
+                <Text style={styles.buttonText}>{t.save}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ))}
+      <Pressable testID="inputs-clear-all" accessibilityRole="button" onPress={onClearAll}>
+        <Text style={styles.secondaryText}>{t.clearInputs}</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 /** Ask for the secrets and inputs a cell needs: secrets are stored for every runbook, inputs kept while this one is open. */
 function NeedsCard({
@@ -475,6 +567,8 @@ const useStyles = themedStyles((c) => ({
   link: { fontSize: 15, color: c.link },
   warning: { fontSize: 13, color: c.error, marginVertical: 6 },
   disabled: { opacity: 0.5 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4 },
+  grow: { flex: 1 },
   params: { marginVertical: 6 },
   paramsTitle: { fontSize: 13, color: c.muted, marginBottom: 4 },
   param: { marginBottom: 8 },

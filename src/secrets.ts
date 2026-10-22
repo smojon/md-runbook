@@ -40,6 +40,20 @@ function declaredParams(nb: vscode.NotebookDocument): RunbookParam[] {
   return parseFrontMatter(first.document.getText())?.params ?? [];
 }
 
+/** The `${…}` references of the runbook's shell cells, in order (cells with malformed ones are skipped). */
+function usedRefs(nb: vscode.NotebookDocument): ReturnType<typeof findRefs> {
+  const out: ReturnType<typeof findRefs> = [];
+  for (const cell of nb.getCells()) {
+    if (cell.kind !== vscode.NotebookCellKind.Code || !shellKindForLanguage(cell.document.languageId)) continue;
+    try {
+      out.push(...findRefs(cell.document.getText()));
+    } catch {
+      // a name used as two kinds: the run reports it
+    }
+  }
+  return out;
+}
+
 /** Expand `${workspaceFolder}`; relative paths are relative to the runbook's folder. */
 function resolveEnvFile(setting: string, cwd: string, uri: vscode.Uri): string {
   const ws = vscode.workspace.getWorkspaceFolder(uri) ?? vscode.workspace.workspaceFolders?.[0];
@@ -285,8 +299,10 @@ class SecretsFeature {
       for (const [k, v] of Object.entries(values as Record<string, string>)) if (VAR_NAME_RE.test(k)) cache.set(k, v);
       return;
     }
-    const params = declaredParams(nb);
-    if (params.length === 0) return void vscode.window.showInformationMessage('md-runbook: this runbook declares no params in its front matter.');
+    // Declared ones first (with their defaults), then any other the cells use.
+    const params: { name: string; default?: string }[] = [...declaredParams(nb)];
+    for (const r of usedRefs(nb)) if (r.kind === 'param' && !params.some((p) => p.name === r.name)) params.push({ name: r.name });
+    if (params.length === 0) return void vscode.window.showInformationMessage('md-runbook: this runbook has no parameters (${param:NAME}).');
     for (const p of params) {
       const value = await vscode.window.showInputBox({
         title: `${runbookName(nb)}: parameter ${p.name}`,
@@ -296,6 +312,36 @@ class SecretsFeature {
       });
       if (value === undefined) return;
       cache.set(p.name, value);
+    }
+  }
+
+  /**
+   * Ask for every `${input:NAME}` the runbook's cells use, the current value filled in (a secret
+   * one is masked and never shown: empty keeps it). Escape stops; the values set so far stay.
+   */
+  async setInputs(values?: unknown): Promise<void> {
+    const nb = activeRunbook();
+    if (!nb) return;
+    const cache = this.session(this.inputs, nb);
+    if (values !== undefined && typeof values === 'object' && values !== null && Object.values(values).every((v) => typeof v === 'string')) {
+      for (const [k, v] of Object.entries(values as Record<string, string>)) if (VAR_NAME_RE.test(k)) cache.set(k, v);
+      return;
+    }
+    const inputs = new Map<string, boolean>();
+    for (const r of usedRefs(nb)) if (r.kind === 'input') inputs.set(r.name, (inputs.get(r.name) ?? false) || r.secret);
+    if (inputs.size === 0) return void vscode.window.showInformationMessage('md-runbook: this runbook has no inputs (${input:NAME}).');
+    for (const [name, secret] of inputs) {
+      const current = cache.get(name);
+      const value = await vscode.window.showInputBox({
+        title: `${runbookName(nb)}: input ${name}`,
+        prompt: secret && current !== undefined ? `Value for ${name} (empty keeps the current one)` : `Value for ${name}`,
+        value: secret ? undefined : current,
+        password: secret,
+        ignoreFocusOut: true,
+      });
+      if (value === undefined) return;
+      if (secret && value === '' && current !== undefined) continue;
+      cache.set(name, value);
     }
   }
 
@@ -371,6 +417,7 @@ export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunP
       }),
       vscode.commands.registerCommand('mdRunbook._test.deleteSecret', (name: string) => f.deleteSecret(name)),
       vscode.commands.registerCommand('mdRunbook._test.setParameters', (values: Record<string, string>) => f.setParameters(values)),
+      vscode.commands.registerCommand('mdRunbook._test.setInputs', (values: Record<string, string>) => f.setInputs(values)),
     );
   }
   context.subscriptions.push(
@@ -380,6 +427,7 @@ export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunP
     vscode.commands.registerCommand('mdRunbook.deleteSecret', () => f.deleteSecretCommand()),
     vscode.commands.registerCommand('mdRunbook.listSecrets', () => f.listSecretsCommand()),
     vscode.commands.registerCommand('mdRunbook.setParameters', () => f.setParameters()),
+    vscode.commands.registerCommand('mdRunbook.setInputs', () => f.setInputs()),
     vscode.commands.registerCommand('mdRunbook.resetInputs', () => {
       const nb = activeRunbook();
       if (nb) f.forget(nb);
