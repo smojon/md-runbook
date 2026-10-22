@@ -112,7 +112,15 @@ request there could miss them.
 the code. Each needs a pattern (`--pattern NAME=REGEX`, a POSIX extended regular expression the
 whole value must match); the gate checks the value and refuses newlines. The front matter isn't
 signed, so the app doesn't take a signed block's parameter values from its defaults: they are
-typed on the runbook. `${secret:}`, `${input:}` and `${out:}` can't be signed yet.
+typed on the runbook.
+
+**Inputs and captured values.** `${input:NAME}` (asked when the cell runs) and `${out:NAME}` (a
+value an earlier block captured with `capture=`) are signed like parameters: each needs a
+pattern under the same name (`--pattern SINCE='[0-9]+[smh]'`), the client sends the value to the
+gate with the run, and the gate checks it against the signed pattern. That way a later block can
+use what an earlier one printed (a pod name, a ticket) without the value being part of the code.
+Secrets can't be signed: `${secret:}`, `${input:NAME:secret}` and values from `capture-secret=`,
+because the gate logs every value it is given.
 
 **Line runs.** A signed block runs whole, or its commands in order (Step through, Run lines 1-N).
 Single lines and ranges (Run line, Run lines N-end, checked lines) need `lines=any` on the block

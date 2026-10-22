@@ -302,6 +302,28 @@ describe('runCell: parameters', () => {
     expect(conn.calls).toHaveLength(0);
   });
 
+  it('a signed cell with ${input:} and ${out:}: checked against their patterns, sent to the gate', async () => {
+    const plain = '```bash\nkubectl logs ${out:POD} --since ${input:SINCE}\n```\n';
+    const built = buildManifest(plain, { name: 'ops/x', version: 1, scopes: [], patterns: { POD: 'web-[a-z0-9]+', SINCE: '[0-9]+[smh]' } });
+    if ('errors' in built) throw new Error(built.errors.join('; '));
+    const signed = withSignature(plain, {
+      signer: 'ops',
+      signed: '2026-10-23',
+      manifest: formatManifest(built.manifest),
+      signature: 'U1NI',
+    });
+    const pod = { name: 'POD', value: 'web-7f9', secret: false, fromAssistant: false };
+    const conn = fakeConnection([{}]);
+    expect(
+      await runCell({ host, text: signed, cellIndex: 0, connection: conn, captures: { POD: pod }, inputs: { SINCE: '1 hour' } }),
+    ).toEqual({
+      kind: 'error',
+      message: "The value of SINCE doesn't match its pattern [0-9]+[smh]",
+    });
+    await runCell({ host, text: signed, cellIndex: 0, connection: conn, captures: { POD: pod }, inputs: { SINCE: '1h' } });
+    expect(conn.calls[0]).toMatchObject({ signed: { cell: 1, params: { POD: 'web-7f9', SINCE: '1h' } } });
+  });
+
   it('a signed runbook: values must match the signed pattern, and go to the gate with the run', async () => {
     const plain = '```bash\nsystemctl restart ${param:SERVICE}\n```\n';
     const built = buildManifest(plain, { name: 'ops/x', version: 1, scopes: [], patterns: { SERVICE: '[a-z-]+' } });

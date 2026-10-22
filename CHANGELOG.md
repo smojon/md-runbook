@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Signed runbooks can use `${input:NAME}` and `${out:NAME}`**, each with a pattern like a
+  parameter: the app sends the typed or captured value to md-runbook-gate, which checks it
+  against the signed pattern. Sign Runbook asks for the missing patterns. Secrets
+  (`${secret:}`, `${input:NAME:secret}`, `capture-secret=` values) still can't be signed: the
+  gate logs the values it gets.
 - **stderr shows in VS Code.** What a cell wrote to stderr was saved but never shown: VS Code
   draws one item of each output, and the stderr items sat next to stdout ones. Now each stretch
   of one stream is an output of its own, in order.

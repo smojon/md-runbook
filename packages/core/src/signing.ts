@@ -170,6 +170,10 @@ export function buildManifest(text: string, meta: ManifestMeta): { manifest: Man
     }
   }
   errors.push(...hiddenFences(withoutSignature(text)));
+  // capture-secret= values reach the gate as parameters too, and the gate logs every parameter
+  // value: a signed cell can't use them.
+  const secretCaptures = new Set<string>();
+  for (const c of bashCells(text)) for (const cap of parseCellOptions(c.info).checks?.captures ?? []) if (cap.secret) secretCaptures.add(cap.name);
   const cells: ManifestCell[] = [];
   for (const c of bashCells(text)) {
     const n = cells.length + 1;
@@ -178,17 +182,23 @@ export function buildManifest(text: string, meta: ManifestMeta): { manifest: Man
     for (const e of opts.errors) errors.push(`${where}: invalid option ${e}`);
     const needs: string[] = [];
     try {
+      // ${param:}, ${input:} and ${out:} values go to the gate, which checks them against the
+      // signed pattern and logs them; secrets don't (the log would hold them).
       for (const ref of findRefs(c.value)) {
-        if (ref.kind !== 'param') errors.push(`${where}: \${${ref.kind}:${ref.name}} can't be signed (only \${param:NAME} with a pattern)`);
-        else if (meta.patterns[ref.name] === undefined) errors.push(`${where}: \${param:${ref.name}} needs a pattern (--pattern ${ref.name}=REGEX)`);
-        else needs.push(ref.name);
+        const token = `\${${ref.kind}:${ref.name}${ref.kind === 'input' && ref.secret ? ':secret' : ''}}`;
+        if (ref.kind === 'secret') errors.push(`${where}: ${token} can't be signed (servers log the values signed cells get)`);
+        else if (ref.secret) errors.push(`${where}: ${token} can't be signed: a secret input would be in the servers' logs`);
+        else if (ref.kind === 'out' && secretCaptures.has(ref.name)) errors.push(`${where}: ${token} comes from capture-secret= and can't be signed (servers log the values)`);
+        else if (meta.patterns[ref.name] === undefined) errors.push(`${where}: ${token} needs a pattern (--pattern ${ref.name}=REGEX)`);
+        else if (!needs.includes(ref.name)) needs.push(ref.name);
       }
     } catch (e) {
       errors.push(`${where}: ${e instanceof Error ? e.message : String(e)}`);
     }
     // `${param:X:secret}` and the like aren't references: bash would read them as ${param:offset:length}.
     for (const m of c.value.matchAll(/\$\{(secret|input|param|out):[^}\s]*/g)) {
-      if (!/^\$\{(secret|input|param|out):[A-Za-z_][A-Za-z0-9_]*$/.test(m[0])) errors.push(`${where}: ${m[0]}} is not a plain \${${m[1]}:NAME} and can't be signed`);
+      // (${input:NAME:secret} is a reference: refused above as a secret.)
+      if (!/^\$\{((secret|param|out):[A-Za-z_][A-Za-z0-9_]*|input:[A-Za-z_][A-Za-z0-9_]*(:secret)?)$/.test(m[0])) errors.push(`${where}: ${m[0]}} is not a plain \${${m[1]}:NAME} and can't be signed`);
     }
     for (const [k, v] of Object.entries(opts.env)) {
       if (!VAR_NAME_RE.test(k)) errors.push(`${where}: env.${k} is not a variable name`);

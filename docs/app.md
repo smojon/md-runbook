@@ -162,5 +162,5 @@ App** copies) open it directly. **⋯ More → Share Runbook** hands the file on
   translation.
 - The web app isn't hosted yet: it needs its own domain, because it keeps its SSH key in the
   site's local storage, which any other site served from the same address could read.
-- Signed runbooks: one signer, no version floors, and `${input:}` / `${out:}` can't be signed
-  yet ([details](features/signed-runbooks.md)).
+- Signed runbooks: one signer, no version floors, and no secret values in signed cells
+  ([details](features/signed-runbooks.md)).

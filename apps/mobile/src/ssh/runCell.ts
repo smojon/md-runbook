@@ -153,6 +153,15 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     paramEnv[ref.name] = value;
   }
   if (needs.length > 0) return { kind: 'needs', needs };
+  // A signed cell's inputs and captured values must match their signed patterns, as parameters do
+  // (the gate checks again): say so here rather than with the gate's refusal.
+  for (const n of signedCell?.needs ?? []) {
+    const value = paramEnv[n] ?? secretEnv[n];
+    const pattern = status?.manifest.patterns[n];
+    if (value === undefined || pattern === undefined || paramEnv[n] !== undefined) continue;
+    const bad = checkParam({ name: n, pattern }, value);
+    if (bad) return { kind: 'error', message: bad === 'newline' ? t.paramNewline(n) : t.paramMismatch(n, pattern) };
+  }
   known.sort((a, b) => b.length - a.length);
   const hideKnown = (text: string): string => known.reduce((s, v) => s.split(v).join(REDACTED), text);
   const asRun = (source: string): string => (refs.length > 0 ? rewriteRefs(source, kind) : source);
@@ -198,7 +207,8 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   const cellSteps = signedCell ? splitSteps(cell.value, 'bash') : [];
   const signed = (step?: LineStep): SignedRun | undefined => {
     if (!status || !signedCell) return undefined;
-    const params = Object.fromEntries(signedCell.needs.map((n) => [n, paramEnv[n] ?? '']));
+    // Every value the signed cell uses: ${param:}, ${input:} and ${out:} (the gate checks each against its signed pattern).
+    const params = Object.fromEntries(signedCell.needs.map((n) => [n, paramEnv[n] ?? secretEnv[n] ?? '']));
     const base = { manifest: status.block.manifest, signature: status.block.signature, cell: signedCell.n, params };
     if (step === undefined) return base;
     const k = signedStepIndex(

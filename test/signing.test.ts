@@ -84,13 +84,34 @@ describe('signing: the manifest', () => {
       /scope "a b"/,
       /cell 1 .*invalid option timeout=x/,
       /cell 2 .*\$\{secret:TOKEN\} can't be signed/,
-      /cell 2 .*\$\{out:POD\} can't be signed/,
-      /cell 2 .*\$\{input:WHO\} can't be signed/,
+      /cell 2 .*\$\{out:POD\} needs a pattern/,
+      /cell 2 .*\$\{input:WHO\} needs a pattern/,
       /cell 3 .*\$\{param:NOPAT\} needs a pattern/,
       /cell 4 .*env.A can't use placeholders/,
     ])
       assert.match(all, re);
     assert.deepEqual(errorsOf('# only prose\n\n' + fence('pwsh', 'Get-Date')), ['no bash or sh cells to sign']);
+  });
+
+  it('signs ${input:} and ${out:} with a pattern, like parameters; never secrets (servers log the values)', () => {
+    const text =
+      fence('bash capture=POD:/^(web-\\S+)/m', 'kubectl get pods') +
+      fence('bash capture-secret=TOKEN:/token=(\\S+)/', 'login') +
+      fence('bash', 'kubectl logs ${out:POD} --since ${input:SINCE} -n ${param:NS} # ${param:NS}');
+    const r = buildManifest(text, meta({ patterns: { POD: 'web-[a-z0-9-]+', SINCE: '[0-9]+[smh]', NS: '[a-z-]+' } }));
+    assert.ok(!('errors' in r), 'errors' in r ? r.errors.join('\n') : '');
+    if ('errors' in r) return;
+    const cell = r.manifest.cells[2]!;
+    assert.deepEqual(cell.needs, ['POD', 'SINCE', 'NS']);
+    assert.equal(cell.code, 'kubectl logs ${POD} --since ${SINCE} -n ${NS} # ${NS}');
+    assert.deepEqual(Object.keys(r.manifest.patterns).sort(), ['NS', 'POD', 'SINCE']);
+    const refused = errorsOf(
+      fence('bash capture-secret=TOKEN:/token=(\\S+)/', 'login') + fence('bash', 'curl -H "x: ${out:TOKEN}" ${input:PW:secret} ${secret:KEY}'),
+      { patterns: { TOKEN: '.+', PW: '.+', KEY: '.+' } },
+    ).join('\n');
+    assert.match(refused, /\$\{out:TOKEN\} comes from capture-secret= and can't be signed/);
+    assert.match(refused, /\$\{input:PW:secret\} can't be signed: a secret input/);
+    assert.match(refused, /\$\{secret:KEY\} can't be signed/);
   });
 
   it("refuses blocks a reviewer reading the rendered file (GitHub) wouldn't see as code that runs", () => {

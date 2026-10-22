@@ -165,7 +165,7 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 1. Shell choice per runbook, only with a safe design (e.g. picking among installed shells, never
    a path from the file).
 2. Signed runbooks: two signers (author and reviewer), version floors (a server refuses versions
-   older than a given one), and signing cells that use `${input:}` or `${out:}`. Limits today:
+   older than a given one). (`${input:}` and `${out:}` are signed since 2026-10-23.) Limits today:
    `docs/features/signed-runbooks.md`.
 3. App translations: the texts are in `apps/mobile/src/i18n.ts`, English only; which languages
    is the owner's choice.

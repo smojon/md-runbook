@@ -82,21 +82,22 @@ async function signRunbook(uri?: unknown): Promise<void> {
   });
   if (days === undefined) return;
 
-  // A pattern for each ${param:NAME} that has none yet.
+  // A pattern for each ${param:NAME}, ${input:NAME} and ${out:NAME} that has none yet (secrets
+  // can't be signed; buildManifest says so).
   const patterns = { ...(prev?.patterns ?? {}) };
-  const names = new Set<string>();
+  const names = new Map<string, string>();
   for (const cell of parse(text).cells) {
     if (cell.kind !== 'code' || shellKindForLanguage(cell.languageId) !== 'bash') continue;
     try {
-      for (const r of findRefs(cell.value)) if (r.kind === 'param') names.add(r.name);
+      for (const r of findRefs(cell.value)) if (r.kind !== 'secret' && !r.secret && !names.has(r.name)) names.set(r.name, r.kind);
     } catch {
       // reported by buildManifest
     }
   }
-  for (const p of names) {
+  for (const [p, kind] of names) {
     if (patterns[p] !== undefined) continue;
     const re = await vscode.window.showInputBox({
-      title: `md-runbook: what may \${param:${p}} be?`,
+      title: `md-runbook: what may \${${kind}:${p}} be?`,
       prompt: 'A POSIX extended regular expression the whole value must match, e.g. [a-z0-9-]{1,32}',
       validateInput: (v) => (v.trim() === '' ? 'A pattern is needed: servers check the value against it' : undefined),
     });

@@ -23,7 +23,8 @@ patterns and counts the version up.
   --expires DATE       Last day it may run, YYYY-MM-DD (UTC)
   --expires-in DAYS    The same, counted from today
   --scope NAME         Where it may run (repeatable; servers and keys accept scopes)
-  --pattern NAME=RE    What \${param:NAME} may be: a POSIX extended regex for the whole value
+  --pattern NAME=RE    What \${param:NAME}, \${input:NAME} or \${out:NAME} may be: a POSIX
+                       extended regex for the whole value
   --out FILE           Write the signed runbook to FILE instead
 
 verify shows what a runbook's signature covers and which blocks changed since signing. Only
