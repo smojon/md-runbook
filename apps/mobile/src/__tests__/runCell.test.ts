@@ -228,9 +228,9 @@ describe('runCell: parameters', () => {
       kind: 'error',
       message: 'Enter a value for TARGET under Parameters',
     });
-    const secret = '```bash\necho ${secret:TOKEN}\n```\n';
-    const r = await runCell({ host, text: secret, cellIndex: 0, connection: conn });
-    expect(r).toMatchObject({ kind: 'error', message: expect.stringMatching(/^\$\{secret:TOKEN\} is not supported in the app yet/) });
+    const out = '```bash\necho ${out:POD}\n```\n';
+    const r = await runCell({ host, text: out, cellIndex: 0, connection: conn });
+    expect(r).toMatchObject({ kind: 'error', message: expect.stringMatching(/^\$\{out:POD\} is not supported in the app yet/) });
     expect(conn.calls).toHaveLength(0);
   });
 
@@ -251,5 +251,50 @@ describe('runCell: parameters', () => {
     });
     await runCell({ host, text: signed, cellIndex: 0, connection: conn, params: { SERVICE: 'api-gw' } });
     expect(conn.calls[0]).toMatchObject({ source: 'systemctl restart ${SERVICE}', signed: { cell: 1, params: { SERVICE: 'api-gw' } } });
+  });
+});
+
+describe('runCell: secrets and inputs', () => {
+  const text = '```bash\ncurl -H "Authorization: Bearer ${secret:API_TOKEN}" "https://${input:HOST}/"\n```\n';
+  const stored: Record<string, string> = { API_TOKEN: 's3cr3t-token-value' };
+  const readSecret = async (name: string): Promise<string | undefined> => stored[name];
+
+  it('asks for what is missing: a secret not stored, an input not typed (masked when it looks secret)', async () => {
+    const conn = fakeConnection([{}]);
+    expect(await runCell({ host, text, cellIndex: 0, connection: conn, readSecret: async () => undefined })).toEqual({
+      kind: 'needs',
+      needs: [
+        { kind: 'secret', name: 'API_TOKEN', masked: true },
+        { kind: 'input', name: 'HOST', masked: false },
+      ],
+    });
+    const pw = '```bash\necho ${input:DB_PASSWORD} ${input:PIN:secret}\n```\n';
+    expect(await runCell({ host, text: pw, cellIndex: 0, connection: conn })).toMatchObject({
+      needs: [
+        { name: 'DB_PASSWORD', masked: true },
+        { name: 'PIN', masked: true },
+      ],
+    });
+    expect(conn.calls).toHaveLength(0);
+  });
+
+  it('values go in the environment, never in the script, and secrets are redacted live and in the file', async () => {
+    const conn = fakeConnection([{ stdout: 'sent s3cr3t-token-value to api.example.net\n' }]);
+    const live: string[] = [];
+    const r = await runCell({
+      host,
+      text,
+      cellIndex: 0,
+      connection: conn,
+      readSecret,
+      inputs: { HOST: 'api.example.net' },
+      onOutput: (t) => live.push(t),
+    });
+    expect(conn.calls[0]).toMatchObject({
+      source: 'curl -H "Authorization: Bearer ${API_TOKEN}" "https://${HOST}/"',
+      opts: { env: { API_TOKEN: 's3cr3t-token-value', HOST: 'api.example.net' } },
+    });
+    expect(live.join('')).toBe('sent [REDACTED] to api.example.net\n');
+    expect(r.kind === 'done' && parse(r.text).cells[0]?.output?.text).toBe('sent [REDACTED] to api.example.net');
   });
 });

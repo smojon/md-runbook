@@ -5,6 +5,7 @@ import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { KeyStorage, appKeyInfo, appPublicKeyLine } from '../ssh/appKey';
+import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import { getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { mono, themedStyles } from '../theme';
 
@@ -34,6 +35,7 @@ export function HostList() {
       ListFooterComponent={
         <>
           <AppKeySection />
+          <SecretsSection />
           {Platform.OS === 'web' ? <RelaySection /> : null}
         </>
       }
@@ -109,6 +111,67 @@ function AppKeySection() {
       >
         <Text style={styles.buttonText}>{copied ? t.copied : t.copy}</Text>
       </Pressable>
+    </View>
+  );
+}
+
+/** The stored `${secret:NAME}` names (never their values), each with Forget. */
+function SecretsSection() {
+  const styles = useStyles();
+  const names = useSecretNames();
+  /** The secret whose new value is being typed, and that value. */
+  const [editing, setEditing] = useState<{ name: string; value: string } | undefined>();
+  useEffect(() => {
+    void loadSecretNames();
+  }, []);
+  const save = async (): Promise<void> => {
+    if (!editing || editing.value === '') return;
+    await storeSecret(editing.name, editing.value);
+    setEditing(undefined);
+  };
+  return (
+    <View testID="secrets" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.secretsTitle}</Text>
+      <Text style={styles.help}>{names.length > 0 ? t.secretsHelp : t.secretsNone}</Text>
+      {names.map((n) => (
+        <View key={n}>
+          <View style={styles.secretRow}>
+            <Text style={styles.secretName}>{n}</Text>
+            <View style={styles.secretActions}>
+              <Pressable testID={`change-secret-${n}`} accessibilityRole="button" onPress={() => setEditing({ name: n, value: '' })}>
+                <Text style={styles.link}>{t.changeSecret}</Text>
+              </Pressable>
+              <Pressable testID={`forget-secret-${n}`} accessibilityRole="button" onPress={() => void forgetSecret(n)}>
+                <Text style={styles.link}>{t.forgetSecret}</Text>
+              </Pressable>
+            </View>
+          </View>
+          {editing?.name === n ? (
+            <View style={styles.secretEdit}>
+              <TextInput
+                testID={`secret-value-${n}`}
+                accessibilityLabel={t.newSecretValue(n)}
+                style={[styles.input, styles.secretInput]}
+                value={editing.value}
+                onChangeText={(value) => setEditing({ name: n, value })}
+                placeholder={t.newSecretValue(n)}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Pressable
+                testID={`save-secret-${n}`}
+                accessibilityRole="button"
+                disabled={editing.value === ''}
+                onPress={() => void save()}
+                style={[styles.button, editing.value === '' && styles.disabled]}
+              >
+                <Text style={styles.buttonText}>{t.save}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ))}
     </View>
   );
 }
@@ -211,4 +274,10 @@ const useStyles = themedStyles((colors) => ({
     marginTop: 4,
   },
   error: { fontSize: 13, color: colors.error, marginTop: 8 },
+  secretRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8 },
+  secretName: { fontFamily: mono, fontSize: 14, color: colors.text },
+  secretActions: { flexDirection: 'row', gap: 16 },
+  secretEdit: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  secretInput: { flex: 1, marginTop: 0 },
+  link: { fontSize: 15, color: colors.link },
 }));

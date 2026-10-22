@@ -3,6 +3,7 @@ import { parse } from '@md-runbook/core';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { addHost, resetHosts } from '../hosts/store';
 import { resetParamValues } from '../runbooks/params';
+import { readSecret } from '../secrets/store';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { RunbookView } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
@@ -49,6 +50,53 @@ describe('runbook parameters', () => {
   it('a runbook without parameters has no card', async () => {
     await render(<RunbookView id="sample" />);
     expect(screen.queryByTestId('params')).toBeNull();
+  });
+});
+
+describe('secrets and inputs', () => {
+  it('a cell asks for them, stores the secret, keeps the input, then runs', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const r = addRunbook('api.md', '# API\n\n```bash\ncurl -u "${input:USER}:${secret:API_KEY}" https://api\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('needs')).toBeTruthy());
+    expect(mockConnection.calls).toHaveLength(0);
+    expect(screen.getByTestId('need-API_KEY').props.secureTextEntry).toBe(true);
+    expect(screen.getByTestId('need-USER').props.secureTextEntry).toBe(false);
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('need-USER'), 'ops');
+      fireEvent.changeText(screen.getByTestId('need-API_KEY'), 'k-123456');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('needs-run'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(1));
+    expect(mockConnection.calls[0]?.opts.env).toMatchObject({ USER: 'ops', API_KEY: 'k-123456' });
+    expect(await readSecret('API_KEY')).toBe('k-123456');
+    // Run again: nothing is asked.
+    await waitFor(() => expect(screen.getByTestId('cell-1-output')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(2));
+    expect(screen.queryByTestId('needs')).toBeNull();
+  });
+
+  it('cancelling runs nothing and says so', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const r = addRunbook('who.md', '# Who\n\n```bash\necho ${input:WHO}\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('needs')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('needs-cancel'));
+    });
+    expect(screen.getByTestId('run-notice').props.children).toBe('Cancelled: WHO not given, nothing was run');
+    expect(mockConnection.calls).toHaveLength(0);
   });
 });
 

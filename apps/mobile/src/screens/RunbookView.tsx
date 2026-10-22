@@ -1,5 +1,5 @@
 import { Link, Stack } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { isCodeMeta, parse, taskItems } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
@@ -15,7 +15,8 @@ import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } f
 import { getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { fingerprint } from '../ssh/fingerprint';
 import { LineMode, isStepping, planLines } from '../ssh/lineRuns';
-import { runCell } from '../ssh/runCell';
+import { NeededValue, runCell } from '../ssh/runCell';
+import { storeSecret } from '../secrets/store';
 import { transportReady } from '../ssh/transport';
 import { mono, themedStyles, usePalette } from '../theme';
 
@@ -67,6 +68,10 @@ export function RunbookView({ id }: { id: string | undefined }) {
   const host = hosts.find((h) => h.id === hostId) ?? hosts[0];
   const [running, setRunning] = useState<Running | undefined>();
   const [trust, setTrust] = useState<Trust | undefined>();
+  /** Secrets to store and inputs to type before a cell can run. */
+  const [asking, setAsking] = useState<{ request: RunRequest; hostId: string; needs: NeededValue[] } | undefined>();
+  /** ${input:NAME} values for as long as this runbook is open (as in the extension's session). */
+  const inputs = useRef<Record<string, string>>({});
   const [notice, setNotice] = useState<string | undefined>();
   const [transportIssue, setTransportIssue] = useState<string | undefined>();
   /** Checked commands per cell index (their texts), for this screen's life, as in the extension's session. */
@@ -156,6 +161,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
       lines,
       beforeStep,
       params: paramValues,
+      inputs: inputs.current,
       latestText: () => getRunbook(runbook.id)?.text ?? runbook.text,
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
       onOutput: (text) => update((r) => ({ ...r, live: (r.live + text).slice(-LIVE_CHARS) })),
@@ -172,7 +178,19 @@ export function RunbookView({ id }: { id: string | undefined }) {
         fingerprint: await fingerprint(outcome.hostKey),
         changed: outcome.changed,
       });
-    } else setNotice(outcome.message);
+    } else if (outcome.kind === 'needs') setAsking({ request, hostId: target.id, needs: outcome.needs });
+    else setNotice(outcome.message);
+  };
+  const provide = async (values: Record<string, string>): Promise<void> => {
+    if (!asking) return;
+    const { request, hostId, needs } = asking;
+    for (const n of needs) {
+      const v = values[n.name] ?? '';
+      if (n.kind === 'secret') await storeSecret(n.name, v);
+      else inputs.current = { ...inputs.current, [n.name]: v };
+    }
+    setAsking(undefined);
+    void run(request, getHost(hostId));
   };
   const acceptTrust = (): void => {
     if (!trust) return;
@@ -228,6 +246,16 @@ export function RunbookView({ id }: { id: string | undefined }) {
                 {notice}
               </Text>
             ) : null}
+            {asking ? (
+              <NeedsCard
+                needs={asking.needs}
+                onRun={(v) => void provide(v)}
+                onCancel={() => {
+                  setNotice(t.needsCancelled(asking.needs.map((n) => n.name).join(', ')));
+                  setAsking(undefined);
+                }}
+              />
+            ) : null}
             {trust && trustHost ? (
               <TrustCard host={trustHost} trust={trust} onAccept={acceptTrust} onDecline={() => setTrust(undefined)} />
             ) : null}
@@ -263,6 +291,58 @@ export function RunbookView({ id }: { id: string | undefined }) {
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
+
+/** Ask for the secrets and inputs a cell needs: secrets are stored for every runbook, inputs kept while this one is open. */
+function NeedsCard({
+  needs,
+  onRun,
+  onCancel,
+}: {
+  needs: readonly NeededValue[];
+  onRun(values: Record<string, string>): void;
+  onCancel(): void;
+}) {
+  const styles = useStyles();
+  const colors = usePalette();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const complete = needs.every((n) => (values[n.name] ?? '') !== '');
+  return (
+    <View testID="needs" style={styles.trust}>
+      <Text style={styles.trustTitle}>{t.needsTitle}</Text>
+      {needs.map((n) => (
+        <View key={n.name} style={styles.param}>
+          <Text style={styles.paramName}>{n.kind === 'secret' ? t.needSecret(n.name) : n.name}</Text>
+          <TextInput
+            testID={`need-${n.name}`}
+            accessibilityLabel={n.name}
+            style={styles.paramInput}
+            value={values[n.name] ?? ''}
+            onChangeText={(v) => setValues((m) => ({ ...m, [n.name]: v }))}
+            secureTextEntry={n.masked}
+            placeholderTextColor={colors.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <Text style={styles.paramHint}>{n.kind === 'secret' ? t.needSecretHint : t.needInputHint}</Text>
+        </View>
+      ))}
+      <View style={styles.actions}>
+        <Pressable
+          testID="needs-run"
+          accessibilityRole="button"
+          disabled={!complete}
+          onPress={() => onRun(values)}
+          style={[styles.button, !complete && styles.disabled]}
+        >
+          <Text style={styles.buttonText}>{t.needsRun}</Text>
+        </Pressable>
+        <Pressable testID="needs-cancel" accessibilityRole="button" onPress={onCancel} style={styles.secondary}>
+          <Text style={styles.secondaryText}>{t.trustDecline}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
 
 /** The runbook's `${param:NAME}` values: typed here, the default as placeholder, checked against a signed pattern. */
 function ParamsCard({
@@ -394,6 +474,7 @@ const useStyles = themedStyles((c) => ({
   chipTextOn: { color: c.onAccent },
   link: { fontSize: 15, color: c.link },
   warning: { fontSize: 13, color: c.error, marginVertical: 6 },
+  disabled: { opacity: 0.5 },
   params: { marginVertical: 6 },
   paramsTitle: { fontSize: 13, color: c.muted, marginBottom: 4 },
   param: { marginBottom: 8 },

@@ -116,6 +116,20 @@ const en = {
   refUnsupported: (kind: string, name: string) =>
     `\${${kind}:${name}} is not supported in the app yet: this cell runs in VS Code or the command line`,
 
+  // Secrets and inputs (${secret:NAME}, ${input:NAME})
+  needsTitle: 'This cell needs',
+  needSecret: (name: string) => `Secret ${name}`,
+  needSecretHint: 'Stored in this device’s keychain for every runbook. Redacted from the output.',
+  needInputHint: 'Kept while this runbook is open.',
+  needsRun: 'Run',
+  needsCancelled: (names: string) => `Cancelled: ${names} not given, nothing was run`,
+  secretsTitle: 'Secrets',
+  secretsHelp: 'Values for ${secret:NAME}, stored in this device’s keychain. Change a value, or forget it to be asked again.',
+  secretsNone: 'None stored yet: a cell that uses one asks for it.',
+  forgetSecret: 'Forget',
+  changeSecret: 'Change',
+  newSecretValue: (name: string) => `New value of ${name}`,
+
   // Signed runbooks (md-runbook-gate)
   signedTitle: (name: string, version: number, signer: string) => `Signed runbook ${name}, version ${version}, by ${signer}`,
   signedUntil: (date: string) => `Valid until ${date}.`,

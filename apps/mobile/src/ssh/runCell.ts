@@ -5,6 +5,7 @@
  */
 import {
   DEFAULT_PATTERNS,
+  REDACTED,
   DEFAULT_WRITE_OPTIONS,
   createRedactor,
   exitLabel,
@@ -21,6 +22,7 @@ import { echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core
 import type { RemoteRunOptions, SessionRunResult, SignedRun } from '@md-runbook/ssh';
 import type { Host } from '../hosts/store';
 import { checkParam, refsOf, runbookParams } from '../runbooks/params';
+import { readSecret } from '../secrets/store';
 import { t } from '../i18n';
 import { runnability } from './cells';
 import { Connection, connectionFor } from './connections';
@@ -34,8 +36,18 @@ export type RunOutcome =
   | { kind: 'done'; text: string; result: SessionRunResult; attrs: Record<string, string>; summary: string }
   /** The server's key is not trusted yet (or changed): nothing was sent; ask, pin, run again. */
   | { kind: 'trust'; hostKey: string; changed: boolean }
+  /** Nothing ran: the cell needs secrets or inputs that are not there yet; ask, then run again. */
+  | { kind: 'needs'; needs: NeededValue[] }
   /** Nothing ran: the cell can't run here, or the connection failed. */
   | { kind: 'error'; message: string };
+
+/** A `${secret:NAME}` that isn't stored, or an `${input:NAME}` not typed yet. */
+export interface NeededValue {
+  kind: 'secret' | 'input';
+  name: string;
+  /** Typed masked, and redacted from the output. */
+  masked: boolean;
+}
 
 export interface RunCellParams {
   host: Host;
@@ -58,6 +70,10 @@ export interface RunCellParams {
   latestText?(): string;
   /** Values typed for the runbook's `${param:NAME}` (else the front matter's defaults are used). */
   params?: Record<string, string>;
+  /** Values typed for `${input:NAME}` while the runbook is open. */
+  inputs?: Record<string, string>;
+  /** A stored secret's value (default: the secure store). */
+  readSecret?(name: string): Promise<string | undefined>;
   /** Tests: a connection instead of the host's real one. */
   connection?: Connection;
 }
@@ -71,14 +87,28 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   if (!can.ok) return { kind: 'error', message: t.notRunnable[can.why](can.detail) };
   const opts = can.options;
 
-  // ${param:NAME} becomes ${NAME} and its value goes in the environment, as in the extension: the
-  // value is never part of the script. Other placeholders need stores the app doesn't have yet.
+  // Placeholders become environment variables, as in the extension: a value is never part of the
+  // script. ${param:} comes from the Parameters card, ${secret:} from the secure store, ${input:}
+  // from what was typed for this runbook; ${out:} (a captured value) isn't supported yet.
   const refs = refsOf(cell.value);
-  const other = refs.find((r) => r.kind !== 'param');
-  if (other) return { kind: 'error', message: t.refUnsupported(other.kind, other.name) };
-  const specs = refs.length > 0 ? runbookParams(p.text) : [];
+  const out = refs.find((r) => r.kind === 'out');
+  if (out) return { kind: 'error', message: t.refUnsupported(out.kind, out.name) };
+  const specs = refs.some((r) => r.kind === 'param') ? runbookParams(p.text) : [];
   const paramEnv: Record<string, string> = {};
+  const secretEnv: Record<string, string> = {};
+  /** Values to redact as exact matches, longest first (a secret containing another goes whole). */
+  const known: string[] = [];
+  const needs: NeededValue[] = [];
   for (const ref of refs) {
+    if (ref.kind === 'secret' || ref.kind === 'input') {
+      const value = ref.kind === 'secret' ? await (p.readSecret ?? readSecret)(ref.name) : p.inputs?.[ref.name];
+      if (value === undefined) needs.push({ kind: ref.kind, name: ref.name, masked: ref.secret });
+      else {
+        secretEnv[ref.name] = value;
+        if (ref.secret && value.length >= 4) known.push(value);
+      }
+      continue;
+    }
     const spec = specs.find((s) => s.name === ref.name) ?? { name: ref.name };
     const typed = p.params?.[ref.name];
     const value = typed !== undefined && typed !== '' ? typed : spec.default;
@@ -88,6 +118,9 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
       return { kind: 'error', message: bad === 'newline' ? t.paramNewline(ref.name) : t.paramMismatch(ref.name, spec.pattern ?? '') };
     paramEnv[ref.name] = value;
   }
+  if (needs.length > 0) return { kind: 'needs', needs };
+  known.sort((a, b) => b.length - a.length);
+  const hideKnown = (text: string): string => known.reduce((s, v) => s.split(v).join(REDACTED), text);
   const asRun = (source: string): string => (refs.length > 0 ? rewriteRefs(source, 'bash') : source);
 
   let conn: Connection;
@@ -103,10 +136,10 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   let stdout = '';
   const write = (text: string): void => {
     transcript += text;
-    p.onOutput?.(text);
+    p.onOutput?.(hideKnown(text));
   };
   const runOpts: RemoteRunOptions = {
-    env: { ...opts.env, ...paramEnv },
+    env: { ...opts.env, ...paramEnv, ...secretEnv },
     cwd: opts.cwd,
     timeoutMs: opts.timeoutSeconds === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutSeconds * 1000,
     signal: p.signal,
@@ -186,7 +219,11 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   const base = p.latestText?.() ?? p.text;
   if (parse(base).cells[p.cellIndex]?.value !== cell.value) return { kind: 'error', message: t.cellChanged };
   const text =
-    setCellOutput(base, p.cellIndex, { kind: 'new', text: transcript, attrs }, { ...DEFAULT_WRITE_OPTIONS, redact: redactor.redact }) ??
-    base;
+    setCellOutput(
+      base,
+      p.cellIndex,
+      { kind: 'new', text: transcript, attrs },
+      { ...DEFAULT_WRITE_OPTIONS, redact: (s) => redactor.redact(hideKnown(s)) },
+    ) ?? base;
   return { kind: 'done', text, result, attrs, summary: outputSummary(attrs, ended) };
 }

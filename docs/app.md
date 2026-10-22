@@ -61,13 +61,24 @@ A browser can't open SSH connections, so the web app goes through a small relay 
 yourself ([apps/relay](../apps/relay/README.md)). SSH still runs in the browser: the relay only
 sees encrypted traffic, and it only connects to the servers on its list.
 
-## Parameters
+## Parameters, secrets and inputs
 
-A runbook whose cells use `${param:NAME}` shows a **Parameters** card: one field per parameter,
-with the front matter's default as placeholder. The values are remembered per runbook. As in
-the extension, a value never becomes part of the script: `${param:NAME}` runs as `${NAME}` and
-the value is passed in the environment. `${secret:}`, `${input:}` and `${out:}` are not
-supported in the app yet; such a cell says so instead of running.
+As in the extension, a value never becomes part of the script: `${param:NAME}`,
+`${secret:NAME}` and `${input:NAME}` run as `${NAME}` and the value is passed in the
+environment.
+
+- **Parameters:** a runbook whose cells use `${param:NAME}` shows a **Parameters** card, one
+  field per parameter with the front matter's default as placeholder. The values are
+  remembered per runbook.
+- **Secrets:** the first time a cell needs `${secret:NAME}`, the app asks for it (masked) and
+  stores it in the phone's Keychain or Keystore (in the browser: the app's local storage, like
+  its key), for every runbook. **Hosts → Secrets** lists the stored names and forgets them.
+- **Inputs:** `${input:NAME}` is asked for the first time a cell needs it and kept while the
+  runbook is open. Names ending in `_PASSWORD`, `_TOKEN` or `_SECRET`, and
+  `${input:NAME:secret}`, are masked.
+- Secret values are redacted from the live output and from the saved output block.
+- `${out:NAME}` (a value captured by an earlier cell) is not supported in the app yet; such a
+  cell says so instead of running.
 
 ## Signed runbooks
 
