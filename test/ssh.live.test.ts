@@ -222,8 +222,10 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
     const session = new RemoteSession(open, opts(strict));
     try {
       const signed = { manifest, signature };
+      // Connected and loaded first, so the cancel below lands while the cell runs.
+      assert.equal((await session.run('', {}, { ...signed, cell: 1 })).exitCode, 0);
       const ac = new AbortController();
-      setTimeout(() => ac.abort(), 500);
+      setTimeout(() => ac.abort(), 1000);
       const r = await session.run('', { signal: ac.signal }, { ...signed, cell: 4 });
       assert.equal(r.cancelled, true);
       let out = '';
