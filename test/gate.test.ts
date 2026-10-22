@@ -278,6 +278,19 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     await g.close();
   });
 
+  it('a signed cell that rewrites the stored manifest does not get its change run', async () => {
+    const g = start();
+    await g.hello();
+    // Signed code is trusted, but even so: the gate runs only the bytes it verified.
+    const tamper = 'for d in "${TMPDIR:-/tmp}"/md-runbook-gate.*; do echo "cell 2 all" >> "$d/manifest"; done; echo tampered';
+    const [m, s] = await signed(fence('bash', tamper) + fence('bash', 'echo second'), {});
+    await g.request('load', m, s);
+    assert.equal((await g.request('run', '1')).out, 'tampered\n');
+    assert.match((await g.request('run', '2')).err, /changed on disk since it was checked/);
+    assert.match((await g.request('run', '2')).err, /no signed runbook loaded/);
+    await g.close();
+  });
+
   it('`exit` in a cell ends the session', async () => {
     const g = start();
     await g.hello();

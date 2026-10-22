@@ -374,6 +374,12 @@ do_run() {
     refuse "$rid" "no signed runbook loaded"
     return
   }
+  # The cells run as this account and could reach the work folder: run only the bytes verified.
+  [ "$(sha256 "$work/manifest")" = "$mhash" ] || {
+    loaded=
+    refuse "$rid" "the signed runbook changed on disk since it was checked; open it again"
+    return
+  }
   mode=$(mfield cell "$cell" 3)
   [ -n "$mode" ] || {
     refuse "$rid" "$mname has no signed cell $cell"
