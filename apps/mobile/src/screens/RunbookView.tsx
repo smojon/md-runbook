@@ -4,6 +4,8 @@ import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-na
 import { isCodeMeta, parse, taskItems } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, signedStatus } from '@md-runbook/core/signing';
+import { textProgress } from '@md-runbook/core/textProgress';
+import type { Progress } from '@md-runbook/core';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId } from '@md-runbook/ssh';
 import { CodeCell } from '../cells/CodeCell';
@@ -15,6 +17,7 @@ import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } f
 import { getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { fingerprint } from '../ssh/fingerprint';
 import { LineMode, isStepping, planLines } from '../ssh/lineRuns';
+import { runnability } from '../ssh/cells';
 import { NeededValue, runCell } from '../ssh/runCell';
 import { storeSecret } from '../secrets/store';
 import { transportReady } from '../ssh/transport';
@@ -60,6 +63,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
   const styles = useStyles();
   const runbook = useRunbooks().find((r) => r.id === id);
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
+  const progress = useMemo(() => (runbook ? textProgress(runbook.text) : undefined), [runbook]);
   const signed = useMemo(() => (runbook ? signedStatus(runbook.text) : undefined), [runbook]);
   const params = useMemo(() => (runbook ? runbookParams(runbook.text) : []), [runbook]);
   const paramValues = useParamValues(runbook?.id ?? '');
@@ -77,6 +81,15 @@ export function RunbookView({ id }: { id: string | undefined }) {
   const updateInputs = (next: Readonly<Record<string, TypedInput>>): void => {
     inputs.current = next;
     setTypedInputs(next);
+  };
+  /** A cell is running (a ref: Run all starts the next one before React re-renders). */
+  const busy = useRef(false);
+  /** Run all / Continue: the cells still to run, the host, and the proposals left out. */
+  const queue = useRef<{ cells: number[]; on: Host | undefined; proposed: number } | undefined>(undefined);
+  const [queued, setQueued] = useState(false);
+  const clearQueue = (): void => {
+    queue.current = undefined;
+    setQueued(false);
   };
   const [notice, setNotice] = useState<string | undefined>();
   const [transportIssue, setTransportIssue] = useState<string | undefined>();
@@ -113,7 +126,18 @@ export function RunbookView({ id }: { id: string | undefined }) {
   );
 
   const run = async (request: RunRequest, on: Host | undefined): Promise<void> => {
-    if (!runbook || running) return;
+    if (!runbook || busy.current) return;
+    busy.current = true;
+    try {
+      await runOne(request, on);
+    } finally {
+      busy.current = false;
+    }
+    // Run all / Continue: on to the next cell, after this render has caught up.
+    if (queue.current) setTimeout(() => runNext(), 0);
+  };
+  const runOne = async (request: RunRequest, on: Host | undefined): Promise<void> => {
+    if (!runbook) return;
     const { cellIndex, mode, line } = request;
     const cell = cells[cellIndex];
     // host=NAME: that host, whichever is selected (as the store has it now: a key may just have been pinned).
@@ -121,10 +145,11 @@ export function RunbookView({ id }: { id: string | undefined }) {
     const match = named === undefined ? on : hosts.find((h) => h.name.toLowerCase() === named.toLowerCase());
     const target = match && (getHost(match.id) ?? match);
     if (named !== undefined && !target) {
+      clearQueue();
       setNotice(t.noHostNamed(named));
       return;
     }
-    if (!target) return;
+    if (!target) return clearQueue();
     const lines = mode && cell ? planLines(cell.value, mode, line ?? 0, checks.get(cellIndex)) : undefined;
     if (mode && !lines) return;
     const abort = new AbortController();
@@ -176,6 +201,13 @@ export function RunbookView({ id }: { id: string | undefined }) {
     if (outcome.kind === 'done') {
       updateRunbookText(runbook.id, outcome.text);
       if (outcome.result.newShell) setNotice(t.newShell);
+      // Run all stops at the first failure, unless the cell says continue-on-error.
+      const passed = outcome.attrs.exit === '0' && outcome.attrs.check !== 'failed';
+      const goOn = cell && isCodeMeta(cell.meta) && parseCellOptions(cell.meta.info).continueOnError;
+      if (queue.current && (outcome.result.cancelled || (!passed && !goOn))) {
+        clearQueue();
+        if (!outcome.result.cancelled) setNotice(t.runStopped);
+      }
     } else if (outcome.kind === 'trust') {
       setTrust({
         request,
@@ -185,8 +217,49 @@ export function RunbookView({ id }: { id: string | undefined }) {
         changed: outcome.changed,
       });
     } else if (outcome.kind === 'needs') setAsking({ request, hostId: target.id, needs: outcome.needs });
-    else setNotice(outcome.message);
+    else {
+      clearQueue();
+      setNotice(outcome.message);
+    }
   };
+  /** Start the next cell of Run all / Continue (with the newest render's state). */
+  const runNext = (): void => {
+    const q = queue.current;
+    if (!q) return;
+    const next = q.cells.shift();
+    if (next === undefined) {
+      clearQueue();
+      if (q.proposed > 0) setNotice(t.proposedNotRun(q.proposed));
+      return;
+    }
+    void runRef.current({ cellIndex: next }, q.on);
+  };
+  /** Run all (from the top) or Continue (the failed or pending cells from the first such one on). */
+  const runSequence = (from: 'start' | 'resume'): void => {
+    if (!runbook || busy.current || !host) return;
+    const parsed = parse(runbook.text).cells;
+    const candidates =
+      from === 'start' ? parsed.map((c, i) => (c.kind === 'code' ? i : -1)).filter((i) => i >= 0) : textProgress(runbook.text).resume;
+    const verdicts = candidates.map((i) => ({ i, can: runnability(parsed[i]!) }));
+    queue.current = {
+      cells: verdicts.filter((v) => v.can.ok).map((v) => v.i),
+      on: host,
+      proposed: verdicts.filter((v) => !v.can.ok && v.can.why === 'proposed').length,
+    };
+    setQueued(true);
+    setNotice(undefined);
+    runNext();
+  };
+  const stopSequence = (): void => {
+    clearQueue();
+    if (running?.paused) running.paused.stop();
+    else running?.abort.abort();
+  };
+  const runRef = useRef(run);
+  // Run all calls the newest render's run (its runbook text and values), not the first one's.
+  useEffect(() => {
+    runRef.current = run;
+  });
   const provide = async (values: Record<string, string>): Promise<void> => {
     if (!asking) return;
     const { request, hostId, needs } = asking;
@@ -238,6 +311,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
         keyExtractor={(_, i) => String(i)}
         ListHeaderComponent={
           <View>
+            <RunBar progress={progress} canRun={host !== undefined} running={queued} onRun={runSequence} onStop={stopSequence} />
             <SaveBar runbook={runbook} />
             {signed ? <SignedBanner status={signed} /> : null}
             {params.length > 0 ? (
@@ -267,13 +341,22 @@ export function RunbookView({ id }: { id: string | undefined }) {
                 needs={asking.needs}
                 onRun={(v) => void provide(v)}
                 onCancel={() => {
+                  clearQueue();
                   setNotice(t.needsCancelled(asking.needs.map((n) => n.name).join(', ')));
                   setAsking(undefined);
                 }}
               />
             ) : null}
             {trust && trustHost ? (
-              <TrustCard host={trustHost} trust={trust} onAccept={acceptTrust} onDecline={() => setTrust(undefined)} />
+              <TrustCard
+                host={trustHost}
+                trust={trust}
+                onAccept={acceptTrust}
+                onDecline={() => {
+                  clearQueue();
+                  setTrust(undefined);
+                }}
+              />
             ) : null}
           </View>
         }
@@ -296,7 +379,7 @@ export function RunbookView({ id }: { id: string | undefined }) {
               busy={running !== undefined && running.cellIndex !== index}
               checked={checks.get(index) ?? EMPTY}
               onRun={(mode, line) => void run({ cellIndex: index, mode, line }, host)}
-              onStop={() => (running?.paused ? running.paused.stop() : running?.abort.abort())}
+              onStop={stopSequence}
               onToggleCheck={(step) => toggleCheck(index, step)}
             />
           )
@@ -307,6 +390,57 @@ export function RunbookView({ id }: { id: string | undefined }) {
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
+
+/**
+ * The one obvious action, for anyone opening the runbook: Run all, then Continue after a stop,
+ * Run again when everything is done; with how far the runbook is. Everything else stays one tap
+ * away (cells, lines, the menu).
+ */
+function RunBar({
+  progress,
+  canRun,
+  running,
+  onRun,
+  onStop,
+}: {
+  progress: Progress | undefined;
+  canRun: boolean;
+  running: boolean;
+  onRun(from: 'start' | 'resume'): void;
+  onStop(): void;
+}) {
+  const styles = useStyles();
+  if (!progress || progress.total === 0) return null;
+  const complete = progress.done + progress.skipped;
+  const fresh = complete === 0 && progress.failed === 0;
+  const finished = progress.pending === 0 && progress.failed === 0;
+  const resume = !fresh && !finished && progress.resume.length > 0;
+  const label = running ? t.stopRun : fresh || finished || !resume ? (finished ? t.runAgain : t.runAll) : t.continueRunbook;
+  return (
+    <View testID="run-bar" style={styles.runBar}>
+      <Pressable
+        testID="run-primary"
+        accessibilityRole="button"
+        disabled={!canRun && !running}
+        onPress={() => (running ? onStop() : onRun(resume ? 'resume' : 'start'))}
+        style={[styles.runPrimary, running && styles.runStop, !canRun && !running && styles.disabled]}
+      >
+        <Text style={styles.runPrimaryText}>{label}</Text>
+      </Pressable>
+      <View style={styles.grow}>
+        <Text testID="run-progress" style={styles.runProgress}>
+          {t.progressDone(complete, progress.total)}
+          {progress.firstFailed ? t.progressFailed(progress.firstFailed.step) : ''}
+        </Text>
+        {resume && !running ? (
+          <Pressable testID="run-from-start" accessibilityRole="button" onPress={() => onRun('start')}>
+            <Text style={styles.secondaryText}>{t.runFromStart}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
 
 /** An `${input:NAME}` value typed while this runbook is open. */
 interface TypedInput {
@@ -565,6 +699,18 @@ const useStyles = themedStyles((c) => ({
   link: { fontSize: 15, color: c.link },
   warning: { fontSize: 13, color: c.error, marginVertical: 6 },
   disabled: { opacity: 0.5 },
+  runBar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
+  runPrimary: {
+    paddingVertical: 12,
+    paddingHorizontal: 22,
+    borderRadius: 24,
+    backgroundColor: c.accent,
+    minWidth: 130,
+    alignItems: 'center',
+  },
+  runStop: { backgroundColor: c.error },
+  runPrimaryText: { fontSize: 17, fontWeight: '600', color: c.onAccent },
+  runProgress: { fontSize: 14, color: c.text },
   inputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4 },
   grow: { flex: 1 },
   params: { marginVertical: 6 },

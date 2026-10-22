@@ -28,6 +28,53 @@ beforeEach(() => {
   script([{ stdout: 'ok\n' }]);
 });
 
+describe('Run all / Continue (the one-tap action)', () => {
+  const text =
+    '# Restart\n\n```bash\necho one\n```\n\n```bash proposed by=ai\necho proposal\n```\n\n```bash\necho two\n```\n\n```bash\necho three\n```\n';
+  const outputOf = (rb: string, cell: number) => parse(getRunbook(rb)!.text).cells[cell]?.output?.attrs.exit;
+
+  it('runs every runnable cell in order, leaves proposals out, and says how far the runbook is', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    script([{ stdout: 'one\n' }, { stdout: 'two\n' }, { stdout: 'three\n' }]);
+    const r = addRunbook('restart.md', text);
+    await render(<RunbookView id={r.id} />);
+    expect(screen.getByTestId('run-primary')).toHaveTextContent('▶ Run all');
+    expect(screen.getByTestId('run-progress')).toHaveTextContent('0 of 4 steps done');
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('run-primary'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(3));
+    expect(mockConnection.calls.map((c) => c.source)).toEqual(['echo one', 'echo two', 'echo three']);
+    await waitFor(() => expect(screen.getByTestId('run-notice').props.children).toBe('1 proposed cell was not run: it needs approval.'));
+    expect(screen.getByTestId('run-progress')).toHaveTextContent('3 of 4 steps done');
+  });
+
+  it('stops at a failure; Continue resumes from the failed cell, Run again when all is done', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const plain = '# Restart\n\n```bash\necho one\n```\n\n```bash\necho two\n```\n\n```bash\necho three\n```\n';
+    script([{ stdout: 'one\n' }, { stderr: 'boom\n', exitCode: 1 }]);
+    const r = addRunbook('restart.md', plain);
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('run-primary'));
+    });
+    await waitFor(() => expect(screen.getByTestId('run-notice').props.children).toMatch(/stopped at a failed step/));
+    expect(mockConnection.calls).toHaveLength(2);
+    expect(outputOf(r.id, 2)).toBe('1');
+    expect(screen.getByTestId('run-progress')).toHaveTextContent('1 of 3 steps done · step 2 failed');
+    expect(screen.getByTestId('run-primary')).toHaveTextContent('▶ Continue');
+
+    script([{ stdout: 'two\n' }, { stdout: 'three\n' }]);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('run-primary'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(2));
+    expect(mockConnection.calls.map((c) => c.source)).toEqual(['echo two', 'echo three']);
+    await waitFor(() => expect(screen.getByTestId('run-primary')).toHaveTextContent('↻ Run again'));
+    expect(screen.getByTestId('run-progress')).toHaveTextContent('3 of 3 steps done');
+  });
+});
+
 describe('runbook parameters', () => {
   beforeEach(() => resetParamValues());
   const text = '---\nparams:\n  - REGION: eu-west-1\n---\n\n# Deploy\n\n```bash\necho "${param:TARGET} ${param:REGION}"\n```\n';

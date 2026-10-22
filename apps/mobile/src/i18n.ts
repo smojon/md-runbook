@@ -109,6 +109,18 @@ const en = {
   noHostNamed: (name: string) => `This cell runs on the host ${name} (host=), and there is no host with that name. Add it under Hosts.`,
   cellChanged: 'The cell changed while it ran: its output was not written',
 
+  // Run all / Continue
+  runAll: '▶ Run all',
+  continueRunbook: '▶ Continue',
+  runAgain: '↻ Run again',
+  stopRun: '■ Stop',
+  runFromStart: 'Run all from the start',
+  progressDone: (done: number, total: number) => `${done} of ${total} steps done`,
+  progressFailed: (step: number) => ` · step ${step} failed`,
+  runStopped: 'Run all stopped at a failed step: fix it, then Continue.',
+  proposedNotRun: (n: number) =>
+    n === 1 ? '1 proposed cell was not run: it needs approval.' : `${n} proposed cells were not run: they need approval.`,
+
   // Parameters (${param:NAME})
   paramsTitle: 'Parameters',
   paramPattern: (pattern: string) => `Must match ${pattern}`,
