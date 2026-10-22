@@ -4,7 +4,8 @@
  * command's actions (Run line, Run lines 1-N, Run lines N-end, Check), checked commands get a
  * mark beside them, a status line (checked-lines run, language and options) and the output.
  */
-import { ParsedCell, isCodeMeta, outputSummary } from '@md-runbook/core';
+import { ParsedCell, isCodeMeta, outputSummary, shellKindForLanguage } from '@md-runbook/core';
+import type { RemotePlatform } from '@md-runbook/ssh';
 import { LineStep, stepAtLine } from '@md-runbook/core/steps';
 import { ReactNode, memo, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
@@ -28,6 +29,8 @@ export interface CodeCellProps {
   index: number;
   /** The runbook it is in (approvals made on this device count). */
   runbookId?: string;
+  /** What the selected host runs, once known (Windows servers run PowerShell and cmd cells). */
+  platform?: RemotePlatform;
   /** Commands (their first line) with a breakpoint: a run of the cell pauses before them. */
   breakpoints?: ReadonlySet<number>;
   onToggleBreakpoint?(step: LineStep): void;
@@ -53,13 +56,14 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
   const { cell, index, running } = p;
   const styles = useStyles();
   const c = usePalette();
-  const can = runnability(cell, p.runbookId);
-  const isBash = can.ok || (can.why !== 'language' && cell.kind === 'code');
+  const can = runnability(cell, p.runbookId, p.platform);
+  const isBash = cell.kind === 'code' && shellKindForLanguage(cell.languageId) === 'bash';
   const lines = useMemo(
     () => (isBash ? highlightBash(cell.value) : cell.value.split('\n').map((l): Token[] => [{ text: l, kind: 'plain' }])),
     [cell.value, isBash],
   );
-  const steps = useMemo(() => (can.ok ? cellSteps(cell.value) : []), [cell.value, can.ok]);
+  const shell = can.ok ? can.shell : undefined;
+  const steps = useMemo(() => (shell ? cellSteps(cell.value, shell) : []), [cell.value, shell]);
   const [selected, setSelected] = useState<LineStep | undefined>();
   // The selection is a command of the current text (an edit may have moved it).
   const sel = selected && steps.find((s) => s.start === selected.start && s.text === selected.text);

@@ -12,6 +12,7 @@ import {
   isCodeMeta,
   parse,
   setCellOutput,
+  shellKindForLanguage,
   taskItems,
 } from '@md-runbook/core';
 import { isManualMark } from '@md-runbook/core/progress';
@@ -241,7 +242,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     // A whole cell with breakpoints runs command by command, pausing before each breakpoint.
     const breaks = !mode && cell ? breakpoints.get(cellIndex) : undefined;
     const atBreaks = breaks !== undefined && breaks.size > 0;
-    const lines = cell && (mode || atBreaks) ? planLines(cell.value, mode ?? 'step', line ?? 0, checks.get(cellIndex)) : undefined;
+    const shell = cell && cell.kind === 'code' ? shellKindForLanguage(cell.languageId) : undefined;
+    const lines =
+      cell && (mode || atBreaks) ? planLines(cell.value, mode ?? 'step', line ?? 0, checks.get(cellIndex), shell ?? 'bash') : undefined;
     if (mode && !lines) return;
     const abort = new AbortController();
     setNotice(undefined);
@@ -349,7 +352,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const parsed = parse(runbook.text).cells;
     const candidates =
       from === 'start' ? parsed.map((c, i) => (c.kind === 'code' ? i : -1)).filter((i) => i >= 0) : textProgress(runbook.text).resume;
-    const verdicts = candidates.map((i) => ({ i, can: runnability(parsed[i]!, runbook.id) }));
+    const verdicts = candidates.map((i) => ({ i, can: runnability(parsed[i]!, runbook.id, host.platform) }));
     queue.current = {
       cells: verdicts.filter((v) => v.can.ok).map((v) => v.i),
       on: host,
@@ -511,7 +514,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const cellActions = (index: number): AppAction[] => {
     const cell = cells[index];
     if (!runbook || !cell || cell.kind !== 'code') return [];
-    const can = runnability(cell, runbook.id);
+    const can = runnability(cell, runbook.id, host?.platform);
     const why = !host ? t.noRunNow : can.ok ? undefined : t.notRunnable[can.why](can.detail);
     const proposal = isCodeMeta(cell.meta) ? approvalOf(cell.meta.info, cell.value, runbook.id) : 'none';
     return [
@@ -757,6 +760,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               onExplainLine={(step) => assistant.ask('explainLine', index, lineLabel(step))}
               onActions={() => setCellSheet(cellActions(index))}
               runbookId={runbook.id}
+              platform={host?.platform}
               below={
                 approving?.index === index && isCodeMeta(item.meta) ? (
                   <ApproveCard

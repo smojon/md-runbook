@@ -102,8 +102,11 @@ const en = {
   busy: 'Another cell is running',
   cellGone: 'The cell is no longer in the runbook',
   notRunnable: {
-    language: (_detail?: string) => 'Only bash and sh cells run over SSH',
-    os: (_detail?: string) => 'For Windows · not run over SSH',
+    language: (_detail?: string) => 'Only bash, sh, PowerShell and cmd cells run over SSH',
+    platform: (detail?: string) =>
+      detail === 'windows' ? 'For a Windows server · this host runs sh or bash' : 'For a Linux or macOS server · this host is Windows',
+    os: (detail?: string) =>
+      detail === 'windows' ? 'Not for Windows (os=) · not run on this Windows server' : 'For Windows (os=) · not run on this server',
     skip: (_detail?: string) => 'Skipped (skip option)',
     invalid: (detail?: string) => `Invalid options: ${detail ?? ''}`,
     unverified: (detail?: string) =>

@@ -11,6 +11,7 @@
 
 import type { Stream } from '@microsoft/dev-tunnels-ssh';
 import type { GateInfo } from './command';
+import type { RemotePlatform } from './command';
 import { ConnectOptions, RemoteRunOptions, RemoteRunResult, RemoteShell } from './remoteShell';
 
 export interface SessionRunResult extends RemoteRunResult {
@@ -50,6 +51,11 @@ export class RemoteSession {
 
   get isConnected(): boolean {
     return this.shell?.isOpen ?? false;
+  }
+
+  /** sh/bash or Windows PowerShell, once connected (the server's kind stays the same across reconnects). */
+  get platform(): RemotePlatform | undefined {
+    return this.shell?.platform;
   }
 
   /** md-runbook-gate's banner while connected through it. */

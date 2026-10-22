@@ -1,6 +1,6 @@
 import { parse } from '@md-runbook/core';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
-import type { Host } from '../hosts/store';
+import { Host, addHost, getHost } from '../hosts/store';
 import { runnability } from '../ssh/cells';
 import { planLines } from '../ssh/lineRuns';
 import { runCell } from '../ssh/runCell';
@@ -84,17 +84,20 @@ describe('runCell', () => {
     expect(r.kind === 'done' && r.result.newShell).toBe(true);
   });
 
-  it('refuses cells that cannot run over SSH', async () => {
+  it('refuses cells that cannot run over SSH: the shell, os= and skip follow the server', async () => {
     const cells = parse(runbook).cells;
-    expect(runnability(cells[2]!)).toEqual({ ok: false, why: 'language' });
-    expect(runnability(cells[3]!)).toEqual({ ok: false, why: 'os' });
+    // A PowerShell cell is for a Windows server: fine while the host's kind isn't known yet.
+    expect(runnability(cells[2]!)).toMatchObject({ ok: true, shell: 'pwsh' });
+    expect(runnability(cells[2]!, undefined, 'posix')).toEqual({ ok: false, why: 'platform', detail: 'windows' });
+    expect(runnability(cells[1]!, undefined, 'windows')).toEqual({ ok: false, why: 'platform', detail: 'posix' });
+    expect(runnability(cells[3]!)).toEqual({ ok: false, why: 'os', detail: 'posix' });
     expect(runnability(cells[4]!)).toEqual({ ok: false, why: 'skip' });
     expect(runnability(cells[0]!)).toEqual({ ok: false, why: 'language' });
-    expect(runnability(cells[1]!)).toMatchObject({ ok: true });
+    expect(runnability(cells[1]!)).toMatchObject({ ok: true, shell: 'bash' });
     const conn = fakeConnection();
-    expect(await runCell({ host, text: runbook, cellIndex: 2, connection: conn })).toEqual({
+    expect(await runCell({ host: { ...host, platform: 'posix' }, text: runbook, cellIndex: 2, connection: conn })).toEqual({
       kind: 'error',
-      message: 'Only bash and sh cells run over SSH',
+      message: 'For a Windows server · this host runs sh or bash',
     });
     expect(await runCell({ host, text: runbook, cellIndex: 42, connection: conn })).toMatchObject({ kind: 'error' });
     expect(conn.calls).toHaveLength(0);
@@ -107,6 +110,53 @@ describe('runCell', () => {
     const r = await p;
     expect(r.kind === 'done' && r.attrs.exit).toBe('cancelled');
     expect(r.kind === 'done' && r.attrs.check).toBeUndefined();
+  });
+});
+
+describe('runCell: Windows servers', () => {
+  const win = [
+    '```powershell',
+    'Get-Service ${param:SVC}',
+    '```',
+    '',
+    '```cmd',
+    'echo %COMPUTERNAME%',
+    '```',
+    '',
+    '```bash',
+    'uname',
+    '```',
+    '',
+  ].join('\n');
+
+  it('PowerShell and cmd cells run with their shell, values as environment variables', async () => {
+    const conn = fakeConnection([{ stdout: 'Running\n' }, {}], 'windows');
+    const r = await runCell({ host, text: win, cellIndex: 0, connection: conn, params: { SVC: 'W32Time' } });
+    expect(r.kind).toBe('done');
+    expect(conn.calls[0]).toMatchObject({ source: 'Get-Service ${env:SVC}', opts: { shell: 'pwsh', env: { SVC: 'W32Time' } } });
+    await runCell({ host, text: win, cellIndex: 1, connection: conn });
+    expect(conn.calls[1]).toMatchObject({ source: 'echo %COMPUTERNAME%', opts: { shell: 'cmd' } });
+  });
+
+  it("learns the server's kind on the first connection; a bash cell on Windows doesn't run", async () => {
+    const h = addHost({ name: 'win-1', hostname: 'win1', port: 22, username: 'Administrator' });
+    const conn = fakeConnection([{}], 'windows');
+    expect(await runCell({ host: h, text: win, cellIndex: 2, connection: conn })).toEqual({
+      kind: 'error',
+      message: 'This is a Windows server: bash and sh cells need a Linux or macOS server.',
+    });
+    expect(conn.calls).toHaveLength(0);
+    expect(getHost(h.id)?.platform).toBe('windows');
+  });
+
+  it('a command of a PowerShell cell is echoed with its prompt', async () => {
+    const two = '```pwsh\nGet-Date\nGet-Location\n```\n';
+    const conn = fakeConnection([{}, {}], 'windows');
+    const out: string[] = [];
+    const lines = planLines('Get-Date\nGet-Location', 'from', 1, new Set(), 'pwsh');
+    await runCell({ host, text: two, cellIndex: 0, connection: conn, lines, onOutput: (t) => out.push(t) });
+    expect(out.join('')).toContain('PS> Get-Location');
+    expect(conn.calls.map((c) => c.source)).toEqual(['Get-Location']);
   });
 });
 

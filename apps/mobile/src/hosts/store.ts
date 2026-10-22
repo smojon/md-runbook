@@ -14,9 +14,11 @@ export interface Host {
   username: string;
   /** `type base64` of the host key the user trusted (see hostKeyId); absent until the first run. */
   hostKey?: string;
+  /** What the server runs, learnt on the first connection: sh/bash (Linux, macOS) or Windows PowerShell. */
+  platform?: 'posix' | 'windows';
 }
 
-export type HostInput = Omit<Host, 'id' | 'hostKey'>;
+export type HostInput = Omit<Host, 'id' | 'hostKey' | 'platform'>;
 
 export interface HostMessages {
   nameMissing: string;
@@ -99,6 +101,10 @@ export function removeHost(id: string): void {
 /** Remember (or forget, with undefined) the server's host key after the user trusted it. */
 export function pinHostKey(id: string, hostKey: string | undefined): void {
   publish(hosts.map((h) => (h.id === id ? { ...h, hostKey } : h)));
+}
+
+export function setHostPlatform(id: string, platform: 'posix' | 'windows'): void {
+  if (hosts.some((h) => h.id === id && h.platform !== platform)) publish(hosts.map((h) => (h.id === id ? { ...h, platform } : h)));
 }
 
 export function getHost(id: string | undefined): Host | undefined {

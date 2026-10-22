@@ -18,6 +18,8 @@ export interface FakeRun {
 
 export function fakeConnection(
   script: FakeRun[] = [{ stdout: 'hello\n', exitCode: 0 }],
+  /** What the server runs, as the session reports it once connected. */
+  platform?: 'posix' | 'windows',
 ): Connection & { calls: { source: string; opts: RemoteRunOptions; signed?: SignedRun }[] } {
   const calls: { source: string; opts: RemoteRunOptions; signed?: SignedRun }[] = [];
   let i = 0;
@@ -28,6 +30,7 @@ export function fakeConnection(
     secrets: new Set<string>(),
     session: {
       isConnected: true,
+      platform,
       async run(source: string, opts: RemoteRunOptions = {}, signed?: SignedRun): Promise<SessionRunResult> {
         calls.push({ source, opts, ...(signed ? { signed } : {}) });
         const step = script[Math.min(i++, script.length - 1)] ?? {};
@@ -37,7 +40,8 @@ export function fakeConnection(
         }
         if (step.error) throw new Error(step.error);
         if (step.waitForAbort) {
-          await new Promise<void>((r) => opts.signal?.addEventListener('abort', () => r()));
+          // As the real shell: a signal that has already fired cancels at once.
+          if (!opts.signal?.aborted) await new Promise<void>((r) => opts.signal?.addEventListener('abort', () => r()));
           return { exitCode: null, signal: null, timedOut: false, cancelled: true, durationMs: 5 };
         }
         if (step.stdout) opts.onStdout?.(step.stdout);

@@ -23,8 +23,8 @@ import { proposalOf } from '@md-runbook/core/proposal';
 import { rewriteRefs } from '@md-runbook/core/secrets';
 import { signedStatus, signedStepIndex } from '@md-runbook/core/signing';
 import { LineStep, echoCommand, formatLineRange, formatLineRanges, splitSteps } from '@md-runbook/core/steps';
-import type { RemoteRunOptions, SessionRunResult, SignedRun } from '@md-runbook/ssh';
-import type { Host } from '../hosts/store';
+import { RemoteRunOptions, SessionRunResult, SignedRun, wrongPlatform } from '@md-runbook/ssh';
+import { Host, setHostPlatform } from '../hosts/store';
 import { checkParam, refsOf, runbookParams } from '../runbooks/params';
 import { readSecret } from '../secrets/store';
 import { historySize } from '../settings/store';
@@ -94,9 +94,11 @@ const redactor = createRedactor(DEFAULT_PATTERNS);
 export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   const cell = parse(p.text).cells[p.cellIndex];
   if (!cell) return { kind: 'error', message: t.cellGone };
-  const can = runnability(cell, p.runbookId);
+  const can = runnability(cell, p.runbookId, p.host.platform);
   if (!can.ok) return { kind: 'error', message: t.notRunnable[can.why](can.detail) };
   const opts = can.options;
+  // bash on Linux and macOS servers; PowerShell and cmd on Windows ones.
+  const kind = can.shell;
 
   // Placeholders become environment variables, as in the extension: a value is never part of the
   // script. ${param:} comes from the Parameters card, ${secret:} from the secure store, ${input:}
@@ -152,7 +154,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   if (needs.length > 0) return { kind: 'needs', needs };
   known.sort((a, b) => b.length - a.length);
   const hideKnown = (text: string): string => known.reduce((s, v) => s.split(v).join(REDACTED), text);
-  const asRun = (source: string): string => (refs.length > 0 ? rewriteRefs(source, 'bash') : source);
+  const asRun = (source: string): string => (refs.length > 0 ? rewriteRefs(source, kind) : source);
 
   let conn: Connection;
   try {
@@ -174,6 +176,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     p.onOutput?.(hideKnown(text));
   };
   const runOpts: RemoteRunOptions = {
+    shell: kind,
     env: { ...opts.env, ...paramEnv, ...secretEnv },
     cwd: opts.cwd,
     timeoutMs: opts.timeoutSeconds === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutSeconds * 1000,
@@ -202,6 +205,14 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   /** Steps of a line run that ran (indexes into p.lines.steps). */
   const ran: number[] = [];
   try {
+    // The first connection tells what the server runs; a cell for the other kind doesn't run.
+    await conn.session.connect();
+    const platform = conn.session.platform;
+    if (platform) {
+      if (p.host.platform !== platform) setHostPlatform(p.host.id, platform);
+      const wrong = wrongPlatform(platform, kind);
+      if (wrong) return { kind: 'error', message: wrong };
+    }
     if (!p.lines) result = await conn.session.run(asRun(cell.value), runOpts, signed());
     else {
       result = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
@@ -215,7 +226,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
           break;
         }
         p.onStep?.(i);
-        write(echoCommand('bash', steps[i]!.text));
+        write(echoCommand(kind, steps[i]!.text));
         const r = await conn.session.run(asRun(steps[i]!.text), runOpts, signed(steps[i]!));
         ran.push(i);
         result = { ...r, durationMs: result.durationMs + r.durationMs, newShell: result.newShell || r.newShell };

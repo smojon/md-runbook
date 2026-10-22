@@ -104,6 +104,79 @@ export function stopCommand(pid: number, signal: 'TERM' | 'KILL'): string {
   return `pkill -${signal} -P ${Math.trunc(pid)} 2>/dev/null; true`;
 }
 
+// ---- Windows servers ----
+//
+// OpenSSH on Windows runs an exec request through cmd.exe (or PowerShell, if that is its default
+// shell), where SHELL_COMMAND fails at once. The app then starts Windows PowerShell reading
+// commands on stdin, as the extension's PowerShell sessions do (core/node/session.ts): each
+// command is one ASCII line, the cell travels in base64 and is written to a temp script that is
+// dot-sourced, so variables, functions and the folder carry over. cmd cells run from there in a
+// cmd.exe of their own (cmd has no session mode, as in the extension).
+
+/** Which kind of shell the server gave: sh/bash on Linux and macOS, Windows PowerShell on Windows. */
+export type RemotePlatform = 'posix' | 'windows';
+
+/** Started by the `exec` request on a Windows server. */
+export const WINDOWS_SHELL_COMMAND = 'powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -';
+
+/** PowerShell single quotes (it also treats the typographic ones as quotes). */
+export const psq = (s: string): string => "'" + s.replace(/['‘’‚‛]/g, (q) => q + q) + "'";
+
+/** A string expression whose value is `s`, written in ASCII (the command stream's encoding varies on Windows). */
+const ps64 = (s: string): string => `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(s)}'))`;
+
+const psMarker = (marker: string, value: string): string =>
+  `$__mdrbS = [string][char]30 + '${marker} ' + ${value} + [char]10; [Console]::Out.Write($__mdrbS); [Console]::Error.Write($__mdrbS)\n`;
+
+/** First lines on Windows: UTF-8 output, no progress bars, then the marker with the shell's process id. */
+export function windowsHelloCommand(id: string): string {
+  return (
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $OutputEncoding = New-Object Text.UTF8Encoding $false; $ProgressPreference = 'SilentlyContinue'\n" +
+    psMarker(markerFor(id), '$PID')
+  );
+}
+
+/**
+ * The text sent to Windows PowerShell for one `pwsh`/`powershell` or `cmd` cell. Two lines: a
+ * terminating error ends only the first, and the exit code follows the extension's rules (the
+ * last native exit code, else 1 if the script failed). Values in `env` are set from the command
+ * stream, never written to disk; the temp script holds the cell's text (placeholders, not values).
+ */
+export function windowsCellCommand(source: string, id: string, kind: 'pwsh' | 'cmd', opts: CellCommandOptions = {}): string {
+  const ext = kind === 'cmd' ? '.cmd' : '.ps1';
+  // A cmd script gets CRLF and UTF-8; a PowerShell script a BOM, so Windows PowerShell reads it as UTF-8.
+  const script = kind === 'cmd' ? ['@echo off', '@chcp 65001 >nul', ...source.split(/\r?\n/)].join('\r\n') + '\r\n' : source;
+  const encoding = kind === 'cmd' ? '(New-Object Text.UTF8Encoding $false)' : '(New-Object Text.UTF8Encoding $true)';
+  const env = Object.entries(opts.env ?? {})
+    .filter(([k]) => VAR_NAME.test(k))
+    .map(([k, v]) => `[Environment]::SetEnvironmentVariable(${psq(k)}, ${ps64(v)}); `)
+    .join('');
+  const cd = opts.cwd === undefined ? '' : `Push-Location -LiteralPath (${ps64(opts.cwd)}) -StackName mdrb -ErrorAction Stop; $__mdrbPushed = $true; `;
+  const run = kind === 'cmd' ? '& $env:ComSpec /d /c $__mdrbF' : '. $__mdrbF';
+  return (
+    `$global:LASTEXITCODE = 0; $__mdrbOk = $false; $__mdrbPushed = $false; ` +
+    `$__mdrbF = Join-Path ([IO.Path]::GetTempPath()) 'mdrb-${id}${ext}'; ` +
+    `[IO.File]::WriteAllText($__mdrbF, ${ps64(script)}, ${encoding}); ` +
+    `${env}${cd}${run}; $__mdrbOk = $?\n` +
+    `Remove-Item -LiteralPath $__mdrbF -Force -ErrorAction Ignore; ` +
+    `if ($__mdrbPushed) { Pop-Location -StackName mdrb -ErrorAction Ignore; $__mdrbPushed = $false }; ` +
+    `$__mdrbRc = if ($LASTEXITCODE) { $LASTEXITCODE } elseif (-not $__mdrbOk) { 1 } else { 0 }; ` +
+    psMarker(markerFor(id), '$__mdrbRc')
+  );
+}
+
+/**
+ * Windows: stop the cell running in PowerShell `pid` (the programs it started, with their own
+ * children), keeping the shell. A cell that loops in PowerShell itself can't be stopped this way;
+ * the caller then closes the shell.
+ */
+export function windowsStopCommand(pid: number): string {
+  return (
+    `powershell -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter 'ParentProcessId=${Math.trunc(pid)}' | ` +
+    `Where-Object { $_.Name -ne 'conhost.exe' } | ForEach-Object { taskkill /F /T /PID $_.ProcessId | Out-Null }"`
+  );
+}
+
 /** A random id for markers and here-doc terminators (Web Crypto: Node 20+, browsers, React Native polyfill). */
 export function randomId(): string {
   const bytes = new Uint8Array(12);

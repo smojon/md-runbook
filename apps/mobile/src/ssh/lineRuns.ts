@@ -4,6 +4,7 @@
  * Run lines N-end (it and the ones after it), Run checked lines (the ticked commands, in order).
  * A command spans several lines when it continues (`\`, open quotes, `if … fi`, here-docs).
  */
+import type { ShellKind } from '@md-runbook/core';
 import { LineStep, formatLineRange, splitSteps, stepAtLine } from '@md-runbook/core/steps';
 
 export interface LinePlan {
@@ -18,14 +19,20 @@ export type LineMode = 'at' | 'to' | 'from' | 'checked' | 'step' | 'stepFrom';
 /** Step Through and Step from here pause between commands. */
 export const isStepping = (mode: LineMode | undefined): boolean => mode === 'step' || mode === 'stepFrom';
 
-/** The commands of a bash cell (blank and comment lines are not commands). */
-export function cellSteps(source: string): LineStep[] {
-  return splitSteps(source, 'bash');
+/** The commands of a cell (blank and comment lines are not commands). */
+export function cellSteps(source: string, kind: ShellKind = 'bash'): LineStep[] {
+  return splitSteps(source, kind);
 }
 
 /** `checked` holds the texts of the ticked commands (a check follows its command's text). */
-export function planLines(source: string, mode: LineMode, line: number, checked: ReadonlySet<string> = new Set()): LinePlan | undefined {
-  const all = cellSteps(source);
+export function planLines(
+  source: string,
+  mode: LineMode,
+  line: number,
+  checked: ReadonlySet<string> = new Set(),
+  kind: ShellKind = 'bash',
+): LinePlan | undefined {
+  const all = cellSteps(source, kind);
   if (all.length === 0) return undefined;
   if (mode === 'at') {
     const step = stepAtLine(all, line);

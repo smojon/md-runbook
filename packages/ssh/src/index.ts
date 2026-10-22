@@ -6,7 +6,9 @@
 export {
   CellCommandOptions,
   GateInfo,
+  RemotePlatform,
   SHELL_COMMAND,
+  WINDOWS_SHELL_COMMAND,
   cellCommand,
   gateBanner,
   gateLoadCommand,
@@ -15,12 +17,16 @@ export {
   gateRunCommand,
   helloCommand,
   markerFor,
+  psq,
   randomId,
   signedReply,
   sq,
   stopCommand,
+  windowsCellCommand,
+  windowsHelloCommand,
+  windowsStopCommand,
 } from './command';
-export { ConnectOptions, RemoteRunOptions, RemoteRunResult, RemoteShell, ShellEndedError } from './remoteShell';
+export { ConnectOptions, RemoteRunOptions, RemoteRunResult, RemoteShell, ShellEndedError, wrongPlatform } from './remoteShell';
 export { RemoteSession, SessionRunResult, SignedRun } from './session';
 export { generateKey, hostKeyId, importPrivateKey, privateKeyPem, publicKeyLine } from './keys';
 export { ECDSA_P256, ExternalAwareEcdsaP256, ExternalKeyPair, ExternalP256Key, derToRs } from './externalKey';

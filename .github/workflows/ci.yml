@@ -28,6 +28,18 @@ jobs:
           export MD_RUNBOOK_SSH_HOST_PUB="$RUNNER_TEMP/sshd/host_ecdsa.pub"
           export MD_RUNBOOK_SSH_AUTHORIZED_KEYS="$RUNNER_TEMP/sshd/authorized_keys"
           node --test --test-reporter=spec out/test/ssh.live.test.js || { cat "$RUNNER_TEMP/sshd/sshd.log"; exit 1; }
+      # The same against Windows OpenSSH (cmd.exe as default shell): the app finds PowerShell there.
+      - name: SSH tests (Windows server)
+        if: runner.os == 'Windows'
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          ./scripts/ci/start-sshd-windows.ps1
+          $env:MD_RUNBOOK_SSH_TEST = "127.0.0.1:2222:$env:USERNAME"
+          $env:MD_RUNBOOK_SSH_HOST_PUB = "$env:RUNNER_TEMP\sshd\host_ecdsa.pub"
+          $env:MD_RUNBOOK_SSH_AUTHORIZED_KEYS = "$env:RUNNER_TEMP\sshd\authorized_keys"
+          node --test --test-reporter=spec out/test/ssh.windows.live.test.js
+          if ($LASTEXITCODE) { Get-Content "$env:RUNNER_TEMP\sshd\sshd.log" -ErrorAction SilentlyContinue; exit 1 }
       - name: Lint the example runbooks
         if: runner.os == 'Linux'
         # The sample has a misspelled option on purpose (a warning); the others must be clean.
