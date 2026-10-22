@@ -68,6 +68,8 @@ export interface RunCellParams {
    * the output block goes into that text. Default: `text`.
    */
   latestText?(): string;
+  /** The runbook's id in the app: proposals approved on this device for it can run. */
+  runbookId?: string;
   /** Values typed for the runbook's `${param:NAME}` (else the front matter's defaults are used). */
   params?: Record<string, string>;
   /** Values typed for `${input:NAME}` while the runbook is open. */
@@ -83,7 +85,7 @@ const redactor = createRedactor(DEFAULT_PATTERNS);
 export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   const cell = parse(p.text).cells[p.cellIndex];
   if (!cell) return { kind: 'error', message: t.cellGone };
-  const can = runnability(cell);
+  const can = runnability(cell, p.runbookId);
   if (!can.ok) return { kind: 'error', message: t.notRunnable[can.why](can.detail) };
   const opts = can.options;
 

@@ -6,7 +6,7 @@
  */
 import { ParsedCell, isCodeMeta, outputSummary } from '@md-runbook/core';
 import { LineStep, stepAtLine } from '@md-runbook/core/steps';
-import { memo, useMemo, useState } from 'react';
+import { ReactNode, memo, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Token, highlightBash } from '../highlight/bash';
 import { t } from '../i18n';
@@ -26,6 +26,10 @@ export interface CellRun {
 export interface CodeCellProps {
   cell: ParsedCell;
   index: number;
+  /** The runbook it is in (approvals made on this device count). */
+  runbookId?: string;
+  /** Shown under the cell (the approval card of a proposal). */
+  below?: ReactNode;
   /** A host is chosen: runs are possible. */
   canRun: boolean;
   running: CellRun | undefined;
@@ -44,7 +48,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
   const { cell, index, running } = p;
   const styles = useStyles();
   const c = usePalette();
-  const can = runnability(cell);
+  const can = runnability(cell, p.runbookId);
   const isBash = can.ok || (can.why !== 'language' && cell.kind === 'code');
   const lines = useMemo(
     () => (isBash ? highlightBash(cell.value) : cell.value.split('\n').map((l): Token[] => [{ text: l, kind: 'plain' }])),
@@ -252,6 +256,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
           ) : null}
         </View>
       ) : null}
+      {p.below}
     </Pressable>
   );
 });

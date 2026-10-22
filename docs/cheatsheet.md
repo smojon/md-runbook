@@ -83,7 +83,7 @@ secret values are redacted from the output.
 | **Copy for AI** / **Copy Cell for AI** | Assistant ▾ / the cell's copy icon | Use the chat assistant you already have: copy the runbook with names pseudonymized and secrets removed. | — |
 | **Paste AI Proposal** | Assistant ▾ | Bring the assistant's answer back: its code blocks become proposed cells, with the real names restored. | — |
 | **Check for Leaks** | Assistant ▾ | Before you share a runbook or its output: find tokens, keys and internal host names in it. | — |
-| **Approve Proposed Cell** / **Reject Proposed Cell**, **Approve All Proposals**, **Go to Next Proposal** | cell ⋯ and the cell's status line / Assistant ▾ (when there are proposals) | Commands written by an assistant or a colleague never run until you read and approve them. | — |
+| **Approve Proposed Cell** / **Reject Proposed Cell**, **Approve All Proposals**, **Go to Next Proposal** | cell ⋯ and the cell's status line / Assistant ▾ (when there are proposals) | Commands written by an assistant or a colleague never run until you read and approve them. | the cell’s ⋯ → Approve / Reject; ⋯ More → Assistant (the extension’s built-in policy, approvals kept on the device) |
 | **Set Anthropic API Key** / **Clear Anthropic API Key** | Assistant ▾ | Using Claude directly as the AI provider. | — |
 
 ## Share

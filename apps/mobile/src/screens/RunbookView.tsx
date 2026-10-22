@@ -14,6 +14,8 @@ import {
   taskItems,
 } from '@md-runbook/core';
 import { isManualMark } from '@md-runbook/core/progress';
+import { DEFAULT_POLICY, PolicyResult, evaluatePolicy } from '@md-runbook/core/policy';
+import { proposalOf } from '@md-runbook/core/proposal';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, signedStatus } from '@md-runbook/core/signing';
@@ -21,6 +23,8 @@ import { textProgress } from '@md-runbook/core/textProgress';
 import type { Progress } from '@md-runbook/core';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId } from '@md-runbook/ssh';
+import { approvalOf, approveCell, rejectCell } from '../approvals/store';
+import { ApproveCard } from '../cells/ApproveCard';
 import { CodeCell } from '../cells/CodeCell';
 import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, pinHostKey, useHosts } from '../hosts/store';
@@ -254,6 +258,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       lines,
       beforeStep,
       params: paramValues,
+      runbookId: runbook.id,
       inputs: Object.fromEntries(Object.entries(inputs.current).map(([k, v]) => [k, v.value])),
       latestText: () => getRunbook(runbook.id)?.text ?? runbook.text,
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
@@ -302,7 +307,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const parsed = parse(runbook.text).cells;
     const candidates =
       from === 'start' ? parsed.map((c, i) => (c.kind === 'code' ? i : -1)).filter((i) => i >= 0) : textProgress(runbook.text).resume;
-    const verdicts = candidates.map((i) => ({ i, can: runnability(parsed[i]!) }));
+    const verdicts = candidates.map((i) => ({ i, can: runnability(parsed[i]!, runbook.id) }));
     queue.current = {
       cells: verdicts.filter((v) => v.can.ok).map((v) => v.i),
       on: host,
@@ -334,6 +339,34 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     group,
     ...(disabled ? { disabled } : {}),
   });
+  // Approving proposals: the extension's built-in command policy, one card per cell.
+  const [approving, setApproving] = useState<{ index: number; result: PolicyResult; all: boolean } | undefined>();
+  const pendingProposals = (text: string): number[] =>
+    parse(text)
+      .cells.map((c, i) =>
+        c.kind === 'code' && isCodeMeta(c.meta) && /^(proposed|unverified)$/.test(approvalOf(c.meta.info, c.value, runbook?.id ?? ''))
+          ? i
+          : -1,
+      )
+      .filter((i) => i >= 0);
+  const openApprove = (index: number, all: boolean, text = runbook?.text ?? ''): void => {
+    const cell = parse(text).cells[index];
+    if (!cell || cell.kind !== 'code') return setApproving(undefined);
+    setApproving({ index, result: evaluatePolicy(cell.value, DEFAULT_POLICY, 'bash'), all });
+    list.current?.scrollToIndex({ index, viewPosition: 0.2 });
+  };
+  const decide = (approve: boolean): void => {
+    if (!runbook || !approving) return;
+    const next = approve
+      ? approveCell(runbook.id, runbook.text, approving.index, 'app', formatLocalIso(new Date()))
+      : rejectCell(runbook.text, approving.index);
+    if (next === undefined) return setApproving(undefined);
+    updateRunbookText(runbook.id, next);
+    // Approve All: on to the next proposal, in the text as it is now.
+    const more = approving.all ? pendingProposals(next)[0] : undefined;
+    if (more === undefined) setApproving(undefined);
+    else openApprove(more, true, next);
+  };
   /** Run All as Copy: the runbook without outputs under a dated name, opened and run at once. */
   const runAsCopy = (): void => {
     if (!runbook) return;
@@ -373,6 +406,20 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           run: () => write(checkNextItem(runbook.text)),
         },
         { ...meta('hosts', 'run'), run: () => router.push('/hosts') },
+        {
+          ...meta('nextProposal', 'assistant', pendingProposals(runbook.text).length > 0 ? undefined : t.noProposals),
+          run: () => {
+            const at = pendingProposals(runbook.text)[0];
+            if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
+          },
+        },
+        {
+          ...meta('approveAllProposals', 'assistant', pendingProposals(runbook.text).length > 0 ? undefined : t.noProposals),
+          run: () => {
+            const at = pendingProposals(runbook.text)[0];
+            if (at !== undefined) openApprove(at, true);
+          },
+        },
         ...(params.length > 0 ? [{ ...meta('setParameters', 'values'), run: () => list.current?.scrollToOffset({ offset: 0 }) }] : []),
         {
           ...meta('resetInputs', 'values', Object.keys(typedInputs).length > 0 ? undefined : t.noInputsYet),
@@ -408,9 +455,16 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const cellActions = (index: number): AppAction[] => {
     const cell = cells[index];
     if (!runbook || !cell || cell.kind !== 'code') return [];
-    const can = runnability(cell);
+    const can = runnability(cell, runbook.id);
     const why = !host ? t.noRunNow : can.ok ? undefined : t.notRunnable[can.why](can.detail);
+    const proposal = isCodeMeta(cell.meta) ? approvalOf(cell.meta.info, cell.value, runbook.id) : 'none';
     return [
+      ...(proposal === 'proposed' || proposal === 'unverified'
+        ? [
+            { ...meta('approveProposal', 'assistant'), run: () => openApprove(index, false) },
+            { ...meta('rejectProposal', 'assistant'), run: () => openApprove(index, false) },
+          ]
+        : []),
       { ...meta('runCell', 'run', why), run: () => void run({ cellIndex: index }, host) },
       { ...meta('stepThrough', 'run', why), run: () => void run({ cellIndex: index, mode: 'step', line: 0 }, host) },
       { ...meta('markDone', 'steps'), run: () => mark(index, 'done') },
@@ -578,6 +632,23 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               onStop={stopSequence}
               onToggleCheck={(step) => toggleCheck(index, step)}
               onActions={() => setCellSheet(cellActions(index))}
+              runbookId={runbook.id}
+              below={
+                approving?.index === index && isCodeMeta(item.meta) ? (
+                  <ApproveCard
+                    code={item.value}
+                    info={item.meta.info}
+                    by={proposalOf(item.meta.info).by ?? 'someone'}
+                    reason={proposalOf(item.meta.info).reason}
+                    result={approving.result}
+                    typed={DEFAULT_POLICY.requireTypedConfirmation}
+                    runsAs={host ? `${host.username}@${host.name}` : undefined}
+                    onApprove={() => decide(true)}
+                    onReject={() => decide(false)}
+                    onCancel={() => setApproving(undefined)}
+                  />
+                ) : undefined
+              }
             />
           )
         }
