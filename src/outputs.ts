@@ -1,7 +1,8 @@
 /** Mapping between VS Code cell outputs and the core's persisted-output model. */
 
 import * as vscode from 'vscode';
-import { escapeHtml } from '@md-runbook/core';
+import { colorizeSaved, escapeHtml } from '@md-runbook/core';
+import { colorConfig } from './config';
 import type { HistoryEntry, OutputInput, ParsedOutput } from '@md-runbook/core';
 
 export const META_KEY = 'mdRunbook';
@@ -19,6 +20,8 @@ export interface OutputMetadata {
   status?: boolean;
   /** Final marker attributes of a finished run, carried by its status output. */
   attrs?: Record<string, string>;
+  /** The run's output as saved (plain text, stderr lines marked), carried by its status output. */
+  text?: string;
   /** The collapsed list of earlier runs (output history); display only, never persisted. */
   earlier?: boolean;
 }
@@ -66,15 +69,18 @@ export function earlierRunsOutput(entries: readonly HistoryEntry[]): vscode.Note
  * VS Code only syncs a replaced output's items (not its metadata) to the extension host, so
  * metadata that must survive to save time goes on a newly appended output like this one.
  */
-export function statusOutput(text: string, attrs?: Record<string, string>): vscode.NotebookCellOutput {
-  const meta: OutputMetadata = { status: true, ...(attrs ? { attrs } : {}) };
+export function statusOutput(text: string, attrs?: Record<string, string>, saved?: string): vscode.NotebookCellOutput {
+  const meta: OutputMetadata = { status: true, ...(attrs ? { attrs } : {}), ...(saved !== undefined ? { text: saved } : {}) };
   return new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.text(text)], { [META_KEY]: meta });
 }
 
 /** Outputs for a cell loaded from disk: the stored text plus a status line. */
 export function persistedOutputs(out: ParsedOutput, history: readonly HistoryEntry[] = []): vscode.NotebookCellOutput[] {
   const meta: OutputMetadata = { persisted: true };
-  const outputs = [new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout(out.text)], { [META_KEY]: meta })];
+  // Coloured as when it ran (display only: a save writes the block from the file, unchanged).
+  const colors = colorConfig();
+  const shown = colorizeSaved(out.text, out.attrs.stderr, colors.levels, colors.stderrRed);
+  const outputs = [new vscode.NotebookCellOutput([vscode.NotebookCellOutputItem.stdout(shown)], { [META_KEY]: meta })];
   if (out.attrs.exit !== undefined || out.attrs.ran !== undefined) {
     const status = [statusLine(out.attrs.exit, out.attrs.ran, out.attrs.duration), earlierRuns(history.length)].filter(Boolean).join(' · ');
     outputs.push(statusOutput(status));
@@ -90,6 +96,7 @@ const decoder = new TextDecoder();
 export function toOutputInput(outputs: readonly OutputLike[]): OutputInput | undefined {
   let attrs: Record<string, string> | undefined;
   let text = '';
+  let saved: string | undefined;
   for (const o of outputs) {
     const m = outputMeta(o);
     if (m?.persisted) return { kind: 'preserved' };
@@ -100,6 +107,8 @@ export function toOutputInput(outputs: readonly OutputLike[]): OutputInput | und
       }
     }
     if (m?.status && m.attrs) attrs = m.attrs;
+    // The plain text the run recorded (the shown items carry colours); older outputs have none.
+    if (m?.status && m.text !== undefined) saved = m.text;
   }
-  return attrs ? { kind: 'new', text, attrs } : undefined;
+  return attrs ? { kind: 'new', text: saved ?? text, attrs } : undefined;
 }

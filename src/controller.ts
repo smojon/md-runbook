@@ -4,7 +4,20 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ExecuteResult, HISTORY_KEY, LineBuffer, isRunHistory, SUPPORTED_LANGUAGE_IDS, exitLabel, formatDurationAttr, formatLocalIso, isSuccess, shellKindForLanguage } from '@md-runbook/core';
+import {
+  ExecuteResult,
+  HISTORY_KEY,
+  LineBuffer,
+  isRunHistory,
+  SUPPORTED_LANGUAGE_IDS,
+  colorizeAnsi,
+  exitLabel,
+  formatDurationAttr,
+  formatLocalIso,
+  isSuccess,
+  markStderr,
+  shellKindForLanguage,
+} from '@md-runbook/core';
 import { CheckOutcome, evaluateChecks, hasChecks } from '@md-runbook/core/checks';
 import { SessionPool } from '@md-runbook/core/node/session';
 import { LineStep, echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core/steps';
@@ -12,7 +25,7 @@ import { FrontMatter, parseFrontMatter } from '@md-runbook/core/secrets';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { isCodeMeta } from '@md-runbook/core';
 import { SECTION } from './config';
-import { ExecutionConfig, executionConfig, redactionConfig } from './config';
+import { ExecutionConfig, colorConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
 import { CellPlan, ExecuteIO, PrepareContext, RunPipeline, RunRecord } from './pipeline';
 import { copyOrigin } from './copyOrigins';
@@ -23,17 +36,21 @@ const FLUSH_MS = 100;
 
 type Chunk = { stream: 'stdout' | 'stderr'; text: string };
 
-/** Merge consecutive chunks of the same stream into output items. */
-function toItems(chunks: readonly Chunk[]): vscode.NotebookCellOutputItem[] {
+/** Merge consecutive chunks of the same stream. */
+function mergeChunks(chunks: readonly Chunk[]): Chunk[] {
   const merged: Chunk[] = [];
   for (const c of chunks) {
     const last = merged[merged.length - 1];
     if (last && last.stream === c.stream) last.text += c.text;
     else merged.push({ ...c });
   }
-  return merged.map((c) =>
-    c.stream === 'stdout' ? vscode.NotebookCellOutputItem.stdout(c.text) : vscode.NotebookCellOutputItem.stderr(c.text),
-  );
+  return merged;
+}
+
+/** What a chunk shows: log levels coloured, stderr in red (output.colorLevels, output.stderrInRed). */
+function itemOf(c: Chunk, colors: { levels: boolean; stderrRed: boolean }): vscode.NotebookCellOutputItem {
+  const text = colorizeAnsi(c.text, { levels: colors.levels, stderr: colors.stderrRed && c.stream === 'stderr' });
+  return c.stream === 'stdout' ? vscode.NotebookCellOutputItem.stdout(text) : vscode.NotebookCellOutputItem.stderr(text);
 }
 
 /** Resolves true after `ms`, or false as soon as `signal` aborts. */
@@ -319,7 +336,13 @@ export class RunbookController implements vscode.Disposable {
 
       let unflushed: Chunk[] = [];
       const previousOutputs = [...cell.outputs];
+      // One output per stretch of one stream: VS Code shows a single item of each output (its
+      // items are alternative forms of one thing), so stderr items next to stdout ones were never shown.
       let live = new vscode.NotebookCellOutput([], runMeta('running'));
+      let liveStream: Chunk['stream'] | undefined;
+      const colors = colorConfig();
+      // Everything shown, as plain text with its stream: what a save writes (the display has colours).
+      let shown: Chunk[] = [];
       // Clear first so the live output is a new output, not an in-place replacement of the old one
       // (in-place replacements keep the old metadata on the extension host side).
       await exec.clearOutput();
@@ -328,12 +351,24 @@ export class RunbookController implements vscode.Disposable {
       let flushing = Promise.resolve();
       const flush = (): Promise<void> => {
         if (unflushed.length === 0) return flushing;
-        const items = toItems(unflushed);
+        const groups = mergeChunks(unflushed);
         unflushed = [];
-        flushing = flushing.then(() => exec.appendOutputItems(items, live)).then(
-          () => undefined,
-          () => undefined,
-        );
+        flushing = flushing
+          .then(async () => {
+            for (const g of groups) {
+              shown.push(g);
+              if (liveStream === undefined || liveStream === g.stream) await exec.appendOutputItems([itemOf(g, colors)], live);
+              else {
+                live = new vscode.NotebookCellOutput([itemOf(g, colors)], runMeta('running'));
+                await exec.appendOutput([live]);
+              }
+              liveStream = g.stream;
+            }
+          })
+          .then(
+            () => undefined,
+            () => undefined,
+          );
         return flushing;
       };
       timer = setInterval(() => void flush(), FLUSH_MS);
@@ -352,9 +387,16 @@ export class RunbookController implements vscode.Disposable {
       /** Replace the cell's output with a new live output holding `chunks`. */
       const restartOutput = async (chunks: readonly Chunk[]): Promise<void> => {
         await flush();
-        live = new vscode.NotebookCellOutput(chunks.length > 0 ? toItems(chunks) : [], runMeta('running'));
+        const groups = mergeChunks(chunks);
+        shown = [...groups];
+        const outputs =
+          groups.length > 0
+            ? groups.map((g) => new vscode.NotebookCellOutput([itemOf(g, colors)], runMeta('running')))
+            : [new vscode.NotebookCellOutput([], runMeta('running'))];
+        live = outputs[outputs.length - 1]!;
+        liveStream = groups[groups.length - 1]?.stream;
         await exec.clearOutput();
-        await exec.appendOutput([live]);
+        await exec.appendOutput(outputs);
       };
 
       const ctx: PrepareContext = { cell, notebook, token: exec.token, previousOutputs };
@@ -500,7 +542,9 @@ export class RunbookController implements vscode.Disposable {
         ...plan.attrs,
       };
       const earlierOutput = earlierRunsOutput(history);
-      await exec.appendOutput(earlierOutput ? [statusOutput(status, attrs), earlierOutput] : [statusOutput(status, attrs)]);
+      // The text to save: what was shown, without colours, its stderr lines marked (stderr=).
+      const saved = shown.map((c) => (c.stream === 'stderr' ? markStderr(c.text) : c.text)).join('');
+      await exec.appendOutput(earlierOutput ? [statusOutput(status, attrs, saved), earlierOutput] : [statusOutput(status, attrs, saved)]);
 
       // A cell that was not run counts as success so Run All carries on (a declined confirmation
       // stops it through stopSequence).

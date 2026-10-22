@@ -1316,6 +1316,24 @@
             "description": "Remove ANSI escape codes (colours, cursor movement) from output written to the file.",
             "order": 7
           },
+          "mdRunbook.output.colorLevels": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Colour log levels in the output as log viewers do (Grafana, VS Code): `FATAL`/`CRITICAL` purple, `ERROR`/`FAILED` red, `WARN` yellow, `INFO`/`NOTICE` blue, `DEBUG` grey, `TRACE` light blue, `OK`/`PASSED`/`SUCCESS` green. Display only: the file keeps plain text. Lines with colours of their own keep them.",
+            "order": 7
+          },
+          "mdRunbook.output.stderrInRed": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show what a cell writes to stderr in red, also when the runbook is opened again (the output block records which lines came from stderr).",
+            "order": 7
+          },
+          "mdRunbook.output.forceColor": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Ask programs for colours although their output is not a terminal: cells get `FORCE_COLOR=1` and `CLICOLOR_FORCE=1` (Node tools, many CLIs, macOS/BSD tools). The colours show in the output; the file keeps plain text unless `#mdRunbook.output.stripAnsi#` is off. Some tools need their own flag (`ls --color=always`, `git -c color.ui=always`).",
+            "order": 7
+          },
           "mdRunbook.output.recordContext": {
             "type": "object",
             "default": {},

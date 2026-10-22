@@ -20,7 +20,7 @@ import {
   isMarkupMeta,
 } from './model';
 import { formatHistoryBlock } from './history';
-import { formatOutputBlock, processOutputText } from './outputBlock';
+import { formatOutputBlock, processOutput } from './outputBlock';
 import { parse } from './parser';
 
 export function serialize(doc: DocMeta | undefined, cells: readonly CellInput[], opts: WriteOptions): string {
@@ -173,10 +173,13 @@ function renderOutput(
   if (!output) return '';
   if (output.kind === 'preserved') return meta?.output ? meta.output.raw + (meta.history?.raw ?? '') : '';
   if (!opts.persistOutputs) return '';
-  const text = processOutputText(output.text, opts);
+  const { text, stderr } = processOutput(output.text, opts);
   const eol = meta?.eol ?? docEol;
   const indent = meta?.indent ?? '';
-  const attrs = output.previous ? { ...output.attrs, changed: output.previous.text === text ? 'no' : 'yes' } : output.attrs;
+  // The lines that came from stderr (shown in red when the file is opened again).
+  const { stderr: _stale, ...rest } = output.attrs;
+  const withStderr = stderr ? { ...rest, stderr } : rest;
+  const attrs = output.previous ? { ...withStderr, changed: output.previous.text === text ? 'no' : 'yes' } : withStderr;
   let s = (meta?.output?.gap ?? '') + formatOutputBlock(text, attrs, indent, eol);
   if (output.history?.length) s += (meta?.history?.gap ?? '') + formatHistoryBlock(output.history, indent, eol);
   return s;

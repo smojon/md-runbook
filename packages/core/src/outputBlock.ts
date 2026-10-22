@@ -9,6 +9,7 @@
  */
 
 import { stripAnsi } from './ansi';
+import { formatLineSet, splitStderrMarks } from './outputColors';
 import { addIndent } from './fence';
 import { toLf } from './lines';
 
@@ -79,12 +80,21 @@ export interface OutputTextOptions {
 
 /** Turn raw process output into the text that is written to disk. */
 export function processOutputText(text: string, opts: OutputTextOptions): string {
+  return processOutput(text, opts).text;
+}
+
+/**
+ * The same, and which of the written lines came from stderr (`stderr=`, as `2,4-6`; '' for none):
+ * stderr lines are marked in `text` (outputColors.markStderr) and the marks are removed here.
+ */
+export function processOutput(text: string, opts: OutputTextOptions): { text: string; stderr: string } {
   let t = text.replace(/\r\n/g, '\n');
   if (opts.stripAnsi) t = stripAnsi(t);
   t = normalizeNewlines(t);
   if (opts.redact) t = opts.redact(t);
   t = t.replace(/\n+$/, '');
-  return truncateLines(t, opts.maxOutputLines);
+  const marked = splitStderrMarks(truncateLines(t, opts.maxOutputLines));
+  return { text: marked.text, stderr: formatLineSet(marked.stderr) };
 }
 
 /** Render an output block from already-processed text. Ends with `eol`. */

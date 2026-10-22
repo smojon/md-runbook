@@ -43,6 +43,16 @@ export function writeOptions(): WriteOptions {
   };
 }
 
+/** How output is coloured on screen (the file keeps plain text). */
+export function colorConfig(): { levels: boolean; stderrRed: boolean; force: boolean } {
+  const c = cfg();
+  return {
+    levels: c.get<boolean>('output.colorLevels', true),
+    stderrRed: c.get<boolean>('output.stderrInRed', true),
+    force: c.get<boolean>('output.forceColor', false),
+  };
+}
+
 export interface ExecutionConfig {
   timeoutMs: number;
   stopOnFailure: boolean;
@@ -52,7 +62,8 @@ export interface ExecutionConfig {
 
 export function executionConfig(): ExecutionConfig {
   const c = cfg();
-  const env: Record<string, string> = {};
+  // output.forceColor: programs colour their output although it isn't a terminal (execution.env can still override).
+  const env: Record<string, string> = c.get<boolean>('output.forceColor', false) ? { FORCE_COLOR: '1', CLICOLOR_FORCE: '1' } : {};
   for (const [k, v] of Object.entries(c.get<Record<string, unknown>>('execution.env', {}))) {
     if (v !== null && v !== undefined) env[k] = String(v);
   }
