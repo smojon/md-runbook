@@ -14,6 +14,7 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
 }));
 jest.mock('../ssh/transport', () => ({ openTransport: jest.fn(), transportReady: async () => undefined }));
+jest.mock('../share/export', () => ({ exportReport: jest.fn(async () => undefined), shareRunbook: jest.fn(async () => undefined) }));
 let mockConnection = fakeConnection();
 jest.mock('../ssh/connections', () => ({
   connectionFor: jest.fn(async () => mockConnection),
@@ -207,6 +208,19 @@ describe('sessions and Run All as Copy', () => {
     script([{ stdout: 'new\n' }]);
     await render(<RunbookView id={copy.id} autorun />);
     await waitFor(() => expect(parse(getRunbook(copy.id)!.text).cells[1]?.output?.text).toBe('new'));
+  });
+
+  it('Share: the report as HTML or PDF, and the runbook, through the share sheet', async () => {
+    const exp = jest.requireMock<{ exportReport: jest.Mock; shareRunbook: jest.Mock }>('../share/export');
+    const r = addRunbook('deploy.md', '# D\n\n```bash\necho one\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await menu('exportReportPdf');
+    expect(exp.exportReport).toHaveBeenLastCalledWith(expect.objectContaining({ id: r.id }), 'pdf');
+    await menu('exportReportHtml');
+    expect(exp.exportReport).toHaveBeenLastCalledWith(expect.objectContaining({ id: r.id }), 'html');
+    exp.shareRunbook.mockRejectedValueOnce(new Error('no app to share to'));
+    await menu('shareRunbook');
+    await waitFor(() => expect(screen.getByTestId('run-notice').props.children).toBe('Not shared: no app to share to'));
   });
 
   it('copyStamp is the extension’s yyyyMMdd-HHmmss', () => {

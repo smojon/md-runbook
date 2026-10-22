@@ -29,7 +29,8 @@ import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
 import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } from '../runbooks/params';
 import { canDownload } from '../runbooks/files';
 import { saveRunbook } from '../runbooks/save';
-import { addRunbook, getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
+import { exportReport, shareRunbook } from '../share/export';
+import { Runbook, addRunbook, getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { fingerprint } from '../ssh/fingerprint';
 import { LineMode, isStepping, planLines } from '../ssh/lineRuns';
 import { runnability } from '../ssh/cells';
@@ -82,6 +83,32 @@ interface Trust {
 export function copyStamp(d: Date): string {
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+/** Share: the run report (HTML, PDF) and the runbook itself, through the share sheet or a download. */
+function shareActions(runbook: Runbook, failed: (why: string) => void): AppAction[] {
+  const safely = (f: () => Promise<void>) => () => void f().catch((e: unknown) => failed(e instanceof Error ? e.message : String(e)));
+  const item = (id: 'exportReportHtml' | 'exportReportPdf' | 'shareRunbook', run: () => void): AppAction => ({
+    id,
+    title: t.actions[id][0],
+    hint: t.actions[id][1],
+    group: 'share',
+    run,
+  });
+  return [
+    item(
+      'exportReportHtml',
+      safely(() => exportReport(runbook, 'html')),
+    ),
+    item(
+      'exportReportPdf',
+      safely(() => exportReport(runbook, 'pdf')),
+    ),
+    item(
+      'shareRunbook',
+      safely(() => shareRunbook(runbook)),
+    ),
+  ];
 }
 
 export function RunbookView({ id, autorun = false }: { id: string | undefined; autorun?: boolean }) {
@@ -355,6 +382,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         runbook.origin
           ? action('save', 'share', () => void saveFromMenu())
           : action('download', 'share', () => void saveFromMenu(), canDownload ? undefined : t.saveUnavailable),
+        ...shareActions(runbook, (why) => setNotice(t.shareFailed(why))),
         action('cheatSheet', 'help', () => void Linking.openURL(CHEAT_SHEET_URL)),
         action('sample', 'help', () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } })),
       ]

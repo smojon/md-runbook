@@ -90,7 +90,7 @@ secret values are redacted from the output.
 
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
-| **Export Report (HTML)** / **Export Report (PDF)** | Share ▾, right-click the file in the Explorer | Send the result of a run to someone without VS Code: a change record, an incident report, an audit. | — |
+| **Export Report (HTML)** / **Export Report (PDF)** | Share ▾, right-click the file in the Explorer | Send the result of a run to someone without VS Code: a change record, an incident report, an audit. | ⋯ More → Share (through the share sheet; in a browser: download, print to PDF) |
 | **Sign Runbook** | Share ▾ | Release a runbook for a support team: servers restricted to md-runbook-gate run only signed runbooks, unchanged. See [signed runbooks](https://github.com/smojon/md-runbook/blob/main/docs/features/signed-runbooks.md). | shows who signed it and which blocks changed |
 | Save | Ctrl+S | Outputs are written into the `.md` file: commit it, and the run is in Git. | **Save to the file** (or **Download** in browsers that can't write files) |
 
@@ -104,6 +104,7 @@ secret values are redacted from the output.
 | **Forget the trusted host key** | Hosts → a host | The server was reinstalled and has a new key on purpose. |
 | **This app's SSH key → Copy** | Hosts | Put the app's public key into `~/.ssh/authorized_keys` on each server. On phones the private key stays in secure hardware. |
 | **Relay** address and token | Hosts (browser only) | The browser can't open SSH connections itself: it goes through your relay. |
+| **Share Runbook** | ⋯ More → Share | Hand the .md with its outputs to VS Code or a colleague (mail, Files, AirDrop, Slack). |
 | **Remove** a runbook | start screen | Take a runbook off the app (it asks if it has unsaved changes). |
 
 ## Command line

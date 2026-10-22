@@ -14,6 +14,9 @@ jest.mock('expo-secure-store', () => ({
 }));
 
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => true) }));
+// Reports and sharing (native: a PDF renderer and the share sheet).
+jest.mock('expo-print', () => ({ printToFileAsync: jest.fn(async () => ({ uri: 'file:///cache/print.pdf' })) }));
+jest.mock('expo-sharing', () => ({ shareAsync: jest.fn(async () => undefined), isAvailableAsync: jest.fn(async () => true) }));
 
 // The app's copies of runbooks (the documents folder does not exist in Jest): in memory.
 const mockDocs = new Map<string, string>();
