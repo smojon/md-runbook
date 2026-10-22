@@ -6,8 +6,8 @@ blocks, so a runbook can move between the two.
 
 It is not in the App Store or Google Play yet. To try it, see [Try it](#try-it) below.
 
-The screenshots come from the app's CI run: an iPhone simulator, an Android emulator and
-Chromium, against a throwaway SSH server.
+The screenshots come from the app's CI run of 2026-10-22: an iPhone simulator, an Android
+emulator and Chromium, against a throwaway SSH server.
 
 ## A runbook
 
@@ -49,7 +49,7 @@ Explain Output, Approve / Reject a proposal. The [cheat sheet](cheatsheet.md) ha
 
 ## Hosts and the app's key
 
-<img src="app/ios-hosts.png" width="320" alt="The Hosts screen: one host, and the app's public SSH key with a Copy button">
+<img src="app/ios-hosts.png" width="320" alt="The Hosts screen: one host, the app's public SSH key with a Copy button, secrets and output history">
 
 You add each server once: a name, its address and the user to log in as. The app makes its own
 SSH key on first use. On phones the private key is made inside the secure hardware (the Secure
@@ -84,7 +84,7 @@ The app runs `sh` and `bash` cells on Linux and macOS servers. `pwsh`, `powershe
 cells, and blocks marked `os=windows`, are shown with their saved output but not run: use VS
 Code or the command line for those.
 
-<img src="app/web-line-actions-dark.png" width="720" alt="The web app in dark mode: a code line tapped, with Run line 2, Run lines 1-2 and Check under it">
+<img src="app/web-line-actions-dark.png" width="720" alt="The web app in dark mode: a code line tapped, with Run line 2, Run lines 1-2, Check, Breakpoint and Explain under it">
 
 ## In a browser, through the relay
 
