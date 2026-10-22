@@ -326,12 +326,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, []);
-  const action = (id: keyof typeof t.actions, group: ActionGroup, run: () => void, disabled?: string): AppAction => ({
+  /** An action's title, hint and group; its `run` goes next to it in an object literal (a handler, never called during render). */
+  const meta = (id: keyof typeof t.actions, group: ActionGroup, disabled?: string): Omit<AppAction, 'run'> => ({
     id,
     title: t.actions[id][0],
     hint: t.actions[id][1],
     group,
-    run,
     ...(disabled ? { disabled } : {}),
   });
   /** Run All as Copy: the runbook without outputs under a dated name, opened and run at once. */
@@ -344,51 +344,52 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const actions: AppAction[] = runbook
     ? [
         queued || running
-          ? action('stop', 'run', () => stopSequence())
-          : action('runAll', 'run', () => runSequence('start'), host ? undefined : t.noRunNow),
-        action(
-          'resumeRun',
-          'run',
-          () => runSequence('resume'),
-          !host ? t.noRunNow : progress?.resume.length ? undefined : t.nothingToResume,
-        ),
-        action('nextStep', 'run', () => {
-          const at = progress?.firstFailed?.cell ?? progress?.firstPending?.cell;
-          if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
-        }),
-        action(
-          'restartSession',
-          'run',
-          () => {
+          ? { ...meta('stop', 'run'), run: () => stopSequence() }
+          : { ...meta('runAll', 'run', host ? undefined : t.noRunNow), run: () => runSequence('start') },
+        {
+          ...meta('resumeRun', 'run', !host ? t.noRunNow : progress?.resume.length ? undefined : t.nothingToResume),
+          run: () => runSequence('resume'),
+        },
+        {
+          ...meta('nextStep', 'run'),
+          run: () => {
+            const at = progress?.firstFailed?.cell ?? progress?.firstPending?.cell;
+            if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
+          },
+        },
+        {
+          ...meta('restartSession', 'run', hosts.some((h) => isConnected(h.id)) ? undefined : t.noSessionOpen),
+          run: () => {
             for (const h of hosts) if (isConnected(h.id)) void disconnect(h.id);
           },
-          hosts.some((h) => isConnected(h.id)) ? undefined : t.noSessionOpen,
-        ),
+        },
         sessionMode === 'session'
-          ? action('sessionOff', 'run', () => setSessionMode('isolated'))
-          : action('sessionOn', 'run', () => setSessionMode('session')),
-        action('runAllAsCopy', 'run', () => runAsCopy(), host ? undefined : t.noRunNow),
-        action('clearAllOutputs', 'run', () => updateRunbookText(runbook.id, clearOutputBlocks(runbook.text))),
-        action(
-          'checkNextItem',
-          'steps',
-          () => write(checkNextItem(runbook.text)),
-          checkNextItem(runbook.text) === undefined ? t.noTaskLeft : undefined,
-        ),
-        action('hosts', 'run', () => router.push('/hosts')),
-        ...(params.length > 0 ? [action('setParameters', 'values', () => list.current?.scrollToOffset({ offset: 0 }))] : []),
-        action('resetInputs', 'values', () => updateInputs({}), Object.keys(typedInputs).length > 0 ? undefined : t.noInputsYet),
-        action('secrets', 'values', () => router.push('/hosts')),
+          ? { ...meta('sessionOff', 'run'), run: () => setSessionMode('isolated') }
+          : { ...meta('sessionOn', 'run'), run: () => setSessionMode('session') },
+        { ...meta('runAllAsCopy', 'run', host ? undefined : t.noRunNow), run: () => runAsCopy() },
+        { ...meta('clearAllOutputs', 'run'), run: () => updateRunbookText(runbook.id, clearOutputBlocks(runbook.text)) },
+        {
+          ...meta('checkNextItem', 'steps', checkNextItem(runbook.text) === undefined ? t.noTaskLeft : undefined),
+          run: () => write(checkNextItem(runbook.text)),
+        },
+        { ...meta('hosts', 'run'), run: () => router.push('/hosts') },
+        ...(params.length > 0 ? [{ ...meta('setParameters', 'values'), run: () => list.current?.scrollToOffset({ offset: 0 }) }] : []),
+        {
+          ...meta('resetInputs', 'values', Object.keys(typedInputs).length > 0 ? undefined : t.noInputsYet),
+          run: () => updateInputs({}),
+        },
+        { ...meta('secrets', 'values'), run: () => router.push('/hosts') },
         runbook.origin
-          ? action('save', 'share', () => void saveFromMenu())
-          : action('download', 'share', () => void saveFromMenu(), canDownload ? undefined : t.saveUnavailable),
+          ? { ...meta('save', 'share'), run: () => void saveFromMenu() }
+          : { ...meta('download', 'share', canDownload ? undefined : t.saveUnavailable), run: () => void saveFromMenu() },
         ...shareActions(runbook, (why) => setNotice(t.shareFailed(why))),
-        action('cheatSheet', 'help', () => void Linking.openURL(CHEAT_SHEET_URL)),
-        action('sample', 'help', () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } })),
+        { ...meta('cheatSheet', 'help'), run: () => void Linking.openURL(CHEAT_SHEET_URL) },
+        { ...meta('sample', 'help'), run: () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } }) },
       ]
     : [];
   // A code cell's own actions (its ⋯, or a long press), as in a cell's ⋯ menu in VS Code.
-  const [cellFor, setCellFor] = useState<number | undefined>();
+  /** The open cell sheet: its actions, built when its ⋯ was tapped (a handler, not during render). */
+  const [cellSheet, setCellSheet] = useState<AppAction[] | undefined>();
   const write = (next: string | undefined): void => {
     if (runbook && next !== undefined) updateRunbookText(runbook.id, next);
   };
@@ -410,18 +411,16 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const can = runnability(cell);
     const why = !host ? t.noRunNow : can.ok ? undefined : t.notRunnable[can.why](can.detail);
     return [
-      action('runCell', 'run', () => void run({ cellIndex: index }, host), why),
-      action('stepThrough', 'run', () => void run({ cellIndex: index, mode: 'step', line: 0 }, host), why),
-      action('markDone', 'steps', () => mark(index, 'done')),
-      action('markSkipped', 'steps', () => mark(index, 'skipped')),
-      action(
-        'unmarkStep',
-        'steps',
-        () => write(clearCellOutputs(runbook.text, (i) => i === index)),
-        isManualMark(cell.output?.attrs) ? undefined : t.notManualMark,
-      ),
-      action('clearAbove', 'run', () => write(clearCellOutputs(runbook.text, (i) => i < index))),
-      action('clearBelow', 'run', () => write(clearCellOutputs(runbook.text, (i) => i >= index))),
+      { ...meta('runCell', 'run', why), run: () => void run({ cellIndex: index }, host) },
+      { ...meta('stepThrough', 'run', why), run: () => void run({ cellIndex: index, mode: 'step', line: 0 }, host) },
+      { ...meta('markDone', 'steps'), run: () => mark(index, 'done') },
+      { ...meta('markSkipped', 'steps'), run: () => mark(index, 'skipped') },
+      {
+        ...meta('unmarkStep', 'steps', isManualMark(cell.output?.attrs) ? undefined : t.notManualMark),
+        run: () => write(clearCellOutputs(runbook.text, (i) => i === index)),
+      },
+      { ...meta('clearAbove', 'run'), run: () => write(clearCellOutputs(runbook.text, (i) => i < index)) },
+      { ...meta('clearBelow', 'run'), run: () => write(clearCellOutputs(runbook.text, (i) => i >= index)) },
     ];
   };
   const saveFromMenu = async (): Promise<void> => {
@@ -508,11 +507,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               onMore={() => setShowActions(true)}
             />
             <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
-            <ActionsSheet
-              actions={cellFor === undefined ? [] : cellActions(cellFor)}
-              visible={cellFor !== undefined}
-              onClose={() => setCellFor(undefined)}
-            />
+            <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />
             <SaveBar runbook={runbook} />
             {signed ? <SignedBanner status={signed} /> : null}
             {params.length > 0 ? (
@@ -582,7 +577,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               onRun={(mode, line) => void run({ cellIndex: index, mode, line }, host)}
               onStop={stopSequence}
               onToggleCheck={(step) => toggleCheck(index, step)}
-              onActions={() => setCellFor(index)}
+              onActions={() => setCellSheet(cellActions(index))}
             />
           )
         }
