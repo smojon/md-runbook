@@ -12,7 +12,8 @@ if (-not (Test-Path $sshd)) {
 }
 $keygen = Join-Path $env:WINDIR 'System32\OpenSSH\ssh-keygen.exe'
 $key = Join-Path $d 'host_ecdsa'
-& $keygen -q -t ecdsa -b 256 -N '""' -f $key
+# PowerShell 7 passes '' as an empty argument (the CI step runs in pwsh).
+& $keygen -q -t ecdsa -b 256 -N '' -f $key
 if ($LASTEXITCODE) { throw 'ssh-keygen failed' }
 $auth = Join-Path $d 'authorized_keys'
 Set-Content -Path $auth -Value $null -Encoding ascii
