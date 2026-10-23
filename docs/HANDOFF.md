@@ -20,7 +20,10 @@ State of the project for whoever picks it up next (person or new Claude session)
   npm project using the packages from their sources; `.github/workflows/app.yml` runs its gates,
   the web build in Chromium and the release builds on an Android emulator and an iPhone
   simulator with the Maestro flows in `apps/mobile/e2e/maestro`. Locally: `cd apps/mobile &&
-  npm ci && npm run check`. The spike that chose this stack: `spikes/ssh/README.md`.
+  npm ci && npm run check`. After a UI change, `npm run export:web && npm run ui-tour` takes
+  screenshots of every screen and sheet at phone size, light and dark, into `ui-tour/` (with a
+  seeded runbook: outputs, a cloud view, a Windows host, a proposal, a signed runbook); look
+  through them. The spike that chose this stack: `spikes/ssh/README.md`.
   What it does, with screenshots: [app.md](app.md) (the images in `docs/app/` come from an App
   workflow run's artifacts; refresh them from a newer run when screens change).
   The app draws runbooks like VS Code's notebook with native components (Markdown from the

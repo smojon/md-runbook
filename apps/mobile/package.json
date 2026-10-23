@@ -61,7 +61,8 @@
     "check:deps": "node e2e/check-deps.mjs && expo-doctor",
     "export:web": "expo export --platform web",
     "check": "npm run typecheck && npm run lint && npm run format && npm test",
-    "audit": "node e2e/audit.mjs"
+    "audit": "node e2e/audit.mjs",
+    "ui-tour": "node e2e/ui-tour.mjs"
   },
   "private": true,
   "jest": {
