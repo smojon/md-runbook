@@ -6,8 +6,6 @@
 import { execFileSync } from 'node:child_process';
 
 const REVIEWED = {
-  // braces <=3.0.3 (latest): glob patterns of the build tooling (Metro, micromatch), not in the app bundle.
-  'GHSA-vfj7-8cjw-p6xm': '2026-10-19',
   // node-forge <=1.4.0 (latest): via @expo/code-signing-certificates, used by the Expo CLI, not in the app bundle.
   'GHSA-86w9-cpqp-85rv': '2026-10-19',
 };
