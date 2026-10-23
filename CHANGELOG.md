@@ -8,7 +8,8 @@
   windows-powershell` for both). Only names of installed shells, never a path. In VS Code, the
   command line and the app (which starts that shell on the server); in sessions and terminal
   mode too. A missing shell is an error on the cell. With `shell: zsh`, an assistant's proposal is
-  never approved by the allowlist alone, and earlier approvals no longer count; Sign Runbook
+  never approved by the allowlist alone, and earlier approvals no longer count (in the app, a
+  proposal approved as bash also doesn't run where the server's login profile starts zsh); Sign Runbook
   refuses a Unix shell other than bash (servers run signed runbooks in bash). Lint warns about
   names it ignores.
 - **App look and feel, from a screen-by-screen check:** iOS-style toggles on every platform;

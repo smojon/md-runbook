@@ -168,6 +168,9 @@ describe("the runbook's shell: (front matter)", () => {
     assert.ok(win.ok);
     assert.equal(win.shell.command, gitSh);
     assert.deepEqual(win.shell.args('C:\\Temp\\cell.sh'), ['C:/Temp/cell.sh']);
+    const custom = resolveShell('bash', { bashPath: 'E:\\tools\\git\\bin\\bash.exe', runbook: { unix: 'sh' } }, fakeEnv('win32', ['E:\\tools\\git\\bin\\sh.exe', gitSh], WIN_ENV));
+    assert.ok(custom.ok);
+    assert.equal(custom.shell.command, 'E:\\tools\\git\\bin\\sh.exe');
     const none = resolveShell('bash', { runbook: { unix: 'sh' } }, fakeEnv('win32', [], WIN_ENV));
     assert.ok(!none.ok);
     assert.match(none.error, /Git for Windows/);

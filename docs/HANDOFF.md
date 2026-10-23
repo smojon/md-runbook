@@ -127,7 +127,8 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
   notebook closes).
 - With `safety.recordContext` on, a cell's secret prompts come before its confirmation
   (documented in `docs/features/safety.md`).
-- Line runs: cmd cells run each line in its own process (no state between lines); checks,
+- Line runs: cmd cells run each line in its own process (no state between lines), as do
+  `shell: sh` cells in terminal mode; checks,
   retries and captures don't apply to line runs (documented in `docs/features/lines.md` and
   `checks.md`).
 - Checklist boxes don't show in Restricted Mode: VS Code's sanitizer drops `<input>`.

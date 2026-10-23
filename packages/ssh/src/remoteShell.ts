@@ -5,7 +5,7 @@
  * the relay), so this file has no platform code.
  */
 
-import { RunResult, RunbookShells, SentinelFilter, ShellKind } from '@md-runbook/core';
+import { RunResult, RunbookShells, SentinelFilter, ShellKind, UnixShell } from '@md-runbook/core';
 import {
   CommandRequestMessage,
   KeyPair,
@@ -67,6 +67,12 @@ export interface ConnectOptions {
 export interface RemoteRunOptions extends CellCommandOptions {
   /** The cell's shell: bash (the default) on Linux and macOS servers, pwsh or cmd on Windows ones. */
   shell?: ShellKind;
+  /**
+   * An approved proposal: the shell its approval read it as (the command policy's rules). Checked
+   * as bash, it doesn't run where the login shell turned out to be zsh, which reads some text
+   * differently (a profile that ends in `exec zsh`).
+   */
+  checkedAs?: 'bash' | 'zsh';
   /** 0 or absent: no limit. */
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -120,6 +126,8 @@ export class RemoteShell {
   private gateInfo: GateInfo | undefined;
   /** Why the runbook's `shell:` can't be had here, per kind of cell: those cells don't run. */
   private readonly unavailable: Partial<Record<ShellKind, string>> = {};
+  /** On Linux and macOS servers (not through the gate): the shell that answered, by its own variables. */
+  private answered: UnixShell | undefined;
   /** While the shell starts, its channel closing (cmd.exe refusing the sh command) is not the connection's end. */
   private starting = true;
   private readonly decoderOut = new TextDecoder();
@@ -203,10 +211,14 @@ export class RemoteShell {
       if (noPwsh) shell.unavailable.pwsh = noPwsh;
       if (platform === 'posix' && want.unix && want.unix !== 'bash' && shell.gateInfo) {
         shell.unavailable.bash = `md-runbook-gate runs cells in bash: the runbook's shell: ${want.unix} can't be used through it.`;
-      } else if (platform === 'posix' && (want.unix === 'zsh' || want.unix === 'bash') && !shell.gateInfo) {
-        // zsh fell back to sh, or bash wasn't there: say so instead of running the cells elsewhere.
+      } else if (platform === 'posix' && !shell.gateInfo) {
+        // Which shell answered: zsh may have fallen back to sh, bash may be missing, and a login
+        // profile can start another shell (`exec zsh`). Say so instead of running the cells elsewhere.
         const got = PROBED_SHELLS[(await shell.exchange(randomId(), shellProbeCommand)) ?? -1];
-        if (got !== want.unix) shell.unavailable.bash = `This server has no ${want.unix} (the runbook's shell: ${want.unix}).`;
+        shell.answered = got;
+        if ((want.unix === 'zsh' || want.unix === 'bash') && got !== want.unix) {
+          shell.unavailable.bash = `This server has no ${want.unix} (the runbook's shell: ${want.unix}).`;
+        }
       }
       shell.starting = false;
       return shell;
@@ -234,7 +246,11 @@ export class RemoteShell {
    */
   async run(source: string, opts: RemoteRunOptions = {}): Promise<RemoteRunResult> {
     const kind = opts.shell ?? 'bash';
-    const wrong = wrongPlatform(this.platform, kind) ?? this.unavailable[kind];
+    const zshUnchecked =
+      kind === 'bash' && opts.checkedAs === 'bash' && this.answered === 'zsh'
+        ? "This server's login shell is zsh (its profile starts it), and this proposal was approved as bash: add shell: zsh to the runbook and approve it again."
+        : undefined;
+    const wrong = wrongPlatform(this.platform, kind) ?? this.unavailable[kind] ?? zshUnchecked;
     if (wrong) return { exitCode: null, signal: null, timedOut: false, cancelled: false, durationMs: 0, error: wrong };
     if (kind !== 'bash') return this.runText((id) => windowsCellCommand(source, id, kind, opts), opts);
     const text = (id: string): string => (this.gateInfo ? gateRawCommand(id, cellCommand(source, id, opts)) : cellCommand(source, id, opts));

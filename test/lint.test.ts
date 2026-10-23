@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { formatProblem, lintRunbook } from '@md-runbook/core/lint';
+import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { lint } from '../src/cli/main';
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';
@@ -58,6 +59,14 @@ describe('lintRunbook', () => {
       '2 warning: front matter shell: "fish" is ignored (expected bash, zsh, sh for sh/bash cells, pwsh or windows-powershell for PowerShell cells)',
       '2 warning: front matter shell: "/bin/zsh" is ignored: name a shell (bash, zsh, sh, pwsh, windows-powershell), never a path',
       '2 warning: front matter shell: "bash" is ignored: one shell per kind of cell, the first one counts',
+    ]);
+    // A second line: the first one counts there too; a YAML list isn't read.
+    assert.deepEqual(messages('---\nshell: zsh\nshell: sh pwsh\n---\n\n' + fence('bash', 'echo hi')), [
+      '3 warning: front matter shell: "sh" is ignored: one shell per kind of cell, the first one counts',
+    ]);
+    assert.deepEqual(parseFrontMatter('---\nshell: zsh\nshell: sh pwsh\n---\n')?.shell, { unix: 'zsh', powershell: 'pwsh' });
+    assert.deepEqual(messages('---\nshell:\n  - zsh\n---\n\n' + fence('bash', 'echo hi')), [
+      '2 warning: front matter shell: is empty: write the names on the same line (shell: zsh, pwsh), not as a list below it',
     ]);
   });
 

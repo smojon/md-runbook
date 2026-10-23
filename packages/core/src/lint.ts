@@ -55,10 +55,22 @@ export function lintRunbook(text: string): LintProblem[] {
         problems.push({ severity: 'warning', line: i, message: `front matter ${key}: "${m[2]}" is ignored (expected ${expected})` });
       }
     }
+    const seen: { unix?: string; powershell?: string } = {};
     for (let i = 1; i < end; i++) {
       const m = /^shell\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
       if (!m) continue;
-      const { unknown, twice } = parseShells(m[1]!);
+      if (m[1] === '') {
+        problems.push({ severity: 'warning', line: i, message: 'front matter shell: is empty: write the names on the same line (shell: zsh, pwsh), not as a list below it' });
+        continue;
+      }
+      const { shells, unknown, twice } = parseShells(m[1]!);
+      // Across lines too: an earlier shell: line already chose for those cells.
+      for (const kind of ['unix', 'powershell'] as const) {
+        const name = shells[kind];
+        if (!name) continue;
+        if (seen[kind]) twice.push(name);
+        else seen[kind] = name;
+      }
       for (const name of unknown) {
         const message = /[\\/]/.test(name)
           ? `front matter shell: "${name}" is ignored: name a shell (${[...UNIX_SHELLS, ...POWERSHELLS].join(', ')}), never a path`
@@ -117,6 +129,16 @@ export function lintRunbook(text: string): LintProblem[] {
   // A signed runbook whose blocks changed since signing.
   const signed = signedStatus(text);
   if (signed) {
+    // The front matter isn't signed: servers run the signed blocks in bash, elsewhere they'd run in this shell.
+    const unix = fm?.shell?.unix;
+    if (unix && unix !== 'bash') {
+      const at = text.replace(/^﻿/, '').split(/\r?\n/).findIndex((l) => /^shell\s*:/i.test(l));
+      problems.push({
+        severity: 'warning',
+        line: Math.max(0, at),
+        message: `front matter shell: ${unix} in a signed runbook: servers run its signed blocks in bash, and without the gate they would run in ${unix}`,
+      });
+    }
     for (const loc of locs.filter((l) => signed.changed.includes(l.cellIndex))) {
       problems.push({
         severity: 'warning',

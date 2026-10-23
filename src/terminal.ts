@@ -141,7 +141,7 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
       const sh = kind === 'bash' && unix === 'sh' ? resolveShell('bash', plan.shell, nodeShellEnv()) : undefined;
       if (sh && !sh.ok) return notRun(sh.error);
       const resolved = resolveShell(kind, sh ? { ...plan.shell, runbook: otherShells } : plan.shell, nodeShellEnv());
-      if (!resolved.ok) return notRun(resolved.error);
+      if (!resolved.ok) return notRun(sh ? `Terminal mode runs sh cells from a bash terminal: ${resolved.error}` : resolved.error);
       const shell = resolved.shell;
       const script = cmd?.ok ? cmd.shell : sh?.ok ? sh.shell : shell;
 

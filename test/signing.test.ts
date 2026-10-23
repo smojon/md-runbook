@@ -246,6 +246,15 @@ describe('signing: which cells are signed', () => {
     assert.match(lintRunbook(cut).map((p) => p.message).join('\n'), /signed blocks 1, 3 of 3 not in the file as signed/);
   });
 
+  it('lint warns when shell: zsh is added to a signed runbook (the front matter is not signed)', () => {
+    const signedRb = sign(fence('bash', 'echo hi'));
+    assert.doesNotMatch(lintRunbook(signedRb).map((p) => p.message).join('\n'), /shell:/);
+    const ps = lintRunbook('---\nshell: zsh\n---\n\n' + signedRb);
+    const w = ps.find((p) => /shell: zsh in a signed runbook/.test(p.message));
+    assert.ok(w, ps.map((p) => p.message).join('\n'));
+    assert.equal(w.line, 1);
+  });
+
   it('finds the signed command of a line run by its text', () => {
     const cell = signedStatus(signed)!.cells.get(2)!;
     assert.equal(signedStepIndex(cell, 'echo "${param:TARGET}"'), 2);

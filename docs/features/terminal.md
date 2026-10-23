@@ -73,7 +73,8 @@ next line gets a new one.
   integration, so they run from a PowerShell terminal, each in a `cmd.exe` of its own (as cmd
   cells always do), and prompts such as `set /p`, `pause` or `choice` are answered there. In a
   runbook with `shell: sh` (no shell integration either), cells run from a bash terminal, each in
-  an `sh` of its own; `shell: zsh` gets a zsh terminal.
+  an `sh` of its own, so the lines of a line run don't share `cd` or variables there (as with cmd
+  cells); `shell: zsh` gets a zsh terminal.
 - If shell integration does not start within 10 seconds, the cell fails with an explanation
   instead of running blind.
 - Prompts and anything else the program prints become part of the saved output (redacted).

@@ -139,7 +139,8 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       const sh = /^shell\s*:\s*(.*?)\s*(#.*)?$/i.exec(line);
       if (sh) {
         const { shells } = parseShells(sh[1]!);
-        if (shells.unix || shells.powershell) shell = shells;
+        // A second `shell:` line adds what the first didn't say; the first one counts (lint warns).
+        if (shells.unix || shells.powershell) shell = { ...shells, ...shell };
       }
       continue;
     }

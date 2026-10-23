@@ -33,6 +33,8 @@ export interface PolicyResult {
   unlisted: string[];
   /** Invalid patterns (ignored). */
   errors: string[];
+  /** Read for zsh (the runbook's `shell: zsh`): every command line is in `unlisted`, to be read. */
+  zsh?: true;
 }
 
 export const DEFAULT_ALLOW: string[] = [
@@ -449,7 +451,7 @@ export function evaluatePolicy(text: string, policy: CommandPolicy, cellShell: P
     else if (zsh || !lineAllowed(line, { allow, also }, shell)) unlisted.push(line);
   }
   const verdict: Verdict = denied.length > 0 ? 'denied' : unlisted.length > 0 ? 'review' : 'allowed';
-  return { verdict, denied, unlisted, errors };
+  return { verdict, denied, unlisted, errors, ...(zsh ? { zsh: true as const } : {}) };
 }
 
 /** Fingerprint of a cell's code, independent of line endings. */

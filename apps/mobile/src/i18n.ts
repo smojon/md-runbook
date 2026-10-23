@@ -258,6 +258,8 @@ const en = {
   approveReason: (reason: string) => `Reason given: ${reason}`,
   approveRunsAs: (who: string) => `Once approved it runs as ${who}, with that account’s rights.`,
   approveUnlisted: 'Commands not on the allowlist (read them before approving):',
+  approveZsh:
+    'This runbook runs in zsh (shell: zsh), which reads some commands differently from bash: read every command before approving:',
   approveOptions: 'Fence options that change how it runs:',
   approveTypeRun: 'Type run to approve',
   approveDenied: (line: string, pattern: string) => `Can’t be approved: “${line}” matches ${pattern}. Edit the cell instead.`,

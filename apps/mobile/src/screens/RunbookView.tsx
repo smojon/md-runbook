@@ -398,7 +398,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     ...(disabled ? { disabled } : {}),
   });
   // Approving proposals: the extension's built-in command policy, one card per cell.
-  const [approving, setApproving] = useState<{ index: number; result: PolicyResult; all: boolean } | undefined>();
+  // `scope`: what the approval is bound to when the card opened; checked again if `shell:` changed meanwhile.
+  const [approving, setApproving] = useState<{ index: number; result: PolicyResult; all: boolean; scope: string } | undefined>();
   const pendingProposals = (text: string): number[] =>
     parse(text)
       .cells.map((c, i) =>
@@ -414,15 +415,21 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const openApprove = (index: number, all: boolean, text = runbook?.text ?? ''): void => {
     const cell = parse(text).cells[index];
     if (!cell || cell.kind !== 'code') return setApproving(undefined);
+    // The cell's own shell's rules; zsh (the runbook's `shell: zsh`) never passes unread.
+    const shells = parseFrontMatter(text)?.shell;
+    const kind = shellKindForLanguage(cell.languageId) ?? 'bash';
     setApproving({
       index,
-      result: evaluatePolicy(cell.value, DEFAULT_POLICY, parseFrontMatter(text)?.shell?.unix === 'zsh' ? 'zsh' : 'bash'),
+      result: evaluatePolicy(cell.value, DEFAULT_POLICY, kind === 'bash' && shells?.unix === 'zsh' ? 'zsh' : kind),
       all,
+      scope: runbook ? approvalScope(runbook.id, shells) : '',
     });
     list.current?.scrollToIndex({ index, viewPosition: 0.2 });
   };
   const decide = (approve: boolean): void => {
     if (!runbook || !approving) return;
+    // The runbook's `shell:` changed while the card was open: check the cell again under it.
+    if (approve && approving.scope !== approvalId) return openApprove(approving.index, approving.all);
     const next = approve
       ? approveCell(approvalId, runbook.text, approving.index, 'app', formatLocalIso(new Date()))
       : rejectCell(runbook.text, approving.index);

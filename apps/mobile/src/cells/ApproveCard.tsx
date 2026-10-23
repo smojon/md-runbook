@@ -55,7 +55,7 @@ export function ApproveCard(p: {
       ) : null}
       {!denied && p.result.unlisted.length > 0 ? (
         <View>
-          <Text style={styles.body}>{t.approveUnlisted}</Text>
+          <Text style={styles.body}>{p.result.zsh ? t.approveZsh : t.approveUnlisted}</Text>
           {p.result.unlisted.map((l) => (
             <Text key={l} style={styles.code}>
               {l}

@@ -295,7 +295,14 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
 
   private async review(cell: vscode.NotebookCell, p: Proposal, r: PolicyResult, options: string[], typed: boolean): Promise<boolean> {
     const lines = [
-      ...(r.unlisted.length > 0 ? ['Commands not on the allowlist:', ...r.unlisted.map((l) => `  ${l}`)] : []),
+      ...(r.unlisted.length > 0
+        ? [
+            r.zsh
+              ? 'This runbook runs in zsh (shell: zsh), which reads some commands differently from bash, so no command is approved unread:'
+              : 'Commands not on the allowlist:',
+            ...r.unlisted.map((l) => `  ${l}`),
+          ]
+        : []),
       ...(options.length > 0 ? ['Fence options that change how it runs:', ...options.map((o) => `  ${o}`)] : []),
     ];
     const reason = p.reason ? `\n\nReason given: ${p.reason}` : '';

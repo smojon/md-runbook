@@ -196,6 +196,8 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   const forced: Record<string, string> = outputSettings().forceColor ? { FORCE_COLOR: '1', CLICOLOR_FORCE: '1' } : {};
   const runOpts: RemoteRunOptions = {
     shell: kind,
+    // An approved proposal was checked as bash, or as zsh with `shell: zsh` (the approval's rules).
+    ...(byAssistant && kind === 'bash' ? { checkedAs: shells?.unix === 'zsh' ? ('zsh' as const) : ('bash' as const) } : {}),
     env: { ...forced, ...opts.env, ...paramEnv, ...secretEnv },
     cwd: opts.cwd,
     timeoutMs: opts.timeoutSeconds === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutSeconds * 1000,

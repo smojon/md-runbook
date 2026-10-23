@@ -28,6 +28,12 @@ token is kept:
 - An `approved-by=` stamp that came with the file is not trusted by default (anything that
   can edit the file, including an assistant, can write one). The cell runs once the same
   code has been approved on this machine; see `mdRunbook.approval.trustFileApprovals`.
+- In a runbook with `shell: zsh` no proposal is approved by the allowlist alone (zsh reads some
+  commands differently from bash, and its glob qualifiers can run code), and an approval given
+  before the runbook switched to zsh no longer counts on this machine. With `resetOnEdit` off or
+  `trustFileApprovals` on, approvals are weaker already, and a stamp from the file also stays
+  valid after a switch to zsh. In the app, a proposal approved as bash doesn't run where the
+  server's login shell turns out to be zsh (a profile that starts it).
 - Approved cells record the audit trail in their output marker:
 
   ```markdown

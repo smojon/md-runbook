@@ -147,14 +147,15 @@ const unixShell = (command: string, label: string, win: boolean): ResolvedShell 
 });
 
 /** `shell: zsh` or `shell: sh`: that shell for the runbook's sh/bash cells, found by name. */
-function resolveNamedUnix(name: 'zsh' | 'sh', env: ShellEnv): ShellResolution {
+function resolveNamedUnix(name: 'zsh' | 'sh', settings: ShellSettings, env: ShellEnv): ShellResolution {
   const win = env.platform === 'win32';
   let command: string | undefined;
   if (name === 'zsh') command = win ? windowsOnPath(env, 'zsh.exe') : env.which('zsh');
   else if (!win) command = env.exists('/bin/sh') ? '/bin/sh' : env.which('sh');
   else {
-    // Git for Windows has sh.exe next to bash.exe (bash in POSIX mode).
-    command = gitBashCandidates(env)
+    // Git for Windows has sh.exe next to bash.exe (bash in POSIX mode): the configured one's first.
+    const bashPath = settings.bashPath?.trim();
+    command = [...(bashPath ? [bashPath] : []), ...gitBashCandidates(env)]
       .map((p) => path.win32.join(path.win32.dirname(p), 'sh.exe'))
       .find((p) => env.exists(p));
     command ??= windowsOnPath(env, 'sh.exe');
@@ -168,7 +169,7 @@ function resolveNamedUnix(name: 'zsh' | 'sh', env: ShellEnv): ShellResolution {
 
 function resolveBash(settings: ShellSettings, env: ShellEnv): ShellResolution {
   const named = settings.runbook?.unix;
-  if (named === 'zsh' || named === 'sh') return resolveNamedUnix(named, env);
+  if (named === 'zsh' || named === 'sh') return resolveNamedUnix(named, settings, env);
   const win = env.platform === 'win32';
   let command = settings.bashPath?.trim() || undefined;
   if (!command && win) {
