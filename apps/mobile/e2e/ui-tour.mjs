@@ -74,6 +74,9 @@ async function tour(scheme) {
   await step('hosts-history-colours', async () => {
     await id('color-settings').scrollIntoViewIfNeeded();
   });
+  await step('hosts-signing', async () => {
+    await id('signing').scrollIntoViewIfNeeded();
+  });
   await step('toggles-closeup', async () => {
     await id('color-settings').screenshot({ path: path.join(out, `${scheme}-toggles.png`), scale: 'device' });
   });
@@ -127,6 +130,10 @@ async function tour(scheme) {
     await page.goto(page.url());
     await id('more-actions').waitFor({ timeout: 20_000 });
     await id('more-actions').click();
+  });
+  await step('sign-card', async () => {
+    await id('action-signRunbook').click();
+    await id('sign-card').waitFor({ timeout: 5000 });
   });
   // Opened by its URL (no history): the back arrow must still be there.
   await step('host-chips-windows', async () => {

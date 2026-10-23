@@ -7,6 +7,7 @@
  */
 
 import { parseCellOptions, tokenizeInfo } from './cellOptions';
+import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
 import { locateCodeCells } from './locate';
@@ -165,7 +166,16 @@ export function lintRunbook(text: string): LintProblem[] {
       });
     }
   } else {
-    const at = text.split(/\r?\n/).findIndex((l) => l.startsWith('<!-- md-runbook:signature'));
+    // A block-shaped line inside code is an example, not the signature (as readSignature reads it).
+    let open: FenceOpen | null = null;
+    const at = text.split(/\r?\n/).findIndex((l) => {
+      if (open) {
+        if (isFenceClose(l, open)) open = null;
+        return false;
+      }
+      open = matchFenceOpen(l);
+      return open === null && l.startsWith('<!-- md-runbook:signature');
+    });
     if (at >= 0) problems.push({ severity: 'error', line: at, message: 'the signature block is damaged (sign the runbook again)' });
   }
   return problems.sort((a, b) => a.line - b.line);

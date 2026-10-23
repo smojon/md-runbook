@@ -271,6 +271,9 @@ describe('signing: which cells are signed', () => {
     const edited = signed.replace('systemctl status api', 'systemctl restart api');
     assert.match(lintRunbook(edited).map((p) => p.message).join('\n'), /block changed since the runbook was signed/);
     assert.match(lintRunbook(signed.replace('signature\n', 'signatur\n')).map((p) => p.message).join('\n'), /signature block is damaged/);
+    // An example of a block inside code is not the signature: no error.
+    const example = '# Doc\n\n```\n<!-- md-runbook:signature v1 signer=ops@example.net signed=2026-10-22\nmanifest\nAAAA…\n```\n';
+    assert.doesNotMatch(lintRunbook(example).map((p) => p.message).join('\n'), /damaged/);
     assert.deepEqual(lintRunbook(fence('bash host=web lines=any', 'echo')), []);
     assert.match(lintRunbook(fence('bash lines=some', 'echo'))[0]!.message, /lines=some: expected lines=any/);
   });

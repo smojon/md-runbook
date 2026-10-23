@@ -10,7 +10,7 @@
  *   (the browser's storage on the web).
  */
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
-import { ExternalKeyPair, generateKey, importPrivateKey, privateKeyPem, publicKeyLine } from '@md-runbook/ssh';
+import { ExternalKeyPair, allowedSignersLine, generateKey, importPrivateKey, privateKeyPem, publicKeyLine } from '@md-runbook/ssh';
 import { Buffer } from 'buffer';
 import { Platform } from 'react-native';
 import { HardwareKey } from '../../modules/hardware-key';
@@ -85,4 +85,9 @@ export async function resetAppKey(): Promise<void> {
   cached = undefined;
   await deleteSecret(KEY);
   await HardwareKey?.remove(ALIAS);
+}
+
+/** `principal namespaces="md-runbook" ecdsa-sha2-nistp256 AAAA…`: the line for the servers' allowed_signers (signing runbooks). */
+export async function appAllowedSignersLine(principal: string): Promise<string> {
+  return allowedSignersLine(await appKey(), principal);
 }

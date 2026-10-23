@@ -5,11 +5,19 @@ import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
-import { KeyStorage, appKeyInfo, appPublicKeyLine } from '../ssh/appKey';
+import { KeyStorage, appAllowedSignersLine, appKeyInfo, appPublicKeyLine } from '../ssh/appKey';
 import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
-import { HISTORY_SIZES, setHistorySize, setOutputSetting, useHistorySize, useOutputSettings } from '../settings/store';
+import {
+  HISTORY_SIZES,
+  setHistorySize,
+  setOutputSetting,
+  setSignerName,
+  useHistorySize,
+  useOutputSettings,
+  useSignerName,
+} from '../settings/store';
 import { getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
-import { mono, themedStyles } from '../theme';
+import { mono, themedStyles, usePalette } from '../theme';
 import { Toggle } from '../ui/Toggle';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
@@ -38,6 +46,7 @@ export function HostList() {
       ListFooterComponent={
         <>
           <AppKeySection />
+          <SigningSection />
           <SecretsSection />
           <HistorySection />
           <ColorSection />
@@ -110,6 +119,73 @@ function AppKeySection() {
       ) : null}
       <Pressable
         testID="copy-public-key"
+        accessibilityRole="button"
+        disabled={!line}
+        onPress={() => void copy()}
+        style={[styles.button, !line && styles.disabled]}
+      >
+        <Text style={styles.buttonText}>{copied ? t.copied : t.copy}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+/**
+ * Signing runbooks with this app's key: the name signatures carry, and the key's line for the
+ * servers' allowed_signers (md-runbook-gate checks signatures against it).
+ */
+function SigningSection() {
+  const styles = useStyles();
+  const colors = usePalette();
+  const saved = useSignerName();
+  const [name, setName] = useState(saved);
+  const [line, setLine] = useState<string | undefined>();
+  const [copied, setCopied] = useState(false);
+  const principal = name.trim() || t.signerPlaceholder;
+  useEffect(() => {
+    let live = true;
+    // A failure (no key yet) leaves the line out; the app key section above says why.
+    Promise.resolve()
+      .then(() => appAllowedSignersLine(principal))
+      .then(
+        (l) => live && setLine(l),
+        () => live && setLine(undefined),
+      );
+    return () => {
+      live = false;
+    };
+  }, [principal]);
+  const copy = async (): Promise<void> => {
+    if (!line) return;
+    await Clipboard.setStringAsync(line);
+    setCopied(true);
+  };
+  return (
+    <View testID="signing" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.signingTitle}</Text>
+      <Text style={styles.help}>{t.signingHelp}</Text>
+      <Text style={styles.label}>{t.signerName}</Text>
+      <TextInput
+        testID="signer-name"
+        style={styles.input}
+        value={name}
+        onChangeText={(v) => {
+          setName(v);
+          setCopied(false);
+        }}
+        onEndEditing={() => setSignerName(name)}
+        onBlur={() => setSignerName(name)}
+        placeholder={t.signerPlaceholder}
+        placeholderTextColor={colors.placeholder}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+      <Text style={styles.help}>{t.allowedSignersHelp}</Text>
+      <Text testID="allowed-signers-line" style={styles.key} selectable>
+        {line ?? t.appKeyLoading}
+      </Text>
+      <Pressable
+        testID="copy-allowed-signers"
         accessibilityRole="button"
         disabled={!line}
         onPress={() => void copy()}

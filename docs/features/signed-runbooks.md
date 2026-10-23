@@ -43,6 +43,16 @@ md-runbook verify restart-api.runbook.md --allowed-signers /etc/md-runbook/allow
 or **md-runbook: Sign Runbook** in VS Code (it asks for the name, scopes, days of validity and
 missing patterns; the key comes from `mdRunbook.signing.key`, or it asks).
 
+**From the app.** In a runbook's ⋯ More, **Sign Runbook** asks the same in a card at the top and
+signs with the app's own key (in the Secure Enclave or Android Keystore on a phone, so the
+private key never leaves the hardware); **Co-sign Runbook** shows the blocks being signed and
+adds your signature. The signature is the same OpenSSH format (`ssh-keygen -Y sign`, ECDSA
+P-256), checked the same way. Once, add the app's line to the servers' `allowed_signers`: under
+**Hosts & settings → Signing runbooks**, set your name for signatures and copy the line, which
+looks like `you@example.net namespaces="md-runbook" ecdsa-sha2-nistp256 AAAA…`. The app can't
+run `bash -n`, so it doesn't check a cell's commands one by one as VS Code and the command line
+do (a gate refuses a step bash can't read on its own at run time); sign there for that check.
+
 - Signing uses `ssh-keygen -Y sign` (OpenSSH 8.2 or newer) with any key it can use: a key file,
   a FIDO `sk-` key, or a `.pub` whose key is in the SSH agent. Keys with a passphrase sign on
   the command line (it asks), or through the agent in VS Code.
@@ -176,7 +186,7 @@ runbook at once, give it a **version floor**: the `floors` file has lines like
 a runbook needs signatures from two distinct signers in `allowed_signers`, say its author and a
 reviewer. The author signs (`md-runbook sign`, Sign Runbook); the reviewer then adds a signature
 to the same manifest with `md-runbook sign FILE --key KEY --cosign` or **Co-sign Runbook** (Share
-▾). Co-signing changes nothing that was signed and is refused if the blocks changed since. Two
+▾ in VS Code, ⋯ More in the app: a reviewer can co-sign from a phone). Co-signing changes nothing that was signed and is refused if the blocks changed since. Two
 signatures of one key, or a signature from a key the server doesn't trust, count once or not at
 all. `md-runbook verify --allowed-signers FILE` checks every signature; the gate logs all
 signers, and the app shows them.

@@ -16,7 +16,18 @@ const rotr = (x: number, n: number): number => (x >>> n) | (x << (32 - n));
 
 /** Lower-case hex digest of the UTF-8 bytes of `text`. */
 export function sha256Hex(text: string): string {
-  const data = new TextEncoder().encode(text);
+  return Array.from(sha256Words(new TextEncoder().encode(text)), (x) => x.toString(16).padStart(8, '0')).join('');
+}
+
+/** The 32-byte digest of `data` (SSH signatures sign it). */
+export function sha256Bytes(data: Uint8Array): Uint8Array {
+  const out = new Uint8Array(32);
+  const view = new DataView(out.buffer);
+  sha256Words(data).forEach((x, i) => view.setUint32(i * 4, x));
+  return out;
+}
+
+function sha256Words(data: Uint8Array): Uint32Array {
   const bitLen = data.length * 8;
   const padded = new Uint8Array(((data.length + 9 + 63) >> 6) << 6);
   padded.set(data);
@@ -59,5 +70,5 @@ export function sha256Hex(text: string): string {
     h[6] = (h[6]! + g) >>> 0;
     h[7] = (h[7]! + hh) >>> 0;
   }
-  return Array.from(h, (x) => x.toString(16).padStart(8, '0')).join('');
+  return h;
 }

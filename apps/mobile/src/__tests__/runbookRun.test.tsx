@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { addHost, getHost, resetHosts } from '../hosts/store';
 import { resetRunbooks } from '../runbooks/store';
+import { signerName } from '../settings/store';
 import { HostList } from '../screens/HostList';
 import { RunbookList } from '../screens/RunbookList';
 import { RunbookView } from '../screens/RunbookView';
@@ -15,6 +16,7 @@ jest.mock('../ssh/transport', () => ({ openTransport: jest.fn(), transportReady:
 jest.mock('../ssh/appKey', () => ({
   appPublicKeyLine: async () => 'ecdsa-sha2-nistp256 AAAAtest md-runbook-app',
   appKeyInfo: async () => ({ pair: {}, storage: 'hardware' }),
+  appAllowedSignersLine: async (who: string) => `${who} namespaces="md-runbook" ecdsa-sha2-nistp256 AAAAtest`,
 }));
 let script: FakeRun[] = [];
 let mockConnection = fakeConnection();
@@ -112,5 +114,24 @@ describe('hosts screens', () => {
       fireEvent.press(screen.getByTestId('copy-public-key'));
     });
     expect(screen.getByText('Copied')).toBeTruthy();
+  });
+
+  it("Signing: the name for signatures, and the key's line for the servers' allowed_signers", async () => {
+    await render(<HostList />);
+    await waitFor(() =>
+      expect(screen.getByTestId('allowed-signers-line').props.children).toMatch(/^you@example\.net namespaces="md-runbook" /),
+    );
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('signer-name'), 'me@example.net');
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('allowed-signers-line').props.children).toMatch(
+        /^me@example\.net namespaces="md-runbook" ecdsa-sha2-nistp256 /,
+      ),
+    );
+    await act(async () => {
+      fireEvent(screen.getByTestId('signer-name'), 'blur');
+    });
+    expect(signerName()).toBe('me@example.net');
   });
 });

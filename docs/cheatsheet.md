@@ -92,8 +92,8 @@ secret values are redacted from the output.
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
 | **Export Report (HTML)** / **Export Report (PDF)** | Share ▾, right-click the file in the Explorer | Send the result of a run to someone without VS Code: a change record, an incident report, an audit. | ⋯ More → Share (through the share sheet; in a browser: download, print to PDF) |
-| **Co-sign Runbook** | Share ▾ | Four eyes: a reviewer adds a signature to the signed runbook as it is, for servers that need two signers (`signers = 2`). Refused if the runbook changed since it was signed. | shows every signer |
-| **Sign Runbook** | Share ▾ | Release a runbook for a support team: servers restricted to md-runbook-gate run only signed runbooks, unchanged. See [signed runbooks](https://github.com/smojon/md-runbook/blob/main/docs/features/signed-runbooks.md). | shows who signed it and which blocks changed |
+| **Co-sign Runbook** | Share ▾ | Four eyes: a reviewer adds a signature to the signed runbook as it is, for servers that need two signers (`signers = 2`). Refused if the runbook changed since it was signed. | ⋯ More → Co-sign Runbook (the app's key) |
+| **Sign Runbook** | Share ▾ | Release a runbook for a support team: servers restricted to md-runbook-gate run only signed runbooks, unchanged. See [signed runbooks](https://github.com/smojon/md-runbook/blob/main/docs/features/signed-runbooks.md). | ⋯ More → Sign Runbook (the app's key); shows who signed it and which blocks changed |
 | **Open in the App** | Share ▾ | Continue on your phone: copies a link that opens this runbook (its GitHub or GitLab file) in the md-runbook app. It warns when the phone would get an older version (changes not committed or not pushed). | **Open a link…** on the start screen; mdrunbook://open?url=… links |
 | Save | Ctrl+S | Outputs are written into the `.md` file: commit it, and the run is in Git. | **Save to the file** (or **Download** in browsers that can't write files) |
 

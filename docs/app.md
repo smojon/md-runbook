@@ -134,6 +134,12 @@ restricted to md-runbook-gate, the app runs
 the signed blocks by their number in the signed manifest, and the gate refuses anything else;
 the app finds the gate by itself. See [signed runbooks](features/signed-runbooks.md).
 
+**Sign Runbook** and **Co-sign Runbook** (⋯ More) sign with the app's own key, inside the phone's
+secure hardware: a card at the top asks what VS Code asks (a name and scopes the first time, days
+of validity, a pattern for each value a signed block uses), or shows the blocks you co-sign. Under
+**Hosts & settings → Signing runbooks** you set your name for signatures and copy the key's line
+for the servers' `allowed_signers`.
+
 ## Saving
 
 <img src="app/web-saved.png" width="720" alt="A runbook opened from a file, with Saved and Save to the file">
@@ -162,5 +168,5 @@ App** copies) open it directly. **⋯ More → Share Runbook** hands the file on
   translation.
 - The web app isn't hosted yet: it needs its own domain, because it keeps its SSH key in the
   site's local storage, which any other site served from the same address could read.
-- Signed runbooks: no secret values in signed cells, and the app can't sign or co-sign (VS Code
-  and the command line do) ([details](features/signed-runbooks.md)).
+- Signed runbooks: no secret values in signed cells; signing in the app doesn't check each
+  command with `bash -n` as VS Code and the command line do ([details](features/signed-runbooks.md)).

@@ -1,7 +1,8 @@
 /**
  * App settings that mirror the extension's: how many earlier runs each cell keeps in the file
  * (mdRunbook.output.historySize there, 0 by default: the file only has the latest run), and how
- * output is coloured (mdRunbook.output.colorLevels, stderrInRed and forceColor).
+ * output is coloured (mdRunbook.output.colorLevels, stderrInRed and forceColor), and the name the
+ * app signs runbooks with.
  */
 import { useSyncExternalStore } from 'react';
 import { getJson, setJson } from '../storage/kv';
@@ -19,9 +20,14 @@ export interface Settings {
   forceColor: boolean;
   /** AWS / Google Cloud JSON output: a list of the resources with console links (mdRunbook.output.cloudViews). */
   cloudViews: boolean;
+  /**
+   * Who signs runbooks on this device (the signature block's signer=, e.g. an e-mail address),
+   * and the principal suggested for the servers' allowed_signers. Empty until set.
+   */
+  signerName: string;
 }
 
-const DEFAULTS: Settings = { historySize: 0, colorLevels: true, stderrInRed: true, forceColor: false, cloudViews: true };
+const DEFAULTS: Settings = { historySize: 0, colorLevels: true, stderrInRed: true, forceColor: false, cloudViews: true, signerName: '' };
 
 /** Saved settings, older ones (only historySize) completed with the defaults. */
 const isSaved = (v: unknown): v is Partial<Settings> =>
@@ -43,6 +49,7 @@ export async function loadSettings(): Promise<void> {
       stderrInRed: flag('stderrInRed'),
       forceColor: flag('forceColor'),
       cloudViews: flag('cloudViews'),
+      signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
     };
   }
   emit();
@@ -63,6 +70,16 @@ export function setHistorySize(n: number): void {
 
 export function setOutputSetting(key: OutputFlag, on: boolean): void {
   update({ [key]: on });
+}
+
+export const signerName = (): string => settings.signerName;
+
+export function setSignerName(name: string): void {
+  update({ signerName: name.trim() });
+}
+
+export function useSignerName(): string {
+  return useSettings().signerName;
 }
 
 function useSettings(): Settings {

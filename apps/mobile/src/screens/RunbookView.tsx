@@ -21,7 +21,7 @@ import { DEFAULT_POLICY, PolicyResult, approvalScope, evaluatePolicy } from '@md
 import { proposalOf } from '@md-runbook/core/proposal';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { SignedStatus, signedStatus, signerNames } from '@md-runbook/core/signing';
+import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
 import type { Progress } from '@md-runbook/core';
 import { LineStep } from '@md-runbook/core/steps';
@@ -42,6 +42,9 @@ import { canDownload } from '../runbooks/files';
 import { saveRunbook } from '../runbooks/save';
 import { exportReport, shareRunbook } from '../share/export';
 import { Runbook, addRunbook, getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
+import { SignCard, SignRequest } from '../signing/SignCard';
+import { SignInput, cosignCheck, cosignRunbook, signPlan, signRunbook } from '../signing/sign';
+import { appKey } from '../ssh/appKey';
 import { fingerprint } from '../ssh/fingerprint';
 import { LineMode, isStepping, lineLabel, planLines } from '../ssh/lineRuns';
 import { runnability } from '../ssh/cells';
@@ -137,6 +140,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
   const progress = useMemo(() => (runbook ? textProgress(runbook.text) : undefined), [runbook]);
   const signed = useMemo(() => (runbook ? signedStatus(runbook.text) : undefined), [runbook]);
+  /** Whether it can be co-signed now (Co-sign Runbook), or why not. */
+  const cosign = useMemo(() => (runbook ? cosignCheck(runbook.text) : undefined), [runbook]);
   const params = useMemo(() => (runbook ? runbookParams(runbook.text) : []), [runbook]);
   const paramValues = useParamValues(runbook?.id ?? '');
   const hosts = useHosts();
@@ -515,10 +520,60 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ? { ...meta('save', 'share'), run: () => void saveFromMenu() }
           : { ...meta('download', 'share', canDownload ? undefined : t.saveUnavailable), run: () => void saveFromMenu() },
         ...shareActions(runbook, (why) => setNotice(t.shareFailed(why))),
+        { ...meta('signRunbook', 'share'), run: () => openSign('sign') },
+        {
+          ...meta(
+            'cosignRunbook',
+            'share',
+            !cosign || !('why' in cosign)
+              ? undefined
+              : cosign.why === 'changed'
+                ? t.changedSinceSigned(signed?.block.signer ?? '?')
+                : t.notSignedYet,
+          ),
+          run: () => openSign('cosign'),
+        },
         { ...meta('cheatSheet', 'help'), run: () => void Linking.openURL(CHEAT_SHEET_URL) },
         { ...meta('sample', 'help'), run: () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } }) },
       ]
     : [];
+  // Sign Runbook / Co-sign Runbook: a card at the top; this app's key signs (inside the phone's secure hardware).
+  const [signing, setSigning] = useState<{ request: SignRequest; busy: boolean; errors: string[] } | undefined>();
+  const openSign = (kind: 'sign' | 'cosign'): void => {
+    if (!runbook) return;
+    if (kind === 'sign') setSigning({ request: { kind, plan: signPlan(runbook.text, runbook.fileName) }, busy: false, errors: [] });
+    else if (cosign && !('why' in cosign))
+      setSigning({ request: { kind, block: cosign.block, manifest: cosign.manifest }, busy: false, errors: [] });
+    list.current?.scrollToOffset({ offset: 0 });
+  };
+  const doSign = async (input: SignInput | undefined, signer: string): Promise<void> => {
+    if (!runbook || !signing) return;
+    const { request } = signing;
+    setSigning({ request, busy: true, errors: [] });
+    try {
+      const text = getRunbook(runbook.id)?.text ?? runbook.text;
+      const key = await appKey();
+      const r =
+        request.kind === 'sign' && input
+          ? await signRunbook(text, request.plan, input, signer, key)
+          : await cosignRunbook(text, signer, key);
+      if (!r.ok) {
+        const why = (e: string): string =>
+          e === 'unsigned' ? t.notSignedYet : e === 'changed' ? t.changedSinceSigned(readSignature(text)?.signer ?? '?') : e;
+        return setSigning({ request, busy: false, errors: r.errors.map(why) });
+      }
+      updateRunbookText(runbook.id, r.text);
+      setSigning(undefined);
+      const signers = signerNames(readSignature(r.text)!).join(', ');
+      setNotice(
+        request.kind === 'sign'
+          ? t.signedNotice(r.manifest.name, r.manifest.version, signers, r.manifest.cells.length)
+          : t.cosignedNotice(r.manifest.name, r.manifest.version, signers),
+      );
+    } catch (e) {
+      setSigning({ request, busy: false, errors: [t.signFailed(e instanceof Error ? e.message : String(e))] });
+    }
+  };
   // A code cell's own actions (its ⋯, or a long press), as in a cell's ⋯ menu in VS Code.
   const [diff, setDiff] = useState<{ title: string; lines: DiffLine[] } | undefined>();
   /** The open cell sheet: its actions, built when its ⋯ was tapped (a handler, not during render). */
@@ -693,6 +748,16 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />
             <SaveBar runbook={runbook} />
             {signed ? <SignedBanner status={signed} verified={verified} /> : null}
+            {signing ? (
+              <SignCard
+                key={signing.request.kind}
+                request={signing.request}
+                busy={signing.busy}
+                errors={signing.errors}
+                onSign={(input, signer) => void doSign(input, signer)}
+                onCancel={() => setSigning(undefined)}
+              />
+            ) : null}
             {params.length > 0 ? (
               <ParamsCard specs={params} values={paramValues} onChange={(name, value) => setParamValue(runbook.id, name, value)} />
             ) : null}

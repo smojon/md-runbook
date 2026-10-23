@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Signing in the app:** **Sign Runbook** and **Co-sign Runbook** (⋯ More) sign with the app's
+  own key, inside the phone's Secure Enclave or Android Keystore, in the same OpenSSH format as
+  VS Code and the command line, so md-runbook-gate checks them the same way: a reviewer can
+  co-sign from a phone. A card asks what VS Code asks (name and scopes the first time, days of
+  validity, missing patterns). **Hosts & settings → Signing runbooks** holds your name for
+  signatures and the key's line for the servers' `allowed_signers`, with Copy.
 - **A runbook can choose its shell:** front matter `shell: zsh` or `shell: sh` runs its `sh`/`bash`
   cells in zsh or POSIX sh, `shell: pwsh` its PowerShell cells in PowerShell 7 only, and
   `shell: windows-powershell` in Windows PowerShell 5.1 even when 7 is installed (`shell: zsh,
