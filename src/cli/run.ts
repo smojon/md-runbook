@@ -305,7 +305,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
           language: loc.language,
           source,
           cwd,
-          settings: o.shell,
+          settings: fm?.shell ? { ...o.shell, runbook: fm.shell } : o.shell,
           timeoutMs: timeoutS * 1000,
           env,
           signal: o.signal,

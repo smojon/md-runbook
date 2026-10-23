@@ -17,7 +17,7 @@ import {
 } from '@md-runbook/core';
 import { isManualMark } from '@md-runbook/core/progress';
 import type { Captured } from '@md-runbook/core/checks';
-import { DEFAULT_POLICY, PolicyResult, evaluatePolicy } from '@md-runbook/core/policy';
+import { DEFAULT_POLICY, PolicyResult, approvalScope, evaluatePolicy } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
@@ -186,6 +186,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [sessionMode, setSessionMode] = useState<'session' | 'isolated'>(
     () => (runbook && parseFrontMatter(runbook.text)?.mode) || 'session',
   );
+  /** The runbook's `shell:`, and what approvals made here are bound to (its id, and zsh when it says so). */
+  const shells = runbook ? parseFrontMatter(runbook.text)?.shell : undefined;
+  const approvalId = runbook ? approvalScope(runbook.id, shells) : '';
   useEffect(() => {
     let live = true;
     void transportReady().then((why) => live && setTransportIssue(why));
@@ -361,7 +364,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const parsed = parse(runbook.text).cells;
     const candidates =
       from === 'start' ? parsed.map((c, i) => (c.kind === 'code' ? i : -1)).filter((i) => i >= 0) : textProgress(runbook.text).resume;
-    const verdicts = candidates.map((i) => ({ i, can: runnability(parsed[i]!, runbook.id, host.platform) }));
+    const verdicts = candidates.map((i) => ({ i, can: runnability(parsed[i]!, approvalId, host.platform) }));
     queue.current = {
       cells: verdicts.filter((v) => v.can.ok).map((v) => v.i),
       on: host,
@@ -399,7 +402,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const pendingProposals = (text: string): number[] =>
     parse(text)
       .cells.map((c, i) =>
-        c.kind === 'code' && isCodeMeta(c.meta) && /^(proposed|unverified)$/.test(approvalOf(c.meta.info, c.value, runbook?.id ?? ''))
+        c.kind === 'code' &&
+        isCodeMeta(c.meta) &&
+        /^(proposed|unverified)$/.test(
+          approvalOf(c.meta.info, c.value, runbook ? approvalScope(runbook.id, parseFrontMatter(text)?.shell) : ''),
+        )
           ? i
           : -1,
       )
@@ -407,13 +414,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const openApprove = (index: number, all: boolean, text = runbook?.text ?? ''): void => {
     const cell = parse(text).cells[index];
     if (!cell || cell.kind !== 'code') return setApproving(undefined);
-    setApproving({ index, result: evaluatePolicy(cell.value, DEFAULT_POLICY, 'bash'), all });
+    setApproving({
+      index,
+      result: evaluatePolicy(cell.value, DEFAULT_POLICY, parseFrontMatter(text)?.shell?.unix === 'zsh' ? 'zsh' : 'bash'),
+      all,
+    });
     list.current?.scrollToIndex({ index, viewPosition: 0.2 });
   };
   const decide = (approve: boolean): void => {
     if (!runbook || !approving) return;
     const next = approve
-      ? approveCell(runbook.id, runbook.text, approving.index, 'app', formatLocalIso(new Date()))
+      ? approveCell(approvalId, runbook.text, approving.index, 'app', formatLocalIso(new Date()))
       : rejectCell(runbook.text, approving.index);
     if (next === undefined) return setApproving(undefined);
     updateRunbookText(runbook.id, next);
@@ -523,9 +534,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const cellActions = (index: number): AppAction[] => {
     const cell = cells[index];
     if (!runbook || !cell || cell.kind !== 'code') return [];
-    const can = runnability(cell, runbook.id, host?.platform);
+    const can = runnability(cell, approvalId, host?.platform);
     const why = !host ? t.noRunNow : can.ok ? undefined : t.notRunnable[can.why](can.detail);
-    const proposal = isCodeMeta(cell.meta) ? approvalOf(cell.meta.info, cell.value, runbook.id) : 'none';
+    const proposal = isCodeMeta(cell.meta) ? approvalOf(cell.meta.info, cell.value, approvalId) : 'none';
     return [
       ...(proposal === 'proposed' || proposal === 'unverified'
         ? [
@@ -772,7 +783,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               onToggleBreakpoint={(step) => toggleBreakpoint(index, step)}
               onExplainLine={(step) => assistant.ask('explainLine', index, lineLabel(step))}
               onActions={() => setCellSheet(cellActions(index))}
-              runbookId={runbook.id}
+              runbookId={approvalId}
               platform={host?.platform}
               below={
                 approving?.index === index && isCodeMeta(item.meta) ? (

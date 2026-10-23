@@ -4,7 +4,7 @@
  */
 
 import * as path from 'node:path';
-import type { ShellEnv, ShellKind, ShellResolution, ShellSettings } from '../shellKind';
+import type { ResolvedShell, ShellEnv, ShellKind, ShellResolution, ShellSettings } from '../shellKind';
 
 export type { ResolvedShell, ShellEnv, ShellKind, ShellResolution, ShellSettings } from '../shellKind';
 export { shellKindForLanguage } from '../shellKind';
@@ -20,15 +20,30 @@ export function resolveShell(kind: ShellKind, settings: ShellSettings, env: Shel
   }
 }
 
+/** Windows PowerShell 5.1, the one that comes with Windows. */
+function windowsPowerShell(env: ShellEnv): string | undefined {
+  const systemRoot = env.env.SystemRoot ?? env.env.SYSTEMROOT ?? 'C:\\Windows';
+  const builtin = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return env.which('powershell.exe') ?? (env.exists(builtin) ? builtin : undefined);
+}
+
 function resolvePwsh(settings: ShellSettings, env: ShellEnv): ShellResolution {
   const win = env.platform === 'win32';
-  let command = settings.pwshPath?.trim() || env.which('pwsh');
-  if (!command && win) {
-    const systemRoot = env.env.SystemRoot ?? env.env.SYSTEMROOT ?? 'C:\\Windows';
-    const builtin = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    command = env.which('powershell.exe') ?? (env.exists(builtin) ? builtin : undefined);
+  const wanted = settings.runbook?.powershell;
+  let command: string | undefined;
+  if (wanted === 'windows-powershell') {
+    if (!win) return { ok: false, error: "Windows PowerShell 5.1 runs only on Windows (the runbook's shell: windows-powershell)." };
+    command = windowsPowerShell(env);
+    if (!command) return { ok: false, error: "Windows PowerShell 5.1 not found (the runbook's shell: windows-powershell)." };
+  } else {
+    command = settings.pwshPath?.trim() || env.which('pwsh');
+    // Without a choice, Windows PowerShell stands in for PowerShell 7; `shell: pwsh` needs 7.
+    if (!command && wanted === 'pwsh') {
+      return { ok: false, error: "PowerShell 7 (pwsh) not found (the runbook's shell: pwsh): install it or set mdRunbook.shell.pwshPath." };
+    }
+    if (!command && win) command = windowsPowerShell(env);
+    if (!command) command = env.which('powershell');
   }
-  if (!command) command = env.which('powershell');
   if (!command) {
     return { ok: false, error: 'PowerShell not found: install PowerShell 7 (pwsh) or set mdRunbook.shell.pwshPath.' };
   }
@@ -114,7 +129,46 @@ function isWslBash(p: string): boolean {
   return /\\(System32|Sysnative)\\bash\.exe$/i.test(p) || /\\WindowsApps\\/i.test(p);
 }
 
+/** A Windows executable on PATH that isn't WSL's launcher (WSL's shells run in Linux, not here). */
+function windowsOnPath(env: ShellEnv, name: string): string | undefined {
+  const p = env.which(name);
+  return p && !isWslBash(p) ? p : undefined;
+}
+
+/** bash, zsh or sh running the cell's script file. */
+const unixShell = (command: string, label: string, win: boolean): ResolvedShell => ({
+  kind: 'bash',
+  command,
+  label,
+  extension: '.sh',
+  // Git Bash accepts C:/x/y paths; backslashes would be eaten as escapes in some contexts.
+  args: (scriptPath: string) => [win ? scriptPath.replace(/\\/g, '/') : scriptPath],
+  script: (source: string) => source.replace(/\r\n/g, '\n') + '\n',
+});
+
+/** `shell: zsh` or `shell: sh`: that shell for the runbook's sh/bash cells, found by name. */
+function resolveNamedUnix(name: 'zsh' | 'sh', env: ShellEnv): ShellResolution {
+  const win = env.platform === 'win32';
+  let command: string | undefined;
+  if (name === 'zsh') command = win ? windowsOnPath(env, 'zsh.exe') : env.which('zsh');
+  else if (!win) command = env.exists('/bin/sh') ? '/bin/sh' : env.which('sh');
+  else {
+    // Git for Windows has sh.exe next to bash.exe (bash in POSIX mode).
+    command = gitBashCandidates(env)
+      .map((p) => path.win32.join(path.win32.dirname(p), 'sh.exe'))
+      .find((p) => env.exists(p));
+    command ??= windowsOnPath(env, 'sh.exe');
+  }
+  if (!command) {
+    const where = win && name === 'sh' ? ': install Git for Windows' : win ? ' on PATH (WSL\'s is not used)' : ' on PATH';
+    return { ok: false, error: `${name} not found${where} (the runbook's shell: ${name}).` };
+  }
+  return { ok: true, shell: unixShell(command, name, win) };
+}
+
 function resolveBash(settings: ShellSettings, env: ShellEnv): ShellResolution {
+  const named = settings.runbook?.unix;
+  if (named === 'zsh' || named === 'sh') return resolveNamedUnix(named, env);
   const win = env.platform === 'win32';
   let command = settings.bashPath?.trim() || undefined;
   if (!command && win) {
@@ -130,18 +184,10 @@ function resolveBash(settings: ShellSettings, env: ShellEnv): ShellResolution {
       };
     }
   }
-  if (!command) command = env.which('bash') ?? env.which('sh');
-  if (!command) return { ok: false, error: 'bash not found on PATH: set mdRunbook.shell.bashPath.' };
-  return {
-    ok: true,
-    shell: {
-      kind: 'bash',
-      command,
-      label: /(^|[\\/])sh$/.test(command) ? 'sh' : 'bash',
-      extension: '.sh',
-      // Git Bash accepts C:/x/y paths; backslashes would be eaten as escapes in some contexts.
-      args: (scriptPath) => [win ? scriptPath.replace(/\\/g, '/') : scriptPath],
-      script: (source) => source.replace(/\r\n/g, '\n') + '\n',
-    },
-  };
+  // Without a choice, sh stands in for a missing bash; `shell: bash` needs bash.
+  if (!command) command = env.which('bash') ?? (named === 'bash' ? undefined : env.which('sh'));
+  if (!command) {
+    return { ok: false, error: `bash not found on PATH${named === 'bash' ? " (the runbook's shell: bash)" : ''}: set mdRunbook.shell.bashPath.` };
+  }
+  return { ok: true, shell: unixShell(command, /(^|[\\/])sh$/.test(command) ? 'sh' : 'bash', win) };
 }

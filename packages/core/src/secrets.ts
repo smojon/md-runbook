@@ -6,7 +6,7 @@
  * in the environment.
  */
 
-import type { ShellKind } from './shellKind';
+import { RunbookShells, ShellKind, parseShells } from './shellKind';
 
 export type RefKind = 'secret' | 'input' | 'param' | 'out';
 
@@ -95,12 +95,15 @@ export interface FrontMatter {
   timeoutSeconds?: number;
   /** `cwd:` as written: the runbook's working folder, relative to the .md file's folder. */
   cwd?: string;
+  /** `shell:`: the installed shells its cells run in, by name (lint reports names it ignored). */
+  shell?: RunbookShells;
 }
 
 /**
- * `params:`, `mode:`, `timeout:` and `cwd:` from YAML-style front matter (`---` ... `---` at the
- * very top). Only this subset is understood; other keys are ignored. Param items are `- name` or
- * `- name: default`; `mode` is `session` or `isolated`; `timeout` is seconds (`120` or `120s`).
+ * `params:`, `mode:`, `timeout:`, `cwd:` and `shell:` from YAML-style front matter (`---` ... `---`
+ * at the very top). Only this subset is understood; other keys are ignored. Param items are
+ * `- name` or `- name: default`; `mode` is `session` or `isolated`; `timeout` is seconds (`120`
+ * or `120s`); `shell` names shells (`zsh, windows-powershell`, see parseShells).
  * Returns undefined when the text has no front matter.
  */
 export function parseFrontMatter(text: string): FrontMatter | undefined {
@@ -110,6 +113,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
   let mode: 'session' | 'isolated' | undefined;
   let timeoutSeconds: number | undefined;
   let cwd: string | undefined;
+  let shell: RunbookShells | undefined;
   let inParams = false;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
@@ -119,6 +123,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
         ...(mode ? { mode } : {}),
         ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}),
         ...(cwd !== undefined ? { cwd } : {}),
+        ...(shell ? { shell } : {}),
       };
     }
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
@@ -131,6 +136,11 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       if (t) timeoutSeconds = Number(t[1]);
       const c = /^cwd\s*:\s*(.*?)\s*$/i.exec(line);
       if (c && c[1] !== '') cwd = unquote(c[1]!.replace(/\s+#.*$/, ''));
+      const sh = /^shell\s*:\s*(.*?)\s*(#.*)?$/i.exec(line);
+      if (sh) {
+        const { shells } = parseShells(sh[1]!);
+        if (shells.unix || shells.powershell) shell = shells;
+      }
       continue;
     }
     if (!inParams) continue;

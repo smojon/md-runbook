@@ -31,7 +31,20 @@ export {
 export { stripAnsi } from './ansi';
 export { DEFAULT_PATTERNS, REDACTED, RedactionPattern, Redactor, createRedactor } from './redact';
 export { LineBuffer } from './lineBuffer';
-export { ShellEnv, ShellKind, ShellResolution, ShellSettings, ResolvedShell, shellKindForLanguage } from './shellKind';
+export {
+  POWERSHELLS,
+  PowerShellName,
+  RunbookShells,
+  ShellEnv,
+  ShellKind,
+  ShellResolution,
+  ShellSettings,
+  ResolvedShell,
+  UNIX_SHELLS,
+  UnixShell,
+  parseShells,
+  shellKindForLanguage,
+} from './shellKind';
 export { ExecuteOptions, ExecuteResult, RunResult, exitLabel, isSuccess } from './result';
 export { SENTINEL_START, SentinelFilter } from './sentinel';
 export { Progress, ProgressCell, StepState, checkNextItem, checklist, taskItemAtLine, computeProgress, formatProgress, nextUncheckedOffset, outputBlockAttrs, stepState, TaskItem, taskItems } from './progress';

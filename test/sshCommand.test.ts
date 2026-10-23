@@ -14,6 +14,9 @@ import {
   gateRunCommand,
   helloCommand,
   markerFor,
+  PROBED_SHELLS,
+  posixShellCommand,
+  shellProbeCommand,
   signedReply,
   sq,
   stopCommand,
@@ -54,6 +57,14 @@ describe('ssh: commands sent to the remote shell', { skip: !bash && 'needs bash'
   it('the hello reports the shell pid', () => {
     const [hello] = session([['h', helloCommand('h')]]);
     assert.ok((hello!.code ?? 0) > 1, String(hello!.code));
+  });
+
+  it("the shell probe tells bash from sh and zsh; the runbook's shell: picks the login shell", () => {
+    const [probe] = session([['p', shellProbeCommand('p')]]);
+    assert.equal(PROBED_SHELLS[probe!.code ?? -1], 'bash');
+    assert.match(posixShellCommand('zsh'), /exec zsh -l \|\| exec sh -l$/);
+    assert.equal(posixShellCommand('sh'), 'exec sh -l');
+    assert.equal(posixShellCommand(undefined), posixShellCommand('bash'));
   });
 
   it('folder and variables carry over; exit codes come back; stdin is empty', () => {

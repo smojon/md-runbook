@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A runbook can choose its shell:** front matter `shell: zsh` or `shell: sh` runs its `sh`/`bash`
+  cells in zsh or POSIX sh, `shell: pwsh` its PowerShell cells in PowerShell 7 only, and
+  `shell: windows-powershell` in Windows PowerShell 5.1 even when 7 is installed (`shell: zsh,
+  windows-powershell` for both). Only names of installed shells, never a path. In VS Code, the
+  command line and the app (which starts that shell on the server); in sessions and terminal
+  mode too. A missing shell is an error on the cell. With `shell: zsh`, an assistant's proposal is
+  never approved by the allowlist alone, and earlier approvals no longer count; Sign Runbook
+  refuses a Unix shell other than bash (servers run signed runbooks in bash). Lint warns about
+  names it ignores.
 - **App look and feel, from a screen-by-screen check:** iOS-style toggles on every platform;
   sheets with a grabber, rounded corners, and a raised colour and stronger dim in dark mode; a
   focused field's border in the accent colour on the web (no thick black ring); placeholders

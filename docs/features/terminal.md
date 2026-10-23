@@ -39,7 +39,7 @@ run (redacted, with `exit=`, `ran=`, `ended=`, `duration=`).
   It is a transient terminal: VS Code does not restore it (or its environment and scrollback)
   after a reload.
 - The cell's script runs in a child process of the configured shell (`mdRunbook.shell.bashPath`
-  / `pwshPath`, or the one md-runbook finds), so `exit`, `cd`/`Set-Location` and variables in a
+  / `pwshPath`, or the one md-runbook finds, or the runbook's `shell:`), so `exit`, `cd`/`Set-Location` and variables in a
   cell end with the cell instead of changing the terminal (use [session mode](session.md) to
   carry state over). PowerShell runs it with `-NoProfile`, and on Windows with
   `-ExecutionPolicy Bypass`, as normal runs do.
@@ -71,7 +71,9 @@ next line gets a new one.
   (`terminal.integrated.shellIntegration.enabled`, on by default). Supported shells: bash
   (including Git Bash), zsh and PowerShell. **cmd** cells run too: cmd.exe has no shell
   integration, so they run from a PowerShell terminal, each in a `cmd.exe` of its own (as cmd
-  cells always do), and prompts such as `set /p`, `pause` or `choice` are answered there.
+  cells always do), and prompts such as `set /p`, `pause` or `choice` are answered there. In a
+  runbook with `shell: sh` (no shell integration either), cells run from a bash terminal, each in
+  an `sh` of its own; `shell: zsh` gets a zsh terminal.
 - If shell integration does not start within 10 seconds, the cell fails with an explanation
   instead of running blind.
 - Prompts and anything else the program prints become part of the saved output (redacted).

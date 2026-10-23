@@ -91,6 +91,9 @@ describe('signing: the manifest', () => {
     ])
       assert.match(all, re);
     assert.deepEqual(errorsOf('# only prose\n\n' + fence('pwsh', 'Get-Date')), ['no bash or sh cells to sign']);
+    // The gate runs bash; the front matter isn't signed.
+    assert.match(errorsOf('---\nshell: zsh\n---\n\n' + fence('bash', 'echo')).join('\n'), /front matter shell: zsh: servers run signed runbooks in bash/);
+    assert.equal(errorsOf('---\nshell: bash, pwsh\n---\n\n' + fence('bash', 'echo')).length, 0);
   });
 
   it('signs ${input:} and ${out:} with a pattern, like parameters; never secrets (servers log the values)', () => {

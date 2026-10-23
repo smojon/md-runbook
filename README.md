@@ -96,6 +96,11 @@ AI assistant that writes runbooks for you.
 | `cmd` | `cmd.exe` | not available |
 | `sh`, `bash` | Git Bash (auto-detected or `mdRunbook.shell.bashPath`) | `bash` (falls back to `sh`) |
 
+A runbook can name other installed shells in its front matter: `shell: zsh` or `shell: sh` for
+its `sh`/`bash` cells, `shell: pwsh` or `shell: windows-powershell` (5.1) for its PowerShell
+cells, also in the app on the server. Only names, never a path; see
+[the syntax](docs/syntax.md#front-matter).
+
 - **Working directory:** the folder containing the `.md` file.
 - **Programs installed during the session (Windows):** each cell gets the `PATH` directories
   added since VS Code started, read from the registry as a new terminal does, so a runbook can

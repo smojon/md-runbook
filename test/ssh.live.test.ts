@@ -53,6 +53,33 @@ describe('ssh: live server', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }
     assert.match(b, /^kept (\/private)?\/tmp\n$/);
   });
 
+  it("the runbook's shell: sh runs its cells (state carries over); zsh runs in zsh or says the server has none", async () => {
+    const sh = await RemoteShell.connect(await open(), { ...opts(), shells: { unix: 'sh' } });
+    try {
+      let out = '';
+      await sh.run('Y=kept');
+      const r = await sh.run('echo "$Y"', { onStdout: (t) => (out += t) });
+      assert.deepEqual([r.exitCode, out], [0, 'kept\n']);
+    } finally {
+      await sh.close();
+    }
+    let hasZsh = true;
+    try {
+      execFileSync('sh', ['-c', 'command -v zsh'], { stdio: 'ignore' });
+    } catch {
+      hasZsh = false;
+    }
+    const zsh = await RemoteShell.connect(await open(), { ...opts(), shells: { unix: 'zsh' } });
+    try {
+      let out = '';
+      const r = await zsh.run('echo "${ZSH_VERSION:+zsh}"', { onStdout: (t) => (out += t) });
+      if (hasZsh) assert.deepEqual([r.exitCode, out], [0, 'zsh\n']);
+      else assert.match(r.error ?? '', /This server has no zsh \(the runbook's shell: zsh\)/);
+    } finally {
+      await zsh.close();
+    }
+  });
+
   it('a large output arrives intact', async () => {
     let out = '';
     const r = await shell.run("head -c 1000000 /dev/zero | tr '\\0' 'x'; echo", { onStdout: (t) => (out += t) });

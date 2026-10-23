@@ -68,6 +68,24 @@ describe('ssh: live Windows server', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST o
     assert.match(after.o.out, /still here: kept/);
   });
 
+  it("PowerShell cells run in Windows PowerShell; the runbook's shell: pwsh runs them in PowerShell 7", async () => {
+    const v = collect();
+    await shell.run('$PSVersionTable.PSVersion.Major', { shell: 'pwsh', ...v });
+    assert.equal(v.o.out.trim(), '5');
+    const seven = await RemoteShell.connect(await open(), { ...opts(), shells: { powershell: 'pwsh' } });
+    try {
+      const w = collect();
+      const r = await seven.run('$PSVersionTable.PSVersion.Major', { shell: 'pwsh', ...w });
+      assert.equal(r.exitCode, 0);
+      assert.ok(Number(w.o.out.trim()) >= 7, w.o.out);
+      const c = collect();
+      assert.equal((await seven.run('echo cmd-too', { shell: 'cmd', ...c })).exitCode, 0);
+      assert.equal(c.o.out.trim(), 'cmd-too');
+    } finally {
+      await seven.close();
+    }
+  });
+
   it('a session reports the platform', async () => {
     const s = new RemoteSession(open, opts());
     try {

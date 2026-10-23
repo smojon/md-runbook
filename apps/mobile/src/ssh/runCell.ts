@@ -20,8 +20,9 @@ import {
   markStderr,
 } from '@md-runbook/core';
 import { Captured, evaluateChecks } from '@md-runbook/core/checks';
+import { approvalScope } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
-import { rewriteRefs } from '@md-runbook/core/secrets';
+import { parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { signedStatus, signedStepIndex } from '@md-runbook/core/signing';
 import { LineStep, echoCommand, formatLineRange, formatLineRanges, splitSteps } from '@md-runbook/core/steps';
 import { RemoteRunOptions, SessionRunResult, SignedRun, wrongPlatform } from '@md-runbook/ssh';
@@ -95,7 +96,8 @@ const redactor = createRedactor(DEFAULT_PATTERNS);
 export async function runCell(p: RunCellParams): Promise<RunOutcome> {
   const cell = parse(p.text).cells[p.cellIndex];
   if (!cell) return { kind: 'error', message: t.cellGone };
-  const can = runnability(cell, p.runbookId, p.host.platform);
+  const shells = parseFrontMatter(p.text)?.shell;
+  const can = runnability(cell, p.runbookId === undefined ? undefined : approvalScope(p.runbookId, shells), p.host.platform);
   if (!can.ok) return { kind: 'error', message: t.notRunnable[can.why](can.detail) };
   const opts = can.options;
   // bash on Linux and macOS servers; PowerShell and cmd on Windows ones.
@@ -168,7 +170,8 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
 
   let conn: Connection;
   try {
-    conn = p.connection ?? (await connectionFor(p.host, p.runbookId ?? ''));
+    // The runbook's `shell:` picks the server's shell (zsh, sh; PowerShell 7), as in the extension.
+    conn = p.connection ?? (await connectionFor(p.host, p.runbookId ?? '', shells));
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }

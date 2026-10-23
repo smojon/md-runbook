@@ -16,6 +16,7 @@ option on purpose, to show a marker.
 | `every=` without `retry=` | warning |
 | `${param:NAME}` not declared under `params:` in the front matter (no default; the command line needs `--param`) | warning |
 | A front matter `mode:`, `timeout:` or `cwd:` value that is ignored (`mode: sometimes`) | warning |
+| A front matter `shell:` name that is ignored: unknown (`fish`), a path (`/bin/zsh`), or a second one for the same cells | warning |
 
 ## In the editor
 

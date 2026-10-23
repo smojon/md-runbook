@@ -11,7 +11,7 @@ import { isCodeMeta } from './model';
 import { parse } from './parser';
 import { locateCodeCells } from './locate';
 import { findRefs, parseFrontMatter } from './secrets';
-import { shellKindForLanguage } from './shellKind';
+import { POWERSHELLS, UNIX_SHELLS, parseShells, shellKindForLanguage } from './shellKind';
 import { signedStatus } from './signing';
 
 export type LintSeverity = 'error' | 'warning';
@@ -54,6 +54,18 @@ export function lintRunbook(text: string): LintProblem[] {
         const expected = key === 'mode' ? 'session or isolated' : key === 'timeout' ? 'seconds, e.g. 300' : 'a folder';
         problems.push({ severity: 'warning', line: i, message: `front matter ${key}: "${m[2]}" is ignored (expected ${expected})` });
       }
+    }
+    for (let i = 1; i < end; i++) {
+      const m = /^shell\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
+      if (!m) continue;
+      const { unknown, twice } = parseShells(m[1]!);
+      for (const name of unknown) {
+        const message = /[\\/]/.test(name)
+          ? `front matter shell: "${name}" is ignored: name a shell (${[...UNIX_SHELLS, ...POWERSHELLS].join(', ')}), never a path`
+          : `front matter shell: "${name}" is ignored (expected ${UNIX_SHELLS.join(', ')} for sh/bash cells, ${POWERSHELLS.join(' or ')} for PowerShell cells)`;
+        problems.push({ severity: 'warning', line: i, message });
+      }
+      for (const name of twice) problems.push({ severity: 'warning', line: i, message: `front matter shell: "${name}" is ignored: one shell per kind of cell, the first one counts` });
     }
   }
   const declared = new Set((fm?.params ?? []).map((p) => p.name));

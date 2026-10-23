@@ -36,6 +36,15 @@ describe('buildAiContext structure', () => {
     assert.deepEqual(r.warnings, []);
   });
 
+  it("says which shells the runbook's shell: names, also when only some cells go", () => {
+    const md = `---\nshell: zsh, windows-powershell\n---\n\n# T\n\n${cell('echo hi')}`;
+    const shells = 'Shells: zsh runs the sh/bash cells; windows-powershell runs the PowerShell cells.';
+    assert.ok(ctx(md, { pseudonymize: false, title: 'run.md' }).text.startsWith(`Runbook: run.md\n${shells}\n\n---\n`));
+    const some = ctx(md, { pseudonymize: false, cells: [1] }).text;
+    assert.ok(some.startsWith(`${shells}\n\n# T\n`), some);
+    assert.doesNotMatch(some, /^---$/m);
+  });
+
   it('uses a longer fence when the code contains backticks', () => {
     const md = '````bash\ncat <<EOF\n```\nEOF\n````\n';
     assert.match(ctx(md).text, /^````bash\ncat <<EOF\n```\nEOF\n````$/m);

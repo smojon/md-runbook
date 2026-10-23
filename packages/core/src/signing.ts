@@ -15,7 +15,7 @@ import { parseCellOptions } from './cellOptions';
 import { FenceOpen, isFenceClose, langOf, matchFenceOpen } from './fence';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
-import { VAR_NAME_RE, findRefs, rewriteRefs } from './secrets';
+import { VAR_NAME_RE, findRefs, parseFrontMatter, rewriteRefs } from './secrets';
 import { shellKindForLanguage } from './shellKind';
 import { splitSteps } from './steps';
 
@@ -170,6 +170,9 @@ export function buildManifest(text: string, meta: ManifestMeta): { manifest: Man
     }
   }
   errors.push(...hiddenFences(withoutSignature(text)));
+  // Servers run signed cells in bash (md-runbook-gate), and the front matter isn't signed.
+  const unix = parseFrontMatter(text)?.shell?.unix;
+  if (unix && unix !== 'bash') errors.push(`front matter shell: ${unix}: servers run signed runbooks in bash; remove it, or write shell: bash`);
   // capture-secret= values reach the gate as parameters too, and the gate logs every parameter
   // value: a signed cell can't use them.
   const secretCaptures = new Set<string>();

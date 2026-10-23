@@ -23,7 +23,7 @@ import { SessionPool } from '@md-runbook/core/node/session';
 import { LineStep, echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core/steps';
 import { FrontMatter, parseFrontMatter } from '@md-runbook/core/secrets';
 import { proposalOf } from '@md-runbook/core/proposal';
-import { isCodeMeta } from '@md-runbook/core';
+import { ShellSettings, isCodeMeta } from '@md-runbook/core';
 import { SECTION } from './config';
 import { ExecutionConfig, colorConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, cloudOutput, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
@@ -99,6 +99,15 @@ function runbookDefaults(nb: vscode.NotebookDocument, cell?: vscode.NotebookCell
     if (isCodeMeta(meta) && proposalOf(meta.info).by !== undefined) return undefined;
   }
   return frontMatterOf(nb);
+}
+
+/**
+ * The shell settings for a runbook's cells: the user's, with the runbook's `shell:` (which
+ * installed shell, by name). Like `mode:`, it is the whole runbook's, proposals included.
+ */
+export function runbookShellSettings(nb: vscode.NotebookDocument, settings: ShellSettings): ShellSettings {
+  const shell = frontMatterOf(nb)?.shell;
+  return shell ? { ...settings, runbook: shell } : settings;
 }
 
 /** Where the runbook's cells run: its `cwd:` (relative to the .md file's folder), else that folder. */
@@ -305,7 +314,7 @@ export class RunbookController implements vscode.Disposable {
       cwd: runbookCwd(notebook, cell),
       env: { ...cfg.env },
       timeoutMs: fmTimeoutMs ?? cfg.timeoutMs,
-      shell: cfg.shell,
+      shell: runbookShellSettings(notebook, cfg.shell),
       attrs: {},
       secrets: [],
       continueOnError: false,

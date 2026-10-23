@@ -158,6 +158,7 @@ line. Only these keys are read; every other key (`title:` and so on) is ignored 
 mode: session        # session | isolated (default: the user's setting)
 timeout: 300         # seconds for every cell: 300 or 300s; a cell's timeout= wins
 cwd: ../infra        # folder cells run in, relative to the .md file; a cell's cwd= is still relative to the .md file
+shell: zsh, windows-powershell   # which installed shells run the cells (see below)
 params:
   - NAMESPACE        # asked, no default
   - REGION: eu-west-1
@@ -168,6 +169,30 @@ params:
 `#` starts a comment. A value that is not understood (`mode: sometimes`) is ignored with a lint
 warning. In session mode one bash and one PowerShell process live for the whole runbook, so
 `cd`, exported variables and `oc login` carry over between cells; `cmd` cells always run alone.
+
+`shell:` names, separated by commas or spaces, at most one of each kind:
+
+| Name | Runs the runbook's | Found |
+| --- | --- | --- |
+| `bash` (default) | `sh` and `bash` cells | as without `shell:`, but sh doesn't stand in for a missing bash |
+| `zsh` | `sh` and `bash` cells | `zsh` on the `PATH` (on Windows a native one such as MSYS2's; WSL's is never used) |
+| `sh` | `sh` and `bash` cells | `/bin/sh`; on Windows Git for Windows' `sh.exe` |
+| `pwsh` | `pwsh` and `powershell` cells | PowerShell 7, with no fallback to Windows PowerShell |
+| `windows-powershell` | `pwsh` and `powershell` cells | Windows PowerShell 5.1 even when PowerShell 7 is installed (Windows only) |
+
+Without `shell:`, `sh`/`bash` cells run in bash (Git Bash on Windows, sh if there is no bash) and
+PowerShell cells in PowerShell 7, else Windows PowerShell. A missing shell is an error on the
+cell, never a silent switch to another one. Only names are read, never a path: a runbook can't
+choose a program to run (paths are your settings, `mdRunbook.shell.bashPath` and
+`mdRunbook.shell.pwshPath`, which apply to the default shells). Lint warns about names it
+ignores.
+
+`shell:` applies to every cell, including an assistant's proposals. With `shell: zsh` a proposal
+is never approved by the allowlist alone (zsh reads some text differently from bash: its glob
+qualifiers can run commands), and an approval given before the runbook switched to zsh no longer
+counts. Signed runbooks run in bash on the server, so Sign Runbook refuses another Unix shell.
+The app starts the named shell on the server (`zsh -l`, `sh -l`, or `pwsh` on Windows servers)
+and says so on the cell when the server doesn't have it.
 
 ## Output blocks
 

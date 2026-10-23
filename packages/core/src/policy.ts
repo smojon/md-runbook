@@ -10,6 +10,7 @@
 
 import { sha256Hex } from './sha256';
 import { stripApprovalTokens } from './proposal';
+import type { RunbookShells } from './shellKind';
 
 export interface CommandPolicy {
   /** Matched against each command of a line (split at `|`, `;`, `&&`, `||`, `&`). */
@@ -430,7 +431,11 @@ function stripBlocks(part: string): string {
  * always send to review: reading the environment or credential files, kubectl / oc / helm commands
  * that are not plainly read-only, follow/watch modes, and file redirections.
  */
-export function evaluatePolicy(text: string, policy: CommandPolicy, shell: PolicyShell = 'bash'): PolicyResult {
+export function evaluatePolicy(text: string, policy: CommandPolicy, cellShell: PolicyShell | 'zsh' = 'bash'): PolicyResult {
+  // zsh (the runbook's `shell: zsh`) reads some text differently from bash (glob qualifiers like
+  // `*(e:…:)` run code): its lines are read as bash for the deny list, but none is allowed unread.
+  const zsh = cellShell === 'zsh';
+  const shell: PolicyShell = zsh ? 'bash' : cellShell;
   const errors: string[] = [];
   const allow = compile(policy.allow, errors);
   const deny = compile(policy.deny, errors);
@@ -441,7 +446,7 @@ export function evaluatePolicy(text: string, policy: CommandPolicy, shell: Polic
     const plain = words(line, shell).join(' ');
     const hit = deny.find(({ re }) => re.test(line) || re.test(plain));
     if (hit) denied.push({ line, pattern: hit.src });
-    else if (!lineAllowed(line, { allow, also }, shell)) unlisted.push(line);
+    else if (zsh || !lineAllowed(line, { allow, also }, shell)) unlisted.push(line);
   }
   const verdict: Verdict = denied.length > 0 ? 'denied' : unlisted.length > 0 ? 'review' : 'allowed';
   return { verdict, denied, unlisted, errors };
@@ -462,6 +467,15 @@ export function approvalInfo(info: string): string {
  * What an approval is bound to: the code, the fence options (cwd=, env.X=, timeout=, by=, …) and
  * the runbook it lives in. Changing any of them needs a new approval.
  */
+/**
+ * The `runbook` an approval is bound to: the runbook's key, plus its `shell:` when that is zsh,
+ * which reads some text differently from bash. An approval given for bash doesn't carry over
+ * when the runbook switches to zsh (other shells read cells as bash and PowerShell do).
+ */
+export function approvalScope(runbook: string, shells: RunbookShells | undefined): string {
+  return shells?.unix === 'zsh' ? `${runbook}\u0000shell=zsh` : runbook;
+}
+
 export function approvalHash(code: string, info: string, runbook: string): string {
   return codeHash(`${approvalInfo(info)}\u0000${runbook}\u0000${code.replace(/\r\n?/g, '\n')}`);
 }

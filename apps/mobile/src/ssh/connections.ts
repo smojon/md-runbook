@@ -6,6 +6,7 @@
  * checked before any credential is sent: unknown or changed keys end the connection and are
  * reported here, so the screen can ask the user.
  */
+import type { RunbookShells } from '@md-runbook/core';
 import { RemoteSession, hostKeyId } from '@md-runbook/ssh';
 import type { Host } from '../hosts/store';
 import { appKey } from './appKey';
@@ -30,13 +31,17 @@ interface Entry extends Connection {
   signature: string;
 }
 
-const signatureOf = (h: Host): string => `${h.hostname}:${h.port}:${h.username}:${h.hostKey ?? ''}`;
+const signatureOf = (h: Host, shells: RunbookShells | undefined): string =>
+  `${h.hostname}:${h.port}:${h.username}:${h.hostKey ?? ''}:${shells?.unix ?? ''}:${shells?.powershell ?? ''}`;
 const keyOf = (hostId: string, runbookId: string): string => `${hostId}\n${runbookId}`;
 const entries = new Map<string, Entry>();
 
-/** The connection of a runbook to a host, made on first use; replaced when the host's address, user or trusted key changed. */
-export async function connectionFor(host: Host, runbookId: string): Promise<Connection> {
-  const signature = signatureOf(host);
+/**
+ * The connection of a runbook to a host, made on first use; replaced when the host's address, user
+ * or trusted key changed, or the runbook's `shell:` (the shells the server starts for it).
+ */
+export async function connectionFor(host: Host, runbookId: string, shells?: RunbookShells): Promise<Connection> {
+  const signature = signatureOf(host, shells);
   const id = keyOf(host.id, runbookId);
   const existing = entries.get(id);
   if (existing?.signature === signature) return existing;
@@ -50,6 +55,7 @@ export async function connectionFor(host: Host, runbookId: string): Promise<Conn
     session: new RemoteSession(() => openTransport(host), {
       username: host.username,
       key,
+      shells,
       verifyHostKey: (line) => {
         if (host.hostKey !== undefined && hostKeyId(line) === host.hostKey) return true;
         entry.unknownHostKey = line;

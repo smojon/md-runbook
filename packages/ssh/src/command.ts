@@ -8,10 +8,30 @@
  * reach us separately and stderr could otherwise still be on its way when stdout ends.
  */
 
+import type { UnixShell } from '@md-runbook/core';
 import { Buffer } from 'buffer';
 
 /** Started by the `exec` request: bash as a login shell (for the user's PATH), else sh. */
 export const SHELL_COMMAND = 'command -v bash >/dev/null 2>&1 && exec bash -l || exec sh -l';
+
+/**
+ * The `exec` request for the runbook's `shell:` (a login shell too). zsh falls back to sh when the
+ * server has none, so the connection still answers; `shellProbeCommand` then tells.
+ */
+export function posixShellCommand(unix: UnixShell | undefined): string {
+  if (unix === 'zsh') return 'command -v zsh >/dev/null 2>&1 && exec zsh -l || exec sh -l';
+  if (unix === 'sh') return 'exec sh -l';
+  return SHELL_COMMAND;
+}
+
+/** Which shell answers, by the shell's own variables: the marker's value is an index in PROBED_SHELLS. */
+export function shellProbeCommand(id: string): string {
+  return (
+    '__mdrb_sh=0; if [ -n "$ZSH_VERSION" ]; then __mdrb_sh=2; elif [ -n "$BASH_VERSION" ]; then __mdrb_sh=1; fi; ' +
+    printMarker(markerFor(id), '"$__mdrb_sh"')
+  );
+}
+export const PROBED_SHELLS: readonly UnixShell[] = ['sh', 'bash', 'zsh'];
 
 export const markerFor = (id: string): string => `__MDRB_${id}__`;
 
@@ -120,6 +140,8 @@ export type RemotePlatform = 'posix' | 'windows';
 
 /** Started by the `exec` request on a Windows server. */
 export const WINDOWS_SHELL_COMMAND = 'powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -';
+/** The same with PowerShell 7, for a runbook with `shell: pwsh`. */
+export const PWSH_SHELL_COMMAND = 'pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -';
 
 /** PowerShell single quotes (it also treats the typographic ones as quotes). */
 export const psq = (s: string): string => "'" + s.replace(/['‘’‚‛]/g, (q) => q + q) + "'";

@@ -85,7 +85,10 @@ written by an assistant (they run in the `.md` file's folder with the usual time
 when `mdRunbook.cellOptions.enabled` is off. Shell paths can't be
 set in the front matter on purpose: a file from a repository must not choose which program runs
 your cells (that would get around the command policy for approved assistant cells). Set them in
-your user settings (`mdRunbook.shell.bashPath`, `mdRunbook.shell.pwshPath`).
+your user settings (`mdRunbook.shell.bashPath`, `mdRunbook.shell.pwshPath`). The front matter can
+only name an installed shell (`shell: zsh`, `sh`, `pwsh`, `windows-powershell`; see
+[the syntax](../syntax.md#front-matter)). In a `shell: zsh` runbook the command policy never
+approves a proposal on its own, and approvals given before the switch to zsh no longer count.
 
 ## Confirming risky commands
 

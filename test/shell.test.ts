@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { ShellEnv, shellKindForLanguage } from '@md-runbook/core';
+import { ShellEnv, parseShells, shellKindForLanguage } from '@md-runbook/core';
 import { resolveShell } from '@md-runbook/core/node';
+import { parseFrontMatter } from '@md-runbook/core/secrets';
 
 function fakeEnv(platform: NodeJS.Platform, files: string[], env: Record<string, string> = {}, path: Record<string, string> = {}): ShellEnv {
   const set = new Set(files.map((f) => f.toLowerCase()));
@@ -126,6 +127,74 @@ describe('bash resolution', () => {
     const r = resolveShell('bash', {}, fakeEnv('darwin', [], {}, { bash: '/bin/bash' }));
     assert.ok(r.ok);
     assert.equal(r.shell.script('a\r\nb'), 'a\nb\n');
+  });
+});
+
+describe("the runbook's shell: (front matter)", () => {
+  it('reads names, at most one per kind of cell; never a path', () => {
+    assert.deepEqual(parseShells('zsh, windows-powershell'), { shells: { unix: 'zsh', powershell: 'windows-powershell' }, unknown: [], twice: [] });
+    assert.deepEqual(parseShells('[ "sh" pwsh ]'), { shells: { unix: 'sh', powershell: 'pwsh' }, unknown: [], twice: [] });
+    assert.deepEqual(parseShells('zsh bash /tmp/evil fish'), { shells: { unix: 'zsh' }, unknown: ['/tmp/evil', 'fish'], twice: ['bash'] });
+    assert.deepEqual(parseFrontMatter('---\nshell: ZSH # macOS\n---\n')?.shell, { unix: 'zsh' });
+    assert.equal(parseFrontMatter('---\nshell: /bin/zsh\n---\n')?.shell, undefined);
+  });
+
+  it('zsh for sh/bash cells, found on PATH (not the bash path setting)', () => {
+    const r = resolveShell('bash', { bashPath: '/opt/bash', runbook: { unix: 'zsh' } }, fakeEnv('darwin', [], {}, { zsh: '/bin/zsh', bash: '/bin/bash' }));
+    assert.ok(r.ok);
+    assert.equal(r.shell.command, '/bin/zsh');
+    assert.equal(r.shell.label, 'zsh');
+    assert.deepEqual(r.shell.args('/tmp/cell.sh'), ['/tmp/cell.sh']);
+    const missing = resolveShell('bash', { runbook: { unix: 'zsh' } }, fakeEnv('linux', [], {}, { bash: '/bin/bash' }));
+    assert.ok(!missing.ok);
+    assert.match(missing.error, /zsh not found on PATH \(the runbook's shell: zsh\)/);
+  });
+
+  it('zsh on Windows only from PATH, never through WSL', () => {
+    const wsl = resolveShell('bash', { runbook: { unix: 'zsh' } }, fakeEnv('win32', [], WIN_ENV, { 'zsh.exe': 'C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\zsh.exe' }));
+    assert.ok(!wsl.ok);
+    const msys = resolveShell('bash', { runbook: { unix: 'zsh' } }, fakeEnv('win32', [], WIN_ENV, { 'zsh.exe': 'C:\\msys64\\usr\\bin\\zsh.exe' }));
+    assert.ok(msys.ok);
+    assert.equal(msys.shell.command, 'C:\\msys64\\usr\\bin\\zsh.exe');
+  });
+
+  it('sh: /bin/sh on Unix, Git for Windows’ sh.exe on Windows', () => {
+    const unix = resolveShell('bash', { runbook: { unix: 'sh' } }, fakeEnv('linux', ['/bin/sh'], {}, { bash: '/bin/bash' }));
+    assert.ok(unix.ok);
+    assert.equal(unix.shell.command, '/bin/sh');
+    assert.equal(unix.shell.label, 'sh');
+    const gitSh = 'C:\\Program Files\\Git\\bin\\sh.exe';
+    const win = resolveShell('bash', { runbook: { unix: 'sh' } }, fakeEnv('win32', [gitSh], WIN_ENV));
+    assert.ok(win.ok);
+    assert.equal(win.shell.command, gitSh);
+    assert.deepEqual(win.shell.args('C:\\Temp\\cell.sh'), ['C:/Temp/cell.sh']);
+    const none = resolveShell('bash', { runbook: { unix: 'sh' } }, fakeEnv('win32', [], WIN_ENV));
+    assert.ok(!none.ok);
+    assert.match(none.error, /Git for Windows/);
+  });
+
+  it('bash: no stand-in sh', () => {
+    const r = resolveShell('bash', { runbook: { unix: 'bash' } }, fakeEnv('linux', [], {}, { sh: '/bin/sh' }));
+    assert.ok(!r.ok);
+    assert.match(r.error, /the runbook's shell: bash/);
+  });
+
+  it('windows-powershell: 5.1 even when PowerShell 7 is installed; only on Windows', () => {
+    const builtin = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+    const r = resolveShell('pwsh', { pwshPath: 'D:\\pwsh.exe', runbook: { powershell: 'windows-powershell' } }, fakeEnv('win32', [builtin], WIN_ENV, { pwsh: 'C:\\pwsh7\\pwsh.exe' }));
+    assert.ok(r.ok);
+    assert.equal(r.shell.command, builtin);
+    assert.equal(r.shell.label, 'powershell');
+    const mac = resolveShell('pwsh', { runbook: { powershell: 'windows-powershell' } }, fakeEnv('darwin', [], {}, { pwsh: '/usr/local/bin/pwsh' }));
+    assert.ok(!mac.ok);
+    assert.match(mac.error, /only on Windows/);
+  });
+
+  it('pwsh: PowerShell 7, without falling back to 5.1', () => {
+    const builtin = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+    const r = resolveShell('pwsh', { runbook: { powershell: 'pwsh' } }, fakeEnv('win32', [builtin], WIN_ENV));
+    assert.ok(!r.ok);
+    assert.match(r.error, /PowerShell 7 \(pwsh\) not found/);
   });
 });
 

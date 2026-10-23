@@ -31,7 +31,7 @@ export interface CellRun {
 export interface CodeCellProps {
   cell: ParsedCell;
   index: number;
-  /** The runbook it is in (approvals made on this device count). */
+  /** The runbook it is in, as approvals know it (core approvalScope): approvals made on this device count. */
   runbookId?: string;
   /** What the selected host runs, once known (Windows servers run PowerShell and cmd cells). */
   platform?: RemotePlatform;

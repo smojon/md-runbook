@@ -165,7 +165,5 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 
 ## Ideas for later
 
-1. Shell choice per runbook, only with a safe design (e.g. picking among installed shells, never
-   a path from the file).
 3. App translations: the texts are in `apps/mobile/src/i18n.ts`, English only; which languages
    is the owner's choice.

@@ -52,6 +52,15 @@ describe('lintRunbook', () => {
     );
   });
 
+  it('front matter shell: names it ignores (unknown, a path, a second one for the same cells)', () => {
+    assert.deepEqual(messages('---\nshell: zsh, windows-powershell\n---\n\n' + fence('bash', 'echo hi')), []);
+    assert.deepEqual(messages('---\nshell: fish /bin/zsh sh bash\n---\n\n' + fence('bash', 'echo hi')), [
+      '2 warning: front matter shell: "fish" is ignored (expected bash, zsh, sh for sh/bash cells, pwsh or windows-powershell for PowerShell cells)',
+      '2 warning: front matter shell: "/bin/zsh" is ignored: name a shell (bash, zsh, sh, pwsh, windows-powershell), never a path',
+      '2 warning: front matter shell: "bash" is ignored: one shell per kind of cell, the first one counts',
+    ]);
+  });
+
   it('formats problems as file:line: severity: message', () => {
     assert.equal(formatProblem('r.md', { severity: 'error', message: 'boom', line: 4 }), 'r.md:5: error: boom');
   });

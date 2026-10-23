@@ -10,12 +10,23 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CodeMeta, formatLocalIso, isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { ApprovalStatus, CommandPolicy, DEFAULT_POLICY, PolicyResult, approvalHash, approvalStatus, evaluatePolicy, parsePolicy, restrictPolicy } from '@md-runbook/core/policy';
+import {
+  ApprovalStatus,
+  CommandPolicy,
+  DEFAULT_POLICY,
+  PolicyResult,
+  approvalHash,
+  approvalScope,
+  approvalStatus,
+  evaluatePolicy,
+  parsePolicy,
+  restrictPolicy,
+} from '@md-runbook/core/policy';
 import { Proposal, approvedInfo, asProposed, proposalOf, withInfo } from '@md-runbook/core/proposal';
 import { VAR_NAME_RE, findRefs } from '@md-runbook/core/secrets';
 import { tokenizeInfo } from '@md-runbook/core/cellOptions';
 import { SECTION, executionConfig } from './config';
-import { workingDirectory } from './controller';
+import { frontMatterOf, workingDirectory } from './controller';
 import { META_KEY } from './outputs';
 import { CellPlan, CellPreparer, PrepareContext, RunPipeline } from './pipeline';
 import { setContext } from './contextKeys';
@@ -26,8 +37,9 @@ export const APPROVAL_KEY = 'mdRunbookApproval';
 // v2: approvals are bound to code + fence options + runbook (older code-only entries no longer count).
 const LEDGER_KEY = 'mdRunbook.approvedHashes.v2';
 
-/** Identifies a runbook for approvals: its file path (or URI for unsaved ones). */
-const runbookKey = (nb: vscode.NotebookDocument): string => (nb.uri.scheme === 'file' ? nb.uri.fsPath : nb.uri.toString());
+/** Identifies a runbook for approvals: its file path (or URI for unsaved ones), and its `shell:` when that is zsh. */
+const runbookKey = (nb: vscode.NotebookDocument): string =>
+  approvalScope(nb.uri.scheme === 'file' ? nb.uri.fsPath : nb.uri.toString(), frontMatterOf(nb)?.shell);
 const LEDGER_MAX = 5000;
 const POLICY_FILE = '.md-runbook-policy.json';
 /** The secrets feature stores values under this prefix. */
@@ -247,7 +259,8 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
     const code = cell.document.getText();
     const found = a.proposal.by ? this.policyFor(cell.notebook.uri) : undefined;
     if (found) {
-      const r = evaluatePolicy(code, found.policy, shellKindForLanguage(cell.document.languageId) ?? 'bash');
+      const kind = shellKindForLanguage(cell.document.languageId) ?? 'bash';
+      const r = evaluatePolicy(code, found.policy, kind === 'bash' && frontMatterOf(cell.notebook)?.shell?.unix === 'zsh' ? 'zsh' : kind);
       if (r.errors.length > 0) void vscode.window.showWarningMessage(`md-runbook: invalid policy pattern(s) ignored:\n${r.errors.join('\n')}`);
       const options = riskyOptions(a.meta.info);
       if (r.verdict === 'denied') return this.refuse(cell, r, found.source);

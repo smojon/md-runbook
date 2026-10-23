@@ -5,7 +5,7 @@
  * the relay), so this file has no platform code.
  */
 
-import { RunResult, SentinelFilter, ShellKind } from '@md-runbook/core';
+import { RunResult, RunbookShells, SentinelFilter, ShellKind } from '@md-runbook/core';
 import {
   CommandRequestMessage,
   KeyPair,
@@ -25,8 +25,9 @@ import { Buffer } from 'buffer';
 import {
   CellCommandOptions,
   GateInfo,
+  PROBED_SHELLS,
+  PWSH_SHELL_COMMAND,
   RemotePlatform,
-  SHELL_COMMAND,
   WINDOWS_SHELL_COMMAND,
   cellCommand,
   gateBanner,
@@ -36,7 +37,9 @@ import {
   gateRunCommand,
   helloCommand,
   markerFor,
+  posixShellCommand,
   randomId,
+  shellProbeCommand,
   signedReply,
   stopCommand,
   windowsCellCommand,
@@ -57,6 +60,8 @@ export interface ConnectOptions {
   connectTimeoutMs?: number;
   /** Keep-alive interval, so a dead connection (phone asleep, network changed) is noticed. Default 15 s; 0 = off. */
   keepAliveSeconds?: number;
+  /** The runbook's `shell:`: zsh, sh or bash on Linux and macOS servers; pwsh (7) or Windows PowerShell on Windows ones. */
+  shells?: RunbookShells;
 }
 
 export interface RemoteRunOptions extends CellCommandOptions {
@@ -113,6 +118,8 @@ export class RemoteShell {
   private ended = false;
   private pid = 0;
   private gateInfo: GateInfo | undefined;
+  /** Why the runbook's `shell:` can't be had here, per kind of cell: those cells don't run. */
+  private readonly unavailable: Partial<Record<ShellKind, string>> = {};
   /** While the shell starts, its channel closing (cmd.exe refusing the sh command) is not the connection's end. */
   private starting = true;
   private readonly decoderOut = new TextDecoder();
@@ -154,7 +161,12 @@ export class RemoteShell {
       if (!ok) throw new Error('authentication failed (host key refused, or the key was not accepted)');
       // sh/bash first. On a Windows server cmd.exe (or PowerShell) runs the request and fails at
       // once, closing the channel: then Windows PowerShell.
-      const shell = (await RemoteShell.start(session, 'posix')) ?? (await RemoteShell.start(session, 'windows'));
+      const want = opts.shells ?? {};
+      const shell =
+        (await RemoteShell.start(session, 'posix', want)) ??
+        (await RemoteShell.start(session, 'windows', want)) ??
+        // No PowerShell 7 on this Windows server: Windows PowerShell, for its cmd cells.
+        (want.powershell === 'pwsh' ? await RemoteShell.start(session, 'windows', {}, "This server has no PowerShell 7 (pwsh): the runbook's shell: pwsh needs it.") : undefined);
       if (!shell) throw new Error('the server did not start a shell (sh, bash or Windows PowerShell)');
       return shell;
     };
@@ -175,10 +187,11 @@ export class RemoteShell {
    * channel closed before the shell answered its hello (not that kind of server); the connection
    * stays open for the next try.
    */
-  private static async start(session: SshClientSession, platform: RemotePlatform): Promise<RemoteShell | undefined> {
+  private static async start(session: SshClientSession, platform: RemotePlatform, want: RunbookShells, noPwsh?: string): Promise<RemoteShell | undefined> {
     const channel = await session.openChannel();
     const shell = new RemoteShell(session, channel, platform);
-    if (!(await channel.request(execRequest(platform === 'windows' ? WINDOWS_SHELL_COMMAND : SHELL_COMMAND)))) {
+    const command = platform === 'posix' ? posixShellCommand(want.unix) : want.powershell === 'pwsh' ? PWSH_SHELL_COMMAND : WINDOWS_SHELL_COMMAND;
+    if (!(await channel.request(execRequest(command)))) {
       await channel.close().catch(() => undefined);
       return undefined;
     }
@@ -187,6 +200,14 @@ export class RemoteShell {
       let greeting = '';
       shell.pid = (await shell.exchange(randomId(), platform === 'windows' ? windowsHelloCommand : helloCommand, (t) => (greeting += t))) ?? 0;
       shell.gateInfo = platform === 'posix' ? gateBanner(greeting) : undefined;
+      if (noPwsh) shell.unavailable.pwsh = noPwsh;
+      if (platform === 'posix' && want.unix && want.unix !== 'bash' && shell.gateInfo) {
+        shell.unavailable.bash = `md-runbook-gate runs cells in bash: the runbook's shell: ${want.unix} can't be used through it.`;
+      } else if (platform === 'posix' && (want.unix === 'zsh' || want.unix === 'bash') && !shell.gateInfo) {
+        // zsh fell back to sh, or bash wasn't there: say so instead of running the cells elsewhere.
+        const got = PROBED_SHELLS[(await shell.exchange(randomId(), shellProbeCommand)) ?? -1];
+        if (got !== want.unix) shell.unavailable.bash = `This server has no ${want.unix} (the runbook's shell: ${want.unix}).`;
+      }
       shell.starting = false;
       return shell;
     } catch (e) {
@@ -213,7 +234,7 @@ export class RemoteShell {
    */
   async run(source: string, opts: RemoteRunOptions = {}): Promise<RemoteRunResult> {
     const kind = opts.shell ?? 'bash';
-    const wrong = wrongPlatform(this.platform, kind);
+    const wrong = wrongPlatform(this.platform, kind) ?? this.unavailable[kind];
     if (wrong) return { exitCode: null, signal: null, timedOut: false, cancelled: false, durationMs: 0, error: wrong };
     if (kind !== 'bash') return this.runText((id) => windowsCellCommand(source, id, kind, opts), opts);
     const text = (id: string): string => (this.gateInfo ? gateRawCommand(id, cellCommand(source, id, opts)) : cellCommand(source, id, opts));

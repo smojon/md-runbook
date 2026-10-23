@@ -135,10 +135,15 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
       const cmd = cellKind === 'cmd' ? resolveShell('cmd', plan.shell, nodeShellEnv()) : undefined;
       if (cmd && !cmd.ok) return notRun(cmd.error);
       const kind = cellKind === 'cmd' ? 'pwsh' : cellKind;
-      const resolved = resolveShell(kind, plan.shell, nodeShellEnv());
+      // sh (the runbook's `shell: sh`) has no shell integration either: the cell runs from a bash
+      // terminal, in an sh of its own.
+      const { unix, ...otherShells } = plan.shell.runbook ?? {};
+      const sh = kind === 'bash' && unix === 'sh' ? resolveShell('bash', plan.shell, nodeShellEnv()) : undefined;
+      if (sh && !sh.ok) return notRun(sh.error);
+      const resolved = resolveShell(kind, sh ? { ...plan.shell, runbook: otherShells } : plan.shell, nodeShellEnv());
       if (!resolved.ok) return notRun(resolved.error);
       const shell = resolved.shell;
-      const script = cmd?.ok ? cmd.shell : shell;
+      const script = cmd?.ok ? cmd.shell : sh?.ok ? sh.shell : shell;
 
       const started = Date.now();
       let timedOut = false;
@@ -214,7 +219,9 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
 
         const commandLine = cmd?.ok
           ? terminalCmdCommandLine(cmd.shell.command, scriptPath, statusPath)
-          : ctx.lineRun
+          : sh?.ok
+            ? terminalCommandLine('bash', sh.shell.command, asArg(scriptPath), asArg(statusPath))
+            : ctx.lineRun
             ? terminalInlineCommandLine(kind, asArg(scriptPath), asArg(statusPath))
             : terminalCommandLine(kind, shell.command, asArg(scriptPath), asArg(statusPath));
         const execution = integration.executeCommand(commandLine);

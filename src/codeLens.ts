@@ -11,6 +11,7 @@ import {
   CodeCellLocation,
   ExecuteResult,
   LineBuffer,
+  ShellSettings,
   exitLabel,
   formatDurationAttr,
   formatLocalIso,
@@ -57,6 +58,8 @@ interface RunOptions {
   cwd: string;
   timeoutMs: number;
   env: Record<string, string>;
+  /** The user's shell settings with the runbook's `shell:`. */
+  shell: ShellSettings;
   /** Invalid cell options: the block fails with this message instead of running. */
   error?: string;
 }
@@ -66,11 +69,12 @@ interface RunOptions {
  * options preparer: cwd relative to the .md file's folder, invalid options fail the block.
  */
 function runOptions(info: string, baseDir: string, cfg: ExecutionConfig, docText: string): RunOptions {
-  // Front matter `cwd:` and `timeout:` are the runbook's defaults, as in the notebook.
+  // Front matter `cwd:`, `timeout:` and `shell:` are the runbook's defaults, as in the notebook.
   const fm = parseFrontMatter(docText);
   const cwd = fm?.cwd ? path.resolve(baseDir, fm.cwd) : baseDir;
   const timeoutMs = fm?.timeoutSeconds !== undefined ? fm.timeoutSeconds * 1000 : cfg.timeoutMs;
-  const out: RunOptions = { skip: false, cwd, timeoutMs, env: { ...cfg.env } };
+  const shell = fm?.shell ? { ...cfg.shell, runbook: fm.shell } : cfg.shell;
+  const out: RunOptions = { skip: false, cwd, timeoutMs, env: { ...cfg.env }, shell };
   if (!vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true)) return out;
   const o = parseCellOptions(info);
   if (o.errors.length > 0) out.error = `md-runbook: invalid cell option ${o.errors.join('; ')}`;
@@ -207,7 +211,7 @@ class EditorRunner {
             language: loc.language,
             source: loc.source,
             cwd,
-            settings: cfg.shell,
+            settings: opts.shell,
             timeoutMs: opts.timeoutMs,
             env: opts.env,
             signal,
