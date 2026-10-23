@@ -113,7 +113,7 @@ environment.
   remembered per runbook.
 - **Secrets:** the first time a cell needs `${secret:NAME}`, the app asks for it (masked) and
   stores it in the phone's Keychain or Keystore (in the browser: the app's local storage, like
-  its key), for every runbook. **Hosts → Secrets** lists the stored names and forgets them.
+  its key), for every runbook. **Hosts & settings → Secrets** lists the stored names and forgets them.
 - **Inputs:** `${input:NAME}` is asked for the first time a cell needs it and kept while the
   runbook is open. Names ending in `_PASSWORD`, `_TOKEN` or `_SECRET`, and
   `${input:NAME:secret}`, are masked.

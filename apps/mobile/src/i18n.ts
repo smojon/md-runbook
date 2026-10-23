@@ -41,8 +41,11 @@ const en = {
   cancel: 'Cancel',
 
   // Hosts
-  hosts: 'Hosts',
-  hostsTitle: 'Hosts',
+  // The screen holds the app's settings too (key, secrets, output, relay): say so where it is opened.
+  hosts: 'Hosts & settings',
+  hostsTitle: 'Hosts & settings',
+  openLinkTitle: 'Open a link',
+  backToRunbooks: 'Back to the runbooks',
   addHost: 'Add a host',
   noHosts: 'No hosts yet. Add one to run cells over SSH.',
   newHostTitle: 'New host',
@@ -89,7 +92,8 @@ const en = {
   relayUrlPlaceholder: 'wss://relay.example.net',
   relayToken: 'Relay token',
   relaySaved: 'Relay saved',
-  relayNotConfigured: 'No relay is configured: set its address and token under Hosts.',
+  relayNotConfigured: 'In the browser, cells run through a relay; none is set up yet.',
+  setUpRelay: 'Set up the relay',
   relayRefused: (url: string) => `The relay at ${url} refused the connection (address, token or target not allowed).`,
   relayUnreachable: (url: string) => `The relay at ${url} did not answer (address, network, or the page's origin not allowed).`,
   relayTooOld: (url: string) => `The relay at ${url} is older than this app: update it.`,
@@ -123,7 +127,8 @@ const en = {
   otherHostBody: (name: string, selected: string | undefined) =>
     `The runbook says host=${name} for this cell${selected ? `, not ${selected}, the host you selected` : ''}. Run it on ${name}? Check that the runbook comes from someone you trust.`,
   otherHostAccept: (name: string) => `Run on ${name}`,
-  noHostNamed: (name: string) => `This cell runs on the host ${name} (host=), and there is no host with that name. Add it under Hosts.`,
+  noHostNamed: (name: string) =>
+    `This cell runs on the host ${name} (host=), and there is no host with that name. Add it under Hosts & settings.`,
   cellChanged: 'The cell changed while it ran: its output was not written',
   outMissing: (name: string) => `\${out:${name}} has no value yet: run the cell with capture=${name} first`,
   outFromAssistant: (name: string) =>
@@ -193,7 +198,7 @@ const en = {
   cellActions: 'Cell actions',
   diffTitle: (label: string, before: string, after: string) => `${label}: ${before} → ${after}`,
   diffSame: 'The output is the same as in the previous run.',
-  noEarlierRun: 'No earlier run is kept: turn on Hosts → Output history, then run the cell again.',
+  noEarlierRun: 'No earlier run is kept: turn on Hosts & settings → Output history, then run the cell again.',
   colorsTitle: 'Output colours',
   colorLevels: 'Log levels in colour',
   colorLevelsHelp: 'ERROR and FAILED red, WARN yellow, INFO blue, DEBUG grey, OK and PASSED green, as log viewers show them.',

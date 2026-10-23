@@ -116,7 +116,7 @@ function Field(p: {
         value={p.value}
         onChangeText={p.onChange}
         placeholder={p.placeholder}
-        placeholderTextColor={colors.muted}
+        placeholderTextColor={colors.placeholder}
         keyboardType={p.keyboard ?? 'default'}
         autoCapitalize="none"
         autoCorrect={false}

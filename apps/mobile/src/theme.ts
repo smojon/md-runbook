@@ -11,9 +11,15 @@ export interface Palette {
   background: string;
   text: string;
   muted: string;
+  /** Placeholder text in inputs: lighter than real values, so an empty field doesn't look filled. */
+  placeholder: string;
   border: string;
   /** Code cells and other code blocks (the notebook's cell editor). */
   codeBackground: string;
+  /** Bottom sheets: raised above the page (in dark, lighter than it, as VS Code's quick pick). */
+  sheet: string;
+  /** The dimmed screen behind a sheet. */
+  scrim: string;
   /** Inline `code` in Markdown. */
   inlineCode: string;
   ok: string;
@@ -46,8 +52,11 @@ export const light: Palette = {
   background: '#ffffff',
   text: '#3b3b3b',
   muted: '#616161',
+  placeholder: '#a0a0a0',
   border: '#e5e5e5',
   codeBackground: '#f8f8f8',
+  sheet: '#ffffff',
+  scrim: 'rgba(0, 0, 0, 0.3)',
   inlineCode: '#ebebeb',
   ok: '#388a34',
   error: '#e51400',
@@ -87,8 +96,11 @@ export const dark: Palette = {
   background: '#1f1f1f',
   text: '#cccccc',
   muted: '#9d9d9d',
+  placeholder: '#6b6b6b',
   border: '#3c3c3c',
   codeBackground: '#181818',
+  sheet: '#282828',
+  scrim: 'rgba(0, 0, 0, 0.6)',
   inlineCode: '#2b2b2b',
   ok: '#73c991',
   error: '#f14c4c',

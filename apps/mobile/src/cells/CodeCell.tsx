@@ -199,11 +199,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
       </View>
       <View style={styles.statusLine}>
         <View style={styles.statusLeft}>
-          {!can.ok ? (
-            <Text testID={`cell-${index}-why`} style={styles.statusText}>
-              {t.notRunnable[can.why](can.detail)}
-            </Text>
-          ) : runnable && !running ? (
+          {can.ok && runnable && !running ? (
             <View style={styles.statusButtons}>
               {steps.length > 1 ? (
                 <Pressable
@@ -247,6 +243,12 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
           </Pressable>
         ) : null}
       </View>
+      {/* Why it doesn't run here: a line of its own (beside the options it was squeezed to a sliver). */}
+      {!can.ok ? (
+        <Text testID={`cell-${index}-why`} style={[styles.why, (can.why === 'proposed' || can.why === 'unverified') && styles.whyProposed]}>
+          {t.notRunnable[can.why](can.detail)}
+        </Text>
+      ) : null}
       {running ? (
         <View testID={`cell-${index}-live`} style={styles.output}>
           {running.paused ? (
@@ -414,6 +416,8 @@ const useStyles = themedStyles((c) => ({
   statusLine: { flexDirection: 'row', alignItems: 'center', marginLeft: 34, paddingHorizontal: 4, paddingTop: 4, minHeight: 24, gap: 8 },
   statusLeft: { flex: 1 },
   statusText: { fontSize: 12, color: c.muted, flexShrink: 1 },
+  why: { fontSize: 12, lineHeight: 17, color: c.muted, marginLeft: 38, paddingHorizontal: 4, paddingTop: 2 },
+  whyProposed: { color: c.warning },
   statusButton: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   statusLink: { fontSize: 12, color: c.link },
   output: { marginLeft: 34, marginTop: 4, paddingHorizontal: 8, paddingVertical: 6, gap: 4 },

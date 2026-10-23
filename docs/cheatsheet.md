@@ -58,7 +58,7 @@ action by the same groups, with a search field (Ctrl/⌘+K with a keyboard).
 | --- | --- | --- | --- |
 | **Mark Step Done** / **Mark Step Skipped** / **Unmark Step** | cell ⋯ | Steps you do by hand (call the vendor, check a dashboard): record them, so progress and Resume Run know where you are. | the cell’s ⋯ (or a long press) |
 | **Check Next Item** | ⋯ of a Markdown cell | Tick the next `- [ ]` item of a checklist without editing the text. | tap the task box; ⋯ More → Check Next Item |
-| **Compare With Previous Run** | cell ⋯ | "Was it like this yesterday?": diff the output with the run before (with output history turned on). | the cell’s ⋯ → Compare With Previous Run (with Hosts → Output history on) |
+| **Compare With Previous Run** | cell ⋯ | "Was it like this yesterday?": diff the output with the run before (with output history turned on). | the cell’s ⋯ → Compare With Previous Run (with Hosts & settings → Output history on) |
 
 ## Values: parameters, inputs, secrets
 
@@ -67,9 +67,9 @@ action by the same groups, with a search field (Ctrl/⌘+K with a keyboard).
 | **Set Parameters** | Values ▾ | One runbook for several targets (`${param:NAMESPACE}`, `${param:REGION}`): set them once before running, instead of answering a prompt per cell. | the **Parameters** card on the runbook |
 | **Set Inputs** | Values ▾ | Values that differ per run (a ticket number, a user name, `${input:NAME}`): set or change them before running. | asked when a cell needs one; the **Inputs** card shows, changes and clears them |
 | **Reset Inputs** | Values ▾ | You start a new run with other values: forget this runbook's inputs and parameters, so they're asked again. | **Clear all inputs** on the Inputs card; ⋯ More → Reset Inputs |
-| **Set Secret** | Values ▾ | Store a token or password once (`${secret:NAME}`) in the OS keychain, instead of pasting it into commands. Setting it again changes it. | asked the first time; **Hosts → Secrets → Add a secret / Change** |
-| **List Secrets** | Values ▾ | See which secrets are stored (never their values) and copy a `${secret:NAME}` reference to write into a cell. | Hosts → Secrets |
-| **Delete Secret** | Values ▾ | A token was rotated or should no longer be used on this machine. | Hosts → Secrets → **Forget** |
+| **Set Secret** | Values ▾ | Store a token or password once (`${secret:NAME}`) in the OS keychain, instead of pasting it into commands. Setting it again changes it. | asked the first time; **Hosts & settings → Secrets → Add a secret / Change** |
+| **List Secrets** | Values ▾ | See which secrets are stored (never their values) and copy a `${secret:NAME}` reference to write into a cell. | Hosts & settings → Secrets |
+| **Delete Secret** | Values ▾ | A token was rotated or should no longer be used on this machine. | Hosts & settings → Secrets → **Forget** |
 
 Values never become part of the script: they reach the shell as environment variables, and
 secret values are redacted from the output.
@@ -104,7 +104,7 @@ secret values are redacted from the output.
 | **Add a host**, edit, **Delete this host** | Hosts | Each server you run on, once: name, address, user. |
 | **Run on** (host chips) | top of a runbook | Pick the server the cells run on. A cell with `host=NAME` always runs on that one. |
 | **Trust and run** | shown on the first connection | Check the server's fingerprint before anything is sent. If a known server's key changes, the app stops and tells you. |
-| **Forget the trusted host key** | Hosts → a host | The server was reinstalled and has a new key on purpose. |
+| **Forget the trusted host key** | Hosts & settings → a host | The server was reinstalled and has a new key on purpose. |
 | **This app's SSH key → Copy** | Hosts | Put the app's public key into `~/.ssh/authorized_keys` on each server. On phones the private key stays in secure hardware. |
 | **Relay** address and token | Hosts (browser only) | The browser can't open SSH connections itself: it goes through your relay. |
 | **Share Runbook** | ⋯ More → Share | Hand the .md with its outputs to VS Code or a colleague (mail, Files, AirDrop, Slack). |

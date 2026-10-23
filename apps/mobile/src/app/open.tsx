@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { Link, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ScrollView, Text } from 'react-native';
 import { themedStyles } from '../theme';
@@ -28,6 +28,11 @@ export default function OpenRoute() {
       <Text testID="open-link-state" role={shown ? 'alert' : undefined} style={shown ? styles.error : styles.text}>
         {shown ?? t.linkOpening}
       </Text>
+      {shown ? (
+        <Link href="/" replace style={styles.link}>
+          {t.backToRunbooks}
+        </Link>
+      ) : null}
     </ScrollView>
   );
 }
@@ -37,4 +42,5 @@ const useStyles = themedStyles((c) => ({
   content: { padding: 16 },
   text: { fontSize: 15, color: c.text },
   error: { fontSize: 15, color: c.error },
+  link: { fontSize: 15, color: c.link, marginTop: 16 },
 }));

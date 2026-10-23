@@ -10,6 +10,7 @@ import type { LeakFinding } from '@md-runbook/core/leaks';
 import { t } from '../i18n';
 import { MarkdownView } from '../markdown/MarkdownView';
 import { mono, themedStyles, usePalette } from '../theme';
+import { Grabber } from '../ui/Grabber';
 
 export type AssistantStep =
   | { kind: 'key' }
@@ -45,6 +46,7 @@ export function AssistantSheet(p: {
     <Modal visible={s !== undefined} animationType="slide" transparent onRequestClose={close}>
       <Pressable style={styles.backdrop} onPress={close} accessibilityLabel={t.close} />
       <View testID="assistant-sheet" style={styles.sheet}>
+        <Grabber onClose={close} />
         <ScrollView keyboardShouldPersistTaps="handled">
           {s?.kind === 'key' ? (
             <View>
@@ -60,7 +62,7 @@ export function AssistantSheet(p: {
                 autoCapitalize="none"
                 autoCorrect={false}
                 placeholder="sk-ant-…"
-                placeholderTextColor={colors.muted}
+                placeholderTextColor={colors.placeholder}
               />
               <View style={styles.actions}>
                 <Pressable
@@ -154,10 +156,10 @@ export function AssistantSheet(p: {
 }
 
 const useStyles = themedStyles((c) => ({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)' },
+  backdrop: { flex: 1, backgroundColor: c.scrim },
   sheet: {
     maxHeight: '85%',
-    backgroundColor: c.background,
+    backgroundColor: c.sheet,
     borderTopLeftRadius: 14,
     borderTopRightRadius: 14,
     padding: 16,

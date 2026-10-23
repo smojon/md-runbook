@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { t } from '../i18n';
 import { themedStyles, usePalette } from '../theme';
+import { Grabber } from './Grabber';
 
 export interface AppAction {
   id: string;
@@ -47,6 +48,7 @@ export function ActionsSheet({ actions, visible, onClose }: { actions: readonly 
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel={t.close} />
       <View testID="actions-sheet" style={styles.sheet}>
+        <Grabber onClose={onClose} />
         <TextInput
           testID="actions-search"
           accessibilityLabel={t.searchActions}
@@ -54,7 +56,7 @@ export function ActionsSheet({ actions, visible, onClose }: { actions: readonly 
           value={query}
           onChangeText={setQuery}
           placeholder={t.searchActions}
-          placeholderTextColor={colors.muted}
+          placeholderTextColor={colors.placeholder}
           autoCapitalize="none"
           autoCorrect={false}
           autoFocus
@@ -94,10 +96,10 @@ export function ActionsSheet({ actions, visible, onClose }: { actions: readonly 
 }
 
 const useStyles = themedStyles((c) => ({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)' },
+  backdrop: { flex: 1, backgroundColor: c.scrim },
   sheet: {
     maxHeight: '75%',
-    backgroundColor: c.background,
+    backgroundColor: c.sheet,
     borderTopLeftRadius: 14,
     borderTopRightRadius: 14,
     padding: 14,

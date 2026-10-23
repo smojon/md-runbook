@@ -205,7 +205,7 @@ Each has its own page with examples and settings:
   VS Code's log files): `ERROR` red, `WARN` yellow, `INFO` blue, `DEBUG` grey, `OK`/`PASSED`
   green, Nevis's `5-NOTICE` and Kubernetes' `E1022 …` lines included. A program's own colours
   win; the file keeps plain text. Settings: `mdRunbook.output.colorLevels`, `stderrInRed`,
-  `forceColor` (also in the app, under Hosts).
+  `forceColor` (also in the app, under Hosts & settings).
 - **Cloud console views:** when a cell prints JSON from the AWS or Google Cloud CLI
   (`aws ec2 describe-instances`, `gcloud compute instances list --format=json`, …), a table of
   the EC2 instances, EKS clusters, Compute Engine instances, GKE clusters or Cloud Run services

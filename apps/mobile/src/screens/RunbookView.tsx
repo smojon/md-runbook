@@ -96,6 +96,15 @@ export function copyStamp(d: Date): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
+/**
+ * The first cell without its YAML front matter, as VS Code's Markdown preview shows it: what it
+ * holds is shown where it acts (the Parameters card, Session), not as a stray list.
+ */
+export function withoutFrontMatter(value: string): string {
+  const m = /^﻿?---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(value);
+  return m ? value.slice(m[0].length) : value;
+}
+
 /** Share: the run report (HTML, PDF) and the runbook itself, through the share sheet or a download. */
 function shareActions(runbook: Runbook, failed: (why: string) => void): AppAction[] {
   const safely = (f: () => Promise<void>) => () => void f().catch((e: unknown) => failed(e instanceof Error ? e.message : String(e)));
@@ -670,9 +679,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               <ParamsCard specs={params} values={paramValues} onChange={(name, value) => setParamValue(runbook.id, name, value)} />
             ) : null}
             <HostPicker hosts={hosts} selected={host} onSelect={setHostId} />
+            {/* A setup step (the web's relay), not an error: a note with the way to it. */}
             {transportIssue ? (
-              <Text testID="transport-issue" style={styles.warning}>
-                {transportIssue}
+              <Text testID="transport-issue" style={styles.setupNote}>
+                {transportIssue}{' '}
+                <Link href={{ pathname: '/hosts', params: {} }}>
+                  <Text style={styles.inlineLink}>{t.setUpRelay}</Text>
+                </Link>
               </Text>
             ) : null}
             {notice ? (
@@ -739,7 +752,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             <View style={styles.markup}>
               <MarkdownView
                 testID={`cell-${index}`}
-                markdown={item.value}
+                markdown={index === 0 ? withoutFrontMatter(item.value) : item.value}
                 firstTask={tasks.first[index]}
                 onToggleTask={tasks.aligned ? toggleTask : undefined}
               />
@@ -948,7 +961,7 @@ function NeedsCard({
             value={values[n.name] ?? ''}
             onChangeText={(v) => setValues((m) => ({ ...m, [n.name]: v }))}
             secureTextEntry={n.masked}
-            placeholderTextColor={colors.muted}
+            placeholderTextColor={colors.placeholder}
             autoCapitalize="none"
             autoCorrect={false}
           />
@@ -1001,7 +1014,7 @@ function ParamsCard({
               value={value}
               onChangeText={(v) => onChange(s.name, v)}
               placeholder={s.default}
-              placeholderTextColor={colors.muted}
+              placeholderTextColor={colors.placeholder}
               autoCapitalize="none"
               autoCorrect={false}
             />
@@ -1122,6 +1135,8 @@ const useStyles = themedStyles((c) => ({
   chipTextOn: { color: c.onAccent },
   link: { fontSize: 15, color: c.link },
   warning: { fontSize: 13, color: c.error, marginVertical: 6 },
+  setupNote: { fontSize: 13, color: c.muted, marginVertical: 6 },
+  inlineLink: { color: c.link },
   disabled: { opacity: 0.5 },
   runBar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
   runPrimary: {

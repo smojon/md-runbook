@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
@@ -10,6 +10,7 @@ import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../s
 import { HISTORY_SIZES, setHistorySize, setOutputSetting, useHistorySize, useOutputSettings } from '../settings/store';
 import { getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { mono, themedStyles } from '../theme';
+import { Toggle } from '../ui/Toggle';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
 export function HostList() {
@@ -166,7 +167,7 @@ function ColorSection() {
             <Text style={styles.switchLabel}>{r.label}</Text>
             <Text style={styles.help}>{r.help}</Text>
           </View>
-          <Switch
+          <Toggle
             testID={`setting-${r.key}`}
             accessibilityLabel={r.label}
             value={s[r.key]}

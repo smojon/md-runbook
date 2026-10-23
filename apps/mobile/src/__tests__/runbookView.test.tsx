@@ -8,7 +8,7 @@ import { readSecret } from '../secrets/store';
 import { autorunAsked } from '../runbooks/autorun';
 import { resetSettings, setOutputSetting } from '../settings/store';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
-import { RunbookView, copyStamp } from '../screens/RunbookView';
+import { RunbookView, copyStamp, withoutFrontMatter } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
 
 jest.mock('expo-router', () => ({
@@ -140,7 +140,7 @@ describe("a cell's ⋯ (or long press): steps and outputs", () => {
     });
     expect(attrs(r.id, 1)).toMatchObject({ exit: '0' });
     await act(async () => {
-      fireEvent.press(screen.getByLabelText('Close'));
+      fireEvent.press(screen.getByTestId('sheet-grabber'));
     });
     await open(3, 'unmarkStep');
     expect(attrs(r.id, 3)).toBeUndefined();
@@ -481,6 +481,16 @@ describe('runbook parameters', () => {
     });
     await waitFor(() => expect(mockConnection.calls).toHaveLength(1));
     expect(mockConnection.calls[0]?.opts.env).toMatchObject({ TARGET: 'web-1', REGION: 'eu-west-1' });
+  });
+
+  it('the front matter is not drawn in the first cell (the card shows it)', async () => {
+    const r = addRunbook('deploy.md', text);
+    await render(<RunbookView id={r.id} />);
+    expect(screen.queryByText(/params:/)).toBeNull();
+    expect(screen.getByText('Deploy')).toBeTruthy();
+    expect(withoutFrontMatter('---\r\nmode: isolated\r\n---\r\n# T\n')).toBe('# T\n');
+    expect(withoutFrontMatter('---\n---\nx')).toBe('x');
+    expect(withoutFrontMatter('# T\n\n---\n')).toBe('# T\n\n---\n');
   });
 
   it('a runbook without parameters has no card', async () => {

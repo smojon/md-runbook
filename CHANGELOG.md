@@ -2,10 +2,19 @@
 
 ## Unreleased
 
+- **App look and feel, from a screen-by-screen check:** iOS-style toggles on every platform;
+  sheets with a grabber, rounded corners, and a raised colour and stronger dim in dark mode; a
+  focused field's border in the accent colour on the web (no thick black ring); placeholders
+  lighter than typed values; output lines no longer wrap (tables and JSON keep their shape,
+  wide output scrolls sideways); why a cell can't run on its own line under the cell; the
+  front matter no longer drawn as a list (its values are in the Parameters card); the browser's
+  relay notice is a quiet line with a link to set it up; a runbook or link opened directly has
+  a back arrow; the link screen has a title and a way back after an error; Hosts is now
+  **Hosts & settings**.
 - **Cloud console views:** JSON from the AWS or Google Cloud CLI gets a table of its resources
   under the output, each with a link to it in the console: EC2 instances, EKS clusters,
   Compute Engine instances, GKE clusters, Cloud Run services (recognized by the JSON's shape).
-  Display only; setting `mdRunbook.output.cloudViews` (on), and in the app under Hosts.
+  Display only; setting `mdRunbook.output.cloudViews` (on), and in the app under Hosts & settings.
 - **Two signers for signed runbooks (four eyes):** a reviewer adds a signature to the signed
   manifest with **Co-sign Runbook** or `md-runbook sign --cosign`, unchanged; md-runbook-gate with
   `signers = 2` (or `--signers=2` on a key) runs only runbooks signed by two distinct trusted

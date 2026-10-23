@@ -75,7 +75,7 @@ export function RunbookList() {
                 value={link}
                 onChangeText={setLink}
                 placeholder={t.openLinkPlaceholder}
-                placeholderTextColor={colors.muted}
+                placeholderTextColor={colors.placeholder}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"

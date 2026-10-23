@@ -74,7 +74,7 @@ export function ApproveCard(p: {
           testID="approve-word"
           accessibilityLabel={t.approveTypeRun}
           placeholder={t.approveTypeRun}
-          placeholderTextColor={colors.muted}
+          placeholderTextColor={colors.placeholder}
           style={styles.input}
           value={word}
           onChangeText={setWord}

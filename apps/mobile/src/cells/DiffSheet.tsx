@@ -3,6 +3,7 @@ import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { t } from '../i18n';
 import { mono, themedStyles } from '../theme';
 import { DiffLine } from './lineDiff';
+import { Grabber } from '../ui/Grabber';
 
 export function DiffSheet(p: { diff: { title: string; lines: readonly DiffLine[] } | undefined; onClose(): void }) {
   const styles = useStyles();
@@ -11,6 +12,7 @@ export function DiffSheet(p: { diff: { title: string; lines: readonly DiffLine[]
     <Modal visible={p.diff !== undefined} animationType="slide" transparent onRequestClose={p.onClose}>
       <Pressable style={styles.backdrop} onPress={p.onClose} accessibilityLabel={t.close} />
       <View testID="diff-sheet" style={styles.sheet}>
+        <Grabber onClose={p.onClose} />
         <Text style={styles.title}>{p.diff?.title}</Text>
         {!changed ? <Text style={styles.body}>{t.diffSame}</Text> : null}
         <ScrollView>
@@ -33,10 +35,10 @@ export function DiffSheet(p: { diff: { title: string; lines: readonly DiffLine[]
 }
 
 const useStyles = themedStyles((c) => ({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)' },
+  backdrop: { flex: 1, backgroundColor: c.scrim },
   sheet: {
     maxHeight: '80%',
-    backgroundColor: c.background,
+    backgroundColor: c.sheet,
     borderTopLeftRadius: 14,
     borderTopRightRadius: 14,
     padding: 16,
