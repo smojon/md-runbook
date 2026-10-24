@@ -351,6 +351,13 @@ const wrap = (b64: string): string => b64.replace(/.{1,76}/g, '$&\n').trimEnd();
 /** A signer name as the block can hold it: one word, nothing that would end the HTML comment (`--`, `>`). */
 export const signerLabel = (name: string): string => name.replace(/[^\w@.+-]+/g, '_').replace(/-{2,}/g, '-') || 'unknown';
 
+/**
+ * A signer name that is the same in the signature block and as a principal in a server's
+ * allowed_signers: ASCII letters, digits and `@ . _ + -` (no spaces, quotes, commas or patterns
+ * such as `*`, which allowed_signers would read differently).
+ */
+export const SIGNER_NAME_RE = /^[A-Za-z0-9_@.+](?:[A-Za-z0-9_@.+]|-(?!-)){0,99}$/;
+
 export function formatSignatureBlock(b: SignatureBlock): string {
   return (
     `<!-- md-runbook:signature v1 signer=${signerLabel(b.signer)} signed=${b.signed}\n` +

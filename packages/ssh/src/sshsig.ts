@@ -5,7 +5,7 @@
  * The key signs through the SSH library, so a key in the Secure Enclave or Android Keystore
  * (ExternalKeyPair) signs inside the hardware.
  */
-import { SIGNATURE_NAMESPACE } from '@md-runbook/core/signing';
+import { SIGNATURE_NAMESPACE, SIGNER_NAME_RE } from '@md-runbook/core/signing';
 import { sha256Bytes } from '@md-runbook/core/sha256';
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
 import { SshDataWriter } from '@microsoft/dev-tunnels-ssh';
@@ -71,6 +71,7 @@ export async function signSshsig(pair: KeyPair, message: string, namespace: stri
  * md-runbook's namespace only: `principal namespaces="md-runbook" ecdsa-sha2-nistp256 AAAA…`.
  */
 export async function allowedSignersLine(pair: KeyPair, principal: string): Promise<string> {
+  if (!SIGNER_NAME_RE.test(principal)) throw new Error(`not a signer name: ${principal}`);
   const publicKey = await pair.getPublicKeyBytes();
   if (!publicKey) throw new Error('the key has no public half');
   return `${principal} namespaces="${SIGNATURE_NAMESPACE}" ${pair.keyAlgorithmName} ${publicKey.toString('base64')}`;

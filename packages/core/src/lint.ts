@@ -158,27 +158,35 @@ export function lintRunbook(text: string): LintProblem[] {
     }
     // Signed blocks not in the file unchanged: deleted, or changed (then also reported above).
     if (signed.missing.length > 0) {
-      const at = text.split(/\r?\n/).findIndex((l) => l.startsWith('<!-- md-runbook:signature'));
       problems.push({
         severity: 'warning',
-        line: Math.max(0, at),
+        line: Math.max(0, signatureLine(text)),
         message: `signed block${signed.missing.length === 1 ? '' : 's'} ${signed.missing.join(', ')} of ${signed.manifest.cells.length} not in the file as signed (deleted or changed since signing)`,
       });
     }
   } else {
-    // A block-shaped line inside code is an example, not the signature (as readSignature reads it).
-    let open: FenceOpen | null = null;
-    const at = text.split(/\r?\n/).findIndex((l) => {
-      if (open) {
-        if (isFenceClose(l, open)) open = null;
-        return false;
-      }
-      open = matchFenceOpen(l);
-      return open === null && l.startsWith('<!-- md-runbook:signature');
-    });
+    const at = signatureLine(text);
     if (at >= 0) problems.push({ severity: 'error', line: at, message: 'the signature block is damaged (sign the runbook again)' });
   }
   return problems.sort((a, b) => a.line - b.line);
+}
+
+/**
+ * The line of the signature block: the last one outside code, as readSignature reads it (a
+ * block-shaped line inside code is an example). -1 when there is none.
+ */
+function signatureLine(text: string): number {
+  let open: FenceOpen | null = null;
+  let at = -1;
+  text.split(/\r?\n/).forEach((l, i) => {
+    if (open) {
+      if (isFenceClose(l, open)) open = null;
+    } else {
+      open = matchFenceOpen(l);
+      if (open === null && l.startsWith('<!-- md-runbook:signature')) at = i;
+    }
+  });
+  return at;
 }
 
 /** `file:line: error: message`, the format editors and CI systems link to. */

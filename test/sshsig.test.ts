@@ -28,6 +28,8 @@ describe('app signatures (SSHSIG) verify with ssh-keygen', () => {
     // Another text, or another namespace, doesn't verify.
     await assert.rejects(sshVerify(manifest + ' ', signature, allowed));
     await assert.rejects(sshVerify(manifest, await signSshsig(key, manifest, 'file'), allowed));
+    // Names allowed_signers would read differently (a space, a quote, a list, a pattern) are refused.
+    for (const bad of ['Stephane Mojon', 'x"y', 'a,b', 'ops*', '#me', '']) await assert.rejects(allowedSignersLine(key, bad), /not a signer name/);
   });
 
   it('a key whose private half signs elsewhere (Secure Enclave, Keystore: DER signatures)', async () => {

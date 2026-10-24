@@ -2,10 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { parseManifest, readSignature, signedStatus } from '@md-runbook/core/signing';
 import { generateKey } from '@md-runbook/ssh';
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
-import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
+import { addRunbook, getRunbook, resetRunbooks, updateRunbookText } from '../runbooks/store';
 import { resetSettings, setSignerName, signerName } from '../settings/store';
 import { RunbookView } from '../screens/RunbookView';
-import { checkSignInput, cosignCheck, cosignRunbook, signPlan, signRunbook } from '../signing/sign';
+import { checkSignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
 
 jest.mock('expo-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
@@ -90,6 +90,43 @@ describe('signing in the app (the logic)', () => {
     const twice = await cosignRunbook(co.text, 'reviewer@example.net', reviewer);
     expect(twice.ok && readSignature(twice.text)!.cosigners?.length).toBe(1);
     expect(cosignCheck(signed.text.replace('restart api', 'stop api'))).toEqual({ why: 'changed' });
+    // The reviewer saw another manifest (signed again since the card opened): refused, not signed unseen.
+    expect(await cosignRunbook(co.text, 'reviewer@example.net', reviewer, 'another manifest')).toEqual({ ok: false, errors: ['other'] });
+  });
+
+  it('the signature goes into the latest text (a run wrote its output meanwhile), never over changed blocks', async () => {
+    const r = await signRunbook(
+      RUNBOOK,
+      signPlan(RUNBOOK, 'r.md'),
+      { name: 'r', scopes: '', days: '', patterns: { NS: '[a-z]+' } },
+      'me',
+      mockKey!,
+    );
+    if (!r.ok) throw new Error(r.errors.join('; '));
+    const output = '<!-- md-runbook:output start exit=0 -->\n```text\nok\n```\n<!-- md-runbook:output end -->\n';
+    const withOutput = RUNBOOK.replace('systemctl restart api\n```\n', 'systemctl restart api\n```\n' + output);
+    const merged = withSignedBlock(withOutput, r.block);
+    expect(merged).toContain('<!-- md-runbook:output start exit=0 -->');
+    expect(readSignature(merged!)?.manifest).toBe(r.block.manifest);
+    expect(withSignedBlock(RUNBOOK.replace('restart api', 'stop api'), r.block)).toBeUndefined();
+  });
+
+  it('the form: days between 1 and 36500, a valid default name; plans compare by version and values', () => {
+    const plan = signPlan(RUNBOOK, '--Über ops!.runbook.md');
+    expect(plan.name).toBe('ber-ops-');
+    expect(signPlan(RUNBOOK, undefined).name).toBe('runbook');
+    const base = { name: 'r', scopes: '', patterns: { NS: 'x' } };
+    for (const [days, ok] of [
+      ['1', true],
+      ['36500', true],
+      ['0', false],
+      ['36501', false],
+      ['99999999999', false],
+      ['1e3', false],
+    ] as const)
+      expect(checkSignInput(plan, { ...base, days }).includes('days')).toBe(!ok);
+    expect(samePlan(plan, signPlan(RUNBOOK, '--Über ops!.runbook.md'))).toBe(true);
+    expect(samePlan(plan, signPlan(RUNBOOK + fence('bash', 'echo ${input:WHO}'), '--Über ops!.runbook.md'))).toBe(false);
   });
 });
 
@@ -97,31 +134,78 @@ describe('signing in the app (the screen)', () => {
   it('⋯ More → Sign Runbook: the card asks, the app key signs, the banner shows the signer', async () => {
     const r = addRunbook('restart-api.md', RUNBOOK);
     await render(<RunbookView id={r.id} />);
-    await act(async () => fireEvent.press(screen.getByTestId('more-actions')));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
     // Co-sign needs a signed runbook first.
     expect(screen.getByTestId('action-cosignRunbook').props.accessibilityState).toEqual({ disabled: true });
-    await act(async () => fireEvent.press(screen.getByTestId('action-signRunbook')));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-signRunbook'));
+    });
     expect(screen.getByTestId('sign-card')).toBeTruthy();
     expect(screen.getByTestId('sign-name').props.value).toBe('restart-api');
     // Nothing is signed until the pattern and the signer's name are given.
-    await act(async () => fireEvent.press(screen.getByTestId('sign-go')));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('sign-go'));
+    });
     expect(readSignature(getRunbook(r.id)!.text)).toBeUndefined();
     await act(async () => {
       fireEvent.changeText(screen.getByTestId('sign-pattern:NS'), '[a-z-]+');
       fireEvent.changeText(screen.getByTestId('sign-signer'), 'me@example.net');
     });
-    await act(async () => fireEvent.press(screen.getByTestId('sign-go')));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('sign-go'));
+    });
     await waitFor(() => expect(readSignature(getRunbook(r.id)!.text)?.signer).toBe('me@example.net'));
     expect(screen.queryByTestId('sign-card')).toBeNull();
     expect(signerName()).toBe('me@example.net');
     expect(screen.getByText(/restart-api version 1 is signed by me@example\.net \(2 blocks\)/)).toBeTruthy();
 
     // Co-sign: the card shows what is being signed; the signer's saved name is filled in.
-    setSignerName('reviewer@example.net');
-    await act(async () => fireEvent.press(screen.getByTestId('more-actions')));
-    await act(async () => fireEvent.press(screen.getByTestId('action-cosignRunbook')));
+    await act(async () => {
+      setSignerName('reviewer@example.net');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-cosignRunbook'));
+    });
     expect(screen.getByTestId('cosign-summary').props.children).toMatch(/Signed by me@example\.net\. .*these 2 blocks/);
-    await act(async () => fireEvent.press(screen.getByTestId('sign-go')));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('sign-go'));
+    });
     await waitFor(() => expect(readSignature(getRunbook(r.id)!.text)?.cosigners?.[0]?.signer).toBe('reviewer@example.net'));
+  });
+
+  it('a name allowed_signers would read differently is refused; a runbook that changed meanwhile shows the card again', async () => {
+    const r = addRunbook('r.md', RUNBOOK);
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-signRunbook'));
+    });
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('sign-pattern:NS'), '[a-z]+');
+      fireEvent.changeText(screen.getByTestId('sign-signer'), 'Stephane Mojon');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('sign-go'));
+    });
+    expect(screen.getByText(/Letters, digits and @ \. _ \+ - only/)).toBeTruthy();
+    expect(readSignature(getRunbook(r.id)!.text)).toBeUndefined();
+    // A new value to pattern arrives while the card is open: the card asks for it instead of signing.
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('sign-signer'), 'me@example.net');
+      updateRunbookText(r.id, RUNBOOK + fence('bash', 'echo ${input:WHO}'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('sign-go'));
+    });
+    expect(screen.getByTestId('sign-error').props.children).toMatch(/changed since this card opened/);
+    expect(screen.getByTestId('sign-pattern:WHO')).toBeTruthy();
+    expect(readSignature(getRunbook(r.id)!.text)).toBeUndefined();
   });
 });

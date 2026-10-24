@@ -47,6 +47,11 @@ const en = {
     `Signed by ${signers}. Your signature says you reviewed these ${blocks} block${blocks === 1 ? '' : 's'}:`,
   cosignGo: 'Co-sign',
   signFailed: (why: string) => `Not signed: ${why}`,
+  signPlanChanged: 'The runbook changed since this card opened: check the fields again, then sign.',
+  cosignOther: 'The runbook was signed again since this card opened: open Co-sign Runbook again to review that version.',
+  signTextChanged: 'The runbook’s blocks changed while signing: nothing was signed. Sign it again.',
+  signerNameRule: 'Letters, digits and @ . _ + - only (no spaces): the same name goes into the servers’ allowed_signers.',
+  signerNameFirst: 'Set your name above to get the line.',
   signedNotice: (name: string, version: number, signers: string, blocks: number) =>
     `${name} version ${version} is signed by ${signers} (${blocks} block${blocks === 1 ? '' : 's'}). The commands were not checked one by one (bash -n) on this device: VS Code and the command line check that.`,
   cosignedNotice: (name: string, version: number, signers: string) => `${name} version ${version} is signed by ${signers}.`,

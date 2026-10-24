@@ -118,9 +118,14 @@ describe('hosts screens', () => {
 
   it("Signing: the name for signatures, and the key's line for the servers' allowed_signers", async () => {
     await render(<HostList />);
-    await waitFor(() =>
-      expect(screen.getByTestId('allowed-signers-line').props.children).toMatch(/^you@example\.net namespaces="md-runbook" /),
-    );
+    // No line (and no Copy) until a name is set; a name allowed_signers would misread gets none either.
+    expect(screen.getByTestId('allowed-signers-line').props.children).toMatch(/Set your name above/);
+    expect(screen.getByTestId('copy-allowed-signers').props.accessibilityState).toMatchObject({ disabled: true });
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('signer-name'), 'Stephane Mojon');
+    });
+    expect(screen.getByTestId('signer-name-rule')).toBeTruthy();
+    expect(screen.getByTestId('allowed-signers-line').props.children).toMatch(/Set your name above/);
     await act(async () => {
       fireEvent.changeText(screen.getByTestId('signer-name'), 'me@example.net');
     });

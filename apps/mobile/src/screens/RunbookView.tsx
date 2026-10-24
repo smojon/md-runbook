@@ -43,7 +43,7 @@ import { saveRunbook } from '../runbooks/save';
 import { exportReport, shareRunbook } from '../share/export';
 import { Runbook, addRunbook, getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { SignCard, SignRequest } from '../signing/SignCard';
-import { SignInput, cosignCheck, cosignRunbook, signPlan, signRunbook } from '../signing/sign';
+import { SignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
 import { appKey } from '../ssh/appKey';
 import { fingerprint } from '../ssh/fingerprint';
 import { LineMode, isStepping, lineLabel, planLines } from '../ssh/lineRuns';
@@ -549,22 +549,39 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const doSign = async (input: SignInput | undefined, signer: string): Promise<void> => {
     if (!runbook || !signing) return;
     const { request } = signing;
+    const text = getRunbook(runbook.id)?.text ?? runbook.text;
+    // The runbook changed since the card opened (signed again elsewhere, a new value to pattern):
+    // show the card for it as it is now rather than sign what wasn't asked.
+    if (request.kind === 'sign') {
+      const fresh = signPlan(text, runbook.fileName);
+      if (!samePlan(fresh, request.plan))
+        return setSigning({ request: { kind: 'sign', plan: fresh }, busy: false, errors: [t.signPlanChanged] });
+    }
     setSigning({ request, busy: true, errors: [] });
     try {
-      const text = getRunbook(runbook.id)?.text ?? runbook.text;
       const key = await appKey();
       const r =
         request.kind === 'sign' && input
           ? await signRunbook(text, request.plan, input, signer, key)
-          : await cosignRunbook(text, signer, key);
+          : await cosignRunbook(text, signer, key, request.kind === 'cosign' ? request.block.manifest : undefined);
       if (!r.ok) {
         const why = (e: string): string =>
-          e === 'unsigned' ? t.notSignedYet : e === 'changed' ? t.changedSinceSigned(readSignature(text)?.signer ?? '?') : e;
+          e === 'unsigned'
+            ? t.notSignedYet
+            : e === 'changed'
+              ? t.changedSinceSigned(readSignature(text)?.signer ?? '?')
+              : e === 'other'
+                ? t.cosignOther
+                : e;
         return setSigning({ request, busy: false, errors: r.errors.map(why) });
       }
-      updateRunbookText(runbook.id, r.text);
+      // Into the text as it is now: a run may have written its output while the key signed.
+      const latest = getRunbook(runbook.id)?.text ?? text;
+      const next = latest === text ? r.text : withSignedBlock(latest, r.block);
+      if (next === undefined) return setSigning({ request, busy: false, errors: [t.signTextChanged] });
+      updateRunbookText(runbook.id, next);
       setSigning(undefined);
-      const signers = signerNames(readSignature(r.text)!).join(', ');
+      const signers = signerNames(r.block).join(', ');
       setNotice(
         request.kind === 'sign'
           ? t.signedNotice(r.manifest.name, r.manifest.version, signers, r.manifest.cells.length)

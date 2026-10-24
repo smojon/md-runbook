@@ -17,6 +17,7 @@ import {
   useSignerName,
 } from '../settings/store';
 import { getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
+import { SIGNER_NAME_RE } from '@md-runbook/core/signing';
 import { mono, themedStyles, usePalette } from '../theme';
 import { Toggle } from '../ui/Toggle';
 
@@ -137,13 +138,17 @@ function AppKeySection() {
 function SigningSection() {
   const styles = useStyles();
   const colors = usePalette();
+  // The saved name until one is typed (settings may load after the screen opens).
   const saved = useSignerName();
-  const [name, setName] = useState(saved);
+  const [typed, setName] = useState<string | undefined>();
+  const name = typed ?? saved;
   const [line, setLine] = useState<string | undefined>();
   const [copied, setCopied] = useState(false);
-  const principal = name.trim() || t.signerPlaceholder;
+  // Only a name allowed_signers reads as written gets a line (and is saved).
+  const principal = SIGNER_NAME_RE.test(name.trim()) ? name.trim() : undefined;
   useEffect(() => {
     let live = true;
+    if (principal === undefined) return;
     // A failure (no key yet) leaves the line out; the app key section above says why.
     Promise.resolve()
       .then(() => appAllowedSignersLine(principal))
@@ -155,9 +160,11 @@ function SigningSection() {
       live = false;
     };
   }, [principal]);
+  // A line made for an earlier, valid name isn't shown for an invalid one.
+  const shown = principal === undefined ? undefined : line;
   const copy = async (): Promise<void> => {
-    if (!line) return;
-    await Clipboard.setStringAsync(line);
+    if (!shown) return;
+    await Clipboard.setStringAsync(shown);
     setCopied(true);
   };
   return (
@@ -173,23 +180,28 @@ function SigningSection() {
           setName(v);
           setCopied(false);
         }}
-        onEndEditing={() => setSignerName(name)}
-        onBlur={() => setSignerName(name)}
+        onEndEditing={() => principal !== undefined && setSignerName(principal)}
+        onBlur={() => principal !== undefined && setSignerName(principal)}
         placeholder={t.signerPlaceholder}
         placeholderTextColor={colors.placeholder}
         autoCapitalize="none"
         autoCorrect={false}
       />
+      {name.trim() !== '' && principal === undefined ? (
+        <Text testID="signer-name-rule" style={styles.error}>
+          {t.signerNameRule}
+        </Text>
+      ) : null}
       <Text style={styles.help}>{t.allowedSignersHelp}</Text>
       <Text testID="allowed-signers-line" style={styles.key} selectable>
-        {line ?? t.appKeyLoading}
+        {shown ?? (principal === undefined ? t.signerNameFirst : t.appKeyLoading)}
       </Text>
       <Pressable
         testID="copy-allowed-signers"
         accessibilityRole="button"
-        disabled={!line}
+        disabled={!shown}
         onPress={() => void copy()}
-        style={[styles.button, !line && styles.disabled]}
+        style={[styles.button, !shown && styles.disabled]}
       >
         <Text style={styles.buttonText}>{copied ? t.copied : t.copy}</Text>
       </Pressable>

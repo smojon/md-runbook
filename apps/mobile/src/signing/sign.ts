@@ -57,7 +57,13 @@ export function signPlan(text: string, fileName: string | undefined): SignPlan {
     }
   }
   const needs = [...seen].filter(([n]) => previous?.patterns[n] === undefined).map(([name, kind]) => ({ name, kind }));
-  const base = (fileName ?? 'runbook').replace(/(\.runbook)?\.md$/i, '').replace(/[^A-Za-z0-9._/-]+/g, '-');
+  // A valid name (RUNBOOK_NAME_RE): starts with a letter or digit, at most 100 characters.
+  const base =
+    (fileName ?? '')
+      .replace(/(\.runbook)?\.md$/i, '')
+      .replace(/[^A-Za-z0-9._/-]+/g, '-')
+      .replace(/^[^A-Za-z0-9]+/, '')
+      .slice(0, 100) || 'runbook';
   return { ...(previous ? { previous } : {}), name: previous?.name ?? base, version: previous ? previous.version + 1 : 1, needs };
 }
 
@@ -83,12 +89,26 @@ export function checkSignInput(plan: SignPlan, input: SignInput): string[] {
       .every((s) => SCOPE_RE.test(s))
   )
     errors.push('scopes');
-  if (input.days.trim() !== '' && !/^\d+$/.test(input.days.trim())) errors.push('days');
+  // 1 to 36500 days (a hundred years): a larger number is no date.
+  const days = input.days.trim();
+  if (days !== '' && (!/^\d{1,5}$/.test(days) || Number(days) < 1 || Number(days) > 36_500)) errors.push('days');
   for (const n of plan.needs) if ((input.patterns[n.name] ?? '').trim() === '') errors.push(`pattern:${n.name}`);
   return errors;
 }
 
-export type SignResult = { ok: true; text: string; manifest: Manifest } | { ok: false; errors: string[] };
+export type SignResult = { ok: true; text: string; manifest: Manifest; block: SignatureBlock } | { ok: false; errors: string[] };
+
+/** The same signing as `b` would do: the version, and the values that need a pattern (else the card asks again). */
+export const samePlan = (a: SignPlan, b: SignPlan): boolean =>
+  a.version === b.version && a.name === b.name && a.needs.map((n) => n.name).join(' ') === b.needs.map((n) => n.name).join(' ');
+
+/**
+ * `block` (just signed) into the runbook as it is now: the text may have changed while the key
+ * signed (a run wrote its output). Undefined when its blocks no longer make the signed manifest.
+ */
+export function withSignedBlock(latest: string, block: SignatureBlock): string | undefined {
+  return cosignable(latest, block) ? withSignature(latest, block) : undefined;
+}
 
 const today = (now: Date): string => now.toISOString().slice(0, 10);
 
@@ -113,7 +133,7 @@ export async function signRunbook(
   const manifest = formatManifest(built.manifest);
   const signature = await signSshsig(key, manifest);
   const block: SignatureBlock = { signer, signed: today(now), manifest, signature };
-  return { ok: true, text: withSignature(text, block), manifest: built.manifest };
+  return { ok: true, text: withSignature(text, block), manifest: built.manifest, block };
 }
 
 /** Why the runbook can't be co-signed now, or undefined (with its block). */
@@ -124,14 +144,20 @@ export function cosignCheck(text: string): { why: 'unsigned' | 'changed' } | { b
   return { block, manifest: parseManifest(block.manifest) };
 }
 
-/** The runbook with this signer's signature added to the manifest as it is (an earlier one of theirs replaced). */
-export async function cosignRunbook(text: string, signer: string, key: KeyPair, now = new Date()): Promise<SignResult> {
+/**
+ * The runbook with this signer's signature added to the manifest as it is (an earlier one of
+ * theirs replaced). `reviewed`: the manifest the reviewer was shown; another one is refused
+ * (re-signed meanwhile) rather than signed unseen.
+ */
+export async function cosignRunbook(text: string, signer: string, key: KeyPair, reviewed?: string, now = new Date()): Promise<SignResult> {
   const c = cosignCheck(text);
   if ('why' in c) return { ok: false, errors: [c.why] };
+  if (reviewed !== undefined && c.block.manifest !== reviewed) return { ok: false, errors: ['other'] };
   const signature = await signSshsig(key, c.block.manifest);
   const cosigners = [
     ...(c.block.cosigners ?? []).filter((x) => x.signer !== signerLabel(signer)),
     { signer, signed: today(now), signature },
   ];
-  return { ok: true, text: withSignature(text, { ...c.block, cosigners }), manifest: c.manifest };
+  const block = { ...c.block, cosigners };
+  return { ok: true, text: withSignature(text, block), manifest: c.manifest, block };
 }

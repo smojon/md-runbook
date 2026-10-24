@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import type { Manifest, SignatureBlock } from '@md-runbook/core/signing';
-import { signerNames } from '@md-runbook/core/signing';
+import { SIGNER_NAME_RE, signerNames } from '@md-runbook/core/signing';
 import { t } from '../i18n';
 import { setSignerName, useSignerName } from '../settings/store';
 import { mono, themedStyles, usePalette } from '../theme';
@@ -22,7 +22,7 @@ export function SignCard({
   onCancel,
 }: {
   request: SignRequest;
-  /** Signing (the hardware key may ask for a fingerprint or the device code). */
+  /** Signing: the key signs (inside the phone's secure hardware); the card waits. */
   busy: boolean;
   /** What the core refused (a cell that can't be signed, …). */
   errors: readonly string[];
@@ -31,8 +31,10 @@ export function SignCard({
 }) {
   const styles = useStyles();
   const colors = usePalette();
+  // The saved name until one is typed (settings may load after the card opens).
   const saved = useSignerName();
-  const [signer, setSigner] = useState(saved);
+  const [typed, setSigner] = useState<string | undefined>();
+  const signer = typed ?? saved;
   const [input, setInput] = useState<SignInput>(() => ({
     name: request.kind === 'sign' ? request.plan.name : '',
     scopes: '',
@@ -42,7 +44,7 @@ export function SignCard({
   const [tried, setTried] = useState(false);
   const bad = new Set([
     ...(request.kind === 'sign' ? checkSignInput(request.plan, input) : []),
-    ...(signer.trim() === '' ? ['signer'] : []),
+    ...(SIGNER_NAME_RE.test(signer.trim()) ? [] : ['signer']),
   ]);
   const field = (
     id: string,
@@ -119,7 +121,10 @@ export function SignCard({
           ))}
         </>
       ) : null}
-      {field('signer', t.signerName, signer, setSigner, { placeholder: t.signerPlaceholder })}
+      {field('signer', t.signerName, signer, setSigner, {
+        placeholder: t.signerPlaceholder,
+        ...(tried && bad.has('signer') ? { hint: t.signerNameRule } : {}),
+      })}
       {errors.map((e) => (
         <Text key={e} testID="sign-error" style={styles.error}>
           {e}
@@ -135,7 +140,13 @@ export function SignCard({
         >
           {busy ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.buttonText}>{plan ? t.signGo : t.cosignGo}</Text>}
         </Pressable>
-        <Pressable testID="sign-cancel" accessibilityRole="button" onPress={onCancel} style={styles.secondary}>
+        <Pressable
+          testID="sign-cancel"
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={onCancel}
+          style={[styles.secondary, busy && styles.disabled]}
+        >
           <Text style={styles.secondaryText}>{t.cancel}</Text>
         </Pressable>
       </View>
