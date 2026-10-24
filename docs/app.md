@@ -49,7 +49,7 @@ Explain Output, Approve / Reject a proposal. The [cheat sheet](cheatsheet.md) ha
 
 ## Hosts and the app's key
 
-<img src="app/ios-hosts.png" width="320" alt="The Hosts screen: one host, the app's public SSH key with a Copy button, secrets and output history">
+<img src="app/ios-hosts.png" width="320" alt="The Hosts & settings screen: one host, the app's public SSH key with a Copy button, and Signing runbooks with the name for signatures">
 
 You add each server once: a name, its address and the user to log in as. The app makes its own
 SSH key on first use. On phones the private key is made inside the secure hardware (the Secure
