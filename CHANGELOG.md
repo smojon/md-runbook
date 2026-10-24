@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
 - **The front matter isn't drawn in the notebook:** a runbook's YAML front matter showed as a
   `params: • …` list above its title; now the notebook hides it, as VS Code's Markdown preview and
