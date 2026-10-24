@@ -29,10 +29,12 @@ xcrun simctl install "$udid" "$app" || exit 1
 xcrun simctl spawn "$udid" log stream --level info --predicate 'subsystem CONTAINS "dev.mdrunbook" OR process CONTAINS "mdrunbook"' >"$out/simulator.log" 2>&1 &
 log_pid=$!
 
-# Right after a fresh simulator's first boot (it can spend minutes migrating its data), Maestro's
+# Right after a fresh simulator's first boot (it can spend ten minutes migrating its data), Maestro's
 # iOS driver sometimes doesn't start in time ("iOS driver not ready in time"), even with
-# MAESTRO_DRIVER_STARTUP_TIMEOUT raised: then try once more, now that the simulator has settled.
-# Only that error is retried; a failing flow fails the job.
+# MAESTRO_DRIVER_STARTUP_TIMEOUT raised, and an immediate second try failed the same way (twice on
+# 2026-10-23/24) while a fresh job passed: so before trying again the simulator is restarted (its
+# migration is done by then, so it boots in seconds), up to three tries. Only that error is
+# retried; a failing flow fails the job.
 run_flows() {
   # The SSH server for run-cell.yaml is the runner's own (e2e/start-ssh-test-server.sh); the
   # simulator shares the Mac's network.
@@ -42,14 +44,22 @@ run_flows() {
     tee "$out/maestro-attempt-$1.log"
   return "${PIPESTATUS[0]}"
 }
-run_flows 1
+attempt=1
+run_flows "$attempt"
 status=$?
-if [ "$status" != 0 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-1.log"; then
-  echo "::warning::Maestro's iOS driver did not start in time; trying once more"
-  sleep 20
-  run_flows 2
+while [ "$status" != 0 ] && [ "$attempt" -lt 3 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-$attempt.log"; do
+  attempt=$((attempt + 1))
+  echo "::warning::Maestro's iOS driver did not start in time; restarting the simulator for try $attempt"
+  kill "$log_pid" >/dev/null 2>&1
+  xcrun simctl shutdown "$udid" 2>/dev/null || true
+  xcrun simctl boot "$udid" 2>/dev/null || true
+  xcrun simctl bootstatus "$udid" -b >/dev/null
+  xcrun simctl spawn "$udid" log stream --level info --predicate 'subsystem CONTAINS "dev.mdrunbook" OR process CONTAINS "mdrunbook"' >>"$out/simulator.log" 2>&1 &
+  log_pid=$!
+  sleep 10
+  run_flows "$attempt"
   status=$?
-fi
+done
 
 kill "$log_pid" >/dev/null 2>&1
 gzip -f "$out/simulator.log"

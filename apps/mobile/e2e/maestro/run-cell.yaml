@@ -48,9 +48,15 @@ name: run-cell
 - assertVisible:
     id: add-host
 - takeScreenshot: 03-hosts
-# Back to the home screen the same way on both platforms: a relaunch (state is kept).
+# Back to the home screen the same way on both platforms: a relaunch (state is kept). Wait for
+# the list as at the start: a tap while it was still loading didn't open the runbook (iOS,
+# 2026-10-24).
 - launchApp
 - runFlow: subflows/dismiss-system-dialog.yaml
+- extendedWaitUntil:
+    visible:
+      id: core-status
+    timeout: 120000
 - tapOn:
     id: runbook-sample
 - extendedWaitUntil:
