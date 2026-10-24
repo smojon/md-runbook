@@ -1,16 +1,18 @@
 /**
  * Notebook renderer extending VS Code's Markdown renderer (`vscode.markdown-it-renderer`): task-list
- * items in Markdown cells become checkboxes. A click asks the extension to flip that item in the
- * cell's source (src/taskLists.ts); the cell then re-renders from the new source.
+ * items in Markdown cells become checkboxes, and the runbook's front matter isn't drawn. A click on
+ * a checkbox asks the extension to flip that item in the cell's source (src/taskLists.ts); the cell
+ * then re-renders from the new source.
  *
  * Built separately as an ES module for the notebook webview (tsconfig.renderer.json).
  */
 
+import { MarkdownIt as FrontMatterIt, frontMatterPlugin } from './frontMatterPlugin.js';
 import { MarkdownIt, TASK_CLASS, ToggleMessage, taskListPlugin } from './taskListPlugin.js';
 
 interface RendererContext {
   postMessage?(message: unknown): void;
-  getRenderer(id: string): Promise<{ extendMarkdownIt(f: (md: MarkdownIt) => void): void } | undefined>;
+  getRenderer(id: string): Promise<{ extendMarkdownIt(f: (md: MarkdownIt & FrontMatterIt) => void): void } | undefined>;
 }
 
 /** Recently rendered sources by id. The oldest are dropped; their cells have re-rendered since. */
@@ -28,7 +30,10 @@ function register(src: string): number {
 export async function activate(ctx: RendererContext): Promise<void> {
   const markdownIt = await ctx.getRenderer('vscode.markdown-it-renderer');
   if (!markdownIt) throw new Error('md-runbook: the Markdown renderer is not available');
-  markdownIt.extendMarkdownIt((md) => taskListPlugin(md, register, () => ctx.postMessage !== undefined));
+  markdownIt.extendMarkdownIt((md) => {
+    frontMatterPlugin(md);
+    taskListPlugin(md, register, () => ctx.postMessage !== undefined);
+  });
 
   // Cells render in shadow roots: listen on the document and take the checkbox from the event path.
   document.addEventListener(

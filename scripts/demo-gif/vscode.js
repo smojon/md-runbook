@@ -54,6 +54,8 @@ async function launch({ repo, out, exe, file, width, height }) {
       '--skip-welcome',
       '--disable-telemetry',
       '--disable-renderer-backgrounding',
+      // The same pixel size on any screen (a 125% display made 1253-px frames of a 1000-px window).
+      '--force-device-scale-factor=1',
     ],
   });
   const win = await app.firstWindow();

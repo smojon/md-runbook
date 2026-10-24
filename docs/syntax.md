@@ -167,7 +167,8 @@ params:
 ```
 
 `#` starts a comment. A value that is not understood (`mode: sometimes`) is ignored with a lint
-warning. In session mode one bash and one PowerShell process live for the whole runbook, so
+warning. The runbook view (VS Code and the app) doesn't draw the front matter, as VS Code's
+Markdown preview doesn't; editing the first cell shows it. In session mode one bash and one PowerShell process live for the whole runbook, so
 `cd`, exported variables and `oc login` carry over between cells; `cmd` cells always run alone.
 
 `shell:` names, separated by commas or spaces, at most one of each kind:

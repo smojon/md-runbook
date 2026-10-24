@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **The front matter isn't drawn in the notebook:** a runbook's YAML front matter showed as a
+  `params: • …` list above its title; now the notebook hides it, as VS Code's Markdown preview and
+  the app do (editing the first cell still shows it). The README GIF shows the notebook that way.
 - **Signing in the app:** **Sign Runbook** and **Co-sign Runbook** (⋯ More) sign with the app's
   own key, inside the phone's Secure Enclave or Android Keystore, in the same OpenSSH format as
   VS Code and the command line, so md-runbook-gate checks them the same way: a reviewer can
