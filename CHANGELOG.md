@@ -2,10 +2,14 @@
 
 ## Unreleased
 
-- **App home screen on narrow phones:** the buttons wrap to a second line instead of running off
-  the screen (**Hosts & settings** was cut off on a Pixel 9 Pro), and the "Core OK" line is gone:
-  the app only says something when its self-check fails. An **App APK** workflow builds an
-  arm64 APK to install on an Android phone by hand.
+- **The app's own icon and a new look:** the app and the web app's favicon use the extension's
+  icon (Android's adaptive and themed icons included). The start screen has the icon in its
+  header, **Hosts & settings** as the gear at the top right, **Open a runbook…** and **Open a
+  link…** side by side (they no longer run off a narrow phone), and the runbooks as a card with
+  each one's file. Hosts & settings shows the hosts as a card ending with **Add a host**, and
+  each setting in its own card. The "Core OK" line is gone: the app only says something when its
+  self-check fails. An **App APK** workflow builds an arm64 APK to install on an Android phone
+  by hand.
 
 ## 0.10.0
 

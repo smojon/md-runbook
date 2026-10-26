@@ -16,6 +16,10 @@ export interface Palette {
   border: string;
   /** Code cells and other code blocks (the notebook's cell editor). */
   codeBackground: string;
+  /** Cards on the start screen: a grouped list a step off the page. */
+  surface: string;
+  /** A tinted button (the accent, softened) beside a filled one. */
+  accentSoft: string;
   /** Bottom sheets: raised above the page (in dark, lighter than it, as VS Code's quick pick). */
   sheet: string;
   /** The dimmed screen behind a sheet. */
@@ -55,6 +59,8 @@ export const light: Palette = {
   placeholder: '#a0a0a0',
   border: '#e5e5e5',
   codeBackground: '#f8f8f8',
+  surface: '#f8f8f8',
+  accentSoft: '#e5effa',
   sheet: '#ffffff',
   scrim: 'rgba(0, 0, 0, 0.3)',
   inlineCode: '#ebebeb',
@@ -99,6 +105,8 @@ export const dark: Palette = {
   placeholder: '#6b6b6b',
   border: '#3c3c3c',
   codeBackground: '#181818',
+  surface: '#272727',
+  accentSoft: '#1b3a57',
   sheet: '#282828',
   scrim: 'rgba(0, 0, 0, 0.6)',
   inlineCode: '#2b2b2b',

@@ -18,7 +18,7 @@ describe('screens', () => {
   it('lists the sample runbook, with no core error', async () => {
     await render(<RunbookList />);
     expect(screen.getByTestId('runbook-sample')).toBeTruthy();
-    expect(screen.getByText('2 commands')).toBeTruthy();
+    expect(screen.getByText('2 commands · Example')).toBeTruthy();
     expect(screen.queryByTestId('core-error')).toBeNull();
   });
 

@@ -51,7 +51,8 @@ Explain Output, Approve / Reject a proposal. The [cheat sheet](cheatsheet.md) ha
 
 <img src="app/ios-hosts.png" width="320" alt="The Hosts & settings screen: one host, the app's public SSH key with a Copy button, and Signing runbooks with the name for signatures">
 
-You add each server once: a name, its address and the user to log in as. The app makes its own
+**Hosts & settings** is the gear at the top right of the start screen. You add each server once
+there: a name, its address and the user to log in as. The app makes its own
 SSH key on first use. On phones the private key is made inside the secure hardware (the Secure
 Enclave on iPhones, Android Keystore) and can't be read out, not even by the app. You copy the
 public key into `~/.ssh/authorized_keys` on each server. The app never asks for a password or a

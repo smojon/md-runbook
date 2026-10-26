@@ -48,26 +48,24 @@ export function RunbookList() {
       keyExtractor={(r) => r.id}
       ListHeaderComponent={
         <View style={styles.header}>
-          <View style={styles.buttons}>
-            <Pressable testID="open-runbook" accessibilityRole="button" onPress={() => void open()} style={styles.button}>
-              <Text style={styles.buttonText}>{t.openRunbook}</Text>
+          <View style={styles.actions}>
+            <Pressable testID="open-runbook" accessibilityRole="button" onPress={() => void open()} style={[styles.action, styles.primary]}>
+              <Codicon name="folder-opened" size={18} color={colors.onAccent} />
+              <Text style={styles.primaryText}>{t.openRunbook}</Text>
             </Pressable>
             <Pressable
               testID="open-link"
               accessibilityRole="button"
+              aria-expanded={link !== undefined}
               onPress={() => setLink(link === undefined ? '' : undefined)}
-              style={styles.secondary}
+              style={[styles.action, styles.tinted]}
             >
-              <Text style={styles.secondaryText}>{t.openLink}</Text>
+              <Codicon name="link" size={18} color={colors.link} />
+              <Text style={styles.tintedText}>{t.openLink}</Text>
             </Pressable>
-            <Link href={{ pathname: '/hosts', params: {} }} asChild>
-              <Pressable testID="hosts" accessibilityRole="link" style={styles.secondary}>
-                <Text style={styles.secondaryText}>{t.hosts}</Text>
-              </Pressable>
-            </Link>
           </View>
           {link !== undefined ? (
-            <View style={styles.buttons}>
+            <View style={styles.linkRow}>
               <TextInput
                 testID="open-link-url"
                 accessibilityLabel={t.openLink}
@@ -87,9 +85,9 @@ export function RunbookList() {
                 accessibilityRole="button"
                 disabled={link.trim() === ''}
                 onPress={() => void openLink()}
-                style={styles.button}
+                style={[styles.go, link.trim() === '' && styles.disabled]}
               >
-                <Text style={styles.buttonText}>{t.open}</Text>
+                <Text style={styles.primaryText}>{t.open}</Text>
               </Pressable>
             </View>
           ) : null}
@@ -98,9 +96,12 @@ export function RunbookList() {
               {error}
             </Text>
           ) : null}
+          <Text style={styles.section} role="heading">
+            {t.runbooksSection}
+          </Text>
         </View>
       }
-      renderItem={({ item }) => <RunbookRow item={item} />}
+      renderItem={({ item, index }) => <RunbookRow item={item} first={index === 0} last={index === items.length - 1} />}
       ListFooterComponent={
         core.ok ? undefined : (
           <Text testID="core-error" role="alert" style={[styles.status, { color: colors.error }]}>
@@ -113,21 +114,29 @@ export function RunbookList() {
 }
 
 /** A runbook in the list; opened files can be removed from the app (their file stays). */
-function RunbookRow({ item }: { item: Runbook & { cells: number } }) {
+function RunbookRow({ item, first, last }: { item: Runbook & { cells: number }; first: boolean; last: boolean }) {
   const styles = useStyles();
   const colors = usePalette();
   const [confirming, setConfirming] = useState(false);
   const unsaved = hasUnsavedChanges(item);
   return (
-    <View style={styles.row}>
+    <View style={[styles.row, first && styles.rowFirst, last && styles.rowLast]}>
       <View style={styles.rowMain}>
         <Link href={{ pathname: '/runbook/[id]', params: { id: item.id } }} asChild>
           <Pressable testID={`runbook-${item.id}`} accessibilityRole="link" aria-label={item.title} style={styles.rowLink}>
-            <Text style={styles.title}>{item.title}</Text>
-            <Text style={styles.meta}>
-              {t.commands(item.cells)}
-              {unsaved ? ` · ${t.unsaved}` : ''}
-            </Text>
+            <View style={styles.badge}>
+              <Codicon name="notebook" size={18} color={colors.link} />
+            </View>
+            <View style={styles.rowText}>
+              <Text style={styles.title} numberOfLines={2}>
+                {item.title}
+              </Text>
+              <Text style={styles.meta} numberOfLines={1}>
+                {t.commands(item.cells)}
+                {` · ${item.source === 'file' ? (item.fileName ?? t.fromFile) : t.example}`}
+                {unsaved ? ` · ${t.unsaved}` : ''}
+              </Text>
+            </View>
           </Pressable>
         </Link>
         {item.source === 'file' && !confirming ? (
@@ -173,33 +182,72 @@ function RunbookRow({ item }: { item: Runbook & { cells: number } }) {
 }
 
 const useStyles = themedStyles((colors) => ({
-  rowMain: { flexDirection: 'row', alignItems: 'center' },
+  screen: { flex: 1, backgroundColor: colors.background },
+  content: { paddingHorizontal: 16, paddingBottom: 24 },
+  header: { paddingTop: 16 },
+  // Two buttons sharing the width: they never run off a narrow screen, and a long label wraps.
+  actions: { flexDirection: 'row', gap: 10 },
+  action: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 48,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  primary: { backgroundColor: colors.accent },
+  primaryText: { fontSize: 15, fontWeight: '600', color: colors.onAccent, flexShrink: 1 },
+  tinted: { backgroundColor: colors.accentSoft },
+  tintedText: { fontSize: 15, fontWeight: '600', color: colors.link, flexShrink: 1 },
+  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
   linkInput: {
     flex: 1,
-    minWidth: 200,
+    minHeight: 44,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
-    borderRadius: 6,
-    padding: 10,
+    borderRadius: 10,
+    paddingHorizontal: 12,
     fontSize: 15,
     color: colors.text,
+    backgroundColor: colors.surface,
   },
-  rowLink: { flex: 1 },
-  remove: { padding: 8 },
-  confirm: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 8 },
-  danger: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 4, backgroundColor: colors.error },
-  dangerText: { fontSize: 14, color: colors.onAccent },
-  screen: { flex: 1, backgroundColor: colors.background },
-  content: { paddingHorizontal: 16 },
-  header: { paddingVertical: 12 },
-  buttons: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12 },
-  button: { alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6, backgroundColor: colors.accent },
-  buttonText: { fontSize: 15, color: colors.onAccent },
-  secondary: { paddingVertical: 8, paddingHorizontal: 6 },
-  secondaryText: { fontSize: 15, color: colors.accent },
-  error: { fontSize: 13, color: colors.error, marginTop: 8 },
-  row: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
-  title: { fontSize: 17, color: colors.text },
+  go: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 10, backgroundColor: colors.accent },
+  disabled: { opacity: 0.5 },
+  error: { fontSize: 13, color: colors.error, marginTop: 10 },
+  section: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 28,
+    marginBottom: 8,
+    marginLeft: 4,
+  },
+  // The runbooks as one card: rows share a surface, separated by hairlines.
+  row: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12,
+  },
+  rowFirst: { borderTopWidth: StyleSheet.hairlineWidth, borderTopLeftRadius: 12, borderTopRightRadius: 12 },
+  rowLast: { borderBottomLeftRadius: 12, borderBottomRightRadius: 12 },
+  rowMain: { flexDirection: 'row', alignItems: 'center' },
+  rowLink: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
+  badge: { width: 36, height: 36, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+  rowText: { flex: 1 },
+  title: { fontSize: 16, fontWeight: '500', color: colors.text },
   meta: { fontSize: 13, color: colors.muted, marginTop: 2 },
+  remove: { padding: 8, marginLeft: 4 },
+  confirm: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingBottom: 12 },
+  danger: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, backgroundColor: colors.error },
+  dangerText: { fontSize: 14, color: colors.onAccent },
+  secondary: { paddingVertical: 8, paddingHorizontal: 6 },
+  secondaryText: { fontSize: 15, color: colors.link },
   status: { fontSize: 13, paddingVertical: 16 },
 }));

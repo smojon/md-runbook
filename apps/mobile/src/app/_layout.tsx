@@ -10,6 +10,7 @@ import { loadRunbooks } from '../runbooks/store';
 import { t } from '../i18n';
 import { usePalette } from '../theme';
 import { CODICON_FONT, codiconFont } from '../ui/Codicon';
+import { HomeTitle, HostsButton } from '../ui/HomeHeader';
 
 /** A runbook or host opened by a link has the list under it, so the back arrow is always there. */
 export const unstable_settings = { initialRouteName: 'index' };
@@ -45,12 +46,14 @@ export default function RootLayout() {
       <Stack
         screenOptions={{
           headerStyle: { backgroundColor: c.background },
+          // No line under the header (on the web it was a bright one in dark mode).
+          headerShadowVisible: false,
           headerTintColor: c.text,
           headerTitleStyle: { color: c.text },
           contentStyle: { backgroundColor: c.background },
         }}
       >
-        <Stack.Screen name="index" options={{ title: t.appTitle }} />
+        <Stack.Screen name="index" options={{ title: t.appTitle, headerTitle: () => <HomeTitle />, headerRight: () => <HostsButton /> }} />
         <Stack.Screen name="runbook/[id]" options={{ title: '' }} />
         <Stack.Screen name="hosts/index" options={{ title: t.hostsTitle }} />
         <Stack.Screen name="open" options={{ title: t.openLinkTitle }} />

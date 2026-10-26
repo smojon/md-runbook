@@ -3,7 +3,7 @@ import { addHost, getHost, resetHosts } from '../hosts/store';
 import { resetRunbooks } from '../runbooks/store';
 import { signerName } from '../settings/store';
 import { HostList } from '../screens/HostList';
-import { RunbookList } from '../screens/RunbookList';
+import { HostsButton } from '../ui/HomeHeader';
 import { RunbookView } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
 
@@ -106,8 +106,8 @@ describe('running a cell from the runbook screen', () => {
 
 describe('hosts screens', () => {
   it('the home screen links to the hosts; the hosts screen shows the public key', async () => {
-    await render(<RunbookList />);
-    expect(screen.getByTestId('hosts')).toBeTruthy();
+    await render(<HostsButton />);
+    expect(screen.getByTestId('hosts').props.accessibilityLabel).toBe('Hosts & settings');
     await render(<HostList />);
     await waitFor(() => expect(screen.getByTestId('app-public-key').props.children).toMatch(/^ecdsa-sha2-nistp256 /));
     await act(async () => {

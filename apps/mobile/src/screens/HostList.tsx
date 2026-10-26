@@ -19,11 +19,13 @@ import {
 import { getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { SIGNER_NAME_RE } from '@md-runbook/core/signing';
 import { mono, themedStyles, usePalette } from '../theme';
+import { Codicon } from '../ui/Codicon';
 import { Toggle } from '../ui/Toggle';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
 export function HostList() {
   const styles = useStyles();
+  const colors = usePalette();
   const hosts = useHosts();
   return (
     <FlatList
@@ -34,18 +36,27 @@ export function HostList() {
       data={hosts}
       keyExtractor={(h) => h.id}
       ListHeaderComponent={
-        <View style={styles.header}>
-          <Link href={{ pathname: '/hosts/[id]', params: { id: 'new' } }} asChild>
-            <Pressable testID="add-host" accessibilityRole="button" style={styles.button}>
-              <Text style={styles.buttonText}>{t.addHost}</Text>
-            </Pressable>
-          </Link>
-          {hosts.length === 0 ? <Text style={styles.help}>{t.noHosts}</Text> : null}
-        </View>
+        <Text style={styles.groupTitle} role="heading">
+          {t.hostsSection}
+        </Text>
       }
-      renderItem={({ item }) => <HostRow host={item} />}
+      renderItem={({ item, index }) => <HostRow host={item} first={index === 0} />}
       ListFooterComponent={
         <>
+          {/* The hosts' card ends with the row that adds one. Under Link asChild a style must be one object: the web throws on an array. */}
+          <Link href={{ pathname: '/hosts/[id]', params: { id: 'new' } }} asChild>
+            <Pressable
+              testID="add-host"
+              accessibilityRole="button"
+              style={StyleSheet.flatten([styles.row, hosts.length === 0 && styles.rowFirst, styles.rowLast])}
+            >
+              <View style={styles.badge}>
+                <Codicon name="add" size={18} color={colors.link} />
+              </View>
+              <Text style={styles.addText}>{t.addHost}</Text>
+            </Pressable>
+          </Link>
+          {hosts.length === 0 ? <Text style={styles.groupHelp}>{t.noHosts}</Text> : null}
           <AppKeySection />
           <SigningSection />
           <SecretsSection />
@@ -58,18 +69,29 @@ export function HostList() {
   );
 }
 
-function HostRow({ host }: { host: Host }) {
+function HostRow({ host, first }: { host: Host; first: boolean }) {
   const styles = useStyles();
+  const colors = usePalette();
   return (
     <Link href={{ pathname: '/hosts/[id]', params: { id: host.id } }} asChild>
-      <Pressable testID={`host-${host.id}`} accessibilityRole="link" aria-label={host.name} style={styles.row}>
-        <Text style={styles.title}>{host.name}</Text>
-        <Text style={styles.meta}>
-          {hostLabel(host)}
-          {' · '}
-          {host.hostKey ? t.hostKeyTrusted : t.hostKeyNotTrusted}
-          {host.platform ? ` · ${t.hostPlatform[host.platform]}` : ''}
-        </Text>
+      <Pressable
+        testID={`host-${host.id}`}
+        accessibilityRole="link"
+        aria-label={host.name}
+        style={StyleSheet.flatten([styles.row, first && styles.rowFirst])}
+      >
+        <View style={styles.badge}>
+          <Codicon name="server" size={18} color={colors.link} />
+        </View>
+        <View style={styles.rowText}>
+          <Text style={styles.title}>{host.name}</Text>
+          <Text style={styles.meta}>
+            {hostLabel(host)}
+            {' · '}
+            {host.hostKey ? t.hostKeyTrusted : t.hostKeyNotTrusted}
+            {host.platform ? ` · ${t.hostPlatform[host.platform]}` : ''}
+          </Text>
+        </View>
       </Pressable>
     </Link>
   );
@@ -432,25 +454,60 @@ function RelaySection() {
   );
 }
 
+// The start screen's look: a heading over the hosts' card, then one card per setting.
 const useStyles = themedStyles((colors) => ({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 32 },
-  header: { paddingVertical: 12 },
+  groupTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 16,
+    marginBottom: 8,
+    marginLeft: 4,
+  },
+  groupHelp: { fontSize: 13, color: colors.muted, lineHeight: 18, marginTop: 8, marginHorizontal: 4 },
   button: {
     alignSelf: 'flex-start',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 6,
+    minHeight: 40,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    borderRadius: 10,
     backgroundColor: colors.accent,
-    marginTop: 8,
+    marginTop: 12,
   },
   disabled: { opacity: 0.5 },
-  buttonText: { fontSize: 15, color: colors.onAccent },
-  row: { paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
-  title: { fontSize: 17, color: colors.text },
+  buttonText: { fontSize: 15, fontWeight: '600', color: colors.onAccent },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  rowFirst: { borderTopWidth: StyleSheet.hairlineWidth, borderTopLeftRadius: 12, borderTopRightRadius: 12 },
+  rowLast: { borderBottomLeftRadius: 12, borderBottomRightRadius: 12 },
+  badge: { width: 36, height: 36, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+  rowText: { flex: 1 },
+  addText: { fontSize: 16, fontWeight: '500', color: colors.link },
+  title: { fontSize: 16, fontWeight: '500', color: colors.text },
   meta: { fontSize: 13, color: colors.muted, marginTop: 2 },
-  section: { marginTop: 28 },
-  sectionTitle: { fontSize: 17, color: colors.text, marginBottom: 6 },
+  section: {
+    marginTop: 20,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: colors.text, marginBottom: 4 },
   help: { fontSize: 13, color: colors.muted, lineHeight: 18, marginTop: 4 },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
   switchText: { flex: 1 },
@@ -459,8 +516,10 @@ const useStyles = themedStyles((colors) => ({
     fontFamily: mono,
     fontSize: 12,
     color: colors.text,
-    backgroundColor: colors.codeBackground,
-    borderRadius: 6,
+    backgroundColor: colors.background,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    borderRadius: 8,
     padding: 10,
     marginTop: 8,
   },
@@ -468,7 +527,8 @@ const useStyles = themedStyles((colors) => ({
   input: {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
-    borderRadius: 6,
+    borderRadius: 10,
+    backgroundColor: colors.background,
     padding: 10,
     fontSize: 15,
     color: colors.text,
@@ -476,7 +536,14 @@ const useStyles = themedStyles((colors) => ({
   },
   error: { fontSize: 13, color: colors.error, marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  chip: { paddingVertical: 5, paddingHorizontal: 12, borderRadius: 14, borderWidth: 1, borderColor: colors.border },
+  chip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
   chipOn: { backgroundColor: colors.accent, borderColor: colors.accent },
   chipText: { fontSize: 14, color: colors.text },
   chipTextOn: { color: colors.onAccent },
