@@ -18,6 +18,7 @@ export {
   gateRawCommand,
   gateRunCommand,
   helloCommand,
+  installKeyCommand,
   markerFor,
   posixShellCommand,
   psq,
@@ -35,3 +36,5 @@ export { RemoteSession, SessionRunResult, SignedRun } from './session';
 export { generateKey, hostKeyId, importPrivateKey, privateKeyPem, publicKeyLine } from './keys';
 export { ECDSA_P256, ExternalAwareEcdsaP256, ExternalKeyPair, ExternalP256Key, derToRs } from './externalKey';
 export { allowedSignersLine, signSshsig } from './sshsig';
+export type { InstallKeyOptions, InstallKeyResult } from './installKey';
+export { installPublicKey } from './installKey';

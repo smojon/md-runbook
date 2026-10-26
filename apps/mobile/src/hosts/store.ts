@@ -12,6 +12,8 @@ export interface Host {
   hostname: string;
   port: number;
   username: string;
+  /** A customer, a site, a team: hosts are listed and run on by group (empty: none). */
+  group?: string;
   /** `type base64` of the host key the user trusted (see hostKeyId); absent until the first run. */
   hostKey?: string;
   /** What the server runs, learnt on the first connection: sh/bash (Linux, macOS) or Windows PowerShell. */
@@ -42,6 +44,7 @@ const isHost = (v: unknown): v is Host => {
     typeof h.port === 'number' &&
     typeof h.username === 'string' &&
     (h.hostKey === undefined || typeof h.hostKey === 'string') &&
+    (h.group === undefined || typeof h.group === 'string') &&
     (h.platform === undefined || h.platform === 'posix' || h.platform === 'windows')
   );
 };
@@ -76,6 +79,7 @@ const clean = (input: HostInput): HostInput => ({
   hostname: input.hostname.trim(),
   port: input.port,
   username: input.username.trim(),
+  ...(input.group?.trim() ? { group: input.group.trim() } : {}),
 });
 
 export function addHost(input: HostInput): Host {

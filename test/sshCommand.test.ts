@@ -13,6 +13,7 @@ import {
   gateRawCommand,
   gateRunCommand,
   helloCommand,
+  installKeyCommand,
   markerFor,
   PROBED_SHELLS,
   posixShellCommand,
@@ -100,5 +101,29 @@ describe('ssh: commands sent to the remote shell', { skip: !bash && 'needs bash'
 
   it('the stop command only targets the children of one pid', () => {
     assert.equal(stopCommand(1234.9, 'TERM'), 'pkill -TERM -P 1234 2>/dev/null; true');
+  });
+});
+
+describe('Install My Key: the authorized_keys command', { skip: bash === undefined && 'runs in a POSIX shell (Linux and macOS CI)' }, () => {
+  const LINE = "ecdsa-sha2-nistp256 AAAAE2Vj+/key= md-runbook-app";
+  const install = (home: string): string =>
+    spawnSync(bash!, ['-c', installKeyCommand(LINE)], { env: { ...process.env, HOME: home }, encoding: 'utf8' }).stdout.trim();
+
+  it('creates ~/.ssh (700) and the file (600), adds the key once, keeps what was there', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-home-'));
+    try {
+      assert.equal(install(home), '__MDRB_KEY_ADDED__');
+      const file = path.join(home, '.ssh', 'authorized_keys');
+      assert.equal(fs.readFileSync(file, 'utf8'), LINE + '\n');
+      assert.equal(fs.statSync(path.join(home, '.ssh')).mode & 0o777, 0o700);
+      assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+      assert.equal(install(home), '__MDRB_KEY_ALREADY__');
+      // A file without a newline at its end: the key goes on a line of its own.
+      fs.writeFileSync(file, 'ssh-ed25519 AAAAother me@laptop');
+      assert.equal(install(home), '__MDRB_KEY_ADDED__');
+      assert.equal(fs.readFileSync(file, 'utf8'), `ssh-ed25519 AAAAother me@laptop\n${LINE}\n`);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

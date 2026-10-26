@@ -22,6 +22,9 @@ export function ScanScreen() {
   const onScanned = (result: BarcodeScanningResult): void => {
     if (busy.current) return;
     busy.current = true;
+    // A colleague's hosts (Share hosts → Show as a QR code): to the import screen, which asks first.
+    const hosts = /^mdrunbook:\/\/hosts\/import\?(?:.*&)?h=([A-Za-z0-9_-]+)/.exec(result.data)?.[1];
+    if (hosts) return router.replace({ pathname: '/hosts/import', params: { h: hosts } });
     const parsed = parseRunbookLink(result.data);
     if (!parsed.ok) {
       setMessage(t.scanNotRunbook);

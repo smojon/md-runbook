@@ -53,3 +53,9 @@ export async function exportRecordJson(runbook: Runbook): Promise<void> {
 export async function requestCosign(runbook: Runbook): Promise<void> {
   await Share.share({ message: cosignRequestMessage(runbook) });
 }
+
+/** Share hosts: the list as hosts.json through the share sheet. */
+export async function shareHostsFile(json: string): Promise<void> {
+  const f = cacheFile('hosts.json', json);
+  await Sharing.shareAsync(f.uri, { mimeType: 'application/json', UTI: 'public.json', dialogTitle: 'hosts.json' });
+}

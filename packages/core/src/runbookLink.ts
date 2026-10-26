@@ -149,7 +149,8 @@ export function packText(text: string): string {
   return toBase64Url(deflateSync(new TextEncoder().encode(text), { level: 9 }));
 }
 
-function unpackText(packed: string): string | { problem: 'bad-text' | 'too-large' } {
+/** The text `packText` made (rb=, and other packed link fields), or why it can't be read. */
+export function unpackText(packed: string): string | { problem: 'bad-text' | 'too-large' } {
   let bytes: Uint8Array;
   try {
     bytes = fromBase64Url(packed);

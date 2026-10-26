@@ -14,10 +14,11 @@ export function HostForm({ id }: { id: string | undefined }) {
   const [hostname, setHostname] = useState(existing?.hostname ?? '');
   const [port, setPort] = useState(existing ? String(existing.port) : '22');
   const [username, setUsername] = useState(existing?.username ?? '');
+  const [group, setGroup] = useState(existing?.group ?? '');
   const [trusted, setTrusted] = useState(existing?.hostKey !== undefined);
   const [errors, setErrors] = useState<string[]>([]);
 
-  const input = (): HostInput => ({ name, hostname, port: /^\d+$/.test(port.trim()) ? Number(port.trim()) : NaN, username });
+  const input = (): HostInput => ({ name, hostname, port: /^\d+$/.test(port.trim()) ? Number(port.trim()) : NaN, username, group });
   const save = (): void => {
     const problems = validateHost(input(), t.hostErrors);
     setErrors(problems);
@@ -66,6 +67,7 @@ export function HostForm({ id }: { id: string | undefined }) {
           onChange={setUsername}
           placeholder={t.hostUsernamePlaceholder}
         />
+        <Field testID="host-group" label={t.hostGroup} value={group} onChange={setGroup} placeholder={t.hostGroupPlaceholder} />
         {errors.length > 0 ? (
           <View testID="host-errors" role="alert">
             {errors.map((e) => (

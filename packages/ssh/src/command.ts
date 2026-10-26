@@ -207,3 +207,23 @@ export function randomId(): string {
   globalThis.crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+/**
+ * Install My Key: append `line` (the app's `ecdsa-sha2-nistp256 AAAA… md-runbook-app`) to the
+ * account's ~/.ssh/authorized_keys, once. Creates ~/.ssh (700) and the file (600) when missing,
+ * adds the missing newline at the end of a file before appending, and says which happened:
+ * `__MDRB_KEY_ADDED__` or `__MDRB_KEY_ALREADY__`. POSIX sh; nothing else is changed.
+ */
+export function installKeyCommand(line: string): string {
+  const key = sq(line.trim());
+  return [
+    'umask 077',
+    'mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"',
+    'f="$HOME/.ssh/authorized_keys"',
+    'touch "$f" && chmod 600 "$f"',
+    `if grep -qxF ${key} "$f"; then echo __MDRB_KEY_ALREADY__; else`,
+    '  if [ -s "$f" ] && [ "$(tail -c 1 "$f" | wc -l)" -eq 0 ]; then printf "\\n" >>"$f"; fi',
+    `  printf '%s\\n' ${key} >>"$f" && echo __MDRB_KEY_ADDED__`,
+    'fi',
+  ].join('\n');
+}

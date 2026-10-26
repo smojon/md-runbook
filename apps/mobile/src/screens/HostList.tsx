@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
@@ -21,12 +21,21 @@ import { SIGNER_NAME_RE } from '@md-runbook/core/signing';
 import { mono, themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
 import { Toggle } from '../ui/Toggle';
+import { QrView } from '../ui/QrView';
+import { qrMatrix } from '@md-runbook/core/qr';
+import { hostsJson, hostsLink } from '../hosts/share';
+import { shareHostsFile } from '../share/export';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
 export function HostList() {
   const styles = useStyles();
   const colors = usePalette();
-  const hosts = useHosts();
+  const allHosts = useHosts();
+  /** Hosts by group (a customer, a site): the chips show one group's hosts. */
+  const groups = [...new Set(allHosts.flatMap((h) => (h.group ? [h.group] : [])))].sort((a, b) => a.localeCompare(b));
+  const [group, setGroup] = useState<string | undefined>();
+  const shown = group && groups.includes(group) ? group : undefined;
+  const hosts = shown ? allHosts.filter((h) => h.group === shown) : allHosts;
   return (
     <FlatList
       style={styles.screen}
@@ -36,9 +45,27 @@ export function HostList() {
       data={hosts}
       keyExtractor={(h) => h.id}
       ListHeaderComponent={
-        <Text style={styles.groupTitle} role="heading">
-          {t.hostsSection}
-        </Text>
+        <>
+          <Text style={styles.groupTitle} role="heading">
+            {t.hostsSection}
+          </Text>
+          {groups.length > 0 ? (
+            <View style={[styles.chips, styles.groupChips]}>
+              {[undefined, ...groups].map((g) => (
+                <Pressable
+                  key={g ?? ''}
+                  testID={`host-group-${g ?? 'all'}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: shown === g }}
+                  onPress={() => setGroup(g)}
+                  style={[styles.chip, shown === g && styles.chipOn]}
+                >
+                  <Text style={[styles.chipText, shown === g && styles.chipTextOn]}>{g ?? t.allHosts}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </>
       }
       renderItem={({ item, index }) => <HostRow host={item} first={index === 0} />}
       ListFooterComponent={
@@ -57,6 +84,15 @@ export function HostList() {
             </Pressable>
           </Link>
           {hosts.length === 0 ? <Text style={styles.groupHelp}>{t.noHosts}</Text> : null}
+          {allHosts.length > 0 ? (
+            <ShareHostsSection hosts={hosts} />
+          ) : (
+            <Link href={{ pathname: '/hosts/import', params: {} }} asChild>
+              <Pressable testID="hosts-import-open" accessibilityRole="button" style={styles.button}>
+                <Text style={styles.buttonText}>{t.hostsImport}</Text>
+              </Pressable>
+            </Link>
+          )}
           <AppKeySection />
           <SigningSection />
           <SecretsSection />
@@ -87,6 +123,7 @@ function HostRow({ host, first }: { host: Host; first: boolean }) {
         <View style={styles.rowText}>
           <Text style={styles.title}>{host.name}</Text>
           <Text style={styles.meta}>
+            {host.group ? `${host.group} · ` : ''}
             {hostLabel(host)}
             {' · '}
             {host.hostKey ? t.hostKeyTrusted : t.hostKeyNotTrusted}
@@ -609,6 +646,8 @@ const useStyles = themedStyles((colors) => ({
   },
   error: { fontSize: 13, color: colors.error, marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  groupChips: { marginTop: 0, marginBottom: 10 },
+  qrBox: { alignItems: 'center', marginTop: 12 },
   chip: {
     paddingVertical: 6,
     paddingHorizontal: 12,
@@ -627,3 +666,57 @@ const useStyles = themedStyles((colors) => ({
   secretInput: { flex: 1, marginTop: 0 },
   link: { fontSize: 15, color: colors.link },
 }));
+
+/** Share hosts: the listed ones (a group when one is picked) as a file or a QR code, and Import… */
+function ShareHostsSection({ hosts }: { hosts: readonly Host[] }) {
+  const styles = useStyles();
+  const { width } = useWindowDimensions();
+  const [withKeys, setWithKeys] = useState(false);
+  const [qr, setQr] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const matrix = qr ? qrMatrix(hostsLink(hosts, withKeys)) : undefined;
+  return (
+    <View testID="share-hosts" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.hostsShareTitle}</Text>
+      <Text style={styles.help}>{t.hostsShareHelp}</Text>
+      <View style={styles.switchRow}>
+        <View style={styles.switchText}>
+          <Text style={styles.switchLabel}>{t.hostsWithKeys}</Text>
+        </View>
+        <Toggle testID="share-hosts-keys" accessibilityLabel={t.hostsWithKeys} value={withKeys} onValueChange={setWithKeys} />
+      </View>
+      <View style={styles.chips}>
+        <Pressable
+          testID="share-hosts-file"
+          accessibilityRole="button"
+          onPress={() =>
+            void shareHostsFile(hostsJson(hosts, withKeys)).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+          }
+          style={styles.button}
+        >
+          <Text style={styles.buttonText}>{t.hostsExportFile}</Text>
+        </Pressable>
+        <Pressable testID="share-hosts-qr" accessibilityRole="button" onPress={() => setQr(!qr)} style={styles.button}>
+          <Text style={styles.buttonText}>{t.hostsShowQr}</Text>
+        </Pressable>
+        <Link href={{ pathname: '/hosts/import', params: {} }} asChild>
+          <Pressable testID="hosts-import-open" accessibilityRole="button" style={styles.button}>
+            <Text style={styles.buttonText}>{t.hostsImport}</Text>
+          </Pressable>
+        </Link>
+      </View>
+      {qr ? (
+        matrix ? (
+          <View style={styles.qrBox}>
+            <QrView testID="share-hosts-code" matrix={matrix} size={Math.min(width - 96, 300)} />
+          </View>
+        ) : (
+          <Text testID="share-hosts-too-many" style={styles.error}>
+            {t.hostsTooMany}
+          </Text>
+        )
+      ) : null}
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+    </View>
+  );
+}

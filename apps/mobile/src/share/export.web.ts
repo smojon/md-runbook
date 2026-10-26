@@ -44,3 +44,7 @@ export async function requestCosign(runbook: Runbook): Promise<void> {
   if (nav.share) await nav.share({ text });
   else await navigator.clipboard.writeText(text);
 }
+
+export async function shareHostsFile(json: string): Promise<void> {
+  download('hosts.json', json, 'application/json');
+}

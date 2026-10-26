@@ -102,7 +102,7 @@ interface Exchange {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-async function withTimeout<T>(p: Promise<T>, ms: number, what: string, onTimeout: () => Promise<unknown>): Promise<T> {
+export async function withTimeout<T>(p: Promise<T>, ms: number, what: string, onTimeout: () => Promise<unknown>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -421,7 +421,7 @@ export function wrongPlatform(platform: RemotePlatform, kind: ShellKind): string
   return undefined;
 }
 
-function execRequest(command: string): CommandRequestMessage {
+export function execRequest(command: string): CommandRequestMessage {
   const m = new CommandRequestMessage();
   m.requestType = 'exec';
   m.wantReply = true;
