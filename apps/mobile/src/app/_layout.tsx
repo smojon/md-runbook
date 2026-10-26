@@ -7,6 +7,7 @@ import { loadApprovals } from '../approvals/store';
 import { loadSettings } from '../settings/store';
 import { loadHosts } from '../hosts/store';
 import { loadRunbooks } from '../runbooks/store';
+import { loadPins } from '../runbooks/pins';
 import { t } from '../i18n';
 import { usePalette } from '../theme';
 import { CODICON_FONT, codiconFont } from '../ui/Codicon';
@@ -39,6 +40,7 @@ export default function RootLayout() {
     void loadApprovals();
     void loadSettings();
     void loadRunbooks();
+    void loadPins();
   }, []);
   return (
     <>

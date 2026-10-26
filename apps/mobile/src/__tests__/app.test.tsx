@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { pinnedIds, resetPins } from '../runbooks/pins';
 import { checkCore } from '../coreCheck';
 import { RunbookList } from '../screens/RunbookList';
 import { RunbookView } from '../screens/RunbookView';
@@ -36,5 +37,24 @@ describe('screens', () => {
   it('copes with a large runbook', () => {
     const big = Array.from({ length: 2000 }, (_, i) => `Step ${i}\n\n\`\`\`bash\necho ${i}\n\`\`\`\n`).join('\n');
     expect(checkCore(big)).toEqual({ ok: true });
+  });
+});
+
+describe('pinned runbooks', () => {
+  it('a pinned runbook moves to the top under "Pinned"; unpinning moves it back', async () => {
+    resetPins();
+    await render(<RunbookList />);
+    expect(screen.queryByText('Pinned')).toBeNull();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('pin-sample'));
+    });
+    expect(screen.getByText('Pinned')).toBeTruthy();
+    expect(screen.getByTestId('pin-sample').props.accessibilityState).toMatchObject({ selected: true });
+    expect(pinnedIds()).toEqual(['sample']);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('pin-sample'));
+    });
+    expect(screen.queryByText('Pinned')).toBeNull();
+    expect(pinnedIds()).toEqual([]);
   });
 });

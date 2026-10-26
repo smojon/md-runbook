@@ -8,6 +8,7 @@ import { openRunbookFile } from '../runbooks/openFile';
 import { openRunbookLink } from '../runbooks/openLink';
 import { forgetOrigin } from '../runbooks/files';
 import { Runbook, hasUnsavedChanges, removeRunbook, useRunbooks } from '../runbooks/store';
+import { setPinned, usePins } from '../runbooks/pins';
 import { themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
 
@@ -20,6 +21,23 @@ export function RunbookList() {
     () => runbooks.map((r) => ({ ...r, cells: parse(r.text).cells.filter((c) => c.kind === 'code').length })),
     [runbooks],
   );
+  const pins = usePins();
+  /** Pinned runbooks first (in the order pinned), then the others, each group a card under its heading. */
+  const rows = useMemo(() => {
+    const pinned = pins.flatMap((id) => items.filter((i) => i.id === id));
+    const rest = items.filter((i) => !pins.includes(i.id));
+    const out: ListRow[] = [];
+    const group = (title: string, list: typeof items, isPinned: boolean): void => {
+      if (list.length === 0) return;
+      out.push({ kind: 'heading', key: 'h-' + title, title });
+      list.forEach((r, i) =>
+        out.push({ kind: 'runbook', key: r.id, item: r, first: i === 0, last: i === list.length - 1, pinned: isPinned }),
+      );
+    };
+    group(t.pinnedSection, pinned, true);
+    group(t.runbooksSection, rest, false);
+    return out;
+  }, [items, pins]);
   const [error, setError] = useState<string | undefined>();
   /** Open a link…: the address being typed (undefined: the field is closed). */
   const [link, setLink] = useState<string | undefined>();
@@ -44,8 +62,8 @@ export function RunbookList() {
       style={styles.screen}
       contentContainerStyle={styles.content}
       contentInsetAdjustmentBehavior="automatic"
-      data={items}
-      keyExtractor={(r) => r.id}
+      data={rows}
+      keyExtractor={(r) => r.key}
       ListHeaderComponent={
         <View style={styles.header}>
           <View style={styles.actions}>
@@ -102,12 +120,17 @@ export function RunbookList() {
               {error}
             </Text>
           ) : null}
-          <Text style={styles.section} role="heading">
-            {t.runbooksSection}
-          </Text>
         </View>
       }
-      renderItem={({ item, index }) => <RunbookRow item={item} first={index === 0} last={index === items.length - 1} />}
+      renderItem={({ item }) =>
+        item.kind === 'heading' ? (
+          <Text style={styles.section} role="heading">
+            {item.title}
+          </Text>
+        ) : (
+          <RunbookRow item={item.item} first={item.first} last={item.last} pinned={item.pinned} />
+        )
+      }
       ListFooterComponent={
         core.ok ? undefined : (
           <Text testID="core-error" role="alert" style={[styles.status, { color: colors.error }]}>
@@ -120,7 +143,11 @@ export function RunbookList() {
 }
 
 /** A runbook in the list; opened files can be removed from the app (their file stays). */
-function RunbookRow({ item, first, last }: { item: Runbook & { cells: number }; first: boolean; last: boolean }) {
+type ListRow =
+  | { kind: 'heading'; key: string; title: string }
+  | { kind: 'runbook'; key: string; item: Runbook & { cells: number }; first: boolean; last: boolean; pinned: boolean };
+
+function RunbookRow({ item, first, last, pinned }: { item: Runbook & { cells: number }; first: boolean; last: boolean; pinned: boolean }) {
   const styles = useStyles();
   const colors = usePalette();
   const [confirming, setConfirming] = useState(false);
@@ -145,6 +172,20 @@ function RunbookRow({ item, first, last }: { item: Runbook & { cells: number }; 
             </View>
           </Pressable>
         </Link>
+        {!confirming ? (
+          <Pressable
+            testID={`pin-${item.id}`}
+            accessibilityRole="button"
+            aria-label={pinned ? t.unpin : t.pin}
+            accessibilityLabel={pinned ? t.unpin : t.pin}
+            accessibilityState={{ selected: pinned }}
+            hitSlop={8}
+            onPress={() => setPinned(item.id, !pinned)}
+            style={styles.remove}
+          >
+            <Codicon name={pinned ? 'pinned' : 'pin'} size={16} color={pinned ? colors.link : colors.muted} />
+          </Pressable>
+        ) : null}
         {item.source === 'file' && !confirming ? (
           <Pressable
             testID={`remove-${item.id}`}
@@ -166,6 +207,7 @@ function RunbookRow({ item, first, last }: { item: Runbook & { cells: number }; 
             testID={`remove-${item.id}-confirm`}
             accessibilityRole="button"
             onPress={() => {
+              setPinned(item.id, false);
               const r = removeRunbook(item.id);
               if (r?.origin) void forgetOrigin(r.origin);
             }}
