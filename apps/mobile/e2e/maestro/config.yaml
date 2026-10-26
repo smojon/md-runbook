@@ -1,0 +1,12 @@
+# The order of the flows. The first launch after installing the app is slow on a fresh emulator or
+# simulator (Android once drew a blank screen for two minutes, iOS once didn't launch the app at
+# all), so smoke goes first: its long wait for the start screen absorbs that, and the flows after
+# it start a warm app. (Without this, Maestro runs them in alphabetical order: open-link first.)
+flows:
+  - '*.yaml'
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - smoke
+    - run-cell
+    - open-link

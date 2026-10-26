@@ -3,6 +3,7 @@
 # and URL under Hermes), opens it, fills GREETING and says the host is missing. Made with
 # core's formatRunbookLink; nothing runs. Its pin comes with it, so it opens as unsigned, not pinned.
 appId: dev.mdrunbook.app
+name: open-link
 ---
 - launchApp:
     clearState: true
