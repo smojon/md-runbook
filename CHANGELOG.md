@@ -12,6 +12,10 @@
   mitigate and to resolve, the `rto:` target met or missed, failed runs, people and machines,
   and a timeline of every run, attempt, mark and note in time order; printed, every page shows
   the incident and a page number. The command line's `--json` carries the same record.
+- **Sign Run Record** (Share ▾, ⋯ More in the app, `md-runbook sign --record`): vouch for the
+  record of an incident or a drill as it happened, outputs and notes included; a second person
+  co-signs it. Export Report shows who signed and whether the record changed since, and
+  `md-runbook verify --allowed-signers` checks each signature.
 
 - **Runbook links:** one link format for Open in the App, QR codes, pager alerts and co-sign
   requests ([details](docs/switching.md#runbook-links)): `sha256=` pins the content (the app

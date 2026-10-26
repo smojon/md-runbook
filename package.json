@@ -412,6 +412,12 @@
         "icon": "$(workspace-trusted)"
       },
       {
+        "command": "mdRunbook.signRecord",
+        "title": "Sign Run Record",
+        "category": "md-runbook",
+        "icon": "$(verified)"
+      },
+      {
         "command": "mdRunbook.openInApp",
         "title": "Open in the App",
         "category": "md-runbook",
@@ -640,6 +646,10 @@
         },
         {
           "command": "mdRunbook.signRunbook",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.signRecord",
           "when": "notebookType == md-runbook || resourceExtname == .md"
         },
         {
@@ -1148,6 +1158,10 @@
         {
           "command": "mdRunbook.cosignRunbook",
           "group": "2_sign@2"
+        },
+        {
+          "command": "mdRunbook.signRecord",
+          "group": "2_sign@3"
         },
         {
           "command": "mdRunbook.openInApp",

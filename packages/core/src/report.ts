@@ -11,6 +11,7 @@ import { osGroups, osLabel, stepNumbers } from './os';
 import { formatLocalIso } from './outputBlock';
 import { parse } from './parser';
 import { MILESTONES, Timeline, buildTimeline, formatSeconds } from './incident';
+import { recordSigners, recordStatus } from './record';
 
 export interface ReportOptions {
   generatedAt: Date;
@@ -135,7 +136,7 @@ export function renderReport(text: string, opts: ReportOptions): string {
   const summary = [`${step} step${step === 1 ? '' : 's'}`, `${counts.ok} passed`, `${counts.fail} failed`];
   if (counts.skip) summary.push(`${counts.skip} skipped`);
   if (counts.none) summary.push(`${counts.none} not run`);
-  const record = renderRecord(buildTimeline(text), redact);
+  const record = renderRecord(buildTimeline(text), recordStatus(text), redact);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -195,6 +196,7 @@ blockquote{margin:0;padding:0 1em;color:var(--muted);border-left:.25em solid var
 .facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px 16px;margin:12px 0}
 .facts div{border:1px solid var(--border);border-radius:6px;padding:6px 10px}
 .facts dt{font-size:12px;color:var(--muted)}.facts dd{margin:0;font-weight:600}
+.facts div.changed{border-color:var(--fail);color:var(--fail)}
 .timeline td:first-child{white-space:nowrap;font-variant-numeric:tabular-nums}
 .timeline tr.note td{background:var(--code)}
 .badge.milestone{color:var(--link)}
@@ -211,9 +213,13 @@ const when = (iso: string): string => iso.replace('T', ' ').replace(/([+-]\d\d:\
  * every run, attempt, mark and note in time order. Nothing when the runbook has no recorded times.
  * In print, every page says the incident and its page number.
  */
-function renderRecord(t: Timeline, redact: (s: string) => string): { html: string; pageCss: string } {
+function renderRecord(
+  t: Timeline,
+  signed: ReturnType<typeof recordStatus>,
+  redact: (s: string) => string,
+): { html: string; pageCss: string } {
   const s = t.summary;
-  if (t.events.length === 0 && !s.incident) return { html: '', pageCss: '' };
+  if (t.events.length === 0 && !s.incident && !signed) return { html: '', pageCss: '' };
   const facts: [string, string][] = [];
   if (s.incident) facts.push(['Incident', [s.incident, s.severity].filter(Boolean).join(' · ')]);
   if (s.start) facts.push(['Start', when(s.start)]);
@@ -227,7 +233,15 @@ function renderRecord(t: Timeline, redact: (s: string) => string): { html: strin
   facts.push(['Runs', `${s.runs}${s.failedAttempts ? ` · ${s.failedAttempts} failed` : ''}`]);
   if (s.people.length) facts.push(['People', s.people.join(', ')]);
   if (s.places.length) facts.push(['Ran on', s.places.join(', ')]);
-  const factsHtml = facts.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(redact(v))}</dd></div>`).join('');
+  // Sign Run Record: who vouched for the record, and whether it changed since (the signature
+  // itself is checked against the signers' keys by md-runbook verify).
+  if (signed) {
+    const by = recordSigners(signed.block).join(', ');
+    facts.push(['Record signed', signed.unchanged ? `by ${by} · unchanged since` : `by ${by} · CHANGED since signing`]);
+  }
+  const factsHtml = facts
+    .map(([k, v]) => `<div${k === 'Record signed' && signed && !signed.unchanged ? ' class="changed"' : ''}><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(redact(v))}</dd></div>`)
+    .join('');
 
   const rows = t.events
     .map((e) => {

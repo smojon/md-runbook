@@ -54,6 +54,15 @@ const en = {
   qrHelp:
     'Another phone scans it with Scan a code. The runbook travels in the code, without its outputs, so no network is needed; it opens unsigned unless the runbook is signed.',
   qrWithHostParams: 'With the selected host and parameter values',
+  signRecordTitle: 'Sign Run Record',
+  cosignRecordTitle: 'Co-sign Run Record',
+  recordUnsigned:
+    'Your signature says this is the record as it happened: outputs, notes and earlier attempts. Any later change shows in its report and in md-runbook verify.',
+  recordCosign: (signers: string) => `Signed by ${signers}. Your co-signature says you reviewed the record as it is.`,
+  recordChanged: (signers: string) => `The record changed since ${signers} signed it. Signing again replaces their signatures.`,
+  recordNeedsName: 'Set your name for signatures first, under Hosts & settings → Signing runbooks.',
+  recordChangedWhileSigning: 'A run changed the record while it was being signed: sign it again.',
+  recordSigned: (signers: string) => `The run record is signed by ${signers}. Export Report shows it; md-runbook verify checks it.`,
   startIncidentTitle: 'Start Incident',
   startIncidentHelp:
     'A dated copy of this runbook for the incident: each run records who ran it and where, every attempt is kept, and Export Report shows the timeline.',
@@ -244,6 +253,10 @@ const en = {
     signRunbook: [
       'Sign Runbook',
       'Release a runbook for a support team: servers restricted to md-runbook-gate run only signed runbooks, unchanged. Signed with this app’s key.',
+    ],
+    signRecord: [
+      'Sign Run Record',
+      'Vouch for the record of an incident or a drill as it is (outputs, notes and all): a later change shows. Co-signs a record someone signed.',
     ],
     cosignRunbook: [
       'Co-sign Runbook',

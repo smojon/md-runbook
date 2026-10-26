@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { parseManifest, readSignature, signedStatus } from '@md-runbook/core/signing';
+import { recordSigners, recordStatus } from '@md-runbook/core/record';
 import { generateKey } from '@md-runbook/ssh';
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
 import { addRunbook, getRunbook, resetRunbooks, updateRunbookText } from '../runbooks/store';
@@ -207,5 +208,68 @@ describe('signing in the app (the screen)', () => {
     expect(screen.getByTestId('sign-error').props.children).toMatch(/changed since this card opened/);
     expect(screen.getByTestId('sign-pattern:WHO')).toBeTruthy();
     expect(readSignature(getRunbook(r.id)!.text)).toBeUndefined();
+  });
+});
+
+describe('Sign Run Record in the app', () => {
+  const sign = async (id: string) => {
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-signRecord'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('record-sign'));
+    });
+    await waitFor(() => expect(recordStatus(getRunbook(id)!.text)).toBeDefined());
+  };
+
+  it('signs the record with the app key, co-signs it as it is, and a change shows', async () => {
+    const r = addRunbook('incident.md', '---\nincident: INC-1\n---\n\n# Failover\n');
+    setSignerName('ana@example.net');
+    await render(<RunbookView id={r.id} />);
+    expect(screen.queryByTestId('record-card')).toBeNull();
+    await sign(r.id);
+    const first = recordStatus(getRunbook(r.id)!.text)!;
+    expect(first.unchanged).toBe(true);
+    expect(recordSigners(first.block)).toEqual(['ana@example.net']);
+    expect(first.block.signature).toMatch(/^U1NIU0lH/);
+
+    setSignerName('lead@example.net');
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-signRecord'));
+    });
+    expect(screen.getByTestId('record-status').props.children).toMatch(/^Signed by ana@example.net/);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('record-sign'));
+    });
+    await waitFor(() =>
+      expect(recordSigners(recordStatus(getRunbook(r.id)!.text)!.block)).toEqual(['ana@example.net', 'lead@example.net']),
+    );
+
+    await act(async () => {
+      updateRunbookText(r.id, getRunbook(r.id)!.text.replace('# Failover', '# Failover (edited)'));
+    });
+    expect(recordStatus(getRunbook(r.id)!.text)!.unchanged).toBe(false);
+  });
+
+  it('asks for a name for signatures first', async () => {
+    const r = addRunbook('incident.md', '# Failover\n');
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-signRecord'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('record-sign'));
+    });
+    expect(screen.getByTestId('run-notice').props.children).toMatch(/Set your name for signatures/);
+    expect(recordStatus(getRunbook(r.id)!.text)).toBeUndefined();
   });
 });

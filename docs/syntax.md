@@ -332,6 +332,25 @@ namespace `md-runbook`, without its armor lines. A block is signed while its fen
 and code equal a manifest cell's; signing again replaces the block. Never write or edit it by
 hand: change the runbook and sign it again.
 
+### Run record signature
+
+**Sign Run Record** (VS Code, the app, `md-runbook sign --record`) vouches for a run record, the
+file with its outputs, notes and history, as it is. It covers every byte of the file except its
+own block (a runbook signature block included), and what is signed is the statement
+`md-runbook run record v1\nsha256 HEX\n` with the SHA-256 of those bytes, in the same SSHSIG
+namespace, so one allowed_signers file checks both (`md-runbook verify --allowed-signers`); a
+statement is never a manifest, so a record signature can't pass for a runbook's. `signed=` is
+local time with its offset. Co-signers (`--cosign`) sign the same statement.
+
+```markdown
+<!-- md-runbook:record-signature v1 signer=ana@example.net signed=2026-10-26T22:40:00+01:00 sha256=3f0c…
+signature
+U1NIU0lH…
+cosign signer=lead@example.net signed=2026-10-26T22:45:00+01:00
+U1NIU0lH…
+-->
+```
+
 ## Writing a runbook as an assistant
 
 - Use only `sh`, `bash`, `pwsh`, `powershell` or `cmd` fences for steps. Put one command or one

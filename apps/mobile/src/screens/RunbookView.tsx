@@ -12,6 +12,14 @@ import {
   withFrontMatterValues,
 } from '@md-runbook/core/incident';
 import { qrMatrix } from '@md-runbook/core/qr';
+import {
+  recordDigest,
+  recordSigners,
+  recordStatement,
+  recordStatus,
+  withRecordCosigner,
+  withRecordSignature,
+} from '@md-runbook/core/record';
 import { formatRunbookLink } from '@md-runbook/core/runbookLink';
 import { QrView } from '../ui/QrView';
 import { Toggle } from '../ui/Toggle';
@@ -38,7 +46,7 @@ import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runb
 import { textProgress } from '@md-runbook/core/textProgress';
 import type { Progress } from '@md-runbook/core';
 import { LineStep } from '@md-runbook/core/steps';
-import { hostKeyId } from '@md-runbook/ssh';
+import { hostKeyId, signSshsig } from '@md-runbook/ssh';
 import { approvalOf, approveCell, rejectCell } from '../approvals/store';
 import { AssistantSheet } from '../assistant/AssistantSheet';
 import { useAssistant } from '../assistant/useAssistant';
@@ -206,7 +214,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   /** Show QR Code: the card at the top with this runbook's code. */
   const [showQr, setShowQr] = useState(false);
   /** Start Incident / Add Note: their card at the top. */
-  const [incidentCard, setIncidentCard] = useState<'start' | 'note' | undefined>();
+  const [incidentCard, setIncidentCard] = useState<'start' | 'note' | 'record' | undefined>();
   // Who a gate said signed this runbook's manifest (the file's own signer name is only a claim).
   const [gateChecked, setGateChecked] = useState<{ manifest: string; host: string; principal: string } | undefined>();
   const verified = signed && gateChecked?.manifest === signed.block.manifest ? gateChecked : undefined;
@@ -610,6 +618,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         },
         { ...meta('signRunbook', 'share'), run: () => openSign('sign') },
         {
+          ...meta('signRecord', 'share'),
+          run: () => {
+            setIncidentCard('record');
+            list.current?.scrollToOffset({ offset: 0 });
+          },
+        },
+        {
           ...meta(
             'cosignRunbook',
             'share',
@@ -682,6 +697,33 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       );
     } catch (e) {
       setSigning({ request, busy: false, errors: [t.signFailed(e instanceof Error ? e.message : String(e))] });
+    }
+  };
+  /**
+   * Sign Run Record (core/record.ts), after its card: this app's key vouches for the record as it
+   * is (an incident, a drill); a signed, unchanged record gets a co-signature instead.
+   */
+  const signRecord = async (): Promise<void> => {
+    if (!runbook) return;
+    setIncidentCard(undefined);
+    const name = signerName();
+    if (!name) return setNotice(t.recordNeedsName);
+    const text = getRunbook(runbook.id)?.text ?? runbook.text;
+    const status = recordStatus(text);
+    try {
+      const sha256 = recordDigest(text);
+      const signature = await signSshsig(await appKey(), recordStatement(sha256));
+      const signed = formatLocalIso(new Date());
+      const block =
+        status?.unchanged === true
+          ? withRecordCosigner(status.block, { signer: name, signed, signature })
+          : { signer: name, signed, sha256, signature };
+      // A run that wrote its output meanwhile would not be covered: sign again then.
+      if ((getRunbook(runbook.id)?.text ?? text) !== text) return setNotice(t.recordChangedWhileSigning);
+      updateRunbookText(runbook.id, withRecordSignature(text, block));
+      setNotice(t.recordSigned(recordSigners(block).join(', ')));
+    } catch (e) {
+      setNotice(t.signFailed(e instanceof Error ? e.message : String(e)));
     }
   };
   // A code cell's own actions (its ⋯, or a long press), as in a cell's ⋯ menu in VS Code.
@@ -862,6 +904,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             {showQr ? <QrCard text={runbook.text} host={host?.name} params={paramValues} onClose={() => setShowQr(false)} /> : null}
             {incidentCard === 'start' ? <StartIncidentCard onStart={startIncident} onCancel={() => setIncidentCard(undefined)} /> : null}
             {incidentCard === 'note' ? <NoteCard onAdd={addNote} onCancel={() => setIncidentCard(undefined)} /> : null}
+            {incidentCard === 'record' ? (
+              <RecordCard text={runbook.text} onSign={() => void signRecord()} onCancel={() => setIncidentCard(undefined)} />
+            ) : null}
             {signing ? (
               <SignCard
                 key={signing.request.kind}
@@ -1389,6 +1434,33 @@ function NoteCard({ onAdd, onCancel }: { onAdd(milestone: Milestone | undefined,
           style={[styles.cardPrimary, text.trim() === '' && styles.disabled]}
         >
           <Text style={styles.cardPrimaryText}>{t.addNoteGo}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/** Sign Run Record: what a signature says, and who signed so far, before this app's key signs. */
+function RecordCard({ text, onSign, onCancel }: { text: string; onSign(): void; onCancel(): void }) {
+  const styles = useStyles();
+  const status = recordStatus(text);
+  const cosign = status?.unchanged === true;
+  return (
+    <View testID="record-card" style={styles.qrCard}>
+      <Text style={styles.signedTitle}>{cosign ? t.cosignRecordTitle : t.signRecordTitle}</Text>
+      <Text testID="record-status" style={styles.signedBody}>
+        {!status
+          ? t.recordUnsigned
+          : cosign
+            ? t.recordCosign(recordSigners(status.block).join(', '))
+            : t.recordChanged(recordSigners(status.block).join(', '))}
+      </Text>
+      <View style={styles.cardButtons}>
+        <Pressable testID="record-cancel" accessibilityRole="button" onPress={onCancel} style={styles.qrClose}>
+          <Text style={styles.link}>{t.cancel}</Text>
+        </Pressable>
+        <Pressable testID="record-sign" accessibilityRole="button" onPress={onSign} style={styles.cardPrimary}>
+          <Text style={styles.cardPrimaryText}>{cosign ? t.cosignGo : t.signGo}</Text>
         </Pressable>
       </View>
     </View>

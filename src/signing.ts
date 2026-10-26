@@ -8,7 +8,8 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { parse, shellKindForLanguage } from '@md-runbook/core';
+import { formatLocalIso, parse, shellKindForLanguage } from '@md-runbook/core';
+import { recordDigest, recordSigners, recordStatement, recordStatus, withRecordCosigner, withRecordSignature } from '@md-runbook/core/record';
 import { findRefs } from '@md-runbook/core/secrets';
 import { checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign } from '@md-runbook/core/node';
 import { executionConfig } from './config';
@@ -206,9 +207,50 @@ async function cosignRunbook(uri?: unknown): Promise<void> {
   void vscode.window.showInformationMessage(`md-runbook: ${m.name} version ${m.version} is signed by ${signerNames(next).join(', ')}.`);
 }
 
+/**
+ * Sign Run Record (core/record.ts): vouch for a run record (an incident, a drill) as it is now, so
+ * a report or an audit can tell it wasn't changed afterwards. When the record is signed and
+ * unchanged, this co-signs it (an incident or drill lead); when it changed, signing again replaces
+ * the earlier signatures.
+ */
+async function signRecord(uri?: unknown): Promise<void> {
+  const target = targetUri(uri);
+  if (!target || target.scheme !== 'file') return void vscode.window.showErrorMessage('md-runbook: open a run record (a .md file) to sign.');
+  await saveIfOpen(target);
+  const text = decoder.decode(await vscode.workspace.fs.readFile(target));
+  const status = recordStatus(text);
+  const cosign = status?.unchanged === true;
+  const question = !status
+    ? 'md-runbook: sign this run record? Your signature says it is the record as it happened (outputs, notes and earlier attempts); any later change shows in its report.'
+    : cosign
+      ? `md-runbook: co-sign this run record, signed by ${recordSigners(status.block).join(', ')}? Your signature says you reviewed it as it is.`
+      : `md-runbook: this record changed since ${recordSigners(status.block).join(', ')} signed it. Sign it again? That replaces the earlier signatures.`;
+  const go = await vscode.window.showInformationMessage(question, { modal: true }, cosign ? 'Co-sign' : 'Sign');
+  if (!go) return;
+  const key = await pickKey();
+  if (!key) return;
+  const sha256 = recordDigest(text);
+  let signature: string;
+  try {
+    signature = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'md-runbook: signing the run record (touch your security key if it blinks)' },
+      () => sshSign(recordStatement(sha256), key, { interactive: false }),
+    );
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    return void vscode.window.showErrorMessage(`md-runbook: ${why}. A key with a passphrase signs through the SSH agent: add it (ssh-add) and choose its .pub file.`);
+  }
+  const signer = keyComment(key) ?? os.userInfo().username;
+  const signed = formatLocalIso(new Date());
+  const block = cosign && status ? withRecordCosigner(status.block, { signer, signed, signature }) : { signer, signed, sha256, signature };
+  await vscode.workspace.fs.writeFile(target, encoder.encode(withRecordSignature(text, block)));
+  void vscode.window.showInformationMessage(`md-runbook: the run record is signed by ${recordSigners(block).join(', ')}. Export Report shows it; md-runbook verify checks the signatures.`);
+}
+
 export function registerSigning(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('mdRunbook.signRunbook', signRunbook),
     vscode.commands.registerCommand('mdRunbook.cosignRunbook', cosignRunbook),
+    vscode.commands.registerCommand('mdRunbook.signRecord', signRecord),
   );
 }

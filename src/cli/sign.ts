@@ -5,7 +5,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { locateCodeCells, parse } from '@md-runbook/core';
+import { formatLocalIso, locateCodeCells, parse } from '@md-runbook/core';
+import { recordDigest, recordSigners, recordStatement, recordStatus, withRecordCosigner, withRecordSignature } from '@md-runbook/core/record';
 import { checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign, sshVerify } from '@md-runbook/core/node';
 import {
   ManifestMeta,
@@ -39,6 +40,8 @@ patterns and counts the version up.
   --pattern NAME=RE    What \${param:NAME}, \${input:NAME} or \${out:NAME} may be: a POSIX
                        extended regex for the whole value
   --out FILE           Write the signed runbook to FILE instead
+  --record             Sign the run record instead (outputs, notes and all: an incident, a
+                       drill), so a report can tell it was not changed afterwards
   --cosign             Add your signature to the signed runbook as it is (a reviewer's, for
                        servers that need two signers); refused if it changed since signing
 
@@ -67,6 +70,8 @@ interface SignArgs {
   scopes?: string[];
   patterns: Record<string, string>;
   out?: string;
+  /** Sign the run record (outputs and all, core/record.ts) instead of the runbook. */
+  record?: boolean;
   /** Add a signature to the manifest as it is (a reviewer's), instead of signing a new version. */
   cosign?: boolean;
 }
@@ -87,6 +92,7 @@ export function parseSignArgs(argv: readonly string[]): SignArgs {
       case '--name': a.name = value(f); break;
       case '--out': a.out = value(f); break;
       case '--cosign': a.cosign = true; break;
+      case '--record': a.record = true; break;
       case '--version': {
         const n = Number(value(f));
         if (!Number.isInteger(n) || n < 1) throw new SignUsageError('--version expects a positive whole number');
@@ -147,6 +153,7 @@ export async function signCommand(argv: readonly string[], out: Out = stdout, ss
       return undefined;
     }
   })();
+  if (a.record) return signRecordCommand(a, text, out, sshKeygen);
   if (a.cosign) return cosignCommand(a, text, prev?.block, out, sshKeygen);
   const meta: ManifestMeta = {
     name: a.name ?? prev?.manifest.name ?? defaultName(a.file),
@@ -221,6 +228,64 @@ async function cosignCommand(a: SignArgs, text: string, block: SignatureBlock | 
 }
 
 /** `md-runbook verify`: 0 when every block is signed (and, with --allowed-signers, the signature verifies). */
+/**
+ * `sign --record`: sign the run record (core/record.ts), or with --cosign add a signature to a
+ * signed record that hasn't changed since.
+ */
+async function signRecordCommand(a: SignArgs, text: string, out: Out, sshKeygen?: string): Promise<number> {
+  const status = recordStatus(text);
+  if (a.cosign && !status) {
+    process.stderr.write(`md-runbook: ${a.file}: the run record is not signed yet (sign it first, then a second person co-signs)\n`);
+    return 1;
+  }
+  if (a.cosign && status && !status.unchanged) {
+    process.stderr.write(`md-runbook: ${a.file}: the run record changed since ${recordSigners(status.block).join(', ')} signed it: sign it again first\n`);
+    return 1;
+  }
+  const sha256 = recordDigest(text);
+  let signature: string;
+  try {
+    signature = await sshSign(recordStatement(sha256), a.key, { sshKeygen });
+  } catch (e) {
+    process.stderr.write(`md-runbook: ${e instanceof Error ? e.message : String(e)}\n`);
+    return 1;
+  }
+  const signer = a.signer ?? keyComment(a.key) ?? 'unknown';
+  const signed = formatLocalIso(new Date());
+  const block = a.cosign && status ? withRecordCosigner(status.block, { signer, signed, signature }) : { signer, signed, sha256, signature };
+  const target = a.out ?? a.file;
+  fs.writeFileSync(target, withRecordSignature(text, block), 'utf8');
+  out(`✓ ${target}: run record signed by ${recordSigners(block).join(', ')} (sha256 ${sha256})`);
+  return 0;
+}
+
+/**
+ * What `verify` says about a run record's signature: the signers, whether the record changed
+ * since, and with --allowed-signers each signature. undefined when the file has none; else ok.
+ */
+async function verifyRecord(text: string, file: string, allowed: string | undefined, out: Out, sshKeygen?: string): Promise<boolean | undefined> {
+  const status = recordStatus(text);
+  if (!status) return undefined;
+  const b = status.block;
+  const cos = (b.cosigners ?? []).map((c) => `, co-signed by ${c.signer} at ${c.signed}`).join('');
+  out(`${file}: run record signed by ${b.signer} at ${b.signed}${cos} (as the file says)`);
+  out(`  record sha256 ${b.sha256}: ${status.unchanged ? 'unchanged since signing' : `CHANGED since signing (now ${recordDigest(text)})`}`);
+  let ok = status.unchanged;
+  if (allowed) {
+    const sigs = [b.signature, ...(b.cosigners ?? []).map((c) => c.signature)];
+    const names = recordSigners(b);
+    for (let i = 0; i < sigs.length; i++) {
+      try {
+        out(`  record signature ${i + 1} (${names[i]}): good, by ${await sshVerify(recordStatement(b.sha256), sigs[i]!, allowed, sshKeygen)} (${allowed})`);
+      } catch (e) {
+        out(`  record signature ${i + 1} (${names[i]}): ${e instanceof Error ? e.message : String(e)}`);
+        ok = false;
+      }
+    }
+  } else out('  record signature: NOT checked: add --allowed-signers FILE');
+  return ok;
+}
+
 export async function verifyCommand(argv: readonly string[], out: Out = stdout, sshKeygen?: string): Promise<number> {
   if (argv.includes('-h') || argv.includes('--help')) return void process.stdout.write(SIGN_USAGE), 0;
   const args = [...argv];
@@ -244,10 +309,17 @@ export async function verifyCommand(argv: readonly string[], out: Out = stdout, 
   }
   const text = fs.readFileSync(file, 'utf8');
   const status = signedStatus(text);
+  // A run record's signature (Sign Run Record) is checked whether or not the runbook is signed.
+  const record = await verifyRecord(text, file, allowed, out, sshKeygen);
   if (!status) {
+    if (record !== undefined) {
+      out(`${record ? '✓' : '✗'} run record${allowed ? '' : ', signature not checked'} (the runbook itself is not signed)`);
+      return record ? 0 : 1;
+    }
     out(`✗ ${file}: ${/<!-- md-runbook:signature/.test(text) ? 'the signature block is damaged' : 'not signed'}`);
     return 1;
   }
+  if (record === false) out('  (the run record above does not verify)');
   const m = status.manifest;
   // The signer's name and date are what the file says; only the key check below proves who signed.
   const cos = (status.block.cosigners ?? []).map((c) => `, co-signed by ${c.signer} on ${c.signed}`).join('');
@@ -296,5 +368,5 @@ export async function verifyCommand(argv: readonly string[], out: Out = stdout, 
     `${ok ? '✓' : '✗'} ${status.cells.size} signed block${status.cells.size === 1 ? '' : 's'}, ${status.changed.length} changed` +
       (allowed ? '' : ', signature not checked'),
   );
-  return ok ? 0 : 1;
+  return ok && record !== false ? 0 : 1;
 }

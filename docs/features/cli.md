@@ -76,6 +76,8 @@ blocks changed since; see [Signed runbooks](signed-runbooks.md).
 | `--scope NAME` | Where it may run (repeatable) |
 | `--pattern NAME=RE` | What `${param:NAME}` may be: a POSIX extended regex for the whole value |
 | `--out FILE` | Write the signed runbook to FILE instead |
+| `--record` | Sign the run record instead (outputs, notes and all: an incident, a drill); `verify` then says whether it changed since and, with `--allowed-signers`, checks each signature |
+| `--cosign` | Add your signature to the signed runbook (or, with `--record`, the signed record) as it is |
 
 ## QR codes and labels
 
