@@ -20,6 +20,7 @@ import { registerSessions } from './session';
 import { registerSigning } from './signing';
 import { registerOpenInApp } from './openInApp';
 import { registerMakeQr } from './makeQr';
+import { registerIncidentCommands } from './incidentCommands';
 import { registerTaskLists } from './taskLists';
 import { registerTerminal } from './terminal';
 import { registerToolbarButtons } from './toolbarButtons';
@@ -99,6 +100,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerSigning(context);
   registerOpenInApp(context);
   registerMakeQr(context);
+  registerIncidentCommands(context);
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {
       transientOutputs: false,

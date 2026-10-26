@@ -108,6 +108,59 @@ describe('⋯ More: every action, by group or by search', () => {
   });
 });
 
+describe('Start Incident and Add Note', () => {
+  const more = async (id: string) => {
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(`action-${id}`));
+    });
+  };
+
+  it('Start Incident opens a dated copy that keeps evidence, with a detected note; the original is untouched', async () => {
+    const original =
+      '# Failover\n\n```bash\necho hi\n```\n<!-- md-runbook:output start exit=0 -->\n```text\nhi\n```\n<!-- md-runbook:output end -->\n';
+    const r = addRunbook('failover.md', original);
+    const { router } = jest.requireMock<{ router: { push: jest.Mock } }>('expo-router');
+    router.push.mockClear();
+    await render(<RunbookView id={r.id} />);
+    await more('startIncident');
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('incident-id'), 'INC-42');
+      fireEvent.press(screen.getByTestId('severity-SEV2'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('incident-start'));
+    });
+    const copyId = router.push.mock.calls[0]![0].params.id as string;
+    const copy = getRunbook(copyId)!;
+    expect(copy.fileName).toMatch(/^failover\.\d{8}-\d{6}\.md$/);
+    expect(copy.text).toMatch(
+      /^---\nincident: INC-42\nseverity: SEV2\n---\n\n<!-- md-runbook:note at=\S+ milestone=detected -->\n> \*\*\d\d:\d\d · detected:\*\* Incident INC-42 started from Failover\n\n# Failover/,
+    );
+    expect(copy.text).not.toContain('md-runbook:output');
+    expect(getRunbook(r.id)!.text).toBe(original);
+  });
+
+  it('Add Note appends a timestamped milestone', async () => {
+    const r = addRunbook('t.md', '# T\n');
+    await render(<RunbookView id={r.id} />);
+    await more('addNote');
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('milestone-mitigated'));
+      fireEvent.changeText(screen.getByTestId('note-text'), 'Failover done');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('note-add'));
+    });
+    expect(getRunbook(r.id)!.text).toMatch(
+      /^# T\n\n<!-- md-runbook:note at=\S+ milestone=mitigated -->\n> \*\*\d\d:\d\d · mitigated:\*\* Failover done\n$/,
+    );
+    expect(screen.queryByTestId('note-card')).toBeNull();
+  });
+});
+
 describe('Show QR Code', () => {
   it('shows a code of the runbook without its outputs; another phone opens what it reads', async () => {
     const r = addRunbook(

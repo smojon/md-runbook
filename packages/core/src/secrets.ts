@@ -97,10 +97,28 @@ export interface FrontMatter {
   cwd?: string;
   /** `shell:`: the installed shells its cells run in, by name (lint reports names it ignored). */
   shell?: RunbookShells;
+  /** `incident:`: the incident this run record belongs to (`INC-1234`); implies `evidence`. */
+  incident?: string;
+  /** `severity:` of the incident, as written (`SEV2`, `P1`). */
+  severity?: string;
+  /** `evidence: true` (or an incident): every run records who ran it and where, and every attempt is kept. */
+  evidence?: boolean;
+  /** `rto:` in seconds (`30m`, `1h`, `90s`): the target a drill or recovery is measured against. */
+  rtoSeconds?: number;
+}
+
+/** `30m`, `1h30m`, `90s`, `45` (seconds) as seconds; undefined when it isn't a duration. */
+export function parseDurationSeconds(s: string): number | undefined {
+  const t = s.trim().toLowerCase();
+  if (/^\d+(?:\.\d+)?$/.test(t)) return Number(t);
+  const m = /^(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?$/.exec(t);
+  if (!m || (!m[1] && !m[2] && !m[3])) return undefined;
+  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0);
 }
 
 /**
- * `params:`, `mode:`, `timeout:`, `cwd:` and `shell:` from YAML-style front matter (`---` ... `---`
+ * `params:`, `mode:`, `timeout:`, `cwd:`, `shell:`, `incident:`, `severity:`, `evidence:` and `rto:` from
+ * YAML-style front matter (`---` ... `---`
  * at the very top). Only this subset is understood; other keys are ignored. Param items are
  * `- name` or `- name: default`; `mode` is `session` or `isolated`; `timeout` is seconds (`120`
  * or `120s`); `shell` names shells (`zsh, windows-powershell`, see parseShells).
@@ -114,6 +132,10 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
   let timeoutSeconds: number | undefined;
   let cwd: string | undefined;
   let shell: RunbookShells | undefined;
+  let incident: string | undefined;
+  let severity: string | undefined;
+  let evidence: boolean | undefined;
+  let rtoSeconds: number | undefined;
   let inParams = false;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
@@ -124,6 +146,10 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
         ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}),
         ...(cwd !== undefined ? { cwd } : {}),
         ...(shell ? { shell } : {}),
+        ...(incident ? { incident } : {}),
+        ...(severity ? { severity } : {}),
+        ...(evidence || incident ? { evidence: true } : {}),
+        ...(rtoSeconds !== undefined ? { rtoSeconds } : {}),
       };
     }
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
@@ -142,6 +168,16 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
         // A second `shell:` line adds what the first didn't say; the first one counts (lint warns).
         if (shells.unix || shells.powershell) shell = { ...shells, ...shell };
       }
+      const value = (key: string): string | undefined => {
+        const v = new RegExp(`^${key}\\s*:\\s*(.*?)\\s*$`, 'i').exec(line)?.[1];
+        return v === undefined || v === '' ? undefined : unquote(v.replace(/\s+#.*$/, ''));
+      };
+      incident = value('incident') ?? incident;
+      severity = value('severity') ?? severity;
+      const ev = value('evidence');
+      if (ev !== undefined) evidence = /^(true|yes|on)$/i.test(ev);
+      const rto = value('rto');
+      if (rto !== undefined) rtoSeconds = parseDurationSeconds(rto) ?? rtoSeconds;
       continue;
     }
     if (!inParams) continue;

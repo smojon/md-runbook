@@ -7,9 +7,10 @@ import { stripAnsi } from './ansi';
 import { escapeHtml, renderCodeBlock, renderInline, renderMarkdown } from './markdown';
 import { parseCellOptions } from './cellOptions';
 import { isCodeMeta } from './model';
-import { osGroups, osLabel } from './os';
+import { osGroups, osLabel, stepNumbers } from './os';
 import { formatLocalIso } from './outputBlock';
 import { parse } from './parser';
+import { MILESTONES, Timeline, buildTimeline, formatSeconds } from './incident';
 
 export interface ReportOptions {
   generatedAt: Date;
@@ -83,16 +84,11 @@ export function renderReport(text: string, opts: ReportOptions): string {
     const current = primary.get(slot.group);
     if (current === undefined || (!doc.cells[current]!.output && doc.cells[i]!.output)) primary.set(slot.group, i);
   });
-  /** Step number of each code cell: the alternatives of a group share one. */
+  /** Step number of each code cell: the alternatives of a group share one (as the run timeline numbers them). */
+  const numbers = stepNumbers(doc.cells.map((c, i) => (isCodeMeta(c.meta) ? { kind: 'code' as const, os: osOf(i) } : { kind: 'markup' as const })));
   const stepOf = new Map<number, number>();
-  const groupStep = new Map<number, number>();
-  doc.cells.forEach((c, i) => {
-    if (!isCodeMeta(c.meta)) return;
-    const slot = slots[i];
-    if (slot && groupStep.has(slot.group)) return void stepOf.set(i, groupStep.get(slot.group)!);
-    stepOf.set(i, ++step);
-    if (slot) groupStep.set(slot.group, step);
-  });
+  numbers.forEach((n, i) => n !== undefined && stepOf.set(i, n));
+  step = Math.max(0, ...numbers.filter((n): n is number => n !== undefined));
 
   for (const [index, cell] of doc.cells.entries()) {
     if (!isCodeMeta(cell.meta)) {
@@ -139,6 +135,7 @@ export function renderReport(text: string, opts: ReportOptions): string {
   const summary = [`${step} step${step === 1 ? '' : 's'}`, `${counts.ok} passed`, `${counts.fail} failed`];
   if (counts.skip) summary.push(`${counts.skip} skipped`);
   if (counts.none) summary.push(`${counts.none} not run`);
+  const record = renderRecord(buildTimeline(text), redact);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -148,14 +145,14 @@ export function renderReport(text: string, opts: ReportOptions): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="generator" content="md-runbook">
 <title>${escapeHtml(docTitle)}</title>
-<style>${CSS}</style>
+<style>${CSS}${record.pageCss}</style>
 </head>
 <body>
 <header>
 <h1 class="title">${renderInline(docTitle)}</h1>
 <p class="meta">Generated ${escapeHtml(formatLocalIso(opts.generatedAt))} · ${summary.join(' · ')}</p>
 </header>
-<table class="summary">
+${record.html}<table class="summary">
 <thead><tr><th>#</th><th>Command</th><th>Shell</th><th>Exit</th><th>Ran</th><th>Duration</th></tr></thead>
 <tbody>
 ${rows}</tbody>
@@ -194,4 +191,68 @@ th,td{border:1px solid var(--border);padding:4px 8px;text-align:left;vertical-al
 .output pre{white-space:pre-wrap;word-break:break-word}
 li.task{list-style:none}
 blockquote{margin:0;padding:0 1em;color:var(--muted);border-left:.25em solid var(--border)}
+.record{margin:16px 0 24px}
+.facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px 16px;margin:12px 0}
+.facts div{border:1px solid var(--border);border-radius:6px;padding:6px 10px}
+.facts dt{font-size:12px;color:var(--muted)}.facts dd{margin:0;font-weight:600}
+.timeline td:first-child{white-space:nowrap;font-variant-numeric:tabular-nums}
+.timeline tr.note td{background:var(--code)}
+.badge.milestone{color:var(--link)}
+.earlier{font-size:12px;color:var(--muted)}
+@media print{.facts div,.timeline tr{break-inside:avoid}.timeline tr.note td{background:none}}
 `;
+
+/** `2026-10-26T22:05:00+01:00` → `2026-10-26 22:05:00 +01:00`. */
+const when = (iso: string): string => iso.replace('T', ' ').replace(/([+-]\d\d:\d\d|Z)$/, ' $1');
+
+/**
+ * The run record above the steps, for audit evidence and postmortems: the incident's facts
+ * (start, end, time to mitigate and resolve, the RTO, failed attempts, people and places), then
+ * every run, attempt, mark and note in time order. Nothing when the runbook has no recorded times.
+ * In print, every page says the incident and its page number.
+ */
+function renderRecord(t: Timeline, redact: (s: string) => string): { html: string; pageCss: string } {
+  const s = t.summary;
+  if (t.events.length === 0 && !s.incident) return { html: '', pageCss: '' };
+  const facts: [string, string][] = [];
+  if (s.incident) facts.push(['Incident', [s.incident, s.severity].filter(Boolean).join(' · ')]);
+  if (s.start) facts.push(['Start', when(s.start)]);
+  if (s.end) facts.push(['End', when(s.end)]);
+  if (s.durationSeconds !== undefined) facts.push(['Duration', formatSeconds(s.durationSeconds)]);
+  for (const m of MILESTONES) if (s.milestones[m]) facts.push([m[0]!.toUpperCase() + m.slice(1), when(s.milestones[m])]);
+  if (s.timeToMitigateSeconds !== undefined) facts.push(['Time to mitigate', formatSeconds(s.timeToMitigateSeconds)]);
+  if (s.timeToResolveSeconds !== undefined) facts.push(['Time to resolve', formatSeconds(s.timeToResolveSeconds)]);
+  if (s.rtoSeconds !== undefined)
+    facts.push(['RTO', `${formatSeconds(s.rtoSeconds)}${s.rtoMet === undefined ? '' : s.rtoMet ? ' · met' : ' · missed'}`]);
+  facts.push(['Runs', `${s.runs}${s.failedAttempts ? ` · ${s.failedAttempts} failed` : ''}`]);
+  if (s.people.length) facts.push(['People', s.people.join(', ')]);
+  if (s.places.length) facts.push(['Ran on', s.places.join(', ')]);
+  const factsHtml = facts.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(redact(v))}</dd></div>`).join('');
+
+  const rows = t.events
+    .map((e) => {
+      const what =
+        e.kind === 'note'
+          ? `${e.milestone ? `<span class="badge milestone">${escapeHtml(e.milestone)}</span> ` : ''}${escapeHtml(redact(e.text ?? '')).replace(/\n/g, '<br>')}`
+          : `<a href="#step-${e.step}">${e.step}</a> <code>${escapeHtml(redact(e.label ?? ''))}</code>${e.earlier ? ' <span class="earlier">earlier attempt</span>' : ''}`;
+      const result =
+        e.kind === 'note' ? '' : `<span class="badge ${e.ok ? (e.exit === 'skipped' ? 'skip' : 'ok') : 'fail'}">${escapeHtml(e.check === 'failed' ? 'check failed' : e.exit === '0' ? 'exit 0' : /^-?\d+$/.test(e.exit ?? '') ? `exit ${e.exit}` : (e.exit ?? ''))}</span>`;
+      return (
+        `<tr class="${e.kind}"><td>${escapeHtml(when(e.at))}</td><td>${what}</td><td>${escapeHtml(redact(e.by ?? ''))}</td>` +
+        `<td>${escapeHtml(redact(e.on ?? ''))}</td><td>${result}</td><td>${escapeHtml(e.duration ?? '')}</td></tr>\n`
+      );
+    })
+    .join('');
+  const html =
+    `<section class="record">\n<h2>${s.incident ? 'Incident record' : 'Run record'}</h2>\n<dl class="facts">${factsHtml}</dl>\n` +
+    (rows
+      ? `<table class="timeline">\n<thead><tr><th>Time</th><th>What</th><th>By</th><th>On</th><th>Result</th><th>Duration</th></tr></thead>\n<tbody>\n${rows}</tbody>\n</table>\n`
+      : '') +
+    `</section>\n`;
+  const label = s.incident ? `${s.incident}${s.severity ? ` · ${s.severity}` : ''}` : '';
+  // Chrome prints page margin boxes (the PDF export prints with Chrome or Edge).
+  const pageCss = `@page{@bottom-right{content:"Page " counter(page) " of " counter(pages);font:10px sans-serif;color:#656d76}${
+    label ? `@top-right{content:${JSON.stringify(label)};font:10px sans-serif;color:#656d76}` : ''
+  }}`;
+  return { html, pageCss };
+}

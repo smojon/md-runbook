@@ -3,6 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
 import { LinkContext, forgetLinkContext, linkContext } from '../runbooks/linkContext';
 import { FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import {
+  MILESTONES,
+  Milestone,
+  formatNote,
+  withBlockAfterFrontMatter,
+  withBlockAtEnd,
+  withFrontMatterValues,
+} from '@md-runbook/core/incident';
 import { qrMatrix } from '@md-runbook/core/qr';
 import { formatRunbookLink } from '@md-runbook/core/runbookLink';
 import { QrView } from '../ui/QrView';
@@ -47,6 +55,7 @@ import { canDownload } from '../runbooks/files';
 import { saveRunbook } from '../runbooks/save';
 import { exportReport, shareRunbook } from '../share/export';
 import { Runbook, addRunbook, getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
+import { signerName } from '../settings/store';
 import { SignCard, SignRequest } from '../signing/SignCard';
 import { SignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
 import { appKey } from '../ssh/appKey';
@@ -196,6 +205,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   );
   /** Show QR Code: the card at the top with this runbook's code. */
   const [showQr, setShowQr] = useState(false);
+  /** Start Incident / Add Note: their card at the top. */
+  const [incidentCard, setIncidentCard] = useState<'start' | 'note' | undefined>();
   // Who a gate said signed this runbook's manifest (the file's own signer name is only a claim).
   const [gateChecked, setGateChecked] = useState<{ manifest: string; host: string; principal: string } | undefined>();
   const verified = signed && gateChecked?.manifest === signed.block.manifest ? gateChecked : undefined;
@@ -467,6 +478,41 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     else openApprove(more, true, next);
   };
   /** Run All as Copy: the runbook without outputs under a dated name, opened and run at once. */
+  /**
+   * Start Incident: a dated copy that keeps evidence (incident: and severity: in its front matter),
+   * with a first note, detected; it opens without running.
+   */
+  const startIncident = (id: string, severity: string | undefined): void => {
+    if (!runbook) return;
+    setIncidentCard(undefined);
+    const base = (runbook.fileName ?? `${runbook.title}.md`).replace(/(\.\d{8}-\d{6})?\.md$/i, '');
+    const now = new Date();
+    const text = withBlockAfterFrontMatter(
+      withFrontMatterValues(clearOutputBlocks(runbook.text), { incident: id, ...(severity ? { severity } : {}) }),
+      formatNote({
+        at: now,
+        ...(signerName() ? { by: signerName() } : {}),
+        milestone: 'detected',
+        text: t.incidentStarted(id, runbook.title),
+      }),
+    );
+    const copy = addRunbook(`${base}.${copyStamp(now)}.md`, text);
+    router.push({ pathname: '/runbook/[id]', params: { id: copy.id } });
+  };
+  /** Add Note: a timestamped note (or milestone) at the end of the runbook, for the record. */
+  const addNote = (milestone: Milestone | undefined, note: string): void => {
+    if (!runbook) return;
+    setIncidentCard(undefined);
+    const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+    const block = formatNote({
+      at: new Date(),
+      ...(signerName() ? { by: signerName() } : {}),
+      ...(milestone ? { milestone } : {}),
+      text: note,
+    });
+    updateRunbookText(runbook.id, withBlockAtEnd(latest, block));
+    setNotice(t.noteAdded);
+  };
   const runAsCopy = (): void => {
     if (!runbook) return;
     const base = (runbook.fileName ?? `${runbook.title}.md`).replace(/(\.\d{8}-\d{6})?\.md$/i, '');
@@ -500,6 +546,20 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ? { ...meta('sessionOff', 'run'), run: () => setSessionMode('isolated') }
           : { ...meta('sessionOn', 'run'), run: () => setSessionMode('session') },
         { ...meta('runAllAsCopy', 'run', host ? undefined : t.noRunNow), run: () => runAsCopy() },
+        {
+          ...meta('startIncident', 'run'),
+          run: () => {
+            setIncidentCard('start');
+            list.current?.scrollToOffset({ offset: 0 });
+          },
+        },
+        {
+          ...meta('addNote', 'run'),
+          run: () => {
+            setIncidentCard('note');
+            list.current?.scrollToOffset({ offset: 0 });
+          },
+        },
         { ...meta('clearAllOutputs', 'run'), run: () => updateRunbookText(runbook.id, clearOutputBlocks(runbook.text)) },
         {
           ...meta('checkNextItem', 'steps', checkNextItem(runbook.text) === undefined ? t.noTaskLeft : undefined),
@@ -800,6 +860,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             {fromLink ? <LinkNotes context={fromLink} /> : null}
             {signed ? <SignedBanner status={signed} verified={verified} /> : null}
             {showQr ? <QrCard text={runbook.text} host={host?.name} params={paramValues} onClose={() => setShowQr(false)} /> : null}
+            {incidentCard === 'start' ? <StartIncidentCard onStart={startIncident} onCancel={() => setIncidentCard(undefined)} /> : null}
+            {incidentCard === 'note' ? <NoteCard onAdd={addNote} onCancel={() => setIncidentCard(undefined)} /> : null}
             {signing ? (
               <SignCard
                 key={signing.request.kind}
@@ -1224,6 +1286,115 @@ function QrCard({
   );
 }
 
+const SEVERITIES = ['SEV1', 'SEV2', 'SEV3', 'SEV4'] as const;
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+
+/** Start Incident: the incident's ID (a dated one to start from) and its severity. */
+function StartIncidentCard({ onStart, onCancel }: { onStart(id: string, severity: string | undefined): void; onCancel(): void }) {
+  const styles = useStyles();
+  const colors = usePalette();
+  const [id, setId] = useState(() => {
+    const d = new Date();
+    return `INC-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}`;
+  });
+  const [severity, setSeverity] = useState<string | undefined>();
+  return (
+    <View testID="incident-card" style={styles.qrCard}>
+      <Text style={styles.signedTitle}>{t.startIncidentTitle}</Text>
+      <Text style={styles.signedBody}>{t.startIncidentHelp}</Text>
+      <TextInput
+        testID="incident-id"
+        accessibilityLabel={t.incidentId}
+        value={id}
+        onChangeText={setId}
+        autoCapitalize="characters"
+        autoCorrect={false}
+        style={[styles.paramInput, styles.cardInput]}
+        placeholderTextColor={colors.placeholder}
+      />
+      <View style={styles.cardChips}>
+        {SEVERITIES.map((s) => (
+          <Pressable
+            key={s}
+            testID={`severity-${s}`}
+            accessibilityRole="button"
+            accessibilityState={{ selected: severity === s }}
+            onPress={() => setSeverity(severity === s ? undefined : s)}
+            style={[styles.chip, severity === s && styles.chipOn]}
+          >
+            <Text style={[styles.chipText, severity === s && styles.chipTextOn]}>{s}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <View style={styles.cardButtons}>
+        <Pressable testID="incident-cancel" accessibilityRole="button" onPress={onCancel} style={styles.qrClose}>
+          <Text style={styles.link}>{t.cancel}</Text>
+        </Pressable>
+        <Pressable
+          testID="incident-start"
+          accessibilityRole="button"
+          disabled={id.trim() === ''}
+          onPress={() => onStart(id.trim(), severity)}
+          style={[styles.cardPrimary, id.trim() === '' && styles.disabled]}
+        >
+          <Text style={styles.cardPrimaryText}>{t.startIncidentGo}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/** Add Note: a note or a milestone (detected, mitigated, resolved) for the record. */
+function NoteCard({ onAdd, onCancel }: { onAdd(milestone: Milestone | undefined, text: string): void; onCancel(): void }) {
+  const styles = useStyles();
+  const colors = usePalette();
+  const [milestone, setMilestone] = useState<Milestone | undefined>();
+  const [text, setText] = useState('');
+  return (
+    <View testID="note-card" style={styles.qrCard}>
+      <Text style={styles.signedTitle}>{t.addNoteTitle}</Text>
+      <View style={styles.cardChips}>
+        {MILESTONES.map((m) => (
+          <Pressable
+            key={m}
+            testID={`milestone-${m}`}
+            accessibilityRole="button"
+            accessibilityState={{ selected: milestone === m }}
+            onPress={() => setMilestone(milestone === m ? undefined : m)}
+            style={[styles.chip, milestone === m && styles.chipOn]}
+          >
+            <Text style={[styles.chipText, milestone === m && styles.chipTextOn]}>{t.milestone[m]}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <TextInput
+        testID="note-text"
+        accessibilityLabel={t.addNoteTitle}
+        value={text}
+        onChangeText={setText}
+        placeholder={t.notePlaceholder}
+        placeholderTextColor={colors.placeholder}
+        multiline
+        style={[styles.paramInput, styles.cardInput, styles.noteInput]}
+      />
+      <View style={styles.cardButtons}>
+        <Pressable testID="note-cancel" accessibilityRole="button" onPress={onCancel} style={styles.qrClose}>
+          <Text style={styles.link}>{t.cancel}</Text>
+        </Pressable>
+        <Pressable
+          testID="note-add"
+          accessibilityRole="button"
+          disabled={text.trim() === ''}
+          onPress={() => onAdd(milestone, text.trim())}
+          style={[styles.cardPrimary, text.trim() === '' && styles.disabled]}
+        >
+          <Text style={styles.cardPrimaryText}>{t.addNoteGo}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 function LinkNotes({ context }: { context: LinkContext }) {
   const styles = useStyles();
   const colors = usePalette();
@@ -1389,6 +1560,12 @@ const useStyles = themedStyles((c) => ({
   qrSwitch: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
   qrSwitchText: { flex: 1 },
   qrClose: { alignSelf: 'flex-end', paddingVertical: 6, paddingHorizontal: 4, marginTop: 4 },
+  cardInput: { marginTop: 10 },
+  noteInput: { minHeight: 72, textAlignVertical: 'top' },
+  cardChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  cardButtons: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 12, marginTop: 10 },
+  cardPrimary: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 10, backgroundColor: c.accent },
+  cardPrimaryText: { fontSize: 15, fontWeight: '600', color: c.onAccent },
   signedTitle: { fontSize: 14, color: c.text },
   signedBody: { fontSize: 12, color: c.muted, lineHeight: 17, marginTop: 2 },
   trust: { borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 12, marginVertical: 8 },

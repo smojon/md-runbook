@@ -26,10 +26,11 @@ import { parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { signedStatus, signedStepIndex } from '@md-runbook/core/signing';
 import { LineStep, echoCommand, formatLineRange, formatLineRanges, splitSteps } from '@md-runbook/core/steps';
 import { RemoteRunOptions, SessionRunResult, SignedRun, wrongPlatform } from '@md-runbook/ssh';
-import { Host, setHostPlatform } from '../hosts/store';
+import { Host, hostLabel, setHostPlatform } from '../hosts/store';
 import { checkParam, refsOf, runbookParams } from '../runbooks/params';
 import { readSecret } from '../secrets/store';
-import { historySize, outputSettings } from '../settings/store';
+import { historySize, outputSettings, signerName } from '../settings/store';
+import { historySizeFor, runnerAttrs } from '@md-runbook/core/incident';
 import { t } from '../i18n';
 import { runnability } from './cells';
 import { Connection, connectionFor } from './connections';
@@ -281,6 +282,9 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
     ran: formatLocalIso(started),
     ended: formatLocalIso(ended),
     duration: formatDurationAttr(ended.getTime() - started.getTime()),
+    // Who and where, when the runbook keeps evidence (incident:, evidence: true): the name this app
+    // signs with, and the account it ran as.
+    ...runnerAttrs(p.text, { ...(signerName() ? { by: signerName() } : {}), on: hostLabel(p.host) }),
   };
   let captured: Captured[] = [];
   if (opts.checks && result.exitCode !== null && !result.timedOut && !result.cancelled) {
@@ -317,7 +321,7 @@ export async function runCell(p: RunCellParams): Promise<RunOutcome> {
         text: saved,
         attrs,
         ...(previous ? { previous } : {}),
-        history: nextHistory(previous, older, p.historySize ?? historySize()),
+        history: nextHistory(previous, older, historySizeFor(base, p.historySize ?? historySize())),
       },
       { ...DEFAULT_WRITE_OPTIONS, redact: (s) => redactor.redact(hideKnown(s)) },
     ) ?? base;

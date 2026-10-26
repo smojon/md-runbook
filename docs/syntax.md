@@ -159,6 +159,10 @@ mode: session        # session | isolated (default: the user's setting)
 timeout: 300         # seconds for every cell: 300 or 300s; a cell's timeout= wins
 cwd: ../infra        # folder cells run in, relative to the .md file; a cell's cwd= is still relative to the .md file
 shell: zsh, windows-powershell   # which installed shells run the cells (see below)
+incident: INC-1234   # this file is the record of an incident (Start Incident writes it); implies evidence
+severity: SEV2       # the incident's severity, as you name them
+evidence: true       # every run records by= and on=, and every attempt is kept (also implied by incident:)
+rto: 30m             # recovery time objective: 90s, 30m, 1h30m or seconds; the report says met or missed
 params:
   - NAMESPACE        # asked, no default
   - REGION: eu-west-1
@@ -237,7 +241,8 @@ system:admin
 | `lines` | the 1-based lines of the cell that ran (`2-3`), when not the whole cell ran; such a step is not done yet |
 | `stderr` | the 1-based lines of the output that came from stderr (`3,5-7`); absent when none did |
 | `proposed-by`, `approved-by` | audit trail of an approved assistant cell |
-| `by` | the OS user who marked the step done or skipped by hand; the output body is `[md-runbook] marked done by NAME` |
+| `by` | the OS user who marked the step done or skipped by hand (the output body is `[md-runbook] marked done by NAME`); and, when the runbook keeps evidence (`incident:`, `evidence: true`, or `mdRunbook.output.recordRunner`), who ran it: the OS user in VS Code and the command line, the name for signatures in the app |
+| `on` | where it ran, when the runbook keeps evidence: `user@machine` in VS Code and the command line, the SSH account `user@host` in the app |
 | any other, e.g. `context`, `server` | the first output line of a context command configured by the user (`kubectl config current-context`), recorded before the cell ran |
 
 ### Output history
@@ -257,6 +262,20 @@ error: You must be logged in to the server (Unauthorized)
 
 </details>
 ````
+
+A runbook that keeps evidence (`incident:` or `evidence: true`) keeps every attempt (up to 100 per
+step) whatever the history setting, in VS Code, the app and the command line.
+
+### Notes
+
+**Add Note** (and **Start Incident**, for when the incident was detected) writes a note: a marker
+with the time, the author and an optional milestone (`detected`, `mitigated`, `resolved`), then a
+quote. Anywhere in the Markdown; Export Report puts notes in the timeline by their time.
+
+```markdown
+<!-- md-runbook:note at=2026-10-26T22:08:00+01:00 by=ana milestone=mitigated -->
+> **22:08 · mitigated · ana:** Failover done; errors back to 0
+```
 
 ## Steps and progress
 

@@ -69,6 +69,14 @@ The report contains:
 
 - the title (the first heading, or the file name) and when it was generated, with a count of
   passed, failed and not-run steps,
+- the **run record**, when the runbook has recorded times: for an incident (`incident:` in the
+  front matter, what **Start Incident** writes) its ID and severity, start, end and duration,
+  when it was detected, mitigated and resolved (from **Add Note** milestones), time to mitigate
+  and to resolve, the `rto:` target met or missed, how many runs failed, and who ran steps on
+  which machines; then a **timeline** of every run, earlier attempt, step marked by hand and note,
+  in time order, with who ran it, where, the result and the duration. This is the page for
+  audit evidence and postmortem meetings; printed (PDF), every page shows the incident and its
+  page number,
 - a summary table with one row per runnable block: step number, first line of code, shell,
   exit status (`✓ exit 0`, `✗ exit 1`, `not run`, …), start time and duration. Each row links to
   the step,

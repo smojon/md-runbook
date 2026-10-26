@@ -6,6 +6,7 @@
  */
 
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   DEFAULT_PATTERNS,
@@ -16,7 +17,10 @@ import {
   exitLabel,
   formatDurationAttr,
   formatLocalIso,
+  isCodeMeta,
   isSuccess,
+  loadedOutputEntry,
+  nextHistory,
   locateCodeCells,
   outputSummary,
   parse,
@@ -32,6 +36,7 @@ import { currentOs, osGroups, osLabel } from '@md-runbook/core/os';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { REDACTED } from '@md-runbook/core/redact';
 import { findRefs, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
+import { historySizeFor, runnerAttrs } from '@md-runbook/core/incident';
 import { SessionPool } from '@md-runbook/core/node/session';
 
 export interface CliOptions {
@@ -356,8 +361,16 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         ...(check ? { check } : {}),
         ...(attempts > 1 ? { attempts: String(attempt) } : {}),
         ...(opts.name !== undefined ? { name: opts.name } : {}),
+        // Who and where, when the runbook keeps evidence (incident:, evidence: true).
+        ...runnerAttrs(text, { by: runner(), on: `${runner()}@${os.hostname()}` }),
       };
-      text = setCellOutput(text, loc.cellIndex, { kind: 'new', text: transcript, attrs }, writeOpts) ?? text;
+      // Earlier runs are kept only while the runbook keeps evidence (every attempt, as the clients do).
+      const meta = parse(text).cells[loc.cellIndex]?.meta;
+      const previous = isCodeMeta(meta) ? loadedOutputEntry(meta) : undefined;
+      const history = previous ? nextHistory(previous, isCodeMeta(meta) ? (meta.history?.entries ?? []) : [], historySizeFor(text, 0)) : [];
+      text =
+        setCellOutput(text, loc.cellIndex, { kind: 'new', text: transcript, attrs, ...(previous && history.length ? { previous, history } : {}) }, writeOpts) ??
+        text;
       const ok = outcome ? outcome.ok : isSuccess(r);
       // Without ran/ended: "5m ago" means nothing in a terminal.
       const { ran: _ran, ended: _ended, ...shown } = attrs;
@@ -405,4 +418,13 @@ export function markdownSummary(file: string, steps: readonly StepResult[]): str
   const rows = steps.map((s) => `| ${s.step} | ${icon[s.status]} ${s.status} | \`${cell(s.title).slice(0, 80)}\` | ${cell(s.exit)} | ${(s.durationMs / 1000).toFixed(1)}s | ${cell(s.message ?? '')} |`);
   const passed = steps.filter((s) => s.status === 'passed').length;
   return `### ${cell(file)}: ${passed}/${steps.length} steps passed\n\n| Step | Result | Command | Exit | Time | Note |\n|---|---|---|---|---|---|\n${rows.join('\n')}\n`;
+}
+
+/** The OS user running the command line, for by= and on=. */
+function runner(): string {
+  try {
+    return os.userInfo().username;
+  } catch {
+    return process.env.USER ?? process.env.USERNAME ?? 'unknown';
+  }
 }

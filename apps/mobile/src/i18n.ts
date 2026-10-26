@@ -54,6 +54,17 @@ const en = {
   qrHelp:
     'Another phone scans it with Scan a code. The runbook travels in the code, without its outputs, so no network is needed; it opens unsigned unless the runbook is signed.',
   qrWithHostParams: 'With the selected host and parameter values',
+  startIncidentTitle: 'Start Incident',
+  startIncidentHelp:
+    'A dated copy of this runbook for the incident: each run records who ran it and where, every attempt is kept, and Export Report shows the timeline.',
+  incidentId: 'Incident ID',
+  startIncidentGo: 'Start',
+  incidentStarted: (id: string, title: string) => `Incident ${id} started from ${title}`,
+  addNoteTitle: 'Add Note',
+  addNoteGo: 'Add',
+  notePlaceholder: 'Called the DBA, failover approved',
+  noteAdded: 'Note added at the end of the runbook; Export Report puts it in the timeline.',
+  milestone: { detected: 'Detected', mitigated: 'Mitigated', resolved: 'Resolved' },
   qrTooLarge:
     'This runbook is too large for a QR code. Use Share Runbook instead, or make a code for its address in VS Code (Make QR Code).',
   fileTooLarge: (name: string) => `${name} is larger than 2 MB and was not opened`,
@@ -218,6 +229,11 @@ const en = {
     sessionOff: ['Session: on', 'Now one shell for the whole runbook (cd and variables carry over). Tap to give each cell a fresh shell.'],
     sessionOn: ['Session: off', 'Now each cell starts in a fresh shell. Tap to keep one shell for the whole runbook.'],
     runAllAsCopy: ['Run All as Copy', 'The runbook is a template: run it in a new dated copy, so the original stays clean.'],
+    startIncident: [
+      'Start Incident',
+      "You're paged: a dated copy that records who ran each step and where, keeps every attempt, and starts the incident timeline.",
+    ],
+    addNote: ['Add Note', 'A decision or a milestone (detected, mitigated, resolved), with the time and your name, for the record.'],
     clearAllOutputs: ['Clear All Outputs', 'Before sharing or saving the runbook as a template, without the last run’s output.'],
     hosts: ['Hosts and SSH Key', 'Add a server, trust its key, or copy this app’s public key to it.'],
     setParameters: ['Set Parameters', 'One runbook for several targets: set the values before running.'],

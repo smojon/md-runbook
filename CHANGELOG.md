@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Incident records for audits and postmortems:** **Start Incident** (Run ▾, and ⋯ More in the
+  app) makes a dated copy with `incident:` and `severity:` in its front matter and a first note,
+  *detected*. Such a runbook (also `evidence: true`, or the setting
+  `mdRunbook.output.recordRunner`) records on every run who ran it (`by=`) and where (`on=`), and
+  keeps every attempt. **Add Note** records a decision or a milestone (*detected*, *mitigated*,
+  *resolved*) with the time and your name. Export Report (HTML, PDF, the command line's
+  `--report`/`--pdf`, the app) then starts with the incident record: start, end, time to
+  mitigate and to resolve, the `rto:` target met or missed, failed runs, people and machines,
+  and a timeline of every run, attempt, mark and note in time order; printed, every page shows
+  the incident and a page number. The command line's `--json` carries the same record.
+
 - **Runbook links:** one link format for Open in the App, QR codes, pager alerts and co-sign
   requests ([details](docs/switching.md#runbook-links)): `sha256=` pins the content (the app
   refuses any other text), `host=` picks a host the app has, `p.NAME=` fills a parameter,

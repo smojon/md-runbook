@@ -18,7 +18,8 @@ import {
   serialize,
 } from '@md-runbook/core';
 import { SECTION, writeOptions } from './config';
-import { workingDirectory } from './controller';
+import { frontMatterOf, workingDirectory } from './controller';
+import { EVIDENCE_HISTORY_SIZE } from '@md-runbook/core/incident';
 import { copyOrigin, setCopyOrigin } from './copyOrigins';
 import { META_KEY, toOutputInput } from './outputs';
 import { CellPlan, PrepareContext, RunPipeline } from './pipeline';
@@ -56,7 +57,9 @@ async function captureHistory(_plan: CellPlan, ctx: PrepareContext): Promise<voi
   const { cell, notebook } = ctx;
   const { current: previous, older } = outputsOf(ctx.previousOutputs ?? [], cell.metadata);
   if (!previous && cell.metadata?.[HISTORY_KEY] === undefined) return;
-  const size = Math.max(0, Math.floor(cfg().get<number>('output.historySize', 0)));
+  // A runbook that keeps evidence (incident:, evidence: true) keeps every attempt.
+  const configured = Math.max(0, Math.floor(cfg().get<number>('output.historySize', 0)));
+  const size = frontMatterOf(notebook)?.evidence ? Math.max(configured, EVIDENCE_HISTORY_SIZE) : configured;
   const metadata: Record<string, unknown> = { ...cell.metadata };
   if (previous) metadata[HISTORY_KEY] = { previous, history: nextHistory(previous, older, size) } satisfies RunHistory;
   else delete metadata[HISTORY_KEY];
@@ -84,7 +87,7 @@ function copyPreparer(_plan: CellPlan, ctx: PrepareContext): void {
 }
 
 /** The runbook's current content (unsaved edits included) without any output blocks. */
-async function contentWithoutOutputs(uri: vscode.Uri): Promise<string> {
+export async function contentWithoutOutputs(uri: vscode.Uri): Promise<string> {
   const nb = vscode.workspace.notebookDocuments.find((d) => d.notebookType === NOTEBOOK_TYPE && d.uri.toString() === uri.toString());
   if (nb) {
     const cells: CellInput[] = nb.getCells().map((c) => ({
@@ -118,7 +121,7 @@ async function waitForEditor(uri: vscode.Uri): Promise<vscode.NotebookEditor> {
   }
 }
 
-function sourceUri(arg: unknown): vscode.Uri | undefined {
+export function sourceUri(arg: unknown): vscode.Uri | undefined {
   if (arg instanceof vscode.Uri) return arg;
   return vscode.window.activeNotebookEditor?.notebook.uri ?? vscode.window.activeTextEditor?.document.uri;
 }
@@ -127,7 +130,17 @@ function sourceUri(arg: unknown): vscode.Uri | undefined {
 async function runAllAsCopy(arg?: unknown): Promise<vscode.Uri | undefined> {
   const source = sourceUri(arg);
   if (!source) return undefined;
-  const text = await contentWithoutOutputs(source);
+  const { target, editor } = await openRunCopy(source, await contentWithoutOutputs(source));
+  await vscode.commands.executeCommand('notebook.execute', target);
+  await editor.notebook.save();
+  return target;
+}
+
+/**
+ * A run copy of `source` with this text (a timestamped file next to it, or in
+ * mdRunbook.output.copyFolder), opened as a notebook with the shell kernel; not run.
+ */
+export async function openRunCopy(source: vscode.Uri, text: string): Promise<{ target: vscode.Uri; editor: vscode.NotebookEditor }> {
   const dir = vscode.Uri.joinPath(source, '..');
   const folderSetting = cfg().get<string>('output.copyFolder', '').trim();
   const folder =
@@ -147,9 +160,7 @@ async function runAllAsCopy(arg?: unknown): Promise<vscode.Uri | undefined> {
   await vscode.commands.executeCommand('vscode.openWith', target, NOTEBOOK_TYPE);
   const editor = await waitForEditor(target);
   await vscode.commands.executeCommand('notebook.selectKernel', { notebookEditor: editor, id: 'md-runbook-shell', extension: 'smojon.md-runbook' });
-  await vscode.commands.executeCommand('notebook.execute', target);
-  await editor.notebook.save();
-  return target;
+  return { target, editor };
 }
 
 // ---- Compare With Previous Run -----------------------------------------------------------------

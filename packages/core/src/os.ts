@@ -72,3 +72,21 @@ export function osGroups(cells: readonly OsCell[], here: OsName = currentOs()): 
     return { group, active: c.os.includes(here) };
   });
 }
+
+/**
+ * Step numbers of a runbook's cells (1-based; undefined for Markdown), as Export Report and the
+ * run timeline number them: each code block is a step, and the os= alternatives of a group share one.
+ */
+export function stepNumbers(cells: readonly OsCell[]): (number | undefined)[] {
+  const slots = osGroups(cells);
+  const groupStep = new Map<number, number>();
+  let step = 0;
+  return cells.map((c, i) => {
+    if (c.kind !== 'code') return undefined;
+    const slot = slots[i];
+    if (slot && groupStep.has(slot.group)) return groupStep.get(slot.group);
+    step++;
+    if (slot) groupStep.set(slot.group, step);
+    return step;
+  });
+}

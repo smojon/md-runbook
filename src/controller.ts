@@ -88,6 +88,21 @@ export function frontMatterOf(nb: vscode.NotebookDocument): FrontMatter | undefi
 }
 
 /**
+ * `by=` and `on=` for a run (core/incident.ts): who ran it and on which machine, when the
+ * runbook keeps evidence (`incident:`, `evidence: true`) or mdRunbook.output.recordRunner is on.
+ */
+export function runnerAttrsOf(nb: vscode.NotebookDocument): Record<string, string> {
+  if (!frontMatterOf(nb)?.evidence && !vscode.workspace.getConfiguration(SECTION).get<boolean>('output.recordRunner', false)) return {};
+  let user: string;
+  try {
+    user = os.userInfo().username;
+  } catch {
+    user = process.env.USER ?? process.env.USERNAME ?? 'unknown';
+  }
+  return { by: user, on: `${user}@${os.hostname()}` };
+}
+
+/**
  * The front matter's `cwd:` / `timeout:` for a cell, or none: they are runbook options, so
  * `mdRunbook.cellOptions.enabled` turns them off too, and cells written by an assistant never get
  * them (approval shows a cell's own options, not the front matter's).
@@ -549,6 +564,7 @@ export class RunbookController implements vscode.Disposable {
         ...(tries ? { attempts: String(tries) } : {}),
         ...(lines ? { lines } : {}),
         ...plan.attrs,
+        ...runnerAttrsOf(notebook),
       };
       const earlierOutput = earlierRunsOutput(history);
       // The text to save: what was shown, without colours, its stderr lines marked (stderr=).

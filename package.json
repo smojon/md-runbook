@@ -209,6 +209,18 @@
         "icon": "$(files)"
       },
       {
+        "command": "mdRunbook.startIncident",
+        "title": "Start Incident",
+        "category": "md-runbook",
+        "icon": "$(flame)"
+      },
+      {
+        "command": "mdRunbook.addNote",
+        "title": "Add Note",
+        "category": "md-runbook",
+        "icon": "$(note)"
+      },
+      {
         "command": "mdRunbook.compareWithPreviousRun",
         "title": "Compare With Previous Run",
         "category": "md-runbook",
@@ -699,6 +711,14 @@
           "when": "notebookType == md-runbook || resourceExtname == .md"
         },
         {
+          "command": "mdRunbook.startIncident",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.addNote",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
           "command": "mdRunbook.compareWithPreviousRun",
           "when": "notebookType == md-runbook"
         },
@@ -1034,6 +1054,14 @@
         {
           "command": "mdRunbook.clearAllOutputs",
           "group": "3_outputs@1"
+        },
+        {
+          "command": "mdRunbook.startIncident",
+          "group": "4_record@1"
+        },
+        {
+          "command": "mdRunbook.addNote",
+          "group": "4_record@2"
         }
       ],
       "mdRunbook.toolbar.values": [
@@ -1304,6 +1332,12 @@
             "default": 0,
             "minimum": 0,
             "markdownDescription": "When a cell is re-run, keep up to this many earlier outputs in a collapsed `<details>` block after the latest output. `0` = off (re-running drops any existing history).",
+            "order": 3
+          },
+          "mdRunbook.output.recordRunner": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Record on every run who ran it (`by=`, your OS user) and where (`on=`, user@machine) in the output marker, for audit evidence. Runbooks with `incident:` or `evidence: true` in their front matter always record them, and keep every attempt in their history.",
             "order": 3
           },
           "mdRunbook.output.mode": {

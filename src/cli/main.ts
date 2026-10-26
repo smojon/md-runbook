@@ -8,6 +8,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { renderReport } from '@md-runbook/core';
 import { formatProblem, lintRunbook } from '@md-runbook/core/lint';
+import { buildTimeline } from '@md-runbook/core/incident';
 import { CliOptions, junitReport, markdownSummary, runRunbook } from './run';
 import { notifyConfig, notifyText, runLink, sendNotification } from './notify';
 import { findBrowser, htmlToPdf } from './pdf';
@@ -32,7 +33,8 @@ Options:
   --pdf FILE.pdf       Also write the report as PDF (needs Chrome, Edge or Chromium)
   --browser PATH       Browser for --pdf (default: CHROME_PATH, else one found on this machine)
   --junit FILE.xml     Also write a JUnit report (one test case per step)
-  --json FILE.json     Also write the step results as JSON (status, exit, message, output)
+  --json FILE.json     Also write the step results as JSON (status, exit, message, output) and
+                       the run record (every run, attempt and note in time order)
   --param NAME=VALUE   Value for \${param:NAME} (repeatable; default: the front matter's)
   --input NAME=VALUE   Value for \${input:NAME} (repeatable; default: environment variable NAME)
   --yes                Run blocks that ask for confirmation in VS Code (risky commands, confirm)
@@ -227,7 +229,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   const html = (): string => renderReport(summary.text, { generatedAt: new Date(), fallbackTitle: file, redact: summary.redact });
   if (options.report) writeFile(options.report, html());
   if (options.junit) writeFile(options.junit, junitReport(file, summary.steps));
-  if (options.json) writeFile(options.json, JSON.stringify({ file, ok: summary.ok, steps: summary.steps }, null, 2) + '\n');
+  // record: the run timeline and its summary (core/incident.ts), for audit tools and postmortems.
+  if (options.json) writeFile(options.json, JSON.stringify({ file, ok: summary.ok, steps: summary.steps, record: buildTimeline(summary.text) }, null, 2) + '\n');
   const ghSummary = process.env.GITHUB_STEP_SUMMARY;
   if (ghSummary) fs.appendFileSync(ghSummary, markdownSummary(file, summary.steps) + '\n');
   let pdfFailed = false;
