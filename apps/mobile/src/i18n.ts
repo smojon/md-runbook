@@ -30,16 +30,17 @@ const en = {
   },
   linkMismatch:
     'Not opened: the runbook is not the one this link pins (its sha256= differs). It changed since the link was made, or someone changed it on the way.',
-  linkUnverifiedRefused: 'Not opened: this link is neither signed nor pinned, and Hosts & settings → Links opens only those.',
-  linkOpenedUnverified: 'Opened from a link that is neither signed nor pinned: check where it came from before you run anything.',
-  linkOpenedPinned: 'Opened from a link: the runbook is exactly the one the link pins.',
+  linkUnsignedRefused: 'Not opened: this runbook is not signed, and Hosts & settings → Links opens only signed runbooks from links.',
+  linkOpenedUnverified: 'Opened from a link; the runbook is not signed: check where the link came from before you run anything.',
+  linkOpenedPinned:
+    'Opened from a link that pins this exact text, but the runbook is not signed: check where the link came from before you run anything.',
   linkOpenedSigned: 'Opened from a link: the runbook is signed and its blocks are unchanged.',
   linkMissingHost: (name: string) => `The link asks to run on ${name}, and there is no host with that name. Add it under Hosts & settings.`,
   linkIgnoredParams: (names: string[]) => `The link sets ${names.join(', ')}, which this runbook doesn’t use: ignored.`,
   linksTitle: 'Links',
-  verifiedLinksOnly: 'Open only signed or pinned links',
-  verifiedLinksOnlyHelp:
-    'Runbook links (QR codes, pager alerts, mails) open only when the runbook is signed or the link pins its content (sha256=). Off: other links open with a warning.',
+  signedLinksOnly: 'Open only signed runbooks from links',
+  signedLinksOnlyHelp:
+    'Runbooks from links (QR codes, pager alerts, mails) open only when signed, with no signed block changed: anyone can make a link, only a signature says who approved the runbook. Off: unsigned ones open with a warning.',
   linkOpening: 'Opening the runbook…',
   fileTooLarge: (name: string) => `${name} is larger than 2 MB and was not opened`,
   fileUnreadable: (name: string, why: string) => `${name} could not be read: ${why}`,

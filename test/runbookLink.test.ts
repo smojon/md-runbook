@@ -93,6 +93,12 @@ describe('runbook links', () => {
     assert.equal(linkTrust({ url: 'https://a/b.md', params: {} }, RUNBOOK), 'unverified');
   });
 
+  it('a runbook carried in the link is never pinned: a forged sticker brings its own pin', () => {
+    const carried = { text: RUNBOOK, sha256: runbookDigest(RUNBOOK), params: {} };
+    assert.equal(linkTrust(carried, RUNBOOK), 'unverified');
+    assert.equal(linkTrust(carried, RUNBOOK.replace('restart', 'stop')), 'mismatch');
+  });
+
   it('a signed runbook is signed while its blocks are unchanged', () => {
     const signed = withSignature(RUNBOOK, {
       signer: 'ops@example.net',

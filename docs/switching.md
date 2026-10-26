@@ -53,10 +53,14 @@ mdrunbook://open?url=https%3A%2F%2Fgithub.com%2F…%2Frestart.md&sha256=…&host
 | `p.NAME=` | A value for the runbook's parameter `NAME` (one line). A signed runbook still checks it against its pattern, and md-runbook-gate checks it again. Names the runbook doesn't use are ignored. |
 | `action=cosign` | Opens on **Co-sign Runbook**, or says why it can't be co-signed. |
 
-The app says how far it trusts what it opened: **signed** (a signature block, no signed block
-changed), **pinned** (the text the link's `sha256=` names) or neither, with a warning to check
-where the link came from. **Hosts & settings → Links → Open only signed or pinned links** refuses
-the third kind. The web app takes the same fields at its own address, `https://<web app>/open?…`.
+The app says what it opened: **signed** (a signature block, no signed block changed), **pinned**
+(the text at the link's address is the one its `sha256=` names) or neither; the last two come
+with a warning to check where the link came from. Only a signature says who approved a runbook:
+anyone can make a link, and a forged link or sticker can pin its own text. So a pin protects a
+genuine link from the file changing later, and a runbook carried in the link (`rb=`) never counts
+as pinned. **Hosts & settings → Links → Open only signed runbooks from links** refuses anything
+unsigned; servers with md-runbook-gate check the signature itself. The web app takes the same
+fields at its own address, `https://<web app>/open?…`.
 
 ## The same names in both
 

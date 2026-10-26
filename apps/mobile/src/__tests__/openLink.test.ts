@@ -1,4 +1,5 @@
 import { formatRunbookLink, runbookDigest } from '@md-runbook/core/runbookLink';
+import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { addHost, getHosts, resetHosts } from '../hosts/store';
 import { linkContext } from '../runbooks/linkContext';
 import { openRunbookLink, rawRunbookUrl } from '../runbooks/openLink';
@@ -62,6 +63,17 @@ describe('runbook links: pins, hosts, parameters, co-sign', () => {
   const offline = (async () => {
     throw new Error('no network');
   }) as unknown as typeof fetch;
+  /** The runbook with a signature block (a dummy signature: the app compares blocks, gates check signatures). */
+  const signed = (text: string): string => {
+    const m = buildManifest(text, { name: 'ops/restart', version: 1, scopes: [], patterns: { SERVICE: '[a-z]+' } });
+    if ('errors' in m) throw new Error(m.errors.join('; '));
+    return withSignature(text, {
+      signer: 'ops@example.net',
+      signed: '2026-10-26',
+      manifest: formatManifest(m.manifest),
+      signature: 'U1NIU0lHAAAAAQ' + 'A'.repeat(150),
+    });
+  };
 
   beforeEach(() => {
     resetHosts();
@@ -86,16 +98,26 @@ describe('runbook links: pins, hosts, parameters, co-sign', () => {
     if (r.kind === 'opened') expect(linkContext(r.runbook.id)?.trust).toBe('pinned');
   });
 
-  it('with "only signed or pinned links" on, an unverified link is not opened', async () => {
-    setOutputSetting('verifiedLinksOnly', true);
-    expect(await openRunbookLink(formatRunbookLink({ text: RUNBOOK, params: {} }), offline)).toMatchObject({
-      kind: 'error',
-      message: expect.stringMatching(/neither signed nor pinned/),
-    });
-    const pinned = formatRunbookLink({ text: RUNBOOK, sha256: runbookDigest(RUNBOOK), params: {} });
-    expect((await openRunbookLink(pinned, offline)).kind).toBe('opened');
-    // Saved settings outlive resetSettings (the next link load reads them): switch it back.
-    setOutputSetting('verifiedLinksOnly', false);
+  it('a runbook carried in the link is never "pinned": a forged sticker would bring its own pin', async () => {
+    const r = await openRunbookLink(formatRunbookLink({ text: RUNBOOK, sha256: runbookDigest(RUNBOOK), params: {} }), offline);
+    if (r.kind !== 'opened') throw new Error(r.message);
+    expect(linkContext(r.runbook.id)?.trust).toBe('unverified');
+  });
+
+  it('with "only signed runbooks from links" on, only a signed runbook opens (a pin is not enough)', async () => {
+    setOutputSetting('signedLinksOnly', true);
+    try {
+      const refused = { kind: 'error', message: expect.stringMatching(/not signed/) };
+      expect(await openRunbookLink(formatRunbookLink({ text: RUNBOOK, params: {} }), offline)).toMatchObject(refused);
+      const pinnedUrl = formatRunbookLink({ url: 'https://x.example.net/r.md', sha256: runbookDigest(RUNBOOK), params: {} });
+      expect(await openRunbookLink(pinnedUrl, serve(RUNBOOK))).toMatchObject(refused);
+      const r = await openRunbookLink(formatRunbookLink({ text: signed(RUNBOOK), params: {} }), offline);
+      expect(r.kind).toBe('opened');
+      if (r.kind === 'opened') expect(linkContext(r.runbook.id)?.trust).toBe('signed');
+    } finally {
+      // Saved settings outlive resetSettings (the next link load reads them): switch it back.
+      setOutputSetting('signedLinksOnly', false);
+    }
   });
 
   it("fills the runbook's parameters, picks a host the app has, and never adds one", async () => {

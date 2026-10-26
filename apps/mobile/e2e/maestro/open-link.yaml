@@ -1,7 +1,7 @@
 # A runbook link that carries its runbook (rb=, deflated), pinned with sha256=, naming a host the
 # app doesn't have and filling a parameter: the app unpacks it on the device (fflate, TextDecoder
-# and URL under Hermes), opens it as pinned, fills GREETING and says the host is missing. Made with
-# core's formatRunbookLink; nothing runs.
+# and URL under Hermes), opens it, fills GREETING and says the host is missing. Made with
+# core's formatRunbookLink; nothing runs. Its pin comes with it, so it opens as unsigned, not pinned.
 appId: dev.mdrunbook.app
 ---
 - launchApp:
@@ -20,7 +20,7 @@ appId: dev.mdrunbook.app
       - tapOn: 'Open'
 - extendedWaitUntil:
     visible:
-      id: link-trust-pinned
+      id: link-trust-unverified
     timeout: 30000
 - assertVisible: 'Linked runbook'
 - assertVisible:

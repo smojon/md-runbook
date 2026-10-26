@@ -20,8 +20,8 @@ export interface Settings {
   forceColor: boolean;
   /** AWS / Google Cloud JSON output: a list of the resources with console links (mdRunbook.output.cloudViews). */
   cloudViews: boolean;
-  /** Runbook links (QR codes, pager alerts, mails) open only when signed or pinned (sha256=); off: they open with a warning. */
-  verifiedLinksOnly: boolean;
+  /** Runbooks from links (QR codes, pager alerts, mails) open only when signed; off: unsigned ones open with a warning. */
+  signedLinksOnly: boolean;
   /**
    * Who signs runbooks on this device (the signature block's signer=, e.g. an e-mail address),
    * and the principal suggested for the servers' allowed_signers. Empty until set.
@@ -35,7 +35,7 @@ const DEFAULTS: Settings = {
   stderrInRed: true,
   forceColor: false,
   cloudViews: true,
-  verifiedLinksOnly: false,
+  signedLinksOnly: false,
   signerName: '',
 };
 
@@ -43,7 +43,7 @@ const DEFAULTS: Settings = {
 const isSaved = (v: unknown): v is Partial<Settings> =>
   typeof v === 'object' && v !== null && typeof (v as Settings).historySize === 'number';
 
-type OutputFlag = 'colorLevels' | 'stderrInRed' | 'forceColor' | 'cloudViews' | 'verifiedLinksOnly';
+type OutputFlag = 'colorLevels' | 'stderrInRed' | 'forceColor' | 'cloudViews' | 'signedLinksOnly';
 
 let settings: Settings = DEFAULTS;
 const listeners = new Set<() => void>();
@@ -66,7 +66,7 @@ async function readSettings(): Promise<void> {
       stderrInRed: flag('stderrInRed'),
       forceColor: flag('forceColor'),
       cloudViews: flag('cloudViews'),
-      verifiedLinksOnly: flag('verifiedLinksOnly'),
+      signedLinksOnly: flag('signedLinksOnly'),
       signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
     };
   }

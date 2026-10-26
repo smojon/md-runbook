@@ -14,6 +14,8 @@
       "@md-runbook/ssh": ["../../packages/ssh/src/index.ts"],
       "@md-runbook/ssh/*": ["../../packages/ssh/src/*"],
       "re2js": ["./node_modules/re2js"],
+      "fflate": ["./node_modules/fflate"],
+      "qrcode-generator": ["./node_modules/qrcode-generator"],
       "buffer": ["./node_modules/buffer"],
       "@microsoft/dev-tunnels-ssh": ["./node_modules/@microsoft/dev-tunnels-ssh"],
       "@microsoft/dev-tunnels-ssh-keys": ["./node_modules/@microsoft/dev-tunnels-ssh-keys"]

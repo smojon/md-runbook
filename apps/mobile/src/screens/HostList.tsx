@@ -299,14 +299,14 @@ function LinksSection() {
       <Text style={styles.sectionTitle}>{t.linksTitle}</Text>
       <View style={styles.switchRow}>
         <View style={styles.switchText}>
-          <Text style={styles.switchLabel}>{t.verifiedLinksOnly}</Text>
-          <Text style={styles.help}>{t.verifiedLinksOnlyHelp}</Text>
+          <Text style={styles.switchLabel}>{t.signedLinksOnly}</Text>
+          <Text style={styles.help}>{t.signedLinksOnlyHelp}</Text>
         </View>
         <Toggle
-          testID="setting-verifiedLinksOnly"
-          accessibilityLabel={t.verifiedLinksOnly}
-          value={s.verifiedLinksOnly}
-          onValueChange={(on) => setOutputSetting('verifiedLinksOnly', on)}
+          testID="setting-signedLinksOnly"
+          accessibilityLabel={t.signedLinksOnly}
+          value={s.signedLinksOnly}
+          onValueChange={(on) => setOutputSetting('signedLinksOnly', on)}
         />
       </View>
     </View>

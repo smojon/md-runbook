@@ -80,7 +80,7 @@ export async function openRunbookLink(
   await Promise.all([loadHosts(), loadSettings()]);
   const trust = linkTrust(l, text);
   if (trust === 'mismatch') return { kind: 'error', message: t.linkMismatch };
-  if (trust === 'unverified' && outputSettings().verifiedLinksOnly) return { kind: 'error', message: t.linkUnverifiedRefused };
+  if (trust !== 'signed' && outputSettings().signedLinksOnly) return { kind: 'error', message: t.linkUnsignedRefused };
 
   const runbook = addRunbook(fileName, text);
   const declared = new Set(runbookParams(text).map((p) => p.name));

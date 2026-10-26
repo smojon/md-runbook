@@ -7,7 +7,7 @@
   refuses any other text), `host=` picks a host the app has, `p.NAME=` fills a parameter,
   `action=cosign` opens on Co-sign Runbook, and `rb=` carries a small runbook in the link itself
   (no network needed). Nothing runs from a link. The app shows whether what it opened is signed,
-  pinned or neither; **Hosts & settings → Links** can refuse links that are neither. **Open in
+  pinned or neither; **Hosts & settings → Links** can refuse runbooks that aren't signed. **Open in
   the App** now pins the pushed file.
 
 - **The app's own icon and a new look:** the app and the web app's favicon use the extension's

@@ -116,7 +116,10 @@ export function runbookDigest(text: string): string {
 /**
  * How far the opened text can be trusted. `mismatch`: the link pins other content (refuse it);
  * `signed`: the runbook carries a signature block and no signed block changed; `pinned`: the
- * text is the one the link pins; `unverified`: neither (open it, with a warning).
+ * text at the link's address is the one the link pins; `unverified`: neither (open it, with a
+ * warning). Only a signature says who approved a runbook: a forged link or sticker can pin its
+ * own text, so a pin guards a genuine link against the file changing later, nothing more, and a
+ * runbook carried in the link (rb=) is never `pinned` (its pin would come with it).
  */
 export type LinkTrust = 'mismatch' | 'signed' | 'pinned' | 'unverified';
 
@@ -124,7 +127,7 @@ export function linkTrust(l: RunbookLink, text: string): LinkTrust {
   if (l.sha256 && runbookDigest(text) !== l.sha256) return 'mismatch';
   const signed = signedStatus(text);
   if (signed && signed.changed.length === 0 && signed.missing.length === 0 && signed.moved.length === 0) return 'signed';
-  return l.sha256 ? 'pinned' : 'unverified';
+  return l.sha256 && l.text === undefined ? 'pinned' : 'unverified';
 }
 
 /** `rb=`: the text deflated (raw), in base64url. */
