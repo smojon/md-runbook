@@ -50,9 +50,15 @@ export function RunbookList() {
         <View style={styles.header}>
           <View style={styles.actions}>
             <Pressable testID="open-runbook" accessibilityRole="button" onPress={() => void open()} style={[styles.action, styles.primary]}>
-              <Codicon name="folder-opened" size={18} color={colors.onAccent} />
+              <Codicon name="folder-opened" size={22} color={colors.onAccent} />
               <Text style={styles.primaryText}>{t.openRunbook}</Text>
             </Pressable>
+            <Link href={{ pathname: '/scan', params: {} }} asChild>
+              <Pressable testID="scan-code" accessibilityRole="button" style={StyleSheet.flatten([styles.action, styles.tinted])}>
+                <Codicon name="device-camera" size={22} color={colors.link} />
+                <Text style={styles.tintedText}>{t.scanCode}</Text>
+              </Pressable>
+            </Link>
             <Pressable
               testID="open-link"
               accessibilityRole="button"
@@ -60,7 +66,7 @@ export function RunbookList() {
               onPress={() => setLink(link === undefined ? '' : undefined)}
               style={[styles.action, styles.tinted]}
             >
-              <Codicon name="link" size={18} color={colors.link} />
+              <Codicon name="link" size={22} color={colors.link} />
               <Text style={styles.tintedText}>{t.openLink}</Text>
             </Pressable>
           </View>
@@ -185,22 +191,23 @@ const useStyles = themedStyles((colors) => ({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 24 },
   header: { paddingTop: 16 },
-  // Two buttons sharing the width: they never run off a narrow screen, and a long label wraps.
+  // Three tiles sharing the width (icon over label): they never run off a narrow screen, and a
+  // long label wraps to a second line.
   actions: { flexDirection: 'row', gap: 10 },
   action: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    minHeight: 48,
-    paddingHorizontal: 12,
-    borderRadius: 12,
+    gap: 6,
+    minHeight: 76,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    borderRadius: 14,
   },
   primary: { backgroundColor: colors.accent },
-  primaryText: { fontSize: 15, fontWeight: '600', color: colors.onAccent, flexShrink: 1 },
+  primaryText: { fontSize: 14, fontWeight: '600', color: colors.onAccent, textAlign: 'center' },
   tinted: { backgroundColor: colors.accentSoft },
-  tintedText: { fontSize: 15, fontWeight: '600', color: colors.link, flexShrink: 1 },
+  tintedText: { fontSize: 14, fontWeight: '600', color: colors.link, textAlign: 'center' },
   linkRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
   linkInput: {
     flex: 1,

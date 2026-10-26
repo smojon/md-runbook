@@ -108,6 +108,43 @@ describe('⋯ More: every action, by group or by search', () => {
   });
 });
 
+describe('Show QR Code', () => {
+  it('shows a code of the runbook without its outputs; another phone opens what it reads', async () => {
+    const r = addRunbook(
+      'done.md',
+      '# Done\n\n```bash\necho hi\n```\n<!-- md-runbook:output start exit=0 -->\n```text\nhi\n```\n<!-- md-runbook:output end -->\n',
+    );
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-showQrCode'));
+    });
+    expect(screen.getByTestId('qr-code')).toBeTruthy();
+    expect(screen.queryByTestId('qr-too-large')).toBeNull();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('qr-close'));
+    });
+    expect(screen.queryByTestId('qr-card')).toBeNull();
+  });
+
+  it('says when a runbook is too large for a code', async () => {
+    const big =
+      '# Big\n\n' +
+      Array.from({ length: 400 }, (_, i) => `Step ${i}: ${Math.random().toString(36)}${Math.random().toString(36)}\n`).join('');
+    const r = addRunbook('big.md', big);
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-showQrCode'));
+    });
+    expect(screen.getByTestId('qr-too-large')).toBeTruthy();
+  });
+});
+
 describe("a cell's ⋯ (or long press): steps and outputs", () => {
   const out = (exit: string) => `<!-- md-runbook:output start exit=${exit} -->\n\`\`\`text\nx\n\`\`\`\n<!-- md-runbook:output end -->\n`;
   const text =

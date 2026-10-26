@@ -42,6 +42,20 @@ const en = {
   signedLinksOnlyHelp:
     'Runbooks from links (QR codes, pager alerts, mails) open only when signed, with no signed block changed: anyone can make a link, only a signature says who approved the runbook. Off: unsigned ones open with a warning.',
   linkOpening: 'Opening the runbook…',
+  scanCode: 'Scan a code',
+  scanTitle: 'Scan a code',
+  scanHint: 'Point the camera at a runbook QR code.',
+  scanNotRunbook: 'That code is not a runbook link.',
+  cameraWhy: 'The camera reads runbook QR codes, such as the labels on machines. Nothing is recorded.',
+  cameraBlocked: 'Camera access is off for md-runbook. Turn it on in the settings to scan codes.',
+  allowCamera: 'Allow the camera',
+  openSettings: 'Open settings',
+  qrTitle: 'QR code of this runbook',
+  qrHelp:
+    'Another phone scans it with Scan a code. The runbook travels in the code, without its outputs, so no network is needed; it opens unsigned unless the runbook is signed.',
+  qrWithHostParams: 'With the selected host and parameter values',
+  qrTooLarge:
+    'This runbook is too large for a QR code. Use Share Runbook instead, or make a code for its address in VS Code (Make QR Code).',
   fileTooLarge: (name: string) => `${name} is larger than 2 MB and was not opened`,
   fileUnreadable: (name: string, why: string) => `${name} could not be read: ${why}`,
   outputExit: (exit: string) => `Output · exit ${exit}`,
@@ -225,6 +239,7 @@ const en = {
     ],
     exportReportPdf: ['Export Report (PDF)', 'The same report as a PDF, for a ticket, an audit or a mail.'],
     shareRunbook: ['Share Runbook', 'The .md file with its outputs: open it in VS Code, or hand the procedure to a colleague.'],
+    showQrCode: ['Show QR Code', 'A code another phone scans to open this runbook: no network, no file to send.'],
     cheatSheet: ['Cheat Sheet', 'Every action of the app and VS Code, and when it matters.'],
     sample: ['Open Sample Runbook', 'Try every feature on a safe runbook.'],
     checkNextItem: ['Check Next Item', 'Tick the next box of a checklist without editing the text.'],

@@ -2,7 +2,11 @@ import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
 import { LinkContext, forgetLinkContext, linkContext } from '../runbooks/linkContext';
-import { FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { qrMatrix } from '@md-runbook/core/qr';
+import { formatRunbookLink } from '@md-runbook/core/runbookLink';
+import { QrView } from '../ui/QrView';
+import { Toggle } from '../ui/Toggle';
 import {
   DEFAULT_WRITE_OPTIONS,
   ParsedCell,
@@ -190,6 +194,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : t.notSignedYet
       : undefined,
   );
+  /** Show QR Code: the card at the top with this runbook's code. */
+  const [showQr, setShowQr] = useState(false);
   // Who a gate said signed this runbook's manifest (the file's own signer name is only a claim).
   const [gateChecked, setGateChecked] = useState<{ manifest: string; host: string; principal: string } | undefined>();
   const verified = signed && gateChecked?.manifest === signed.block.manifest ? gateChecked : undefined;
@@ -535,6 +541,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ? { ...meta('save', 'share'), run: () => void saveFromMenu() }
           : { ...meta('download', 'share', canDownload ? undefined : t.saveUnavailable), run: () => void saveFromMenu() },
         ...shareActions(runbook, (why) => setNotice(t.shareFailed(why))),
+        {
+          ...meta('showQrCode', 'share'),
+          run: () => {
+            setShowQr(true);
+            list.current?.scrollToOffset({ offset: 0 });
+          },
+        },
         { ...meta('signRunbook', 'share'), run: () => openSign('sign') },
         {
           ...meta(
@@ -786,6 +799,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             <SaveBar runbook={runbook} />
             {fromLink ? <LinkNotes context={fromLink} /> : null}
             {signed ? <SignedBanner status={signed} verified={verified} /> : null}
+            {showQr ? <QrCard text={runbook.text} host={host?.name} params={paramValues} onClose={() => setShowQr(false)} /> : null}
             {signing ? (
               <SignCard
                 key={signing.request.kind}
@@ -1157,6 +1171,59 @@ function ParamsCard({
  * A runbook just opened from a link: how far its text can be trusted, and what of the link was
  * not used (a host the app doesn't have, parameters the runbook doesn't take).
  */
+/**
+ * Show QR Code: the runbook in a code (rb=, without its outputs) that another phone scans with
+ * Scan a code; optionally with the selected host and the parameter values typed here.
+ */
+function QrCard({
+  text,
+  host,
+  params,
+  onClose,
+}: {
+  text: string;
+  host: string | undefined;
+  params: Readonly<Record<string, string>>;
+  onClose(): void;
+}) {
+  const styles = useStyles();
+  const { width } = useWindowDimensions();
+  const [withValues, setWithValues] = useState(false);
+  const matrix = useMemo(() => {
+    const values = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== ''));
+    const link = formatRunbookLink({
+      text: clearOutputBlocks(text),
+      ...(withValues && host ? { host } : {}),
+      params: withValues ? values : {},
+    });
+    return qrMatrix(link);
+  }, [text, host, params, withValues]);
+  return (
+    <View testID="qr-card" style={styles.qrCard}>
+      <Text style={styles.signedTitle}>{t.qrTitle}</Text>
+      {matrix ? (
+        <>
+          <View style={styles.qrBox}>
+            <QrView testID="qr-code" matrix={matrix} size={Math.min(width - 64, 320)} />
+          </View>
+          <Text style={styles.signedBody}>{t.qrHelp}</Text>
+          <View style={styles.qrSwitch}>
+            <Text style={[styles.signedBody, styles.qrSwitchText]}>{t.qrWithHostParams}</Text>
+            <Toggle testID="qr-with-values" accessibilityLabel={t.qrWithHostParams} value={withValues} onValueChange={setWithValues} />
+          </View>
+        </>
+      ) : (
+        <Text testID="qr-too-large" style={styles.warning}>
+          {t.qrTooLarge}
+        </Text>
+      )}
+      <Pressable testID="qr-close" accessibilityRole="button" onPress={onClose} style={styles.qrClose}>
+        <Text style={styles.link}>{t.close}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function LinkNotes({ context }: { context: LinkContext }) {
   const styles = useStyles();
   const colors = usePalette();
@@ -1317,6 +1384,11 @@ const useStyles = themedStyles((c) => ({
   paramHint: { fontSize: 12, color: c.muted, marginTop: 2 },
   signed: { borderLeftWidth: 3, borderLeftColor: c.accent, paddingLeft: 10, paddingVertical: 4, marginVertical: 6 },
   linkNotes: { borderLeftWidth: 3, paddingLeft: 10, paddingVertical: 4, marginVertical: 6 },
+  qrCard: { borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 14, marginVertical: 8, backgroundColor: c.surface },
+  qrBox: { alignItems: 'center', marginVertical: 10 },
+  qrSwitch: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+  qrSwitchText: { flex: 1 },
+  qrClose: { alignSelf: 'flex-end', paddingVertical: 6, paddingHorizontal: 4, marginTop: 4 },
   signedTitle: { fontSize: 14, color: c.text },
   signedBody: { fontSize: 12, color: c.muted, lineHeight: 17, marginTop: 2 },
   trust: { borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 12, marginVertical: 8 },

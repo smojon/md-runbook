@@ -2,7 +2,8 @@
  * VS Code's icons (Codicons, https://github.com/microsoft/vscode-codicons, font licensed under
  * CC BY 4.0 by Microsoft) drawn from their font, so the app's buttons are the editor's.
  */
-import { StyleProp, Text, TextStyle } from 'react-native';
+import { useFonts } from 'expo-font';
+import { StyleProp, Text, TextStyle, View, ViewStyle } from 'react-native';
 
 export const CODICON_FONT = 'codicon';
 export const codiconFont = require('@vscode/codicons/dist/codicon.ttf') as number;
@@ -41,6 +42,7 @@ const GLYPHS = {
   'folder-opened': 0xeaf7,
   link: 0xeb15,
   notebook: 0xebaf,
+  'device-camera': 0xeada,
 } as const;
 
 export type CodiconName = keyof typeof GLYPHS;
@@ -56,6 +58,11 @@ export function Codicon({
   color: string;
   style?: StyleProp<TextStyle>;
 }) {
+  // Until the font is in, a blank of the glyph's size: a glyph drawn before would be measured and
+  // drawn with a fallback font and not redrawn (iOS showed "?" boxes, Android cut glyphs in half
+  // on the start screen, which renders before the font loads).
+  const [loaded] = useFonts({ [CODICON_FONT]: codiconFont });
+  if (!loaded) return <View style={[{ width: size, height: size + 2 }, style as StyleProp<ViewStyle>]} />;
   return (
     <Text
       accessible={false}

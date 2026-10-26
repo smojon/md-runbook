@@ -38,6 +38,7 @@
   ],
   "dependencies": {
     "fflate": "0.8.2",
+    "qrcode-generator": "2.0.4",
     "re2js": "2.8.8"
   }
 }

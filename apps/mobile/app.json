@@ -25,7 +25,22 @@
       "output": "single",
       "bundler": "metro"
     },
-    "plugins": ["expo-router", "react-native-quick-crypto", "expo-secure-store", "expo-font", "expo-status-bar", "expo-sharing"],
+    "plugins": [
+      "expo-router",
+      "react-native-quick-crypto",
+      "expo-secure-store",
+      "expo-font",
+      "expo-status-bar",
+      "expo-sharing",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "md-runbook uses the camera to scan runbook QR codes, such as the labels on machines.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
     "scheme": "mdrunbook",
     "runtimeVersion": {
       "policy": "appVersion"
