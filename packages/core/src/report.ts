@@ -146,7 +146,7 @@ export function renderReport(text: string, opts: ReportOptions): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="generator" content="md-runbook">
 <title>${escapeHtml(docTitle)}</title>
-<style>${CSS}${record.pageCss}</style>
+<style>${REPORT_CSS}${record.pageCss}</style>
 </head>
 <body>
 <header>
@@ -165,7 +165,8 @@ ${body}</main>
 `;
 }
 
-const CSS = `
+/** The reports' style sheet (light and dark, print), shared with the gate audit report. */
+export const REPORT_CSS = `
 :root{--bg:#fff;--fg:#1f2328;--muted:#656d76;--border:#d0d7de;--code:#f6f8fa;--ok:#1a7f37;--fail:#cf222e;--skip:#9a6700;--link:#0969da}
 @media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#8d96a0;--border:#30363d;--code:#161b22;--ok:#3fb950;--fail:#f85149;--skip:#d29922;--link:#4493f8}}
 *{box-sizing:border-box}

@@ -14,6 +14,7 @@ import { notifyConfig, notifyText, runLink, sendNotification } from './notify';
 import { findBrowser, htmlToPdf } from './pdf';
 import { signCommand, verifyCommand } from './sign';
 import { qrCommand } from './qr';
+import { auditCommand } from './audit';
 
 declare const MD_RUNBOOK_VERSION: string | undefined;
 
@@ -23,6 +24,7 @@ const USAGE = `Usage: md-runbook run <file.md> [options]
        md-runbook verify <file.md> [--allowed-signers FILE]
        md-runbook qr <file.md> [options]               (see md-runbook qr --help)
        md-runbook link <file.md> [options]             (the qr options; prints the link)
+       md-runbook audit <gate log>... [options]        (see md-runbook audit --help)
 
 Runs the bash, pwsh/powershell and cmd blocks of a Markdown runbook in order and writes their
 output into the file, as the VS Code extension does. Stops at the first failed step.
@@ -82,7 +84,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   // Only as the first argument: a value such as a parameter `-h` must not turn a run into help.
   if (args.length === 0 || args[0] === '-h' || args[0] === '--help') return 'help';
   if (args[0] === '--version') return 'version';
-  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected run, lint, sign, verify, qr or link)`);
+  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected run, lint, sign, verify, qr, link or audit)`);
   args.shift();
   const o: ParsedArgs['options'] = { file: '', write: true, params: {}, inputs: {}, yes: false, keepGoing: false, shell: {} };
   let pdf: string | undefined;
@@ -174,6 +176,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (argv[0] === 'verify') return verifyCommand(argv.slice(1));
   if (argv[0] === 'qr') return qrCommand(argv.slice(1));
   if (argv[0] === 'link') return qrCommand(argv.slice(1), undefined, true);
+  if (argv[0] === 'audit') return auditCommand(argv.slice(1));
   let parsed: ReturnType<typeof parseArgs>;
   try {
     parsed = parseArgs(argv);
