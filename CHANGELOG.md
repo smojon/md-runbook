@@ -9,6 +9,11 @@
   (no network needed). Nothing runs from a link. The app shows whether what it opened is signed,
   pinned or neither; **Hosts & settings → Links** can refuse runbooks that aren't signed. **Open in
   the App** now pins the pushed file.
+- **QR codes** ([details](docs/switching.md#qr-codes)): **Share ▾ → Make QR Code** writes
+  `<name>.qr.svg` for the pushed file (pinned) or the runbook itself (no network needed), with an
+  optional host and parameter values; `md-runbook qr --labels hosts.csv` prints a label sheet
+  with one code per machine (HTML or PDF). In the app, **Scan a code** on the start screen opens
+  a code like a link, and **⋯ More → Share → Show QR Code** shows a code for another phone.
 
 - **The app's own icon and a new look:** the app and the web app's favicon use the extension's
   icon (Android's adaptive and themed icons included). The start screen has the icon in its

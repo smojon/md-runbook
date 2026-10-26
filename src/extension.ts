@@ -19,6 +19,7 @@ import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
 import { registerSessions } from './session';
 import { registerSigning } from './signing';
 import { registerOpenInApp } from './openInApp';
+import { registerMakeQr } from './makeQr';
 import { registerTaskLists } from './taskLists';
 import { registerTerminal } from './terminal';
 import { registerToolbarButtons } from './toolbarButtons';
@@ -97,6 +98,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerLint(context);
   registerSigning(context);
   registerOpenInApp(context);
+  registerMakeQr(context);
   context.subscriptions.push(
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, new RunbookSerializer(), {
       transientOutputs: false,

@@ -95,6 +95,7 @@ secret values are redacted from the output.
 | **Co-sign Runbook** | Share ▾ | Four eyes: a reviewer adds a signature to the signed runbook as it is, for servers that need two signers (`signers = 2`). Refused if the runbook changed since it was signed. | ⋯ More → Co-sign Runbook (the app's key) |
 | **Sign Runbook** | Share ▾ | Release a runbook for a support team: servers restricted to md-runbook-gate run only signed runbooks, unchanged. See [signed runbooks](https://github.com/smojon/md-runbook/blob/main/docs/features/signed-runbooks.md). | ⋯ More → Sign Runbook (the app's key); shows who signed it and which blocks changed |
 | **Open in the App** | Share ▾ | Continue on your phone: copies a link that opens this runbook (its GitHub or GitLab file) in the md-runbook app. It warns when the phone would get an older version (changes not committed or not pushed). | **Open a link…** on the start screen; mdrunbook://open?url=… links |
+| **Make QR Code** | Share ▾ | A label for a machine, a slide or a screen: a QR code (`<name>.qr.svg`) of the runbook's pushed file (pinned) or of the runbook itself (no network needed), with an optional host and parameter values. Many machines at once: `md-runbook qr --labels hosts.csv`. | **Scan a code** on the start screen opens it; ⋯ More → Share → **Show QR Code** shows one for another phone |
 | Save | Ctrl+S | Outputs are written into the `.md` file: commit it, and the run is in Git. | **Save to the file** (or **Download** in browsers that can't write files) |
 
 ## Only in the app

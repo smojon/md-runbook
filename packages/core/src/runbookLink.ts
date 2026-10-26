@@ -12,7 +12,8 @@
  */
 
 import { deflateSync, Inflate } from 'fflate';
-import { VAR_NAME_RE } from './secrets';
+import { parse } from './parser';
+import { VAR_NAME_RE, findRefs, parseFrontMatter } from './secrets';
 import { sha256Hex } from './sha256';
 import { signedStatus } from './signing';
 
@@ -128,6 +129,19 @@ export function linkTrust(l: RunbookLink, text: string): LinkTrust {
   const signed = signedStatus(text);
   if (signed && signed.changed.length === 0 && signed.missing.length === 0 && signed.moved.length === 0) return 'signed';
   return l.sha256 && l.text === undefined ? 'pinned' : 'unverified';
+}
+
+/**
+ * The parameters a link can fill for this runbook: the front matter's `params:` (with their
+ * defaults), then every other `${param:NAME}` its code cells use, in order.
+ */
+export function linkableParams(text: string): { name: string; default?: string }[] {
+  const out = [...(parseFrontMatter(text)?.params ?? [])];
+  for (const cell of parse(text).cells) {
+    if (cell.kind !== 'code') continue;
+    for (const ref of findRefs(cell.value)) if (ref.kind === 'param' && !out.some((p) => p.name === ref.name)) out.push({ name: ref.name });
+  }
+  return out;
 }
 
 /** `rb=`: the text deflated (raw), in base64url. */

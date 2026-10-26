@@ -62,6 +62,25 @@ as pinned. **Hosts & settings → Links → Open only signed runbooks from links
 unsigned; servers with md-runbook-gate check the signature itself. The web app takes the same
 fields at its own address, `https://<web app>/open?…`.
 
+### QR codes
+
+A runbook link fits in a QR code, for a label on a machine, a slide or a colleague's screen.
+
+- **In VS Code:** **Share ▾ → Make QR Code** asks what the code carries (the pushed file,
+  pinned, or the runbook itself, which needs no network), an optional host and parameter values,
+  and writes `<name>.qr.svg` next to the runbook (its link is copied too).
+- **On the command line:** `md-runbook qr file.md --labels hosts.csv --out labels.pdf` prints a
+  sheet with one code per machine, each with its own host and parameter values
+  ([options](features/cli.md#qr-codes-and-labels)).
+- **In the app:** **Scan a code** on the start screen opens a code like any link: nothing runs,
+  and the runbook says whether it is signed. **⋯ More → Share → Show QR Code** shows a code of
+  the runbook (without outputs, optionally with the selected host and parameter values) for
+  another phone to scan.
+
+A code made of the runbook itself works where there is no network: the phone only needs to reach
+the machine. A sticker can be replaced, so sign runbooks you put on labels; servers with
+md-runbook-gate run only signed ones.
+
 ## The same names in both
 
 The app's **⋯ More** uses the groups of the extension's toolbar, with the same names, so what

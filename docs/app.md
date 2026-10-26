@@ -151,9 +151,13 @@ on iOS, and in Chrome and Edge; other browsers download the file instead. If the
 elsewhere since it was opened, the app asks whether to overwrite it or load that version.
 
 **Open a link…** on the start screen opens a runbook from an `https` address (a GitHub or
-GitLab file page works too), and `mdrunbook://open?url=…` links (what VS Code's **Open in the
-App** copies) open it directly. **⋯ More → Share Runbook** hands the file on. More in
-[Moving between VS Code and the app](switching.md).
+GitLab file page works too), and runbook links (`mdrunbook://open?…`, what VS Code's **Open in
+the App** copies, a pager alert, a co-sign request) open it directly, with the host and
+parameter values they name; nothing runs from a link, and the runbook says whether it is signed.
+**Scan a code** opens the same from a QR code (a label on a machine, VS Code's **Make QR Code**),
+and **⋯ More → Share → Show QR Code** shows a code of this runbook for another phone.
+**⋯ More → Share Runbook** hands the file on. More in
+[Moving between VS Code and the app](switching.md#runbook-links).
 
 ## Try it
 

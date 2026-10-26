@@ -77,6 +77,31 @@ blocks changed since; see [Signed runbooks](signed-runbooks.md).
 | `--pattern NAME=RE` | What `${param:NAME}` may be: a POSIX extended regex for the whole value |
 | `--out FILE` | Write the signed runbook to FILE instead |
 
+## QR codes and labels
+
+`md-runbook qr file.md` writes `file.qr.svg`, a QR code that opens the runbook in the app (**Scan
+a code**); `md-runbook qr file.md --labels hosts.csv --out labels.pdf` prints a sheet with one
+code per machine. See [Runbook links](../switching.md#runbook-links) for what a code carries.
+
+| Option of `qr` | Meaning |
+| --- | --- |
+| `--embed` | The runbook itself in the code, without outputs: no network needed (about 2 KB fit) |
+| `--url URL` | The runbook's `https` address (default: its file on GitHub or GitLab, from the Git remote, pinned to the pushed file) |
+| `--pin` | With `--url`: pin the address to this file's content |
+| `--host NAME` | The host in the app to run on |
+| `--param NAME=VALUE` | A parameter value (repeatable) |
+| `--cosign` | Open on Co-sign Runbook |
+| `--web-app URL` | `https://<web app>/open` links instead of `mdrunbook://` (a phone's own camera opens those) |
+| `--labels FILE.csv` | One label per row: `host`, optional `label` (printed under the code), `p.NAME` columns |
+| `--out FILE` | `.svg` for one code; `.html` or `.pdf` for labels (a `.pdf` needs Chrome, Edge or Chromium) |
+| `--link` | Print the links too |
+
+```csv
+host,label,p.SERVICE
+web-1,Rack 4 left,api
+web-2,Rack 4 right,shop
+```
+
 ## What runs, what doesn't
 
 - **Placeholders** never prompt. `${secret:NAME}` and `${input:NAME}` come from the environment

@@ -406,6 +406,12 @@
         "icon": "$(device-mobile)"
       },
       {
+        "command": "mdRunbook.makeQrCode",
+        "title": "Make QR Code",
+        "category": "md-runbook",
+        "icon": "$(symbol-array)"
+      },
+      {
         "command": "mdRunbook.runCheckedLines",
         "title": "Run Checked Lines",
         "category": "md-runbook",
@@ -626,6 +632,10 @@
         },
         {
           "command": "mdRunbook.openInApp",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.makeQrCode",
           "when": "notebookType == md-runbook || resourceExtname == .md"
         },
         {
@@ -1114,6 +1124,10 @@
         {
           "command": "mdRunbook.openInApp",
           "group": "3_app@1"
+        },
+        {
+          "command": "mdRunbook.makeQrCode",
+          "group": "3_app@2"
         }
       ],
       "mdRunbook.toolbar.help": [
