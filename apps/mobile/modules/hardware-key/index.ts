@@ -17,8 +17,11 @@ export interface GeneratedKey {
 export interface HardwareKeyModule {
   /** The public key of the key named `alias`, or null when there is none. */
   publicKey(alias: string): Promise<string | null>;
-  /** Make a new key named `alias` (replacing one of that name). */
-  generate(alias: string): Promise<GeneratedKey>;
+  /**
+   * Make a new key named `alias` (replacing one of that name). `userPresence`: every use asks for
+   * Face ID, Touch ID, a fingerprint or the screen lock (enforced by the hardware).
+   */
+  generate(alias: string, userPresence: boolean): Promise<GeneratedKey>;
   /** ECDSA with SHA-256 over the base64 `data`; base64 of the DER signature. */
   sign(alias: string, data: string): Promise<string>;
   remove(alias: string): Promise<void>;

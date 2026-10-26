@@ -22,6 +22,8 @@ export interface Settings {
   cloudViews: boolean;
   /** Runbooks from links (QR codes, pager alerts, mails) open only when signed; off: unsigned ones open with a warning. */
   signedLinksOnly: boolean;
+  /** The app's key asks for Face ID, Touch ID, a fingerprint or the screen lock on every use (made with that flag in the hardware). */
+  keyNeedsUser: boolean;
   /**
    * Who signs runbooks on this device (the signature block's signer=, e.g. an e-mail address),
    * and the principal suggested for the servers' allowed_signers. Empty until set.
@@ -36,6 +38,7 @@ const DEFAULTS: Settings = {
   forceColor: false,
   cloudViews: true,
   signedLinksOnly: false,
+  keyNeedsUser: false,
   signerName: '',
 };
 
@@ -43,7 +46,7 @@ const DEFAULTS: Settings = {
 const isSaved = (v: unknown): v is Partial<Settings> =>
   typeof v === 'object' && v !== null && typeof (v as Settings).historySize === 'number';
 
-type OutputFlag = 'colorLevels' | 'stderrInRed' | 'forceColor' | 'cloudViews' | 'signedLinksOnly';
+type OutputFlag = 'colorLevels' | 'stderrInRed' | 'forceColor' | 'cloudViews' | 'signedLinksOnly' | 'keyNeedsUser';
 
 let settings: Settings = DEFAULTS;
 const listeners = new Set<() => void>();
@@ -67,6 +70,7 @@ async function readSettings(): Promise<void> {
       forceColor: flag('forceColor'),
       cloudViews: flag('cloudViews'),
       signedLinksOnly: flag('signedLinksOnly'),
+      keyNeedsUser: flag('keyNeedsUser'),
       signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
     };
   }

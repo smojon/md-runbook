@@ -5,7 +5,7 @@ import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
-import { KeyStorage, appAllowedSignersLine, appKeyInfo, appPublicKeyLine } from '../ssh/appKey';
+import { KeyStorage, appAllowedSignersLine, appKeyInfo, appPublicKeyLine, setKeyNeedsUser } from '../ssh/appKey';
 import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import {
   HISTORY_SIZES,
@@ -123,6 +123,22 @@ function AppKeySection() {
     await Clipboard.setStringAsync(line);
     setCopied(true);
   };
+  const settings = useOutputSettings();
+  /** The switch was flipped: the new value, until the user confirms making a new key. */
+  const [changing, setChanging] = useState<boolean | undefined>();
+  const [newKey, setNewKey] = useState(false);
+  const changeKey = async (on: boolean): Promise<void> => {
+    setChanging(undefined);
+    try {
+      const k = await setKeyNeedsUser(on);
+      setStorage(k.storage);
+      setLine(await appPublicKeyLine());
+      setCopied(false);
+      setNewKey(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{t.appKeyTitle}</Text>
@@ -139,6 +155,39 @@ function AppKeySection() {
       {storage ? (
         <Text testID="app-key-storage" style={styles.help}>
           {t.appKeyStorage[storage]}
+        </Text>
+      ) : null}
+      {/* Only a key in the phone's keystore can require the user (the hardware enforces it). */}
+      {storage === 'hardware' || storage === 'keystore' ? (
+        <View style={styles.switchRow}>
+          <View style={styles.switchText}>
+            <Text style={styles.switchLabel}>{t.keyNeedsUser}</Text>
+            <Text style={styles.help}>{t.keyNeedsUserHelp}</Text>
+          </View>
+          <Toggle
+            testID="setting-keyNeedsUser"
+            accessibilityLabel={t.keyNeedsUser}
+            value={changing ?? settings.keyNeedsUser}
+            onValueChange={(on) => setChanging(on)}
+          />
+        </View>
+      ) : null}
+      {changing !== undefined ? (
+        <View testID="key-change-confirm">
+          <Text style={styles.error}>{t.keyChangeWarning}</Text>
+          <View style={styles.chips}>
+            <Pressable testID="key-change-go" accessibilityRole="button" onPress={() => void changeKey(changing)} style={styles.button}>
+              <Text style={styles.buttonText}>{t.keyChangeGo}</Text>
+            </Pressable>
+            <Pressable testID="key-change-cancel" accessibilityRole="button" onPress={() => setChanging(undefined)} style={styles.button}>
+              <Text style={styles.buttonText}>{t.cancel}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+      {newKey ? (
+        <Text testID="key-changed" role="alert" style={styles.help}>
+          {t.keyChanged}
         </Text>
       ) : null}
       <Pressable

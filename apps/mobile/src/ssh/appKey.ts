@@ -15,6 +15,7 @@ import { Buffer } from 'buffer';
 import { Platform } from 'react-native';
 import { HardwareKey } from '../../modules/hardware-key';
 import { deleteSecret, getSecret, setSecret } from '../storage/secure';
+import { loadSettings, outputSettings, setOutputSetting } from '../settings/store';
 
 const KEY = 'app-key.pkcs8';
 const ALIAS = 'ssh-app-key';
@@ -46,7 +47,9 @@ async function softwareKey(): Promise<AppKey> {
 }
 
 async function hardwareKey(hw: NonNullable<typeof HardwareKey>): Promise<AppKey> {
-  const publicKey = (await hw.publicKey(ALIAS)) ?? (await hw.generate(ALIAS)).publicKey;
+  // Made with Hosts & settings' choice: whether each use asks for Face ID or a fingerprint.
+  await loadSettings();
+  const publicKey = (await hw.publicKey(ALIAS)) ?? (await hw.generate(ALIAS, outputSettings().keyNeedsUser)).publicKey;
   const pair = await ExternalKeyPair.create({
     publicKey: new Uint8Array(Buffer.from(publicKey, 'base64')),
     sign: async (data) => new Uint8Array(Buffer.from(await hw.sign(ALIAS, Buffer.from(data).toString('base64')), 'base64')),
@@ -85,6 +88,17 @@ export async function resetAppKey(): Promise<void> {
   cached = undefined;
   await deleteSecret(KEY);
   await HardwareKey?.remove(ALIAS);
+}
+
+/**
+ * Ask for Face ID, Touch ID, a fingerprint or the screen lock on every use of the key, or stop
+ * asking. The hardware only enforces it on a key made that way, so this makes a new key: hosts
+ * (authorized_keys) and servers' allowed_signers need its public key again.
+ */
+export async function setKeyNeedsUser(on: boolean): Promise<AppKey> {
+  setOutputSetting('keyNeedsUser', on);
+  await resetAppKey();
+  return appKeyInfo();
 }
 
 /** `principal namespaces="md-runbook" ecdsa-sha2-nistp256 AAAA…`: the line for the servers' allowed_signers (signing runbooks). */

@@ -166,6 +166,13 @@ const en = {
   appKeyTitle: "This app's SSH key",
   appKeyHelp: 'The key was made on this device and stays here. Add its public key to ~/.ssh/authorized_keys on each host:',
   appKeyLoading: 'Making the key…',
+  keyNeedsUser: 'Ask for Face ID or a fingerprint before the key is used',
+  keyNeedsUserHelp:
+    'Each SSH login and each signature then asks for Face ID, Touch ID, a fingerprint or the screen lock, enforced by the phone’s secure hardware: a lost or stolen phone can’t use the key.',
+  keyChangeWarning:
+    'The phone’s hardware only enforces this on a key made that way, so this makes a new key. Put its public key on your hosts again (authorized_keys), and the new allowed_signers line on servers that check your signatures.',
+  keyChangeGo: 'Make a new key',
+  keyChanged: 'New key made: copy its public key above to your hosts.',
   appKeyFailed: (why: string) => `The key could not be made: ${why}`,
   appKeyStorage: {
     hardware: "The private key was made in this device's secure hardware and cannot be read out, not even by the app.",

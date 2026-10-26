@@ -13,3 +13,8 @@ android {
     versionName '1.0.0'
   }
 }
+
+dependencies {
+  // The fingerprint or screen-lock prompt before a key that requires the user signs.
+  implementation "androidx.biometric:biometric:1.1.0"
+}

@@ -7,6 +7,8 @@ const mockHardware = {
   available: true,
   failGenerate: false,
   signed: 0,
+  /** The userPresence each generate() was asked for. */
+  presence: [] as boolean[],
 };
 jest.mock('../../modules/hardware-key', () => {
   const c = jest.requireActual<typeof import('node:crypto')>('node:crypto');
@@ -19,8 +21,9 @@ jest.mock('../../modules/hardware-key', () => {
       if (!mockHardware.available) return null;
       return {
         publicKey: async (alias: string) => (mockKeys.has(alias) ? point(alias) : null),
-        generate: async (alias: string) => {
+        generate: async (alias: string, userPresence: boolean) => {
           if (mockHardware.failGenerate) throw new Error('keystore unavailable');
+          mockHardware.presence.push(userPresence);
           mockKeys.set(alias, c.generateKeyPairSync('ec', { namedCurve: 'prime256v1' }));
           return { publicKey: point(alias), hardware: true };
         },
@@ -56,7 +59,7 @@ const fresh = (): AppKeyModule & { ssh: SshModule } => {
 beforeEach(() => {
   mockKeys.clear();
   mockSecrets.clear();
-  Object.assign(mockHardware, { available: true, failGenerate: false, signed: 0 });
+  Object.assign(mockHardware, { available: true, failGenerate: false, signed: 0, presence: [] });
 });
 
 describe("the app's key in the phone's hardware", () => {
@@ -96,5 +99,21 @@ describe("the app's key in the phone's hardware", () => {
     const m = fresh();
     expect((await m.appKeyInfo()).storage).toBe('secure-store');
     expect(mockSecrets.get('app-key.pkcs8')).toMatch(/^-----BEGIN PRIVATE KEY-----/);
+  });
+});
+
+describe('asking for the user before the key is used', () => {
+  it('makes a new key with userPresence, and back without it; the public key changes each time', async () => {
+    const m = fresh();
+    const first = await m.appPublicKeyLine();
+    expect(mockHardware.presence).toEqual([false]);
+    await m.setKeyNeedsUser(true);
+    const gated = await m.appPublicKeyLine();
+    expect(mockHardware.presence).toEqual([false, true]);
+    expect(gated).not.toBe(first);
+    // Kept across app starts (the setting is saved, the key stays in the keystore).
+    expect(await fresh().appPublicKeyLine()).toBe(gated);
+    await m.setKeyNeedsUser(false);
+    expect(mockHardware.presence).toEqual([false, true, false]);
   });
 });

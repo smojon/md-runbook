@@ -15,12 +15,14 @@ public final class HardwareKeyModule: Module {
       return try HardwareKeyStore.publicKeyBase64(key)
     }
 
-    AsyncFunction("generate") { (alias: String) -> [String: Any] in
+    // userPresence: every use of the key asks for Face ID, Touch ID or the passcode (the system's
+    // own prompt, enforced by the Secure Enclave or the Keychain, not by the app).
+    AsyncFunction("generate") { (alias: String, userPresence: Bool) -> [String: Any] in
       try HardwareKeyStore.remove(alias)
-      if SecureEnclave.isAvailable, let key = try? HardwareKeyStore.make(alias, enclave: true) {
+      if SecureEnclave.isAvailable, let key = try? HardwareKeyStore.make(alias, enclave: true, userPresence: userPresence) {
         return ["publicKey": try HardwareKeyStore.publicKeyBase64(key), "hardware": true]
       }
-      let key = try HardwareKeyStore.make(alias, enclave: false)
+      let key = try HardwareKeyStore.make(alias, enclave: false, userPresence: userPresence)
       return ["publicKey": try HardwareKeyStore.publicKeyBase64(key), "hardware": false]
     }
 
@@ -66,13 +68,16 @@ enum HardwareKeyStore {
     ]
   }
 
-  static func make(_ alias: String, enclave: Bool) throws -> SecKey {
+  static func make(_ alias: String, enclave: Bool, userPresence: Bool) throws -> SecKey {
     var error: Unmanaged<CFError>?
+    var flags: SecAccessControlCreateFlags = []
+    if enclave { flags.insert(.privateKeyUsage) }
+    if userPresence { flags.insert(.userPresence) }
     // Usable after the first unlock, on this device only (no backups, no migration to another phone).
     guard let access = SecAccessControlCreateWithFlags(
       kCFAllocatorDefault,
       kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-      enclave ? [.privateKeyUsage] : [],
+      flags,
       &error
     ) else { throw HardwareKeyError.from(error, "access control") }
     var attributes: [String: Any] = [
