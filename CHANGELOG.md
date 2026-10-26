@@ -16,6 +16,9 @@
   record of an incident or a drill as it happened, outputs and notes included; a second person
   co-signs it. Export Report shows who signed and whether the record changed since, and
   `md-runbook verify --allowed-signers` checks each signature.
+- **Export Run Record (JSON)** (Share ▾, ⋯ More → Share in the app): the timeline, its summary and
+  the record's signature as `<name>.record.json`, redacted as the report is, for audit and ticket
+  tools.
 
 - **Runbook links:** one link format for Open in the App, QR codes, pager alerts and co-sign
   requests ([details](docs/switching.md#runbook-links)): `sha256=` pins the content (the app

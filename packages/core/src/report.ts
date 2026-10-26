@@ -270,3 +270,38 @@ function renderRecord(
   }}`;
   return { html, pageCss };
 }
+
+/**
+ * The run record as JSON (Export Run Record), for audit and ticket tools: the timeline and its
+ * summary (core/incident.ts), and the record's signature with whether the record changed since.
+ * Text that goes into it (step labels, notes, people, places) goes through `redact` as in the report.
+ */
+export function recordJson(text: string, opts: { file: string; generatedAt: Date; redact?: (s: string) => string }): string {
+  const redact = opts.redact ?? ((s: string): string => s);
+  const { events, summary } = buildTimeline(text);
+  const signed = recordStatus(text);
+  const r = (s: string | undefined): string | undefined => (s === undefined ? undefined : redact(s));
+  return (
+    JSON.stringify(
+      {
+        format: 'md-runbook run record v1',
+        file: opts.file,
+        generated: formatLocalIso(opts.generatedAt),
+        summary: { ...summary, people: summary.people.map(redact), places: summary.places.map(redact) },
+        events: events.map((e) => ({ ...e, label: r(e.label), text: r(e.text), by: r(e.by), on: r(e.on) })),
+        signature: signed
+          ? {
+              unchanged: signed.unchanged,
+              sha256: signed.block.sha256,
+              signers: [
+                { signer: signed.block.signer, signed: signed.block.signed, signature: signed.block.signature },
+                ...(signed.block.cosigners ?? []),
+              ],
+            }
+          : null,
+      },
+      null,
+      2,
+    ) + '\n'
+  );
+}

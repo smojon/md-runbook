@@ -7,7 +7,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import type { Runbook } from '../runbooks/store';
-import { baseName, reportHtml } from './report';
+import { baseName, recordJsonText, reportHtml } from './report';
 
 /** A file in the app's cache under `name` (replacing an earlier one), with `text` in it. */
 function cacheFile(name: string, text?: string): File {
@@ -37,4 +37,10 @@ export async function exportReport(runbook: Runbook, kind: 'html' | 'pdf'): Prom
 export async function shareRunbook(runbook: Runbook): Promise<void> {
   const f = cacheFile(`${baseName(runbook)}.md`, runbook.text);
   await Sharing.shareAsync(f.uri, { mimeType: 'text/markdown', UTI: 'net.daringfireball.markdown', dialogTitle: runbook.title });
+}
+
+/** Export Run Record (JSON): the timeline and its signature, for audit and ticket tools. */
+export async function exportRecordJson(runbook: Runbook): Promise<void> {
+  const f = cacheFile(`${baseName(runbook)}.record.json`, recordJsonText(runbook));
+  await Sharing.shareAsync(f.uri, { mimeType: 'application/json', UTI: 'public.json', dialogTitle: runbook.title });
 }

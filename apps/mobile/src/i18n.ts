@@ -267,6 +267,10 @@ const en = {
       'Send the result of a run to someone without the app or VS Code: a change record, an incident report.',
     ],
     exportReportPdf: ['Export Report (PDF)', 'The same report as a PDF, for a ticket, an audit or a mail.'],
+    exportRecordJson: [
+      'Export Run Record (JSON)',
+      'The timeline, its summary and the record signature as JSON, for an audit or a ticket tool.',
+    ],
     shareRunbook: ['Share Runbook', 'The .md file with its outputs: open it in VS Code, or hand the procedure to a colleague.'],
     showQrCode: ['Show QR Code', 'A code another phone scans to open this runbook: no network, no file to send.'],
     cheatSheet: ['Cheat Sheet', 'Every action of the app and VS Code, and when it matters.'],

@@ -61,7 +61,7 @@ import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
 import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } from '../runbooks/params';
 import { canDownload } from '../runbooks/files';
 import { saveRunbook } from '../runbooks/save';
-import { exportReport, shareRunbook } from '../share/export';
+import { exportRecordJson, exportReport, shareRunbook } from '../share/export';
 import { Runbook, addRunbook, getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { signerName } from '../settings/store';
 import { SignCard, SignRequest } from '../signing/SignCard';
@@ -133,7 +133,7 @@ export function withoutFrontMatter(value: string): string {
 /** Share: the run report (HTML, PDF) and the runbook itself, through the share sheet or a download. */
 function shareActions(runbook: Runbook, failed: (why: string) => void): AppAction[] {
   const safely = (f: () => Promise<void>) => () => void f().catch((e: unknown) => failed(e instanceof Error ? e.message : String(e)));
-  const item = (id: 'exportReportHtml' | 'exportReportPdf' | 'shareRunbook', run: () => void): AppAction => ({
+  const item = (id: 'exportReportHtml' | 'exportReportPdf' | 'exportRecordJson' | 'shareRunbook', run: () => void): AppAction => ({
     id,
     title: t.actions[id][0],
     hint: t.actions[id][1],
@@ -148,6 +148,10 @@ function shareActions(runbook: Runbook, failed: (why: string) => void): AppActio
     item(
       'exportReportPdf',
       safely(() => exportReport(runbook, 'pdf')),
+    ),
+    item(
+      'exportRecordJson',
+      safely(() => exportRecordJson(runbook)),
     ),
     item(
       'shareRunbook',

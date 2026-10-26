@@ -4,7 +4,7 @@
  * browser has one, else as a download.
  */
 import type { Runbook } from '../runbooks/store';
-import { baseName, reportHtml } from './report';
+import { baseName, recordJsonText, reportHtml } from './report';
 
 function download(name: string, text: string, type: string): void {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -32,4 +32,8 @@ export async function shareRunbook(runbook: Runbook): Promise<void> {
   const nav = navigator as Navigator & { canShare?(d: { files: File[] }): boolean };
   if (nav.canShare?.({ files: [file] })) await nav.share({ files: [file], title: runbook.title });
   else download(name, runbook.text, 'text/markdown');
+}
+
+export async function exportRecordJson(runbook: Runbook): Promise<void> {
+  download(`${baseName(runbook)}.record.json`, recordJsonText(runbook), 'application/json');
 }

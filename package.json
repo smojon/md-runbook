@@ -400,6 +400,12 @@
         "icon": "$(file-pdf)"
       },
       {
+        "command": "mdRunbook.exportRecordJson",
+        "title": "Export Run Record (JSON)",
+        "category": "md-runbook",
+        "icon": "$(json)"
+      },
+      {
         "command": "mdRunbook.signRunbook",
         "title": "Sign Runbook",
         "category": "md-runbook",
@@ -833,6 +839,10 @@
           "when": "notebookType == md-runbook || resourceExtname == .md"
         },
         {
+          "command": "mdRunbook.exportRecordJson",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
           "command": "mdRunbook.runCheckedLines",
           "when": "notebookType == md-runbook"
         },
@@ -1150,6 +1160,10 @@
         {
           "command": "mdRunbook.exportReportPdf",
           "group": "1_report@2"
+        },
+        {
+          "command": "mdRunbook.exportRecordJson",
+          "group": "1_report@3"
         },
         {
           "command": "mdRunbook.signRunbook",

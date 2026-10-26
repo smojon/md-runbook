@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { renderReport } from '@md-runbook/core';
+import { recordJson, renderReport } from '@md-runbook/core';
 import {
   readRecordSignature,
   recordDigest,
@@ -93,5 +93,21 @@ describe('cli: sign --record and verify', () => {
     assert.equal(await verifyCommand([f, '--allowed-signers', allowed], out), 1);
     assert.ok(lines.some((l) => /CHANGED since signing/.test(l)), lines.join('\n'));
     assert.equal(await signCommand([f, '--record', '--cosign', '--key', keys.lead!], out), 1, 'no co-signing a changed record');
+  });
+});
+
+describe('Export Run Record (JSON)', () => {
+  it('carries the timeline, the summary and the signature, redacted', () => {
+    const block = { signer: 'ana', signed: '2026-10-26T22:40:00+01:00', sha256: recordDigest(RECORD), signature: SIG };
+    const json = JSON.parse(
+      recordJson(withRecordSignature(RECORD, block), { file: 'failover.md', generatedAt: new Date('2026-10-26T22:50:00Z'), redact: (s) => s.replace('ops-1', '[redacted]') }),
+    );
+    assert.equal(json.format, 'md-runbook run record v1');
+    assert.equal(json.summary.incident, 'INC-7');
+    assert.deepEqual(json.summary.places, ['ana@[redacted]']);
+    assert.deepEqual(json.events.map((e: { kind: string; on: string }) => [e.kind, e.on]), [['run', 'ana@[redacted]']]);
+    assert.equal(json.signature.unchanged, true);
+    assert.deepEqual(json.signature.signers.map((s: { signer: string }) => s.signer), ['ana']);
+    assert.equal(JSON.parse(recordJson(RECORD, { file: 'f.md', generatedAt: new Date() })).signature, null);
   });
 });

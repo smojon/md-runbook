@@ -6,7 +6,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { findBrowser, htmlToPdf } from './cli/pdf';
-import { renderReport } from '@md-runbook/core';
+import { recordJson, renderReport } from '@md-runbook/core';
 import { confirmNoLeaks } from './aiCommands';
 import { SECTION, writeOptions } from './config';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
@@ -109,9 +109,31 @@ export async function exportReportPdf(arg?: unknown): Promise<vscode.Uri | undef
   return r.out;
 }
 
+/**
+ * Export Run Record (JSON): the timeline, its summary and the record's signature (core
+ * recordJson), for audit and ticket tools, as `<name>.record.json` where reports go.
+ */
+export async function exportRecordJson(arg?: unknown): Promise<vscode.Uri | undefined> {
+  const uri = targetUri(arg);
+  if (!uri) return void vscode.window.showInformationMessage('md-runbook: open a runbook to export its run record.');
+  if (uri.scheme === 'untitled') return void vscode.window.showWarningMessage('md-runbook: save the file before exporting its run record.');
+  const name = path.posix.basename(uri.path);
+  const text = await currentText(uri);
+  if (!(await confirmNoLeaks(text, 'Export'))) return undefined;
+  const folder = reportFolder(uri);
+  await vscode.workspace.fs.createDirectory(folder);
+  const out = vscode.Uri.joinPath(folder, name.replace(/\.(md|markdown)$/i, '') + '.record.json');
+  await vscode.workspace.fs.writeFile(out, new TextEncoder().encode(recordJson(text, { file: name, generatedAt: new Date(), redact: writeOptions().redact })));
+  void vscode.window.showInformationMessage(`md-runbook: run record written to ${vscode.workspace.asRelativePath(out)}`, 'Open').then((choice) => {
+    if (choice === 'Open') void vscode.commands.executeCommand('vscode.open', out);
+  });
+  return out;
+}
+
 export function registerReport(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(EXPORT_REPORT, exportReport),
     vscode.commands.registerCommand(EXPORT_REPORT_PDF, exportReportPdf),
+    vscode.commands.registerCommand('mdRunbook.exportRecordJson', exportRecordJson),
   );
 }
