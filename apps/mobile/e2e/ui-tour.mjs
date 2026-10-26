@@ -55,7 +55,7 @@ async function tour(scheme) {
   const id = (t) => page.getByTestId(t);
   const home = async () => {
     await page.goto(url);
-    await id('core-status').waitFor({ timeout: 30_000 });
+    await id('open-runbook').waitFor({ timeout: 30_000 });
   };
 
   await step('home', home);

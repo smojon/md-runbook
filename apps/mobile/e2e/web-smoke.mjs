@@ -16,7 +16,8 @@ page.on('pageerror', (e) => errors.push(String(e)));
 let failed = false;
 try {
   await page.goto(url);
-  await page.getByTestId('core-status').filter({ hasText: 'Core OK' }).waitFor({ timeout: 30_000 });
+  await page.getByTestId('open-runbook').waitFor({ timeout: 30_000 });
+  if (await page.getByTestId('core-error').count()) throw new Error(await page.getByTestId('core-error').innerText());
   await page.screenshot({ path: 'web-01-runbooks.png' });
   await page.getByTestId('runbook-sample').click();
   await page.getByTestId('cell-1-output').waitFor({ timeout: 30_000 });

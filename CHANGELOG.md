@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **App home screen on narrow phones:** the buttons wrap to a second line instead of running off
+  the screen (**Hosts & settings** was cut off on a Pixel 9 Pro), and the "Core OK" line is gone:
+  the app only says something when its self-check fails. An **App APK** workflow builds an
+  arm64 APK to install on an Android phone by hand.
+
 ## 0.10.0
 
 - **The front matter isn't drawn in the notebook:** a runbook's YAML front matter showed as a

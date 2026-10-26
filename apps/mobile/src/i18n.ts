@@ -6,7 +6,6 @@
 const en = {
   appTitle: 'md-runbook',
   commands: (n: number) => (n === 1 ? '1 command' : `${n} commands`),
-  coreOk: 'Core OK',
   coreFailed: (why: string) => `Core check failed: ${why}`,
   notFound: 'Runbook not found',
   openRunbook: 'Open a runbook…',

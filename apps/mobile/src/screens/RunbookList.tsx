@@ -102,9 +102,11 @@ export function RunbookList() {
       }
       renderItem={({ item }) => <RunbookRow item={item} />}
       ListFooterComponent={
-        <Text testID="core-status" style={[styles.status, { color: core.ok ? colors.ok : colors.error }]}>
-          {core.ok ? t.coreOk : t.coreFailed(core.why)}
-        </Text>
+        core.ok ? undefined : (
+          <Text testID="core-error" role="alert" style={[styles.status, { color: colors.error }]}>
+            {t.coreFailed(core.why)}
+          </Text>
+        )
       }
     />
   );
@@ -190,7 +192,7 @@ const useStyles = themedStyles((colors) => ({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16 },
   header: { paddingVertical: 12 },
-  buttons: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  buttons: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12 },
   button: { alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6, backgroundColor: colors.accent },
   buttonText: { fontSize: 15, color: colors.onAccent },
   secondary: { paddingVertical: 8, paddingHorizontal: 6 },

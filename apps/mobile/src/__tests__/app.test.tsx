@@ -15,11 +15,11 @@ describe('the shared core in the app', () => {
 });
 
 describe('screens', () => {
-  it('lists the sample runbook and says the core works', async () => {
+  it('lists the sample runbook, with no core error', async () => {
     await render(<RunbookList />);
     expect(screen.getByTestId('runbook-sample')).toBeTruthy();
     expect(screen.getByText('2 commands')).toBeTruthy();
-    expect(screen.getByTestId('core-status').props.children).toBe('Core OK');
+    expect(screen.queryByTestId('core-error')).toBeNull();
   });
 
   it('shows the cells of a runbook with their saved output', async () => {

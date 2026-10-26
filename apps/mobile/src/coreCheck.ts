@@ -1,7 +1,7 @@
 /**
- * A quick check, shown on the home screen, that the shared core works on this platform: the
- * parser and writer round-trip a runbook byte for byte, and RE2 regular expressions run (CI's
- * device tests look for it). Pure, so Jest tests it too.
+ * A quick check that the shared core works on this platform: the parser and writer round-trip a
+ * runbook byte for byte, and RE2 regular expressions run. The home screen says so only when it
+ * fails (CI's device tests check that it doesn't). Pure, so Jest tests it too.
  */
 import { DEFAULT_WRITE_OPTIONS, parse, serialize, toCellInputs } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';

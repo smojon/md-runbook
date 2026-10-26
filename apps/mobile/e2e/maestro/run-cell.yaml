@@ -11,7 +11,7 @@ name: run-cell
 - runFlow: subflows/dismiss-system-dialog.yaml
 - extendedWaitUntil:
     visible:
-      id: core-status
+      id: open-runbook
     timeout: 120000
 - tapOn:
     id: hosts
@@ -55,7 +55,7 @@ name: run-cell
 - runFlow: subflows/dismiss-system-dialog.yaml
 - extendedWaitUntil:
     visible:
-      id: core-status
+      id: open-runbook
     timeout: 120000
 - tapOn:
     id: runbook-sample

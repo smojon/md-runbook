@@ -8,11 +8,10 @@ name: smoke
 - runFlow: subflows/dismiss-system-dialog.yaml
 - extendedWaitUntil:
     visible:
-      id: core-status
+      id: open-runbook
     timeout: 120000
-- assertVisible: 'Core OK'
-- assertVisible:
-    id: open-runbook
+- assertNotVisible:
+    id: core-error
 - takeScreenshot: 01-runbooks
 - runFlow: subflows/dismiss-system-dialog.yaml
 - tapOn:
