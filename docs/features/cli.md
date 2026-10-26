@@ -79,6 +79,28 @@ blocks changed since; see [Signed runbooks](signed-runbooks.md).
 | `--record` | Sign the run record instead (outputs, notes and all: an incident, a drill); `verify` then says whether it changed since and, with `--allowed-signers`, checks each signature |
 | `--cosign` | Add your signature to the signed runbook (or, with `--record`, the signed record) as it is |
 
+## Gate audit
+
+`md-runbook audit gate.log… [--record incident.md] [--out audit.pdf]` reports what servers with
+md-runbook-gate ran, from their logs: every run with the key, account and client, the runbook,
+version and signer, the parameters, exit code and duration, and the findings (refused requests,
+unsigned code, stopped runs). With `--record`, a saved run record is matched against the log.
+Exit code 1 when there are findings or recorded runs the log doesn't show. See [For
+auditors](for-auditors.md).
+
+```sh
+journalctl -t md-runbook-gate -o cat --since yesterday | md-runbook audit - --out audit.html
+md-runbook audit /var/log/md-runbook-gate.log --record runbooks/failover.20261026-2205.md --out audit.pdf
+```
+
+| Option of `audit` | Meaning |
+| --- | --- |
+| `--record FILE.md` | A saved run record to match (repeatable) |
+| `--since DATE`, `--until DATE` | Only runs in this period (`2026-10-26` or `2026-10-26T22:00:00Z`) |
+| `--runbook NAME` | Only this signed runbook |
+| `--who KEY` | Only this key (fingerprint, or the gate's `--who` name) |
+| `--out FILE` | `.html` (default `gate-audit.html`), `.pdf` (needs Chrome, Edge or Chromium) or `.json` |
+
 ## QR codes and labels
 
 `md-runbook qr file.md` writes `file.qr.svg`, a QR code that opens the runbook in the app (**Scan

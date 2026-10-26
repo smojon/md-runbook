@@ -227,6 +227,9 @@ The `end` events are written by the account's own shell, and a log file must be 
 account, so a block (or unsigned text where it is allowed) could add lines of its own. For a log
 the account can't touch, use syslog and forward it off the server.
 
+`md-runbook audit` turns these logs into a report, and matches saved run records against them
+([command line](cli.md#gate-audit), [for auditors](for-auditors.md)).
+
 ## Limits
 
 - The gate controls what the account can start, not what a signed block does once it runs: the

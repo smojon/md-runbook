@@ -12,6 +12,10 @@
   mitigate and to resolve, the `rto:` target met or missed, failed runs, people and machines,
   and a timeline of every run, attempt, mark and note in time order; printed, every page shows
   the incident and a page number. The command line's `--json` carries the same record.
+- **`md-runbook audit`** ([for auditors](docs/features/for-auditors.md)): what servers with
+  md-runbook-gate ran, from their logs: every run with the key, account, client, runbook,
+  signer, parameters, exit code and duration, and the findings (refusals, unsigned code, stopped
+  runs), as HTML, PDF or JSON; `--record` matches a saved run record against the log.
 - **Request Co-signature** (Share ▾, ⋯ More → Share in the app): a message with a link that opens
   the signed runbook on Co-sign Runbook in the reviewer's app (VS Code links the pushed file,
   pinned; the app puts the runbook in the link); `md-runbook link --cosign` prints one.
