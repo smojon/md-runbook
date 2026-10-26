@@ -2,7 +2,7 @@ Pod::Spec.new do |s|
   s.name           = 'AppShortcuts'
   s.version        = '1.0.0'
   s.summary        = 'md-runbook: quick actions on the app icon'
-  s.description    = 'The app icon's long-press menu: Scan a code and the pinned runbooks.'
+  s.description    = 'The long-press menu of the app icon: Scan a code and the pinned runbooks.'
   s.license        = 'MIT'
   s.author         = 'md-runbook'
   s.homepage       = 'https://github.com/smojon/md-runbook'
