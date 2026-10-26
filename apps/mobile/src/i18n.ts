@@ -531,6 +531,16 @@ const en = {
   trustBody:
     'Compare this fingerprint with the one shown on the server (ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub) before trusting it.',
   trustChangedBody: 'Another machine may be answering at this address. Trust the new key only if you know why it changed.',
+  installKey: 'Install my key…',
+  installKeyHelp: (account: string) =>
+    `Logs in once as ${account} with its password and adds this app’s public key to ~/.ssh/authorized_keys (Linux and macOS servers). The password is used for this one login and not kept.`,
+  installKeyPassword: 'Password',
+  installKeyGo: 'Install',
+  installKeyBusy: 'Installing…',
+  installKeyTrust: 'Trust and install',
+  installKeyAdded: 'Done: the key is on the server, and the app logs in with it from now on.',
+  installKeyAlready: 'The key was already there: the app logs in with it.',
+  installKeyFailed: (why: string) => `Not installed: ${why}`,
   trustAccept: 'Trust and run',
   trustDecline: 'Cancel',
 } as const;
