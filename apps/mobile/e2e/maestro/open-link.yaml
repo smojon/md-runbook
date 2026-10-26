@@ -1,0 +1,31 @@
+# A runbook link that carries its runbook (rb=, deflated), pinned with sha256=, naming a host the
+# app doesn't have and filling a parameter: the app unpacks it on the device (fflate, TextDecoder
+# and URL under Hermes), opens it as pinned, fills GREETING and says the host is missing. Made with
+# core's formatRunbookLink; nothing runs.
+appId: dev.mdrunbook.app
+---
+- launchApp:
+    clearState: true
+- runFlow: subflows/dismiss-system-dialog.yaml
+- extendedWaitUntil:
+    visible:
+      id: open-runbook
+    timeout: 120000
+- openLink: mdrunbook://open?rb=U1bwyczLTk1RKCrNS8rPz-bi8i9IzQPy04rycxUSFXKAsgolGYklCsmJRUWZqcUKmSV6XFwJCQlJicUZXKnJGfkKSirVBYlFiblW7kGuriGefu61SiAFXAA&sha256=b397dcfb1a65c3e85e4128d4a76d328ad98b7124c495a97b38d770f901943492&host=nowhere&p.GREETING=hello
+# iOS may ask whether to open the app for the link.
+- runFlow:
+    when:
+      visible: 'Open'
+    commands:
+      - tapOn: 'Open'
+- extendedWaitUntil:
+    visible:
+      id: link-trust-pinned
+    timeout: 30000
+- assertVisible: 'Linked runbook'
+- assertVisible:
+    id: link-missing-host
+- assertVisible:
+    id: param-GREETING
+    text: 'hello'
+- takeScreenshot: 03-opened-from-link

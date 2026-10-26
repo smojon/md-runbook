@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { appLink, fileWebUrl } from '../src/appLink';
+import { parseRunbookLink } from '@md-runbook/core/runbookLink';
 
 describe('Open in the App', () => {
   it('the file page from the remote: https and ssh forms, GitHub and GitLab', () => {
@@ -13,5 +14,13 @@ describe('Open in the App', () => {
 
   it('the app link carries the address', () => {
     assert.equal(appLink('https://github.com/o/r/blob/main/a b.md'), 'mdrunbook://open?url=https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fblob%2Fmain%2Fa%20b.md');
+  });
+
+  it('pinned to the pushed file: the app refuses other content', () => {
+    const pin = 'ab'.repeat(32);
+    const link = appLink('https://github.com/o/r/blob/main/a.md', pin);
+    assert.equal(link, `mdrunbook://open?url=https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fblob%2Fmain%2Fa.md&sha256=${pin}`);
+    const parsed = parseRunbookLink(link);
+    assert.ok(parsed.ok && parsed.link.sha256 === pin);
   });
 });

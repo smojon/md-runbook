@@ -1,5 +1,10 @@
+import { formatRunbookLink, runbookDigest } from '@md-runbook/core/runbookLink';
+import { addHost, getHosts, resetHosts } from '../hosts/store';
+import { linkContext } from '../runbooks/linkContext';
 import { openRunbookLink, rawRunbookUrl } from '../runbooks/openLink';
+import { paramValues, resetParamValues } from '../runbooks/params';
 import { getRunbook, resetRunbooks } from '../runbooks/store';
+import { resetSettings, setOutputSetting } from '../settings/store';
 
 beforeEach(() => resetRunbooks());
 
@@ -48,5 +53,72 @@ describe('opening a runbook from a link', () => {
     expect(read).not.toHaveBeenCalled();
     const ok = (async () => ({ ok: true, status: 200, text: async () => '# T\n' })) as unknown as typeof fetch;
     expect(await openRunbookLink('https://x.example.net/100%.md', ok)).toMatchObject({ kind: 'opened', runbook: { fileName: '100%.md' } });
+  });
+});
+
+describe('runbook links: pins, hosts, parameters, co-sign', () => {
+  const RUNBOOK = '# Restart the API\n\n```bash\nsystemctl restart ${param:SERVICE}\n```\n';
+  const serve = (text: string) => (async () => ({ ok: true, status: 200, text: async () => text })) as unknown as typeof fetch;
+  const offline = (async () => {
+    throw new Error('no network');
+  }) as unknown as typeof fetch;
+
+  beforeEach(() => {
+    resetHosts();
+    resetSettings();
+    resetParamValues();
+  });
+
+  it('opens a runbook carried in the link without the network, named after its title', async () => {
+    const r = await openRunbookLink(formatRunbookLink({ text: RUNBOOK, params: {} }), offline);
+    expect(r).toMatchObject({ kind: 'opened', runbook: { fileName: 'restart-the-api.md', text: RUNBOOK } });
+    if (r.kind === 'opened') expect(linkContext(r.runbook.id)).toMatchObject({ trust: 'unverified', cosign: false });
+  });
+
+  it('refuses a text other than the link pins, and opens the pinned one as pinned', async () => {
+    const link = formatRunbookLink({ url: 'https://x.example.net/restart.md', sha256: runbookDigest(RUNBOOK), params: {} });
+    expect(await openRunbookLink(link, serve(RUNBOOK.replace('restart', 'stop')))).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/not the one this link pins/),
+    });
+    const r = await openRunbookLink(link, serve(RUNBOOK));
+    expect(r.kind).toBe('opened');
+    if (r.kind === 'opened') expect(linkContext(r.runbook.id)?.trust).toBe('pinned');
+  });
+
+  it('with "only signed or pinned links" on, an unverified link is not opened', async () => {
+    setOutputSetting('verifiedLinksOnly', true);
+    expect(await openRunbookLink(formatRunbookLink({ text: RUNBOOK, params: {} }), offline)).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/neither signed nor pinned/),
+    });
+    const pinned = formatRunbookLink({ text: RUNBOOK, sha256: runbookDigest(RUNBOOK), params: {} });
+    expect((await openRunbookLink(pinned, offline)).kind).toBe('opened');
+    // Saved settings outlive resetSettings (the next link load reads them): switch it back.
+    setOutputSetting('verifiedLinksOnly', false);
+  });
+
+  it("fills the runbook's parameters, picks a host the app has, and never adds one", async () => {
+    const web1 = addHost({ name: 'web-1', hostname: 'web1.example.net', port: 22, username: 'deploy' });
+    const link = (host: string) => formatRunbookLink({ text: RUNBOOK, host, params: { SERVICE: 'api', OTHER: 'x' }, action: 'cosign' });
+    const r = await openRunbookLink(link('web-1'), offline);
+    if (r.kind !== 'opened') throw new Error(r.message);
+    expect(paramValues(r.runbook.id)).toEqual({ SERVICE: 'api' });
+    expect(linkContext(r.runbook.id)).toEqual({ trust: 'unverified', hostId: web1.id, ignoredParams: ['OTHER'], cosign: true });
+    const r2 = await openRunbookLink(link('db-9'), offline);
+    if (r2.kind !== 'opened') throw new Error(r2.message);
+    expect(linkContext(r2.runbook.id)?.missingHost).toBe('db-9');
+    expect(getHosts().map((h) => h.name)).toEqual(['web-1']);
+  });
+
+  it('a damaged link says what is wrong with it', async () => {
+    expect(await openRunbookLink('mdrunbook://open?rb=***', offline)).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/damaged/),
+    });
+    expect(await openRunbookLink('mdrunbook://open?url=https%3A%2F%2Fa%2Fb.md&p.X=a%0Ab', offline)).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/line break/),
+    });
   });
 });

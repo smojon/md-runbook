@@ -8,12 +8,22 @@
 import { execFile } from 'node:child_process';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { runbookDigest } from '@md-runbook/core/runbookLink';
 import { appLink, fileWebUrl } from './appLink';
 import { NOTEBOOK_TYPE } from './serializer';
 
 function git(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) =>
     execFile('git', args, { cwd, windowsHide: true, timeout: 10_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout.trim()))),
+  );
+}
+
+/** A file at a revision, exactly (not trimmed: the pin is over every byte). */
+function gitShow(cwd: string, spec: string): Promise<string> {
+  return new Promise((resolve, reject) =>
+    execFile('git', ['show', spec], { cwd, windowsHide: true, timeout: 10_000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) =>
+      err ? reject(err) : resolve(stdout),
+    ),
   );
 }
 
@@ -50,7 +60,9 @@ async function openInApp(uri?: unknown): Promise<string | undefined> {
     );
     if (go !== 'Copy the Link Anyway') return undefined;
   }
-  const link = appLink(web);
+  // Pinned to the pushed file, the one the phone downloads (the blob: no CRLF from a checkout).
+  const pushed = await gitShow(root, `origin/${branch}:${rel.split(path.sep).join('/')}`).catch(() => undefined);
+  const link = appLink(web, pushed === undefined ? undefined : runbookDigest(pushed));
   await vscode.env.clipboard.writeText(link);
   void vscode.window
     .showInformationMessage(

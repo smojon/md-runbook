@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Runbook links:** one link format for Open in the App, QR codes, pager alerts and co-sign
+  requests ([details](docs/switching.md#runbook-links)): `sha256=` pins the content (the app
+  refuses any other text), `host=` picks a host the app has, `p.NAME=` fills a parameter,
+  `action=cosign` opens on Co-sign Runbook, and `rb=` carries a small runbook in the link itself
+  (no network needed). Nothing runs from a link. The app shows whether what it opened is signed,
+  pinned or neither; **Hosts & settings → Links** can refuse links that are neither. **Open in
+  the App** now pins the pushed file.
+
 - **The app's own icon and a new look:** the app and the web app's favicon use the extension's
   icon (Android's adaptive and themed icons included). The start screen has the icon in its
   header, **Hosts & settings** as the gear at the top right, **Open a runbook…** and **Open a

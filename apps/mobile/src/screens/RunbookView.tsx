@@ -1,6 +1,7 @@
 import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
+import { LinkContext, forgetLinkContext, linkContext } from '../runbooks/linkContext';
 import { FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   DEFAULT_WRITE_OPTIONS,
@@ -145,7 +146,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const params = useMemo(() => (runbook ? runbookParams(runbook.text) : []), [runbook]);
   const paramValues = useParamValues(runbook?.id ?? '');
   const hosts = useHosts();
-  const [hostId, setHostId] = useState<string | undefined>();
+  /** What the link that just opened this runbook asked for (its host, Co-sign), and how far to trust it. */
+  const [fromLink] = useState(() => (id ? linkContext(id) : undefined));
+  useEffect(
+    () => () => {
+      if (id) forgetLinkContext(id);
+    },
+    [id],
+  );
+  const [hostId, setHostId] = useState<string | undefined>(fromLink?.hostId);
   const host = hosts.find((h) => h.id === hostId) ?? hosts[0];
   const [running, setRunning] = useState<Running | undefined>();
   const [trust, setTrust] = useState<Trust | undefined>();
@@ -174,7 +183,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     queue.current = undefined;
     setQueued(false);
   };
-  const [notice, setNotice] = useState<string | undefined>();
+  const [notice, setNotice] = useState<string | undefined>(() =>
+    fromLink?.cosign && cosign && 'why' in cosign
+      ? cosign.why === 'changed'
+        ? t.changedSinceSigned(signed?.block.signer ?? '?')
+        : t.notSignedYet
+      : undefined,
+  );
   // Who a gate said signed this runbook's manifest (the file's own signer name is only a claim).
   const [gateChecked, setGateChecked] = useState<{ manifest: string; host: string; principal: string } | undefined>();
   const verified = signed && gateChecked?.manifest === signed.block.manifest ? gateChecked : undefined;
@@ -538,7 +553,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       ]
     : [];
   // Sign Runbook / Co-sign Runbook: a card at the top; this app's key signs (inside the phone's secure hardware).
-  const [signing, setSigning] = useState<{ request: SignRequest; busy: boolean; errors: string[] } | undefined>();
+  // A "please co-sign" link opens on the card (its notice says why when it can't be co-signed).
+  const [signing, setSigning] = useState<{ request: SignRequest; busy: boolean; errors: string[] } | undefined>(() =>
+    fromLink?.cosign && cosign && !('why' in cosign)
+      ? { request: { kind: 'cosign', block: cosign.block, manifest: cosign.manifest }, busy: false, errors: [] }
+      : undefined,
+  );
   const openSign = (kind: 'sign' | 'cosign'): void => {
     if (!runbook) return;
     if (kind === 'sign') setSigning({ request: { kind, plan: signPlan(runbook.text, runbook.fileName) }, busy: false, errors: [] });
@@ -764,6 +784,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             <DiffSheet diff={diff} onClose={() => setDiff(undefined)} />
             <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />
             <SaveBar runbook={runbook} />
+            {fromLink ? <LinkNotes context={fromLink} /> : null}
             {signed ? <SignedBanner status={signed} verified={verified} /> : null}
             {signing ? (
               <SignCard
@@ -1132,6 +1153,33 @@ function ParamsCard({
   );
 }
 
+/**
+ * A runbook just opened from a link: how far its text can be trusted, and what of the link was
+ * not used (a host the app doesn't have, parameters the runbook doesn't take).
+ */
+function LinkNotes({ context }: { context: LinkContext }) {
+  const styles = useStyles();
+  const colors = usePalette();
+  const ok = context.trust !== 'unverified';
+  return (
+    <View testID="link-notes" style={[styles.linkNotes, { borderLeftColor: ok ? colors.ok : colors.warning }]}>
+      <Text testID={`link-trust-${context.trust}`} style={styles.signedBody}>
+        {context.trust === 'signed' ? t.linkOpenedSigned : context.trust === 'pinned' ? t.linkOpenedPinned : t.linkOpenedUnverified}
+      </Text>
+      {context.missingHost ? (
+        <Text testID="link-missing-host" style={styles.signedBody}>
+          {t.linkMissingHost(context.missingHost)}
+        </Text>
+      ) : null}
+      {context.ignoredParams.length > 0 ? (
+        <Text testID="link-ignored-params" style={styles.signedBody}>
+          {t.linkIgnoredParams(context.ignoredParams)}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 /** A signed runbook: who signed which version, and the blocks changed since (a gate refuses those). */
 function SignedBanner({ status, verified }: { status: SignedStatus; verified: { host: string; principal: string } | undefined }) {
   const styles = useStyles();
@@ -1268,6 +1316,7 @@ const useStyles = themedStyles((c) => ({
   },
   paramHint: { fontSize: 12, color: c.muted, marginTop: 2 },
   signed: { borderLeftWidth: 3, borderLeftColor: c.accent, paddingLeft: 10, paddingVertical: 4, marginVertical: 6 },
+  linkNotes: { borderLeftWidth: 3, paddingLeft: 10, paddingVertical: 4, marginVertical: 6 },
   signedTitle: { fontSize: 14, color: c.text },
   signedBody: { fontSize: 12, color: c.muted, lineHeight: 17, marginTop: 2 },
   trust: { borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 12, marginVertical: 8 },

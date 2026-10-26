@@ -20,6 +20,8 @@ export interface Settings {
   forceColor: boolean;
   /** AWS / Google Cloud JSON output: a list of the resources with console links (mdRunbook.output.cloudViews). */
   cloudViews: boolean;
+  /** Runbook links (QR codes, pager alerts, mails) open only when signed or pinned (sha256=); off: they open with a warning. */
+  verifiedLinksOnly: boolean;
   /**
    * Who signs runbooks on this device (the signature block's signer=, e.g. an e-mail address),
    * and the principal suggested for the servers' allowed_signers. Empty until set.
@@ -27,19 +29,34 @@ export interface Settings {
   signerName: string;
 }
 
-const DEFAULTS: Settings = { historySize: 0, colorLevels: true, stderrInRed: true, forceColor: false, cloudViews: true, signerName: '' };
+const DEFAULTS: Settings = {
+  historySize: 0,
+  colorLevels: true,
+  stderrInRed: true,
+  forceColor: false,
+  cloudViews: true,
+  verifiedLinksOnly: false,
+  signerName: '',
+};
 
 /** Saved settings, older ones (only historySize) completed with the defaults. */
 const isSaved = (v: unknown): v is Partial<Settings> =>
   typeof v === 'object' && v !== null && typeof (v as Settings).historySize === 'number';
 
-type OutputFlag = 'colorLevels' | 'stderrInRed' | 'forceColor' | 'cloudViews';
+type OutputFlag = 'colorLevels' | 'stderrInRed' | 'forceColor' | 'cloudViews' | 'verifiedLinksOnly';
 
 let settings: Settings = DEFAULTS;
 const listeners = new Set<() => void>();
 const emit = (): void => listeners.forEach((l) => l());
 
-export async function loadSettings(): Promise<void> {
+let loaded: Promise<void> | undefined;
+
+/** Read the saved settings, once (later calls wait for the same read). */
+export function loadSettings(): Promise<void> {
+  return (loaded ??= readSettings());
+}
+
+async function readSettings(): Promise<void> {
   const saved = await getJson(KEY, isSaved);
   if (saved) {
     const flag = (k: OutputFlag): boolean => (typeof saved[k] === 'boolean' ? saved[k] : DEFAULTS[k]);
@@ -49,6 +66,7 @@ export async function loadSettings(): Promise<void> {
       stderrInRed: flag('stderrInRed'),
       forceColor: flag('forceColor'),
       cloudViews: flag('cloudViews'),
+      verifiedLinksOnly: flag('verifiedLinksOnly'),
       signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
     };
   }
@@ -103,5 +121,6 @@ export function useOutputSettings(): Settings {
 /** Tests. */
 export function resetSettings(): void {
   settings = DEFAULTS;
+  loaded = undefined;
   emit();
 }

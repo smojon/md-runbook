@@ -62,6 +62,7 @@ export function HostList() {
           <SecretsSection />
           <HistorySection />
           <ColorSection />
+          <LinksSection />
           {Platform.OS === 'web' ? <RelaySection /> : null}
         </>
       }
@@ -285,6 +286,29 @@ function ColorSection() {
           />
         </View>
       ))}
+    </View>
+  );
+}
+
+/** Runbook links: whether only signed or pinned ones open (off: the others open with a warning). */
+function LinksSection() {
+  const styles = useStyles();
+  const s = useOutputSettings();
+  return (
+    <View testID="link-settings" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.linksTitle}</Text>
+      <View style={styles.switchRow}>
+        <View style={styles.switchText}>
+          <Text style={styles.switchLabel}>{t.verifiedLinksOnly}</Text>
+          <Text style={styles.help}>{t.verifiedLinksOnlyHelp}</Text>
+        </View>
+        <Toggle
+          testID="setting-verifiedLinksOnly"
+          accessibilityLabel={t.verifiedLinksOnly}
+          value={s.verifiedLinksOnly}
+          onValueChange={(on) => setOutputSetting('verifiedLinksOnly', on)}
+        />
+      </View>
     </View>
   );
 }

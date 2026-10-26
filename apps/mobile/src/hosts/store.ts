@@ -114,6 +114,9 @@ export function setHostPlatform(id: string, platform: 'posix' | 'windows'): void
   if (hosts.some((h) => h.id === id && h.platform !== platform)) publish(hosts.map((h) => (h.id === id ? { ...h, platform } : h)));
 }
 
+/** All hosts (outside React; useHosts in a screen). */
+export const getHosts = (): readonly Host[] => hosts;
+
 export function getHost(id: string | undefined): Host | undefined {
   return hosts.find((h) => h.id === id);
 }

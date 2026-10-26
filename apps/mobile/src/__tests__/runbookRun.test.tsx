@@ -3,6 +3,8 @@ import { addHost, getHost, resetHosts } from '../hosts/store';
 import { resetRunbooks } from '../runbooks/store';
 import { signerName } from '../settings/store';
 import { HostList } from '../screens/HostList';
+import { formatRunbookLink } from '@md-runbook/core/runbookLink';
+import { openRunbookLink } from '../runbooks/openLink';
 import { HostsButton } from '../ui/HomeHeader';
 import { RunbookView } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
@@ -138,5 +140,20 @@ describe('hosts screens', () => {
       fireEvent(screen.getByTestId('signer-name'), 'blur');
     });
     expect(signerName()).toBe('me@example.net');
+  });
+});
+
+describe('a runbook opened from a link', () => {
+  it('says how far the link is trusted, picks its host, and says why it cannot be co-signed', async () => {
+    addHost({ name: 'web-1', hostname: 'web1.example.net', port: 22, username: 'deploy' });
+    const web2 = addHost({ name: 'web-2', hostname: 'web2.example.net', port: 22, username: 'deploy' });
+    const text = '# Check\n\n```bash\nuptime\n```\n';
+    const r = await openRunbookLink(formatRunbookLink({ text, host: 'web-2', params: { NOPE: '1' }, action: 'cosign' }));
+    if (r.kind !== 'opened') throw new Error(r.message);
+    await render(<RunbookView id={r.runbook.id} />);
+    expect(screen.getByTestId('link-trust-unverified')).toBeTruthy();
+    expect(screen.getByTestId('link-ignored-params').props.children).toMatch(/NOPE/);
+    expect(screen.getByTestId(`host-chip-${web2.id}`).props.accessibilityState).toEqual({ selected: true });
+    expect(screen.getByTestId('run-notice').props.children).toMatch(/^Not signed yet/);
   });
 });
