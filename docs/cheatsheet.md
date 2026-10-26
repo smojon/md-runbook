@@ -109,6 +109,10 @@ secret values are redacted from the output.
 | --- | --- | --- |
 | **Add a host**, edit, **Delete this host** | Hosts | Each server you run on, once: name, address, user. |
 | **Run on** (host chips) | top of a runbook | Pick the server the cells run on. A cell with `host=NAME` always runs on that one. |
+| **Practice on a Host…** / **Stop Practice** | ⋯ More → Run | A drill or training: every cell runs on a practice server, whatever `host=` says (also `practice: NAME` in the front matter). |
+| **Scan a code** | start screen | Open the runbook a QR code carries (a label on a machine, another phone's **Show QR Code**). |
+| **Pin** a runbook | the pin on its row | Keep the runbooks you need first at the top, and on the app icon's long-press menu. |
+| **Ask for Face ID or a fingerprint before the key is used** | Hosts & settings → This app's SSH key | A lost or stolen phone can't use the key (makes a new key: put its public key on your hosts again). |
 | **Trust and run** | shown on the first connection | Check the server's fingerprint before anything is sent. If a known server's key changes, the app stops and tells you. |
 | **Forget the trusted host key** | Hosts & settings → a host | The server was reinstalled and has a new key on purpose. |
 | **This app's SSH key → Copy** | Hosts | Put the app's public key into `~/.ssh/authorized_keys` on each server. On phones the private key stays in secure hardware. |

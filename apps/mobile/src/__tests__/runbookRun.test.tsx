@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { addHost, getHost, resetHosts } from '../hosts/store';
-import { resetRunbooks } from '../runbooks/store';
+import { addRunbook, resetRunbooks } from '../runbooks/store';
 import { signerName } from '../settings/store';
 import { HostList } from '../screens/HostList';
 import { formatRunbookLink } from '@md-runbook/core/runbookLink';
@@ -155,5 +155,37 @@ describe('a runbook opened from a link', () => {
     expect(screen.getByTestId('link-ignored-params').props.children).toMatch(/NOPE/);
     expect(screen.getByTestId(`host-chip-${web2.id}`).props.accessibilityState).toEqual({ selected: true });
     expect(screen.getByTestId('run-notice').props.children).toMatch(/^Not signed yet/);
+  });
+});
+
+describe('practice on a host (drills)', () => {
+  const { connectionFor } = jest.requireMock<{ connectionFor: jest.Mock }>('../ssh/connections');
+
+  it('every cell runs on the practice host, even one that says host=prod', async () => {
+    addHost({ name: 'prod', hostname: 'prod.example.net', port: 22, username: 'ops' });
+    const train = addHost({ name: 'train', hostname: 'train.example.net', port: 22, username: 'ops' });
+    const r = addRunbook('drill.md', '---\npractice: train\n---\n\n# Drill\n\n```bash host=prod\nuptime\n```\n');
+    connectionFor.mockClear();
+    await render(<RunbookView id={r.id} />);
+    expect(screen.getByTestId('practice-banner')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(connectionFor).toHaveBeenCalled());
+    expect(connectionFor.mock.calls[0]![0].id).toBe(train.id);
+    expect(screen.queryByText(/This cell runs on prod/)).toBeNull();
+  });
+
+  it('a practice host the app does not have stops the run instead of using the selected host', async () => {
+    addHost({ name: 'prod', hostname: 'prod.example.net', port: 22, username: 'ops' });
+    const r = addRunbook('drill.md', '---\npractice: train\n---\n\n# Drill\n\n```bash\nuptime\n```\n');
+    connectionFor.mockClear();
+    await render(<RunbookView id={r.id} />);
+    expect(screen.getByTestId('practice-missing')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    expect(connectionFor).not.toHaveBeenCalled();
+    expect(screen.getByTestId('run-notice').props.children).toMatch(/no host with that name/);
   });
 });

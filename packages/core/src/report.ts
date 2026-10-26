@@ -222,7 +222,7 @@ function renderRecord(
   const s = t.summary;
   if (t.events.length === 0 && !s.incident && !signed) return { html: '', pageCss: '' };
   const facts: [string, string][] = [];
-  if (s.incident) facts.push(['Incident', [s.incident, s.severity].filter(Boolean).join(' · ')]);
+  if (s.incident) facts.push([s.drill ? 'Drill' : 'Incident', [s.incident, s.severity].filter(Boolean).join(' · ')]);
   if (s.start) facts.push(['Start', when(s.start)]);
   if (s.end) facts.push(['End', when(s.end)]);
   if (s.durationSeconds !== undefined) facts.push(['Duration', formatSeconds(s.durationSeconds)]);
@@ -259,7 +259,7 @@ function renderRecord(
     })
     .join('');
   const html =
-    `<section class="record">\n<h2>${s.incident ? 'Incident record' : 'Run record'}</h2>\n<dl class="facts">${factsHtml}</dl>\n` +
+    `<section class="record">\n<h2>${s.drill ? 'Drill record' : s.incident ? 'Incident record' : 'Run record'}</h2>\n<dl class="facts">${factsHtml}</dl>\n` +
     (rows
       ? `<table class="timeline">\n<thead><tr><th>Time</th><th>What</th><th>By</th><th>On</th><th>Result</th><th>Duration</th></tr></thead>\n<tbody>\n${rows}</tbody>\n</table>\n`
       : '') +

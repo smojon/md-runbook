@@ -194,6 +194,8 @@ Each has its own page with examples and settings:
   and when, **Add Note** the decisions and milestones, and **Export Report** turns it into an
   incident record and timeline for the postmortem and the auditors (**Sign Run Record** vouches
   for it). QR codes on machines open runbooks the same way (`md-runbook qr --labels`).
+- **[Drills and training](docs/features/drills.md):** a dated drill record measured against its
+  recovery-time objective, run on a practice server so nothing reaches production.
 - **[For auditors](docs/features/for-auditors.md):** what md-runbook records and enforces, for
   approvals (signatures, two signers, version floors), execution (the gate's log, `md-runbook
   audit`) and evidence (run records, matched against the log and signed).

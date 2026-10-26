@@ -25,21 +25,30 @@ async function startIncident(arg?: unknown): Promise<vscode.Uri | undefined> {
   const source = sourceUri(arg);
   if (!source) return void vscode.window.showErrorMessage('md-runbook: open a runbook (a .md file) first.');
   const now = new Date();
+  const kind = await vscode.window.showQuickPick(
+    [
+      { label: '$(flame) A real incident', drill: false },
+      { label: '$(beaker) A drill or exercise', description: 'The record says drill; the report measures it against rto:', drill: true },
+    ],
+    { title: 'Start Incident', placeHolder: 'An incident, or a drill?' },
+  );
+  if (!kind) return undefined;
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
   const id = await vscode.window.showInputBox({
-    title: 'Start Incident: incident ID',
-    prompt: "The incident's ID (from your pager or ticket system). The run copy records it, and every run records who ran it and where.",
-    value: `INC-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`,
+    title: `Start Incident: ${kind.drill ? 'drill' : 'incident'} ID`,
+    prompt: "The ID (from your pager or ticket system). The run copy records it, and every run records who ran it and where.",
+    value: `${kind.drill ? 'DRILL' : 'INC'}-${stamp}`,
     validateInput: (v) => (v.trim() === '' ? 'An ID' : /[\r\n]/.test(v) ? 'One line' : undefined),
   });
   if (id === undefined) return undefined;
-  const severity = await vscode.window.showQuickPick(['SEV1', 'SEV2', 'SEV3', 'SEV4', 'No severity'], {
-    title: 'Start Incident: severity',
-    placeHolder: 'How bad is it?',
-  });
+  const severity = kind.drill
+    ? 'No severity'
+    : await vscode.window.showQuickPick(['SEV1', 'SEV2', 'SEV3', 'SEV4', 'No severity'], { title: 'Start Incident: severity', placeHolder: 'How bad is it?' });
   if (severity === undefined) return undefined;
   const text = withFrontMatterValues(await contentWithoutOutputs(source), {
     incident: id.trim(),
     ...(severity !== 'No severity' ? { severity } : {}),
+    ...(kind.drill ? { drill: 'true' } : {}),
   });
   const { target, editor } = await openRunCopy(source, text);
   await insertNote(editor, { at: now, by: userName(), milestone: 'detected', text: `Incident ${id.trim()} started from ${source.path.split('/').pop()}` }, 1);

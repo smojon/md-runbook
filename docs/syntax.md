@@ -163,6 +163,8 @@ incident: INC-1234   # this file is the record of an incident (Start Incident wr
 severity: SEV2       # the incident's severity, as you name them
 evidence: true       # every run records by= and on=, and every attempt is kept (also implied by incident:)
 rto: 30m             # recovery time objective: 90s, 30m, 1h30m or seconds; the report says met or missed
+drill: true          # the record is a drill or exercise (the report says Drill record)
+practice: training-1 # the app runs every cell on this host, whatever host= says (drills, training)
 params:
   - NAMESPACE        # asked, no default
   - REGION: eu-west-1

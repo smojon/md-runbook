@@ -162,6 +162,7 @@ function shareActions(runbook: Runbook, failed: (why: string) => void): AppActio
 
 export function RunbookView({ id, autorun = false }: { id: string | undefined; autorun?: boolean }) {
   const styles = useStyles();
+  const palette = usePalette();
   const runbook = useRunbooks().find((r) => r.id === id);
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
   const progress = useMemo(() => (runbook ? textProgress(runbook.text) : undefined), [runbook]);
@@ -181,6 +182,16 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   );
   const [hostId, setHostId] = useState<string | undefined>(fromLink?.hostId);
   const host = hosts.find((h) => h.id === hostId) ?? hosts[0];
+  /**
+   * Practice (drills, training): the host every cell runs on, whatever host= says; from the front
+   * matter's practice: (a host of that name) or ⋯ More → Practice on a Host.
+   */
+  const [practiceId, setPracticeId] = useState<string | undefined>();
+  const practiceName = runbook ? parseFrontMatter(runbook.text)?.practice : undefined;
+  const practiceHost =
+    hosts.find((h) => h.id === practiceId) ??
+    (practiceName ? hosts.find((h) => h.name.toLowerCase() === practiceName.toLowerCase()) : undefined);
+  const [practiceCard, setPracticeCard] = useState(false);
   const [running, setRunning] = useState<Running | undefined>();
   const [trust, setTrust] = useState<Trust | undefined>();
   // A cell whose host= names a host other than the selected one waits for a yes, once per host
@@ -286,8 +297,16 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (!runbook) return;
     const { cellIndex, mode, line } = request;
     const cell = cells[cellIndex];
+    // Practice: every cell on the practice host, whatever host= says (a drill can't reach production).
+    // A practice host the app doesn't have stops the run rather than falling back to the selected one.
+    if (practiceName && !practiceHost) {
+      clearQueue();
+      setNotice(t.practiceMissing(practiceName));
+      return;
+    }
+    if (practiceHost) on = practiceHost;
     // host=NAME: that host, whichever is selected (as the store has it now: a key may just have been pinned).
-    const named = cell && isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).host : undefined;
+    const named = !practiceHost && cell && isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).host : undefined;
     const match = named === undefined ? on : hosts.find((h) => h.name.toLowerCase() === named.toLowerCase());
     const target = match && (getHost(match.id) ?? match);
     if (named !== undefined && !target) {
@@ -494,13 +513,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
    * Start Incident: a dated copy that keeps evidence (incident: and severity: in its front matter),
    * with a first note, detected; it opens without running.
    */
-  const startIncident = (id: string, severity: string | undefined): void => {
+  const startIncident = (id: string, severity: string | undefined, drill: boolean): void => {
     if (!runbook) return;
     setIncidentCard(undefined);
     const base = (runbook.fileName ?? `${runbook.title}.md`).replace(/(\.\d{8}-\d{6})?\.md$/i, '');
     const now = new Date();
     const text = withBlockAfterFrontMatter(
-      withFrontMatterValues(clearOutputBlocks(runbook.text), { incident: id, ...(severity ? { severity } : {}) }),
+      withFrontMatterValues(clearOutputBlocks(runbook.text), {
+        incident: id,
+        ...(severity ? { severity } : {}),
+        ...(drill ? { drill: 'true' } : {}),
+      }),
       formatNote({
         at: now,
         ...(signerName() ? { by: signerName() } : {}),
@@ -558,6 +581,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ? { ...meta('sessionOff', 'run'), run: () => setSessionMode('isolated') }
           : { ...meta('sessionOn', 'run'), run: () => setSessionMode('session') },
         { ...meta('runAllAsCopy', 'run', host ? undefined : t.noRunNow), run: () => runAsCopy() },
+        practiceHost && practiceId
+          ? { ...meta('stopPractice', 'run'), run: () => setPracticeId(undefined) }
+          : {
+              ...meta('practiceOnHost', 'run', hosts.length === 0 ? t.noRunNow : practiceHost ? t.practiceFromFrontMatter : undefined),
+              run: () => {
+                setPracticeCard(true);
+                list.current?.scrollToOffset({ offset: 0 });
+              },
+            },
         {
           ...meta('startIncident', 'run'),
           run: () => {
@@ -937,6 +969,48 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             ) : null}
             {params.length > 0 ? (
               <ParamsCard specs={params} values={paramValues} onChange={(name, value) => setParamValue(runbook.id, name, value)} />
+            ) : null}
+            {practiceHost ? (
+              <View testID="practice-banner" style={[styles.linkNotes, { borderLeftColor: palette.warning }]}>
+                <Text style={styles.signedBody}>{t.practiceOn(practiceHost.name)}</Text>
+              </View>
+            ) : practiceName ? (
+              <Text testID="practice-missing" style={styles.warning}>
+                {t.practiceMissing(practiceName)}
+              </Text>
+            ) : null}
+            {practiceCard ? (
+              <View testID="practice-card" style={styles.qrCard}>
+                <Text style={styles.signedTitle}>{t.practiceTitle}</Text>
+                <Text style={styles.signedBody}>{t.practiceHelp}</Text>
+                <View style={styles.cardChips}>
+                  {hosts.map((h) => (
+                    <Pressable
+                      key={h.id}
+                      testID={`practice-host-${h.id}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: h.id === practiceHost?.id }}
+                      onPress={() => {
+                        setPracticeId(h.id);
+                        setPracticeCard(false);
+                      }}
+                      style={[styles.chip, h.id === practiceHost?.id && styles.chipOn]}
+                    >
+                      <Text style={[styles.chipText, h.id === practiceHost?.id && styles.chipTextOn]}>{h.name}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View style={styles.cardButtons}>
+                  <Pressable
+                    testID="practice-close"
+                    accessibilityRole="button"
+                    onPress={() => setPracticeCard(false)}
+                    style={styles.qrClose}
+                  >
+                    <Text style={styles.link}>{t.close}</Text>
+                  </Pressable>
+                </View>
+              </View>
             ) : null}
             <HostPicker hosts={hosts} selected={host} onSelect={setHostId} />
             {/* A setup step (the web's relay), not an error: a note with the way to it. */}
@@ -1353,7 +1427,13 @@ const SEVERITIES = ['SEV1', 'SEV2', 'SEV3', 'SEV4'] as const;
 const pad2 = (n: number): string => String(n).padStart(2, '0');
 
 /** Start Incident: the incident's ID (a dated one to start from) and its severity. */
-function StartIncidentCard({ onStart, onCancel }: { onStart(id: string, severity: string | undefined): void; onCancel(): void }) {
+function StartIncidentCard({
+  onStart,
+  onCancel,
+}: {
+  onStart(id: string, severity: string | undefined, drill: boolean): void;
+  onCancel(): void;
+}) {
   const styles = useStyles();
   const colors = usePalette();
   const [id, setId] = useState(() => {
@@ -1361,6 +1441,13 @@ function StartIncidentCard({ onStart, onCancel }: { onStart(id: string, severity
     return `INC-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}`;
   });
   const [severity, setSeverity] = useState<string | undefined>();
+  const [drill, setDrill] = useState(false);
+  /** A drill: a DRILL- ID while the ID is still the one offered, and no severity. */
+  const toggleDrill = (): void => {
+    setDrill(!drill);
+    setId((v) => (drill ? v.replace(/^DRILL-/, 'INC-') : v.replace(/^INC-/, 'DRILL-')));
+    setSeverity(undefined);
+  };
   return (
     <View testID="incident-card" style={styles.qrCard}>
       <Text style={styles.signedTitle}>{t.startIncidentTitle}</Text>
@@ -1376,18 +1463,28 @@ function StartIncidentCard({ onStart, onCancel }: { onStart(id: string, severity
         placeholderTextColor={colors.placeholder}
       />
       <View style={styles.cardChips}>
-        {SEVERITIES.map((s) => (
-          <Pressable
-            key={s}
-            testID={`severity-${s}`}
-            accessibilityRole="button"
-            accessibilityState={{ selected: severity === s }}
-            onPress={() => setSeverity(severity === s ? undefined : s)}
-            style={[styles.chip, severity === s && styles.chipOn]}
-          >
-            <Text style={[styles.chipText, severity === s && styles.chipTextOn]}>{s}</Text>
-          </Pressable>
-        ))}
+        <Pressable
+          testID="incident-drill"
+          accessibilityRole="button"
+          accessibilityState={{ selected: drill }}
+          onPress={toggleDrill}
+          style={[styles.chip, drill && styles.chipOn]}
+        >
+          <Text style={[styles.chipText, drill && styles.chipTextOn]}>{t.drillChip}</Text>
+        </Pressable>
+        {!drill &&
+          SEVERITIES.map((s) => (
+            <Pressable
+              key={s}
+              testID={`severity-${s}`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: severity === s }}
+              onPress={() => setSeverity(severity === s ? undefined : s)}
+              style={[styles.chip, severity === s && styles.chipOn]}
+            >
+              <Text style={[styles.chipText, severity === s && styles.chipTextOn]}>{s}</Text>
+            </Pressable>
+          ))}
       </View>
       <View style={styles.cardButtons}>
         <Pressable testID="incident-cancel" accessibilityRole="button" onPress={onCancel} style={styles.qrClose}>
@@ -1397,7 +1494,7 @@ function StartIncidentCard({ onStart, onCancel }: { onStart(id: string, severity
           testID="incident-start"
           accessibilityRole="button"
           disabled={id.trim() === ''}
-          onPress={() => onStart(id.trim(), severity)}
+          onPress={() => onStart(id.trim(), severity, drill)}
           style={[styles.cardPrimary, id.trim() === '' && styles.disabled]}
         >
           <Text style={styles.cardPrimaryText}>{t.startIncidentGo}</Text>

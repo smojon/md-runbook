@@ -68,6 +68,13 @@ const en = {
   recordNeedsName: 'Set your name for signatures first, under Hosts & settings → Signing runbooks.',
   recordChangedWhileSigning: 'A run changed the record while it was being signed: sign it again.',
   recordSigned: (signers: string) => `The run record is signed by ${signers}. Export Report shows it; md-runbook verify checks it.`,
+  practiceTitle: 'Practice on a host',
+  practiceHelp: 'Every cell of this runbook runs on the host you pick, whatever host= says: for drills and training on a practice server.',
+  practiceOn: (name: string) => `Practice: every cell runs on ${name}, whatever host= says.`,
+  practiceMissing: (name: string) =>
+    `This runbook practises on ${name} (practice:), and there is no host with that name: add it under Hosts & settings before you run.`,
+  practiceFromFrontMatter: 'This runbook names its practice host in its front matter (practice:).',
+  drillChip: 'A drill',
   startIncidentTitle: 'Start Incident',
   startIncidentHelp:
     'A dated copy of this runbook for the incident: each run records who ran it and where, every attempt is kept, and Export Report shows the timeline.',
@@ -250,6 +257,11 @@ const en = {
     sessionOff: ['Session: on', 'Now one shell for the whole runbook (cd and variables carry over). Tap to give each cell a fresh shell.'],
     sessionOn: ['Session: off', 'Now each cell starts in a fresh shell. Tap to keep one shell for the whole runbook.'],
     runAllAsCopy: ['Run All as Copy', 'The runbook is a template: run it in a new dated copy, so the original stays clean.'],
+    practiceOnHost: [
+      'Practice on a Host…',
+      'A drill or training: every cell runs on the host you pick (a practice server), whatever host= says, so nothing reaches production.',
+    ],
+    stopPractice: ['Stop Practice', 'Back to the selected host, and to the hosts that cells name with host=.'],
     startIncident: [
       'Start Incident',
       "You're paged: a dated copy that records who ran each step and where, keeps every attempt, and starts the incident timeline.",

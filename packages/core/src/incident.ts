@@ -41,6 +41,8 @@ export interface TimelineEvent {
 export interface TimelineSummary {
   incident?: string;
   severity?: string;
+  /** A drill or exercise (`drill: true`), not a real incident. */
+  drill?: boolean;
   /** First and last event, and the time between. */
   start?: string;
   end?: string;
@@ -151,6 +153,7 @@ export function buildTimeline(text: string): Timeline {
   const summary: TimelineSummary = {
     ...(fm?.incident ? { incident: fm.incident } : {}),
     ...(fm?.severity ? { severity: fm.severity } : {}),
+    ...(fm?.drill ? { drill: true } : {}),
     ...(start ? { start } : {}),
     ...(end ? { end } : {}),
     ...(start && end ? { durationSeconds: seconds(start, end) } : {}),

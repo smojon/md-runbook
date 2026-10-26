@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { buildTimeline, formatNote, formatSeconds, parseNotes } from '@md-runbook/core/incident';
 import { parseDurationSeconds, parseFrontMatter } from '@md-runbook/core/secrets';
+import { renderReport } from '@md-runbook/core';
 
 const out = (attrs: string, body = 'x') => `<!-- md-runbook:output start ${attrs} -->\n\`\`\`text\n${body}\n\`\`\`\n<!-- md-runbook:output end -->\n`;
 const history = (...blocks: string[]) => `<details><summary>md-runbook: ${blocks.length} previous runs</summary>\n\n${blocks.join('\n')}\n</details>\n`;
@@ -73,5 +74,17 @@ describe('run timeline (audit evidence, postmortems)', () => {
     assert.equal(parseFrontMatter('---\nmode: session\n---\n')!.evidence, undefined);
     assert.deepEqual(['90s', '45', '2h', 'soon'].map(parseDurationSeconds), [90, 45, 7200, undefined]);
     assert.deepEqual([95, 7200, 0, 3725].map(formatSeconds), ['1 min 35 s', '2 h', '0 s', '1 h 2 min 5 s']);
+  });
+});
+
+describe('drills', () => {
+  it('drill: true and practice: are read; the report calls it a drill record', () => {
+    const fm = parseFrontMatter('---\nincident: DRILL-1\ndrill: true\npractice: train\nrto: 30m\n---\n')!;
+    assert.deepEqual([fm.drill, fm.practice, fm.evidence], [true, 'train', true]);
+    const text = '---\nincident: DRILL-1\ndrill: true\n---\n\n# Failover drill\n\n```bash\nuptime\n```\n<!-- md-runbook:output start exit=0 ran=2026-10-27T10:00:00+01:00 duration=1.000s -->\n```text\nup\n```\n<!-- md-runbook:output end -->\n';
+    const html = renderReport(text, { generatedAt: new Date('2026-10-27T10:30:00Z') });
+    assert.match(html, /<h2>Drill record<\/h2>/);
+    assert.match(html, /<dt>Drill<\/dt><dd>DRILL-1<\/dd>/);
+    assert.equal(buildTimeline(text).summary.drill, true);
   });
 });

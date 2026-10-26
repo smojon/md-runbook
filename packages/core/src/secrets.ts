@@ -103,6 +103,10 @@ export interface FrontMatter {
   severity?: string;
   /** `evidence: true` (or an incident): every run records who ran it and where, and every attempt is kept. */
   evidence?: boolean;
+  /** `drill: true`: the record is of a drill or exercise, not a real incident (the report says so). */
+  drill?: boolean;
+  /** `practice:` the host (by its name in the app) every cell runs on in a drill, whatever host= says. */
+  practice?: string;
   /** `rto:` in seconds (`30m`, `1h`, `90s`): the target a drill or recovery is measured against. */
   rtoSeconds?: number;
 }
@@ -136,6 +140,8 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
   let severity: string | undefined;
   let evidence: boolean | undefined;
   let rtoSeconds: number | undefined;
+  let practice: string | undefined;
+  let drill: boolean | undefined;
   let inParams = false;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
@@ -150,6 +156,8 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
         ...(severity ? { severity } : {}),
         ...(evidence || incident ? { evidence: true } : {}),
         ...(rtoSeconds !== undefined ? { rtoSeconds } : {}),
+        ...(practice ? { practice } : {}),
+        ...(drill ? { drill } : {}),
       };
     }
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
@@ -174,6 +182,9 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       };
       incident = value('incident') ?? incident;
       severity = value('severity') ?? severity;
+      practice = value('practice') ?? practice;
+      const dr = value('drill');
+      if (dr !== undefined) drill = /^(true|yes|on)$/i.test(dr);
       const ev = value('evidence');
       if (ev !== undefined) evidence = /^(true|yes|on)$/i.test(ev);
       const rto = value('rto');

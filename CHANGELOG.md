@@ -12,6 +12,10 @@
   mitigate and to resolve, the `rto:` target met or missed, failed runs, people and machines,
   and a timeline of every run, attempt, mark and note in time order; printed, every page shows
   the incident and a page number. The command line's `--json` carries the same record.
+- **Drills and training** ([details](docs/features/drills.md)): **Start Incident** can start a
+  drill (`drill: true`; the report says *Drill record* and measures it against `rto:`), and in
+  the app **Practice on a Host…** (or `practice: NAME`) runs every cell on a practice server,
+  whatever `host=` says; nothing runs if that host is missing.
 - **`md-runbook audit`** ([for auditors](docs/features/for-auditors.md)): what servers with
   md-runbook-gate ran, from their logs: every run with the key, account, client, runbook,
   signer, parameters, exit code and duration, and the findings (refusals, unsigned code, stopped
