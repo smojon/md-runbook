@@ -10,6 +10,8 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { formatLocalIso, parse, shellKindForLanguage } from '@md-runbook/core';
 import { recordDigest, recordSigners, recordStatement, recordStatus, withRecordCosigner, withRecordSignature } from '@md-runbook/core/record';
+import { formatRunbookLink } from '@md-runbook/core/runbookLink';
+import { pushedRunbook } from './openInApp';
 import { findRefs } from '@md-runbook/core/secrets';
 import { checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign } from '@md-runbook/core/node';
 import { executionConfig } from './config';
@@ -208,6 +210,32 @@ async function cosignRunbook(uri?: unknown): Promise<void> {
 }
 
 /**
+ * Request Co-signature: a link for a reviewer (mail, chat) that opens the signed runbook in the
+ * md-runbook app on Co-sign Runbook, pinned to the pushed file (core/runbookLink.ts). The reviewer
+ * sees exactly the blocks they sign; their co-signature comes back as a commit or a shared file.
+ */
+async function requestCosign(uri?: unknown): Promise<void> {
+  const target = targetUri(uri);
+  if (!target || target.scheme !== 'file') return void vscode.window.showErrorMessage('md-runbook: open a signed runbook (a .md file) first.');
+  await saveIfOpen(target);
+  const text = decoder.decode(await vscode.workspace.fs.readFile(target));
+  const block = readSignature(text);
+  if (!block) return void vscode.window.showErrorMessage('md-runbook: this runbook is not signed yet. Sign it first (Sign Runbook), then ask for a co-signature.');
+  if (!cosignable(text, block)) {
+    return void vscode.window.showErrorMessage(`md-runbook: the runbook changed since ${block.signer} signed it. Sign it again, then ask for a co-signature.`);
+  }
+  const pushed = await pushedRunbook(target, 'Copy the Request Anyway');
+  if (!pushed) return;
+  const m = parseManifest(block.manifest);
+  const link = formatRunbookLink({ url: pushed.web, ...(pushed.sha256 ? { sha256: pushed.sha256 } : {}), params: {}, action: 'cosign' });
+  const request = `Please co-sign ${m.name} version ${m.version} (signed by ${signerNames(block).join(', ')}): open this link in the md-runbook app, review the ${m.cells.length} signed block${m.cells.length === 1 ? '' : 's'}, then Co-sign.\n${link}\n`;
+  await vscode.env.clipboard.writeText(request);
+  void vscode.window.showInformationMessage(
+    'md-runbook: co-signature request copied (a message with the link). Send it to the reviewer; their app opens the runbook on Co-sign Runbook.',
+  );
+}
+
+/**
  * Sign Run Record (core/record.ts): vouch for a run record (an incident, a drill) as it is now, so
  * a report or an audit can tell it wasn't changed afterwards. When the record is signed and
  * unchanged, this co-signs it (an incident or drill lead); when it changed, signing again replaces
@@ -252,5 +280,6 @@ export function registerSigning(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('mdRunbook.signRunbook', signRunbook),
     vscode.commands.registerCommand('mdRunbook.cosignRunbook', cosignRunbook),
     vscode.commands.registerCommand('mdRunbook.signRecord', signRecord),
+    vscode.commands.registerCommand('mdRunbook.requestCosign', requestCosign),
   );
 }

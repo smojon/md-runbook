@@ -418,6 +418,12 @@
         "icon": "$(workspace-trusted)"
       },
       {
+        "command": "mdRunbook.requestCosign",
+        "title": "Request Co-signature",
+        "category": "md-runbook",
+        "icon": "$(mail)"
+      },
+      {
         "command": "mdRunbook.signRecord",
         "title": "Sign Run Record",
         "category": "md-runbook",
@@ -656,6 +662,10 @@
         },
         {
           "command": "mdRunbook.signRecord",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.requestCosign",
           "when": "notebookType == md-runbook || resourceExtname == .md"
         },
         {
@@ -1174,8 +1184,12 @@
           "group": "2_sign@2"
         },
         {
-          "command": "mdRunbook.signRecord",
+          "command": "mdRunbook.requestCosign",
           "group": "2_sign@3"
+        },
+        {
+          "command": "mdRunbook.signRecord",
+          "group": "2_sign@4"
         },
         {
           "command": "mdRunbook.openInApp",

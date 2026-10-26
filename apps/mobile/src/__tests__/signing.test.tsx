@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { parseManifest, readSignature, signedStatus } from '@md-runbook/core/signing';
 import { recordSigners, recordStatus } from '@md-runbook/core/record';
+import { parseRunbookLink } from '@md-runbook/core/runbookLink';
+import { cosignRequestMessage } from '../share/report';
 import { generateKey } from '@md-runbook/ssh';
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
 import { addRunbook, getRunbook, resetRunbooks, updateRunbookText } from '../runbooks/store';
@@ -271,5 +273,26 @@ describe('Sign Run Record in the app', () => {
     });
     expect(screen.getByTestId('run-notice').props.children).toMatch(/Set your name for signatures/);
     expect(recordStatus(getRunbook(r.id)!.text)).toBeUndefined();
+  });
+});
+
+describe('Request Co-signature', () => {
+  it('a message whose link opens the signed runbook (without outputs) on Co-sign Runbook', async () => {
+    const plan = signPlan(RUNBOOK, 'restart.md');
+    const r = await signRunbook(
+      RUNBOOK,
+      plan,
+      { name: 'ops/restart', scopes: '', days: '', patterns: { NS: '[a-z-]+' } },
+      'ana@example.net',
+      mockKey!,
+    );
+    if (!r.ok) throw new Error(r.errors.join('; '));
+    const message = cosignRequestMessage(addRunbook('restart.md', r.text));
+    expect(message).toMatch(/^Please co-sign ops\/restart version 1 \(signed by ana@example.net\): /);
+    const link = parseRunbookLink(message.trim().split('\n').pop()!);
+    expect(link.ok).toBe(true);
+    if (!link.ok) return;
+    expect(link.link.action).toBe('cosign');
+    expect(readSignature(link.link.text!)!.signer).toBe('ana@example.net');
   });
 });

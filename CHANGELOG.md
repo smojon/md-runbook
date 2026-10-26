@@ -12,6 +12,9 @@
   mitigate and to resolve, the `rto:` target met or missed, failed runs, people and machines,
   and a timeline of every run, attempt, mark and note in time order; printed, every page shows
   the incident and a page number. The command line's `--json` carries the same record.
+- **Request Co-signature** (Share ▾, ⋯ More → Share in the app): a message with a link that opens
+  the signed runbook on Co-sign Runbook in the reviewer's app (VS Code links the pushed file,
+  pinned; the app puts the runbook in the link); `md-runbook link --cosign` prints one.
 - **Sign Run Record** (Share ▾, ⋯ More in the app, `md-runbook sign --record`): vouch for the
   record of an incident or a drill as it happened, outputs and notes included; a second person
   co-signs it. Export Report shows who signed and whether the record changed since, and

@@ -4,7 +4,7 @@
  * browser has one, else as a download.
  */
 import type { Runbook } from '../runbooks/store';
-import { baseName, recordJsonText, reportHtml } from './report';
+import { baseName, cosignRequestMessage, recordJsonText, reportHtml } from './report';
 
 function download(name: string, text: string, type: string): void {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -36,4 +36,11 @@ export async function shareRunbook(runbook: Runbook): Promise<void> {
 
 export async function exportRecordJson(runbook: Runbook): Promise<void> {
   download(`${baseName(runbook)}.record.json`, recordJsonText(runbook), 'application/json');
+}
+
+export async function requestCosign(runbook: Runbook): Promise<void> {
+  const text = cosignRequestMessage(runbook);
+  const nav = navigator as Navigator & { share?(d: { text: string }): Promise<void> };
+  if (nav.share) await nav.share({ text });
+  else await navigator.clipboard.writeText(text);
 }

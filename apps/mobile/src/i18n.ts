@@ -63,6 +63,8 @@ const en = {
     'Your signature says this is the record as it happened: outputs, notes and earlier attempts. Any later change shows in its report and in md-runbook verify.',
   recordCosign: (signers: string) => `Signed by ${signers}. Your co-signature says you reviewed the record as it is.`,
   recordChanged: (signers: string) => `The record changed since ${signers} signed it. Signing again replaces their signatures.`,
+  cosignRequest: (what: string, signers: string, link: string) =>
+    `Please co-sign ${what}${signers ? ` (signed by ${signers})` : ''}: open this link in the md-runbook app, review the signed blocks, then Co-sign. Send the runbook back with Share Runbook.\n${link}\n`,
   recordNeedsName: 'Set your name for signatures first, under Hosts & settings → Signing runbooks.',
   recordChangedWhileSigning: 'A run changed the record while it was being signed: sign it again.',
   recordSigned: (signers: string) => `The run record is signed by ${signers}. Export Report shows it; md-runbook verify checks it.`,
@@ -267,6 +269,10 @@ const en = {
     signRecord: [
       'Sign Run Record',
       'Vouch for the record of an incident or a drill as it is (outputs, notes and all): a later change shows. Co-signs a record someone signed.',
+    ],
+    requestCosign: [
+      'Request Co-signature',
+      'Ask a reviewer to co-sign: a message with a link that opens this signed runbook on Co-sign Runbook in their app.',
     ],
     cosignRunbook: [
       'Co-sign Runbook',

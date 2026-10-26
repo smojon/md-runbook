@@ -61,7 +61,7 @@ import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
 import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } from '../runbooks/params';
 import { canDownload } from '../runbooks/files';
 import { saveRunbook } from '../runbooks/save';
-import { exportRecordJson, exportReport, shareRunbook } from '../share/export';
+import { exportRecordJson, exportReport, requestCosign, shareRunbook } from '../share/export';
 import { Runbook, addRunbook, getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { signerName } from '../settings/store';
 import { SignCard, SignRequest } from '../signing/SignCard';
@@ -639,6 +639,20 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 : t.notSignedYet,
           ),
           run: () => openSign('cosign'),
+        },
+        {
+          // Same conditions as Co-sign Runbook: a signed runbook, unchanged since.
+          ...meta(
+            'requestCosign',
+            'share',
+            !cosign || !('why' in cosign)
+              ? undefined
+              : cosign.why === 'changed'
+                ? t.changedSinceSigned(signed?.block.signer ?? '?')
+                : t.notSignedYet,
+          ),
+          run: () =>
+            void requestCosign(runbook).catch((e: unknown) => setNotice(t.shareFailed(e instanceof Error ? e.message : String(e)))),
         },
         { ...meta('cheatSheet', 'help'), run: () => void Linking.openURL(CHEAT_SHEET_URL) },
         { ...meta('sample', 'help'), run: () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } }) },
