@@ -189,6 +189,11 @@ Each has its own page with examples and settings:
   never run them. [Moving between VS Code and the app](docs/switching.md): a synced folder,
   **Open in the App** from VS Code, **Share Runbook** from the app; the run carries on where it
   stopped.
+- **[On call and incidents](docs/features/on-call.md):** a pager alert's link opens the runbook in
+  the app with the host and parameters filled in; **Start Incident** records who ran what, where
+  and when, **Add Note** the decisions and milestones, and **Export Report** turns it into an
+  incident record and timeline for the postmortem and the auditors (**Sign Run Record** vouches
+  for it). QR codes on machines open runbooks the same way (`md-runbook qr --labels`).
 - **[Signed runbooks](docs/features/signed-runbooks.md):** sign a runbook (**Sign Runbook**, or
   `md-runbook sign`) and ship it anywhere; servers whose support keys are restricted to
   `md-runbook-gate` run only runbooks signed by keys they trust, unchanged, with scopes,

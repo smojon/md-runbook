@@ -15,6 +15,7 @@ import { fileWebUrl } from '../appLink';
 import { findBrowser, htmlToPdf } from './pdf';
 
 export const QR_USAGE = `Usage: md-runbook qr <file.md> [options]
+       md-runbook link <file.md> [options]       (prints the link: a pager alert, a chat)
        md-runbook qr <file.md> --labels hosts.csv [options]
 
 Makes a QR code that opens the runbook in the md-runbook app (Scan a code). It carries the
@@ -124,7 +125,12 @@ function pushedFile(file: string): { web: string; sha256?: string } | string {
   }
 }
 
-export async function qrCommand(argv: readonly string[], out: Out = stdout): Promise<number> {
+/**
+ * `md-runbook qr`, or with `linkOnly` `md-runbook link`: the same link printed instead of a code (a
+ * pager alert's runbook field, a chat message, a template); with --labels one `host<TAB>link` line
+ * per row.
+ */
+export async function qrCommand(argv: readonly string[], out: Out = stdout, linkOnly = false): Promise<number> {
   if (argv.includes('-h') || argv.includes('--help')) return void process.stdout.write(QR_USAGE), 0;
   let a: QrArgs;
   try {
@@ -152,7 +158,8 @@ export async function qrCommand(argv: readonly string[], out: Out = stdout): Pro
     }
     base.url = pushed.web;
     if (pushed.sha256) base.sha256 = pushed.sha256;
-    else out('md-runbook: the file is not pushed yet (no origin version): the code is not pinned');
+    // On stderr: `md-runbook link` prints into configs and templates.
+    else process.stderr.write('md-runbook: the file is not pushed yet (no origin version): the link is not pinned\n');
   }
   const linkOf = (l: RunbookLink): string => formatRunbookLink(l, a.webApp ?? APP_LINK_BASE);
   // What the app will read: refuse anything it would refuse (a bad host name, an http address).
@@ -171,6 +178,7 @@ export async function qrCommand(argv: readonly string[], out: Out = stdout): Pro
       process.stderr.write(`md-runbook: the app would refuse this link (${problem})\n`);
       return 2;
     }
+    if (linkOnly) return out(link), 0;
     const m = qrMatrix(link);
     if (!m) {
       process.stderr.write(`md-runbook: too much for a QR code (${Buffer.byteLength(link)} bytes; 2953 at most): use its address instead of --embed\n`);
@@ -203,9 +211,11 @@ export async function qrCommand(argv: readonly string[], out: Out = stdout): Pro
       process.stderr.write(`md-runbook: ${a.labels} row ${i + 2}: the app would refuse its link (${problem})\n`);
       return 2;
     }
-    if (a.printLink) out(link);
+    if (linkOnly) out(`${row.host}\t${link}`);
+    else if (a.printLink) out(link);
     labels.push({ link, title: row.host || title, subtitle: row.label || (row.host ? title : undefined) });
   }
+  if (linkOnly) return 0;
   const { html, tooLong } = qrLabelSheet(title, labels);
   if (tooLong.length > 0) {
     process.stderr.write(`md-runbook: too much for a QR code: ${tooLong.join(', ')} (use its address instead of --embed)\n`);

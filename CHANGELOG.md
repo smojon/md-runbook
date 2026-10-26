@@ -27,6 +27,8 @@
   (no network needed). Nothing runs from a link. The app shows whether what it opened is signed,
   pinned or neither; **Hosts & settings → Links** can refuse runbooks that aren't signed. **Open in
   the App** now pins the pushed file.
+- **`md-runbook link`** prints a runbook link for a pager alert ([on call](docs/features/on-call.md):
+  Alertmanager, PagerDuty and Opsgenie examples).
 - **QR codes** ([details](docs/switching.md#qr-codes)): **Share ▾ → Make QR Code** writes
   `<name>.qr.svg` for the pushed file (pinned) or the runbook itself (no network needed), with an
   optional host and parameter values; `md-runbook qr --labels hosts.csv` prints a label sheet

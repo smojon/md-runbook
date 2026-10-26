@@ -71,3 +71,24 @@ describe('cli: md-runbook qr', () => {
     assert.equal(await qrCommand([file, '--embed'], out), 1);
   });
 });
+
+describe('cli: md-runbook link', () => {
+  it('prints the link (one host<TAB>link line per CSV row), and writes no file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-link-'));
+    try {
+      const file = path.join(dir, 'restart.md');
+      fs.writeFileSync(file, RUNBOOK);
+      const lines: string[] = [];
+      assert.equal(await qrCommand([file, '--url', 'https://x.example.net/restart.md', '--host', 'web-1', '--param', 'SERVICE=api'], (l) => lines.push(l), true), 0);
+      assert.deepEqual(lines, ['mdrunbook://open?url=https%3A%2F%2Fx.example.net%2Frestart.md&host=web-1&p.SERVICE=api']);
+      const csv = path.join(dir, 'hosts.csv');
+      fs.writeFileSync(csv, 'host\nweb-1\nweb-2\n');
+      lines.length = 0;
+      assert.equal(await qrCommand([file, '--url', 'https://x.example.net/restart.md', '--labels', csv], (l) => lines.push(l), true), 0);
+      assert.deepEqual(lines.map((l) => l.split('\t')[0]), ['web-1', 'web-2']);
+      assert.deepEqual(fs.readdirSync(dir).sort(), ['hosts.csv', 'restart.md']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
