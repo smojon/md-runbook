@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["AppShortcutsModule"],
+    "appDelegateSubscribers": ["AppShortcutsAppDelegate"]
+  },
+  "android": {
+    "modules": ["dev.mdrunbook.appshortcuts.AppShortcutsModule"]
+  }
+}

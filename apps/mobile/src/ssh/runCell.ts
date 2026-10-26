@@ -26,6 +26,7 @@ import { parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { signedStatus, signedStepIndex } from '@md-runbook/core/signing';
 import { LineStep, echoCommand, formatLineRange, formatLineRanges, splitSteps } from '@md-runbook/core/steps';
 import { RemoteRunOptions, SessionRunResult, SignedRun, wrongPlatform } from '@md-runbook/ssh';
+import { withBackgroundTime } from '../../modules/background-time';
 import { Host, hostLabel, setHostPlatform } from '../hosts/store';
 import { checkParam, refsOf, runbookParams } from '../runbooks/params';
 import { readSecret } from '../secrets/store';
@@ -94,7 +95,15 @@ export interface RunCellParams {
 
 const redactor = createRedactor(DEFAULT_PATTERNS);
 
-export async function runCell(p: RunCellParams): Promise<RunOutcome> {
+/**
+ * Run the cell, with background time on iOS: switching to the pager or chat app for a moment
+ * doesn't cut its connection (iOS suspends a backgrounded app within seconds).
+ */
+export function runCell(p: RunCellParams): Promise<RunOutcome> {
+  return withBackgroundTime('md-runbook: a cell is running', () => runCellNow(p));
+}
+
+async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   const cell = parse(p.text).cells[p.cellIndex];
   if (!cell) return { kind: 'error', message: t.cellGone };
   const shells = parseFrontMatter(p.text)?.shell;

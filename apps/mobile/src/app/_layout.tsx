@@ -12,6 +12,7 @@ import { t } from '../i18n';
 import { usePalette } from '../theme';
 import { CODICON_FONT, codiconFont } from '../ui/Codicon';
 import { HomeTitle, HostsButton } from '../ui/HomeHeader';
+import { useAppShortcuts } from '../ui/useAppShortcuts';
 
 /** A runbook or host opened by a link has the list under it, so the back arrow is always there. */
 export const unstable_settings = { initialRouteName: 'index' };
@@ -30,6 +31,11 @@ function useWebFocusStyle(accent: string): void {
   }, [accent]);
 }
 
+function AppShortcutsSync() {
+  useAppShortcuts();
+  return null;
+}
+
 export default function RootLayout() {
   const c = usePalette();
   useWebFocusStyle(c.accent);
@@ -45,6 +51,7 @@ export default function RootLayout() {
   return (
     <>
       <StatusBar style="auto" />
+      <AppShortcutsSync />
       <Stack
         screenOptions={{
           headerStyle: { backgroundColor: c.background },
