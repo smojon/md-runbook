@@ -29,8 +29,11 @@ import {
   checkNextItem,
   clearCellOutputs,
   clearOutputBlocks,
+  formatDurationAttr,
   formatLocalIso,
   isCodeMeta,
+  loadedOutputEntry,
+  nextHistory,
   parse,
   setCellOutput,
   shellKindForLanguage,
@@ -55,7 +58,7 @@ import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell } from '../cells/CodeCell';
 import { SaveBar } from '../cells/SaveBar';
-import { Host, getHost, pinHostKey, useHosts } from '../hosts/store';
+import { Host, getHost, hostLabel, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
 import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } from '../runbooks/params';
@@ -63,7 +66,7 @@ import { canDownload } from '../runbooks/files';
 import { saveRunbook } from '../runbooks/save';
 import { exportRecordJson, exportReport, requestCosign, shareRunbook } from '../share/export';
 import { Runbook, addRunbook, getRunbook, updateRunbookText, useRunbooks } from '../runbooks/store';
-import { signerName } from '../settings/store';
+import { historySize, signerName } from '../settings/store';
 import { SignCard, SignRequest } from '../signing/SignCard';
 import { SignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
 import { appKey } from '../ssh/appKey';
@@ -192,6 +195,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     hosts.find((h) => h.id === practiceId) ??
     (practiceName ? hosts.find((h) => h.name.toLowerCase() === practiceName.toLowerCase()) : undefined);
   const [practiceCard, setPracticeCard] = useState(false);
+  /** Run on a Group: the cell whose group is being picked, and the group run's results so far. */
+  const hostGroups = [...new Set(hosts.flatMap((h) => (h.group ? [h.group] : [])))].sort((a, b) => a.localeCompare(b));
+  const [groupPick, setGroupPick] = useState<number | undefined>();
+  const [groupRun, setGroupRun] = useState<{ group: string; results: { host: string; ok: boolean | undefined }[] } | undefined>();
   const [running, setRunning] = useState<Running | undefined>();
   const [trust, setTrust] = useState<Trust | undefined>();
   // A cell whose host= names a host other than the selected one waits for a yes, once per host
@@ -413,6 +420,95 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       clearQueue();
       setNotice(outcome.message);
     }
+  };
+  /**
+   * Run on a Group: the cell on each host of the group in turn, then one output block with a
+   * section per host (hosts=, group=, failed=; exit is the first failure's). Hosts whose key isn't
+   * trusted yet are skipped with a note: a trust question per host would stop the round halfway.
+   */
+  const runOnGroup = async (cellIndex: number, group: string): Promise<void> => {
+    setGroupPick(undefined);
+    if (!runbook || busy.current) return;
+    const members = hosts.filter((h) => h.group === group);
+    if (members.length === 0) return;
+    busy.current = true;
+    const started = new Date();
+    const parts: { host: Host; exit: string; check?: string; text: string }[] = [];
+    const show = (): void =>
+      setGroupRun({ group, results: members.map((h) => ({ host: h.name, ok: okOf(parts.find((p) => p.host.id === h.id)) })) });
+    const okOf = (p: (typeof parts)[number] | undefined): boolean | undefined => (p ? p.exit === '0' && p.check !== 'failed' : undefined);
+    show();
+    try {
+      for (const h of members) {
+        if (!h.hostKey) {
+          parts.push({ host: h, exit: 'skipped', text: t.groupNotTrusted(h.name) + '\n' });
+          show();
+          continue;
+        }
+        const outcome = await runCell({
+          host: h,
+          text: getRunbook(runbook.id)?.text ?? runbook.text,
+          cellIndex,
+          params: paramValues,
+          runbookId: runbook.id,
+          captures: captures.current,
+          inputs: Object.fromEntries(Object.entries(inputs.current).map(([k, v]) => [k, v.value])),
+        });
+        if (outcome.kind === 'done') {
+          const out = parse(outcome.text).cells[cellIndex]?.output;
+          parts.push({
+            host: h,
+            exit: outcome.attrs.exit ?? '?',
+            ...(outcome.attrs.check ? { check: outcome.attrs.check } : {}),
+            text: out?.text ?? '',
+          });
+        } else if (outcome.kind === 'trust') parts.push({ host: h, exit: 'skipped', text: t.groupNotTrusted(h.name) + '\n' });
+        else if (outcome.kind === 'needs') {
+          // Values to type first: the round stops here, before any other host.
+          setNotice(t.groupNeedsValues);
+          break;
+        } else parts.push({ host: h, exit: 'error', text: outcome.message + '\n' });
+        show();
+      }
+    } finally {
+      busy.current = false;
+    }
+    if (parts.length === 0) return;
+    const ended = new Date();
+    const failed = parts.filter((p) => !okOf(p));
+    const body = parts
+      .map(
+        (p) =>
+          `── ${p.host.name} (${hostLabel(p.host)}) · ${p.check === 'failed' ? 'check failed' : p.exit === '0' ? 'exit 0' : p.exit} ──\n${p.text.replace(/\n?$/, '\n')}`,
+      )
+      .join('');
+    const attrs: Record<string, string> = {
+      exit: failed[0]?.exit === 'skipped' ? 'error' : (failed[0]?.exit ?? '0'),
+      ran: formatLocalIso(started),
+      ended: formatLocalIso(ended),
+      duration: formatDurationAttr(ended.getTime() - started.getTime()),
+      group,
+      hosts: parts.map((p) => p.host.name).join(','),
+      ...(failed.length ? { failed: failed.map((p) => p.host.name).join(',') } : {}),
+      ...(parts.some((p) => p.check) ? { check: parts.some((p) => p.check === 'failed') ? 'failed' : 'ok' } : {}),
+    };
+    if (failed[0]?.exit === '0') attrs.exit = '1';
+    const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+    const meta = parse(latest).cells[cellIndex]?.meta;
+    const previous = isCodeMeta(meta) ? loadedOutputEntry(meta) : undefined;
+    const next = setCellOutput(
+      latest,
+      cellIndex,
+      {
+        kind: 'new',
+        text: body,
+        attrs,
+        ...(previous ? { previous } : {}),
+        history: nextHistory(previous, isCodeMeta(meta) ? (meta.history?.entries ?? []) : [], historySize()),
+      },
+      DEFAULT_WRITE_OPTIONS,
+    );
+    if (next !== undefined) updateRunbookText(runbook.id, next);
   };
   /** Start the next cell of Run all / Continue (with the newest render's state). */
   const runNext = (): void => {
@@ -810,6 +906,23 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : []),
       { ...meta('runCell', 'run', why), run: () => void run({ cellIndex: index }, host) },
       { ...meta('stepThrough', 'run', why), run: () => void run({ cellIndex: index, mode: 'step', line: 0 }, host) },
+      {
+        ...meta(
+          'runOnGroup',
+          'run',
+          practiceHost
+            ? t.groupNotInPractice
+            : hostGroups.length === 0
+              ? t.noHostGroups
+              : can.ok
+                ? undefined
+                : t.notRunnable[can.why](can.detail),
+        ),
+        run: () => {
+          setGroupPick(index);
+          list.current?.scrollToOffset({ offset: 0 });
+        },
+      },
       { ...meta('explainOutput', 'assistant', cell.output ? undefined : t.noOutputToExplain), run: () => assistant.ask('explain', index) },
       { ...meta('suggestNextSteps', 'assistant'), run: () => assistant.ask('suggest', index) },
       { ...meta('copyCellForAi', 'assistant'), run: () => assistant.copyForAi(index) },
@@ -978,6 +1091,55 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               <Text testID="practice-missing" style={styles.warning}>
                 {t.practiceMissing(practiceName)}
               </Text>
+            ) : null}
+            {groupPick !== undefined ? (
+              <View testID="group-card" style={styles.qrCard}>
+                <Text style={styles.signedTitle}>{t.groupPickTitle}</Text>
+                <Text style={styles.signedBody}>{t.groupPickHelp}</Text>
+                <View style={styles.cardChips}>
+                  {hostGroups.map((g) => (
+                    <Pressable
+                      key={g}
+                      testID={`group-${g}`}
+                      accessibilityRole="button"
+                      onPress={() => void runOnGroup(groupPick, g)}
+                      style={styles.chip}
+                    >
+                      <Text style={styles.chipText}>{t.groupChip(g, hosts.filter((h) => h.group === g).length)}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View style={styles.cardButtons}>
+                  <Pressable
+                    testID="group-cancel"
+                    accessibilityRole="button"
+                    onPress={() => setGroupPick(undefined)}
+                    style={styles.qrClose}
+                  >
+                    <Text style={styles.link}>{t.cancel}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+            {groupRun ? (
+              <View testID="group-results" style={styles.qrCard}>
+                <Text style={styles.signedTitle}>{t.groupResultsTitle(groupRun.group)}</Text>
+                {groupRun.results.map((r) => (
+                  <Text key={r.host} testID={`group-result-${r.host}`} style={r.ok === false ? styles.warning : styles.signedBody}>
+                    {`${r.ok === undefined ? '…' : r.ok ? '✓' : '✗'} ${r.host}`}
+                  </Text>
+                ))}
+                <View style={styles.cardButtons}>
+                  <Pressable
+                    testID="group-results-close"
+                    accessibilityRole="button"
+                    onPress={() => setGroupRun(undefined)}
+                    style={styles.qrClose}
+                  >
+                    <Text style={styles.link}>{t.close}</Text>
+                  </Pressable>
+                </View>
+              </View>
             ) : null}
             {practiceCard ? (
               <View testID="practice-card" style={styles.qrCard}>

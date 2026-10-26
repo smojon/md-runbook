@@ -1,4 +1,7 @@
 /** Install My Key: the host key check comes first; the password goes only to a trusted server. */
+import { hostKeyId } from '@md-runbook/ssh';
+import { installAppKey } from '../ssh/installAppKey';
+
 const mockServer = { hostKey: 'ecdsa-sha2-nistp256 AAAAserver= host', passwords: [] as string[] };
 jest.mock('@md-runbook/ssh', () => ({
   ...jest.requireActual('@md-runbook/ssh'),
@@ -13,9 +16,6 @@ jest.mock('@md-runbook/ssh', () => ({
 }));
 jest.mock('../ssh/transport', () => ({ openTransport: jest.fn(async () => ({})), transportReady: async () => undefined }));
 jest.mock('../ssh/appKey', () => ({ appPublicKeyLine: async () => 'ecdsa-sha2-nistp256 AAAAapp= md-runbook-app' }));
-
-import { hostKeyId } from '@md-runbook/ssh';
-import { installAppKey } from '../ssh/installAppKey';
 
 const host = { id: 'h1', name: 'web-1', hostname: 'web1.example.net', port: 22, username: 'deploy' };
 

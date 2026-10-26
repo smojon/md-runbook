@@ -12,6 +12,10 @@
   mitigate and to resolve, the `rto:` target met or missed, failed runs, people and machines,
   and a timeline of every run, attempt, mark and note in time order; printed, every page shows
   the incident and a page number. The command line's `--json` carries the same record.
+- **Hosts for teams and providers (app)** ([details](docs/app.md#hosts-and-the-apps-key)): host
+  groups with a filter, **Run on a Group…** (one cell on every host of a group, a section per host),
+  **Share hosts** as a file or QR code and **Import…** (never a private key; the sender's host keys
+  only if you trust them), and **Install my key…** (one password login adds the app's key).
 - **Drills and training** ([details](docs/features/drills.md)): **Start Incident** can start a
   drill (`drill: true`; the report says *Drill record* and measures it against `rto:`), and in
   the app **Practice on a Host…** (or `practice: NAME`) runs every cell on a practice server,

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { addHost, getHost, resetHosts } from '../hosts/store';
-import { addRunbook, resetRunbooks } from '../runbooks/store';
+import { parse } from '@md-runbook/core';
+import { addHost, getHost, pinHostKey, resetHosts } from '../hosts/store';
+import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { signerName } from '../settings/store';
 import { HostList } from '../screens/HostList';
 import { formatRunbookLink } from '@md-runbook/core/runbookLink';
@@ -187,5 +188,38 @@ describe('practice on a host (drills)', () => {
     });
     expect(connectionFor).not.toHaveBeenCalled();
     expect(screen.getByTestId('run-notice').props.children).toMatch(/no host with that name/);
+  });
+});
+
+describe('run on a group', () => {
+  it('runs the cell on each trusted host of the group and writes a section per host', async () => {
+    const a = addHost({ name: 'web-1', hostname: 'web1.example.net', port: 22, username: 'ops', group: 'acme' });
+    const b = addHost({ name: 'web-2', hostname: 'web2.example.net', port: 22, username: 'ops', group: 'acme' });
+    addHost({ name: 'web-3', hostname: 'web3.example.net', port: 22, username: 'ops', group: 'acme' });
+    addHost({ name: 'other', hostname: 'other.example.net', port: 22, username: 'ops', group: 'beta' });
+    pinHostKey(a.id, 'ecdsa-sha2-nistp256 AAAA1=');
+    pinHostKey(b.id, 'ecdsa-sha2-nistp256 AAAA2=');
+    mockConnection = fakeConnection([
+      { stdout: 'up 1 day\n', exitCode: 0 },
+      { stdout: 'disk full\n', exitCode: 2 },
+    ]);
+    const r = addRunbook('check.md', '# Check\n\n```bash\nuptime\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-runOnGroup'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('group-acme'));
+    });
+    await waitFor(() => expect(parse(getRunbook(r.id)!.text).cells[1]?.output).toBeDefined());
+    const out = parse(getRunbook(r.id)!.text).cells[1]!.output!;
+    expect(out.attrs).toMatchObject({ exit: '2', group: 'acme', hosts: 'web-1,web-2,web-3', failed: 'web-2,web-3' });
+    expect(out.text).toContain('── web-1 (ops@web1.example.net) · exit 0 ──\nup 1 day\n');
+    expect(out.text).toContain('── web-2 (ops@web2.example.net) · 2 ──\ndisk full\n');
+    expect(out.text).toMatch(/── web-3 .*skipped ──\n\[md-runbook\] web-3 skipped: its host key isn't trusted yet/);
+    expect(screen.getByTestId('group-result-web-2').props.children).toBe('✗ web-2');
   });
 });

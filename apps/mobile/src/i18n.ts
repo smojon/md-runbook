@@ -68,6 +68,15 @@ const en = {
   recordNeedsName: 'Set your name for signatures first, under Hosts & settings → Signing runbooks.',
   recordChangedWhileSigning: 'A run changed the record while it was being signed: sign it again.',
   recordSigned: (signers: string) => `The run record is signed by ${signers}. Export Report shows it; md-runbook verify checks it.`,
+  groupPickTitle: 'Run on a group',
+  groupPickHelp: 'This cell runs on each host of the group, one after the other; the output has a section per host.',
+  groupChip: (group: string, n: number) => `${group} (${n})`,
+  groupResultsTitle: (group: string) => `Ran on ${group}`,
+  groupNotTrusted: (host: string) =>
+    `[md-runbook] ${host} skipped: its host key isn't trusted yet (run a cell on it once to check and trust it).`,
+  groupNeedsValues: 'This cell needs values first: run it once on one host (it asks for them), then on the group.',
+  groupNotInPractice: 'In practice, every cell runs on the practice host.',
+  noHostGroups: 'No host groups yet: give hosts a group under Hosts & settings.',
   practiceTitle: 'Practice on a host',
   practiceHelp: 'Every cell of this runbook runs on the host you pick, whatever host= says: for drills and training on a practice server.',
   practiceOn: (name: string) => `Practice: every cell runs on ${name}, whatever host= says.`,
@@ -282,6 +291,10 @@ const en = {
     sessionOff: ['Session: on', 'Now one shell for the whole runbook (cd and variables carry over). Tap to give each cell a fresh shell.'],
     sessionOn: ['Session: off', 'Now each cell starts in a fresh shell. Tap to keep one shell for the whole runbook.'],
     runAllAsCopy: ['Run All as Copy', 'The runbook is a template: run it in a new dated copy, so the original stays clean.'],
+    runOnGroup: [
+      'Run on a Group…',
+      'One cell on every host of a group (a customer, a site), one after the other, with a section per host in the output.',
+    ],
     practiceOnHost: [
       'Practice on a Host…',
       'A drill or training: every cell runs on the host you pick (a practice server), whatever host= says, so nothing reaches production.',

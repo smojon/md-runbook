@@ -55,8 +55,21 @@ Explain Output, Approve / Reject a proposal. The [cheat sheet](cheatsheet.md) ha
 there: a name, its address and the user to log in as. The app makes its own
 SSH key on first use. On phones the private key is made inside the secure hardware (the Secure
 Enclave on iPhones, Android Keystore) and can't be read out, not even by the app. You copy the
-public key into `~/.ssh/authorized_keys` on each server. The app never asks for a password or a
-private key file.
+public key into `~/.ssh/authorized_keys` on each server, or let **Install my key…** (on a host)
+do it: it logs in once with that account's password, after checking the server's key, adds the
+public key and forgets the password. The app never stores a password or reads a private key
+file.
+
+- **Face ID or a fingerprint** (Hosts & settings → This app's SSH key): each SSH login and each
+  signature asks for it, enforced by the phone's hardware, so a lost phone can't use the key.
+  Turning it on or off makes a new key: put its public key on your hosts again.
+- **Groups**: give hosts a group (a customer, a site, a team); Hosts & settings filters by group,
+  and a cell's ⋯ → **Run on a Group…** runs it on each host of a group in turn, with a section per
+  host in the output (hosts whose key isn't trusted yet are skipped, with a note).
+- **Share hosts**: the listed hosts (one group, when one is picked) as a `hosts.json` file or a QR
+  code, for a colleague's app; **Import…** (or Scan a code) shows the list first, leaves hosts with
+  names you have alone, and trusts the sender's host keys only if you say so. A list never holds
+  a private key: each phone puts its own public key on the hosts.
 
 ## Trusting a server
 
