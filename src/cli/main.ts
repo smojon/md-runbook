@@ -10,6 +10,7 @@ import { renderReport } from '@md-runbook/core';
 import { formatProblem, lintRunbook } from '@md-runbook/core/lint';
 import { buildTimeline } from '@md-runbook/core/incident';
 import { CliOptions, junitReport, markdownSummary, runRunbook } from './run';
+import { RunUsageError } from './select';
 import { notifyConfig, notifyText, runLink, sendNotification } from './notify';
 import { findBrowser, htmlToPdf } from './pdf';
 import { signCommand, verifyCommand } from './sign';
@@ -41,6 +42,10 @@ Options:
   --param NAME=VALUE   Value for \${param:NAME} (repeatable; default: the front matter's)
   --input NAME=VALUE   Value for \${input:NAME} (repeatable; default: environment variable NAME)
   --yes                Run blocks that ask for confirmation in VS Code (risky commands, confirm)
+  --from N, --to N     Run only steps N to M (the numbers of the "▶ Step N" lines); the others
+                       are skipped and keep their outputs
+  --section TEXT       Run only the steps under headings that start with TEXT, e.g. "3." or
+                       "Rollback" (repeatable; with --from/--to, both must hold)
   --keep-going         Carry on after a failed step
   --session            Run all blocks of a shell in one process (like session mode)
   --isolated           One process per block, even with "mode: session" in the front matter
@@ -119,6 +124,19 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
       case '--input': pair(a, o.inputs); break;
       case '--yes': o.yes = true; break;
       case '--keep-going': o.keepGoing = true; break;
+      case '--from':
+      case '--to': {
+        const v = value(a);
+        if (!/^[1-9]\d*$/.test(v)) throw new UsageError(`${a} expects a step number (1, 2, …), got "${v}"`);
+        o[a === '--from' ? 'from' : 'to'] = Number(v);
+        break;
+      }
+      case '--section': {
+        const v = value(a);
+        if (v.trim() === '') throw new UsageError('--section needs the start of a heading');
+        (o.sections ??= []).push(v);
+        break;
+      }
       case '--session': o.session = true; break;
       case '--isolated': o.session = false; break;
       case '--timeout': {
@@ -137,6 +155,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
     }
   }
   if (!o.file) throw new UsageError('missing the runbook file');
+  if (o.from !== undefined && o.to !== undefined && o.from > o.to) throw new UsageError(`--from ${o.from} is after --to ${o.to}`);
   return { options: o, ...(pdf ? { pdf } : {}), ...(browser ? { browser } : {}), ...(notify ? { notify } : {}), ...(notifyOn ? { notifyOn } : {}), quiet };
 }
 
@@ -221,6 +240,13 @@ export async function main(argv: readonly string[]): Promise<number> {
       { out: (t) => void (quiet || process.stdout.write(t)), log: (l) => void (quiet || process.stdout.write(l + '\n')) },
     );
   } catch (e) {
+    if (e instanceof RunUsageError) {
+      // Found before the first step: nothing ran, like any other usage error.
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
+      process.stderr.write(`md-runbook: ${e.message}\n`);
+      return 2;
+    }
     // A run that breaks still raises the alarm.
     await send(`✗ ${path.basename(options.file)}: the run stopped with an error${runLink(process.env) ? `\n${runLink(process.env)}` : ''}`);
     throw e;

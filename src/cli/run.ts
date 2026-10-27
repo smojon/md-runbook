@@ -2,7 +2,8 @@
  * Run a runbook outside VS Code (CI, scheduled checks, servers): the same parser, shells, cell
  * options, checks, redaction and output format as the extension, with no prompts. What needs a
  * person in VS Code fails clearly here instead: a missing `${input:}`, a risky command without
- * `--yes`, a proposed or assistant-written cell.
+ * `--yes`, a proposed or assistant-written cell. What is known before the first step (a bad
+ * --from/--to/--section, a capture left out) is a RunUsageError.
  */
 
 import * as fs from 'node:fs';
@@ -33,12 +34,13 @@ import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { CheckOutcome, evaluateChecks, hasChecks } from '@md-runbook/core/checks';
 import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
-import { currentOs, osGroups, osLabel } from '@md-runbook/core/os';
+import { currentOs, osGroups, osLabel, stepNumbers } from '@md-runbook/core/os';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { REDACTED } from '@md-runbook/core/redact';
 import { findRefs, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { historySizeFor, runnerAttrs } from '@md-runbook/core/incident';
 import { SessionPool } from '@md-runbook/core/node/session';
+import { PlannedBlock, RunUsageError, formatSteps, missingCaptures, selectSteps, selectionLabel } from './select';
 
 export interface CliOptions {
   file: string;
@@ -57,6 +59,11 @@ export interface CliOptions {
   yes: boolean;
   /** Carry on after a failed step. */
   keepGoing: boolean;
+  /** Only steps from..to (the numbers of the `▶ Step N` lines), inclusive. */
+  from?: number;
+  to?: number;
+  /** Only the steps under headings starting with one of these (with from/to: both must hold). */
+  sections?: string[];
   /** undefined: the front matter's `mode:`, else isolated. */
   session?: boolean;
   /** Default timeout; the front matter and cell options win. */
@@ -116,7 +123,6 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   const fm = parseFrontMatter(original);
   const baseCwd = fm?.cwd ? path.resolve(mdDir, fm.cwd) : mdDir;
   const session = o.session ?? fm?.mode === 'session';
-  const pool = session ? new SessionPool() : undefined;
 
   // Redaction: the default patterns, plus every secret value seen (exact match).
   const known = new Set<string>();
@@ -152,24 +158,56 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     }
   }
 
-  const slots = osGroups(doc.cells.map((c) => (c.kind === 'code' ? { kind: 'code' as const, os: parseCellOptions(c.meta.kind === 'code' ? c.meta.info : '').os } : { kind: 'markup' as const })));
+  const osCells = doc.cells.map((c) => (c.kind === 'code' ? { kind: 'code' as const, os: parseCellOptions(c.meta.kind === 'code' ? c.meta.info : '').os } : { kind: 'markup' as const }));
+  const slots = osGroups(osCells);
   const activeGroups = new Set(slots.filter((s) => s?.active).map((s) => s!.group));
-  const stepOfGroup = new Map<number, number>();
+  // The numbers of Export Report and the run record; --from/--to mean these.
+  const numberOf = stepNumbers(osCells);
+  const numbers = locs.map((loc) => numberOf[loc.cellIndex]!);
+
+  // Checked before the first step: what is known now must not stop a long run halfway.
+  const selection = { ...(o.from !== undefined ? { from: o.from } : {}), ...(o.to !== undefined ? { to: o.to } : {}), ...(o.sections?.length ? { sections: o.sections } : {}) };
+  const selected = selectSteps(original, locs, numbers, selection);
+  const blocks: PlannedBlock[] = locs.map((loc, i) => {
+    const opts = parseCellOptions(loc.info);
+    const slot = slots[loc.cellIndex];
+    const proposal = proposalOf(loc.info);
+    let uses: string[] = [];
+    try {
+      uses = findRefs(loc.source).filter((r) => r.kind === 'out').map((r) => r.name);
+    } catch {
+      // reported when the step runs
+    }
+    const isSelected = !selected || selected.has(numbers[i]!);
+    return {
+      n: numbers[i]!,
+      loc,
+      selected: isSelected,
+      runs: isSelected && (!slot || slot.active) && !opts.host && !opts.skip && opts.errors.length === 0 && proposal.state !== 'proposed' && proposal.by === undefined,
+      uses,
+      captures: (opts.checks?.captures ?? []).map((c) => c.name),
+    };
+  });
+  const uncaptured = missingCaptures(blocks, fileName);
+  if (uncaptured.length > 0) {
+    throw new RunUsageError(`${uncaptured.join('\n')}\nselect the step that captures it too (a run starts without captured values); nothing ran`);
+  }
+  if (selected) io.log(`Step${selected.size === 1 ? '' : 's'} ${formatSteps([...selected])} of ${Math.max(0, ...numbers)} (${selectionLabel(selection)})`);
+  const notSelected = `not selected (${selectionLabel(selection)})`;
+
+  const pool = session ? new SessionPool() : undefined;
+  const counted = new Set<number>();
   const steps: StepResult[] = [];
-  let step = 0;
   let stopped = false;
 
   try {
-    for (const loc of locs) {
+    for (const [i, loc] of locs.entries()) {
       const slot = slots[loc.cellIndex];
-      if (slot && stepOfGroup.has(slot.group)) {
+      if (slot && counted.has(slot.group)) {
         // Another alternative of a step already counted.
         if (!slot.active) continue;
-      } else {
-        step++;
-        if (slot) stepOfGroup.set(slot.group, step);
-      }
-      const n = slot ? stepOfGroup.get(slot.group)! : step;
+      } else if (slot) counted.add(slot.group);
+      const n = numbers[i]!;
       const opts = parseCellOptions(loc.info);
       const firstLine = loc.source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
       const result = (status: StepStatus, exit: string, extra: Partial<StepResult> = {}): StepResult => ({
@@ -191,6 +229,11 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
           io.log(`– ${where}: for ${osLabel(opts.os ?? [])}, skipped on ${osLabel([currentOs()])}`);
           steps.push(result('skipped', 'skipped', { message: `for ${osLabel(opts.os ?? [])}` }));
         }
+        continue;
+      }
+      if (!blocks[i]!.selected) {
+        // Left out by --from/--to/--section: not run, output untouched (a resumed run keeps the earlier ones).
+        steps.push(result('skipped', 'skipped', { message: notSelected }));
         continue;
       }
       if (opts.host) {
