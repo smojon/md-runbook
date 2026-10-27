@@ -43,6 +43,8 @@ test('terminal: a terminal cell answers an interactive prompt and its output is 
     assert.equal(ok, true, outputText(cell));
     assert.match(outputText(cell), /hello bob/);
     assert.match(outputText(cell), /terminal/, 'status line names the terminal');
+    // The cell shown in the terminal before it runs is not part of its output.
+    assert.doesNotMatch(outputText(cell), /(?:\$|PS>) (?:echo ready|Write-Output 'ready')/);
 
     // Exit codes come through.
     // The second code cell is index 1: there is no Markdown cell between the two blocks.
@@ -53,6 +55,7 @@ test('terminal: a terminal cell answers an interactive prompt and its output is 
     assert.ok(await step('save', editor.notebook.save()));
     assert.match(read(uri), /hello bob/);
     assert.match(read(uri), /exit=3/);
+    assert.doesNotMatch(read(uri), /MdRunbookShown|\$ echo ready|PS> Write-Output/);
   } finally {
     await setConfig('terminal.mode', undefined);
     await closeAll();

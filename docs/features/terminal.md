@@ -23,6 +23,21 @@ The cell runs in a terminal named `md-runbook: <file> (bash)`, which gets the fo
 When the command ends, its output and exit code are written to the cell and saved like any other
 run (redacted, with `exit=`, `ran=`, `ended=`, `duration=`).
 
+## What the terminal shows
+
+Before the cell runs, the terminal shows its commands as if typed at a prompt (`$ ` for bash,
+`PS> ` for PowerShell, `> ` for cmd; a continued line gets `> ` or `>> `), in bold after a dim
+prompt. Then the cell's output follows. That makes terminal mode useful for teaching too: with
+`"mdRunbook.terminal.mode": "always"`, a learner sees every command run, step by step.
+
+- The commands show as written in the runbook: `${secret:TOKEN}` stays a reference, and no
+  secret value is ever shown. A line run shows the line it runs, with references as environment
+  variables.
+- They are not part of the cell's output: checks, captures and the saved file see only what the
+  commands print.
+- Above them is the line md-runbook typed to start the cell's script (see the last item under
+  *Requirements and limits*).
+
 ## Security
 
 - **What you type never passes through md-runbook.** Keystrokes go straight to the program;

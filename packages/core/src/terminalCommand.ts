@@ -124,6 +124,43 @@ export function terminalSignature(kind: string, command: string, cwd: string, en
   return JSON.stringify([kind, command, cwd, keys.map((k) => [k, env[k]])]);
 }
 
+/**
+ * Marks around the cell's text shown in the terminal. Shell integration's own property sequence
+ * (OSC 633 ; P): ConPTY passes it through on Windows, VS Code ignores a property it doesn't know,
+ * and the terminal displays nothing for it.
+ */
+const shownMark = (edge: 'Start' | 'End', nonce: string): string => `\x1b]633;P;MdRunbookShown${edge}=${nonce}\x07`;
+/** Output held back while looking for the shown text before giving up on it. */
+const SHOWN_WINDOW = 4096;
+
+/**
+ * What the terminal shows before a cell runs: its commands as typed at a prompt (`$ `, `PS> `,
+ * `> ` for cmd; `> `/`>> ` for continued lines), so whoever watches the terminal sees what runs
+ * rather than only the command line that starts the cell's script. `source` is the cell as
+ * written, with `${secret:…}` references, never their values. Control characters are removed, so
+ * a cell can't hide lines or fake the marks. Between the marks TerminalOutputFilter drops it, so
+ * it is never part of the cell's output or its checks.
+ */
+export function terminalShownText(source: string, kind: ShellKind, nonce: string): string {
+  const prompt = kind === 'bash' ? '$ ' : kind === 'pwsh' ? 'PS> ' : '> ';
+  const more = kind === 'pwsh' ? '>> ' : '> ';
+  const continues = kind === 'bash' ? '\\' : kind === 'pwsh' ? '`' : '^';
+  const lines = source.split(/\r?\n/).map((l) => l.replace(/[\x00-\x08\x0a-\x1f\x7f-\x9f]/g, ''));
+  while (lines.length > 0 && lines[lines.length - 1]?.trim() === '') lines.pop();
+  let continued = false;
+  const shown = lines.map((line) => {
+    const p = continued ? more : prompt;
+    continued = line.trimEnd().endsWith(continues);
+    return `\x1b[2m${p}\x1b[0m\x1b[1m${line}\x1b[0m\r\n`;
+  });
+  return shownMark('Start', nonce) + shown.join('') + shownMark('End', nonce);
+}
+
+/** Typed before a cell's command line: prints the file written from terminalShownText. */
+export function terminalShowCommand(kind: Exclude<ShellKind, 'cmd'>, shownArg: string): string {
+  return kind === 'bash' ? `cat ${quoteSh(shownArg)}; ` : `[Console]::Out.Write([System.IO.File]::ReadAllText(${quotePwsh(shownArg)})); `;
+}
+
 /** Any OSC sequence: shell integration marks, but also window titles (`ESC ]0;C:\...\pwsh.exe BEL`). */
 const OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const COMMAND_STARTED = /\x1b\](?:633|133);C(?:\x07|\x1b\\)/;
@@ -132,10 +169,17 @@ const COMMAND_STARTED = /\x1b\](?:633|133);C(?:\x07|\x1b\\)/;
  * Cleans the raw stream of a terminal command for the cell output: everything before the
  * "command started" mark (prompt, echoed command line) is dropped, and the remaining OSC
  * sequences (shell integration marks, window titles) are removed. Feed chunks in order; keeps state across chunk boundaries.
+ * With `shownNonce`, the cell's text shown first (terminalShownText) is dropped too; should it
+ * not arrive within the first few KB, the output is kept as it is.
  */
 export class TerminalOutputFilter {
   private started = false;
   private pending = '';
+  private shown: 'looking' | 'inside' | 'done';
+
+  constructor(private readonly shownNonce?: string) {
+    this.shown = shownNonce === undefined ? 'done' : 'looking';
+  }
 
   push(chunk: string): string {
     let text = this.pending + chunk;
@@ -150,6 +194,32 @@ export class TerminalOutputFilter {
       this.started = true;
       text = text.slice(m.index + m[0].length);
     }
+    if (this.shown !== 'done' && this.shownNonce !== undefined) {
+      if (this.shown === 'looking') {
+        const start = text.indexOf(shownMark('Start', this.shownNonce));
+        if (start < 0) {
+          if (text.length < SHOWN_WINDOW) {
+            this.pending = text;
+            return '';
+          }
+          this.shown = 'done';
+        } else {
+          this.shown = 'inside';
+          text = text.slice(start);
+        }
+      }
+      if (this.shown === 'inside') {
+        const end = shownMark('End', this.shownNonce);
+        const at = text.indexOf(end);
+        if (at < 0) {
+          // Keep a tail in case the end mark is split across chunks.
+          this.pending = text.slice(-end.length);
+          return '';
+        }
+        this.shown = 'done';
+        text = text.slice(at + end.length);
+      }
+    }
     // Hold back an unfinished escape sequence at the end.
     const cut = text.lastIndexOf('\x1b');
     if (cut >= 0 && !/(?:\x07|\x1b\\)/.test(text.slice(cut + 1)) && text.length - cut < 512 && (text[cut + 1] === undefined || text[cut + 1] === ']')) {
@@ -159,9 +229,9 @@ export class TerminalOutputFilter {
     return text.replace(OSC, '');
   }
 
-  /** Whatever is left at the end (only after the command started). */
+  /** Whatever is left at the end (only after the command started, never shown text). */
   flush(): string {
-    const rest = this.started ? this.pending.replace(OSC, '') : '';
+    const rest = this.started && this.shown !== 'inside' ? this.pending.replace(OSC, '') : '';
     this.pending = '';
     return rest;
   }
