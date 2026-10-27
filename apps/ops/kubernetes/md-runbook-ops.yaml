@@ -119,6 +119,7 @@ spec:
         - name: ops
           # Published with each md-runbook release; pin one (:0.11.0) once you rely on it.
           image: ghcr.io/smojon/md-runbook-ops:latest
+          imagePullPolicy: IfNotPresent
           env:
             # The context name kubectl reports here: what runbooks write as kube-context:.
             - name: CLUSTER_NAME
