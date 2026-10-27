@@ -23,6 +23,8 @@ import {
   terminalCmdCommandLine,
   terminalCommandLine,
   terminalInlineCommandLine,
+  terminalShowCommand,
+  terminalShownText,
   terminalSignature,
 } from '@md-runbook/core/terminalCommand';
 import { META_KEY } from './outputs';
@@ -216,14 +218,21 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
         const statusPath = path.join(dir, 'status');
         // bash gets paths in the form its args use (forward slashes for Git Bash); pwsh native paths.
         const asArg = (p: string): string => (kind === 'bash' ? (shell.args(p)[0] ?? p) : p);
+        // Show the cell as written (in a line run, the line) before it runs, for whoever watches
+        // the terminal; the output filter drops it again.
+        const nonce = crypto.randomBytes(8).toString('hex');
+        const shownPath = path.join(dir, 'shown');
+        fs.writeFileSync(shownPath, terminalShownText(ctx.lineRun ? plan.source : ctx.cell.document.getText(), cellKind, nonce), 'utf8');
 
-        const commandLine = cmd?.ok
-          ? terminalCmdCommandLine(cmd.shell.command, scriptPath, statusPath)
-          : sh?.ok
-            ? terminalCommandLine('bash', sh.shell.command, asArg(scriptPath), asArg(statusPath))
-            : ctx.lineRun
-            ? terminalInlineCommandLine(kind, asArg(scriptPath), asArg(statusPath))
-            : terminalCommandLine(kind, shell.command, asArg(scriptPath), asArg(statusPath));
+        const commandLine =
+          terminalShowCommand(kind, asArg(shownPath)) +
+          (cmd?.ok
+            ? terminalCmdCommandLine(cmd.shell.command, scriptPath, statusPath)
+            : sh?.ok
+              ? terminalCommandLine('bash', sh.shell.command, asArg(scriptPath), asArg(statusPath))
+              : ctx.lineRun
+                ? terminalInlineCommandLine(kind, asArg(scriptPath), asArg(statusPath))
+                : terminalCommandLine(kind, shell.command, asArg(scriptPath), asArg(statusPath)));
         const execution = integration.executeCommand(commandLine);
         let stopWaiting = (): void => undefined;
         const ended = new Promise<number | undefined>((resolve) => {
@@ -245,7 +254,7 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
           });
         });
         // read() must be called right away, or early output is lost.
-        const filter = new TerminalOutputFilter();
+        const filter = new TerminalOutputFilter(nonce);
         const reading = (async () => {
           for await (const data of execution.read()) {
             const text = filter.push(data);

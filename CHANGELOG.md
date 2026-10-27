@@ -76,6 +76,11 @@
   each setting in its own card. The "Core OK" line is gone: the app only says something when its
   self-check fails. An **App APK** workflow builds an arm64 APK to install on an Android phone
   by hand.
+- **Terminal mode shows what runs.** Before a cell runs in a terminal, its commands appear there
+  as typed at a prompt (`$ `, `PS> `), so whoever watches the terminal sees the cell's commands,
+  not only the line that starts its script. They show as written, `${secret:…}` references
+  included, never a value, and they are not part of the cell's output, its checks or the saved
+  file. Useful for teaching: `terminal.mode: always` runs every cell visibly.
 
 ## 0.10.0
 
