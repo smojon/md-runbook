@@ -1,4 +1,5 @@
 import { CellChecks, MAX_EVERY_MS, MAX_RETRY, parseCapture, parseInterval, parseMatcher } from './checks';
+import { isKubeContextName } from './kubeContext';
 import { OsName, parseOsList } from './os';
 
 /**
@@ -33,6 +34,8 @@ export interface CellOptions {
    * The extension and the CLI run cells locally, so they never run such a block.
    */
   host?: string;
+  /** kube-context=NAME: the block runs only while `kubectl config current-context` is NAME (kubeContext.ts). */
+  kubeContext?: string;
   /**
    * lines=any: in a signed runbook, single lines and ranges of this block may run on a server
    * with md-runbook-gate (otherwise only the whole block, or its commands in order).
@@ -157,6 +160,9 @@ export function parseCellOptions(info: string): CellOptions {
     } else if (k === 'host') {
       if (value.trim() === '') opts.errors.push('host: empty name');
       else opts.host = value.trim();
+    } else if (k === 'kube-context') {
+      if (!isKubeContextName(value.trim())) opts.errors.push(`kube-context=${value}: expected a Kubernetes context name`);
+      else opts.kubeContext = value.trim();
     } else if (k === 'lines') {
       if (value.toLowerCase() !== 'any') opts.errors.push(`lines=${value}: expected lines=any`);
       else opts.lines = 'any';

@@ -16,6 +16,7 @@
 #   param ID NAME VALUE               -> base64 value, checked against the manifest's pattern
 #   run ID CELL | step ID CELL K      -> runs a signed cell, or its K-th command (0-based)
 #   raw ID TEXT                       -> base64 shell text, only where unsigned cells are allowed
+#   context ID                        -> runs `kubectl config current-context` (the kube-context guard)
 # A second connection whose command is `pkill -TERM|-KILL -P PID 2>/dev/null; true` stops the
 # running cell of this account's shell PID (what the app sends to cancel).
 
@@ -143,7 +144,7 @@ is_var() { case $1 in '' | [0-9]* | *[!A-Za-z0-9_]*) return 1 ;; esac; }
 is_reserved() {
   case $1 in
     PATH | IFS | ENV | BASH_ENV | CDPATH | GLOBIGNORE | HOME | SHELL | SHELLOPTS | BASHOPTS | PS1 | PS2 | PS3 | PS4 | \
-      PROMPT_COMMAND | PWD | OLDPWD | TMPDIR | LC_* | LANG | LANGUAGE | LD_* | DYLD_* | BASH_FUNC_* | __mdrb_*) return 0 ;;
+      PROMPT_COMMAND | PWD | OLDPWD | TMPDIR | LC_* | LANG | LANGUAGE | LD_* | DYLD_* | BASH_FUNC_* | __mdrb_* | MD_RUNBOOK_GATE_*) return 0 ;;
   esac
   return 1
 }
@@ -217,7 +218,11 @@ mkfifo "$work/in" || fatal "can't create a pipe"
 mkdir "$work/params"
 
 # The shell the cells run in: bash as a login shell (the account's PATH), else sh. It reads
-# only what this gate writes; the cells themselves read /dev/null.
+# only what this gate writes; the cells themselves read /dev/null. MD_RUNBOOK_GATE_WHO (the key)
+# and, during a signed run, MD_RUNBOOK_GATE_RUN (its id) let tools log against them
+# (md-runbook-probe on the ops host).
+MD_RUNBOOK_GATE_WHO=$who
+export MD_RUNBOOK_GATE_WHO
 if command -v bash >/dev/null 2>&1; then
   LC_ALL=$session_lc_all bash -l <"$work/in" &
 else
@@ -424,6 +429,7 @@ emit_run() {
         printf '%s\n' "$k" >>"$work/exported"
       done
     printf '__mdrb_id=%s\n__mdrb_f=%s\n' "$rid" "$(sq "$file")"
+    printf 'export MD_RUNBOOK_GATE_RUN=%s\n' "$rid"
     cwd64=$(mfield cwd "$cell" 2)
     if [ -n "$cwd64" ]; then
       printf '__mdrb_dir=%s\n' "$(sq "$(printf '%s' "$cwd64" | b64d)")"
@@ -520,7 +526,27 @@ do_raw() {
   }
   # Straight to the shell, never to disk: the text exports the cell's secret values.
   log_event event unsigned id "$rid" hash "$(printf '%s' "$2" | b64d | sha256_in)"
+  # Not a signed run: tools must not log against the last one.
+  printf 'unset MD_RUNBOOK_GATE_RUN\n' >&4
   printf '%s' "$2" | b64d >&4
+}
+
+# do_context ID: `kubectl config current-context` in the shell, for the app's kube-context guard.
+# Answered whether or not unsigned cells may run: it only reads the kubeconfig.
+do_context() {
+  rid=$1
+  [ $# -eq 1 ] || {
+    refuse "$rid" "bad context request"
+    return
+  }
+  log_event event context id "$rid"
+  {
+    printf '__mdrb_id=%s\n' "$rid"
+    echo 'kubectl config current-context </dev/null; __mdrb_rc=$?'
+    cat <<'EOF'
+printf '\036%s %s\n' "__MDRB_${__mdrb_id}__" "$__mdrb_rc" >&2; printf '\036%s %s\n' "__MDRB_${__mdrb_id}__" "$__mdrb_rc"
+EOF
+  } >&4
 }
 
 serve() {
@@ -556,6 +582,7 @@ serve() {
       run) if [ $# -eq 2 ] && is_num "$2"; then do_run "$1" "$2"; else refuse "$rid" "bad run request"; fi ;;
       step) if [ $# -eq 3 ] && is_num "$2" && is_num "$3"; then do_run "$1" "$2" "$3"; else refuse "$rid" "bad step request"; fi ;;
       raw) do_raw "$@" ;;
+      context) do_context "$@" ;;
       *) refuse "$rid" "unknown request $verb" ;;
     esac
   done

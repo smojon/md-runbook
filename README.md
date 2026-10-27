@@ -196,6 +196,10 @@ Each has its own page with examples and settings:
   for it). QR codes on machines open runbooks the same way (`md-runbook qr --labels`).
 - **[Drills and training](docs/features/drills.md):** a dated drill record measured against its
   recovery-time objective, run on a practice server so nothing reaches production.
+- **[Kubernetes](docs/features/kubernetes.md):** `kube-context: prod-eu` stops every cell on
+  the wrong cluster. The ops host runs the app's runbooks against your clusters with no
+  credential on the phone. `md-runbook-probe` checks endpoints and certificates from inside the
+  cluster, and its results go into the record and the audit.
 - **[For auditors](docs/features/for-auditors.md):** what md-runbook records and enforces, for
   approvals (signatures, two signers, version floors), execution (the gate's log, `md-runbook
   audit`) and evidence (run records, matched against the log and signed).

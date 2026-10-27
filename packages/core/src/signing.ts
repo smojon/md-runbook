@@ -37,7 +37,7 @@ const isDate = (s: string): boolean => DATE_RE.test(s) && new Date(`${s}T00:00:0
 export function isReservedVar(name: string): boolean {
   return (
     /^(PATH|IFS|ENV|BASH_ENV|CDPATH|GLOBIGNORE|HOME|SHELL|SHELLOPTS|BASHOPTS|PS[1-4]|PROMPT_COMMAND|PWD|OLDPWD|TMPDIR|LANG|LANGUAGE)$/.test(name) ||
-    /^(LC_|LD_|DYLD_|BASH_FUNC_|__mdrb_)/.test(name)
+    /^(LC_|LD_|DYLD_|BASH_FUNC_|__mdrb_|MD_RUNBOOK_GATE_)/.test(name)
   );
 }
 

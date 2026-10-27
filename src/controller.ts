@@ -19,6 +19,8 @@ import {
   shellKindForLanguage,
 } from '@md-runbook/core';
 import { CheckOutcome, evaluateChecks, hasChecks } from '@md-runbook/core/checks';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { SessionPool } from '@md-runbook/core/node/session';
 import { LineStep, echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core/steps';
 import { FrontMatter, parseFrontMatter } from '@md-runbook/core/secrets';
@@ -33,6 +35,8 @@ import { knownSecrets } from './knownSecrets';
 import { NOTEBOOK_TYPE } from './serializer';
 
 const FLUSH_MS = 100;
+/** `kubectl config current-context` only reads the kubeconfig. */
+const KUBE_CONTEXT_TIMEOUT_MS = 15_000;
 
 type Chunk = { stream: 'stdout' | 'stderr'; text: string };
 
@@ -500,15 +504,17 @@ export class RunbookController implements vscode.Disposable {
       } else {
         try {
           const io: ExecuteIO = { signal: abort.signal, onStdout: write(out), onStderr: write(err) };
-          result = !fs.existsSync(plan.cwd)
-            ? failed(`Working directory not found: ${plan.cwd}`)
-            : lineRun
-              ? await this.runSteps(lineRun, plan, io, ctx, ranSteps, async () => {
-                  out.flush();
-                  err.flush();
-                  await flush();
-                })
-              : await runAttempts(io);
+          // kube-context: the cluster is checked where the cell would run, before it runs.
+          const wrongCluster = fs.existsSync(plan.cwd) ? await this.kubeContextRefusal(plan, ctx, abort.signal) : undefined;
+          if (!fs.existsSync(plan.cwd)) result = failed(`Working directory not found: ${plan.cwd}`);
+          else if (wrongCluster !== undefined) result = failed(wrongCluster);
+          else if (lineRun) {
+            result = await this.runSteps(lineRun, plan, io, ctx, ranSteps, async () => {
+              out.flush();
+              err.flush();
+              await flush();
+            });
+          } else result = await runAttempts(io);
         } catch (e) {
           result = failed(e instanceof Error ? e.message : String(e));
         }
@@ -594,6 +600,26 @@ export class RunbookController implements vscode.Disposable {
         }
       }
     }
+  }
+
+  /**
+   * The wrong-cluster guard (core/kubeContext.ts): with the cell's `kube-context=` or the
+   * runbook's `kube-context:`, `kubectl config current-context` runs as the cell would (its session
+   * shell, its environment and folder); why the cell must not run, or undefined.
+   */
+  private kubeContextRefusal(plan: CellPlan, ctx: PrepareContext, signal: AbortSignal): Promise<string | undefined> {
+    const meta: unknown = ctx.cell.metadata?.[META_KEY];
+    const want = wantedKubeContext(parseCellOptions(isCodeMeta(meta) ? meta.info : ''), frontMatterOf(ctx.notebook));
+    return checkKubeContext(want, async (command) => {
+      let stdout = '';
+      let stderr = '';
+      const r = await this.pipeline.executorFor(ctx.notebook).execute(
+        { ...plan, source: command, steps: undefined, timeoutMs: KUBE_CONTEXT_TIMEOUT_MS },
+        { signal, onStdout: (t) => (stdout += t), onStderr: (t) => (stderr += t) },
+        ctx,
+      );
+      return { exitCode: r.exitCode, stdout, stderr: r.error ?? (r.timedOut ? 'timed out' : stderr) };
+    });
   }
 
   /**

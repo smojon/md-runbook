@@ -22,6 +22,32 @@ services:
     # Not published: only Caddy reaches it.
     expose: ['8022']
 
+  # The ops host next to the relay (apps/ops): `docker compose --profile ops up -d`. The relay
+  # reaches it as ops:2222 (add it to RELAY_TARGETS); phones connect to this machine's port 2222.
+  # Its files are in ./ops (see apps/ops/README.md): keys/authorized_keys, gate/gate.conf,
+  # gate/allowed_signers, kubeconfig/config (outside a cluster, kubectl's login).
+  ops:
+    profiles: [ops]
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile
+    restart: unless-stopped
+    ports: ['2222:2222']
+    volumes:
+      - ./ops/keys:/etc/md-runbook-ops/keys:ro
+      - ./ops/gate:/etc/md-runbook:ro
+      - ./ops/kubeconfig:/etc/md-runbook-ops/kubeconfig:ro
+      # The host key the app trusts, kept across rebuilds.
+      - ops-state:/var/lib/md-runbook-ops
+    tmpfs:
+      - /tmp:mode=1777
+      - /run/md-runbook-ops:uid=10001,gid=10001,mode=0700
+      - /var/log/md-runbook:uid=10001,gid=10001,mode=0700
+      - /home/ops:uid=10001,gid=10001,mode=0700
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+
   caddy:
     image: caddy:2.10.2-alpine
     restart: unless-stopped
@@ -36,3 +62,4 @@ secrets:
 
 volumes:
   caddy-data:
+  ops-state:

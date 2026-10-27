@@ -108,6 +108,7 @@ Tokens are separated by spaces or tabs. There are three forms:
 | `capture-secret=…` | as `capture=` | The same, redacted everywhere and never written to disk. |
 | `os=LIST` | `windows`, `linux`, `macos`, comma-separated; also `win`, `win32`, `mac`, `osx`, `darwin` | Run only on these systems. Adjacent `os=` blocks with no OS repeated are alternatives of one step. |
 | `host=NAME` | a host's name in the md-runbook app; quote it if it has spaces | The md-runbook app runs the block on that host over SSH, whichever host is selected. The VS Code extension and the CLI run cells on the local machine, so they never run such a block: it counts as skipped. |
+| `kube-context=NAME` | a Kubernetes context name | Run only while `kubectl config current-context` prints NAME, checked where the cell runs just before it runs; otherwise nothing runs and the cell fails. Overrides the front matter's `kube-context:`. See [Kubernetes](features/kubernetes.md). |
 | `lines=any` | the word `any` | In a signed runbook: servers with md-runbook-gate also run single lines and ranges of this block (otherwise only the whole block, or its commands in order). See [signed runbooks](features/signed-runbooks.md). |
 | `retry=N` | integer 1 to 100 | Run up to N times in all until it passes. |
 | `every=D` | `15s`, `500ms`, `2m`, or seconds as a number; at most 1 hour | Wait between attempts (default 5 s). Only with `retry=`. |
@@ -165,6 +166,7 @@ evidence: true       # every run records by= and on=, and every attempt is kept 
 rto: 30m             # recovery time objective: 90s, 30m, 1h30m or seconds; the report says met or missed
 drill: true          # the record is a drill or exercise (the report says Drill record)
 practice: training-1 # the app runs every cell on this host, whatever host= says (drills, training)
+kube-context: prod-eu # every cell runs only while kubectl's current context is prod-eu; a cell's kube-context= wins
 params:
   - NAMESPACE        # asked, no default
   - REGION: eu-west-1
@@ -173,7 +175,15 @@ params:
 ```
 
 `#` starts a comment. A value that is not understood (`mode: sometimes`) is ignored with a lint
-warning. The runbook view (VS Code and the app) doesn't draw the front matter, as VS Code's
+warning.
+
+`kube-context:` is a guard against the wrong cluster. Before each cell, `kubectl config
+current-context` runs where the cell would run: the session shell, or the app's SSH host,
+through md-runbook-gate if the host has one. The cell runs only if that prints the name.
+Otherwise nothing runs and the cell fails with both names: VS Code and the command line record
+it as `exit=error`, and the app shows the reason on the cell. A `kubectl config use-context` in
+an earlier cell is therefore caught too. The front matter isn't signed, so in
+a signed runbook put `kube-context=` on the cells themselves. The runbook view (VS Code and the app) doesn't draw the front matter, as VS Code's
 Markdown preview doesn't; editing the first cell shows it. In session mode one bash and one PowerShell process live for the whole runbook, so
 `cd`, exported variables and `oc login` carry over between cells; `cmd` cells always run alone.
 

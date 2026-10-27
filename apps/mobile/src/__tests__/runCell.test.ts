@@ -55,6 +55,27 @@ describe('runCell', () => {
     expect(r.text.endsWith('```\n')).toBe(true);
   });
 
+  it('kube-context: runs only on that cluster, checked on the host before each cell', async () => {
+    const k8s = '---\nkube-context: prod-eu\n---\n\n```bash\nkubectl get pods\n```\n\n```bash kube-context=staging-eu\nkubectl get pods\n```\n';
+    const right = fakeConnection([{ stdout: 'pod/web\n' }], 'posix', 'prod-eu');
+    expect(await runCell({ host, text: k8s, cellIndex: 1, connection: right })).toMatchObject({ kind: 'done' });
+    expect([right.contextChecks, right.calls.length]).toEqual([1, 1]);
+    // The cell's own kube-context= wins over the front matter's.
+    const wrong = fakeConnection([{ stdout: 'pod/web\n' }], 'posix', 'prod-eu');
+    const r = await runCell({ host, text: k8s, cellIndex: 2, connection: wrong });
+    expect(r).toEqual({ kind: 'error', message: expect.stringMatching(/context staging-eu, and kubectl's current context is prod-eu: nothing ran/) });
+    expect(wrong.calls).toEqual([]);
+    const none = fakeConnection([{}], 'posix');
+    expect(await runCell({ host, text: k8s, cellIndex: 1, connection: none })).toEqual({
+      kind: 'error',
+      message: expect.stringMatching(/failed \(error: current-context is not set\): nothing ran/),
+    });
+    // Without kube-context nothing is checked.
+    const plain = fakeConnection([{ stdout: 'ok\n' }], 'posix');
+    await runCell({ host, text: runbook, cellIndex: 1, connection: plain });
+    expect(plain.contextChecks).toBe(0);
+  });
+
   it('a failed check and a non-zero exit are written as such', async () => {
     const r = await runCell({ host, text: runbook, cellIndex: 1, connection: fakeConnection([{ stdout: 'nope\n', exitCode: 2 }]) });
     expect(r.kind === 'done' && r.attrs).toMatchObject({ exit: '2', check: 'failed' });

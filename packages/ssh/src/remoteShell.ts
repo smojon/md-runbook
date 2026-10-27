@@ -19,6 +19,7 @@ import {
   SshSessionConfiguration,
   Stream,
 } from '@microsoft/dev-tunnels-ssh';
+import { KUBE_CONTEXT_COMMAND } from '@md-runbook/core/kubeContext';
 import { exportPublicKey } from '@microsoft/dev-tunnels-ssh-keys';
 // The library's own Buffer, so this file also works where there is no global Buffer (browsers).
 import { Buffer } from 'buffer';
@@ -31,6 +32,7 @@ import {
   WINDOWS_SHELL_COMMAND,
   cellCommand,
   gateBanner,
+  gateContextCommand,
   gateLoadCommand,
   gateParamCommand,
   gateRawCommand,
@@ -279,6 +281,16 @@ export class RemoteShell {
   async runSigned(cell: number, step: number | undefined, opts: RemoteRunOptions = {}): Promise<RemoteRunResult> {
     if (!this.gateInfo) throw new Error('not an md-runbook-gate session');
     return this.runText((id) => gateRunCommand(id, cell, step), opts);
+  }
+
+  /**
+   * `kubectl config current-context` in this shell, for the kube-context guard. Through
+   * md-runbook-gate it is the gate's own `context` request, answered also where only signed
+   * cells run (the command only reads the kubeconfig).
+   */
+  async kubeContext(opts: RemoteRunOptions = {}): Promise<RemoteRunResult> {
+    if (this.gateInfo) return this.runText((id) => gateContextCommand(id), opts);
+    return this.run(KUBE_CONTEXT_COMMAND, opts);
   }
 
   /** A short gate request: undefined when it succeeded, else the gate's reason. */

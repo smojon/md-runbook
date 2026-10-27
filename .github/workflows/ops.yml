@@ -1,0 +1,128 @@
+name: Ops host
+# The ops host (apps/ops) as users run it: the image in a throwaway kind cluster with the
+# manifest from apps/ops/kubernetes (Pod Security "restricted" enforced), then the same image
+# outside a cluster with a mounted kubeconfig, each driven by the app's SSH code
+# (test/ops.live.test.ts) through port-forwards.
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'apps/ops/**'
+      - 'apps/gate/**'
+      - 'apps/relay/compose.example.yml'
+      - 'packages/ssh/**'
+      - 'packages/core/src/kubeContext.ts'
+      - 'test/ops.live.test.ts'
+      - '.github/workflows/ops.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run compile
+      - name: Check the scripts
+        run: |
+          shellcheck -S warning apps/ops/md-runbook-probe
+          shellcheck -s sh -S warning apps/ops/start.sh apps/gate/md-runbook-gate
+
+      - name: Build the image
+        run: docker build -t md-runbook-ops:ci -f apps/ops/Dockerfile apps
+      - name: The image runs as ops, with the gate as its only command
+        run: |
+          test "$(docker inspect -f '{{.Config.User}}' md-runbook-ops:ci)" = 10001:10001
+          docker run --rm --entrypoint sh md-runbook-ops:ci -c \
+            'grep -qx "ForceCommand /usr/local/bin/md-runbook-gate" /etc/ssh/md-runbook-ops.conf && kubectl version --client && ssh -V'
+      - name: The compose file with the ops service is valid
+        run: docker compose -f apps/relay/compose.example.yml --profile ops config -q
+
+      - name: Keys
+        run: |
+          KEYS="$RUNNER_TEMP/ops-keys"
+          echo "KEYS=$KEYS" >> "$GITHUB_ENV"
+          mkdir -p "$KEYS"
+          ssh-keygen -q -t ecdsa -b 256 -m PKCS8 -N '' -C ci-phone -f "$KEYS/client"
+          ssh-keygen -q -t ed25519 -N '' -C ci@example.net -f "$KEYS/signer"
+          ssh-keygen -q -t ed25519 -N '' -C md-runbook-ops -f "$KEYS/ssh_host_ed25519_key"
+          cp "$KEYS/client.pub" "$KEYS/authorized_keys"
+          echo "ci@example.net namespaces=\"md-runbook\" $(cut -d' ' -f1,2 "$KEYS/signer.pub")" > "$KEYS/allowed_signers"
+          printf '%s\n' 'unsigned = allow' 'allowed_signers = /etc/md-runbook/allowed_signers' 'log = /var/log/md-runbook/gate.log' > "$KEYS/gate.conf"
+
+      - name: Cluster
+        run: |
+          command -v kind || { sudo curl -fsSLo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 && sudo chmod +x /usr/local/bin/kind; }
+          kind create cluster --name ops --wait 180s
+          kind load docker-image md-runbook-ops:ci --name ops
+          kubectl -n default create deployment web --image=registry.k8s.io/pause:3.10
+
+      - name: Install the manifest the way the README says
+        run: |
+          kubectl apply -f apps/ops/kubernetes/md-runbook-ops.yaml
+          ns="-n md-runbook-ops"
+          kubectl $ns create configmap md-runbook-ops-keys --from-file=authorized_keys="$KEYS/authorized_keys"
+          kubectl $ns create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ed25519_key="$KEYS/ssh_host_ed25519_key"
+          kubectl $ns create configmap md-runbook-ops-gate --from-file=gate.conf="$KEYS/gate.conf" \
+            --from-file=allowed_signers="$KEYS/allowed_signers" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl $ns set image deployment/md-runbook-ops ops=md-runbook-ops:ci
+          kubectl $ns set env deployment/md-runbook-ops CLUSTER_NAME=ops-ci
+          kubectl $ns rollout status deployment/md-runbook-ops --timeout=180s
+
+      - name: Through the app's SSH code (in the cluster)
+        run: |
+          kubectl -n md-runbook-ops port-forward service/md-runbook-ops 2222:22 > "$RUNNER_TEMP/pf.log" 2>&1 &
+          for _ in $(seq 1 30); do nc -z 127.0.0.1 2222 && break; sleep 1; done
+          MD_RUNBOOK_OPS_TEST=127.0.0.1:2222:ops MD_RUNBOOK_OPS_KEY="$KEYS/client" \
+          MD_RUNBOOK_OPS_HOST_PUB="$KEYS/ssh_host_ed25519_key.pub" MD_RUNBOOK_OPS_SIGNER="$KEYS/signer" \
+          MD_RUNBOOK_OPS_CONTEXT=ops-ci MD_RUNBOOK_OPS_IN_CLUSTER=1 \
+            node --test --test-reporter=spec out/test/ops.live.test.js
+      - name: The gate's events are in the Pod's log
+        run: |
+          kubectl -n md-runbook-ops logs deployment/md-runbook-ops > "$RUNNER_TEMP/ops.log"
+          grep -q '"event":"context"' "$RUNNER_TEMP/ops.log"
+          grep -q '"event":"run".*"signer":"ci@example.net"' "$RUNNER_TEMP/ops.log"
+          # md-runbook-probe's checks, one tied to the signed run that made it; md-runbook audit reads them.
+          grep -q '"event":"probe".*"run":"[^"]\{1,\}".*"result":"ok".*"cert_sha256":"[0-9a-f]\{64\}"' "$RUNNER_TEMP/ops.log"
+          node out/dist/cli.js audit "$RUNNER_TEMP/ops.log" --out "$RUNNER_TEMP/audit.json" || test $? = 1
+          node -e 'const a=require(process.argv[1]); if(!a.probes.some(p=>p.run&&p.run.runbook==="ops/probe"&&p.ok)) process.exit(1)' "$RUNNER_TEMP/audit.json"
+
+      - name: Outside a cluster, with a mounted kubeconfig (as next to the relay)
+        run: |
+          cfg="$RUNNER_TEMP/ops-docker"
+          mkdir -p "$cfg/keys" "$cfg/gate" "$cfg/kubeconfig"
+          cp "$KEYS/authorized_keys" "$cfg/keys/"
+          cp "$KEYS/gate.conf" "$KEYS/allowed_signers" "$cfg/gate/"
+          kind get kubeconfig --name ops --internal > "$cfg/kubeconfig/config"
+          chmod -R a+rX "$cfg"
+          docker run -d --name ops --network kind -p 127.0.0.1:2223:2222 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --tmpfs /tmp:mode=1777 --tmpfs /run/md-runbook-ops:uid=10001,gid=10001,mode=0700 \
+            --tmpfs /var/log/md-runbook:uid=10001,gid=10001,mode=0700 --tmpfs /home/ops:uid=10001,gid=10001,mode=0700 \
+            -v "$cfg/keys:/etc/md-runbook-ops/keys:ro" -v "$cfg/gate:/etc/md-runbook:ro" \
+            -v "$cfg/kubeconfig:/etc/md-runbook-ops/kubeconfig:ro" -v ops-state:/var/lib/md-runbook-ops md-runbook-ops:ci
+          for _ in $(seq 1 30); do nc -z 127.0.0.1 2223 && break; sleep 1; done
+          docker cp ops:/var/lib/md-runbook-ops/ssh_host_ed25519_key.pub "$RUNNER_TEMP/docker_host.pub"
+          MD_RUNBOOK_OPS_TEST=127.0.0.1:2223:ops MD_RUNBOOK_OPS_KEY="$KEYS/client" \
+          MD_RUNBOOK_OPS_HOST_PUB="$RUNNER_TEMP/docker_host.pub" MD_RUNBOOK_OPS_SIGNER="$KEYS/signer" \
+          MD_RUNBOOK_OPS_CONTEXT=kind-ops \
+            node --test --test-reporter=spec out/test/ops.live.test.js
+
+      - name: Logs
+        if: failure()
+        run: |
+          kubectl -n md-runbook-ops describe pods || true
+          kubectl -n md-runbook-ops logs deployment/md-runbook-ops || true
+          cat "$RUNNER_TEMP/pf.log" || true
+          docker logs ops || true

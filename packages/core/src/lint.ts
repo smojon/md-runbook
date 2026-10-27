@@ -29,7 +29,7 @@ export interface LintProblem {
 const KNOWN_OPTIONS = new Set([
   // cellOptions.ts
   'timeout', 'cwd', 'continue-on-error', 'skip', 'confirm', 'no-confirm', 'terminal', 'name',
-  'expect', 'expect-not', 'expect-exit', 'capture', 'capture-secret', 'os', 'host', 'lines', 'retry', 'every',
+  'expect', 'expect-not', 'expect-exit', 'capture', 'capture-secret', 'os', 'host', 'kube-context', 'lines', 'retry', 'every',
   // proposal.ts (assistant proposals and approvals)
   'proposed', 'by', 'reason', 'approved', 'approved-by', 'approved-at',
 ]);
@@ -47,12 +47,16 @@ export function lintRunbook(text: string): LintProblem[] {
     const lines = text.replace(/^﻿/, '').split(/\r?\n/);
     const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));
     for (let i = 1; i < end; i++) {
-      const m = /^(mode|timeout|cwd)\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
+      const m = /^(mode|timeout|cwd|kube-context)\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
       if (!m) continue;
       const key = m[1]!.toLowerCase();
-      const ignored = (key === 'mode' && fm.mode === undefined) || (key === 'timeout' && fm.timeoutSeconds === undefined) || (key === 'cwd' && fm.cwd === undefined);
+      const ignored =
+        (key === 'mode' && fm.mode === undefined) ||
+        (key === 'timeout' && fm.timeoutSeconds === undefined) ||
+        (key === 'cwd' && fm.cwd === undefined) ||
+        (key === 'kube-context' && fm.kubeContext === undefined);
       if (ignored) {
-        const expected = key === 'mode' ? 'session or isolated' : key === 'timeout' ? 'seconds, e.g. 300' : 'a folder';
+        const expected = key === 'mode' ? 'session or isolated' : key === 'timeout' ? 'seconds, e.g. 300' : key === 'cwd' ? 'a folder' : 'a Kubernetes context name, e.g. prod-eu';
         problems.push({ severity: 'warning', line: i, message: `front matter ${key}: "${m[2]}" is ignored (expected ${expected})` });
       }
     }

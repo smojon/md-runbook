@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Kubernetes** ([guide](docs/features/kubernetes.md)):
+  - **Wrong-cluster guard.** `kube-context: prod-eu` in the front matter, or `kube-context=` on
+    a cell, means a cell runs only while `kubectl config current-context` is that context. The
+    check runs where the cell runs, before each cell: in VS Code, on the command line, and in
+    the app over SSH. md-runbook-gate answers the check (its new `context` request) also where
+    only signed runbooks run.
+  - **The ops host** ([apps/ops](apps/ops/README.md)). An SSH server whose only command is
+    md-runbook-gate, with kubectl, as a container image. Run it inside a cluster (a manifest
+    with its own service account and a restricted ClusterRole, Pod Security `restricted`) or
+    next to the relay (`docker compose --profile ops`). The app reaches your clusters through
+    it, and no cluster credential is ever on a phone.
+  - **md-runbook-probe** on the ops host checks, from inside the cluster, that each endpoint
+    resolves, accepts a TCP connection and has a TLS certificate that is trusted, is for that
+    name and doesn't expire within 14 days. It accepts only host names, addresses and URLs as
+    targets. Every check is a `probe` event in the gate's log, tied to the signed run that made
+    it, and `md-runbook audit` lists these events. Export Report and the JSON export show a
+    record's checks under **Endpoint checks**.
+  - An example runbook: [examples/kubernetes.runbook.md](examples/kubernetes.runbook.md).
 - **Incident records for audits and postmortems:** **Start Incident** (Run ▾, and ⋯ More in the
   app) makes a dated copy with `incident:` and `severity:` in its front matter and a first note,
   *detected*. Such a runbook (also `evidence: true`, or the setting

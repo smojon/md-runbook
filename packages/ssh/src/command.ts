@@ -80,6 +80,8 @@ export const gateRunCommand = (id: string, cell: number, step?: number): string 
   step === undefined ? `run ${id} ${Math.trunc(cell)}\n` : `step ${id} ${Math.trunc(cell)} ${Math.trunc(step)}\n`;
 /** An unsigned cell, for a gate that allows them: the text a plain shell would get. */
 export const gateRawCommand = (id: string, text: string): string => `raw ${id} ${b64(text)}\n`;
+/** `kubectl config current-context` in the gate's shell, signed runbooks only or not (the kube-context guard). */
+export const gateContextCommand = (id: string): string => `context ${id}\n`;
 
 export interface CellCommandOptions {
   /** Exported before the cell runs (and kept for later cells, as in a local session). */

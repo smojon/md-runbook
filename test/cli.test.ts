@@ -93,7 +93,8 @@ describe('cli: running a runbook', { skip: !hasBash && 'bash not installed' }, (
       { file, write: true, params: {}, inputs: {}, yes: false, keepGoing: false, shell: settings, env: { ...process.env, CLI_TOKEN: 'tok-cli-12345' }, ...extra },
       { out: (t) => lines.push(t), log: (l) => lines.push(l + '\n') },
     );
-    fs.rmSync(dir, { recursive: true, force: true });
+    // A session's shell (mode: session) may still be in the folder for a moment on Windows.
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     return { ...r, printed: lines.join('') };
   };
 
@@ -134,6 +135,22 @@ describe('cli: running a runbook', { skip: !hasBash && 'bash not installed' }, (
     assert.match(r.printed, /runs on the host web-1 \(md-runbook app\), skipped here/);
     assert.doesNotMatch(r.text, /remote\n<!-- md-runbook:output end/);
     assert.equal((r.text.match(/md-runbook:output start/g) ?? []).length, 1);
+  });
+
+  it('runs a kube-context= block only while kubectl says that context, checked in the session shell', async () => {
+    // kubectl as a function of the session: an earlier cell switching the context is caught.
+    const md = [
+      '---', 'mode: session', '---', '',
+      '```bash', 'kubectl() { echo "$CTX"; }; CTX=prod-eu', '```', '',
+      '```bash kube-context=prod-eu', 'echo on-prod', '```', '',
+      '```bash', 'CTX=staging-eu', '```', '',
+      '```bash kube-context=prod-eu', 'echo never-on-staging', '```', '',
+    ].join('\n');
+    const r = await run(md);
+    assert.deepEqual(r.steps.map((s) => s.status), ['passed', 'passed', 'passed', 'failed'], r.printed);
+    assert.match(r.printed, /on-prod/);
+    assert.doesNotMatch(r.printed, /never-on-staging\n/);
+    assert.match(r.text, /Kubernetes context prod-eu, and kubectl's current context is staging-eu: nothing ran/);
   });
 
   it('stops at a failure; risky commands need --yes; missing inputs fail clearly', async () => {

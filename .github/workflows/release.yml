@@ -30,6 +30,31 @@ jobs:
         if: runner.os != 'Linux'
         run: npm run test:integration
 
+  # The ops host image (apps/ops) for amd64 and arm64, as ghcr.io/OWNER/md-runbook-ops:VERSION and
+  # :latest. The first push makes a private package: set it to public once in the package's settings.
+  ops-image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub's registry
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Build and push
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/md-runbook-ops"
+          version="${GITHUB_REF_NAME#v}"
+          docker buildx build --platform linux/amd64,linux/arm64 -f apps/ops/Dockerfile \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.version=$version" \
+            -t "$image:$version" -t "$image:latest" --push apps
+
   publish:
     needs: test
     runs-on: ubuntu-latest

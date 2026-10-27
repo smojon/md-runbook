@@ -16,7 +16,9 @@ Reads md-runbook-gate's log (its log file, or syslog: journalctl -t md-runbook-g
 /var/log/syslog lines with the tag) and reports every run of a signed runbook: when, the key
 (its fingerprint, or the gate's --who name), the account and client, the runbook, version and
 signer, the block, the parameter values, the exit code and duration; and the findings: refused
-requests, unsigned code (where allowed) and stopped runs. "-" reads standard input.
+requests, unsigned code (where allowed) and stopped runs. On an ops host, also each endpoint
+md-runbook-probe checked (up or not, the certificate's expiry and fingerprint, the signed run
+that checked it). "-" reads standard input.
 
   --record FILE.md     A saved run record (the runbook with its outputs, e.g. an incident's
                        copy) to match: each recorded run of a signed block the log confirms, and
@@ -107,7 +109,9 @@ export async function auditCommand(argv: readonly string[], out: Out = stdout, r
 
   fs.mkdirSync(path.dirname(path.resolve(a.out)), { recursive: true });
   if (/\.json$/i.test(a.out)) {
-    fs.writeFileSync(a.out, JSON.stringify({ format: 'md-runbook gate audit v1', sources: a.logs, ...audit, records: matches }, null, 2) + '\n', 'utf8');
+    // A probe names its signed run by its time, runbook and block (the run itself is in runs).
+    const probes = audit.probes.map(({ run, ...p }) => ({ ...p, ...(run ? { run: { time: run.time, runbook: run.runbook, version: run.version, cell: run.cell } } : {}) }));
+    fs.writeFileSync(a.out, JSON.stringify({ format: 'md-runbook gate audit v1', sources: a.logs, ...audit, probes, records: matches }, null, 2) + '\n', 'utf8');
   } else {
     const html = renderAuditReport(audit, matches, { generatedAt: new Date(), sources: a.logs.map((l) => (l === '-' ? 'standard input' : path.basename(l))) });
     if (/\.pdf$/i.test(a.out)) {
@@ -124,6 +128,11 @@ export async function auditCommand(argv: readonly string[], out: Out = stdout, r
   const missing = matches.reduce((n, m) => n + m.missing.length, 0);
   out(`${audit.runs.length} run${audit.runs.length === 1 ? '' : 's'} in ${audit.sessions} session${audit.sessions === 1 ? '' : 's'}, ${failed} failed, ${audit.findings.length} finding${audit.findings.length === 1 ? '' : 's'}`);
   for (const f of audit.findings) out(`  ${f.time} ${f.kind}: ${f.who} (${f.account} from ${f.client}): ${f.detail}`);
+  if (audit.probes.length) {
+    const down = audit.probes.filter((p) => !p.ok);
+    out(`${audit.probes.length} endpoint check${audit.probes.length === 1 ? '' : 's'} (md-runbook-probe), ${down.length} failed`);
+    for (const p of down) out(`  ${p.time} ${p.target}: ${p.detail}`);
+  }
   for (const m of matches) {
     out(`  ${m.file}: ${m.confirmed.length} recorded run${m.confirmed.length === 1 ? '' : 's'} confirmed by the log${m.missing.length ? `, ${m.missing.length} not in it (steps ${m.missing.map((x) => x.step).join(', ')})` : ''}`);
   }

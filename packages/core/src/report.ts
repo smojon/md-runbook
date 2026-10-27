@@ -232,6 +232,7 @@ function renderRecord(
   if (s.rtoSeconds !== undefined)
     facts.push(['RTO', `${formatSeconds(s.rtoSeconds)}${s.rtoMet === undefined ? '' : s.rtoMet ? ' · met' : ' · missed'}`]);
   facts.push(['Runs', `${s.runs}${s.failedAttempts ? ` · ${s.failedAttempts} failed` : ''}`]);
+  if (s.endpointChecks) facts.push(['Endpoint checks', `${s.endpointChecks.total}${s.endpointChecks.failed ? ` · ${s.endpointChecks.failed} failed` : ' · all up'}`]);
   if (s.people.length) facts.push(['People', s.people.join(', ')]);
   if (s.places.length) facts.push(['Ran on', s.places.join(', ')]);
   // Sign Run Record: who vouched for the record, and whether it changed since (the signature
@@ -258,10 +259,24 @@ function renderRecord(
       );
     })
     .join('');
+  // md-runbook-probe runs: each endpoint checked, when, and its certificate (core/probe.ts).
+  const checkRows = t.events
+    .flatMap((e) => (e.checks ?? []).map((c) => ({ e, c })))
+    .map(
+      ({ e, c }) =>
+        `<tr><td>${escapeHtml(when(e.at))}</td><td><a href="#step-${e.step}">${e.step}</a>${e.earlier ? ' <span class="earlier">earlier attempt</span>' : ''}</td>` +
+        `<td><code>${escapeHtml(redact(c.target))}</code></td><td><span class="badge ${c.ok ? 'ok' : 'fail'}">${c.ok ? 'up' : 'failed'}</span></td>` +
+        `<td>${c.expires ? escapeHtml(`${c.expires} (${c.daysLeft !== undefined && c.daysLeft < 0 ? `expired ${-c.daysLeft} days ago` : `${c.daysLeft} days`})`) : ''}</td>` +
+        `<td>${escapeHtml(redact(c.detail))}</td></tr>\n`,
+    )
+    .join('');
   const html =
     `<section class="record">\n<h2>${s.drill ? 'Drill record' : s.incident ? 'Incident record' : 'Run record'}</h2>\n<dl class="facts">${factsHtml}</dl>\n` +
     (rows
       ? `<table class="timeline">\n<thead><tr><th>Time</th><th>What</th><th>By</th><th>On</th><th>Result</th><th>Duration</th></tr></thead>\n<tbody>\n${rows}</tbody>\n</table>\n`
+      : '') +
+    (checkRows
+      ? `<h3>Endpoint checks</h3>\n<table class="timeline">\n<thead><tr><th>Time</th><th>Step</th><th>Endpoint</th><th>Result</th><th>Certificate expires</th><th>Detail</th></tr></thead>\n<tbody>\n${checkRows}</tbody>\n</table>\n`
       : '') +
     `</section>\n`;
   const label = s.incident ? `${s.incident}${s.severity ? ` · ${s.severity}` : ''}` : '';
@@ -289,7 +304,14 @@ export function recordJson(text: string, opts: { file: string; generatedAt: Date
         file: opts.file,
         generated: formatLocalIso(opts.generatedAt),
         summary: { ...summary, people: summary.people.map(redact), places: summary.places.map(redact) },
-        events: events.map((e) => ({ ...e, label: r(e.label), text: r(e.text), by: r(e.by), on: r(e.on) })),
+        events: events.map((e) => ({
+          ...e,
+          label: r(e.label),
+          text: r(e.text),
+          by: r(e.by),
+          on: r(e.on),
+          ...(e.checks ? { checks: e.checks.map((c) => ({ ...c, target: redact(c.target), detail: redact(c.detail) })) } : {}),
+        })),
         signature: signed
           ? {
               unchanged: signed.unchanged,

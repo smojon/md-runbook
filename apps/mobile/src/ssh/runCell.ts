@@ -20,6 +20,7 @@ import {
   markStderr,
 } from '@md-runbook/core';
 import { Captured, evaluateChecks } from '@md-runbook/core/checks';
+import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { approvalScope } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
@@ -252,6 +253,22 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
       const wrong = wrongPlatform(platform, kind);
       if (wrong) return { kind: 'error', message: wrong };
     }
+    // kube-context: the host's current Kubernetes context must be the one the runbook is for.
+    let probedNewShell = false;
+    const wrongCluster = await checkKubeContext(wantedKubeContext(opts, parseFrontMatter(p.text)), async () => {
+      let out = '';
+      let err = '';
+      const r = await conn.session.kubeContext({
+        shell: kind,
+        timeoutMs: 15_000,
+        signal: p.signal,
+        onStdout: (t) => (out += t),
+        onStderr: (t) => (err += t),
+      });
+      probedNewShell = r.newShell ?? false;
+      return { exitCode: r.exitCode, stdout: out, stderr: r.error ?? (r.timedOut ? 'timed out' : err) };
+    });
+    if (wrongCluster !== undefined) return { kind: 'error', message: wrongCluster };
     if (!p.lines) result = await conn.session.run(asRun(cell.value), runOpts, signed());
     else {
       result = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
@@ -276,6 +293,8 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
         }
       }
     }
+    // The check may have been what reconnected: the cell still runs in a new shell.
+    if (probedNewShell) result = { ...result, newShell: true };
   } catch (e) {
     p.onStep?.(undefined);
     if (conn.unknownHostKey) return { kind: 'trust', hostKey: conn.unknownHostKey, changed: conn.changed ?? false };

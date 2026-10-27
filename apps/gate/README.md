@@ -66,6 +66,11 @@ anything that could hold spaces; replies end with the marker a plain session use
 | `param ID NAME VALUE` | A parameter's value, checked against the manifest's pattern. |
 | `run ID N`, `step ID N K` | Run signed block N, or its command K (0-based). |
 | `raw ID TEXT` | Shell text, only where unsigned blocks are allowed. |
+| `context ID` | Runs `kubectl config current-context`, for runbooks with `kube-context:` ([Kubernetes](../../docs/features/kubernetes.md)). Answered on every server, because it only reads the kubeconfig. |
+
+The cells' shell has `MD_RUNBOOK_GATE_WHO` (the key, as logged) and, during a signed run,
+`MD_RUNBOOK_GATE_RUN` (its request id), so tools on the server can log against them, as
+md-runbook-probe on the [ops host](../ops/README.md) does. Neither can be set by a manifest.
 
 A second connection with the command `pkill -TERM|-KILL -P PID 2>/dev/null; true` (what the app
 sends to cancel) stops the running block of a shell this gate started for the account.

@@ -47,6 +47,11 @@ own framework and your auditors to decide.
   who, from where, the runbook and signer, the parameters, the exit code and duration, plus the
   findings (refusals, unsigned code, stopped runs). It exits 1 when there are findings, so a
   scheduled CI job can raise them ([options](cli.md#gate-audit)).
+- **Endpoint checks (ops host).** On the [ops host](kubernetes.md), md-runbook-probe writes a
+  `probe` event to the same log for every endpoint it checks. The event has the key, the client,
+  the signed run that made the check, the endpoint and its address, the result, and the
+  certificate's expiry and SHA-256 fingerprint. `md-runbook audit` lists these events under
+  Endpoint checks, and Export Report lists the same checks in the run record.
 - **Client side (the operator's record).** Each run's output goes into the runbook file with its
   start, end, duration and exit code. A runbook with `incident:` or `evidence: true` (**Start
   Incident** writes it) also records who ran each step and on which machine, and keeps every

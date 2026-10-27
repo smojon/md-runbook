@@ -93,7 +93,9 @@ opens its actions:
   before the next one, with **Run next** and **Continue**.
 - **Check**, to mark lines and run only those.
 
-The output block records which lines ran (`lines=`), as the extension writes it. A cell with
+The output block records which lines ran (`lines=`), as the extension writes it. A runbook with
+`kube-context:` runs a cell only while kubectl on the host is on that cluster
+([Kubernetes](features/kubernetes.md), where the ops host keeps cluster access off the phone). A cell with
 `host=NAME` runs on that host, whichever one is selected; the first time a runbook sends a cell
 to a host other than the selected one, the app asks (a runbook from a link could otherwise
 choose your production server), and an approval card names the host the cell runs on.

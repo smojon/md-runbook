@@ -8,7 +8,9 @@
  * each recorded step the log confirms, and the ones it doesn't.
  *
  * The gate writes these events (apps/gate/md-runbook-gate): session, load, param, run, end (by the
- * account's shell: time, id, exit), unsigned, refused, stop, end-session.
+ * account's shell: time, id, exit), unsigned, refused, stop, context, end-session. On the ops host
+ * (apps/ops), md-runbook-probe adds a `probe` event per endpoint it checked, with the id of the
+ * signed run that started it.
  */
 
 import { isCodeMeta } from './model';
@@ -60,9 +62,28 @@ export interface AuditFinding {
   detail: string;
 }
 
+/** An endpoint checked by md-runbook-probe on an ops host (its `probe` event). */
+export interface AuditProbe {
+  time: string;
+  account: string;
+  who: string;
+  client: string;
+  target: string;
+  address: string;
+  ok: boolean;
+  detail: string;
+  daysLeft?: number;
+  /** The certificate's expiry (UTC) and SHA-256 fingerprint, for TLS endpoints. */
+  notAfter?: string;
+  certSha256?: string;
+  /** The signed run that started it, when it ran in one. */
+  run?: AuditRun;
+}
+
 export interface Audit {
   runs: AuditRun[];
   findings: AuditFinding[];
+  probes: AuditProbe[];
   sessions: number;
   /** Lines that were not gate events (other syslog lines): skipped, counted. */
   skipped: number;
@@ -100,9 +121,12 @@ export function buildAudit(events: readonly GateEvent[], skipped = 0): Audit {
   const sorted = [...events].sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
   const runs: AuditRun[] = [];
   const findings: AuditFinding[] = [];
+  const probes: AuditProbe[] = [];
   /** Per session (account, key, client): parameter values by runbook. */
   const params = new Map<string, Map<string, Record<string, string>>>();
   const open = new Map<string, AuditRun>();
+  /** The latest run of each id, open or ended: what a probe event's `run` names. */
+  const byId = new Map<string, AuditRun>();
   let sessions = 0;
   const sessionOf = (e: GateEvent): string => `${str(e.account)}\n${str(e.who)}\n${str(e.client)}`;
   for (const e of sorted) {
@@ -140,6 +164,26 @@ export function buildAudit(events: readonly GateEvent[], skipped = 0): Audit {
         };
         runs.push(run);
         open.set(str(e.id), run);
+        byId.set(str(e.id), run);
+        break;
+      }
+      case 'probe': {
+        const days = Number(str(e.days_left));
+        const run = e.run === undefined ? undefined : byId.get(str(e.run));
+        probes.push({
+          time: e.time,
+          account: str(e.account),
+          who: str(e.who),
+          client: str(e.client),
+          target: str(e.target),
+          address: str(e.address),
+          ok: e.result === 'ok',
+          detail: str(e.detail),
+          ...(str(e.days_left) !== '' && Number.isFinite(days) ? { daysLeft: days } : {}),
+          ...(e.not_after ? { notAfter: str(e.not_after) } : {}),
+          ...(e.cert_sha256 ? { certSha256: str(e.cert_sha256) } : {}),
+          ...(run ? { run } : {}),
+        });
         break;
       }
       case 'end': {
@@ -165,7 +209,7 @@ export function buildAudit(events: readonly GateEvent[], skipped = 0): Audit {
         break;
     }
   }
-  return { runs, findings, sessions, skipped };
+  return { runs, findings, probes, sessions, skipped };
 }
 
 /** Keep the runs and findings in a time range and, optionally, of one runbook or one key. */
@@ -175,6 +219,7 @@ export function filterAudit(a: Audit, f: { since?: Date; until?: Date; runbook?:
     ...a,
     runs: a.runs.filter((r) => inRange(r.time) && (!f.runbook || r.runbook === f.runbook) && (!f.who || r.who === f.who)),
     findings: a.findings.filter((x) => inRange(x.time) && (!f.who || x.who === f.who)),
+    probes: a.probes.filter((p) => inRange(p.time) && (!f.who || p.who === f.who) && (!f.runbook || p.run?.runbook === f.runbook)),
   };
 }
 
@@ -252,6 +297,14 @@ export function renderAuditReport(a: Audit, matches: readonly RecordMatch[], opt
     )
     .join('');
   const findingRows = a.findings.map((f) => `<tr>${td(when(f.time))}${td(f.kind)}${td(f.who)}${td(`${f.account} from ${f.client}`)}${td(f.detail)}</tr>\n`).join('');
+  const probeRows = a.probes
+    .map(
+      (p) =>
+        `<tr>${td(when(p.time))}${td(p.who)}${td(p.target)}${td(p.address)}<td><span class="badge ${p.ok ? 'ok' : 'fail'}">${p.ok ? 'up' : 'failed'}</span></td>` +
+        `${td(p.notAfter ? `${when(p.notAfter)}${p.daysLeft === undefined ? '' : ` (${p.daysLeft} days)`}` : '')}${td(p.certSha256 ? `sha256 ${p.certSha256}` : '')}` +
+        `${td(p.run ? `${p.run.runbook} v${p.run.version}, block ${p.run.cell}` : 'unsigned or by hand')}${td(p.detail)}</tr>\n`,
+    )
+    .join('');
   const runbookRows = [...byRunbook.entries()]
     .map(([k, e]) => `<tr>${td(k)}${td(e.signer)}${td(String(e.runs))}${td(String(e.failed))}</tr>\n`)
     .join('');
@@ -291,7 +344,7 @@ ${runbookRows}</tbody></table>
 ${runRows}</tbody></table>
 <h2>Findings</h2>
 ${findingRows ? `<table class="timeline"><thead><tr><th>Time</th><th>What</th><th>Who (key)</th><th>Account, client</th><th>Detail</th></tr></thead><tbody>\n${findingRows}</tbody></table>` : '<p>None: no refusals, no unsigned code, no stopped runs.</p>'}
-${matches.length ? `<h2>Run records</h2>\n${matchHtml}` : ''}</body>
+${probeRows ? `<h2>Endpoint checks</h2>\n<table class="timeline"><thead><tr><th>Time</th><th>Who (key)</th><th>Endpoint</th><th>Address</th><th>Result</th><th>Certificate expires</th><th>Certificate</th><th>Signed run</th><th>Detail</th></tr></thead><tbody>\n${probeRows}</tbody></table>\n` : ''}${matches.length ? `<h2>Run records</h2>\n${matchHtml}` : ''}</body>
 </html>
 `;
 }

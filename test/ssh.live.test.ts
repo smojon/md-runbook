@@ -213,6 +213,11 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
       const r = await s.run('echo should-not-run', { onStderr: (t) => (err += t) });
       assert.equal(r.exitCode, 126);
       assert.match(err, /runs signed runbooks only/);
+      // The kube-context check is answered all the same (kubectl's own exit: 0, 1 without a
+      // kubeconfig, 127 where it isn't installed), never refused.
+      const ctx = await s.kubeContext();
+      assert.notEqual(ctx.exitCode, 126);
+      assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"event":"context"/);
     } finally {
       await s.close();
     }

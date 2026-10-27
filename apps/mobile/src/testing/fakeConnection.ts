@@ -20,11 +20,14 @@ export function fakeConnection(
   script: FakeRun[] = [{ stdout: 'hello\n', exitCode: 0 }],
   /** What the server runs, as the session reports it once connected. */
   platform?: 'posix' | 'windows',
-): Connection & { calls: { source: string; opts: RemoteRunOptions; signed?: SignedRun }[] } {
+  /** What `kubectl config current-context` prints there (undefined: no kubeconfig, exit 1). */
+  kubeContext?: string,
+): Connection & { calls: { source: string; opts: RemoteRunOptions; signed?: SignedRun }[]; contextChecks: number } {
   const calls: { source: string; opts: RemoteRunOptions; signed?: SignedRun }[] = [];
   let i = 0;
   const conn = {
     calls,
+    contextChecks: 0,
     unknownHostKey: undefined as string | undefined,
     changed: undefined as boolean | undefined,
     secrets: new Set<string>(),
@@ -47,6 +50,12 @@ export function fakeConnection(
         if (step.stdout) opts.onStdout?.(step.stdout);
         if (step.stderr) opts.onStderr?.(step.stderr);
         return { exitCode: step.exitCode ?? 0, signal: null, timedOut: false, cancelled: false, durationMs: 5, newShell: step.newShell };
+      },
+      async kubeContext(opts: RemoteRunOptions = {}): Promise<SessionRunResult> {
+        conn.contextChecks++;
+        if (kubeContext === undefined) opts.onStderr?.('error: current-context is not set\n');
+        else opts.onStdout?.(`${kubeContext}\n`);
+        return { exitCode: kubeContext === undefined ? 1 : 0, signal: null, timedOut: false, cancelled: false, durationMs: 1 };
       },
       async connect(): Promise<void> {},
       async close(): Promise<void> {},

@@ -1,0 +1,7 @@
+# The build context is apps/ (for the gate script): send only what the image needs.
+*
+!gate/md-runbook-gate
+!ops/sshd_config
+!ops/gate.conf
+!ops/start.sh
+!ops/md-runbook-probe

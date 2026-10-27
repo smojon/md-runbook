@@ -88,6 +88,13 @@ export class RemoteSession {
     return lost ? { ...r, newShell: true } : r;
   }
 
+  /** `kubectl config current-context` in this session's shell (through the gate where there is one). */
+  async kubeContext(opts: RemoteRunOptions = {}): Promise<SessionRunResult> {
+    const lost = this.hadShell && !this.isConnected;
+    const r = await (await this.ensure()).kubeContext(opts);
+    return lost ? { ...r, newShell: true } : r;
+  }
+
   async close(): Promise<void> {
     const s = this.shell;
     this.shell = undefined;

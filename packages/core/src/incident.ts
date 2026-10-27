@@ -11,6 +11,7 @@ import { isCodeMeta } from './model';
 import { stepNumbers } from './os';
 import { formatAttrs, formatLocalIso, parseAttrs } from './outputBlock';
 import { parse } from './parser';
+import { EndpointCheck, parseProbeOutput, usesProbe } from './probe';
 import { parseFrontMatter } from './secrets';
 
 export const MILESTONES = ['detected', 'mitigated', 'resolved'] as const;
@@ -36,6 +37,8 @@ export interface TimelineEvent {
   /** For notes: the text and the milestone it marks. */
   text?: string;
   milestone?: Milestone;
+  /** For runs of md-runbook-probe: the endpoints it checked (probe.ts). */
+  checks?: EndpointCheck[];
 }
 
 export interface TimelineSummary {
@@ -60,6 +63,8 @@ export interface TimelineSummary {
   /** People and places seen in the record. */
   people: string[];
   places: string[];
+  /** md-runbook-probe in the latest run of each step: endpoints checked, how many failed. */
+  endpointChecks?: { total: number; failed: number };
 }
 
 export interface Timeline {
@@ -101,9 +106,10 @@ export function parseNotes(text: string): TimelineEvent[] {
 const FAILED = (exit: string | undefined, check: string | undefined): boolean =>
   check === 'failed' || (exit !== undefined && !['0', 'done', 'skipped', 'running', 'proposed', 'declined'].includes(exit) && check !== 'ok');
 
-function event(attrs: Record<string, string>, step: number, label: string, earlier: boolean): TimelineEvent | undefined {
+function event(attrs: Record<string, string>, step: number, label: string, earlier: boolean, probeOutput?: string): TimelineEvent | undefined {
   if (!attrs.ran || Number.isNaN(Date.parse(attrs.ran))) return undefined;
   const manual = attrs.exit === 'done' || attrs.exit === 'skipped';
+  const checks = probeOutput === undefined ? [] : parseProbeOutput(probeOutput);
   return {
     at: attrs.ran,
     kind: manual && attrs.duration === undefined ? 'mark' : 'run',
@@ -116,6 +122,7 @@ function event(attrs: Record<string, string>, step: number, label: string, earli
     ok: !FAILED(attrs.exit, attrs.check),
     ...(attrs.duration ? { duration: attrs.duration } : {}),
     ...(earlier ? { earlier: true } : {}),
+    ...(checks.length ? { checks } : {}),
   };
 }
 
@@ -132,12 +139,13 @@ export function buildTimeline(text: string): Timeline {
     const step = steps[i];
     if (step === undefined || !isCodeMeta(cell.meta)) continue;
     const label = options[i]?.name ?? cell.value.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? `step ${step}`;
+    const probe = usesProbe(cell.value);
     if (cell.output) {
-      const e = event(cell.output.attrs, step, label, false);
+      const e = event(cell.output.attrs, step, label, false, probe ? cell.output.text : undefined);
       if (e) events.push(e);
     }
     for (const h of cell.meta.history?.entries ?? []) {
-      const e = event(h.attrs, step, label, true);
+      const e = event(h.attrs, step, label, true, probe ? h.text : undefined);
       if (e) events.push(e);
     }
   }
@@ -165,6 +173,8 @@ export function buildTimeline(text: string): Timeline {
     people: [...new Set(events.flatMap((e) => (e.by ? [e.by] : [])))],
     places: [...new Set(events.flatMap((e) => (e.on ? [e.on] : [])))],
   };
+  const latestChecks = events.flatMap((e) => (e.earlier ? [] : (e.checks ?? [])));
+  if (latestChecks.length) summary.endpointChecks = { total: latestChecks.length, failed: latestChecks.filter((c) => !c.ok).length };
   if (fm?.rtoSeconds !== undefined) {
     summary.rtoSeconds = fm.rtoSeconds;
     const until = milestones.resolved ?? end;

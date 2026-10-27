@@ -45,7 +45,7 @@ jobs:
         if: runner.os == 'Linux'
         # The sample has a misspelled option on purpose (a warning); the others must be clean.
         run: |
-          node out/dist/cli.js lint --strict examples/ci.runbook.md examples/screenshots.runbook.md
+          node out/dist/cli.js lint --strict examples/ci.runbook.md examples/screenshots.runbook.md examples/kubernetes.runbook.md
           node out/dist/cli.js lint examples/sample.runbook.md
       # md-runbook-gate runs under any POSIX sh on the servers (dash, bash, busybox).
       - name: Check the gate script

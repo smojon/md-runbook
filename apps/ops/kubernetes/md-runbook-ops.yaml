@@ -1,0 +1,187 @@
+# The md-runbook ops host inside your cluster. kubectl uses the Pod's own service account, so
+# there is no kubeconfig to copy and no cloud key anywhere; the ClusterRole below is all a
+# runbook can do. Before `kubectl apply -f` this file, see apps/ops/README.md: your keys, your
+# signers, and the cluster's name for kube-context:.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: md-runbook-ops
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: md-runbook-ops
+  namespace: md-runbook-ops
+---
+# What runbooks may do: read most things (not Secrets), restart, roll back and scale workloads,
+# rerun a CronJob as a Job. Add rules for more (pods/exec, delete) once you need them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: md-runbook-ops
+rules:
+  - apiGroups: ['']
+    resources: [pods, pods/log, services, endpoints, events, configmaps, namespaces, nodes, persistentvolumeclaims, persistentvolumes, resourcequotas, limitranges]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list, watch]
+  # kubectl rollout restart / undo, kubectl scale.
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets]
+    verbs: [patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale, statefulsets/scale]
+    verbs: [get, patch, update]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  # kubectl create job --from=cronjob/NAME
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods, nodes]
+    verbs: [get, list]
+  # cert-manager, where installed: which certificates are ready and when they expire.
+  - apiGroups: [cert-manager.io]
+    resources: [certificates, certificaterequests, issuers, clusterissuers]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: md-runbook-ops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: md-runbook-ops
+subjects:
+  - kind: ServiceAccount
+    name: md-runbook-ops
+    namespace: md-runbook-ops
+---
+# The gate's policy and the publishers' keys. unsigned = refuse runs signed runbooks only; set
+# allow while you try it out (every cell is still logged).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: md-runbook-ops-gate
+  namespace: md-runbook-ops
+data:
+  gate.conf: |
+    unsigned = refuse
+    scopes = *
+    allowed_signers = /etc/md-runbook/allowed_signers
+    signers = 1
+    log = /var/log/md-runbook/gate.log
+  # One line per publisher: `you@example.net namespaces="md-runbook" ssh-ed25519 AAAA…`
+  # (VS Code: Sign Runbook shows it; the app: Hosts & settings → Signing runbooks).
+  allowed_signers: ''
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: md-runbook-ops
+  namespace: md-runbook-ops
+  labels:
+    app.kubernetes.io/name: md-runbook-ops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: md-runbook-ops
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: md-runbook-ops
+    spec:
+      serviceAccountName: md-runbook-ops
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ops
+          # Published with each md-runbook release; pin one (:0.11.0) once you rely on it.
+          image: ghcr.io/smojon/md-runbook-ops:latest
+          env:
+            # The context name kubectl reports here: what runbooks write as kube-context:.
+            - name: CLUSTER_NAME
+              value: my-cluster
+          ports:
+            - name: ssh
+              containerPort: 2222
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            tcpSocket:
+              port: ssh
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - { name: keys, mountPath: /etc/md-runbook-ops/keys, readOnly: true }
+            - { name: hostkey, mountPath: /etc/md-runbook-ops/hostkey, readOnly: true }
+            - { name: gate, mountPath: /etc/md-runbook, readOnly: true }
+            - { name: home, mountPath: /home/ops }
+            - { name: tmp, mountPath: /tmp }
+            - { name: run, mountPath: /run/md-runbook-ops }
+            - { name: state, mountPath: /var/lib/md-runbook-ops }
+            - { name: log, mountPath: /var/log/md-runbook }
+      volumes:
+        # kubectl -n md-runbook-ops create configmap md-runbook-ops-keys --from-file=authorized_keys
+        - name: keys
+          configMap:
+            name: md-runbook-ops-keys
+            optional: true
+        # kubectl -n md-runbook-ops create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ed25519_key
+        - name: hostkey
+          secret:
+            secretName: md-runbook-ops-hostkey
+            optional: true
+            defaultMode: 0440
+        - name: gate
+          configMap:
+            name: md-runbook-ops-gate
+        - { name: home, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+        - { name: run, emptyDir: { medium: Memory } }
+        - { name: state, emptyDir: {} }
+        - { name: log, emptyDir: {} }
+---
+# Inside the cluster only. For the app on a phone: a LoadBalancer (see README.md), a VPN, or
+# the relay next to it for the web app.
+apiVersion: v1
+kind: Service
+metadata:
+  name: md-runbook-ops
+  namespace: md-runbook-ops
+spec:
+  selector:
+    app.kubernetes.io/name: md-runbook-ops
+  ports:
+    - name: ssh
+      port: 22
+      targetPort: ssh

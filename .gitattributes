@@ -3,3 +3,5 @@ test/fixtures/** -text
 # Shell scripts copied to servers from any checkout must keep LF.
 apps/gate/md-runbook-gate text eol=lf
 apps/gate/gate.conf.example text eol=lf
+# The ops host image: files copied into a Linux container from any checkout.
+apps/ops/** text eol=lf

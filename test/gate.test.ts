@@ -187,6 +187,28 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     await g.close();
   });
 
+  it('answers a context request with kubectl config current-context, also where only signed cells run', async () => {
+    // A kubeconfig for a real kubectl (CI runners have one), and a stand-in where there is none.
+    const kubeconfig = path.join(dir, 'kubeconfig');
+    fs.writeFileSync(
+      kubeconfig,
+      'apiVersion: v1\nkind: Config\ncurrent-context: prod-eu\ncontexts:\n- name: prod-eu\n  context: {cluster: c, user: u}\n' +
+        'clusters:\n- name: c\n  cluster: {server: "https://127.0.0.1:1"}\nusers:\n- name: u\n  user: {}\n',
+    );
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'kubectl'), '#!/bin/sh\necho prod-eu\n', { mode: 0o755 });
+    const g = new Gate([`--config=${conf}`], { ...env(), KUBECONFIG: kubeconfig, PATH: `${process.env.PATH ?? ''}${path.delimiter}${bin}` });
+    gates.push(g);
+    assert.match((await g.hello()).out, /unsigned=refuse/);
+    const r = await g.request('context');
+    assert.deepEqual([r.code, r.out], [0, 'prod-eu\n']);
+    const bad = await g.request('context', 'extra');
+    assert.equal(bad.code, 126);
+    await g.close();
+    assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"event":"context"/);
+  });
+
   it('runs unsigned text where the key allows it', async () => {
     const g = start('--unsigned=allow');
     const hello = await g.hello();

@@ -30,6 +30,7 @@ import {
 import { executeCell } from '@md-runbook/core/node';
 import type { ShellSettings } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { CheckOutcome, evaluateChecks, hasChecks } from '@md-runbook/core/checks';
 import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
 import { currentOs, osGroups, osLabel } from '@md-runbook/core/os';
@@ -295,7 +296,30 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       let r: ExecuteResult;
       let outcome: CheckOutcome | undefined;
       let attempt = 0;
-      for (;;) {
+      // kube-context: the cluster is checked where the cell runs (its session shell), before it runs.
+      const wrongCluster = fs.existsSync(cwd)
+        ? await checkKubeContext(wantedKubeContext(opts, fm), async (command) => {
+            let out = '';
+            let err = '';
+            const probe = {
+              language: loc.language,
+              source: command,
+              cwd,
+              settings: fm?.shell ? { ...o.shell, runbook: fm.shell } : o.shell,
+              timeoutMs: 15_000,
+              env,
+              signal: o.signal,
+              onStdout: (t: string) => (out += t),
+              onStderr: (t: string) => (err += t),
+            };
+            const p = pool ? await pool.execute({ ...probe, baseCwd }) : await executeCell(probe);
+            return { exitCode: p.exitCode, stdout: out, stderr: p.error ?? (p.timedOut ? 'timed out' : err) };
+          })
+        : undefined;
+      if (wrongCluster !== undefined) {
+        attempt = 1;
+        r = { exitCode: null, signal: null, timedOut: false, cancelled: false, error: wrongCluster, durationMs: 0 };
+      } else for (;;) {
         attempt++;
         transcript = '';
         stdout = '';
