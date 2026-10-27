@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0
 
 - **Kubernetes** ([guide](docs/features/kubernetes.md)):
   - **Wrong-cluster guard.** `kube-context: prod-eu` in the front matter, or `kube-context=` on
