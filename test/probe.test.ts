@@ -1,5 +1,11 @@
 import { strict as assert } from 'node:assert';
-import { describe, it } from 'node:test';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import type { AddressInfo } from 'node:net';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as tls from 'node:tls';
+import { after, before, describe, it } from 'node:test';
 import { buildAudit, parseGateLog, renderAuditReport } from '@md-runbook/core/audit';
 import { buildTimeline } from '@md-runbook/core/incident';
 import { parseProbeOutput, usesProbe } from '@md-runbook/core/probe';
@@ -77,5 +83,240 @@ describe('md-runbook-probe in the record', () => {
     assert.match(html, /<td>ops\/check v2, block 1<\/td>/);
     assert.match(html, /<td>unsigned or by hand<\/td>/);
     assert.match(html, /sha256 ab12/);
+  });
+});
+
+/**
+ * The script itself (apps/ops/md-runbook-probe), against TLS servers this test starts on
+ * 127.0.0.1 with two private CAs. SSL_CERT_FILE and SSL_CERT_DIR stand in for the system's CAs
+ * (CA B), so what --ca adds to them is visible. The probe needs getent, GNU date and timeout:
+ * Linux only, as on the ops host. It runs from a copy whose gate.conf path is in the test's folder.
+ */
+const PROBE = path.resolve(__dirname, '..', '..', 'apps', 'ops', 'md-runbook-probe');
+const probeSkip = ((): string | false => {
+  if (process.platform !== 'linux') return 'md-runbook-probe runs on Linux (getent, GNU date)';
+  const r = spawnSync('bash', ['-c', 'for c in getent openssl timeout; do command -v "$c" >/dev/null || exit 1; done']);
+  return r.status === 0 ? false : 'needs bash, getent, openssl and timeout';
+})();
+
+describe('md-runbook-probe, the script', { skip: probeSkip }, () => {
+  let dir = '';
+  let script = '';
+  let gateConf = '';
+  const servers: tls.Server[] = [];
+  let portA = 0; // certificate from CA A (trusted only with --ca or --ca-only)
+  let portB = 0; // certificate from CA B (the "system" CA)
+
+  const openssl = (...args: string[]): void => void execFileSync('openssl', args, { cwd: dir, stdio: 'pipe' });
+  const listen = async (name: string): Promise<number> => {
+    const read = (ext: string) => fs.readFileSync(path.join(dir, `${name}.${ext}`));
+    const server = tls.createServer({ key: read('key'), cert: read('pem') }, (s) => s.end());
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    return (server.address() as AddressInfo).port;
+  };
+  /** Async: the TLS servers answer from this process. */
+  const probe = (args: string[], env: Record<string, string> = {}): Promise<{ code: number | null; out: string; err: string }> =>
+    new Promise((resolve) => {
+      const base = { ...process.env };
+      delete base.MD_RUNBOOK_PROBE_LOG;
+      const p = spawn('bash', [script, '--timeout', '3', ...args], {
+        env: { ...base, SSL_CERT_FILE: path.join(dir, 'ca-b.pem'), SSL_CERT_DIR: path.join(dir, 'no-certs'), ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      let err = '';
+      p.stdout.on('data', (d: Buffer) => (out += d.toString('utf8')));
+      p.stderr.on('data', (d: Buffer) => (err += d.toString('utf8')));
+      p.on('close', (code) => resolve({ code, out, err }));
+    });
+
+  before(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-probe-'));
+    fs.mkdirSync(path.join(dir, 'no-certs'));
+    gateConf = path.join(dir, 'gate.conf');
+    script = path.join(dir, 'md-runbook-probe');
+    fs.writeFileSync(script, fs.readFileSync(PROBE, 'utf8').split('/etc/md-runbook/gate.conf').join(gateConf));
+    const ec = ['-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes'];
+    for (const ca of ['ca-a', 'ca-b']) openssl('req', '-x509', ...ec, '-keyout', `${ca}.key`, '-out', `${ca}.pem`, '-days', '30', '-subj', `/CN=${ca}`);
+    fs.writeFileSync(path.join(dir, 'san.ext'), 'subjectAltName=IP:127.0.0.1\n');
+    for (const [srv, ca] of [
+      ['srv-a', 'ca-a'],
+      ['srv-b', 'ca-b'],
+    ]) {
+      openssl('req', ...ec, '-keyout', `${srv}.key`, '-out', `${srv}.csr`, '-subj', `/CN=${srv}`);
+      openssl('x509', '-req', '-in', `${srv}.csr`, '-CA', `${ca}.pem`, '-CAkey', `${ca}.key`, '-CAcreateserial', '-days', '300', '-extfile', 'san.ext', '-out', `${srv}.pem`);
+    }
+    portA = await listen('srv-a');
+    portB = await listen('srv-b');
+  });
+  after(() => {
+    for (const s of servers) s.close();
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  const caA = () => path.join(dir, 'ca-a.pem');
+  const a = () => `tls://127.0.0.1:${portA}`;
+  const b = () => `tls://127.0.0.1:${portB}`;
+  const verdicts = (out: string): string[] =>
+    out
+      .trimEnd()
+      .split('\n')
+      .map((l) => (/certificate trusted/.test(l) ? 'trusted' : /not trusted/.test(l) ? 'untrusted' : l));
+
+  it("--ca adds a CA to the system's; --ca-only trusts that CA alone", async () => {
+    const none = await probe([a(), b()]);
+    assert.deepEqual([none.code, verdicts(none.out)], [1, ['untrusted', 'trusted']], none.out + none.err);
+    const added = await probe(['--ca', caA(), a(), b()]);
+    assert.deepEqual([added.code, verdicts(added.out)], [0, ['trusted', 'trusted']], added.out + added.err);
+    const only = await probe(['--ca-only', caA(), a(), b()]);
+    assert.deepEqual([only.code, verdicts(only.out)], [1, ['trusted', 'untrusted']], only.out + only.err);
+    // A missing default folder: s_client would give up on it, so it is left out.
+    const noDir = await probe(['--ca', caA(), a(), b()], { SSL_CERT_DIR: path.join(dir, 'missing') });
+    assert.deepEqual([noDir.code, verdicts(noDir.out)], [0, ['trusted', 'trusted']], noDir.out + noDir.err);
+    assert.equal((await probe(['--ca', caA(), '--ca-only', caA(), a()])).code, 2);
+    assert.equal((await probe(['--ca-only', path.join(dir, 'missing.pem'), a()])).code, 2);
+  });
+
+  it('the text lines are what the run record reads', async () => {
+    const r = await probe(['--ca', caA(), a(), `127.0.0.1:${portA}`]);
+    assert.equal(r.code, 0, r.out + r.err);
+    const [tlsLine, tcpLine] = r.out.trimEnd().split('\n');
+    assert.match(tlsLine!, new RegExp(`^OK {4}127\\.0\\.0\\.1:${portA} +127\\.0\\.0\\.1, tcp \\d+ms, certificate trusted, \\d+ days left \\(\\d{4}-\\d\\d-\\d\\d\\), CN=srv-a, issuer ca-a$`));
+    // Not a TLS port: without tls:// only TCP is checked.
+    assert.match(tcpLine!, new RegExp(`^OK {4}127\\.0\\.0\\.1:${portA} +127\\.0\\.0\\.1, tcp \\d+ms$`));
+    const checks = parseProbeOutput(r.out);
+    assert.deepEqual([checks.length, checks[0]!.ok, typeof checks[0]!.daysLeft], [2, true, 'number']);
+  });
+
+  it('tls:// and tcp:// decide per target, over --tls and --no-tls', async () => {
+    const forced = await probe(['--no-tls', '--ca', caA(), a(), `tcp://127.0.0.1:${portA}`]);
+    assert.equal(forced.code, 0, forced.out + forced.err);
+    const [tlsLine, tcpLine] = forced.out.trimEnd().split('\n');
+    assert.match(tlsLine!, /certificate trusted/);
+    assert.match(tcpLine!, /, tcp \d+ms$/);
+    const all = await probe(['--tls', `tcp://127.0.0.1:${portA}`]);
+    assert.match(all.out, /, tcp \d+ms\n$/);
+    // tcp:// has no default port; the rest is as strict as for any target.
+    const bad = await probe(['tcp://127.0.0.1', 'tls://-oProxyCommand=x:443', 'tcp://a;b:1']);
+    assert.equal(bad.code, 1);
+    assert.equal((bad.out.match(/ not a host name, address or URL$/gm) ?? []).length, 3, bad.out);
+  });
+
+  it('--format json: one object per target and line, with the labels', async () => {
+    const r = await probe(['--format', 'json', '--ca', caA(), '--label', 'component=proxy', '--label', 'note=a "b" \\c', a(), `tcp://127.0.0.1:${portB}`, '127.0.0.1:1', 'a;b']);
+    assert.equal(r.code, 1, r.err);
+    const objs = r.out
+      .trimEnd()
+      .split('\n')
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    assert.equal(objs.length, 4);
+    const [tlsOk, tcpOk, down, invalid] = objs;
+    assert.deepEqual(
+      [tlsOk!.target, tlsOk!.ok, tlsOk!.address, tlsOk!.reachable, typeof tlsOk!.tcp_ms, tlsOk!.tls, tlsOk!.trusted, tlsOk!.subject, tlsOk!.issuer],
+      [`127.0.0.1:${portA}`, true, '127.0.0.1', true, 'number', true, true, 'srv-a', 'ca-a'],
+    );
+    assert.match(String(tlsOk!.not_after), /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    assert.ok(Number(tlsOk!.days_left) >= 298, String(tlsOk!.days_left));
+    assert.match(String(tlsOk!.detail), /^127\.0\.0\.1, tcp \d+ms, certificate trusted, /);
+    assert.deepEqual(tlsOk!.labels, { component: 'proxy', note: 'a "b" \\c' });
+    assert.deepEqual([tcpOk!.ok, tcpOk!.reachable, tcpOk!.tls, tcpOk!.trusted, tcpOk!.not_after, tcpOk!.days_left], [true, true, false, null, null, null]);
+    assert.deepEqual([down!.ok, down!.address, down!.reachable, down!.tcp_ms], [false, '127.0.0.1', false, null]);
+    assert.deepEqual([invalid!.ok, invalid!.target, invalid!.detail], [false, 'ab', 'not a host name, address or URL']);
+    // --no-verify: trust isn't checked, so it is neither true nor false.
+    const nv = await probe(['--format', 'json', '--no-verify', a()]);
+    assert.equal((JSON.parse(nv.out) as { trusted: unknown }).trusted, null);
+  });
+
+  it('--format prometheus: gauges per target, the labels escaped, a target listed twice once', async () => {
+    const r = await probe(['--format=prometheus', '--ca', caA(), '--label', 'component=proxy', '--label', 'note=a "b" \\c', a(), a(), `tcp://127.0.0.1:${portB}`, '127.0.0.1:1']);
+    assert.equal(r.code, 1, r.err);
+    const lines = r.out.trimEnd().split('\n');
+    const families = ['ok', 'reachable', 'certificate_expiry_timestamp_seconds', 'last_run_timestamp_seconds'].map((n) => `md_runbook_probe_${n}`);
+    assert.deepEqual(
+      lines.filter((l) => l.startsWith('# TYPE ')),
+      families.map((f) => `# TYPE ${f} gauge`),
+    );
+    assert.equal(lines.filter((l) => l.startsWith('# HELP ')).length, 4);
+    const samples = new Map<string, number>();
+    for (const l of lines.filter((x) => !x.startsWith('#'))) {
+      const m = /^([a-z_]+)(\{.*\}) (\d+)$/.exec(l);
+      assert.ok(m, l);
+      assert.equal(samples.has(m[1]! + m[2]!), false, `twice: ${l}`);
+      samples.set(m[1]! + m[2]!, Number(m[3]));
+    }
+    const at = (port: number) => `{target="127.0.0.1:${port}",component="proxy",note="a \\"b\\" \\\\c"}`;
+    assert.equal(samples.get(`md_runbook_probe_ok${at(portA)}`), 1);
+    assert.equal(samples.get(`md_runbook_probe_ok${at(portB)}`), 1);
+    assert.equal(samples.get(`md_runbook_probe_ok${at(1)}`), 0);
+    assert.equal(samples.get(`md_runbook_probe_reachable${at(portB)}`), 1);
+    assert.equal(samples.get(`md_runbook_probe_reachable${at(1)}`), 0);
+    const expiry = samples.get(`md_runbook_probe_certificate_expiry_timestamp_seconds${at(portA)}`)!;
+    assert.ok(expiry > Date.now() / 1000 + 298 * 86400, String(expiry));
+    // Only TLS targets with a certificate have an expiry.
+    assert.equal(samples.has(`md_runbook_probe_certificate_expiry_timestamp_seconds${at(portB)}`), false);
+    assert.ok(Math.abs(samples.get(`md_runbook_probe_last_run_timestamp_seconds${at(1)}`)! - Date.now() / 1000) < 60);
+    assert.equal(samples.size, 3 + 3 + 1 + 3);
+  });
+
+  it('--format and --label are checked: bad usage is exit 2, before any check', async () => {
+    for (const args of [
+      ['--format', 'xml'],
+      ['--label', '1x=y'],
+      ['--label', 'target=x'],
+      ['--label', '__name__=x'],
+      ['--label', 'novalue'],
+      ['--label', 'a='],
+      ['--label', 'a-b=c'],
+      ['--label', 'a=1', '--label', 'a=2'],
+      ['--label', 'a=x\ty'],
+      ['--label', 'a=x\ny'],
+    ]) {
+      const r = await probe([...args, a()], { MD_RUNBOOK_PROBE_LOG: 'stderr' });
+      assert.deepEqual([r.code, r.out], [2, ''], `${JSON.stringify(args)}: ${r.err}`);
+      assert.doesNotMatch(r.err, /"event":"probe"/);
+    }
+  });
+
+  it('audit events outside the gate: MD_RUNBOOK_PROBE_LOG names a file or stderr', async () => {
+    const file = path.join(dir, 'probe.log');
+    const r = await probe(['--ca', caA(), a(), '127.0.0.1:1'], { MD_RUNBOOK_PROBE_LOG: file });
+    assert.equal(r.err, '');
+    const audit = buildAudit(parseGateLog(fs.readFileSync(file, 'utf8')).events);
+    assert.deepEqual(
+      audit.probes.map((p) => [p.target, p.ok, typeof p.daysLeft, /^[0-9a-f]{64}$/.test(p.certSha256 ?? '')]),
+      [
+        [`127.0.0.1:${portA}`, true, 'number', true],
+        ['127.0.0.1:1', false, 'undefined', false],
+      ],
+    );
+    const s = await probe([a()], { MD_RUNBOOK_PROBE_LOG: 'stderr' });
+    assert.match(s.out, /^FAIL /);
+    assert.equal(parseGateLog(s.err).events.filter((e) => e.event === 'probe').length, 1, s.err);
+    assert.equal((await probe([a()])).err, '');
+  });
+
+  it("an audit log it can't write: one warning on stderr, the output and exit code as without", async () => {
+    const log = path.join(dir, 'missing', 'probe.log');
+    const r = await probe(['--format', 'json', a(), b()], { MD_RUNBOOK_PROBE_LOG: log });
+    assert.equal(r.code, 1);
+    assert.equal(r.out.trimEnd().split('\n').length, 2);
+    assert.equal(r.err, `md-runbook-probe: can't write the audit log ${log}: these checks are not logged\n`);
+  });
+
+  it('where the gate runs it, gate.conf decides and MD_RUNBOOK_PROBE_LOG changes nothing', async () => {
+    const gateLog = path.join(dir, 'gate.log');
+    const envLog = path.join(dir, 'env.log');
+    fs.writeFileSync(gateConf, `unsigned = allow\nlog = ${gateLog}\n`);
+    try {
+      const r = await probe([b()], { MD_RUNBOOK_PROBE_LOG: envLog, MD_RUNBOOK_GATE_RUN: 'r1' });
+      assert.equal(r.code, 0, r.out + r.err);
+      assert.equal(fs.existsSync(envLog), false);
+      const [ev] = parseGateLog(fs.readFileSync(gateLog, 'utf8')).events;
+      assert.deepEqual([ev?.event, ev?.run, ev?.result], ['probe', 'r1', 'ok']);
+      assert.equal((await probe([b()], { MD_RUNBOOK_PROBE_LOG: 'stderr' })).err, '');
+    } finally {
+      fs.rmSync(gateConf);
+    }
   });
 });
