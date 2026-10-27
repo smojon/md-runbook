@@ -31,6 +31,7 @@ import { executeCell } from '@md-runbook/core/node';
 import type { ShellSettings } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
+import { KubeconfigPins, runbookEnv } from '@md-runbook/core/node/runbookEnv';
 import { CheckOutcome, evaluateChecks, hasChecks } from '@md-runbook/core/checks';
 import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
 import { currentOs, osGroups, osLabel } from '@md-runbook/core/os';
@@ -117,6 +118,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   const baseCwd = fm?.cwd ? path.resolve(mdDir, fm.cwd) : mdDir;
   const session = o.session ?? fm?.mode === 'session';
   const pool = session ? new SessionPool() : undefined;
+  const pins = new KubeconfigPins();
 
   // Redaction: the default patterns, plus every secret value seen (exact match).
   const known = new Set<string>();
@@ -280,6 +282,9 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         notRun(missing, 'error');
         continue;
       }
+      // kube-context-mode: pin and git-bash-path-conversion: off add to the cell's environment.
+      const added = runbookEnv({ language: loc.language, frontMatter: fm, kubeContext: wantedKubeContext(opts, fm), env: { ...process.env, ...env }, pins });
+      Object.assign(env, added.env);
       const source = refs.length > 0 ? rewriteRefs(loc.source, kind) : loc.source;
       // A value captured as a secret is only known once the cell has finished: hold back the
       // output of such a cell and print it redacted afterwards (a CI log can't be redrawn).
@@ -314,7 +319,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
             };
             const p = pool ? await pool.execute({ ...probe, baseCwd }) : await executeCell(probe);
             return { exitCode: p.exitCode, stdout: out, stderr: p.error ?? (p.timedOut ? 'timed out' : err) };
-          })
+          }, added.pinned)
         : undefined;
       if (wrongCluster !== undefined) {
         attempt = 1;
@@ -405,6 +410,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     }
   } finally {
     pool?.dispose();
+    pins.dispose();
   }
 
   const ok = steps.every((s) => s.status === 'passed' || s.status === 'skipped');

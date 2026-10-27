@@ -6,7 +6,7 @@
  * in the environment.
  */
 
-import { isKubeContextName } from './kubeContext';
+import { KUBE_CONTEXT_MODES, KubeContextMode, isKubeContextName } from './kubeContext';
 import { RunbookShells, ShellKind, parseShells } from './shellKind';
 
 export type RefKind = 'secret' | 'input' | 'param' | 'out';
@@ -112,6 +112,10 @@ export interface FrontMatter {
   rtoSeconds?: number;
   /** `kube-context:` the Kubernetes context its cells run against (kubeContext.ts); a cell's kube-context= wins. */
   kubeContext?: string;
+  /** `kube-context-mode:` `check` (the default: kubectl's current context must be it) or `pin` (md-runbook makes it the cell's). */
+  kubeContextMode?: KubeContextMode;
+  /** `git-bash-path-conversion: off`: on Windows, Git Bash doesn't rewrite POSIX-looking arguments (node/runbookEnv.ts). */
+  gitBashPathConversion?: 'on' | 'off';
 }
 
 /** `30m`, `1h30m`, `90s`, `45` (seconds) as seconds; undefined when it isn't a duration. */
@@ -124,7 +128,8 @@ export function parseDurationSeconds(s: string): number | undefined {
 }
 
 /**
- * `params:`, `mode:`, `timeout:`, `cwd:`, `shell:`, `incident:`, `severity:`, `evidence:`, `rto:` and `kube-context:` from
+ * `params:`, `mode:`, `timeout:`, `cwd:`, `shell:`, `incident:`, `severity:`, `evidence:`, `rto:`, `kube-context:`,
+ * `kube-context-mode:` and `git-bash-path-conversion:` from
  * YAML-style front matter (`---` ... `---`
  * at the very top). Only this subset is understood; other keys are ignored. Param items are
  * `- name` or `- name: default`; `mode` is `session` or `isolated`; `timeout` is seconds (`120`
@@ -146,6 +151,8 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
   let practice: string | undefined;
   let drill: boolean | undefined;
   let kubeContext: string | undefined;
+  let kubeContextMode: KubeContextMode | undefined;
+  let gitBashPathConversion: 'on' | 'off' | undefined;
   let inParams = false;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
@@ -163,6 +170,8 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
         ...(practice ? { practice } : {}),
         ...(drill ? { drill } : {}),
         ...(kubeContext ? { kubeContext } : {}),
+        ...(kubeContextMode ? { kubeContextMode } : {}),
+        ...(gitBashPathConversion ? { gitBashPathConversion } : {}),
       };
     }
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
@@ -197,6 +206,10 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       const kc = value('kube-context');
       // A name kubectl can't have would refuse every cell: ignored (lint says so).
       if (kc !== undefined && isKubeContextName(kc)) kubeContext = kc;
+      const km = value('kube-context-mode')?.toLowerCase();
+      if (km !== undefined && (KUBE_CONTEXT_MODES as readonly string[]).includes(km)) kubeContextMode = km as KubeContextMode;
+      const pc = value('git-bash-path-conversion')?.toLowerCase();
+      if (pc === 'on' || pc === 'off') gitBashPathConversion = pc;
       continue;
     }
     if (!inParams) continue;
