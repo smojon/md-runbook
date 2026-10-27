@@ -1296,6 +1296,13 @@
             "default": true,
             "markdownDescription": "Windows: give each cell the `PATH` directories added since VS Code started (read from the registry, as a new terminal does), so a tool a runbook just installed is found without restarting VS Code. Directories are only added, at the end: the inherited `PATH` keeps its order. A session gets them when it starts (**Restart Session** starts a new one); a running session keeps its `PATH`.",
             "order": 9
+          },
+          "mdRunbook.execution.kubeContextPin": {
+            "type": "boolean",
+            "default": true,
+            "scope": "machine",
+            "markdownDescription": "Let runbooks with `kube-context-mode: pin` pin their Kubernetes context: each cell gets a `KUBECONFIG` whose first file only sets the current context to the runbook's `kube-context`, followed by your own kubeconfig, so kubectl and helm use that context without changing your default. Off: such runbooks only check the context (a cell runs only while `kubectl config current-context` is that context). User settings only.",
+            "order": 10
           }
         }
       },

@@ -51,6 +51,8 @@ export interface CellPlan {
   checks?: CellChecks;
   /** Run again until it passes: up to `attempts` in all, `everyMs` apart. Not for line runs. */
   retry?: { attempts: number; everyMs: number };
+  /** Set by runbookEnv.ts: `env.KUBECONFIG` pins the cell's kube-context (kube-context-mode: pin). */
+  kubeContextPinned?: boolean;
 }
 
 export interface PrepareContext {

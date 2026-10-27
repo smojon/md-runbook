@@ -197,7 +197,8 @@ Each has its own page with examples and settings:
 - **[Drills and training](docs/features/drills.md):** a dated drill record measured against its
   recovery-time objective, run on a practice server so nothing reaches production.
 - **[Kubernetes](docs/features/kubernetes.md):** `kube-context: prod-eu` stops every cell on
-  the wrong cluster. The ops host runs the app's runbooks against your clusters with no
+  the wrong cluster, or with `kube-context-mode: pin` runs every cell on that cluster without
+  touching your default context. The ops host runs the app's runbooks against your clusters with no
   credential on the phone. `md-runbook-probe` checks endpoints and certificates from inside the
   cluster, and its results go into the record and the audit.
 - **[For auditors](docs/features/for-auditors.md):** what md-runbook records and enforces, for
@@ -351,6 +352,7 @@ extension is also disabled in untrusted workspaces (Restricted Mode).
 | `mdRunbook.execution.stopOnFailure` | `true` | Run All stops at the first failed cell. |
 | `mdRunbook.execution.timeoutSeconds` | `0` | Kill a cell's process tree after N seconds. `0` = no timeout. |
 | `mdRunbook.execution.refreshPath` | `true` | Windows: add the `PATH` directories installed since VS Code started to each cell. |
+| `mdRunbook.execution.kubeContextPin` | `true` | Runbooks with `kube-context-mode: pin` run their cells against their `kube-context` (a `KUBECONFIG` that sets only the current context, then yours). Off: they are only checked. User settings only. |
 | `mdRunbook.execution.env` | `{}` | Extra environment variables for every cell. |
 | `mdRunbook.shell.bashPath` | `""` | bash executable for `sh`/`bash` (e.g. `C:\\Program Files\\Git\\bin\\bash.exe`). |
 | `mdRunbook.shell.pwshPath` | `""` | PowerShell executable for `pwsh`/`powershell`. |
