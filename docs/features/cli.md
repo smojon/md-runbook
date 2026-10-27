@@ -15,7 +15,7 @@ It runs the code blocks in order and stops at the first failed step. It exits wi
 |---|---|
 | `0` | every step passed (or was skipped) |
 | `1` | a step failed, or could not run (see below) |
-| `2` | wrong usage (unknown option, missing file) |
+| `2` | wrong usage (unknown option, missing file), or a problem found before the first step: nothing ran (see [Part of a runbook](#part-of-a-runbook) and [What runs, what doesn't](#what-runs-what-doesnt)) |
 
 ## Getting it
 
@@ -47,6 +47,8 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--param NAME=VALUE` | Value for `${param:NAME}` (repeatable). Without it, the front matter's default is used. |
 | `--input NAME=VALUE` | Value for `${input:NAME}` (repeatable). Without it, the environment variable `NAME`. |
 | `--yes` | Run blocks that ask for a confirmation in VS Code: risky commands and the `confirm` option. |
+| `--from N`, `--to N` | Run only steps `N` to `M`, as the run's `▶ Step N` lines number them (see [Part of a runbook](#part-of-a-runbook)). |
+| `--section TEXT` | Run only the steps under the headings that start with `TEXT` (repeatable). |
 | `--keep-going` | Carry on after a failed step (the exit code is still `1`). |
 | `--session` / `--isolated` | One shell process per shell for the whole runbook (like [session mode](session.md)), or one per block. Default: the front matter's `mode:`, else isolated. |
 | `--timeout SECONDS` | Default timeout per block. The front matter's `timeout:` and a block's `timeout=` win. |
@@ -54,6 +56,33 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--notify URL` | Post a summary to a chat webhook when the run fails (see [Notifications](#notifications)). Prefer the environment variable `MD_RUNBOOK_NOTIFY_URL`. |
 | `--notify-on WHEN` | `failure` (default) or `always`; or `MD_RUNBOOK_NOTIFY_ON`. |
 | `--quiet` | Print only the summary line. |
+
+## Part of a runbook
+
+To resume a long run where it stopped, or to run one section of it:
+
+```sh
+md-runbook run upgrade.md --from 6                        # step 6 to the end
+md-runbook run upgrade.md --from 6 --to 9
+md-runbook run upgrade.md --section "3." --section "4."   # the sections "## 3. …" and "## 4. …"
+md-runbook run upgrade.md --section Rollback
+```
+
+- **Steps** are numbered as the run prints them (`▶ Step 6 · upgrade.md:120 · bash`), and as
+  Export Report numbers them: every code block is a step, and the `os=` alternatives of one step
+  share a number. The numbers are the same whether or not you give a range, so you can resume at
+  the number a failed run showed.
+- **`--section TEXT`** selects the steps under each heading whose text, after the `#`s and
+  spaces, starts with `TEXT` (case-sensitive: `"3."` matches `## 3. Deploy` but not
+  `## 30. Clean up`). A section includes its sub-headings and ends at the next heading of the
+  same or a higher level. Only `#` headings count, not underlined ones. With `--from`/`--to`
+  too, a step must be in both.
+- The steps left out are **skipped**, not failed (`not selected (--from 6)` in the JSON, JUnit and
+  job summary), and keep the outputs they have in the file.
+- **Before anything runs**, the run stops with exit code `2` if `--from`/`--to` is outside the
+  runbook or backwards, a `--section` matches no heading, nothing is selected, or a selected
+  step uses `${out:NAME}` and only steps left out capture `NAME` (a run starts without
+  captured values: select the capturing step too).
 
 ## Checking without running
 
@@ -137,8 +166,19 @@ web-2,Rack 4 right,shop
   value makes the step fail with a message that says what to pass. Secret values are redacted
   from everything printed and written, as are the default redaction patterns.
 - **Risky commands** (the default confirmation patterns: `rm -rf`, `delete`, `--force`, …) and
-  blocks with `confirm` are **not run without `--yes`**: they are recorded as `exit=declined` and
-  the run stops. `no-confirm` can't switch this off.
+  blocks with `confirm` are **not run without `--yes`**. The run checks for them before the first
+  step: if a step that would run (for this OS, not `skip`, not `host=`, in `--from`/`--to`/
+  `--section`) is one, nothing runs and it exits with `2`, listing each such step and why, so you
+  learn it before a long run, not halfway. With `--keep-going` the run starts anyway and such a
+  step is recorded as `exit=declined` where it is, like any other failure. `no-confirm` can't
+  switch this off.
+
+  ```text
+  md-runbook: 2 steps ask for confirmation in VS Code and need --yes here; nothing ran:
+    Step 4 · upgrade.md:61 · kubectl apply -f gateway.yaml: risky command “apply”
+    Step 9 · upgrade.md:140 · promote: confirm option
+  pass --yes to run them
+  ```
 - **Proposed or assistant-written cells** never run from the command line: they need approval
   and read-only credentials, which only the extension provides.
 - **Cell options** work as in the extension: `skip`, `cwd=`, `timeout=`, `env.X=`,

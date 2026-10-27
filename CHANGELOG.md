@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- **Command line: part of a runbook** ([details](docs/features/cli.md#part-of-a-runbook)).
+  `md-runbook run --from 6` resumes a long run at the step it stopped at, numbered as the run's
+  `▶ Step N` lines number them (the same with or without a range), `--to 9` ends earlier, and
+  `--section "3."` (repeatable) runs only the steps under the headings that start with that
+  text, sub-headings included. The steps left out are skipped and keep their outputs. A range
+  outside the runbook, a section that matches no heading, or a selected step whose
+  `${out:NAME}` is captured only by a step left out stops the run before it starts (exit code 2).
+- **Command line: cells that need `--yes` are found before the first step.** Without `--yes`, a
+  run that has a risky command or a `confirm` block it would run (for this OS, in the selected
+  steps) now stops before anything runs, with exit code 2 and a list of those steps and why,
+  instead of after the steps before them. With `--keep-going` they are declined where they are,
+  as before. Nothing more runs without `--yes` than before.
+- **Pin the Kubernetes context** ([details](docs/features/kubernetes.md#check-or-pin)):
+  `kube-context-mode: pin` in the front matter makes the runbook's and its cells' `kube-context`
+  the context their cells run against, instead of only checking it. Each cell run in VS Code or
+  on the command line (isolated or in a session) gets a `KUBECONFIG` whose first file only says
+  `current-context: NAME`, followed by your own kubeconfig, so kubectl, helm and k9s use that
+  context without `--context` flags and without changing your default context. No credential is
+  copied, a `use-context` in a cell only changes the temporary file, and the file is removed when
+  the run ends or the runbook closes. Before each cell md-runbook checks that your kubeconfig has
+  the context. Cells on an SSH host (`host=`, the app) are still only checked, and lint warns.
+  The user setting `mdRunbook.execution.kubeContextPin` turns pinning off.
+- **`git-bash-path-conversion: off`** in the front matter: on Windows, Git Bash no longer rewrites
+  arguments that look like POSIX paths (`kubectl exec pod -- cat /opt/x` reaching kubectl as
+  `C:/Program Files/Git/opt/x`) in the runbook's bash cells. It sets `MSYS_NO_PATHCONV=1` and
+  `MSYS2_ARG_CONV_EXCL=*`; other shells and systems are unchanged.
+- Lint knows both front matter keys and reports values it ignores.
 - **md-runbook-probe** ([guide](docs/features/kubernetes.md#is-everything-up-endpoint-and-certificate-checks)):
   - **Behaviour change: `--ca FILE` now adds to the system's CAs** instead of replacing them, so
     a cluster's CA and public endpoints are trusted in the same run (before, public endpoints

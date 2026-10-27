@@ -28,7 +28,11 @@ deployment "web" successfully rolled out
   `${param:NAME}` from `--param` or the front matter. Secrets are redacted from everything
   printed and written.
 - **Safe by default:** risky commands (`rm -rf`, `delete`, `--force`, …) don't run without
-  `--yes`, and cells proposed or written by an AI assistant never run.
+  `--yes` (a run that has any stops before its first step and lists them), and cells proposed or
+  written by an AI assistant never run.
+- **Part of a runbook:** `--from 6` resumes at the step a run stopped at (numbered as the run
+  prints them), `--to 9` ends earlier, and `--section "3."` runs the steps under the headings
+  that start with that text.
 - **Reports:** the filled-in runbook, `--report` (HTML), `--pdf` (with the Chrome or Edge already
   installed), `--junit` (one test case per step), and a job summary on GitHub Actions.
 - **Checks without running:** `md-runbook lint runbooks/*.md` reports invalid or unknown cell

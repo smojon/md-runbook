@@ -21,6 +21,7 @@ import { registerSigning } from './signing';
 import { registerOpenInApp } from './openInApp';
 import { registerMakeQr } from './makeQr';
 import { registerIncidentCommands } from './incidentCommands';
+import { registerRunbookEnv } from './runbookEnv';
 import { registerTaskLists } from './taskLists';
 import { registerTerminal } from './terminal';
 import { registerToolbarButtons } from './toolbarButtons';
@@ -81,6 +82,8 @@ export function activate(context: vscode.ExtensionContext): void {
   registerTerminal(context, pipeline);
   // Read-only credentials of AI-proposed cells win over cell options and secrets.
   pipeline.preparers.push(approval.credentials);
+  // kube-context-mode: pin goes in front of the kubeconfig the cell would use (read-only ones too).
+  pipeline.preparers.push(registerRunbookEnv(context));
   // Last, once the environment is final: record the context (cluster, ...) the cell really runs
   // against, and ask for a pending confirmation showing it.
   pipeline.preparers.push(safety.final);

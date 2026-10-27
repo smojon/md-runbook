@@ -47,17 +47,26 @@ export function lintRunbook(text: string): LintProblem[] {
     const lines = text.replace(/^﻿/, '').split(/\r?\n/);
     const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));
     for (let i = 1; i < end; i++) {
-      const m = /^(mode|timeout|cwd|kube-context)\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
+      const m = /^(mode|timeout|cwd|kube-context|kube-context-mode|git-bash-path-conversion)\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
       if (!m) continue;
       const key = m[1]!.toLowerCase();
       const ignored =
         (key === 'mode' && fm.mode === undefined) ||
         (key === 'timeout' && fm.timeoutSeconds === undefined) ||
         (key === 'cwd' && fm.cwd === undefined) ||
-        (key === 'kube-context' && fm.kubeContext === undefined);
+        (key === 'kube-context' && fm.kubeContext === undefined) ||
+        (key === 'kube-context-mode' && fm.kubeContextMode === undefined) ||
+        (key === 'git-bash-path-conversion' && fm.gitBashPathConversion === undefined);
       if (ignored) {
-        const expected = key === 'mode' ? 'session or isolated' : key === 'timeout' ? 'seconds, e.g. 300' : key === 'cwd' ? 'a folder' : 'a Kubernetes context name, e.g. prod-eu';
-        problems.push({ severity: 'warning', line: i, message: `front matter ${key}: "${m[2]}" is ignored (expected ${expected})` });
+        const expected: Record<string, string> = {
+          mode: 'session or isolated',
+          timeout: 'seconds, e.g. 300',
+          cwd: 'a folder',
+          'kube-context': 'a Kubernetes context name, e.g. prod-eu',
+          'kube-context-mode': 'check or pin',
+          'git-bash-path-conversion': 'on or off',
+        };
+        problems.push({ severity: 'warning', line: i, message: `front matter ${key}: "${m[2]}" is ignored (expected ${expected[key]})` });
       }
     }
     const seen: { unix?: string; powershell?: string } = {};
@@ -85,6 +94,19 @@ export function lintRunbook(text: string): LintProblem[] {
       for (const name of twice) problems.push({ severity: 'warning', line: i, message: `front matter shell: "${name}" is ignored: one shell per kind of cell, the first one counts` });
     }
   }
+  // kube-context-mode: pin sets KUBECONFIG for cells run on this machine; on an SSH host the context is only checked.
+  const pin = fm?.kubeContextMode === 'pin';
+  const pinLine = (): number => Math.max(0, text.replace(/^﻿/, '').split(/\r?\n/).findIndex((l) => /^kube-context-mode\s*:/i.test(l)));
+  if (pin && !fm?.kubeContext && !locs.some((l) => parseCellOptions(l.info).kubeContext !== undefined)) {
+    problems.push({ severity: 'warning', line: pinLine(), message: 'front matter kube-context-mode: pin has no effect: no kube-context: in the front matter and no kube-context= on a block' });
+  }
+  if (pin && fm?.practice) {
+    problems.push({
+      severity: 'warning',
+      line: pinLine(),
+      message: `front matter kube-context-mode: pin doesn't apply on the practice host ${fm.practice}: there the Kubernetes context is only checked`,
+    });
+  }
   const declared = new Set((fm?.params ?? []).map((p) => p.name));
   const captured = new Set<string>();
 
@@ -107,6 +129,10 @@ export function lintRunbook(text: string): LintProblem[] {
       if (!KNOWN_OPTIONS.has(key) && !(key.startsWith('env.') && key.length > 4)) at('warning', `unknown cell option "${t.key}" (ignored)`);
     }
     if (/(^|\s)every=/i.test(rest) && !opts.retry) at('warning', 'every= has no effect without retry=');
+    const kubeContext = opts.kubeContext ?? fm?.kubeContext;
+    if (pin && opts.host && kubeContext) {
+      at('warning', `kube-context-mode: pin doesn't apply on the host ${opts.host}: there kubectl's current context must already be ${kubeContext} (only checked)`);
+    }
 
     let refs: ReturnType<typeof findRefs> = [];
     try {

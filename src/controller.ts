@@ -605,7 +605,8 @@ export class RunbookController implements vscode.Disposable {
   /**
    * The wrong-cluster guard (core/kubeContext.ts): with the cell's `kube-context=` or the
    * runbook's `kube-context:`, `kubectl config current-context` runs as the cell would (its session
-   * shell, its environment and folder); why the cell must not run, or undefined.
+   * shell, its environment and folder); why the cell must not run, or undefined. A pinned cell
+   * (kube-context-mode: pin) is checked for the context existing and being current instead.
    */
   private kubeContextRefusal(plan: CellPlan, ctx: PrepareContext, signal: AbortSignal): Promise<string | undefined> {
     const meta: unknown = ctx.cell.metadata?.[META_KEY];
@@ -619,7 +620,7 @@ export class RunbookController implements vscode.Disposable {
         ctx,
       );
       return { exitCode: r.exitCode, stdout, stderr: r.error ?? (r.timedOut ? 'timed out' : stderr) };
-    });
+    }, plan.kubeContextPinned);
   }
 
   /**
