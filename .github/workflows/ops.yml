@@ -57,7 +57,7 @@ jobs:
           mkdir -p "$KEYS"
           ssh-keygen -q -t ecdsa -b 256 -m PKCS8 -N '' -C ci-phone -f "$KEYS/client"
           ssh-keygen -q -t ed25519 -N '' -C ci@example.net -f "$KEYS/signer"
-          ssh-keygen -q -t ed25519 -N '' -C md-runbook-ops -f "$KEYS/ssh_host_ed25519_key"
+          ssh-keygen -q -t ecdsa -b 256 -N '' -C md-runbook-ops -f "$KEYS/ssh_host_ecdsa_key"
           cp "$KEYS/client.pub" "$KEYS/authorized_keys"
           echo "ci@example.net namespaces=\"md-runbook\" $(cut -d' ' -f1,2 "$KEYS/signer.pub")" > "$KEYS/allowed_signers"
           printf '%s\n' 'unsigned = allow' 'allowed_signers = /etc/md-runbook/allowed_signers' 'log = /var/log/md-runbook/gate.log' > "$KEYS/gate.conf"
@@ -76,7 +76,7 @@ jobs:
           kubectl apply -f apps/ops/kubernetes/md-runbook-ops.yaml
           ns="-n md-runbook-ops"
           kubectl $ns create configmap md-runbook-ops-keys --from-file=authorized_keys="$KEYS/authorized_keys"
-          kubectl $ns create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ed25519_key="$KEYS/ssh_host_ed25519_key"
+          kubectl $ns create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ecdsa_key="$KEYS/ssh_host_ecdsa_key"
           kubectl $ns create configmap md-runbook-ops-gate --from-file=gate.conf="$KEYS/gate.conf" \
             --from-file=allowed_signers="$KEYS/allowed_signers" --dry-run=client -o yaml | kubectl apply -f -
           kubectl $ns set image deployment/md-runbook-ops ops=md-runbook-ops:ci
@@ -88,7 +88,7 @@ jobs:
           kubectl -n md-runbook-ops port-forward service/md-runbook-ops 2222:22 > "$RUNNER_TEMP/pf.log" 2>&1 &
           for _ in $(seq 1 30); do nc -z 127.0.0.1 2222 && break; sleep 1; done
           MD_RUNBOOK_OPS_TEST=127.0.0.1:2222:ops MD_RUNBOOK_OPS_KEY="$KEYS/client" \
-          MD_RUNBOOK_OPS_HOST_PUB="$KEYS/ssh_host_ed25519_key.pub" MD_RUNBOOK_OPS_SIGNER="$KEYS/signer" \
+          MD_RUNBOOK_OPS_HOST_PUB="$KEYS/ssh_host_ecdsa_key.pub" MD_RUNBOOK_OPS_SIGNER="$KEYS/signer" \
           MD_RUNBOOK_OPS_CONTEXT=ops-ci MD_RUNBOOK_OPS_IN_CLUSTER=1 \
             node --test --test-reporter=spec out/test/ops.live.test.js
       - name: The gate's events are in the Pod's log
@@ -116,7 +116,7 @@ jobs:
             -v "$cfg/keys:/etc/md-runbook-ops/keys:ro" -v "$cfg/gate:/etc/md-runbook:ro" \
             -v "$cfg/kubeconfig:/etc/md-runbook-ops/kubeconfig:ro" -v ops-state:/var/lib/md-runbook-ops md-runbook-ops:ci
           for _ in $(seq 1 30); do nc -z 127.0.0.1 2223 && break; sleep 1; done
-          docker cp ops:/var/lib/md-runbook-ops/ssh_host_ed25519_key.pub "$RUNNER_TEMP/docker_host.pub"
+          docker cp ops:/var/lib/md-runbook-ops/ssh_host_ecdsa_key.pub "$RUNNER_TEMP/docker_host.pub"
           MD_RUNBOOK_OPS_TEST=127.0.0.1:2223:ops MD_RUNBOOK_OPS_KEY="$KEYS/client" \
           MD_RUNBOOK_OPS_HOST_PUB="$RUNNER_TEMP/docker_host.pub" MD_RUNBOOK_OPS_SIGNER="$KEYS/signer" \
           MD_RUNBOOK_OPS_CONTEXT=kind-ops \

@@ -1,7 +1,7 @@
 # sshd of the md-runbook ops host. It runs as the account ops (not root), so it only logs in as
 # ops, and every login runs md-runbook-gate: this file is in the image, out of the account's reach.
 Port 2222
-HostKey /run/md-runbook-ops/ssh_host_ed25519_key
+HostKey /run/md-runbook-ops/ssh_host_ecdsa_key
 PidFile none
 UsePAM no
 

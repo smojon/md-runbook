@@ -23,7 +23,7 @@ All of these are read-only mounts:
 | Path | What | Without it |
 | --- | --- | --- |
 | `/etc/md-runbook-ops/keys/authorized_keys` | Public keys allowed to log in: the app's key from **Hosts & settings → This app's SSH key**, one line per phone | nobody can log in |
-| `/etc/md-runbook-ops/hostkey/ssh_host_ed25519_key` | The server's host key, which the app pins | one is made at first start (kept in `/var/lib/md-runbook-ops`) |
+| `/etc/md-runbook-ops/hostkey/ssh_host_ecdsa_key` | The server's host key, which the app pins | one is made at first start (kept in `/var/lib/md-runbook-ops`) |
 | `/etc/md-runbook/gate.conf`, `/etc/md-runbook/allowed_signers` | The gate's policy and the publishers' keys | signed runbooks only, and no publishers yet |
 | `/etc/md-runbook-ops/kubeconfig/config` | kubectl's login outside a cluster | inside a cluster: the Pod's service account |
 
@@ -44,9 +44,10 @@ kubectl apply -f apps/ops/kubernetes/md-runbook-ops.yaml
 ns="-n md-runbook-ops"
 # The app's public key (one line per phone):
 kubectl $ns create configmap md-runbook-ops-keys --from-file=authorized_keys
-# A host key that survives restarts (else the app reports a changed key after each one):
-ssh-keygen -q -t ed25519 -N '' -C md-runbook-ops -f ssh_host_ed25519_key
-kubectl $ns create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ed25519_key
+# A host key that survives restarts (else the app reports a changed key after each one).
+# ECDSA P-256: the app's SSH library doesn't accept Ed25519 host keys.
+ssh-keygen -q -t ecdsa -b 256 -N '' -C md-runbook-ops -f ssh_host_ecdsa_key
+kubectl $ns create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ecdsa_key
 # The cluster's name as runbooks will say it (kube-context: prod-eu):
 kubectl $ns set env deployment/md-runbook-ops CLUSTER_NAME=prod-eu
 # Your publishers, and the policy (edit, then apply):

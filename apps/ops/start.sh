@@ -11,19 +11,19 @@ say() { printf 'md-runbook-ops: %s\n' "$*" >&2; }
 # ---- host key ----
 # Yours (a Secret or a mounted file) keeps the fingerprint the app trusts; else one is made once
 # and kept in /var/lib/md-runbook-ops (a volume, or the Pod's own folder until it is replaced).
-mounted=/etc/md-runbook-ops/hostkey/ssh_host_ed25519_key
+mounted=/etc/md-runbook-ops/hostkey/ssh_host_ecdsa_key
 if [ -r "$mounted" ]; then
-  cp "$mounted" "$run/ssh_host_ed25519_key"
+  cp "$mounted" "$run/ssh_host_ecdsa_key"
 else
-  if [ ! -s "$state/ssh_host_ed25519_key" ]; then
-    ssh-keygen -q -t ed25519 -N '' -C md-runbook-ops -f "$state/ssh_host_ed25519_key"
+  if [ ! -s "$state/ssh_host_ecdsa_key" ]; then
+    ssh-keygen -q -t ecdsa -b 256 -N '' -C md-runbook-ops -f "$state/ssh_host_ecdsa_key"
     say "made a host key; a new container makes another, which the app reports as a changed key."
     say "To keep it, put your own key in /etc/md-runbook-ops/hostkey (README.md)."
   fi
-  cp "$state/ssh_host_ed25519_key" "$run/ssh_host_ed25519_key"
+  cp "$state/ssh_host_ecdsa_key" "$run/ssh_host_ecdsa_key"
 fi
-chmod 600 "$run/ssh_host_ed25519_key"
-say "host key $(ssh-keygen -lf "$run/ssh_host_ed25519_key" | awk '{ print $2 }')"
+chmod 600 "$run/ssh_host_ecdsa_key"
+say "host key $(ssh-keygen -lf "$run/ssh_host_ecdsa_key" | awk '{ print $2 }')"
 
 # ---- kubeconfig ----
 # A mounted kubeconfig (outside a cluster), else the Pod's service account (inside one). A

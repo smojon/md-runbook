@@ -157,7 +157,7 @@ spec:
           configMap:
             name: md-runbook-ops-keys
             optional: true
-        # kubectl -n md-runbook-ops create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ed25519_key
+        # kubectl -n md-runbook-ops create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ecdsa_key
         - name: hostkey
           secret:
             secretName: md-runbook-ops-hostkey
