@@ -94,12 +94,19 @@ md-runbook-probe --ca /var/run/secrets/kubernetes.io/serviceaccount/ca.crt kuber
 For each target, the probe:
 1. looks up the name in DNS;
 2. opens a TCP connection;
-3. on TLS ports (443, 6443, 8443 and the like, or with `--tls`), checks the certificate: it must
-   be trusted, be for that name, and not expire within `--days` (default 14).
+3. on TLS ports (443, 6443, 8443 and the like, with `--tls`, or for `tls://host:port`), checks
+   the certificate: it must be trusted, be for that name, and not expire within `--days`
+   (default 14). `--ca FILE` trusts that CA in addition to the system's CAs, `--ca-only FILE`
+   trusts it alone.
 
 It prints one line per target, and its exit code is 1 when any check failed, so a cell fails
 on it. `--ping` also pings. ICMP is often blocked, and a container may not be allowed to send
-it, in which case the line says so.
+it, in which case the line says so. `--format json` and `--format prometheus` print the same
+checks for other programs, with `--label NAME=VALUE` on each
+([all options](../../docs/features/kubernetes.md#options)).
+
+To run only the probe, e.g. as a Pod next to your services, use the
+[probe image](../probe/README.md): no sshd, no gate, no kubectl.
 
 What keeps it as safe as the rest:
 - **It runs only as a cell**, through the gate: signed runbooks only, unless `gate.conf` allows
@@ -108,7 +115,8 @@ What keeps it as safe as the rest:
 - **It writes an audit event for every check** to the gate's log, which is also the container's
   output. Each event records the key, the client, the signed run that started the check, the
   target, its address, the result, and the certificate's expiry and SHA-256 fingerprint.
-  `md-runbook audit` lists these events under Endpoint checks.
+  `md-runbook audit` lists these events under Endpoint checks. Here `gate.conf` alone decides
+  where they go; `MD_RUNBOOK_PROBE_LOG` only applies where no gate runs the probe.
 - **Export Report shows the checks** of a run record (an incident or a drill) in an Endpoint
   checks table: when each check ran, which endpoint, up or not, and when its certificate
   expires. The JSON export has the same data.

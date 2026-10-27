@@ -91,6 +91,75 @@ host:
 checks the cluster, the API server, every Ingress, your own endpoints and cert-manager's
 certificates, then restarts a deployment (and rolls it back if needed).
 
+### Options
+
+| Option | What it does |
+| --- | --- |
+| `--days N` | fail when a certificate expires within N days (default 14) |
+| `--timeout S` | seconds per connection (default 5) |
+| `--ca FILE` | trust this CA in addition to the system's CAs, e.g. the cluster's `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` |
+| `--ca-only FILE` | trust this CA and no other |
+| `--no-verify` | report the expiry without checking trust or the name (self-signed endpoints) |
+| `--tls`, `--no-tls` | check TLS on every port, or on none; otherwise on 443, 6443, 8443, 9443, 465, 636, 993 and 995 |
+| `--ping` | also ping (ICMP is often blocked, or not allowed in a container) |
+| `--format F` | `text` (the lines above, the default), `json` or `prometheus` |
+| `--label NAME=VALUE` | add a label to every metric and JSON object (repeatable) |
+
+A target is `host`, `host:port`, `[v6]:port` or a URL: `https://host/path`, and
+`tls://host:port` (always check TLS, on any port) or `tcp://host:port` (only TCP), which win over
+`--tls` and `--no-tls`. `-` reads targets from stdin. The exit code is 1 when a check failed and
+2 on bad usage, in every format.
+
+Up to 0.11.0, `--ca` replaced the system's CAs, so with it public endpoints were reported as
+*not trusted*. `--ca-only` does that now.
+
+### Formats and labels
+
+`--format json` prints one object per target and line (JSON Lines): `target`, `ok`, `address`,
+`reachable` (a TCP connection opened), `tcp_ms`, `tls` (TLS checked), `trusted` (`null` when not
+checked), `not_after`, `days_left`, `subject`, `issuer`, `detail` (the text line's detail),
+`time` and `labels`.
+
+```json
+{"time":"2026-10-27T10:00:01Z","target":"shop.example.net:443","ok":false,"address":"203.0.113.9","reachable":true,"tcp_ms":20,"tls":true,"trusted":true,"not_after":"2026-11-05T12:00:00Z","days_left":9,"subject":"shop.example.net","issuer":"R11","detail":"203.0.113.9, tcp 20ms, certificate expires in 9 days (2026-11-05), under 14, CN=shop.example.net, issuer R11","labels":{"component":"shop"}}
+```
+
+`--format prometheus` prints metrics in Prometheus's text format, gauges labelled
+`target="host:port"` and with the `--label`s:
+
+| Metric | Value |
+| --- | --- |
+| `md_runbook_probe_ok` | 1 if every check of the target passed, else 0 |
+| `md_runbook_probe_reachable` | 1 if a TCP connection opened, else 0 |
+| `md_runbook_probe_certificate_expiry_timestamp_seconds` | when the certificate expires (Unix time); only TLS targets with a certificate |
+| `md_runbook_probe_last_run_timestamp_seconds` | when the target was checked (Unix time) |
+
+```text
+md_runbook_probe_ok{target="shop.example.net:443",component="shop"} 0
+md_runbook_probe_certificate_expiry_timestamp_seconds{target="shop.example.net:443",component="shop"} 1793880000
+```
+
+`--label NAME=VALUE` takes a Prometheus label name (letters, digits and `_`, not `target`, not
+starting with `__`, each once) and a value without control characters; quotes and backslashes
+are escaped. One run has one set of labels. The text format has no labels.
+
+### Audit outside the gate
+
+Where the gate runs the probe (on the ops host), its `gate.conf` decides where the events go,
+and nothing else can change that. Elsewhere, e.g. `kubectl exec` into a Pod, the environment
+variable `MD_RUNBOOK_PROBE_LOG` may name a file, `stderr` or `syslog`; without it nothing is
+logged. In a container, `MD_RUNBOOK_PROBE_LOG=/proc/1/fd/1` puts the events into the
+container's log, where `kubectl logs` and `md-runbook audit` find them. If the destination
+can't be written (a read-only filesystem, no syslog), the probe says so once on stderr.
+
+### The probe image
+
+The probe also comes alone, as `ghcr.io/smojon/md-runbook-probe`
+([apps/probe](../../apps/probe/README.md)): no sshd, no gate, no kubectl, non-root, the probe
+as its entrypoint. Its example manifest runs it as a Pod next to your services, every 60 s with
+`--format prometheus` and a sidecar that serves the metrics, without a service account token
+and with a read-only root filesystem.
+
 ## Not there yet
 
 - Pods aren't hosts: the app doesn't open `kubectl exec` sessions into a pod by itself. A cell
