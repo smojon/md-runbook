@@ -102,8 +102,8 @@ For each target, the probe:
 It prints one line per target, and its exit code is 1 when any check failed, so a cell fails
 on it. `--ping` also pings. ICMP is often blocked, and a container may not be allowed to send
 it, in which case the line says so. `--format json` and `--format prometheus` print the same
-checks for other programs, with `--label NAME=VALUE` on each
-([all options](../../docs/features/kubernetes.md#options)).
+checks for other programs, with labels from `--label NAME=VALUE` or per target
+(`tls://web:8443 component=proxy`) ([all options](../../docs/features/kubernetes.md#options)).
 
 To run only the probe, e.g. as a Pod next to your services, use the
 [probe image](../probe/README.md): no sshd, no gate, no kubectl.

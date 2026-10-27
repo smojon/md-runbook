@@ -12,8 +12,11 @@
     prometheus`** (`md_runbook_probe_ok`, `md_runbook_probe_reachable`,
     `md_runbook_probe_certificate_expiry_timestamp_seconds`,
     `md_runbook_probe_last_run_timestamp_seconds`, labelled `target="host:port"`). The text
-    lines stay as they were. **`--label NAME=VALUE`** adds a label to every metric and JSON
-    object, e.g. `component="proxy"`.
+    lines stay as they were. **Labels:** `--label NAME=VALUE` adds a label to every metric and
+    JSON object, and `NAME=VALUE` words after a target label that target only (on stdin: the
+    targets on that line), over a `--label` of the same name, e.g. `tls://idm-web:8989
+    component=proxy`. So one scrape tells components apart; the same endpoint with other labels
+    is another series.
   - **`tls://host:port` and `tcp://host:port` targets** check TLS on any port, or never, per
     target.
   - **Audit outside the gate.** Where no gate runs the probe (no `/etc/md-runbook/gate.conf`,

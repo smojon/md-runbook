@@ -115,15 +115,17 @@ describe('md-runbook-probe, the script', { skip: probeSkip }, () => {
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     return (server.address() as AddressInfo).port;
   };
-  /** Async: the TLS servers answer from this process. */
-  const probe = (args: string[], env: Record<string, string> = {}): Promise<{ code: number | null; out: string; err: string }> =>
+  /** Async: the TLS servers answer from this process. `input` goes to stdin (for `-`). */
+  const probe = (args: string[], env: Record<string, string> = {}, input = ''): Promise<{ code: number | null; out: string; err: string }> =>
     new Promise((resolve) => {
       const base = { ...process.env };
       delete base.MD_RUNBOOK_PROBE_LOG;
       const p = spawn('bash', [script, '--timeout', '3', ...args], {
         env: { ...base, SSL_CERT_FILE: path.join(dir, 'ca-b.pem'), SSL_CERT_DIR: path.join(dir, 'no-certs'), ...env },
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
+      p.stdin.on('error', () => undefined);
+      p.stdin.end(input);
       let out = '';
       let err = '';
       p.stdout.on('data', (d: Buffer) => (out += d.toString('utf8')));
@@ -294,6 +296,72 @@ describe('md-runbook-probe, the script', { skip: probeSkip }, () => {
     assert.match(s.out, /^FAIL /);
     assert.equal(parseGateLog(s.err).events.filter((e) => e.event === 'probe').length, 1, s.err);
     assert.equal((await probe([a()])).err, '');
+  });
+
+  it('labels per target: on a stdin line for its targets, on the command line for the one before; over --label', async () => {
+    const tcpB = `tcp://127.0.0.1:${portB}`;
+    const lines = [`${a()} component=proxy`, `${tcpB} component=auth`, `${tcpB} component=admin4`, `${tcpB}   component=admin4`, '127.0.0.1:1 127.0.0.1:2 tier=db'];
+    const r = await probe(['--format', 'prometheus', '--ca', caA(), '--label', 'cluster=c1', '--label', 'component=default', '-'], {}, lines.join('\n') + '\n');
+    assert.equal(r.code, 1, r.err);
+    // One series per target and labels: the two mariadb-like lines are two, the repeated one once.
+    const ok = r.out.split('\n').filter((l) => l.startsWith('md_runbook_probe_ok{'));
+    assert.deepEqual(ok, [
+      `md_runbook_probe_ok{target="127.0.0.1:${portA}",cluster="c1",component="proxy"} 1`,
+      `md_runbook_probe_ok{target="127.0.0.1:${portB}",cluster="c1",component="auth"} 1`,
+      `md_runbook_probe_ok{target="127.0.0.1:${portB}",cluster="c1",component="admin4"} 1`,
+      `md_runbook_probe_ok{target="127.0.0.1:1",cluster="c1",component="default",tier="db"} 0`,
+      `md_runbook_probe_ok{target="127.0.0.1:2",cluster="c1",component="default",tier="db"} 0`,
+    ]);
+    assert.equal(r.out.split('\n').filter((l) => l.startsWith('md_runbook_probe_certificate_expiry_timestamp_seconds{')).length, 1);
+
+    const j = await probe(['--format', 'json', '--label', 'cluster=c1', `tcp://127.0.0.1:${portA}`, 'component=proxy', 'note=a "b" \\c', tcpB]);
+    assert.equal(j.code, 0, j.err);
+    const labels = j.out
+      .trimEnd()
+      .split('\n')
+      .map((l) => (JSON.parse(l) as { labels: unknown }).labels);
+    assert.deepEqual(labels, [{ cluster: 'c1', component: 'proxy', note: 'a "b" \\c' }, { cluster: 'c1' }]);
+
+    // Text: no labels; the same target with other labels is another line.
+    const t = await probe(['-'], {}, `tcp://127.0.0.1:${portA} component=x\ntcp://127.0.0.1:${portA} component=y\n`);
+    assert.equal(t.code, 0, t.err);
+    const re = new RegExp(`^OK {4}127\\.0\\.0\\.1:${portA} +127\\.0\\.0\\.1, tcp \\d+ms$`);
+    assert.deepEqual(
+      t.out
+        .trimEnd()
+        .split('\n')
+        .map((l) => re.test(l)),
+      [true, true],
+    );
+    assert.equal(parseProbeOutput(t.out).length, 2);
+  });
+
+  it('labels per target are checked like --label; a word that is no label is a target, checked as before', async () => {
+    for (const args of [['component=x', a()], [a(), 'target=x'], [a(), '__a=1'], [a(), 'a=1', 'a=2'], [a(), 'a='], [a(), 'a=x\ty'], ['-', 'a=1']]) {
+      const r = await probe([...args, '--format', 'json'], { MD_RUNBOOK_PROBE_LOG: 'stderr' }, `${a()}\n`);
+      assert.deepEqual([r.code, r.out], [2, ''], `${JSON.stringify(args)}: ${r.err}`);
+      assert.doesNotMatch(r.err, /"event":"probe"/);
+    }
+    for (const input of ['component=x 127.0.0.1:1\n', '127.0.0.1:1 a=1 a=2\n', '127.0.0.1:1 target=x\n']) {
+      const r = await probe(['-'], {}, input);
+      assert.deepEqual([r.code, r.out], [2, ''], `${JSON.stringify(input)}: ${r.err}`);
+    }
+    // Not NAME= at the start: a target, which fails the check. No globbing of words from stdin.
+    const odd = await probe(['--format', 'json', '-'], {}, '127.0.0.1:1 1x=y a-b=c c=*\n');
+    assert.equal(odd.code, 1);
+    const objs = odd.out
+      .trimEnd()
+      .split('\n')
+      .map((l) => JSON.parse(l) as { target: string; detail: string; labels: unknown });
+    assert.deepEqual(
+      objs.map((o) => [o.target, o.labels]),
+      [
+        ['127.0.0.1:1', { c: '*' }],
+        ['1xy', { c: '*' }],
+        ['a-bc', { c: '*' }],
+      ],
+    );
+    assert.equal(objs[1]!.detail, 'not a host name, address or URL');
   });
 
   it("an audit log it can't write: one warning on stderr, the output and exit code as without", async () => {

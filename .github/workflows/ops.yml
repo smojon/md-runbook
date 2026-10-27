@@ -195,6 +195,12 @@ jobs:
           grep -q '^md_runbook_probe_ok{target="tls-server:8443",component="ci"} 1$' probe.prom
           grep -q '^md_runbook_probe_ok{target="nowhere.invalid:443",component="ci"} 0$' probe.prom
           grep -q '^md_runbook_probe_certificate_expiry_timestamp_seconds{target="tls-server:8443",component="ci"} [0-9]*$' probe.prom
+          # Labels per target, from stdin: one endpoint for two components is two series in one scrape.
+          printf '%s\n' 'tls-server:8443 component=proxy' 'tcp://tls-server:8443 component=auth' 'tcp://tls-server:8443 component=admin4' |
+            docker run --rm -i --network probe -v "$TLS:/tls:ro" md-runbook-probe:ci --format prometheus --ca /tls/ca.pem --label cluster=ci - > labels.prom
+          cat labels.prom
+          docker run --rm -i --entrypoint promtool prom/prometheus:v3.5.0 check metrics < labels.prom
+          test "$(grep -c '^md_runbook_probe_ok{target="tls-server:8443",cluster="ci",component="\(proxy\|auth\|admin4\)"} 1$' labels.prom)" = 3
 
       - name: The audit in the container's log, from a check by docker exec
         run: |
@@ -226,8 +232,10 @@ jobs:
           cat headers.txt metrics.prom
           grep -qi '^content-type: text/plain' headers.txt
           docker run --rm -i --entrypoint promtool prom/prometheus:v3.5.0 check metrics < metrics.prom
-          grep -q '^md_runbook_probe_ok{target="kubernetes.default.svc:443",cluster="my-cluster"} 1$' metrics.prom
-          grep -q '^md_runbook_probe_ok{target="kube-dns.kube-system.svc:53",cluster="my-cluster"} 1$' metrics.prom
+          # The ConfigMap's labels per target: kube-dns for two components is two series.
+          grep -q '^md_runbook_probe_ok{target="kubernetes.default.svc:443",cluster="my-cluster",component="api"} 1$' metrics.prom
+          grep -q '^md_runbook_probe_ok{target="kube-dns.kube-system.svc:53",cluster="my-cluster",component="dns"} 1$' metrics.prom
+          grep -q '^md_runbook_probe_ok{target="kube-dns.kube-system.svc:53",cluster="my-cluster",component="api"} 1$' metrics.prom
           # A check by hand is an event in the Pod's log; the loop's own checks are not.
           kubectl $ns exec deploy/md-runbook-probe -c probe -- md-runbook-probe --ca /etc/kube-ca/ca.crt https://kubernetes.default.svc/healthz
           for _ in $(seq 1 10); do kubectl $ns logs deploy/md-runbook-probe -c probe > pod.log; grep -q '"event":"probe"' pod.log && break; sleep 1; done

@@ -103,7 +103,7 @@ certificates, then restarts a deployment (and rolls it back if needed).
 | `--tls`, `--no-tls` | check TLS on every port, or on none; otherwise on 443, 6443, 8443, 9443, 465, 636, 993 and 995 |
 | `--ping` | also ping (ICMP is often blocked, or not allowed in a container) |
 | `--format F` | `text` (the lines above, the default), `json` or `prometheus` |
-| `--label NAME=VALUE` | add a label to every metric and JSON object (repeatable) |
+| `--label NAME=VALUE` | add a label to every metric and JSON object (repeatable); `NAME=VALUE` after a target labels that target only |
 
 A target is `host`, `host:port`, `[v6]:port` or a URL: `https://host/path`, and
 `tls://host:port` (always check TLS, on any port) or `tcp://host:port` (only TCP), which win over
@@ -125,7 +125,7 @@ checked), `not_after`, `days_left`, `subject`, `issuer`, `detail` (the text line
 ```
 
 `--format prometheus` prints metrics in Prometheus's text format, gauges labelled
-`target="host:port"` and with the `--label`s:
+`target="host:port"` and with the target's labels:
 
 | Metric | Value |
 | --- | --- |
@@ -139,9 +139,30 @@ md_runbook_probe_ok{target="shop.example.net:443",component="shop"} 0
 md_runbook_probe_certificate_expiry_timestamp_seconds{target="shop.example.net:443",component="shop"} 1793880000
 ```
 
-`--label NAME=VALUE` takes a Prometheus label name (letters, digits and `_`, not `target`, not
-starting with `__`, each once) and a value without control characters; quotes and backslashes
-are escaped. One run has one set of labels. The text format has no labels.
+Labels come from two places. `--label NAME=VALUE` is on every target. `NAME=VALUE` words after
+a target are on that target only, and win over a `--label` of the same name: on the command
+line for the target just before them, on a stdin line for every target on that line. So one
+run, and one scrape, can tell components apart, even where two share an endpoint:
+
+```sh
+md-runbook-probe --format prometheus --label cluster=prod - <<'EOF'
+tls://idm-web:8989 component=proxy
+tcp://mariadb.mariadb.svc:3306 component=auth
+tcp://mariadb.mariadb.svc:3306 component=admin4
+EOF
+```
+
+```text
+md_runbook_probe_ok{target="mariadb.mariadb.svc:3306",cluster="prod",component="auth"} 1
+md_runbook_probe_ok{target="mariadb.mariadb.svc:3306",cluster="prod",component="admin4"} 1
+```
+
+A label name is a Prometheus label name (letters, digits and `_`, not `target`, not starting
+with `__`, once per target), the value has no control characters; quotes and backslashes are
+escaped. A label before any target is bad usage (exit 2). A word that doesn't start like a
+label (`NAME=`) is a target and checked as one. In Prometheus format a target with the same
+labels twice is one series; the same target with other labels is another. The text format
+prints no labels: a target listed twice is two lines.
 
 ### Audit outside the gate
 

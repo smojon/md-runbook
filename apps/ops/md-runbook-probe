@@ -1,9 +1,13 @@
 #!/bin/bash
 # md-runbook-probe: is each endpoint up, seen from here, and when does its certificate expire?
 #
-#   md-runbook-probe [options] TARGET...       TARGET: host, host:port, [v6]:port, https://host/path,
+#   md-runbook-probe [options] TARGET [N=V...]...   TARGET: host, host:port, [v6]:port, https://host/path,
 #                                              tls://host:port (always TLS) or tcp://host:port (never)
 #   kubectl get ingress -A -o jsonpath='…' | md-runbook-probe -     targets from stdin, one per line
+#
+# N=V after a target labels that target's metrics and JSON object (e.g. component=proxy), over a
+# --label of the same name; on stdin it labels the targets on its line:
+#   printf '%s\n' 'tls://web:8443 component=proxy' 'tcp://db:3306 component=auth' | md-runbook-probe -
 #
 # For each target: the name resolves (DNS), a TCP connection opens, and on TLS ports (443, 6443,
 # 8443, 9443, 465, 636, 993, 995, --tls or tls://) the certificate is trusted, is for that name and
@@ -25,6 +29,7 @@
 # Each check is also an audit event: in md-runbook-gate's log when the gate runs the probe (its
 # /etc/md-runbook/gate.conf), else where MD_RUNBOOK_PROBE_LOG says: a file, stderr or syslog.
 set -u
+set -f # no globbing: a target or label read from stdin is a word, never file names
 export LC_ALL=C
 
 days=14
@@ -37,12 +42,28 @@ ping=0
 format=text
 stdin=0
 targets=()
+tlabels=() # per target: its own NAME=VALUE labels, one per line
 labels=()
 
 usage() {
   sed -n '2,/^set -u/{/^set -u/d;s/^# \{0,1\}//;p}' "$0"
   exit "${1:-2}"
 }
+
+# Labels: NAME as Prometheus allows it (not target, not __reserved, once per target), a VALUE
+# without control characters; escaped for each format. A word after a target is a label when it
+# starts like one (NAME=); anything else is a target, checked as before.
+is_label() { [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; }
+# check_label WORD LIST (the labels so far, one per line): exit 2 unless WORD may join LIST.
+check_label() {
+  local name=${1%%=*} value=${1#*=}
+  if [[ $1 != *=* || ! $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ || $name == __* || $name == target || $'\n'$2 == *$'\n'"$name="* || -z $value ]]; then
+    echo "md-runbook-probe: a label is NAME=VALUE, once per NAME (letters, digits and _, not target): $(printf '%q' "$1")" >&2
+    exit 2
+  fi
+  [[ $value != *[[:cntrl:]]* ]] || { echo "md-runbook-probe: label $name: no control characters in the value" >&2; exit 2; }
+}
+no_target() { echo "md-runbook-probe: $(printf '%q' "$1"): a label comes after the target it is for" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case $1 in
     --days) days=${2:-}; shift 2 || usage ;;
@@ -62,9 +83,40 @@ while [ $# -gt 0 ]; do
     --label) labels+=("${2:-}"); shift 2 || usage ;;
     --label=*) labels+=("${1#*=}"); shift ;;
     -h | --help) usage 0 ;;
-    -) stdin=1; while IFS= read -r l || [ -n "$l" ]; do for t in $l; do targets+=("$t"); done; done; shift ;;
+    -)
+      # A line's labels are for all the targets on that line.
+      stdin=1
+      while IFS= read -r l || [ -n "$l" ]; do
+        line=()
+        own=
+        for w in $l; do
+          if is_label "$w"; then
+            [ ${#line[@]} -gt 0 ] || no_target "$w"
+            check_label "$w" "$own"
+            own+="$w"$'\n'
+          else
+            line+=("$w")
+          fi
+        done
+        for t in ${line[@]+"${line[@]}"}; do targets+=("$t"); tlabels+=("$own"); done
+      done
+      last=
+      shift
+      ;;
     -*) echo "md-runbook-probe: unknown option $1" >&2; usage ;;
-    *) targets+=("$1"); shift ;;
+    *)
+      # On the command line a label is for the target just before it.
+      if is_label "$1"; then
+        [ -n "${last:-}" ] || no_target "$1"
+        check_label "$1" "${tlabels[$last]}"
+        tlabels[last]+="$1"$'\n'
+      else
+        targets+=("$1")
+        tlabels+=("")
+        last=$((${#targets[@]} - 1))
+      fi
+      shift
+      ;;
   esac
 done
 [[ $days =~ ^[0-9]+$ && $timeout =~ ^[0-9]+$ ]] || { echo "md-runbook-probe: --days and --timeout take whole numbers" >&2; exit 2; }
@@ -77,23 +129,35 @@ done
 json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')"; }
 prom_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
 
-# --label NAME=VALUE: NAME as Prometheus allows it (not target, not __reserved, once), a VALUE
-# without control characters; escaped for each format.
-prom_labels=
-json_labels=
-names=" target "
+# --label NAME=VALUE: on every target, unless the target has its own NAME.
+global=
 for l in ${labels[@]+"${labels[@]}"}; do
-  name=${l%%=*}
-  value=${l#*=}
-  if [[ $l != *=* || ! $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ || $name == __* || $names == *" $name "* || -z $value ]]; then
-    echo "md-runbook-probe: --label takes NAME=VALUE, once per NAME (letters, digits and _, not target): $(printf '%q' "$l")" >&2
-    exit 2
-  fi
-  [[ $value != *[[:cntrl:]]* ]] || { echo "md-runbook-probe: --label $name: no control characters in the value" >&2; exit 2; }
-  names="$names$name "
-  prom_labels="$prom_labels,$name=$(prom_str "$value")"
-  json_labels="$json_labels${json_labels:+,}$(json_str "$name"):$(json_str "$value")"
+  check_label "$l" "$global"
+  global+="$l"$'\n'
 done
+# target_labels OWN: the target's labels for each format (t_prom, t_json): the --label ones in
+# their order, with the target's own value where it has one, then the rest of its own.
+target_labels() {
+  local rest=$global$1 w name value seen=$'\n'
+  t_prom=
+  t_json=
+  while [ -n "$rest" ]; do
+    w=${rest%%$'\n'*}
+    rest=${rest#*$'\n'}
+    name=${w%%=*}
+    [[ $seen == *$'\n'"$name"$'\n'* ]] && continue
+    seen+="$name"$'\n'
+    value=$'\n'$1
+    if [[ $value == *$'\n'"$name="* ]]; then
+      value=${value#*$'\n'"$name="}
+      value=${value%%$'\n'*}
+    else
+      value=${w#*=}
+    fi
+    t_prom+=",$name=$(prom_str "$value")"
+    t_json+="${t_json:+,}$(json_str "$name"):$(json_str "$value")"
+  done
+}
 
 if [ ${#targets[@]} -eq 0 ]; then
   # Nothing to check (e.g. a cluster without Ingresses) is not a failure.
@@ -168,7 +232,8 @@ log_event() {
 
 # ---- output ----
 # text: the lines (what Export Report reads). json: an object per target and line. prometheus:
-# the metric families, printed at the end; a target listed twice is in them once.
+# the metric families, printed at the end; a target listed twice with the same labels is in them
+# once.
 jstr() { if [ -n "$1" ]; then json_str "$1"; else printf null; fi; }
 jnum() { printf '%s' "${1:-null}"; }
 jbool() { case $1 in 1) printf true ;; 0) printf false ;; *) printf null ;; esac; }
@@ -176,7 +241,7 @@ m_ok=
 m_reachable=
 m_expiry=
 m_last_run=
-seen=" "
+seen=$'\n'
 emit() {
   local result=$1 detail=$2 ok=0 l
   [ "$result" = OK ] && ok=1
@@ -186,12 +251,12 @@ emit() {
       printf '{"time":"%s","target":%s,"ok":%s,"address":%s,"reachable":%s,"tcp_ms":%s,"tls":%s,"trusted":%s,"not_after":%s,"days_left":%s,"subject":%s,"issuer":%s,"detail":%s,"labels":{%s}}\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_str "$label")" "$(jbool "$ok")" "$(jstr "${addr:-}")" "$(jbool "$reachable")" \
         "$(jnum "$ms")" "$(jbool "$use_tls")" "$(jbool "$trusted")" "$(jstr "$c_end")" "$(jnum "$c_left")" \
-        "$(jstr "$subject")" "$(jstr "$issuer")" "$(json_str "$detail")" "$json_labels"
+        "$(jstr "$subject")" "$(jstr "$issuer")" "$(json_str "$detail")" "$t_json"
       ;;
     prometheus)
-      case $seen in *" $label "*) return ;; esac
-      seen="$seen$label "
-      l="{target=$(prom_str "$label")$prom_labels}"
+      l="{target=$(prom_str "$label")$t_prom}"
+      case $seen in *$'\n'"$l"$'\n'*) return ;; esac
+      seen+="$l"$'\n'
       m_ok+="md_runbook_probe_ok$l $ok"$'\n'
       m_reachable+="md_runbook_probe_reachable$l $reachable"$'\n'
       [ -z "$c_epoch" ] || m_expiry+="md_runbook_probe_certificate_expiry_timestamp_seconds$l $c_epoch"$'\n'
@@ -318,6 +383,9 @@ probe() {
   fi
 }
 
-for t in "${targets[@]}"; do probe "$t"; done
+for i in "${!targets[@]}"; do
+  target_labels "${tlabels[i]}"
+  probe "${targets[i]}"
+done
 [ "$format" != prometheus ] || metrics
 exit "$failed"

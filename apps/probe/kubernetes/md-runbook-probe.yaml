@@ -10,8 +10,10 @@ metadata:
   labels:
     pod-security.kubernetes.io/enforce: restricted
 ---
-# One target per line: host:port, https://host/path, tls://host:port, tcp://host:port.
-# Read again on every round: `kubectl edit` takes effect within a minute or two.
+# One target per line: host:port, https://host/path, tls://host:port, tcp://host:port, then
+# its own labels (NAME=VALUE). An endpoint that several components depend on is listed once per
+# component: one series each, in one scrape. Read again on every round: `kubectl edit` takes
+# effect within a minute or two.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,8 +21,9 @@ metadata:
   namespace: md-runbook-probe
 data:
   targets: |
-    kubernetes.default.svc:443
-    tcp://kube-dns.kube-system.svc:53
+    kubernetes.default.svc:443 component=api
+    tcp://kube-dns.kube-system.svc:53 component=dns
+    tcp://kube-dns.kube-system.svc:53 component=api
 ---
 apiVersion: apps/v1
 kind: Deployment

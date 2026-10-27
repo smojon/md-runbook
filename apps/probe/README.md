@@ -24,7 +24,8 @@ For a Pod, these matter most:
   `md_runbook_probe_last_run_timestamp_seconds`, each with `target="host:port"`.
   `--format json` prints one JSON object per target and line.
 - `--label NAME=VALUE` adds a label to every metric and JSON object, e.g. `--label
-  component=proxy`. One run has one set of labels.
+  cluster=prod`. `NAME=VALUE` after a target labels that target only (on stdin: the targets
+  on its line), e.g. `tls://idm-web:8989 component=proxy`, and wins over a `--label`.
 - `tls://host:port` checks TLS on any port, `tcp://host:port` only opens a TCP connection.
 - `--ca FILE` trusts that CA in addition to the system's CAs, `--ca-only FILE` trusts it alone.
 
@@ -32,7 +33,7 @@ For a Pod, these matter most:
 
 [kubernetes/md-runbook-probe.yaml](kubernetes/md-runbook-probe.yaml) sets up:
 - the namespace `md-runbook-probe`, with Pod Security `restricted` enforced;
-- a ConfigMap with the targets, one per line;
+- a ConfigMap with the targets, one per line, each with its own labels (`component=...`);
 - a Deployment: the probe in a loop every 60 s with `--format prometheus`, writing to a shared
   in-memory folder, and a busybox sidecar that serves it on port 9100 as `/metrics.prom`. No
   service account token, a read-only root filesystem, no capabilities;
@@ -54,10 +55,24 @@ An alert on certificates that expire within 14 days:
   expr: md_runbook_probe_certificate_expiry_timestamp_seconds - time() < 14 * 86400
 ```
 
-To label targets differently (`component="proxy"` for some, `component="idm"` for others), run
-one probe per label set, each with its own file and scrape path, or add the label in Prometheus
-from `target` with `metric_relabel_configs`. Two runs' outputs can't simply be concatenated: a
-metric's lines must be together, with one `# HELP` and `# TYPE`.
+One scrape has every component: the labels after each target in the ConfigMap end up on its
+series, and the same endpoint listed for two components is two series.
+
+```text
+# targets
+tls://idm-web.my-app.svc:8989 component=proxy
+tcp://mariadb.mariadb.svc:3306 component=auth
+tcp://mariadb.mariadb.svc:3306 component=admin4
+```
+
+```text
+md_runbook_probe_ok{target="idm-web.my-app.svc:8989",cluster="my-cluster",component="proxy"} 1
+md_runbook_probe_ok{target="mariadb.mariadb.svc:3306",cluster="my-cluster",component="auth"} 1
+md_runbook_probe_ok{target="mariadb.mariadb.svc:3306",cluster="my-cluster",component="admin4"} 1
+```
+
+Run the probe once, with all targets: two runs' outputs can't simply be concatenated (a
+metric's lines must be together, with one `# HELP` and `# TYPE`).
 
 ## Checks by hand, and the audit trail
 
