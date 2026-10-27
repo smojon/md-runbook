@@ -40,7 +40,8 @@ jobs:
           shellcheck -s sh -S warning apps/ops/start.sh apps/gate/md-runbook-gate
 
       - name: Build the image
-        run: docker build -t md-runbook-ops:ci -f apps/ops/Dockerfile apps
+        # No attestations: kind's containerd can't use an image index that has them.
+        run: docker build --provenance=false --sbom=false -t md-runbook-ops:ci -f apps/ops/Dockerfile apps
       - name: The image runs as ops, with the gate as its only command
         run: |
           test "$(docker inspect -f '{{.Config.User}}' md-runbook-ops:ci)" = 10001:10001
@@ -65,7 +66,9 @@ jobs:
         run: |
           command -v kind || { sudo curl -fsSLo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 && sudo chmod +x /usr/local/bin/kind; }
           kind create cluster --name ops --wait 180s
-          kind load docker-image md-runbook-ops:ci --name ops
+          docker save md-runbook-ops:ci -o "$RUNNER_TEMP/ops-image.tar"
+          kind load image-archive "$RUNNER_TEMP/ops-image.tar" --name ops
+          docker exec ops-control-plane crictl images | grep md-runbook-ops
           kubectl -n default create deployment web --image=registry.k8s.io/pause:3.10
 
       - name: Install the manifest the way the README says
