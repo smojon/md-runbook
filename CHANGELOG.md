@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Command line: part of a runbook** ([details](docs/features/cli.md#part-of-a-runbook)).
+  `md-runbook run --from 6` resumes a long run at the step it stopped at, numbered as the run's
+  `▶ Step N` lines number them (the same with or without a range), `--to 9` ends earlier, and
+  `--section "3."` (repeatable) runs only the steps under the headings that start with that
+  text, sub-headings included. The steps left out are skipped and keep their outputs. A range
+  outside the runbook, a section that matches no heading, or a selected step whose
+  `${out:NAME}` is captured only by a step left out stops the run before it starts (exit code 2).
+- **Command line: cells that need `--yes` are found before the first step.** Without `--yes`, a
+  run that has a risky command or a `confirm` block it would run (for this OS, in the selected
+  steps) now stops before anything runs, with exit code 2 and a list of those steps and why,
+  instead of after the steps before them. With `--keep-going` they are declined where they are,
+  as before. Nothing more runs without `--yes` than before.
+
 ## 0.11.0
 
 - **Kubernetes** ([guide](docs/features/kubernetes.md)):
