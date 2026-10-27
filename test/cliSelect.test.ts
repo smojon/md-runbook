@@ -1,6 +1,6 @@
 /**
  * Part of a runbook from the command line (--from, --to, --section), and what `md-runbook run`
- * refuses before the first step: a bad selection, a capture left out.
+ * refuses before the first step: a bad selection, a capture left out, cells that need --yes.
  * The runs use real bash (skipped without it).
  */
 import { strict as assert } from 'node:assert';
@@ -12,12 +12,13 @@ import { ShellSettings, locateCodeCells, parse } from '@md-runbook/core';
 import { nodeShellEnv, resolveShell } from '@md-runbook/core/node';
 import { stepNumbers } from '@md-runbook/core/os';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { parseArgs } from '../src/cli/main';
+import { main, parseArgs } from '../src/cli/main';
 import { CliOptions, RunSummary, runRunbook } from '../src/cli/run';
 import { RunUsageError, Selection, formatSteps, headingsOf, selectSteps } from '../src/cli/select';
 
 const settings: ShellSettings = { bashPath: process.env.MD_RUNBOOK_BASH };
 const hasBash = resolveShell('bash', settings, nodeShellEnv()).ok;
+const otherOs = process.platform === 'win32' ? 'linux' : 'windows';
 
 // Steps: 1 one, 2 two (captures X), 3 three (os= alternatives), 4 four (uses X), 5 five, 6 six.
 const RUNBOOK = [
@@ -198,5 +199,106 @@ describe('cli: running part of a runbook', { skip: !hasBash && 'bash not install
     assert.match(r.error.message, /^step 4 \(r\.md:\d+\) uses \$\{out:X\}, captured by step 2 \(r\.md:\d+\), which is not selected\n/);
     assert.match(r.error.message, /nothing ran$/);
     assert.equal(r.printed, '');
+  });
+
+  // Steps: 1 echo, 2 apply, 3 confirm, 4 another OS, 5 host=, 6 skip, 7 --force.
+  const RISKY = [
+    '# Risky',
+    '',
+    '```bash',
+    'echo first-step-ran',
+    '```',
+    '',
+    '```bash',
+    'echo kubectl apply -f deploy.yaml',
+    '```',
+    '',
+    '```bash confirm name=deploy',
+    'echo deploying',
+    '```',
+    '',
+    `\`\`\`bash os=${otherOs}`,
+    'echo rm -rf ./other-os',
+    '```',
+    '',
+    '```bash host=web-1',
+    'echo kubectl delete pod remote',
+    '```',
+    '',
+    '```bash skip',
+    'echo kubectl delete pod skipped',
+    '```',
+    '',
+    '```bash',
+    'echo git push --force',
+    '```',
+    '',
+  ].join('\n');
+
+  it('cells that need --yes are listed before the first step, and nothing runs', async () => {
+    const r = await run(RISKY);
+    assert.ok(r.error instanceof RunUsageError, r.printed);
+    assert.equal(r.printed, '', 'nothing ran');
+    const lines = r.error.message.split('\n');
+    assert.equal(lines[0], '3 steps ask for confirmation in VS Code and need --yes here; nothing ran:');
+    assert.match(lines[1]!, /^ {2}Step 2 · r\.md:7 · echo kubectl apply -f deploy\.yaml: risky command “apply”$/);
+    assert.match(lines[2]!, /^ {2}Step 3 · r\.md:11 · deploy: confirm option$/);
+    assert.match(lines[3]!, /^ {2}Step 7 · r\.md:27 · echo git push --force: risky command “--force”$/);
+    assert.equal(lines[4], 'pass --yes to run them');
+    assert.equal(lines.length, 5, 'another OS, host= and skip are not listed');
+  });
+
+  it('only the steps that would run count: the range leaves the others out', async () => {
+    const r = await run(RISKY, { from: 3, to: 6 });
+    assert.ok(r.error instanceof RunUsageError);
+    assert.match(r.error.message, /^a step asks for confirmation in VS Code and needs --yes here; nothing ran:\n {2}Step 3 · [^\n]*\npass --yes to run it$/);
+    const safe = await run(RISKY, { to: 1 });
+    assert.deepEqual(statuses(safe), ['passed', 'skipped', 'skipped', 'skipped', 'skipped', 'skipped', 'skipped']);
+  });
+
+  it('--yes runs them; --keep-going declines each one where it is, as before', async () => {
+    const yes = await run(RISKY, { yes: true });
+    assert.equal(yes.ok, true, yes.printed);
+    assert.deepEqual(statuses(yes), ['passed', 'passed', 'passed', 'skipped', 'skipped', 'skipped', 'passed']);
+    const going = await run(RISKY, { keepGoing: true });
+    assert.deepEqual(statuses(going), ['passed', 'not run', 'not run', 'skipped', 'skipped', 'skipped', 'not run']);
+    assert.deepEqual(going.steps!.filter((s) => s.status === 'not run').map((s) => s.exit), ['declined', 'declined', 'declined']);
+    assert.match(going.text!, /not confirmed: risky command “apply”; pass --yes to run it/);
+  });
+
+  it('md-runbook run: exit 2 before anything runs; the JSON and JUnit reports show the steps left out', async () => {
+    const shell = settings.bashPath ? ['--bash', settings.bashPath] : [];
+    const stderr: string[] = [];
+    const write = process.stderr.write;
+    const cli = async (args: string[]): Promise<number> => {
+      process.stderr.write = ((t: string | Uint8Array) => (stderr.push(String(t)), true)) as typeof process.stderr.write;
+      try {
+        return await main(['run', ...args, '--quiet', ...shell]);
+      } finally {
+        process.stderr.write = write;
+      }
+    };
+    const dir = tmp(RISKY);
+    try {
+      const file = path.join(dir, 'r.md');
+      assert.equal(await cli([file]), 2);
+      assert.match(stderr.join(''), /^md-runbook: 3 steps ask for confirmation in VS Code and need --yes here; nothing ran:\n/);
+      assert.equal(fs.readFileSync(file, 'utf8'), RISKY, 'the runbook is untouched');
+      assert.equal(await cli([file, '--section', 'Nope']), 2);
+      assert.match(stderr.join(''), /md-runbook: no heading starts with "Nope"/);
+
+      const json = path.join(dir, 'r.json');
+      const junit = path.join(dir, 'r.xml');
+      assert.equal(await cli([file, '--check', '--to', '1', '--json', json, '--junit', junit]), 0);
+      const { ok, steps } = JSON.parse(fs.readFileSync(json, 'utf8')) as { ok: boolean; steps: { step: number; status: string; message?: string }[] };
+      assert.equal(ok, true);
+      assert.deepEqual(steps.map((s) => `${s.step} ${s.status}`), ['1 passed', '2 skipped', '3 skipped', '4 skipped', '5 skipped', '6 skipped', '7 skipped']);
+      assert.equal(steps[1]!.message, 'not selected (--to 1)');
+      const xml = fs.readFileSync(junit, 'utf8');
+      assert.match(xml, /tests="7" failures="0" skipped="6"/);
+      assert.match(xml, /name="Step 2: echo kubectl apply -f deploy.yaml" time="0.000"><skipped message="not selected \(--to 1\)"\/>/);
+    } finally {
+      await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
   });
 });
