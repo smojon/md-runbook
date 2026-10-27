@@ -29,6 +29,33 @@
   `C:/Program Files/Git/opt/x`) in the runbook's bash cells. It sets `MSYS_NO_PATHCONV=1` and
   `MSYS2_ARG_CONV_EXCL=*`; other shells and systems are unchanged.
 - Lint knows both front matter keys and reports values it ignores.
+- **md-runbook-probe** ([guide](docs/features/kubernetes.md#is-everything-up-endpoint-and-certificate-checks)):
+  - **Behaviour change: `--ca FILE` now adds to the system's CAs** instead of replacing them, so
+    a cluster's CA and public endpoints are trusted in the same run (before, public endpoints
+    failed with *certificate not trusted: unable to get local issuer certificate*). `--ca-only
+    FILE` is the old behaviour: only that CA is trusted.
+  - **`--format json`** (one object per target and line: target, ok, address, reachable,
+    tcp_ms, tls, trusted, not_after, days_left, subject, issuer, detail, labels) and **`--format
+    prometheus`** (`md_runbook_probe_ok`, `md_runbook_probe_reachable`,
+    `md_runbook_probe_certificate_expiry_timestamp_seconds`,
+    `md_runbook_probe_last_run_timestamp_seconds`, labelled `target="host:port"`). The text
+    lines stay as they were. **Labels:** `--label NAME=VALUE` adds a label to every metric and
+    JSON object, and `NAME=VALUE` words after a target label that target only (on stdin: the
+    targets on that line), over a `--label` of the same name, e.g. `tls://idm-web:8989
+    component=proxy`. So one scrape tells components apart; the same endpoint with other labels
+    is another series.
+  - **`tls://host:port` and `tcp://host:port` targets** check TLS on any port, or never, per
+    target.
+  - **Audit outside the gate.** Where no gate runs the probe (no `/etc/md-runbook/gate.conf`,
+    e.g. `kubectl exec` into a Pod), `MD_RUNBOOK_PROBE_LOG` names where its events go: a file,
+    `stderr` or `syslog`; in a container `/proc/1/fd/1` is its log. Where the gate runs it,
+    `gate.conf` alone decides, as before. A destination it can't write is reported once on
+    stderr instead of being skipped silently.
+- **The probe image** `ghcr.io/smojon/md-runbook-probe` ([apps/probe](apps/probe/README.md)):
+  md-runbook-probe alone, without sshd, the gate or kubectl, non-root, published with each
+  release next to the ops host image. Its example manifest runs the probe as a Pod next to your
+  services, publishing the checks as Prometheus metrics, without a service account token and
+  with a read-only root filesystem.
 
 ## 0.11.0
 

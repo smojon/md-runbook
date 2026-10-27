@@ -2,12 +2,14 @@ name: Ops host
 # The ops host (apps/ops) as users run it: the image in a throwaway kind cluster with the
 # manifest from apps/ops/kubernetes (Pod Security "restricted" enforced), then the same image
 # outside a cluster with a mounted kubeconfig, each driven by the app's SSH code
-# (test/ops.live.test.ts) through port-forwards.
+# (test/ops.live.test.ts) through port-forwards. And the probe image (apps/probe): its formats
+# with docker, then its example manifest in a kind cluster.
 on:
   push:
     branches: ['**']
     paths:
       - 'apps/ops/**'
+      - 'apps/probe/**'
       - 'apps/gate/**'
       - 'apps/relay/compose.example.yml'
       - 'packages/ssh/**'
@@ -129,3 +131,123 @@ jobs:
           kubectl -n md-runbook-ops logs deployment/md-runbook-ops || true
           cat "$RUNNER_TEMP/pf.log" || true
           docker logs ops || true
+
+  # The probe image (apps/probe): md-runbook-probe alone, as users run it next to their services.
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run compile
+
+      - name: Build the image
+        run: docker build --provenance=false --sbom=false -t md-runbook-probe:ci -f apps/probe/Dockerfile apps
+      - name: Only the probe, non-root, without a gate.conf
+        run: |
+          test "$(docker inspect -f '{{.Config.User}}' md-runbook-probe:ci)" = 10001:10001
+          test "$(docker inspect -f '{{json .Config.Entrypoint}}' md-runbook-probe:ci)" = '["/usr/local/bin/md-runbook-probe"]'
+          docker run --rm --entrypoint bash md-runbook-probe:ci -c \
+            'test ! -e /usr/sbin/sshd && ! command -v kubectl && ! command -v md-runbook-gate && test ! -e /etc/md-runbook/gate.conf'
+          docker run --rm md-runbook-probe:ci --help | grep -q -- '--format F'
+
+      - name: A TLS endpoint with a private CA
+        run: |
+          d="$RUNNER_TEMP/tls"
+          echo "TLS=$d" >> "$GITHUB_ENV"
+          mkdir -p "$d" && cd "$d"
+          ec=(-newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes)
+          openssl req -x509 "${ec[@]}" -keyout ca.key -out ca.pem -days 30 -subj /CN=ci-ca
+          openssl req "${ec[@]}" -keyout srv.key -out srv.csr -subj /CN=tls-server
+          echo 'subjectAltName=DNS:tls-server' > san.ext
+          openssl x509 -req -in srv.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 300 -extfile san.ext -out srv.pem
+          chmod a+r ./*
+          docker network create probe
+          docker run -d --name tls-server --network probe -v "$d:/tls:ro" --entrypoint openssl md-runbook-probe:ci \
+            s_server -accept 8443 -cert /tls/srv.pem -key /tls/srv.key -www -quiet
+
+      - name: The checks in each format, with a read-only root filesystem
+        run: |
+          probe() {
+            docker run --rm --network probe --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+              -v "$TLS:/tls:ro" md-runbook-probe:ci "$@"
+          }
+          # --ca adds the private CA to the system's: both trusted. With --ca-only the public host isn't.
+          probe --ca /tls/ca.pem tls-server:8443 github.com
+          rc=0; probe --ca-only /tls/ca.pem tls-server:8443 github.com > only.txt || rc=$?
+          cat only.txt; test "$rc" = 1
+          grep -q '^OK  *tls-server:8443 .*certificate trusted' only.txt
+          grep -q '^FAIL  *github.com:443 .*certificate not trusted' only.txt
+          # JSON Lines with the labels; tcp:// skips TLS on a TLS port.
+          probe --format json --ca /tls/ca.pem --label component=ci tls-server:8443 tcp://tls-server:8443 > probe.jsonl
+          node -e '
+            const [t, c] = require("fs").readFileSync(process.argv[1], "utf8").trim().split("\n").map((l) => JSON.parse(l));
+            const ok = t.ok && t.tls && t.trusted && t.days_left > 200 && t.subject === "tls-server" && t.labels.component === "ci" &&
+              c.ok && c.reachable && !c.tls && c.not_after === null;
+            if (!ok) { console.error(t, c); process.exit(1); }' probe.jsonl
+          # Prometheus's own parser reads the metrics.
+          rc=0; probe --format prometheus --ca /tls/ca.pem --label component=ci tls-server:8443 nowhere.invalid > probe.prom || rc=$?
+          cat probe.prom; test "$rc" = 1
+          docker run --rm -i --entrypoint promtool prom/prometheus:v3.5.0 check metrics < probe.prom
+          grep -q '^md_runbook_probe_ok{target="tls-server:8443",component="ci"} 1$' probe.prom
+          grep -q '^md_runbook_probe_ok{target="nowhere.invalid:443",component="ci"} 0$' probe.prom
+          grep -q '^md_runbook_probe_certificate_expiry_timestamp_seconds{target="tls-server:8443",component="ci"} [0-9]*$' probe.prom
+          # Labels per target, from stdin: one endpoint for two components is two series in one scrape.
+          printf '%s\n' 'tls-server:8443 component=proxy' 'tcp://tls-server:8443 component=auth' 'tcp://tls-server:8443 component=admin4' |
+            docker run --rm -i --network probe -v "$TLS:/tls:ro" md-runbook-probe:ci --format prometheus --ca /tls/ca.pem --label cluster=ci - > labels.prom
+          cat labels.prom
+          docker run --rm -i --entrypoint promtool prom/prometheus:v3.5.0 check metrics < labels.prom
+          test "$(grep -c '^md_runbook_probe_ok{target="tls-server:8443",cluster="ci",component="\(proxy\|auth\|admin4\)"} 1$' labels.prom)" = 3
+
+      - name: The audit in the container's log, from a check by docker exec
+        run: |
+          docker run -d --name probe-loop --network probe --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            -v "$TLS:/tls:ro" -e MD_RUNBOOK_PROBE_LOG=/proc/1/fd/1 --entrypoint bash md-runbook-probe:ci \
+            -c 'trap "exit 0" TERM; while :; do sleep 5 & wait $!; done'
+          docker exec probe-loop md-runbook-probe --ca /tls/ca.pem tls-server:8443
+          # A destination it can't write: one warning, the checks as without.
+          docker exec -e MD_RUNBOOK_PROBE_LOG=/var/log/probe.log probe-loop \
+            md-runbook-probe --ca /tls/ca.pem tls-server:8443 tls-server:8443 2> warn.txt
+          cat warn.txt; test "$(grep -c "can't write the audit log /var/log/probe.log" warn.txt)" = 1
+          docker logs probe-loop > probe.log
+          grep -q '"event":"probe".*"target":"tls-server:8443".*"result":"ok".*"cert_sha256":"[0-9a-f]\{64\}"' probe.log
+          node out/dist/cli.js audit probe.log --out audit.json || test $? = 1
+          node -e 'const a=require(process.argv[1]); if(!a.probes.some(p=>p.target==="tls-server:8443"&&p.ok)) process.exit(1)' "$PWD/audit.json"
+          docker stop probe-loop
+
+      - name: The example manifest in a kind cluster (Pod Security "restricted")
+        run: |
+          command -v kind || { sudo curl -fsSLo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 && sudo chmod +x /usr/local/bin/kind; }
+          kind create cluster --name probe --wait 180s
+          docker save md-runbook-probe:ci -o "$RUNNER_TEMP/probe-image.tar"
+          kind load image-archive "$RUNNER_TEMP/probe-image.tar" --name probe
+          sed 's|ghcr.io/smojon/md-runbook-probe:latest|md-runbook-probe:ci|' apps/probe/kubernetes/md-runbook-probe.yaml | kubectl apply -f -
+          ns="-n md-runbook-probe"
+          kubectl $ns rollout status deployment/md-runbook-probe --timeout=180s
+          kubectl $ns port-forward service/md-runbook-probe 9100:9100 > "$RUNNER_TEMP/probe-pf.log" 2>&1 &
+          for _ in $(seq 1 30); do curl -fsS -D headers.txt -o metrics.prom http://127.0.0.1:9100/metrics.prom && break; sleep 2; done
+          cat headers.txt metrics.prom
+          grep -qi '^content-type: text/plain' headers.txt
+          docker run --rm -i --entrypoint promtool prom/prometheus:v3.5.0 check metrics < metrics.prom
+          # The ConfigMap's labels per target: kube-dns for two components is two series.
+          grep -q '^md_runbook_probe_ok{target="kubernetes.default.svc:443",cluster="my-cluster",component="api"} 1$' metrics.prom
+          grep -q '^md_runbook_probe_ok{target="kube-dns.kube-system.svc:53",cluster="my-cluster",component="dns"} 1$' metrics.prom
+          grep -q '^md_runbook_probe_ok{target="kube-dns.kube-system.svc:53",cluster="my-cluster",component="api"} 1$' metrics.prom
+          # A check by hand is an event in the Pod's log; the loop's own checks are not.
+          kubectl $ns exec deploy/md-runbook-probe -c probe -- md-runbook-probe --ca /etc/kube-ca/ca.crt https://kubernetes.default.svc/healthz
+          for _ in $(seq 1 10); do kubectl $ns logs deploy/md-runbook-probe -c probe > pod.log; grep -q '"event":"probe"' pod.log && break; sleep 1; done
+          cat pod.log
+          test "$(grep -c '"event":"probe".*"target":"kubernetes.default.svc:443".*"result":"ok"' pod.log)" = 1
+          test "$(grep -c '"event":"probe"' pod.log)" = 1
+
+      - name: Logs
+        if: failure()
+        run: |
+          docker logs tls-server || true
+          docker logs probe-loop || true
+          kubectl -n md-runbook-probe describe pods || true
+          kubectl -n md-runbook-probe logs deployment/md-runbook-probe --all-containers || true
+          cat "$RUNNER_TEMP/probe-pf.log" || true

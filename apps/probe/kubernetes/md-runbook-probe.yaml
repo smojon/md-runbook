@@ -1,0 +1,141 @@
+# md-runbook-probe next to the services it watches: every 60 s it checks the targets in the
+# ConfigMap below and writes the results as Prometheus metrics, which a sidecar serves on port
+# 9100 (/metrics.prom). No service account token, read-only root filesystem, Pod Security
+# `restricted`. `kubectl exec` runs a live check; its audit events go to the Pod's log
+# (MD_RUNBOOK_PROBE_LOG). See apps/probe/README.md.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: md-runbook-probe
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+# One target per line: host:port, https://host/path, tls://host:port, tcp://host:port, then
+# its own labels (NAME=VALUE). An endpoint that several components depend on is listed once per
+# component: one series each, in one scrape. Read again on every round: `kubectl edit` takes
+# effect within a minute or two.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: md-runbook-probe-targets
+  namespace: md-runbook-probe
+data:
+  targets: |
+    kubernetes.default.svc:443 component=api
+    tcp://kube-dns.kube-system.svc:53 component=dns
+    tcp://kube-dns.kube-system.svc:53 component=api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: md-runbook-probe
+  namespace: md-runbook-probe
+  labels:
+    app.kubernetes.io/name: md-runbook-probe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: md-runbook-probe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: md-runbook-probe
+    spec:
+      # The probe needs no Kubernetes API.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: probe
+          # Published with each md-runbook release; pin a version once you rely on it.
+          image: ghcr.io/smojon/md-runbook-probe:latest
+          imagePullPolicy: IfNotPresent
+          command: [bash, -c]
+          # The metrics file is replaced whole, so the sidecar never serves half of it. Exit 1
+          # (a check failed) is a result like any other; exit 2 (bad usage) keeps the old file.
+          # The loop's own checks are in the metrics, not in the audit log.
+          args:
+            - |
+              trap 'exit 0' TERM
+              while :; do
+                MD_RUNBOOK_PROBE_LOG= md-runbook-probe --format prometheus --ca /etc/kube-ca/ca.crt \
+                  --label cluster=my-cluster - </etc/md-runbook-probe/targets >/metrics/metrics.prom.tmp
+                [ $? -le 1 ] && mv /metrics/metrics.prom.tmp /metrics/metrics.prom
+                sleep 60 & wait $!
+              done
+          env:
+            # The audit events: the container's own output (kubectl logs), also for kubectl exec.
+            - name: MD_RUNBOOK_PROBE_LOG
+              value: /proc/1/fd/1
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - { name: targets, mountPath: /etc/md-runbook-probe, readOnly: true }
+            - { name: kube-ca, mountPath: /etc/kube-ca, readOnly: true }
+            - { name: metrics, mountPath: /metrics }
+        - name: metrics
+          image: busybox:1.37.0
+          imagePullPolicy: IfNotPresent
+          # The text exposition format's content type, for Prometheus 3.
+          command:
+            - sh
+            - -c
+            - echo '.prom:text/plain; version=0.0.4; charset=utf-8' >/tmp/httpd.conf && exec httpd -f -p 9100 -h /metrics -c /tmp/httpd.conf
+          ports:
+            - name: metrics
+              containerPort: 9100
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              memory: 32Mi
+          volumeMounts:
+            - { name: metrics, mountPath: /metrics, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: targets
+          configMap:
+            name: md-runbook-probe-targets
+        # The cluster's CA, in every namespace: for kubernetes.default.svc (--ca adds it to the
+        # system's CAs, so public endpoints stay trusted).
+        - name: kube-ca
+          configMap:
+            name: kube-root-ca.crt
+        - { name: metrics, emptyDir: { medium: Memory, sizeLimit: 1Mi } }
+        - { name: tmp, emptyDir: { medium: Memory, sizeLimit: 1Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: md-runbook-probe
+  namespace: md-runbook-probe
+  labels:
+    app.kubernetes.io/name: md-runbook-probe
+spec:
+  selector:
+    app.kubernetes.io/name: md-runbook-probe
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: metrics

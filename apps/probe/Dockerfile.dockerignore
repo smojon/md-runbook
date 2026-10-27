@@ -1,0 +1,3 @@
+# The build context is apps/ (for the probe script in apps/ops): send only what the image needs.
+*
+!ops/md-runbook-probe

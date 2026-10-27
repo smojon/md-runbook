@@ -108,6 +108,27 @@ describe('ops host', { skip: !spec && 'set MD_RUNBOOK_OPS_TEST to run' }, () => 
     assert.doesNotMatch(bad.out, /uid=/);
   });
 
+  it("md-runbook-probe: --ca adds the cluster's CA to the system's, the formats, and gate.conf decides where events go", { skip: !inCluster && 'not in a cluster' }, async () => {
+    const file = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt';
+    const both = await sh(`md-runbook-probe --ca ${file} kubernetes.default.svc github.com`);
+    assert.equal(both.code, 0, both.out + both.err);
+    assert.equal((both.out.match(/^OK .*certificate trusted/gm) ?? []).length, 2, both.out);
+    const only = await sh(`md-runbook-probe --ca-only ${file} kubernetes.default.svc github.com`);
+    assert.equal(only.code, 1);
+    assert.match(only.out, /^OK +kubernetes\.default\.svc:443 /m);
+    assert.match(only.out, /^FAIL +github\.com:443 .*certificate not trusted/m);
+    // Under the gate, MD_RUNBOOK_PROBE_LOG changes nothing: the events go to the gate's log.
+    const json = await sh(`MD_RUNBOOK_PROBE_LOG=stderr md-runbook-probe --format json --label component=api --ca ${file} kubernetes.default.svc`);
+    assert.equal(json.code, 0, json.out + json.err);
+    assert.equal(json.err, '');
+    const o = JSON.parse(json.out) as { target: string; ok: boolean; trusted: boolean; tls: boolean; labels: unknown };
+    assert.deepEqual([o.target, o.ok, o.tls, o.trusted, o.labels], ['kubernetes.default.svc:443', true, true, true, { component: 'api' }]);
+    const prom = await sh(`md-runbook-probe --format prometheus --ca ${file} kubernetes.default.svc`);
+    assert.equal(prom.code, 0, prom.out + prom.err);
+    assert.match(prom.out, /^md_runbook_probe_ok\{target="kubernetes\.default\.svc:443"\} 1$/m);
+    assert.match(prom.out, /^md_runbook_probe_certificate_expiry_timestamp_seconds\{target="kubernetes\.default\.svc:443"\} \d+$/m);
+  });
+
   it('a signed run of the probe: its checks are in the gate\'s log, with the run\'s id', { skip: !inCluster && 'not in a cluster' }, async () => {
     const body = 'md-runbook-probe --ca /var/run/secrets/kubernetes.io/serviceaccount/ca.crt kubernetes.default.svc';
     const built = buildManifest('```bash\n' + body + '\n```\n', { name: 'ops/probe', version: 1, scopes: [], patterns: {} });
