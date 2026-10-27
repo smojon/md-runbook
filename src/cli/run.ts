@@ -3,7 +3,7 @@
  * options, checks, redaction and output format as the extension, with no prompts. What needs a
  * person in VS Code fails clearly here instead: a missing `${input:}`, a risky command without
  * `--yes`, a proposed or assistant-written cell. What is known before the first step (a bad
- * --from/--to/--section, a capture left out) is a RunUsageError.
+ * --from/--to/--section, a capture left out, cells that need --yes) is a RunUsageError.
  */
 
 import * as fs from 'node:fs';
@@ -191,6 +191,25 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   const uncaptured = missingCaptures(blocks, fileName);
   if (uncaptured.length > 0) {
     throw new RunUsageError(`${uncaptured.join('\n')}\nselect the step that captures it too (a run starts without captured values); nothing ran`);
+  }
+  if (!o.yes && !o.keepGoing) {
+    // The same decision as each step's own below, which stays: with --keep-going a declined
+    // step doesn't stop the run, so it is reported where it is, like any other failure.
+    const declined = blocks.flatMap((b) => {
+      if (!b.runs) return [];
+      const opts = parseCellOptions(b.loc.info);
+      const match = confirmationFor(b.loc.source, 'patterns', regexes, opts.confirm === true ? true : undefined);
+      if (match === undefined) return [];
+      const firstLine = b.loc.source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
+      return [`  Step ${b.n} · ${fileName}:${b.loc.line + 1} · ${redact(opts.name ?? firstLine)}: ${match === '' ? 'confirm option' : `risky command “${match.trim()}”`}`];
+    });
+    if (declined.length > 0) {
+      const one = declined.length === 1;
+      throw new RunUsageError(
+        `${one ? 'a step asks' : `${declined.length} steps ask`} for confirmation in VS Code and ${one ? 'needs' : 'need'} --yes here; nothing ran:\n` +
+          `${declined.join('\n')}\npass --yes to run ${one ? 'it' : 'them'}`,
+      );
+    }
   }
   if (selected) io.log(`Step${selected.size === 1 ? '' : 's'} ${formatSteps([...selected])} of ${Math.max(0, ...numbers)} (${selectionLabel(selection)})`);
   const notSelected = `not selected (${selectionLabel(selection)})`;

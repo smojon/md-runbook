@@ -41,7 +41,8 @@ Options:
                        the run record (every run, attempt and note in time order)
   --param NAME=VALUE   Value for \${param:NAME} (repeatable; default: the front matter's)
   --input NAME=VALUE   Value for \${input:NAME} (repeatable; default: environment variable NAME)
-  --yes                Run blocks that ask for confirmation in VS Code (risky commands, confirm)
+  --yes                Run blocks that ask for confirmation in VS Code (risky commands, confirm);
+                       without it, a run that has such blocks stops before the first step
   --from N, --to N     Run only steps N to M (the numbers of the "▶ Step N" lines); the others
                        are skipped and keep their outputs
   --section TEXT       Run only the steps under headings that start with TEXT, e.g. "3." or

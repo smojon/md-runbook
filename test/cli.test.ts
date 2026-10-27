@@ -89,13 +89,16 @@ describe('cli: running a runbook', { skip: !hasBash && 'bash not installed' }, (
     const file = path.join(dir, 'r.md');
     fs.writeFileSync(file, md);
     const lines: string[] = [];
-    const r = await runRunbook(
-      { file, write: true, params: {}, inputs: {}, yes: false, keepGoing: false, shell: settings, env: { ...process.env, CLI_TOKEN: 'tok-cli-12345' }, ...extra },
-      { out: (t) => lines.push(t), log: (l) => lines.push(l + '\n') },
-    );
-    // A session's shell (mode: session) may still be in the folder for a moment on Windows.
-    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-    return { ...r, printed: lines.join('') };
+    try {
+      const r = await runRunbook(
+        { file, write: true, params: {}, inputs: {}, yes: false, keepGoing: false, shell: settings, env: { ...process.env, CLI_TOKEN: 'tok-cli-12345' }, ...extra },
+        { out: (t) => lines.push(t), log: (l) => lines.push(l + '\n') },
+      );
+      return { ...r, printed: lines.join('') };
+    } finally {
+      // A session's shell (mode: session) may still be in the folder for a moment on Windows.
+      await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
   };
 
   it('runs blocks, writes output blocks, resolves placeholders and redacts secrets', async () => {
@@ -157,7 +160,9 @@ describe('cli: running a runbook', { skip: !hasBash && 'bash not installed' }, (
     const failed = await run('```bash\nexit 4\n```\n\n```bash\necho never\n```\n');
     assert.equal(failed.ok, false);
     assert.deepEqual(failed.steps.map((s) => s.status), ['failed', 'not run']);
-    const risky = await run('```bash\nrm -rf ./nothing-here-x\n```\n');
+    // Refused before the first step (cliSelect.test.ts); with --keep-going, declined where it is.
+    await assert.rejects(run('```bash\nrm -rf ./nothing-here-x\n```\n'), /needs --yes here; nothing ran/);
+    const risky = await run('```bash\nrm -rf ./nothing-here-x\n```\n', { keepGoing: true });
     assert.equal(risky.steps[0]!.status, 'not run');
     assert.match(risky.text, /exit=declined/);
     assert.equal((await run('```bash\nrm -rf ./nothing-here-x\n```\n', { yes: true })).ok, true);
