@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0
 
 - **Command line: part of a runbook** ([details](docs/features/cli.md#part-of-a-runbook)).
   `md-runbook run --from 6` resumes a long run at the step it stopped at, numbered as the run's
