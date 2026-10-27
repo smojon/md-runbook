@@ -56,14 +56,18 @@ describe('runCell', () => {
   });
 
   it('kube-context: runs only on that cluster, checked on the host before each cell', async () => {
-    const k8s = '---\nkube-context: prod-eu\n---\n\n```bash\nkubectl get pods\n```\n\n```bash kube-context=staging-eu\nkubectl get pods\n```\n';
+    const k8s =
+      '---\nkube-context: prod-eu\n---\n\n```bash\nkubectl get pods\n```\n\n```bash kube-context=staging-eu\nkubectl get pods\n```\n';
     const right = fakeConnection([{ stdout: 'pod/web\n' }], 'posix', 'prod-eu');
     expect(await runCell({ host, text: k8s, cellIndex: 1, connection: right })).toMatchObject({ kind: 'done' });
     expect([right.contextChecks, right.calls.length]).toEqual([1, 1]);
     // The cell's own kube-context= wins over the front matter's.
     const wrong = fakeConnection([{ stdout: 'pod/web\n' }], 'posix', 'prod-eu');
     const r = await runCell({ host, text: k8s, cellIndex: 2, connection: wrong });
-    expect(r).toEqual({ kind: 'error', message: expect.stringMatching(/context staging-eu, and kubectl's current context is prod-eu: nothing ran/) });
+    expect(r).toEqual({
+      kind: 'error',
+      message: expect.stringMatching(/context staging-eu, and kubectl's current context is prod-eu: nothing ran/),
+    });
     expect(wrong.calls).toEqual([]);
     const none = fakeConnection([{}], 'posix');
     expect(await runCell({ host, text: k8s, cellIndex: 1, connection: none })).toEqual({
