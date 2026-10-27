@@ -5,3 +5,5 @@ apps/gate/md-runbook-gate text eol=lf
 apps/gate/gate.conf.example text eol=lf
 # The ops host image: files copied into a Linux container from any checkout.
 apps/ops/** text eol=lf
+# The probe image: files copied into a Linux container from any checkout.
+apps/probe/** text eol=lf
