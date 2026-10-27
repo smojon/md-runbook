@@ -108,7 +108,7 @@ Tokens are separated by spaces or tabs. There are three forms:
 | `capture-secret=…` | as `capture=` | The same, redacted everywhere and never written to disk. |
 | `os=LIST` | `windows`, `linux`, `macos`, comma-separated; also `win`, `win32`, `mac`, `osx`, `darwin` | Run only on these systems. Adjacent `os=` blocks with no OS repeated are alternatives of one step. |
 | `host=NAME` | a host's name in the md-runbook app; quote it if it has spaces | The md-runbook app runs the block on that host over SSH, whichever host is selected. The VS Code extension and the CLI run cells on the local machine, so they never run such a block: it counts as skipped. |
-| `kube-context=NAME` | a Kubernetes context name | Run only while `kubectl config current-context` prints NAME, checked where the cell runs just before it runs; otherwise nothing runs and the cell fails. Overrides the front matter's `kube-context:`. See [Kubernetes](features/kubernetes.md). |
+| `kube-context=NAME` | a Kubernetes context name | Run only while `kubectl config current-context` prints NAME, checked where the cell runs just before it runs; otherwise nothing runs and the cell fails. Overrides the front matter's `kube-context:`. With `kube-context-mode: pin` in the front matter, the cell runs against NAME instead (on this machine; checked only on a `host=`). See [Kubernetes](features/kubernetes.md). |
 | `lines=any` | the word `any` | In a signed runbook: servers with md-runbook-gate also run single lines and ranges of this block (otherwise only the whole block, or its commands in order). See [signed runbooks](features/signed-runbooks.md). |
 | `retry=N` | integer 1 to 100 | Run up to N times in all until it passes. |
 | `every=D` | `15s`, `500ms`, `2m`, or seconds as a number; at most 1 hour | Wait between attempts (default 5 s). Only with `retry=`. |
@@ -167,6 +167,8 @@ rto: 30m             # recovery time objective: 90s, 30m, 1h30m or seconds; the 
 drill: true          # the record is a drill or exercise (the report says Drill record)
 practice: training-1 # the app runs every cell on this host, whatever host= says (drills, training)
 kube-context: prod-eu # every cell runs only while kubectl's current context is prod-eu; a cell's kube-context= wins
+kube-context-mode: pin # check (default) | pin: cells run on their kube-context without changing your default context
+git-bash-path-conversion: off # on (default) | off: Git Bash on Windows leaves /opt/x-style arguments alone
 params:
   - NAMESPACE        # asked, no default
   - REGION: eu-west-1
@@ -183,7 +185,26 @@ through md-runbook-gate if the host has one. The cell runs only if that prints t
 Otherwise nothing runs and the cell fails with both names: VS Code and the command line record
 it as `exit=error`, and the app shows the reason on the cell. A `kubectl config use-context` in
 an earlier cell is therefore caught too. The front matter isn't signed, so in
-a signed runbook put `kube-context=` on the cells themselves. The runbook view (VS Code and the app) doesn't draw the front matter, as VS Code's
+a signed runbook put `kube-context=` on the cells themselves.
+
+`kube-context-mode: pin` makes the runbook's and its cells' `kube-context` the context the
+cells run against instead of only checking it: each cell run on this machine (VS Code and the
+command line) gets a `KUBECONFIG` whose first file only says `current-context: NAME`, followed by
+your own kubeconfig list (`$KUBECONFIG`, else `~/.kube/config`). kubectl, helm, k9s and other
+client-go tools then use NAME, your default context is never changed, and no credential is
+copied. Before each cell md-runbook checks that your kubeconfig has NAME. A cell with no
+`kube-context` gets your own list. Cells on an SSH host (`host=`, the app) are only checked; lint
+warns. The user setting `mdRunbook.execution.kubeContextPin` (on by default) turns pinning off,
+and such runbooks are then only checked. See [Kubernetes](features/kubernetes.md#check-or-pin).
+
+`git-bash-path-conversion: off` stops Git Bash on Windows from rewriting arguments that look like
+POSIX paths when a bash cell starts a Windows program (`kubectl exec pod -- cat /opt/x/probe.sh`
+would otherwise get `C:/Program Files/Git/opt/x/probe.sh`). It sets `MSYS_NO_PATHCONV=1` and
+`MSYS2_ARG_CONV_EXCL=*` for the runbook's `sh`/`bash` cells on Windows; it changes nothing for
+PowerShell and cmd cells or on other systems. The default stays `on` because some commands rely
+on the conversion (a Windows program given `/c/Users/me/file` needs `C:/Users/me/file`).
+
+The runbook view (VS Code and the app) doesn't draw the front matter, as VS Code's
 Markdown preview doesn't; editing the first cell shows it. In session mode one bash and one PowerShell process live for the whole runbook, so
 `cd`, exported variables and `oc login` carry over between cells; `cmd` cells always run alone.
 

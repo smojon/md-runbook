@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **Pin the Kubernetes context** ([details](docs/features/kubernetes.md#check-or-pin)):
+  `kube-context-mode: pin` in the front matter makes the runbook's and its cells' `kube-context`
+  the context their cells run against, instead of only checking it. Each cell run in VS Code or
+  on the command line (isolated or in a session) gets a `KUBECONFIG` whose first file only says
+  `current-context: NAME`, followed by your own kubeconfig, so kubectl, helm and k9s use that
+  context without `--context` flags and without changing your default context. No credential is
+  copied, a `use-context` in a cell only changes the temporary file, and the file is removed when
+  the run ends or the runbook closes. Before each cell md-runbook checks that your kubeconfig has
+  the context. Cells on an SSH host (`host=`, the app) are still only checked, and lint warns.
+  The user setting `mdRunbook.execution.kubeContextPin` turns pinning off.
+- **`git-bash-path-conversion: off`** in the front matter: on Windows, Git Bash no longer rewrites
+  arguments that look like POSIX paths (`kubectl exec pod -- cat /opt/x` reaching kubectl as
+  `C:/Program Files/Git/opt/x`) in the runbook's bash cells. It sets `MSYS_NO_PATHCONV=1` and
+  `MSYS2_ARG_CONV_EXCL=*`; other shells and systems are unchanged.
+- Lint knows both front matter keys and reports values it ignores.
+
 ## 0.11.0
 
 - **Kubernetes** ([guide](docs/features/kubernetes.md)):

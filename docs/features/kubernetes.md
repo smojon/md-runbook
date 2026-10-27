@@ -4,7 +4,8 @@ Runbooks with `kubectl` cells work as they are: in VS Code and on the command li
 own kubeconfig. Two things make them safer, and the app adds a third:
 
 1. **The wrong-cluster guard.** `kube-context: prod-eu` in the front matter means no cell runs
-   unless kubectl's current context is `prod-eu`.
+   unless kubectl's current context is `prod-eu`. With `kube-context-mode: pin`, every cell runs
+   against `prod-eu` instead, without changing your default context.
 2. **The ops host.** The app runs runbooks against your clusters through a small SSH server
    that holds the cluster access, so no cluster credential is ever on a phone.
 3. **Endpoint and certificate checks** from inside the cluster, kept in the run record and in
@@ -35,6 +36,76 @@ meant for staging-eu.
 - On a server that only runs signed runbooks, the gate still answers the check: it only reads
   the kubeconfig. See the gate's `context` request in its [README](../../apps/gate/README.md).
 - Lint reports a name kubectl can't have.
+
+### Check or pin
+
+The check above makes you choose the cluster: the runbook refuses to run anywhere else. That is
+awkward when your kubeconfig's default context is production and the runbook is for a lab
+cluster. You'd have to switch your default to the lab and remember to switch back, or write
+`--context lab` / `--kube-context lab` on every kubectl and helm command, where one forgotten flag
+reaches production. `kube-context-mode: pin` lets the runbook choose instead:
+
+```markdown
+---
+kube-context: rancher-desktop
+kube-context-mode: pin   # check (the default) or pin
+---
+```
+
+Each cell md-runbook runs on this machine (VS Code and the command line, isolated or in a
+session) gets a `KUBECONFIG` whose first file is a temporary file holding only
+`current-context: rancher-desktop`, followed by your own list (`$KUBECONFIG`, else
+`~/.kube/config`; `;` between files on Windows, `:` elsewhere). kubeconfig merging takes the
+current context from the first file that sets one, so:
+
+- kubectl, helm, k9s and every other client-go tool in the cell use `rancher-desktop`, without
+  any flag;
+- your default context stays production for your terminals and other tools;
+- nothing is copied out of your kubeconfig: clusters, users and credentials are still read from
+  your files, and the temporary file has none;
+- a `kubectl config use-context` in a cell only changes the temporary file, and the next cell
+  starts on `rancher-desktop` again. A context a cell creates with `kubectl config set-context`
+  also goes to the temporary file and is lost after the run.
+
+Before each pinned cell, `kubectl config get-contexts rancher-desktop` runs as the cell would, and
+the cell runs only if your kubeconfig has that context and it is the current one there:
+
+```text
+md-runbook: this runbook pins the Kubernetes context rancher-desktop, and your kubeconfig has no
+context rancher-desktop (error: context rancher-desktop not found): nothing ran. `kubectl config
+get-contexts` lists the ones you have.
+```
+
+- A cell's `kube-context=` pins that cell to its own context. A cell with no `kube-context` gets
+  your own list (in a session too, where an earlier cell's `KUBECONFIG` would otherwise stay).
+- md-runbook sets `KUBECONFIG` for every cell of a pinned runbook, so one exported by an earlier
+  cell in a session doesn't carry over. To use another kubeconfig, give the cell `env.KUBECONFIG=`:
+  it becomes the list after the pin file. An assistant's cell with read-only credentials
+  (`mdRunbook.approval.readOnlyEnv`) is pinned in front of its read-only kubeconfig.
+- The temporary files are in a folder only you can read (0700, the files 0600), one per context,
+  rewritten before each cell. They are removed when the run ends (command line) or the runbook is
+  closed (VS Code), not after each cell: a session shell keeps its `KUBECONFIG`, and kubectl skips
+  a missing file, which would fall back to your default context. A background process a cell
+  leaves running after that sees your default context.
+- **Pin is only for cells run on this machine.** Cells on an SSH host (`host=`, everything in the
+  app, a `practice:` host) are only checked as above: kubectl's current context on the host must
+  already be the one named. Lint warns about a `host=` cell in a pinned runbook.
+- Pinning gives a runbook nothing it couldn't already do: any cell can pass `--context`. It is
+  still yours to switch off: the user setting `mdRunbook.execution.kubeContextPin` (on by
+  default, user settings only) turns pinning off, and pinned runbooks are then only checked.
+- With pin, opening a runbook and running it acts on its cluster whatever your current context
+  is. Use it for runbooks whose cluster is fixed (a lab, one runbook per cluster); keep the check
+  for runbooks where you should have switched on purpose.
+
+### Git Bash and paths in kubectl commands (Windows)
+
+On Windows, bash cells run in Git Bash, which rewrites arguments that look like POSIX paths when
+it starts a Windows program: `kubectl exec pod -- bash /opt/x/probe.sh` reaches kubectl as
+`C:/Program Files/Git/opt/x/probe.sh`. `git-bash-path-conversion: off` in the front matter sets
+`MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*` for the runbook's bash cells on Windows, so such
+arguments reach kubectl as written. It has no effect on other systems or on PowerShell and cmd
+cells. It is off only when asked for, since some commands need the conversion (a Windows program
+given `/c/Users/me/file`).
 
 ## The ops host
 
