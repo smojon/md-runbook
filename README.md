@@ -269,9 +269,13 @@ system:admin
   Re-running a cell replaces its block. Output blocks you don't re-run are kept byte for byte.
 - An output block is only recognized directly after a runnable code block (blank lines in
   between are allowed) and only with the exact structure above. Anything else stays Markdown.
-- Before writing, output is cleaned up: ANSI codes are stripped and carriage-return progress
-  lines are collapsed to their final state. Then it is redacted and truncated (the first and last
-  lines are kept, with `… [md-runbook: N lines truncated] …` in between).
+- Before writing, output is cleaned up to what a terminal would show: carriage returns,
+  backspaces, erased lines and cursor movements are applied (a progress bar or spinner is saved
+  as it ended, not frame by frame), other control characters dropped, and ANSI codes stripped.
+  Then it is redacted and truncated (the first and last lines are kept, with
+  `… [md-runbook: N lines truncated] …` in between).
+- On Windows, cells get `PYTHONIOENCODING=utf-8` unless an encoding is set: Python writes to a
+  pipe in the ANSI code page otherwise, so `é` was saved as `�` and a `✓` stopped the script.
 
 **md-runbook: Clear All Outputs** (notebook toolbar, Explorer context menu, Command Palette)
 removes all output blocks from the file. It works on an open runbook, on a file open as text,
