@@ -33,6 +33,7 @@ import { CellPlan, ExecuteIO, PrepareContext, RunPipeline, RunRecord } from './p
 import { copyOrigin } from './copyOrigins';
 import { knownSecrets } from './knownSecrets';
 import { NOTEBOOK_TYPE } from './serializer';
+import { CellTranscript, startCellTranscript } from './transcript';
 
 const FLUSH_MS = 100;
 /** `kubectl config current-context` only reads the kubeconfig. */
@@ -344,6 +345,8 @@ export class RunbookController implements vscode.Disposable {
     let ended = false;
     let timer: NodeJS.Timeout | undefined;
     let cancelSub: vscode.Disposable | undefined;
+    // The transcript (output.transcript): what is shown, also appended to a file as it arrives.
+    let cellTranscript: CellTranscript | undefined;
     const cleanup = async (): Promise<void> => {
       const fns = plan.cleanup ?? [];
       plan.cleanup = [];
@@ -385,6 +388,7 @@ export class RunbookController implements vscode.Disposable {
           .then(async () => {
             for (const g of groups) {
               shown.push(g);
+              cellTranscript?.out(g.stream, g.text);
               if (liveStream === undefined || liveStream === g.stream) await exec.appendOutputItems([itemOf(g, colors)], live);
               else {
                 live = new vscode.NotebookCellOutput([itemOf(g, colors)], runMeta('running'));
@@ -402,12 +406,12 @@ export class RunbookController implements vscode.Disposable {
       timer = setInterval(() => void flush(), FLUSH_MS);
 
       // What the current attempt printed (a retry starts them again).
-      let transcript = '';
+      let attemptText = '';
       let stdoutText = '';
       let attemptChunks: Chunk[] = [];
       const sink = (stream: Chunk['stream']) => (text: string) => {
         if (text === '') return;
-        transcript += text;
+        attemptText += text;
         if (stream === 'stdout') stdoutText += text;
         attemptChunks.push({ stream, text });
         unflushed.push({ stream, text });
@@ -440,6 +444,8 @@ export class RunbookController implements vscode.Disposable {
         prepareError = e instanceof Error ? e.message : String(e);
       }
       knownSecrets.add(plan.secrets);
+      const holdTranscript = !lineRun && (plan.checks?.captures ?? []).some((c) => c.secret);
+      cellTranscript = startCellTranscript(cell, lineRun ? undefined : plan.source, holdTranscript);
 
       const redaction = redactionConfig();
       const liveRedact =
@@ -468,7 +474,7 @@ export class RunbookController implements vscode.Disposable {
       let outcome: CheckOutcome | undefined;
       const judge = (r: ExecuteResult): CheckOutcome | undefined =>
         hasChecks(checks) && r.exitCode !== null && r.error === undefined && !r.timedOut && !r.cancelled
-          ? evaluateChecks(checks, r.exitCode, transcript, stdoutText)
+          ? evaluateChecks(checks, r.exitCode, attemptText, stdoutText)
           : undefined;
       /** Run until it passes or the attempts are used up; only the last attempt's output is kept. */
       const runAttempts = async (io: ExecuteIO): Promise<ExecuteResult> => {
@@ -486,10 +492,11 @@ export class RunbookController implements vscode.Disposable {
           unflushed.push({ stream: 'stderr', text: message(`[md-runbook] attempt ${attempt}/${attempts} failed (${why}); trying again in ${formatDuration(every)}\n`) });
           await flush();
           if (!(await wait(every, abort.signal))) return { ...r, exitCode: null, cancelled: true };
-          transcript = '';
+          attemptText = '';
           stdoutText = '';
           attemptChunks = [];
           outcome = undefined;
+          cellTranscript?.attempt(attempt + 1, attempts);
           await restartOutput([]);
         }
       };
@@ -535,7 +542,7 @@ export class RunbookController implements vscode.Disposable {
       const capturedSecrets = outcome?.secretValues ?? [];
       if (capturedSecrets.length > 0) {
         knownSecrets.add(capturedSecrets);
-        transcript = knownSecrets.redact(transcript);
+        attemptText = knownSecrets.redact(attemptText);
         await restartOutput(attemptChunks.map((c) => ({ ...c, text: knownSecrets.redact(c.text) })));
       }
 
@@ -572,6 +579,7 @@ export class RunbookController implements vscode.Disposable {
         ...plan.attrs,
         ...runnerAttrsOf(notebook),
       };
+      cellTranscript?.end({ exit, durationMs: elapsed, ...(check ? { check } : {}), ...(tries ? { attempt: tries, attempts } : {}), ...(lines ? { lines } : {}) });
       const earlierOutput = earlierRunsOutput(history);
       // The text to save: what was shown, without colours, its stderr lines marked (stderr=).
       const saved = shown.map((c) => (c.stream === 'stderr' ? markStderr(c.text) : c.text)).join('');
@@ -585,13 +593,15 @@ export class RunbookController implements vscode.Disposable {
       const success = skipped || (outcome ? outcome.ok : isSuccess(result));
       ended = true;
       exec.end(skipped ? undefined : success, Date.now());
-      const run: RunRecord = { cell, notebook, plan, result, success, attrs, output: transcript, ...(outcome?.ok ? { captured: outcome.captured } : {}) };
+      const run: RunRecord = { cell, notebook, plan, result, success, attrs, output: attemptText, ...(outcome?.ok ? { captured: outcome.captured } : {}) };
       for (const o of this.pipeline.observers) await o.onDidRunCell?.(run);
       return run;
     } finally {
       if (timer) clearInterval(timer);
       cancelSub?.dispose();
       await cleanup();
+      // Something threw: the entry still ends (a no-op when it already has).
+      cellTranscript?.end({ exit: 'error', durationMs: Date.now() - started.getTime() });
       if (!ended) {
         try {
           exec.end(false, Date.now());

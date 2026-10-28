@@ -41,7 +41,9 @@ import { REDACTED } from '@md-runbook/core/redact';
 import { findRefs, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { historySizeFor, runnerAttrs } from '@md-runbook/core/incident';
 import { SessionPool } from '@md-runbook/core/node/session';
-import { PlannedBlock, RunUsageError, formatSteps, missingCaptures, selectSteps, selectionLabel } from './select';
+import { TranscriptFile } from '@md-runbook/core/node/transcript';
+import { TranscriptEntry, transcriptNote } from '@md-runbook/core/transcript';
+import { PlannedBlock, RunUsageError, formatSteps, headingsOf, missingCaptures, selectSteps, selectionLabel } from './select';
 
 export interface CliOptions {
   file: string;
@@ -52,6 +54,8 @@ export interface CliOptions {
   junit?: string;
   /** Also write the step results as JSON (for scripts). */
   json?: string;
+  /** Also append every step to this transcript as it runs (core/transcript.ts). */
+  transcript?: string;
   /** Values for `${param:NAME}` (else the front matter default). */
   params: Record<string, string>;
   /** Values for `${input:NAME}` (else the environment variable NAME). */
@@ -217,6 +221,13 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   const notSelected = `not selected (${selectionLabel(selection)})`;
 
   const pool = session ? new SessionPool() : undefined;
+  const transcriptFile = o.transcript ? new TranscriptFile(path.resolve(o.transcript), (e) => io.log(`! the transcript ${o.transcript} can't be written, so it stops: ${e.message}`)) : undefined;
+  const headings = headingsOf(original);
+  const sectionAt = (line: number): string | undefined => [...headings].reverse().find((h) => h.line < line)?.text;
+  const note = (n: number, title: string, text: string): void => {
+    transcriptFile?.append(transcriptNote(new Date(), fileName, `Step ${n} · ${title}: ${text}`, redact));
+    transcriptFile?.flush();
+  };
   const counted = new Set<number>();
   const steps: StepResult[] = [];
   let stopped = false;
@@ -270,6 +281,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
 
       const notRun = (message: string, exit = 'not run'): void => {
         io.log(`✗ ${where}: not run: ${message}`);
+        note(n, redact(opts.name ?? firstLine), `not run: ${message}`);
         steps.push(result('not run', exit, { message }));
         if (!o.keepGoing) stopped = true;
       };
@@ -358,7 +370,10 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
 
       io.log(`▶ ${where}${opts.name ? ` · ${opts.name}` : ''}`);
       const started = new Date();
-      let transcript = '';
+      // Held like the live output when the step captures a secret: redacted once it is known.
+      const entry = transcriptFile ? new TranscriptEntry((t) => transcriptFile.append(t), redact, holdOutput) : undefined;
+      entry?.start({ at: started, runbook: fileName, step: n, line: loc.line + 1, section: sectionAt(loc.line), title: opts.name ?? firstLine, command: source });
+      let attemptText = '';
       let stdout = '';
       let r: ExecuteResult;
       let outcome: CheckOutcome | undefined;
@@ -388,14 +403,16 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         r = { exitCode: null, signal: null, timedOut: false, cancelled: false, error: wrongCluster, durationMs: 0 };
       } else for (;;) {
         attempt++;
-        transcript = '';
+        if (attempt > 1) entry?.attempt(attempt, attempts, new Date());
+        attemptText = '';
         stdout = '';
         held = '';
         const live = new LineBuffer((t) => (holdOutput ? (held += t) : io.out(t)), redact);
         const sink = (isOut: boolean) => (t: string) => {
-          transcript += t;
+          attemptText += t;
           if (isOut) stdout += t;
           live.write(t);
+          entry?.out(isOut ? 'stdout' : 'stderr', t);
         };
         const exec = {
           language: loc.language,
@@ -420,21 +437,23 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         live.flush();
         outcome =
           hasChecks(opts.checks) && r.exitCode !== null && r.error === undefined && !r.timedOut && !r.cancelled
-            ? evaluateChecks(opts.checks, r.exitCode, transcript, stdout)
+            ? evaluateChecks(opts.checks, r.exitCode, attemptText, stdout)
             : undefined;
         const passed = outcome ? outcome.ok : isSuccess(r);
         if (passed || attempt >= attempts || r.cancelled || o.signal?.aborted) break;
         const why = outcome?.failures[0] ?? (r.timedOut ? 'timed out' : (r.error ?? `exit code ${exitLabel(r)}`));
         const every = opts.retry?.everyMs ?? 0;
         io.log(`  attempt ${attempt}/${attempts} failed (${redact(why)}); trying again in ${every / 1000}s`);
+        entry?.out('stderr', `[md-runbook] attempt ${attempt}/${attempts} failed (${why}); trying again in ${every / 1000}s\n`);
         if (!(await sleep(every, o.signal))) break;
       }
       // Secrets that matched are known now (even if another capture failed): print what was held back.
       for (const v of outcome?.secretValues ?? []) addSecret(v);
       if (holdOutput) io.out(redact(held));
       const add = (line: string): void => {
-        transcript += line;
+        attemptText += line;
         io.out(redact(line));
+        entry?.out('stderr', line);
       };
       if (r.error !== undefined) add(r.error + '\n');
       if (r.timedOut) add(`[md-runbook] timed out after ${timeoutS}s; process tree killed\n`);
@@ -460,17 +479,20 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       const previous = isCodeMeta(meta) ? loadedOutputEntry(meta) : undefined;
       const history = previous ? nextHistory(previous, isCodeMeta(meta) ? (meta.history?.entries ?? []) : [], historySizeFor(text, 0)) : [];
       text =
-        setCellOutput(text, loc.cellIndex, { kind: 'new', text: transcript, attrs, ...(previous && history.length ? { previous, history } : {}) }, writeOpts) ??
+        setCellOutput(text, loc.cellIndex, { kind: 'new', text: attemptText, attrs, ...(previous && history.length ? { previous, history } : {}) }, writeOpts) ??
         text;
       const ok = outcome ? outcome.ok : isSuccess(r);
+      entry?.end({ exit, durationMs: ended.getTime() - started.getTime(), ...(check ? { check } : {}), ...(attempts > 1 ? { attempt, attempts } : {}) });
+      transcriptFile?.flush();
       // Without ran/ended: "5m ago" means nothing in a terminal.
       const { ran: _ran, ended: _ended, ...shown } = attrs;
       io.log(`${outputSummary(shown)}${r.shell ? ` · ${r.shell.label}` : ''}`);
-      steps.push(result(ok ? 'passed' : 'failed', exit, { durationMs: ended.getTime() - started.getTime(), output: redact(transcript), ...(ok ? {} : { message: outcome?.failures[0] ?? `exit ${exit}` }) }));
+      steps.push(result(ok ? 'passed' : 'failed', exit, { durationMs: ended.getTime() - started.getTime(), output: redact(attemptText), ...(ok ? {} : { message: outcome?.failures[0] ?? `exit ${exit}` }) }));
       if (!ok && !opts.continueOnError && !o.keepGoing) stopped = true;
       if (o.signal?.aborted) stopped = true;
     }
   } finally {
+    transcriptFile?.flush();
     pool?.dispose();
     pins.dispose();
   }

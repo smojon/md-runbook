@@ -39,6 +39,8 @@ Options:
   --junit FILE.xml     Also write a JUnit report (one test case per step)
   --json FILE.json     Also write the step results as JSON (status, exit, message, output) and
                        the run record (every run, attempt and note in time order)
+  --transcript FILE    Also append each step to FILE as it runs: the command, every output line
+                       ("| " stdout, "! " stderr), exit code and time (redacted; tail -f it)
   --param NAME=VALUE   Value for \${param:NAME} (repeatable; default: the front matter's)
   --input NAME=VALUE   Value for \${input:NAME} (repeatable; default: environment variable NAME)
   --yes                Run blocks that ask for confirmation in VS Code (risky commands, confirm);
@@ -121,6 +123,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
       case '--notify-on': notifyOn = value(a); break;
       case '--junit': o.junit = value(a); break;
       case '--json': o.json = value(a); break;
+      case '--transcript': o.transcript = value(a); break;
       case '--param': pair(a, o.params); break;
       case '--input': pair(a, o.inputs); break;
       case '--yes': o.yes = true; break;

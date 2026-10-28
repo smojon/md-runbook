@@ -44,6 +44,7 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--browser PATH` | The browser for `--pdf`. |
 | `--junit FILE.xml` | Also write a JUnit report, one test case per step, for your CI's test view. |
 | `--json FILE.json` | Also write the results as JSON: per step its number, line, status (`passed`, `failed`, `skipped`, `not run`), exit, message and (redacted) output. |
+| `--transcript FILE` | Also append each step to `FILE` as it runs: the command, every output line (`\| ` stdout, `! ` stderr), exit and time, redacted ([Transcript](history.md#transcript)). Off unless given. |
 | `--param NAME=VALUE` | Value for `${param:NAME}` (repeatable). Without it, the front matter's default is used. |
 | `--input NAME=VALUE` | Value for `${input:NAME}` (repeatable). Without it, the environment variable `NAME`. |
 | `--yes` | Run blocks that ask for a confirmation in VS Code: risky commands and the `confirm` option. |

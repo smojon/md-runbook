@@ -1,8 +1,8 @@
 # Output history, run copies and diffs
 
 md-runbook can keep earlier outputs of a cell, mark whether a re-run changed the output, show
-a diff against the previous run, and run a runbook as a timestamped copy so the original stays
-a clean template.
+a diff against the previous run, run a runbook as a timestamped copy so the original stays
+a clean template, and append every run to a transcript file as it happens.
 
 ## Output history
 
@@ -89,6 +89,54 @@ re-run in it later): `mdRunbook.output.saveAfterRun` is `"copies"` by default. A
 place is saved only when you save it, so nothing is written into your file without that step;
 `true` saves those too, `false` never saves after a run.
 
+## Transcript
+
+Every run of a cell is also appended to a **transcript**, a plain text file next to the runbook,
+as its output arrives: `deploy.runbook.md` gets `deploy.runbook.transcript.log`. It is on disk
+even if the runbook is never saved or VS Code closes, so a run can be followed live from another
+window (`tail -f deploy.runbook.transcript.log`, or an assistant watching the file) and looked at
+afterwards:
+
+```text
+===== 2026-10-28T22:14:05+01:00 · deploy.runbook.md · Step 12 · 5. Push · Push the platform
+$ git push http://localhost:3000/lab/platform.git main
+! fatal: unable to access 'http://localhost:3000/lab/platform.git/': The requested URL returned error: 503
+! [md-runbook] check failed: the output does not contain "main -> main"
+===== exit=128 · 9.1s · check failed
+
+===== 2026-10-28T22:15:40+01:00 · deploy.runbook.md · checked: Open http://localhost:8080
+```
+
+- **A header per run:** the time, the runbook, the step number (as Export Report numbers it),
+  the heading it is under, and its `name=` or first line; then the script as it runs (`$ `).
+  A line run leaves the script out, since each line is echoed in the output.
+- **Output with a gutter:** `| ` for stdout, `! ` for stderr, so `grep '^! '` finds the errors.
+  A line is written once it is complete, as the saved output writes it (no colours, a carriage
+  return's last state), at most a tenth of a second after it arrived.
+- **A footer:** exit, duration, and whether a check passed, the attempt and the lines of a line
+  run. A retry marks each new attempt (`----- attempt 2/40`) below the last one's output.
+- **Checklist items** ticked or unticked by clicking are noted on a line of their own.
+- **Redacted like a saved runbook**, line by line and a private key block at once, also with
+  live redaction off. A cell with `capture-secret=` holds its output until it has finished, so
+  the captured value is redacted too (a file can't be redrawn).
+- **The file only grows:** past 10 MB it is renamed to `….transcript.log.1` (replacing an older
+  one) and a new one starts. A run copy has a transcript of its own.
+- The folder is created when needed. If the file can't be written, a warning says so once and
+  the transcript stops for the session; the runs are not affected.
+
+The transcript is on by default. It holds what the outputs hold, so keep it out of Git:
+
+```gitignore
+*.transcript.log
+*.transcript.log.1
+```
+
+Turn it off with `mdRunbook.output.transcript`, or put the files elsewhere with
+`mdRunbook.output.transcriptFolder` (relative to the runbook's folder, or absolute) and name them
+with `mdRunbook.output.transcriptExtension` (`.transcript.log`: what replaces `.md`; a dot first,
+no spaces or slashes, not `.md`). All three are user settings only. The command line writes one
+with [`--transcript FILE`](cli.md#options).
+
 ## Settings
 
 | Setting | Default | Description |
@@ -97,3 +145,6 @@ place is saved only when you save it, so nothing is written into your file witho
 | `mdRunbook.output.mode` | `"inPlace"` | `"copy"` makes **Run All as Copy** the primary action and hints at it when cells are run in place. |
 | `mdRunbook.output.copyFolder` | `""` | Folder for run copies, relative to the runbook's folder (or absolute). Empty = next to the runbook. |
 | `mdRunbook.output.saveAfterRun` | `"copies"` | Save after each run: `"copies"` only run copies, `true` every runbook, `false` never. |
+| `mdRunbook.output.transcript` | `true` | Append every run to `<runbook>.transcript.log` as it happens ([Transcript](#transcript)). |
+| `mdRunbook.output.transcriptFolder` | `""` | Folder for transcripts, relative to the runbook's folder (or absolute). Empty = next to the runbook. |
+| `mdRunbook.output.transcriptExtension` | `".transcript.log"` | What replaces `.md` in a transcript's name. |

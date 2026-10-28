@@ -112,6 +112,27 @@ describe('cli: running a runbook', { skip: !hasBash && 'bash not installed' }, (
     assert.doesNotMatch(r.text + r.printed, /tok-cli-12345/);
   });
 
+  it('appends every step to the transcript as it runs, redacted', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-cli-tx-'));
+    const transcript = path.join(dir, 'r.transcript.log');
+    try {
+      const r = await run(
+        '# Run\n\n## 1. Hello\n\n```bash name="Say hello"\necho "hi ${secret:CLI_TOKEN}"\necho oops >&2\n```\n\n```bash retry=2 every=0s expect="never"\necho try\n```\n',
+        { transcript, keepGoing: true },
+      );
+      assert.equal(r.ok, false);
+      const t = fs.readFileSync(transcript, 'utf8');
+      assert.match(t, /^===== \S+ · r\.md:5 · Step 1 · 1\. Hello · Say hello\n\$ echo "hi /m);
+      assert.match(t, /^\| hi \[REDACTED\]\n! oops\n===== exit=0 · /m);
+      assert.match(t, /^! \[md-runbook\] attempt 1\/2 failed \(the output does not contain "never"\)/m);
+      assert.match(t, /^----- attempt 2\/2 · /m);
+      assert.match(t, /^===== exit=0 · \S+ · check failed · attempt 2\/2\n\n$/m);
+      assert.doesNotMatch(t, /tok-cli-12345/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('redacts environment secrets from every step, holds back secret captures, survives bad placeholders', async () => {
     const md = [
       '```bash', 'echo "early $CLI_TOKEN"', '```', '',

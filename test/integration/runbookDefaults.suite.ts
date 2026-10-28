@@ -78,6 +78,34 @@ export const tests: Test[] = [
       }
     },
   },
+  {
+    name: 'output.transcript (on by default) appends each run next to the runbook, unsaved; transcriptFolder is created',
+    fn: async () => {
+      const text = `# Transcript\n\n## 1. Say it\n\n\`\`\`${LANG} name="Say it"\n${isWin ? 'Write-Output said-live' : 'echo said-live'}\n\`\`\`\n`;
+      const uri = writeFile('transcript.runbook.md', text);
+      const beside = path.join(work, 'transcript.runbook.transcript.log');
+      const inFolder = path.join(work, 'tx-logs', 'transcript.runbook.transcript.log');
+      fs.rmSync(beside, { force: true });
+      fs.rmSync(path.join(work, 'tx-logs'), { recursive: true, force: true });
+      const done = /^===== \S+ · transcript\.runbook\.md · Step 1 · 1\. Say it · Say it\n[\s\S]*^\| said-live\n===== exit=0 · /m;
+      try {
+        const editor = await openRunbook(uri);
+        await runCells(editor, 1, 2);
+        assert.equal(await waitForRun(editor.notebook.cellAt(1)), true);
+        await waitFor('the transcript beside the runbook', () => fs.existsSync(beside) && done.test(fs.readFileSync(beside, 'utf8')));
+        assert.equal(read(uri), text, 'the runbook itself was not saved');
+
+        await setConfig('output.transcriptFolder', 'tx-logs');
+        await runCells(editor, 1, 2);
+        assert.equal(await waitForRun(editor.notebook.cellAt(1)), true);
+        await waitFor('the transcript in the new folder', () => fs.existsSync(inFolder) && done.test(fs.readFileSync(inFolder, 'utf8')));
+      } finally {
+        await setConfig('output.transcriptFolder', undefined);
+        await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+        await closeAll();
+      }
+    },
+  },
 ];
 
 tests.push({
