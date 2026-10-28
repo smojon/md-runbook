@@ -4,3 +4,7 @@ out/
 .vscode-test/
 .claude/worktrees/
 packages/*/dist/
+
+# md-runbook transcripts (mdRunbook.output.transcript)
+*.transcript.log
+*.transcript.log.1

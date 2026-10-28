@@ -1410,6 +1410,27 @@
             "scope": "machine",
             "order": 5
           },
+          "mdRunbook.output.transcript": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Append every run of a cell to a transcript next to the runbook (`deploy.runbook.md` -> `deploy.runbook.transcript.log`) as its output arrives: the command, each output line (`| ` stdout, `! ` stderr), the exit code and time, and checklist items ticked. It is on disk even if the runbook is never saved, and can be followed with `tail -f`. Redacted like a saved runbook. Add `*.transcript.log` to `.gitignore`. User settings only.",
+            "scope": "machine",
+            "order": 5
+          },
+          "mdRunbook.output.transcriptFolder": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Folder for the transcripts (`#mdRunbook.output.transcript#`), relative to the runbook's folder (or absolute). Empty = next to the runbook. User settings only.",
+            "scope": "machine",
+            "order": 5
+          },
+          "mdRunbook.output.transcriptExtension": {
+            "type": "string",
+            "default": ".transcript.log",
+            "markdownDescription": "What replaces `.md` in a transcript's name (`#mdRunbook.output.transcript#`): a dot first, no spaces or slashes, not `.md`. User settings only.",
+            "scope": "machine",
+            "order": 5
+          },
           "mdRunbook.output.maxLines": {
             "type": "integer",
             "default": 2000,

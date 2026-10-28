@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Transcript** ([details](docs/features/history.md#transcript)): every run of a cell is
+  appended to `<runbook>.transcript.log` next to the runbook as its output arrives: a header
+  (time, step, heading, name), the script, each output line (`| ` stdout, `! ` stderr), each
+  retry, and a footer (exit, duration, check, attempt), plus checklist items ticked by clicking.
+  It is on disk even if the runbook is never saved, so a run can be followed with `tail -f` and
+  read afterwards. Redacted like a saved runbook; a `capture-secret=` cell is written when it
+  has finished. Past 10 MB the file starts again (one older kept as `.1`). **On by default**, the
+  one default that is not the most secure choice: add `*.transcript.log` to `.gitignore`, or
+  turn it off with `mdRunbook.output.transcript`. `transcriptFolder` and `transcriptExtension`
+  say where and how it is named (user settings only). The command line writes one with
+  `--transcript FILE`.
+
 ## 0.12.0
 
 - **Command line: part of a runbook** ([details](docs/features/cli.md#part-of-a-runbook)).
