@@ -56,10 +56,6 @@ jobs:
         run: node e2e/check-deps.mjs
       - name: expo-doctor
         run: npx expo-doctor
-        env:
-          # check-deps.mjs above is the dependency gate (a patch behind warns, a minor or major
-          # fails); expo-doctor's own copy of that check failed the workflow on every patch release.
-          EXPO_DOCTOR_SKIP_DEPENDENCY_VERSION_CHECK: '1'
       - name: Audit (runtime dependencies)
         run: npm run audit
       - name: Web build
