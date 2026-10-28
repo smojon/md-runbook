@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0
 
 - **Saved output is what the terminal showed.** Carriage returns overwrite from the first
   column (`abcdefXY` was saved as `XY`, a terminal shows `XYcdef`), backspaces and the
