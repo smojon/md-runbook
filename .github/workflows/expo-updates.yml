@@ -1,0 +1,92 @@
+name: Expo updates
+# Daily: has Expo published patch releases of the packages the app uses (apps/mobile)? They are
+# not a change here, so they are not a check on pushes and pull requests (the App workflow's
+# expo-doctor skips its version check; check-deps.mjs still fails on a minor or major mismatch).
+# This job finds them the day they are out: it updates them on the branch `expo-updates`
+# (`expo install --fix`, exact pins kept), starts the App and CI workflows on it, and opens one
+# pull request, or updates the one that is open. Merge it when its checks are green.
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write # push the branch
+  pull-requests: write # open the pull request (Settings: Actions may create pull requests)
+  actions: write # start App and CI on it: a push with this token starts no workflow by itself
+
+concurrency:
+  group: expo-updates
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: apps/mobile
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: expo-updates
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+
+      - name: Are Expo patch releases out?
+        id: check
+        run: |
+          if npx expo install --check > "$RUNNER_TEMP/check.txt" 2>&1; then
+            echo "The Expo packages are the versions the SDK expects."
+            echo "outdated=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$RUNNER_TEMP/check.txt"
+            echo "outdated=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update them, exact pins kept
+        if: steps.check.outputs.outdated == 'true'
+        run: |
+          cp package.json "$RUNNER_TEMP/package.before.json"
+          npx expo install --fix
+          node e2e/pin-exact.mjs "$RUNNER_TEMP/package.before.json"
+          npm install --no-audit --no-fund
+          # Up to date now, or the update did not do what it should: fail here, not in a PR.
+          npx expo install --check
+
+      - name: Push the branch and open or update the pull request
+        if: steps.check.outputs.outdated == 'true'
+        run: |
+          # "  expo@58.0.19 - expected version: ~58.0.21" -> "expo 58.0.21"
+          list=$(sed -nE 's/^ *([^ ]+)@[^ ]+ - expected version: [~^]?([^ ]+).*/\1 \2/p' "$RUNNER_TEMP/check.txt")
+          first=$(echo "$list" | head -3 | paste -sd, - | sed 's/,/, /g')
+          more=''
+          if [ "$(echo "$list" | wc -l)" -gt 3 ]; then more=', …'; fi
+          title="App: Expo SDK patch releases ($first$more)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -C "$BRANCH"
+          git commit -q -am "$title" -m "$(printf 'Found by the daily Expo updates workflow (expo install --check), updated with\nexpo install --fix, exact pins kept (e2e/pin-exact.mjs):\n\n%s' "$list")"
+          # The same update as the open pull request already has: nothing to do.
+          if git fetch -q origin "$BRANCH" 2>/dev/null && git diff --quiet "origin/$BRANCH" -- package.json package-lock.json; then
+            echo "The branch $BRANCH already has these versions."
+            exit 0
+          fi
+          git push -q --force origin "$BRANCH"
+          body=$(printf 'Expo published patch releases of the packages the app uses:\n\n```\n%s\n```\n\nUpdated with `npx expo install --fix`, exact pins kept (`e2e/pin-exact.mjs`). The App and CI workflows run on this branch; merge when they are green. Opened by the daily Expo updates workflow, which updates this pull request when newer patches come out.' "$list")
+          number=$(gh pr list --head "$BRANCH" --state open --json number -q '.[].number')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "$title" --body "$body"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$title" --body "$body"
+          fi
+          gh workflow run app.yml --ref "$BRANCH"
+          gh workflow run ci.yml --ref "$BRANCH"

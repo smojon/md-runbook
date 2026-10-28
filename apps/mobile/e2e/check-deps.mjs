@@ -1,6 +1,7 @@
 // `expo install --check` as a CI gate that doesn't break on every Expo patch release: a package
 // whose major or minor version differs from what the SDK expects fails the build; one that is only
-// a patch behind is a warning on the run (update with `npx expo install --fix`, then pin exact).
+// a patch behind is a warning on the run. The daily Expo updates workflow (expo-updates.yml) opens
+// a pull request with the patch releases (`npx expo install --fix`, then e2e/pin-exact.mjs).
 //
 //   node e2e/check-deps.mjs
 import { spawnSync } from 'node:child_process';

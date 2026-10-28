@@ -33,6 +33,14 @@ State of the project for whoever picks it up next (person or new Claude session)
   SSH key in the Secure Enclave or Android Keystore; the SSH layer signs through
   `ExternalKeyPair`) and `document-access` (iOS: open a file in place, keep a bookmark). These
   are only compiled by the Android and iOS jobs of the App workflow.
+- **Expo patch releases:** `.github/workflows/expo-updates.yml` checks daily (05:23 UTC, or
+  Actions → Expo updates → Run workflow) and opens or updates one pull request from the branch
+  `expo-updates` (`expo install --fix`, exact pins kept by `apps/mobile/e2e/pin-exact.mjs`),
+  with the App and CI workflows started on it; merge it when green. On pushes and pull requests
+  the App workflow's `check-deps.mjs` fails only on a minor or major mismatch, and `expo-doctor`
+  skips its version check, which answered differently each time Expo published a patch. Needs
+  Settings → Actions → General → *Allow GitHub Actions to create and approve pull requests*
+  (on since 2026-10-29). An update can also need an advisory taken off `e2e/audit.mjs`.
 - **Relay:** `apps/relay` lets the web app reach SSH servers (WebSocket to TCP, protocol v1,
   allowlist and tokens; its README). Separate npm project with a Dockerfile; the Relay workflow
   tests it and probes the container, and the App workflow runs a cell from Chromium through it.
