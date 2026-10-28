@@ -254,9 +254,10 @@ system:admin
 - The output fence is a backtick fence with `text`, longer than any backtick run inside the
   output, so output can never break the document. Its indentation matches the code block's.
 - stdout and stderr are merged in arrival order; `stderr=` lists the lines that came from stderr,
-  so both clients show them in red again when the file is opened. Before writing, ANSI codes are stripped,
-  carriage-return progress lines are collapsed, secrets are redacted, and long output is cut in
-  the middle with `… [md-runbook: N lines truncated] …`.
+  so both clients show them in red again when the file is opened. Before writing, output becomes what a terminal
+  would show (carriage returns, backspaces, erased lines and cursor movements applied, other
+  control characters dropped), ANSI codes are stripped, secrets are redacted, and long output is
+  cut in the middle with `… [md-runbook: N lines truncated] …`.
 - Re-running a cell replaces its block. Blocks of cells that did not run are kept byte for byte.
 - The status line shown in the editor (`exit code 0 · 1.2s · bash`) is not in the file.
 

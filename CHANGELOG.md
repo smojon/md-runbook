@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Saved output is what the terminal showed.** Carriage returns overwrite from the first
+  column (`abcdefXY` was saved as `XY`, a terminal shows `XYcdef`), backspaces and the
+  erase-line, cursor up/down/forward/back, column and save/restore sequences are applied, so a
+  spinner or a multi-line progress display is saved as it ended instead of every frame; other
+  control characters, which showed as odd symbols, are dropped. Clearing the screen keeps what
+  was printed. Colours are stripped as before.
+- **Python's `é` and `✓` on Windows.** A Python script's output was saved as `�` (and a `✓`
+  stopped it with `UnicodeEncodeError`): Python writes to a pipe in the ANSI code page
+  (cp1252). Cells on Windows now get `PYTHONIOENCODING=utf-8`, unless `PYTHONIOENCODING` or
+  `PYTHONUTF8` is already set. Reported by a tester as a difference between the terminal and
+  the runbook.
+
 - **Transcript** ([details](docs/features/history.md#transcript)): every run of a cell is
   appended to `<runbook>.transcript.log` next to the runbook as its output arrives: a header
   (time, step, heading, name), the script, each output line (`| ` stdout, `! ` stderr), each

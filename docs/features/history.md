@@ -111,8 +111,9 @@ $ git push http://localhost:3000/lab/platform.git main
   the heading it is under, and its `name=` or first line; then the script as it runs (`$ `).
   A line run leaves the script out, since each line is echoed in the output.
 - **Output with a gutter:** `| ` for stdout, `! ` for stderr, so `grep '^! '` finds the errors.
-  A line is written once it is complete, as the saved output writes it (no colours, a carriage
-  return's last state), at most a tenth of a second after it arrived.
+  A line is written once it is complete, as the saved output writes it (what a terminal shows,
+  no colours), at most a tenth of a second after it arrived. A file only grows, so a program
+  that redraws lines already written (a spinner over several lines) leaves each frame here.
 - **A footer:** exit, duration, and whether a check passed, the attempt and the lines of a line
   run. A retry marks each new attempt (`----- attempt 2/40`) below the last one's output.
 - **Checklist items** ticked or unticked by clicking are noted on a line of their own.

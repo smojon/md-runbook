@@ -9,7 +9,8 @@
  */
 
 import { stripAnsi } from './ansi';
-import { formatLineSet, splitStderrMarks } from './outputColors';
+import { STDERR_MARK, formatLineSet, splitStderrMarks } from './outputColors';
+import { applyTerminalControls } from './terminalText';
 import { addIndent } from './fence';
 import { toLf } from './lines';
 
@@ -88,9 +89,10 @@ export function processOutputText(text: string, opts: OutputTextOptions): string
  * stderr lines are marked in `text` (outputColors.markStderr) and the marks are removed here.
  */
 export function processOutput(text: string, opts: OutputTextOptions): { text: string; stderr: string } {
-  let t = text.replace(/\r\n/g, '\n');
+  // As a terminal shows it (cursor movements applied), then without colours: the movements are
+  // escape sequences too, so they are applied before stripAnsi takes the rest away.
+  let t = applyTerminalControls(text.replace(/\r\n/g, '\n'), STDERR_MARK);
   if (opts.stripAnsi) t = stripAnsi(t);
-  t = normalizeNewlines(t);
   if (opts.redact) t = opts.redact(t);
   t = t.replace(/\n+$/, '');
   const marked = splitStderrMarks(truncateLines(t, opts.maxOutputLines));

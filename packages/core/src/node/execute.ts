@@ -51,6 +51,20 @@ export function nodeShellEnv(env: NodeJS.ProcessEnv = process.env): ShellEnv {
 export async function cellEnv(settings: ShellSettings, extra: NodeJS.ProcessEnv | undefined, platform: NodeJS.Platform): Promise<NodeJS.ProcessEnv> {
   const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
   if (settings.refreshPath !== false) await freshenPath(env, platform);
+  return withPythonUtf8(env, platform);
+}
+
+/**
+ * On Windows, Python writes to a pipe in the ANSI code page (cp1252), where a terminal gets
+ * UTF-8, and md-runbook reads UTF-8: an `é` printed by a Python script was saved as `�`, and a
+ * `✓` stopped the script with UnicodeEncodeError. PYTHONIOENCODING=utf-8 makes it write UTF-8,
+ * unless the user chose an encoding (or UTF-8 mode) already. It changes only stdin/stdout/stderr.
+ */
+export function withPythonUtf8(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): NodeJS.ProcessEnv {
+  if (platform !== 'win32') return env;
+  // A copy of process.env is case-sensitive, Windows' environment is not.
+  const set = Object.keys(env).some((k) => /^(PYTHONIOENCODING|PYTHONUTF8)$/i.test(k));
+  if (!set) env.PYTHONIOENCODING = 'utf-8';
   return env;
 }
 

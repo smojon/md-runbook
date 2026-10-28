@@ -17,7 +17,8 @@
 
 import { stripAnsi } from './ansi';
 import { LineBuffer } from './lineBuffer';
-import { formatLocalIso, normalizeNewlines } from './outputBlock';
+import { formatLocalIso } from './outputBlock';
+import { applyTerminalControls } from './terminalText';
 
 export const DEFAULT_TRANSCRIPT_EXTENSION = '.transcript.log';
 
@@ -105,7 +106,10 @@ export class TranscriptEntry {
     private readonly redact: (text: string) => string,
     private readonly hold = false,
   ) {
-    const buffer = (stream: Stream): LineBuffer => new LineBuffer((t) => this.lines(stream, t), (t) => this.redact(stripAnsi(t)));
+    // Lines as the saved output has them: cursor movements applied (a file only grows, so a
+    // redraw of lines already written stays), then no colours, then redacted.
+    const clean = (t: string): string => this.redact(stripAnsi(applyTerminalControls(t.replace(/\r\n/g, '\n'))));
+    const buffer = (stream: Stream): LineBuffer => new LineBuffer((t) => this.lines(stream, t), clean);
     this.buffers = { stdout: buffer('stdout'), stderr: buffer('stderr') };
   }
 
@@ -145,7 +149,7 @@ export class TranscriptEntry {
   private lines(stream: Stream, text: string): void {
     const parts = (this.carry[stream] + text).split('\n');
     this.carry[stream] = parts.pop()!;
-    if (parts.length > 0) this.write(parts.map((l) => GUTTER[stream] + normalizeNewlines(l)).join('\n') + '\n');
+    if (parts.length > 0) this.write(parts.map((l) => GUTTER[stream] + l).join('\n') + '\n');
   }
 }
 
