@@ -234,7 +234,8 @@ Each has its own page with examples and settings:
   collapsed `<details>` block, **Run All as Copy** into a timestamped `.md` (the original stays
   a clean template), and **Compare With Previous Run**. Re-run outputs get `changed=yes|no`.
   Every run is also appended to a **transcript** next to the runbook as it happens
-  (`deploy.runbook.transcript.log`), saved or not: follow it with `tail -f`.
+  (`deploy.runbook.transcript.log`), saved or not: **Run ▾ › Open Transcript** follows it
+  (or `tail -f`), **Run ▾ › Transcript** turns it off or on.
 - **[Run from the text editor and export a report](docs/features/codelens-report.md):** "▶ Run"
   links above each block in the normal Markdown editor, and a self-contained HTML report with a
   step summary table, also as PDF (printed by the Chrome or Edge you have).
@@ -330,7 +331,7 @@ the most secure choice but one, the transcript (below). Turn things on as you ne
 | Text-editor runs (CodeLens) | Off. When on, proposed and assistant-written cells are refused and risky commands still ask. |
 | Secrets | Passed as environment variables, never as script text; no `.env` file is loaded unless configured. |
 | History | Off (`historySize: 0`), so old outputs are not kept. |
-| Transcript | **On**, the one exception: every run is appended, redacted, to `<runbook>.transcript.log` next to the runbook, so a run is on disk even if the runbook is never saved. Add `*.transcript.log` to `.gitignore`, or turn it off with `mdRunbook.output.transcript`. |
+| Transcript | **On**, the one exception: every run is appended, redacted, to `<runbook>.transcript.log` next to the runbook, so a run is on disk even if the runbook is never saved. Add `*.transcript.log` to `.gitignore`, or turn it off: **Run ▾ › Transcript** (the setting `mdRunbook.output.transcript`). |
 | AI | Provider `off`: nothing is sent until you choose one. Every send is confirmed, names are pseudonymized, and a leak check blocks sharing unless you choose otherwise. |
 | Proposals | Proposed cells never run until approved; approval resets when the code changes and is only trusted when made on this machine; the command policy applies; AI cells need read-only credentials (`approval.readOnlyOnly`) and always run isolated. |
 

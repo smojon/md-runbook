@@ -99,6 +99,20 @@ export function selectSteps(text: string, locs: readonly CodeCellLocation[], num
     if (missing.length > 0) {
       throw new RunUsageError(`no heading starts with ${missing.map((t) => JSON.stringify(t)).join(', ')} (--section matches the heading text after the #s, case-sensitive)`);
     }
+    // The runbook's title (its one top-level heading) holds every step, so a section matching it
+    // selects them all: "6." for "## 6. The scheduled check" also matches "# 6. Are the backends up?".
+    const top = Math.min(...headings.map((h) => h.level));
+    const tops = headings.filter((h) => h.level === top);
+    if (tops.length === 1 && headings.length > 1) {
+      const title = tops[0]!;
+      const onTitle = sections.filter((t) => title.text.startsWith(t));
+      if (onTitle.length > 0) {
+        const t = onTitle[0]!;
+        const others = headings.filter((h) => h !== title && h.text.startsWith(t)).map((h) => h.text);
+        const hint = others.length > 0 ? `; for ${JSON.stringify(others[0])}, give more of it, e.g. --section ${JSON.stringify(others[0]!.split(/\s+/).slice(0, 2).join(' '))}` : '';
+        throw new RunUsageError(`--section ${JSON.stringify(t)} matches the runbook's title ${JSON.stringify(title.text)}, which holds every step${hint}`);
+      }
+    }
     // A block is in a section while that heading is open: until the next heading of its level or higher.
     under = (line) => {
       const open: Heading[] = [];

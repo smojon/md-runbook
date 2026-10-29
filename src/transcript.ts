@@ -25,10 +25,10 @@ import { META_KEY } from './outputs';
 const files = new Map<string, TranscriptFile>();
 let reportedExtension: string | undefined;
 
-/** The transcript file of a runbook, or undefined (turned off, not a file on disk). */
-export function transcriptFileFor(nb: vscode.NotebookDocument): TranscriptFile | undefined {
+/** Where a runbook's transcript is (whether it is on or not), or undefined for a runbook that is not a file on disk. */
+export function transcriptPathFor(nb: vscode.NotebookDocument): string | undefined {
+  if (nb.uri.scheme !== 'file') return undefined;
   const c = vscode.workspace.getConfiguration(SECTION);
-  if (!c.get<boolean>('output.transcript', true) || nb.uri.scheme !== 'file') return undefined;
   let ext = c.get<string>('output.transcriptExtension', DEFAULT_TRANSCRIPT_EXTENSION).trim() || DEFAULT_TRANSCRIPT_EXTENSION;
   const problem = transcriptExtensionProblem(ext);
   if (problem !== undefined) {
@@ -40,7 +40,19 @@ export function transcriptFileFor(nb: vscode.NotebookDocument): TranscriptFile |
   }
   const dir = path.dirname(nb.uri.fsPath);
   const folder = c.get<string>('output.transcriptFolder', '').trim();
-  const file = path.join(folder ? path.resolve(dir, folder) : dir, transcriptFileName(path.basename(nb.uri.fsPath), ext));
+  return path.join(folder ? path.resolve(dir, folder) : dir, transcriptFileName(path.basename(nb.uri.fsPath), ext));
+}
+
+/** Whether runs are written to the transcript (mdRunbook.output.transcript, on by default). */
+export function transcriptOn(): boolean {
+  return vscode.workspace.getConfiguration(SECTION).get<boolean>('output.transcript', true);
+}
+
+/** The transcript file of a runbook, or undefined (turned off, not a file on disk). */
+export function transcriptFileFor(nb: vscode.NotebookDocument): TranscriptFile | undefined {
+  if (!transcriptOn()) return undefined;
+  const file = transcriptPathFor(nb);
+  if (file === undefined) return undefined;
   let f = files.get(file);
   if (!f) {
     f = new TranscriptFile(file, (e) => void vscode.window.showWarningMessage(`md-runbook: the transcript ${file} can't be written, so it stops for this session: ${e.message}`));
@@ -111,4 +123,55 @@ export function noteTaskBox(nb: vscode.NotebookDocument, item: string, checked: 
   if (!file) return;
   file.append(transcriptNote(new Date(), path.basename(nb.uri.fsPath), `${checked ? 'checked' : 'unchecked'}: ${item}`, writeOptions().redact ?? ((t: string) => t)));
   file.flush();
+}
+
+/**
+ * Run ▾ › Open Transcript, Run ▾ › Transcript (a check mark: on or off) and Help ▾ › Settings…,
+ * so a learner finds the transcript, and every setting, without knowing their names.
+ */
+export function registerTranscriptCommands(context: vscode.ExtensionContext): void {
+  const notebook = (): vscode.NotebookDocument | undefined => vscode.window.activeNotebookEditor?.notebook;
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mdRunbook.openTranscript', async () => {
+      const nb = notebook();
+      const file = nb && transcriptPathFor(nb);
+      if (!file) {
+        void vscode.window.showInformationMessage('md-runbook: save the runbook first; an unsaved runbook has no transcript.');
+        return;
+      }
+      files.get(file)?.flush();
+      try {
+        await vscode.workspace.fs.stat(vscode.Uri.file(file));
+      } catch {
+        const turnOn = transcriptOn() ? undefined : 'Turn the Transcript On';
+        const answer = await vscode.window.showInformationMessage(
+          transcriptOn()
+            ? `md-runbook: no step of this runbook has run since the transcript is on; it starts with the next run (${path.basename(file)}).`
+            : 'md-runbook: the transcript is off (Run ▾ › Transcript).',
+          ...(turnOn ? [turnOn] : []),
+        );
+        if (answer === turnOn && turnOn) await setTranscript(true);
+        return;
+      }
+      // An editor rather than a preview: it follows the file as later runs append to it.
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+      const editor = await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.Beside });
+      const end = doc.lineAt(Math.max(0, doc.lineCount - 1)).range.end;
+      editor.revealRange(new vscode.Range(end, end), vscode.TextEditorRevealType.Default);
+    }),
+    vscode.commands.registerCommand('mdRunbook.toggleTranscript', () => setTranscript(!transcriptOn())),
+    vscode.commands.registerCommand('mdRunbook.openSettings', () =>
+      vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`),
+    ),
+  );
+}
+
+/** The setting is machine-scoped: it lives in the user settings, never in a workspace. */
+async function setTranscript(on: boolean): Promise<void> {
+  await vscode.workspace.getConfiguration(SECTION).update('output.transcript', on, vscode.ConfigurationTarget.Global);
+  void vscode.window.showInformationMessage(
+    on
+      ? 'md-runbook: transcript on. Each run is appended to <runbook>.transcript.log next to the runbook (Run ▾ › Open Transcript).'
+      : 'md-runbook: transcript off. Runs are no longer written to <runbook>.transcript.log; the files already there stay.',
+  );
 }

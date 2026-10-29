@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **The transcript in the menus.** **Run ▾ › Open Transcript** opens `<runbook>.transcript.log`
+  beside the runbook (it grows as later runs append); **Run ▾ › Transcript** turns it off or on
+  (a check mark while on; the user setting `mdRunbook.output.transcript`). Before, only someone
+  who knew the setting's name could turn it off.
+- **Help ▾ › Settings…** opens md-runbook's settings, so every one can be found from a menu.
+- **`md-runbook run --section` refuses a section that matches the runbook's title**: the title
+  holds every step, so `--section "6."` for `## 6. The scheduled check` also matched
+  `# 6. Are the backends up?` and ran the whole runbook. The message names the heading meant and
+  how to say it (`--section "6. The"`).
+
 ## 0.13.0
 
 - **Saved output is what the terminal showed.** Carriage returns overwrite from the first
