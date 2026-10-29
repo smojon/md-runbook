@@ -140,6 +140,21 @@ describe('cli: selecting steps', () => {
     assert.throws(() => select(RUNBOOK, { sections: ['1.'], from: 3 }), /--from 3 --section "1." selects no step/);
   });
 
+  it("a section matching the runbook's title, which holds every step, is refused with a hint", () => {
+    // Seen running guide 6: --section "6." meant "## 6. The scheduled check" and ran the whole runbook.
+    const guide = ['# 6. Are the backends up?', '', '## 1. The cluster', '', '```bash', 'echo one', '```', '', '## 6. The scheduled check', '', '```bash', 'echo six', '```', ''].join('\n');
+    assert.throws(
+      () => select(guide, { sections: ['6.'] }),
+      (e: Error) =>
+        e instanceof RunUsageError &&
+        /--section "6\." matches the runbook's title "6\. Are the backends up\?", which holds every step; for "6\. The scheduled check", give more of it, e\.g\. --section "6\. The"/.test(e.message),
+    );
+    assert.deepEqual(select(guide, { sections: ['6. The'] }), [2]);
+    // Several top-level headings are sections, not a title: matching one is fine.
+    const parts = ['# 1. Prepare', '', '```bash', 'echo one', '```', '', '# 2. Deploy', '', '```bash', 'echo two', '```', ''].join('\n');
+    assert.deepEqual(select(parts, { sections: ['2.'] }), [2]);
+  });
+
   it('formats step lists', () => {
     assert.equal(formatSteps([7, 1, 2, 3, 5, 8]), '1–3, 5, 7–8');
   });

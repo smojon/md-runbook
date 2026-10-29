@@ -17,3 +17,6 @@ web-7c9d…   1/1     Running
 
 - The status bar shows progress (`4/7`); **Resume Run** carries on from the first failed or
   pending step. Secrets are redacted before anything is written.
+- Every run is also appended to a **transcript**, `<runbook>.transcript.log` next to the runbook,
+  saved or not: **Run ▾ › Open Transcript** follows it, **Run ▾ › Transcript** turns it off or on,
+  and **Help ▾ › Settings…** lists every setting.

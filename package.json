@@ -539,6 +539,23 @@
         "title": "Help",
         "category": "md-runbook",
         "icon": "$(question)"
+      },
+      {
+        "command": "mdRunbook.openTranscript",
+        "title": "Open Transcript",
+        "category": "md-runbook",
+        "icon": "$(output)"
+      },
+      {
+        "command": "mdRunbook.toggleTranscript",
+        "title": "Transcript",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.openSettings",
+        "title": "Settings…",
+        "category": "md-runbook",
+        "icon": "$(settings-gear)"
       }
     ],
     "menus": {
@@ -923,6 +940,14 @@
         {
           "command": "mdRunbook.menu.help",
           "when": "false"
+        },
+        {
+          "command": "mdRunbook.openTranscript",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.toggleTranscript",
+          "when": "notebookType == md-runbook"
         }
       ],
       "notebook/cell/title": [
@@ -1086,6 +1111,15 @@
           "group": "3_outputs@1"
         },
         {
+          "command": "mdRunbook.openTranscript",
+          "group": "3_outputs@2"
+        },
+        {
+          "command": "mdRunbook.toggleTranscript",
+          "group": "3_outputs@3",
+          "toggled": "config.mdRunbook.output.transcript"
+        },
+        {
           "command": "mdRunbook.startIncident",
           "group": "4_record@1"
         },
@@ -1212,6 +1246,10 @@
         {
           "command": "mdRunbook.openSample",
           "group": "1_help@3"
+        },
+        {
+          "command": "mdRunbook.openSettings",
+          "group": "2_settings@1"
         }
       ]
     },
