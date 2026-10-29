@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **The hover's line buttons work on Windows.** Clicking **Run line**, **Run lines …**, **Step from
+  here**, **Check**, **Breakpoint** or **Copy** said *open a runbook and pick a code cell first*:
+  VS Code decodes a command link's arguments twice, so the cell's address arrived with `c:` for
+  `c%3A` and was not found. The ▶ ☐ buttons (`lines.buttons: inline`), the right-click menu and
+  Ctrl+Alt+Enter were not affected.
+
 ## 0.14.0
 
 - **The transcript in the menus.** **Run ▾ › Open Transcript** opens `<runbook>.transcript.log`
