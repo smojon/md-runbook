@@ -1,0 +1,97 @@
+name: Expo updates
+# Daily: has Expo published patch releases of the packages the app uses (apps/mobile)? They are
+# not a change here, so they are not a check on pushes and pull requests (the App workflow's
+# expo-doctor skips its version check; check-deps.mjs still fails on a minor or major mismatch).
+# This job looks every day and takes a release once it is 7 days old (e2e/expo-updates.mjs: a
+# compromised release is usually pulled within days; the rule of anotherMoney's
+# minimumReleaseAge). It updates them on the branch `expo-updates`, exact pins kept, starts the
+# App and CI workflows on it, and opens one pull request, or updates the one that is open. Merge
+# it when its checks are green. What is held, and until when, is in the run's summary.
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write # push the branch
+  pull-requests: write # open the pull request (Settings: Actions may create pull requests)
+  actions: write # start App and CI on it: a push with this token starts no workflow by itself
+
+concurrency:
+  group: expo-updates
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: apps/mobile
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: expo-updates
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+
+      - name: Are Expo patch releases out?
+        id: check
+        run: |
+          if npx expo install --check > "$RUNNER_TEMP/check.txt" 2>&1; then
+            echo "The Expo packages are the versions the SDK expects."
+            echo "outdated=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$RUNNER_TEMP/check.txt"
+            echo "outdated=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update the ones at least 7 days old, exact pins kept
+        id: update
+        if: steps.check.outputs.outdated == 'true'
+        run: |
+          node e2e/expo-updates.mjs "$RUNNER_TEMP/check.txt" "$RUNNER_TEMP/summary.md"
+          cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          if git diff --quiet -- package.json package-lock.json; then
+            echo "Nothing is 7 days old yet."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push the branch and open or update the pull request
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          # "- `expo` 58.0.19 → **58.0.21** (published …)" -> "expo 58.0.21"
+          list=$(sed -nE 's/^- `([^`]+)` [^ ]+ → \*\*([^*]+)\*\*.*/\1 \2/p' "$RUNNER_TEMP/summary.md")
+          first=$(echo "$list" | head -3 | paste -sd, - | sed 's/,/, /g')
+          more=''
+          if [ "$(echo "$list" | wc -l)" -gt 3 ]; then more=', …'; fi
+          title="App: Expo SDK patch releases ($first$more)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -C "$BRANCH"
+          git commit -q -am "$title" -m "$(printf 'Found by the daily Expo updates workflow (e2e/expo-updates.mjs):\n\n%s' "$(cat "$RUNNER_TEMP/summary.md")")"
+          # The same update as the open pull request already has: nothing to do.
+          if git fetch -q origin "$BRANCH" 2>/dev/null && git diff --quiet "origin/$BRANCH" -- package.json package-lock.json; then
+            echo "The branch $BRANCH already has these versions."
+            exit 0
+          fi
+          git push -q --force origin "$BRANCH"
+          body=$(printf 'Expo patch releases of the packages the app uses, taken once they are 7 days old:\n\n%s\n\nInstalled with `npm install --before` (their dependencies are 7 days old too), exact pins kept. The App and CI workflows run on this branch; merge when they are green. If the audit step fails on a reviewed advisory that no longer applies, remove it from `e2e/audit.mjs` here. Opened by the daily Expo updates workflow, which updates this pull request when newer releases are old enough.' "$(cat "$RUNNER_TEMP/summary.md")")
+          number=$(gh pr list --head "$BRANCH" --state open --json number -q '.[].number')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "$title" --body "$body"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$title" --body "$body"
+          fi
+          gh workflow run app.yml --ref "$BRANCH"
+          gh workflow run ci.yml --ref "$BRANCH"

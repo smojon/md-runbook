@@ -3,6 +3,7 @@ on:
   push:
     branches: ['**'] # not tags: the Release workflow tests tag pushes
   pull_request:
+  workflow_dispatch: # the Expo updates workflow starts it on its branch (its push starts nothing)
 jobs:
   test:
     strategy:

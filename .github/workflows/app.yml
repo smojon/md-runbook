@@ -56,6 +56,11 @@ jobs:
         run: node e2e/check-deps.mjs
       - name: expo-doctor
         run: npx expo-doctor
+        env:
+          # Its version check asks which patch is newest today, so it failed this workflow on every
+          # Expo patch release without a change here. check-deps.mjs (above) is the version gate on
+          # changes; the daily Expo updates workflow (expo-updates.yml) brings the patch releases.
+          EXPO_DOCTOR_SKIP_DEPENDENCY_VERSION_CHECK: '1'
       - name: Audit (runtime dependencies)
         run: npm run audit
       - name: Web build
