@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0
 
 - **Line buttons on the cell's status line.** The run buttons of the line the cursor is on
   (**Run line**, **Run lines 1-N**, **Run lines N-end**, **Step from here**) are also under the
