@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.0
 
 - **The transcript in the menus.** **Run ▾ › Open Transcript** opens `<runbook>.transcript.log`
   beside the runbook (it grows as later runs append); **Run ▾ › Transcript** turns it off or on
