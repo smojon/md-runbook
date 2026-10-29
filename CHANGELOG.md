@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.1
 
 - **The hover's line buttons work on Windows.** Clicking **Run line**, **Run lines …**, **Step from
   here**, **Check**, **Breakpoint** or **Copy** said *open a runbook and pick a code cell first*:
