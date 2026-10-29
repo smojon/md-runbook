@@ -79,16 +79,24 @@ ${out:POD} = no value yet: run the cell with capture=POD first
 
 The hover only reads what md-runbook already knows: it never asks for a value or runs anything.
 
+The run buttons of the line the cursor is on are also on the cell's status line, under the cell:
+`▷ Run line 2 · Run lines 1-2 · Run lines 2-3 · Step from here`. They stay while the cell is
+selected, so a click in the line and then one on the status line runs it. The hover is harder to
+reach on a cell's first lines: VS Code draws it above the cell there, and closes it as soon as the
+mouse leaves the cell's text (`editor.hover.hidingDelay` only applies inside it). By keyboard,
+`Ctrl+K Ctrl+I` opens the hover at the cursor, the same keys again move into it, and `Tab` and
+`Enter` choose a button.
+
 `mdRunbook.lines.buttons` chooses where the buttons are:
 
 | Value | Buttons |
 |---|---|
-| `hover` (default) | In a hover on the command, a plain click. Nothing in the code until you hover. |
+| `hover` (default) | In a hover on the command, a plain click; the cursor's line's run buttons also on the cell's status line. Nothing in the code until you hover. |
 | `inline` | `▶ ☐` always in front of each command. They are VS Code *inlay hints*, which VS Code runs on `Ctrl+click` (`Cmd+click` on macOS) only, and which need `editor.inlayHints.enabled` on. |
 | `off` | None. The dropdown, the right-click menu and `Ctrl+Alt+Enter` still run lines. |
 
 VS Code doesn't let an extension put clickable buttons in the margin or next to the cell's run
-button, so the hover is the closest a plain-click button can get to the line.
+button, so the hover and the cell's status line are the closest a plain-click button can get to the line.
 
 ## Step Through
 
