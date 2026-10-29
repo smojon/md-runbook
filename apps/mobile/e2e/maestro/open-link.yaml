@@ -14,19 +14,23 @@ name: open-link
     timeout: 120000
 - openLink: mdrunbook://open?rb=U1bwyczLTk1RKCrNS8rPz-bi8i9IzQPy04rycxUSFXKAsgolGYklCsmJRUWZqcUKmSV6XFwJCQlJicUZXKnJGfkKSirVBYlFiblW7kGuriGefu61SiAFXAA&sha256=b397dcfb1a65c3e85e4128d4a76d328ad98b7124c495a97b38d770f901943492&host=nowhere&p.GREETING=hello
 # iOS asks "Open in md-runbook?" first, a moment after the link: wait for it, or a check made
-# too early misses it and the dialog stays over the next flows.
+# too early misses it and the dialog stays over the next flows. On CI's simulator iOS is slow at
+# both ends, and the app is not: the dialog came up to 21 s after the link, and the link reached
+# the app (UIOpenURLAction in simulator.log) 3 to 36 s after the tap, its screen drawn within half
+# a second of that. The waits were 15 and 30 s, and 3 of 11 runs failed on one of them (2026-10-27
+# to 29), so they leave room; a pass returns as soon as the element is there.
 - runFlow:
     when:
       platform: iOS
     commands:
       - extendedWaitUntil:
           visible: 'Open'
-          timeout: 15000
+          timeout: 60000
       - tapOn: 'Open'
 - extendedWaitUntil:
     visible:
       id: link-trust-unverified
-    timeout: 30000
+    timeout: 90000
 - assertVisible: 'Linked runbook'
 - assertVisible:
     id: link-missing-host
