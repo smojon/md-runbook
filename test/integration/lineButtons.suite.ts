@@ -129,7 +129,11 @@ export const tests: Test[] = [
 
         await setConfig('lines.buttons', 'off');
         assert.equal(await hoverText(cell, 1), '', 'no hover with lines.buttons off');
-        assert.deepEqual(await vscode.commands.executeCommand('mdRunbook._lineStatus', docUri, 1), [], 'no status line buttons with lines.buttons off');
+        assert.deepEqual(
+          await vscode.commands.executeCommand('mdRunbook._lineStatus', docUri, 1),
+          ['$(play) Run 2 checked lines'],
+          "no run buttons for the cursor's line with lines.buttons off; the checked lines stay",
+        );
         assert.deepEqual(await hintLabels(cell), []);
         assert.deepEqual(await vscode.commands.executeCommand('mdRunbook._checkMarks', docUri), []);
       } finally {
