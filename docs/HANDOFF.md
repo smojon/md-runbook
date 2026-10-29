@@ -35,8 +35,10 @@ State of the project for whoever picks it up next (person or new Claude session)
   are only compiled by the Android and iOS jobs of the App workflow.
 - **Expo patch releases:** `.github/workflows/expo-updates.yml` checks daily (05:23 UTC, or
   Actions → Expo updates → Run workflow) and opens or updates one pull request from the branch
-  `expo-updates` (`expo install --fix`, exact pins kept by `apps/mobile/e2e/pin-exact.mjs`),
-  with the App and CI workflows started on it; merge it when green. On pushes and pull requests
+  `expo-updates` with the releases that are at least 7 days old (`apps/mobile/e2e/expo-updates.mjs`,
+  installed with `npm install --before`, exact pins kept by `pin-exact.mjs`; the supply-chain rule
+  of anotherMoney's `minimumReleaseAge`), with the App and CI workflows started on it; merge it
+  when green. The run's summary lists what is held and from when. On pushes and pull requests
   the App workflow's `check-deps.mjs` fails only on a minor or major mismatch, and `expo-doctor`
   skips its version check, which answered differently each time Expo published a patch. Needs
   Settings → Actions → General → *Allow GitHub Actions to create and approve pull requests*
