@@ -244,9 +244,18 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
   /** Fired when checks or `lines.buttons` change: the ▶ ☐ hints, the ☑ margin and the cell status redraw. */
   const hintsChanged = new vscode.EventEmitter<void>();
 
-  /** A runbook's code cell by its document URI (what the ▶ and ☐ buttons pass). */
+  /**
+   * A runbook's code cell by its document URI (what the ▶ and ☐ buttons pass). Compared parsed:
+   * a hover's command link reaches the command decoded twice (VS Code's opener parses the link,
+   * then decodes its query again), so `c%3A` and `%3D` arrive as `c:` and `=`.
+   */
   const cellByUri = (uri: unknown): vscode.NotebookCell | undefined => {
-    const key = String(uri);
+    let key: string;
+    try {
+      key = vscode.Uri.parse(String(uri), true).toString();
+    } catch {
+      return undefined;
+    }
     for (const nb of vscode.workspace.notebookDocuments) {
       if (nb.notebookType !== NOTEBOOK_TYPE) continue;
       const cell = nb.getCells().find((c) => c.document.uri.toString() === key);

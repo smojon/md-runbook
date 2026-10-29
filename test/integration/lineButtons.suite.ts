@@ -30,6 +30,18 @@ async function hoverText(cell: vscode.NotebookCell, line: number): Promise<strin
   return hovers.flatMap((h) => h.contents.map((c) => (typeof c === 'string' ? c : c.value))).join('\n');
 }
 
+/**
+ * Clicks a hover link the way VS Code's command opener does: it parses the link (which decodes
+ * the query) and then decodes the query again before JSON.parse.
+ */
+function clickLink(hover: string, command: string): Thenable<unknown> {
+  const href = new RegExp(`\\]\\((command:${command.replace(/\./g, '\\.')}\\?[^ )]+)`).exec(hover)?.[1];
+  assert.ok(href, `no ${command} link in ${hover}`);
+  const link = vscode.Uri.parse(href);
+  const args = JSON.parse(decodeURIComponent(link.query)) as unknown[];
+  return vscode.commands.executeCommand(link.path, ...args);
+}
+
 const buttonsRunbook = (): string => `# Buttons\n\n\`\`\`${LANG}\n${say('one')}\n${say('two')}\n${say('three')}\n\`\`\`\n\n\`\`\`${LANG}\n${say('alone')}\n\`\`\`\n`;
 
 export const tests: Test[] = [
@@ -97,6 +109,14 @@ export const tests: Test[] = [
         assert.match(outputText(cell), /one[\s\S]*two/);
         assert.doesNotMatch(outputText(cell), /three/);
         assert.match(outputText(cell), /lines 1-2/);
+
+        // Clicking Run line 3 in the hover: the cell's URI arrives decoded twice (c: for c%3A).
+        void clickLink(await hoverText(cell, 2), 'mdRunbook.runLineAt');
+        await new Promise((r) => setTimeout(r, 500));
+        assert.equal(await waitForRun(cell), true, outputText(cell));
+        assert.match(outputText(cell), /three/);
+        assert.doesNotMatch(outputText(cell), /one|two/);
+        assert.match(outputText(cell), /lines 3\b/);
 
         await setConfig('lines.buttons', 'off');
         assert.equal(await hoverText(cell, 1), '', 'no hover with lines.buttons off');
