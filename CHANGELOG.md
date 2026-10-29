@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Line buttons on the cell's status line.** The run buttons of the line the cursor is on
+  (**Run line**, **Run lines 1-N**, **Run lines N-end**, **Step from here**) are also under the
+  cell, and stay while the cell is selected: click in the line, then on the button. The hover
+  was hard to reach on a cell's first lines, where VS Code draws it above the cell and closes it
+  as soon as the mouse leaves the cell's text. Reported by the user.
+
 ## 0.14.1
 
 - **The hover's line buttons work on Windows.** Clicking **Run line**, **Run lines …**, **Step from
