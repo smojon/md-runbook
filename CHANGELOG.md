@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **No stray `m` before red stderr lines on Windows.** A Windows program ends its lines with
+  `\r\n`, and the colour reset went between the `\r` and the `\n`. VS Code rewrites a line at a
+  `\r` character by character (as Jupyter does), so the reset overwrote the colour's first four
+  characters and left the fifth, `m`, at the start of every stderr line, a Python traceback's for
+  example. The reset now comes before the `\r`, and a line rewritten with `\r` is coloured as a
+  terminal shows it.
+
 ## 0.15.0
 
 - **Line buttons on the cell's status line.** The run buttons of the line the cursor is on
