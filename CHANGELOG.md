@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.1
 
 - **No stray `m` before red stderr lines on Windows.** A Windows program ends its lines with
   `\r\n`, and the colour reset went between the `\r` and the `\n`. VS Code rewrites a line at a
