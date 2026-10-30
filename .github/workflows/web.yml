@@ -1,0 +1,40 @@
+name: Web image
+# The web app as a container (apps/web): built from the repository root the way the release
+# builds it, started read-only, and asked for what a browser and a runbook link ask for.
+on:
+  push:
+    branches: ['**']
+    paths: ['apps/web/**', 'apps/mobile/**', 'packages/core/src/**', 'packages/ssh/src/**', '.github/workflows/web.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the image
+        run: docker build -t md-runbook-web -f apps/web/Dockerfile .
+      - name: Serves the app, its routes and its bundles
+        run: |
+          docker run -d --name web -p 127.0.0.1:8080:8080 --read-only --tmpfs /tmp --cap-drop ALL md-runbook-web
+          for _ in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:8080/ && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/ -o index.html
+          grep -q '_expo/static/js' index.html
+          # A runbook link (/open?...) and a runbook's page are the app too, with status 200.
+          curl -fsS 'http://127.0.0.1:8080/open?url=https%3A%2F%2Fexample.net%2Fr.md' | cmp - index.html
+          curl -fsS http://127.0.0.1:8080/runbook/x | cmp - index.html
+          bundle="$(grep -o '/_expo/static/js/[^"]*\.js' index.html | head -1)"
+          curl -fsSI "http://127.0.0.1:8080$bundle" | tee headers.txt
+          grep -qi 'cache-control: public, max-age=31536000, immutable' headers.txt
+          test "$(docker inspect -f '{{.Config.User}}' md-runbook-web)" != root
+      - name: Web server log
+        if: always()
+        run: docker logs web || true

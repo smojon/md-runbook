@@ -186,7 +186,9 @@ and **⋯ More → Share → Show QR Code** shows a code of this runbook for ano
 
 - The app is in English only; its texts are in one file (`apps/mobile/src/i18n.ts`), ready for
   translation.
-- The web app isn't hosted yet: it needs its own domain, because it keeps its SSH key in the
-  site's local storage, which any other site served from the same address could read.
+- The web app isn't hosted by md-runbook yet: it needs its own domain, because it keeps its SSH
+  key in the site's local storage, which any other site served from the same address could
+  read. To host it yourself, the release publishes it as a container
+  ([apps/web](../apps/web/README.md)).
 - Signed runbooks: no secret values in signed cells; signing in the app doesn't check each
   command with `bash -n` as VS Code and the command line do ([details](features/signed-runbooks.md)).
