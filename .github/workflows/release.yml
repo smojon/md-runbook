@@ -30,9 +30,10 @@ jobs:
         if: runner.os != 'Linux'
         run: npm run test:integration
 
-  # The ops host image (apps/ops) and the probe image (apps/probe) for amd64 and arm64, as
-  # ghcr.io/OWNER/md-runbook-ops:VERSION and :latest (md-runbook-probe the same). The first push
-  # makes a private package: set it to public once in the package's settings.
+  # The ops host (apps/ops), the probe (apps/probe), the relay (apps/relay) and the web app
+  # (apps/web) for amd64 and arm64, as ghcr.io/OWNER/md-runbook-ops:VERSION and :latest (the
+  # others the same). The first push makes a private package: set it to public once in the
+  # package's settings.
   images:
     needs: test
     runs-on: ubuntu-latest
@@ -41,7 +42,11 @@ jobs:
       packages: write
     strategy:
       matrix:
-        image: [md-runbook-ops, md-runbook-probe]
+        include:
+          - {image: md-runbook-ops, context: apps}
+          - {image: md-runbook-probe, context: apps}
+          - {image: md-runbook-relay, context: apps/relay}
+          - {image: md-runbook-web, context: .}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v3
@@ -53,13 +58,14 @@ jobs:
       - name: Build and push
         env:
           IMAGE: ${{ matrix.image }}
+          CONTEXT: ${{ matrix.context }}
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$IMAGE"
           version="${GITHUB_REF_NAME#v}"
           docker buildx build --platform linux/amd64,linux/arm64 -f "apps/${IMAGE#md-runbook-}/Dockerfile" \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.version=$version" \
-            -t "$image:$version" -t "$image:latest" --push apps
+            -t "$image:$version" -t "$image:latest" --push "$CONTEXT"
 
   publish:
     needs: test

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **The web app and the relay as container images.** Each release now also publishes
+  `ghcr.io/smojon/md-runbook-web` (the web export behind nginx, to host the app on your own
+  domain; [apps/web](apps/web/README.md)) and `ghcr.io/smojon/md-runbook-relay`, next to the ops
+  host and the probe. A new workflow builds the web image on every change to the app and checks
+  that it serves the app, its routes and its bundles.
+
 ## 0.15.1
 
 - **No stray `m` before red stderr lines on Windows.** A Windows program ends its lines with
@@ -40,7 +48,8 @@
 ## 0.13.0
 
 - **Saved output is what the terminal showed.** Carriage returns overwrite from the first
-  column (`abcdefXY` was saved as `XY`, a terminal shows `XYcdef`), backspaces and the
+  column (`abcdef
+XY` was saved as `XY`, a terminal shows `XYcdef`), backspaces and the
   erase-line, cursor up/down/forward/back, column and save/restore sequences are applied, so a
   spinner or a multi-line progress display is saved as it ended instead of every frame; other
   control characters, which showed as odd symbols, are dropped. Clearing the screen keeps what

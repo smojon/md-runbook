@@ -1,0 +1,11 @@
+# The build context is the repository root: send only what the export needs.
+*
+!apps/mobile
+!packages/core/src
+!packages/ssh/src
+!apps/web/nginx.conf
+apps/mobile/node_modules
+apps/mobile/dist
+apps/mobile/.expo
+apps/mobile/android
+apps/mobile/ios
