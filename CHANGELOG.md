@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.0
 
 - **The web app and the relay as container images.** Each release now also publishes
   `ghcr.io/smojon/md-runbook-web` (the web export behind nginx, to host the app on your own

@@ -11,5 +11,5 @@ md-runbook lint runbooks/*.md
 md-runbook run deploy.md --param TARGET=staging --report report.html --junit junit.xml
 ```
 
-On GitHub Actions: `uses: smojon/md-runbook@v0.15.1`. Section 17 of the sample runbook tries all
+On GitHub Actions: `uses: smojon/md-runbook@v0.16.0`. Section 17 of the sample runbook tries all
 three.
