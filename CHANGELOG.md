@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+- **The app retries `retry=` cells.** A cell with `retry=10 every=30s expect=…` ran once in the
+  app and showed *check failed*; it now runs up to N times until it passes, `every=` apart, as
+  VS Code and the command line do: the running cell says `attempt 2/10`, or which attempt failed
+  and when the next starts (with the reason in the output), Stop ends the wait, and only the last
+  attempt's output is kept, with `attempts=`. A signed cell goes to md-runbook-gate again for each
+  attempt, as the same signed cell. Line runs run once, as in VS Code. Found running an SOP from
+  an alert in the web app.
+- **The app asks before a risky cell.** A cell with a risky command (VS Code's default patterns:
+  `delete`, `apply`, `rollout restart`, `rm -rf`, `helm upgrade`, …) or the `confirm` option ran
+  straight away in the app. It now shows a card under the cell, with the risky match, the account
+  it runs as and how often `retry=` may run it, and runs only after **Run**; Run All waits there,
+  and **Cancel** stops it. Run on a Group asks once for the group. A runbook's `no-confirm` counts
+  only after **Hosts & settings → Asking before a cell runs** allows it (off by default, like
+  VS Code's `mdRunbook.execution.allowNoConfirmOption`).
+- **A runbook's title in the app is its first heading**, not a `# …` comment in its YAML front
+  matter or a `#` line in a code block: an SOP whose front matter starts with
+  `# Every command runs against this cluster…` was listed, opened and shared under that comment.
+  The run report skips `#` lines in code blocks too.
+- **The same runbook link opens the same copy.** Each click on an alert mail's link added another
+  copy of the runbook to the app's list. The app now remembers which link opened a copy: the same
+  link opens it again with the link's host and values, as long as the runbook at that address is
+  unchanged (a changed runbook is a new copy). **Start Incident** still makes a copy per incident.
+- **Relay tokens a browser can send.** The relay's README and `compose.example.yml` made the
+  token with `openssl rand -base64 32`, which always ends in `=`: the browser sends the token as a
+  WebSocket subprotocol (`token.<token>`), which allows no `=` or `/`, so the web app could never
+  connect (`new WebSocket` throws a SyntaxError). The docs now say `openssl rand -hex 32`, the
+  relay refuses to start with a token a browser can't send and says how to make one, and the app
+  refuses to save such a token, saying why.
+- **The Release workflow says when it skips npm.** Without the `NPM_TOKEN` secret the command
+  line is not published to npm (`npx md-runbook` answers 404); the run now shows a warning that
+  says so, instead of a quietly skipped step.
+
 ## 0.16.0
 
 - **The web app and the relay as container images.** Each release now also publishes

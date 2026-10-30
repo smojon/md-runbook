@@ -44,6 +44,10 @@ const en = {
   signedLinksOnly: 'Open only signed runbooks from links',
   signedLinksOnlyHelp:
     'Runbooks from links (QR codes, pager alerts, mails) open only when signed, with no signed block changed: anyone can make a link, only a signature says who approved the runbook. Off: unsigned ones open with a warning.',
+  safetyTitle: 'Asking before a cell runs',
+  allowNoConfirm: 'Let runbooks skip the question (no-confirm)',
+  allowNoConfirmHelp:
+    'The app asks before a cell with a risky command (delete, apply, rm -rf, helm upgrade, …) or the confirm option runs. Off: a cell’s no-confirm is ignored, so a runbook can’t switch the question off.',
   linkOpening: 'Opening the runbook…',
   scanCode: 'Scan a code',
   scanTitle: 'Scan a code',
@@ -233,6 +237,8 @@ const en = {
   relayUrlPlaceholder: 'wss://relay.example.net',
   relayToken: 'Relay token',
   relaySaved: 'Relay saved',
+  relayTokenInvalid: (ch: string) =>
+    `The token contains ${ch === ' ' ? 'a space' : `“${ch}”`}, which a browser can’t send to the relay (it goes in the WebSocket’s protocol header). Use letters and digits: make one with openssl rand -hex 32, for the relay and here.`,
   relayNotConfigured: 'In the browser, cells run through a relay; none is set up yet.',
   setUpRelay: 'Set up the relay',
   relayRefused: (url: string) => `The relay at ${url} refused the connection (address, token or target not allowed).`,
@@ -264,6 +270,17 @@ const en = {
   timedOutNote: (seconds: number) => `[md-runbook] timed out after ${seconds}s; the cell's processes were stopped`,
   checkFailedNote: (why: string) => `[md-runbook] check failed: ${why}`,
   lineFailedNote: (lines: string) => `[md-runbook] line ${lines} failed; the lines after it were not run`,
+  retryNote: (attempt: number, attempts: number, why: string, wait: string) =>
+    `[md-runbook] attempt ${attempt}/${attempts} failed (${why}); trying again in ${wait}`,
+  runningAttempt: (attempt: number, attempts: number) => `Running… attempt ${attempt}/${attempts}`,
+  retryWaiting: (attempt: number, attempts: number, wait: string) =>
+    `Attempt ${attempt}/${attempts} failed · trying again in ${wait} (Stop to end here)`,
+  confirmTitle: (cell: number) => `Run cell ${cell}?`,
+  confirmRiskyTitle: (cell: number, match: string) => `Cell ${cell} contains a risky command: “${match}”`,
+  confirmRunsAs: (where: string) => `It runs as ${where}.`,
+  confirmRetries: (attempts: number) => `It runs up to ${attempts} times (retry=) until it passes.`,
+  confirmRun: 'Run',
+  confirmDeclined: (cell: number) => `Cell ${cell} was not run: you didn’t confirm it.`,
   otherHostTitle: (name: string) => `This cell runs on ${name}`,
   otherHostBody: (name: string, selected: string | undefined) =>
     `The runbook says host=${name} for this cell${selected ? `, not ${selected}, the host you selected` : ''}. Run it on ${name}? Check that the runbook comes from someone you trust.`,

@@ -2,6 +2,7 @@
 import { ParsedCell, ShellKind, isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
 import type { RemotePlatform } from '@md-runbook/ssh';
 import { CellOptions, parseCellOptions } from '@md-runbook/core/cellOptions';
+import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { approvalOf } from '../approvals/store';
 
@@ -46,4 +47,26 @@ export function runnability(cell: ParsedCell, runbookId?: string, platform?: Rem
     return { ok: false, why: 'os', detail: server };
   }
   return { ok: true, options, shell };
+}
+
+const RISKY = compileConfirmPatterns(DEFAULT_CONFIRM_PATTERNS).regexes;
+
+/**
+ * Whether running `source` (the cell, or the lines of a line run) asks first, by the extension's
+ * default rules: a risky command (its built-in patterns) or the cell's `confirm` option. undefined
+ * when it runs without asking; else the risky match ('' for `confirm`). A cell's `no-confirm`
+ * counts only when the user allowed it (Hosts & settings): a runbook can't switch the question off.
+ */
+export function confirmationOf(source: string, info: string, allowNoConfirm: boolean): string | undefined {
+  const own = parseCellOptions(info).confirm;
+  return confirmationFor(source, 'patterns', RISKY, own === false && !allowNoConfirm ? undefined : own);
+}
+
+/** `500ms`, `30.0s`, `2m0s`: as the extension writes the wait between attempts. */
+export function formatWait(ms: number): string {
+  return ms < 1000
+    ? `${ms}ms`
+    : ms < 60_000
+      ? `${(ms / 1000).toFixed(1)}s`
+      : `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`;
 }

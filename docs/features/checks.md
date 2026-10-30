@@ -57,6 +57,9 @@ kubectl rollout status deploy/web --timeout=10s
   marker gets `attempts=4`.
 - A timed-out attempt is tried again; cancelling stops at once. The timeout applies to each
   attempt.
+- The app retries the same way: the running cell says `attempt 2/10`, or which attempt failed
+  and when the next starts, and Stop ends the wait. A signed cell goes to md-runbook-gate again
+  for each attempt, as the same signed cell.
 
 ## Captured values: `capture=` and `${out:NAME}`
 

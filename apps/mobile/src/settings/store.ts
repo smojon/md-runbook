@@ -2,7 +2,7 @@
  * App settings that mirror the extension's: how many earlier runs each cell keeps in the file
  * (mdRunbook.output.historySize there, 0 by default: the file only has the latest run), and how
  * output is coloured (mdRunbook.output.colorLevels, stderrInRed and forceColor), and the name the
- * app signs runbooks with.
+ * app signs runbooks with, and whether a runbook's `no-confirm` is honoured.
  */
 import { useSyncExternalStore } from 'react';
 import { getJson, setJson } from '../storage/kv';
@@ -25,6 +25,11 @@ export interface Settings {
   /** The app's key asks for Face ID, Touch ID, a fingerprint or the screen lock on every use (made with that flag in the hardware). */
   keyNeedsUser: boolean;
   /**
+   * A cell's `no-confirm` option is honoured (the extension's mdRunbook.execution.allowNoConfirmOption):
+   * off, a runbook can't switch off the question before a risky cell.
+   */
+  allowNoConfirm: boolean;
+  /**
    * Who signs runbooks on this device (the signature block's signer=, e.g. an e-mail address),
    * and the principal suggested for the servers' allowed_signers. Empty until set.
    */
@@ -39,6 +44,7 @@ const DEFAULTS: Settings = {
   cloudViews: true,
   signedLinksOnly: false,
   keyNeedsUser: false,
+  allowNoConfirm: false,
   signerName: '',
 };
 
@@ -46,7 +52,7 @@ const DEFAULTS: Settings = {
 const isSaved = (v: unknown): v is Partial<Settings> =>
   typeof v === 'object' && v !== null && typeof (v as Settings).historySize === 'number';
 
-type OutputFlag = 'colorLevels' | 'stderrInRed' | 'forceColor' | 'cloudViews' | 'signedLinksOnly' | 'keyNeedsUser';
+type OutputFlag = 'colorLevels' | 'stderrInRed' | 'forceColor' | 'cloudViews' | 'signedLinksOnly' | 'keyNeedsUser' | 'allowNoConfirm';
 
 let settings: Settings = DEFAULTS;
 const listeners = new Set<() => void>();
@@ -71,6 +77,7 @@ async function readSettings(): Promise<void> {
       cloudViews: flag('cloudViews'),
       signedLinksOnly: flag('signedLinksOnly'),
       keyNeedsUser: flag('keyNeedsUser'),
+      allowNoConfirm: flag('allowNoConfirm'),
       signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
     };
   }

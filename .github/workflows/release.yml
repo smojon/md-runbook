@@ -109,6 +109,11 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         if: env.NODE_AUTH_TOKEN != ''
         run: npm publish out/npm --access public --provenance
+      - name: Say that npm was skipped
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: env.NODE_AUTH_TOKEN == ''
+        run: echo "::warning::The NPM_TOKEN secret is not set, so the command line was not published to npm (PUBLISHING.md, npm)."
       - name: GitHub release with the .vsix
         env:
           GH_TOKEN: ${{ github.token }}

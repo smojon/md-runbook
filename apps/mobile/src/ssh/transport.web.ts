@@ -7,7 +7,7 @@
 import { Stream, WebSocketStream } from '@microsoft/dev-tunnels-ssh';
 import type { Host } from '../hosts/store';
 import { t } from '../i18n';
-import { getRelaySettings } from './relaySettings';
+import { badTokenCharacter, getRelaySettings } from './relaySettings';
 
 export const RELAY_PROTOCOL = 1;
 const SUBPROTOCOL = 'mdrb-relay.v1';
@@ -41,6 +41,9 @@ export async function openTransport(host: Host): Promise<Stream> {
   if (!relay) throw new Error(t.relayNotConfigured);
   const problem = await checkRelay(relay.url);
   if (problem) throw new Error(problem);
+  // A token a browser can't send (base64's / and =) would make `new WebSocket` throw a bare SyntaxError.
+  const bad = badTokenCharacter(relay.token);
+  if (bad !== undefined) throw new Error(t.relayTokenInvalid(bad));
   const url = `${relayBases(relay.url).ws}/v1/ssh?target=${encodeURIComponent(`${host.hostname}:${host.port}`)}`;
   const ws = await new Promise<WebSocket>((resolve, reject) => {
     const socket = new WebSocket(url, [SUBPROTOCOL, `token.${relay.token}`]);

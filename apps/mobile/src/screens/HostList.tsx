@@ -16,7 +16,7 @@ import {
   useOutputSettings,
   useSignerName,
 } from '../settings/store';
-import { getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
+import { badTokenCharacter, getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { SIGNER_NAME_RE } from '@md-runbook/core/signing';
 import { mono, themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
@@ -99,6 +99,7 @@ export function HostList() {
           <HistorySection />
           <ColorSection />
           <LinksSection />
+          <SafetySection />
           {Platform.OS === 'web' ? <RelaySection /> : null}
         </>
       }
@@ -399,6 +400,29 @@ function LinksSection() {
   );
 }
 
+/** Confirmation of risky cells: whether a runbook's `no-confirm` counts (the extension's allowNoConfirmOption). */
+function SafetySection() {
+  const styles = useStyles();
+  const s = useOutputSettings();
+  return (
+    <View testID="safety-settings" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.safetyTitle}</Text>
+      <View style={styles.switchRow}>
+        <View style={styles.switchText}>
+          <Text style={styles.switchLabel}>{t.allowNoConfirm}</Text>
+          <Text style={styles.help}>{t.allowNoConfirmHelp}</Text>
+        </View>
+        <Toggle
+          testID="setting-allowNoConfirm"
+          accessibilityLabel={t.allowNoConfirm}
+          value={s.allowNoConfirm}
+          onValueChange={(on) => setOutputSetting('allowNoConfirm', on)}
+        />
+      </View>
+    </View>
+  );
+}
+
 function SecretsSection() {
   const styles = useStyles();
   const names = useSecretNames();
@@ -511,6 +535,7 @@ function RelaySection() {
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
   const [saved, setSaved] = useState(false);
+  const [tokenProblem, setTokenProblem] = useState<string | undefined>();
   useEffect(() => {
     let live = true;
     void getRelaySettings().then((s) => {
@@ -524,6 +549,10 @@ function RelaySection() {
     };
   }, []);
   const save = async (): Promise<void> => {
+    // Refused here rather than as a failed connection later: the browser can't send such a token.
+    const bad = badTokenCharacter(token);
+    setTokenProblem(bad === undefined ? undefined : t.relayTokenInvalid(bad));
+    if (bad !== undefined) return;
     await setRelaySettings({ url, token });
     setSaved(true);
   };
@@ -557,6 +586,11 @@ function RelaySection() {
         autoCapitalize="none"
         autoCorrect={false}
       />
+      {tokenProblem ? (
+        <Text testID="relay-token-problem" role="alert" style={styles.error}>
+          {tokenProblem}
+        </Text>
+      ) : null}
       <Pressable testID="relay-save" accessibilityRole="button" onPress={() => void save()} style={styles.button}>
         <Text style={styles.buttonText}>{saved ? t.relaySaved : t.save}</Text>
       </Pressable>

@@ -53,6 +53,9 @@ mdrunbook://open?url=https%3A%2F%2Fgithub.com%2F…%2Frestart.md&sha256=…&host
 | `p.NAME=` | A value for the runbook's parameter `NAME` (one line). A signed runbook still checks it against its pattern, and md-runbook-gate checks it again. Names the runbook doesn't use are ignored. |
 | `action=cosign` | Opens on **Co-sign Runbook**, or says why it can't be co-signed. |
 
+Opening the same link again opens the copy the app already has (with the link's values), unless
+the runbook at that address changed since: a new version is a new copy.
+
 The app says what it opened: **signed** (a signature block, no signed block changed), **pinned**
 (the text at the link's address is the one its `sha256=` names) or neither; the last two come
 with a warning to check where the link came from. Only a signature says who approved a runbook:

@@ -93,6 +93,13 @@ opens its actions:
   before the next one, with **Run next** and **Continue**.
 - **Check**, to mark lines and run only those.
 
+A cell with `retry=` runs again until it passes, `every=` apart, as in the extension: the cell
+says which attempt is running, or when the next starts, and Stop ends the wait; only the last
+attempt's output is kept (`attempts=`). A risky command (`delete`, `apply`, `rm -rf`, `helm
+upgrade`, …) or the `confirm` option shows a card under the cell, and the cell runs only after
+**Run**; Run All waits there, and stops if you cancel. A runbook's `no-confirm` counts only when
+**Hosts & settings** allows it ([safety](features/safety.md)).
+
 The output block records which lines ran (`lines=`), as the extension writes it. A runbook with
 `kube-context:` runs a cell only while kubectl on the host is on that cluster
 ([Kubernetes](features/kubernetes.md), where the ops host keeps cluster access off the phone). A cell with
@@ -169,6 +176,9 @@ elsewhere since it was opened, the app asks whether to overwrite it or load that
 GitLab file page works too), and runbook links (`mdrunbook://open?…`, what VS Code's **Open in
 the App** copies, a pager alert, a co-sign request) open it directly, with the host and
 parameter values they name; nothing runs from a link, and the runbook says whether it is signed.
+The same link opened again (each click on an alert's link) opens the same copy with the new
+values, as long as the runbook at that address is unchanged; **Start Incident** makes a copy per
+incident.
 **Scan a code** opens the same from a QR code (a label on a machine, VS Code's **Make QR Code**),
 and **⋯ More → Share → Show QR Code** shows a code of this runbook for another phone.
 **⋯ More → Share Runbook** hands the file on. More in

@@ -195,6 +195,10 @@ describe('relay settings', () => {
   it('needs a long token and an allowlist', () => {
     assert.throws(() => loadConfig({ RELAY_TARGETS: 'a:22' }), /RELAY_TOKEN/);
     assert.throws(() => loadConfig({ RELAY_TOKEN: 'short', RELAY_TARGETS: 'a:22' }), /24 characters/);
+    // `openssl rand -base64 32` ends in `=` (and may hold `/`): a browser can't send it as a subprotocol.
+    assert.throws(() => loadConfig({ ...base, RELAY_TOKEN: 'Ht5pbLsPrEFKnJgUIeF11FeqLmtGZr9Vtra0t93U5O4=' }), /openssl rand -hex 32/);
+    assert.throws(() => loadConfig({ ...base, RELAY_TOKENS: `${TOKEN}/x` }), /letters, digits/);
+    assert.ok(loadConfig({ ...base, RELAY_TOKEN: 'b04d6752122db1e60570b22f6eb68c93f9fb013f4466962cc33ea0c125920c43' }));
     assert.throws(() => loadConfig({ RELAY_TOKEN: TOKEN }), /RELAY_TARGETS/);
     assert.throws(() => loadConfig({ ...base, RELAY_TARGETS: 'web1' }), /not host:port/);
     assert.throws(() => loadConfig({ ...base, RELAY_PORT: 'x' }), /RELAY_PORT/);

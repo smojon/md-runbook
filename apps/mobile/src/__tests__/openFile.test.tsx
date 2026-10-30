@@ -65,6 +65,17 @@ describe('opening a runbook file', () => {
     expect(titleOf('intro\n# Real title #\n', 'ops.md')).toBe('Real title');
   });
 
+  it('the title is a heading of the Markdown, not a comment in the front matter or a code block', () => {
+    const sop =
+      '---\n# Every command runs against this cluster: check it first.\nkube-context: rancher-desktop\n---\n\n# Synthetic login failing\n';
+    expect(titleOf(sop, 'synthetic-login-failing.runbook.md')).toBe('Synthetic login failing');
+    expect(titleOf('---\r\n# a comment\r\n---\r\n\r\n```bash\n# a shell comment\n```\n\n# After the code\n', 'x.md')).toBe(
+      'After the code',
+    );
+    expect(titleOf('---\n# only a comment\n---\n\ntext\n', 'ops.md')).toBe('ops');
+    expect(titleOf('# C#\n', 'x.md')).toBe('C#');
+  });
+
   it('the list shows a runbook once it is opened', async () => {
     await render(<RunbookList />);
     expect(screen.queryByText('Deploy')).toBeNull();
