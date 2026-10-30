@@ -470,3 +470,100 @@ describe('runCell: capture= and ${out:NAME}', () => {
     expect(conn.calls).toHaveLength(0);
   });
 });
+
+describe('runCell: retry= and every=', () => {
+  const text = (opts: string): string => `# Login\n\n\`\`\`bash ${opts}\ncurl -s localhost/login\n\`\`\`\n`;
+
+  it('runs again until the check passes, keeps only the last attempt and records attempts=', async () => {
+    const conn = fakeConnection([
+      { stdout: '{"outcome":"error"}\n' },
+      { stdout: '{"outcome":"error"}\n' },
+      { stdout: '{"outcome":"signed_in"}\n' },
+    ]);
+    const live: string[] = [];
+    const attempts: (number | undefined)[][] = [];
+    const r = await runCell({
+      host,
+      text: text('retry=5 every=1ms expect=/"outcome":"signed_in"/'),
+      cellIndex: 1,
+      connection: conn,
+      onOutput: (t) => live.push(t),
+      onAttempt: (n, of, waitMs) => attempts.push([n, of, waitMs]),
+    });
+    expect(conn.calls).toHaveLength(3);
+    expect(r).toMatchObject({ kind: 'done', attrs: { exit: '0', check: 'ok', attempts: '3' } });
+    if (r.kind !== 'done') return;
+    expect(parse(r.text).cells[1]?.output?.text).toBe('{"outcome":"signed_in"}');
+    expect(r.summary).toMatch(/^✓ exit 0 · 3 attempts/);
+    // The wait between attempts is shown live, as in VS Code.
+    expect(live.join('')).toContain('[md-runbook] attempt 1/5 failed (the output does not match /"outcome":"signed_in"/)');
+    expect(live.join('')).toContain('trying again in 1ms');
+    expect(attempts).toEqual([
+      [1, 5, undefined],
+      [1, 5, 1],
+      [2, 5, undefined],
+      [2, 5, 1],
+      [3, 5, undefined],
+    ]);
+  });
+
+  it('a non-zero exit is retried too; after the last attempt it fails with the check', async () => {
+    const conn = fakeConnection([{ stdout: 'no\n', exitCode: 7 }]);
+    const r = await runCell({ host, text: text('retry=3 every=1ms'), cellIndex: 1, connection: conn });
+    expect(conn.calls).toHaveLength(3);
+    expect(r).toMatchObject({ kind: 'done', attrs: { exit: '7', attempts: '3' } });
+    const failed = await runCell({
+      host,
+      text: text('retry=2 every=1ms expect=/yes/'),
+      cellIndex: 1,
+      connection: fakeConnection([{ stdout: 'no\n' }]),
+    });
+    expect(failed).toMatchObject({ kind: 'done', attrs: { exit: '0', check: 'failed', attempts: '2' } });
+  });
+
+  it('a cell that passes at once runs once and writes attempts=1', async () => {
+    const conn = fakeConnection([{ stdout: 'yes\n' }]);
+    const r = await runCell({ host, text: text('retry=3 expect=/yes/'), cellIndex: 1, connection: conn });
+    expect(conn.calls).toHaveLength(1);
+    expect(r).toMatchObject({ kind: 'done', attrs: { check: 'ok', attempts: '1' } });
+  });
+
+  it('Stop while it waits for the next attempt ends the run, cancelled', async () => {
+    const abort = new AbortController();
+    const conn = fakeConnection([{ stdout: 'no\n' }]);
+    const r = await runCell({
+      host,
+      text: text('retry=10 every=30s expect=/yes/'),
+      cellIndex: 1,
+      connection: conn,
+      signal: abort.signal,
+      onAttempt: (_n, _of, waitMs) => waitMs !== undefined && abort.abort(),
+    });
+    expect(conn.calls).toHaveLength(1);
+    expect(r).toMatchObject({ kind: 'done', attrs: { exit: 'cancelled', attempts: '1' } });
+  });
+
+  it('a line run runs once, as in the extension', async () => {
+    const conn = fakeConnection([{ stdout: 'no\n', exitCode: 1 }]);
+    await runCell({
+      host,
+      text: text('retry=3 every=1ms'),
+      cellIndex: 1,
+      connection: conn,
+      lines: planLines('curl -s localhost/login', 'at', 0),
+    });
+    expect(conn.calls).toHaveLength(1);
+  });
+
+  it('a signed cell goes to the gate again for each attempt, as the same signed cell', async () => {
+    const plain = text('retry=2 every=1ms expect=/signed_in/');
+    const built = buildManifest(plain, { name: 'ops/login', version: 1, scopes: [], patterns: {} });
+    if ('errors' in built) throw new Error(built.errors.join('; '));
+    const manifest = formatManifest(built.manifest);
+    const signed = withSignature(plain, { signer: 'ops@example.net', signed: '2026-10-30', manifest, signature: 'U1NIU0lH' });
+    const conn = fakeConnection([{ stdout: 'error\n' }, { stdout: 'signed_in\n' }]);
+    const r = await runCell({ host, text: signed, cellIndex: 1, connection: conn });
+    expect(r).toMatchObject({ kind: 'done', attrs: { check: 'ok', attempts: '2' } });
+    expect(conn.calls.map((c) => c.signed?.cell)).toEqual([1, 1]);
+  });
+});

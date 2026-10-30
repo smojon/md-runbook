@@ -4,7 +4,7 @@ import { addHost, getHosts, resetHosts } from '../hosts/store';
 import { linkContext } from '../runbooks/linkContext';
 import { openRunbookLink, rawRunbookUrl } from '../runbooks/openLink';
 import { paramValues, resetParamValues } from '../runbooks/params';
-import { getRunbook, resetRunbooks } from '../runbooks/store';
+import { getRunbook, removeRunbook, resetRunbooks } from '../runbooks/store';
 import { resetSettings, setOutputSetting } from '../settings/store';
 
 beforeEach(() => resetRunbooks());
@@ -131,6 +131,31 @@ describe('runbook links: pins, hosts, parameters, co-sign', () => {
     if (r2.kind !== 'opened') throw new Error(r2.message);
     expect(linkContext(r2.runbook.id)?.missingHost).toBe('db-9');
     expect(getHosts().map((h) => h.name)).toEqual(['web-1']);
+  });
+
+  it('the same link opened again opens the same copy, with its values; a changed runbook is a new copy', async () => {
+    const link = (service: string) => formatRunbookLink({ url: 'https://x.example.net/alerts/restart.md', params: { SERVICE: service } });
+    const first = await openRunbookLink(link('api'), serve(RUNBOOK));
+    if (first.kind !== 'opened') throw new Error(first.message);
+    // Each click on the alert's link: the same entry, the new alert's values.
+    const again = await openRunbookLink(link('web'), serve(RUNBOOK));
+    if (again.kind !== 'opened') throw new Error(again.message);
+    expect(again.runbook.id).toBe(first.runbook.id);
+    expect(paramValues(first.runbook.id)).toEqual({ SERVICE: 'web' });
+    // Also after a restart of the app (the list is read back).
+    resetRunbooks();
+    const later = await openRunbookLink(link('api'), serve(RUNBOOK));
+    expect(later.kind === 'opened' && later.runbook.id).toBe(first.runbook.id);
+    // The runbook changed at that address: a new version, a copy of its own.
+    const changed = await openRunbookLink(link('api'), serve(RUNBOOK + '\nMore.\n'));
+    expect(changed.kind === 'opened' && changed.runbook.id).not.toBe(first.runbook.id);
+    // The same text from another address is another runbook too.
+    const elsewhere = await openRunbookLink(formatRunbookLink({ url: 'https://y.example.net/restart.md', params: {} }), serve(RUNBOOK));
+    expect(elsewhere.kind === 'opened' && elsewhere.runbook.id).not.toBe(first.runbook.id);
+    // Removed from the app: the link opens a new copy.
+    removeRunbook(first.runbook.id);
+    const fresh = await openRunbookLink(link('api'), serve(RUNBOOK));
+    expect(fresh.kind === 'opened' && fresh.runbook.id).not.toBe(first.runbook.id);
   });
 
   it('a damaged link says what is wrong with it', async () => {

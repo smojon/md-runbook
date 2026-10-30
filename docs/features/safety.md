@@ -123,6 +123,12 @@ against the whole cell text, comments included.
 ]
 ```
 
+**In the app**, the same rules with the default patterns: a cell with a risky command, or with
+`confirm`, shows a card under it (the risky match, the account it runs as, how often `retry=` may
+run it) and runs only after **Run**; **Cancel** leaves it unrun and stops Run All there. Run on a
+Group asks once for the whole group. A cell's `no-confirm` counts only after **Hosts & settings →
+Asking before a cell runs** allows it (off by default).
+
 ## Recording the context
 
 `mdRunbook.output.recordContext` maps attribute names to commands. Before a cell runs, each

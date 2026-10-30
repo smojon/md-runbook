@@ -24,7 +24,7 @@ Behind a reverse proxy that terminates TLS, so the web app reaches it as `wss://
 
 ```sh
 cd apps/relay
-openssl rand -base64 32 > relay-token.txt
+openssl rand -hex 32 > relay-token.txt
 # Edit compose.example.yml (targets, origins) and Caddyfile.example (your relay's name).
 docker compose -f compose.example.yml up -d
 ```
@@ -65,7 +65,7 @@ little: one CPU and 1 GB of memory.
    ```sh
    sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2 git
    git clone https://github.com/smojon/md-runbook && cd md-runbook/apps/relay
-   openssl rand -base64 32 > relay-token.txt
+   openssl rand -hex 32 > relay-token.txt
    cp Caddyfile.example Caddyfile
    sed 's|./Caddyfile.example|./Caddyfile|' compose.example.yml > compose.yml
    # compose.yml: RELAY_TARGETS (your servers) and RELAY_ORIGINS (the web app's origin).
@@ -87,7 +87,7 @@ To update the relay: `git pull && sudo docker compose up -d --build`. Git ignore
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RELAY_TOKEN` | required | The token clients send. At least 24 characters. |
+| `RELAY_TOKEN` | required | The token clients send. At least 24 characters, letters and digits (`openssl rand -hex 32`): the browser sends it in a header, so base64's `/` and `=` are refused. |
 | `RELAY_TOKENS` | | More tokens, comma-separated, for example one per person. |
 | `RELAY_TOKEN_FILE` | | A file with tokens, one per line, for Docker secrets. |
 | `RELAY_TARGETS` | required | `host:port` pairs, comma-separated. `*:22` allows any public host on port 22; a server on the relay itself or a private network (127.x, 10.x, 192.168.x, …) must be listed by name or address. |

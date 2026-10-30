@@ -1,7 +1,8 @@
 /**
  * Opening a runbook from a link: what VS Code's Open in the App sends, a link in a mail or a chat,
  * a file on GitHub or GitLab. The app keeps a copy (a link can't be saved back to); Share Runbook
- * or Download hands it on.
+ * or Download hands it on. The same link opened again (each click on an alert's link) opens that
+ * copy, as long as the runbook at the address is unchanged; Start Incident makes a copy per incident.
  */
 import { linkTrust, parseRunbookLink } from '@md-runbook/core/runbookLink';
 import { getHosts, loadHosts } from '../hosts/store';
@@ -9,7 +10,7 @@ import { t } from '../i18n';
 import { loadSettings, outputSettings } from '../settings/store';
 import { setLinkContext } from './linkContext';
 import { runbookParams, setParamValue } from './params';
-import { MAX_RUNBOOK_BYTES, Runbook, addRunbook, titleOf } from './store';
+import { MAX_RUNBOOK_BYTES, Runbook, addRunbook, linkKey, linkedRunbook, loadRunbooks, titleOf } from './store';
 
 /** The raw file behind a link: GitHub and GitLab pages give their raw address; only https. */
 export function rawRunbookUrl(link: string): string | undefined {
@@ -53,7 +54,9 @@ export async function openRunbookLink(
   const l = parsed.link;
   let text: string;
   let fileName: string;
+  let source: string;
   if (l.text !== undefined) {
+    source = 'rb';
     text = l.text;
     fileName = `${
       titleOf(text, 'runbook.md')
@@ -64,6 +67,7 @@ export async function openRunbookLink(
   } else {
     const url = rawRunbookUrl(l.url!);
     if (!url) return { kind: 'error', message: t.linkInvalid };
+    source = url;
     fileName = fileNameOf(url);
     try {
       const res = await fetcher(url);
@@ -77,12 +81,14 @@ export async function openRunbookLink(
     if (text.length > MAX_RUNBOOK_BYTES) return { kind: 'error', message: t.fileTooLarge(fileName) };
   }
   // Opened at a cold start (a QR code, a pager alert): the hosts and settings may still be loading.
-  await Promise.all([loadHosts(), loadSettings()]);
+  // The remembered runbooks too, to find a copy this link opened before.
+  await Promise.all([loadHosts(), loadSettings(), loadRunbooks()]);
   const trust = linkTrust(l, text);
   if (trust === 'mismatch') return { kind: 'error', message: t.linkMismatch };
   if (trust !== 'signed' && outputSettings().signedLinksOnly) return { kind: 'error', message: t.linkUnsignedRefused };
 
-  const runbook = addRunbook(fileName, text);
+  const key = linkKey(source, text);
+  const runbook = linkedRunbook(key) ?? addRunbook(fileName, text, undefined, key);
   const declared = new Set(runbookParams(text).map((p) => p.name));
   const ignoredParams: string[] = [];
   for (const [name, value] of Object.entries(l.params)) {

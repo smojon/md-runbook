@@ -15,7 +15,7 @@ import { ReactNode, memo, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Token, highlightBash } from '../highlight/bash';
 import { t } from '../i18n';
-import { runnability } from '../ssh/cells';
+import { formatWait, runnability } from '../ssh/cells';
 import { LineMode, cellSteps, lineLabel } from '../ssh/lineRuns';
 import { Palette, mono, themedStyles, usePalette } from '../theme';
 import { Codicon, CodiconName } from '../ui/Codicon';
@@ -26,6 +26,8 @@ export interface CellRun {
   step?: { start: number; end: number };
   /** Step through, waiting before this command. */
   paused?: { step: { start: number; end: number }; next(): void; cont(): void };
+  /** retry=: the attempt running, or (with `waitMs`) the one that failed while the next waits. */
+  attempt?: { n: number; of: number; waitMs?: number };
 }
 
 export interface CodeCellProps {
@@ -275,7 +277,15 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
               </Pressable>
             </View>
           ) : (
-            <Text style={styles.outputHeader}>{running.step ? t.runningLine(lineLabel(running.step)) : t.running}</Text>
+            <Text testID={`cell-${index}-running`} style={styles.outputHeader}>
+              {running.step
+                ? t.runningLine(lineLabel(running.step))
+                : running.attempt
+                  ? running.attempt.waitMs !== undefined
+                    ? t.retryWaiting(running.attempt.n, running.attempt.of, formatWait(running.attempt.waitMs))
+                    : t.runningAttempt(running.attempt.n, running.attempt.of)
+                  : t.running}
+            </Text>
           )}
           {running.live !== '' ? <OutputText style={styles.outputText} text={running.live} /> : null}
         </View>

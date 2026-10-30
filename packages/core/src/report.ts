@@ -46,8 +46,19 @@ function badge(exit: string | undefined, lines?: string, check?: string): string
   return `<span class="badge ${st}">${escapeHtml(text)}</span>`;
 }
 
+/** The first heading, not a `#` comment in a code block that stays in the Markdown (yaml, text). */
 function firstHeading(markdown: string): string | undefined {
+  let fence: string | undefined;
   for (const line of markdown.split('\n')) {
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fence !== undefined) {
+      if (open && open[0] === fence[0] && open.length >= fence.length && line.trim() === open) fence = undefined;
+      continue;
+    }
+    if (open) {
+      fence = open;
+      continue;
+    }
     const m = /^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/.exec(line);
     if (m?.[1]) return m[1].replace(/[*_`]/g, '');
   }

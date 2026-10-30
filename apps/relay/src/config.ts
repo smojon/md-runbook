@@ -44,12 +44,19 @@ export function isTargetSpec(t: string): boolean {
   return m !== null && Number(m[2]) >= 1 && Number(m[2]) <= 65535 && (m[1] === '*' || !m[1]!.includes('*'));
 }
 
+/** RFC 7230 token characters: what a WebSocket subprotocol, and so a relay token, may hold. */
+const TOKEN_CHARS = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
   const tokens = [...list(env.RELAY_TOKENS), ...(env.RELAY_TOKEN ? [env.RELAY_TOKEN] : [])];
   if (env.RELAY_TOKEN_FILE) tokens.push(...list(readFileSync(env.RELAY_TOKEN_FILE, 'utf8').replace(/\s+/g, ',')));
   if (tokens.length === 0) throw new Error('Set RELAY_TOKEN (or RELAY_TOKENS / RELAY_TOKEN_FILE): the relay never runs without a token');
   const short = tokens.find((t) => t.length < 24);
-  if (short !== undefined) throw new Error('Each relay token must be at least 24 characters (e.g. `openssl rand -base64 32`)');
+  if (short !== undefined) throw new Error('Each relay token must be at least 24 characters (e.g. `openssl rand -hex 32`)');
+  // A browser sends the token as a WebSocket subprotocol (`token.<token>`), which allows only
+  // RFC 7230 token characters: `new WebSocket` throws on base64's `/` and `=`, so refuse them here.
+  if (tokens.some((t) => !TOKEN_CHARS.test(t)))
+    throw new Error("A relay token may hold only letters, digits and !#$%&'*+-.^_`|~ (a browser sends it in a header): make one with `openssl rand -hex 32`");
 
   const targets = list(env.RELAY_TARGETS);
   if (targets.length === 0) throw new Error('Set RELAY_TARGETS to the host:port pairs the relay may reach (e.g. web1.example.net:22)');
