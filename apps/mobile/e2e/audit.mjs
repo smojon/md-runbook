@@ -6,8 +6,6 @@
 import { execFileSync } from 'node:child_process';
 
 const REVIEWED = {
-  // node-forge <=1.4.0 (latest): via @expo/code-signing-certificates, used by the Expo CLI, not in the app bundle.
-  'GHSA-86w9-cpqp-85rv': '2026-10-19',
   // zod <4.6.6: via @expo/cli and eslint-plugin-react-hooks (build and lint tools), not in the app bundle; they pin zod 3.
   'GHSA-mrhx-c7xc-m3w5': '2026-10-24',
 };
