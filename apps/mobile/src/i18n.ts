@@ -218,6 +218,11 @@ const en = {
     'Each SSH login and each signature then asks for Face ID, Touch ID, a fingerprint or the screen lock, enforced by the phone’s secure hardware: a lost or stolen phone can’t use the key.',
   keyChangeWarning:
     'The phone’s hardware only enforces this on a key made that way, so this makes a new key. Put its public key on your hosts again (authorized_keys), and the new allowed_signers line on servers that check your signatures.',
+  usePasskey: 'Use a passkey',
+  usePasskeyHelp:
+    'The key is then a passkey for this site, kept by Windows Hello, Touch ID, your phone or a security key: the app never sees it, and each SSH login and each signature asks for your fingerprint, face or PIN. Hosts need OpenSSH 8.4 or newer.',
+  passkeyChangeWarning:
+    'This makes a new key: put its public key on your hosts again (authorized_keys), and the new allowed_signers line on servers that check your signatures. A passkey you no longer use stays in your password manager or authenticator until you remove it there.',
   keyChangeGo: 'Make a new key',
   keyChanged: 'New key made: copy its public key above to your hosts.',
   appKeyFailed: (why: string) => `The key could not be made: ${why}`,
@@ -226,6 +231,7 @@ const en = {
     keystore: "The private key is in this device's keystore and never handed to the app.",
     'secure-store': "The private key is kept in this device's secure storage.",
     browser: "The private key is kept in this browser's storage for this site.",
+    passkey: 'The key is a passkey for this site: your authenticator keeps it and asks for you each time it is used.',
   },
   copy: 'Copy',
   copied: 'Copied',

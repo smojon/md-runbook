@@ -6,6 +6,7 @@ import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { KeyStorage, appAllowedSignersLine, appKeyInfo, appPublicKeyLine, setKeyNeedsUser } from '../ssh/appKey';
+import { passkeysAvailable } from '../ssh/passkey';
 import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import {
   HISTORY_SIZES,
@@ -162,6 +163,8 @@ function AppKeySection() {
     setCopied(true);
   };
   const settings = useOutputSettings();
+  /** The web app where the browser offers passkeys: the switch makes one. */
+  const web = passkeysAvailable();
   /** The switch was flipped: the new value, until the user confirms making a new key. */
   const [changing, setChanging] = useState<boolean | undefined>();
   const [newKey, setNewKey] = useState(false);
@@ -171,6 +174,7 @@ function AppKeySection() {
       const k = await setKeyNeedsUser(on);
       setStorage(k.storage);
       setLine(await appPublicKeyLine());
+      setError(undefined);
       setCopied(false);
       setNewKey(true);
     } catch (e) {
@@ -195,16 +199,17 @@ function AppKeySection() {
           {t.appKeyStorage[storage]}
         </Text>
       ) : null}
-      {/* Only a key in the phone's keystore can require the user (the hardware enforces it). */}
-      {storage === 'hardware' || storage === 'keystore' ? (
+      {/* Only a key in the phone's keystore can require the user (the hardware enforces it); on
+          the web, a passkey does. */}
+      {storage === 'hardware' || storage === 'keystore' || web ? (
         <View style={styles.switchRow}>
           <View style={styles.switchText}>
-            <Text style={styles.switchLabel}>{t.keyNeedsUser}</Text>
-            <Text style={styles.help}>{t.keyNeedsUserHelp}</Text>
+            <Text style={styles.switchLabel}>{web ? t.usePasskey : t.keyNeedsUser}</Text>
+            <Text style={styles.help}>{web ? t.usePasskeyHelp : t.keyNeedsUserHelp}</Text>
           </View>
           <Toggle
             testID="setting-keyNeedsUser"
-            accessibilityLabel={t.keyNeedsUser}
+            accessibilityLabel={web ? t.usePasskey : t.keyNeedsUser}
             value={changing ?? settings.keyNeedsUser}
             onValueChange={(on) => setChanging(on)}
           />
@@ -212,7 +217,7 @@ function AppKeySection() {
       ) : null}
       {changing !== undefined ? (
         <View testID="key-change-confirm">
-          <Text style={styles.error}>{t.keyChangeWarning}</Text>
+          <Text style={styles.error}>{web ? t.passkeyChangeWarning : t.keyChangeWarning}</Text>
           <View style={styles.chips}>
             <Pressable testID="key-change-go" accessibilityRole="button" onPress={() => void changeKey(changing)} style={styles.button}>
               <Text style={styles.buttonText}>{t.keyChangeGo}</Text>

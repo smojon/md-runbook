@@ -26,7 +26,12 @@ Then restrict each support key in the account's `authorized_keys`:
 
 ```
 restrict,command="/usr/local/bin/md-runbook-gate" ecdsa-sha2-nistp256 AAAA… alice@support
+restrict,verify-required,command="/usr/local/bin/md-runbook-gate" sk-ecdsa-sha2-nistp256@openssh.com AAAA… bob@web
 ```
+
+The second is the web app's passkey (**Use a passkey**): `verify-required` makes sshd refuse a
+signature made without the person's fingerprint, face or PIN. The gate logs its fingerprint as
+for any key.
 
 `restrict` turns off port, agent and X11 forwarding and the pty. Options on the command:
 `--unsigned=allow|refuse`, `--scopes=a,b` and `--signers=N` override `gate.conf` for that key, `--who=NAME` is

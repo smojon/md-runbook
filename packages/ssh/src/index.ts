@@ -35,6 +35,17 @@ export { ConnectOptions, RemoteRunOptions, RemoteRunResult, RemoteShell, ShellEn
 export { RemoteSession, SessionRunResult, SignedRun } from './session';
 export { generateKey, hostKeyId, importPrivateKey, privateKeyPem, publicKeyLine } from './keys';
 export { ECDSA_P256, ExternalAwareEcdsaP256, ExternalKeyPair, ExternalP256Key, derToRs } from './externalKey';
+export {
+  Passkey,
+  PasskeyAssertion,
+  PasskeyKeyPair,
+  PasskeySkEcdsaP256,
+  SK_ECDSA_P256,
+  WEBAUTHN_SK_ECDSA_P256,
+  base64url,
+  skEcdsaPublicKey,
+  webauthnSignature,
+} from './passkey';
 export { allowedSignersLine, signSshsig } from './sshsig';
 export type { InstallKeyOptions, InstallKeyResult } from './installKey';
 export { installPublicKey } from './installKey';
