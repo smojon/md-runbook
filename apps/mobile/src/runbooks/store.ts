@@ -19,6 +19,11 @@ export interface Runbook {
   fileName?: string;
   origin?: Origin;
   savedHash?: string;
+  /**
+   * Opened from a link: where the runbook came from and which version (linkKey). The same link
+   * opening the same version again opens this runbook rather than another copy.
+   */
+  link?: string;
 }
 
 /** Larger files are refused: the app keeps every open runbook in memory. */
@@ -29,6 +34,7 @@ interface IndexEntry {
   fileName: string;
   origin?: Origin;
   savedHash?: string;
+  link?: string;
 }
 const INDEX_KEY = 'runbooks.v1';
 const isIndex = (v: unknown): v is IndexEntry[] =>
@@ -39,7 +45,8 @@ const isIndex = (v: unknown): v is IndexEntry[] =>
       e !== null &&
       typeof (e as IndexEntry).id === 'string' &&
       typeof (e as IndexEntry).fileName === 'string' &&
-      ((e as IndexEntry).origin === undefined || isOrigin((e as IndexEntry).origin)),
+      ((e as IndexEntry).origin === undefined || isOrigin((e as IndexEntry).origin)) &&
+      ((e as IndexEntry).link === undefined || typeof (e as IndexEntry).link === 'string'),
   );
 
 const bundled = (): Runbook[] => BUNDLED.map((r) => ({ ...r, source: 'bundled' as const }));
@@ -47,10 +54,35 @@ let all: readonly Runbook[] = bundled();
 const listeners = new Set<() => void>();
 const emit = (): void => listeners.forEach((l) => l());
 
-/** The first `# heading`, else the file name without `.md`. */
+/**
+ * The runbook's text without its YAML front matter (`---` … `---` or `...` at the very top), as
+ * VS Code's Markdown preview and the report leave it out.
+ */
+export function withoutFrontMatter(value: string): string {
+  const m = /^﻿?---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(value);
+  return m ? value.slice(m[0].length) : value;
+}
+
+/**
+ * The first `# heading` of the Markdown (not a comment in the front matter or a `#` line in a
+ * code block), else the file name without `.md`.
+ */
 export function titleOf(text: string, fileName: string): string {
-  const heading = /^#[ \t]+(.+?)[ \t#]*$/m.exec(text)?.[1]?.trim();
-  return heading || fileName.replace(/\.(md|markdown)$/i, '') || fileName;
+  let fence: string | undefined;
+  for (const line of withoutFrontMatter(text).split(/\r?\n/)) {
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fence !== undefined) {
+      if (open && open[0] === fence[0] && open.length >= fence.length && line.trim() === open) fence = undefined;
+      continue;
+    }
+    if (open) {
+      fence = open;
+      continue;
+    }
+    const heading = /^ {0,3}#[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/.exec(line)?.[1]?.trim();
+    if (heading) return heading;
+  }
+  return fileName.replace(/\.(md|markdown)$/i, '') || fileName;
 }
 
 /** Writes in order per runbook, so a slow write never lands after a newer one. */
@@ -68,6 +100,7 @@ function persistIndex(): void {
       fileName: r.fileName ?? r.title,
       ...(r.origin ? { origin: r.origin } : {}),
       ...(r.savedHash ? { savedHash: r.savedHash } : {}),
+      ...(r.link ? { link: r.link } : {}),
     }));
   void setJson(INDEX_KEY, index).catch((e: unknown) => console.warn('runbook list not saved', e));
 }
@@ -94,6 +127,7 @@ export function loadRunbooks(): Promise<void> {
         fileName: e.fileName,
         origin: e.origin,
         savedHash: e.savedHash,
+        ...(e.link ? { link: e.link } : {}),
       });
     }
     const samples = await Promise.all(
@@ -110,7 +144,21 @@ export function loadRunbooks(): Promise<void> {
   return loaded;
 }
 
-export function addRunbook(fileName: string, text: string, origin?: Origin): Runbook {
+/**
+ * What makes two openings of a link the same runbook: its address (`rb` for a runbook carried in
+ * the link) and the text it gave. A changed runbook at the same address is a new version, and a
+ * copy of its own.
+ */
+export function linkKey(source: string, text: string): string {
+  return `${source} ${textHash(text)}`;
+}
+
+/** The runbook a link with this key opened before, while the app still has it. */
+export function linkedRunbook(link: string): Runbook | undefined {
+  return all.find((r) => r.source === 'file' && r.link === link);
+}
+
+export function addRunbook(fileName: string, text: string, origin?: Origin, link?: string): Runbook {
   const id = `file-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const r: Runbook = {
     id,
@@ -119,6 +167,7 @@ export function addRunbook(fileName: string, text: string, origin?: Origin): Run
     source: 'file',
     fileName,
     ...(origin ? { origin, savedHash: textHash(text) } : {}),
+    ...(link ? { link } : {}),
   };
   all = [...all, r];
   persistText(id, text);

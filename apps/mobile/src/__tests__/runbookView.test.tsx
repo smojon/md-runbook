@@ -7,8 +7,8 @@ import { resetParamValues } from '../runbooks/params';
 import { readSecret } from '../secrets/store';
 import { autorunAsked } from '../runbooks/autorun';
 import { resetSettings, setOutputSetting } from '../settings/store';
-import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
-import { RunbookView, copyStamp, withoutFrontMatter } from '../screens/RunbookView';
+import { addRunbook, getRunbook, resetRunbooks, withoutFrontMatter } from '../runbooks/store';
+import { RunbookView, copyStamp } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
 
 jest.mock('expo-router', () => ({

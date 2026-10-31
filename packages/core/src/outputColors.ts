@@ -7,6 +7,7 @@
  */
 
 import { stripAnsi } from './ansi';
+import { applyTerminalControls } from './terminalText';
 
 export type OutputLevel = 'critical' | 'error' | 'warning' | 'info' | 'debug' | 'trace' | 'success';
 
@@ -158,21 +159,33 @@ export interface ColorOptions {
   stderr: boolean;
 }
 
-/** `text` (whole lines, or the end of a stream) with ANSI colours added. */
+/**
+ * `text` (whole lines, or the end of a stream) with ANSI colours added.
+ *
+ * VS Code rewrites a stream's line at a `\r` the way Jupyter does: what follows the `\r` replaces
+ * the line's first characters one for one, ANSI codes counted as characters. A colour reset after
+ * a line's `\r` therefore overwrote the first four characters of the line's colour and left the
+ * fifth: every red stderr line of a Windows program (`\r\n`) started with `m`. So a line's closing
+ * `\r`s go after the reset, and a `\r` inside a line is applied as a terminal would before the line
+ * is coloured.
+ */
 export function colorizeAnsi(text: string, opts: ColorOptions): string {
   if (!opts.levels && !opts.stderr) return text;
   return text
     .split('\n')
-    .map((line) => {
-      if (line === '' || ANSI_IN_LINE.test(line)) return line;
+    .map((raw) => {
+      const cr = /\r*$/.exec(raw)![0];
+      let line = raw.slice(0, raw.length - cr.length);
+      if (line === '' || ANSI_IN_LINE.test(line)) return raw;
+      const spans = opts.levels ? levelSpans(line) : [];
+      if (!opts.stderr && !spans.some((s) => s.level)) return raw;
+      if (line.includes('\r')) return colorizeAnsi(applyTerminalControls(line), opts) + cr;
       const base = opts.stderr ? `\u001b[${RED}m` : '';
       const reset = opts.stderr ? `\u001b[0;${RED}m` : '\u001b[0m';
       const body = opts.levels
-        ? levelSpans(line)
-            .map((s) => (s.level ? `\u001b[${LEVEL_SGR[s.level]}m${s.text}${reset}` : s.text))
-            .join('')
+        ? spans.map((s) => (s.level ? `\u001b[${LEVEL_SGR[s.level]}m${s.text}${reset}` : s.text)).join('')
         : line;
-      return opts.stderr ? `${base}${body}\u001b[0m` : body;
+      return (opts.stderr ? `${base}${body}\u001b[0m` : body) + cr;
     })
     .join('\n');
 }

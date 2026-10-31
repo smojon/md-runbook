@@ -22,6 +22,7 @@ action by the same groups, with a search field (Ctrl/⌘+K with a keyboard).
 | **Open Sample Runbook** | Help ▾ | You're new and want to try every feature on a safe file. Nothing is written until you save it. | on the start screen; ⋯ More → Help |
 | **Get Started** | Help ▾ | A short tour of the main features, the first time you use it. | — |
 | **Cheat Sheet** | Help ▾ | This page, inside VS Code: "is there a button for…?" | ⋯ More → Help (opens this page) |
+| **Settings…** | Help ▾ | Every md-runbook setting in one list (where outputs go, the transcript, redaction, the shells, the assistant), with what each does. | Hosts & settings on the start screen |
 
 ## Running
 
@@ -33,6 +34,8 @@ action by the same groups, with a search field (Ctrl/⌘+K with a keyboard).
 | **Go to Next Step** | Run ▾ | A long runbook: jump to the first step that isn't done yet. | ⋯ More → Go to Next Step |
 | **Session: on / off** | toolbar | **On**: one shell for the whole runbook, so `cd`, variables and logins carry over from cell to cell, as in a terminal. **Off**: every cell starts clean, so the result never depends on an earlier cell. | ⋯ More → Session: on / off (the front matter’s mode: decides at first) |
 | **Session…**, **Restart Session**, **Stop Session** | Run ▾ | The session got into a bad state (wrong folder, a stuck login): start again from a clean shell without closing the runbook. | ⋯ More → Restart Session |
+| **Open Transcript** | Run ▾ | Follow a run as it happens, or find one you never saved: every run of a cell is appended to `<runbook>.transcript.log` next to the runbook (command, output, exit, time; redacted). It opens beside the runbook and grows with each run. | — |
+| **Transcript** (✓ while on) | Run ▾ | Turn the transcript off, or on again. It is a user setting (`mdRunbook.output.transcript`, on by default), so it holds for every runbook on this machine; files already written stay. | — |
 | **Clear All Outputs** | Run ▾, right-click the file in the Explorer | Before sharing or committing a runbook as a template, without the last run's output. | ⋯ More → Clear All Outputs |
 | **Start Incident** | Run ▾ | You're paged: a dated run copy with `incident:` and `severity:`, where every run records who ran it and where, every attempt is kept, and a first note marks when it was detected. Export Report then shows the incident record and timeline. | ⋯ More → Start Incident |
 | **Add Note** | Run ▾ | During an incident or a drill: record a decision ("called the DBA, failover approved") or a milestone (detected, mitigated, resolved) with the time and your name, for the timeline and the postmortem. | ⋯ More → Add Note |

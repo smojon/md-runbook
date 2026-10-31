@@ -61,6 +61,33 @@ describe('output colours: ANSI for VS Code', () => {
     assert.equal(colorizeAnsi('WARN', { levels: false, stderr: true }), '\u001b[31mWARN\u001b[0m');
     assert.equal(colorizeAnsi('INFO', { levels: false, stderr: false }), 'INFO');
   });
+
+  // What VS Code does with a `\r` in a stream (formatStreamText, as Jupyter's fixCarriageReturn):
+  // the text after it replaces the line's first characters one for one, ANSI codes included.
+  const vscodeStream = (s: string): string => {
+    s = s.replace(/\r+\n/gm, '\n');
+    while (s.search(/\r[^$]/g) > -1) {
+      const base = s.match(/^(.*)\r+/m)![1]!;
+      const insert = s.match(/\r+(.*)$/m)![1]!;
+      s = s.replace(/\r+.*$/m, '\r').replace(/^.*\r/m, insert + base.slice(insert.length));
+    }
+    return s;
+  };
+  const shown = (s: string): string => vscodeStream(s).replace(/\u001b\[[0-9;]*m/g, '');
+
+  it('a Windows program\'s stderr (\\r\\n) shows in red without a stray m', () => {
+    const red = colorizeAnsi('Traceback (most recent call last):\r\n  File "x.py"\r\n', { levels: false, stderr: true });
+    assert.equal(red, '\u001b[31mTraceback (most recent call last):\u001b[0m\r\n\u001b[31m  File "x.py"\u001b[0m\r\n');
+    assert.equal(shown(red), 'Traceback (most recent call last):\n  File "x.py"\n');
+    // Before: the reset came after the \r, and VS Code's rewrite left the colour's `m`.
+    assert.equal(shown('\u001b[31mTraceback\r\u001b[0m\n'), 'mTraceback\n');
+  });
+
+  it('a line rewritten with \\r is coloured as a terminal shows it', () => {
+    assert.equal(colorizeAnsi('abcdef\rXY', { levels: false, stderr: true }), '\u001b[31mXYcdef\u001b[0m');
+    assert.equal(colorizeAnsi('ERROR 10%\rERROR 20%\r\n', { levels: true, stderr: false }), '\u001b[31mERROR\u001b[0m 20%\r\n');
+    assert.equal(colorizeAnsi('plain 10%\rplain 20%\r\n', { levels: true, stderr: false }), 'plain 10%\rplain 20%\r\n', 'nothing to colour: unchanged');
+  });
 });
 
 describe('output colours: styled spans (the app)', () => {

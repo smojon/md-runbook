@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { parse } from '@md-runbook/core';
 import { addHost, getHost, pinHostKey, resetHosts } from '../hosts/store';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
-import { signerName } from '../settings/store';
+import { resetSettings, setOutputSetting, signerName } from '../settings/store';
 import { HostList } from '../screens/HostList';
 import { formatRunbookLink } from '@md-runbook/core/runbookLink';
 import { openRunbookLink } from '../runbooks/openLink';
@@ -104,6 +104,123 @@ describe('running a cell from the runbook screen', () => {
       fireEvent.press(screen.getByTestId('cell-1-stop'));
     });
     await waitFor(() => expect(screen.getByText(/cancelled/)).toBeTruthy());
+  });
+});
+
+describe('asking before a risky cell, as VS Code does', () => {
+  const RISKY = [
+    '# Rollout',
+    '',
+    '```bash',
+    'kubectl get pods',
+    '```',
+    '',
+    '```bash',
+    'kubectl rollout restart deploy/api',
+    '```',
+    '',
+    '```bash',
+    'kubectl get pods -w',
+    '```',
+    '',
+    '```bash confirm',
+    'echo careful',
+    '```',
+    '',
+    '```bash no-confirm',
+    'kubectl delete pod web-1',
+    '```',
+    '',
+  ].join('\n');
+  // Cells: 0 heading, 1 get, 2 rollout restart (risky), 3 get -w, 4 confirm, 5 no-confirm + delete.
+  beforeEach(() => resetSettings());
+
+  it('a risky cell waits for Run under it; nothing is sent before', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const rb = addRunbook('rollout.md', RISKY);
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-2-run'));
+    });
+    expect(screen.getByTestId('confirm-title')).toHaveTextContent('Cell 3 contains a risky command: “rollout restart”');
+    expect(screen.getByText('It runs as deploy@web-1.')).toBeTruthy();
+    expect(mockConnection.calls).toHaveLength(0);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('confirm-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-2-output')).toBeTruthy());
+    expect(mockConnection.calls.map((c) => c.source)).toEqual(['kubectl rollout restart deploy/api']);
+    expect(screen.queryByTestId('confirm-card')).toBeNull();
+  });
+
+  it('Run all stops at a risky cell until it is confirmed; Cancel ends it there', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const rb = addRunbook('rollout.md', RISKY);
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('run-primary'));
+    });
+    await waitFor(() => expect(screen.getByTestId('confirm-card')).toBeTruthy());
+    expect(mockConnection.calls.map((c) => c.source)).toEqual(['kubectl get pods']);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('confirm-cancel'));
+    });
+    expect(screen.getByTestId('run-notice').props.children).toBe('Cell 3 was not run: you didn’t confirm it.');
+    expect(mockConnection.calls).toHaveLength(1);
+    expect(getRunbook(rb.id)?.text).not.toMatch(/rollout restart deploy\/api\n```\n<!-- md-runbook:output/);
+
+    // Again, confirmed: Run all goes on to the next cell and asks at `confirm`.
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('run-primary'));
+    });
+    await waitFor(() => expect(screen.getByTestId('confirm-card')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('confirm-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('confirm-title')).toHaveTextContent('Run cell 5?'));
+    expect(mockConnection.calls.map((c) => c.source).slice(-2)).toEqual(['kubectl rollout restart deploy/api', 'kubectl get pods -w']);
+  });
+
+  it("a runbook's no-confirm counts only when Hosts & settings allows it", async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const rb = addRunbook('rollout.md', RISKY);
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-5-run'));
+    });
+    expect(screen.getByTestId('confirm-title')).toHaveTextContent('Cell 6 contains a risky command: “delete”');
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('confirm-cancel'));
+    });
+    await act(async () => setOutputSetting('allowNoConfirm', true));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-5-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-5-output')).toBeTruthy());
+    expect(screen.queryByTestId('confirm-card')).toBeNull();
+  });
+
+  it('retry=: the running cell says which attempt, and Stop ends the wait', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    mockConnection = fakeConnection([{ stdout: '{"outcome":"error"}\n' }]);
+    const rb = addRunbook(
+      'login.md',
+      '# Login\n\n```bash retry=10 every=30s expect=/"outcome":"signed_in"/\ncurl -s localhost/login\n```\n',
+    );
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('cell-1-running')).toHaveTextContent('Attempt 1/10 failed · trying again in 30.0s (Stop to end here)'),
+    );
+    expect(screen.getByText(/attempt 1\/10 failed \(the output does not match/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-stop'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-output')).toBeTruthy());
+    expect(mockConnection.calls).toHaveLength(1);
+    expect(screen.getByText(/cancelled · check failed · 1 attempts/)).toBeTruthy();
   });
 });
 

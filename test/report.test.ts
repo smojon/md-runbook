@@ -121,6 +121,11 @@ describe('report hardening', () => {
     assert.doesNotMatch(r, /<hr/);
     assert.match(r, /<title>Title<\/title>/);
   });
+
+  it('takes the title from a heading, not from a comment in the front matter or a code block', () => {
+    const r = report('---\n# Every command runs against this cluster\nkube-context: lab\n---\n\n```yaml\n# not this\n```\n\n# Title\n');
+    assert.match(r, /<title>Title<\/title>/);
+  });
 });
 
 describe('renderReport step states', () => {

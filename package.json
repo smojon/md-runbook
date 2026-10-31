@@ -2,7 +2,7 @@
   "name": "md-runbook",
   "displayName": "Markdown Runbook",
   "description": "Run shell blocks in Markdown runbooks as a notebook and keep their output in the same .md file: PowerShell, cmd and bash on Windows, macOS and Linux. Step through lines, check outputs, retry until ready, redact secrets, approve AI-proposed commands, and run the same runbooks in CI from the command line.",
-  "version": "0.13.0",
+  "version": "0.16.0",
   "publisher": "smojon",
   "preview": true,
   "license": "MIT",
@@ -539,6 +539,23 @@
         "title": "Help",
         "category": "md-runbook",
         "icon": "$(question)"
+      },
+      {
+        "command": "mdRunbook.openTranscript",
+        "title": "Open Transcript",
+        "category": "md-runbook",
+        "icon": "$(output)"
+      },
+      {
+        "command": "mdRunbook.toggleTranscript",
+        "title": "Transcript",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.openSettings",
+        "title": "Settings…",
+        "category": "md-runbook",
+        "icon": "$(settings-gear)"
       }
     ],
     "menus": {
@@ -923,6 +940,14 @@
         {
           "command": "mdRunbook.menu.help",
           "when": "false"
+        },
+        {
+          "command": "mdRunbook.openTranscript",
+          "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.toggleTranscript",
+          "when": "notebookType == md-runbook"
         }
       ],
       "notebook/cell/title": [
@@ -1086,6 +1111,15 @@
           "group": "3_outputs@1"
         },
         {
+          "command": "mdRunbook.openTranscript",
+          "group": "3_outputs@2"
+        },
+        {
+          "command": "mdRunbook.toggleTranscript",
+          "group": "3_outputs@3",
+          "toggled": "config.mdRunbook.output.transcript"
+        },
+        {
           "command": "mdRunbook.startIncident",
           "group": "4_record@1"
         },
@@ -1212,6 +1246,10 @@
         {
           "command": "mdRunbook.openSample",
           "group": "1_help@3"
+        },
+        {
+          "command": "mdRunbook.openSettings",
+          "group": "2_settings@1"
         }
       ]
     },
@@ -1331,7 +1369,7 @@
               "off"
             ],
             "enumDescriptions": [
-              "Rest the mouse on a command: `▶ Run line · ☐ Check` shows in a hover, a plain click runs or checks it. Checked lines get a ☑ in the margin, and the cell's status line has **Run N checked lines**.",
+              "Rest the mouse on a command: `▶ Run line · ☐ Check` shows in a hover, a plain click runs or checks it. The run buttons of the cursor's line are also on the cell's status line. Checked lines get a ☑ in the margin, and the cell's status line has **Run N checked lines**.",
               "`▶ ☐` always shown in front of each command (VS Code inlay hints: Ctrl+click, Cmd+click on macOS; `editor.inlayHints.enabled` must be on).",
               "No line buttons. The cell's dropdown, the right-click menu and `Ctrl+Alt+Enter` still run lines."
             ],

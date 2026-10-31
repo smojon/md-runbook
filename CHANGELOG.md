@@ -1,9 +1,89 @@
 # Changelog
 
+## Unreleased
+
+- **The app retries `retry=` cells.** A cell with `retry=10 every=30s expect=…` ran once in the
+  app and showed *check failed*; it now runs up to N times until it passes, `every=` apart, as
+  VS Code and the command line do: the running cell says `attempt 2/10`, or which attempt failed
+  and when the next starts (with the reason in the output), Stop ends the wait, and only the last
+  attempt's output is kept, with `attempts=`. A signed cell goes to md-runbook-gate again for each
+  attempt, as the same signed cell. Line runs run once, as in VS Code. Found running an SOP from
+  an alert in the web app.
+- **The app asks before a risky cell.** A cell with a risky command (VS Code's default patterns:
+  `delete`, `apply`, `rollout restart`, `rm -rf`, `helm upgrade`, …) or the `confirm` option ran
+  straight away in the app. It now shows a card under the cell, with the risky match, the account
+  it runs as and how often `retry=` may run it, and runs only after **Run**; Run All waits there,
+  and **Cancel** stops it. Run on a Group asks once for the group. A runbook's `no-confirm` counts
+  only after **Hosts & settings → Asking before a cell runs** allows it (off by default, like
+  VS Code's `mdRunbook.execution.allowNoConfirmOption`).
+- **A runbook's title in the app is its first heading**, not a `# …` comment in its YAML front
+  matter or a `#` line in a code block: an SOP whose front matter starts with
+  `# Every command runs against this cluster…` was listed, opened and shared under that comment.
+  The run report skips `#` lines in code blocks too.
+- **The same runbook link opens the same copy.** Each click on an alert mail's link added another
+  copy of the runbook to the app's list. The app now remembers which link opened a copy: the same
+  link opens it again with the link's host and values, as long as the runbook at that address is
+  unchanged (a changed runbook is a new copy). **Start Incident** still makes a copy per incident.
+- **Relay tokens a browser can send.** The relay's README and `compose.example.yml` made the
+  token with `openssl rand -base64 32`, which always ends in `=`: the browser sends the token as a
+  WebSocket subprotocol (`token.<token>`), which allows no `=` or `/`, so the web app could never
+  connect (`new WebSocket` throws a SyntaxError). The docs now say `openssl rand -hex 32`, the
+  relay refuses to start with a token a browser can't send and says how to make one, and the app
+  refuses to save such a token, saying why.
+- **The Release workflow says when it skips npm.** Without the `NPM_TOKEN` secret the command
+  line is not published to npm (`npx md-runbook` answers 404); the run now shows a warning that
+  says so, instead of a quietly skipped step.
+
+## 0.16.0
+
+- **The web app and the relay as container images.** Each release now also publishes
+  `ghcr.io/smojon/md-runbook-web` (the web export behind nginx, to host the app on your own
+  domain; [apps/web](apps/web/README.md)) and `ghcr.io/smojon/md-runbook-relay`, next to the ops
+  host and the probe. A new workflow builds the web image on every change to the app and checks
+  that it serves the app, its routes and its bundles.
+
+## 0.15.1
+
+- **No stray `m` before red stderr lines on Windows.** A Windows program ends its lines with
+  `\r\n`, and the colour reset went between the `\r` and the `\n`. VS Code rewrites a line at a
+  `\r` character by character (as Jupyter does), so the reset overwrote the colour's first four
+  characters and left the fifth, `m`, at the start of every stderr line, a Python traceback's for
+  example. The reset now comes before the `\r`, and a line rewritten with `\r` is coloured as a
+  terminal shows it.
+
+## 0.15.0
+
+- **Line buttons on the cell's status line.** The run buttons of the line the cursor is on
+  (**Run line**, **Run lines 1-N**, **Run lines N-end**, **Step from here**) are also under the
+  cell, and stay while the cell is selected: click in the line, then on the button. The hover
+  was hard to reach on a cell's first lines, where VS Code draws it above the cell and closes it
+  as soon as the mouse leaves the cell's text. Reported by the user.
+
+## 0.14.1
+
+- **The hover's line buttons work on Windows.** Clicking **Run line**, **Run lines …**, **Step from
+  here**, **Check**, **Breakpoint** or **Copy** said *open a runbook and pick a code cell first*:
+  VS Code decodes a command link's arguments twice, so the cell's address arrived with `c:` for
+  `c%3A` and was not found. The ▶ ☐ buttons (`lines.buttons: inline`), the right-click menu and
+  Ctrl+Alt+Enter were not affected.
+
+## 0.14.0
+
+- **The transcript in the menus.** **Run ▾ › Open Transcript** opens `<runbook>.transcript.log`
+  beside the runbook (it grows as later runs append); **Run ▾ › Transcript** turns it off or on
+  (a check mark while on; the user setting `mdRunbook.output.transcript`). Before, only someone
+  who knew the setting's name could turn it off.
+- **Help ▾ › Settings…** opens md-runbook's settings, so every one can be found from a menu.
+- **`md-runbook run --section` refuses a section that matches the runbook's title**: the title
+  holds every step, so `--section "6."` for `## 6. The scheduled check` also matched
+  `# 6. Are the backends up?` and ran the whole runbook. The message names the heading meant and
+  how to say it (`--section "6. The"`).
+
 ## 0.13.0
 
 - **Saved output is what the terminal showed.** Carriage returns overwrite from the first
-  column (`abcdefXY` was saved as `XY`, a terminal shows `XYcdef`), backspaces and the
+  column (`abcdef
+XY` was saved as `XY`, a terminal shows `XYcdef`), backspaces and the
   erase-line, cursor up/down/forward/back, column and save/restore sequences are applied, so a
   spinner or a multi-line progress display is saved as it ended instead of every frame; other
   control characters, which showed as odd symbols, are dropped. Clearing the screen keeps what

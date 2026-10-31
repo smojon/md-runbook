@@ -12,6 +12,7 @@ import {
   formatDurationAttr,
   formatLocalIso,
   isCodeMeta,
+  isSuccess,
   loadedOutputEntry,
   nextHistory,
   outputSummary,
@@ -19,7 +20,7 @@ import {
   setCellOutput,
   markStderr,
 } from '@md-runbook/core';
-import { Captured, evaluateChecks } from '@md-runbook/core/checks';
+import { Captured, CheckOutcome, evaluateChecks } from '@md-runbook/core/checks';
 import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { approvalScope } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
@@ -34,7 +35,7 @@ import { readSecret } from '../secrets/store';
 import { historySize, outputSettings, signerName } from '../settings/store';
 import { historySizeFor, runnerAttrs } from '@md-runbook/core/incident';
 import { t } from '../i18n';
-import { runnability } from './cells';
+import { formatWait, runnability } from './cells';
 import { Connection, connectionFor } from './connections';
 import type { LinePlan } from './lineRuns';
 
@@ -74,6 +75,11 @@ export interface RunCellParams {
   /** Called before command `index` of a line run; resolves false to stop before it (Step Through). */
   beforeStep?(index: number): Promise<boolean>;
   /**
+   * retry=: attempt `attempt` of `attempts` starts (its output starts again: only the last
+   * attempt's is kept), or, with `waitMs`, failed and the next one starts in that long.
+   */
+  onAttempt?(attempt: number, attempts: number, waitMs?: number): void;
+  /**
    * The runbook as it is when the run ends (other edits, e.g. a ticked task box, happened meanwhile):
    * the output block goes into that text. Default: `text`.
    */
@@ -95,6 +101,22 @@ export interface RunCellParams {
 }
 
 const redactor = createRedactor(DEFAULT_PATTERNS);
+
+/** Resolves true after `ms`, false at once when the signal aborts (Stop between two attempts). */
+function wait(ms: number, signal: AbortSignal | undefined): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(true);
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
 
 /**
  * Run the cell, with background time on iOS: switching to the pager or chat app for a moment
@@ -244,6 +266,15 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   let result: SessionRunResult;
   /** Steps of a line run that ran (indexes into p.lines.steps). */
   const ran: number[] = [];
+  // retry=N: up to N attempts of the whole cell until it passes, `every` apart, as in the extension
+  // and the command line (not for line runs). A signed cell goes to the gate again each time.
+  const attempts = p.lines ? 1 : (opts.retry?.attempts ?? 1);
+  let attempt = 0;
+  let outcome: CheckOutcome | undefined;
+  const judge = (r: SessionRunResult): CheckOutcome | undefined =>
+    opts.checks && r.exitCode !== null && !r.timedOut && !r.cancelled
+      ? evaluateChecks(opts.checks, r.exitCode, transcript, stdout)
+      : undefined;
   try {
     // The first connection tells what the server runs; a cell for the other kind doesn't run.
     await conn.session.connect();
@@ -269,8 +300,29 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
       return { exitCode: r.exitCode, stdout: out, stderr: r.error ?? (r.timedOut ? 'timed out' : err) };
     });
     if (wrongCluster !== undefined) return { kind: 'error', message: wrongCluster };
-    if (!p.lines) result = await conn.session.run(asRun(cell.value), runOpts, signed());
-    else {
+    if (!p.lines) {
+      for (;;) {
+        attempt++;
+        if (attempts > 1) p.onAttempt?.(attempt, attempts);
+        result = await conn.session.run(asRun(cell.value), runOpts, signed());
+        outcome = judge(result);
+        const passed = outcome ? outcome.ok : isSuccess(result);
+        if (passed || attempt >= attempts || result.cancelled || p.signal?.aborted) break;
+        const why = outcome?.failures[0] ?? (result.timedOut ? 'timed out' : (result.error ?? `exit code ${exitLabel(result)}`));
+        const every = opts.retry?.everyMs ?? 0;
+        write(t.retryNote(attempt, attempts, why, formatWait(every)) + '\n', 'stderr');
+        p.onAttempt?.(attempt, attempts, every);
+        // Stop while waiting: the run ends cancelled, with the failed attempt's output.
+        if (!(await wait(every, p.signal))) {
+          result = { ...result, exitCode: null, cancelled: true };
+          break;
+        }
+        transcript = '';
+        saved = '';
+        stdout = '';
+        outcome = undefined;
+      }
+    } else {
       result = { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
       const steps = p.lines.steps;
       for (let i = 0; i < steps.length; i++) {
@@ -310,13 +362,15 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     ran: formatLocalIso(started),
     ended: formatLocalIso(ended),
     duration: formatDurationAttr(ended.getTime() - started.getTime()),
+    ...(attempts > 1 && attempt > 0 ? { attempts: String(attempt) } : {}),
     // Who and where, when the runbook keeps evidence (incident:, evidence: true): the name this app
     // signs with, and the account it ran as.
     ...runnerAttrs(p.text, { ...(signerName() ? { by: signerName() } : {}), on: hostLabel(p.host) }),
   };
   let captured: Captured[] = [];
-  if (opts.checks && result.exitCode !== null && !result.timedOut && !result.cancelled) {
-    const outcome = evaluateChecks(opts.checks, result.exitCode, transcript, stdout);
+  // A line run is judged here; a whole cell was judged after each attempt.
+  if (p.lines) outcome = judge(result);
+  if (outcome) {
     attrs.check = outcome.ok ? 'ok' : 'failed';
     for (const f of outcome.failures) write(t.checkFailedNote(f) + '\n', 'stderr');
     // capture=: kept for later cells' ${out:NAME}; capture-secret= values are redacted from here on.

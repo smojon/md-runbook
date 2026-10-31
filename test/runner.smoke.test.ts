@@ -9,7 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { ExecuteResult, ShellSettings, exitLabel } from '@md-runbook/core';
-import { executeCell, nodeShellEnv, resolveShell } from '@md-runbook/core/node';
+import { executeCell, nodeShellEnv, resolveShell, runProcess } from '@md-runbook/core/node';
 
 const settings: ShellSettings = { pwshPath: process.env.MD_RUNBOOK_PWSH, bashPath: process.env.MD_RUNBOOK_BASH };
 const isWin = process.platform === 'win32';
@@ -205,5 +205,23 @@ describe('errors', () => {
   it('reports unknown languages', async () => {
     const r = await run('python', 'print(1)');
     assert.match(r.error ?? '', /No shell/);
+  });
+
+  it('a run cancelled before it starts starts nothing', async () => {
+    // A cancel while the cell is still being prepared: it threw a ReferenceError (onAbort used
+    // before its declaration), which a slow machine hit in the cancel tests above.
+    const ac = new AbortController();
+    ac.abort();
+    const r = await runProcess({
+      command: process.execPath,
+      args: ['-e', 'console.log("started")'],
+      cwd: process.cwd(),
+      timeoutMs: 0,
+      signal: ac.signal,
+      onStdout: () => assert.fail('the process started'),
+      onStderr: () => {},
+    });
+    assert.ok(r.cancelled);
+    assert.equal(r.exitCode, null);
   });
 });

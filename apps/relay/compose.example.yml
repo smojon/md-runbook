@@ -2,7 +2,7 @@
 # web app connects to wss://relay.example.net. Copy this file and Caddyfile.example, put your own
 # name, token and targets in, then `docker compose up -d`.
 #
-# The token: `openssl rand -base64 32`, kept in relay-token.txt next to this file (not in Git).
+# The token: `openssl rand -hex 32` (letters and digits: base64's / and = can't go in the header), kept in relay-token.txt next to this file (not in Git).
 services:
   relay:
     build: .

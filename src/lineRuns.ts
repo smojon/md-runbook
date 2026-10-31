@@ -7,8 +7,10 @@
  * the line (links in a hover take a plain click): Run line, Run lines 1-N (up to and including it),
  * Run lines N-end, Step from here, Check, Breakpoint,
  * Copy with values, Explain (with an AI provider set), then what the line would ask before running,
- * the last known target context, and the current values of its `${…}` references. Checked lines
- * get a ☑ in the margin, and the cell's status line has "Run N checked lines". With
+ * the last known target context, and the current values of its `${…}` references. The run
+ * buttons of the cursor's line are also on the cell's status line, which stays put (VS Code
+ * closes a hover as soon as the mouse leaves the cell, and draws it above the cell for its first
+ * lines). Checked lines get a ☑ in the margin, and the cell's status line has "Run N checked lines". With
  * `lines.buttons: inline` they are `▶ ☐` in front of each command instead (inlay hints: always
  * shown, but VS Code runs them on Ctrl+click only).
  *
@@ -244,9 +246,18 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
   /** Fired when checks or `lines.buttons` change: the ▶ ☐ hints, the ☑ margin and the cell status redraw. */
   const hintsChanged = new vscode.EventEmitter<void>();
 
-  /** A runbook's code cell by its document URI (what the ▶ and ☐ buttons pass). */
+  /**
+   * A runbook's code cell by its document URI (what the ▶ and ☐ buttons pass). Compared parsed:
+   * a hover's command link reaches the command decoded twice (VS Code's opener parses the link,
+   * then decodes its query again), so `c%3A` and `%3D` arrive as `c:` and `=`.
+   */
   const cellByUri = (uri: unknown): vscode.NotebookCell | undefined => {
-    const key = String(uri);
+    let key: string;
+    try {
+      key = vscode.Uri.parse(String(uri), true).toString();
+    } catch {
+      return undefined;
+    }
     for (const nb of vscode.workspace.notebookDocuments) {
       if (nb.notebookType !== NOTEBOOK_TYPE) continue;
       const cell = nb.getCells().find((c) => c.document.uri.toString() === key);
@@ -351,6 +362,20 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
     },
   };
 
+  /** The run buttons of a command: Run line, Run lines 1-N (not on the first), Run lines N-end and Step from here (not on the last). */
+  const runButtons = (steps: readonly LineStep[], step: LineStep): { label: string; command: string; tip: string }[] => {
+    const last = steps[steps.length - 1]!;
+    const buttons = [{ label: `$(play) Run line ${formatLineRange(step.start, step.end)}`, command: 'mdRunbook.runLineAt', tip: 'Run only this command' }];
+    if (step !== steps[0]) {
+      buttons.push({ label: `$(run-above) Run lines ${formatLineRange(steps[0]!.start, step.end)}`, command: 'mdRunbook.runToLineAt', tip: 'Run the commands before this one, and this one' });
+    }
+    if (step !== last) {
+      buttons.push({ label: `$(run-below) Run lines ${formatLineRange(step.start, last.end)}`, command: 'mdRunbook.runFromLineAt', tip: 'Run this command and the ones after it' });
+      buttons.push({ label: '$(debug-step-into) Step from here', command: 'mdRunbook.stepFromLineAt', tip: 'Run this command, then pause before each next one (F10 next, F5 continue)' });
+    }
+    return buttons;
+  };
+
   const aiOn = (): boolean => ['vscode', 'anthropic'].includes(vscode.workspace.getConfiguration(SECTION).get<string>('ai.provider', 'off'));
   const HOVER_COMMANDS = [
     'mdRunbook.runLineAt',
@@ -376,17 +401,11 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
       const cell = step && cellByUri(document.uri.toString());
       if (!step || !cell) return undefined;
       const uri = document.uri.toString();
-      const last = steps[steps.length - 1]!;
       const lines = formatLineRange(step.start, step.end);
       const link = (label: string, command: string, tip: string, args: unknown[] = [uri, step.start]): string =>
         `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))} "${tip}")`;
 
-      const runs = [link(`$(play) Run line ${lines}`, 'mdRunbook.runLineAt', 'Run only this command')];
-      if (step !== steps[0]) runs.push(link(`$(run-above) Run lines ${formatLineRange(steps[0]!.start, step.end)}`, 'mdRunbook.runToLineAt', 'Run the commands before this one, and this one'));
-      if (step !== last) {
-        runs.push(link(`$(run-below) Run lines ${formatLineRange(step.start, last.end)}`, 'mdRunbook.runFromLineAt', 'Run this command and the ones after it'));
-        runs.push(link('$(debug-step-into) Step from here', 'mdRunbook.stepFromLineAt', 'Run this command, then pause before each next one (F10 next, F5 continue)'));
-      }
+      const runs = runButtons(steps, step).map((b) => link(b.label, b.command, b.tip));
       const on = checks.get(uri)?.has(step.text) ?? false;
       const tools = [link(on ? '$(pass-filled) Uncheck' : '$(check) Check', 'mdRunbook.toggleLineCheck', `${on ? 'Uncheck' : 'Check'} for Run Checked Lines`)];
       if (breakpointsOn()) {
@@ -452,19 +471,58 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
     for (const e of editors) e.setDecorations(checkedMark, on ? checkedSteps(e.document).map((s) => new vscode.Range(s.start, 0, s.start, 0)) : []);
   };
 
-  /** "▶ Run 2 checked lines" on the status line under a cell with checked lines. */
-  const lineStatus = (cell: vscode.NotebookCell): vscode.NotebookCellStatusBarItem[] => {
-    const steps = checkedSteps(cell.document);
-    if (steps.length === 0) return [];
-    const n = steps.length;
-    const item = new vscode.NotebookCellStatusBarItem(`$(play) Run ${n} checked line${n === 1 ? '' : 's'}`, vscode.NotebookCellStatusBarAlignment.Left);
-    item.tooltip = `Run Checked Lines: ${formatLineRanges(steps)}, in order`;
-    item.command = { title: 'Run Checked Lines', command: 'mdRunbook.runCheckedLines', arguments: [cell.document.uri.toString()] };
-    return [item];
+  /**
+   * The line the cursor was last on, per cell document: its run buttons stay on the cell's status
+   * line while the cell is selected, so they can be clicked without chasing the hover (which VS
+   * Code closes when the mouse leaves the line, and draws above the cell for its first lines).
+   */
+  const cursorLines = new Map<vscode.TextDocument, number>();
+  const statusChanged = new vscode.EventEmitter<void>();
+  hintsChanged.event(() => statusChanged.fire());
+  const cursorLine = (cell: vscode.NotebookCell): number | undefined => {
+    const line = cursorLines.get(cell.document);
+    if (line === undefined) return undefined;
+    if (vscode.window.activeTextEditor?.document === cell.document) return line;
+    const nbEditor = vscode.window.activeNotebookEditor;
+    return nbEditor?.notebook === cell.notebook && nbEditor.selections[0]?.start === cell.index ? line : undefined;
+  };
+
+  /**
+   * The cell's status line: the run buttons of the cursor's command (hover mode), then
+   * "▶ Run 2 checked lines" when lines are checked.
+   */
+  const lineStatus = (cell: vscode.NotebookCell, line = cursorLine(cell)): vscode.NotebookCellStatusBarItem[] => {
+    const items: vscode.NotebookCellStatusBarItem[] = [];
+    const uri = cell.document.uri.toString();
+    const steps = buttonsMode() === 'hover' && line !== undefined ? buttonSteps(cell.document) : [];
+    const step = stepAtLine(steps, line ?? -1);
+    for (const b of step ? runButtons(steps, step) : []) {
+      const item = new vscode.NotebookCellStatusBarItem(b.label, vscode.NotebookCellStatusBarAlignment.Left);
+      item.tooltip = b.tip;
+      item.command = { title: b.tip, command: b.command, arguments: [uri, step!.start] };
+      items.push(item);
+    }
+    const checked = checkedSteps(cell.document);
+    if (checked.length > 0) {
+      const n = checked.length;
+      const item = new vscode.NotebookCellStatusBarItem(`$(play) Run ${n} checked line${n === 1 ? '' : 's'}`, vscode.NotebookCellStatusBarAlignment.Left);
+      item.tooltip = `Run Checked Lines: ${formatLineRanges(checked)}, in order`;
+      item.command = { title: 'Run Checked Lines', command: 'mdRunbook.runCheckedLines', arguments: [uri] };
+      items.push(item);
+    }
+    return items;
   };
   const cellStatus: vscode.NotebookCellStatusBarItemProvider = {
-    onDidChangeCellStatusBarItems: hintsChanged.event,
-    provideCellStatusBarItems: lineStatus,
+    onDidChangeCellStatusBarItems: statusChanged.event,
+    provideCellStatusBarItems: (cell) => lineStatus(cell),
+  };
+  /** A new cursor line (or another cell) redraws the status lines; a move within the line does not. */
+  const trackCursor = (e: vscode.TextEditorSelectionChangeEvent): void => {
+    if (!cellByUri(e.textEditor.document.uri.toString())) return;
+    const line = e.selections[0]?.active.line;
+    if (line === undefined || cursorLines.get(e.textEditor.document) === line) return;
+    cursorLines.set(e.textEditor.document, line);
+    statusChanged.fire();
   };
 
   // A normal run of a cell with breakpoints: line by line, pausing at them.
@@ -491,8 +549,13 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
     checkedMark,
     status,
     hintsChanged,
+    statusChanged,
     vscode.window.onDidChangeTextEditorSelection(updateSelectionKey),
     vscode.window.onDidChangeActiveTextEditor(updateSelectionKey),
+    vscode.window.onDidChangeTextEditorSelection(trackCursor),
+    vscode.window.onDidChangeActiveTextEditor(() => statusChanged.fire()),
+    vscode.window.onDidChangeNotebookEditorSelection(() => statusChanged.fire()),
+    vscode.workspace.onDidCloseNotebookDocument((nb) => nb.getCells().forEach((c) => cursorLines.delete(c.document))),
     vscode.commands.registerCommand('mdRunbook.runSelection', (arg?: unknown) => run('selection', arg)),
     vscode.commands.registerCommand('mdRunbook.runCursorLine', (arg?: unknown) => run('selection', arg)),
     vscode.commands.registerCommand('mdRunbook.stepThroughFromSelection', (arg?: unknown) => run('stepFrom', arg)),
@@ -534,10 +597,11 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
     }),
     // For tests: the checked commands of a cell.
     vscode.commands.registerCommand('mdRunbook._checkedLines', (uri: unknown) => [...(checks.get(String(uri)) ?? [])]),
-    // For tests: the cell's status line items, and the lines (0-based) with a ☑ in the margin.
-    vscode.commands.registerCommand('mdRunbook._lineStatus', (uri: unknown) => {
+    // For tests: the cell's status line items (with the cursor on `line`, 0-based, if given), and
+    // the lines (0-based) with a ☑ in the margin.
+    vscode.commands.registerCommand('mdRunbook._lineStatus', (uri: unknown, line?: unknown) => {
       const cell = cellByUri(uri);
-      return cell ? lineStatus(cell).map((i) => i.text) : [];
+      return cell ? lineStatus(cell, line === undefined ? undefined : Number(line)).map((i) => i.text) : [];
     }),
     vscode.commands.registerCommand('mdRunbook._checkMarks', (uri: unknown) => {
       const cell = cellByUri(uri);
