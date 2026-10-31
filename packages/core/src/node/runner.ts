@@ -58,6 +58,13 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
       opts.signal?.removeEventListener('abort', onAbort);
       resolve({ ...r, timedOut, cancelled, durationMs: Date.now() - started });
     };
+    // Before the early return below, as finish() removes it: a signal aborted before the start (a
+    // cancel while the cell was still being prepared) threw a ReferenceError here. Registered, and so
+    // called, only once kill exists.
+    const onAbort = (): void => {
+      cancelled = true;
+      kill();
+    };
 
     if (opts.signal?.aborted) {
       cancelled = true;
@@ -76,10 +83,6 @@ export function runProcess(opts: RunOptions): Promise<RunResult> {
 
     const kill = (): void => {
       if (child.pid !== undefined && child.exitCode === null) killTree(child.pid);
-    };
-    const onAbort = (): void => {
-      cancelled = true;
-      kill();
     };
     opts.signal?.addEventListener('abort', onAbort);
     if (opts.timeoutMs > 0) {
