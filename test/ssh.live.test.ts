@@ -11,10 +11,11 @@ import { generateKeyPairSync, sign as nodeSign } from 'node:crypto';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ExternalKeyPair, RemoteSession, RemoteShell, generateKey, hostKeyId, publicKeyLine } from '@md-runbook/ssh';
+import { ExternalKeyPair, PasskeyKeyPair, RemoteSession, RemoteShell, generateKey, hostKeyId, publicKeyLine } from '@md-runbook/ssh';
 import { connectTcp } from '@md-runbook/ssh/node';
 import { buildManifest, formatManifest } from '@md-runbook/core/signing';
 import { sshSign } from '@md-runbook/core/node';
+import { softPasskey } from './softPasskey';
 
 const spec = process.env.MD_RUNBOOK_SSH_TEST;
 const [host = '', port = '0', user = ''] = (spec ?? '').split(':');
@@ -159,6 +160,28 @@ describe('ssh: live server', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }
     } finally {
       hw.close();
     }
+  });
+
+  it('logs in with a passkey (the web app), and verify-required refuses one used without the user', async () => {
+    const rp = 'runbook.example.net';
+    const passkey = softPasskey(rp);
+    const key = new PasskeyKeyPair(passkey);
+    // A second passkey whose authenticator cannot verify the user (UP only, as a security key without PIN).
+    const unverified = new PasskeyKeyPair(softPasskey(rp, { flags: 0x01 }));
+    for (const k of [key, unverified]) {
+      fs.appendFileSync(process.env.MD_RUNBOOK_SSH_AUTHORIZED_KEYS!, `verify-required ${await publicKeyLine(k, 'passkey')}\n`);
+    }
+    const web = await RemoteShell.connect(await open(), { ...opts(), key });
+    try {
+      let out = '';
+      const r = await web.run('echo from-passkey', { onStdout: (t) => (out += t) });
+      assert.equal(r.exitCode, 0);
+      assert.equal(out, 'from-passkey\n');
+      assert.equal(passkey.signed, 1);
+    } finally {
+      web.close();
+    }
+    await assert.rejects(RemoteShell.connect(await open(), { ...opts(), key: unverified }), /authentication failed/);
   });
 });
 

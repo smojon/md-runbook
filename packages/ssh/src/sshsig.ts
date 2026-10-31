@@ -3,7 +3,7 @@
  * app can sign and co-sign runbooks: md-runbook-gate checks them with `ssh-keygen -Y verify`
  * against its `allowed_signers`, as it checks signatures made in VS Code or on the command line.
  * The key signs through the SSH library, so a key in the Secure Enclave or Android Keystore
- * (ExternalKeyPair) signs inside the hardware.
+ * (ExternalKeyPair) signs inside the hardware, and a passkey (PasskeyKeyPair) in its authenticator.
  */
 import { SIGNATURE_NAMESPACE, SIGNER_NAME_RE } from '@md-runbook/core/signing';
 import { sha256Bytes } from '@md-runbook/core/sha256';
@@ -11,6 +11,7 @@ import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
 import { SshDataWriter } from '@microsoft/dev-tunnels-ssh';
 import { Buffer } from 'buffer';
 import { ECDSA_P256, ExternalAwareEcdsaP256 } from './externalKey';
+import { PasskeyKeyPair } from './passkey';
 
 const MAGIC = Buffer.from('SSHSIG', 'ascii');
 /** SHA-256 of the message: PROTOCOL.sshsig allows sha256 and sha512, and ssh-keygen verifies both. */
@@ -27,7 +28,8 @@ const encode = (fill: (w: SshDataWriter) => void): Buffer => {
  * `pair` (ECDSA P-256) in md-runbook's namespace.
  */
 export async function signSshsig(pair: KeyPair, message: string, namespace: string = SIGNATURE_NAMESPACE): Promise<string> {
-  if (pair.keyAlgorithmName !== ECDSA_P256) throw new Error(`signing needs an ECDSA P-256 key, not ${pair.keyAlgorithmName}`);
+  const passkey = pair instanceof PasskeyKeyPair;
+  if (!passkey && pair.keyAlgorithmName !== ECDSA_P256) throw new Error(`signing needs an ECDSA P-256 key or a passkey, not ${pair.keyAlgorithmName}`);
   const publicKey = await pair.getPublicKeyBytes();
   if (!publicKey) throw new Error('the key has no public half');
   const digest = Buffer.from(sha256Bytes(new TextEncoder().encode(message)));
@@ -41,17 +43,23 @@ export async function signSshsig(pair: KeyPair, message: string, namespace: stri
       w.writeBinary(digest);
     }),
   ]);
-  const signer = new ExternalAwareEcdsaP256().createSigner(pair);
-  let raw: Buffer;
-  try {
-    raw = await signer.sign(signed);
-  } finally {
-    signer.dispose();
+  let signature: Buffer;
+  if (passkey) {
+    // The whole SSH signature blob (webauthn-sk-…), the signed data as the WebAuthn challenge.
+    signature = await pair.signBlob(signed);
+  } else {
+    const signer = new ExternalAwareEcdsaP256().createSigner(pair);
+    let raw: Buffer;
+    try {
+      raw = await signer.sign(signed);
+    } finally {
+      signer.dispose();
+    }
+    signature = encode((w) => {
+      w.writeString(ECDSA_P256, 'ascii');
+      w.writeBinary(raw);
+    });
   }
-  const signature = encode((w) => {
-    w.writeString(ECDSA_P256, 'ascii');
-    w.writeBinary(raw);
-  });
   const blob = Buffer.concat([
     MAGIC,
     encode((w) => {

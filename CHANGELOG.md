@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A passkey as the web app's SSH key.** In the web app, **Hosts & settings → Use a passkey**
+  makes the key a passkey for the site (Windows Hello, Touch ID, a phone, a security key): the
+  private key never reaches the browser's storage or the app, and each SSH login and each
+  signature asks for the person. Stock OpenSSH accepts it with no server change: the key is an
+  `sk-ecdsa-sha2-nistp256@openssh.com` key whose application is the site, signed in OpenSSH's
+  `webauthn-sk-ecdsa-sha2-nistp256@openssh.com` format; the line the app shows starts with
+  `verify-required`. Runbooks signed with it verify with `ssh-keygen -Y verify`, so
+  md-runbook-gate accepts them. Off by default; turning it on or off makes a new key.
 - **The app retries `retry=` cells.** A cell with `retry=10 every=30s expect=…` ran once in the
   app and showed *check failed*; it now runs up to N times until it passes, `every=` apart, as
   VS Code and the command line do: the running cell says `attempt 2/10`, or which attempt failed

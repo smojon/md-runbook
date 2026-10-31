@@ -49,6 +49,7 @@ import {
   windowsStopCommand,
 } from './command';
 import { ExternalAwareEcdsaP256 } from './externalKey';
+import { PasskeySkEcdsaP256 } from './passkey';
 
 export interface ConnectOptions {
   username: string;
@@ -158,6 +159,8 @@ export class RemoteShell {
     const config = new SshSessionConfiguration();
     // Keys held by the device's keystore (ExternalKeyPair) sign through it; other keys as before.
     if (SshAlgorithms.publicKey.ecdsaSha2Nistp256) config.publicKeyAlgorithms.unshift(new ExternalAwareEcdsaP256());
+    // Passkeys (the web app): last, as the library offers these as host key types too.
+    config.publicKeyAlgorithms.push(new PasskeySkEcdsaP256());
     config.keepAliveTimeoutInSeconds = opts.keepAliveSeconds ?? 15;
     const session = new SshClientSession(config);
     session.onAuthenticating((e: SshAuthenticatingEventArgs) => {

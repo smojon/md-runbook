@@ -63,6 +63,13 @@ file.
 - **Face ID or a fingerprint** (Hosts & settings → This app's SSH key): each SSH login and each
   signature asks for it, enforced by the phone's hardware, so a lost phone can't use the key.
   Turning it on or off makes a new key: put its public key on your hosts again.
+- **A passkey** (the web app, Hosts & settings → **Use a passkey**): the key is then a passkey
+  for the web app's site, kept by Windows Hello, Touch ID, your phone or a security key. The
+  browser never hands it to the app, and each SSH login and each signature asks for your
+  fingerprint, face or PIN. Its line starts with `verify-required`, so the server also refuses a
+  signature made without that check. It needs a page the browser trusts (https), and hosts with
+  OpenSSH 8.4 or newer; nothing changes on the server. Without it, the web app keeps its key in
+  the browser's storage for the site.
 - **Groups**: give hosts a group (a customer, a site, a team); Hosts & settings filters by group,
   and a cell's ⋯ → **Run on a Group…** runs it on each host of a group in turn, with a section per
   host in the output (hosts whose key isn't trusted yet are skipped, with a note).
