@@ -5,8 +5,7 @@
 //   node e2e/audit.mjs
 import { execFileSync } from 'node:child_process';
 
-const REVIEWED = {
-};
+const REVIEWED = {};
 
 let out;
 try {
