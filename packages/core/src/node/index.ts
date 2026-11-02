@@ -7,6 +7,6 @@ export { RunOptions, killTree, runProcess } from './runner';
 export { cellEnv, executeCell, nodeShellEnv, shellEnvOn, withPythonUtf8 } from './execute';
 export { RegQuery, expandWindowsVars, freshenPath, mergePath, parseRegQuery, registryPath } from './freshPath';
 export { gitBashCandidates, pwshWrapper, resolveShell } from './shell';
-export { KubeconfigPins, NO_PATH_CONVERSION, RunbookEnvOptions, runbookEnv, userKubeconfig } from './runbookEnv';
+export { KubeconfigPins, NO_PATH_CONVERSION, RunbookEnvOptions, runbookEnv, userKubeconfig, withRunbookEnv } from './runbookEnv';
 export { SignOptions, checkSignedSteps, keyComment, manifestHash, sshSign, sshVerify } from './sign';
 export { MAX_TRANSCRIPT_BYTES, TranscriptFile } from './transcript';

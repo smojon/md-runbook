@@ -231,6 +231,8 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     shell: kind,
     // An approved proposal was checked as bash, or as zsh with `shell: zsh` (the approval's rules).
     ...(byAssistant && kind === 'bash' ? { checkedAs: shells?.unix === 'zsh' ? ('zsh' as const) : ('bash' as const) } : {}),
+    // Never the front matter's env: (VS Code and the command line only): the front matter isn't
+    // signed, and a signed cell must not run on a host with variables someone added beside it.
     env: { ...forced, ...opts.env, ...paramEnv, ...secretEnv },
     cwd: opts.cwd,
     timeoutMs: opts.timeoutSeconds === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutSeconds * 1000,

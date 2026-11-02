@@ -11,7 +11,7 @@ import { describe, it } from 'node:test';
 import { ShellSettings } from '@md-runbook/core';
 import { checkKubeContext, kubePinCommand, kubePinRefusal, pinnedKubeconfig, pinnedKubeconfigList } from '@md-runbook/core/kubeContext';
 import { lintRunbook } from '@md-runbook/core/lint';
-import { KubeconfigPins, NO_PATH_CONVERSION, nodeShellEnv, resolveShell, runbookEnv, userKubeconfig } from '@md-runbook/core/node';
+import { KubeconfigPins, NO_PATH_CONVERSION, nodeShellEnv, resolveShell, runbookEnv, userKubeconfig, withRunbookEnv } from '@md-runbook/core/node';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { runRunbook } from '../src/cli/run';
 
@@ -134,12 +134,12 @@ describe('kube-context-mode: pin', () => {
       assert.equal(r.env.MSYS_NO_PATHCONV, undefined);
 
       const noContext = runbookEnv({ language: 'bash', frontMatter: pin, kubeContext: undefined, env, pins, platform: 'linux' });
-      assert.deepEqual(noContext, { env: { KUBECONFIG: env.KUBECONFIG }, pinned: false });
+      assert.deepEqual(noContext, { env: { KUBECONFIG: env.KUBECONFIG }, defaults: {}, pinned: false });
       // Pinning turned off (the setting), or check mode: nothing is added, the context is checked.
-      assert.deepEqual(runbookEnv({ language: 'bash', frontMatter: pin, kubeContext: 'lab', env, pins: undefined, platform: 'linux' }), { env: {}, pinned: false });
+      assert.deepEqual(runbookEnv({ language: 'bash', frontMatter: pin, kubeContext: 'lab', env, pins: undefined, platform: 'linux' }), { env: {}, defaults: {}, pinned: false });
       const check = parseFrontMatter('---\nkube-context: lab\n---\n');
-      assert.deepEqual(runbookEnv({ language: 'bash', frontMatter: check, kubeContext: 'lab', env, pins, platform: 'linux' }), { env: {}, pinned: false });
-      assert.deepEqual(runbookEnv({ language: 'bash', frontMatter: undefined, kubeContext: undefined, env, pins, platform: 'linux' }), { env: {}, pinned: false });
+      assert.deepEqual(runbookEnv({ language: 'bash', frontMatter: check, kubeContext: 'lab', env, pins, platform: 'linux' }), { env: {}, defaults: {}, pinned: false });
+      assert.deepEqual(runbookEnv({ language: 'bash', frontMatter: undefined, kubeContext: undefined, env, pins, platform: 'linux' }), { env: {}, defaults: {}, pinned: false });
     } finally {
       pins.dispose();
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -289,6 +289,115 @@ describe('git-bash-path-conversion: off in Git Bash', { skip: (process.platform 
       const on = await runWith(md('title: default', mode), node);
       assert.notEqual(on.steps[0]!.output.trim(), '/opt/x', on.printed);
       assert.match(on.steps[0]!.output.trim(), /opt[\\/]x$/);
+    });
+  }
+});
+
+describe('front matter: env:', () => {
+  const fmOf = (body: string) => parseFrontMatter(`---\n${body}\n---\n`);
+
+  it('reads NAME: value lines, quoted or bare, a comment dropped, the first of a name counting', () => {
+    const fm = fmOf(
+      [
+        'title: x',
+        'env:   # for every cell',
+        '  NO_PROXY: localhost,127.0.0.1,.nip.io',
+        '  PAGER: cat # no pager',
+        '  HASH: "a # b"',
+        "  QUOTE: 'it''s'",
+        '  EMPTY:',
+        '  EMPTY2: ""',
+        '  PAGER: less',
+        '  not a variable',
+        '  2BAD: x',
+        'timeout: 60',
+        '  AFTER: ignored',
+      ].join('\n'),
+    );
+    assert.deepEqual({ ...fm?.env }, { NO_PROXY: 'localhost,127.0.0.1,.nip.io', PAGER: 'cat', HASH: 'a # b', QUOTE: "it's", EMPTY: '', EMPTY2: '' });
+    assert.equal(fm?.timeoutSeconds, 60);
+    assert.equal(fmOf('title: x')?.env, undefined);
+    assert.equal(fmOf('env:\n')?.env, undefined);
+  });
+
+  it('a variable named constructor or __proto__ is a plain entry', () => {
+    const env = fmOf('env:\n  constructor: c\n  __proto__: p')?.env;
+    assert.equal(env?.constructor, 'c');
+    assert.equal(env?.['__proto__'], 'p');
+    assert.deepEqual(Object.keys(env ?? {}).sort(), ['__proto__', 'constructor']);
+  });
+
+  it('goes under the cell own variables; the pin and Git Bash switches go over them', () => {
+    const fm = fmOf('kube-context: lab\nkube-context-mode: pin\ngit-bash-path-conversion: off\nenv:\n  A: runbook\n  B: runbook\n  KUBECONFIG: /runbook/config');
+    const pins = new KubeconfigPins();
+    try {
+      const own = { B: 'cell' };
+      const added = runbookEnv({ language: 'bash', frontMatter: fm, kubeContext: 'lab', env: { ...fm?.env, ...own }, pins, platform: 'win32' });
+      assert.deepEqual(added.defaults, { A: 'runbook', B: 'runbook', KUBECONFIG: '/runbook/config' });
+      const env = withRunbookEnv(own, added);
+      assert.equal(env.A, 'runbook');
+      assert.equal(env.B, 'cell', "the cell's env.B= wins");
+      assert.equal(env.MSYS_NO_PATHCONV, '1');
+      // The pin goes in front of the runbook's KUBECONFIG, not the user's.
+      assert.match(env.KUBECONFIG!, /runbook[\\/]config$/);
+      assert.notEqual(env.KUBECONFIG, '/runbook/config');
+    } finally {
+      pins.dispose();
+    }
+    const none = runbookEnv({ language: 'bash', frontMatter: undefined, kubeContext: undefined, env: {}, pins: undefined });
+    assert.deepEqual(none.defaults, {});
+  });
+
+  it('lint: entries that are ignored, a name twice, risky names, a host= cell', () => {
+    const clean = lintRunbook('---\nenv:\n  NO_PROXY: localhost\n  PAGER: cat\n---\n\n```bash\necho "$PAGER"\n```\n');
+    assert.deepEqual(clean, []);
+
+    const inline = lintRunbook('---\nenv: NO_PROXY=localhost\n---\n\n```bash\necho\n```\n');
+    assert.ok(inline.some((p) => p.line === 1 && /front matter env: is ignored: write each variable on its own indented line/.test(p.message)));
+
+    const bad = lintRunbook('---\nenv:\n  A: 1\n  2BAD: x\n  A: 2\n  PATH: /tmp/bin\n  LD_PRELOAD: /tmp/x.so\n---\n\n```bash\necho\n```\n');
+    const messages = bad.map((p) => `${p.line}: ${p.message}`).join('\n');
+    assert.match(messages, /3: front matter env: "2BAD: x" is ignored/);
+    assert.match(messages, /4: front matter env: A is set twice: the first one counts/);
+    assert.match(messages, /5: front matter env: PATH changes what every cell runs, and the front matter isn't signed/);
+    assert.match(messages, /6: front matter env: LD_PRELOAD changes what every cell runs/);
+    assert.ok(bad.every((p) => p.severity === 'warning'));
+
+    const host = lintRunbook('---\nenv:\n  A: 1\n---\n\n```bash host=ops-1\necho "$A"\n```\n\n```bash\necho local\n```\n');
+    const onHost = host.filter((p) => /front matter env: doesn't apply on the host ops-1/.test(p.message));
+    assert.equal(onHost.length, 1);
+    assert.equal(onHost[0]!.cell?.index, 1);
+  });
+});
+
+describe('front matter env: through the command line', { skip: !hasBash && 'bash not installed' }, () => {
+  for (const mode of ['isolated', 'session']) {
+    it(`${mode}: every cell gets it, a cell's env.NAME= wins, the next cell has the runbook's value again`, async () => {
+      const md = [
+        '---',
+        `mode: ${mode}`,
+        'env:',
+        '  MDRB_GREETING: from the runbook',
+        '  MDRB_EMPTY:',
+        '---',
+        '',
+        '```bash',
+        'echo "1 $MDRB_GREETING [${MDRB_EMPTY-unset}]"',
+        '```',
+        '',
+        '```bash env.MDRB_GREETING=from-the-cell',
+        'echo "2 $MDRB_GREETING"',
+        '```',
+        '',
+        '```bash',
+        'echo "3 $MDRB_GREETING"',
+        '```',
+        '',
+      ].join('\n');
+      const r = await runWith(md, {});
+      assert.equal(r.steps[0]!.output.trim(), '1 from the runbook []', r.printed);
+      assert.equal(r.steps[1]!.output.trim(), '2 from-the-cell', r.printed);
+      assert.equal(r.steps[2]!.output.trim(), '3 from the runbook', r.printed);
     });
   }
 });

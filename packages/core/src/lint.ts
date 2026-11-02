@@ -11,7 +11,7 @@ import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
 import { locateCodeCells } from './locate';
-import { findRefs, parseFrontMatter } from './secrets';
+import { FRONT_MATTER_ENV_ENTRY, findRefs, parseFrontMatter } from './secrets';
 import { POWERSHELLS, UNIX_SHELLS, parseShells, shellKindForLanguage } from './shellKind';
 import { signedStatus } from './signing';
 
@@ -35,6 +35,56 @@ const KNOWN_OPTIONS = new Set([
 ]);
 
 const LANG_RE = /^\s*[^\s{]*/;
+
+/**
+ * Variables that change what every cell runs, not only how: a front matter that sets them takes
+ * over each command (the front matter isn't signed). Warned about, not refused: on your own
+ * machine whoever edits the front matter can edit the cells too.
+ */
+const RISKY_ENV = /^(PATH|BASH_ENV|ENV|IFS|PROMPT_COMMAND|PS4|SHELLOPTS|BASHOPTS|CDPATH|LD_\w+|DYLD_\w+|NODE_OPTIONS|PYTHONPATH|PYTHONSTARTUP|PERL5OPT|PERL5LIB|RUBYOPT|GIT_SSH_COMMAND|GIT_EXEC_PATH)$/i;
+
+/** `env:` in the front matter (lines 1 to end-1): entries that are ignored, risky names, a signed runbook. */
+function lintFrontMatterEnv(lines: string[], end: number, signed: boolean): LintProblem[] {
+  const problems: LintProblem[] = [];
+  const start = lines.findIndex((l, i) => i > 0 && i < end && /^env\s*:/i.test(l));
+  if (start < 0) return problems;
+  if (!/^env\s*:\s*(#.*)?$/i.test(lines[start]!)) {
+    problems.push({ severity: 'warning', line: start, message: 'front matter env: is ignored: write each variable on its own indented line below it (  NAME: value)' });
+    return problems;
+  }
+  const seen = new Set<string>();
+  for (let i = start + 1; i < end; i++) {
+    const line = lines[i]!;
+    if (line.trim() === '' || line.trim().startsWith('#')) continue;
+    if (!/^\s/.test(line)) break; // the next top-level key
+    const entry = FRONT_MATTER_ENV_ENTRY.exec(line);
+    if (!entry) {
+      problems.push({ severity: 'warning', line: i, message: `front matter env: "${line.trim()}" is ignored (expected NAME: value, the name letters, digits and _)` });
+      continue;
+    }
+    const name = entry[1]!;
+    if (seen.has(name)) {
+      problems.push({ severity: 'warning', line: i, message: `front matter env: ${name} is set twice: the first one counts` });
+      continue;
+    }
+    seen.add(name);
+    if (RISKY_ENV.test(name)) {
+      problems.push({
+        severity: 'warning',
+        line: i,
+        message: `front matter env: ${name} changes what every cell runs, and the front matter isn't signed: set it on the cells that need it (env.${name}=)`,
+      });
+    }
+  }
+  if (signed && seen.size > 0) {
+    problems.push({
+      severity: 'warning',
+      line: start,
+      message: "front matter env: is used in VS Code and the command line only: the md-runbook app doesn't use it for a signed runbook's cells (the front matter isn't signed); put what a host needs on the cells (env.NAME=)",
+    });
+  }
+  return problems;
+}
 
 export function lintRunbook(text: string): LintProblem[] {
   const problems: LintProblem[] = [];
@@ -93,6 +143,7 @@ export function lintRunbook(text: string): LintProblem[] {
       }
       for (const name of twice) problems.push({ severity: 'warning', line: i, message: `front matter shell: "${name}" is ignored: one shell per kind of cell, the first one counts` });
     }
+    problems.push(...lintFrontMatterEnv(lines, end, signedStatus(text) !== undefined));
   }
   // kube-context-mode: pin sets KUBECONFIG for cells run on this machine; on an SSH host the context is only checked.
   const pin = fm?.kubeContextMode === 'pin';
@@ -129,6 +180,9 @@ export function lintRunbook(text: string): LintProblem[] {
       if (!KNOWN_OPTIONS.has(key) && !(key.startsWith('env.') && key.length > 4)) at('warning', `unknown cell option "${t.key}" (ignored)`);
     }
     if (/(^|\s)every=/i.test(rest) && !opts.retry) at('warning', 'every= has no effect without retry=');
+    if (opts.host && fm?.env) {
+      at('warning', `front matter env: doesn't apply on the host ${opts.host}: there the cell gets only its own env.NAME= variables`);
+    }
     const kubeContext = opts.kubeContext ?? fm?.kubeContext;
     if (pin && opts.host && kubeContext) {
       at('warning', `kube-context-mode: pin doesn't apply on the host ${opts.host}: there kubectl's current context must already be ${kubeContext} (only checked)`);
