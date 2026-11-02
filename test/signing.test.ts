@@ -246,6 +246,16 @@ describe('signing: which cells are signed', () => {
     assert.match(lintRunbook(cut).map((p) => p.message).join('\n'), /signed blocks 1, 3 of 3 not in the file as signed/);
   });
 
+  it('lint: env: in a signed runbook is for VS Code and the command line only (the front matter is not signed)', () => {
+    const signedRb = sign(fence('bash', 'echo hi'));
+    const withEnv = lintRunbook('---\nenv:\n  PAGER: cat\n---\n\n' + signedRb);
+    const w = withEnv.find((p) => /front matter env: is used in VS Code and the command line only/.test(p.message));
+    assert.ok(w, withEnv.map((p) => p.message).join('\n'));
+    assert.equal(w.line, 1);
+    const unsigned = lintRunbook('---\nenv:\n  PAGER: cat\n---\n\n' + fence('bash', 'echo hi'));
+    assert.doesNotMatch(unsigned.map((p) => p.message).join('\n'), /VS Code and the command line only/);
+  });
+
   it('lint warns when shell: zsh is added to a signed runbook (the front matter is not signed)', () => {
     const signedRb = sign(fence('bash', 'echo hi'));
     assert.doesNotMatch(lintRunbook(signedRb).map((p) => p.message).join('\n'), /shell:/);

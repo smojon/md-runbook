@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`env:` in the front matter**: variables for every cell run in VS Code or from the command
+  line, one `NAME: value` per indented line (`NO_PROXY: localhost,127.0.0.1`, `PAGER: cat`); a
+  cell's own `env.NAME=` wins. The md-runbook app doesn't use it: the front matter isn't signed,
+  so a signed cell on a host never gets variables someone added beside it. The linter warns about
+  names that change what every command runs (`PATH`, `BASH_ENV`, `LD_*`, ...), lines it ignores, a
+  name set twice, a `host=` cell, and `env:` in a signed runbook.
 - **A passkey as the web app's SSH key.** In the web app, **Hosts & settings → Use a passkey**
   makes the key a passkey for the site (Windows Hello, Touch ID, a phone, a security key): the
   private key never reaches the browser's storage or the app, and each SSH login and each

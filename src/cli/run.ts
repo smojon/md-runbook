@@ -32,7 +32,7 @@ import { executeCell } from '@md-runbook/core/node';
 import type { ShellSettings } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
-import { KubeconfigPins, runbookEnv } from '@md-runbook/core/node/runbookEnv';
+import { KubeconfigPins, runbookEnv, withRunbookEnv } from '@md-runbook/core/node/runbookEnv';
 import { CheckOutcome, evaluateChecks, hasChecks } from '@md-runbook/core/checks';
 import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
 import { currentOs, osGroups, osLabel, stepNumbers } from '@md-runbook/core/os';
@@ -318,7 +318,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       }
 
       // Placeholders: values come from the command line and the environment, never from prompts.
-      const env: Record<string, string> = { ...opts.env };
+      let env: Record<string, string> = { ...opts.env };
       let missing: string | undefined;
       let refs: ReturnType<typeof findRefs>;
       try {
@@ -356,9 +356,10 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         notRun(missing, 'error');
         continue;
       }
-      // kube-context-mode: pin and git-bash-path-conversion: off add to the cell's environment.
-      const added = runbookEnv({ language: loc.language, frontMatter: fm, kubeContext: wantedKubeContext(opts, fm), env: { ...process.env, ...env }, pins });
-      Object.assign(env, added.env);
+      // kube-context-mode: pin and git-bash-path-conversion: off add to the cell's environment; the
+      // front matter's env: goes under the cell's own variables.
+      const added = runbookEnv({ language: loc.language, frontMatter: fm, kubeContext: wantedKubeContext(opts, fm), env: { ...process.env, ...fm?.env, ...env }, pins });
+      env = withRunbookEnv(env, added);
       const source = refs.length > 0 ? rewriteRefs(loc.source, kind) : loc.source;
       // A value captured as a secret is only known once the cell has finished: hold back the
       // output of such a cell and print it redacted afterwards (a CI log can't be redrawn).

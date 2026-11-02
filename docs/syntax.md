@@ -169,12 +169,25 @@ practice: training-1 # the app runs every cell on this host, whatever host= says
 kube-context: prod-eu # every cell runs only while kubectl's current context is prod-eu; a cell's kube-context= wins
 kube-context-mode: pin # check (default) | pin: cells run on their kube-context without changing your default context
 git-bash-path-conversion: off # on (default) | off: Git Bash on Windows leaves /opt/x-style arguments alone
+env:                 # variables for every cell run in VS Code or the command line; a cell's env.NAME= wins
+  NO_PROXY: localhost,127.0.0.1,.nip.io
+  PAGER: cat
 params:
   - NAMESPACE        # asked, no default
   - REGION: eu-west-1
   - REPLICAS: "3"    # quotes are removed
 ---
 ```
+
+`env:` sets variables for every cell that runs on this machine - in VS Code and from the command
+line, isolated or session - one `NAME: value` per indented line: the value bare or quoted (`"a # b"`),
+`NAME:` alone the empty string. A cell's own `env.NAME=` wins over it. Good uses: `NO_PROXY` for the
+addresses a runbook reaches on this machine, `PAGER: cat`, `GIT_TERMINAL_PROMPT: "0"`. The md-runbook
+app never uses it, on any host: the front matter isn't signed, and a signed cell must not run with
+variables someone could add beside it (`PATH`, `BASH_ENV`, `LD_PRELOAD` change what every command
+runs). Put what a cell on a host needs on the cell itself (`env.NAME=`). The linter warns about such
+names, about lines it ignores, about a `host=` cell in a runbook with `env:`, and about `env:` in a
+signed runbook.
 
 `#` starts a comment. A value that is not understood (`mode: sometimes`) is ignored with a lint
 warning.

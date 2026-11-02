@@ -8,6 +8,10 @@
  * - `git-bash-path-conversion: off`: on Windows, Git Bash (MSYS) rewrites arguments that look like
  *   POSIX paths when it starts a Windows program (`kubectl exec pod -- ls /opt/x` gets
  *   `C:/Program Files/Git/opt/x`). These variables switch that off for the runbook's bash cells.
+ * - `env:` (`NAME: value` lines): variables for every cell, under the cell's own `env.NAME=`. Only
+ *   here, on this machine: the md-runbook app and an SSH host never use them, because the front
+ *   matter isn't signed and a signed cell must not run with variables (PATH, BASH_ENV, LD_PRELOAD)
+ *   that someone could add beside it.
  *
  * The values are set for every cell, not only the first: in session mode the shell lives across
  * cells, and a cell's variables stay set after it.
@@ -117,11 +121,14 @@ export interface RunbookEnvOptions {
 
 /**
  * The variables to add to a cell, and whether its kube-context is pinned (the guard then checks
- * that the context exists rather than that it is current).
+ * that the context exists rather than that it is current). `defaults` are the front matter's
+ * `env:`: they go *under* the cell's own variables (`env.NAME=`, secrets, captured values), `env`
+ * over them (withRunbookEnv). Pass `o.env` with the defaults in it, so that a pin builds on their KUBECONFIG.
  */
-export function runbookEnv(o: RunbookEnvOptions): { env: Record<string, string>; pinned: boolean } {
+export function runbookEnv(o: RunbookEnvOptions): { env: Record<string, string>; defaults: Record<string, string>; pinned: boolean } {
   const platform = o.platform ?? process.platform;
   const fm = o.frontMatter;
+  const defaults: Record<string, string> = { ...fm?.env };
   const env: Record<string, string> = {};
   let pinned = false;
   if (fm?.kubeContextMode === 'pin' && o.pins) {
@@ -135,5 +142,10 @@ export function runbookEnv(o: RunbookEnvOptions): { env: Record<string, string>;
     }
   }
   if (fm?.gitBashPathConversion === 'off' && platform === 'win32' && shellKindForLanguage(o.language) === 'bash') Object.assign(env, NO_PATH_CONVERSION);
-  return { env, pinned };
+  return { env, defaults, pinned };
+}
+
+/** The front matter's `env:` under a cell's own variables, runbookEnv's additions over them. */
+export function withRunbookEnv(own: Record<string, string>, added: { env: Record<string, string>; defaults: Record<string, string> }): Record<string, string> {
+  return { ...added.defaults, ...own, ...added.env };
 }

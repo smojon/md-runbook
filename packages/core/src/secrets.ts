@@ -116,7 +116,23 @@ export interface FrontMatter {
   kubeContextMode?: KubeContextMode;
   /** `git-bash-path-conversion: off`: on Windows, Git Bash doesn't rewrite POSIX-looking arguments (node/runbookEnv.ts). */
   gitBashPathConversion?: 'on' | 'off';
+  /**
+   * `env:` variables for every cell run on this machine (VS Code and the command line), below a
+   * cell's own `env.NAME=` (node/runbookEnv.ts). Not used on an SSH host: the front matter isn't signed.
+   */
+  env?: Record<string, string>;
 }
+
+/** A front matter value as written: quoted (`"a # b"`, `'it''s'`) or bare, a trailing ` # comment` dropped. */
+function scalar(raw: string): string {
+  const v = raw.trim();
+  const quoted = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s*(?:#.*)?$/.exec(v);
+  if (quoted) return unquote(quoted[1]!);
+  return v.startsWith('#') ? '' : v.replace(/\s+#.*$/, '');
+}
+
+/** An `env:` entry: an indented `NAME: value` (`NAME:` alone is the empty string). */
+export const FRONT_MATTER_ENV_ENTRY = /^\s+([A-Za-z_][A-Za-z0-9_]*)\s*:(?:\s+(.*?))?\s*$/;
 
 /** `30m`, `1h30m`, `90s`, `45` (seconds) as seconds; undefined when it isn't a duration. */
 export function parseDurationSeconds(s: string): number | undefined {
@@ -129,7 +145,7 @@ export function parseDurationSeconds(s: string): number | undefined {
 
 /**
  * `params:`, `mode:`, `timeout:`, `cwd:`, `shell:`, `incident:`, `severity:`, `evidence:`, `rto:`, `kube-context:`,
- * `kube-context-mode:` and `git-bash-path-conversion:` from
+ * `kube-context-mode:`, `git-bash-path-conversion:` and `env:` (indented `NAME: value` lines) from
  * YAML-style front matter (`---` ... `---`
  * at the very top). Only this subset is understood; other keys are ignored. Param items are
  * `- name` or `- name: default`; `mode` is `session` or `isolated`; `timeout` is seconds (`120`
@@ -153,7 +169,10 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
   let kubeContext: string | undefined;
   let kubeContextMode: KubeContextMode | undefined;
   let gitBashPathConversion: 'on' | 'off' | undefined;
+  // No prototype: a variable named constructor or __proto__ is a plain entry.
+  const env: Record<string, string> = Object.create(null) as Record<string, string>;
   let inParams = false;
+  let inEnv = false;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
     if (/^(---|\.\.\.)\s*$/.test(line)) {
@@ -172,12 +191,14 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
         ...(kubeContext ? { kubeContext } : {}),
         ...(kubeContextMode ? { kubeContextMode } : {}),
         ...(gitBashPathConversion ? { gitBashPathConversion } : {}),
+        ...(Object.keys(env).length > 0 ? { env } : {}),
       };
     }
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
     if (!/^\s/.test(line) && !line.startsWith('-')) {
       // A top-level key.
       inParams = /^params\s*:\s*$/.test(line);
+      inEnv = /^env\s*:\s*(#.*)?$/i.test(line);
       const m = /^mode\s*:\s*["']?(session|isolated)["']?\s*(#.*)?$/i.exec(line);
       if (m) mode = m[1]!.toLowerCase() as 'session' | 'isolated';
       const t = /^timeout\s*:\s*["']?(\d+(?:\.\d+)?)s?["']?\s*(#.*)?$/i.exec(line);
@@ -210,6 +231,12 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       if (km !== undefined && (KUBE_CONTEXT_MODES as readonly string[]).includes(km)) kubeContextMode = km as KubeContextMode;
       const pc = value('git-bash-path-conversion')?.toLowerCase();
       if (pc === 'on' || pc === 'off') gitBashPathConversion = pc;
+      continue;
+    }
+    if (inEnv) {
+      const entry = FRONT_MATTER_ENV_ENTRY.exec(line);
+      // The first one counts (lint warns about the others and about lines that are no entry).
+      if (entry && !(entry[1]! in env)) env[entry[1]!] = scalar(entry[2] ?? '');
       continue;
     }
     if (!inParams) continue;
