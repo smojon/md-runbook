@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.17.0
 
 - **`env:` in the front matter**: variables for every cell run in VS Code or from the command
   line, one `NAME: value` per indented line (`NO_PROXY: localhost,127.0.0.1`, `PAGER: cat`); a
