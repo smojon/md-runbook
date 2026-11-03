@@ -5,10 +5,7 @@
 //   node e2e/audit.mjs
 import { execFileSync } from 'node:child_process';
 
-const REVIEWED = {
-  // zod <4.6.6: via @expo/cli and eslint-plugin-react-hooks (build and lint tools), not in the app bundle; they pin zod 3.
-  'GHSA-mrhx-c7xc-m3w5': '2026-10-24',
-};
+const REVIEWED = {};
 
 let out;
 try {
