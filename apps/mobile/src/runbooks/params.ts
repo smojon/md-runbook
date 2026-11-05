@@ -5,7 +5,8 @@
  * server. The values the user types are remembered per runbook (they are not secrets).
  */
 import { useSyncExternalStore } from 'react';
-import { ParsedCell, parse, shellKindForLanguage } from '@md-runbook/core';
+import { ParsedCell, isCodeMeta, parse, shellKindForLanguage } from '@md-runbook/core';
+import { cellRefs } from '@md-runbook/core/cellOptions';
 import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { signedStatus } from '@md-runbook/core/signing';
 import { getJson, setJson } from '../storage/kv';
@@ -26,7 +27,8 @@ export function runbookParams(text: string): ParamSpec[] {
   for (const p of parseFrontMatter(text)?.params ?? [])
     specs.set(p.name, { name: p.name, ...(p.default !== undefined ? { default: p.default } : {}) });
   for (const cell of parse(text).cells.filter(isBash)) {
-    for (const ref of refsOf(cell.value)) if (ref.kind === 'param' && !specs.has(ref.name)) specs.set(ref.name, { name: ref.name });
+    for (const ref of refsOf(cell.value, isCodeMeta(cell.meta) ? cell.meta.info : ''))
+      if (ref.kind === 'param' && !specs.has(ref.name)) specs.set(ref.name, { name: ref.name });
   }
   const patterns = signedStatus(text)?.manifest.patterns ?? {};
   for (const [name, pattern] of Object.entries(patterns)) {
@@ -36,10 +38,10 @@ export function runbookParams(text: string): ParamSpec[] {
   return [...specs.values()];
 }
 
-/** References of a cell; none when they are malformed (lint reports those). */
-export function refsOf(source: string): ReturnType<typeof findRefs> {
+/** References of a cell, its checks' (expect=, expect-not=) after its code's; none when they are malformed (lint reports those). */
+export function refsOf(source: string, info = ''): ReturnType<typeof findRefs> {
   try {
-    return findRefs(source);
+    return cellRefs(source, info);
   } catch {
     return [];
   }

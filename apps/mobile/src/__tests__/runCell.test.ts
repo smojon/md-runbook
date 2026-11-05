@@ -469,6 +469,26 @@ describe('runCell: capture= and ${out:NAME}', () => {
     });
     expect(conn.calls).toHaveLength(0);
   });
+
+  it('expect= compares with ${out:NAME} and ${param:NAME} values, the script stays as it is', async () => {
+    const md = '---\nparams:\n  - WORD: hello\n---\n\n```bash expect="${out:GREETING}" expect-not="${param:WORD}x"\necho hello\n```\n';
+    const captures = { GREETING: { name: 'GREETING', value: 'hello', secret: false } };
+    const conn = fakeConnection([{ stdout: 'hello\n' }, { stdout: 'bye\n' }]);
+    expect(await runCell({ host, text: md, cellIndex: 1, connection: conn, captures })).toMatchObject({
+      kind: 'done',
+      attrs: { check: 'ok' },
+    });
+    expect(conn.calls[0]).toMatchObject({ source: 'echo hello' });
+    const r = await runCell({ host, text: md, cellIndex: 1, connection: conn, captures });
+    expect(r).toMatchObject({ kind: 'done', attrs: { check: 'failed' } });
+    expect(r.kind === 'done' && parse(r.text).cells[1]?.output?.text).toContain('the output does not contain "hello"');
+    // A value captured with capture-secret= is not compared in the open.
+    const secret = { GREETING: { name: 'GREETING', value: 'hello', secret: true } };
+    expect(await runCell({ host, text: md, cellIndex: 1, connection: conn, captures: secret })).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/it is a secret value/),
+    });
+  });
 });
 
 describe('runCell: retry= and every=', () => {

@@ -6,7 +6,7 @@
  * editor's problem markers.
  */
 
-import { parseCellOptions, tokenizeInfo } from './cellOptions';
+import { cellRefs, parseCellOptions, tokenizeInfo } from './cellOptions';
 import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
@@ -190,7 +190,8 @@ export function lintRunbook(text: string): LintProblem[] {
 
     let refs: ReturnType<typeof findRefs> = [];
     try {
-      refs = findRefs(loc.source);
+      // The checks' too (expect="${out:NAME}"): those are reported on the fence line.
+      refs = cellRefs(loc.source, loc.info);
     } catch (e) {
       at('error', e instanceof Error ? e.message : String(e));
     }

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **`${out:NAME}`, `${param:NAME}` and `${input:NAME}` in `expect=` and `expect-not=`.** A check
+  compared the output with the literal text `${out:GREETING}`; it now compares with the value, as
+  the cell's code gets it: `expect="${out:BEFORE}"` after a change, `expect="${param:STATEMENTS}"`
+  for the value the operator chose. In a regular expression the value is matched as literal text
+  (`expect=/^max=${param:N}$/m`). The values are asked or looked up before the cell runs, like the
+  code's, and the failure says what was compared (`the output does not contain "512"`). A secret
+  can't be used in a check (its text is shown when it fails): `${secret:NAME}` there is an error,
+  and so is a value captured with `capture-secret=`. VS Code, the command line and the app; lint
+  checks these references too. Issue #21.
+
 ## 0.17.0
 
 - **`env:` in the front matter**: variables for every cell run in VS Code or from the command

@@ -5,7 +5,7 @@
 
 import { RE2JS } from 're2js';
 import { stripAnsi } from './ansi';
-import { VAR_NAME_RE } from './secrets';
+import { VAR_NAME_RE, VarRef, findRefs, replaceRefs } from './secrets';
 
 /** Text the output must contain, or a regular expression it must match. */
 export type Matcher = { kind: 'text'; text: string } | { kind: 'regex'; re: SafeRegex };
@@ -90,11 +90,58 @@ export class SafeRegex {
 
 const REGEX_RE = /^\/([\s\S]*)\/([imsu]*)$/;
 
-/** `/regex/flags` (flags i, m, s, u) or plain text. Throws on an invalid regular expression. */
+/**
+ * `/regex/flags` (flags i, m, s, u) or plain text. Throws on an invalid regular expression, and
+ * on a secret reference: `${param:NAME}`, `${input:NAME}` and `${out:NAME}` are filled in before
+ * the check (resolveChecks), but a check's text is shown when it fails, so no secret goes there.
+ */
 export function parseMatcher(value: string): Matcher {
+  const secret = findRefs(value).find((r) => r.secret);
+  if (secret) {
+    throw new Error(`a check can't use the secret ${secret.kind === 'secret' ? `\${secret:${secret.name}}` : `\${input:${secret.name}}`}: its text is shown when it fails`);
+  }
   const m = REGEX_RE.exec(value);
   if (!m) return { kind: 'text', text: value };
+  // With references, also check the pattern as it will be: each value is one literal atom.
+  if (findRefs(m[1]!).length > 0) new SafeRegex(replaceRefs(m[1]!, () => '(?:x)'), m[2]!);
   return { kind: 'regex', re: new SafeRegex(m[1]!, m[2]!) };
+}
+
+/** The text of a cell's checks that may hold references (expect=, expect-not=), one per line. */
+export function checkRefText(c: CellChecks | undefined): string {
+  return [c?.expect, c?.expectNot]
+    .filter((m): m is Matcher => m !== undefined)
+    .map((m) => (m.kind === 'text' ? m.text : m.re.source))
+    .join('\n');
+}
+
+/** The `${…}` references a cell's checks use. Throws as findRefs does. */
+export function checkRefs(c: CellChecks | undefined): VarRef[] {
+  return findRefs(checkRefText(c));
+}
+
+/**
+ * The checks with their references filled in from `values` (by name): as text in plain text, as
+ * a literal (quoted) part of a regular expression. Throws when a value is missing, or secret
+ * (`secret(name)`: a value captured with capture-secret=), since the check's text is shown.
+ */
+export function resolveChecks(c: CellChecks, values: Readonly<Record<string, string>>, secret: (name: string) => boolean = () => false): CellChecks {
+  const fill = (kind: string, name: string, quote: (v: string) => string): string => {
+    const v = values[name];
+    if (v === undefined) throw new Error(`\${${kind}:${name}} in a check has no value`);
+    if (secret(name)) throw new Error(`a check can't use \${${kind}:${name}}: it is a secret value, and a check's text is shown when it fails`);
+    return quote(v);
+  };
+  const resolve = (m: Matcher | undefined): Matcher | undefined => {
+    if (m === undefined) return undefined;
+    if (m.kind === 'text') return { kind: 'text', text: replaceRefs(m.text, (k, n) => fill(k, n, (v) => v)) };
+    const source = replaceRefs(m.re.source, (k, n) => fill(k, n, (v) => `(?:${RE2JS.quote(v)})`));
+    return source === m.re.source ? m : { kind: 'regex', re: new SafeRegex(source, m.re.flags) };
+  };
+  if (checkRefs(c).length === 0) return c;
+  const expect = resolve(c.expect);
+  const expectNot = resolve(c.expectNot);
+  return { ...c, ...(expect ? { expect } : {}), ...(expectNot ? { expectNot } : {}) };
 }
 
 export function describeMatcher(m: Matcher): string {

@@ -2,8 +2,8 @@ import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { computeProgress, outputSummary, renderReport, stepState } from '@md-runbook/core';
 import { findRefs } from '@md-runbook/core/secrets';
-import { evaluateChecks, parseCapture, parseInterval, parseMatcher } from '@md-runbook/core/checks';
-import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { checkRefs, evaluateChecks, parseCapture, parseInterval, parseMatcher, resolveChecks } from '@md-runbook/core/checks';
+import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 
 describe('cell options: expect, retry, capture', () => {
   it('parses checks and retries', () => {
@@ -52,6 +52,52 @@ describe('matchers and intervals', () => {
   it('capture specs', () => {
     assert.deepEqual(parseCapture('POD', false), { name: 'POD', secret: false });
     assert.throws(() => parseCapture('POD:text', false), /NAME:\/regex\//);
+  });
+});
+
+describe('references in checks (expect="${out:NAME}", "${param:NAME}")', () => {
+  const checks = (opts: string) => parseCellOptions(`bash ${opts}`).checks!;
+
+  it('fills text in as written, and the check compares with the value', () => {
+    const c = resolveChecks(checks('expect="${out:GREETING}" expect-not="was ${param:WORD}"'), { GREETING: 'hello', WORD: 'old' });
+    assert.deepEqual(c.expect, { kind: 'text', text: 'hello' });
+    assert.deepEqual(c.expectNot, { kind: 'text', text: 'was old' });
+    assert.equal(evaluateChecks(c, 0, 'hello\n', '').ok, true);
+    assert.deepEqual(evaluateChecks(c, 0, 'hi, was old\n', '').failures, ['the output does not contain "hello"', 'the output contains "was old"']);
+  });
+
+  it('fills a regular expression in with the value as literal text', () => {
+    const c = resolveChecks(checks('expect=/^max=${param:N}$/m'), { N: '1.5*' });
+    assert.equal(evaluateChecks(c, 0, 'x\nmax=1.5*\n', '').ok, true);
+    assert.equal(evaluateChecks(c, 0, 'max=1x5\n', '').ok, false);
+    // One atom: a quantifier after the reference repeats the whole value.
+    const twice = resolveChecks(checks('expect=/^(?:${param:W}){2}$/'), { W: 'ab' });
+    assert.equal(evaluateChecks(twice, 0, 'abab', '').ok, true);
+  });
+
+  it('checks without references are returned as they are', () => {
+    const c = checks('expect=ok');
+    assert.equal(resolveChecks(c, {}), c);
+  });
+
+  it('refuses a missing or secret value', () => {
+    assert.throws(() => resolveChecks(checks('expect="${out:X}"'), {}), /\$\{out:X\} in a check has no value/);
+    assert.throws(() => resolveChecks(checks('expect="${out:TOKEN}"'), { TOKEN: 't0k' }, (n) => n === 'TOKEN'), /secret value/);
+  });
+
+  it("a secret can't be written in a check", () => {
+    assert.match(parseCellOptions('bash expect="${secret:API}"').errors.join(), /can't use the secret \$\{secret:API\}/);
+    assert.match(parseCellOptions('bash expect-not=${input:DB_PASSWORD}').errors.join(), /can't use the secret/);
+    assert.deepEqual(parseCellOptions('bash expect=/^${param:N}+$/').errors, []);
+  });
+
+  it('cellRefs: the code then the checks, one name one kind', () => {
+    assert.deepEqual(
+      cellRefs('echo ${param:A}', 'bash expect="${out:B} ${param:A}"').map((r) => `${r.kind}:${r.name}`),
+      ['param:A', 'out:B'],
+    );
+    assert.throws(() => cellRefs('echo ${param:A}', 'bash expect="${out:A}"'), /both param and out/);
+    assert.deepEqual(checkRefs(checks('expect=/${input:X}/')).map((r) => r.name), ['X']);
   });
 });
 

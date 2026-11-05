@@ -41,6 +41,17 @@ describe('lintRunbook', () => {
     assert.match(ps[0]!.message, /\$\{out:POD\} is not captured by an earlier block/);
   });
 
+  it('checks the references in expect= too, on the fence line', () => {
+    const md = '---\nparams:\n- WORD: hi\n---\n\n' + fence('bash capture=G', 'echo hi') + fence('bash expect="${out:G}" expect-not="${param:WORD} ${out:LATER} ${param:B}"', 'echo hi');
+    assert.deepEqual(messages(md), [
+      '10 error: ${out:LATER} is not captured by an earlier block (add capture=LATER to the block that prints it)',
+      '10 warning: ${param:B} is not declared in the front matter params: (it has no default, and the command line needs --param B=…)',
+    ]);
+    assert.deepEqual(messages(fence('bash expect="${secret:API}"', 'echo')), [
+      "1 error: invalid cell option expect=${secret:API}: a check can't use the secret ${secret:API}: its text is shown when it fails",
+    ]);
+  });
+
   it('reports a name used as two kinds, and ignored front matter values', () => {
     const md = '---\nmode: sometimes\ntimeout: soon\n---\n\n' + fence('bash', 'echo ${input:X} ${param:X}');
     assert.deepEqual(

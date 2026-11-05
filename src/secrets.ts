@@ -7,7 +7,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
-import type { Captured } from '@md-runbook/core/checks';
+import { Captured, checkRefText, resolveChecks } from '@md-runbook/core/checks';
+import { cellRefs } from '@md-runbook/core/cellOptions';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { RefKind, RunbookParam, VAR_NAME_RE, dotenvSecrets, findRefs, parseDotenv, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { META_KEY } from './outputs';
@@ -46,7 +47,8 @@ function usedRefs(nb: vscode.NotebookDocument): ReturnType<typeof findRefs> {
   for (const cell of nb.getCells()) {
     if (cell.kind !== vscode.NotebookCellKind.Code || !shellKindForLanguage(cell.document.languageId)) continue;
     try {
-      out.push(...findRefs(cell.document.getText()));
+      const meta: unknown = cell.metadata?.[META_KEY];
+      out.push(...cellRefs(cell.document.getText(), isCodeMeta(meta) ? meta.info : ''));
     } catch {
       // a name used as two kinds: the run reports it
     }
@@ -197,7 +199,9 @@ class SecretsFeature {
 
     const shell = shellKindForLanguage(plan.language);
     if (!shell) return;
-    const refs = findRefs(plan.source);
+    // The checks' references too (expect="${out:NAME}"): asked and filled in like the code's.
+    const checkText = checkRefText(plan.checks);
+    const refs = findRefs(checkText === '' ? plan.source : plan.source + '\n' + checkText);
     const secretRefs = by ? refs.filter((r) => r.secret) : [];
     if (secretRefs.length > 0) {
       const names = secretRefs.map((r) => (r.kind === 'secret' ? `\${secret:${r.name}}` : `\${input:${r.name}} (secret)`)).join(', ');
@@ -206,6 +210,8 @@ class SecretsFeature {
           'They only get the credentials in "mdRunbook.approval.readOnlyEnv".',
       );
     }
+    const values: Record<string, string> = {};
+    const secrets = new Set<string>();
     for (const ref of refs) {
       let value: string;
       let secret = ref.secret;
@@ -231,8 +237,13 @@ class SecretsFeature {
               : await this.param(ref.name, ctx);
       }
       plan.env[ref.name] = value;
-      if (secret) plan.secrets.push(value);
+      values[ref.name] = value;
+      if (secret) {
+        plan.secrets.push(value);
+        secrets.add(ref.name);
+      }
     }
+    if (plan.checks && checkText !== '') plan.checks = resolveChecks(plan.checks, values, (n) => secrets.has(n));
     if (refs.length > 0) {
       plan.source = rewriteRefs(plan.source, shell);
       plan.steps = plan.steps?.map((step) => rewriteRefs(step, shell));

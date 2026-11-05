@@ -1,4 +1,5 @@
-import { CellChecks, MAX_EVERY_MS, MAX_RETRY, parseCapture, parseInterval, parseMatcher } from './checks';
+import { CellChecks, MAX_EVERY_MS, MAX_RETRY, checkRefText, parseCapture, parseInterval, parseMatcher } from './checks';
+import { VarRef, findRefs } from './secrets';
 import { isKubeContextName } from './kubeContext';
 import { OsName, parseOsList } from './os';
 
@@ -115,6 +116,16 @@ export function rewriteInfoTokens(info: string, replace: (t: InfoToken) => strin
     pos = off + t.end;
   }
   return out + info.slice(pos);
+}
+
+/**
+ * The `${…}` references a block uses: in its code, then in its checks (expect=, expect-not=),
+ * which are filled in before they are judged. Only the code's are rewritten into the script.
+ * Throws as findRefs does (a name used as two kinds).
+ */
+export function cellRefs(source: string, info: string): VarRef[] {
+  const checks = checkRefText(parseCellOptions(info).checks);
+  return findRefs(checks === '' ? source : source + '\n' + checks);
 }
 
 export function parseCellOptions(info: string): CellOptions {

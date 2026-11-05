@@ -30,10 +30,10 @@ import {
 } from '@md-runbook/core';
 import { executeCell } from '@md-runbook/core/node';
 import type { ShellSettings } from '@md-runbook/core';
-import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { KubeconfigPins, runbookEnv, withRunbookEnv } from '@md-runbook/core/node/runbookEnv';
-import { CheckOutcome, evaluateChecks, hasChecks } from '@md-runbook/core/checks';
+import { CheckOutcome, evaluateChecks, hasChecks, resolveChecks } from '@md-runbook/core/checks';
 import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
 import { currentOs, osGroups, osLabel, stepNumbers } from '@md-runbook/core/os';
 import { proposalOf } from '@md-runbook/core/proposal';
@@ -180,7 +180,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     const proposal = proposalOf(loc.info);
     let uses: string[] = [];
     try {
-      uses = findRefs(loc.source).filter((r) => r.kind === 'out').map((r) => r.name);
+      uses = cellRefs(loc.source, loc.info).filter((r) => r.kind === 'out').map((r) => r.name);
     } catch {
       // reported when the step runs
     }
@@ -320,9 +320,13 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       // Placeholders: values come from the command line and the environment, never from prompts.
       let env: Record<string, string> = { ...opts.env };
       let missing: string | undefined;
+      const secretNames = new Set<string>();
       let refs: ReturnType<typeof findRefs>;
+      let codeRefs: number;
       try {
-        refs = findRefs(loc.source);
+        // The checks' references too (expect="${out:NAME}"), filled in below; only the code's go into the script.
+        codeRefs = findRefs(loc.source).length;
+        refs = cellRefs(loc.source, loc.info);
       } catch (e) {
         notRun(e instanceof Error ? e.message : String(e), 'error');
         continue;
@@ -350,17 +354,27 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
           break;
         }
         env[ref.name] = value;
-        if (secret) addSecret(value);
+        if (secret) {
+          addSecret(value);
+          secretNames.add(ref.name);
+        }
       }
       if (missing) {
         notRun(missing, 'error');
+        continue;
+      }
+      let checks = opts.checks;
+      try {
+        if (checks) checks = resolveChecks(checks, env, (n) => secretNames.has(n));
+      } catch (e) {
+        notRun(e instanceof Error ? e.message : String(e), 'error');
         continue;
       }
       // kube-context-mode: pin and git-bash-path-conversion: off add to the cell's environment; the
       // front matter's env: goes under the cell's own variables.
       const added = runbookEnv({ language: loc.language, frontMatter: fm, kubeContext: wantedKubeContext(opts, fm), env: { ...process.env, ...fm?.env, ...env }, pins });
       env = withRunbookEnv(env, added);
-      const source = refs.length > 0 ? rewriteRefs(loc.source, kind) : loc.source;
+      const source = codeRefs > 0 ? rewriteRefs(loc.source, kind) : loc.source;
       // A value captured as a secret is only known once the cell has finished: hold back the
       // output of such a cell and print it redacted afterwards (a CI log can't be redrawn).
       const holdOutput = (opts.checks?.captures ?? []).some((c) => c.secret);
@@ -437,8 +451,8 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         }
         live.flush();
         outcome =
-          hasChecks(opts.checks) && r.exitCode !== null && r.error === undefined && !r.timedOut && !r.cancelled
-            ? evaluateChecks(opts.checks, r.exitCode, attemptText, stdout)
+          hasChecks(checks) && r.exitCode !== null && r.error === undefined && !r.timedOut && !r.cancelled
+            ? evaluateChecks(checks, r.exitCode, attemptText, stdout)
             : undefined;
         const passed = outcome ? outcome.ok : isSuccess(r);
         if (passed || attempt >= attempts || r.cancelled || o.signal?.aborted) break;

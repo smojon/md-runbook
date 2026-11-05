@@ -20,7 +20,7 @@ import {
   setCellOutput,
   markStderr,
 } from '@md-runbook/core';
-import { Captured, CheckOutcome, evaluateChecks } from '@md-runbook/core/checks';
+import { Captured, CheckOutcome, evaluateChecks, resolveChecks } from '@md-runbook/core/checks';
 import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { approvalScope } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
@@ -139,7 +139,8 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   // Placeholders become environment variables, as in the extension: a value is never part of the
   // script. ${param:} comes from the Parameters card, ${secret:} from the secure store, ${input:}
   // from what was typed for this runbook, ${out:} from an earlier cell's capture= this session.
-  const refs = refsOf(cell.value);
+  // The checks' references too (expect="${out:NAME}"): filled in below, never part of the script.
+  const refs = refsOf(cell.value, isCodeMeta(cell.meta) ? cell.meta.info : '');
   const byAssistant = isCodeMeta(cell.meta) && proposalOf(cell.meta.info).by !== undefined;
   const specs = refs.some((r) => r.kind === 'param') ? runbookParams(p.text) : [];
   // A signed cell goes to md-runbook-gate as its number in the manifest (where the host runs the
@@ -196,6 +197,13 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     if (value === undefined || pattern === undefined || paramEnv[n] !== undefined) continue;
     const bad = checkParam({ name: n, pattern }, value);
     if (bad) return { kind: 'error', message: bad === 'newline' ? t.paramNewline(n) : t.paramMismatch(n, pattern) };
+  }
+  let checks = opts.checks;
+  try {
+    const secret = (n: string): boolean => (p.captures?.[n]?.secret ?? false) || refs.some((r) => r.name === n && r.secret);
+    if (checks) checks = resolveChecks(checks, { ...paramEnv, ...secretEnv }, secret);
+  } catch (e) {
+    return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }
   known.sort((a, b) => b.length - a.length);
   const hideKnown = (text: string): string => known.reduce((s, v) => s.split(v).join(REDACTED), text);
@@ -274,9 +282,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   let attempt = 0;
   let outcome: CheckOutcome | undefined;
   const judge = (r: SessionRunResult): CheckOutcome | undefined =>
-    opts.checks && r.exitCode !== null && !r.timedOut && !r.cancelled
-      ? evaluateChecks(opts.checks, r.exitCode, transcript, stdout)
-      : undefined;
+    checks && r.exitCode !== null && !r.timedOut && !r.cancelled ? evaluateChecks(checks, r.exitCode, transcript, stdout) : undefined;
   try {
     // The first connection tells what the server runs; a cell for the other kind doesn't run.
     await conn.session.connect();

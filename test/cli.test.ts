@@ -112,6 +112,19 @@ describe('cli: running a runbook', { skip: !hasBash && 'bash not installed' }, (
     assert.doesNotMatch(r.text + r.printed, /tok-cli-12345/);
   });
 
+  it('expect= and expect-not= compare with ${out:NAME} and ${param:NAME} values (issue #21)', async () => {
+    const r = await run(
+      '---\nparams:\n  - WORD: hello\n---\n\n# Probe\n\n## 1. capture\n\n```bash capture=GREETING\necho hello\n```\n\n' +
+        '## 2. expect with out\n\n```bash expect="${out:GREETING}"\necho hello\n```\n\n' +
+        '## 3. expect with param\n\n```bash expect="${param:WORD}" expect-not=/^${param:WORD}x$/m\necho hello\n```\n\n' +
+        '## 4. a different value\n\n```bash expect="${param:WORD}"\necho bye\n```\n',
+      { keepGoing: true },
+    );
+    assert.deepEqual(r.steps.map((s) => s.status), ['passed', 'passed', 'passed', 'failed'], r.printed);
+    assert.match(r.printed, /check failed: the output does not contain "hello"/);
+    assert.doesNotMatch(r.printed, /\$\{(out|param):/);
+  });
+
   it('appends every step to the transcript as it runs, redacted', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-cli-tx-'));
     const transcript = path.join(dir, 'r.transcript.log');

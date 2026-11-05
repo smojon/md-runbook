@@ -125,6 +125,12 @@ Checks read everything the cell printed (stdout and stderr) without colour codes
 line endings; captures read only stdout. Quote a matcher that contains spaces:
 `expect="pod Running"`, `capture="POD:/name: (\S+)/"`.
 
+`${out:NAME}`, `${param:NAME}` and `${input:NAME}` in `expect=` and `expect-not=` are replaced by
+their values before the check, as in the cell's code (and asked for when needed); in a regular
+expression each value is one literal atom (`/^max=${param:N}$/`, `/(?:${out:POD}\s+){2}/`). A
+secret is refused there: `${secret:NAME}` or a secret input is an invalid option, and a value
+captured with `capture-secret=` stops the cell before it runs.
+
 **Passing.** A cell passes when its exit code is 0 (or `expect-exit=N`) **and** every check
 passes. With `retry=`, only the last attempt's output is kept.
 
@@ -147,7 +153,8 @@ Inside the code of a cell, these are replaced before it runs:
   in the environment. So write it where a variable expands: inside double quotes, not single
   quotes. In a cmd cell with placeholders a literal `!` must be written `^^!`.
 - The file keeps the placeholder. `${env:NAME}` is PowerShell syntax, not a placeholder.
-- Placeholders work only in cell source, not in option values or Markdown.
+- Placeholders work only in cell source and in `expect=` / `expect-not=` (see Matchers above),
+  not in other option values or Markdown.
 
 ## Front matter
 

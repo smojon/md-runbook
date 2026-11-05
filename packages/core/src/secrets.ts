@@ -43,6 +43,11 @@ export function findRefs(source: string): VarRef[] {
   return [...out.values()];
 }
 
+/** `source` with each reference replaced by what `fn` returns for it (`:secret` only counts on inputs). */
+export function replaceRefs(source: string, fn: (kind: RefKind, name: string) => string): string {
+  return source.replace(REF_RE, (whole, kind: RefKind, name: string, mod: string | undefined) => (mod && kind !== 'input' ? whole : fn(kind, name)));
+}
+
 /** How a shell reads environment variable `name`. */
 export function envRef(name: string, shell: ShellKind): string {
   switch (shell) {

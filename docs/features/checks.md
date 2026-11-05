@@ -35,6 +35,24 @@ grep -q old-setting config.yaml || echo "not found"; exit 1
   with `\n` line endings.
 - Quote values that contain spaces: `expect="pod Running"`, `expect="/a b/"`. Use single quotes
   around a value that contains `"`.
+- `${out:NAME}`, `${param:NAME}` and `${input:NAME}` in `expect=` and `expect-not=` are the values
+  the cell's code would get (asked before the cell runs if needed), so a step can check against
+  what an earlier step read or what the operator chose:
+
+  ````markdown
+  ```bash capture=BEFORE
+  mysql -Nse 'select @@max_prepared_stmt_count'
+  ```
+
+  ```bash expect="${param:STATEMENTS}" expect-not="${out:BEFORE}"
+  mysql -Nse 'select @@max_prepared_stmt_count'
+  ```
+  ````
+
+  In a regular expression the value is literal text (`expect=/^max=${param:N}$/m` with `N=1.5*`
+  matches `max=1.5*` only). A secret can't be used: `${secret:NAME}` (or a secret input) in a
+  check is an error, and so is a value captured with `capture-secret=`, since the check's text is
+  shown when it fails.
 - A failed check fails the cell even with exit code 0. The output ends with the reason, e.g.
   `[md-runbook] check failed: the output does not contain "Running"`, and the marker gets
   `check=failed` (`check=ok` when every check passed). Progress, Resume Run, Run All
