@@ -32,7 +32,12 @@ function run(command: string, args: string[], stdin: 'inherit' | string): Promis
     child.stderr!.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
     child.on('error', (e) => reject(new Error(`${command}: ${e.message} (OpenSSH's ssh-keygen is needed)`)));
     child.on('close', (code) => resolve({ code, stdout, stderr }));
-    if (stdin !== 'inherit') child.stdin!.end(stdin);
+    if (stdin !== 'inherit') {
+      // A command that doesn't read its input (find-principals) may exit before it is written:
+      // EPIPE, which unhandled was an uncaught exception. Its exit code and stderr say what went wrong.
+      child.stdin!.on('error', () => undefined);
+      child.stdin!.end(stdin);
+    }
   });
 }
 
