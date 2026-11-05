@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.18.0
 
 - **`${out:NAME}`, `${param:NAME}` and `${input:NAME}` in `expect=` and `expect-not=`.** A check
   compared the output with the literal text `${out:GREETING}`; it now compares with the value, as
@@ -21,6 +21,9 @@
   `kube-context=`. Signing a cell with `kube-context=${param:NAME}` needs a `--pattern` for NAME,
   and the app checks the value against it, so a signed runbook can't be pointed at a cluster its
   signer did not allow. Issue #22.
+- **Fix:** `md-runbook verify` (and signing in VS Code) could crash with `write EPIPE` when
+  ssh-keygen finished before md-runbook had written its input. That error is now ignored, and the
+  result comes from ssh-keygen's exit code and message, as before.
 
 ## 0.17.0
 
