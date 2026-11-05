@@ -4,10 +4,11 @@
  * skipped where missing).
  */
 import { strict as assert } from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { describe, it } from 'node:test';
+import { before, describe, it } from 'node:test';
 import { ShellSettings } from '@md-runbook/core';
 import { checkKubeContext, kubePinCommand, kubePinRefusal, pinnedKubeconfig, pinnedKubeconfigList } from '@md-runbook/core/kubeContext';
 import { lintRunbook } from '@md-runbook/core/lint';
@@ -203,6 +204,12 @@ async function runWith(md: string, env: Record<string, string>): Promise<Awaited
 }
 
 describe('kube-context-mode: pin with kubectl', { skip: (!hasBash && 'bash not installed') || (!kubectl && 'kubectl not installed') }, () => {
+  // The first kubectl start on a fresh Windows runner can take longer than the guard's 15 s (the
+  // binary is scanned once): start it here, so the tests time the guard, not that.
+  before(() => {
+    if (kubectl) spawnSync(kubectl, ['version', '--client'], { timeout: 120_000, stdio: 'ignore' });
+  });
+
   /** A kubeconfig with two contexts whose default is prod (the user's), and a lab. No server is contacted. */
   const fixture = (): { dir: string; file: string } => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-kube-'));
