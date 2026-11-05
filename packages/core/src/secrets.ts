@@ -6,7 +6,7 @@
  * in the environment.
  */
 
-import { KUBE_CONTEXT_MODES, KubeContextMode, isKubeContextName } from './kubeContext';
+import { KUBE_CONTEXT_MODES, KubeContextMode, isKubeContextValue } from './kubeContext';
 import { RunbookShells, ShellKind, parseShells } from './shellKind';
 
 export type RefKind = 'secret' | 'input' | 'param' | 'out';
@@ -115,7 +115,7 @@ export interface FrontMatter {
   practice?: string;
   /** `rto:` in seconds (`30m`, `1h`, `90s`): the target a drill or recovery is measured against. */
   rtoSeconds?: number;
-  /** `kube-context:` the Kubernetes context its cells run against (kubeContext.ts); a cell's kube-context= wins. */
+  /** `kube-context:` the Kubernetes context its cells run against, or `${param:NAME}` (kubeContext.ts); a cell's kube-context= wins. */
   kubeContext?: string;
   /** `kube-context-mode:` `check` (the default: kubectl's current context must be it) or `pin` (md-runbook makes it the cell's). */
   kubeContextMode?: KubeContextMode;
@@ -230,8 +230,9 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       const rto = value('rto');
       if (rto !== undefined) rtoSeconds = parseDurationSeconds(rto) ?? rtoSeconds;
       const kc = value('kube-context');
-      // A name kubectl can't have would refuse every cell: ignored (lint says so).
-      if (kc !== undefined && isKubeContextName(kc)) kubeContext = kc;
+      // A name kubectl can't have would refuse every cell: ignored (lint says so). `${param:NAME}`
+      // is filled in when the cell runs (resolveKubeContext).
+      if (kc !== undefined && isKubeContextValue(kc)) kubeContext = kc;
       const km = value('kube-context-mode')?.toLowerCase();
       if (km !== undefined && (KUBE_CONTEXT_MODES as readonly string[]).includes(km)) kubeContextMode = km as KubeContextMode;
       const pc = value('git-bash-path-conversion')?.toLowerCase();

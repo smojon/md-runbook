@@ -17,9 +17,46 @@ export function isKubeContextName(name: string): boolean {
   return name.length <= 253 && CONTEXT_RE.test(name);
 }
 
-/** The context a cell must run against: its own `kube-context=`, else the runbook's `kube-context:`. */
+const PARAM_RE = /^\$\{param:([A-Za-z_][A-Za-z0-9_]*)\}$/;
+
+/** `${param:NAME}` as a kube-context (one runbook for a lab and PROD): NAME, else undefined. */
+export function kubeContextParam(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : PARAM_RE.exec(value)?.[1];
+}
+
+/** Whether `value` can be a kube-context as written: a context name, or `${param:NAME}`. */
+export function isKubeContextValue(value: string): boolean {
+  return isKubeContextName(value) || kubeContextParam(value) !== undefined;
+}
+
+/**
+ * The context a cell must run against, as written: its own `kube-context=`, else the runbook's
+ * `kube-context:` (a name or `${param:NAME}`; resolveKubeContext fills the parameter in).
+ */
 export function wantedKubeContext(cell: { kubeContext?: string }, frontMatter: { kubeContext?: string } | undefined): string | undefined {
   return cell.kubeContext ?? frontMatter?.kubeContext;
+}
+
+/**
+ * The context `want` names, its `${param:NAME}` filled in with `param(NAME)`. Throws, so nothing
+ * runs, when the parameter has no value or its value is no context name (a value goes into
+ * kubectl's command line and the pinned kubeconfig: only a name kubectl allows does).
+ */
+export function resolveKubeContext(want: string | undefined, param: (name: string) => string | undefined): string | undefined {
+  const name = kubeContextParam(want);
+  if (name === undefined) return want;
+  const value = param(name);
+  if (value === undefined) throw new Error(`md-runbook: kube-context \${param:${name}} has no value: nothing ran`);
+  if (!isKubeContextName(value)) {
+    throw new Error(`md-runbook: kube-context \${param:${name}} is ${JSON.stringify(value)}, which is not a Kubernetes context name: nothing ran`);
+  }
+  return value;
+}
+
+/** The `${param:NAME}` reference text of a parameterised kube-context, for the lists of references (cellRefs). */
+export function kubeContextRefText(want: string | undefined): string {
+  const name = kubeContextParam(want);
+  return name === undefined ? '' : `\${param:${name}}`;
 }
 
 /** What running KUBE_CONTEXT_COMMAND gave. */

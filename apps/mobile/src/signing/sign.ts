@@ -5,7 +5,9 @@
  * The phone's key signs inside its secure hardware.
  */
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
-import { parse, shellKindForLanguage } from '@md-runbook/core';
+import { isCodeMeta, parse, shellKindForLanguage } from '@md-runbook/core';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { kubeContextRefText } from '@md-runbook/core/kubeContext';
 import { findRefs } from '@md-runbook/core/secrets';
 import {
   Manifest,
@@ -51,7 +53,10 @@ export function signPlan(text: string, fileName: string | undefined): SignPlan {
   for (const cell of parse(text).cells) {
     if (cell.kind !== 'code' || shellKindForLanguage(cell.languageId) !== 'bash') continue;
     try {
-      for (const r of findRefs(cell.value)) if (r.kind !== 'secret' && !r.secret && !seen.has(r.name)) seen.set(r.name, r.kind);
+      // And the cell's kube-context=${param:NAME}: signed in its info string, so its value needs a pattern too.
+      const context = kubeContextRefText(parseCellOptions(isCodeMeta(cell.meta) ? cell.meta.info : '').kubeContext);
+      for (const r of findRefs(context ? cell.value + '\n' + context : cell.value))
+        if (r.kind !== 'secret' && !r.secret && !seen.has(r.name)) seen.set(r.name, r.kind);
     } catch {
       // buildManifest reports it
     }

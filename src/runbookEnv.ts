@@ -10,12 +10,21 @@
 import * as vscode from 'vscode';
 import { isCodeMeta } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { wantedKubeContext } from '@md-runbook/core/kubeContext';
+import { kubeContextParam, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { KubeconfigPins, runbookEnv, withRunbookEnv } from '@md-runbook/core/node/runbookEnv';
 import { SECTION } from './config';
 import { frontMatterOf } from './controller';
 import { META_KEY } from './outputs';
-import { CellPreparer } from './pipeline';
+import { CellPlan, CellPreparer } from './pipeline';
+
+/**
+ * The context a cell runs against: as secrets.ts resolved it, else as written when that is a
+ * name. An unresolved `${param:NAME}` is none here (no pin), and the guard refuses the cell.
+ */
+export function cellKubeContext(plan: CellPlan, written: string | undefined): string | undefined {
+  if (plan.kubeContext !== undefined) return plan.kubeContext;
+  return kubeContextParam(written) === undefined ? written : undefined;
+}
 
 export function registerRunbookEnv(context: vscode.ExtensionContext): CellPreparer {
   // One set of pin files per open runbook, removed when it closes: a session shell keeps the
@@ -42,7 +51,7 @@ export function registerRunbookEnv(context: vscode.ExtensionContext): CellPrepar
       const added = runbookEnv({
         language: plan.language,
         frontMatter: fm,
-        kubeContext: wantedKubeContext(parseCellOptions(isCodeMeta(meta) ? meta.info : ''), fm),
+        kubeContext: cellKubeContext(plan, wantedKubeContext(parseCellOptions(isCodeMeta(meta) ? meta.info : ''), fm)),
         env: { ...process.env, ...fm.env, ...plan.env },
         pins: pinAllowed ? pins.get(key) : undefined,
       });

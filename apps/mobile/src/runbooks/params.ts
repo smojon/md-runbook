@@ -24,10 +24,10 @@ const isBash = (c: ParsedCell): boolean => c.kind === 'code' && shellKindForLang
 /** The parameters of a runbook, in order: declared ones first, then any other the cells use. */
 export function runbookParams(text: string): ParamSpec[] {
   const specs = new Map<string, ParamSpec>();
-  for (const p of parseFrontMatter(text)?.params ?? [])
-    specs.set(p.name, { name: p.name, ...(p.default !== undefined ? { default: p.default } : {}) });
+  const fm = parseFrontMatter(text);
+  for (const p of fm?.params ?? []) specs.set(p.name, { name: p.name, ...(p.default !== undefined ? { default: p.default } : {}) });
   for (const cell of parse(text).cells.filter(isBash)) {
-    for (const ref of refsOf(cell.value, isCodeMeta(cell.meta) ? cell.meta.info : ''))
+    for (const ref of refsOf(cell.value, isCodeMeta(cell.meta) ? cell.meta.info : '', fm))
       if (ref.kind === 'param' && !specs.has(ref.name)) specs.set(ref.name, { name: ref.name });
   }
   const patterns = signedStatus(text)?.manifest.patterns ?? {};
@@ -38,10 +38,13 @@ export function runbookParams(text: string): ParamSpec[] {
   return [...specs.values()];
 }
 
-/** References of a cell, its checks' (expect=, expect-not=) after its code's; none when they are malformed (lint reports those). */
-export function refsOf(source: string, info = ''): ReturnType<typeof findRefs> {
+/**
+ * References of a cell: its code's, then its checks' (expect=, expect-not=) and its
+ * kube-context's (`${param:NAME}`); none when they are malformed (lint reports those).
+ */
+export function refsOf(source: string, info = '', frontMatter?: { kubeContext?: string }): ReturnType<typeof findRefs> {
   try {
-    return cellRefs(source, info);
+    return cellRefs(source, info, frontMatter);
   } catch {
     return [];
   }

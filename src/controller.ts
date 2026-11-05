@@ -20,7 +20,7 @@ import {
 } from '@md-runbook/core';
 import { CheckOutcome, evaluateChecks, hasChecks } from '@md-runbook/core/checks';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
+import { checkKubeContext, resolveKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { SessionPool } from '@md-runbook/core/node/session';
 import { LineStep, echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core/steps';
 import { FrontMatter, parseFrontMatter } from '@md-runbook/core/secrets';
@@ -620,7 +620,14 @@ export class RunbookController implements vscode.Disposable {
    */
   private kubeContextRefusal(plan: CellPlan, ctx: PrepareContext, signal: AbortSignal): Promise<string | undefined> {
     const meta: unknown = ctx.cell.metadata?.[META_KEY];
-    const want = wantedKubeContext(parseCellOptions(isCodeMeta(meta) ? meta.info : ''), frontMatterOf(ctx.notebook));
+    const written = wantedKubeContext(parseCellOptions(isCodeMeta(meta) ? meta.info : ''), frontMatterOf(ctx.notebook));
+    // A ${param:NAME} was filled in by secrets.ts; one that wasn't refuses the cell.
+    let want: string | undefined;
+    try {
+      want = plan.kubeContext ?? resolveKubeContext(written, () => undefined);
+    } catch (e) {
+      return Promise.resolve(e instanceof Error ? e.message : String(e));
+    }
     return checkKubeContext(want, async (command) => {
       let stdout = '';
       let stderr = '';

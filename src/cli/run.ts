@@ -31,7 +31,7 @@ import {
 import { executeCell } from '@md-runbook/core/node';
 import type { ShellSettings } from '@md-runbook/core';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
-import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
+import { checkKubeContext, kubeContextParam, resolveKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { KubeconfigPins, runbookEnv, withRunbookEnv } from '@md-runbook/core/node/runbookEnv';
 import { CheckOutcome, evaluateChecks, hasChecks, resolveChecks } from '@md-runbook/core/checks';
 import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
@@ -180,7 +180,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     const proposal = proposalOf(loc.info);
     let uses: string[] = [];
     try {
-      uses = cellRefs(loc.source, loc.info).filter((r) => r.kind === 'out').map((r) => r.name);
+      uses = cellRefs(loc.source, loc.info, fm).filter((r) => r.kind === 'out').map((r) => r.name);
     } catch {
       // reported when the step runs
     }
@@ -326,7 +326,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       try {
         // The checks' references too (expect="${out:NAME}"), filled in below; only the code's go into the script.
         codeRefs = findRefs(loc.source).length;
-        refs = cellRefs(loc.source, loc.info);
+        refs = cellRefs(loc.source, loc.info, fm);
       } catch (e) {
         notRun(e instanceof Error ? e.message : String(e), 'error');
         continue;
@@ -364,15 +364,20 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         continue;
       }
       let checks = opts.checks;
+      // kube-context: ${param:NAME}: the parameter's value, recorded with the run (it isn't in the file).
+      let kubeContext: string | undefined;
+      const wantedContext = wantedKubeContext(opts, fm);
       try {
         if (checks) checks = resolveChecks(checks, env, (n) => secretNames.has(n));
+        kubeContext = resolveKubeContext(wantedContext, (n) => env[n]);
       } catch (e) {
         notRun(e instanceof Error ? e.message : String(e), 'error');
         continue;
       }
+      const contextFromParam = kubeContextParam(wantedContext) !== undefined ? kubeContext : undefined;
       // kube-context-mode: pin and git-bash-path-conversion: off add to the cell's environment; the
       // front matter's env: goes under the cell's own variables.
-      const added = runbookEnv({ language: loc.language, frontMatter: fm, kubeContext: wantedKubeContext(opts, fm), env: { ...process.env, ...fm?.env, ...env }, pins });
+      const added = runbookEnv({ language: loc.language, frontMatter: fm, kubeContext, env: { ...process.env, ...fm?.env, ...env }, pins });
       env = withRunbookEnv(env, added);
       const source = codeRefs > 0 ? rewriteRefs(loc.source, kind) : loc.source;
       // A value captured as a secret is only known once the cell has finished: hold back the
@@ -383,7 +388,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       const timeoutS = opts.timeoutSeconds ?? fm?.timeoutSeconds ?? o.timeoutSeconds ?? 0;
       const attempts = opts.retry?.attempts ?? 1;
 
-      io.log(`▶ ${where}${opts.name ? ` · ${opts.name}` : ''}`);
+      io.log(`▶ ${where}${opts.name ? ` · ${opts.name}` : ''}${contextFromParam ? ` · Kubernetes context ${contextFromParam}` : ''}`);
       const started = new Date();
       // Held like the live output when the step captures a secret: redacted once it is known.
       const entry = transcriptFile ? new TranscriptEntry((t) => transcriptFile.append(t), redact, holdOutput) : undefined;
@@ -395,7 +400,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       let attempt = 0;
       // kube-context: the cluster is checked where the cell runs (its session shell), before it runs.
       const wrongCluster = fs.existsSync(cwd)
-        ? await checkKubeContext(wantedKubeContext(opts, fm), async (command) => {
+        ? await checkKubeContext(kubeContext, async (command) => {
             let out = '';
             let err = '';
             const probe = {
@@ -486,6 +491,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         ...(check ? { check } : {}),
         ...(attempts > 1 ? { attempts: String(attempt) } : {}),
         ...(opts.name !== undefined ? { name: opts.name } : {}),
+        ...(contextFromParam ? { 'kube-context': contextFromParam } : {}),
         // Who and where, when the runbook keeps evidence (incident:, evidence: true).
         ...runnerAttrs(text, { by: runner(), on: `${runner()}@${os.hostname()}` }),
       };

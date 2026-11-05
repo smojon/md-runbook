@@ -112,7 +112,7 @@ export function lintRunbook(text: string): LintProblem[] {
           mode: 'session or isolated',
           timeout: 'seconds, e.g. 300',
           cwd: 'a folder',
-          'kube-context': 'a Kubernetes context name, e.g. prod-eu',
+          'kube-context': 'a Kubernetes context name, e.g. prod-eu, or ${param:NAME}',
           'kube-context-mode': 'check or pin',
           'git-bash-path-conversion': 'on or off',
         };
@@ -191,7 +191,7 @@ export function lintRunbook(text: string): LintProblem[] {
     let refs: ReturnType<typeof findRefs> = [];
     try {
       // The checks' too (expect="${out:NAME}"): those are reported on the fence line.
-      refs = cellRefs(loc.source, loc.info);
+      refs = cellRefs(loc.source, loc.info, fm);
     } catch (e) {
       at('error', e instanceof Error ? e.message : String(e));
     }

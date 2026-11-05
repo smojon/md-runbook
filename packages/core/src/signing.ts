@@ -13,6 +13,7 @@
 
 import { parseCellOptions } from './cellOptions';
 import { FenceOpen, isFenceClose, langOf, matchFenceOpen } from './fence';
+import { kubeContextParam } from './kubeContext';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
 import { VAR_NAME_RE, findRefs, parseFrontMatter, rewriteRefs } from './secrets';
@@ -202,6 +203,12 @@ export function buildManifest(text: string, meta: ManifestMeta): { manifest: Man
     for (const m of c.value.matchAll(/\$\{(secret|input|param|out):[^}\s]*/g)) {
       // (${input:NAME:secret} is a reference: refused above as a secret.)
       if (!/^\$\{((secret|param|out):[A-Za-z_][A-Za-z0-9_]*|input:[A-Za-z_][A-Za-z0-9_]*(:secret)?)$/.test(m[0])) errors.push(`${where}: ${m[0]}} is not a plain \${${m[1]}:NAME} and can't be signed`);
+    }
+    // kube-context=${param:NAME} is signed in the info string: the value must match a signed pattern,
+    // so a signed runbook can't be pointed at a cluster its signer did not allow.
+    const contextParam = kubeContextParam(opts.kubeContext);
+    if (contextParam !== undefined && meta.patterns[contextParam] === undefined) {
+      errors.push(`${where}: kube-context=\${param:${contextParam}} needs a pattern (--pattern ${contextParam}=REGEX)`);
     }
     for (const [k, v] of Object.entries(opts.env)) {
       if (!VAR_NAME_RE.test(k)) errors.push(`${where}: env.${k} is not a variable name`);

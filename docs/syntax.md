@@ -108,7 +108,7 @@ Tokens are separated by spaces or tabs. There are three forms:
 | `capture-secret=…` | as `capture=` | The same, redacted everywhere and never written to disk. |
 | `os=LIST` | `windows`, `linux`, `macos`, comma-separated; also `win`, `win32`, `mac`, `osx`, `darwin` | Run only on these systems. Adjacent `os=` blocks with no OS repeated are alternatives of one step. |
 | `host=NAME` | a host's name in the md-runbook app; quote it if it has spaces | The md-runbook app runs the block on that host over SSH, whichever host is selected. The VS Code extension and the CLI run cells on the local machine, so they never run such a block: it counts as skipped. |
-| `kube-context=NAME` | a Kubernetes context name | Run only while `kubectl config current-context` prints NAME, checked where the cell runs just before it runs; otherwise nothing runs and the cell fails. Overrides the front matter's `kube-context:`. With `kube-context-mode: pin` in the front matter, the cell runs against NAME instead (on this machine; checked only on a `host=`). See [Kubernetes](features/kubernetes.md). |
+| `kube-context=NAME` | a Kubernetes context name, or `${param:NAME}` | Run only while `kubectl config current-context` prints NAME, checked where the cell runs just before it runs; otherwise nothing runs and the cell fails. Overrides the front matter's `kube-context:`. With `kube-context-mode: pin` in the front matter, the cell runs against NAME instead (on this machine; checked only on a `host=`). See [Kubernetes](features/kubernetes.md). |
 | `lines=any` | the word `any` | In a signed runbook: servers with md-runbook-gate also run single lines and ranges of this block (otherwise only the whole block, or its commands in order). See [signed runbooks](features/signed-runbooks.md). |
 | `retry=N` | integer 1 to 100 | Run up to N times in all until it passes. |
 | `every=D` | `15s`, `500ms`, `2m`, or seconds as a number; at most 1 hour | Wait between attempts (default 5 s). Only with `retry=`. |
@@ -216,6 +216,13 @@ copied. Before each cell md-runbook checks that your kubeconfig has NAME. A cell
 `kube-context` gets your own list. Cells on an SSH host (`host=`, the app) are only checked; lint
 warns. The user setting `mdRunbook.execution.kubeContextPin` (on by default) turns pinning off,
 and such runbooks are then only checked. See [Kubernetes](features/kubernetes.md#check-or-pin).
+
+`kube-context: ${param:NAME}` (and `kube-context=${param:NAME}` on a cell) takes the context
+from a runbook parameter, asked or given like any other (`--param NAME=prod-eu`), so one runbook
+runs on a lab by default and on another cluster when asked. The value must be a context name, or
+nothing runs. `pin` and the check work as for a name written out, and each run records the value
+as `kube-context=` in its output marker. Signing a runbook whose cell has
+`kube-context=${param:NAME}` needs a `--pattern` for NAME, and the app checks the value against it.
 
 `git-bash-path-conversion: off` stops Git Bash on Windows from rewriting arguments that look like
 POSIX paths when a bash cell starts a Windows program (`kubectl exec pod -- cat /opt/x/probe.sh`

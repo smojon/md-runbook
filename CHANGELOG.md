@@ -11,6 +11,16 @@
   can't be used in a check (its text is shown when it fails): `${secret:NAME}` there is an error,
   and so is a value captured with `capture-secret=`. VS Code, the command line and the app; lint
   checks these references too. Issue #21.
+- **The Kubernetes context from a parameter**: `kube-context: ${param:CONTEXT}` in the front
+  matter (or `kube-context=${param:CONTEXT}` on a cell), with `pin` and the check working as for a
+  name written out. One runbook then serves a lab and production: with `CONTEXT: rancher-desktop`
+  as the parameter's default, a run without parameters can only touch the lab, and
+  `--param CONTEXT=prod-eu` (or the value typed in VS Code or the app) runs it on production,
+  without `--context` on every kubectl and helm call. The value must be a context name, or nothing
+  runs. The command line's step line names it, and the output marker records it as
+  `kube-context=`. Signing a cell with `kube-context=${param:NAME}` needs a `--pattern` for NAME,
+  and the app checks the value against it, so a signed runbook can't be pointed at a cluster its
+  signer did not allow. Issue #22.
 
 ## 0.17.0
 

@@ -8,7 +8,9 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { formatLocalIso, parse, shellKindForLanguage } from '@md-runbook/core';
+import { formatLocalIso, isCodeMeta, parse, shellKindForLanguage } from '@md-runbook/core';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { kubeContextRefText } from '@md-runbook/core/kubeContext';
 import { recordDigest, recordSigners, recordStatement, recordStatus, withRecordCosigner, withRecordSignature } from '@md-runbook/core/record';
 import { formatRunbookLink } from '@md-runbook/core/runbookLink';
 import { pushedRunbook } from './openInApp';
@@ -104,7 +106,9 @@ async function signRunbook(uri?: unknown): Promise<void> {
   for (const cell of parse(text).cells) {
     if (cell.kind !== 'code' || shellKindForLanguage(cell.languageId) !== 'bash') continue;
     try {
-      for (const r of findRefs(cell.value)) if (r.kind !== 'secret' && !r.secret && !names.has(r.name)) names.set(r.name, r.kind);
+      // And the cell's kube-context=${param:NAME}: signed in its info string, so its value needs a pattern too.
+      const context = kubeContextRefText(parseCellOptions(isCodeMeta(cell.meta) ? cell.meta.info : '').kubeContext);
+      for (const r of findRefs(context ? cell.value + '\n' + context : cell.value)) if (r.kind !== 'secret' && !r.secret && !names.has(r.name)) names.set(r.name, r.kind);
     } catch {
       // reported by buildManifest
     }

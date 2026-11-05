@@ -138,10 +138,11 @@ export function linkTrust(l: RunbookLink, text: string): LinkTrust {
  * defaults), then every other `${param:NAME}` its code cells use, in order.
  */
 export function linkableParams(text: string): { name: string; default?: string }[] {
-  const out = [...(parseFrontMatter(text)?.params ?? [])];
+  const fm = parseFrontMatter(text);
+  const out = [...(fm?.params ?? [])];
   for (const cell of parse(text).cells) {
     if (cell.kind !== 'code') continue;
-    for (const ref of cellRefs(cell.value, isCodeMeta(cell.meta) ? cell.meta.info : '')) if (ref.kind === 'param' && !out.some((p) => p.name === ref.name)) out.push({ name: ref.name });
+    for (const ref of cellRefs(cell.value, isCodeMeta(cell.meta) ? cell.meta.info : '', fm)) if (ref.kind === 'param' && !out.some((p) => p.name === ref.name)) out.push({ name: ref.name });
   }
   return out;
 }

@@ -8,9 +8,20 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
 import { Captured, checkRefText, resolveChecks } from '@md-runbook/core/checks';
-import { cellRefs } from '@md-runbook/core/cellOptions';
+import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
+import { kubeContextParam, kubeContextRefText, resolveKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { proposalOf } from '@md-runbook/core/proposal';
-import { RefKind, RunbookParam, VAR_NAME_RE, dotenvSecrets, findRefs, parseDotenv, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
+import {
+  FrontMatter,
+  RefKind,
+  RunbookParam,
+  VAR_NAME_RE,
+  dotenvSecrets,
+  findRefs,
+  parseDotenv,
+  parseFrontMatter,
+  rewriteRefs,
+} from '@md-runbook/core/secrets';
 import { META_KEY } from './outputs';
 import { CellPlan, PrepareContext, RunPipeline } from './pipeline';
 import { SECTION } from './config';
@@ -34,21 +45,26 @@ function activeRunbook(): vscode.NotebookDocument | undefined {
   return undefined;
 }
 
-/** Declared parameters of a runbook: front matter in its first (markup) cell. */
-function declaredParams(nb: vscode.NotebookDocument): RunbookParam[] {
+/** A runbook's front matter: in its first (markup) cell. */
+function frontMatter(nb: vscode.NotebookDocument): FrontMatter | undefined {
   const first = nb.cellCount > 0 ? nb.cellAt(0) : undefined;
-  if (first?.kind !== vscode.NotebookCellKind.Markup) return [];
-  return parseFrontMatter(first.document.getText())?.params ?? [];
+  return first?.kind === vscode.NotebookCellKind.Markup ? parseFrontMatter(first.document.getText()) : undefined;
+}
+
+/** Declared parameters of a runbook. */
+function declaredParams(nb: vscode.NotebookDocument): RunbookParam[] {
+  return frontMatter(nb)?.params ?? [];
 }
 
 /** The `${…}` references of the runbook's shell cells, in order (cells with malformed ones are skipped). */
 function usedRefs(nb: vscode.NotebookDocument): ReturnType<typeof findRefs> {
   const out: ReturnType<typeof findRefs> = [];
+  const fm = frontMatter(nb);
   for (const cell of nb.getCells()) {
     if (cell.kind !== vscode.NotebookCellKind.Code || !shellKindForLanguage(cell.document.languageId)) continue;
     try {
       const meta: unknown = cell.metadata?.[META_KEY];
-      out.push(...cellRefs(cell.document.getText(), isCodeMeta(meta) ? meta.info : ''));
+      out.push(...cellRefs(cell.document.getText(), isCodeMeta(meta) ? meta.info : '', fm));
     } catch {
       // a name used as two kinds: the run reports it
     }
@@ -201,7 +217,9 @@ class SecretsFeature {
     if (!shell) return;
     // The checks' references too (expect="${out:NAME}"): asked and filled in like the code's.
     const checkText = checkRefText(plan.checks);
-    const refs = findRefs(checkText === '' ? plan.source : plan.source + '\n' + checkText);
+    // And kube-context=${param:NAME} (or the front matter's): the parameter is asked like the others.
+    const wantedContext = wantedKubeContext(parseCellOptions(isCodeMeta(meta) ? meta.info : ''), frontMatter(ctx.notebook));
+    const refs = findRefs([plan.source, checkText, kubeContextRefText(wantedContext)].filter((t) => t !== '').join('\n'));
     const secretRefs = by ? refs.filter((r) => r.secret) : [];
     if (secretRefs.length > 0) {
       const names = secretRefs.map((r) => (r.kind === 'secret' ? `\${secret:${r.name}}` : `\${input:${r.name}} (secret)`)).join(', ');
@@ -244,6 +262,9 @@ class SecretsFeature {
       }
     }
     if (plan.checks && checkText !== '') plan.checks = resolveChecks(plan.checks, values, (n) => secrets.has(n));
+    plan.kubeContext = resolveKubeContext(wantedContext, (n) => values[n]);
+    // The parameter's value isn't in the file: the run records it.
+    if (plan.kubeContext !== undefined && kubeContextParam(wantedContext) !== undefined) plan.attrs['kube-context'] = plan.kubeContext;
     if (refs.length > 0) {
       plan.source = rewriteRefs(plan.source, shell);
       plan.steps = plan.steps?.map((step) => rewriteRefs(step, shell));

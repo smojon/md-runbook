@@ -97,6 +97,38 @@ get-contexts` lists the ones you have.
   is. Use it for runbooks whose cluster is fixed (a lab, one runbook per cluster); keep the check
   for runbooks where you should have switched on purpose.
 
+### The context from a parameter
+
+One runbook for the same change on several clusters, tried on a lab first: make the context a
+[parameter](../syntax.md#front-matter) whose default can only touch the lab.
+
+```markdown
+---
+params:
+  - CONTEXT: rancher-desktop
+kube-context: ${param:CONTEXT}
+kube-context-mode: pin
+---
+```
+
+A run without parameters pins `rancher-desktop`. For production, give the context:
+`md-runbook run sessionstore-limits.runbook.md --param CONTEXT=prod-eu`, or type it when VS Code
+asks (**md-runbook: Set Parameters**), or on the app's Parameters card. No `--context` is needed
+on the kubectl and helm commands.
+
+- The value must be a context name (letters, digits, `. _ : @ / + -`): anything else, or no value,
+  and nothing runs.
+- `pin` and the check work as for a name written out. The command line's step line says
+  `Kubernetes context prod-eu`, and every output marker records it as `kube-context=prod-eu`,
+  because the value isn't in the file.
+- A cell's `kube-context=${param:NAME}` works the same, for that cell.
+- **Signed runbooks.** A cell's options are signed, so `kube-context=${param:CONTEXT}` on a cell
+  needs a pattern when you sign (`--pattern CONTEXT='rancher-desktop|ocpasni-test'`), and the app
+  runs the cell only with a value that matches. A signed runbook can't then be pointed at a
+  cluster its signer did not allow. (The front matter isn't signed: in a signed runbook put the
+  parameter on the cells.)
+- Lint treats it as any other parameter: an undeclared one is reported.
+
 ### Git Bash and paths in kubectl commands (Windows)
 
 On Windows, bash cells run in Git Bash, which rewrites arguments that look like POSIX paths when

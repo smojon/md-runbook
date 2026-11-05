@@ -80,6 +80,26 @@ describe('runCell', () => {
     expect(plain.contextChecks).toBe(0);
   });
 
+  it('kube-context: ${param:NAME} takes the Parameters card value, else the default, and records it', async () => {
+    const k8s = '---\nparams:\n  - CTX: lab\nkube-context: ${param:CTX}\n---\n\n```bash\nkubectl get pods\n```\n';
+    const prod = fakeConnection([{ stdout: 'pod/web\n' }], 'posix', 'prod-eu');
+    const r = await runCell({ host, text: k8s, cellIndex: 1, connection: prod, params: { CTX: 'prod-eu' } });
+    expect(r).toMatchObject({ kind: 'done', attrs: { 'kube-context': 'prod-eu' } });
+    expect(r.kind === 'done' && r.text).toMatch(/<!-- md-runbook:output start [^>]*kube-context=prod-eu/);
+    // Without a typed value the default (the lab) is the one checked: not this host's context.
+    const byDefault = fakeConnection([{ stdout: 'pod/web\n' }], 'posix', 'prod-eu');
+    expect(await runCell({ host, text: k8s, cellIndex: 1, connection: byDefault })).toEqual({
+      kind: 'error',
+      message: expect.stringMatching(/context lab, and kubectl's current context is prod-eu: nothing ran/),
+    });
+    const bad = fakeConnection([{}], 'posix', 'prod-eu');
+    expect(await runCell({ host, text: k8s, cellIndex: 1, connection: bad, params: { CTX: 'prod eu' } })).toEqual({
+      kind: 'error',
+      message: expect.stringMatching(/is "prod eu", which is not a Kubernetes context name: nothing ran/),
+    });
+    expect([bad.contextChecks, bad.calls.length]).toEqual([0, 0]);
+  });
+
   it('a failed check and a non-zero exit are written as such', async () => {
     const r = await runCell({ host, text: runbook, cellIndex: 1, connection: fakeConnection([{ stdout: 'nope\n', exitCode: 2 }]) });
     expect(r.kind === 'done' && r.attrs).toMatchObject({ exit: '2', check: 'failed' });

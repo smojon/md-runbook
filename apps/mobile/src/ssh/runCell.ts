@@ -21,7 +21,7 @@ import {
   markStderr,
 } from '@md-runbook/core';
 import { Captured, CheckOutcome, evaluateChecks, resolveChecks } from '@md-runbook/core/checks';
-import { checkKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
+import { checkKubeContext, kubeContextParam, resolveKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { approvalScope } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
@@ -129,7 +129,8 @@ export function runCell(p: RunCellParams): Promise<RunOutcome> {
 async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   const cell = parse(p.text).cells[p.cellIndex];
   if (!cell) return { kind: 'error', message: t.cellGone };
-  const shells = parseFrontMatter(p.text)?.shell;
+  const fm = parseFrontMatter(p.text);
+  const shells = fm?.shell;
   const can = runnability(cell, p.runbookId === undefined ? undefined : approvalScope(p.runbookId, shells), p.host.platform);
   if (!can.ok) return { kind: 'error', message: t.notRunnable[can.why](can.detail) };
   const opts = can.options;
@@ -139,8 +140,9 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   // Placeholders become environment variables, as in the extension: a value is never part of the
   // script. ${param:} comes from the Parameters card, ${secret:} from the secure store, ${input:}
   // from what was typed for this runbook, ${out:} from an earlier cell's capture= this session.
-  // The checks' references too (expect="${out:NAME}"): filled in below, never part of the script.
-  const refs = refsOf(cell.value, isCodeMeta(cell.meta) ? cell.meta.info : '');
+  // The checks' references too (expect="${out:NAME}"), and kube-context=${param:NAME}: filled in
+  // below, never part of the script.
+  const refs = refsOf(cell.value, isCodeMeta(cell.meta) ? cell.meta.info : '', fm);
   const byAssistant = isCodeMeta(cell.meta) && proposalOf(cell.meta.info).by !== undefined;
   const specs = refs.some((r) => r.kind === 'param') ? runbookParams(p.text) : [];
   // A signed cell goes to md-runbook-gate as its number in the manifest (where the host runs the
@@ -199,9 +201,13 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     if (bad) return { kind: 'error', message: bad === 'newline' ? t.paramNewline(n) : t.paramMismatch(n, pattern) };
   }
   let checks = opts.checks;
+  // kube-context=${param:NAME}: the value typed on the Parameters card (checked against a signed pattern above).
+  const wantedContext = wantedKubeContext(opts, fm);
+  let kubeContext: string | undefined;
   try {
     const secret = (n: string): boolean => (p.captures?.[n]?.secret ?? false) || refs.some((r) => r.name === n && r.secret);
     if (checks) checks = resolveChecks(checks, { ...paramEnv, ...secretEnv }, secret);
+    kubeContext = resolveKubeContext(wantedContext, (n) => paramEnv[n]);
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }
@@ -294,7 +300,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     }
     // kube-context: the host's current Kubernetes context must be the one the runbook is for.
     let probedNewShell = false;
-    const wrongCluster = await checkKubeContext(wantedKubeContext(opts, parseFrontMatter(p.text)), async () => {
+    const wrongCluster = await checkKubeContext(kubeContext, async () => {
       let out = '';
       let err = '';
       const r = await conn.session.kubeContext({
@@ -371,6 +377,8 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     ended: formatLocalIso(ended),
     duration: formatDurationAttr(ended.getTime() - started.getTime()),
     ...(attempts > 1 && attempt > 0 ? { attempts: String(attempt) } : {}),
+    // The parameter's value isn't in the file: the run records it.
+    ...(kubeContext !== undefined && kubeContextParam(wantedContext) !== undefined ? { 'kube-context': kubeContext } : {}),
     // Who and where, when the runbook keeps evidence (incident:, evidence: true): the name this app
     // signs with, and the account it ran as.
     ...runnerAttrs(p.text, { ...(signerName() ? { by: signerName() } : {}), on: hostLabel(p.host) }),

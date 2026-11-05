@@ -125,6 +125,19 @@ describe('cli: running a runbook', { skip: !hasBash && 'bash not installed' }, (
     assert.doesNotMatch(r.printed, /\$\{(out|param):/);
   });
 
+  it('kube-context: ${param:NAME} takes the parameter, records it, and refuses a value that is no context name (issue #22)', async () => {
+    const md = '---\nparams:\n  - CTX\nkube-context: ${param:CTX}\n---\n\n```bash\necho hi\n```\n';
+    const missing = await run(md);
+    assert.equal(missing.steps[0]?.status, 'not run');
+    assert.match(missing.printed, /\$\{param:CTX\}: pass --param CTX=… \(it has no default\)/);
+    const bad = await run(md, { params: { CTX: 'lab; touch pwned' } });
+    assert.match(bad.printed, /kube-context \$\{param:CTX\} is "lab; touch pwned", which is not a Kubernetes context name: nothing ran/);
+    // Whether kubectl is here or not, the step is for lab: the header and the record say so.
+    const lab = await run(md, { params: { CTX: 'lab' } });
+    assert.match(lab.printed, /▶ Step 1 · r\.md:7 · bash · Kubernetes context lab\n/);
+    assert.match(lab.text, /<!-- md-runbook:output start [^>]*kube-context=lab/);
+  });
+
   it('appends every step to the transcript as it runs, redacted', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-cli-tx-'));
     const transcript = path.join(dir, 'r.transcript.log');

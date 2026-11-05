@@ -1,6 +1,6 @@
 import { CellChecks, MAX_EVERY_MS, MAX_RETRY, checkRefText, parseCapture, parseInterval, parseMatcher } from './checks';
 import { VarRef, findRefs } from './secrets';
-import { isKubeContextName } from './kubeContext';
+import { isKubeContextValue, kubeContextRefText, wantedKubeContext } from './kubeContext';
 import { OsName, parseOsList } from './os';
 
 /**
@@ -120,12 +120,14 @@ export function rewriteInfoTokens(info: string, replace: (t: InfoToken) => strin
 
 /**
  * The `${…}` references a block uses: in its code, then in its checks (expect=, expect-not=),
- * which are filled in before they are judged. Only the code's are rewritten into the script.
+ * which are filled in before they are judged, then its kube-context's (`kube-context=${param:NAME}`,
+ * or the front matter's for a block without one). Only the code's are rewritten into the script.
  * Throws as findRefs does (a name used as two kinds).
  */
-export function cellRefs(source: string, info: string): VarRef[] {
-  const checks = checkRefText(parseCellOptions(info).checks);
-  return findRefs(checks === '' ? source : source + '\n' + checks);
+export function cellRefs(source: string, info: string, frontMatter?: { kubeContext?: string }): VarRef[] {
+  const opts = parseCellOptions(info);
+  const more = [checkRefText(opts.checks), kubeContextRefText(wantedKubeContext(opts, frontMatter))].filter((t) => t !== '');
+  return findRefs([source, ...more].join('\n'));
 }
 
 export function parseCellOptions(info: string): CellOptions {
@@ -172,7 +174,7 @@ export function parseCellOptions(info: string): CellOptions {
       if (value.trim() === '') opts.errors.push('host: empty name');
       else opts.host = value.trim();
     } else if (k === 'kube-context') {
-      if (!isKubeContextName(value.trim())) opts.errors.push(`kube-context=${value}: expected a Kubernetes context name`);
+      if (!isKubeContextValue(value.trim())) opts.errors.push(`kube-context=${value}: expected a Kubernetes context name or \${param:NAME}`);
       else opts.kubeContext = value.trim();
     } else if (k === 'lines') {
       if (value.toLowerCase() !== 'any') opts.errors.push(`lines=${value}: expected lines=any`);
