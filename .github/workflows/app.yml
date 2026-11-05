@@ -205,6 +205,18 @@ jobs:
       - name: Collect the SSH server logs
         if: always()
         run: cp "$RUNNER_TEMP"/sshd/*.log "$RUNNER_TEMP/maestro-out/" 2>/dev/null || true
+      # Maestro's own logs (where its CONTRIBUTING.md says they are): the iOS driver's xcodebuild
+      # output, which says why "iOS driver not ready in time" when it happens, and the CLI's log.
+      - name: Collect Maestro's driver and CLI logs
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/maestro-out"
+          mkdir -p "$out"
+          cp -R ~/Library/Logs/maestro/xctest_runner_logs "$out/" 2>/dev/null || true
+          for f in ~/.maestro/tests/*/maestro.log; do
+            [ -f "$f" ] && mkdir -p "$out/maestro-cli-logs/$(basename "$(dirname "$f")")" && cp "$f" "$out/maestro-cli-logs/$(basename "$(dirname "$f")")/"
+          done
+          true
       - uses: actions/upload-artifact@v7
         if: always()
         with:

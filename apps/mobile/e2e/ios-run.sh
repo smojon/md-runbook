@@ -44,9 +44,17 @@ run_flows() {
     tee "$out/maestro-attempt-$1.log"
   return "${PIPESTATUS[0]}"
 }
+# After a driver timeout: which xcodebuild / XCTest processes are left (none: xcodebuild exited at
+# once, Maestro issue #2932; still there: the runner started too slowly). The driver's own
+# xcodebuild log is collected by the workflow (~/Library/Logs/maestro/xctest_runner_logs).
+driver_snapshot() {
+  { echo "after try $1, $(date -u +%H:%M:%S) UTC"; ps -axo pid,etime,command | grep -E 'xcodebuild|XCTRunner|maestro-driver|xctest' | grep -v grep || echo '(none)'; } \
+    >"$out/driver-processes-attempt-$1.txt" 2>&1
+}
 attempt=1
 run_flows "$attempt"
 status=$?
+[ "$status" != 0 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-$attempt.log" && driver_snapshot "$attempt"
 while [ "$status" != 0 ] && [ "$attempt" -lt 3 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-$attempt.log"; do
   attempt=$((attempt + 1))
   echo "::warning::Maestro's iOS driver did not start in time; restarting the simulator for try $attempt"
@@ -59,6 +67,7 @@ while [ "$status" != 0 ] && [ "$attempt" -lt 3 ] && grep -q 'iOS driver not read
   sleep 10
   run_flows "$attempt"
   status=$?
+  [ "$status" != 0 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-$attempt.log" && driver_snapshot "$attempt"
 done
 
 kill "$log_pid" >/dev/null 2>&1
