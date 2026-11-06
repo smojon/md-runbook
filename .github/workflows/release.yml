@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub release
-      id-token: write # npm provenance: the package links back to this workflow run
+      id-token: write # npm trusted publishing and provenance: no npm token, and the package links back to this run
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -99,21 +99,17 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         if: env.OVSX_PAT != ''
         run: npx --yes ovsx@0.10.6 publish md-runbook.vsix --skip-duplicate
-      # Built without the npm token in the environment; only `npm publish` gets it.
       - name: Lay out the npm package
         run: |
           node scripts/build.js
           node scripts/pack-cli.js
+      # Trusted publishing (PUBLISHING.md, npm): npm trades this run's GitHub OIDC token for a
+      # one-time publish token, so no npm token is stored. It needs npm 11.5.1 or newer.
+      - name: npm with trusted publishing
+        run: npm install -g npm@11.6.2
+      # Keep the `./`: without it npm reads `out/npm` as a GitHub repository.
       - name: Publish the command line to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        if: env.NODE_AUTH_TOKEN != ''
         run: npm publish ./out/npm --access public --provenance
-      - name: Say that npm was skipped
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        if: env.NODE_AUTH_TOKEN == ''
-        run: echo "::warning::The NPM_TOKEN secret is not set, so the command line was not published to npm (PUBLISHING.md, npm)."
       # The command line's npm package as a file too: `npm install -g <its URL>` installs it without
       # the npm registry (the dev container feature does that, devcontainer-features/).
       - name: The command line as a package file

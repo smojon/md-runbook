@@ -32,16 +32,25 @@ is set), and creates a GitHub release with the `.vsix` attached.
 
 The Release workflow also publishes the command line as the npm package
 [`md-runbook`](https://www.npmjs.com/package/md-runbook) (`npx md-runbook run …`), with
-provenance, when the `NPM_TOKEN` secret is set. The package holds only `cli.js`, `cli/README.md`
-and `LICENSE` (laid out by `scripts/pack-cli.js` in `out/npm`).
+provenance. The package holds only `cli.js`, `cli/README.md` and `LICENSE` (laid out by
+`scripts/pack-cli.js` in `out/npm`). It has been published since 0.19.2.
 
-1. Sign in at <https://www.npmjs.com> (enable two-factor authentication).
-2. **Access Tokens → Generate New Token → Granular Access Token**: packages and scopes **Read
-   and write**, for all packages (the package doesn't exist before the first publish; after it,
-   the token can be limited to `md-runbook`). Pick an expiry.
-3. Add it as the repository secret `NPM_TOKEN`.
+It uses npm's **trusted publishing**: no npm token is stored anywhere. npm accepts a publish from
+this repository's `release.yml` because the package says so:
 
-The next tag then publishes the matching version. To check the package without publishing:
+- On <https://www.npmjs.com/package/md-runbook/access> (signed in as the package's owner), under
+  **Trusted Publisher**, choose **GitHub Actions** and enter organization or user `smojon`,
+  repository `md-runbook`, workflow filename `release.yml` (no environment).
+- Below it, **Publishing access**: "Require two-factor authentication and disallow tokens" is the
+  safest choice once trusted publishing works; it doesn't affect the workflow.
+
+A package must exist before it can have a trusted publisher, so a new package (for example after
+a rename) needs one publish with a token first: a granular access token with **Read and write**
+for all packages and **Bypass two-factor authentication**, stored as the repository secret
+`NPM_TOKEN` and given to the publish step as `NODE_AUTH_TOKEN`. Delete both once the trusted
+publisher is set.
+
+To check the package without publishing:
 `npm run compile && node scripts/pack-cli.js && (cd out/npm && npm pack --dry-run)`.
 
 ### Repository

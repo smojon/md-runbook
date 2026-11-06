@@ -121,9 +121,8 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
   submenu in the notebook toolbar as a bare icon, so they are commands that open lists
   (`src/toolbarButtons.ts`). Menus test only package.json; look at the toolbar itself after
   changing it.
-- **npm token:** add the `NPM_TOKEN` secret (`PUBLISHING.md` → npm); the next release then
-  publishes the command line as `md-runbook` on npm. Until then: the GitHub Action, or
-  `node out/dist/cli.js` from a clone.
+- **npm:** the command line is published as `md-runbook` from 0.19.2 on, by trusted publishing
+  (no npm token; `PUBLISHING.md` → npm).
 - **Screenshots:** the shot list and a demo runbook are ready in `docs/screenshots.md`.
 - **App store builds:** `apps/mobile/eas.json` is ready; the steps that need the owner's Expo,
   Apple and Google accounts, and the encryption export question, are in

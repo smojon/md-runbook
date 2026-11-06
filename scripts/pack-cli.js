@@ -1,7 +1,7 @@
 // Lays out the npm package of the command-line runner in out/npm: the bundled cli.js (built by
 // scripts/build.js), cli/README.md, LICENSE and a package.json with only what npm needs.
-// Publish with `npm publish ./out/npm --access public`; the Release workflow does it when the
-// NPM_TOKEN secret is set. Keep the `./`: without it npm reads `out/npm` as a GitHub repository.
+// Publish with `npm publish ./out/npm --access public`; the Release workflow does it (trusted
+// publishing, PUBLISHING.md). Keep the `./`: without it npm reads `out/npm` as a GitHub repository.
 const fs = require('fs');
 const path = require('path');
 
@@ -27,7 +27,8 @@ const pkg = {
   description: 'Run the shell blocks of a Markdown runbook (bash, PowerShell, cmd) and keep their output in the file: checks, retries, secret redaction, HTML/PDF/JUnit reports. For CI, servers and scheduled checks.',
   license: ext.license,
   author: 'Stephane Mojon',
-  repository: ext.repository,
+  // npm's own spelling, so `npm publish` doesn't warn that it "normalized" the URL.
+  repository: { type: 'git', url: `git+${ext.repository.url}` },
   homepage: 'https://github.com/smojon/md-runbook/blob/main/docs/features/cli.md',
   bugs: ext.bugs,
   keywords: ['runbook', 'markdown', 'shell', 'bash', 'powershell', 'cmd', 'ci', 'devops', 'sre', 'automation', 'cli', 'junit'],
