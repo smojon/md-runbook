@@ -23,7 +23,7 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 
 - **npm:** `npx md-runbook run runbook.md`, or `npm install -g md-runbook`. The package
   [`md-runbook`](https://www.npmjs.com/package/md-runbook) is published with each release from
-  0.19.1 on; `npx md-runbook@0.19.1 …` pins a version.
+  0.19.2 on; `npx md-runbook@0.19.2 …` pins a version.
 - **GitHub Actions:** the [action](#github-action) builds it from its own source at the version
   you pin.
 - **From a clone:**
@@ -206,7 +206,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: smojon/md-runbook@v0.19.1
+      - uses: smojon/md-runbook@v0.19.2
         with:
           runbook: runbooks/smoke.md
           params: |
