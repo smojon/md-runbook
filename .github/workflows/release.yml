@@ -98,7 +98,7 @@ jobs:
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         if: env.OVSX_PAT != ''
-        run: npx --yes ovsx@0.10.6 publish md-runbook.vsix
+        run: npx --yes ovsx@0.10.6 publish md-runbook.vsix --skip-duplicate
       # Built without the npm token in the environment; only `npm publish` gets it.
       - name: Lay out the npm package
         run: |
@@ -108,7 +108,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         if: env.NODE_AUTH_TOKEN != ''
-        run: npm publish out/npm --access public --provenance
+        run: npm publish ./out/npm --access public --provenance
       - name: Say that npm was skipped
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

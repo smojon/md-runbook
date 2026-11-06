@@ -1,7 +1,7 @@
 // Lays out the npm package of the command-line runner in out/npm: the bundled cli.js (built by
 // scripts/build.js), cli/README.md, LICENSE and a package.json with only what npm needs.
-// Publish with `npm publish out/npm --access public` (the Release workflow does it when the
-// NPM_TOKEN secret is set).
+// Publish with `npm publish ./out/npm --access public`; the Release workflow does it when the
+// NPM_TOKEN secret is set. Keep the `./`: without it npm reads `out/npm` as a GitHub repository.
 const fs = require('fs');
 const path = require('path');
 
