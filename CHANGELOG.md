@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.19.1
+
+- **The command line is on npm.** `npx md-runbook run runbook.md` or `npm install -g md-runbook`
+  now works on any machine or CI system with Node.js 20 or newer, with no clone and no download
+  from a GitHub release. Pin a version with `npx md-runbook@0.19.1 …`. The package is published
+  by the release workflow with provenance, so npm shows the workflow run that built it. The
+  VS Code extension is unchanged.
+
 ## 0.19.0
 
 - **A dev container feature:** `"ghcr.io/smojon/md-runbook/md-runbook:1": {}` in a

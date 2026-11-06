@@ -21,8 +21,9 @@ It runs the code blocks in order and stops at the first failed step. It exits wi
 
 It needs Node.js 20 or newer and nothing else (one bundled file).
 
-- **npm:** `npx md-runbook run runbook.md`, or `npm install -g md-runbook` (published with each
-  release once the npm package is set up; see `PUBLISHING.md`).
+- **npm:** `npx md-runbook run runbook.md`, or `npm install -g md-runbook`. The package
+  [`md-runbook`](https://www.npmjs.com/package/md-runbook) is published with each release from
+  0.19.1 on; `npx md-runbook@0.19.1 …` pins a version.
 - **GitHub Actions:** the [action](#github-action) builds it from its own source at the version
   you pin.
 - **From a clone:**
@@ -205,7 +206,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: smojon/md-runbook@v0.19.0
+      - uses: smojon/md-runbook@v0.19.1
         with:
           runbook: runbooks/smoke.md
           params: |
