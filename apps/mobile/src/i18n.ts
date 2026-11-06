@@ -310,6 +310,10 @@ const en = {
     resumeRun: ['Resume Run', 'A step failed and you fixed the cause: carry on from it without re-running what worked.'],
     stop: ['Stop', 'Stop the running cell and the rest of Run All.'],
     nextStep: ['Go to Next Step', 'Jump to the first step that isn’t done yet.'],
+    nextProblem: [
+      'Go to Next Problem',
+      'Before running: jump to the next typo in a cell option or value that is never set, with its fix where there is one.',
+    ],
     restartSession: ['Restart Session', 'The shell got into a bad state (wrong folder, a stuck login): start again from a clean one.'],
     sessionOff: ['Session: on', 'Now one shell for the whole runbook (cd and variables carry over). Tap to give each cell a fresh shell.'],
     sessionOn: ['Session: off', 'Now each cell starts in a fresh shell. Tap to keep one shell for the whole runbook.'],
@@ -395,6 +399,19 @@ const en = {
   noSessionOpen: 'No session is open for this runbook.',
   noInputsYet: 'No inputs typed yet.',
   cellActions: 'Cell actions',
+  // Lint (the checks of md-runbook lint, as the extension's problem markers)
+  problemLine: (line: number) => `Line ${line}`,
+  problemCell: (cell: number) => `Cell ${cell}`,
+  problemError: 'Error',
+  problemWarning: 'Warning',
+  fixOption: (from: string, to: string) => `Change “${from}” to “${to}”`,
+  problemsSummary: (errors: number, warnings: number) =>
+    [errors > 0 ? `${errors} error${errors === 1 ? '' : 's'}` : '', warnings > 0 ? `${warnings} warning${warnings === 1 ? '' : 's'}` : '']
+      .filter(Boolean)
+      .join(', '),
+  problemsShow: 'Show',
+  problemsHide: 'Hide',
+  noProblems: 'No problems found.',
   diffTitle: (label: string, before: string, after: string) => `${label}: ${before} → ${after}`,
   diffSame: 'The output is the same as in the previous run.',
   noEarlierRun: 'No earlier run is kept: turn on Hosts & settings → Output history, then run the cell again.',

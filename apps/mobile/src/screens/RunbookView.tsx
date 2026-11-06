@@ -57,7 +57,9 @@ import { ApproveCard } from '../cells/ApproveCard';
 import { ConfirmCard } from '../cells/ConfirmCard';
 import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
-import { CodeCell } from '../cells/CodeCell';
+import { CodeCell, ProblemRow } from '../cells/CodeCell';
+import { RunbookProblems, fixCellOption, runbookProblems } from '../runbooks/lint';
+import { Codicon } from '../ui/Codicon';
 import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, hostLabel, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
@@ -169,6 +171,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   /** Whether it can be co-signed now (Co-sign Runbook), or why not. */
   const cosign = useMemo(() => (runbook ? cosignCheck(runbook.text) : undefined), [runbook]);
   const params = useMemo(() => (runbook ? runbookParams(runbook.text) : []), [runbook]);
+  /** What `md-runbook lint` finds, as the extension's problem markers: on the cells, and counted at the top. */
+  const problems = useMemo(() => (runbook ? runbookProblems(runbook.text) : NO_LINT), [runbook]);
+  const [problemsOpen, setProblemsOpen] = useState(false);
+  /** Go to Next Problem: where it went last (-1: the runbook's own problems, in the card at the top). */
+  const lastProblem = useRef<number | undefined>(undefined);
   const paramValues = useParamValues(runbook?.id ?? '');
   const hosts = useHosts();
   /** What the link that just opened this runbook asked for (its host, Co-sign), and how far to trust it. */
@@ -711,6 +718,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
           },
         },
+        { ...meta('nextProblem', 'run', problems.all.length > 0 ? undefined : t.noProblems), run: () => goToNextProblem() },
         {
           ...meta('restartSession', 'run', hosts.some((h) => isConnected(h.id, runbook.id)) ? undefined : t.noSessionOpen),
           run: () => {
@@ -923,6 +931,24 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const write = (next: string | undefined): void => {
     if (runbook && next !== undefined) updateRunbookText(runbook.id, next);
   };
+  /** The "did you mean" fix: rename a misspelled option of cell `index` to lint's suggestion. */
+  const fixOption = (index: number, from: string, to: string): void => {
+    if (runbook) write(fixCellOption(getRunbook(runbook.id)?.text ?? runbook.text, index, from, to));
+  };
+  /** Each cell with problems in turn (the runbook's own problems first, in the card at the top), then around again. */
+  const goToNextProblem = (): void => {
+    const stops = [...(problems.runbook.length > 0 ? [-1] : []), ...[...problems.byCell.keys()].sort((a, b) => a - b)];
+    const last = lastProblem.current;
+    const next = stops.find((s) => last === undefined || s > last) ?? stops[0];
+    if (next === undefined) return;
+    lastProblem.current = next;
+    if (next === -1) {
+      setProblemsOpen(true);
+      list.current?.scrollToOffset({ offset: 0 });
+    } else {
+      list.current?.scrollToIndex({ index: next, viewPosition: 0.2 });
+    }
+  };
   const mark = (index: number, exit: 'done' | 'skipped'): void => {
     if (!runbook) return;
     // As the extension marks it: a manual output with who marked it (`by=`), counted by progress.
@@ -1109,6 +1135,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             <SaveBar runbook={runbook} />
             {fromLink ? <LinkNotes context={fromLink} /> : null}
             {signed ? <SignedBanner status={signed} verified={verified} /> : null}
+            {problems.all.length > 0 ? (
+              <ProblemsCard
+                problems={problems}
+                open={problemsOpen}
+                onToggle={() => setProblemsOpen(!problemsOpen)}
+                onGo={(index) => list.current?.scrollToIndex({ index, viewPosition: 0.2 })}
+                onFix={fixOption}
+              />
+            ) : null}
             {showQr ? <QrCard text={runbook.text} host={host?.name} params={paramValues} onClose={() => setShowQr(false)} /> : null}
             {incidentCard === 'start' ? <StartIncidentCard onStart={startIncident} onCancel={() => setIncidentCard(undefined)} /> : null}
             {incidentCard === 'note' ? <NoteCard onAdd={addNote} onCancel={() => setIncidentCard(undefined)} /> : null}
@@ -1313,6 +1348,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               onToggleBreakpoint={(step) => toggleBreakpoint(index, step)}
               onExplainLine={(step) => assistant.ask('explainLine', index, lineLabel(step))}
               onActions={() => setCellSheet(cellActions(index))}
+              {...(problems.byCell.has(index) ? { problems: problems.byCell.get(index)! } : {})}
+              onFix={(from, to) => fixOption(index, from, to)}
               runbookId={approvalId}
               platform={host?.platform}
               below={
@@ -1359,6 +1396,71 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
 
 const EMPTY: ReadonlySet<string> = new Set();
 const NO_BREAKS: ReadonlySet<number> = new Set();
+const NO_LINT: RunbookProblems = { all: [], byCell: new Map(), runbook: [] };
+
+/**
+ * What lint found, at the top of the runbook: one line with the count (folded, so a runbook with
+ * a known warning doesn't push its content down), opened to list every problem: each cell's goes
+ * to the cell, and a misspelled option has its fix right there.
+ */
+function ProblemsCard({
+  problems,
+  open,
+  onToggle,
+  onGo,
+  onFix,
+}: {
+  problems: RunbookProblems;
+  open: boolean;
+  onToggle(): void;
+  onGo(index: number): void;
+  onFix(index: number, from: string, to: string): void;
+}) {
+  const styles = useStyles();
+  const colors = usePalette();
+  const errors = problems.all.filter((p) => p.severity === 'error').length;
+  return (
+    <View testID="problems-card" style={[styles.linkNotes, { borderLeftColor: errors > 0 ? colors.error : colors.warning }]}>
+      <Pressable
+        testID="problems-toggle"
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        onPress={onToggle}
+        style={styles.problemsHeader}
+      >
+        <Codicon name={errors > 0 ? 'error' : 'warning'} size={14} color={errors > 0 ? colors.error : colors.warning} />
+        <Text testID="problems-summary" style={styles.signedTitle}>
+          {t.problemsSummary(errors, problems.all.length - errors)}
+        </Text>
+        <Text style={styles.inlineLink}>{open ? t.problemsHide : t.problemsShow}</Text>
+      </Pressable>
+      {open ? (
+        <View style={styles.problemsList}>
+          {problems.all.map((p, i) => {
+            const index = p.cell?.index;
+            const where =
+              index === undefined
+                ? t.problemLine(p.line + 1)
+                : p.cell?.sourceLine === undefined
+                  ? t.problemCell(index + 1)
+                  : `${t.problemCell(index + 1)}, ${t.problemLine(p.cell.sourceLine + 1).toLowerCase()}`;
+            return (
+              <ProblemRow
+                key={i}
+                id={`problems-${i}`}
+                problem={p}
+                where={where}
+                {...(index !== undefined
+                  ? { onPress: () => onGo(index), onFix: (from: string, to: string) => onFix(index, from, to) }
+                  : {})}
+              />
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+}
 
 /**
  * The one obvious action, for anyone opening the runbook: Run all, then Continue after a stop,
@@ -1967,6 +2069,8 @@ const useStyles = themedStyles((c) => ({
   paramHint: { fontSize: 12, color: c.muted, marginTop: 2 },
   signed: { borderLeftWidth: 3, borderLeftColor: c.accent, paddingLeft: 10, paddingVertical: 4, marginVertical: 6 },
   linkNotes: { borderLeftWidth: 3, paddingLeft: 10, paddingVertical: 4, marginVertical: 6 },
+  problemsHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 32 },
+  problemsList: { gap: 8, paddingTop: 4, paddingBottom: 4 },
   qrCard: { borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 14, marginVertical: 8, backgroundColor: c.surface },
   qrBox: { alignItems: 'center', marginVertical: 10 },
   qrSwitch: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },

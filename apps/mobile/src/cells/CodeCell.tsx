@@ -19,6 +19,7 @@ import { formatWait, runnability } from '../ssh/cells';
 import { LineMode, cellSteps, lineLabel } from '../ssh/lineRuns';
 import { Palette, mono, themedStyles, usePalette } from '../theme';
 import { Codicon, CodiconName } from '../ui/Codicon';
+import type { LintProblem } from '../runbooks/lint';
 
 export interface CellRun {
   live: string;
@@ -56,6 +57,10 @@ export interface CodeCellProps {
   onToggleCheck(step: LineStep): void;
   /** The cell's own actions (⋯ on its status line, or a long press). */
   onActions?(): void;
+  /** What lint found in the cell (as the extension's problem markers), each under the cell. */
+  problems?: readonly LintProblem[];
+  /** Rename a misspelled option to lint's suggestion (the "did you mean" fix). */
+  onFix?(from: string, to: string): void;
 }
 
 export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
@@ -99,6 +104,13 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
           ? undefined
           : { icon: 'error', color: c.error, label: t.ranFailed };
   const info = isCodeMeta(cell.meta) ? cell.meta.info : cell.languageId;
+  const problems = p.problems ?? NO_PROBLEMS;
+  // The worst problem on each source line, for a mark beside it.
+  const problemLines = new Map<number, LintProblem['severity']>();
+  for (const pr of problems) {
+    const n = pr.cell?.sourceLine;
+    if (n !== undefined && problemLines.get(n) !== 'error') problemLines.set(n, pr.severity);
+  }
 
   const tapLine = (line: number): void => {
     if (!can.ok) return;
@@ -160,6 +172,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
             const step = stepAtLine(steps, n);
             const isChecked = step !== undefined && step.start === n && p.checked.has(step.text);
             const isBreak = step !== undefined && step.start === n && (p.breakpoints?.has(n) ?? false);
+            const problemHere = problemLines.get(n);
             return (
               <View key={n}>
                 <Pressable
@@ -175,6 +188,10 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                       </View>
                     ) : isChecked ? (
                       <Codicon name="pass-filled" size={12} color={c.accent} />
+                    ) : problemHere ? (
+                      <View testID={`cell-${index}-line-${n}-problem`}>
+                        <Codicon name={problemHere} size={12} color={problemHere === 'error' ? c.error : c.warning} />
+                      </View>
                     ) : null}
                   </View>
                   <Text style={styles.source}>{tokenText(tokens, c)}</Text>
@@ -251,6 +268,13 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
           {t.notRunnable[can.why](can.detail)}
         </Text>
       ) : null}
+      {problems.length > 0 ? (
+        <View testID={`cell-${index}-problems`} style={styles.problems}>
+          {problems.map((pr, i) => (
+            <ProblemRow key={i} id={`cell-${index}-problem-${i}`} problem={pr} {...(p.onFix ? { onFix: p.onFix } : {})} />
+          ))}
+        </View>
+      ) : null}
       {running ? (
         <View testID={`cell-${index}-live`} style={styles.output}>
           {running.paused ? (
@@ -306,6 +330,66 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
     </Pressable>
   );
 });
+
+const NO_PROBLEMS: readonly LintProblem[] = [];
+
+/**
+ * One lint problem: its icon, where it is (a line of the cell, or the cell's options) and the
+ * message, with the "did you mean" fix as a button when there is one. Also the runbook's
+ * problems card uses it.
+ */
+export function ProblemRow({
+  id,
+  problem,
+  where,
+  onFix,
+  onPress,
+}: {
+  id: string;
+  problem: LintProblem;
+  /** Overrides the "Line N" label (the runbook's problems card names the cell). */
+  where?: string;
+  onFix?(from: string, to: string): void;
+  /** Tapping the message (the problems card: go to the cell). */
+  onPress?(): void;
+}) {
+  const styles = useStyles();
+  const c = usePalette();
+  const label = where ?? (problem.cell?.sourceLine !== undefined ? t.problemLine(problem.cell.sourceLine + 1) : undefined);
+  const message = (
+    <Text style={styles.problemText}>
+      {label ? <Text style={styles.problemWhere}>{`${label} · `}</Text> : null}
+      {problem.message}
+    </Text>
+  );
+  return (
+    <View testID={id} style={styles.problem}>
+      <View accessibilityLabel={problem.severity === 'error' ? t.problemError : t.problemWarning} style={styles.problemIcon}>
+        <Codicon name={problem.severity} size={13} color={problem.severity === 'error' ? c.error : c.warning} />
+      </View>
+      <View style={styles.problemBody}>
+        {onPress ? (
+          <Pressable testID={`${id}-go`} accessibilityRole="link" onPress={onPress}>
+            {message}
+          </Pressable>
+        ) : (
+          message
+        )}
+        {problem.fix && onFix ? (
+          <Pressable
+            testID={`${id}-fix`}
+            accessibilityRole="button"
+            onPress={() => onFix(problem.fix!.option, problem.fix!.to)}
+            style={styles.statusButton}
+          >
+            <Codicon name="lightbulb" size={12} color={c.link} />
+            <Text style={styles.statusLink}>{t.fixOption(problem.fix.option, problem.fix.to)}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
 
 function LineActions(p: {
   index: number;
@@ -428,6 +512,12 @@ const useStyles = themedStyles((c) => ({
   statusText: { fontSize: 12, color: c.muted, flexShrink: 1 },
   why: { fontSize: 12, lineHeight: 17, color: c.muted, marginLeft: 38, paddingHorizontal: 4, paddingTop: 2 },
   whyProposed: { color: c.warning },
+  problems: { marginLeft: 38, paddingHorizontal: 4, paddingTop: 4, gap: 6 },
+  problem: { flexDirection: 'row', gap: 6, alignItems: 'flex-start' },
+  problemIcon: { paddingTop: 2 },
+  problemBody: { flex: 1, gap: 4, alignItems: 'flex-start' },
+  problemText: { fontSize: 12, lineHeight: 17, color: c.text },
+  problemWhere: { color: c.muted },
   statusButton: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   statusLink: { fontSize: 12, color: c.link },
   output: { marginLeft: 34, marginTop: 4, paddingHorizontal: 8, paddingVertical: 6, gap: 4 },

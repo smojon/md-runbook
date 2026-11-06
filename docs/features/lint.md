@@ -29,6 +29,15 @@ press Ctrl+. (Cmd+. on macOS), then choose **Change "retires" to "retry"**. It r
 on the block's fence and keeps its value as written. This works in the runbook view and in the
 Markdown editor.
 
+## In the app
+
+The md-runbook app (iPhone, Android, browser) runs the same checks when a runbook opens and after
+each change. Each code cell lists its problems under it, with a mark beside the line concerned.
+The top of the runbook counts them ("1 error, 2 warnings"): tap the count to list every problem,
+front matter included, and tap one to go to its cell. **⋯ More → Go to Next Problem** goes
+through them in turn. A misspelled option with a suggestion has a **Change "retires" to "retry"**
+button under the problem, which renames the option as the Quick Fix does.
+
 ## On the command line
 
 ```sh

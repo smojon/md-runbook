@@ -24,6 +24,7 @@ const GLYPHS = {
   'circle-slash': 0xeabd,
   loading: 0xeb19,
   warning: 0xea6c,
+  lightbulb: 0xea61,
   'chevron-down': 0xeab4,
   'chevron-right': 0xeab6,
   copy: 0xebcc,

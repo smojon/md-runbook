@@ -576,7 +576,8 @@ describe('runbook parameters', () => {
   it('the front matter is not drawn in the first cell (the card shows it)', async () => {
     const r = addRunbook('deploy.md', text);
     await render(<RunbookView id={r.id} />);
-    expect(screen.queryByText(/params:/)).toBeNull();
+    // The front matter's own lines (lint's warning about the undeclared TARGET names params: too).
+    expect(screen.queryByText(/REGION: eu-west-1/)).toBeNull();
     expect(screen.getByText('Deploy')).toBeTruthy();
     expect(withoutFrontMatter('---\r\nmode: isolated\r\n---\r\n# T\n')).toBe('# T\n');
     expect(withoutFrontMatter('---\n---\nx')).toBe('x');

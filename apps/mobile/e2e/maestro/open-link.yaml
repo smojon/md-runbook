@@ -2,6 +2,8 @@
 # app doesn't have and filling a parameter: the app unpacks it on the device (fflate, TextDecoder
 # and URL under Hermes), opens it, fills GREETING and says the host is missing. Made with
 # core's formatRunbookLink; nothing runs. Its pin comes with it, so it opens as unsigned, not pinned.
+# Its block has a misspelled option (retires=2) and an undeclared ${param:GREETING}: lint counts 2
+# warnings at the top, and the fix under the cell renames the option to retry=.
 appId: dev.mdrunbook.app
 name: open-link
 ---
@@ -12,7 +14,7 @@ name: open-link
     visible:
       id: open-runbook
     timeout: 120000
-- openLink: mdrunbook://open?rb=U1bwyczLTk1RKCrNS8rPz-bi8i9IzQPy04rycxUSFXKAsgolGYklCsmJRUWZqcUKmSV6XFwJCQlJicUZXKnJGfkKSirVBYlFiblW7kGuriGefu61SiAFXAA&sha256=b397dcfb1a65c3e85e4128d4a76d328ad98b7124c495a97b38d770f901943492&host=nowhere&p.GREETING=hello
+- openLink: mdrunbook://open?rb=FcqxCoMwEAbg_Z7iR507dCw4ihRKC9IHyKknOVITucRJ-u7iN381XhqDzLA9jikFos8mUWYsllYwfhoDiueCic1UMrTciJxzI2cPk6Imub2TTD6hao6NjddHP3Td9_nu_9VV6QQ&sha256=482773f473929234f8d1483b80ab8c1ea8b72c40421b8e9d682d775287a9b7cf&host=nowhere&p.GREETING=hello
 # iOS asks "Open in md-runbook?" first, a moment after the link: wait for it, or a check made
 # too early misses it and the dialog stays over the next flows. On CI's simulator iOS is slow at
 # both ends, and the app is not: the dialog came up to 21 s after the link, and the link reached
@@ -38,3 +40,19 @@ name: open-link
     id: param-GREETING
     text: 'hello'
 - takeScreenshot: 03-opened-from-link
+# Lint: the count at the top, the problem under the cell, and its fix.
+- assertVisible:
+    id: problems-summary
+    text: '2 warnings'
+- scrollUntilVisible:
+    element:
+      id: cell-1-problem-0-fix
+    direction: DOWN
+- tapOn:
+    id: cell-1-problem-0-fix
+- extendedWaitUntil:
+    visible:
+      id: problems-summary
+      text: '1 warning'
+    timeout: 10000
+- takeScreenshot: 04-lint-fixed

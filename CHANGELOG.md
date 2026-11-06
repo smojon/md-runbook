@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **The app checks runbooks too.** The md-runbook app runs the same checks as `md-runbook lint`
+  and the extension's problem markers. Each code cell lists its problems under it, with a mark
+  beside the line concerned, and the top of the runbook counts them ("1 error, 2 warnings"); tap
+  the count for the full list, front matter included. **⋯ More → Go to Next Problem** goes
+  through them. A misspelled option gets a **Change "retires" to "retry"** button, as the
+  extension's Quick Fix.
+
 ## 0.19.3
 
 - **npm without a token.** The release workflow publishes the command line to npm through npm's
