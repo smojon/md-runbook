@@ -1,0 +1,53 @@
+name: Dev container feature
+# The md-runbook dev container feature (devcontainer-features/src/md-runbook): tested in a
+# container with the command line built from this commit, and published to ghcr.io from main
+# (ghcr.io/smojon/md-runbook/md-runbook). A version already published is skipped, so bump
+# "version" in devcontainer-feature.json to publish a change.
+on:
+  push:
+    branches: ['**']
+    paths: ['devcontainer-features/**', '.github/workflows/devcontainer-feature.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['mcr.microsoft.com/devcontainers/base:ubuntu', 'mcr.microsoft.com/devcontainers/base:debian']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      # The command line of this commit, next to install.sh (which then installs it instead of a release's).
+      - name: Build the command line package
+        run: |
+          node scripts/build.js
+          node scripts/pack-cli.js
+          (cd out/npm && npm pack --silent)
+          mv out/npm/md-runbook-*.tgz devcontainer-features/src/md-runbook/md-runbook-cli.tgz
+      - name: Test the feature
+        run: npx --yes @devcontainers/cli@0.90.0 features test --project-folder devcontainer-features --features md-runbook --base-image "${{ matrix.image }}"
+
+  publish:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: devcontainers/action@v1.4.4
+        with:
+          publish-features: 'true'
+          base-path-to-features: ./devcontainer-features/src
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

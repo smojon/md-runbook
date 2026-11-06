@@ -114,7 +114,13 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         if: env.NODE_AUTH_TOKEN == ''
         run: echo "::warning::The NPM_TOKEN secret is not set, so the command line was not published to npm (PUBLISHING.md, npm)."
-      - name: GitHub release with the .vsix
+      # The command line's npm package as a file too: `npm install -g <its URL>` installs it without
+      # the npm registry (the dev container feature does that, devcontainer-features/).
+      - name: The command line as a package file
+        run: |
+          (cd out/npm && npm pack --silent)
+          mv out/npm/md-runbook-*.tgz md-runbook-cli.tgz
+      - name: GitHub release with the .vsix and the command line
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" md-runbook.vsix --title "$GITHUB_REF_NAME" --notes-file <(node scripts/release-notes.js "$GITHUB_REF_NAME") --prerelease
+        run: gh release create "$GITHUB_REF_NAME" md-runbook.vsix md-runbook-cli.tgz --title "$GITHUB_REF_NAME" --notes-file <(node scripts/release-notes.js "$GITHUB_REF_NAME") --prerelease

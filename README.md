@@ -180,6 +180,8 @@ Each has its own page with examples and settings:
 - **[Checking runbooks](docs/features/lint.md):** problems such as unknown cell options or
   `${out:NAME}` without a capture are underlined while you edit; `md-runbook lint` checks files
   in CI.
+- **[Dev containers and Codespaces](docs/features/devcontainer.md):** one line in
+  `devcontainer.json` installs the command line and the extension.
 - **[On the web](docs/features/web.md):** a GitHub Actions workflow with a Run button
   (`examples/github/run-runbook.yml`), the `smojon/md-runbook` GitHub Action, and running the
   extension in GitHub Codespaces.

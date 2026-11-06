@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A dev container feature:** `"ghcr.io/smojon/md-runbook/md-runbook:1": {}` in a
+  `devcontainer.json` installs the command line and the VS Code extension in a dev container or a
+  GitHub Codespace ([docs](docs/features/devcontainer.md)). Each GitHub release now also carries
+  the command line as `md-runbook-cli.tgz`, the npm package as a file, which the feature installs.
 - **Runbook links open in VS Code.** The link in a pager alert only opened the phone app, so on a
   laptop clicking it did nothing. Now `vscode://smojon.md-runbook/open?…`, with the same fields as
   the app's link, opens the runbook in VS Code:
