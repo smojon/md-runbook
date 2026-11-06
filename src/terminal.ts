@@ -379,7 +379,6 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
       return {
         execute: (plan, io, ctx) => {
           if (!wantsTerminal(ctx.cell)) return base.execute(plan, io, ctx);
-          // Not written as a JSON entry ("key": "value"): output redaction would mask the value.
           io.onStderr('[md-runbook] Terminal mode is off, so this cell\'s prompts get no answer.\n[md-runbook] To answer them, set "mdRunbook.terminal.mode" to "perCell" (user settings).\n');
           const running = base.execute(plan, io, ctx);
           void offerTerminalMode(ctx.cell, running);
