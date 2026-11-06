@@ -30,7 +30,7 @@ test('terminal: the terminal option runs normally, with a note, while terminal.m
     assert.equal(await waitForRun(editor.notebook.cellAt(0)), true);
     const out = outputText(editor.notebook.cellAt(0));
     assert.match(out, /plain/);
-    assert.match(out, /Terminal mode is off, so this cell's prompts get no answer\.\n.*"mdRunbook\.terminal\.mode": "perCell"/, 'explains why there is no terminal, in short lines');
+    assert.match(out, /Terminal mode is off, so this cell's prompts get no answer\.\r?\n.*set "mdRunbook\.terminal\.mode" to "perCell"/, `explains why there is no terminal, in short lines: ${JSON.stringify(out)}`);
     assert.equal(vscode.window.terminals.filter((t) => t.name.startsWith('md-runbook:')).length, 0);
   } finally {
     await closeAll();

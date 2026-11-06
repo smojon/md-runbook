@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import { SECTION } from './config';
 import { isCodeMeta } from '@md-runbook/core';
 import { renameInfoOption } from '@md-runbook/core/cellOptions';
-import { LintProblem, lintRunbook } from '@md-runbook/core/lint';
+import { LintProblem, lintRunbook, suggestOption } from '@md-runbook/core/lint';
 import { withInfo } from '@md-runbook/core/proposal';
 import { META_KEY } from './outputs';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
@@ -27,6 +27,30 @@ function toDiagnostic(p: LintProblem, range: vscode.Range, prefix = ''): vscode.
   return d;
 }
 
+const FIX_COMMAND = 'mdRunbook._fixCellOption';
+
+/** Only a typo's fix: `from` is not a known option and `to` is the one lint suggests for it. */
+const isTypoFix = (from: string, to: string): boolean => to !== from.toLowerCase() && suggestOption(from) === to;
+
+/**
+ * The fix in the runbook view: the fence options are in the cell's metadata, and a code action's
+ * workspace edit can't carry a notebook edit (VS Code ignores it), so a command makes it. Any
+ * command can also be called from a link: this one renames nothing but a typo to lint's
+ * suggestion, so it can't turn off an option such as confirm.
+ */
+async function fixCellOption(notebook: unknown, index: unknown, from: unknown, to: unknown): Promise<boolean> {
+  if (typeof notebook !== 'string' || typeof index !== 'number' || typeof from !== 'string' || typeof to !== 'string' || !isTypoFix(from, to)) return false;
+  const nb = vscode.workspace.notebookDocuments.find((d) => d.uri.toString() === notebook);
+  if (!nb || index < 0 || index >= nb.cellCount) return false;
+  const cell = nb.cellAt(index);
+  const meta: unknown = cell.metadata?.[META_KEY];
+  const info = isCodeMeta(meta) ? renameInfoOption(meta.info, from, to) : undefined;
+  if (!isCodeMeta(meta) || info === undefined) return false;
+  const edit = new vscode.WorkspaceEdit();
+  edit.set(nb.uri, [vscode.NotebookEdit.updateCellMetadata(index, { ...cell.metadata, [META_KEY]: withInfo(meta, info) })]);
+  return vscode.workspace.applyEdit(edit);
+}
+
 /**
  * Quick Fix for a misspelled cell option: rename it on the fence, in the runbook view (the cell's
  * fence options, kept in its metadata) and in the Markdown text (the fence line).
@@ -38,24 +62,22 @@ const typoFixes: vscode.CodeActionProvider = {
       const m = d.source === 'md-runbook' && d.code === TYPO_CODE ? TYPO_RE.exec(d.message) : null;
       if (!m) continue;
       const [, from, to] = m as unknown as [string, string, string];
-      const edit = new vscode.WorkspaceEdit();
+      const action = new vscode.CodeAction(`Change "${from}" to "${to}"`, vscode.CodeActionKind.QuickFix);
+      action.diagnostics = [d];
+      action.isPreferred = true;
       if (doc.uri.scheme === 'vscode-notebook-cell') {
         const cell = vscode.workspace.notebookDocuments.flatMap((nb) => nb.getCells()).find((c) => c.document.uri.toString() === doc.uri.toString());
-        const meta: unknown = cell?.metadata?.[META_KEY];
-        const info = cell && isCodeMeta(meta) ? renameInfoOption(meta.info, from, to) : undefined;
-        if (!cell || !isCodeMeta(meta) || info === undefined) continue;
-        edit.set(cell.notebook.uri, [vscode.NotebookEdit.updateCellMetadata(cell.index, { ...cell.metadata, [META_KEY]: withInfo(meta, info) })]);
+        if (!cell) continue;
+        action.command = { title: action.title, command: FIX_COMMAND, arguments: [cell.notebook.uri.toString(), cell.index, from, to] };
       } else {
         const line = doc.lineAt(d.range.start.line);
         const fence = FENCE_LINE_RE.exec(line.text);
         const info = fence ? renameInfoOption(fence[2]!, from, to) : undefined;
         if (!fence || info === undefined) continue;
+        const edit = new vscode.WorkspaceEdit();
         edit.replace(doc.uri, line.range, fence[1]! + info);
+        action.edit = edit;
       }
-      const action = new vscode.CodeAction(`Change "${from}" to "${to}"`, vscode.CodeActionKind.QuickFix);
-      action.diagnostics = [d];
-      action.isPreferred = true;
-      action.edit = edit;
       actions.push(action);
     }
     return actions;
@@ -133,6 +155,7 @@ export function registerLint(context: vscode.ExtensionContext): void {
     vscode.languages.registerCodeActionsProvider([{ scheme: 'vscode-notebook-cell' }, { language: 'markdown' }], typoFixes, {
       providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
     }),
+    vscode.commands.registerCommand(FIX_COMMAND, fixCellOption),
     { dispose: () => timers.forEach((t) => clearTimeout(t)) },
     vscode.workspace.onDidOpenNotebookDocument((nb) => isRunbook(nb) && timed('lint', nb.uri.fsPath, () => lintNotebook(nb))),
     vscode.workspace.onDidChangeNotebookDocument((e) => isRunbook(e.notebook) && later(e.notebook.uri.toString(), () => lintNotebook(e.notebook))),
