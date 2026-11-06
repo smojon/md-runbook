@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.3
+
+- **npm without a token.** The release workflow publishes the command line to npm through npm's
+  trusted publishing: npm accepts a publish only from this repository's release workflow, and no
+  npm token is stored anywhere. The VS Code extension and the command line are unchanged.
+
 ## 0.19.2
 
 - **The command line is on npm.** `npx md-runbook run runbook.md` or `npm install -g md-runbook`
