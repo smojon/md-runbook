@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.19.0
 
 - **A dev container feature:** `"ghcr.io/smojon/md-runbook/md-runbook:1": {}` in a
   `devcontainer.json` installs the command line and the VS Code extension in a dev container or a
