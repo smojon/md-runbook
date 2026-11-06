@@ -1,9 +1,25 @@
 /** Terminal mode: off by default; with perCell, `terminal` cells run in a VS Code terminal (interactive). */
 import { strict as assert } from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import * as vscode from 'vscode';
 import { LANG, Test, closeAll, isWin, openRunbook, outputText, read, runCells, setConfig, step, waitFor, waitForRun, writeFile } from './suite';
 
 export const tests: Test[] = [];
+
+/** `pid`'s descendants from `ps -o pid=,ppid=,args=` output, one "pid args" per line. */
+function processTree(ps: string, pid: number): string {
+  const rows = ps.split('\n').map((l) => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l)).filter((m): m is RegExpExecArray => m !== null);
+  const found: string[] = [];
+  const walk = (parent: number): void => {
+    for (const m of rows) {
+      if (Number(m[2]) !== parent) continue;
+      found.push(`${m[1]} ${m[3]}`);
+      walk(Number(m[1]));
+    }
+  };
+  walk(pid);
+  return found.length ? found.join(' | ') : '(nothing)';
+}
 const test = (name: string, fn: () => Promise<void>): void => void tests.push({ name, fn });
 
 test('terminal: the terminal option runs normally, with a note, while terminal.mode is off (default)', async () => {
@@ -32,7 +48,15 @@ test('terminal: a terminal cell answers an interactive prompt and its output is 
     const running = runCells(editor, 0, 1);
     const terminal = await waitFor('md-runbook terminal', () => vscode.window.terminals.find((t) => t.name.startsWith('md-runbook: term-prompt.md')), 20_000);
     // Answer the prompt by typing into the terminal, as a user would, once the cell is running.
-    await waitFor('cell to start', () => /ready/.test(outputText(cell)), 30_000);
+    // On a timeout, say how far it got: what the cell shows, whether it ended, shell integration.
+    await waitFor('cell to start', () => /ready/.test(outputText(cell)), 30_000).catch(async (e: Error) => {
+      const integration = (terminal as vscode.Terminal & { shellIntegration?: unknown }).shellIntegration !== undefined;
+      const ended = cell.executionSummary?.timing?.endTime !== undefined;
+      // What runs under the terminal's shell: the cell's script (it ran, its output got lost) or nothing.
+      const pid = await terminal.processId;
+      const tree = isWin || pid === undefined ? '(not looked at)' : processTree(spawnSync('ps', ['-A', '-o', 'pid=,ppid=,args='], { encoding: 'utf8' }).stdout, pid);
+      throw new Error(`${e.message}; cell output: ${JSON.stringify(outputText(cell))}; cell ended: ${ended}; shell integration: ${integration}; under the shell (pid ${pid}): ${tree}`);
+    });
     await new Promise((r) => setTimeout(r, 1000));
     terminal.sendText('bob');
     const ok = await waitForRun(cell, 30_000);

@@ -44,6 +44,7 @@ interface TerminalWithIntegration extends vscode.Terminal {
 }
 interface WindowWithIntegration {
   onDidChangeTerminalShellIntegration?: vscode.Event<{ terminal: vscode.Terminal; shellIntegration: ShellIntegration }>;
+  onDidStartTerminalShellExecution?: vscode.Event<{ terminal: vscode.Terminal; execution: ShellExecution }>;
   onDidEndTerminalShellExecution?: vscode.Event<{ terminal: vscode.Terminal; execution: ShellExecution; exitCode: number | undefined }>;
 }
 
@@ -233,7 +234,34 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
               : ctx.lineRun
                 ? terminalInlineCommandLine(kind, asArg(scriptPath), asArg(statusPath))
                 : terminalCommandLine(kind, shell.command, asArg(scriptPath), asArg(statusPath)));
+        // VS Code matches the command it sees start to the one asked for by its text. When they
+        // differ (a long command line that wraps, on a busy machine: CI, 2026-11-06), the one that
+        // runs is another execution, which gets all the output and the end report, and the one
+        // returned here none. So the first execution that starts in this terminal after the
+        // command was sent counts too.
+        const filter = new TerminalOutputFilter(nonce);
+        const executions: ShellExecution[] = [];
+        const readings: Promise<void>[] = [];
+        // read() must be called right away, or early output is lost.
+        const follow = (ex: ShellExecution): void => {
+          executions.push(ex);
+          readings.push(
+            (async () => {
+              for await (const data of ex.read()) {
+                const text = filter.push(data);
+                if (text) io.onStdout(text);
+              }
+            })(),
+          );
+        };
+        let adopted = false;
+        const startSub = win.onDidStartTerminalShellExecution?.((e) => {
+          if (e.terminal !== terminal || adopted) return;
+          adopted = true;
+          if (!executions.includes(e.execution)) follow(e.execution);
+        });
         const execution = integration.executeCommand(commandLine);
+        follow(execution);
         let stopWaiting = (): void => undefined;
         const ended = new Promise<number | undefined>((resolve) => {
           const done = (code: number | undefined): void => {
@@ -246,23 +274,13 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
             closeSub.dispose();
           };
           const endSub = win.onDidEndTerminalShellExecution!((e) => {
-            if (e.execution === execution) done(e.exitCode);
+            if (executions.includes(e.execution)) done(e.exitCode);
           });
           // A disposed terminal never reports the end.
           const closeSub = vscode.window.onDidCloseTerminal((t) => {
             if (t === terminal) done(undefined);
           });
         });
-        // read() must be called right away, or early output is lost.
-        const filter = new TerminalOutputFilter(nonce);
-        const reading = (async () => {
-          for await (const data of execution.read()) {
-            const text = filter.push(data);
-            if (text) io.onStdout(text);
-          }
-          const rest = filter.flush();
-          if (rest) io.onStdout(rest);
-        })();
 
         // Ctrl+C; if the command has not ended after the grace period, kill what runs in the
         // terminal and close it. A command that stops in time leaves the terminal reusable.
@@ -295,6 +313,7 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
         const reported = await Promise.race([ended, byStatusFile]);
         polling = false;
         stopWaiting();
+        startSub?.dispose();
         finished = true;
         clearTimeout(grace);
         stop.signal.removeEventListener('abort', interrupt);
@@ -306,8 +325,11 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
           await sleep(100);
           written = readStatus(statusPath);
         }
-        // The stream finishes shortly after the end event; don't cut off the last lines.
-        await Promise.race([reading.catch(() => undefined), sleep(READ_GRACE_MS)]);
+        // The stream finishes shortly after the end event; don't cut off the last lines. Of two
+        // streams only the execution that ran ends, so the first to finish is the one.
+        await Promise.race([...readings.map((r) => r.catch(() => undefined)), sleep(READ_GRACE_MS)]);
+        const rest = filter.flush();
+        if (rest) io.onStdout(rest);
 
         const status = parseStatus(written);
         if (status !== undefined) return result(status);

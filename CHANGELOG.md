@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Fix: terminal mode could lose a cell's output on a busy machine.** The cell ran in the
+  terminal, and you could see it there, but nothing reached the cell's output, so its checks and
+  captures saw nothing either. A cell waiting at a prompt also showed nothing above it. Cause:
+  VS Code matches the command it sees start to the one md-runbook sent by its text, and on a busy
+  machine the long command line could come back slightly different. VS Code then gave the output
+  to a second execution that md-runbook didn't read. md-runbook now reads whichever execution
+  starts in the terminal. With the CPU busy, 4 of 10 test runs lost the output before and none of
+  10 after.
+
 ## 0.18.0
 
 - **`${out:NAME}`, `${param:NAME}` and `${input:NAME}` in `expect=` and `expect-not=`.** A check

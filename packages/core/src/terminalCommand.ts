@@ -132,6 +132,8 @@ export function terminalSignature(kind: string, command: string, cwd: string, en
 const shownMark = (edge: 'Start' | 'End', nonce: string): string => `\x1b]633;P;MdRunbookShown${edge}=${nonce}\x07`;
 /** Output held back while looking for the shown text before giving up on it. */
 const SHOWN_WINDOW = 4096;
+/** Kept before the command started, so a mark split across chunks is still found (the shown mark is the longer one). */
+const SHOWN_MARK_TAIL = 64;
 
 /**
  * What the terminal shows before a cell runs: its commands as typed at a prompt (`$ `, `PS> `,
@@ -186,13 +188,18 @@ export class TerminalOutputFilter {
     this.pending = '';
     if (!this.started) {
       const m = COMMAND_STARTED.exec(text);
-      if (!m) {
-        // Keep a tail in case the mark is split across chunks.
-        this.pending = text.slice(-32);
+      // The stream may begin after the "command started" mark: on a busy machine VS Code started
+      // it past the mark, and the whole output was held back (CI, 2026-11-05). The shown text's
+      // start mark is printed by the command itself, so it means the command started too. The
+      // echoed command line names the file holding it, never the mark.
+      const shownAt = this.shownNonce === undefined ? -1 : text.indexOf(shownMark('Start', this.shownNonce));
+      if (!m && shownAt < 0) {
+        // Keep a tail in case a mark is split across chunks.
+        this.pending = text.slice(-SHOWN_MARK_TAIL);
         return '';
       }
       this.started = true;
-      text = text.slice(m.index + m[0].length);
+      text = m && (shownAt < 0 || m.index < shownAt) ? text.slice(m.index + m[0].length) : text.slice(shownAt);
     }
     if (this.shown !== 'done' && this.shownNonce !== undefined) {
       if (this.shown === 'looking') {

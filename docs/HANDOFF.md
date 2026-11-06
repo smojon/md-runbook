@@ -144,13 +144,19 @@ toolbar buttons, the walkthrough's look) has no automated test: try it in a deve
 - Checklist boxes don't show in Restricted Mode: VS Code's sanitizer drops `<input>`.
 - Terminal mode is tested through the integration suite; it has not been tried by hand on
   macOS.
-- The integration test "terminal: a line run keeps cd between lines…" hung once on Linux CI
-  (2026-10-19). Likely cause: shell integration lost the end report of a command. Terminal mode
-  now also ends a command a few seconds after its exit-code file appears; on a timeout the test
-  prints the cell's output and the open terminals.
-- The integration test "terminal: a terminal cell answers an interactive prompt and its output
-  is saved" failed twice on Linux CI (2026-10-21), on commits that only touched the app; the
-  next runs passed. Rerun the failed job; look into it if it keeps coming back.
+- The terminal integration tests ("answers an interactive prompt", "a line run keeps cd") failed
+  now and then on Linux CI (2026-10-19, 10-21, 11-05). Fixed 2026-11-06. Under CPU load, VS Code
+  sometimes didn't match the command it saw start to the one sent by `executeCommand`, since it
+  compares the command-line text. It then made another execution that got the output and the end
+  report, while ours got nothing. Terminal mode now also reads the first execution that starts in
+  its terminal (`src/terminal.ts`).
+  - The evidence: on Ubuntu with every core kept busy, main lost the output in about 45% of
+    jobs, and the fix in 0 of 10.
+  - To chase such a test again: `MD_RUNBOOK_ITEST_ONLY` (a regex on test names) and
+    `MD_RUNBOOK_ITEST_REPEAT` pick and repeat integration tests (`test/integration/index.ts`).
+    Busy loops (`while :; do :; done &`, one per core) make it show.
+  - On a timeout, the prompt test prints the cell's output, whether shell integration started, and
+    what runs under the terminal's shell.
 - The app's iOS flow once failed with "Element not found: host-name" after tapping Add host;
   a rerun passed.
 - The controller's try/finally cleanup has no unit test (it needs VS Code).

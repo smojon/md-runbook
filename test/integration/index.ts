@@ -18,7 +18,11 @@ function allTests(): Test[] {
 export async function run(...args: unknown[]): Promise<void> {
   const log = typeof args[0] === 'function' ? (args[0] as (line: string) => void) : (line: string) => console.log(line);
   setTrace(log);
-  const tests = allTests();
+  // To chase a flaky test: MD_RUNBOOK_ITEST_ONLY (a regex on the names) and MD_RUNBOOK_ITEST_REPEAT.
+  const only = process.env.MD_RUNBOOK_ITEST_ONLY ? new RegExp(process.env.MD_RUNBOOK_ITEST_ONLY) : undefined;
+  const repeat = Math.max(1, Number(process.env.MD_RUNBOOK_ITEST_REPEAT) || 1);
+  const picked = allTests().filter((t) => !only || only.test(t.name));
+  const tests = Array.from({ length: repeat }, () => picked).flat();
   const failures: string[] = [];
   for (const t of tests) {
     const started = Date.now();

@@ -141,6 +141,21 @@ describe('the cell shown in the terminal', () => {
     }
   });
 
+  it('TerminalOutputFilter starts at the shown cell when the stream begins after the "command started" mark', async () => {
+    // On a busy CI runner VS Code began read() past the mark: the cell's output was held back for good.
+    const { TerminalOutputFilter, terminalShownText } = await import('@md-runbook/core/terminalCommand');
+    const raw = `\x1b[?25l${terminalShownText('echo ready', 'bash', 'abc')}ready\r\nName: `;
+    for (const size of [1, 7, 64, raw.length]) {
+      const f = new TerminalOutputFilter('abc');
+      let out = '';
+      for (let i = 0; i < raw.length; i += size) out += f.push(raw.slice(i, i + size));
+      assert.equal(out, 'ready\r\nName: ', `chunks of ${size}, before the end`);
+    }
+    // The echoed command line names the shown file, not the mark: still nothing before the command starts.
+    const echo = new TerminalOutputFilter('abc');
+    assert.equal(echo.push("prompt$ cat '/tmp/md-runbook-term-x/shown'; bash cell.sh\r\n"), '');
+  });
+
   it('TerminalOutputFilter keeps the output when the shown cell never comes, or comes with another nonce', async () => {
     const { TerminalOutputFilter, terminalShownText } = await import('@md-runbook/core/terminalCommand');
     const short = new TerminalOutputFilter('abc');
