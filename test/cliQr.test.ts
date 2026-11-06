@@ -91,4 +91,19 @@ describe('cli: md-runbook link', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('--vscode prints a VS Code link; not for a QR code, nor with --web-app', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-link-'));
+    try {
+      const file = path.join(dir, 'restart.md');
+      fs.writeFileSync(file, RUNBOOK);
+      const lines: string[] = [];
+      assert.equal(await qrCommand([file, '--url', 'https://x.example.net/restart.md', '--host', 'web-1', '--param', 'SERVICE=api', '--vscode'], (l) => lines.push(l), true), 0);
+      assert.deepEqual(lines, ['vscode://smojon.md-runbook/open?url=https%3A%2F%2Fx.example.net%2Frestart.md&host=web-1&p.SERVICE=api']);
+      assert.equal(await qrCommand([file, '--url', 'https://x.example.net/restart.md', '--vscode'], () => undefined), 2, 'not for qr');
+      assert.equal(await qrCommand([file, '--url', 'https://x.example.net/restart.md', '--vscode', '--web-app', 'https://w.example.net/open'], () => undefined, true), 2);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

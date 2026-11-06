@@ -9,7 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { clearOutputBlocks } from '@md-runbook/core';
 import { QrLabel, parseCsv, qrLabelSheet, qrMatrix, qrSvg } from '@md-runbook/core/qr';
-import { APP_LINK_BASE, RunbookLink, formatRunbookLink, parseRunbookLink, runbookDigest } from '@md-runbook/core/runbookLink';
+import { APP_LINK_BASE, RunbookLink, formatRunbookLink, formatVsCodeLink, parseRunbookLink, parseVsCodeLinkQuery, runbookDigest } from '@md-runbook/core/runbookLink';
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { fileWebUrl } from '../appLink';
 import { findBrowser, htmlToPdf } from './pdf';
@@ -31,6 +31,8 @@ says who approved it.
   --param NAME=VALUE   A parameter value (repeatable)
   --cosign             Open on Co-sign Runbook
   --web-app URL        Make https links on the web app (https://…/open) instead of mdrunbook://
+  --vscode             (link only) Make links that open the runbook in VS Code
+                       (vscode://smojon.md-runbook/open?…), for a laptop
   --labels FILE.csv    One label per row: column host (the app's host name), optional label
                        (printed under it) and p.NAME columns (parameter values)
   --out FILE           .svg (one code), .html or .pdf (labels). Default: next to the runbook
@@ -51,6 +53,7 @@ export interface QrArgs {
   params: Record<string, string>;
   cosign: boolean;
   webApp?: string;
+  vscode: boolean;
   labels?: string;
   out?: string;
   browser?: string;
@@ -59,7 +62,7 @@ export interface QrArgs {
 
 export function parseQrArgs(argv: readonly string[]): QrArgs {
   const args = [...argv];
-  const a: QrArgs = { file: '', embed: false, pin: false, params: {}, cosign: false, printLink: false };
+  const a: QrArgs = { file: '', embed: false, pin: false, params: {}, cosign: false, vscode: false, printLink: false };
   const value = (flag: string): string => {
     const v = args.shift();
     if (v === undefined || v.startsWith('--')) throw new QrUsageError(`${flag} needs a value`);
@@ -81,6 +84,7 @@ export function parseQrArgs(argv: readonly string[]): QrArgs {
       }
       case '--cosign': a.cosign = true; break;
       case '--web-app': a.webApp = value(x); break;
+      case '--vscode': a.vscode = true; break;
       case '--labels': a.labels = value(x); break;
       case '--out': a.out = value(x); break;
       case '--browser': a.browser = value(x); break;
@@ -95,6 +99,7 @@ export function parseQrArgs(argv: readonly string[]): QrArgs {
   if (a.embed && a.url) throw new QrUsageError('--embed and --url: choose one');
   if (a.pin && !a.url) throw new QrUsageError('--pin goes with --url (the Git address is pinned anyway)');
   if (a.webApp && !/^https:\/\/[^/]+\/(?:.*\/)?open$/.test(a.webApp)) throw new QrUsageError('--web-app expects https://<web app>/open');
+  if (a.webApp && a.vscode) throw new QrUsageError('--web-app and --vscode: choose one');
   return a;
 }
 
@@ -144,6 +149,10 @@ export async function qrCommand(argv: readonly string[], out: Out = stdout, link
     process.stderr.write(`md-runbook: no such file: ${a.file}\n`);
     return 2;
   }
+  if (a.vscode && !linkOnly) {
+    process.stderr.write('md-runbook: --vscode is for md-runbook link (a phone camera does not open VS Code links)\n');
+    return 2;
+  }
   const text = fs.readFileSync(a.file, 'utf8');
   const base: RunbookLink = { params: { ...a.params }, ...(a.cosign ? { action: 'cosign' as const } : {}) };
   if (a.embed) base.text = clearOutputBlocks(text);
@@ -161,10 +170,11 @@ export async function qrCommand(argv: readonly string[], out: Out = stdout, link
     // On stderr: `md-runbook link` prints into configs and templates.
     else process.stderr.write('md-runbook: the file is not pushed yet (no origin version): the link is not pinned\n');
   }
-  const linkOf = (l: RunbookLink): string => formatRunbookLink(l, a.webApp ?? APP_LINK_BASE);
-  // What the app will read: refuse anything it would refuse (a bad host name, an http address).
+  const linkOf = (l: RunbookLink): string => (a.vscode ? formatVsCodeLink(l) : formatRunbookLink(l, a.webApp ?? APP_LINK_BASE));
+  // What the app (or VS Code, given the query decoded once) will read: refuse anything it would
+  // refuse (a bad host name, an http address).
   const check = (link: string): string | undefined => {
-    const r = parseRunbookLink(link);
+    const r = a.vscode ? parseVsCodeLinkQuery(decodeURIComponent(link.slice(link.indexOf('?') + 1))) : parseRunbookLink(link);
     return r.ok ? undefined : r.problem;
   };
   const name = path.basename(a.file).replace(/\.md$/i, '');

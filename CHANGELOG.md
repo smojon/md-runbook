@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Runbook links open in VS Code.** The link in a pager alert only opened the phone app, so on a
+  laptop clicking it did nothing. Now `vscode://smojon.md-runbook/open?…`, with the same fields as
+  the app's link, opens the runbook in VS Code:
+  - your workspace's copy, if a clone of the repository is open and its file is the version the
+    link pins (if it differs, you choose which to open);
+  - otherwise a downloaded copy, which the same link opens again with its runs.
+
+  The pin and the signature are checked as in the app, and the link's parameters are filled in.
+  Nothing runs until you run it. `md-runbook link --vscode` prints such links, and the
+  [on-call page](docs/features/on-call.md#on-a-laptop-vs-code) shows them next to the app's in
+  Alertmanager and PagerDuty.
 - **"Did you mean" for misspelled cell options, with a Quick Fix.** A misspelled option was only
   reported as unknown. Now the warning suggests the option it was probably meant to be:
   `unknown cell option "retires" (ignored): did you mean "retry"?`. A suggestion is made for

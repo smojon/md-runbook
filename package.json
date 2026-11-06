@@ -65,7 +65,8 @@
     "md-runbook": "out/dist/cli.js"
   },
   "activationEvents": [
-    "onLanguage:markdown"
+    "onLanguage:markdown",
+    "onUri"
   ],
   "contributes": {
     "notebooks": [

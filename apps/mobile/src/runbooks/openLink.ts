@@ -4,7 +4,7 @@
  * or Download hands it on. The same link opened again (each click on an alert's link) opens that
  * copy, as long as the runbook at the address is unchanged; Start Incident makes a copy per incident.
  */
-import { linkTrust, parseRunbookLink } from '@md-runbook/core/runbookLink';
+import { linkTrust, parseRunbookLink, rawRunbookUrl } from '@md-runbook/core/runbookLink';
 import { getHosts, loadHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { loadSettings, outputSettings } from '../settings/store';
@@ -12,21 +12,8 @@ import { setLinkContext } from './linkContext';
 import { runbookParams, setParamValue } from './params';
 import { MAX_RUNBOOK_BYTES, Runbook, addRunbook, linkKey, linkedRunbook, loadRunbooks, titleOf } from './store';
 
-/** The raw file behind a link: GitHub and GitLab pages give their raw address; only https. */
-export function rawRunbookUrl(link: string): string | undefined {
-  let u: URL;
-  try {
-    u = new URL(link.trim());
-  } catch {
-    return undefined;
-  }
-  if (u.protocol !== 'https:') return undefined;
-  const gh = /^\/([^/]+)\/([^/]+)\/blob\/(.+)$/.exec(u.pathname);
-  if (u.hostname === 'github.com' && gh) return `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/${gh[3]}`;
-  const gl = /^(.+)\/-\/blob\/(.+)$/.exec(u.pathname);
-  if (gl) return `${u.origin}${gl[1]}/-/raw/${gl[2]}${u.search}`;
-  return u.toString();
-}
+/** The raw file behind a link (in core, shared with VS Code's link handler). */
+export { rawRunbookUrl };
 
 /** `deploy.md` from `…/runbooks/deploy.md?x=1`; `runbook.md` when the link has no file name. */
 function fileNameOf(url: string): string {

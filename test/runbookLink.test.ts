@@ -113,3 +113,38 @@ describe('runbook links', () => {
     assert.equal(linkTrust({ ...link, sha256: runbookDigest(RUNBOOK) }, signed), 'mismatch');
   });
 });
+
+describe('VS Code links', () => {
+  // What VS Code's link handler gets: the query, decoded once (its URI parser percent-decodes it).
+  const asHandled = (link: string): string => decodeURIComponent(link.slice(link.indexOf('?') + 1));
+
+  it('survive VS Code decoding the query: plain values as the app link, others carried in link=', async () => {
+    const { formatVsCodeLink, parseVsCodeLinkQuery } = await import('@md-runbook/core/runbookLink');
+    const plain: RunbookLink = { url: 'https://github.com/acme/ops/blob/main/runbooks/restart api.md', sha256: 'a'.repeat(64), host: 'web-1', params: { SERVICE: 'api' } };
+    const tricky: RunbookLink = { url: 'https://x.example.net/r.md?ref=a&b=c', host: 'web-1', params: { Q: 'a+b=c&d#e%41' } };
+    const carried: RunbookLink = { text: '# T\n\n```bash\necho hi\n```\n', params: {} };
+    const p = formatVsCodeLink(plain);
+    assert.match(p, /^vscode:\/\/smojon\.md-runbook\/open\?url=/);
+    assert.match(formatVsCodeLink(tricky), /^vscode:\/\/smojon\.md-runbook\/open\?link=mdrunbook%3A%2F%2Fopen%3F/);
+    for (const l of [plain, tricky, carried]) {
+      const r = parseVsCodeLinkQuery(asHandled(formatVsCodeLink(l)));
+      assert.ok(r.ok, JSON.stringify(r));
+      assert.deepEqual(r.link, l);
+    }
+    // An alert template appends plain fields to a printed link.
+    const r = parseVsCodeLinkQuery(asHandled(`${p}&p.REGION=eu-1`));
+    assert.ok(r.ok);
+    assert.equal(r.link.params.REGION, 'eu-1');
+    assert.equal(parseVsCodeLinkQuery(asHandled('vscode://smojon.md-runbook/open?url=http%3A%2F%2Fx%2Fa.md')).ok, false, 'https only, as in the app');
+  });
+
+  it('repoPathCandidates: the file in a clone, longest path first; nothing outside a repository', async () => {
+    const { repoPathCandidates, rawRunbookUrl } = await import('@md-runbook/core/runbookLink');
+    assert.deepEqual(repoPathCandidates('https://github.com/acme/ops/blob/main/runbooks/restart.md'), ['runbooks/restart.md', 'restart.md']);
+    assert.deepEqual(repoPathCandidates('https://github.com/acme/ops/blob/feature/x/runbooks/restart.md'), ['x/runbooks/restart.md', 'runbooks/restart.md', 'restart.md'], 'a branch with a slash');
+    assert.deepEqual(repoPathCandidates('https://gitlab.example.net/g/ops/-/blob/main/my%20runbook.md'), ['my runbook.md']);
+    assert.deepEqual(repoPathCandidates('https://github.com/acme/ops/blob/main/../../etc/x.md'), [], 'no ..');
+    assert.deepEqual(repoPathCandidates('https://x.example.net/restart.md'), []);
+    assert.equal(rawRunbookUrl('https://github.com/acme/ops/blob/main/r.md'), 'https://raw.githubusercontent.com/acme/ops/main/r.md');
+  });
+});

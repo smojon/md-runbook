@@ -146,6 +146,7 @@ code per machine. See [Runbook links](../switching.md#runbook-links) for what a 
 | `--param NAME=VALUE` | A parameter value (repeatable) |
 | `--cosign` | Open on Co-sign Runbook |
 | `--web-app URL` | `https://<web app>/open` links instead of `mdrunbook://` (a phone's own camera opens those) |
+| `--vscode` | `md-runbook link` only: links that open the runbook in VS Code (`vscode://smojon.md-runbook/open?…`), for a laptop ([on call](on-call.md#on-a-laptop-vs-code)) |
 | `--labels FILE.csv` | One label per row: `host`, optional `label` (printed under the code), `p.NAME` columns |
 | `--out FILE` | `.svg` for one code; `.html` or `.pdf` for labels (a `.pdf` needs Chrome, Edge or Chromium) |
 | `--link` | Print the links too |

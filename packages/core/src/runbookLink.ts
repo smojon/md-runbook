@@ -111,6 +111,76 @@ export function formatRunbookLink(l: RunbookLink, base: string = APP_LINK_BASE):
   return `${base}?${q.join('&')}`;
 }
 
+/** The extension's link handler: `vscode://smojon.md-runbook/open?…` opens the runbook in VS Code. */
+export const VSCODE_LINK_BASE = 'vscode://smojon.md-runbook/open';
+/** Characters that VS Code's one decoding of a link's query would turn into separators or escapes. */
+const UNSAFE_AFTER_DECODING = /[&=#+%]/;
+
+/**
+ * The link for `l` that opens it in VS Code. VS Code hands the handler the query decoded once, so
+ * a value with `&`, `=`, `#`, `+` or `%` in it would come apart: such links carry the whole app
+ * link, encoded once more, in `link=`. Plain ones (most: a GitHub address, host and parameter
+ * names) read like the app's link, so alert templates can append `&host=…` and `&p.NAME=…`.
+ */
+export function formatVsCodeLink(l: RunbookLink): string {
+  const values = [l.url, l.text !== undefined ? packText(l.text) : undefined, l.sha256, l.host, ...Object.entries(l.params).flat()];
+  if (values.some((v) => v !== undefined && UNSAFE_AFTER_DECODING.test(v))) return `${VSCODE_LINK_BASE}?link=${encodeURIComponent(formatRunbookLink(l))}`;
+  return formatRunbookLink(l, VSCODE_LINK_BASE);
+}
+
+/** Read the query VS Code gave the link handler (decoded once): formatVsCodeLink's two forms. */
+export function parseVsCodeLinkQuery(query: string): ReturnType<typeof parseRunbookLink> {
+  if (query.startsWith('link=')) return parseRunbookLink(query.slice('link='.length));
+  // Encode again what decoding undid, field by field, so URL parsing sees the same values.
+  const fields = query.split('&').map((f) => {
+    const eq = f.indexOf('=');
+    return eq < 0 ? encodeURIComponent(f) : `${encodeURIComponent(f.slice(0, eq))}=${encodeURIComponent(f.slice(eq + 1))}`;
+  });
+  return parseRunbookLink(`${APP_LINK_BASE}?${fields.join('&')}`);
+}
+
+/** The raw file behind a runbook's address: GitHub and GitLab pages give their raw address; only https. */
+export function rawRunbookUrl(link: string): string | undefined {
+  let u: URL;
+  try {
+    u = new URL(link.trim());
+  } catch {
+    return undefined;
+  }
+  if (u.protocol !== 'https:') return undefined;
+  const gh = /^\/([^/]+)\/([^/]+)\/blob\/(.+)$/.exec(u.pathname);
+  if (u.hostname === 'github.com' && gh) return `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/${gh[3]}`;
+  const gl = /^(.+)\/-\/blob\/(.+)$/.exec(u.pathname);
+  if (gl) return `${u.origin}${gl[1]}/-/raw/${gl[2]}${u.search}`;
+  return u.toString();
+}
+
+/**
+ * Where a GitHub or GitLab file could be in a clone of its repository, longest first: the branch
+ * name may have slashes, so each tail of the path after `blob/` is a candidate
+ * (`main/runbooks/x.md` gives `runbooks/x.md`, then `x.md`). Empty for other addresses.
+ */
+export function repoPathCandidates(url: string): string[] {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return [];
+  }
+  const m = /\/(?:-\/)?blob\/(.+)$/.exec(u.pathname);
+  if (!m) return [];
+  let parts: string[];
+  try {
+    parts = m[1]!.split('/').map((p) => decodeURIComponent(p));
+  } catch {
+    return [];
+  }
+  if (parts.some((p) => p === '..' || p === '.' || p === '' || /[\\:]/.test(p))) return [];
+  const out: string[] = [];
+  for (let i = 1; i < parts.length; i++) out.push(parts.slice(i).join('/'));
+  return out.filter((p) => /\.(md|markdown)$/i.test(p));
+}
+
 /** The digest a link pins: SHA-256 of the text without a leading BOM (fetch drops it anyway). */
 export function runbookDigest(text: string): string {
   return sha256Hex(text.replace(/^﻿/, ''));

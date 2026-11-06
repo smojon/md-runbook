@@ -14,7 +14,8 @@ import { registerLint } from './lint';
 import { RunPipeline } from './pipeline';
 import { registerProgress } from './progress';
 import { registerSafety } from './safety';
-import { registerSecrets } from './secrets';
+import { isTestMode, registerSecrets } from './secrets';
+import { registerLinkHandler } from './linkHandler';
 import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
 import { registerSessions } from './session';
 import { registerSigning } from './signing';
@@ -104,6 +105,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerLint(context);
   registerSigning(context);
   registerOpenInApp(context);
+  registerLinkHandler(context, secrets, isTestMode(context));
   registerMakeQr(context);
   registerIncidentCommands(context);
   context.subscriptions.push(

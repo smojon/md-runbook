@@ -322,6 +322,12 @@ class SecretsFeature {
     for (const v of values) m.set(v.name, { ...v, fromAssistant });
   }
 
+  /** Set parameter values for `nb` without asking (a runbook link's values, already checked by parseRunbookLink). */
+  fillParameters(nb: vscode.NotebookDocument, values: Readonly<Record<string, string>>): void {
+    const cache = this.session(this.params, nb);
+    for (const [k, v] of Object.entries(values)) if (VAR_NAME_RE.test(k)) cache.set(k, v);
+  }
+
   /** Ask for every declared parameter (`values` only from the test helper, never from a command link). */
   async setParameters(values?: unknown): Promise<void> {
     const nb = activeRunbook();
@@ -424,6 +430,8 @@ export interface RefValue {
 export interface SecretsInfo {
   /** The references in `source` and their current values, without asking for anything. */
   values(notebook: vscode.NotebookDocument, source: string): RefValue[];
+  /** Fill parameter values for this session (a runbook link's p.NAME=); a run still uses them as values, never as code. */
+  fillParameters(notebook: vscode.NotebookDocument, values: Readonly<Record<string, string>>): void;
 }
 
 /** Test-only helpers are registered only under the extension test runner (or the test harness). */
@@ -465,5 +473,5 @@ export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunP
       if (nb) f.forget(nb);
     }),
   );
-  return { values: (nb, source) => f.peek(nb, source) };
+  return { values: (nb, source) => f.peek(nb, source), fillParameters: (nb, values) => f.fillParameters(nb, values) };
 }
