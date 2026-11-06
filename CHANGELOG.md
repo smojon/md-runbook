@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.18.1
 
 - **Fix: terminal mode could lose a cell's output on a busy machine.** The cell ran in the
   terminal, and you could see it there, but nothing reached the cell's output, so its checks and
