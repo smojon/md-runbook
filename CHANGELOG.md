@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **"Did you mean" for misspelled cell options, with a Quick Fix.** A misspelled option was only
+  reported as unknown. Now the warning suggests the option it was probably meant to be:
+  `unknown cell option "retires" (ignored): did you mean "retry"?`. A suggestion is made for
+  one or two letters off, letters swapped, or an option's plural (`retries`, `timeouts`). In
+  VS Code, the light bulb (or Ctrl+.) offers **Change "retires" to "retry"**, which renames the
+  option on the fence and keeps its value. This works in the runbook view and in the Markdown
+  editor. `md-runbook lint` prints the suggestion too.
+- **Terminal mode off: an offer to turn it on.** A cell marked `terminal` that ran while terminal
+  mode was off showed a green tick with empty answers, and the note explaining why ran off the
+  edge of the output. Now the note is two short lines. Once per session, a notification offers
+  **Turn On and Run Again**: it sets `"mdRunbook.terminal.mode": "perCell"` in your user settings
+  and runs the cell again in a terminal.
+
 ## 0.18.1
 
 - **Fix: terminal mode could lose a cell's output on a busy machine.** The cell ran in the

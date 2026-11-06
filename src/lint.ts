@@ -5,17 +5,62 @@
 
 import * as vscode from 'vscode';
 import { SECTION } from './config';
+import { isCodeMeta } from '@md-runbook/core';
+import { renameInfoOption } from '@md-runbook/core/cellOptions';
 import { LintProblem, lintRunbook } from '@md-runbook/core/lint';
+import { withInfo } from '@md-runbook/core/proposal';
+import { META_KEY } from './outputs';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
 import { timed } from './timings';
 
 const DELAY_MS = 300;
+/** The diagnostic code of an unknown option that looks like a typo (a Quick Fix renames it). */
+const TYPO_CODE = 'unknown-cell-option';
+/** Its fix, read back from the message: the code action gets copies of the diagnostics, without extra fields. */
+const TYPO_RE = /unknown cell option "([^"]+)" \(ignored\): did you mean "([^"]+)"\?/;
+const FENCE_LINE_RE = /^(\s*(?:`{3,}|~{3,}))(.*)$/;
 
 function toDiagnostic(p: LintProblem, range: vscode.Range, prefix = ''): vscode.Diagnostic {
   const d = new vscode.Diagnostic(range, prefix + p.message, p.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning);
   d.source = 'md-runbook';
+  if (p.fix) d.code = TYPO_CODE;
   return d;
 }
+
+/**
+ * Quick Fix for a misspelled cell option: rename it on the fence, in the runbook view (the cell's
+ * fence options, kept in its metadata) and in the Markdown text (the fence line).
+ */
+const typoFixes: vscode.CodeActionProvider = {
+  provideCodeActions(doc, _range, context) {
+    const actions: vscode.CodeAction[] = [];
+    for (const d of context.diagnostics) {
+      const m = d.source === 'md-runbook' && d.code === TYPO_CODE ? TYPO_RE.exec(d.message) : null;
+      if (!m) continue;
+      const [, from, to] = m as unknown as [string, string, string];
+      const edit = new vscode.WorkspaceEdit();
+      if (doc.uri.scheme === 'vscode-notebook-cell') {
+        const cell = vscode.workspace.notebookDocuments.flatMap((nb) => nb.getCells()).find((c) => c.document.uri.toString() === doc.uri.toString());
+        const meta: unknown = cell?.metadata?.[META_KEY];
+        const info = cell && isCodeMeta(meta) ? renameInfoOption(meta.info, from, to) : undefined;
+        if (!cell || !isCodeMeta(meta) || info === undefined) continue;
+        edit.set(cell.notebook.uri, [vscode.NotebookEdit.updateCellMetadata(cell.index, { ...cell.metadata, [META_KEY]: withInfo(meta, info) })]);
+      } else {
+        const line = doc.lineAt(d.range.start.line);
+        const fence = FENCE_LINE_RE.exec(line.text);
+        const info = fence ? renameInfoOption(fence[2]!, from, to) : undefined;
+        if (!fence || info === undefined) continue;
+        edit.replace(doc.uri, line.range, fence[1]! + info);
+      }
+      const action = new vscode.CodeAction(`Change "${from}" to "${to}"`, vscode.CodeActionKind.QuickFix);
+      action.diagnostics = [d];
+      action.isPreferred = true;
+      action.edit = edit;
+      actions.push(action);
+    }
+    return actions;
+  },
+};
 
 const lineRange = (doc: vscode.TextDocument, line: number): vscode.Range => {
   const l = doc.lineAt(Math.min(Math.max(line, 0), Math.max(doc.lineCount - 1, 0)));
@@ -85,6 +130,9 @@ export function registerLint(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     collection,
+    vscode.languages.registerCodeActionsProvider([{ scheme: 'vscode-notebook-cell' }, { language: 'markdown' }], typoFixes, {
+      providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+    }),
     { dispose: () => timers.forEach((t) => clearTimeout(t)) },
     vscode.workspace.onDidOpenNotebookDocument((nb) => isRunbook(nb) && timed('lint', nb.uri.fsPath, () => lintNotebook(nb))),
     vscode.workspace.onDidChangeNotebookDocument((e) => isRunbook(e.notebook) && later(e.notebook.uri.toString(), () => lintNotebook(e.notebook))),

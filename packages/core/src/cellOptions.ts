@@ -119,6 +119,21 @@ export function rewriteInfoTokens(info: string, replace: (t: InfoToken) => strin
 }
 
 /**
+ * `info` with the first option named `from` (any case) renamed to `to`, its value kept as written
+ * (a typo's fix); undefined when there is no such option.
+ */
+export function renameInfoOption(info: string, from: string, to: string): string | undefined {
+  const off = (LANG_RE.exec(info)?.[0] ?? '').length;
+  let found = false;
+  const out = rewriteInfoTokens(info, (t) => {
+    if (found || t.key.toLowerCase() !== from.toLowerCase()) return undefined;
+    found = true;
+    return to + info.slice(off + t.start + t.key.length, off + t.end);
+  });
+  return found ? out : undefined;
+}
+
+/**
  * The `${…}` references a block uses: in its code, then in its checks (expect=, expect-not=),
  * which are filled in before they are judged, then its kube-context's (`kube-context=${param:NAME}`,
  * or the front matter's for a block without one). Only the code's are rewritten into the script.

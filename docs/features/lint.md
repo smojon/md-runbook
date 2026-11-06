@@ -12,7 +12,7 @@ option on purpose, to show a marker.
 | An invalid cell option value (`timeout=abc`, `os=dos`, `expect=/(/`) | error |
 | `${out:NAME}` with no earlier block that has `capture=NAME` | error |
 | A name used as two kinds of placeholder (`${input:X}` and `${param:X}`) | error |
-| An unknown cell option (`retires=3`): it is ignored | warning |
+| An unknown cell option (`retires=3`): it is ignored. A likely typo gets a suggestion (`did you mean "retry"?`): one or two letters off, or the plural of an option (`retries`) | warning |
 | `every=` without `retry=` | warning |
 | `${param:NAME}` not declared under `params:` in the front matter (no default; the command line needs `--param`) | warning |
 | A front matter `mode:`, `timeout:` or `cwd:` value that is ignored (`mode: sometimes`) | warning |
@@ -23,6 +23,11 @@ option on purpose, to show a marker.
 Problems are underlined in the runbook view (on the cell that has them; problems with a block's
 fence options are marked on the cell's first line) and in the plain Markdown editor, and they are
 listed in the **Problems** panel. Turn this off with `"mdRunbook.lint.enabled": false`.
+
+A misspelled option with a suggestion has a **Quick Fix**: click the light bulb on the cell, or
+press Ctrl+. (Cmd+. on macOS), then choose **Change "retires" to "retry"**. It renames the option
+on the block's fence and keeps its value as written. This works in the runbook view and in the
+Markdown editor.
 
 ## On the command line
 

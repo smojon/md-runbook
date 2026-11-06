@@ -83,7 +83,9 @@ Tokens are separated by spaces or tabs. There are three forms:
 - Keys are case-insensitive. The variable name in `env.NAME=` keeps its case.
 - Backslashes are literal: `cwd="C:\Program Files\x"` works as written.
 - A pandoc attribute block `{…}` is skipped. Anything else that is not a known option is
-  ignored; the linter reports it as a warning (`unknown cell option "retires" (ignored)`).
+  ignored; the linter reports it as a warning. It also suggests the option a typo was probably
+  meant to be (`unknown cell option "retires" (ignored): did you mean "retry"?`), and in VS Code
+  a Quick Fix renames it.
 - A known option with an invalid value (`timeout=abc`, `os=dos`, `expect=/(/`) is an error:
   the linter reports it and the cell does not run (`invalid cell option timeout=abc: …`).
 - The same key written twice: the last one wins (`capture=` may be repeated and all are kept).

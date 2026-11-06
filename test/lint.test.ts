@@ -23,9 +23,28 @@ describe('lintRunbook', () => {
   it('reports invalid and unknown options, every= without retry=', () => {
     assert.deepEqual(messages(fence('bash timeout=x retires=3 every=1s', 'echo')), [
       '1 error: invalid cell option timeout=x: expected seconds (0 = none)',
-      '1 warning: unknown cell option "retires" (ignored)',
+      '1 warning: unknown cell option "retires" (ignored): did you mean "retry"?',
       '1 warning: every= has no effect without retry=',
     ]);
+  });
+
+  it('suggests the option a typo or a plural was meant to be, and only one', () => {
+    const fixes = (info: string) => lintRunbook(fence(info, 'echo')).map((p) => p.fix);
+    assert.deepEqual(fixes('bash retires=3'), [{ option: 'retires', to: 'retry' }], 'letters swapped, plural');
+    assert.deepEqual(fixes('bash retries=3'), [{ option: 'retries', to: 'retry' }], 'plural');
+    assert.deepEqual(fixes('bash timout=5'), [{ option: 'timout', to: 'timeout' }], 'a letter missing');
+    assert.deepEqual(fixes('bash Expect-Exti=0'), [{ option: 'Expect-Exti', to: 'expect-exit' }], 'any case');
+    assert.deepEqual(fixes('bash colour=red'), [undefined], 'nothing close');
+    assert.deepEqual(fixes('bash xs'), [{ option: 'xs', to: 'os' }], 'short names: one letter off');
+    assert.deepEqual(fixes('bash zz'), [undefined], 'short names: not two letters off');
+    assert.deepEqual(messages(fence('bash colour=red', 'echo')), ['1 warning: unknown cell option "colour" (ignored)']);
+  });
+
+  it('renameInfoOption renames one option and keeps the rest of the fence as written', async () => {
+    const { renameInfoOption } = await import('@md-runbook/core/cellOptions');
+    assert.equal(renameInfoOption('bash  retires=3 every="1s"  name=x', 'retires', 'retry'), 'bash  retry=3 every="1s"  name=x');
+    assert.equal(renameInfoOption('bash Terminl', 'terminl', 'terminal'), 'bash terminal');
+    assert.equal(renameInfoOption('bash name="retires=3"', 'retires', 'retry'), undefined, 'not inside a quoted value');
   });
 
   it('reports ${out:} before its capture and undeclared ${param:}, on the line that uses them', () => {

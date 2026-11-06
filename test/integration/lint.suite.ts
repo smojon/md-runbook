@@ -35,4 +35,35 @@ export const tests: Test[] = [
       }
     },
   },
+  {
+    name: 'lint: a misspelled option has a Quick Fix that renames it on the fence',
+    fn: async () => {
+      const uri = writeFile('lint-fix.md', '# Fix\n\n```bash retires=3 name="retires"\necho a\n```\n');
+      try {
+        const editor = await openRunbook(uri);
+        const cell = editor.notebook.cellAt(1);
+        const markers = (): Thenable<string[]> => vscode.commands.executeCommand<string[]>('mdRunbook._diagnostics', cell.document.uri);
+        let found: string[] = [];
+        const end = Date.now() + 15_000;
+        while (!(found = await markers()).some((m) => /did you mean "retry"\?/.test(m))) {
+          if (Date.now() > end) throw new Error(`no typo marker; got ${JSON.stringify(found)}`);
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>('vscode.executeCodeActionProvider', cell.document.uri, new vscode.Range(0, 0, 0, 1), vscode.CodeActionKind.QuickFix.value);
+        const fix = actions.find((a) => a.title === 'Change "retires" to "retry"');
+        assert.ok(fix?.edit, JSON.stringify(actions.map((a) => a.title)));
+        assert.ok(await vscode.workspace.applyEdit(fix.edit));
+        const info = (editor.notebook.cellAt(1).metadata as { mdRunbook?: { info?: string } }).mdRunbook?.info;
+        assert.equal(info, 'bash retry=3 name="retires"', 'only the option is renamed, not the value');
+        const end2 = Date.now() + 15_000;
+        while ((found = await markers()).some((m) => /retires/.test(m))) {
+          if (Date.now() > end2) throw new Error(`marker still there: ${JSON.stringify(found)}`);
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      } finally {
+        await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+        await closeAll();
+      }
+    },
+  },
 ];

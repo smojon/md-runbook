@@ -348,18 +348,41 @@ export function registerTerminal(context: vscode.ExtensionContext, pipeline: Run
     },
   };
 
+  /**
+   * Once per session, for a `terminal` cell run while terminal mode is off: offer to turn it on
+   * (the user setting) and run the cell again, once this run has ended.
+   */
+  let offered = false;
+  const offerTerminalMode = async (cell: vscode.NotebookCell, running: Promise<unknown>): Promise<void> => {
+    if (offered) return;
+    offered = true;
+    const turnOn = 'Turn On and Run Again';
+    const choice = await vscode.window.showInformationMessage(
+      'This cell asks for input, but terminal mode is off, so its prompts got no answer. Turn on terminal mode? Cells marked terminal then run in a VS Code terminal, where you type the answers.',
+      turnOn,
+      'Not Now',
+    );
+    if (choice !== turnOn) return;
+    await vscode.workspace.getConfiguration(SECTION).update('terminal.mode', 'perCell', vscode.ConfigurationTarget.Global);
+    await running.catch(() => undefined);
+    if (cell.notebook.isClosed || cell.index < 0) return;
+    await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: cell.index, end: cell.index + 1 }], document: cell.notebook.uri });
+  };
+
   const fallback = pipeline.executorFor;
   pipeline.executorFor = (nb) => {
     const base = fallback(nb);
     const mode = terminalMode();
     if (mode === 'off') {
-      // Say why a `terminal` cell gets no input instead of ignoring the option silently.
+      // Say why a `terminal` cell gets no input instead of ignoring the option silently; short
+      // lines, so the note isn't cut off at the output's edge.
       return {
         execute: (plan, io, ctx) => {
-          if (wantsTerminal(ctx.cell)) {
-            io.onStderr('[md-runbook] terminal option ignored: set "mdRunbook.terminal.mode" to "perCell" in your user settings to answer prompts\n');
-          }
-          return base.execute(plan, io, ctx);
+          if (!wantsTerminal(ctx.cell)) return base.execute(plan, io, ctx);
+          io.onStderr('[md-runbook] Terminal mode is off, so this cell\'s prompts get no answer.\n[md-runbook] To answer them: "mdRunbook.terminal.mode": "perCell" (user settings).\n');
+          const running = base.execute(plan, io, ctx);
+          void offerTerminalMode(ctx.cell, running);
+          return running;
         },
       };
     }

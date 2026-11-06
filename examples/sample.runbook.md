@@ -220,8 +220,9 @@ echo "DEMO_VAR=${DEMO_VAR:-unset}, now in $(pwd)"
 
 ## 11. Interactive prompts (terminal mode)
 
-Normal runs have no input attached, so a prompt gets nothing and moves on at once. To answer
-prompts, turn on terminal mode in your **user** settings:
+Normal runs have no input attached, so a prompt gets nothing and moves on at once. If you run
+the next cell with terminal mode off, md-runbook offers to turn it on and run the cell again
+(**Turn On and Run Again**). Or turn it on yourself in your **user** settings:
 
 ```json
 "mdRunbook.terminal.mode": "perCell"
@@ -402,7 +403,9 @@ echo "Temp folder: ${TMPDIR:-/tmp}"
 machine.
 
 **Problems:** the next block has a misspelled option on purpose (`retires=3`). It is underlined
-on the cell and listed in the **Problems** panel; when it runs, the option is ignored.
+on the cell and listed in the **Problems** panel, with a suggestion (`did you mean "retry"?`).
+When it runs, the option is ignored. To fix it, click the light bulb on the cell (or press
+Ctrl+.) and choose **Change "retires" to "retry"**.
 
 ```bash retires=3
 echo "the misspelled option is ignored"

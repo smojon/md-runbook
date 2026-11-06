@@ -24,6 +24,8 @@ export interface LintProblem {
   line: number;
   /** For problems inside a code block: its cell index and the 0-based line in its source (undefined: the fence line). */
   cell?: { index: number; sourceLine?: number };
+  /** An unknown option that looks like a typo: rename `option` to `to` on the fence line (renameInfoOption). */
+  fix?: { option: string; to: string };
 }
 
 const KNOWN_OPTIONS = new Set([
@@ -35,6 +37,45 @@ const KNOWN_OPTIONS = new Set([
 ]);
 
 const LANG_RE = /^\s*[^\s{]*/;
+
+/** Edits from `a` to `b`: inserting, deleting or changing a letter, or swapping two neighbours (retires/retries). */
+function editDistance(a: string, b: string): number {
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, d[i - 2]![j - 2]! + 1);
+      d[i]![j] = v;
+    }
+  }
+  return d[a.length]![b.length]!;
+}
+
+/**
+ * The known option an unknown one was probably meant to be: one or two letters off (one for short
+ * names), its plural counting as the option (retries, timeouts), and only when one option is
+ * nearest. Undefined otherwise.
+ */
+export function suggestOption(key: string): string | undefined {
+  const k = key.toLowerCase();
+  const max = k.length <= 4 ? 1 : 2;
+  let best: string | undefined;
+  let bestDistance = Infinity;
+  let tie = false;
+  for (const option of KNOWN_OPTIONS) {
+    const plural = option.endsWith('y') ? `${option.slice(0, -1)}ies` : `${option}s`;
+    const distance = Math.min(editDistance(k, option), editDistance(k, plural));
+    if (distance < bestDistance) {
+      best = option;
+      bestDistance = distance;
+      tie = false;
+    } else if (distance === bestDistance) {
+      tie = true;
+    }
+  }
+  return best !== undefined && bestDistance <= max && !tie ? best : undefined;
+}
 
 /**
  * Variables that change what every cell runs, not only how: a front matter that sets them takes
@@ -164,12 +205,13 @@ export function lintRunbook(text: string): LintProblem[] {
   for (const loc of locs) {
     const cell = doc.cells[loc.cellIndex]!;
     if (!isCodeMeta(cell.meta) || !shellKindForLanguage(loc.language)) continue;
-    const at = (severity: LintSeverity, message: string, sourceLine?: number): void =>
+    const at = (severity: LintSeverity, message: string, sourceLine?: number, fix?: LintProblem['fix']): void =>
       void problems.push({
         severity,
         message,
         line: sourceLine === undefined ? loc.line : loc.line + 1 + sourceLine,
         cell: { index: loc.cellIndex, ...(sourceLine !== undefined ? { sourceLine } : {}) },
+        ...(fix ? { fix } : {}),
       });
 
     const opts = parseCellOptions(loc.info);
@@ -177,7 +219,10 @@ export function lintRunbook(text: string): LintProblem[] {
     const rest = loc.info.replace(LANG_RE, '');
     for (const t of tokenizeInfo(rest)) {
       const key = t.key.toLowerCase();
-      if (!KNOWN_OPTIONS.has(key) && !(key.startsWith('env.') && key.length > 4)) at('warning', `unknown cell option "${t.key}" (ignored)`);
+      if (KNOWN_OPTIONS.has(key) || (key.startsWith('env.') && key.length > 4)) continue;
+      const meant = suggestOption(key);
+      if (meant) at('warning', `unknown cell option "${t.key}" (ignored): did you mean "${meant}"?`, undefined, { option: t.key, to: meant });
+      else at('warning', `unknown cell option "${t.key}" (ignored)`);
     }
     if (/(^|\s)every=/i.test(rest) && !opts.retry) at('warning', 'every= has no effect without retry=');
     if (opts.host && fm?.env) {
