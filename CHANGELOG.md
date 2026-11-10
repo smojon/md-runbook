@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.20.0
+
 - **How long it takes: `estimate=`.** Annotate a block with the time a real run took
   (`estimate=2m30s`, the durations `every=` takes, or plain seconds; it never changes how the
   block runs). The extension shows it on the block's status line and, while the block runs, a
