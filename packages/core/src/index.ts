@@ -70,4 +70,22 @@ export {
   splitStderrMarks,
   styledSpans,
 } from './outputColors';
+export {
+  BlockProgress,
+  EstimateState,
+  EstimateStep,
+  EstimateSummary,
+  RunbookEstimate,
+  SectionEstimate,
+  blockProgress,
+  estimateRunbook,
+  formatBlockProgress,
+  formatEstimate,
+  formatLeft,
+  formatRunbookEstimate,
+  isOverEstimate,
+  progressBar,
+  runbookEstimate,
+  withoutEstimate,
+} from './estimate';
 export { Heading, headingsOf, runbookTitle, withoutFrontMatter } from './title';

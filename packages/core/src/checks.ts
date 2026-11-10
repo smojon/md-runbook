@@ -216,11 +216,24 @@ export function evaluateChecks(c: CellChecks, exitCode: number, output: string, 
   return { ok, failures, captured, secretValues };
 }
 
-/** `15`, `15s`, `500ms`, `2m` → milliseconds, or undefined if invalid. */
+const UNIT_MS: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1000, ms: 1 };
+
+/**
+ * A duration → milliseconds, or undefined if invalid: `15` (seconds), `15s`, `500ms`, `2m`,
+ * and units in a row from the largest down, `2m30s`, `1h5m` (every=, estimate=).
+ */
 export function parseInterval(value: string): number | undefined {
-  const m = /^(\d+(?:\.\d+)?)(ms|s|m)?$/i.exec(value.trim());
-  if (!m) return undefined;
-  const n = Number(m[1]);
-  const unit = (m[2] ?? 's').toLowerCase();
-  return Math.round(unit === 'ms' ? n : unit === 'm' ? n * 60_000 : n * 1000);
+  const v = value.trim();
+  if (/^\d+(?:\.\d+)?$/.test(v)) return Math.round(Number(v) * 1000);
+  if (!/^(?:\d+(?:\.\d+)?(?:ms|h|m|s))+$/i.test(v)) return undefined;
+  let total = 0;
+  let last = Infinity;
+  for (const [, n, u] of v.matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/gi)) {
+    const unit = UNIT_MS[u!.toLowerCase()]!;
+    // Each unit once and from the largest down: `30s2m` or `1m1m` is a typo, not a duration.
+    if (unit >= last) return undefined;
+    last = unit;
+    total += Number(n) * unit;
+  }
+  return Math.round(total);
 }

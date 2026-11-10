@@ -9,6 +9,7 @@ import { parseCellOptions } from './cellOptions';
 import { isCodeMeta } from './model';
 import { osGroups, osLabel, stepNumbers } from './os';
 import { formatLocalIso } from './outputBlock';
+import { formatEstimate } from './estimate';
 import { parse } from './parser';
 import { MILESTONES, Timeline, buildTimeline, formatSeconds } from './incident';
 import { recordSigners, recordStatus } from './record';
@@ -127,15 +128,17 @@ export function renderReport(text: string, opts: ReportOptions): string {
     const shell = cell.meta.lang;
     const code = redact(cell.value);
     const firstLine = code.split('\n').find((l) => l.trim() !== '')?.trim() ?? '';
+    const estimate = parseCellOptions(cell.meta.info).estimateSeconds;
+    const est = estimate !== undefined ? `est. ${formatEstimate(estimate)}` : undefined;
     rows +=
       `<tr class="${st}"><td><a href="#${anchor}">${n}</a></td><td><code>${escapeHtml(firstLine)}</code></td>` +
       `<td>${escapeHtml(shell)}</td><td>${mark}</td>` +
-      `<td>${escapeHtml(a.ran ?? '')}</td><td>${escapeHtml(a.duration ?? '')}</td></tr>\n`;
+      `<td>${escapeHtml(a.ran ?? '')}</td><td>${escapeHtml([a.duration, est].filter(Boolean).join(' · '))}</td></tr>\n`;
 
     body += `<section class="step ${st}" id="${anchor}">\n<div class="step-head">Step ${n}${alternative ? ' (alternative)' : ''}</div>\n`;
     body += renderCodeBlock(code, shell);
     if (cell.output) {
-      const meta = [a.ran && `ran ${a.ran}`, a.duration].filter(Boolean).map((s) => escapeHtml(s as string));
+      const meta = [a.ran && `ran ${a.ran}`, a.duration, est].filter(Boolean).map((s) => escapeHtml(s as string));
       body +=
         `<div class="output"><div class="output-head">${mark} ${meta.join(' · ')}</div>` +
         `<pre>${escapeHtml(redact(stripAnsi(cell.output.text)))}</pre></div>\n`;

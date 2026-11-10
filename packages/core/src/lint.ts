@@ -30,7 +30,7 @@ export interface LintProblem {
 
 const KNOWN_OPTIONS = new Set([
   // cellOptions.ts
-  'timeout', 'cwd', 'continue-on-error', 'skip', 'confirm', 'no-confirm', 'terminal', 'name',
+  'timeout', 'estimate', 'cwd', 'continue-on-error', 'skip', 'confirm', 'no-confirm', 'terminal', 'name',
   'expect', 'expect-not', 'expect-exit', 'capture', 'capture-secret', 'os', 'host', 'kube-context', 'lines', 'retry', 'every',
   // proposal.ts (assistant proposals and approvals)
   'proposed', 'by', 'reason', 'approved', 'approved-by', 'approved-at',
