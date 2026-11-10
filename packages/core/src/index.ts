@@ -86,6 +86,7 @@ export {
   isOverEstimate,
   progressBar,
   runbookEstimate,
+  textEstimateSteps,
   withoutEstimate,
 } from './estimate';
 export { Heading, headingsOf, runbookTitle, withoutFrontMatter } from './title';

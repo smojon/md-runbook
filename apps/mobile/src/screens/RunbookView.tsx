@@ -47,7 +47,9 @@ import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
-import type { Progress } from '@md-runbook/core';
+import type { Progress, RunbookEstimate } from '@md-runbook/core';
+import { formatLeft, runbookEstimate, textEstimateSteps } from '@md-runbook/core/estimate';
+import { TimeBar, useNow } from '../ui/TimeBar';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId, signSshsig } from '@md-runbook/ssh';
 import { approvalOf, approveCell, rejectCell } from '../approvals/store';
@@ -105,6 +107,8 @@ interface Running extends RunRequest {
   paused?: Paused;
   /** retry=: the attempt running (or, with `waitMs`, failed and waiting for the next one). */
   attempt?: { n: number; of: number; waitMs?: number };
+  /** When it started (Date.now()): the bars against the estimates (estimate=). */
+  startedAt: number;
 }
 
 interface Paused {
@@ -203,6 +207,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [groupPick, setGroupPick] = useState<number | undefined>();
   const [groupRun, setGroupRun] = useState<{ group: string; results: { host: string; ok: boolean | undefined }[] } | undefined>();
   const [running, setRunning] = useState<Running | undefined>();
+  // By the blocks' estimates (estimate=): done over the total and the time left, the running cell
+  // counting what is left of its own estimate.
+  const estimateSteps = useMemo(() => (runbook ? textEstimateSteps(runbook.text) : []), [runbook]);
+  const now = useNow(running !== undefined && estimateSteps.some((s) => s.estimateSeconds !== undefined));
+  const estimate = runbookEstimate(
+    estimateSteps.map((s) =>
+      running && s.cell === running.cellIndex
+        ? { ...s, state: 'running' as const, elapsedSeconds: Math.max(0, (now - running.startedAt) / 1000) }
+        : s,
+    ),
+  );
   const [trust, setTrust] = useState<Trust | undefined>();
   // A cell whose host= names a host other than the selected one waits for a yes, once per host
   // while the runbook is open (a shared runbook could otherwise pick your production server).
@@ -365,7 +380,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const abort = new AbortController();
     setNotice(undefined);
     setTrust(undefined);
-    setRunning({ ...request, live: '', abort });
+    setRunning({ ...request, live: '', abort, startedAt: new Date().getTime() });
     const update = (f: (r: Running) => Running): void => setRunning((r) => (r && r.cellIndex === cellIndex ? f(r) : r));
     // Step through: the first command runs at once, then the run waits before each of the others.
     // At breakpoints: the run waits before each command with one; Run next then waits before the
@@ -1122,6 +1137,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           <View>
             <RunBar
               progress={progress}
+              estimate={estimate}
               canRun={host !== undefined}
               running={queued}
               onRun={runSequence}
@@ -1469,6 +1485,7 @@ function ProblemsCard({
  */
 function RunBar({
   progress,
+  estimate,
   canRun,
   running,
   onRun,
@@ -1476,6 +1493,8 @@ function RunBar({
   onMore,
 }: {
   progress: Progress | undefined;
+  /** By the blocks' estimates; shown when one has an estimate. */
+  estimate?: RunbookEstimate;
   canRun: boolean;
   running: boolean;
   onRun(from: 'start' | 'resume'): void;
@@ -1510,6 +1529,18 @@ function RunBar({
           {t.progressDone(complete, progress.total)}
           {progress.firstFailed ? t.progressFailed(progress.firstFailed.step) : ''}
         </Text>
+        {estimate?.fraction !== undefined ? (
+          <View testID="run-estimate" style={styles.estimateRow}>
+            <TimeBar fraction={estimate.fraction} />
+            <Text testID="run-estimate-text" style={styles.secondaryText}>
+              {[
+                t.estimateDone(Math.floor(estimate.fraction * 100)),
+                estimate.leftSeconds > 0 ? t.estimateLeft(formatLeft(estimate.leftSeconds)) : t.estimateNothingLeft,
+                ...(estimate.unestimatedLeft > 0 ? [t.withoutEstimate(estimate.unestimatedLeft)] : []),
+              ].join(' · ')}
+            </Text>
+          </View>
+        ) : null}
         {resume && !running ? (
           <Pressable testID="run-from-start" accessibilityRole="button" onPress={() => onRun('start')}>
             <Text style={styles.secondaryText}>{t.runFromStart}</Text>
@@ -2053,6 +2084,7 @@ const useStyles = themedStyles((c) => ({
   runProgress: { fontSize: 14, color: c.text },
   inputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4 },
   grow: { flex: 1 },
+  estimateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   params: { marginVertical: 6 },
   paramsTitle: { fontSize: 13, color: c.muted, marginBottom: 4 },
   param: { marginBottom: 8 },

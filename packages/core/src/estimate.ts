@@ -8,6 +8,7 @@ import { parseCellOptions } from './cellOptions';
 import { isCodeMeta } from './model';
 import { OsName, osGroups } from './os';
 import { parse } from './parser';
+import { stepState } from './progress';
 import { headingsOf, withoutFrontMatter } from './title';
 
 /** `2m30s`, `45s`, `1h5m`, `0.5s`: the shortest form parseInterval reads back. */
@@ -80,6 +81,8 @@ export interface EstimateStep {
   state: EstimateState;
   /** For the running block: how long it has run. */
   elapsedSeconds?: number;
+  /** The block's cell index, where known (textEstimateSteps). */
+  cell?: number;
 }
 
 export interface RunbookEstimate {
@@ -225,4 +228,30 @@ export function estimateRunbook(text: string, here?: OsName): EstimateSummary {
     perCell,
     counts,
   };
+}
+
+/**
+ * A runbook's blocks as estimate steps from its text, for the app (cells run over SSH): every
+ * code cell but `skip` blocks and the `os=` alternatives for another system (`here`, the
+ * remote's), each done by its output's exit (stepState); `running` is the cell running now.
+ * `host=` blocks count: they run there.
+ */
+export function textEstimateSteps(text: string, running?: { cellIndex: number; elapsedSeconds: number }, here: OsName = 'linux'): EstimateStep[] {
+  const cells = parse(text).cells;
+  const opts = cells.map((c) => (c.kind === 'code' && isCodeMeta(c.meta) ? parseCellOptions(c.meta.info) : undefined));
+  const slots = osGroups(
+    cells.map((c, i) => ({ kind: c.kind, ...(opts[i]?.os ? { os: opts[i]!.os } : {}) })),
+    here,
+  );
+  const steps: EstimateStep[] = [];
+  cells.forEach((c, i) => {
+    const o = opts[i];
+    if (c.kind !== 'code' || o?.skip || (slots[i] && !slots[i]!.active)) return;
+    const e = o?.estimateSeconds !== undefined ? { estimateSeconds: o.estimateSeconds } : {};
+    if (running?.cellIndex === i) return void steps.push({ ...e, cell: i, state: 'running', elapsedSeconds: running.elapsedSeconds });
+    const a = c.output?.attrs;
+    const state = stepState(a?.exit, a?.lines !== undefined, a?.check);
+    steps.push({ ...e, cell: i, state: state === 'done' || state === 'skipped' ? 'done' : 'pending' });
+  });
+  return steps;
 }

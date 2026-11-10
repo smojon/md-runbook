@@ -14,6 +14,7 @@ import {
   isOverEstimate,
   progressBar,
   runbookEstimate,
+  textEstimateSteps,
 } from '@md-runbook/core/estimate';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
@@ -195,6 +196,33 @@ describe('estimateRunbook', () => {
     const s = estimateRunbook('# T\n\n' + fence('bash estimate=soon'));
     assert.equal(s.unestimated, 1);
     assert.equal(s.totalSeconds, 0);
+  });
+});
+
+describe('textEstimateSteps (the app)', () => {
+  const out = (exit: string): string => `<!-- md-runbook:output start exit=${exit} -->\n\`\`\`text\nx\n\`\`\`\n<!-- md-runbook:output end -->\n\n`;
+  it('done by the outputs, the running cell, skip and other systems left out, host= counted', () => {
+    const md =
+      '# T\n\n' +
+      fence('bash estimate=1m').trimEnd() + '\n' + out('0') +
+      fence('bash estimate=2m').trimEnd() + '\n' + out('1') +
+      fence('bash estimate=3m host=web') +
+      fence('bash estimate=4m skip') +
+      fence('pwsh os=windows estimate=5m') +
+      fence('bash os=linux estimate=6m');
+    const steps = textEstimateSteps(md, { cellIndex: 3, elapsedSeconds: 30 });
+    assert.deepEqual(
+      steps.map((s) => [s.cell, s.estimateSeconds, s.state, s.elapsedSeconds]),
+      [
+        [1, 60, 'done', undefined],
+        [2, 120, 'pending', undefined],
+        [3, 180, 'running', 30],
+        [6, 360, 'pending', undefined],
+      ],
+    );
+    const e = runbookEstimate(steps);
+    assert.equal(e.leftSeconds, 120 + 150 + 360);
+    assert.equal(textEstimateSteps(md, undefined, 'windows').find((s) => s.estimateSeconds === 300)?.cell, 5);
   });
 });
 

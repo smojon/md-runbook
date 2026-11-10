@@ -4,7 +4,8 @@
  * command's actions (Run line, Run lines 1-N, Run lines N-end, Check), checked commands get a
  * mark beside them, a status line (checked-lines run, language and options) and the output.
  */
-import { ParsedCell, isCodeMeta, outputSummary, parseLineSet, shellKindForLanguage } from '@md-runbook/core';
+import { ParsedCell, blockProgress, formatEstimate, isCodeMeta, outputSummary, parseLineSet, shellKindForLanguage } from '@md-runbook/core';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { OutputText } from './OutputText';
 import { CloudView } from './CloudView';
 import { cloudView } from '@md-runbook/core/cloudViews';
@@ -20,6 +21,7 @@ import { LineMode, cellSteps, lineLabel } from '../ssh/lineRuns';
 import { Palette, mono, themedStyles, usePalette } from '../theme';
 import { Codicon, CodiconName } from '../ui/Codicon';
 import type { LintProblem } from '../runbooks/lint';
+import { TimeBar, useNow } from '../ui/TimeBar';
 
 export interface CellRun {
   live: string;
@@ -29,6 +31,8 @@ export interface CellRun {
   paused?: { step: { start: number; end: number }; next(): void; cont(): void };
   /** retry=: the attempt running, or (with `waitMs`) the one that failed while the next waits. */
   attempt?: { n: number; of: number; waitMs?: number };
+  /** When the run started (Date.now()), for the bar against the cell's estimate=. */
+  startedAt?: number;
 }
 
 export interface CodeCellProps {
@@ -104,6 +108,11 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
           ? undefined
           : { icon: 'error', color: c.error, label: t.ranFailed };
   const info = isCodeMeta(cell.meta) ? cell.meta.info : cell.languageId;
+  // estimate=: how long the cell takes; while it runs, a bar against it (full at it, then "over").
+  const estimate = isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).estimateSeconds : undefined;
+  const now = useNow(running?.startedAt !== undefined && estimate !== undefined);
+  const elapsed = running?.startedAt !== undefined ? Math.max(0, (now - running.startedAt) / 1000) : undefined;
+  const timing = estimate !== undefined && elapsed !== undefined ? blockProgress(elapsed, estimate) : undefined;
   const problems = p.problems ?? NO_PROBLEMS;
   // The worst problem on each source line, for a mark beside it.
   const problemLines = new Map<number, LintProblem['severity']>();
@@ -247,6 +256,12 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
             </View>
           ) : null}
         </View>
+        {estimate !== undefined ? (
+          <View testID={`cell-${index}-estimate`} style={styles.estimate}>
+            <Codicon name="watch" size={12} color={c.muted} />
+            <Text style={styles.statusText}>{t.estimate(formatEstimate(estimate))}</Text>
+          </View>
+        ) : null}
         <Text style={styles.statusText} numberOfLines={1}>
           {info}
         </Text>
@@ -311,6 +326,16 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                   : t.running}
             </Text>
           )}
+          {timing && estimate !== undefined && elapsed !== undefined ? (
+            <View testID={`cell-${index}-timing`} style={styles.timing}>
+              <TimeBar fraction={timing.fraction} over={timing.overSeconds > 0} />
+              <Text style={[styles.outputHeader, timing.overSeconds > 0 && styles.overText]}>
+                {timing.overSeconds > 0
+                  ? t.estimateOver(formatEstimate(timing.overSeconds), formatEstimate(estimate))
+                  : t.estimateOf(formatEstimate(elapsed), formatEstimate(estimate))}
+              </Text>
+            </View>
+          ) : null}
           {running.live !== '' ? <OutputText style={styles.outputText} text={running.live} /> : null}
         </View>
       ) : cell.output ? (
@@ -522,5 +547,8 @@ const useStyles = themedStyles((c) => ({
   statusLink: { fontSize: 12, color: c.link },
   output: { marginLeft: 34, marginTop: 4, paddingHorizontal: 8, paddingVertical: 6, gap: 4 },
   outputHeader: { fontSize: 12, color: c.muted },
+  estimate: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 0 },
+  timing: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 4 },
+  overText: { color: c.warning },
   outputText: { fontFamily: mono, fontSize: 13, lineHeight: 19, color: c.text },
 }));

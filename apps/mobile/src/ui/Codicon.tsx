@@ -46,6 +46,7 @@ const GLYPHS = {
   'device-camera': 0xeada,
   pin: 0xeb2b,
   pinned: 0xeba0,
+  watch: 0xeb7c,
 } as const;
 
 export type CodiconName = keyof typeof GLYPHS;
