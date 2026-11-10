@@ -133,6 +133,7 @@ secret values are redacted from the output.
 | --- | --- |
 | `md-runbook run file.md` | Run a runbook in CI, on a server or on a schedule, with the outputs written into the file (`--report`, `--junit`, `--param`, `--notify`). |
 | `md-runbook lint file.md` | Catch typos in cell options and missing values before anyone runs it, in a pull request. |
+| `md-runbook estimate file.md` | How long each section takes, from the blocks' `estimate=` options. |
 | `md-runbook sign file.md --key KEY` | Release a runbook for servers with md-runbook-gate, from your machine or from CI. |
 | `md-runbook verify file.md` | Check what a signature covers and which blocks changed since signing. |
 

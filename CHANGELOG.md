@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **How long it takes: `estimate=`.** Annotate a block with the time a real run took
+  (`estimate=2m30s`, the durations `every=` takes, or plain seconds; it never changes how the
+  block runs). The extension shows it on the block's status line and, while the block runs, a
+  bar against it that fills at the estimate and then says how much over it is
+  (`[##########] +1m20s over 2m30s`); its status bar item adds about how long is left, counted
+  by the estimates (the bar, the share done and the blocks without an estimate in its tooltip).
+  The app shows the estimate beside the cell's options, a bar on the running cell, and the
+  runbook's share done and time left at the top. `md-runbook run` puts it on the step line,
+  warns when a step took more than twice its estimate and over a minute more (exit codes
+  unchanged), shows the run's progress after each step in a terminal (never in a CI log), and
+  writes `estimateSeconds` to `--json`, an `estimate` property to the JUnit report and the
+  estimate beside the duration in the HTML report and the job summary. `md-runbook estimate
+  file.md` sums the estimates per `#`/`##` section and in all. Lint reports an invalid value;
+  `every=` now also takes `1m30s`.
+- **The title of a runbook with a commented front matter.** `md-runbook qr`, `md-runbook link`
+  and a link opened in VS Code took a `# comment` in the YAML front matter for the runbook's
+  title; they now take its first `#` heading, as the app does.
 - **The app checks runbooks too.** The md-runbook app runs the same checks as `md-runbook lint`
   and the extension's problem markers. Each code cell lists its problems under it, with a mark
   beside the line concerned, and the top of the runbook counts them ("1 error, 2 warnings"); tap

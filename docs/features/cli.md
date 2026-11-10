@@ -91,6 +91,26 @@ md-runbook run upgrade.md --section Rollback
 `md-runbook lint file.md…` checks runbooks without running anything; see
 [Checking runbooks](lint.md).
 
+## How long it takes
+
+With `estimate=` on the blocks (the time a real run took, e.g. `estimate=2m30s`),
+`md-runbook estimate file.md…` adds them up per `#` and `##` section and in all, and names the
+blocks without one:
+
+```text
+guide.md
+  # Guide      –
+  ## 1. Start  2m (1 block without an estimate)
+  ## 2. Wait   1m30s
+  Total: 3m30s (1 block without an estimate) for 3 blocks
+```
+
+`md-runbook run` puts a step's estimate on its `▶ Step N` line, prints a warning (not a failure)
+when the step took more than twice its estimate and over a minute more, and in a terminal shows
+after each step how far the run is by the estimates and about how long is left
+(`[####......] 40% · about 6 min left`); a CI log keeps plain lines. `--json` has
+`estimateSeconds` per step, the JUnit report an `estimate` property per test case.
+
 ## Signing runbooks
 
 `md-runbook sign file.md --key KEY` signs a runbook for servers that run md-runbook-gate, and

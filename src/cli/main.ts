@@ -332,7 +332,12 @@ export async function main(argv: readonly string[]): Promise<number> {
   // How long the steps that ran took, against their estimates (when they have any).
   const ran = summary.steps.filter((s) => s.status === 'passed' || s.status === 'failed');
   const estimated = ran.reduce((t, s) => t + (s.estimateSeconds ?? 0), 0);
-  const took = estimated > 0 ? ` · took ${formatEstimate(ran.reduce((t, s) => t + s.durationMs, 0) / 1000)}, estimated ${formatEstimate(estimated)}` : '';
+  const unestimated = ran.filter((s) => s.estimateSeconds === undefined).length;
+  const took =
+    estimated > 0
+      ? ` · took ${formatEstimate(ran.reduce((t, s) => t + s.durationMs, 0) / 1000)}, estimated ${formatEstimate(estimated)}` +
+        (unestimated > 0 ? ` (${unestimated} step${unestimated === 1 ? '' : 's'} without an estimate)` : '')
+      : '';
   process.stdout.write(
     `\n${summary.ok ? '✓' : '✗'} ${file}: ${summary.steps.length} step${summary.steps.length === 1 ? '' : 's'}, ${parts.join(', ')}${took}` +
       `${options.write ? ` · outputs written to ${target}` : ''}\n`,
