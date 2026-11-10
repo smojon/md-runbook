@@ -12,6 +12,7 @@ import { registerHistory } from './history';
 import { registerLineRuns } from './lineRuns';
 import { registerLint } from './lint';
 import { RunPipeline } from './pipeline';
+import { registerEstimates } from './estimates';
 import { registerProgress } from './progress';
 import { registerSafety } from './safety';
 import { isTestMode, registerSecrets } from './secrets';
@@ -91,6 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
   pipeline.preparers.push(safety.final);
   const controller = new RunbookController(pipeline);
   registerProgress(context, pipeline, controller);
+  registerEstimates(context);
   registerLineRuns(context, controller, { safety, secrets });
   registerAutoSave(pipeline);
   registerOpenTiming(context);
