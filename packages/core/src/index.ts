@@ -70,3 +70,4 @@ export {
   splitStderrMarks,
   styledSpans,
 } from './outputColors';
+export { Heading, headingsOf, runbookTitle, withoutFrontMatter } from './title';
