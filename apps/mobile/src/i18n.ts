@@ -496,6 +496,15 @@ const en = {
   runFromStart: 'Run all from the start',
   progressDone: (done: number, total: number) => `${done} of ${total} steps done`,
   progressFailed: (step: number) => ` · step ${step} failed`,
+  /** estimate= on a cell: how long it takes, as measured on a real run. */
+  estimate: (time: string) => `est. ${time}`,
+  estimateOf: (elapsed: string, estimate: string) => `${elapsed} of ${estimate}`,
+  estimateOver: (over: string, estimate: string) => `+${over} over ${estimate}`,
+  /** The runbook's progress by its estimates. */
+  estimateDone: (percent: number) => `${percent}% by the estimates`,
+  estimateLeft: (left: string) => `${left} left`,
+  estimateNothingLeft: 'nothing left',
+  withoutEstimate: (n: number) => (n === 1 ? '1 block without an estimate' : `${n} blocks without an estimate`),
   runStopped: 'Run all stopped at a failed step: fix it, then Continue.',
   proposedNotRun: (n: number) =>
     n === 1 ? '1 proposed cell was not run: it needs approval.' : `${n} proposed cells were not run: they need approval.`,

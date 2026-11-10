@@ -16,6 +16,8 @@ import { OsName, parseOsList } from './os';
 export interface CellOptions {
   /** Seconds; 0 = no timeout. */
   timeoutSeconds?: number;
+  /** estimate=2m30s: how long the block takes, in seconds (shown only; it never changes a run). */
+  estimateSeconds?: number;
   /** As written; relative paths are resolved against the .md file's folder. */
   cwd?: string;
   continueOnError?: boolean;
@@ -161,6 +163,10 @@ export function parseCellOptions(info: string): CellOptions {
       const s = Number(value.replace(/s$/i, ''));
       if (value.trim() === '' || !Number.isFinite(s) || s < 0) opts.errors.push(`timeout=${value}: expected seconds (0 = none)`);
       else opts.timeoutSeconds = s;
+    } else if (k === 'estimate') {
+      const ms = parseInterval(value);
+      if (ms === undefined) opts.errors.push(`estimate=${value}: expected a duration such as 2m30s, 45s or 90 (seconds)`);
+      else opts.estimateSeconds = ms / 1000;
     } else if (k === 'cwd') {
       if (value === '') opts.errors.push('cwd: empty path');
       else opts.cwd = value;

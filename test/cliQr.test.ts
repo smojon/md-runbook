@@ -33,6 +33,12 @@ describe('cli: md-runbook qr', () => {
     assert.equal(parsed.link.text, '# Restart the API\n\n```bash\nsystemctl restart ${param:SERVICE}\n```\n');
   });
 
+  it('the title is the first # heading, not a comment in the front matter', async () => {
+    fs.writeFileSync(file, '---\n# Every command runs against this cluster\nkube-context: x\n---\n\n```bash\n# a shell comment\n```\n\n' + RUNBOOK);
+    assert.equal(await qrCommand([file, '--embed'], out), 0, lines.join('\n'));
+    assert.match(lines.join('\n'), /QR code .* for Restart the API$/m);
+  });
+
   it('an address pinned to this file with --pin; web app links with --web-app', async () => {
     assert.equal(await qrCommand([file, '--url', 'https://x.example.net/restart.md', '--pin', '--web-app', 'https://runbook.example.net/open', '--link'], out), 0);
     assert.ok(lines[0]!.startsWith('https://runbook.example.net/open?url=https%3A%2F%2Fx.example.net%2Frestart.md&sha256='));

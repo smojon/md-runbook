@@ -6,6 +6,7 @@
  * current text means unsaved changes.
  */
 import { useSyncExternalStore } from 'react';
+import { runbookTitle } from '@md-runbook/core/title';
 import { deleteDoc, readDoc, writeDoc } from '../storage/docs';
 import { getJson, setJson } from '../storage/kv';
 import { Origin, isOrigin, textHash } from './origin';
@@ -54,35 +55,14 @@ let all: readonly Runbook[] = bundled();
 const listeners = new Set<() => void>();
 const emit = (): void => listeners.forEach((l) => l());
 
-/**
- * The runbook's text without its YAML front matter (`---` … `---` or `...` at the very top), as
- * VS Code's Markdown preview and the report leave it out.
- */
-export function withoutFrontMatter(value: string): string {
-  const m = /^﻿?---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(value);
-  return m ? value.slice(m[0].length) : value;
-}
+export { withoutFrontMatter } from '@md-runbook/core/title';
 
 /**
  * The first `# heading` of the Markdown (not a comment in the front matter or a `#` line in a
  * code block), else the file name without `.md`.
  */
 export function titleOf(text: string, fileName: string): string {
-  let fence: string | undefined;
-  for (const line of withoutFrontMatter(text).split(/\r?\n/)) {
-    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (fence !== undefined) {
-      if (open && open[0] === fence[0] && open.length >= fence.length && line.trim() === open) fence = undefined;
-      continue;
-    }
-    if (open) {
-      fence = open;
-      continue;
-    }
-    const heading = /^ {0,3}#[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/.exec(line)?.[1]?.trim();
-    if (heading) return heading;
-  }
-  return fileName.replace(/\.(md|markdown)$/i, '') || fileName;
+  return runbookTitle(text) ?? (fileName.replace(/\.(md|markdown)$/i, '') || fileName);
 }
 
 /** Writes in order per runbook, so a slow write never lands after a newer one. */

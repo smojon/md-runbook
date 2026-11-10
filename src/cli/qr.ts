@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { clearOutputBlocks } from '@md-runbook/core';
+import { runbookTitle } from '@md-runbook/core/title';
 import { QrLabel, parseCsv, qrLabelSheet, qrMatrix, qrSvg } from '@md-runbook/core/qr';
 import { APP_LINK_BASE, RunbookLink, formatRunbookLink, formatVsCodeLink, parseRunbookLink, parseVsCodeLinkQuery, runbookDigest } from '@md-runbook/core/runbookLink';
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
@@ -178,7 +179,7 @@ export async function qrCommand(argv: readonly string[], out: Out = stdout, link
     return r.ok ? undefined : r.problem;
   };
   const name = path.basename(a.file).replace(/\.md$/i, '');
-  const title = /^#\s+(.+)$/m.exec(text)?.[1]?.trim() ?? name;
+  const title = runbookTitle(text) ?? name;
 
   if (!a.labels) {
     if (a.host) base.host = a.host;

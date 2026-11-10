@@ -1,0 +1,164 @@
+/**
+ * estimate= in the notebook: each block's estimate on its status line, a running block's time
+ * against it as a bar (full at the estimate, then "+1m20s over"), and the estimate steps of the
+ * whole runbook for the progress item in the status bar (progress.ts).
+ */
+
+import * as vscode from 'vscode';
+import { EstimateStep, formatBlockProgress, formatEstimate, isCodeMeta, isOverEstimate, stepState } from '@md-runbook/core';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { parseInterval } from '@md-runbook/core/checks';
+import { osGroups } from '@md-runbook/core/os';
+import { SECTION } from './config';
+import { META_KEY, outputMeta } from './outputs';
+import { NOTEBOOK_TYPE } from './serializer';
+
+/** How often a running block's bar (and the runbook's time left) moves on. */
+const TICK_MS = 1000;
+
+function optionsOn(): boolean {
+  return vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true);
+}
+
+/** The block's estimate= in seconds, or undefined. */
+export function cellEstimate(cell: vscode.NotebookCell): number | undefined {
+  if (cell.kind !== vscode.NotebookCellKind.Code || !optionsOn()) return undefined;
+  const meta: unknown = cell.metadata?.[META_KEY];
+  return isCodeMeta(meta) ? parseCellOptions(meta.info).estimateSeconds : undefined;
+}
+
+/**
+ * When the cell's run started, while it runs: its live outputs carry exit=running and ran= until
+ * the status output of the finished run follows (the live outputs stay, with their metadata).
+ */
+export function runningSince(cell: vscode.NotebookCell): number | undefined {
+  let since: number | undefined;
+  for (const o of cell.outputs) {
+    const m = outputMeta(o);
+    if (m?.status || m?.persisted) return undefined;
+    const run = m?.run?.attrs;
+    if (since === undefined && run?.exit === 'running' && run.ran) {
+      const t = Date.parse(run.ran);
+      if (Number.isFinite(t)) since = t;
+    }
+  }
+  return since;
+}
+
+/** The last finished run's duration in seconds, from its status output. */
+function lastDuration(cell: vscode.NotebookCell): number | undefined {
+  for (const o of cell.outputs) {
+    const m = outputMeta(o);
+    const d = m?.status ? m.attrs?.duration : undefined;
+    if (d) {
+      const ms = parseInterval(d);
+      return ms === undefined ? undefined : ms / 1000;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The runbook's blocks as estimate steps: every code cell but `skip` and `host=` blocks and the
+ * alternatives for another OS; `exitOf` is the cell's recorded exit (progress.ts's cellAttrs).
+ */
+export function notebookEstimateSteps(
+  nb: vscode.NotebookDocument,
+  attrsOf: (cell: vscode.NotebookCell) => Record<string, string> | undefined,
+  now = Date.now(),
+): EstimateStep[] {
+  const cells = nb.getCells();
+  const opts = cells.map((c) => {
+    const meta: unknown = c.metadata?.[META_KEY];
+    return c.kind === vscode.NotebookCellKind.Code && isCodeMeta(meta) && optionsOn() ? parseCellOptions(meta.info) : undefined;
+  });
+  const slots = osGroups(cells.map((c, i) => ({ kind: c.kind === vscode.NotebookCellKind.Code ? 'code' : 'markup', ...(opts[i]?.os ? { os: opts[i]!.os } : {}) })));
+  const steps: EstimateStep[] = [];
+  cells.forEach((c, i) => {
+    if (c.kind !== vscode.NotebookCellKind.Code) return;
+    const o = opts[i];
+    if (o?.skip || o?.host !== undefined || (slots[i] && !slots[i]!.active)) return;
+    const since = runningSince(c);
+    const e = o?.estimateSeconds !== undefined ? { estimateSeconds: o.estimateSeconds } : {};
+    if (since !== undefined) return void steps.push({ ...e, state: 'running', elapsedSeconds: (now - since) / 1000 });
+    const a = attrsOf(c);
+    const state = stepState(a?.exit, a?.lines !== undefined, a?.check);
+    steps.push({ ...e, state: state === 'done' || state === 'skipped' ? 'done' : 'pending' });
+  });
+  return steps;
+}
+
+/** Whether a cell of the notebook runs now. */
+export function anyRunning(nb: vscode.NotebookDocument): boolean {
+  return nb.getCells().some((c) => runningSince(c) !== undefined);
+}
+
+/**
+ * The block's estimate on its status line: `est. 2m30s`; while it runs, its time against it
+ * (`[####......] 1m of 2m30s`, then `[##########] +1m20s over 2m30s`); after a run that took more
+ * than twice it, a warning. Undefined for a block without an estimate.
+ */
+export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { text: string; tooltip: string } | undefined {
+  const est = cellEstimate(cell);
+  if (est === undefined) return undefined;
+  const since = runningSince(cell);
+  if (since !== undefined) {
+    const elapsed = (now - since) / 1000;
+    return { text: `$(watch) ${formatBlockProgress(elapsed, est)}`, tooltip: `Running for ${formatEstimate(elapsed)}; this block's estimate (estimate=) is ${formatEstimate(est)}.` };
+  }
+  const took = lastDuration(cell);
+  if (took !== undefined && isOverEstimate(took, est)) {
+    return {
+      text: `$(warning) est. ${formatEstimate(est)} · took ${formatEstimate(took)}`,
+      tooltip: `The last run took more than twice this block's estimate (estimate=${formatEstimate(est)}).`,
+    };
+  }
+  return { text: `$(watch) est. ${formatEstimate(est)}`, tooltip: 'How long this block takes, as measured on a real run (estimate=). It does not change how it runs.' };
+}
+
+class EstimateStatus implements vscode.NotebookCellStatusBarItemProvider, vscode.Disposable {
+  private readonly changed = new vscode.EventEmitter<void>();
+  readonly onDidChangeCellStatusBarItems = this.changed.event;
+  private timer: NodeJS.Timeout | undefined;
+
+  provideCellStatusBarItems(cell: vscode.NotebookCell): vscode.NotebookCellStatusBarItem[] {
+    const s = estimateItem(cell);
+    if (!s) return [];
+    const item = new vscode.NotebookCellStatusBarItem(s.text, vscode.NotebookCellStatusBarAlignment.Left);
+    item.tooltip = s.tooltip;
+    return [item];
+  }
+
+  /** Redraw now, and every second while a block with an estimate runs. */
+  refresh(): void {
+    this.changed.fire();
+    const nb = vscode.window.activeNotebookEditor?.notebook;
+    const ticking = nb?.notebookType === NOTEBOOK_TYPE && nb.getCells().some((c) => runningSince(c) !== undefined && cellEstimate(c) !== undefined);
+    if (ticking && !this.timer) this.timer = setInterval(() => this.refresh(), TICK_MS);
+    if (!ticking && this.timer) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
+  }
+
+  dispose(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.changed.dispose();
+  }
+}
+
+export function registerEstimates(context: vscode.ExtensionContext): void {
+  const status = new EstimateStatus();
+  context.subscriptions.push(
+    status,
+    vscode.notebooks.registerNotebookCellStatusBarItemProvider(NOTEBOOK_TYPE, status),
+    // A run starting or ending changes the outputs.
+    vscode.workspace.onDidChangeNotebookDocument((e) => {
+      if (e.notebook.notebookType === NOTEBOOK_TYPE && e.cellChanges.some((c) => c.outputs !== undefined || c.metadata !== undefined)) status.refresh();
+    }),
+    vscode.window.onDidChangeActiveNotebookEditor(() => status.refresh()),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration(`${SECTION}.cellOptions`)) status.refresh();
+    }),
+  );
+}

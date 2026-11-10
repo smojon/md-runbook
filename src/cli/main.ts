@@ -6,7 +6,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { renderReport } from '@md-runbook/core';
+import { estimateRunbook, formatEstimate, renderReport, withoutEstimate } from '@md-runbook/core';
 import { formatProblem, lintRunbook } from '@md-runbook/core/lint';
 import { buildTimeline } from '@md-runbook/core/incident';
 import { CliOptions, junitReport, markdownSummary, runRunbook } from './run';
@@ -21,6 +21,7 @@ declare const MD_RUNBOOK_VERSION: string | undefined;
 
 const USAGE = `Usage: md-runbook run <file.md> [options]
        md-runbook lint <file.md>... [--strict]
+       md-runbook estimate <file.md>...                (how long each section takes, by estimate=)
        md-runbook sign <file.md> --key KEY [options]   (see md-runbook sign --help)
        md-runbook verify <file.md> [--allowed-signers FILE]
        md-runbook qr <file.md> [options]               (see md-runbook qr --help)
@@ -66,6 +67,11 @@ lint checks runbooks without running them (invalid or unknown cell options, \${o
 without an earlier capture=NAME, undeclared \${param:NAME}, ignored front matter values) and
 exits with 1 when it finds an error (with --strict: also a warning).
 
+estimate adds up the blocks' estimate= options (e.g. estimate=2m30s): one line per # and ##
+section with its time and the blocks without an estimate, then the runbook's total. A run
+prints a step's estimate on its "▶ Step N" line, warns when the step took more than twice it,
+and in a terminal shows after each step how far the run is and about how long is left.
+
 \${secret:NAME} values come from the environment variable NAME and are redacted from output.
 On GitHub Actions, a summary table is added to the job summary.
 `;
@@ -92,7 +98,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   // Only as the first argument: a value such as a parameter `-h` must not turn a run into help.
   if (args.length === 0 || args[0] === '-h' || args[0] === '--help') return 'help';
   if (args[0] === '--version') return 'version';
-  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected run, lint, sign, verify, qr, link or audit)`);
+  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected run, lint, estimate, sign, verify, qr, link or audit)`);
   args.shift();
   const o: ParsedArgs['options'] = { file: '', write: true, params: {}, inputs: {}, yes: false, keepGoing: false, shell: {} };
   let pdf: string | undefined;
@@ -193,8 +199,39 @@ export function lint(argv: readonly string[], out: (line: string) => void = (l) 
   return failed ? 1 : 0;
 }
 
+/**
+ * `md-runbook estimate`: the sum of the blocks' estimate= per `#`/`##` section and in all, with
+ * the blocks that have none; 1 for a missing file.
+ */
+export function estimate(argv: readonly string[], out: (line: string) => void = (l) => void process.stdout.write(l + '\n')): number {
+  const unknown = argv.find((f) => f.startsWith('-'));
+  if (unknown || argv.length === 0) {
+    process.stderr.write(`md-runbook: ${unknown ? `unknown option ${unknown}` : 'missing the runbook file(s)'}\n\n${USAGE}`);
+    return 2;
+  }
+  let failed = false;
+  argv.forEach((file, n) => {
+    if (n > 0) out('');
+    if (!fs.existsSync(file)) {
+      out(`${file}: error: no such file`);
+      failed = true;
+      return;
+    }
+    const s = estimateRunbook(fs.readFileSync(file, 'utf8'));
+    const time = (seconds: number, blocks: number, without: number): string =>
+      blocks === 0 ? '–' : `${without === blocks ? '?' : formatEstimate(seconds)}${without > 0 ? ` (${withoutEstimate(without)})` : ''}`;
+    const rows = s.sections.map((x) => [x.level === 0 ? '(before the first heading)' : `${'#'.repeat(x.level)} ${x.heading}`, time(x.seconds, x.blocks, x.unestimated)] as const);
+    const width = Math.min(60, Math.max(0, ...rows.map(([h]) => h.length)));
+    out(file);
+    for (const [h, t] of rows) out(`  ${h.length > width ? h.slice(0, width - 1) + '…' : h.padEnd(width)}  ${t}`);
+    out(`  Total: ${time(s.totalSeconds, s.blocks, s.unestimated)} for ${s.blocks} block${s.blocks === 1 ? '' : 's'}`);
+  });
+  return failed ? 1 : 0;
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
   if (argv[0] === 'lint') return lint(argv.slice(1));
+  if (argv[0] === 'estimate') return estimate(argv.slice(1));
   if (argv[0] === 'sign') return signCommand(argv.slice(1));
   if (argv[0] === 'verify') return verifyCommand(argv.slice(1));
   if (argv[0] === 'qr') return qrCommand(argv.slice(1));
@@ -240,7 +277,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   let summary: Awaited<ReturnType<typeof runRunbook>>;
   try {
     summary = await runRunbook(
-      { ...options, env: process.env, signal: abort.signal, ...(notify ? { extraSecrets: [notify.url] } : {}) },
+      // The progress line after each step only in a terminal: a CI log keeps plain lines.
+      { ...options, env: process.env, signal: abort.signal, progress: process.stdout.isTTY === true && !quiet, ...(notify ? { extraSecrets: [notify.url] } : {}) },
       { out: (t) => void (quiet || process.stdout.write(t)), log: (l) => void (quiet || process.stdout.write(l + '\n')) },
     );
   } catch (e) {
@@ -291,8 +329,17 @@ export async function main(argv: readonly string[]): Promise<number> {
   const parts = [`${count('passed')} passed`, `${count('failed')} failed`];
   if (count('skipped')) parts.push(`${count('skipped')} skipped`);
   if (count('not run')) parts.push(`${count('not run')} not run`);
+  // How long the steps that ran took, against their estimates (when they have any).
+  const ran = summary.steps.filter((s) => s.status === 'passed' || s.status === 'failed');
+  const estimated = ran.reduce((t, s) => t + (s.estimateSeconds ?? 0), 0);
+  const unestimated = ran.filter((s) => s.estimateSeconds === undefined).length;
+  const took =
+    estimated > 0
+      ? ` · took ${formatEstimate(ran.reduce((t, s) => t + s.durationMs, 0) / 1000)}, estimated ${formatEstimate(estimated)}` +
+        (unestimated > 0 ? ` (${unestimated} step${unestimated === 1 ? '' : 's'} without an estimate)` : '')
+      : '';
   process.stdout.write(
-    `\n${summary.ok ? '✓' : '✗'} ${file}: ${summary.steps.length} step${summary.steps.length === 1 ? '' : 's'}, ${parts.join(', ')}` +
+    `\n${summary.ok ? '✓' : '✗'} ${file}: ${summary.steps.length} step${summary.steps.length === 1 ? '' : 's'}, ${parts.join(', ')}${took}` +
       `${options.write ? ` · outputs written to ${target}` : ''}\n`,
   );
   return summary.ok && !pdfFailed ? 0 : 1;

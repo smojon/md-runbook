@@ -5,19 +5,20 @@
 
 import * as os from 'node:os';
 import * as vscode from 'vscode';
-import { Progress, checklist, computeProgress, formatLocalIso, formatProgress, isCodeMeta, nextUncheckedOffset, outputBlockAttrs } from '@md-runbook/core';
+import { Progress, checklist, computeProgress, formatLeft, formatLocalIso, formatProgress, formatRunbookEstimate, isCodeMeta, nextUncheckedOffset, outputBlockAttrs, runbookEstimate } from '@md-runbook/core';
 import { isManualMark } from '@md-runbook/core/progress';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { osGroups } from '@md-runbook/core/os';
 import { SECTION } from './config';
 import { CONTROLLER_ID, RunbookController } from './controller';
+import { anyRunning, estimateItem, notebookEstimateSteps } from './estimates';
 import { META_KEY, outputMeta } from './outputs';
 import { RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
 import { setTaskBox } from './taskLists';
 
 /** Marker attributes of a code cell's current output, or undefined if it has none (or is running). */
-function cellAttrs(cell: vscode.NotebookCell): Record<string, string> | undefined {
+export function cellAttrs(cell: vscode.NotebookCell): Record<string, string> | undefined {
   let attrs: Record<string, string> | undefined;
   for (const o of cell.outputs) {
     const m = outputMeta(o);
@@ -54,6 +55,23 @@ export function notebookProgress(nb: vscode.NotebookDocument): Progress {
       return { kind: 'code', exit: attrs?.exit, partial: attrs?.lines !== undefined, check: attrs?.check, ...(os ? { os } : {}), ...(elsewhere ? { elsewhere } : {}) };
     }),
   );
+}
+
+/**
+ * The status bar item's text and tooltip: the steps done, and by the blocks' estimates
+ * (estimate=) about how long is left; the bar, the share done and the blocks without an
+ * estimate in the tooltip. Nothing about estimates for a runbook without any.
+ */
+export function progressStatus(nb: vscode.NotebookDocument, p: Progress = notebookProgress(nb)): { text: string; tooltip: string } {
+  const e = runbookEstimate(notebookEstimateSteps(nb, cellAttrs));
+  const byEstimate = formatRunbookEstimate(e);
+  return {
+    text: formatProgress(p) + (byEstimate && e.leftSeconds > 0 ? ` · ${formatLeft(e.leftSeconds)} left` : ''),
+    tooltip:
+      `${p.done} done, ${p.skipped} skipped, ${p.failed} failed, ${p.pending} pending.` +
+      (byEstimate ? `\nBy the estimates: ${byEstimate}.` : '') +
+      `\nClick to go to the ${p.firstFailed ? 'failed' : 'next'} step.`,
+  };
 }
 
 function userName(): string {
@@ -121,13 +139,22 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
   item.name = 'md-runbook progress';
   item.command = 'mdRunbook.revealNextStep';
   let timer: NodeJS.Timeout | undefined;
+  // While a block runs, the time left moves on without any output.
+  let ticker: NodeJS.Timeout | undefined;
   const update = (): void => {
     timer = undefined;
     const nb = vscode.window.activeNotebookEditor?.notebook;
     const p = nb?.notebookType === NOTEBOOK_TYPE && vscode.workspace.getConfiguration(SECTION).get<boolean>('progress.statusBar', true) ? notebookProgress(nb) : undefined;
-    if (!p || p.total === 0) return item.hide();
-    item.text = formatProgress(p);
-    item.tooltip = `${p.done} done, ${p.skipped} skipped, ${p.failed} failed, ${p.pending} pending. Click to go to the ${p.firstFailed ? 'failed' : 'next'} step.`;
+    const running = !!p && !!nb && anyRunning(nb);
+    if (running && !ticker) ticker = setInterval(refresh, 5000);
+    if (!running && ticker) {
+      clearInterval(ticker);
+      ticker = undefined;
+    }
+    if (!p || p.total === 0 || !nb) return item.hide();
+    const s = progressStatus(nb, p);
+    item.text = s.text;
+    item.tooltip = s.tooltip;
     item.show();
   };
   // Outputs stream in many small changes; coalesce them.
@@ -139,7 +166,7 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
 
   context.subscriptions.push(
     item,
-    { dispose: () => clearTimeout(timer) },
+    { dispose: () => (clearTimeout(timer), clearInterval(ticker)) },
     vscode.window.onDidChangeActiveNotebookEditor(refresh),
     vscode.workspace.onDidChangeNotebookDocument((e) => {
       if (e.notebook === vscode.window.activeNotebookEditor?.notebook) refresh();
@@ -186,6 +213,12 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
     vscode.commands.registerCommand('mdRunbook._progress', (uri?: vscode.Uri) => {
       const nb = uri ? vscode.workspace.notebookDocuments.find((d) => d.uri.toString() === uri.toString()) : runbookEditor()?.notebook;
       return nb ? notebookProgress(nb) : undefined;
+    }),
+    // For tests: the estimates of a runbook: the status bar text and each cell's estimate item.
+    vscode.commands.registerCommand('mdRunbook._estimates', (uri?: vscode.Uri) => {
+      const nb = uri ? vscode.workspace.notebookDocuments.find((d) => d.uri.toString() === uri.toString()) : runbookEditor()?.notebook;
+      if (!nb) return undefined;
+      return { status: progressStatus(nb), runbook: runbookEstimate(notebookEstimateSteps(nb, cellAttrs)), cells: nb.getCells().map((c) => estimateItem(c)?.text) };
     }),
   );
   refresh();

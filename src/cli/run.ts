@@ -16,6 +16,10 @@ import {
   WriteOptions,
   createRedactor,
   exitLabel,
+  formatEstimate,
+  formatRunbookEstimate,
+  isOverEstimate,
+  runbookEstimate,
   formatDurationAttr,
   formatLocalIso,
   isCodeMeta,
@@ -79,6 +83,8 @@ export interface CliOptions {
   signal?: AbortSignal;
   /** More values to redact everywhere (e.g. the notification URL). */
   extraSecrets?: string[];
+  /** After each step, the run's progress by the blocks' estimates (a terminal, not a CI log). */
+  progress?: boolean;
 }
 
 export type StepStatus = 'passed' | 'failed' | 'skipped' | 'not run';
@@ -92,6 +98,8 @@ export interface StepResult {
   status: StepStatus;
   exit: string;
   durationMs: number;
+  /** estimate= in seconds (absent when the block has none). */
+  estimateSeconds?: number;
   /** Why it failed or was not run. */
   message?: string;
   output: string;
@@ -231,6 +239,11 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   const counted = new Set<number>();
   const steps: StepResult[] = [];
   let stopped = false;
+  // The run's progress by estimates: the blocks this run will run, and the ones it has run.
+  const planned = blocks.flatMap((b, i) => (b.runs ? [i] : []));
+  const finished = new Set<number>();
+  const progressLine = (): string | undefined =>
+    formatRunbookEstimate(runbookEstimate(planned.map((i) => ({ estimateSeconds: parseCellOptions(locs[i]!.info).estimateSeconds, state: finished.has(i) ? 'done' : 'pending' }))));
 
   try {
     for (const [i, loc] of locs.entries()) {
@@ -250,6 +263,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         status,
         exit,
         durationMs: 0,
+        ...(opts.estimateSeconds !== undefined ? { estimateSeconds: opts.estimateSeconds } : {}),
         output: '',
         ...extra,
       });
@@ -388,7 +402,8 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       const timeoutS = opts.timeoutSeconds ?? fm?.timeoutSeconds ?? o.timeoutSeconds ?? 0;
       const attempts = opts.retry?.attempts ?? 1;
 
-      io.log(`▶ ${where}${opts.name ? ` · ${opts.name}` : ''}${contextFromParam ? ` · Kubernetes context ${contextFromParam}` : ''}`);
+      const est = opts.estimateSeconds !== undefined ? ` · est. ${formatEstimate(opts.estimateSeconds)}` : '';
+      io.log(`▶ ${where}${est}${opts.name ? ` · ${opts.name}` : ''}${contextFromParam ? ` · Kubernetes context ${contextFromParam}` : ''}`);
       const started = new Date();
       // Held like the live output when the step captures a secret: redacted once it is known.
       const entry = transcriptFile ? new TranscriptEntry((t) => transcriptFile.append(t), redact, holdOutput) : undefined;
@@ -508,6 +523,14 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       // Without ran/ended: "5m ago" means nothing in a terminal.
       const { ran: _ran, ended: _ended, ...shown } = attrs;
       io.log(`${outputSummary(shown)}${r.shell ? ` · ${r.shell.label}` : ''}`);
+      const tookS = (ended.getTime() - started.getTime()) / 1000;
+      // A warning, not a failure: the estimate may be old, or the machine slow today.
+      if (opts.estimateSeconds !== undefined && isOverEstimate(tookS, opts.estimateSeconds)) {
+        io.log(`! Step ${n} took ${formatEstimate(tookS)}, more than twice its estimate of ${formatEstimate(opts.estimateSeconds)}`);
+      }
+      finished.add(i);
+      const line = o.progress ? progressLine() : undefined;
+      if (line) io.log(`  ${line}`);
       steps.push(result(ok ? 'passed' : 'failed', exit, { durationMs: ended.getTime() - started.getTime(), output: redact(attemptText), ...(ok ? {} : { message: outcome?.failures[0] ?? `exit ${exit}` }) }));
       if (!ok && !opts.continueOnError && !o.keepGoing) stopped = true;
       if (o.signal?.aborted) stopped = true;
@@ -533,7 +556,9 @@ export function junitReport(file: string, steps: readonly StepResult[]): string 
   const total = steps.reduce((t, s) => t + s.durationMs, 0);
   const cases = steps.map((s) => {
     const name = xml(`Step ${s.step}: ${s.title}`);
-    const head = `    <testcase classname="${xml(file)}" name="${name}" time="${time(s.durationMs)}">`;
+    // The estimate as a property of the test case (as pytest's record_property writes them).
+    const props = s.estimateSeconds !== undefined ? `<properties><property name="estimate" value="${s.estimateSeconds}"/></properties>` : '';
+    const head = `    <testcase classname="${xml(file)}" name="${name}" time="${time(s.durationMs)}">${props}`;
     if (s.status === 'passed') return `${head}</testcase>`;
     if (s.status === 'skipped') return `${head}<skipped message="${xml(s.message ?? 'skipped')}"/></testcase>`;
     return `${head}\n      <failure message="${xml(s.message ?? s.exit)}">${xml(s.output)}</failure>\n    </testcase>`;
@@ -550,7 +575,7 @@ export function junitReport(file: string, steps: readonly StepResult[]): string 
 export function markdownSummary(file: string, steps: readonly StepResult[]): string {
   const icon: Record<StepStatus, string> = { passed: '✅', failed: '❌', skipped: '⏭️', 'not run': '⛔' };
   const cell = (s: string): string => s.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
-  const rows = steps.map((s) => `| ${s.step} | ${icon[s.status]} ${s.status} | \`${cell(s.title).slice(0, 80)}\` | ${cell(s.exit)} | ${(s.durationMs / 1000).toFixed(1)}s | ${cell(s.message ?? '')} |`);
+  const rows = steps.map((s) => `| ${s.step} | ${icon[s.status]} ${s.status} | \`${cell(s.title).slice(0, 80)}\` | ${cell(s.exit)} | ${(s.durationMs / 1000).toFixed(1)}s${s.estimateSeconds !== undefined ? ` (est. ${formatEstimate(s.estimateSeconds)})` : ''} | ${cell(s.message ?? '')} |`);
   const passed = steps.filter((s) => s.status === 'passed').length;
   return `### ${cell(file)}: ${passed}/${steps.length} steps passed\n\n| Step | Result | Command | Exit | Time | Note |\n|---|---|---|---|---|---|\n${rows.join('\n')}\n`;
 }

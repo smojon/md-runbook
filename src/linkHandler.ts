@@ -10,6 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { LinkProblem, LinkTrust, RunbookLink, linkTrust, linkableParams, parseVsCodeLinkQuery, rawRunbookUrl, repoPathCandidates, runbookDigest } from '@md-runbook/core/runbookLink';
+import { runbookTitle } from '@md-runbook/core/title';
 import type { SecretsInfo } from './secrets';
 import { NOTEBOOK_TYPE } from './serializer';
 
@@ -98,7 +99,7 @@ export async function openRunbookLinkQuery(query: string, storage: vscode.Uri, s
   let text: string;
   if (l.text !== undefined) {
     text = l.text;
-    const title = /^#\s+(.+)$/m.exec(text)?.[1] ?? 'runbook';
+    const title = runbookTitle(text) ?? 'runbook';
     target = linkCopy(storage, 'rb', text, `${title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'runbook'}.md`);
   } else {
     const url = l.url!;

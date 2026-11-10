@@ -113,7 +113,8 @@ Tokens are separated by spaces or tabs. There are three forms:
 | `kube-context=NAME` | a Kubernetes context name, or `${param:NAME}` | Run only while `kubectl config current-context` prints NAME, checked where the cell runs just before it runs; otherwise nothing runs and the cell fails. Overrides the front matter's `kube-context:`. With `kube-context-mode: pin` in the front matter, the cell runs against NAME instead (on this machine; checked only on a `host=`). See [Kubernetes](features/kubernetes.md). |
 | `lines=any` | the word `any` | In a signed runbook: servers with md-runbook-gate also run single lines and ranges of this block (otherwise only the whole block, or its commands in order). See [signed runbooks](features/signed-runbooks.md). |
 | `retry=N` | integer 1 to 100 | Run up to N times in all until it passes. |
-| `every=D` | `15s`, `500ms`, `2m`, or seconds as a number; at most 1 hour | Wait between attempts (default 5 s). Only with `retry=`. |
+| `every=D` | `15s`, `500ms`, `2m`, `1m30s`, or seconds as a number; at most 1 hour | Wait between attempts (default 5 s). Only with `retry=`. |
+| `estimate=D` | `2m30s`, `45s`, `1h5m`, `500ms`, or seconds as a number | How long the block takes, as measured on a real run. Never changes how it runs. Shown on the block; while it runs, a bar against it (full at the estimate, then "+1m20s over"). See **Estimates** under [Steps and progress](#steps-and-progress). |
 | `proposed` | flag | The cell was written by an assistant or a colleague and needs approval before it runs. |
 | `by=NAME` | word | Who proposed the cell (`ai`, a model name, a person). A cell with `by=` and no approval is a proposal even without the `proposed` flag. |
 | `reason="…"` | any | Why it was proposed. |
@@ -354,6 +355,17 @@ A group of adjacent `os=` blocks is one step, judged by the block for the curren
 `host=` block is skipped in the extension and the CLI. Run All
 runs cells in order and stops at the first failure unless the cell has `continue-on-error`.
 Cells of one runbook never run concurrently.
+
+**Estimates.** With `estimate=` on its blocks, a runbook's progress is also counted in time:
+the estimates of the blocks done over the sum of all, and about how long is left (the blocks
+still to run; the running block counts its estimate minus the time it has run, never below
+zero). Blocks without an estimate are counted as such ("2 blocks without an estimate"), never
+guessed. `skip` blocks don't count; a group of `os=` alternatives counts once. Shown in the
+extension's status bar item, at the top of the app's runbook, and by `md-runbook run` after
+each step when its output is a terminal.
+
+`md-runbook estimate file.md` prints one line per `#` and `##` section (a `###` section stays in
+its `##`) with the sum of its blocks' estimates and the blocks without one, then the total.
 
 ## Proposed cells and approval
 
