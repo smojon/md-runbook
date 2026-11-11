@@ -70,9 +70,12 @@ jobs:
         run: npm run audit
       - name: Web build
         run: npx expo export --platform web
+      # --with-deps installs Chromium's libraries with apt; when Ubuntu's mirror can't be reached
+      # (2026-11-11: "Temporary failure resolving 'azure.archive.ubuntu.com'" for hours), the
+      # runner's own libraries (it ships Chrome) are enough, so install the browser alone.
       - name: Web smoke test (Chromium)
         run: |
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium || npx playwright install chromium
           node e2e/web-smoke.mjs dist
       # The web app runs a cell through the relay (apps/relay) on the runner's SSH server.
       - name: Web run through the relay (Chromium)
