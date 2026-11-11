@@ -3,12 +3,14 @@ import { DEFAULT_PATTERNS, clearOutputBlocks, createRedactor, recordJson, render
 import { formatRunbookLink } from '@md-runbook/core/runbookLink';
 import { parseManifest, readSignature, signerNames } from '@md-runbook/core/signing';
 import { t } from '../i18n';
-import type { Runbook } from '../runbooks/store';
+import { Runbook, runbookNamed } from '../runbooks/store';
 
 const redactor = createRedactor(DEFAULT_PATTERNS);
 
 export function reportHtml(runbook: Runbook, now = new Date()): string {
-  return renderReport(runbook.text, { generatedAt: now, fallbackTitle: runbook.title, redact: redactor.redact });
+  // A runbook call's steps come from its copy, a runbook of its own in the app (by its file name).
+  const readCall = (copy: string): string | undefined => runbookNamed(copy.split('/').pop() ?? copy)?.text;
+  return renderReport(runbook.text, { generatedAt: now, fallbackTitle: runbook.title, redact: redactor.redact, readCall });
 }
 
 /** The runbook's file name without `.md` (for `name.report.html`, `name.pdf`). */

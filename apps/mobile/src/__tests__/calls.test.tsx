@@ -12,6 +12,7 @@ import { addRunbook, getRunbook, linkKey, resetRunbooks } from '../runbooks/stor
 import { activeCall, calledAddress, resetCalls, startCall } from '../runbooks/calls';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { RunbookView } from '../screens/RunbookView';
+import { reportHtml } from '../share/report';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
 
 jest.mock('expo-router', () => ({
@@ -92,6 +93,10 @@ describe('runbook calls in the app', () => {
     expect(out.attrs.copy).toBe(copy.fileName);
     expect(out.attrs.steps).toBe('1 done');
     expect(out.attrs.sha256).toMatch(/^[0-9a-f]{64}$/);
+    // The report shows the copy's steps under the call.
+    const html = reportHtml(getRunbook(parent.id)!);
+    expect(html).toMatch(/<a href="#step-2-1">2\.1<\/a>/);
+    expect(html).toContain(`<code>${copy.fileName}</code>`);
   });
 
   it('opened from a file: the file is picked once, by its name', async () => {
