@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.21.0
+
 - **Signed runbook calls; `md-runbook run --allowed-signers FILE`.** A call is signed as written
   (its placeholders need patterns, `src=` relative, no secrets); the runbook it calls is signed
   on its own. `run --allowed-signers` runs a signed runbook only as signed, as md-runbook-gate
