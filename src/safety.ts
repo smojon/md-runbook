@@ -5,6 +5,7 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { isCallLanguage } from '@md-runbook/core/call';
 import { isCodeMeta } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
@@ -38,8 +39,9 @@ const optionsPreparer: CellPreparer = {
     if (o.skip) plan.skip = 'skip option';
     Object.assign(plan.env, o.env);
     if (o.name !== undefined) plan.attrs.name = o.name;
-    if (o.checks) plan.checks = o.checks;
-    if (o.retry) plan.retry = o.retry;
+    // A runbook call runs no shell: checks and retries are for the blocks of the runbook it runs.
+    if (o.checks && !isCallLanguage(plan.language)) plan.checks = o.checks;
+    if (o.retry && !isCallLanguage(plan.language)) plan.retry = o.retry;
   },
 };
 
@@ -177,7 +179,8 @@ const confirmPreparer: CellPreparer = {
     lastPatternErrors = errorText;
 
     const mode = c.get<ConfirmMode>('execution.confirm', 'patterns');
-    const match = confirmationFor(plan.source, mode, regexes, cellConfirmOption(infoOf(cell)));
+    // A runbook call's lines are values passed, not commands: only `confirm` asks.
+    const match = confirmationFor(isCallLanguage(plan.language) ? '' : plan.source, mode, regexes, cellConfirmOption(infoOf(cell)));
     if (match === undefined) return;
     if (Object.keys(recordContextCommands()).length === 0) await askToRun(plan, cell, match);
     else plan.confirm = match;

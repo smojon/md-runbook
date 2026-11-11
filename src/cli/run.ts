@@ -257,7 +257,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     const declined = blocks.flatMap((b) => {
       if (!b.runs) return [];
       const opts = parseCellOptions(b.loc.info);
-      const match = confirmationFor(b.loc.source, 'patterns', regexes, opts.confirm === true ? true : undefined);
+      const match = confirmationFor(isCallLanguage(b.loc.language) ? '' : b.loc.source, 'patterns', regexes, opts.confirm === true ? true : undefined);
       if (match === undefined) return [];
       const firstLine = b.loc.source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
       return [`  Step ${b.n} · ${fileName}:${b.loc.line + 1} · ${redact(opts.name ?? firstLine)}: ${match === '' ? 'confirm option' : `risky command “${match.trim()}”`}`];
@@ -413,7 +413,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         continue;
       }
       // `no-confirm` can't switch the safety net off here either.
-      const match = confirmationFor(loc.source, 'patterns', regexes, opts.confirm === true ? true : undefined);
+      const match = confirmationFor(isCall ? '' : loc.source, 'patterns', regexes, opts.confirm === true ? true : undefined);
       if (match !== undefined && !o.yes) {
         const why = match === '' ? 'this block asks for confirmation (confirm option)' : `risky command “${match.trim()}”`;
         text =

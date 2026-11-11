@@ -4,6 +4,8 @@
  */
 
 import * as vscode from 'vscode';
+import { LintOptions } from '@md-runbook/core/lint';
+import { matchRunbooks, runbookReader } from '@md-runbook/core/node';
 import { SECTION } from './config';
 import { isCodeMeta } from '@md-runbook/core';
 import { renameInfoOption } from '@md-runbook/core/cellOptions';
@@ -89,6 +91,12 @@ const lineRange = (doc: vscode.TextDocument, line: number): vscode.Range => {
   return new vscode.Range(l.range.start.translate(0, l.firstNonWhitespaceCharacterIndex), l.range.end);
 };
 
+/** Runbook calls: lint reads the runbook a call names (a local file), and the files a pattern matches. */
+function callLintOptions(uri: vscode.Uri): LintOptions {
+  if (uri.scheme !== 'file') return {};
+  return { readRunbook: runbookReader(uri.fsPath), matchRunbooks: (glob) => matchRunbooks(uri.fsPath, glob) };
+}
+
 export function registerLint(context: vscode.ExtensionContext): void {
   const collection = vscode.languages.createDiagnosticCollection('md-runbook');
   const enabled = (): boolean => vscode.workspace.getConfiguration(SECTION).get<boolean>('lint.enabled', true);
@@ -105,7 +113,7 @@ export function registerLint(context: vscode.ExtensionContext): void {
     clearNotebook(nb);
     if (!enabled() || nb.isClosed) return;
     const byCell = new Map<number, vscode.Diagnostic[]>();
-    for (const p of lintRunbook(notebookTextWithOutputs(nb))) {
+    for (const p of lintRunbook(notebookTextWithOutputs(nb), callLintOptions(nb.uri))) {
       // Problems in a code block go on its cell; front matter problems on the first cell.
       const index = p.cell?.index ?? 0;
       if (index >= nb.cellCount) continue;
@@ -131,7 +139,7 @@ export function registerLint(context: vscode.ExtensionContext): void {
   const lintText = (doc: vscode.TextDocument): void => {
     if (doc.languageId !== 'markdown' || doc.uri.scheme === 'vscode-notebook-cell') return;
     if (!enabled()) return void collection.delete(doc.uri);
-    collection.set(doc.uri, lintRunbook(doc.getText()).map((p) => toDiagnostic(p, lineRange(doc, p.line))));
+    collection.set(doc.uri, lintRunbook(doc.getText(), callLintOptions(doc.uri)).map((p) => toDiagnostic(p, lineRange(doc, p.line))));
   };
 
   const later = (key: string, fn: () => void): void => {

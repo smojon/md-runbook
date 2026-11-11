@@ -69,6 +69,14 @@
     "onUri"
   ],
   "contributes": {
+    "languages": [
+      {
+        "id": "runbook",
+        "aliases": [
+          "Runbook call"
+        ]
+      }
+    ],
     "notebooks": [
       {
         "type": "md-runbook",
@@ -208,6 +216,18 @@
         "title": "Run All as Copy",
         "category": "md-runbook",
         "icon": "$(files)"
+      },
+      {
+        "command": "mdRunbook.openCallCopy",
+        "title": "Open the Copy a Runbook Call Ran",
+        "category": "md-runbook",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "mdRunbook.runCallFresh",
+        "title": "Run Runbook Call with a Fresh Copy",
+        "category": "md-runbook",
+        "icon": "$(refresh)"
       },
       {
         "command": "mdRunbook.startIncident",
@@ -1094,6 +1114,14 @@
         {
           "command": "mdRunbook.revealNextStep",
           "group": "1_run@3"
+        },
+        {
+          "command": "mdRunbook.runCallFresh",
+          "group": "1_run@4"
+        },
+        {
+          "command": "mdRunbook.openCallCopy",
+          "group": "1_run@5"
         },
         {
           "command": "mdRunbook.sessionMenu",

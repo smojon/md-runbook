@@ -58,6 +58,8 @@ export interface CellPlan {
   kubeContext?: string;
   /** Set by runbookEnv.ts: `env.KUBECONFIG` pins the cell's kube-context (kube-context-mode: pin). */
   kubeContextPinned?: boolean;
+  /** Set by secrets.ts for a runbook call: the values of the placeholders in its src= and body. */
+  callValues?: Record<string, string>;
 }
 
 export interface PrepareContext {
@@ -149,4 +151,6 @@ export class RunPipeline {
   lineRunFor?: (cell: vscode.NotebookCell) => import('./controller').LineRun | undefined;
   /** Picks the executor per notebook (e.g. a persistent session). */
   executorFor: (notebook: vscode.NotebookDocument) => CellExecutor = () => isolatedExecutor;
+  /** Runs runbook calls (```runbook cells, calls.ts), whatever the notebook's executor. */
+  callExecutor?: CellExecutor;
 }

@@ -6,6 +6,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { isCallLanguage, parseCall } from '@md-runbook/core/call';
+import { passedParam } from './calls';
 import { isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
 import { Captured, checkRefText, resolveChecks } from '@md-runbook/core/checks';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
@@ -169,6 +171,9 @@ class SecretsFeature {
   }
 
   private async param(name: string, ctx: PrepareContext): Promise<string> {
+    // A copy run by a runbook call: the value the call passed.
+    const fromCall = passedParam(ctx.notebook.uri, name);
+    if (fromCall !== undefined) return fromCall;
     const cache = this.session(this.params, ctx.notebook);
     const cached = cache.get(name);
     if (cached !== undefined) return cached;
@@ -214,12 +219,15 @@ class SecretsFeature {
     }
 
     const shell = shellKindForLanguage(plan.language);
-    if (!shell) return;
+    const call = isCallLanguage(plan.language) ? parseCall(isCodeMeta(meta) ? meta.info : '', plan.source) : undefined;
+    if (!shell && !call) return;
     // The checks' references too (expect="${out:NAME}"): asked and filled in like the code's.
     const checkText = checkRefText(plan.checks);
     // And kube-context=${param:NAME} (or the front matter's): the parameter is asked like the others.
     const wantedContext = wantedKubeContext(parseCellOptions(isCodeMeta(meta) ? meta.info : ''), frontMatter(ctx.notebook));
-    const refs = findRefs([plan.source, checkText, kubeContextRefText(wantedContext)].filter((t) => t !== '').join('\n'));
+    // A call: the placeholders of its src= and of the values it passes.
+    const own = call ? [call.src ?? '', ...call.args.map((a) => a.value)].join('\n') : plan.source;
+    const refs = findRefs([own, checkText, kubeContextRefText(wantedContext)].filter((t) => t !== '').join('\n'));
     const secretRefs = by ? refs.filter((r) => r.secret) : [];
     if (secretRefs.length > 0) {
       const names = secretRefs.map((r) => (r.kind === 'secret' ? `\${secret:${r.name}}` : `\${input:${r.name}} (secret)`)).join(', ');
@@ -265,7 +273,11 @@ class SecretsFeature {
     plan.kubeContext = resolveKubeContext(wantedContext, (n) => values[n]);
     // The parameter's value isn't in the file: the run records it.
     if (plan.kubeContext !== undefined && kubeContextParam(wantedContext) !== undefined) plan.attrs['kube-context'] = plan.kubeContext;
-    if (refs.length > 0) {
+    if (call) {
+      plan.callValues = values;
+      return;
+    }
+    if (refs.length > 0 && shell) {
       plan.source = rewriteRefs(plan.source, shell);
       plan.steps = plan.steps?.map((step) => rewriteRefs(step, shell));
     }

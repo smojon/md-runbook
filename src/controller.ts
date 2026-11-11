@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { isCallLanguage } from '@md-runbook/core/call';
 import {
   ExecuteResult,
   HISTORY_KEY,
@@ -170,6 +171,11 @@ export class RunbookController implements vscode.Disposable {
   private executionOrder = 0;
   /** Per-notebook queue so cells of one runbook never run concurrently. */
   private readonly queues = new Map<string, Promise<void>>();
+  /** Notebooks whose queued runs are cancelled (a runbook call stopped), and their running cell's abort. */
+  private readonly cancelled = new Set<string>();
+  private readonly running = new Map<string, AbortController>();
+  /** Notebooks this controller is the kernel of. */
+  private readonly selected = new Set<string>();
 
   constructor(readonly pipeline: RunPipeline = new RunPipeline()) {
     this.controller = vscode.notebooks.createNotebookController(CONTROLLER_ID, NOTEBOOK_TYPE, 'md-runbook shell');
@@ -177,6 +183,26 @@ export class RunbookController implements vscode.Disposable {
     this.controller.supportedLanguages = [...SUPPORTED_LANGUAGE_IDS];
     this.controller.supportsExecutionOrder = true;
     this.controller.executeHandler = (cells, notebook) => this.enqueue(cells, notebook);
+    this.controller.onDidChangeSelectedNotebooks(({ notebook, selected }) => {
+      if (selected) this.selected.add(notebook.uri.toString());
+      else this.selected.delete(notebook.uri.toString());
+    });
+  }
+
+  /** Run cells of a notebook, queued as ▶ would; resolves when they have run (a runbook call runs its copy). */
+  async run(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument): Promise<void> {
+    // Just opened, the notebook may not have this kernel yet: executions can only be made once it has.
+    const key = notebook.uri.toString();
+    for (let waited = 0; !this.selected.has(key) && waited < 10_000; waited += 50) await new Promise((r) => setTimeout(r, 50));
+    return this.enqueue(cells, notebook);
+  }
+
+  /** Stop the running cell of a notebook and pass over its queued ones (a runbook call cancelled). */
+  cancel(uri: vscode.Uri): void {
+    const key = uri.toString();
+    if (!this.queues.has(key)) return;
+    this.cancelled.add(key);
+    this.running.get(key)?.abort();
   }
 
   /** Run some lines of a cell, queued after the runbook's other runs like a normal run. */
@@ -285,7 +311,7 @@ export class RunbookController implements vscode.Disposable {
           exec.end(undefined);
           continue;
         }
-        if (stopped || exec.token.isCancellationRequested) {
+        if (stopped || exec.token.isCancellationRequested || this.cancelled.has(notebook.uri.toString())) {
           // Skipped: leave the cell's previous output untouched.
           exec.start();
           exec.end(undefined);
@@ -298,6 +324,7 @@ export class RunbookController implements vscode.Disposable {
         if ((failedHard || run.plan.stopSequence) && executions.length > 1) stopped = exec.cell;
       }
     } finally {
+      this.cancelled.delete(notebook.uri.toString());
       // Something threw: don't leave the remaining cells pending forever. (runCell ends its own.)
       for (let i = handled + 1; i < executions.length; i++) {
         try {
@@ -345,6 +372,8 @@ export class RunbookController implements vscode.Disposable {
     let ended = false;
     let timer: NodeJS.Timeout | undefined;
     let cancelSub: vscode.Disposable | undefined;
+    /** This cell's abort, while it runs (cancel(), for a runbook call that is stopped). */
+    let runningAbort: AbortController | undefined;
     // The transcript (output.transcript): what is shown, also appended to a file as it arrives.
     let cellTranscript: CellTranscript | undefined;
     const cleanup = async (): Promise<void> => {
@@ -466,6 +495,8 @@ export class RunbookController implements vscode.Disposable {
 
       const abort = new AbortController();
       cancelSub = exec.token.onCancellationRequested(() => abort.abort());
+      this.running.set(notebook.uri.toString(), (runningAbort = abort));
+      const isCall = isCallLanguage(plan.language) && this.pipeline.callExecutor !== undefined;
 
       // Checks, captures and retries apply to whole-cell runs, not to line runs.
       const checks = lineRun ? undefined : plan.checks;
@@ -478,7 +509,7 @@ export class RunbookController implements vscode.Disposable {
           : undefined;
       /** Run until it passes or the attempts are used up; only the last attempt's output is kept. */
       const runAttempts = async (io: ExecuteIO): Promise<ExecuteResult> => {
-        const executor = this.pipeline.executorFor(notebook);
+        const executor = isCall ? this.pipeline.callExecutor! : this.pipeline.executorFor(notebook);
         for (;;) {
           attempt++;
           const r = await executor.execute(plan, io, ctx);
@@ -512,7 +543,8 @@ export class RunbookController implements vscode.Disposable {
         try {
           const io: ExecuteIO = { signal: abort.signal, onStdout: write(out), onStderr: write(err) };
           // kube-context: the cluster is checked where the cell would run, before it runs.
-          const wrongCluster = fs.existsSync(plan.cwd) ? await this.kubeContextRefusal(plan, ctx, abort.signal) : undefined;
+          // (A runbook call runs no shell: the cells of the runbook it runs check their cluster.)
+          const wrongCluster = !isCall && fs.existsSync(plan.cwd) ? await this.kubeContextRefusal(plan, ctx, abort.signal) : undefined;
           if (!fs.existsSync(plan.cwd)) result = failed(`Working directory not found: ${plan.cwd}`);
           else if (wrongCluster !== undefined) result = failed(wrongCluster);
           else if (lineRun) {
@@ -599,6 +631,7 @@ export class RunbookController implements vscode.Disposable {
     } finally {
       if (timer) clearInterval(timer);
       cancelSub?.dispose();
+      if (runningAbort && this.running.get(notebook.uri.toString()) === runningAbort) this.running.delete(notebook.uri.toString());
       await cleanup();
       // Something threw: the entry still ends (a no-op when it already has).
       cellTranscript?.end({ exit: 'error', durationMs: Date.now() - started.getTime() });

@@ -71,6 +71,30 @@ BACKUP_DIR=${out:BACKUP_DIR}
 - **Safety.** A cycle (A calls B calls A) and calls nested more than 3 deep are errors before
   anything runs in them, and so is a file that doesn't exist.
 
+## In VS Code
+
+Run the call cell (or Run All): the copy opens beside the runbook and its steps run there, as you
+would run them yourself, so you see each one, answer its confirmations and give the inputs it
+asks for. The parameters the call passes are never asked again. The call cell lists each step as
+it finishes (`✓ first`, `✗ second (1)`) and ends with the result:
+
+```text
+[md-runbook] running releases/72512.2611.runbook.md as releases/72512.2611.runbook.20261111-143012.md
+  ✓ Check the release notes
+  ✓ Apply the configuration
+6 done, 1 skipped · sha256 3f1c…
+```
+
+- **Open …** on the cell's status bar opens the copy it ran.
+- **Fresh copy** on the cell's status bar (or *md-runbook: Run Runbook Call with a Fresh Copy*)
+  runs it in a new copy instead of continuing the copy of a failed run.
+- Stopping the call cell stops the step running in the copy and the ones after it.
+- `mdRunbook.output.copyFolder` puts the copies in another folder, as for Run All as Copy.
+- The cell shows how long the call takes (the estimates of what it runs), or *estimate unknown
+  until run* when `src=` has placeholders.
+
+The md-runbook app (phone and web) and servers with md-runbook-gate don't run calls yet.
+
 ## On the command line
 
 `md-runbook run` follows the call: the steps of the runbook called are printed indented and

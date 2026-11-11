@@ -9,6 +9,7 @@ import { clearOutputBlocks } from '@md-runbook/core';
 import { RunbookController } from './controller';
 import { registerReport } from './exportReport';
 import { registerHistory } from './history';
+import { registerCalls } from './calls';
 import { registerLineRuns } from './lineRuns';
 import { registerLint } from './lint';
 import { RunPipeline } from './pipeline';
@@ -91,6 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // against, and ask for a pending confirmation showing it.
   pipeline.preparers.push(safety.final);
   const controller = new RunbookController(pipeline);
+  registerCalls(context, pipeline, controller);
   registerProgress(context, pipeline, controller);
   registerEstimates(context);
   registerLineRuns(context, controller, { safety, secrets });

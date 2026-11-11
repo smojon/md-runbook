@@ -5,6 +5,8 @@
  */
 
 import * as vscode from 'vscode';
+import { isCallLanguage, isDynamicSrc, parseCall } from '@md-runbook/core/call';
+import { callEstimateSeconds } from '@md-runbook/core/node';
 import { EstimateStep, formatBlockProgress, formatEstimate, isCodeMeta, isOverEstimate, stepState } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
@@ -24,7 +26,10 @@ function optionsOn(): boolean {
 export function cellEstimate(cell: vscode.NotebookCell): number | undefined {
   if (cell.kind !== vscode.NotebookCellKind.Code || !optionsOn()) return undefined;
   const meta: unknown = cell.metadata?.[META_KEY];
-  return isCodeMeta(meta) ? parseCellOptions(meta.info).estimateSeconds : undefined;
+  if (!isCodeMeta(meta)) return undefined;
+  // A runbook call takes as long as what it runs (its estimate=, else the estimates in that file).
+  if (isCallLanguage(cell.document.languageId) && cell.notebook.uri.scheme === 'file') return callEstimateSeconds(cell.notebook.uri.fsPath, meta.info, cell.document.getText());
+  return parseCellOptions(meta.info).estimateSeconds;
 }
 
 /**
@@ -79,7 +84,8 @@ export function notebookEstimateSteps(
     const o = opts[i];
     if (o?.skip || o?.host !== undefined || (slots[i] && !slots[i]!.active)) return;
     const since = runningSince(c);
-    const e = o?.estimateSeconds !== undefined ? { estimateSeconds: o.estimateSeconds } : {};
+    const seconds = cellEstimate(c);
+    const e = seconds !== undefined ? { estimateSeconds: seconds } : {};
     if (since !== undefined) return void steps.push({ ...e, state: 'running', elapsedSeconds: (now - since) / 1000 });
     const a = attrsOf(c);
     const state = stepState(a?.exit, a?.lines !== undefined, a?.check);
@@ -100,7 +106,15 @@ export function anyRunning(nb: vscode.NotebookDocument): boolean {
  */
 export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { text: string; tooltip: string } | undefined {
   const est = cellEstimate(cell);
-  if (est === undefined) return undefined;
+  if (est === undefined) {
+    // A call whose src= has placeholders: what it runs is known when it runs.
+    const meta: unknown = cell.metadata?.[META_KEY];
+    const src = isCallLanguage(cell.document.languageId) && isCodeMeta(meta) ? parseCall(meta.info, '').src : undefined;
+    if (src !== undefined && isDynamicSrc(src) && optionsOn()) {
+      return { text: '$(watch) estimate unknown until run', tooltip: `src="${src}" is known when the call runs; add estimate= to the block to show one.` };
+    }
+    return undefined;
+  }
   const since = runningSince(cell);
   if (since !== undefined) {
     const elapsed = (now - since) / 1000;
