@@ -224,7 +224,9 @@ signed runbook.
 
 `#` starts a comment, after a space, on any line, `params:` items included: `- NAMESPACE  # asked`
 declares NAMESPACE without a default, and `- REGION: eu-west-1  # the default` gives REGION the
-default `eu-west-1`, without the comment. To put `#` in a value, quote it (`- TAG: "v1 #2"`). A
+default `eu-west-1`, without the comment. To put `#` in a value, quote it (`- TAG: "v1 #2"`).
+`- BACKUP: ""` is an empty default (the parameter is never asked for); `- BACKUP:` alone is no
+default. A
 value that is not understood (`mode: sometimes`) is ignored with a lint warning.
 
 `kube-context:` is a guard against the wrong cluster. Before each cell, `kubectl config

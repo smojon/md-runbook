@@ -258,8 +258,9 @@ Task-list items (`- [ ] Check the canary in Grafana`) are steps a person does. T
 can't do them, and it doesn't pass over them in silence either:
 
 - Each unticked item in the part of the runbook that runs (the whole runbook, or the steps
-  `--from`/`--to`/`--section` select: an item belongs to the step of the block before it, and
-  to the section it is in) is listed where it is: `☐ manual, not ticked · upgrade.md:42 · Check
+  `--from`/`--to`/`--section` select: an item belongs to the step of the block before it, an
+  item before the first block to step 1, and each to the section it is in; so `--from 3` leaves
+  out a *Before you start* list at the top) is listed where it is: `☐ manual, not ticked · upgrade.md:42 · Check
   the canary in Grafana`. Ticked ones (`- [x]`) are done.
 - They are in `--json` (`manual`: line, text, ticked), in the JUnit report (a skipped test case
   "Manual: …") and in the GitHub job summary. They get no step number: `--from`/`--to` and the

@@ -57,8 +57,17 @@ describe('front matter params', () => {
   });
 
   it('drops a comment after an item, with or without a default (as docs/syntax.md shows)', () => {
-    const fm = '---\nparams:\n  - ENV          # DEV or PROD: asked, no default\n  - REPLICAS: "3"    # quotes are removed\n  - A: 1 # x\n  - TAG: "v1 #2"\n  - URL: a#b\n---\n';
-    assert.deepEqual(parseFrontMatter(fm)?.params, [{ name: 'ENV' }, { name: 'REPLICAS', default: '3' }, { name: 'A', default: '1' }, { name: 'TAG', default: 'v1 #2' }, { name: 'URL', default: 'a#b' }]);
+    const fm = '---\nparams:\n  - ENV          # DEV or PROD: asked, no default\n  - REPLICAS: "3"    # quotes are removed\n  - A: 1 # x\n  - TAG: "v1 #2"\n  - URL: a#b\n  - B: ""  # empty default\n  - C: \'\'\n  - D:\n---\n';
+    assert.deepEqual(parseFrontMatter(fm)?.params, [
+      { name: 'ENV' },
+      { name: 'REPLICAS', default: '3' },
+      { name: 'A', default: '1' },
+      { name: 'TAG', default: 'v1 #2' },
+      { name: 'URL', default: 'a#b' },
+      { name: 'B', default: '' },
+      { name: 'C', default: '' },
+      { name: 'D' },
+    ]);
   });
 
   it('accepts unindented items and ... as terminator', () => {

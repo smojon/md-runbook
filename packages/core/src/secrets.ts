@@ -253,7 +253,9 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
     const name = item[1]!;
     if (params.some((p) => p.name === name)) continue;
     const value = item[2] !== undefined ? scalar(item[2]) : '';
-    params.push(value !== '' ? { name, default: value } : { name });
+    // `- B: ""` is an empty default (a quoted value, even empty); `- B:` alone is none.
+    const quoted = /^["']/.test(item[2]?.trim() ?? '');
+    params.push(value !== '' || quoted ? { name, default: value } : { name });
   }
   return undefined; // never closed: not front matter
 }
