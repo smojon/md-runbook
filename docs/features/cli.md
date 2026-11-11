@@ -251,6 +251,25 @@ web-2,Rack 4 right,shop
   answer prompts in).
 - Interactive prompts get end-of-input, as in VS Code without terminal mode.
 
+## Manual steps
+
+Task-list items (`- [ ] Check the canary in Grafana`) are steps a person does. The command line
+can't do them, and it doesn't pass over them in silence either:
+
+- Each unticked item in the part of the runbook that runs (the whole runbook, or the steps
+  `--from`/`--to`/`--section` select: an item belongs to the step of the block before it, and
+  to the section it is in) is listed where it is: `☐ manual, not ticked · upgrade.md:42 · Check
+  the canary in Grafana`. Ticked ones (`- [x]`) are done.
+- They are in `--json` (`manual`: line, text, ticked), in the JUnit report (a skipped test case
+  "Manual: …") and in the GitHub job summary. They get no step number: `--from`/`--to` and the
+  `▶ Step N` lines count blocks only.
+- A section that has only manual steps is not an error: the run lists them.
+- **A runbook that keeps evidence** (`evidence: true` or `incident:` in its front matter) **fails**
+  (exit `1`) when one of them is not ticked: the record must not pass over a check nobody did.
+  Tick it in the file (or in VS Code or the app) and run again; with a [runbook call](calls.md),
+  the call continues in its copy. In other runbooks they are listed and the exit code doesn't
+  change.
+
 ## In CI
 
 Any CI system: run `npx md-runbook run …` (or `node …/cli.js run …`) as a step, pass secrets

@@ -56,6 +56,11 @@ describe('front matter params', () => {
     });
   });
 
+  it('drops a comment after an item, with or without a default (as docs/syntax.md shows)', () => {
+    const fm = '---\nparams:\n  - ENV          # DEV or PROD: asked, no default\n  - REPLICAS: "3"    # quotes are removed\n  - A: 1 # x\n  - TAG: "v1 #2"\n  - URL: a#b\n---\n';
+    assert.deepEqual(parseFrontMatter(fm)?.params, [{ name: 'ENV' }, { name: 'REPLICAS', default: '3' }, { name: 'A', default: '1' }, { name: 'TAG', default: 'v1 #2' }, { name: 'URL', default: 'a#b' }]);
+  });
+
   it('accepts unindented items and ... as terminator', () => {
     assert.deepEqual(parseFrontMatter('---\nparams:\n- A\n- B: 2\n...\n'), { params: [{ name: 'A' }, { name: 'B', default: '2' }] });
     assert.deepEqual(parseFrontMatter('---\nmode: session\n---\n'), { params: [], mode: 'session' });

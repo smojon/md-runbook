@@ -246,11 +246,14 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       continue;
     }
     if (!inParams) continue;
-    const item = /^\s*-\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*(.*?))?\s*$/.exec(line);
+    // `- NAME`, `- NAME: default`, each with an optional ` # comment` (the default as any scalar:
+    // quoted, or bare up to the comment).
+    const item = /^\s*-\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:(?:\s+(.*?)|\s*)|\s+#.*|)\s*$/.exec(line);
     if (!item) continue;
     const name = item[1]!;
     if (params.some((p) => p.name === name)) continue;
-    params.push(item[2] !== undefined && item[2] !== '' ? { name, default: unquote(item[2]) } : { name });
+    const value = item[2] !== undefined ? scalar(item[2]) : '';
+    params.push(value !== '' ? { name, default: value } : { name });
   }
   return undefined; // never closed: not front matter
 }

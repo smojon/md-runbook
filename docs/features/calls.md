@@ -53,6 +53,11 @@ BACKUP_DIR=${out:BACKUP_DIR}
   after the run).
 - **The record.** `evidence:`, `drill:`, `incident:`, `severity:` and `rto:` of this runbook are
   written into the copy's front matter too, so its steps are recorded the same way.
+- **Manual steps.** Task-list items (`- [ ] Check the canary`) in the part called are steps too.
+  Unticked, they are listed in the call's result; in a runbook that keeps evidence the call is
+  not done until they are ticked in the copy (it fails on the command line; run it again once
+  they are, and it continues in the same copy). A `section=` with only manual steps is allowed.
+  See [manual steps](cli.md#manual-steps).
 - **Running it again.** Running a call that failed again goes on in the same copy, from its
   first step not done. `md-runbook run --fresh-copy` starts a new copy instead.
 - **The cluster.** If the runbook called names a `kube-context:`, it must be the same as this
@@ -83,6 +88,7 @@ Lint (the editor's problem markers and `md-runbook lint`) reads the runbook a ca
 | `src=` names a file that doesn't exist | error |
 | A name in the body the runbook called has no parameter for | error |
 | A `section=` that matches no heading of the runbook called | error |
+| A `section=` (or `--section`) whose part holds manual steps only: the command line runs none of it | warning |
 | A parameter of the runbook called with no default that the call doesn't pass | warning |
 | `src=` with placeholders that matches no file yet (`releases/*.runbook.md`) | warning |
 

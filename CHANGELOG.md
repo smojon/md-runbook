@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fixed: a comment on a `params:` line.** `- ENV  # asked` didn't declare ENV at all, and
+  `- A: 1  # x` gave A the default `1  # x` (comment included), although the syntax reference
+  shows that form. Both now read as in the rest of the front matter: the comment is dropped, a
+  quoted value keeps its `#`.
+
 - **Run another runbook as one step: ```` ```runbook ```` blocks.** `src=` names the runbook
   (relative to this file, `${param:}` and `${out:}` allowed), the block's lines pass its
   parameters (`ENV=${param:ENV}`, secrets redacted and never written), `section=` runs only part

@@ -222,8 +222,10 @@ runs). Put what a cell on a host needs on the cell itself (`env.NAME=`). The lin
 names, about lines it ignores, about a `host=` cell in a runbook with `env:`, and about `env:` in a
 signed runbook.
 
-`#` starts a comment. A value that is not understood (`mode: sometimes`) is ignored with a lint
-warning.
+`#` starts a comment, after a space, on any line, `params:` items included: `- NAMESPACE  # asked`
+declares NAMESPACE without a default, and `- REGION: eu-west-1  # the default` gives REGION the
+default `eu-west-1`, without the comment. To put `#` in a value, quote it (`- TAG: "v1 #2"`). A
+value that is not understood (`mode: sometimes`) is ignored with a lint warning.
 
 `kube-context:` is a guard against the wrong cluster. Before each cell, `kubectl config
 current-context` runs where the cell would run: the session shell, or the app's SSH host,
@@ -379,6 +381,12 @@ A group of adjacent `os=` blocks is one step, judged by the block for the curren
 `host=` block is skipped in the extension and the CLI. Run All
 runs cells in order and stops at the first failure unless the cell has `continue-on-error`.
 Cells of one runbook never run concurrently.
+
+A task-list item is a **manual step**: done when it is ticked (`- [x]`), by a person in VS Code
+or the app, or by editing the file. Nothing runs it. `md-runbook run` lists the unticked ones of
+the steps it runs (see [the command line](features/cli.md#manual-steps)), and a run that keeps
+evidence (`evidence: true` or `incident:`) fails when one is not ticked, so a check nobody did
+never passes unrecorded.
 
 **Estimates.** With `estimate=` on its blocks, a runbook's progress is also counted in time:
 the estimates of the blocks done over the sum of all, and about how long is left (the blocks
