@@ -3,11 +3,13 @@
  * and check one (docs/features/signed-runbooks.md).
  */
 
+import { isDynamicSrc, parseCall } from '@md-runbook/core/call';
+import { checkSignedRun, insideRoot, repositoryRoot } from './signedRun';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { formatLocalIso, locateCodeCells, parse } from '@md-runbook/core';
 import { recordDigest, recordSigners, recordStatement, recordStatus, withRecordCosigner, withRecordSignature } from '@md-runbook/core/record';
-import { checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign, sshVerify } from '@md-runbook/core/node';
+import { callTarget, checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign, sshVerify } from '@md-runbook/core/node';
 import {
   ManifestMeta,
   SignatureBlock,
@@ -364,8 +366,34 @@ export async function verifyCommand(argv: readonly string[], out: Out = stdout, 
   } else {
     out('  signature: NOT checked (anyone can write a signer name): add --allowed-signers FILE to check it as the gate does');
   }
+  if (status.missingCalls.length > 0) {
+    out(`  signed runbook call${status.missingCalls.length === 1 ? '' : 's'} ${status.missingCalls.join(', ')} of ${m.calls.length} not in the file as signed (deleted or changed)`);
+    ok = false;
+  }
+  // Runbook calls: the runbooks they name are signed on their own; checked here when src= is fixed.
+  const root = repositoryRoot(file);
+  for (const call of status.calls.values()) {
+    const src = parseCall(call.info, call.body).src ?? '';
+    if (isDynamicSrc(src)) {
+      out(`  runbook call: ${src}: has placeholders, checked when it runs (md-runbook run --allowed-signers)`);
+      continue;
+    }
+    const target = callTarget(file, src);
+    if (!insideRoot(root, target)) {
+      out(`  runbook call: ${src}: outside the repository (${root})`);
+      ok = false;
+      continue;
+    }
+    if (!allowed) {
+      out(`  runbook call: ${src}: ${signedStatus(fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '') ? 'signed (not checked)' : 'NOT signed'}`);
+      continue;
+    }
+    const child = fs.existsSync(target) ? await checkSignedRun(target, {}, allowed, root, { shown: src, ...(sshKeygen ? { sshKeygen } : {}) }) : { problems: [`${src}: no such runbook`] };
+    out(`  runbook call: ${src}: ${child.problems.length === 0 ? 'signed, good' : child.problems.join('; ')}`);
+    if (child.problems.length > 0) ok = false;
+  }
   out(
-    `${ok ? '✓' : '✗'} ${status.cells.size} signed block${status.cells.size === 1 ? '' : 's'}, ${status.changed.length} changed` +
+    `${ok ? '✓' : '✗'} ${status.cells.size} signed block${status.cells.size === 1 ? '' : 's'}${status.calls.size ? `, ${status.calls.size} signed runbook call${status.calls.size === 1 ? '' : 's'}` : ''}, ${status.changed.length} changed` +
       (allowed ? '' : ', signature not checked'),
   );
   return ok && record !== false ? 0 : 1;

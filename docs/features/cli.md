@@ -53,6 +53,7 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--section TEXT` | Run only the steps under the headings that start with `TEXT` (repeatable). |
 | `--keep-going` | Carry on after a failed step (the exit code is still `1`). |
 | `--copy-folder DIR` | Where [runbook calls](calls.md) write the copies of the runbooks they run, relative to each one (default: next to it). |
+| `--allowed-signers FILE` | Run only as signed, as a server with md-runbook-gate would: the signature is good by a key in `FILE`, nothing changed since signing, parameters match their patterns, and the runbooks its calls run are signed and in its repository; otherwise nothing runs (exit `2`). See [signed runbooks](signed-runbooks.md#runbook-calls). |
 | `--fresh-copy` | A runbook call that failed before starts a new copy, instead of continuing the one it ran (keeping the steps done there). |
 | `--session` / `--isolated` | One shell process per shell for the whole runbook (like [session mode](session.md)), or one per block. Default: the front matter's `mode:`, else isolated. |
 | `--timeout SECONDS` | Default timeout per block. The front matter's `timeout:` and a block's `timeout=` win. |

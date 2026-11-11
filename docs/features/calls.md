@@ -106,6 +106,13 @@ numbered under the call (`▶ Step 5.1 · …`), `--from`/`--to` count the call 
 md-runbook run runbooks/3-upgrade.runbook.md --param ENV=DEV --param TO=72512.2611 …
 ```
 
+## Signed runbooks
+
+A call is signed as written, and the runbook it calls is signed on its own.
+`md-runbook run --allowed-signers FILE` refuses before anything runs when the runbook called is
+not signed, changed after it was signed, outside the repository, or a parameter doesn't match its
+pattern. See [signed runbooks](signed-runbooks.md#runbook-calls).
+
 ## Before it runs
 
 Lint (the editor's problem markers and `md-runbook lint`) reads the runbook a call names when

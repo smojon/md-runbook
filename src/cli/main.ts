@@ -55,6 +55,11 @@ Options:
   --keep-going         Carry on after a failed step
   --copy-folder DIR    Where runbook calls (\`\`\`runbook blocks) write the copies of the runbooks
                        they run, relative to each one (default: next to it)
+  --allowed-signers FILE
+                       Run only as signed, as a server with md-runbook-gate would: the
+                       runbook's signature is good by a key in FILE, nothing changed since
+                       signing, parameters match their patterns, and the runbooks its calls
+                       run are signed and in its repository; else nothing runs (exit 2)
   --fresh-copy         A runbook call that failed before starts a new copy, instead of
                        continuing the one it ran (keeping the steps done there)
   --session            Run all blocks of a shell in one process (like session mode)
@@ -175,6 +180,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
       case '--quiet': quiet = true; break;
       case '--copy-folder': o.copyFolder = value(a); break;
       case '--fresh-copy': o.freshCopy = true; break;
+      case '--allowed-signers': o.allowedSigners = value(a); break;
       default:
         if (a.startsWith('-')) throw new UsageError(`unknown option ${a}`);
         if (o.file) throw new UsageError(`only one runbook per run (got "${o.file}" and "${a}")`);

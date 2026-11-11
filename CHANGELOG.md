@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Signed runbook calls; `md-runbook run --allowed-signers FILE`.** A call is signed as written
+  (its placeholders need patterns, `src=` relative, no secrets); the runbook it calls is signed
+  on its own. `run --allowed-signers` runs a signed runbook only as signed, as md-runbook-gate
+  would: before anything runs it checks the signature against `FILE`, that nothing changed since
+  signing, that every block that would run is signed, each parameter against its pattern, and
+  for each call that its runbook is in the repository, signed, and passes the same checks with
+  the values passed. `verify` checks a runbook's calls too. Servers with md-runbook-gate don't
+  run calls yet.
+
 - **Manual steps on the command line.** `md-runbook run` lists the unticked task-list items
   (`- [ ] Check the canary`) of the part it runs, where they are (`☐ manual, not ticked ·
   file:line · …`), and in `--json` (`manual`), the JUnit report (skipped "Manual" cases) and the

@@ -4,6 +4,7 @@ import type { RemotePlatform } from '@md-runbook/ssh';
 import { CellOptions, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
 import { proposalOf } from '@md-runbook/core/proposal';
+import { isCallLanguage } from '@md-runbook/core/call';
 import { approvalOf } from '../approvals/store';
 
 export type Runnability =
@@ -14,7 +15,7 @@ export type Runnability =
    * `skip` option; invalid: bad options; proposed: written by an assistant or a colleague and not
    * approved on this device.
    */
-  | { ok: false; why: 'language' | 'platform' | 'os' | 'skip' | 'invalid' | 'proposed' | 'unverified'; detail?: string };
+  | { ok: false; why: 'language' | 'call' | 'platform' | 'os' | 'skip' | 'invalid' | 'proposed' | 'unverified'; detail?: string };
 
 /**
  * Linux and macOS servers run bash and sh cells; Windows servers PowerShell and cmd cells.
@@ -24,6 +25,8 @@ export type Runnability =
  */
 export function runnability(cell: ParsedCell, runbookId?: string, platform?: RemotePlatform): Runnability {
   if (cell.kind !== 'code' || !isCodeMeta(cell.meta)) return { ok: false, why: 'language' };
+  // A runbook call (```runbook) runs another runbook: VS Code and the command line do that, not SSH.
+  if (isCallLanguage(cell.languageId)) return { ok: false, why: 'call' };
   const shell = shellKindForLanguage(cell.languageId);
   if (shell === undefined) return { ok: false, why: 'language' };
   const needs: RemotePlatform = shell === 'bash' ? 'posix' : 'windows';

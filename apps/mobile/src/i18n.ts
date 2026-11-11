@@ -262,6 +262,7 @@ const en = {
   cellGone: 'The cell is no longer in the runbook',
   notRunnable: {
     language: (_detail?: string) => 'Only bash, sh, PowerShell and cmd cells run over SSH',
+    call: (_detail?: string) => 'Runs another runbook · in VS Code or with md-runbook run, not from the app yet',
     platform: (detail?: string) =>
       detail === 'windows' ? 'For a Windows server · this host runs sh or bash' : 'For a Linux or macOS server · this host is Windows',
     os: (detail?: string) =>

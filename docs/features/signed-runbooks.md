@@ -136,6 +136,28 @@ because the gate logs every value it is given.
 Single lines and ranges (Run line, Run lines N-end, checked lines) need `lines=any` on the block
 when it is signed, because skipping a line can skip a safety check.
 
+## Runbook calls
+
+A [runbook call](calls.md) is signed as written: its options (`src=`, `section=`, …) and the
+values it passes. Every `${param:}`, `${input:}` and `${out:}` in it needs a pattern
+(`--pattern TO='[0-9]{5}\.[0-9]{4}'`), a secret can't be passed, and `src=` must be relative.
+The runbook it calls is not part of this signature: it is signed on its own, with its own
+patterns, and checked with the values passed.
+
+Servers with md-runbook-gate don't run calls yet. On a machine, `md-runbook run
+--allowed-signers FILE` runs a signed runbook only as signed, as the gate would; before anything
+runs, it refuses (exit `2`) when:
+
+- the signature is not good by a key in `FILE`, or has expired;
+- a block or a call changed, moved or was removed since signing, or a block that would run is not
+  signed (only bash/sh blocks are);
+- a parameter doesn't match its signed pattern;
+- a call's runbook is outside the repository (the folder with `.git`), doesn't exist, is not
+  signed, or fails these same checks with the values the call passes.
+
+A call whose `src=` uses `${out:}` or `${input:}` is checked when it runs. `md-runbook verify
+--allowed-signers FILE` checks a runbook's calls with fixed `src=` too, and lists the others.
+
 ## Setting up a server
 
 The gate is one POSIX `sh` script: [apps/gate](../../apps/gate/README.md) has the install steps.

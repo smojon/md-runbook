@@ -302,6 +302,13 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
         message: `block moved since the runbook was signed: it was signed as block ${signed.cells.get(loc.cellIndex)!.n}, after blocks that now come later`,
       });
     }
+    if (signed.missingCalls.length > 0) {
+      problems.push({
+        severity: 'warning',
+        line: Math.max(0, signatureLine(text)),
+        message: `signed runbook call${signed.missingCalls.length === 1 ? '' : 's'} ${signed.missingCalls.join(', ')} of ${signed.manifest.calls.length} not in the file as signed (deleted or changed since signing)`,
+      });
+    }
     // Signed blocks not in the file unchanged: deleted, or changed (then also reported above).
     if (signed.missing.length > 0) {
       problems.push({

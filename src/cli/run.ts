@@ -53,6 +53,7 @@ import { TranscriptFile } from '@md-runbook/core/node/transcript';
 import { TranscriptEntry, transcriptNote } from '@md-runbook/core/transcript';
 import { ManualStep, PlannedBlock, RunUsageError, formatSteps, headingsOf, missingCaptures, selectManual, selectSteps, selectionLabel } from './select';
 import { taskItems } from '@md-runbook/core';
+import { checkSignedRun, insideRoot, repositoryRoot } from './signedRun';
 
 export interface CliOptions {
   file: string;
@@ -98,6 +99,13 @@ export interface CliOptions {
   callers?: string[];
   /** For a runbook run by a call: "5." before its step numbers. */
   stepPrefix?: string;
+  /**
+   * Run only as signed (signedRun.ts): the runbook's signature must be good by a key in this
+   * allowed signers file, and the runbooks its calls run too.
+   */
+  allowedSigners?: string;
+  /** For a signed run: the repository the runbooks it calls must be in (default: the runbook's). */
+  signedRoot?: string;
   /** Pass over blocks whose output says they are done or skipped (a call continuing its copy). */
   skipDone?: boolean;
   /** For a runbook run by a call that names no kube-context: the caller's (resolved) and its mode. */
@@ -152,6 +160,13 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<boolean> =>
 
 export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> {
   const original = fs.readFileSync(o.file, 'utf8');
+  // A signed run: refused before anything runs unless all of it is as signed.
+  const signedRoot = o.allowedSigners ? (o.signedRoot ?? repositoryRoot(o.file)) : undefined;
+  if (o.allowedSigners && signedRoot) {
+    const check = await checkSignedRun(o.file, o.params, o.allowedSigners, signedRoot);
+    if (check.problems.length > 0) throw new RunUsageError(`not run as signed (--allowed-signers ${o.allowedSigners}); nothing ran:\n${check.problems.map((p) => `  ${p}`).join('\n')}`);
+    io.log(`✓ signed${check.signer ? ` by ${check.signer}` : ''}, unchanged, parameters as signed`);
+  }
   const fileName = path.basename(o.file);
   const mdDir = path.dirname(path.resolve(o.file));
   const parsedFm = parseFrontMatter(original);
@@ -462,6 +477,10 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
           notRun(`src="${redact(call.src)}": no such runbook: ${redact(shown)}`, 'error');
           continue;
         }
+        if (signedRoot && !insideRoot(signedRoot, target)) {
+          notRun(`${redact(shown)} is outside the repository (${signedRoot}): a signed runbook calls runbooks in its own repository`, 'error');
+          continue;
+        }
         const callers = o.callers ?? [path.resolve(o.file)];
         const chain = callChainProblem(
           callers.map((p) => path.relative(process.cwd(), p) || p),
@@ -544,6 +563,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
               callers: [...callers, target],
               stepPrefix: `${pre}${n}.`,
               inheritKubeContext: inheritKube,
+              ...(signedRoot ? { signedRoot } : {}),
             },
             { out: io.out, log: (l) => io.log(`  ${l}`) },
           );

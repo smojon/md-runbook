@@ -33,6 +33,9 @@ const child = (second: string): string =>
 
 const parent = (call: string): string => ['# Parent', '', '```' + LANG, 'echo before', '```', '', call, '', '```' + LANG, 'echo after', '```', ''].join('\n');
 
+/** A cell's output without colours (the ✓ and ✗ are coloured). */
+const plain = (cell: vscode.NotebookCell): string => outputText(cell).replace(/\x1b\[[0-9;]*m/g, '');
+
 /** The copies of `name` made in the work folder. */
 const copies = (name: string): string[] => fs.readdirSync(work).filter((f) => f.startsWith(name.replace(/\.md$/, '.')) && /\.\d{8}-\d{6}(-\d+)?\.md$/.test(f));
 
@@ -44,7 +47,7 @@ test('a runbook call runs the runbook called as a copy, with the parameters it p
   assert.equal(cell.document.languageId, 'runbook');
   await step('run the call', runCells(editor, 2, 3));
   assert.equal(await waitForRun(cell, 90_000), true, outputText(cell));
-  const out = outputText(cell);
+  const out = plain(cell);
   assert.match(out, /running call-child\.md as call-child\.\d{8}-\d{6}\.md/);
   assert.match(out, /✓ first/);
   assert.match(out, /2 done · sha256 [0-9a-f]{64}/);
@@ -69,7 +72,7 @@ test('a failed call stops Run All; run again, it continues its copy; Fresh copy 
   await step('run all', runCells(editor, 0, editor.notebook.cellCount));
   const call = editor.notebook.cellAt(2);
   assert.equal(await waitForRun(call, 90_000), false, outputText(call));
-  assert.match(outputText(call), /1 done, 1 failed/);
+  assert.match(plain(call), /1 done, 1 failed/);
   // Run All stopped at the call: the cell after it has no output.
   await waitFor('run all to stop', () => editor.notebook.cellAt(4).executionSummary === undefined || editor.notebook.cellAt(4).outputs.length === 0);
   const [first] = copies('call-child2.md');
@@ -79,7 +82,7 @@ test('a failed call stops Run All; run again, it continues its copy; Fresh copy 
   await step('run again', runCells(editor, 2, 3));
   await waitFor('second run', () => (call.executionSummary?.timing?.endTime ?? 0) > before, 90_000);
   assert.equal(call.executionSummary?.success, true, outputText(call));
-  assert.match(outputText(call), /continuing call-child2\.\d{8}-\d{6}\.md \(steps done there are kept\)/);
+  assert.match(plain(call), /continuing call-child2\.md as call-child2\.\d{8}-\d{6}\.md \(steps done there are kept\)/);
   assert.deepEqual(copies('call-child2.md'), [first]);
 
   const again = call.executionSummary?.timing?.endTime ?? 0;

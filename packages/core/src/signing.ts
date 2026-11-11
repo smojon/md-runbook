@@ -11,6 +11,7 @@
  * cells are signed.
  */
 
+import { callRefs, isCallLanguage, parseCall } from './call';
 import { parseCellOptions } from './cellOptions';
 import { FenceOpen, isFenceClose, langOf, matchFenceOpen } from './fence';
 import { kubeContextParam } from './kubeContext';
@@ -74,8 +75,23 @@ export interface ManifestCell {
   steps: string[];
 }
 
+/**
+ * A runbook call (```runbook block, core/call.ts) as signed: its options and body as written. The
+ * gate doesn't run calls; `md-runbook run --allowed-signers` checks them, and the runbooks they
+ * call must be signed themselves.
+ */
+export interface ManifestCall {
+  /** 1-based, in file order among the calls. */
+  n: number;
+  info: string;
+  body: string;
+  /** The parameters its src= and values use (each has a pattern). */
+  needs: string[];
+}
+
 export interface Manifest extends ManifestMeta {
   cells: ManifestCell[];
+  calls: ManifestCall[];
 }
 
 // ---- base64 of UTF-8 text, without Buffer (the app's runtimes have none) ----
@@ -115,6 +131,15 @@ export function fromBase64(b64: string): string | undefined {
 // ---- the manifest ----
 
 /** The cells a manifest covers: every bash/sh code cell (the gate's shell), in file order. */
+/** The runbook calls of a runbook (```runbook blocks), with their cell index. */
+function callCells(text: string): { index: number; info: string; value: string }[] {
+  const out: { index: number; info: string; value: string }[] = [];
+  parse(text).cells.forEach((cell, index) => {
+    if (cell.kind === 'code' && isCodeMeta(cell.meta) && isCallLanguage(cell.languageId)) out.push({ index, info: cell.meta.info.trim(), value: cell.value });
+  });
+  return out;
+}
+
 function bashCells(text: string): { index: number; info: string; value: string }[] {
   const out: { index: number; info: string; value: string }[] = [];
   parse(text).cells.forEach((cell, index) => {
@@ -226,12 +251,34 @@ export function buildManifest(text: string, meta: ManifestMeta): { manifest: Man
       steps: splitSteps(c.value, 'bash').map((s) => rewriteRefs(s.text, 'bash')),
     });
   }
-  if (cells.length === 0) errors.push('no bash or sh cells to sign');
+  // Runbook calls: signed as written; what they call is signed on its own.
+  const calls: ManifestCall[] = [];
+  for (const c of callCells(text)) {
+    const n = calls.length + 1;
+    const where = `runbook call ${n} (src=${parseCall(c.info, c.value).src ?? '?'})`;
+    const call = parseCall(c.info, c.value);
+    for (const p of call.problems) errors.push(`${where}: ${p.message}`);
+    for (const e of parseCellOptions(c.info).errors) errors.push(`${where}: invalid option ${e}`);
+    if (call.src !== undefined && /^([A-Za-z]:)?[\\/]/.test(call.src)) errors.push(`${where}: src= must be relative: a signed runbook calls runbooks in its own repository`);
+    const needs: string[] = [];
+    try {
+      for (const ref of callRefs(call)) {
+        const token = `\${${ref.kind}:${ref.name}}`;
+        if (ref.kind === 'secret' || ref.secret) errors.push(`${where}: ${token} can't be signed: pass secrets to the runbook called another way`);
+        else if (meta.patterns[ref.name] === undefined) errors.push(`${where}: ${token} needs a pattern (--pattern ${ref.name}=REGEX)`);
+        else if (!needs.includes(ref.name)) needs.push(ref.name);
+      }
+    } catch (e) {
+      errors.push(`${where}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    calls.push({ n, info: c.info, body: c.value, needs });
+  }
+  if (cells.length === 0 && calls.length === 0) errors.push('no bash or sh cells to sign');
   if (errors.length > 0) return { errors };
-  // Only the patterns the cells use.
-  const used = new Set(cells.flatMap((c) => c.needs));
+  // Only the patterns the cells and calls use.
+  const used = new Set([...cells.flatMap((c) => c.needs), ...calls.flatMap((c) => c.needs)]);
   const patterns = Object.fromEntries(Object.entries(meta.patterns).filter(([k]) => used.has(k)));
-  return { manifest: { ...meta, scopes: [...new Set(meta.scopes)], patterns, cells } };
+  return { manifest: { ...meta, scopes: [...new Set(meta.scopes)], patterns, cells, calls } };
 }
 
 /** The manifest as signed: one item per line, values that could hold anything in base64. */
@@ -247,6 +294,11 @@ export function formatManifest(m: Manifest): string {
     for (const [k, v] of Object.entries(c.env)) lines.push(`env ${k} ${toBase64(v)}`);
     for (const s of c.steps) lines.push(`step ${toBase64(s)}`);
   }
+  // Keys of their own: the gate reads its items by key, so these never mix with a cell's.
+  for (const c of m.calls) {
+    lines.push(`call ${c.n}`, `callinfo ${toBase64(c.info)}`, `callbody ${toBase64(c.body)}`);
+    for (const p of c.needs) lines.push(`callneeds ${p}`);
+  }
   lines.push('end');
   return lines.join('\n') + '\n';
 }
@@ -255,8 +307,13 @@ export function formatManifest(m: Manifest): string {
 export function parseManifest(text: string): Manifest {
   const lines = text.split('\n');
   if (lines[0] !== MANIFEST_HEADER) throw new Error('not an md-runbook manifest (or a newer version)');
-  const m: Manifest = { name: '', version: 0, scopes: [], patterns: {}, cells: [] };
+  const m: Manifest = { name: '', version: 0, scopes: [], patterns: {}, cells: [], calls: [] };
   let cell: ManifestCell | undefined;
+  let call: ManifestCall | undefined;
+  const needCall = (what: string): ManifestCall => {
+    if (!call) throw new Error(`manifest: ${what} outside a call`);
+    return call;
+  };
   const b64 = (v: string | undefined, what: string): string => {
     const s = v === undefined ? undefined : fromBase64(v);
     if (s === undefined) throw new Error(`manifest: bad ${what}`);
@@ -312,6 +369,19 @@ export function parseManifest(text: string): Manifest {
         break;
       case 'step':
         need('step').steps.push(b64(a, 'step'));
+        break;
+      case 'call':
+        call = { n: Number(a), info: '', body: '', needs: [] };
+        m.calls.push(call);
+        break;
+      case 'callinfo':
+        needCall('callinfo').info = b64(a, 'callinfo');
+        break;
+      case 'callbody':
+        needCall('callbody').body = b64(a, 'callbody');
+        break;
+      case 'callneeds':
+        needCall('callneeds').needs.push(a ?? '');
         break;
       case 'end':
         ended = true;
@@ -484,6 +554,10 @@ export interface SignedStatus {
   missing: number[];
   /** Indexes of signed cells now before a cell that was signed ahead of them (blocks reordered). */
   moved: number[];
+  /** Runbook calls of the file by cell index: unchanged since signing (new or changed ones are in `changed`). */
+  calls: Map<number, ManifestCall>;
+  /** Manifest numbers of signed calls no longer in the file as signed. */
+  missingCalls: number[];
 }
 
 /**
@@ -518,7 +592,14 @@ export function signedStatus(text: string): SignedStatus | undefined {
     if (m.n < highest) moved.push(c.index);
     highest = Math.max(highest, m.n);
   }
-  return { block, manifest, cells, changed, missing: free.map((m) => m.n), moved };
+  const freeCalls = [...manifest.calls];
+  const calls = new Map<number, ManifestCall>();
+  for (const c of callCells(text)) {
+    const k = freeCalls.findIndex((m) => m.info === c.info && m.body === c.value);
+    if (k < 0) changed.push(c.index);
+    else calls.set(c.index, freeCalls.splice(k, 1)[0]!);
+  }
+  return { block, manifest, cells, changed: changed.sort((a, b) => a - b), missing: free.map((m) => m.n), moved, calls, missingCalls: freeCalls.map((m) => m.n) };
 }
 
 /**
