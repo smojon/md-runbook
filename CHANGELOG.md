@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Manual steps on the command line.** `md-runbook run` lists the unticked task-list items
+  (`- [ ] Check the canary`) of the part it runs, where they are (`☐ manual, not ticked ·
+  file:line · …`), and in `--json` (`manual`), the JUnit report (skipped "Manual" cases) and the
+  job summary; they get no step number. A `--section` (or a call's `section=`) of manual steps only
+  is no longer "selects no step". **A runbook that keeps evidence (`evidence: true`, `incident:`)
+  fails when one is not ticked**, so a check nobody did is never passed over; other runs only list
+  them. Lint warns about a call's `section=` of manual steps only. Found on asni-ci.
+
 - **Fixed: a comment on a `params:` line.** `- ENV  # asked` didn't declare ENV at all, and
   `- A: 1  # x` gave A the default `1  # x` (comment included), although the syntax reference
   shows that form. Both now read as in the rest of the front matter: the comment is dropped, a

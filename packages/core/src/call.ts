@@ -18,7 +18,10 @@
 
 import { tokenizeInfo } from './cellOptions';
 import { RefKind, VAR_NAME_RE, VarRef, findRefs, parseFrontMatter, replaceRefs } from './secrets';
-import { missingSections, sectionHeadings, sectionOnTitle } from './sections';
+import { inSections, missingSections, sectionHeadings, sectionOnTitle } from './sections';
+import { locateCodeCells } from './locate';
+import { parse } from './parser';
+import { taskItems } from './progress';
 
 /** The fence language of a runbook call. */
 export const CALL_LANGUAGE = 'runbook';
@@ -176,6 +179,8 @@ export interface CallCheck {
   notPassed: string[];
   /** section= values no heading starts with, or one that matches the title (every step). */
   sections: string[];
+  /** section= values whose part holds manual steps (task-list items) and no block. */
+  manualOnly: string[];
 }
 
 /** What a call passes against what the runbook called takes. */
@@ -187,7 +192,15 @@ export function checkCall(call: RunbookCall, child: string): CallCheck {
   const headings = sectionHeadings(child);
   const missing = missingSections(headings, call.sections);
   const onTitle = sectionOnTitle(headings, call.sections);
+  const blockLines = locateCodeCells(parse(child)).map((l) => l.line);
+  const items = taskItems(child);
+  const manualOnly = call.sections.filter((t) => {
+    if (missing.includes(t)) return false;
+    const inPart = inSections(headings, [t]);
+    return !blockLines.some(inPart) && items.some((i) => inPart(i.line));
+  });
   return {
+    manualOnly,
     unknown: call.args.filter((a) => !known.has(a.name)),
     notPassed: [...known].filter((n) => !passed.has(n) && !withDefault.has(n)),
     sections: [
@@ -209,14 +222,17 @@ export interface CallResult {
   failed: number;
   /** Steps not run (after a failure, or cancelled). */
   notRun: number;
+  /** Manual steps (task-list items) of the part run that are not ticked. */
+  manual?: number;
 }
 
 /** "5 done, 1 skipped, 1 failed, 2 not run" */
-export function formatCallSteps(r: Pick<CallResult, 'done' | 'skipped' | 'failed' | 'notRun'>): string {
+export function formatCallSteps(r: Pick<CallResult, 'done' | 'skipped' | 'failed' | 'notRun' | 'manual'>): string {
   const parts = [`${r.done} done`];
   if (r.skipped) parts.push(`${r.skipped} skipped`);
   if (r.failed) parts.push(`${r.failed} failed`);
   if (r.notRun) parts.push(`${r.notRun} not run`);
+  if (r.manual) parts.push(`${r.manual} manual not ticked`);
   return parts.join(', ');
 }
 

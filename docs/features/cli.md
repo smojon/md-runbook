@@ -53,7 +53,7 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--section TEXT` | Run only the steps under the headings that start with `TEXT` (repeatable). |
 | `--keep-going` | Carry on after a failed step (the exit code is still `1`). |
 | `--copy-folder DIR` | Where [runbook calls](calls.md) write the copies of the runbooks they run, relative to each one (default: next to it). |
-| `--fresh-copy` | A runbook call that failed before starts a new copy, instead of continuing the one it ran from its first step not done. |
+| `--fresh-copy` | A runbook call that failed before starts a new copy, instead of continuing the one it ran (keeping the steps done there). |
 | `--session` / `--isolated` | One shell process per shell for the whole runbook (like [session mode](session.md)), or one per block. Default: the front matter's `mode:`, else isolated. |
 | `--timeout SECONDS` | Default timeout per block. The front matter's `timeout:` and a block's `timeout=` win. |
 | `--bash PATH`, `--pwsh PATH` | The shells to use (default: as in the extension, e.g. Git Bash on Windows). |
@@ -114,8 +114,8 @@ TENANT=${param:TENANT}
   only the parameters the block passes; its file is not changed. The copy holds its outputs, and
   the call's output block records `runbook=`, `copy=`, `steps=` and `sha256=`.
 - The call fails when a step of the runbook called fails, and the run stops there (unless
-  `continue-on-error` or `--keep-going`). Run it again and the call continues in the same copy
-  from its first step not done; `--fresh-copy` starts a new copy.
+  `continue-on-error` or `--keep-going`). Run it again and the call continues in the same copy,
+  keeping the steps done there; `--fresh-copy` starts a new copy.
 - Values come from the command line as for any block: `--param`, `--input`, the environment for
   `${secret:}`, and earlier captures for `${out:}`. A parameter of the runbook called with no
   default that the block doesn't pass stops the call before it starts.

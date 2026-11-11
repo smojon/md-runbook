@@ -228,7 +228,7 @@ describe('runbook call: md-runbook run', { skip: !hasBash && 'no bash' }, () => 
     const second = await run(file);
     assert.ok(second.summary.ok, second.log.join('\n'));
     assert.equal(second.summary.steps[1]!.call!.copy, copy);
-    assert.ok(second.log.some((l) => l.includes(`continuing ${copy} from step 2`)), second.log.join('\n'));
+    assert.ok(second.log.some((l) => l.includes(`continuing ${copy} (steps done there are kept)`)), second.log.join('\n'));
     assert.deepEqual(
       second.summary.steps[1]!.call!.steps.map((s) => s.status),
       ['skipped', 'passed'],
@@ -263,5 +263,62 @@ describe('runbook call: md-runbook run', { skip: !hasBash && 'no bash' }, () => 
     fs.writeFileSync(file, '---\nkube-context: dev\n---\n# P\n\n```runbook src=k8s.md\n```\n', 'utf8');
     const cluster = await run(file);
     assert.match(cluster.summary.steps[0]!.message!, /runs against the Kubernetes context prod, this runbook against dev/);
+  });
+});
+
+const MANUAL = ['# M', '', '## Do', '', '```bash', 'echo did', '```', '', '- [ ] Check the canary', '- [x] Told the team', '', '## Verify', '', '- [ ] Look at the dashboard', ''].join('\n');
+
+describe('manual steps on the command line', { skip: !hasBash && 'no bash' }, () => {
+  it('lists the unticked ones; a section of manual steps only runs; evidence fails on one', async () => {
+    const dir = tmp({ 'm.md': MANUAL });
+    const file = path.join(dir, 'm.md');
+    const all = await run(file);
+    assert.ok(all.summary.ok, all.log.join('\n'));
+    assert.ok(all.log.includes('☐ manual, not ticked · m.md:9 · Check the canary'), all.log.join('\n'));
+    assert.ok(all.log.includes('☐ 2 manual steps not ticked'), all.log.join('\n'));
+    assert.deepEqual(
+      all.summary.manual.map((m) => [m.line + 1, m.ticked, m.step]),
+      [
+        [9, false, 1],
+        [10, true, 1],
+        [14, false, 1],
+      ],
+    );
+    assert.match(junitReport('m.md', all.summary.steps, all.summary.manual), /name="Manual \(line 14\): Look at the dashboard" time="0\.000"><skipped message="manual step, not ticked"\/>/);
+
+    const verify = await run(file, { sections: ['Verify'] });
+    assert.deepEqual(verify.summary.steps.map((s) => s.status), ['skipped']);
+    assert.deepEqual(verify.summary.manual.map((m) => m.text), ['Look at the dashboard']);
+
+    fs.writeFileSync(file, '---\nevidence: true\n---\n' + MANUAL, 'utf8');
+    const evidence = await run(file);
+    assert.ok(!evidence.summary.ok);
+    assert.ok(evidence.log.some((l) => /^✗ 2 manual steps not ticked, and this runbook keeps evidence/.test(l)), evidence.log.join('\n'));
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/- \[ \]/g, '- [x]'), 'utf8');
+    assert.ok((await run(file)).summary.ok);
+  });
+
+  it('a call in a runbook that keeps evidence waits for the manual steps of the copy', async () => {
+    const dir = tmp({ 'm.md': MANUAL });
+    const file = path.join(dir, 'p.md');
+    fs.writeFileSync(file, '---\nevidence: true\n---\n# P\n\n```runbook src=m.md section=Verify\n```\n', 'utf8');
+    const first = await run(file);
+    assert.ok(!first.summary.ok);
+    const call = first.summary.steps[0]!.call!;
+    assert.match(first.summary.steps[0]!.message!, /1 manual step not ticked in m\.\d{8}-\d{6}\.md, which keeps evidence/);
+    const out = parse(fs.readFileSync(file, 'utf8')).cells.find((c) => c.languageId === 'runbook')!.output!;
+    assert.equal(out.attrs.steps, '0 done, 1 skipped, 1 manual not ticked');
+    // Ticked in the copy: the call goes on in it and passes.
+    const copy = path.join(dir, call.copy);
+    fs.writeFileSync(copy, fs.readFileSync(copy, 'utf8').replace('- [ ] Look', '- [x] Look'), 'utf8');
+    const second = await run(file);
+    assert.ok(second.summary.ok, second.log.join('\n'));
+    assert.equal(second.summary.steps[0]!.call!.copy, call.copy);
+  });
+
+  it('lint warns about a section= of manual steps only', () => {
+    const dir = tmp({ 'm.md': MANUAL });
+    const problems = lintRunbook('# P\n\n```runbook src=m.md section=Verify\n```\n', { readRunbook: runbookReader(path.join(dir, 'p.md')) });
+    assert.ok(problems.some((p) => p.severity === 'warning' && /section="Verify" holds manual steps only/.test(p.message)), JSON.stringify(problems));
   });
 });

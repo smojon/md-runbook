@@ -45,12 +45,47 @@ export function selectionLabel(s: Selection): string {
   ].join(' ');
 }
 
+/** A task-list item (`- [ ] Check the canary`): a step a person does, which nothing runs. */
+export interface ManualStep {
+  /** 0-based line. */
+  line: number;
+  /** The step of the block before it (0: none), which --from/--to select it with. */
+  step: number;
+  text: string;
+  ticked: boolean;
+}
+
 /**
  * The selected step numbers, or undefined without a selection. `numbers[i]` is the step of
  * `locs[i]`. A range outside the runbook, a section without a heading, or a selection with no
- * step in it is a RunUsageError.
+ * step in it (no block, and none of `manual`) is a RunUsageError.
  */
-export function selectSteps(text: string, locs: readonly CodeCellLocation[], numbers: readonly number[], s: Selection): Set<number> | undefined {
+export function selectSteps(
+  text: string,
+  locs: readonly CodeCellLocation[],
+  numbers: readonly number[],
+  s: Selection,
+  manual: readonly ManualStep[] = [],
+): Set<number> | undefined {
+  const has = selectionFilter(text, numbers, s);
+  if (!has) return undefined;
+  const selected = new Set<number>();
+  locs.forEach((loc, i) => {
+    const n = numbers[i]!;
+    if (has(n, loc.line)) selected.add(n);
+  });
+  if (selected.size === 0 && !manual.some((m) => has(Math.max(m.step, 1), m.line))) throw new RunUsageError(`${selectionLabel(s)} selects no step`);
+  return selected;
+}
+
+/** The manual steps a selection holds: under its sections, after a block in its range (all without a selection). */
+export function selectManual(text: string, numbers: readonly number[], s: Selection, manual: readonly ManualStep[]): ManualStep[] {
+  const has = selectionFilter(text, numbers, s);
+  return has ? manual.filter((m) => has(Math.max(m.step, 1), m.line)) : [...manual];
+}
+
+/** Whether step `n` at a 0-based line is selected; undefined without a selection. Throws RunUsageError for a bad one. */
+function selectionFilter(text: string, numbers: readonly number[], s: Selection): ((n: number, line: number) => boolean) | undefined {
   const sections = s.sections ?? [];
   if (s.from === undefined && s.to === undefined && sections.length === 0) return undefined;
   const count = Math.max(0, ...numbers);
@@ -78,13 +113,7 @@ export function selectSteps(text: string, locs: readonly CodeCellLocation[], num
     }
     under = inSections(headings, sections);
   }
-  const selected = new Set<number>();
-  locs.forEach((loc, i) => {
-    const n = numbers[i]!;
-    if (n >= from && n <= to && under(loc.line)) selected.add(n);
-  });
-  if (selected.size === 0) throw new RunUsageError(`${selectionLabel(s)} selects no step`);
-  return selected;
+  return (n, line) => n >= from && n <= to && under(line);
 }
 
 /** A block of the run with what the checks need to know about it. */

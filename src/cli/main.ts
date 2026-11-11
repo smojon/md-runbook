@@ -56,7 +56,7 @@ Options:
   --copy-folder DIR    Where runbook calls (\`\`\`runbook blocks) write the copies of the runbooks
                        they run, relative to each one (default: next to it)
   --fresh-copy         A runbook call that failed before starts a new copy, instead of
-                       continuing the one it ran from its first step not done
+                       continuing the one it ran (keeping the steps done there)
   --session            Run all blocks of a shell in one process (like session mode)
   --isolated           One process per block, even with "mode: session" in the front matter
   --timeout SECONDS    Default timeout per block (the front matter and timeout= win)
@@ -309,11 +309,11 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (options.write) writeFile(target, summary.text);
   const html = (): string => renderReport(summary.text, { generatedAt: new Date(), fallbackTitle: file, redact: summary.redact });
   if (options.report) writeFile(options.report, html());
-  if (options.junit) writeFile(options.junit, junitReport(file, summary.steps));
+  if (options.junit) writeFile(options.junit, junitReport(file, summary.steps, summary.manual));
   // record: the run timeline and its summary (core/incident.ts), for audit tools and postmortems.
-  if (options.json) writeFile(options.json, JSON.stringify({ file, ok: summary.ok, steps: summary.steps, record: buildTimeline(summary.text) }, null, 2) + '\n');
+  if (options.json) writeFile(options.json, JSON.stringify({ file, ok: summary.ok, steps: summary.steps, manual: summary.manual, record: buildTimeline(summary.text) }, null, 2) + '\n');
   const ghSummary = process.env.GITHUB_STEP_SUMMARY;
-  if (ghSummary) fs.appendFileSync(ghSummary, markdownSummary(file, summary.steps) + '\n');
+  if (ghSummary) fs.appendFileSync(ghSummary, markdownSummary(file, summary.steps, summary.manual) + '\n');
   let pdfFailed = false;
   if (parsed.pdf) {
     const browser = findBrowser(parsed.browser ?? process.env.CHROME_PATH);

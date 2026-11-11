@@ -51,7 +51,8 @@ import { historySizeFor, runnerAttrs } from '@md-runbook/core/incident';
 import { SessionPool } from '@md-runbook/core/node/session';
 import { TranscriptFile } from '@md-runbook/core/node/transcript';
 import { TranscriptEntry, transcriptNote } from '@md-runbook/core/transcript';
-import { PlannedBlock, RunUsageError, formatSteps, headingsOf, missingCaptures, selectSteps, selectionLabel } from './select';
+import { ManualStep, PlannedBlock, RunUsageError, formatSteps, headingsOf, missingCaptures, selectManual, selectSteps, selectionLabel } from './select';
+import { taskItems } from '@md-runbook/core';
 
 export interface CliOptions {
   file: string;
@@ -97,6 +98,8 @@ export interface CliOptions {
   callers?: string[];
   /** For a runbook run by a call: "5." before its step numbers. */
   stepPrefix?: string;
+  /** Pass over blocks whose output says they are done or skipped (a call continuing its copy). */
+  skipDone?: boolean;
   /** For a runbook run by a call that names no kube-context: the caller's (resolved) and its mode. */
   inheritKubeContext?: { context: string; mode?: KubeContextMode };
 }
@@ -118,11 +121,13 @@ export interface StepResult {
   message?: string;
   output: string;
   /** A runbook call: the runbook run (relative to this file), its copy, and its steps. */
-  call?: { runbook: string; copy: string; sha256: string; steps: StepResult[] };
+  call?: { runbook: string; copy: string; sha256: string; steps: StepResult[]; manual: ManualStep[] };
 }
 
 export interface RunSummary {
   steps: StepResult[];
+  /** The manual steps (task-list items) of the part run, ticked or not (their text redacted). */
+  manual: ManualStep[];
   /** The runbook with the new outputs. */
   text: string;
   ok: boolean;
@@ -204,7 +209,24 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
 
   // Checked before the first step: what is known now must not stop a long run halfway.
   const selection = { ...(o.from !== undefined ? { from: o.from } : {}), ...(o.to !== undefined ? { to: o.to } : {}), ...(o.sections?.length ? { sections: o.sections } : {}) };
-  const selected = selectSteps(original, locs, numbers, selection);
+  // Manual steps (task-list items): nothing runs them, but the run lists those not ticked.
+  const lines = original.split(/\r?\n/);
+  const manualAll: (ManualStep & { after: number })[] = taskItems(original).map((t) => {
+    let after = -1;
+    locs.forEach((l, k) => void (l.line < t.line && (after = k)));
+    return { line: t.line, step: after >= 0 ? numbers[after]! : 0, after, text: (lines[t.line] ?? '').replace(/^.*?\[[ xX]\][ \t]*/, '').trim(), ticked: t.checked };
+  });
+  const selected = selectSteps(original, locs, numbers, selection, manualAll);
+  const manual = selectManual(original, numbers, selection, manualAll) as (ManualStep & { after: number })[];
+  const manualShown = new Set<number>();
+  /** Log the unticked manual steps after block `k` (-1: before the first). */
+  const listManual = (k: number): void => {
+    for (const m of manual) {
+      if (m.after !== k || m.ticked || manualShown.has(m.line)) continue;
+      manualShown.add(m.line);
+      io.log(`☐ manual, not ticked · ${fileName}:${m.line + 1} · ${redact(m.text)}`);
+    }
+  };
   const blocks: PlannedBlock[] = locs.map((loc, i) => {
     const opts = parseCellOptions(loc.info);
     const slot = slots[loc.cellIndex];
@@ -248,7 +270,13 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       );
     }
   }
-  if (selected) io.log(`Step${selected.size === 1 ? '' : 's'} ${formatSteps([...selected])} of ${Math.max(0, ...numbers)} (${selectionLabel(selection)})`);
+  if (selected) {
+    io.log(
+      selected.size === 0
+        ? `No block selected (${selectionLabel(selection)}): manual steps only`
+        : `Step${selected.size === 1 ? '' : 's'} ${formatSteps([...selected])} of ${Math.max(0, ...numbers)} (${selectionLabel(selection)})`,
+    );
+  }
   const notSelected = `not selected (${selectionLabel(selection)})`;
 
   const pool = session ? new SessionPool() : undefined;
@@ -299,6 +327,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
 
   try {
     for (const [i, loc] of locs.entries()) {
+      listManual(i - 1);
       const slot = slots[loc.cellIndex];
       if (slot && counted.has(slot.group)) {
         // Another alternative of a step already counted.
@@ -328,6 +357,16 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
           steps.push(result('skipped', 'skipped', { message: `for ${osLabel(opts.os ?? [])}` }));
         }
         continue;
+      }
+      if (o.skipDone && blocks[i]!.selected) {
+        const a = loc.outputAttrs;
+        const state = stepState(a?.exit, a?.lines !== undefined, a?.check);
+        if (state === 'done' || state === 'skipped') {
+          io.log(`– ${where}: done in an earlier run, kept`);
+          steps.push(result('skipped', 'skipped', { message: 'done in an earlier run' }));
+          finished.add(i);
+          continue;
+        }
       }
       if (!blocks[i]!.selected) {
         // Left out by --from/--to/--section: not run, output untouched (a resumed run keeps the earlier ones).
@@ -462,22 +501,23 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
           notRun(e instanceof Error ? e.message : String(e), 'error');
           continue;
         }
-        // Run again after a failure: the same copy goes on from its first step not done.
+        // Run again after a failure: the same copy goes on, keeping the steps done there (and
+        // the manual steps ticked in it since).
         let copy: string | undefined;
-        let from: number | undefined;
+        let resumed = false;
         const prev = callFromAttrs(loc.outputAttrs);
         if (prev && !o.freshCopy && prev.exit !== undefined && prev.exit !== '0') {
           const old = path.resolve(path.dirname(path.resolve(o.file)), prev.copy);
           if (fs.existsSync(old) && samePath(callTarget(o.file, prev.runbook), target)) {
-            from = firstStepNotDone(fs.readFileSync(old, 'utf8'), call.sections);
-            if (from !== undefined) copy = old;
+            copy = old;
+            resumed = true;
           }
         }
         copy ??= writeCallCopy(target, original, o.copyFolder);
         const copyShown = relativeToCaller(o.file, copy);
         const title = redact(opts.name ?? firstLine);
         const part = call.sections.length ? ` (section${call.sections.length === 1 ? '' : 's'} ${call.sections.map((t) => JSON.stringify(t)).join(', ')})` : '';
-        io.log(`▶ ${where}${opts.name ? ` · ${opts.name}` : ''} · ${redact(shown)}${part} · ${from !== undefined ? `continuing ${copyShown} from step ${from}` : `copy ${copyShown}`}`);
+        io.log(`▶ ${where}${opts.name ? ` · ${opts.name}` : ''} · ${redact(shown)}${part} · ${resumed ? `continuing ${copyShown} (steps done there are kept)` : `copy ${copyShown}`}`);
         note(n, title, `runs ${redact(shown)}${part} as ${copyShown}`);
         const started = new Date();
         const ctl = new AbortController();
@@ -493,8 +533,9 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
               ...o,
               file: copy,
               params,
-              from,
+              from: undefined,
               to: undefined,
+              skipDone: resumed,
               sections: call.sections.length ? call.sections : undefined,
               session: undefined,
               signal: ctl.signal,
@@ -508,6 +549,10 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
           );
           fs.writeFileSync(copy, child.text, 'utf8');
           for (const s of child.steps) if (s.status === 'failed' || s.status === 'not run') failure ??= `step ${pre}${n}.${s.step} ${s.status === 'failed' ? 'failed' : 'not run'}: ${s.message ?? s.exit}`;
+          const unticked = child.manual.filter((m) => !m.ticked).length;
+          if (!child.ok && failure === undefined && unticked > 0) {
+            failure = `${unticked} manual step${unticked === 1 ? '' : 's'} not ticked in ${copyShown}, which keeps evidence: tick ${unticked === 1 ? 'it' : 'them'} there and run the call again`;
+          }
         } catch (e) {
           failure = e instanceof Error ? e.message : String(e);
         } finally {
@@ -517,7 +562,16 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         if (timedOut) failure = `timed out after ${opts.timeoutSeconds}s; the runbook called was stopped`;
         const ended = new Date();
         const count = (st: StepStatus): number => child?.steps.filter((s) => s.status === st).length ?? 0;
-        const r = { runbook: shown, copy: copyShown, sha256: fileSha256(copy), done: count('passed'), skipped: count('skipped'), failed: count('failed'), notRun: count('not run') };
+        const r = {
+          runbook: shown,
+          copy: copyShown,
+          sha256: fileSha256(copy),
+          done: count('passed'),
+          skipped: count('skipped'),
+          failed: count('failed'),
+          notRun: count('not run'),
+          manual: child?.manual.filter((m) => !m.ticked).length ?? 0,
+        };
         const ok = child?.ok === true && !timedOut;
         const outText = callOutputText(r, call.sections) + (failure ? `[md-runbook] ${failure}\n` : '');
         const attrs: Record<string, string> = {
@@ -540,7 +594,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
           result(ok ? 'passed' : 'failed', attrs.exit!, {
             durationMs: ended.getTime() - started.getTime(),
             output: redact(outText),
-            call: { runbook: shown, copy: copyShown, sha256: r.sha256, steps: child?.steps ?? [] },
+            call: { runbook: shown, copy: copyShown, sha256: r.sha256, steps: child?.steps ?? [], manual: child?.manual ?? [] },
             ...(ok ? {} : { message: redact(failure ?? 'the runbook called failed') }),
           }),
         );
@@ -744,8 +798,20 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     pins.dispose();
   }
 
-  const ok = steps.every((s) => s.status === 'passed' || s.status === 'skipped');
-  return { steps, text, ok, redact };
+  listManual(locs.length - 1);
+  // A runbook that keeps evidence must not pass over a check nobody did.
+  const unticked = manual.filter((m) => !m.ticked);
+  const evidence = parsedFm?.evidence === true;
+  if (unticked.length > 0) {
+    const n = unticked.length;
+    io.log(
+      evidence
+        ? `✗ ${n} manual step${n === 1 ? '' : 's'} not ticked, and this runbook keeps evidence: tick ${n === 1 ? 'it' : 'them'} (- [x]) once done, and run again`
+        : `☐ ${n} manual step${n === 1 ? '' : 's'} not ticked`,
+    );
+  }
+  const ok = steps.every((s) => s.status === 'passed' || s.status === 'skipped') && !(evidence && unticked.length > 0);
+  return { steps, manual: manual.map(({ after: _after, ...m }) => ({ ...m, text: redact(m.text) })), text, ok, redact };
 }
 
 const xml = (s: string): string =>
@@ -759,12 +825,22 @@ export function flattenSteps(steps: readonly StepResult[], prefix = ''): (StepRe
   ]);
 }
 
+/** The manual steps of a run and of its calls (with the file they are in), unticked first in order. */
+export function allManual(file: string, top: readonly StepResult[], manual: readonly ManualStep[]): (ManualStep & { file: string })[] {
+  return [...manual.map((m) => ({ ...m, file })), ...top.flatMap((s) => (s.call ? allManual(s.call.copy, s.call.steps, s.call.manual) : []))];
+}
+
 /** JUnit XML, which most CI systems show as a test report. */
-export function junitReport(file: string, top: readonly StepResult[]): string {
+export function junitReport(file: string, top: readonly StepResult[], manual: readonly ManualStep[] = []): string {
   // A runbook call's steps are test cases too, after the call, with the copy as their class.
   const steps = flattenSteps(top);
+  // Manual steps: passed when ticked, skipped otherwise (nothing ran them).
+  const manualCases = allManual(file, top, manual).map((m) => {
+    const head = `    <testcase classname="${xml(m.file)}" name="${xml(`Manual (line ${m.line + 1}): ${m.text}`)}" time="0.000">`;
+    return m.ticked ? `${head}</testcase>` : `${head}<skipped message="manual step, not ticked"/></testcase>`;
+  });
   const failures = steps.filter((s) => s.status === 'failed' || s.status === 'not run').length;
-  const skipped = steps.filter((s) => s.status === 'skipped').length;
+  const skipped = steps.filter((s) => s.status === 'skipped').length + manualCases.filter((c) => c.includes('<skipped')).length;
   const time = (ms: number): string => (ms / 1000).toFixed(3);
   const total = top.reduce((t, s) => t + s.durationMs, 0);
   const cases = steps.map((s) => {
@@ -778,20 +854,26 @@ export function junitReport(file: string, top: readonly StepResult[]): string {
   });
   return (
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
-    `<testsuites>\n  <testsuite name="${xml(file)}" tests="${steps.length}" failures="${failures}" skipped="${skipped}" time="${time(total)}">\n` +
-    cases.join('\n') +
+    `<testsuites>\n  <testsuite name="${xml(file)}" tests="${steps.length + manualCases.length}" failures="${failures}" skipped="${skipped}" time="${time(total)}">\n` +
+    [...cases, ...manualCases].join('\n') +
     '\n  </testsuite>\n</testsuites>\n'
   );
 }
 
 /** A Markdown table of the steps, e.g. for GitHub's job summary ($GITHUB_STEP_SUMMARY). */
-export function markdownSummary(file: string, top: readonly StepResult[]): string {
+export function markdownSummary(file: string, top: readonly StepResult[], manual: readonly ManualStep[] = []): string {
   const steps = flattenSteps(top);
   const icon: Record<StepStatus, string> = { passed: '✅', failed: '❌', skipped: '⏭️', 'not run': '⛔' };
   const cell = (s: string): string => s.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
   const rows = steps.map((s) => `| ${s.number} | ${icon[s.status]} ${s.status} | \`${cell(s.title).slice(0, 80)}\` | ${cell(s.exit)} | ${(s.durationMs / 1000).toFixed(1)}s${s.estimateSeconds !== undefined ? ` (est. ${formatEstimate(s.estimateSeconds)})` : ''} | ${cell(s.message ?? '')} |`);
   const passed = steps.filter((s) => s.status === 'passed').length;
-  return `### ${cell(file)}: ${passed}/${steps.length} steps passed\n\n| Step | Result | Command | Exit | Time | Note |\n|---|---|---|---|---|---|\n${rows.join('\n')}\n`;
+  const manualAll = allManual(file, top, manual);
+  const manualRows = manualAll.map((m) => `| – | ${m.ticked ? '☑ ticked' : '☐ not ticked'} | ${cell(m.text).slice(0, 80)} | manual | – | ${cell(m.file)}:${m.line + 1} |`);
+  const unticked = manualAll.filter((m) => !m.ticked).length;
+  return (
+    `### ${cell(file)}: ${passed}/${steps.length} steps passed${unticked ? `, ${unticked} manual step${unticked === 1 ? '' : 's'} not ticked` : ''}\n\n` +
+    `| Step | Result | Command | Exit | Time | Note |\n|---|---|---|---|---|---|\n${[...rows, ...manualRows].join('\n')}\n`
+  );
 }
 
 /** In a run copy, the number of the first step not done (in `sections`, when given); undefined when all are. */

@@ -58,8 +58,10 @@ BACKUP_DIR=${out:BACKUP_DIR}
   not done until they are ticked in the copy (it fails on the command line; run it again once
   they are, and it continues in the same copy). A `section=` with only manual steps is allowed.
   See [manual steps](cli.md#manual-steps).
-- **Running it again.** Running a call that failed again goes on in the same copy, from its
-  first step not done. `md-runbook run --fresh-copy` starts a new copy instead.
+- **Running it again.** Running a call that failed again goes on in the same copy: the steps done
+  there are kept (not run again), the others run, and manual steps ticked in the copy since count.
+  `md-runbook run --fresh-copy` starts a new copy instead. A `${out:NAME}` captured by a step done
+  in the earlier run has no value in the next one: put the capture and its use in the same part.
 - **The cluster.** If the runbook called names a `kube-context:`, it must be the same as this
   one's (after parameters), or the call fails before anything runs. If it names none, it runs
   against this one's, with its `kube-context-mode:`.

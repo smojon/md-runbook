@@ -376,6 +376,9 @@ function lintCall(loc: CodeCellLocation, declared: ReadonlySet<string>, captured
   for (const a of check.unknown) at('error', `${a.name}: the runbook called (${call.src}) has no parameter ${a.name}`, a.line);
   for (const name of check.notPassed) at('warning', `${call.src} needs \${param:${name}}, which this call doesn't pass and which has no default: it will be asked (on the command line: an error)`);
   for (const m of check.sections) at('error', m);
+  for (const t of check.manualOnly) {
+    at('warning', `section="${t}" holds manual steps only (task-list items): the command line runs none of it, and a runbook that keeps evidence fails until they are ticked`);
+  }
   return problems;
 }
 
