@@ -53,6 +53,9 @@ BACKUP_DIR=${out:BACKUP_DIR}
   after the run).
 - **The record.** `evidence:`, `drill:`, `incident:`, `severity:` and `rto:` of this runbook are
   written into the copy's front matter too, so its steps are recorded the same way.
+- **The report.** Export Report and `md-runbook run --report` show the steps of the copy under
+  the call, numbered 5.1, 5.2, …, with a link to the copy, and flag a copy whose SHA-256 is no
+  longer the one the call recorded (changed after the run).
 - **Manual steps.** Task-list items (`- [ ] Check the canary`) in the part called are steps too.
   Unticked, they are listed in the call's result; in a runbook that keeps evidence the call is
   not done until they are ticked in the copy (it fails on the command line; run it again once

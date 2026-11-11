@@ -8,7 +8,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
-import { ShellSettings, parse } from '@md-runbook/core';
+import { ShellSettings, parse, renderReport } from '@md-runbook/core';
 import { callEstimateSeconds, matchRunbooks, nodeShellEnv, resolveShell, runbookReader, writeCallCopy } from '@md-runbook/core/node';
 import { callChainProblem, checkCall, isDynamicSrc, parseCall, srcGlob, staysBelow } from '@md-runbook/core/call';
 import { lintRunbook } from '@md-runbook/core/lint';
@@ -208,6 +208,16 @@ describe('runbook call: md-runbook run', { skip: !hasBash && 'no bash' }, () => 
       ['1', '2', '2.1', '2.2', '3'],
     );
     assert.match(junitReport('parent.md', summary.steps), new RegExp(`classname="${call.copy.replace(/\./g, '\\.')}" name="Step 2\\.1: echo`));
+    // Export Report: the copy's steps under the call, with its link; a copy changed after the run is flagged.
+    const read = (rel: string): string | undefined => (fs.existsSync(path.join(dir, rel)) ? fs.readFileSync(path.join(dir, rel), 'utf8') : undefined);
+    const html = renderReport(fs.readFileSync(file, 'utf8'), { generatedAt: new Date(), readCall: read });
+    assert.match(html, /<a href="#step-2-1">2\.1<\/a>/);
+    assert.match(html, /<div class="step-head">Step 2\.2<\/div>/);
+    assert.ok(html.includes(`<a href="${call.copy}"><code>${call.copy}</code></a>`));
+    assert.doesNotMatch(html, /the copy changed after the run/);
+    fs.appendFileSync(path.join(dir, call.copy), '\nedited\n');
+    assert.match(renderReport(fs.readFileSync(file, 'utf8'), { generatedAt: new Date(), readCall: read }), /the copy changed after the run/);
+    assert.doesNotMatch(renderReport(fs.readFileSync(file, 'utf8'), { generatedAt: new Date() }), /step-2-1/);
   });
 
   it('runs only the sections named; a failure stops the caller; a second run continues the copy', async () => {

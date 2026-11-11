@@ -3,6 +3,7 @@
  * "Export Report (PDF)": the same report printed by an installed Chrome, Edge or Chromium.
  */
 
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { findBrowser, htmlToPdf } from './cli/pdf';
@@ -60,7 +61,16 @@ async function prepareReport(arg: unknown, ext: 'html' | 'pdf'): Promise<{ html:
   const name = path.posix.basename(uri.path);
   const text = await currentText(uri);
   if (!(await confirmNoLeaks(text, 'Export'))) return undefined;
-  const html = renderReport(text, { generatedAt: new Date(), fallbackTitle: name, redact: writeOptions().redact });
+  // A runbook call's steps come from its copy (a local file, by its path from the runbook).
+  const readCall = (copy: string): string | undefined => {
+    if (uri.scheme !== 'file') return undefined;
+    try {
+      return fs.readFileSync(path.resolve(path.dirname(uri.fsPath), copy), 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+  const html = renderReport(text, { generatedAt: new Date(), fallbackTitle: name, redact: writeOptions().redact, readCall });
   const folder = reportFolder(uri);
   await vscode.workspace.fs.createDirectory(folder);
   return { html, out: vscode.Uri.joinPath(folder, name.replace(/\.(md|markdown)$/i, '') + `.report.${ext}`) };

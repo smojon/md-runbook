@@ -25,7 +25,8 @@
   carry over to the copy; a different `kube-context:` is refused, none inherits the caller's.
   Cycles and calls more than 3 deep are refused before anything runs. `md-runbook run` follows
   calls (steps 5.1, 5.2, … in the log, `--json`, JUnit and the job summary; `--copy-folder`);
-  lint checks a call against the file it names (unknown or missing parameters, sections, a
+  Export Report and `--report` show the copy's steps under the call (5.1, 5.2, …), link the
+  copy and flag one changed after the run (its SHA-256); lint checks a call against the file it names (unknown or missing parameters, sections, a
   missing file); `md-runbook estimate` counts a call as what it runs. Docs:
   [docs/features/calls.md](docs/features/calls.md).
 

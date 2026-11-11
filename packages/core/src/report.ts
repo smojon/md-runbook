@@ -13,11 +13,18 @@ import { formatEstimate } from './estimate';
 import { parse } from './parser';
 import { MILESTONES, Timeline, buildTimeline, formatSeconds } from './incident';
 import { recordSigners, recordStatus } from './record';
+import { MAX_CALL_DEPTH, callFromAttrs, isCallLanguage } from './call';
+import { sha256Hex } from './sha256';
 
 export interface ReportOptions {
   generatedAt: Date;
   /** Used when the document has no heading. */
   fallbackTitle?: string;
+  /**
+   * The text of a runbook call's copy, by its path relative to the runbook reported (`/`
+   * separators), or undefined when it isn't there. Without it, a call shows as one step.
+   */
+  readCall?(copy: string): string | undefined;
   /**
    * Applied to stored outputs once more (they were already redacted when written), to the code of
    * every step and fenced block, and to front matter.
@@ -75,15 +82,34 @@ function splitFrontMatter(value: string): { yaml: string; rest: string } | undef
   return { yaml: lines.slice(1, end).join('\n'), rest: lines.slice(end + 1).join('\n') };
 }
 
-export function renderReport(text: string, opts: ReportOptions): string {
+/** `rel` (a/b/../c.md) under `base`, normalized, with `/` separators. */
+function joinPath(base: string, rel: string): string {
+  const out: string[] = [];
+  for (const part of [...base.split('/'), ...rel.split(/[\\/]+/)]) {
+    if (part === '' || part === '.') continue;
+    if (part === '..' && out.length > 0 && out[out.length - 1] !== '..') out.pop();
+    else out.push(part);
+  }
+  return out.join('/');
+}
+
+/** The summary rows and the body of a runbook's steps, numbered after `prefix` (`5.` in a call's copy). */
+function renderSteps(
+  text: string,
+  prefix: string,
+  opts: ReportOptions,
+  redact: (s: string) => string,
+  counts: Record<Status, number>,
+  depth: number,
+  /** The folder of `text`, relative to the runbook reported ('' for it). */
+  base = '',
+): { rows: string; body: string; title?: string; step: number; total: number } {
   const doc = parse(text);
-  const redact = (s: string): string => (opts.redact ? opts.redact(s) : s);
   let title: string | undefined;
   let rows = '';
   let body = '';
   let step = 0;
-  const counts: Record<Status, number> = { ok: 0, fail: 0, skip: 0, none: 0 };
-
+  let nested = 0;
   // os= alternatives are one step: the one that ran (has output) stands for the group, the
   // others are shown as alternatives for another OS.
   const osOf = (i: number) => {
@@ -124,18 +150,19 @@ export function renderReport(text: string, opts: ReportOptions): string {
     const st: Status = alternative ? 'skip' : statusOf(a.exit, a.lines, a.check);
     if (!alternative) counts[st]++;
     const mark = alternative ? `<span class="badge skip">${escapeHtml(`– for ${osLabel(osOf(index) ?? [])}`)}</span>` : badge(a.exit, a.lines, a.check);
-    const anchor = alternative ? `step-${n}-${index}` : `step-${n}`;
+    const num = `${prefix}${n}`;
+    const anchor = alternative ? `step-${num.replace(/\./g, '-')}-${index}` : `step-${num.replace(/\./g, '-')}`;
     const shell = cell.meta.lang;
     const code = redact(cell.value);
     const firstLine = code.split('\n').find((l) => l.trim() !== '')?.trim() ?? '';
     const estimate = parseCellOptions(cell.meta.info).estimateSeconds;
     const est = estimate !== undefined ? `est. ${formatEstimate(estimate)}` : undefined;
     rows +=
-      `<tr class="${st}"><td><a href="#${anchor}">${n}</a></td><td><code>${escapeHtml(firstLine)}</code></td>` +
+      `<tr class="${st}${prefix ? ' nested' : ''}"><td><a href="#${anchor}">${num}</a></td><td><code>${escapeHtml(firstLine)}</code></td>` +
       `<td>${escapeHtml(shell)}</td><td>${mark}</td>` +
       `<td>${escapeHtml(a.ran ?? '')}</td><td>${escapeHtml([a.duration, est].filter(Boolean).join(' · '))}</td></tr>\n`;
 
-    body += `<section class="step ${st}" id="${anchor}">\n<div class="step-head">Step ${n}${alternative ? ' (alternative)' : ''}</div>\n`;
+    body += `<section class="step ${st}" id="${anchor}">\n<div class="step-head">Step ${num}${alternative ? ' (alternative)' : ''}</div>\n`;
     body += renderCodeBlock(code, shell);
     if (cell.output) {
       const meta = [a.ran && `ran ${a.ran}`, a.duration, est].filter(Boolean).map((s) => escapeHtml(s as string));
@@ -143,8 +170,35 @@ export function renderReport(text: string, opts: ReportOptions): string {
         `<div class="output"><div class="output-head">${mark} ${meta.join(' · ')}</div>` +
         `<pre>${escapeHtml(redact(stripAnsi(cell.output.text)))}</pre></div>\n`;
     }
+    // A runbook call: the steps of its copy, numbered under it (5.1, 5.2, …), with the copy's link.
+    const call = isCallLanguage(cell.meta.lang) ? callFromAttrs(a) : undefined;
+    if (call && opts.readCall && depth < MAX_CALL_DEPTH) {
+      const copyPath = joinPath(base, call.copy);
+      const copy = opts.readCall(copyPath);
+      if (copy === undefined) {
+        body += `<p class="call-note">${escapeHtml(`The copy ${copyPath} is not there: its steps can't be shown.`)}</p>\n`;
+      } else {
+        const same = call.sha256 === undefined || sha256Hex(copy) === call.sha256;
+        body +=
+          `<div class="call"><p class="call-note">Ran <code>${escapeHtml(call.runbook)}</code> as <a href="${escapeHtml(encodeURI(copyPath))}"><code>${escapeHtml(copyPath)}</code></a>` +
+          (same ? '' : ` · <span class="badge fail">${escapeHtml('✗ the copy changed after the run (its SHA-256 differs)')}</span>`) +
+          '</p>\n';
+        const child = renderSteps(copy, `${num}.`, opts, redact, counts, depth + 1, copyPath.includes('/') ? copyPath.slice(0, copyPath.lastIndexOf('/')) : '');
+        rows += child.rows;
+        nested += child.total;
+        body += child.body + '</div>\n';
+      }
+    }
     body += '</section>\n';
   }
+  return { rows, body, ...(title !== undefined ? { title } : {}), step, total: step + nested };
+}
+
+
+export function renderReport(text: string, opts: ReportOptions): string {
+  const redact = (s: string): string => (opts.redact ? opts.redact(s) : s);
+  const counts: Record<Status, number> = { ok: 0, fail: 0, skip: 0, none: 0 };
+  const { rows, body, title, total: step } = renderSteps(text, '', opts, redact, counts, 0);
 
   const docTitle = title ?? opts.fallbackTitle ?? 'Runbook report';
   const summary = [`${step} step${step === 1 ? '' : 's'}`, `${counts.ok} passed`, `${counts.fail} failed`];
@@ -205,6 +259,8 @@ th,td{border:1px solid var(--border);padding:4px 8px;text-align:left;vertical-al
 .step-head{font-weight:600;color:var(--muted);font-size:13px}
 .output-head{margin:6px 0 4px;color:var(--muted);font-size:13px}
 .output pre{white-space:pre-wrap;word-break:break-word}
+.call{margin:8px 0 0 8px}.call-note{color:var(--muted);font-size:13px}
+.summary tr.nested td:first-child{padding-left:20px}
 li.task{list-style:none}
 blockquote{margin:0;padding:0 1em;color:var(--muted);border-left:.25em solid var(--border)}
 .record{margin:16px 0 24px}

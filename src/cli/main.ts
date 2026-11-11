@@ -84,6 +84,15 @@ On GitHub Actions, a summary table is added to the job summary.
 
 class UsageError extends Error {}
 
+/** A file by its path relative to the folder of `file`, or undefined. */
+function readNear(file: string, rel: string): string | undefined {
+  try {
+    return fs.readFileSync(path.resolve(path.dirname(path.resolve(file)), rel), 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
 /** Write a file, creating its folder first (e.g. a fresh CI temp folder). */
 function writeFile(file: string, data: string): void {
   fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
@@ -307,7 +316,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   const file = path.basename(options.file);
   const target = options.out ?? options.file;
   if (options.write) writeFile(target, summary.text);
-  const html = (): string => renderReport(summary.text, { generatedAt: new Date(), fallbackTitle: file, redact: summary.redact });
+  const html = (): string =>
+    renderReport(summary.text, { generatedAt: new Date(), fallbackTitle: file, redact: summary.redact, readCall: (copy) => readNear(options.file, copy) });
   if (options.report) writeFile(options.report, html());
   if (options.junit) writeFile(options.junit, junitReport(file, summary.steps, summary.manual));
   // record: the run timeline and its summary (core/incident.ts), for audit tools and postmortems.
