@@ -75,7 +75,8 @@ describe('runbook calls in the app', () => {
       fireEvent.press(screen.getByTestId('cell-2-run'));
     });
     await waitFor(() => expect(push).toHaveBeenCalled());
-    expect(fetched).toEqual(['https://raw.githubusercontent.com/acme/ops/main/runbooks/releases/1.md']);
+    // Downloaded ahead for lint and estimates, and again for the run (the file as it is now).
+    expect([...new Set(fetched)]).toEqual(['https://raw.githubusercontent.com/acme/ops/main/runbooks/releases/1.md']);
     const copyId = (push.mock.calls[0]![0] as { params: { id: string } }).params.id;
     const copy = getRunbook(copyId)!;
     expect(copy.fileName).toMatch(/^1\.\d{8}-\d{6}\.md$/);
@@ -208,6 +209,19 @@ describe('runbook calls in the app', () => {
     const fresh = (await startCall(again, 2, { STAGE: 'dev' }, { fresh: true })) as { copyId: string; resumed: boolean };
     expect(fresh.copyId).not.toBe(copy.id);
     expect(fresh.resumed).toBe(false);
+  });
+
+  it('lint and the estimate read the runbook a call names once it is downloaded', async () => {
+    serve(CHILD.replace('```bash\necho "change', '```bash estimate=40s\necho "change'));
+    const text = PARENT.replace('STAGE=${param:STAGE}', 'STAGE=${param:STAGE}\nNOPE=1').replace(
+      '```bash\necho after',
+      '```runbook src="releases/${param:STAGE}.md"\n```\n\n```bash\necho after',
+    );
+    const parent = addRunbook('upgrade.md', text, undefined, linkKey(BASE, text));
+    await render(<RunbookView id={parent.id} />);
+    await waitFor(() => expect(screen.getByTestId('cell-2-estimate')).toHaveTextContent('est. 40s'));
+    expect(screen.getByTestId('cell-2-problems')).toHaveTextContent(/releases\/1\.md\) has no parameter NOPE/);
+    expect(screen.getByTestId('cell-3-estimate')).toHaveTextContent('estimate unknown until run');
   });
 
   it('Run all runs the steps before a call, then goes on in the copy', async () => {

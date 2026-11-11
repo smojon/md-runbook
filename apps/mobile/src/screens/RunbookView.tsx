@@ -1,5 +1,5 @@
-import { callFromAttrs, isCallLanguage } from '@md-runbook/core/call';
-import { activeCall, callCells, finishCall, startCall } from '../runbooks/calls';
+import { callFromAttrs, isCallLanguage, isDynamicSrc, parseCall } from '@md-runbook/core/call';
+import { activeCall, callCells, callReader, finishCall, prefetchCalls, startCall, useCalledTexts } from '../runbooks/calls';
 import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
@@ -50,7 +50,7 @@ import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
 import type { Progress, RunbookEstimate } from '@md-runbook/core';
-import { formatLeft, runbookEstimate, textEstimateSteps } from '@md-runbook/core/estimate';
+import { callEstimate, formatLeft, runbookEstimate, textEstimateSteps } from '@md-runbook/core/estimate';
 import { TimeBar, useNow } from '../ui/TimeBar';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId, signSshsig } from '@md-runbook/ssh';
@@ -178,7 +178,16 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const cosign = useMemo(() => (runbook ? cosignCheck(runbook.text) : undefined), [runbook]);
   const params = useMemo(() => (runbook ? runbookParams(runbook.text) : []), [runbook]);
   /** What `md-runbook lint` finds, as the extension's problem markers: on the cells, and counted at the top. */
-  const problems = useMemo(() => (runbook ? runbookProblems(runbook.text) : NO_LINT), [runbook]);
+  // Runbook calls: lint and estimates read the runbooks they name, once the app has them.
+  const calledVersion = useCalledTexts();
+  useEffect(() => {
+    if (runbook) prefetchCalls(runbook);
+  }, [runbook]);
+  const reader = useMemo(() => (runbook ? callReader(runbook, calledVersion) : undefined), [runbook, calledVersion]);
+  const problems = useMemo(
+    () => (runbook ? runbookProblems(runbook.text, reader ? { readRunbook: (src) => reader(src, undefined)?.text } : {}) : NO_LINT),
+    [runbook, reader],
+  );
   const [problemsOpen, setProblemsOpen] = useState(false);
   /** Go to Next Problem: where it went last (-1: the runbook's own problems, in the card at the top). */
   const lastProblem = useRef<number | undefined>(undefined);
@@ -211,7 +220,26 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [running, setRunning] = useState<Running | undefined>();
   // By the blocks' estimates (estimate=): done over the total and the time left, the running cell
   // counting what is left of its own estimate.
-  const estimateSteps = useMemo(() => (runbook ? textEstimateSteps(runbook.text) : []), [runbook]);
+  // Each runbook call's estimate on its cell: what it runs, or null when src= has placeholders.
+  const callEstimates = useMemo(() => {
+    const m = new Map<number, number | null>();
+    if (!runbook || !reader) return m;
+    parse(runbook.text).cells.forEach((c, i) => {
+      if (c.kind !== 'code' || !isCodeMeta(c.meta) || !isCallLanguage(c.languageId)) return;
+      const e = callEstimate(c.meta.info, c.value, reader);
+      const src = parseCall(c.meta.info, c.value).src;
+      if (e !== undefined) m.set(i, e);
+      else if (src !== undefined && isDynamicSrc(src)) m.set(i, null);
+    });
+    return m;
+  }, [runbook, reader]);
+  const estimateSteps = useMemo(
+    () =>
+      runbook
+        ? textEstimateSteps(runbook.text, undefined, 'linux', reader ? (info, source) => callEstimate(info, source, reader) : undefined)
+        : [],
+    [runbook, reader],
+  );
   const now = useNow(running !== undefined && estimateSteps.some((s) => s.estimateSeconds !== undefined));
   const estimate = runbookEstimate(
     estimateSteps.map((s) =>
@@ -1432,6 +1460,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               cell={item}
               index={index}
               canRun={host !== undefined}
+              {...(callEstimates.has(index) ? { callEstimate: callEstimates.get(index)! } : {})}
               running={running?.cellIndex === index ? running : undefined}
               busy={running !== undefined && running.cellIndex !== index}
               checked={checks.get(index) ?? EMPTY}

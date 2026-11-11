@@ -51,6 +51,8 @@ export interface CodeCellProps {
   below?: ReactNode;
   /** A host is chosen: runs are possible. */
   canRun: boolean;
+  /** A runbook call's estimate: what it runs (seconds), or null when that is known only when it runs. */
+  callEstimate?: number | null;
   running: CellRun | undefined;
   /** Another cell is running. */
   busy: boolean;
@@ -111,7 +113,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
           : { icon: 'error', color: c.error, label: t.ranFailed };
   const info = isCodeMeta(cell.meta) ? cell.meta.info : cell.languageId;
   // estimate=: how long the cell takes; while it runs, a bar against it (full at it, then "over").
-  const estimate = isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).estimateSeconds : undefined;
+  const estimate = p.callEstimate ?? (isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).estimateSeconds : undefined);
   const now = useNow(running?.startedAt !== undefined && estimate !== undefined);
   const elapsed = running?.startedAt !== undefined ? Math.max(0, (now - running.startedAt) / 1000) : undefined;
   const timing = estimate !== undefined && elapsed !== undefined ? blockProgress(elapsed, estimate) : undefined;
@@ -258,10 +260,12 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
             </View>
           ) : null}
         </View>
-        {estimate !== undefined ? (
+        {estimate !== undefined || p.callEstimate === null ? (
           <View testID={`cell-${index}-estimate`} style={styles.estimate}>
             <Codicon name="watch" size={12} color={c.muted} />
-            <Text style={styles.statusText}>{t.estimate(formatEstimate(estimate))}</Text>
+            <Text style={styles.statusText}>
+              {estimate !== undefined ? t.estimate(formatEstimate(estimate)) : t.estimateUnknownUntilRun}
+            </Text>
           </View>
         ) : null}
         <Text style={styles.statusText} numberOfLines={1}>

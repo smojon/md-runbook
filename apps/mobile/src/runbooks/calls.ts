@@ -47,6 +47,8 @@ import { osGroups } from '@md-runbook/core/os';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { inSections, sectionHeadings } from '@md-runbook/core/sections';
 import { sha256Hex } from '@md-runbook/core/sha256';
+import { useSyncExternalStore } from 'react';
+import type { CallReader } from '@md-runbook/core/estimate';
 import { t } from '../i18n';
 import { askAutorun } from './autorun';
 import { pickRunbookFile } from './files';
@@ -68,6 +70,76 @@ export interface ActiveCall {
 }
 
 const active = new Map<string, ActiveCall>();
+/** The runbooks calls named, as downloaded (by address) or picked (`${parentId}\n${src}`), for lint and estimates. */
+const texts = new Map<string, string>();
+const fetching = new Set<string>();
+let version = 0;
+const listeners = new Set<() => void>();
+const changed = (): void => {
+  version++;
+  listeners.forEach((l) => l());
+};
+
+/** Changes when a runbook a call names arrives (lint and estimates read it then). */
+export function useCalledTexts(): number {
+  return useSyncExternalStore(
+    (l) => (listeners.add(l), () => void listeners.delete(l)),
+    () => version,
+  );
+}
+
+/**
+ * Reads the runbooks the calls of `r` name, as far as the app has them now: next to its web
+ * address (downloaded), or picked for it; never asks or downloads.
+ */
+// `version` (useCalledTexts) makes a new reader when a runbook arrives, so lint and estimates run again.
+export function callReader(r: Runbook, version?: number): CallReader {
+  void version;
+  return (src, from) => {
+    const base = from ?? webAddressOf(r);
+    if (base) {
+      const url = calledAddress(base, src);
+      const text = url ? texts.get(url) : undefined;
+      return text === undefined ? undefined : { text, at: url! };
+    }
+    const text = from === undefined ? texts.get(`${r.id}\n${src}`) : undefined;
+    return text === undefined ? undefined : { text };
+  };
+}
+
+/** Download (once) the runbooks the calls of a runbook opened from a web address name, when src= is fixed, and theirs. */
+export function prefetchCalls(r: Runbook, fetcher: typeof fetch = fetch): void {
+  const base = webAddressOf(r);
+  if (!base) return;
+  const walk = (text: string, at: string, depth: number): void => {
+    if (depth >= 3) return;
+    for (const c of parse(text).cells) {
+      if (c.kind !== 'code' || !isCodeMeta(c.meta) || !isCallLanguage(c.languageId)) continue;
+      const src = parseCall(c.meta.info, c.value).src;
+      if (src === undefined || /\$\{/.test(src)) continue;
+      const url = calledAddress(at, src);
+      if (!url) continue;
+      const known = texts.get(url);
+      if (known !== undefined) {
+        walk(known, url, depth + 1);
+        continue;
+      }
+      if (fetching.has(url)) continue;
+      fetching.add(url);
+      void fetcher(url)
+        .then(async (res) => (res.ok ? res.text() : undefined))
+        .then((t) => {
+          if (t === undefined || t.length > MAX_RUNBOOK_BYTES) return;
+          texts.set(url, t);
+          changed();
+          walk(t, url, depth + 1);
+        })
+        .catch(() => undefined)
+        .finally(() => fetching.delete(url));
+    }
+  };
+  walk(r.text, base, 0);
+}
 /** Runbook files picked for a call of a runbook opened from a file: `${parentId}\n${src}` → the text. */
 const picked = new Map<string, { name: string; text: string }>();
 
@@ -119,6 +191,8 @@ async function calledText(parent: Runbook, src: string, fetcher: typeof fetch): 
       if (!res.ok) return { kind: 'error', message: t.callFetchFailed(src, `HTTP ${res.status}`) };
       const text = await res.text();
       if (text.length > MAX_RUNBOOK_BYTES) return { kind: 'error', message: t.fileTooLarge(baseName(src)) };
+      texts.set(url, text);
+      changed();
       return { kind: 'got', text, source: url };
     } catch (e) {
       return { kind: 'error', message: t.callFetchFailed(src, e instanceof Error ? e.message : String(e)) };
@@ -133,6 +207,8 @@ async function calledText(parent: Runbook, src: string, fetcher: typeof fetch): 
   if (p.name.toLowerCase() !== baseName(src).toLowerCase()) return { kind: 'error', message: t.callWrongFile(p.name, baseName(src)) };
   if (p.text.length > MAX_RUNBOOK_BYTES) return { kind: 'error', message: t.fileTooLarge(p.name) };
   picked.set(key, { name: p.name, text: p.text });
+  texts.set(key, p.text);
+  changed();
   return { kind: 'got', text: p.text };
 }
 
@@ -330,4 +406,6 @@ export function finishCall(copyId: string, now = new Date()): { parentId: string
 export function resetCalls(): void {
   active.clear();
   picked.clear();
+  texts.clear();
+  fetching.clear();
 }

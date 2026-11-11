@@ -4,7 +4,9 @@
  * and drives the progress bars of a running block and of the runbook.
  */
 
-import { isCallLanguage } from './call';
+import { MAX_CALL_DEPTH, isCallLanguage, isDynamicSrc, parseCall } from './call';
+import { locateCodeCells } from './locate';
+import { inSections, sectionHeadings } from './sections';
 import { parseCellOptions } from './cellOptions';
 import { isCodeMeta } from './model';
 import { OsName, osGroups } from './os';
@@ -244,9 +246,21 @@ export function estimateRunbook(text: string, here?: OsName, callEstimate?: (inf
  * remote's), each done by its output's exit (stepState); `running` is the cell running now.
  * `host=` blocks count: they run there.
  */
-export function textEstimateSteps(text: string, running?: { cellIndex: number; elapsedSeconds: number }, here: OsName = 'linux'): EstimateStep[] {
+export function textEstimateSteps(
+  text: string,
+  running?: { cellIndex: number; elapsedSeconds: number },
+  here: OsName = 'linux',
+  callEstimateOf?: (info: string, source: string) => number | undefined,
+): EstimateStep[] {
   const cells = parse(text).cells;
   const opts = cells.map((c) => (c.kind === 'code' && isCodeMeta(c.meta) ? parseCellOptions(c.meta.info) : undefined));
+  // A runbook call without estimate= takes as long as what it runs (when that can be read).
+  cells.forEach((c, i) => {
+    const o = opts[i];
+    if (!callEstimateOf || !o || o.estimateSeconds !== undefined || !isCodeMeta(c.meta) || !isCallLanguage(c.languageId)) return;
+    const e = callEstimateOf(c.meta.info, c.value);
+    if (e !== undefined) opts[i] = { ...o, estimateSeconds: e };
+  });
   const slots = osGroups(
     cells.map((c, i) => ({ kind: c.kind, ...(opts[i]?.os ? { os: opts[i]!.os } : {}) })),
     here,
@@ -262,4 +276,30 @@ export function textEstimateSteps(text: string, running?: { cellIndex: number; e
     steps.push({ ...e, cell: i, state: state === 'done' || state === 'skipped' ? 'done' : 'pending' });
   });
   return steps;
+}
+
+/** Reads a runbook a call names: src= as written, from the file the call is in (undefined: the first). */
+export type CallReader = (src: string, from: string | undefined) => { text: string; at?: string } | undefined;
+
+/**
+ * How long a runbook call takes: its estimate=, else the estimates of what it runs (its selected
+ * sections; calls in it too), read with `read`. Undefined when that can't be known before the run
+ * (src= has placeholders, the file can't be read) or nothing in it has an estimate.
+ */
+export function callEstimate(info: string, source: string, read: CallReader, here?: OsName, depth = 0, from?: string): number | undefined {
+  const own = parseCellOptions(info).estimateSeconds;
+  if (own !== undefined) return own;
+  const call = parseCall(info, source);
+  if (call.src === undefined || isDynamicSrc(call.src) || depth >= MAX_CALL_DEPTH) return undefined;
+  const got = read(call.src, from);
+  if (!got) return undefined;
+  const e = estimateRunbook(got.text, here, (i, s) => (got.at === undefined ? undefined : callEstimate(i, s, read, here, depth + 1, got.at)));
+  if (call.sections.length === 0) return e.blocks > e.unestimated ? e.totalSeconds : undefined;
+  const inPart = inSections(sectionHeadings(got.text), call.sections);
+  let sum: number | undefined;
+  for (const loc of locateCodeCells(parse(got.text))) {
+    const seconds = e.perCell[loc.cellIndex];
+    if (e.counts[loc.cellIndex] && seconds !== undefined && inPart(loc.line)) sum = (sum ?? 0) + seconds;
+  }
+  return sum;
 }

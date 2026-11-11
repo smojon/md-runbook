@@ -504,6 +504,7 @@ const en = {
   progressFailed: (step: number) => ` · step ${step} failed`,
   /** estimate= on a cell: how long it takes, as measured on a real run. */
   estimate: (time: string) => `est. ${time}`,
+  estimateUnknownUntilRun: 'estimate unknown until run',
   estimateOf: (elapsed: string, estimate: string) => `${elapsed} of ${estimate}`,
   estimateOver: (over: string, estimate: string) => `+${over} over ${estimate}`,
   /** The runbook's progress by its estimates. */

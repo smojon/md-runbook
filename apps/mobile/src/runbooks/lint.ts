@@ -5,7 +5,7 @@
  */
 import { DEFAULT_WRITE_OPTIONS, isCodeMeta, parse, serialize, toCellInputs } from '@md-runbook/core';
 import { renameInfoOption } from '@md-runbook/core/cellOptions';
-import { LintProblem, lintRunbook, suggestOption } from '@md-runbook/core/lint';
+import { LintOptions, LintProblem, lintRunbook, suggestOption } from '@md-runbook/core/lint';
 import { withInfo } from '@md-runbook/core/proposal';
 
 export type { LintProblem };
@@ -19,8 +19,8 @@ export interface RunbookProblems {
   runbook: readonly LintProblem[];
 }
 
-export function runbookProblems(text: string): RunbookProblems {
-  const all = lintRunbook(text);
+export function runbookProblems(text: string, options: LintOptions = {}): RunbookProblems {
+  const all = lintRunbook(text, options);
   const byCell = new Map<number, LintProblem[]>();
   const runbook: LintProblem[] = [];
   for (const p of all) {

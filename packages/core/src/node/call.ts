@@ -9,14 +9,10 @@ import { createHash } from 'node:crypto';
 import { copyFileName } from '../history';
 import { withFrontMatterValues } from '../incident';
 import { clearOutputBlocks } from '../writer';
-import { MAX_CALL_DEPTH, isDynamicSrc, parseCall, recordValues } from '../call';
+import { recordValues } from '../call';
 export { recordValues };
-import { parseCellOptions } from '../cellOptions';
-import { estimateRunbook } from '../estimate';
-import { locateCodeCells } from '../locate';
+import { callEstimate } from '../estimate';
 import { currentOs } from '../os';
-import { parse } from '../parser';
-import { inSections, sectionHeadings } from '../sections';
 
 /** The absolute path src= (placeholders filled) names, relative to the calling file's folder. */
 export function callTarget(parentFile: string, src: string): string {
@@ -105,27 +101,16 @@ export function writeCallCopy(child: string, parentText: string, folder?: string
  * sections; calls in it too); undefined when that can't be known before the run (src= has
  * placeholders, the file is missing) or nothing in it has an estimate.
  */
-export function callEstimateSeconds(file: string, info: string, source: string, depth = 0): number | undefined {
-  const own = parseCellOptions(info).estimateSeconds;
-  if (own !== undefined) return own;
-  const call = parseCall(info, source);
-  if (call.src === undefined || isDynamicSrc(call.src) || depth >= MAX_CALL_DEPTH) return undefined;
-  const target = callTarget(file, call.src);
-  let text: string;
-  try {
-    text = fs.readFileSync(target, 'utf8');
-  } catch {
-    return undefined;
-  }
-  const e = estimateRunbook(text, currentOs(), (i, s) => callEstimateSeconds(target, i, s, depth + 1));
-  if (call.sections.length === 0) return e.blocks > e.unestimated ? e.totalSeconds : undefined;
-  const inPart = inSections(sectionHeadings(text), call.sections);
-  let sum: number | undefined;
-  for (const loc of locateCodeCells(parse(text))) {
-    const seconds = e.perCell[loc.cellIndex];
-    if (e.counts[loc.cellIndex] && seconds !== undefined && inPart(loc.line)) sum = (sum ?? 0) + seconds;
-  }
-  return sum;
+export function callEstimateSeconds(file: string, info: string, source: string): number | undefined {
+  const read = (src: string, from: string | undefined): { text: string; at: string } | undefined => {
+    const target = callTarget(from ?? file, src);
+    try {
+      return { text: fs.readFileSync(target, 'utf8'), at: target };
+    } catch {
+      return undefined;
+    }
+  };
+  return callEstimate(info, source, read, currentOs());
 }
 
 /** SHA-256 of a file's bytes, hex. */
