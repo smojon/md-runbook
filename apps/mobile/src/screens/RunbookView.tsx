@@ -1,4 +1,4 @@
-import { isCallLanguage } from '@md-runbook/core/call';
+import { callFromAttrs, isCallLanguage } from '@md-runbook/core/call';
 import { activeCall, callCells, finishCall, startCall } from '../runbooks/calls';
 import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -72,7 +72,7 @@ import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } f
 import { canDownload } from '../runbooks/files';
 import { saveRunbook } from '../runbooks/save';
 import { exportRecordJson, exportReport, requestCosign, shareRunbook } from '../share/export';
-import { Runbook, addRunbook, getRunbook, updateRunbookText, useRunbooks, withoutFrontMatter } from '../runbooks/store';
+import { addRunbook, getRunbook, Runbook, runbookNamed, updateRunbookText, useRunbooks, withoutFrontMatter } from '../runbooks/store';
 import { historySize, outputSettings, signerName } from '../settings/store';
 import { SignCard, SignRequest } from '../signing/SignCard';
 import { SignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
@@ -601,14 +601,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
    * Run a runbook call: its copy is made (or a failed run's continued), given the parameters, and
    * opened to run; its result comes back to this cell when that run ends (runbooks/calls.ts).
    */
-  const runCallAt = async (cellIndex: number): Promise<void> => {
+  const runCallAt = async (cellIndex: number, fresh = false): Promise<void> => {
     if (!runbook) return;
     const fm = parseFrontMatter(runbook.text);
     const values: Record<string, string> = {};
     for (const p of fm?.params ?? []) if (p.default !== undefined) values[p.name] = p.default;
     Object.assign(values, paramValues, inputs.current);
     for (const [name, c] of Object.entries(captures.current)) values[name] = c.value;
-    const r = await startCall(getRunbook(runbook.id) ?? runbook, cellIndex, values);
+    const r = await startCall(getRunbook(runbook.id) ?? runbook, cellIndex, values, { fresh });
     if (r.kind === 'error') {
       setNotice(r.message);
       list.current?.scrollToIndex({ index: cellIndex, viewPosition: 0.2 });
@@ -1016,9 +1016,22 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const cell = cells[index];
     if (!runbook || !cell || cell.kind !== 'code') return [];
     const can = runnability(cell, approvalId, host?.platform);
-    const why = !host ? t.noRunNow : can.ok ? undefined : t.notRunnable[can.why](can.detail);
+    const isCall = !can.ok && can.why === 'call';
+    const why = !host ? t.noRunNow : can.ok || isCall ? undefined : t.notRunnable[can.why](can.detail);
     const proposal = isCodeMeta(cell.meta) ? approvalOf(cell.meta.info, cell.value, approvalId) : 'none';
+    // A runbook call: run it in a new copy, or open the copy its last run made.
+    const lastCopy = isCall ? callFromAttrs(cell.output?.attrs)?.copy : undefined;
+    const copyOf = lastCopy ? runbookNamed(lastCopy) : undefined;
     return [
+      ...(isCall
+        ? [
+            { ...meta('runCallFresh', 'run', why), run: () => void runCallAt(index, true) },
+            {
+              ...meta('openCallCopy', 'run', copyOf ? undefined : t.noCallCopy),
+              run: () => copyOf && router.push({ pathname: '/runbook/[id]', params: { id: copyOf.id } }),
+            },
+          ]
+        : []),
       ...(proposal === 'proposed' || proposal === 'unverified'
         ? [
             { ...meta('approveProposal', 'assistant'), run: () => openApprove(index, false) },

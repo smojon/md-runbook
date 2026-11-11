@@ -26,9 +26,12 @@ import {
   stepState,
   taskItems,
 } from '@md-runbook/core';
+import { resolveKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
+import { signedStatus } from '@md-runbook/core/signing';
 import {
   CallResult,
   callAttrs,
+  callChainProblem,
   callFromAttrs,
   callOutputText,
   callRefs,
@@ -47,7 +50,7 @@ import { sha256Hex } from '@md-runbook/core/sha256';
 import { t } from '../i18n';
 import { askAutorun } from './autorun';
 import { pickRunbookFile } from './files';
-import { setParamValue } from './params';
+import { checkParam, setParamValue } from './params';
 import { MAX_RUNBOOK_BYTES, Runbook, addRunbook, getRunbook, linkKey, runbookNamed, updateRunbookText } from './store';
 
 /** A call that is running in its copy: what to write back, and where. */
@@ -60,6 +63,8 @@ export interface ActiveCall {
   /** Continuing the copy of a failed run: the steps done there are kept. */
   resumed: boolean;
   started: Date;
+  /** The runbooks calling it, the first the one opened (cycles, depth). */
+  callers: string[];
 }
 
 const active = new Map<string, ActiveCall>();
@@ -97,6 +102,9 @@ export function calledAddress(base: string, src: string): string | undefined {
 }
 
 const baseName = (p: string): string => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
+
+/** A runbook in a chain of calls: its web address when it has one, else its file name. */
+const identity = (name: string, address: string | undefined): string => address ?? baseName(name);
 
 type Got = { kind: 'got'; text: string; source?: string } | { kind: 'error'; message: string } | { kind: 'canceled' };
 
@@ -147,8 +155,9 @@ export async function startCall(
   parent: Runbook,
   cellIndex: number,
   values: Readonly<Record<string, string>>,
-  fetcher: typeof fetch = fetch,
+  opts: { fetcher?: typeof fetch; fresh?: boolean } = {},
 ): Promise<StartResult> {
+  const fetcher = opts.fetcher ?? fetch;
   const cell = parse(parent.text).cells[cellIndex];
   if (!cell || cell.kind !== 'code' || !isCodeMeta(cell.meta) || !isCallLanguage(cell.languageId))
     return { kind: 'error', message: t.callNotACall };
@@ -167,7 +176,24 @@ export async function startCall(
   };
   const src = fill(call.src);
   const sections = call.sections;
-  const again = earlierCopy(parent, cellIndex, src);
+  // Signed: the call as signed, its values as the signature allows (the gate never sees a call).
+  const signed = signedStatus(parent.text);
+  if (signed) {
+    if (!signed.calls.has(cellIndex)) return { kind: 'error', message: t.callChangedSinceSigned };
+    const used = new Set(callRefs(call).map((r) => r.name));
+    for (const [name, pattern] of Object.entries(signed.manifest.patterns)) {
+      const v = values[name];
+      if (v !== undefined && used.has(name) && checkParam({ name, pattern }, v))
+        return { kind: 'error', message: t.callValueOffPattern(name, pattern) };
+    }
+  }
+  // Cycles and depth: the runbooks calling this one, by where they came from.
+  const base = webAddressOf(parent);
+  const caller = active.get(parent.id);
+  const callers = caller ? [...caller.callers, identity(caller.runbook, base)] : [identity(parent.fileName ?? parent.title, base)];
+  const chain = callChainProblem(callers, identity(src, base ? calledAddress(base, src) : undefined));
+  if (chain) return { kind: 'error', message: chain };
+  const again = opts.fresh ? undefined : earlierCopy(parent, cellIndex, src);
   let copy: Runbook;
   if (again) copy = again;
   else {
@@ -176,7 +202,34 @@ export async function startCall(
     const check = checkCall(call, got.text);
     const refusal = [...check.unknown.map((a) => t.callNoParam(src, a.name)), ...check.sections];
     if (refusal.length > 0) return { kind: 'error', message: refusal.join('; ') };
-    const record = recordValues(parent.text);
+    // A signed runbook calls signed runbooks only, unchanged since signing.
+    if (signed) {
+      const child = signedStatus(got.text);
+      if (!child) return { kind: 'error', message: t.callNotSigned(src) };
+      if (child.changed.length || child.missing.length || child.moved.length || child.missingCalls.length)
+        return { kind: 'error', message: t.callChildChanged(src) };
+    }
+    // The cluster: the runbook called names the caller's, or none (then the caller's is its own).
+    const passed: Record<string, string> = {};
+    for (const a of call.args) passed[a.name] = fill(a.value);
+    const parentFm = parseFrontMatter(parent.text);
+    const childFm = parseFrontMatter(got.text);
+    let mine: string | undefined;
+    let theirs: string | undefined;
+    try {
+      mine = resolveKubeContext(wantedKubeContext(parseCellOptions(cell.meta.info), parentFm), (n) => values[n]);
+      theirs = resolveKubeContext(childFm?.kubeContext, (n) => passed[n] ?? childFm?.params.find((p) => p.name === n)?.default);
+    } catch {
+      theirs = undefined; // a parameter it asks for: its own steps check the cluster
+    }
+    if (mine !== undefined && theirs !== undefined && mine !== theirs)
+      return { kind: 'error', message: t.callOtherCluster(src, theirs, mine) };
+    const record: Record<string, string> = {
+      ...recordValues(parent.text),
+      ...(mine !== undefined && !childFm?.kubeContext
+        ? { 'kube-context': mine, ...(parentFm?.kubeContextMode ? { 'kube-context-mode': parentFm.kubeContextMode } : {}) }
+        : {}),
+    };
     const text = clearOutputBlocks(got.text);
     copy = addRunbook(
       copyFileName(baseName(src), new Date()),
@@ -187,7 +240,15 @@ export async function startCall(
     );
   }
   for (const a of call.args) setParamValue(copy.id, a.name, fill(a.value));
-  active.set(copy.id, { parentId: parent.id, cellIndex, runbook: src, sections, resumed: again !== undefined, started: new Date() });
+  active.set(copy.id, {
+    parentId: parent.id,
+    cellIndex,
+    runbook: src,
+    sections,
+    resumed: again !== undefined,
+    started: new Date(),
+    callers,
+  });
   askAutorun(copy.id);
   return { kind: 'started', copyId: copy.id, resumed: again !== undefined };
 }

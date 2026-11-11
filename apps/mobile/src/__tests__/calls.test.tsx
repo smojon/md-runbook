@@ -9,7 +9,8 @@ import { router } from 'expo-router';
 import { addHost, resetHosts } from '../hosts/store';
 import { paramValues, resetParamValues } from '../runbooks/params';
 import { addRunbook, getRunbook, linkKey, resetRunbooks } from '../runbooks/store';
-import { activeCall, calledAddress, resetCalls } from '../runbooks/calls';
+import { activeCall, calledAddress, resetCalls, startCall } from '../runbooks/calls';
+import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { RunbookView } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
 
@@ -113,6 +114,95 @@ describe('runbook calls in the app', () => {
     // Remembered: the next run of the call doesn't ask again.
     resetRunbooks();
     expect(pick).toHaveBeenCalledTimes(2);
+  });
+
+  const sign = (text: string, patterns: Record<string, string>): string => {
+    const built = buildManifest(text, { name: 'ops/x', version: 1, scopes: [], patterns });
+    if ('errors' in built) throw new Error(built.errors.join('; '));
+    return withSignature(text, {
+      signer: 'ops@example.net',
+      signed: '2026-11-11',
+      manifest: formatManifest(built.manifest),
+      signature: 'U1NIU0lH',
+    });
+  };
+  const serve = (text: string): void => {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => text,
+      headers: { get: () => null },
+    })) as unknown as typeof fetch;
+  };
+
+  it('signed: the call as signed, values matching their patterns, and a signed runbook called', async () => {
+    const parentText = sign(PARENT, { STAGE: '[a-z]+' });
+    const parent = addRunbook('upgrade.md', parentText, undefined, linkKey(BASE, parentText));
+    serve(CHILD);
+    expect(await startCall(parent, 2, { STAGE: 'Dev!' })).toEqual({
+      kind: 'error',
+      message: "STAGE doesn't match its signed pattern [a-z]+: the call doesn't run with it.",
+    });
+    expect(await startCall(parent, 2, { STAGE: 'dev' })).toEqual({
+      kind: 'error',
+      message: 'releases/1.md is not signed: a signed runbook only calls signed runbooks.',
+    });
+    serve(sign(CHILD, { STAGE: '[a-z]+' }).replace('echo verify', 'echo changed'));
+    expect(await startCall(parent, 2, { STAGE: 'dev' })).toEqual({
+      kind: 'error',
+      message: "releases/1.md changed since it was signed: it can't run from a signed runbook.",
+    });
+    serve(sign(CHILD, { STAGE: '[a-z]+' }));
+    expect((await startCall(parent, 2, { STAGE: 'dev' })).kind).toBe('started');
+    const edited = addRunbook('upgrade.md', parentText.replace('STAGE=${param:STAGE}', 'STAGE=prod'), undefined, linkKey(BASE, parentText));
+    expect(await startCall(edited, 2, { STAGE: 'dev' })).toEqual({
+      kind: 'error',
+      message: 'This call changed since the runbook was signed: sign the runbook again before it runs.',
+    });
+  });
+
+  it('refuses a cycle; the cluster: another one is refused, none inherits the caller’s', async () => {
+    const A = '# A\n\n```runbook src=b.md\n```\n';
+    const B = '# B\n\n```runbook src=a.md\n```\n';
+    const base = 'https://example.net/rb/a.md';
+    serve(B);
+    const a = addRunbook('a.md', A, undefined, linkKey(base, A));
+    const started = await startCall(a, 1, {});
+    expect(started.kind).toBe('started');
+    const copyB = getRunbook((started as { copyId: string }).copyId)!;
+    serve(A);
+    expect(await startCall(copyB, 1, {})).toEqual({
+      kind: 'error',
+      message: expect.stringMatching(/^a runbook call cycle: https:\/\/example\.net\/rb\/a\.md → /),
+    });
+
+    const P = '---\nkube-context: dev\nkube-context-mode: pin\n---\n# P\n\n```runbook src=k.md\n```\n';
+    const p = addRunbook('p.md', P, undefined, linkKey(base, P));
+    serve('---\nkube-context: prod\n---\n# K\n\n```bash\necho k\n```\n');
+    expect(await startCall(p, 1, {})).toEqual({
+      kind: 'error',
+      message: 'k.md runs against the Kubernetes context prod, this runbook against dev: nothing ran.',
+    });
+    serve('# K\n\n```bash\necho k\n```\n');
+    const r = await startCall(p, 1, {});
+    expect(getRunbook((r as { copyId: string }).copyId)!.text).toMatch(/^---\nkube-context: dev\nkube-context-mode: pin\n---\n/);
+  });
+
+  it('a failed call continues its copy; Run with a Fresh Copy starts a new one', async () => {
+    serve(CHILD);
+    const parent = addRunbook('upgrade.md', PARENT, undefined, linkKey(BASE, PARENT));
+    const first = (await startCall(parent, 2, { STAGE: 'dev' })) as { copyId: string };
+    const copy = getRunbook(first.copyId)!;
+    // As finishCall writes a failed result.
+    const failed = parent.text.replace(
+      'STAGE=${param:STAGE}\n```\n',
+      `STAGE=\${param:STAGE}\n\`\`\`\n<!-- md-runbook:output start exit=1 runbook=releases/1.md copy=${copy.fileName} -->\n\`\`\`text\nx\n\`\`\`\n<!-- md-runbook:output end -->\n`,
+    );
+    const again = addRunbook('upgrade.md', failed, undefined, linkKey(BASE, PARENT));
+    expect(await startCall(again, 2, { STAGE: 'dev' })).toEqual({ kind: 'started', copyId: copy.id, resumed: true });
+    const fresh = (await startCall(again, 2, { STAGE: 'dev' }, { fresh: true })) as { copyId: string; resumed: boolean };
+    expect(fresh.copyId).not.toBe(copy.id);
+    expect(fresh.resumed).toBe(false);
   });
 
   it('Run all runs the steps before a call, then goes on in the copy', async () => {

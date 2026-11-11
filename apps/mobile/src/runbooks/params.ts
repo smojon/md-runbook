@@ -7,6 +7,7 @@
 import { useSyncExternalStore } from 'react';
 import { ParsedCell, isCodeMeta, parse, shellKindForLanguage } from '@md-runbook/core';
 import { cellRefs } from '@md-runbook/core/cellOptions';
+import { callRefs, isCallLanguage, parseCall } from '@md-runbook/core/call';
 import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { signedStatus } from '@md-runbook/core/signing';
 import { getJson, setJson } from '../storage/kv';
@@ -29,6 +30,17 @@ export function runbookParams(text: string): ParamSpec[] {
   for (const cell of parse(text).cells.filter(isBash)) {
     for (const ref of refsOf(cell.value, isCodeMeta(cell.meta) ? cell.meta.info : '', fm))
       if (ref.kind === 'param' && !specs.has(ref.name)) specs.set(ref.name, { name: ref.name });
+  }
+  // A runbook call's src= and the values it passes (```runbook cells).
+  for (const cell of parse(text).cells) {
+    if (cell.kind !== 'code' || !isCodeMeta(cell.meta) || !isCallLanguage(cell.languageId)) continue;
+    let refs: ReturnType<typeof findRefs> = [];
+    try {
+      refs = callRefs(parseCall(cell.meta.info, cell.value));
+    } catch {
+      // lint reports it
+    }
+    for (const ref of refs) if (ref.kind === 'param' && !specs.has(ref.name)) specs.set(ref.name, { name: ref.name });
   }
   const patterns = signedStatus(text)?.manifest.patterns ?? {};
   for (const [name, pattern] of Object.entries(patterns)) {

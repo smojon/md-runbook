@@ -388,6 +388,11 @@ const en = {
     approveAllProposals: ['Approve All Proposals', 'Go through every proposal, one card each.'],
     runCell: ['Run Cell', 'Run this step on the chosen host.'],
     stepThrough: ['Step Through Lines', 'Risky change: run one command, look at the result, then decide to go on.'],
+    runCallFresh: [
+      'Run with a Fresh Copy',
+      'A runbook call that failed continues its copy when run again: start over in a new copy instead.',
+    ],
+    openCallCopy: ['Open the Copy It Ran', 'The copy a runbook call ran last: its steps and their outputs.'],
     markDone: ['Mark Step Done', 'A step you did by hand (a call, a dashboard check): record it, so progress and Continue know.'],
     markSkipped: ['Mark Step Skipped', 'A step that doesn’t apply this time: Continue passes over it.'],
     unmarkStep: ['Unmark Step', 'Undo a Done or Skipped mark made by hand.'],
@@ -511,6 +516,14 @@ const en = {
   callFetchFailed: (src: string, why: string) => `Couldn't get ${src}: ${why}`,
   callWrongFile: (picked: string, wanted: string) => `You picked ${picked}; this step runs ${wanted}. Pick that file.`,
   callNotACall: 'This cell is not a runbook call.',
+  callChangedSinceSigned: 'This call changed since the runbook was signed: sign the runbook again before it runs.',
+  callValueOffPattern: (name: string, pattern: string) =>
+    `${name} doesn't match its signed pattern ${pattern}: the call doesn't run with it.`,
+  callNotSigned: (src: string) => `${src} is not signed: a signed runbook only calls signed runbooks.`,
+  callChildChanged: (src: string) => `${src} changed since it was signed: it can't run from a signed runbook.`,
+  callOtherCluster: (src: string, theirs: string, mine: string) =>
+    `${src} runs against the Kubernetes context ${theirs}, this runbook against ${mine}: nothing ran.`,
+  noCallCopy: 'This call has not run yet (or its copy is no longer in the app).',
   callNeedsValue: (name: string) => `This step needs a value for ${name} first (Parameters, or the step that captures it).`,
   callNoParam: (src: string, name: string) => `${src} has no parameter ${name}`,
   callManualLeft: (n: number, copy: string) =>
