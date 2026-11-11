@@ -37,6 +37,10 @@ code --install-extension md-runbook-0.1.0.vsix
 
 You can also use **Extensions view → ⋯ → Install from VSIX…**.
 
+**Useful to you?** A [rating on the Marketplace](https://marketplace.visualstudio.com/items?itemName=smojon.md-runbook&ssr=false#review-details)
+or on [Open VSX](https://open-vsx.org/extension/smojon/md-runbook/reviews) helps others find it,
+and an [issue](https://github.com/smojon/md-runbook/issues) tells us what is missing or broken.
+
 ## Compared with Runme
 
 [Runme](https://runme.dev) also opens Markdown as a notebook, and it does things md-runbook does
@@ -223,6 +227,14 @@ Each has its own page with examples and settings:
 - **[Progress, manual steps and Resume](docs/features/progress.md):** mark steps done or skipped
   without running them, tick Markdown checklists, see `4/7 · ✗ step 5` in the status bar, and
   **Resume Run** from the first failed or unrun step. Also Clear Outputs Above / Below.
+- **[How long it takes](docs/syntax.md#steps-and-progress):** `estimate=2m30s` on a block, as
+  measured on a real run. The block shows it, and while it runs a bar fills at the estimate; the
+  runbook shows how far it is and about how long is left, in VS Code, the app and
+  `md-runbook run`. `md-runbook estimate` sums them per section. A [runbook call](docs/features/calls.md)
+  counts as what it runs.
+
+  ![A deploy runbook in the md-runbook app: 2 of 4 steps done, 56% by the estimates, about 4 min left](docs/app/web-estimates.png)
+
 - **Coloured output:** stderr in red and log levels in the colours log viewers use (Grafana,
   VS Code's log files): `ERROR` red, `WARN` yellow, `INFO` blue, `DEBUG` grey, `OK`/`PASSED`
   green, Nevis's `5-NOTICE` and Kubernetes' `E1022 …` lines included. A program's own colours
