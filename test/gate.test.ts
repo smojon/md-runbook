@@ -143,7 +143,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
   it('answers the hello with its banner and the pid of the shell the cells run in', async () => {
     const g = start();
     const r = await g.hello();
-    assert.match(r.out, /\x1e__MDRB_GATE__ 1 unsigned=refuse\n/);
+    assert.match(r.out, /\x1e__MDRB_GATE__ 2 unsigned=refuse\n/);
     assert.ok(r.code > 1, `pid ${r.code}`);
     assert.equal(await g.close(), 0);
   });
@@ -185,6 +185,26 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.match(raw.err, /runs signed runbooks only/);
     assert.equal(raw.out, '');
     await g.close();
+  });
+
+  it('called: the next load is logged as loaded by that call of that runbook; a bad request is refused', async () => {
+    const g = start();
+    await g.hello();
+    const [m, s] = await signed(RUNBOOK, { patterns: PATTERNS, name: 'ops/called' });
+    const caller = 'ab'.repeat(32);
+    assert.equal((await g.request('called', caller, '3')).code, 0);
+    assert.equal((await g.request('load', m, s)).code, 0);
+    // For one load only.
+    assert.equal((await g.request('load', m, s)).code, 0);
+    assert.notEqual((await g.request('called', 'nothex', '3')).code, 0);
+    await g.close();
+    const loads = fs
+      .readFileSync(path.join(dir, 'gate.log'), 'utf8')
+      .split('\n')
+      .filter((l) => /"event":"load".*"runbook":"ops\/called"/.test(l));
+    assert.equal(loads.length, 2);
+    assert.match(loads[0]!, new RegExp(`"called-by":"${caller}","call":"3"`));
+    assert.doesNotMatch(loads[1]!, /called-by/);
   });
 
   it('answers a context request with kubectl config current-context, also where only signed cells run', async () => {

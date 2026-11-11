@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Calls in the app, as on the other clients.** A signed runbook's call must be as signed, its
+  values must match their patterns, and the runbook called must be signed and unchanged.
+  Cycles and calls more than 3 deep are refused. A different `kube-context:` is refused, and
+  none inherits the caller's. The call's ⋯ has **Run with a Fresh Copy** and **Open the Copy It
+  Ran**. Export Report shows the copy's steps under the call. Lint and the estimates read the
+  runbooks calls name (downloaded ahead for a runbook opened from a web address).
+- **md-runbook-gate logs which call loaded a runbook** (protocol 2: the `called` request; the
+  `load` event gets `called-by` and `call`), and `md-runbook audit` shows it (`called by
+  ops/upgrade v4 (call 1)`). The app sends it only to gates that speak protocol 2.
 - **Runbook calls in the app.** ▷ on a call (or Run all reaching it) makes the copy, gives it the
   parameters passed and opens it to run (the call's sections); the result comes back to the call,
   and Continue goes on after it. A runbook opened from a web address gets the runbook a call names

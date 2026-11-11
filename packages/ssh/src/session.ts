@@ -33,6 +33,8 @@ export interface SignedRun {
   step?: number;
   /** Values of the parameters the cell needs. */
   params?: Record<string, string>;
+  /** A runbook call's copy: the caller's manifest sha256 and the call's number, for the gate's log. */
+  calledBy?: { hash: string; call: number };
 }
 
 /** The gate refused: exit 126 with its reason, as the gate reports refused cells itself. */
@@ -110,6 +112,7 @@ export class RemoteSession {
       const signature = signatures.join(' ');
       if (this.loaded?.shell !== shell || this.loaded.manifest !== s.manifest || this.loaded.signature !== signature) {
         this.loaded = undefined;
+        if (s.calledBy) await shell.noteCalled(s.calledBy.hash, s.calledBy.call);
         const { principal } = await shell.loadSigned(s.manifest, signatures);
         this.loaded = { shell, manifest: s.manifest, signature, principal, params: new Map() };
       }

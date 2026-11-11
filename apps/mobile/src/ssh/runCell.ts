@@ -3,6 +3,9 @@
  * the extension does: the same attributes (`exit`, `ran`, `ended`, `duration`, `check`), the
  * same cleaning, redaction and truncation (the core writer), so the file stays the one format.
  */
+import { sha256Hex } from '@md-runbook/core/sha256';
+import { activeCall } from '../runbooks/calls';
+import { getRunbook } from '../runbooks/store';
 import {
   DEFAULT_PATTERNS,
   REDACTED,
@@ -259,6 +262,11 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   };
   // A command's position among the cell's commands tells repeated ones apart (two `sleep 5`).
   const cellSteps = signedCell ? splitSteps(cell.value, 'bash') : [];
+  // A runbook call's copy: the gate logs which call of which signed runbook loaded it (the audit).
+  const call = p.runbookId ? activeCall(p.runbookId) : undefined;
+  const callerStatus = call ? signedStatus(getRunbook(call.parentId)?.text ?? '') : undefined;
+  const callN = call ? callerStatus?.calls.get(call.cellIndex)?.n : undefined;
+  const calledBy = callerStatus && callN !== undefined ? { hash: sha256Hex(callerStatus.block.manifest), call: callN } : undefined;
   const signed = (step?: LineStep): SignedRun | undefined => {
     if (!status || !signedCell) return undefined;
     // Every value the signed cell uses: ${param:}, ${input:} and ${out:} (the gate checks each against its signed pattern).
@@ -270,6 +278,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
       ...(cosignatures.length ? { cosignatures } : {}),
       cell: signedCell.n,
       params,
+      ...(calledBy ? { calledBy } : {}),
     };
     if (step === undefined) return base;
     const k = signedStepIndex(

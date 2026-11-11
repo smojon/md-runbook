@@ -13,6 +13,7 @@ export {
   WINDOWS_SHELL_COMMAND,
   cellCommand,
   gateBanner,
+  gateCalledCommand,
   gateLoadCommand,
   gateParamCommand,
   gateRawCommand,

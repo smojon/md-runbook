@@ -12,6 +12,9 @@
 # The client (the md-runbook app) speaks a line protocol on stdin; replies end with the same
 # end-of-cell marker as a plain shell session (\036__MDRB_<id>__ <exit>, on stdout and stderr).
 #   : mdrb-gate-hello ID; ...           -> banner \036__MDRB_GATE__ 1 unsigned=allow|refuse, marker with the shell's pid
+#   called ID HASH N                  -> (protocol 2) the next load is the runbook called by call N of the
+#                                        runbook with manifest sha256 HASH: logged with that load (what the
+#                                        app says, for the audit; it grants nothing)
 #   load ID MANIFEST SIGNATURE        -> base64; checks the signature and policy; \036__MDRB_SIGNED__ PRINCIPAL HASH
 #   param ID NAME VALUE               -> base64 value, checked against the manifest's pattern
 #   run ID CELL | step ID CELL K      -> runs a signed cell, or its K-th command (0-based)
@@ -31,7 +34,7 @@ session_lc_all=${LC_ALL-}
 LC_ALL=C
 export LC_ALL
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}
-GATE_PROTOCOL=1
+GATE_PROTOCOL=2
 REFUSED=126
 
 say() { printf 'md-runbook-gate: %s\n' "$*" >&2; }
@@ -253,6 +256,11 @@ mfield() { awk -v key="$1" -v cell="$2" -v f="$3" '$1 == "cell" { c = $2 } $1 ==
 do_load() {
   rid=$1
   shift
+  # A `called` note is for this load only, whether it succeeds or not.
+  cb=$called_by
+  cc=$called_call
+  called_by=
+  called_call=
   ok=
   [ $# -ge 2 ] && [ $# -le 6 ] && ok=1
   for a in "$@"; do is_b64 "$a" || ok=; done
@@ -372,9 +380,27 @@ do_load() {
   done
   loaded=1
   step_cell=
-  log_event event load id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal"
+  if [ -n "$cb" ]; then
+    log_event event load id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal" called-by "$cb" call "$cc"
+  else
+    log_event event load id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal"
+  fi
   printf '\036__MDRB_SIGNED__ %s %s\n' "$principal" "$mhash"
   marker "$rid" 0
+}
+
+# called ID HASH N: the next load is called by call N of the runbook whose manifest has sha256 HASH.
+called_by=
+called_call=
+do_called() {
+  rid=$1
+  if [ $# -eq 3 ] && printf '%s' "$2" | grep -qx '[0-9a-f]\{64\}' && is_num "$3"; then
+    called_by=$2
+    called_call=$3
+    marker "$rid" 0
+  else
+    refuse "$rid" "bad called request"
+  fi
 }
 
 do_param() {
@@ -578,6 +604,7 @@ serve() {
     }
     case $verb in
       load) do_load "$@" ;;
+      called) do_called "$@" ;;
       param) do_param "$@" ;;
       run) if [ $# -eq 2 ] && is_num "$2"; then do_run "$1" "$2"; else refuse "$rid" "bad run request"; fi ;;
       step) if [ $# -eq 3 ] && is_num "$2" && is_num "$3"; then do_run "$1" "$2" "$3"; else refuse "$rid" "bad step request"; fi ;;

@@ -51,6 +51,11 @@ export interface AuditRun {
   exit?: number;
   /** Set by matchRecord: where this run is in the saved record. */
   matched?: { file: string; step: number };
+  /**
+   * A runbook call's copy (gate protocol 2, as the app said): the runbook whose call loaded this
+   * one (by its manifest sha256; name and version when the log has its load) and the call's number.
+   */
+  calledBy?: { hash: string; call: string; runbook?: string; version?: string };
 }
 
 export interface AuditFinding {
@@ -129,6 +134,9 @@ export function buildAudit(events: readonly GateEvent[], skipped = 0): Audit {
   const byId = new Map<string, AuditRun>();
   let sessions = 0;
   const sessionOf = (e: GateEvent): string => `${str(e.account)}\n${str(e.who)}\n${str(e.client)}`;
+  /** Runbooks by manifest sha256 (from their loads), and the call that loaded each, per session. */
+  const names = new Map<string, { runbook: string; version: string }>();
+  const calledBy = new Map<string, { hash: string; call: string }>();
   for (const e of sorted) {
     const s = sessionOf(e);
     switch (e.event) {
@@ -139,6 +147,9 @@ export function buildAudit(events: readonly GateEvent[], skipped = 0): Audit {
       case 'load':
         if (!params.has(s)) params.set(s, new Map());
         params.get(s)!.set(str(e.runbook), {});
+        names.set(str(e.hash), { runbook: str(e.runbook), version: str(e.version) });
+        if (typeof e['called-by'] === 'string') calledBy.set(`${s}\n${str(e.runbook)}`, { hash: e['called-by'], call: str(e.call) });
+        else calledBy.delete(`${s}\n${str(e.runbook)}`);
         break;
       case 'param': {
         const byRunbook = params.get(s) ?? new Map<string, Record<string, string>>();
@@ -162,6 +173,8 @@ export function buildAudit(events: readonly GateEvent[], skipped = 0): Audit {
           step: str(e.step),
           params: { ...(params.get(s)?.get(str(e.runbook)) ?? {}) },
         };
+        const via = calledBy.get(`${s}\n${str(e.runbook)}`);
+        if (via) run.calledBy = { ...via };
         runs.push(run);
         open.set(str(e.id), run);
         byId.set(str(e.id), run);
@@ -209,6 +222,7 @@ export function buildAudit(events: readonly GateEvent[], skipped = 0): Audit {
         break;
     }
   }
+  for (const r of runs) if (r.calledBy) Object.assign(r.calledBy, names.get(r.calledBy.hash) ?? {});
   return { runs, findings, probes, sessions, skipped };
 }
 
@@ -291,7 +305,7 @@ export function renderAuditReport(a: Audit, matches: readonly RecordMatch[], opt
   const runRows = runs
     .map(
       (r) =>
-        `<tr>${td(when(r.time))}${td(r.who)}${td(`${r.account} from ${r.client}`)}${td(`${r.runbook} v${r.version}`)}${td(`${r.cell}${r.step ? `.${r.step}` : ''}`)}` +
+        `<tr>${td(when(r.time))}${td(r.who)}${td(`${r.account} from ${r.client}`)}${td(`${r.runbook} v${r.version}${calledLabel(r)}`)}${td(`${r.cell}${r.step ? `.${r.step}` : ''}`)}` +
         `${td(Object.entries(r.params).map(([k, v]) => `${k}=${v}`).join(' '))}<td>${exitBadge(r)}</td>${td(r.durationSeconds === undefined ? '' : `${r.durationSeconds} s`)}` +
         `${td(r.matched ? `${r.matched.file}, step ${r.matched.step}` : '')}</tr>\n`,
     )
@@ -347,4 +361,11 @@ ${findingRows ? `<table class="timeline"><thead><tr><th>Time</th><th>What</th><t
 ${probeRows ? `<h2>Endpoint checks</h2>\n<table class="timeline"><thead><tr><th>Time</th><th>Who (key)</th><th>Endpoint</th><th>Address</th><th>Result</th><th>Certificate expires</th><th>Certificate</th><th>Signed run</th><th>Detail</th></tr></thead><tbody>\n${probeRows}</tbody></table>\n` : ''}${matches.length ? `<h2>Run records</h2>\n${matchHtml}` : ''}</body>
 </html>
 `;
+}
+
+/** ` · called by NAME vN (call N)` for a runbook call's copy, else ''. */
+function calledLabel(r: AuditRun): string {
+  const c = r.calledBy;
+  if (!c) return '';
+  return ` · called by ${c.runbook ? `${c.runbook} v${c.version}` : `sha256 ${c.hash.slice(0, 12)}…`} (call ${c.call})`;
 }

@@ -33,6 +33,7 @@ import {
   cellCommand,
   gateBanner,
   gateContextCommand,
+  gateCalledCommand,
   gateLoadCommand,
   gateParamCommand,
   gateRawCommand,
@@ -272,6 +273,17 @@ export class RemoteShell {
     const reply = signedReply(out);
     if (err !== undefined || !reply) throw new Error(err ?? 'the gate did not confirm the signature');
     return reply;
+  }
+
+  /**
+   * md-runbook-gate: the next load is the runbook a call runs (call `call` of the runbook whose
+   * manifest has sha256 `hash`), for the gate's log. Gates before protocol 2 don't know it: nothing
+   * is sent to them.
+   */
+  async noteCalled(hash: string, call: number): Promise<void> {
+    if (!this.gateInfo || this.gateInfo.protocol < 2) return;
+    const err = await this.request((id) => gateCalledCommand(id, hash, call));
+    if (err !== undefined) throw new Error(err);
   }
 
   /** md-runbook-gate: a parameter's value for the loaded manifest; rejects with the gate's reason. */

@@ -53,7 +53,7 @@ From a machine with the support key:
 printf ': mdrb-gate-hello 0123abcd; x\n' | ssh -i support_key support@server
 ```
 
-prints `__MDRB_GATE__ 1 unsigned=refuse` (after a control character) and the shell's pid. The
+prints `__MDRB_GATE__ 2 unsigned=refuse` (after a control character) and the shell's pid. The
 log (`journalctl -t md-runbook-gate`, or the `log =` file) shows a `session` event. Then open a
 signed runbook in the md-runbook app and run a block; `md-runbook verify --allowed-signers
 /etc/md-runbook/allowed_signers file.md` checks a runbook's signature on the server itself.

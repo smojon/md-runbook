@@ -145,7 +145,8 @@ The runbook it calls is not part of this signature: it is signed on its own, wit
 patterns, and checked with the values passed.
 
 The gate never runs a call itself: the md-runbook app runs the steps of the runbook called, each
-checked against that runbook's own signature. On a machine, `md-runbook run
+checked against that runbook's own signature, and tells the gate which call loaded it, for the
+log (see [The log](#the-log)). On a machine, `md-runbook run
 --allowed-signers FILE` runs a signed runbook only as signed, as the gate would; before anything
 runs, it refuses (exit `2`) when:
 
@@ -241,7 +242,9 @@ patterns in the C locale, whatever locale the client's SSH session sends.
 ## The log
 
 One JSON line per event, to syslog (tag `md-runbook-gate`) or a file: `session`, `load`
-(runbook, version, manifest hash, signer), `param` (name and value), `run` (block and command),
+(runbook, version, manifest hash, signer; for the runbook a [call](calls.md) runs, also
+`called-by`, the caller's manifest hash, and `call`, the call's number), `param` (name and
+value), `run` (block and command),
 `end` (exit code), `unsigned` (hash of the code), `refused` (the reason), `stop`. Each carries
 the time, the account, the client address and the key: its fingerprint with
 `ExposeAuthInfo yes` in `sshd_config`, or the name given with `--who=NAME`.
@@ -251,7 +254,11 @@ account, so a block (or unsigned text where it is allowed) could add lines of it
 the account can't touch, use syslog and forward it off the server.
 
 `md-runbook audit` turns these logs into a report, and matches saved run records against them
-([command line](cli.md#gate-audit), [for auditors](for-auditors.md)).
+([command line](cli.md#gate-audit), [for auditors](for-auditors.md)). A run of a runbook a call
+ran says so: `ops/release v9 · called by ops/upgrade v4 (call 1)`. That link is what the app
+said when it loaded the runbook called (the `called` request, gate protocol 2): it lets you follow
+a call in the log, and it grants nothing, since each runbook's own signature is what the gate
+checks.
 
 ## Limits
 

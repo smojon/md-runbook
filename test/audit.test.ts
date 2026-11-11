@@ -59,6 +59,18 @@ describe('gate audit (core)', () => {
     assert.equal(filterAudit(a, { runbook: 'ops/other' }).runs.length, 0);
   });
 
+  it('a runbook call: the run of the runbook called says which call of which runbook loaded it', () => {
+    const log = [
+      ev({ time: '2026-11-11T20:00:00Z', event: 'session' }),
+      ev({ time: '2026-11-11T20:00:01Z', event: 'load', id: '1', runbook: 'ops/upgrade', version: '4', hash: 'c'.repeat(64), signer: 'ops@example.net' }),
+      ev({ time: '2026-11-11T20:00:02Z', event: 'load', id: '2', runbook: 'ops/release', version: '9', hash: 'd'.repeat(64), signer: 'ops@example.net', 'called-by': 'c'.repeat(64), call: '1' }),
+      ev({ time: '2026-11-11T20:00:03Z', event: 'run', id: '3', runbook: 'ops/release', version: '9', hash: 'd'.repeat(64), signer: 'ops@example.net', cell: '1', step: '' }),
+    ].join('\n');
+    const a = buildAudit(parseGateLog(log).events);
+    assert.deepEqual(a.runs[0]!.calledBy, { hash: 'c'.repeat(64), call: '1', runbook: 'ops/upgrade', version: '4' });
+    assert.match(renderAuditReport(a, [], { generatedAt: new Date(), sources: ['gate.log'] }), /ops\/release v9 · called by ops\/upgrade v4 \(call 1\)/);
+  });
+
   it('matches a run record: the log confirms step 1 (local time vs UTC), not step 2', () => {
     const a = buildAudit(parseGateLog(LOG).events);
     const m = matchRecord(a, 'restart.2026-10-26.md', record());
