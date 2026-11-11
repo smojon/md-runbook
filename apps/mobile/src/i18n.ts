@@ -507,6 +507,8 @@ const en = {
   estimateNothingLeft: 'nothing left',
   withoutEstimate: (n: number) => (n === 1 ? '1 block without an estimate' : `${n} blocks without an estimate`),
   runStopped: 'Run all stopped at a failed step: fix it, then Continue.',
+  stoppedAtCall: (src: string) =>
+    `Run all stopped before the step that runs ${src}: the app doesn't run another runbook yet. Run it in VS Code or with md-runbook run, then mark this step done (⋯) and Continue.`,
   proposedNotRun: (n: number) =>
     n === 1 ? '1 proposed cell was not run: it needs approval.' : `${n} proposed cells were not run: they need approval.`,
 

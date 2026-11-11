@@ -1,3 +1,4 @@
+import { parseCall } from '@md-runbook/core/call';
 import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
@@ -245,7 +246,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   /** A cell is running (a ref: Run all starts the next one before React re-renders). */
   const busy = useRef(false);
   /** Run all / Continue: the cells still to run, the host, and the proposals left out. */
-  const queue = useRef<{ cells: number[]; on: Host | undefined; proposed: number } | undefined>(undefined);
+  /** Run all / Continue: the cells left, the host, proposals passed over, and the runbook call it stops before. */
+  const queue = useRef<{ cells: number[]; on: Host | undefined; proposed: number; call?: number } | undefined>(undefined);
   const [queued, setQueued] = useState(false);
   const clearQueue = (): void => {
     queue.current = undefined;
@@ -583,7 +585,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const next = q.cells.shift();
     if (next === undefined) {
       clearQueue();
-      if (q.proposed > 0) setNotice(t.proposedNotRun(q.proposed));
+      const call = q.call !== undefined && runbook ? parse(getRunbook(runbook.id)?.text ?? runbook.text).cells[q.call] : undefined;
+      if (call && isCodeMeta(call.meta)) {
+        setNotice(t.stoppedAtCall(parseCall(call.meta.info, call.value).src ?? '?'));
+        list.current?.scrollToIndex({ index: q.call, viewPosition: 0.2 });
+      } else if (q.proposed > 0) setNotice(t.proposedNotRun(q.proposed));
       return;
     }
     void runRef.current({ cellIndex: next }, q.on);
@@ -595,10 +601,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const candidates =
       from === 'start' ? parsed.map((c, i) => (c.kind === 'code' ? i : -1)).filter((i) => i >= 0) : textProgress(runbook.text).resume;
     const verdicts = candidates.map((i) => ({ i, can: runnability(parsed[i]!, approvalId, host.platform) }));
+    // A runbook call is a step the app doesn't run: stop before it, never run the steps after it
+    // as if it had (they usually need what it does).
+    const call = verdicts.find((v) => !v.can.ok && v.can.why === 'call')?.i;
     queue.current = {
-      cells: verdicts.filter((v) => v.can.ok).map((v) => v.i),
+      cells: verdicts.filter((v) => v.can.ok && (call === undefined || v.i < call)).map((v) => v.i),
       on: host,
-      proposed: verdicts.filter((v) => !v.can.ok && v.can.why === 'proposed').length,
+      proposed: verdicts.filter((v) => !v.can.ok && v.can.why === 'proposed' && (call === undefined || v.i < call)).length,
+      ...(call !== undefined ? { call } : {}),
     };
     setQueued(true);
     setNotice(undefined);

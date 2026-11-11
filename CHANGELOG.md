@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: the app's Run all passed over a runbook call** and ran the steps after it as if it had
+  run. It now stops before the call and says to run it in VS Code or with `md-runbook run`, then
+  mark the step done and Continue.
+
 ## 0.21.0
 
 - **Signed runbook calls; `md-runbook run --allowed-signers FILE`.** A call is signed as written

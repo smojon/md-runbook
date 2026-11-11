@@ -181,6 +181,27 @@ describe('asking before a risky cell, as VS Code does', () => {
     expect(mockConnection.calls.map((c) => c.source).slice(-2)).toEqual(['kubectl rollout restart deploy/api', 'kubectl get pods -w']);
   });
 
+  it('Run all stops before a runbook call: the steps after it never run as if it had', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    script = [
+      { stdout: 'before\n', exitCode: 0 },
+      { stdout: 'after\n', exitCode: 0 },
+    ];
+    mockConnection = fakeConnection(script);
+    const rb = addRunbook(
+      'upgrade.md',
+      '# Upgrade\n\n```bash\necho before\n```\n\n```runbook src=releases/1.md\nENV=dev\n```\n\n```bash\necho after\n```\n',
+    );
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('run-primary'));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('run-notice').props.children).toMatch(/^Run all stopped before the step that runs releases\/1\.md/),
+    );
+    expect(mockConnection.calls.map((c) => c.source)).toEqual(['echo before']);
+  });
+
   it("a runbook's no-confirm counts only when Hosts & settings allows it", async () => {
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
     const rb = addRunbook('rollout.md', RISKY);
