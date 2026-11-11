@@ -210,6 +210,19 @@ export function checkCall(call: RunbookCall, child: string): CallCheck {
   };
 }
 
+/** Front matter settings of the calling runbook's record that its calls' copies keep too. */
+export function recordValues(parentText: string): Record<string, string> {
+  const fm = parseFrontMatter(parentText);
+  if (!fm) return {};
+  return {
+    ...(fm.incident ? { incident: fm.incident } : {}),
+    ...(fm.severity ? { severity: fm.severity } : {}),
+    ...(fm.evidence ? { evidence: 'true' } : {}),
+    ...(fm.drill ? { drill: 'true' } : {}),
+    ...(fm.rtoSeconds !== undefined ? { rto: `${fm.rtoSeconds}s` } : {}),
+  };
+}
+
 export interface CallResult {
   /** The runbook called, as resolved (relative to the calling file, `/` separators). */
   runbook: string;

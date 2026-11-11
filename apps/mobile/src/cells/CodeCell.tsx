@@ -97,7 +97,9 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
   // The selection is a command of the current text (an edit may have moved it).
   const sel = selected && steps.find((s) => s.start === selected.start && s.text === selected.text);
   const checkedSteps = steps.filter((s) => p.checked.has(s.text));
-  const runnable = can.ok && p.canRun;
+  // A runbook call (```runbook) runs too: ▷ opens its copy and runs it there (runbooks/calls.ts).
+  const isCall = !can.ok && can.why === 'call';
+  const runnable = (can.ok || isCall) && p.canRun;
   const exit = cell.output?.attrs.exit;
   const last: { icon: CodiconName; color: string; label: string } | undefined =
     running || exit === undefined

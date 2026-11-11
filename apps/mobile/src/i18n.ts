@@ -262,7 +262,7 @@ const en = {
   cellGone: 'The cell is no longer in the runbook',
   notRunnable: {
     language: (_detail?: string) => 'Only bash, sh, PowerShell and cmd cells run over SSH',
-    call: (_detail?: string) => 'Runs another runbook · in VS Code or with md-runbook run, not from the app yet',
+    call: (_detail?: string) => 'Runs another runbook as one step: ▷ opens it as a copy and runs it there',
     platform: (detail?: string) =>
       detail === 'windows' ? 'For a Windows server · this host runs sh or bash' : 'For a Linux or macOS server · this host is Windows',
     os: (detail?: string) =>
@@ -507,8 +507,17 @@ const en = {
   estimateNothingLeft: 'nothing left',
   withoutEstimate: (n: number) => (n === 1 ? '1 block without an estimate' : `${n} blocks without an estimate`),
   runStopped: 'Run all stopped at a failed step: fix it, then Continue.',
-  stoppedAtCall: (src: string) =>
-    `Run all stopped before the step that runs ${src}: the app doesn't run another runbook yet. Run it in VS Code or with md-runbook run, then mark this step done (⋯) and Continue.`,
+  callOutside: (src: string) => `src="${src}" leaves the site (or repository) this runbook came from: the app doesn't fetch it`,
+  callFetchFailed: (src: string, why: string) => `Couldn't get ${src}: ${why}`,
+  callWrongFile: (picked: string, wanted: string) => `You picked ${picked}; this step runs ${wanted}. Pick that file.`,
+  callNotACall: 'This cell is not a runbook call.',
+  callNeedsValue: (name: string) => `This step needs a value for ${name} first (Parameters, or the step that captures it).`,
+  callNoParam: (src: string, name: string) => `${src} has no parameter ${name}`,
+  callManualLeft: (n: number, copy: string) =>
+    `${n === 1 ? '1 manual step' : `${n} manual steps`} not ticked in ${copy}, which keeps evidence: tick ${n === 1 ? 'it' : 'them'} there and run this step again`,
+  callRunning: (src: string, copy: string) => `Runs ${src} as ${copy}: when it ends, its result goes to the step that called it.`,
+  callNotDone: (parent: string) =>
+    `This run isn't done: its result went to ${parent} as failed. Fix it here, or go back and run the step again (it continues this copy).`,
   proposedNotRun: (n: number) =>
     n === 1 ? '1 proposed cell was not run: it needs approval.' : `${n} proposed cells were not run: they need approval.`,
 

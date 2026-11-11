@@ -8,9 +8,9 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { copyFileName } from '../history';
 import { withFrontMatterValues } from '../incident';
-import { parseFrontMatter } from '../secrets';
 import { clearOutputBlocks } from '../writer';
-import { MAX_CALL_DEPTH, isDynamicSrc, parseCall } from '../call';
+import { MAX_CALL_DEPTH, isDynamicSrc, parseCall, recordValues } from '../call';
+export { recordValues };
 import { parseCellOptions } from '../cellOptions';
 import { estimateRunbook } from '../estimate';
 import { locateCodeCells } from '../locate';
@@ -82,19 +82,6 @@ export function matchRunbooks(file: string, glob: string): string[] {
     else dirs = next.filter((p) => fs.statSync(p).isDirectory());
   });
   return out.map((p) => relativeToCaller(file, p)).sort();
-}
-
-/** Front matter settings of the calling runbook's record that its calls' copies keep too. */
-export function recordValues(parentText: string): Record<string, string> {
-  const fm = parseFrontMatter(parentText);
-  if (!fm) return {};
-  return {
-    ...(fm.incident ? { incident: fm.incident } : {}),
-    ...(fm.severity ? { severity: fm.severity } : {}),
-    ...(fm.evidence ? { evidence: 'true' } : {}),
-    ...(fm.drill ? { drill: 'true' } : {}),
-    ...(fm.rtoSeconds !== undefined ? { rto: `${fm.rtoSeconds}s` } : {}),
-  };
 }
 
 /**

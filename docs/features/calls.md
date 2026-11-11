@@ -93,7 +93,25 @@ it finishes (`✓ first`, `✗ second (1)`) and ends with the result:
 - The cell shows how long the call takes (the estimates of what it runs), or *estimate unknown
   until run* when `src=` has placeholders.
 
-The md-runbook app (phone and web) and servers with md-runbook-gate don't run calls yet.
+## In the app
+
+The md-runbook app (phone and web) runs a call the same way: ▷ on the call (or Run all reaching
+it) makes the copy, gives it the parameters the call passes, and opens it; its steps run there
+(the call's sections), and when that run ends the result comes back to the call's step, and the
+app goes back to the runbook that called it, where **Continue** goes on after the call. A call
+that failed continues in its copy when run again.
+
+Where the app finds the runbook a call names:
+
+- **A runbook opened from a web address** (a link or QR code with `url=`, a file on GitHub or
+  GitLab): the address next to it, downloaded the same way. It must stay on the same site (on
+  GitHub and GitLab, in the same repository and version).
+- **A runbook opened from a file**: the app asks you to pick the file the call names, once (its
+  name must match); it remembers it while the app is open.
+
+The copy is a runbook of its own in the app's list (`<file>.<yyyyMMdd-HHmmss>.md`). On a server
+with md-runbook-gate, the copy's steps run as signed steps of the runbook called, checked against
+its own signature like any signed runbook; the gate doesn't know they were called.
 
 ## On the command line
 

@@ -144,7 +144,8 @@ values it passes. Every `${param:}`, `${input:}` and `${out:}` in it needs a pat
 The runbook it calls is not part of this signature: it is signed on its own, with its own
 patterns, and checked with the values passed.
 
-Servers with md-runbook-gate don't run calls yet. On a machine, `md-runbook run
+The gate never runs a call itself: the md-runbook app runs the steps of the runbook called, each
+checked against that runbook's own signature. On a machine, `md-runbook run
 --allowed-signers FILE` runs a signed runbook only as signed, as the gate would; before anything
 runs, it refuses (exit `2`) when:
 

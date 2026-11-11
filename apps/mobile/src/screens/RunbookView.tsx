@@ -1,4 +1,5 @@
-import { parseCall } from '@md-runbook/core/call';
+import { isCallLanguage } from '@md-runbook/core/call';
+import { activeCall, callCells, finishCall, startCall } from '../runbooks/calls';
 import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
@@ -331,6 +332,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (!runbook) return;
     const { cellIndex, mode, line } = request;
     const cell = cells[cellIndex];
+    if (cell && cell.kind === 'code' && isCallLanguage(cell.languageId)) {
+      await runCallAt(cellIndex);
+      return;
+    }
     // Practice: every cell on the practice host, whatever host= says (a drill can't reach production).
     // A practice host the app doesn't have stops the run rather than falling back to the selected one.
     if (practiceName && !practiceHost) {
@@ -585,21 +590,42 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const next = q.cells.shift();
     if (next === undefined) {
       clearQueue();
-      const call = q.call !== undefined && runbook ? parse(getRunbook(runbook.id)?.text ?? runbook.text).cells[q.call] : undefined;
-      if (call && isCodeMeta(call.meta)) {
-        setNotice(t.stoppedAtCall(parseCall(call.meta.info, call.value).src ?? '?'));
-        list.current?.scrollToIndex({ index: q.call, viewPosition: 0.2 });
-      } else if (q.proposed > 0) setNotice(t.proposedNotRun(q.proposed));
+      // A runbook call: Run all goes on in its copy (the steps after the call wait for Continue here).
+      if (q.call !== undefined) void runCallAt(q.call);
+      else if (q.proposed > 0) setNotice(t.proposedNotRun(q.proposed));
       return;
     }
     void runRef.current({ cellIndex: next }, q.on);
   };
-  /** Run all (from the top) or Continue (the failed or pending cells from the first such one on). */
-  const runSequence = (from: 'start' | 'resume'): void => {
+  /**
+   * Run a runbook call: its copy is made (or a failed run's continued), given the parameters, and
+   * opened to run; its result comes back to this cell when that run ends (runbooks/calls.ts).
+   */
+  const runCallAt = async (cellIndex: number): Promise<void> => {
+    if (!runbook) return;
+    const fm = parseFrontMatter(runbook.text);
+    const values: Record<string, string> = {};
+    for (const p of fm?.params ?? []) if (p.default !== undefined) values[p.name] = p.default;
+    Object.assign(values, paramValues, inputs.current);
+    for (const [name, c] of Object.entries(captures.current)) values[name] = c.value;
+    const r = await startCall(getRunbook(runbook.id) ?? runbook, cellIndex, values);
+    if (r.kind === 'error') {
+      setNotice(r.message);
+      list.current?.scrollToIndex({ index: cellIndex, viewPosition: 0.2 });
+      return;
+    }
+    if (r.kind === 'canceled') return;
+    router.push({ pathname: '/runbook/[id]', params: { id: r.copyId, autorun: '1' } });
+  };
+  /** Run all (from the top) or Continue (the failed or pending cells from the first such one on); `only`: just these cells. */
+  const runSequence = (from: 'start' | 'resume', only?: readonly number[]): void => {
     if (!runbook || busy.current || !host) return;
     const parsed = parse(runbook.text).cells;
-    const candidates =
-      from === 'start' ? parsed.map((c, i) => (c.kind === 'code' ? i : -1)).filter((i) => i >= 0) : textProgress(runbook.text).resume;
+    const candidates = only
+      ? [...only]
+      : from === 'start'
+        ? parsed.map((c, i) => (c.kind === 'code' ? i : -1)).filter((i) => i >= 0)
+        : textProgress(runbook.text).resume;
     const verdicts = candidates.map((i) => ({ i, can: runnability(parsed[i]!, approvalId, host.platform) }));
     // A runbook call is a step the app doesn't run: stop before it, never run the steps after it
     // as if it had (they usually need what it does).
@@ -1059,13 +1085,42 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (running?.paused) running.paused.stop();
     else running?.abort.abort();
   };
+  // A call's copy: when its run ends (done, failed or stopped), the result goes to the caller's cell;
+  // done, back to the caller, where Continue goes on after the call.
+  const callRun = useRef<'starting' | 'running' | 'ended' | undefined>(undefined);
+  /** Run All as Copy, or a runbook call, opened this copy: run it (a call: its cells only). */
+  const startAutorun = (): void => {
+    if (!runbook) return;
+    const call = activeCall(runbook.id);
+    if (!call) return runSequence('start');
+    const cells = callCells(runbook.text, call);
+    setNotice(t.callRunning(call.runbook, runbook.fileName ?? runbook.title));
+    callRun.current = cells.length > 0 ? 'starting' : 'ended';
+    if (cells.length > 0) runSequence('start', cells);
+  };
+  /** A call's copy whose run ended: its result to the caller; back there when it is done. */
+  const endCallRun = (id: string): void => {
+    const done = finishCall(id);
+    if (done?.ok) router.back();
+    else if (done) setNotice(t.callNotDone(getRunbook(done.parentId)?.title ?? ''));
+  };
   // Run All as Copy opened this copy: run it once, as soon as a host is there.
   const autorunDone = useRef(false);
   useEffect(() => {
     if (!autorun || autorunDone.current || !runbook || !host) return;
     autorunDone.current = true;
     forgetAutorun(runbook.id);
-    runSequence('start');
+    startAutorun();
+  });
+  useEffect(() => {
+    if (!callRun.current || !runbook) return;
+    if (queued || running) {
+      callRun.current = 'running';
+      return;
+    }
+    if (callRun.current === 'starting') return; // the run hasn't begun yet
+    callRun.current = undefined;
+    endCallRun(runbook.id);
   });
   const runRef = useRef(run);
   // Run all calls the newest render's run (its runbook text and values), not the first one's.

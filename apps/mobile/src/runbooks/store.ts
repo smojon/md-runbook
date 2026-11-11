@@ -156,6 +156,11 @@ export function addRunbook(fileName: string, text: string, origin?: Origin, link
   return r;
 }
 
+/** The newest runbook with this file name (a runbook call's copy, by the name its result records). */
+export function runbookNamed(fileName: string): Runbook | undefined {
+  return [...all].reverse().find((r) => r.fileName === fileName);
+}
+
 /** Replace a runbook's text (a cell ran, a box was ticked). */
 export function updateRunbookText(id: string, text: string): void {
   all = all.map((r) => (r.id === id ? { ...r, text, title: r.source === 'file' ? titleOf(text, r.fileName ?? r.title) : r.title } : r));
