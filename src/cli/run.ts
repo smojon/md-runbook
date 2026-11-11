@@ -32,7 +32,10 @@ import {
   setCellOutput,
   shellKindForLanguage,
 } from '@md-runbook/core';
-import { executeCell } from '@md-runbook/core/node';
+import { callEstimateSeconds, callTarget, executeCell, fileSha256, relativeToCaller, samePath, writeCallCopy } from '@md-runbook/core/node';
+import { callAttrs, callChainProblem, callFromAttrs, callOutputText, callRefs, checkCall, fillRefs, formatCallSteps, isCallLanguage, parseCall } from '@md-runbook/core/call';
+import { stepState } from '@md-runbook/core/progress';
+import { KubeContextMode } from '@md-runbook/core/kubeContext';
 import type { ShellSettings } from '@md-runbook/core';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { checkKubeContext, kubeContextParam, resolveKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
@@ -42,7 +45,8 @@ import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } fro
 import { currentOs, osGroups, osLabel, stepNumbers } from '@md-runbook/core/os';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { REDACTED } from '@md-runbook/core/redact';
-import { findRefs, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
+import { VarRef, findRefs, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
+import { inSections, sectionHeadings } from '@md-runbook/core/sections';
 import { historySizeFor, runnerAttrs } from '@md-runbook/core/incident';
 import { SessionPool } from '@md-runbook/core/node/session';
 import { TranscriptFile } from '@md-runbook/core/node/transcript';
@@ -85,6 +89,16 @@ export interface CliOptions {
   extraSecrets?: string[];
   /** After each step, the run's progress by the blocks' estimates (a terminal, not a CI log). */
   progress?: boolean;
+  /** Where runbook calls write the copies of the runbooks they run (relative to each one; default: next to it). */
+  copyFolder?: string;
+  /** A failed call run again starts a fresh copy, instead of continuing the one it ran. */
+  freshCopy?: boolean;
+  /** For a runbook run by a call: the files calling it, the first the one run (cycles, depth). */
+  callers?: string[];
+  /** For a runbook run by a call: "5." before its step numbers. */
+  stepPrefix?: string;
+  /** For a runbook run by a call that names no kube-context: the caller's (resolved) and its mode. */
+  inheritKubeContext?: { context: string; mode?: KubeContextMode };
 }
 
 export type StepStatus = 'passed' | 'failed' | 'skipped' | 'not run';
@@ -103,6 +117,8 @@ export interface StepResult {
   /** Why it failed or was not run. */
   message?: string;
   output: string;
+  /** A runbook call: the runbook run (relative to this file), its copy, and its steps. */
+  call?: { runbook: string; copy: string; sha256: string; steps: StepResult[] };
 }
 
 export interface RunSummary {
@@ -133,7 +149,13 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   const original = fs.readFileSync(o.file, 'utf8');
   const fileName = path.basename(o.file);
   const mdDir = path.dirname(path.resolve(o.file));
-  const fm = parseFrontMatter(original);
+  const parsedFm = parseFrontMatter(original);
+  // Run by a call that names a cluster, a runbook that names none runs against the caller's.
+  const inherit = o.inheritKubeContext;
+  const fm =
+    inherit && !parsedFm?.kubeContext
+      ? { params: [], ...parsedFm, kubeContext: inherit.context, ...(inherit.mode && !parsedFm?.kubeContextMode ? { kubeContextMode: inherit.mode } : {}) }
+      : parsedFm;
   const baseCwd = fm?.cwd ? path.resolve(mdDir, fm.cwd) : mdDir;
   const session = o.session ?? fm?.mode === 'session';
   const pins = new KubeconfigPins();
@@ -158,10 +180,11 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   // Every secret the runbook uses is known before the first step: a step that prints the
   // environment (env, set -x) before the step that references it must not show it either.
   for (const loc of locs) {
-    if (!shellKindForLanguage(loc.language)) continue;
+    const call = isCallLanguage(loc.language);
+    if (!shellKindForLanguage(loc.language) && !call) continue;
     let refs: ReturnType<typeof findRefs> = [];
     try {
-      refs = findRefs(loc.source);
+      refs = call ? callRefs(parseCall(loc.info, loc.source)) : findRefs(loc.source);
     } catch {
       continue; // reported when the step runs
     }
@@ -188,7 +211,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     const proposal = proposalOf(loc.info);
     let uses: string[] = [];
     try {
-      uses = cellRefs(loc.source, loc.info, fm).filter((r) => r.kind === 'out').map((r) => r.name);
+      uses = (isCallLanguage(loc.language) ? callRefs(parseCall(loc.info, loc.source)) : cellRefs(loc.source, loc.info, fm)).filter((r) => r.kind === 'out').map((r) => r.name);
     } catch {
       // reported when the step runs
     }
@@ -230,20 +253,49 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
 
   const pool = session ? new SessionPool() : undefined;
   const transcriptFile = o.transcript ? new TranscriptFile(path.resolve(o.transcript), (e) => io.log(`! the transcript ${o.transcript} can't be written, so it stops: ${e.message}`)) : undefined;
+  const pre = o.stepPrefix ?? '';
   const headings = headingsOf(original);
   const sectionAt = (line: number): string | undefined => [...headings].reverse().find((h) => h.line < line)?.text;
   const note = (n: number, title: string, text: string): void => {
-    transcriptFile?.append(transcriptNote(new Date(), fileName, `Step ${n} · ${title}: ${text}`, redact));
+    transcriptFile?.append(transcriptNote(new Date(), fileName, `Step ${pre}${n} · ${title}: ${text}`, redact));
     transcriptFile?.flush();
+  };
+  /** A placeholder's value: from the command line, the environment or an earlier capture, never from prompts. */
+  const lookup = (ref: VarRef): { value: string; secret: boolean } | { missing: string } => {
+    let value: string | undefined;
+    let secret = ref.secret;
+    if (ref.kind === 'secret') value = o.env[ref.name];
+    else if (ref.kind === 'input') value = o.inputs[ref.name] ?? o.env[ref.name];
+    else if (ref.kind === 'param') value = o.params[ref.name] ?? fm?.params.find((p) => p.name === ref.name)?.default;
+    else {
+      const c = captures.get(ref.name);
+      value = c?.value;
+      secret = c?.secret ?? false;
+    }
+    if (value !== undefined) return { value, secret };
+    return {
+      missing:
+        ref.kind === 'secret'
+          ? `\${secret:${ref.name}}: set the environment variable ${ref.name}`
+          : ref.kind === 'input'
+            ? `\${input:${ref.name}}: pass --input ${ref.name}=… or set the environment variable ${ref.name}`
+            : ref.kind === 'param'
+              ? o.callers
+                ? `\${param:${ref.name}}: the runbook call doesn't pass ${ref.name} (${ref.name}=… in its block), and it has no default`
+                : `\${param:${ref.name}}: pass --param ${ref.name}=… (it has no default)`
+              : `\${out:${ref.name}} has no value yet; run the cell with capture=${ref.name} first`,
+    };
   };
   const counted = new Set<number>();
   const steps: StepResult[] = [];
   let stopped = false;
   // The run's progress by estimates: the blocks this run will run, and the ones it has run.
   const planned = blocks.flatMap((b, i) => (b.runs ? [i] : []));
+  // A runbook call's estimate is what it runs (callEstimateSeconds).
+  const estimates = locs.map((loc) => (isCallLanguage(loc.language) ? callEstimateSeconds(o.file, loc.info, loc.source) : parseCellOptions(loc.info).estimateSeconds));
   const finished = new Set<number>();
   const progressLine = (): string | undefined =>
-    formatRunbookEstimate(runbookEstimate(planned.map((i) => ({ estimateSeconds: parseCellOptions(locs[i]!.info).estimateSeconds, state: finished.has(i) ? 'done' : 'pending' }))));
+    formatRunbookEstimate(runbookEstimate(planned.map((i) => ({ estimateSeconds: estimates[i], state: finished.has(i) ? 'done' : 'pending' }))));
 
   try {
     for (const [i, loc] of locs.entries()) {
@@ -267,7 +319,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         output: '',
         ...extra,
       });
-      const where = `Step ${n} · ${fileName}:${loc.line + 1} · ${loc.language}`;
+      const where = `Step ${pre}${n} · ${fileName}:${loc.line + 1} · ${loc.language}`;
 
       if (slot && !slot.active) {
         // For another OS: not run, output untouched. A group with none for this OS is skipped.
@@ -313,7 +365,8 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         continue;
       }
       const kind = shellKindForLanguage(loc.language);
-      if (!kind) continue; // not a shell block
+      const isCall = isCallLanguage(loc.language);
+      if (!kind && !isCall) continue; // not a shell block
       if (opts.skip) {
         io.log(`– ${where}: skipped (skip option)`);
         text = setCellOutput(text, loc.cellIndex, { kind: 'new', text: '[md-runbook] skipped: skip option\n', attrs: { exit: 'skipped', ran: formatLocalIso(new Date()) } }, writeOpts) ?? text;
@@ -331,6 +384,172 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         continue;
       }
 
+      if (isCall) {
+        // A runbook call: the runbook it names runs as a copy, as one step of this one (core/call.ts).
+        const call = parseCall(loc.info, loc.source);
+        if (call.problems.length > 0 || call.src === undefined) {
+          notRun(call.problems.map((p) => p.message).join('; '), 'error');
+          continue;
+        }
+        let refs: VarRef[];
+        try {
+          refs = callRefs(call);
+        } catch (e) {
+          notRun(e instanceof Error ? e.message : String(e), 'error');
+          continue;
+        }
+        const values = new Map<string, { value: string; secret: boolean }>();
+        let missing: string | undefined;
+        for (const ref of refs) {
+          const v = lookup(ref);
+          if ('missing' in v) {
+            missing = v.missing;
+            break;
+          }
+          values.set(ref.name, v);
+          if (v.secret) addSecret(v.value);
+        }
+        if (missing) {
+          notRun(missing, 'error');
+          continue;
+        }
+        const fill = (t: string): string => {
+          const r = fillRefs(t, (_kind, name) => values.get(name)?.value);
+          return 'text' in r ? r.text : t;
+        };
+        const target = callTarget(o.file, fill(call.src));
+        const shown = relativeToCaller(o.file, target);
+        if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+          notRun(`src="${redact(call.src)}": no such runbook: ${redact(shown)}`, 'error');
+          continue;
+        }
+        const callers = o.callers ?? [path.resolve(o.file)];
+        const chain = callChainProblem(
+          callers.map((p) => path.relative(process.cwd(), p) || p),
+          path.relative(process.cwd(), target) || target,
+          (a, b) => samePath(a, b),
+        );
+        if (chain) {
+          notRun(chain, 'error');
+          continue;
+        }
+        const childText = fs.readFileSync(target, 'utf8');
+        const check = checkCall(call, childText);
+        const refusal = [
+          ...check.unknown.map((a) => `${shown} has no parameter ${a.name}`),
+          ...check.notPassed.map((p) => `${shown} needs \${param:${p}}: pass it in the call (${p}=…), it has no default`),
+          ...check.sections,
+        ];
+        if (refusal.length > 0) {
+          notRun(refusal.join('; '), 'error');
+          continue;
+        }
+        const params: Record<string, string> = {};
+        for (const a of call.args) params[a.name] = fill(a.value);
+        // The cluster: a runbook called runs against the caller's, or names the same one.
+        const childFm = parseFrontMatter(childText);
+        let inheritKube: CliOptions['inheritKubeContext'];
+        try {
+          const paramOf = (name: string): string | undefined => o.params[name] ?? fm?.params.find((p) => p.name === name)?.default;
+          const mine = resolveKubeContext(wantedKubeContext(opts, fm), paramOf);
+          const theirs = resolveKubeContext(childFm?.kubeContext, (name) => params[name] ?? childFm?.params.find((p) => p.name === name)?.default);
+          if (mine !== undefined && theirs !== undefined && mine !== theirs) {
+            notRun(`${shown} runs against the Kubernetes context ${theirs}, this runbook against ${mine}: nothing ran`, 'error');
+            continue;
+          }
+          if (mine !== undefined && theirs === undefined) inheritKube = { context: mine, ...(fm?.kubeContextMode ? { mode: fm.kubeContextMode } : {}) };
+        } catch (e) {
+          notRun(e instanceof Error ? e.message : String(e), 'error');
+          continue;
+        }
+        // Run again after a failure: the same copy goes on from its first step not done.
+        let copy: string | undefined;
+        let from: number | undefined;
+        const prev = callFromAttrs(loc.outputAttrs);
+        if (prev && !o.freshCopy && prev.exit !== undefined && prev.exit !== '0') {
+          const old = path.resolve(path.dirname(path.resolve(o.file)), prev.copy);
+          if (fs.existsSync(old) && samePath(callTarget(o.file, prev.runbook), target)) {
+            from = firstStepNotDone(fs.readFileSync(old, 'utf8'), call.sections);
+            if (from !== undefined) copy = old;
+          }
+        }
+        copy ??= writeCallCopy(target, original, o.copyFolder);
+        const copyShown = relativeToCaller(o.file, copy);
+        const title = redact(opts.name ?? firstLine);
+        const part = call.sections.length ? ` (section${call.sections.length === 1 ? '' : 's'} ${call.sections.map((t) => JSON.stringify(t)).join(', ')})` : '';
+        io.log(`▶ ${where}${opts.name ? ` · ${opts.name}` : ''} · ${redact(shown)}${part} · ${from !== undefined ? `continuing ${copyShown} from step ${from}` : `copy ${copyShown}`}`);
+        note(n, title, `runs ${redact(shown)}${part} as ${copyShown}`);
+        const started = new Date();
+        const ctl = new AbortController();
+        const onAbort = (): void => ctl.abort();
+        o.signal?.addEventListener('abort', onAbort, { once: true });
+        let timedOut = false;
+        const timer = opts.timeoutSeconds ? setTimeout(() => ((timedOut = true), ctl.abort()), opts.timeoutSeconds * 1000) : undefined;
+        let child: RunSummary | undefined;
+        let failure: string | undefined;
+        try {
+          child = await runRunbook(
+            {
+              ...o,
+              file: copy,
+              params,
+              from,
+              to: undefined,
+              sections: call.sections.length ? call.sections : undefined,
+              session: undefined,
+              signal: ctl.signal,
+              progress: false,
+              extraSecrets: [...known],
+              callers: [...callers, target],
+              stepPrefix: `${pre}${n}.`,
+              inheritKubeContext: inheritKube,
+            },
+            { out: io.out, log: (l) => io.log(`  ${l}`) },
+          );
+          fs.writeFileSync(copy, child.text, 'utf8');
+          for (const s of child.steps) if (s.status === 'failed' || s.status === 'not run') failure ??= `step ${pre}${n}.${s.step} ${s.status === 'failed' ? 'failed' : 'not run'}: ${s.message ?? s.exit}`;
+        } catch (e) {
+          failure = e instanceof Error ? e.message : String(e);
+        } finally {
+          clearTimeout(timer);
+          o.signal?.removeEventListener('abort', onAbort);
+        }
+        if (timedOut) failure = `timed out after ${opts.timeoutSeconds}s; the runbook called was stopped`;
+        const ended = new Date();
+        const count = (st: StepStatus): number => child?.steps.filter((s) => s.status === st).length ?? 0;
+        const r = { runbook: shown, copy: copyShown, sha256: fileSha256(copy), done: count('passed'), skipped: count('skipped'), failed: count('failed'), notRun: count('not run') };
+        const ok = child?.ok === true && !timedOut;
+        const outText = callOutputText(r, call.sections) + (failure ? `[md-runbook] ${failure}\n` : '');
+        const attrs: Record<string, string> = {
+          exit: ok ? '0' : '1',
+          ran: formatLocalIso(started),
+          ended: formatLocalIso(ended),
+          duration: formatDurationAttr(ended.getTime() - started.getTime()),
+          ...(opts.name !== undefined ? { name: opts.name } : {}),
+          ...callAttrs(r),
+          ...runnerAttrs(text, { by: runner(), on: `${runner()}@${os.hostname()}` }),
+        };
+        const meta = parse(text).cells[loc.cellIndex]?.meta;
+        const previous = isCodeMeta(meta) ? loadedOutputEntry(meta) : undefined;
+        const history = previous ? nextHistory(previous, isCodeMeta(meta) ? (meta.history?.entries ?? []) : [], historySizeFor(text, 0)) : [];
+        text = setCellOutput(text, loc.cellIndex, { kind: 'new', text: redact(outText), attrs, ...(previous && history.length ? { previous, history } : {}) }, writeOpts) ?? text;
+        note(n, title, `${ok ? 'done' : 'failed'}: ${formatCallSteps(r)}${failure ? ` (${redact(failure)})` : ''}`);
+        io.log(`${ok ? '✓' : '✗'} Step ${pre}${n} · ${redact(shown)}: ${formatCallSteps(r)}${failure ? ` · ${redact(failure)}` : ''}`);
+        finished.add(i);
+        steps.push(
+          result(ok ? 'passed' : 'failed', attrs.exit!, {
+            durationMs: ended.getTime() - started.getTime(),
+            output: redact(outText),
+            call: { runbook: shown, copy: copyShown, sha256: r.sha256, steps: child?.steps ?? [] },
+            ...(ok ? {} : { message: redact(failure ?? 'the runbook called failed') }),
+          }),
+        );
+        if (!ok && !opts.continueOnError && !o.keepGoing) stopped = true;
+        if (o.signal?.aborted) stopped = true;
+        continue;
+      }
+      if (!kind) continue;
+
       // Placeholders: values come from the command line and the environment, never from prompts.
       let env: Record<string, string> = { ...opts.env };
       let missing: string | undefined;
@@ -346,30 +565,14 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         continue;
       }
       for (const ref of refs) {
-        let value: string | undefined;
-        let secret = ref.secret;
-        if (ref.kind === 'secret') value = o.env[ref.name];
-        else if (ref.kind === 'input') value = o.inputs[ref.name] ?? o.env[ref.name];
-        else if (ref.kind === 'param') value = o.params[ref.name] ?? fm?.params.find((p) => p.name === ref.name)?.default;
-        else {
-          const c = captures.get(ref.name);
-          value = c?.value;
-          secret = c?.secret ?? false;
-        }
-        if (value === undefined) {
-          missing =
-            ref.kind === 'secret'
-              ? `\${secret:${ref.name}}: set the environment variable ${ref.name}`
-              : ref.kind === 'input'
-                ? `\${input:${ref.name}}: pass --input ${ref.name}=… or set the environment variable ${ref.name}`
-                : ref.kind === 'param'
-                  ? `\${param:${ref.name}}: pass --param ${ref.name}=… (it has no default)`
-                  : `\${out:${ref.name}} has no value yet; run the cell with capture=${ref.name} first`;
+        const v = lookup(ref);
+        if ('missing' in v) {
+          missing = v.missing;
           break;
         }
-        env[ref.name] = value;
-        if (secret) {
-          addSecret(value);
+        env[ref.name] = v.value;
+        if (v.secret) {
+          addSecret(v.value);
           secretNames.add(ref.name);
         }
       }
@@ -526,7 +729,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       const tookS = (ended.getTime() - started.getTime()) / 1000;
       // A warning, not a failure: the estimate may be old, or the machine slow today.
       if (opts.estimateSeconds !== undefined && isOverEstimate(tookS, opts.estimateSeconds)) {
-        io.log(`! Step ${n} took ${formatEstimate(tookS)}, more than twice its estimate of ${formatEstimate(opts.estimateSeconds)}`);
+        io.log(`! Step ${pre}${n} took ${formatEstimate(tookS)}, more than twice its estimate of ${formatEstimate(opts.estimateSeconds)}`);
       }
       finished.add(i);
       const line = o.progress ? progressLine() : undefined;
@@ -548,17 +751,27 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
 const xml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]!).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
 
+/** The steps with the steps of their runbook calls after each call, numbered 5.1, 5.2, … (`5.1` as the step). */
+export function flattenSteps(steps: readonly StepResult[], prefix = ''): (StepResult & { number: string; file?: string })[] {
+  return steps.flatMap((s) => [
+    { ...s, number: `${prefix}${s.step}` },
+    ...(s.call ? flattenSteps(s.call.steps, `${prefix}${s.step}.`).map((c) => ({ ...c, file: c.file ?? s.call!.copy })) : []),
+  ]);
+}
+
 /** JUnit XML, which most CI systems show as a test report. */
-export function junitReport(file: string, steps: readonly StepResult[]): string {
+export function junitReport(file: string, top: readonly StepResult[]): string {
+  // A runbook call's steps are test cases too, after the call, with the copy as their class.
+  const steps = flattenSteps(top);
   const failures = steps.filter((s) => s.status === 'failed' || s.status === 'not run').length;
   const skipped = steps.filter((s) => s.status === 'skipped').length;
   const time = (ms: number): string => (ms / 1000).toFixed(3);
-  const total = steps.reduce((t, s) => t + s.durationMs, 0);
+  const total = top.reduce((t, s) => t + s.durationMs, 0);
   const cases = steps.map((s) => {
-    const name = xml(`Step ${s.step}: ${s.title}`);
+    const name = xml(`Step ${s.number}: ${s.title}`);
     // The estimate as a property of the test case (as pytest's record_property writes them).
     const props = s.estimateSeconds !== undefined ? `<properties><property name="estimate" value="${s.estimateSeconds}"/></properties>` : '';
-    const head = `    <testcase classname="${xml(file)}" name="${name}" time="${time(s.durationMs)}">${props}`;
+    const head = `    <testcase classname="${xml(s.file ?? file)}" name="${name}" time="${time(s.durationMs)}">${props}`;
     if (s.status === 'passed') return `${head}</testcase>`;
     if (s.status === 'skipped') return `${head}<skipped message="${xml(s.message ?? 'skipped')}"/></testcase>`;
     return `${head}\n      <failure message="${xml(s.message ?? s.exit)}">${xml(s.output)}</failure>\n    </testcase>`;
@@ -572,12 +785,30 @@ export function junitReport(file: string, steps: readonly StepResult[]): string 
 }
 
 /** A Markdown table of the steps, e.g. for GitHub's job summary ($GITHUB_STEP_SUMMARY). */
-export function markdownSummary(file: string, steps: readonly StepResult[]): string {
+export function markdownSummary(file: string, top: readonly StepResult[]): string {
+  const steps = flattenSteps(top);
   const icon: Record<StepStatus, string> = { passed: '✅', failed: '❌', skipped: '⏭️', 'not run': '⛔' };
   const cell = (s: string): string => s.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
-  const rows = steps.map((s) => `| ${s.step} | ${icon[s.status]} ${s.status} | \`${cell(s.title).slice(0, 80)}\` | ${cell(s.exit)} | ${(s.durationMs / 1000).toFixed(1)}s${s.estimateSeconds !== undefined ? ` (est. ${formatEstimate(s.estimateSeconds)})` : ''} | ${cell(s.message ?? '')} |`);
+  const rows = steps.map((s) => `| ${s.number} | ${icon[s.status]} ${s.status} | \`${cell(s.title).slice(0, 80)}\` | ${cell(s.exit)} | ${(s.durationMs / 1000).toFixed(1)}s${s.estimateSeconds !== undefined ? ` (est. ${formatEstimate(s.estimateSeconds)})` : ''} | ${cell(s.message ?? '')} |`);
   const passed = steps.filter((s) => s.status === 'passed').length;
   return `### ${cell(file)}: ${passed}/${steps.length} steps passed\n\n| Step | Result | Command | Exit | Time | Note |\n|---|---|---|---|---|---|\n${rows.join('\n')}\n`;
+}
+
+/** In a run copy, the number of the first step not done (in `sections`, when given); undefined when all are. */
+export function firstStepNotDone(text: string, sections: readonly string[] = []): number | undefined {
+  const doc = parse(text);
+  const osCells = doc.cells.map((c) => (c.kind === 'code' ? { kind: 'code' as const, os: parseCellOptions(c.meta.kind === 'code' ? c.meta.info : '').os } : { kind: 'markup' as const }));
+  const slots = osGroups(osCells);
+  const numberOf = stepNumbers(osCells);
+  const inPart = sections.length ? inSections(sectionHeadings(text), sections) : () => true;
+  for (const loc of locateCodeCells(doc)) {
+    const slot = slots[loc.cellIndex];
+    if ((slot && !slot.active) || !inPart(loc.line) || parseCellOptions(loc.info).skip) continue;
+    const a = loc.outputAttrs;
+    const state = stepState(a?.exit, a?.lines !== undefined, a?.check);
+    if (state !== 'done' && state !== 'skipped') return numberOf[loc.cellIndex];
+  }
+  return undefined;
 }
 
 /** The OS user running the command line, for by= and on=. */

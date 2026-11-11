@@ -56,7 +56,9 @@ A cell is a fenced code block as in CommonMark, with these rules:
   is at least as long. Any indentation is allowed, so blocks inside lists work.
 - The **info string** is everything after the opening fence. Its first word is the language;
   the cell runs only when that word is exactly `sh`, `bash`, `pwsh`, `powershell` or `cmd`
-  (lower case). Any other language (`yaml`, `text`, `python`, …) is plain Markdown.
+  (lower case), or `runbook`, which runs another runbook as one step (see
+  [Runbook calls](#runbook-calls)). Any other language (`yaml`, `text`, `python`, …) is plain
+  Markdown.
 - A backtick fence whose info string contains a backtick is not a fence (CommonMark).
 - Blocks inside a blockquote (`> ```bash`) are not cells. Fences nested inside another fence
   (for example inside a ```` ````markdown ```` example) are not cells. An unclosed fence makes
@@ -136,6 +138,27 @@ captured with `capture-secret=` stops the cell before it runs.
 
 **Passing.** A cell passes when its exit code is 0 (or `expect-exit=N`) **and** every check
 passes. With `retry=`, only the last attempt's output is kept.
+
+### Runbook calls
+
+````text
+```runbook [name="…"] src=PATH [section=TEXT]... [confirm] [timeout=N] [continue-on-error] [skip] [kube-context=NAME] [estimate=D]
+NAME=value
+…
+```
+````
+
+| Part | Value | Effect |
+| --- | --- | --- |
+| `src=PATH` | relative to the folder of the `.md` file; may use `${param:}` and `${out:}` | The runbook to run. Required. |
+| `section=TEXT` | the start of a heading, case-sensitive; repeatable | Run only the steps under it (as `md-runbook run --section`). |
+| a body line `NAME=value` | `NAME` a parameter of the runbook called; the value may use `${param:}`, `${out:}`, `${input:}`, `${secret:}`, and may be quoted | Passed as `${param:NAME}`. Blank lines and `#` comments are allowed. |
+
+The runbook called runs as a copy (`<file>.<yyyyMMdd-HHmmss>.md`, next to it), in a session of
+its own, with only the parameters passed. Its output block records `runbook=`, `copy=`,
+`steps=` and `sha256=` (see [Marker attributes](#marker-attributes)). Shell options (`cwd=`,
+`env.NAME=`, `expect=`, `capture=`, `retry=`, …) have no effect on a call. See
+[running another runbook](features/calls.md).
 
 ## Placeholders in cell source
 
@@ -301,6 +324,7 @@ system:admin
 | `name` | the cell's `name=` option |
 | `check` | `ok` or `failed`: the result of `expect=` / `capture=` checks. Progress follows it over the exit code |
 | `attempts` | the number of attempts made with `retry=` |
+| `runbook`, `copy`, `steps`, `sha256` | a [runbook call](#runbook-calls): the runbook it ran and its run copy (relative to this file), its steps (`6 done, 1 skipped, 1 failed`), and the copy's SHA-256 after the run. A failed call run again continues in that copy |
 | `changed` | `yes` or `no`: whether the output differs from the previous run (absent on a first run) |
 | `lines` | the 1-based lines of the cell that ran (`2-3`), when not the whole cell ran; such a step is not done yet |
 | `stderr` | the 1-based lines of the output that came from stderr (`3,5-7`); absent when none did |

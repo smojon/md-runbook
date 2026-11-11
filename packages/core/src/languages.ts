@@ -1,7 +1,7 @@
 /** Mapping between fence languages and VS Code language ids. */
 
-/** Fence languages that become runnable code cells. */
-export const RUNNABLE_FENCE_LANGS: ReadonlySet<string> = new Set(['sh', 'bash', 'pwsh', 'powershell', 'cmd']);
+/** Fence languages that become runnable code cells (`runbook`: a call of another runbook, core/call.ts). */
+export const RUNNABLE_FENCE_LANGS: ReadonlySet<string> = new Set(['sh', 'bash', 'pwsh', 'powershell', 'cmd', 'runbook']);
 
 const FENCE_TO_LANGUAGE_ID: Readonly<Record<string, string>> = {
   sh: 'shellscript',
@@ -16,6 +16,7 @@ const LANGUAGE_ID_TO_FENCE: Readonly<Record<string, string>> = {
   shellscript: 'bash',
   powershell: 'pwsh',
   bat: 'cmd',
+  runbook: 'runbook',
 };
 
 export const SUPPORTED_LANGUAGE_IDS: readonly string[] = Object.keys(LANGUAGE_ID_TO_FENCE);

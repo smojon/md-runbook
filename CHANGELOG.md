@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Run another runbook as one step: ```` ```runbook ```` blocks.** `src=` names the runbook
+  (relative to this file, `${param:}` and `${out:}` allowed), the block's lines pass its
+  parameters (`ENV=${param:ENV}`, secrets redacted and never written), `section=` runs only part
+  of it. It runs as a dated copy next to it, in a session of its own, with only what is passed;
+  the call fails when one of its steps fails, and its output records the runbook, the copy, the
+  steps and the copy's SHA-256. A failed call run again continues in the same copy
+  (`--fresh-copy` starts a new one). The caller's `evidence:`, `drill:`, `incident:` and `rto:`
+  carry over to the copy; a different `kube-context:` is refused, none inherits the caller's.
+  Cycles and calls more than 3 deep are refused before anything runs. `md-runbook run` follows
+  calls (steps 5.1, 5.2, … in the log, `--json`, JUnit and the job summary; `--copy-folder`);
+  lint checks a call against the file it names (unknown or missing parameters, sections, a
+  missing file); `md-runbook estimate` counts a call as what it runs. Docs:
+  [docs/features/calls.md](docs/features/calls.md).
+
 ## 0.20.0
 
 - **How long it takes: `estimate=`.** Annotate a block with the time a real run took

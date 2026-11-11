@@ -4,6 +4,7 @@
  * and drives the progress bars of a running block and of the runbook.
  */
 
+import { isCallLanguage } from './call';
 import { parseCellOptions } from './cellOptions';
 import { isCodeMeta } from './model';
 import { OsName, osGroups } from './os';
@@ -164,9 +165,16 @@ export interface EstimateSummary {
  * blocks don't count, and `os=` alternatives count once (the one for `here`, else the longest).
  * An invalid `estimate=` counts as none (lint reports it).
  */
-export function estimateRunbook(text: string, here?: OsName): EstimateSummary {
+export function estimateRunbook(text: string, here?: OsName, callEstimate?: (info: string, source: string) => number | undefined): EstimateSummary {
   const cells = parse(text).cells;
   const opts = cells.map((c) => (c.kind === 'code' && isCodeMeta(c.meta) ? parseCellOptions(c.meta.info) : undefined));
+  // A runbook call without estimate= takes as long as what it runs (when that can be read).
+  cells.forEach((c, i) => {
+    const o = opts[i];
+    if (!callEstimate || !o || o.estimateSeconds !== undefined || !isCodeMeta(c.meta) || !isCallLanguage(c.languageId)) return;
+    const e = callEstimate(c.meta.info, c.value);
+    if (e !== undefined) opts[i] = { ...o, estimateSeconds: e };
+  });
   const slots = osGroups(
     cells.map((c, i) => ({ kind: c.kind, ...(opts[i]?.os ? { os: opts[i]!.os } : {}) })),
     here,

@@ -8,6 +8,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { estimateRunbook, formatEstimate, renderReport, withoutEstimate } from '@md-runbook/core';
 import { formatProblem, lintRunbook } from '@md-runbook/core/lint';
+import { callEstimateSeconds, matchRunbooks, runbookReader } from '@md-runbook/core/node';
 import { buildTimeline } from '@md-runbook/core/incident';
 import { CliOptions, junitReport, markdownSummary, runRunbook } from './run';
 import { RunUsageError } from './select';
@@ -29,7 +30,8 @@ const USAGE = `Usage: md-runbook run <file.md> [options]
        md-runbook audit <gate log>... [options]        (see md-runbook audit --help)
 
 Runs the bash, pwsh/powershell and cmd blocks of a Markdown runbook in order and writes their
-output into the file, as the VS Code extension does. Stops at the first failed step.
+output into the file, as the VS Code extension does. Stops at the first failed step. A runbook
+block runs another runbook as one step: as a copy, with the parameters it passes.
 
 Options:
   --check              Run, but don't write the outputs into the file
@@ -51,6 +53,10 @@ Options:
   --section TEXT       Run only the steps under headings that start with TEXT, e.g. "3." or
                        "Rollback" (repeatable; with --from/--to, both must hold)
   --keep-going         Carry on after a failed step
+  --copy-folder DIR    Where runbook calls (\`\`\`runbook blocks) write the copies of the runbooks
+                       they run, relative to each one (default: next to it)
+  --fresh-copy         A runbook call that failed before starts a new copy, instead of
+                       continuing the one it ran from its first step not done
   --session            Run all blocks of a shell in one process (like session mode)
   --isolated           One process per block, even with "mode: session" in the front matter
   --timeout SECONDS    Default timeout per block (the front matter and timeout= win)
@@ -158,6 +164,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
       case '--bash': o.shell.bashPath = value(a); break;
       case '--pwsh': o.shell.pwshPath = value(a); break;
       case '--quiet': quiet = true; break;
+      case '--copy-folder': o.copyFolder = value(a); break;
+      case '--fresh-copy': o.freshCopy = true; break;
       default:
         if (a.startsWith('-')) throw new UsageError(`unknown option ${a}`);
         if (o.file) throw new UsageError(`only one runbook per run (got "${o.file}" and "${a}")`);
@@ -188,7 +196,7 @@ export function lint(argv: readonly string[], out: (line: string) => void = (l) 
       failed = true;
       continue;
     }
-    for (const p of lintRunbook(fs.readFileSync(file, 'utf8'))) {
+    for (const p of lintRunbook(fs.readFileSync(file, 'utf8'), { readRunbook: runbookReader(file), matchRunbooks: (glob) => matchRunbooks(file, glob) })) {
       count++;
       out(formatProblem(file, p));
       if (annotate) out(`::${p.severity} file=${file},line=${p.line + 1}::${p.message.replace(/\r?\n/g, ' ')}`);
@@ -217,7 +225,7 @@ export function estimate(argv: readonly string[], out: (line: string) => void = 
       failed = true;
       return;
     }
-    const s = estimateRunbook(fs.readFileSync(file, 'utf8'));
+    const s = estimateRunbook(fs.readFileSync(file, 'utf8'), undefined, (info, source) => callEstimateSeconds(file, info, source));
     const time = (seconds: number, blocks: number, without: number): string =>
       blocks === 0 ? '–' : `${without === blocks ? '?' : formatEstimate(seconds)}${without > 0 ? ` (${withoutEstimate(without)})` : ''}`;
     const rows = s.sections.map((x) => [x.level === 0 ? '(before the first heading)' : `${'#'.repeat(x.level)} ${x.heading}`, time(x.seconds, x.blocks, x.unestimated)] as const);

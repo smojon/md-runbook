@@ -52,6 +52,8 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--from N`, `--to N` | Run only steps `N` to `M`, as the run's `▶ Step N` lines number them (see [Part of a runbook](#part-of-a-runbook)). |
 | `--section TEXT` | Run only the steps under the headings that start with `TEXT` (repeatable). |
 | `--keep-going` | Carry on after a failed step (the exit code is still `1`). |
+| `--copy-folder DIR` | Where [runbook calls](calls.md) write the copies of the runbooks they run, relative to each one (default: next to it). |
+| `--fresh-copy` | A runbook call that failed before starts a new copy, instead of continuing the one it ran from its first step not done. |
 | `--session` / `--isolated` | One shell process per shell for the whole runbook (like [session mode](session.md)), or one per block. Default: the front matter's `mode:`, else isolated. |
 | `--timeout SECONDS` | Default timeout per block. The front matter's `timeout:` and a block's `timeout=` win. |
 | `--bash PATH`, `--pwsh PATH` | The shells to use (default: as in the extension, e.g. Git Bash on Windows). |
@@ -85,6 +87,45 @@ md-runbook run upgrade.md --section Rollback
   runbook or backwards, a `--section` matches no heading, nothing is selected, or a selected
   step uses `${out:NAME}` and only steps left out capture `NAME` (a run starts without
   captured values: select the capturing step too).
+
+## Runbook calls
+
+A ```` ```runbook ```` block runs another runbook as one step ([Running another runbook](calls.md)):
+
+````markdown
+```runbook name="Apply the release's changes" src="releases/${param:TO}.runbook.md"
+ENV=${param:ENV}
+CONTEXT=${param:CONTEXT}
+TENANT=${param:TENANT}
+```
+````
+
+`md-runbook run` follows it:
+
+```text
+▶ Step 5 · 3-upgrade.runbook.md:88 · runbook · Apply the release's changes · releases/72512.2611.runbook.md · copy releases/72512.2611.runbook.20261111-143012.md
+  ▶ Step 5.1 · 72512.2611.runbook.20261111-143012.md:14 · bash
+  ✓ exit 0 · 0.4s
+  …
+✓ Step 5 · releases/72512.2611.runbook.md: 6 done, 1 skipped
+```
+
+- The runbook called runs as a copy next to it (`--copy-folder DIR` puts it elsewhere), with
+  only the parameters the block passes; its file is not changed. The copy holds its outputs, and
+  the call's output block records `runbook=`, `copy=`, `steps=` and `sha256=`.
+- The call fails when a step of the runbook called fails, and the run stops there (unless
+  `continue-on-error` or `--keep-going`). Run it again and the call continues in the same copy
+  from its first step not done; `--fresh-copy` starts a new copy.
+- Values come from the command line as for any block: `--param`, `--input`, the environment for
+  `${secret:}`, and earlier captures for `${out:}`. A parameter of the runbook called with no
+  default that the block doesn't pass stops the call before it starts.
+- `--from`/`--to` count the call as one step; `section=` on the block selects part of the runbook
+  called. `--yes` and `--keep-going` apply to its steps too.
+- `--json` lists the call's steps under `call.steps`; the JUnit report and the GitHub job summary
+  list them after the call, numbered `5.1`, `5.2`, … (in JUnit with the copy as their class).
+- Refused before anything runs in it: a file that doesn't exist, a cycle (A calls B calls A),
+  calls nested more than 3 deep, a parameter name the runbook called doesn't have, a `section=`
+  that matches no heading, and a `kube-context:` other than the caller's.
 
 ## Checking without running
 

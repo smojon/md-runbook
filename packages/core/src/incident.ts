@@ -225,7 +225,7 @@ export function withFrontMatterValues(text: string, values: Record<string, strin
   }
   const head = lines.slice(1, end);
   for (const [k, v] of Object.entries(values)) {
-    const at = head.findIndex((l) => new RegExp(`^${k}\s*:`).test(l));
+    const at = head.findIndex((l) => new RegExp(`^${k}\\s*:`).test(l));
     if (at >= 0) head[at] = `${k}: ${quote(v)}`;
     else head.push(`${k}: ${quote(v)}`);
   }

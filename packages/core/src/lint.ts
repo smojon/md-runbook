@@ -10,10 +10,11 @@ import { cellRefs, parseCellOptions, tokenizeInfo } from './cellOptions';
 import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
-import { locateCodeCells } from './locate';
+import { CodeCellLocation, locateCodeCells } from './locate';
 import { FRONT_MATTER_ENV_ENTRY, findRefs, parseFrontMatter } from './secrets';
 import { POWERSHELLS, UNIX_SHELLS, parseShells, shellKindForLanguage } from './shellKind';
 import { signedStatus } from './signing';
+import { CALL_OPTIONS, NOT_ON_A_CALL, callRefs, checkCall, isCallLanguage, isDynamicSrc, parseCall, srcGlob } from './call';
 
 export type LintSeverity = 'error' | 'warning';
 
@@ -127,7 +128,17 @@ function lintFrontMatterEnv(lines: string[], end: number, signed: boolean): Lint
   return problems;
 }
 
-export function lintRunbook(text: string): LintProblem[] {
+export interface LintOptions {
+  /**
+   * The text of a runbook a call's static src= names (relative to the file linted), or undefined
+   * when there is no such file. Without it, calls are checked without reading what they call.
+   */
+  readRunbook?(src: string): string | undefined;
+  /** For a src= with placeholders: the files its glob matches today (releases/*.md). */
+  matchRunbooks?(glob: string): string[];
+}
+
+export function lintRunbook(text: string, options: LintOptions = {}): LintProblem[] {
   const problems: LintProblem[] = [];
   const doc = parse(text);
   const locs = locateCodeCells(doc);
@@ -204,6 +215,11 @@ export function lintRunbook(text: string): LintProblem[] {
 
   for (const loc of locs) {
     const cell = doc.cells[loc.cellIndex]!;
+    if (isCodeMeta(cell.meta) && isCallLanguage(loc.language)) {
+      problems.push(...lintCall(loc, declared, captured, options));
+      for (const c of parseCellOptions(loc.info).checks?.captures ?? []) captured.add(c.name);
+      continue;
+    }
     if (!isCodeMeta(cell.meta) || !shellKindForLanguage(loc.language)) continue;
     const at = (severity: LintSeverity, message: string, sourceLine?: number, fix?: LintProblem['fix']): void =>
       void problems.push({
@@ -299,6 +315,68 @@ export function lintRunbook(text: string): LintProblem[] {
     if (at >= 0) problems.push({ severity: 'error', line: at, message: 'the signature block is damaged (sign the runbook again)' });
   }
   return problems.sort((a, b) => a.line - b.line);
+}
+
+/** A runbook call: its options and body, its placeholders, and what it passes against what it calls. */
+function lintCall(loc: CodeCellLocation, declared: ReadonlySet<string>, captured: ReadonlySet<string>, options: LintOptions): LintProblem[] {
+  const problems: LintProblem[] = [];
+  const at = (severity: LintSeverity, message: string, sourceLine?: number, fix?: LintProblem['fix']): void =>
+    void problems.push({
+      severity,
+      message,
+      line: sourceLine === undefined ? loc.line : loc.line + 1 + sourceLine,
+      cell: { index: loc.cellIndex, ...(sourceLine !== undefined ? { sourceLine } : {}) },
+      ...(fix ? { fix } : {}),
+    });
+  const opts = parseCellOptions(loc.info);
+  for (const e of opts.errors) at('error', `invalid cell option ${e}`);
+  for (const t of tokenizeInfo(loc.info.replace(LANG_RE, ''))) {
+    const key = t.key.toLowerCase();
+    if (NOT_ON_A_CALL.has(key) || key.startsWith('env.')) {
+      at('warning', `${t.key}= has no effect on a runbook call (ignored): it runs no shell of its own; put it on the blocks of the runbook called`);
+      continue;
+    }
+    if (KNOWN_OPTIONS.has(key) || CALL_OPTIONS.has(key)) continue;
+    const meant = suggestOption(key) ?? (['source', 'file', 'path', 'srcs'].includes(key) ? 'src' : ['sections', 'part'].includes(key) ? 'section' : undefined);
+    if (meant) at('warning', `unknown cell option "${t.key}" (ignored): did you mean "${meant}"?`, undefined, { option: t.key, to: meant });
+    else at('warning', `unknown cell option "${t.key}" (ignored)`);
+  }
+  const call = parseCall(loc.info, loc.source);
+  for (const p of call.problems) at('error', p.message, p.line);
+  let refs: ReturnType<typeof callRefs> = [];
+  try {
+    refs = callRefs(call);
+  } catch (e) {
+    at('error', e instanceof Error ? e.message : String(e));
+  }
+  const lineOf = (needle: string): number | undefined => call.args.find((a) => a.value.includes(needle))?.line;
+  for (const ref of refs) {
+    const token = '${' + ref.kind + ':' + ref.name;
+    if (ref.kind === 'out' && !captured.has(ref.name)) {
+      at('error', `\${out:${ref.name}} is not captured by an earlier block (add capture=${ref.name} to the block that prints it)`, lineOf(token));
+    }
+    if (ref.kind === 'param' && !declared.has(ref.name)) {
+      at('warning', `\${param:${ref.name}} is not declared in the front matter params: (it has no default, and the command line needs --param ${ref.name}=…)`, lineOf(token));
+    }
+  }
+  if (call.src === undefined) return problems;
+  if (isDynamicSrc(call.src)) {
+    const glob = srcGlob(call.src);
+    const matches = options.matchRunbooks?.(glob);
+    if (matches && matches.length === 0) at('warning', `src="${call.src}": no runbook matches ${glob} yet`);
+    return problems;
+  }
+  if (!options.readRunbook) return problems;
+  const child = options.readRunbook(call.src);
+  if (child === undefined) {
+    at('error', `src="${call.src}": no such runbook (relative to this file)`);
+    return problems;
+  }
+  const check = checkCall(call, child);
+  for (const a of check.unknown) at('error', `${a.name}: the runbook called (${call.src}) has no parameter ${a.name}`, a.line);
+  for (const name of check.notPassed) at('warning', `${call.src} needs \${param:${name}}, which this call doesn't pass and which has no default: it will be asked (on the command line: an error)`);
+  for (const m of check.sections) at('error', m);
+  return problems;
 }
 
 /**

@@ -6,8 +6,8 @@
  * need `--yes`.
  */
 
-import { CodeCellLocation, splitLines } from '@md-runbook/core';
-import { isFenceClose, matchFenceOpen } from '@md-runbook/core/fence';
+import { CodeCellLocation } from '@md-runbook/core';
+import { SectionHeading, inSections, missingSections, sectionHeadings, sectionOnTitle } from '@md-runbook/core/sections';
 
 /** A problem found before the first step: nothing ran (exit code 2). */
 export class RunUsageError extends Error {}
@@ -19,39 +19,9 @@ export interface Selection {
   sections?: string[];
 }
 
-export interface Heading {
-  /** 0-based line. */
-  line: number;
-  level: number;
-  /** After the `#`s and spaces, without a closing `#` sequence. */
-  text: string;
-}
-
-const ATX_RE = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
-
 /** The ATX headings of a runbook, outside the front matter and fenced blocks (code, outputs). */
-export function headingsOf(text: string): Heading[] {
-  const lines = splitLines(text.replace(/^﻿/, '')).map((l) => l.text);
-  const out: Heading[] = [];
-  let i = 0;
-  if (lines[0]?.trimEnd() === '---') {
-    const end = lines.findIndex((l, k) => k > 0 && /^(---|\.\.\.)\s*$/.test(l));
-    if (end > 0) i = end + 1;
-  }
-  for (; i < lines.length; i++) {
-    const open = matchFenceOpen(lines[i]!);
-    if (open) {
-      while (i + 1 < lines.length && !isFenceClose(lines[i + 1]!, open)) i++;
-      i++;
-      continue;
-    }
-    const m = ATX_RE.exec(lines[i]!);
-    if (!m) continue;
-    const content = (m[2] ?? '').replace(/(^|[ \t]+)#+$/, '').trim();
-    out.push({ line: i, level: m[1]!.length, text: content });
-  }
-  return out;
-}
+export type Heading = SectionHeading;
+export const headingsOf = sectionHeadings;
 
 /** "1–3, 5, 7–9" */
 export function formatSteps(steps: readonly number[]): string {
@@ -95,34 +65,18 @@ export function selectSteps(text: string, locs: readonly CodeCellLocation[], num
   let under: (line: number) => boolean = () => true;
   if (sections.length > 0) {
     const headings = headingsOf(text);
-    const missing = sections.filter((t) => !headings.some((h) => h.text.startsWith(t)));
+    const missing = missingSections(headings, sections);
     if (missing.length > 0) {
       throw new RunUsageError(`no heading starts with ${missing.map((t) => JSON.stringify(t)).join(', ')} (--section matches the heading text after the #s, case-sensitive)`);
     }
     // The runbook's title (its one top-level heading) holds every step, so a section matching it
     // selects them all: "6." for "## 6. The scheduled check" also matches "# 6. Are the backends up?".
-    const top = Math.min(...headings.map((h) => h.level));
-    const tops = headings.filter((h) => h.level === top);
-    if (tops.length === 1 && headings.length > 1) {
-      const title = tops[0]!;
-      const onTitle = sections.filter((t) => title.text.startsWith(t));
-      if (onTitle.length > 0) {
-        const t = onTitle[0]!;
-        const others = headings.filter((h) => h !== title && h.text.startsWith(t)).map((h) => h.text);
-        const hint = others.length > 0 ? `; for ${JSON.stringify(others[0])}, give more of it, e.g. --section ${JSON.stringify(others[0]!.split(/\s+/).slice(0, 2).join(' '))}` : '';
-        throw new RunUsageError(`--section ${JSON.stringify(t)} matches the runbook's title ${JSON.stringify(title.text)}, which holds every step${hint}`);
-      }
+    const onTitle = sectionOnTitle(headings, sections);
+    if (onTitle) {
+      const hint = onTitle.other !== undefined ? `; for ${JSON.stringify(onTitle.other)}, give more of it, e.g. --section ${JSON.stringify(onTitle.other.split(/\s+/).slice(0, 2).join(' '))}` : '';
+      throw new RunUsageError(`--section ${JSON.stringify(onTitle.section)} matches the runbook's title ${JSON.stringify(onTitle.title)}, which holds every step${hint}`);
     }
-    // A block is in a section while that heading is open: until the next heading of its level or higher.
-    under = (line) => {
-      const open: Heading[] = [];
-      for (const h of headings) {
-        if (h.line >= line) break;
-        while (open.length > 0 && open[open.length - 1]!.level >= h.level) open.pop();
-        open.push(h);
-      }
-      return open.some((h) => sections.some((t) => h.text.startsWith(t)));
-    };
+    under = inSections(headings, sections);
   }
   const selected = new Set<number>();
   locs.forEach((loc, i) => {
