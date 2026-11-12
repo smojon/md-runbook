@@ -231,7 +231,7 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
   it('finds the gate; an unsigned cell is refused with the reason', async () => {
     const s = await RemoteShell.connect(await open(), opts(strict));
     try {
-      assert.deepEqual(s.gate, { protocol: 1, unsigned: 'refuse' });
+      assert.deepEqual(s.gate, { protocol: 2, unsigned: 'refuse' });
       let err = '';
       const r = await s.run('echo should-not-run', { onStderr: (t) => (err += t) });
       assert.equal(r.exitCode, 126);

@@ -49,7 +49,7 @@ describe('ops host', { skip: !spec && 'set MD_RUNBOOK_OPS_TEST to run' }, () => 
   after(() => shell?.close());
 
   it('every login goes to md-runbook-gate, whatever the client asks for', () => {
-    assert.deepEqual(shell.gate, { protocol: 1, unsigned: 'allow' });
+    assert.deepEqual(shell.gate, { protocol: 2, unsigned: 'allow' });
   });
 
   it('kube-context: the gate names the context, and the guard lets only that one through', async () => {
