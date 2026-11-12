@@ -93,6 +93,8 @@ run, and the progress reads their estimate as *up to*.
 - A runbook called as one of the steps (not with `setup` or `teardown`) runs whole: its own setup
   is guarded by its own ready check, and its teardown runs with it.
 
+<img src="../app/setup-teardown-offer.png" alt="The md-runbook app at the end of a guide: Run the teardown now: Stop the lab? with Take down and Not now" width="320">
+
 The ready check's output is kept like any other (`exit=1 check=ok ready=down`): it passed as a
 check, whatever it answered.
 
@@ -106,8 +108,10 @@ it is chosen. Before the check, the setup is shown as what it may add:
 [####......] 40% · about 33 min left · setup ✓ already up · teardown 2m, offered
 ```
 
-- **The app** draws one bar in three segments: the setup striped until the check (removed when
+- **The app** draws one bar in three segments: the setup outlined until the check (removed when
   already up), the runbook's own steps, and the teardown dashed until chosen.
+
+  <img src="../app/setup-teardown-before.png" alt="The md-runbook app before a run: the bar in three parts, and 0% by the estimates, about 55 min left, +19m if the setup runs, teardown 2m, offered" width="320">
 - **VS Code** shows the parts in the status bar item and its tooltip.
 - **`md-runbook run`** tags its step lines `[setup]`, `[teardown]` and `[ready check]`.
 - **`md-runbook estimate`** adds a line with the parts:

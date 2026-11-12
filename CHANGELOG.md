@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **App: no false "no such runbook" on calls.** A runbook opened from a file showed that error on
+  every call until the file it calls was picked; lint now checks a call only once the app can read
+  what it calls. The teardown card scrolls into view with its buttons, and the teardown's part of
+  the run bar is easier to see (at least 8% wide, a darker outline).
+
 ## 0.22.0
 
 - **Setup and teardown that check whether they are needed** ([#29](https://github.com/smojon/md-runbook/issues/29)).

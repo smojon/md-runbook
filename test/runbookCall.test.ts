@@ -129,6 +129,8 @@ describe('runbook call: lint, estimates and copies', () => {
     assert.ok(problems.some((p) => /^error: section="Part X": no heading/.test(p)), problems.join('\n'));
     const missing = lintRunbook(parent('```runbook src=nope.md\n```'), { readRunbook: runbookReader(file) });
     assert.ok(missing.some((p) => p.severity === 'error' && /no such runbook/.test(p.message)));
+    // Not readable here yet (the app before the file is picked): not checked, no error.
+    assert.deepEqual(lintRunbook(parent('```runbook src=nope.md\n```'), { readRunbook: () => null }).filter((p) => p.severity === 'error'), []);
     const notPassed = lintRunbook(parent('```runbook src=child.md\n```'), { readRunbook: runbookReader(file) });
     assert.ok(notPassed.some((p) => p.severity === 'warning' && /needs \$\{param:ENV\}/.test(p.message)));
     const glob = lintRunbook(parent('```runbook src="releases/${param:TO}.md"\n```'), { matchRunbooks: (g) => matchRunbooks(file, g) });

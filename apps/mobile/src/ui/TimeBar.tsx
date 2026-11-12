@@ -32,7 +32,7 @@ export interface BarSegment {
 }
 
 /** A segment never narrower than this share of the bar, so a 2-minute teardown still shows. */
-const MIN_SHARE = 0.04;
+const MIN_SHARE = 0.08;
 
 const clamp = (f: number): number => Math.min(1, Math.max(0, Number.isFinite(f) ? f : 0));
 
@@ -93,5 +93,5 @@ const useStyles = themedStyles((c) => ({
   // A setup the ready check may skip: outlined in the accent colour until it runs.
   maybe: { height: 6, borderWidth: 1, borderStyle: 'dashed', borderColor: c.accent, backgroundColor: 'transparent' },
   // A teardown not chosen: a dashed outline, never filled.
-  offered: { height: 6, borderWidth: 1, borderStyle: 'dashed', borderColor: c.border, backgroundColor: 'transparent' },
+  offered: { height: 6, borderWidth: 1, borderStyle: 'dashed', borderColor: c.muted, backgroundColor: 'transparent' },
 }));

@@ -132,10 +132,11 @@ function lintFrontMatterEnv(lines: string[], end: number, signed: boolean): Lint
 
 export interface LintOptions {
   /**
-   * The text of a runbook a call's static src= names (relative to the file linted), or undefined
-   * when there is no such file. Without it, calls are checked without reading what they call.
+   * The text of a runbook a call's static src= names (relative to the file linted), undefined when
+   * there is no such file, or null when it can't be read here yet (the app before the file is
+   * picked or downloaded: not checked). Without it, calls are checked without reading what they call.
    */
-  readRunbook?(src: string): string | undefined;
+  readRunbook?(src: string): string | null | undefined;
   /** For a src= with placeholders: the files its glob matches today (releases/*.md). */
   matchRunbooks?(glob: string): string[];
 }
@@ -383,6 +384,7 @@ function lintCall(loc: CodeCellLocation, declared: ReadonlySet<string>, captured
   }
   if (!options.readRunbook) return problems;
   const child = options.readRunbook(call.src);
+  if (child === null) return problems;
   if (child === undefined) {
     at('error', `src="${call.src}": no such runbook (relative to this file)`);
     return problems;

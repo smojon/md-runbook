@@ -213,7 +213,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   }, [runbook]);
   const reader = useMemo(() => (runbook ? callReader(runbook, calledVersion) : undefined), [runbook, calledVersion]);
   const problems = useMemo(
-    () => (runbook ? runbookProblems(runbook.text, reader ? { readRunbook: (src) => reader(src, undefined)?.text } : {}) : NO_LINT),
+    () => (runbook ? runbookProblems(runbook.text, reader ? { readRunbook: (src) => reader(src, undefined)?.text ?? null } : {}) : NO_LINT),
     [runbook, reader],
   );
   const [problemsOpen, setProblemsOpen] = useState(false);
@@ -679,7 +679,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           .filter((i) => partAt(i) === 'teardown')
           .map((i) => teardownLabel(parsedCells[i]));
         setTeardownOffer({ cellIndex: upcoming, labels: [...new Set(labels)] });
-        list.current?.scrollToIndex({ index: upcoming, viewPosition: 0.2 });
+        // Once the card is there: the step and its card in view.
+        setTimeout(() => list.current?.scrollToIndex({ index: upcoming, viewPosition: 0 }), 100);
         return;
       }
       q.takeDown = false;
