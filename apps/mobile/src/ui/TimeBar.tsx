@@ -36,7 +36,17 @@ const MIN_SHARE = 0.04;
 
 const clamp = (f: number): number => Math.min(1, Math.max(0, Number.isFinite(f) ? f : 0));
 
-export function TimeBar({ fraction, over = false, testID, segments }: { fraction: number; over?: boolean; testID?: string; segments?: readonly BarSegment[] }) {
+export function TimeBar({
+  fraction,
+  over = false,
+  testID,
+  segments,
+}: {
+  fraction: number;
+  over?: boolean;
+  testID?: string;
+  segments?: readonly BarSegment[];
+}) {
   const styles = useStyles();
   const f = clamp(fraction);
   const shown = segments?.filter((s) => s.weight > 0) ?? [];

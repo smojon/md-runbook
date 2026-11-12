@@ -517,7 +517,8 @@ const en = {
   callAlreadyUp: (runbook: string) => `already up: the ready check of ${runbook} passed, so its setup was skipped`,
   setupAlreadyUp: 'skipped: already up (the ready check passed)',
   teardownTitle: (what: string) => `Run the teardown now: ${what}?`,
-  teardownBody: "Not now if you go straight on to the next runbook: the teardown stays as it is, to run later. Run all won't ask again for this runbook until the app restarts.",
+  teardownBody:
+    "Not now if you go straight on to the next runbook: the teardown stays as it is, to run later. Run all won't ask again for this runbook until the app restarts.",
   teardownTake: 'Take down',
   teardownNotNow: 'Not now',
   estimateSetupUp: 'setup ✓ already up',

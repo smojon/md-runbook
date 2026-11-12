@@ -106,7 +106,13 @@ function teardownLabel(cell: ParsedCell | undefined): string {
     const call = parseCall(cell.meta.info, cell.value);
     return call.sections[0] ?? call.src ?? '?';
   }
-  return cell.value.split(/\r?\n/).find((l) => l.trim() !== '')?.trim().slice(0, 60) ?? '?';
+  return (
+    cell.value
+      .split(/\r?\n/)
+      .find((l) => l.trim() !== '')
+      ?.trim()
+      .slice(0, 60) ?? '?'
+  );
 }
 
 const CHEAT_SHEET_URL = 'https://github.com/smojon/md-runbook/blob/main/docs/cheatsheet.md';
@@ -669,7 +675,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     // The teardown is offered, not run unasked: you may go straight on to the next runbook.
     if (upcoming !== undefined && partAt(upcoming) === 'teardown' && q.takeDown === undefined) {
       if (!teardownDeclined.has(runbook.id) || q.askAgain) {
-        const labels = [...q.cells, ...(q.call !== undefined ? [q.call] : [])].filter((i) => partAt(i) === 'teardown').map((i) => teardownLabel(parsedCells[i]));
+        const labels = [...q.cells, ...(q.call !== undefined ? [q.call] : [])]
+          .filter((i) => partAt(i) === 'teardown')
+          .map((i) => teardownLabel(parsedCells[i]));
         setTeardownOffer({ cellIndex: upcoming, labels: [...new Set(labels)] });
         list.current?.scrollToIndex({ index: upcoming, viewPosition: 0.2 });
         return;
@@ -1782,11 +1790,21 @@ function barSegments(e: RunbookEstimate): BarSegment[] | undefined {
   const of = (x: { doneSeconds: number; totalSeconds: number }): number => (x.totalSeconds > 0 ? x.doneSeconds / x.totalSeconds : 0);
   const segments: BarSegment[] = [];
   if (p.setup.totalSeconds > 0 && p.states.setup !== 'up') {
-    segments.push({ weight: p.setup.totalSeconds, fraction: of(p.setup), kind: p.states.setup === 'unchecked' ? 'maybe' : 'solid', testID: 'bar-setup' });
+    segments.push({
+      weight: p.setup.totalSeconds,
+      fraction: of(p.setup),
+      kind: p.states.setup === 'unchecked' ? 'maybe' : 'solid',
+      testID: 'bar-setup',
+    });
   }
   segments.push({ weight: p.body.totalSeconds, fraction: of(p.body), kind: 'solid', testID: 'bar-body' });
   if (p.teardown.totalSeconds > 0) {
-    segments.push({ weight: p.teardown.totalSeconds, fraction: of(p.teardown), kind: p.states.teardown === 'chosen' ? 'solid' : 'offered', testID: 'bar-teardown' });
+    segments.push({
+      weight: p.teardown.totalSeconds,
+      fraction: of(p.teardown),
+      kind: p.states.teardown === 'chosen' ? 'solid' : 'offered',
+      testID: 'bar-teardown',
+    });
   }
   return segments;
 }
@@ -1798,9 +1816,11 @@ function partWords(e: RunbookEstimate): string[] {
   const words: string[] = [];
   if (p.setup.blocks > 0) {
     if (p.states.setup === 'up') words.push(t.estimateSetupUp);
-    else if (p.states.setup === 'unchecked' && p.setup.totalSeconds > 0) words.push(t.estimateSetupMaybe(formatEstimate(p.setup.totalSeconds)));
+    else if (p.states.setup === 'unchecked' && p.setup.totalSeconds > 0)
+      words.push(t.estimateSetupMaybe(formatEstimate(p.setup.totalSeconds)));
   }
-  if (p.teardown.blocks > 0 && p.states.teardown === 'offered' && p.teardown.totalSeconds > 0) words.push(t.estimateTeardownOffered(formatEstimate(p.teardown.totalSeconds)));
+  if (p.teardown.blocks > 0 && p.states.teardown === 'offered' && p.teardown.totalSeconds > 0)
+    words.push(t.estimateTeardownOffered(formatEstimate(p.teardown.totalSeconds)));
   return words;
 }
 

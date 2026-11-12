@@ -55,12 +55,7 @@ beforeEach(() => {
 
 describe('setup and teardown in Run all', () => {
   it('the ready check says up: the setup is skipped; Not now leaves the teardown and is not asked again', async () => {
-    const script: FakeRun[] = [
-      { exitCode: 0 },
-      { stdout: 'work\n', exitCode: 0 },
-      { exitCode: 0 },
-      { stdout: 'work\n', exitCode: 0 },
-    ];
+    const script: FakeRun[] = [{ exitCode: 0 }, { stdout: 'work\n', exitCode: 0 }, { exitCode: 0 }, { stdout: 'work\n', exitCode: 0 }];
     mockConnection = fakeConnection(script);
     const rb = addRunbook('guide.md', GUIDE);
     await render(<RunbookView id={rb.id} />);
@@ -125,9 +120,19 @@ describe('setup and teardown in Run all', () => {
 });
 
 describe('a setup call', () => {
-  const LAB = ['# The lab', '', fence('bash ready', 'test -f lab.up'), '## Start the lab', '', fence('bash', 'touch lab.up'), '## Stop the lab', '', fence('bash', 'rm lab.up')].join('\n');
+  const LAB = [
+    '# The lab',
+    '',
+    fence('bash ready', 'test -f lab.up'),
+    '## Start the lab',
+    '',
+    fence('bash', 'touch lab.up'),
+    '## Stop the lab',
+    '',
+    fence('bash', 'rm lab.up'),
+  ].join('\n');
 
-  it("runs the ready check of the runbook it calls first, whatever section= selects", () => {
+  it('runs the ready check of the runbook it calls first, whatever section= selects', () => {
     expect(readyCellOf(LAB)).toBe(1);
     expect(callCells(LAB, { sections: ['Start the lab'], resumed: false, setup: true })).toEqual([1, 3]);
     expect(callCells(LAB, { sections: ['Stop the lab'], resumed: false })).toEqual([5]);
