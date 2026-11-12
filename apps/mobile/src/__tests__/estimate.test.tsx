@@ -31,7 +31,7 @@ describe('estimate= (how long a cell takes)', () => {
       `# Steps\n\n\`\`\`bash estimate=2m30s\necho one\n\`\`\`\n${DONE}\n\`\`\`bash\necho two\n\`\`\`\n\n\`\`\`bash estimate=3m30s\necho three\n\`\`\`\n`,
     );
     await render(<RunbookView id={r.id} />);
-    expect(screen.getByTestId('cell-1-estimate')).toHaveTextContent('est. 2m30s');
+    expect(screen.getByTestId('cell-1-estimate')).toHaveTextContent(/est\. 2m30s$/);
     expect(screen.queryByTestId('cell-2-estimate')).toBeNull();
     expect(screen.getByTestId('run-estimate-text')).toHaveProp(
       'accessibilityLabel',

@@ -219,9 +219,9 @@ describe('runbook calls in the app', () => {
     );
     const parent = addRunbook('upgrade.md', text, undefined, linkKey(BASE, text));
     await render(<RunbookView id={parent.id} />);
-    await waitFor(() => expect(screen.getByTestId('cell-2-estimate')).toHaveTextContent('est. 40s'));
+    await waitFor(() => expect(screen.getByTestId('cell-2-estimate')).toHaveTextContent(/est\. 40s$/));
     expect(screen.getByTestId('cell-2-problems')).toHaveTextContent(/releases\/1\.md\) has no parameter NOPE/);
-    expect(screen.getByTestId('cell-3-estimate')).toHaveTextContent('estimate unknown until run');
+    expect(screen.getByTestId('cell-3-estimate')).toHaveTextContent(/estimate unknown until run$/);
   });
 
   it('Run all runs the steps before a call, then goes on in the copy', async () => {
