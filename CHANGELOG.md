@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.22.0
+
 - **Setup and teardown that check whether they are needed** ([#29](https://github.com/smojon/md-runbook/issues/29)).
   A `ready` block is a runbook's ready check (exit 0: already up); `setup` steps are skipped when
   it passes, and a `setup` call to another runbook runs that runbook's check first. `teardown`
