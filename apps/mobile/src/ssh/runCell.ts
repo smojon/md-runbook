@@ -407,6 +407,11 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     }
     known.sort((a, b) => b.length - a.length);
   }
+  // The ready check (core/parts.ts) answers up or down; either way it passed (check=ok).
+  if (!p.lines && opts.part === 'ready' && !result.cancelled) {
+    attrs.check = 'ok';
+    attrs.ready = (outcome ? outcome.ok : isSuccess(result)) ? 'up' : 'down';
+  }
   // `lines=` when a line run did not run every command of the cell (as the extension writes it).
   if (p.lines && !(p.lines.coversCell && ran.length === p.lines.steps.length)) {
     const picked = ran.length > 0 ? ran.map((i) => p.lines!.steps[i]!) : p.lines.steps;

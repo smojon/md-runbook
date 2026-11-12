@@ -67,6 +67,8 @@ export interface ActiveCall {
   started: Date;
   /** The runbooks calling it, the first the one opened (cycles, depth). */
   callers: string[];
+  /** A setup call (core/parts.ts): the ready check of the runbook called runs first and guards the rest. */
+  setup?: boolean;
 }
 
 const active = new Map<string, ActiveCall>();
@@ -216,7 +218,8 @@ async function calledText(parent: Runbook, src: string, fetcher: typeof fetch): 
 function earlierCopy(parent: Runbook, cellIndex: number, runbook: string): Runbook | undefined {
   const cell = parse(parent.text).cells[cellIndex];
   const prev = callFromAttrs(cell?.output?.attrs);
-  if (!prev || prev.exit === undefined || prev.exit === '0' || prev.runbook !== runbook) return undefined;
+  // A setup call skipped as already up is checked again, not continued.
+  if (!prev || prev.exit === undefined || prev.exit === '0' || prev.exit === 'skipped' || prev.runbook !== runbook) return undefined;
   return runbookNamed(prev.copy);
 }
 
@@ -324,22 +327,34 @@ export async function startCall(
     resumed: again !== undefined,
     started: new Date(),
     callers,
+    ...(parseCellOptions(cell.meta.info).part === 'setup' ? { setup: true } : {}),
   });
   askAutorun(copy.id);
   return { kind: 'started', copyId: copy.id, resumed: again !== undefined };
 }
 
-/** The cells of a copy a call runs: in its sections, and (continuing) not done there before. */
-export function callCells(copyText: string, c: Pick<ActiveCall, 'sections' | 'resumed'>): number[] {
+/**
+ * The cells of a copy a call runs: in its sections, and (continuing) not done there before. A
+ * setup call runs the ready check first, whatever its sections are.
+ */
+export function callCells(copyText: string, c: Pick<ActiveCall, 'sections' | 'resumed' | 'setup'>): number[] {
   const inPart = c.sections.length ? inSections(sectionHeadings(copyText), c.sections) : () => true;
-  return locateCodeCells(parse(copyText))
-    .filter((l) => inPart(l.line))
+  const locs = locateCodeCells(parse(copyText));
+  const ready = c.setup ? readyCellOf(copyText) : undefined;
+  const cells = locs
+    .filter((l) => inPart(l.line) && l.cellIndex !== ready)
     .filter((l) => {
       if (!c.resumed) return true;
       const s = stepState(l.outputAttrs?.exit, l.outputAttrs?.lines !== undefined, l.outputAttrs?.check);
       return s !== 'done' && s !== 'skipped';
     })
     .map((l) => l.cellIndex);
+  return ready !== undefined ? [ready, ...cells] : cells;
+}
+
+/** The cell index of a runbook's ready check (core/parts.ts), if it has one. */
+export function readyCellOf(text: string): number | undefined {
+  return locateCodeCells(parse(text)).find((l) => parseCellOptions(l.info).part === 'ready')?.cellIndex;
 }
 
 /** The call's result, from its copy as it is now (no write). */
@@ -379,14 +394,20 @@ export function finishCall(copyId: string, now = new Date()): { parentId: string
   const parent = getRunbook(c.parentId);
   if (!parent) return undefined;
   const { result, ok, evidence } = callResult(copy, c);
+  // A setup call whose runbook's ready check said up: already up, and the call is skipped.
+  const ready = c.setup ? readyCellOf(copy.text) : undefined;
+  const up = ok && ready !== undefined && parse(copy.text).cells[ready]?.output?.attrs.ready === 'up';
   const note =
     evidence && result.manual && result.failed === 0 && result.notRun === 0
       ? `[md-runbook] ${t.callManualLeft(result.manual, copy.fileName ?? copy.title)}\n`
-      : ok
-        ? ''
-        : `[md-runbook] ${c.runbook}: not done\n`;
+      : up
+        ? `[md-runbook] ${t.callAlreadyUp(c.runbook)}\n`
+        : ok
+          ? ''
+          : `[md-runbook] ${c.runbook}: not done\n`;
   const attrs: Record<string, string> = {
-    exit: ok ? '0' : '1',
+    exit: up ? 'skipped' : ok ? '0' : '1',
+    ...(up ? { ready: 'up' } : {}),
     ran: formatLocalIso(c.started),
     ended: formatLocalIso(now),
     duration: formatDurationAttr(now.getTime() - c.started.getTime()),

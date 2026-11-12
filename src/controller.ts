@@ -369,7 +369,9 @@ export class RunbookController implements vscode.Disposable {
         const part = several && !lineRun ? cellPart(exec.cell) : 'body';
         if (part === 'teardown' && options.teardown !== 'run') {
           // Offered, not run unasked: the reader may go straight on to the next runbook.
-          takeDown ??= await this.chooseTeardown(notebook, executions.slice(next).map((e) => e.cell).filter((c) => cellPart(c) === 'teardown'));
+          // A run of the teardown cells only (Resume Run with only them left) asks for them: offered again.
+          const onlyTeardown = executions.every((e) => cellPart(e.cell) === 'teardown');
+          takeDown ??= await this.chooseTeardown(notebook, executions.slice(next).map((e) => e.cell).filter((c) => cellPart(c) === 'teardown'), onlyTeardown);
           if (!takeDown) {
             exec.start();
             exec.end(undefined);
@@ -409,9 +411,9 @@ export class RunbookController implements vscode.Disposable {
   }
 
   /** Whether to run the teardown cells now: asked once per runbook until Not Now. */
-  private async chooseTeardown(notebook: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[]): Promise<boolean> {
+  private async chooseTeardown(notebook: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[], askAgain = false): Promise<boolean> {
     const key = notebook.uri.toString();
-    if (this.teardownDeclined.has(key)) return false;
+    if (this.teardownDeclined.has(key) && !askAgain) return false;
     const take = await this.askTeardown(notebook, [...new Set(cells.map(teardownLabel))]);
     if (!take) this.teardownDeclined.add(key);
     return take;

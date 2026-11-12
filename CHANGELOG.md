@@ -9,7 +9,10 @@
   `--teardown=always`; `--from N --setup` resumes and brings the setup back if it is down;
   `--setup-always`, `--no-setup`. The progress and `md-runbook estimate` show the parts
   (`+19m if the setup runs`, `setup ✓ already up`, `teardown 2m, offered`); `--json` gives each
-  step its `part` and the run its `setup`. Lint checks the order. See
+  step its `part` and the run its `setup`. In VS Code and the app, Run All offers the teardown
+  (**Take down** / **Not now**, not asked again for that runbook until the window is reloaded or
+  the app restarts); the app's run bar shows the setup, the runbook and the teardown as three
+  segments, and VS Code's status bar tooltip a line for each. Lint checks the order. See
   [setup and teardown](docs/features/setup-teardown.md).
 - **Calls in the app, as on the other clients.** A signed runbook's call must be as signed, its
   values must match their patterns, and the runbook called must be signed and unchanged.

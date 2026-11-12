@@ -87,7 +87,8 @@ run, and the progress reads their estimate as *up to*.
 | Teardown steps | Offered at the end: **Take Down** or **Not Now** | Offered at the end: **Take down** or **Not now** | Not run; `--teardown` runs them after a run that passed, `--teardown=always` after a failure too |
 
 - **Not now** leaves the teardown steps as they were (not *skipped*): you can run them by hand
-  later. Run All doesn't ask again for that runbook until you reload the window or reopen the app.
+  later. Run All doesn't ask again for that runbook until you reload the VS Code window or restart
+  the app; **Continue** (Resume Run) with only the teardown left offers it again.
 - `--yes` never runs a teardown: a teardown is a choice about when you stop, not a confirmation.
 - A runbook called as one of the steps (not with `setup` or `teardown`) runs whole: its own setup
   is guarded by its own ready check, and its teardown runs with it.

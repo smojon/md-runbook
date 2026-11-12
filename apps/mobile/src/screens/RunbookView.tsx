@@ -50,8 +50,10 @@ import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
 import type { Progress, RunbookEstimate } from '@md-runbook/core';
-import { callEstimate, formatLeft, runbookEstimate, textEstimateSteps } from '@md-runbook/core/estimate';
-import { TimeBar, useNow } from '../ui/TimeBar';
+import { callEstimate, formatEstimate, formatLeft, runbookEstimate, textEstimateSteps, textPartStates } from '@md-runbook/core/estimate';
+import { TeardownCard } from '../cells/TeardownCard';
+
+import { BarSegment, TimeBar, useNow } from '../ui/TimeBar';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId, signSshsig } from '@md-runbook/ssh';
 import { approvalOf, approveCell, rejectCell } from '../approvals/store';
@@ -86,6 +88,26 @@ import { storeSecret } from '../secrets/store';
 import { transportReady } from '../ssh/transport';
 import { mono, themedStyles, usePalette } from '../theme';
 import { ActionGroup, ActionsSheet, AppAction } from '../ui/ActionsSheet';
+
+/** Runbooks whose teardown was declined (Not now): Run all doesn't offer it again until the app restarts. */
+const teardownDeclined = new Set<string>();
+
+/** A teardown step (core/parts.ts). */
+function isTeardown(cell: ParsedCell | undefined): boolean {
+  return !!cell && isCodeMeta(cell.meta) && parseCellOptions(cell.meta.info).part === 'teardown';
+}
+
+/** How a teardown step is named in the offer: its name=, a call's section=, or its first line. */
+function teardownLabel(cell: ParsedCell | undefined): string {
+  if (!cell || !isCodeMeta(cell.meta)) return '?';
+  const name = parseCellOptions(cell.meta.info).name;
+  if (name) return name;
+  if (isCallLanguage(cell.languageId)) {
+    const call = parseCall(cell.meta.info, cell.value);
+    return call.sections[0] ?? call.src ?? '?';
+  }
+  return cell.value.split(/\r?\n/).find((l) => l.trim() !== '')?.trim().slice(0, 60) ?? '?';
+}
 
 const CHEAT_SHEET_URL = 'https://github.com/smojon/md-runbook/blob/main/docs/cheatsheet.md';
 
@@ -241,12 +263,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     [runbook, reader],
   );
   const now = useNow(running !== undefined && estimateSteps.some((s) => s.estimateSeconds !== undefined));
+  const partStates = useMemo(() => (runbook ? textPartStates(runbook.text) : undefined), [runbook]);
   const estimate = runbookEstimate(
     estimateSteps.map((s) =>
       running && s.cell === running.cellIndex
         ? { ...s, state: 'running' as const, elapsedSeconds: Math.max(0, (now - running.startedAt) / 1000) }
         : s,
     ),
+    partStates,
   );
   const [trust, setTrust] = useState<Trust | undefined>();
   // A cell whose host= names a host other than the selected one waits for a yes, once per host
@@ -276,7 +300,25 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const busy = useRef(false);
   /** Run all / Continue: the cells still to run, the host, and the proposals left out. */
   /** Run all / Continue: the cells left, the host, proposals passed over, and the runbook call it stops before. */
-  const queue = useRef<{ cells: number[]; on: Host | undefined; proposed: number; call?: number } | undefined>(undefined);
+  const queue = useRef<
+    | {
+        cells: number[];
+        on: Host | undefined;
+        proposed: number;
+        call?: number;
+        /** A setup call's copy: the ready check guards every other cell. */
+        readyFirst?: boolean;
+        /** The ready check's answer, once it ran. */
+        readyUp?: boolean;
+        /** The teardown offer's answer; a called runbook runs whole (`run`). */
+        takeDown?: boolean | 'run';
+        /** Continue with only the teardown left: offer it even after Not now. */
+        askAgain?: boolean;
+      }
+    | undefined
+  >(undefined);
+  // The teardown offer (core/parts.ts), under the first teardown step.
+  const [teardownOffer, setTeardownOffer] = useState<{ cellIndex: number; labels: string[] } | undefined>();
   const [queued, setQueued] = useState(false);
   const clearQueue = (): void => {
     queue.current = undefined;
@@ -483,8 +525,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         setGateChecked({ manifest: signed.block.manifest, host: target.name, principal: outcome.result.signedBy });
       for (const c of outcome.captured) captures.current = { ...captures.current, [c.name]: c };
       if (outcome.result.newShell) setNotice(t.newShell);
-      // Run all stops at the first failure, unless the cell says continue-on-error.
-      const passed = outcome.attrs.exit === '0' && outcome.attrs.check !== 'failed';
+      // Run all stops at the first failure, unless the cell says continue-on-error. Checks decide
+      // over the exit code (expect-exit=, and the ready check, which always passes).
+      const passed = outcome.attrs.check === 'ok' || (outcome.attrs.exit === '0' && outcome.attrs.check !== 'failed');
+      if (queue.current && outcome.attrs.ready !== undefined) queue.current.readyUp = outcome.attrs.ready === 'up';
       const goOn = cell && isCodeMeta(cell.meta) && parseCellOptions(cell.meta.info).continueOnError;
       if (queue.current && (outcome.result.cancelled || (!passed && !goOn))) {
         clearQueue();
@@ -614,7 +658,39 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   /** Start the next cell of Run all / Continue (with the newest render's state). */
   const runNext = (): void => {
     const q = queue.current;
-    if (!q) return;
+    if (!q || !runbook) return;
+    const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+    const parsedCells = parse(latest).cells;
+    const partAt = (i: number): string | undefined => {
+      const c = parsedCells[i];
+      return c && isCodeMeta(c.meta) ? parseCellOptions(c.meta.info).part : undefined;
+    };
+    const upcoming = q.cells[0] ?? q.call;
+    // The teardown is offered, not run unasked: you may go straight on to the next runbook.
+    if (upcoming !== undefined && partAt(upcoming) === 'teardown' && q.takeDown === undefined) {
+      if (!teardownDeclined.has(runbook.id) || q.askAgain) {
+        const labels = [...q.cells, ...(q.call !== undefined ? [q.call] : [])].filter((i) => partAt(i) === 'teardown').map((i) => teardownLabel(parsedCells[i]));
+        setTeardownOffer({ cellIndex: upcoming, labels: [...new Set(labels)] });
+        list.current?.scrollToIndex({ index: upcoming, viewPosition: 0.2 });
+        return;
+      }
+      q.takeDown = false;
+    }
+    if (q.takeDown === false) {
+      // Not now: the teardown steps stay as they are.
+      q.cells = q.cells.filter((i) => partAt(i) !== 'teardown');
+      if (q.call !== undefined && partAt(q.call) === 'teardown') delete q.call;
+    }
+    // The ready check said up: the setup steps it guards are skipped.
+    const guarded = (i: number): boolean => q.readyUp === true && (q.readyFirst ? partAt(i) !== 'ready' : partAt(i) === 'setup');
+    if (q.cells[0] !== undefined && guarded(q.cells[0])) {
+      skipAlreadyUp(q.cells.shift()!);
+      return runNext();
+    }
+    if (q.cells.length === 0 && q.call !== undefined && guarded(q.call)) {
+      skipAlreadyUp(q.call);
+      delete q.call;
+    }
     const next = q.cells.shift();
     if (next === undefined) {
       clearQueue();
@@ -645,8 +721,28 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (r.kind === 'canceled') return;
     router.push({ pathname: '/runbook/[id]', params: { id: r.copyId, autorun: '1' } });
   };
+  /** A setup step the ready check said is up already: recorded as skipped (`ready=up`). */
+  const skipAlreadyUp = (cellIndex: number): void => {
+    if (!runbook) return;
+    const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+    const next = setCellOutput(
+      latest,
+      cellIndex,
+      { kind: 'new', text: `[md-runbook] ${t.setupAlreadyUp}\n`, attrs: { exit: 'skipped', ready: 'up', ran: formatLocalIso(new Date()) } },
+      DEFAULT_WRITE_OPTIONS,
+    );
+    if (next !== undefined) updateRunbookText(runbook.id, next);
+  };
+  /** The teardown offer's answer: take down now, or leave it (and don't ask again for this runbook). */
+  const answerTeardown = (take: boolean): void => {
+    setTeardownOffer(undefined);
+    if (!runbook || !queue.current) return;
+    if (!take) teardownDeclined.add(runbook.id);
+    queue.current.takeDown = take;
+    runNext();
+  };
   /** Run all (from the top) or Continue (the failed or pending cells from the first such one on); `only`: just these cells. */
-  const runSequence = (from: 'start' | 'resume', only?: readonly number[]): void => {
+  const runSequence = (from: 'start' | 'resume', only?: readonly number[], opts: { readyFirst?: boolean } = {}): void => {
     if (!runbook || busy.current || !host) return;
     const parsed = parse(runbook.text).cells;
     const candidates = only
@@ -663,6 +759,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       on: host,
       proposed: verdicts.filter((v) => !v.can.ok && v.can.why === 'proposed' && (call === undefined || v.i < call)).length,
       ...(call !== undefined ? { call } : {}),
+      ...(opts.readyFirst ? { readyFirst: true } : {}),
+      // Continue with only the teardown left is a request for it: offer it again.
+      ...(from === 'resume' && candidates.length > 0 && candidates.every((i) => isTeardown(parsed[i])) ? { askAgain: true } : {}),
+      // What a call runs, runs whole: its teardown isn't offered.
+      ...(activeCall(runbook.id) ? { takeDown: 'run' as const } : {}),
     };
     setQueued(true);
     setNotice(undefined);
@@ -1123,6 +1224,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const stopSequence = (): void => {
     clearQueue();
     setConfirming(undefined);
+    setTeardownOffer(undefined);
     if (running?.paused) running.paused.stop();
     else running?.abort.abort();
   };
@@ -1137,7 +1239,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const cells = callCells(runbook.text, call);
     setNotice(t.callRunning(call.runbook, runbook.fileName ?? runbook.title));
     callRun.current = cells.length > 0 ? 'starting' : 'ended';
-    if (cells.length > 0) runSequence('start', cells);
+    if (cells.length > 0) runSequence('start', cells, { readyFirst: call.setup === true });
   };
   /** A call's copy whose run ended: its result to the caller; back there when it is done. */
   const endCallRun = (id: string): void => {
@@ -1476,7 +1578,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               runbookId={approvalId}
               platform={host?.platform}
               below={
-                confirming?.cellIndex === index ? (
+                teardownOffer?.cellIndex === index ? (
+                  <TeardownCard labels={teardownOffer.labels} onTake={() => answerTeardown(true)} onNotNow={() => answerTeardown(false)} />
+                ) : confirming?.cellIndex === index ? (
                   <ConfirmCard
                     cell={index + 1}
                     match={confirming.match}
@@ -1638,12 +1742,13 @@ function RunBar({
         </Text>
         {estimate?.fraction !== undefined ? (
           <View testID="run-estimate" style={styles.estimateRow}>
-            <TimeBar fraction={estimate.fraction} />
+            <TimeBar fraction={estimate.fraction} segments={barSegments(estimate)} />
             <Text testID="run-estimate-text" style={styles.secondaryText}>
               {[
                 t.estimateDone(Math.floor(estimate.fraction * 100)),
                 estimate.leftSeconds > 0 ? t.estimateLeft(formatLeft(estimate.leftSeconds)) : t.estimateNothingLeft,
                 ...(estimate.unestimatedLeft > 0 ? [t.withoutEstimate(estimate.unestimatedLeft)] : []),
+                ...partWords(estimate),
               ].join(' · ')}
             </Text>
           </View>
@@ -1666,6 +1771,39 @@ interface TypedInput {
 }
 
 /** The inputs typed so far: seen (masked ones as dots), changed, cleared (then asked again). */
+/**
+ * The run bar in three parts (core/parts.ts): the setup (outlined while the ready check may skip
+ * it; gone when already up), the runbook's own steps, and the teardown (dashed until chosen).
+ * Undefined for a runbook without setup or teardown steps.
+ */
+function barSegments(e: RunbookEstimate): BarSegment[] | undefined {
+  const p = e.parts;
+  if (!p) return undefined;
+  const of = (x: { doneSeconds: number; totalSeconds: number }): number => (x.totalSeconds > 0 ? x.doneSeconds / x.totalSeconds : 0);
+  const segments: BarSegment[] = [];
+  if (p.setup.totalSeconds > 0 && p.states.setup !== 'up') {
+    segments.push({ weight: p.setup.totalSeconds, fraction: of(p.setup), kind: p.states.setup === 'unchecked' ? 'maybe' : 'solid', testID: 'bar-setup' });
+  }
+  segments.push({ weight: p.body.totalSeconds, fraction: of(p.body), kind: 'solid', testID: 'bar-body' });
+  if (p.teardown.totalSeconds > 0) {
+    segments.push({ weight: p.teardown.totalSeconds, fraction: of(p.teardown), kind: p.states.teardown === 'chosen' ? 'solid' : 'offered', testID: 'bar-teardown' });
+  }
+  return segments;
+}
+
+/** The setup and teardown in words, after the runbook's progress. */
+function partWords(e: RunbookEstimate): string[] {
+  const p = e.parts;
+  if (!p) return [];
+  const words: string[] = [];
+  if (p.setup.blocks > 0) {
+    if (p.states.setup === 'up') words.push(t.estimateSetupUp);
+    else if (p.states.setup === 'unchecked' && p.setup.totalSeconds > 0) words.push(t.estimateSetupMaybe(formatEstimate(p.setup.totalSeconds)));
+  }
+  if (p.teardown.blocks > 0 && p.states.teardown === 'offered' && p.teardown.totalSeconds > 0) words.push(t.estimateTeardownOffered(formatEstimate(p.teardown.totalSeconds)));
+  return words;
+}
+
 function InputsCard({
   inputs,
   onChange,

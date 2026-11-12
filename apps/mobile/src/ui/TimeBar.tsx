@@ -1,6 +1,8 @@
 /**
  * Time against an estimate (estimate=): a thin bar, full at the estimate and after it, in the
  * warning colour once past it (never looping or overflowing). `useNow` ticks while something runs.
+ * With `segments`, one bar in parts (core/parts.ts): the setup, the runbook's own steps and the
+ * teardown, each as wide as its estimate and filling on its own.
  */
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
@@ -17,9 +19,49 @@ export function useNow(active: boolean, ms = 1000): number {
   return now;
 }
 
-export function TimeBar({ fraction, over = false, testID }: { fraction: number; over?: boolean; testID?: string }) {
+/**
+ * A part of a segmented bar: `weight` its share of the width (seconds), `fraction` how far it is,
+ * `kind` how it looks: `solid`; `maybe` (a setup the ready check may skip, or read as "up to");
+ * `offered` (a teardown not chosen yet).
+ */
+export interface BarSegment {
+  weight: number;
+  fraction: number;
+  kind: 'solid' | 'maybe' | 'offered';
+  testID?: string;
+}
+
+/** A segment never narrower than this share of the bar, so a 2-minute teardown still shows. */
+const MIN_SHARE = 0.04;
+
+const clamp = (f: number): number => Math.min(1, Math.max(0, Number.isFinite(f) ? f : 0));
+
+export function TimeBar({ fraction, over = false, testID, segments }: { fraction: number; over?: boolean; testID?: string; segments?: readonly BarSegment[] }) {
   const styles = useStyles();
-  const f = Math.min(1, Math.max(0, Number.isFinite(fraction) ? fraction : 0));
+  const f = clamp(fraction);
+  const shown = segments?.filter((s) => s.weight > 0) ?? [];
+  if (shown.length > 1) {
+    const total = shown.reduce((a, s) => a + s.weight, 0);
+    const weights = shown.map((s) => Math.max(s.weight, total * MIN_SHARE));
+    return (
+      <View
+        testID={testID}
+        style={styles.row}
+        accessibilityRole="progressbar"
+        accessibilityValue={{ min: 0, max: 100, now: Math.round(f * 100) }}
+      >
+        {shown.map((s, i) => (
+          <View
+            key={i}
+            testID={s.testID}
+            style={[styles.segment, { flexGrow: weights[i]! }, s.kind === 'maybe' && styles.maybe, s.kind === 'offered' && styles.offered]}
+          >
+            {s.kind === 'offered' ? null : <View style={[styles.fill, { width: `${clamp(s.fraction) * 100}%` }]} />}
+          </View>
+        ))}
+      </View>
+    );
+  }
   return (
     <View
       testID={testID}
@@ -36,4 +78,10 @@ const useStyles = themedStyles((c) => ({
   track: { height: 4, borderRadius: 2, backgroundColor: c.border, overflow: 'hidden', flexGrow: 1, minWidth: 60 },
   fill: { height: 4, backgroundColor: c.accent },
   over: { backgroundColor: c.warning },
+  row: { flexDirection: 'row', gap: 3, flexGrow: 1, minWidth: 60, alignItems: 'center' },
+  segment: { height: 4, flexBasis: 0, borderRadius: 2, backgroundColor: c.border, overflow: 'hidden' },
+  // A setup the ready check may skip: outlined in the accent colour until it runs.
+  maybe: { height: 6, borderWidth: 1, borderStyle: 'dashed', borderColor: c.accent, backgroundColor: 'transparent' },
+  // A teardown not chosen: a dashed outline, never filled.
+  offered: { height: 6, borderWidth: 1, borderStyle: 'dashed', borderColor: c.border, backgroundColor: 'transparent' },
 }));
