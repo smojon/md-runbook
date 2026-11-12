@@ -33,9 +33,14 @@ describe('estimate= (how long a cell takes)', () => {
     await render(<RunbookView id={r.id} />);
     expect(screen.getByTestId('cell-1-estimate')).toHaveTextContent('est. 2m30s');
     expect(screen.queryByTestId('cell-2-estimate')).toBeNull();
-    expect(screen.getByTestId('run-estimate-text')).toHaveTextContent(
+    expect(screen.getByTestId('run-estimate-text')).toHaveProp(
+      'accessibilityLabel',
       '41% by the estimates · about 4 min left · 1 block without an estimate',
     );
+    // On screen, short: icons and times.
+    expect(screen.getByTestId('estimate-done')).toHaveTextContent('41%');
+    expect(screen.getByTestId('estimate-left')).toHaveTextContent(/~4m$/);
+    expect(screen.getByTestId('estimate-unestimated')).toHaveTextContent(/1$/);
   });
 
   it('says nothing about estimates in a runbook without any', async () => {
@@ -55,7 +60,8 @@ describe('estimate= (how long a cell takes)', () => {
     });
     await waitFor(() => expect(screen.getByTestId('cell-1-timing')).toHaveTextContent(/of 1s$/));
     await waitFor(() => expect(screen.getByTestId('cell-1-timing')).toHaveTextContent(/^\+\d+s over 1s$/), { timeout: 5000 });
-    expect(screen.getByTestId('run-estimate-text')).toHaveTextContent('0% by the estimates · nothing left');
+    expect(screen.getByTestId('run-estimate-text')).toHaveProp('accessibilityLabel', '0% by the estimates · nothing left');
+    expect(screen.getByTestId('estimate-left')).toHaveTextContent(/0m$/);
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-1-stop'));
     });

@@ -65,7 +65,7 @@ import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell, ProblemRow } from '../cells/CodeCell';
 import { RunbookProblems, fixCellOption, runbookProblems } from '../runbooks/lint';
-import { Codicon } from '../ui/Codicon';
+import { Codicon, CodiconName } from '../ui/Codicon';
 import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, hostLabel, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
@@ -1752,14 +1752,7 @@ function RunBar({
         {estimate?.fraction !== undefined ? (
           <View testID="run-estimate" style={styles.estimateRow}>
             <TimeBar fraction={estimate.fraction} segments={barSegments(estimate)} />
-            <Text testID="run-estimate-text" style={styles.secondaryText}>
-              {[
-                t.estimateDone(Math.floor(estimate.fraction * 100)),
-                estimate.leftSeconds > 0 ? t.estimateLeft(formatLeft(estimate.leftSeconds)) : t.estimateNothingLeft,
-                ...(estimate.unestimatedLeft > 0 ? [t.withoutEstimate(estimate.unestimatedLeft)] : []),
-                ...partWords(estimate),
-              ].join(' · ')}
-            </Text>
+            <EstimateLine estimate={estimate} />
           </View>
         ) : null}
         {resume && !running ? (
@@ -1810,19 +1803,70 @@ function barSegments(e: RunbookEstimate): BarSegment[] | undefined {
   return segments;
 }
 
-/** The setup and teardown in words, after the runbook's progress. */
-function partWords(e: RunbookEstimate): string[] {
+/** One piece of the line under the run bar: icons, a short text, and what a screen reader says. */
+interface EstimatePiece {
+  icons: CodiconName[];
+  text: string;
+  label: string;
+  testID: string;
+}
+
+/**
+ * How far the runbook is, short enough for one line on a phone:
+ * `41% · ⌚ ~4m · ? 1 · ↑ +19m? · ↓ 2m?`. The icons are the cells' own (watch = estimate);
+ * "?" = may run: a setup the ready check may skip, a teardown offered, not chosen yet.
+ */
+function estimatePieces(e: RunbookEstimate): EstimatePiece[] {
+  const percent = Math.floor(e.fraction! * 100);
+  const min = Math.round(Math.max(0, e.leftSeconds) / 60);
+  const pieces: EstimatePiece[] = [
+    { icons: [], text: `${percent}%`, label: t.estimateDone(percent), testID: 'estimate-done' },
+    {
+      icons: ['watch'],
+      text: e.leftSeconds <= 0 ? '0m' : min < 1 ? t.barUnderAMinute : t.barLeft(formatEstimate(min * 60)),
+      label: e.leftSeconds > 0 ? t.estimateLeft(formatLeft(e.leftSeconds)) : t.estimateNothingLeft,
+      testID: 'estimate-left',
+    },
+  ];
+  if (e.unestimatedLeft > 0)
+    pieces.push({
+      icons: ['question'],
+      text: String(e.unestimatedLeft),
+      label: t.withoutEstimate(e.unestimatedLeft),
+      testID: 'estimate-unestimated',
+    });
   const p = e.parts;
-  if (!p) return [];
-  const words: string[] = [];
-  if (p.setup.blocks > 0) {
-    if (p.states.setup === 'up') words.push(t.estimateSetupUp);
-    else if (p.states.setup === 'unchecked' && p.setup.totalSeconds > 0)
-      words.push(t.estimateSetupMaybe(formatEstimate(p.setup.totalSeconds)));
+  if (p && p.setup.blocks > 0) {
+    if (p.states.setup === 'up')
+      pieces.push({ icons: ['arrow-up', 'check'], text: t.barSetupUp, label: t.estimateSetupUp, testID: 'estimate-setup' });
+    else if (p.states.setup === 'unchecked' && p.setup.totalSeconds > 0) {
+      const time = formatEstimate(p.setup.totalSeconds);
+      pieces.push({ icons: ['arrow-up'], text: t.barMaybe(time), label: t.estimateSetupMaybe(time), testID: 'estimate-setup' });
+    }
   }
-  if (p.teardown.blocks > 0 && p.states.teardown === 'offered' && p.teardown.totalSeconds > 0)
-    words.push(t.estimateTeardownOffered(formatEstimate(p.teardown.totalSeconds)));
-  return words;
+  if (p && p.teardown.blocks > 0 && p.states.teardown === 'offered' && p.teardown.totalSeconds > 0) {
+    const time = formatEstimate(p.teardown.totalSeconds);
+    pieces.push({ icons: ['arrow-down'], text: t.barOffered(time), label: t.estimateTeardownOffered(time), testID: 'estimate-teardown' });
+  }
+  return pieces;
+}
+
+function EstimateLine({ estimate }: { estimate: RunbookEstimate }) {
+  const styles = useStyles();
+  const c = usePalette();
+  const pieces = estimatePieces(estimate);
+  return (
+    <View testID="run-estimate-text" accessible accessibilityLabel={pieces.map((x) => x.label).join(' · ')} style={styles.estimatePieces}>
+      {pieces.map((x) => (
+        <View key={x.testID} testID={x.testID} style={styles.estimatePiece}>
+          {x.icons.map((icon) => (
+            <Codicon key={icon} name={icon} size={13} color={c.muted} />
+          ))}
+          <Text style={styles.estimatePieceText}>{x.text}</Text>
+        </View>
+      ))}
+    </View>
+  );
 }
 
 function InputsCard({
@@ -2351,6 +2395,9 @@ const useStyles = themedStyles((c) => ({
   inputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4 },
   grow: { flex: 1 },
   estimateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  estimatePieces: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 8, rowGap: 2 },
+  estimatePiece: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  estimatePieceText: { fontSize: 14, color: c.muted },
   params: { marginVertical: 6 },
   paramsTitle: { fontSize: 13, color: c.muted, marginBottom: 4 },
   param: { marginBottom: 8 },

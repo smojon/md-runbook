@@ -525,6 +525,12 @@ const en = {
   estimateSetupMaybe: (time: string) => `+${time} if the setup runs`,
   estimateSetupUpTo: (time: string) => `setup up to ${time}`,
   estimateTeardownOffered: (time: string) => `teardown ${time}, offered`,
+  /** The run bar's short forms, each after its icon (the long forms above are what a screen reader says). */
+  barLeft: (time: string) => `~${time}`,
+  barUnderAMinute: '<1m',
+  barSetupUp: 'up',
+  barMaybe: (time: string) => `+${time}?`,
+  barOffered: (time: string) => `${time}?`,
   callOutside: (src: string) => `src="${src}" leaves the site (or repository) this runbook came from: the app doesn't fetch it`,
   callFetchFailed: (src: string, why: string) => `Couldn't get ${src}: ${why}`,
   callWrongFile: (picked: string, wanted: string) => `You picked ${picked}; this step runs ${wanted}. Pick that file.`,

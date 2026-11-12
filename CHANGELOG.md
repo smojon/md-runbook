@@ -6,6 +6,9 @@
   every call until the file it calls was picked; lint now checks a call only once the app can read
   what it calls. The teardown card scrolls into view with its buttons, and the teardown's part of
   the run bar is easier to see (at least 8% wide, a darker outline).
+- **App: the line under the run bar fits on one line.** Icons and short times instead of words:
+  `0% · ⌚ ~55m · ↑ +19m? · ↓ 2m?` (time left, setup, teardown; `?` = may run). It took up to
+  four lines on a phone. A screen reader still reads it in full words.
 
 ## 0.22.0
 

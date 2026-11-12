@@ -47,6 +47,9 @@ const GLYPHS = {
   pin: 0xeb2b,
   pinned: 0xeba0,
   watch: 0xeb7c,
+  question: 0xeb32,
+  'arrow-up': 0xeaa1,
+  'arrow-down': 0xea9a,
 } as const;
 
 export type CodiconName = keyof typeof GLYPHS;

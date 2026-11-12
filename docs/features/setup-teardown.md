@@ -109,9 +109,13 @@ it is chosen. Before the check, the setup is shown as what it may add:
 ```
 
 - **The app** draws one bar in three segments: the setup outlined until the check (removed when
-  already up), the runbook's own steps, and the teardown dashed until chosen.
+  already up), the runbook's own steps, and the teardown dashed until chosen. Under it, one short
+  line with icons: `0% · ⌚ ~55m · ↑ +19m? · ↓ 2m?`. ⌚ is the time left, ↑ the setup, ↓ the
+  teardown, and `?` means it may run: the ready check may skip the setup, and the teardown is
+  offered, not chosen yet. Once the check says up, ↑ shows `✓ up`. A screen reader reads the
+  line in full words.
 
-  <img src="../app/setup-teardown-before.png" alt="The md-runbook app before a run: the bar in three parts, and 0% by the estimates, about 55 min left, +19m if the setup runs, teardown 2m, offered" width="320">
+  <img src="../app/setup-teardown-before.png" alt="The md-runbook app before a run: the bar in three parts, and under it 0%, about 55 min left, +19m if the setup runs, teardown 2m offered" width="320">
 - **VS Code** shows the parts in the status bar item and its tooltip.
 - **`md-runbook run`** tags its step lines `[setup]`, `[teardown]` and `[ready check]`.
 - **`md-runbook estimate`** adds a line with the parts:
