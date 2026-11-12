@@ -107,6 +107,8 @@ export interface RunRecord {
   output: string;
   /** Values captured for `${out:NAME}` (capture= options), when the run passed. */
   captured?: Captured[];
+  /** The ready check (core/parts.ts): whether it said already up. */
+  ready?: boolean;
 }
 
 export interface RunObserver {

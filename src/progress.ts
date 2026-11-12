@@ -6,12 +6,13 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
 import { Progress, checklist, computeProgress, formatLeft, formatLocalIso, formatProgress, formatRunbookEstimate, isCodeMeta, nextUncheckedOffset, outputBlockAttrs, runbookEstimate } from '@md-runbook/core';
+import { PartEstimate, RunbookEstimate, formatEstimate, progressBar } from '@md-runbook/core/estimate';
 import { isManualMark } from '@md-runbook/core/progress';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { osGroups } from '@md-runbook/core/os';
 import { SECTION } from './config';
 import { CONTROLLER_ID, RunbookController } from './controller';
-import { anyRunning, estimateItem, notebookEstimateSteps } from './estimates';
+import { anyRunning, estimateItem, notebookEstimateSteps, notebookPartStates } from './estimates';
 import { META_KEY, outputMeta } from './outputs';
 import { RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -63,15 +64,39 @@ export function notebookProgress(nb: vscode.NotebookDocument): Progress {
  * estimate in the tooltip. Nothing about estimates for a runbook without any.
  */
 export function progressStatus(nb: vscode.NotebookDocument, p: Progress = notebookProgress(nb)): { text: string; tooltip: string } {
-  const e = runbookEstimate(notebookEstimateSteps(nb, cellAttrs));
+  const e = runbookEstimate(notebookEstimateSteps(nb, cellAttrs), notebookPartStates(nb, cellAttrs));
   const byEstimate = formatRunbookEstimate(e);
+  const setupDone = e.parts && e.parts.setup.blocks > 0 && (e.parts.states.setup === 'up' || (e.parts.setup.leftSeconds === 0 && e.parts.setup.doneSeconds > 0));
   return {
-    text: formatProgress(p) + (byEstimate && e.leftSeconds > 0 ? ` · ${formatLeft(e.leftSeconds)} left` : ''),
+    text: (setupDone ? 'Setup ✓ · ' : '') + formatProgress(p) + (byEstimate && e.leftSeconds > 0 ? ` · ${formatLeft(e.leftSeconds)} left` : ''),
     tooltip:
       `${p.done} done, ${p.skipped} skipped, ${p.failed} failed, ${p.pending} pending.` +
       (byEstimate ? `\nBy the estimates: ${byEstimate}.` : '') +
+      partsTooltip(e) +
       `\nClick to go to the ${p.firstFailed ? 'failed' : 'next'} step.`,
   };
+}
+
+/**
+ * The setup, the runbook's own steps and the teardown, one line each (core/parts.ts):
+ *   Setup     already up
+ *   Runbook   [####......] 40% · about 33 min left
+ *   Teardown  2m, offered
+ */
+export function partsTooltip(e: RunbookEstimate): string {
+  const p = e.parts;
+  if (!p) return '';
+  const bar = (x: PartEstimate): string =>
+    x.totalSeconds > 0 ? `${progressBar(x.doneSeconds / x.totalSeconds)} ${Math.floor((x.doneSeconds / x.totalSeconds) * 100)}%${x.leftSeconds > 0 ? ` · ${formatLeft(x.leftSeconds)} left` : ''}` : `${x.blocks} step${x.blocks === 1 ? '' : 's'}`;
+  const time = (x: PartEstimate): string => (x.totalSeconds > 0 ? formatEstimate(x.totalSeconds) : `${x.blocks} step${x.blocks === 1 ? '' : 's'}`);
+  const lines: string[] = [];
+  if (p.setup.blocks > 0) {
+    const s = p.states.setup;
+    lines.push(`Setup     ${s === 'up' ? 'already up' : s === 'unchecked' ? `${time(p.setup)} unless already up (the ready check runs first)` : bar(p.setup)}`);
+  }
+  lines.push(`Runbook   ${bar(p.body)}`);
+  if (p.teardown.blocks > 0) lines.push(`Teardown  ${p.states.teardown === 'chosen' ? bar(p.teardown) : `${time(p.teardown)}, offered at the end`}`);
+  return `\n${lines.join('\n')}`;
 }
 
 function userName(): string {

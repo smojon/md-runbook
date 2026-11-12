@@ -39,7 +39,8 @@ export function passedParam(uri: vscode.Uri, name: string): string | undefined {
 
 /** The controller's part: running cells of a notebook (resolves when they have run), and cancelling them. */
 export interface CallHost {
-  run(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument): Promise<void>;
+  /** `readyFirst`: the ready check guards the other cells (a setup call); `teardown: 'run'`: run it, don't offer it. */
+  run(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument, options?: { readyFirst?: boolean; teardown?: 'run' }): Promise<void>;
   cancel(uri: vscode.Uri): void;
 }
 
@@ -125,7 +126,8 @@ export class CallExecutor implements CellExecutor {
     const previous = callFromAttrs(attrsOf(ctx.previousOutputs ?? [], ctx.cell.metadata?.[META_KEY]));
     const freshCopy = fresh.delete(cellKey(ctx.cell));
     let copy: string | undefined;
-    if (previous && !freshCopy && previous.exit !== undefined && previous.exit !== '0') {
+    // A setup call skipped as already up is not a failure to continue: it checks again.
+    if (previous && !freshCopy && previous.exit !== undefined && previous.exit !== '0' && previous.exit !== 'skipped') {
       const old = path.resolve(path.dirname(parentFile), previous.copy);
       if (fs.existsSync(old) && samePath(callTarget(parentFile, previous.runbook), target)) copy = old;
     }
@@ -146,11 +148,16 @@ export class CallExecutor implements CellExecutor {
     const part = call.sections.length ? ` (section${call.sections.length === 1 ? '' : 's'} ${call.sections.map((t) => `"${t}"`).join(', ')})` : '';
     io.onStdout(`[md-runbook] ${resumed ? 'continuing' : 'running'} ${shown}${part} as ${copyShown}${resumed ? ' (steps done there are kept)' : ''}\n`);
 
-    // Its cells: in the sections asked for, not done in an earlier run of this copy.
+    // Its cells: in the sections asked for, not done in an earlier run of this copy. A setup
+    // call runs the ready check of the runbook called first, whatever section= selects.
     const copyText = fs.readFileSync(copy, 'utf8');
-    const inPart = call.sections.length ? inSections(sectionHeadings(copyText), call.sections) : () => true;
-    const toRun = locateCodeCells(parse(copyText))
-      .filter((l) => inPart(l.line))
+    const setup = parseCellOptions(info).part === 'setup';
+    const copyLocs = locateCodeCells(parse(copyText));
+    const readyCell = setup ? copyLocs.find((l) => parseCellOptions(l.info).part === 'ready')?.cellIndex : undefined;
+    const inSelected = call.sections.length ? inSections(sectionHeadings(copyText), call.sections) : () => true;
+    const inPart = (line: number): boolean => inSelected(line);
+    const toRun = copyLocs
+      .filter((l) => inPart(l.line) && l.cellIndex !== readyCell)
       .filter((l) => {
         if (!resumed) return true;
         const a = l.outputAttrs;
@@ -158,6 +165,7 @@ export class CallExecutor implements CellExecutor {
         return s !== 'done' && s !== 'skipped';
       })
       .map((l) => l.cellIndex);
+    if (readyCell !== undefined) toRun.unshift(readyCell);
 
     await vscode.commands.executeCommand('vscode.openWith', copyUri, NOTEBOOK_TYPE, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true, preview: false });
     const editor = await waitForEditor(copyUri);
@@ -185,7 +193,7 @@ export class CallExecutor implements CellExecutor {
     let timedOut = false;
     const timer = timeoutS ? setTimeout(() => ((timedOut = true), this.host.cancel(copyUri)), timeoutS * 1000) : undefined;
     try {
-      if (toRun.length > 0) await this.host.run(toRun.filter((i) => i < nb.cellCount).map((i) => nb.cellAt(i)), nb);
+      if (toRun.length > 0) await this.host.run(toRun.filter((i) => i < nb.cellCount).map((i) => nb.cellAt(i)), nb, { readyFirst: readyCell !== undefined, teardown: 'run' });
       await nb.save();
     } finally {
       clearTimeout(timer);
@@ -218,6 +226,12 @@ export class CallExecutor implements CellExecutor {
     Object.assign(plan.attrs, callAttrs(r));
     const ok = !timedOut && !io.signal.aborted && r.failed === 0 && r.notRun === 0 && !(evidence && unticked > 0);
     io.onStdout(callOutputText(r, call.sections).split('\n')[1]! + '\n');
+    // The ready check of the runbook called said up: the setup was skipped, and so is this call.
+    const readyAttrs = readyCell !== undefined ? locateCodeCells(savedDoc).find((l) => l.cellIndex === readyCell)?.outputAttrs : undefined;
+    if (ok && readyAttrs?.ready === 'up') {
+      Object.assign(plan.attrs, { exit: 'skipped', ready: 'up' });
+      io.onStdout(`[md-runbook] already up: the ready check of ${shown} passed, so its setup was skipped\n`);
+    }
     if (timedOut) io.onStderr(`[md-runbook] timed out after ${timeoutS}s; the runbook called was stopped\n`);
     else if (!ok && evidence && unticked > 0 && r.failed === 0 && r.notRun === 0) {
       io.onStderr(`[md-runbook] ${unticked} manual step${unticked === 1 ? '' : 's'} not ticked in ${copyShown}, which keeps evidence: tick ${unticked === 1 ? 'it' : 'them'} there and run the call again\n`);

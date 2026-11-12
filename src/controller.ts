@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { isCallLanguage } from '@md-runbook/core/call';
+import { isCallLanguage, parseCall } from '@md-runbook/core/call';
 import {
   ExecuteResult,
   HISTORY_KEY,
@@ -26,6 +26,7 @@ import { SessionPool } from '@md-runbook/core/node/session';
 import { LineStep, echoCommand, formatLineRange, formatLineRanges } from '@md-runbook/core/steps';
 import { FrontMatter, parseFrontMatter } from '@md-runbook/core/secrets';
 import { proposalOf } from '@md-runbook/core/proposal';
+import { RunbookPart } from '@md-runbook/core/parts';
 import { ShellSettings, isCodeMeta } from '@md-runbook/core';
 import { SECTION } from './config';
 import { ExecutionConfig, colorConfig, executionConfig, redactionConfig } from './config';
@@ -140,6 +141,46 @@ export function runbookCwd(nb: vscode.NotebookDocument, cell?: vscode.NotebookCe
 
 export const CONTROLLER_ID = 'md-runbook-shell';
 
+/** How a run of several cells treats setup and teardown (core/parts.ts). */
+export interface SequenceOptions {
+  /** Run by a setup call: the ready check guards every other cell (what is called is the setup). */
+  readyFirst?: boolean;
+  /** Run the teardown cells without offering them (a runbook called runs whole). */
+  teardown?: 'run';
+}
+
+/** A cell's part: setup, teardown, the ready check, or the runbook's own steps. */
+export function cellPart(cell: vscode.NotebookCell): RunbookPart {
+  if (cell.kind !== vscode.NotebookCellKind.Code) return 'body';
+  const meta: unknown = cell.metadata?.[META_KEY];
+  return (isCodeMeta(meta) ? parseCellOptions(meta.info).part : undefined) ?? 'body';
+}
+
+/** How a teardown cell is named in the offer: its name=, a call's section=, or its first line. */
+function teardownLabel(cell: vscode.NotebookCell): string {
+  const meta: unknown = cell.metadata?.[META_KEY];
+  const info = isCodeMeta(meta) ? meta.info : '';
+  const name = parseCellOptions(info).name;
+  if (name) return name;
+  if (isCallLanguage(cell.document.languageId)) {
+    const call = parseCall(info, cell.document.getText());
+    return call.sections[0] ?? call.src ?? 'the runbook call';
+  }
+  return cell.document.getText().split(/\r?\n/).find((l) => l.trim() !== '')?.trim().slice(0, 60) ?? `cell ${cell.index + 1}`;
+}
+
+/** Ask whether to run the teardown now (modal: Run All waits for the answer). */
+async function askTeardown(_notebook: vscode.NotebookDocument, labels: readonly string[]): Promise<boolean> {
+  const take = 'Take Down';
+  const answer = await vscode.window.showInformationMessage(
+    `Run the teardown now: ${labels.join(', ')}?`,
+    { modal: true, detail: "Choose Not Now if you go straight on to the next runbook: the teardown stays as it is, to run later. Run All won't ask again for this runbook until the window is reloaded." },
+    take,
+    'Not Now',
+  );
+  return answer === take;
+}
+
 /** A run of some lines of one cell: Run Line or Selection, Run Lines One by One, Step Through. */
 export interface LineRun {
   /** The lines the steps come from: what preparers (confirmation, secrets) see as the source. */
@@ -176,6 +217,10 @@ export class RunbookController implements vscode.Disposable {
   private readonly running = new Map<string, AbortController>();
   /** Notebooks this controller is the kernel of. */
   private readonly selected = new Set<string>();
+  /** Notebooks whose teardown was declined (Not Now): Run All doesn't offer it again this session. */
+  private readonly teardownDeclined = new Set<string>();
+  /** Asks whether to run the teardown (replaced in tests). */
+  askTeardown: (notebook: vscode.NotebookDocument, labels: readonly string[]) => Promise<boolean> = askTeardown;
 
   constructor(readonly pipeline: RunPipeline = new RunPipeline()) {
     this.controller = vscode.notebooks.createNotebookController(CONTROLLER_ID, NOTEBOOK_TYPE, 'md-runbook shell');
@@ -190,11 +235,11 @@ export class RunbookController implements vscode.Disposable {
   }
 
   /** Run cells of a notebook, queued as ▶ would; resolves when they have run (a runbook call runs its copy). */
-  async run(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument): Promise<void> {
+  async run(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument, options?: SequenceOptions): Promise<void> {
     // Just opened, the notebook may not have this kernel yet: executions can only be made once it has.
     const key = notebook.uri.toString();
     for (let waited = 0; !this.selected.has(key) && waited < 10_000; waited += 50) await new Promise((r) => setTimeout(r, 50));
-    return this.enqueue(cells, notebook);
+    return this.enqueue(cells, notebook, undefined, options);
   }
 
   /** Stop the running cell of a notebook and pass over its queued ones (a runbook call cancelled). */
@@ -259,7 +304,7 @@ export class RunbookController implements vscode.Disposable {
     }
   }
 
-  private enqueue(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument, lineRun?: LineRun): Promise<void> {
+  private enqueue(cells: vscode.NotebookCell[], notebook: vscode.NotebookDocument, lineRun?: LineRun, options?: SequenceOptions): Promise<void> {
     // Create executions up front so queued cells show as pending.
     const executions: vscode.NotebookCellExecution[] = [];
     for (const cell of cells) {
@@ -272,7 +317,7 @@ export class RunbookController implements vscode.Disposable {
     }
     const key = notebook.uri.toString();
     const next = (this.queues.get(key) ?? Promise.resolve())
-      .then(() => this.runSequence(executions, notebook, lineRun))
+      .then(() => this.runSequence(executions, notebook, lineRun, options))
       .catch((e: unknown) => {
         void vscode.window.showErrorMessage(`md-runbook: ${e instanceof Error ? e.message : String(e)}`);
       });
@@ -283,9 +328,13 @@ export class RunbookController implements vscode.Disposable {
     return next;
   }
 
-  private async runSequence(executions: vscode.NotebookCellExecution[], notebook: vscode.NotebookDocument, lineRun?: LineRun): Promise<void> {
+  private async runSequence(executions: vscode.NotebookCellExecution[], notebook: vscode.NotebookDocument, lineRun?: LineRun, options: SequenceOptions = {}): Promise<void> {
     const cfg = executionConfig();
     let stopped: vscode.NotebookCell | undefined;
+    // Setup and teardown (core/parts.ts): the ready check's answer, and whether to take down.
+    let readyUp: boolean | undefined;
+    let takeDown: boolean | undefined;
+    const several = executions.length > 1;
     const runs: RunRecord[] = [];
     const cells = executions.map((e) => e.cell);
     /** Index of the last execution started (runCell ends its own, even when it throws). */
@@ -317,9 +366,21 @@ export class RunbookController implements vscode.Disposable {
           exec.end(undefined);
           continue;
         }
+        const part = several && !lineRun ? cellPart(exec.cell) : 'body';
+        if (part === 'teardown' && options.teardown !== 'run') {
+          // Offered, not run unasked: the reader may go straight on to the next runbook.
+          takeDown ??= await this.chooseTeardown(notebook, executions.slice(next).map((e) => e.cell).filter((c) => cellPart(c) === 'teardown'));
+          if (!takeDown) {
+            exec.start();
+            exec.end(undefined);
+            continue;
+          }
+        }
+        const guarded = readyUp === true && (options.readyFirst ? part !== 'ready' : part === 'setup');
         // A cell with breakpoints runs line by line and pauses at them.
-        const run = await this.runCell(exec, notebook, cfg, lineRun ?? this.pipeline.lineRunFor?.(exec.cell));
+        const run = await this.runCell(exec, notebook, cfg, lineRun ?? this.pipeline.lineRunFor?.(exec.cell), guarded);
         runs.push(run);
+        if (part === 'ready' && run.ready !== undefined) readyUp = run.ready;
         const failedHard = !run.success && !run.plan.continueOnError && cfg.stopOnFailure;
         if ((failedHard || run.plan.stopSequence) && executions.length > 1) stopped = exec.cell;
       }
@@ -347,7 +408,16 @@ export class RunbookController implements vscode.Disposable {
     for (const o of this.pipeline.observers) await o.onDidRunSequence?.(notebook, runs);
   }
 
-  private async runCell(exec: vscode.NotebookCellExecution, notebook: vscode.NotebookDocument, cfg: ExecutionConfig, lineRun?: LineRun): Promise<RunRecord> {
+  /** Whether to run the teardown cells now: asked once per runbook until Not Now. */
+  private async chooseTeardown(notebook: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[]): Promise<boolean> {
+    const key = notebook.uri.toString();
+    if (this.teardownDeclined.has(key)) return false;
+    const take = await this.askTeardown(notebook, [...new Set(cells.map(teardownLabel))]);
+    if (!take) this.teardownDeclined.add(key);
+    return take;
+  }
+
+  private async runCell(exec: vscode.NotebookCellExecution, notebook: vscode.NotebookDocument, cfg: ExecutionConfig, lineRun?: LineRun, alreadyUp = false): Promise<RunRecord> {
     const cell = exec.cell;
     const started = new Date();
     exec.executionOrder = ++this.executionOrder;
@@ -468,7 +538,11 @@ export class RunbookController implements vscode.Disposable {
       }
       try {
         if (prepareError !== undefined) throw new Error(prepareError);
-        for (const p of this.pipeline.preparers) await p.prepare(plan, ctx);
+        if (alreadyUp) {
+          // A setup step, and the ready check said up: nothing to ask, nothing to run.
+          plan.skip = 'already up (the ready check passed)';
+          plan.attrs.ready = 'up';
+        } else for (const p of this.pipeline.preparers) await p.prepare(plan, ctx);
       } catch (e) {
         prepareError = e instanceof Error ? e.message : String(e);
       }
@@ -588,11 +662,14 @@ export class RunbookController implements vscode.Disposable {
       const history = isRunHistory(stored) ? stored.history : [];
       const earlier = earlierRuns(history.length);
       const lines = lineRun && linesAttr(lineRun, ranSteps);
-      const check = outcome ? (outcome.ok ? 'ok' : 'failed') : undefined;
+      // The ready check answers up or down; either way it passed (check=ok), and Run All goes on.
+      const isReady = !lineRun && !skipped && prepareError === undefined && cellPart(cell) === 'ready';
+      const answer = isReady && !result.cancelled ? (outcome ? outcome.ok : isSuccess(result)) : undefined;
+      const check = isReady ? 'ok' : outcome ? (outcome.ok ? 'ok' : 'failed') : undefined;
       const tries = attempts > 1 && attempt > 0 ? attempt : undefined;
       const status = [
         statusLine(exit, undefined, formatDuration(elapsed)),
-        check && `check ${check === 'ok' ? 'passed' : 'failed'}`,
+        answer !== undefined ? (answer ? 'ready: already up' : 'ready: not up') : check && `check ${check === 'ok' ? 'passed' : 'failed'}`,
         tries && `attempt ${tries}/${attempts}`,
         lines && `lines ${lines}`,
         shellLabel,
@@ -606,6 +683,7 @@ export class RunbookController implements vscode.Disposable {
         ended: formatLocalIso(endedAt),
         duration: formatDurationAttr(elapsed),
         ...(check ? { check } : {}),
+        ...(answer !== undefined ? { ready: answer ? 'up' : 'down' } : {}),
         ...(tries ? { attempts: String(tries) } : {}),
         ...(lines ? { lines } : {}),
         ...plan.attrs,
@@ -622,10 +700,20 @@ export class RunbookController implements vscode.Disposable {
 
       // A cell that was not run counts as success so Run All carries on (a declined confirmation
       // stops it through stopSequence).
-      const success = skipped || (outcome ? outcome.ok : isSuccess(result));
+      const success = skipped || (isReady ? !result.cancelled : outcome ? outcome.ok : isSuccess(result));
       ended = true;
       exec.end(skipped ? undefined : success, Date.now());
-      const run: RunRecord = { cell, notebook, plan, result, success, attrs, output: attemptText, ...(outcome?.ok ? { captured: outcome.captured } : {}) };
+      const run: RunRecord = {
+        cell,
+        notebook,
+        plan,
+        result,
+        success,
+        attrs,
+        output: attemptText,
+        ...(outcome?.ok ? { captured: outcome.captured } : {}),
+        ...(answer !== undefined ? { ready: answer } : {}),
+      };
       for (const o of this.pipeline.observers) await o.onDidRunCell?.(run);
       return run;
     } finally {

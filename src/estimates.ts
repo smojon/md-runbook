@@ -11,6 +11,7 @@ import { EstimateStep, formatBlockProgress, formatEstimate, isCodeMeta, isOverEs
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
 import { osGroups } from '@md-runbook/core/os';
+import { PartStates } from '@md-runbook/core/estimate';
 import { SECTION } from './config';
 import { META_KEY, outputMeta } from './outputs';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -82,16 +83,50 @@ export function notebookEstimateSteps(
   cells.forEach((c, i) => {
     if (c.kind !== vscode.NotebookCellKind.Code) return;
     const o = opts[i];
-    if (o?.skip || o?.host !== undefined || (slots[i] && !slots[i]!.active)) return;
+    // The ready check is a quick look, not a step that takes time.
+    if (o?.skip || o?.part === 'ready' || o?.host !== undefined || (slots[i] && !slots[i]!.active)) return;
     const since = runningSince(c);
     const seconds = cellEstimate(c);
-    const e = seconds !== undefined ? { estimateSeconds: seconds } : {};
+    const e = {
+      ...(seconds !== undefined ? { estimateSeconds: seconds } : {}),
+      ...(o?.part === 'setup' || o?.part === 'teardown' ? { part: o.part } : {}),
+    };
     if (since !== undefined) return void steps.push({ ...e, state: 'running', elapsedSeconds: (now - since) / 1000 });
     const a = attrsOf(c);
     const state = stepState(a?.exit, a?.lines !== undefined, a?.check);
     steps.push({ ...e, state: state === 'done' || state === 'skipped' ? 'done' : 'pending' });
   });
   return steps;
+}
+
+/**
+ * How the setup and teardown stand (core/estimate.ts textPartStates, from the cells' outputs): the
+ * setup `up` (the ready check or a skipped setup step said so), `run` (a setup step ran, or the
+ * check said down, or nothing can skip it) or `unchecked`; the teardown `chosen` once it ran.
+ */
+export function notebookPartStates(nb: vscode.NotebookDocument, attrsOf: (cell: vscode.NotebookCell) => Record<string, string> | undefined): Required<PartStates> {
+  let readyAttr: string | undefined;
+  let guarded = false;
+  let setupUp = false;
+  let setupRan = false;
+  let teardownRan = false;
+  for (const c of nb.getCells()) {
+    if (c.kind !== vscode.NotebookCellKind.Code) continue;
+    const meta: unknown = c.metadata?.[META_KEY];
+    const part = isCodeMeta(meta) && optionsOn() ? parseCellOptions(meta.info).part : undefined;
+    if (part === undefined) continue;
+    const a = runningSince(c) === undefined ? attrsOf(c) : undefined;
+    if (part === 'ready') {
+      guarded = true;
+      readyAttr ??= a?.ready;
+    } else if (part === 'setup') {
+      if (isCallLanguage(c.document.languageId)) guarded = true;
+      if (a?.ready === 'up') setupUp = true;
+      else if ((a?.exit !== undefined && a.exit !== 'skipped') || runningSince(c) !== undefined) setupRan = true;
+    } else if ((a?.exit !== undefined && a.exit !== 'skipped') || runningSince(c) !== undefined) teardownRan = true;
+  }
+  const setup = setupUp || (!setupRan && readyAttr === 'up') ? 'up' : setupRan || readyAttr === 'down' || !guarded ? 'run' : 'unchecked';
+  return { setup, teardown: teardownRan ? 'chosen' : 'offered' };
 }
 
 /** Whether a cell of the notebook runs now. */

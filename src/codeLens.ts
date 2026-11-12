@@ -132,9 +132,27 @@ class EditorRunner {
       const cfg = executionConfig();
       try {
         let allOk = true;
+        // Setup and teardown (core/parts.ts): the ready check never fails the run; up, the setup
+        // steps are passed over; a teardown is not run by Run Below (run it on its own).
+        let readyUp: boolean | undefined;
         for (const [k, idx] of targets.entries()) {
           if (abort.signal.aborted) return false;
+          const info = locate(doc).find((l) => l.cellIndex === idx)?.info ?? '';
+          const part = vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true) ? parseCellOptions(info).part : undefined;
+          if (part === 'teardown' && targets.length > 1) {
+            this.channel.appendLine('[md-runbook] teardown not run: run it on its own when you stop (you may go on to the next runbook)');
+            continue;
+          }
+          if (part === 'setup' && readyUp === true) {
+            this.channel.appendLine('[md-runbook] setup skipped: already up (the ready check passed)');
+            continue;
+          }
           progress.report({ message: targets.length > 1 ? `block ${k + 1} of ${targets.length}` : 'running…' });
+          if (part === 'ready') {
+            readyUp = await this.runOne(doc, idx, abort.signal, true);
+            this.channel.appendLine(`[md-runbook] ready check: ${readyUp ? 'already up' : 'not up'}`);
+            continue;
+          }
           const ok = await this.runOne(doc, idx, abort.signal);
           allOk &&= ok;
           if (!ok && (abort.signal.aborted || (cfg.stopOnFailure && targets.length > 1))) {
@@ -149,7 +167,8 @@ class EditorRunner {
     });
   }
 
-  private async runOne(doc: vscode.TextDocument, cellIndex: number, signal: AbortSignal): Promise<boolean> {
+  /** Run one block; resolves whether it passed (for the ready check: whether it said up). */
+  private async runOne(doc: vscode.TextDocument, cellIndex: number, signal: AbortSignal, readyCheck = false): Promise<boolean> {
     // Re-locate on every step: earlier steps (or the user) may have edited the document.
     const loc = locate(doc).find((l) => l.cellIndex === cellIndex);
     if (!loc) return false;
@@ -229,7 +248,14 @@ class EditorRunner {
     live.flush();
 
     const ended = new Date();
-    const attrs = { exit: exitLabel(result), ran: formatLocalIso(started), ended: formatLocalIso(ended), duration: formatDurationAttr(ended.getTime() - started.getTime()) };
+    const attrs = {
+      exit: exitLabel(result),
+      ran: formatLocalIso(started),
+      ended: formatLocalIso(ended),
+      duration: formatDurationAttr(ended.getTime() - started.getTime()),
+      // The ready check passed as a check whatever it answered.
+      ...(readyCheck ? { check: 'ok', ready: isSuccess(result) ? 'up' : 'down' } : {}),
+    };
     this.channel.appendLine(`${outputSummary(attrs, ended)}${result.shell ? ` · ${result.shell.label}` : ''}\n`);
     await this.writeOutput(doc, cellIndex, transcript, attrs);
     this.changed.fire();
