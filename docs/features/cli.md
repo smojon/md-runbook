@@ -44,7 +44,7 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--pdf FILE.pdf` | Also write the report as PDF (see [PDF](#pdf)). |
 | `--browser PATH` | The browser for `--pdf`. |
 | `--junit FILE.xml` | Also write a JUnit report, one test case per step, for your CI's test view. |
-| `--json FILE.json` | Also write the results as JSON: per step its number, line, status (`passed`, `failed`, `skipped`, `not run`), exit, message and (redacted) output. |
+| `--json FILE.json` | Also write the results as JSON: per step its number, line, status (`passed`, `failed`, `skipped`, `not run`), exit, message and (redacted) output; in a runbook with setup or teardown steps also each step's `part` and the run's `setup`. |
 | `--transcript FILE` | Also append each step to `FILE` as it runs: the command, every output line (`\| ` stdout, `! ` stderr), exit and time, redacted ([Transcript](history.md#transcript)). Off unless given. |
 | `--param NAME=VALUE` | Value for `${param:NAME}` (repeatable). Without it, the front matter's default is used. |
 | `--input NAME=VALUE` | Value for `${input:NAME}` (repeatable). Without it, the environment variable `NAME`. |
@@ -52,6 +52,9 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--from N`, `--to N` | Run only steps `N` to `M`, as the run's `▶ Step N` lines number them (see [Part of a runbook](#part-of-a-runbook)). |
 | `--section TEXT` | Run only the steps under the headings that start with `TEXT` (repeatable). |
 | `--keep-going` | Carry on after a failed step (the exit code is still `1`). |
+| `--teardown`, `--teardown=always` | Also run the [teardown steps](setup-teardown.md) after a run that passed, or after a failure too. Without it they are listed, not run. |
+| `--setup` | With `--from`/`--to`/`--section`: also run the ready check and the setup steps, so a resumed run brings back what is down. |
+| `--setup-always`, `--no-setup` | Run the setup steps even when the ready check says up, or run neither them nor the check. |
 | `--copy-folder DIR` | Where [runbook calls](calls.md) write the copies of the runbooks they run, relative to each one (default: next to it). |
 | `--allowed-signers FILE` | Run only as signed, as a server with md-runbook-gate would: the signature is good by a key in `FILE`, nothing changed since signing, parameters match their patterns, and the runbooks its calls run are signed and in its repository; otherwise nothing runs (exit `2`). See [signed runbooks](signed-runbooks.md#runbook-calls). |
 | `--fresh-copy` | A runbook call that failed before starts a new copy, instead of continuing the one it ran (keeping the steps done there). |
@@ -127,6 +130,23 @@ TENANT=${param:TENANT}
 - Refused before anything runs in it: a file that doesn't exist, a cycle (A calls B calls A),
   calls nested more than 3 deep, a parameter name the runbook called doesn't have, a `section=`
   that matches no heading, and a `kube-context:` other than the caller's.
+
+## Setup and teardown
+
+A runbook's `setup` steps are skipped when its ready check (`ready`) says up, and its `teardown`
+steps are listed, not run ([Setup and teardown](setup-teardown.md)):
+
+```text
+Setup: The lab: Rancher Desktop's Kubernetes (ka4), about 10 GB is already up - setup skipped
+▶ Step 2 · guide-11.md:40 · bash · est. 4m
+…
+– Step 9 [teardown] · guide-11.md:210 · runbook: teardown, not run (--teardown runs it)
+☐ teardown not run: run again with --teardown (or --from with its step) when you stop for the day
+```
+
+`--teardown` runs the teardown after a run that passed, `--teardown=always` after a failure too
+(CI that must clean up). `--from 23 --setup` resumes and brings the setup back first if it is
+down; `--setup-always` and `--no-setup` override the check.
 
 ## Checking without running
 

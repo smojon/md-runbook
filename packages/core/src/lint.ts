@@ -15,6 +15,7 @@ import { FRONT_MATTER_ENV_ENTRY, findRefs, parseFrontMatter } from './secrets';
 import { POWERSHELLS, UNIX_SHELLS, parseShells, shellKindForLanguage } from './shellKind';
 import { signedStatus } from './signing';
 import { CALL_OPTIONS, NOT_ON_A_CALL, callRefs, checkCall, isCallLanguage, isDynamicSrc, parseCall, srcGlob } from './call';
+import { partProblems } from './parts';
 
 export type LintSeverity = 'error' | 'warning';
 
@@ -33,6 +34,7 @@ const KNOWN_OPTIONS = new Set([
   // cellOptions.ts
   'timeout', 'estimate', 'cwd', 'continue-on-error', 'skip', 'confirm', 'no-confirm', 'terminal', 'name',
   'expect', 'expect-not', 'expect-exit', 'capture', 'capture-secret', 'os', 'host', 'kube-context', 'lines', 'retry', 'every',
+  'setup', 'teardown', 'ready',
   // proposal.ts (assistant proposals and approvals)
   'proposed', 'by', 'reason', 'approved', 'approved-by', 'approved-at',
 ]);
@@ -271,6 +273,12 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
       }
     }
     for (const c of opts.checks?.captures ?? []) captured.add(c.name);
+  }
+
+  // Setup, teardown and the ready check: in that order around the runbook's own steps.
+  for (const p of partProblems(locs)) {
+    const loc = locs[p.at]!;
+    problems.push({ severity: 'error', message: p.message, line: loc.line, cell: { index: loc.cellIndex } });
   }
 
   // A signed runbook whose blocks changed since signing.

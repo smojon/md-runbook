@@ -117,6 +117,9 @@ Tokens are separated by spaces or tabs. There are three forms:
 | `retry=N` | integer 1 to 100 | Run up to N times in all until it passes. |
 | `every=D` | `15s`, `500ms`, `2m`, `1m30s`, or seconds as a number; at most 1 hour | Wait between attempts (default 5 s). Only with `retry=`. |
 | `estimate=D` | `2m30s`, `45s`, `1h5m`, `500ms`, or seconds as a number | How long the block takes, as measured on a real run. Never changes how it runs. Shown on the block; while it runs, a bar against it (full at the estimate, then "+1m20s over"). See **Estimates** under [Steps and progress](#steps-and-progress). |
+| `setup` | flag | A setup step: skipped when the runbook's ready check says up (on a runbook call: the ready check of the runbook called). Comes before the runbook's own steps. See [setup and teardown](features/setup-teardown.md). |
+| `teardown` | flag | A teardown step: offered at the end of Run All, run by `md-runbook run` only with `--teardown`. Comes last. |
+| `ready` | flag | The ready check (one per runbook, a shell block): exit 0 means already up, and the setup steps are skipped. Never fails a run: its output gets `check=ok` and `ready=up` or `ready=down`. |
 | `proposed` | flag | The cell was written by an assistant or a colleague and needs approval before it runs. |
 | `by=NAME` | word | Who proposed the cell (`ai`, a model name, a person). A cell with `by=` and no approval is a proposal even without the `proposed` flag. |
 | `reason="…"` | any | Why it was proposed. |
@@ -142,7 +145,7 @@ passes. With `retry=`, only the last attempt's output is kept.
 ### Runbook calls
 
 ````text
-```runbook [name="…"] src=PATH [section=TEXT]... [confirm] [timeout=N] [continue-on-error] [skip] [kube-context=NAME] [estimate=D]
+```runbook [name="…"] src=PATH [section=TEXT]... [setup|teardown] [confirm] [timeout=N] [continue-on-error] [skip] [kube-context=NAME] [estimate=D]
 NAME=value
 …
 ```
@@ -394,9 +397,14 @@ never passes unrecorded.
 the estimates of the blocks done over the sum of all, and about how long is left (the blocks
 still to run; the running block counts its estimate minus the time it has run, never below
 zero). Blocks without an estimate are counted as such ("2 blocks without an estimate"), never
-guessed. `skip` blocks don't count; a group of `os=` alternatives counts once. Shown in the
-extension's status bar item, at the top of the app's runbook, and by `md-runbook run` after
-each step when its output is a terminal.
+guessed. `skip` blocks and the ready check don't count; a group of `os=` alternatives counts
+once. Shown in the extension's status bar item, at the top of the app's runbook, and by
+`md-runbook run` after each step when its output is a terminal.
+
+**Setup and teardown.** In a runbook with `setup` or `teardown` steps, the setup counts once it
+runs (0 when the ready check said already up; before the check, as "+19m if the setup runs"),
+and the teardown only once chosen ("teardown 2m, offered"). See
+[setup and teardown](features/setup-teardown.md).
 
 `md-runbook estimate file.md` prints one line per `#` and `##` section (a `###` section stays in
 its `##`) with the sum of its blocks' estimates and the blocks without one, then the total.

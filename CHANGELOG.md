@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Setup and teardown that check whether they are needed** ([#29](https://github.com/smojon/md-runbook/issues/29)).
+  A `ready` block is a runbook's ready check (exit 0: already up); `setup` steps are skipped when
+  it passes, and a `setup` call to another runbook runs that runbook's check first. `teardown`
+  steps are offered at the end, never run unasked: `md-runbook run --teardown` (after success),
+  `--teardown=always`; `--from N --setup` resumes and brings the setup back if it is down;
+  `--setup-always`, `--no-setup`. The progress and `md-runbook estimate` show the parts
+  (`+19m if the setup runs`, `setup ✓ already up`, `teardown 2m, offered`); `--json` gives each
+  step its `part` and the run its `setup`. Lint checks the order. See
+  [setup and teardown](docs/features/setup-teardown.md).
 - **Calls in the app, as on the other clients.** A signed runbook's call must be as signed, its
   values must match their patterns, and the runbook called must be signed and unchanged.
   Cycles and calls more than 3 deep are refused. A different `kube-context:` is refused, and

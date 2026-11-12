@@ -231,7 +231,8 @@ Each has its own page with examples and settings:
   measured on a real run. The block shows it, and while it runs a bar fills at the estimate; the
   runbook shows how far it is and about how long is left, in VS Code, the app and
   `md-runbook run`. `md-runbook estimate` sums them per section. A [runbook call](docs/features/calls.md)
-  counts as what it runs.
+  counts as what it runs. [Setup and teardown](docs/features/setup-teardown.md) count apart: a
+  ready check skips a setup that is already up, and the teardown is offered, not run.
 
   ![A deploy runbook in the md-runbook app: 2 of 4 steps done, 56% by the estimates, about 4 min left](docs/app/web-estimates.png)
 

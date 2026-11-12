@@ -17,6 +17,7 @@ import {
   createRedactor,
   exitLabel,
   formatEstimate,
+  formatLeft,
   formatRunbookEstimate,
   isOverEstimate,
   runbookEstimate,
@@ -53,6 +54,8 @@ import { TranscriptFile } from '@md-runbook/core/node/transcript';
 import { TranscriptEntry, transcriptNote } from '@md-runbook/core/transcript';
 import { ManualStep, PlannedBlock, RunUsageError, formatSteps, headingsOf, missingCaptures, selectManual, selectSteps, selectionLabel } from './select';
 import { taskItems } from '@md-runbook/core';
+import { RunbookPart, runbookParts } from '@md-runbook/core/parts';
+import { runbookTitle } from '@md-runbook/core/title';
 import { checkSignedRun, insideRoot, repositoryRoot } from './signedRun';
 
 export interface CliOptions {
@@ -110,6 +113,14 @@ export interface CliOptions {
   skipDone?: boolean;
   /** For a runbook run by a call that names no kube-context: the caller's (resolved) and its mode. */
   inheritKubeContext?: { context: string; mode?: KubeContextMode };
+  /** Setup steps (core/parts.ts): `auto` (the default: skipped when the ready check passes), `always` or `never`. */
+  setup?: 'auto' | 'always' | 'never';
+  /** --setup: a selection (--from, --to, --section) also runs the setup steps and the ready check. */
+  addSetup?: boolean;
+  /** Teardown steps: `no` (the default: not run, only listed), `success` (after a run that passed) or `always`. */
+  teardown?: 'no' | 'success' | 'always';
+  /** Run by a setup call: the ready check guards every selected step (what is called is the setup). */
+  readyFirst?: boolean;
 }
 
 export type StepStatus = 'passed' | 'failed' | 'skipped' | 'not run';
@@ -130,12 +141,19 @@ export interface StepResult {
   output: string;
   /** A runbook call: the runbook run (relative to this file), its copy, and its steps. */
   call?: { runbook: string; copy: string; sha256: string; steps: StepResult[]; manual: ManualStep[] };
+  /** In a runbook with setup or teardown steps: the step's part (`ready`: the ready check). */
+  part?: RunbookPart;
 }
 
 export interface RunSummary {
   steps: StepResult[];
   /** The manual steps (task-list items) of the part run, ticked or not (their text redacted). */
   manual: ManualStep[];
+  /**
+   * In a runbook with setup or teardown steps: whether the ready checks said up (undefined: none
+   * ran), and how long the setup steps that ran took.
+   */
+  setup?: { ready?: boolean; seconds: number };
   /** The runbook with the new outputs. */
   text: string;
   ok: boolean;
@@ -232,6 +250,20 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     return { line: t.line, step: after >= 0 ? numbers[after]! : 0, after, text: (lines[t.line] ?? '').replace(/^.*?\[[ xX]\][ \t]*/, '').trim(), ticked: t.checked };
   });
   const selected = selectSteps(original, locs, numbers, selection, manualAll);
+  // Setup and teardown (core/parts.ts): the ready check guards the setup steps.
+  const rp = runbookParts(locs);
+  const readyIdx = rp.ready;
+  const partAt = (i: number): RunbookPart => rp.parts[i] ?? 'body';
+  const setupMode = o.setup ?? 'auto';
+  const teardownMode = o.teardown ?? 'no';
+  const guarded = (i: number): boolean =>
+    readyIdx !== undefined && i !== readyIdx && setupMode === 'auto' && (o.readyFirst ? true : partAt(i) === 'setup');
+  if (selected) {
+    // --setup: a resumed run brings the setup back (when the ready check says it is down).
+    if (o.addSetup) locs.forEach((_l, i) => void ((partAt(i) === 'setup' || i === readyIdx) && selected.add(numbers[i]!)));
+    // A setup call's section= leaves the ready check out: it runs anyway.
+    if (o.readyFirst && readyIdx !== undefined) selected.add(numbers[readyIdx]!);
+  }
   const manual = selectManual(original, numbers, selection, manualAll) as (ManualStep & { after: number })[];
   const manualShown = new Set<number>();
   /** Log the unticked manual steps after block `k` (-1: before the first). */
@@ -257,7 +289,17 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       n: numbers[i]!,
       loc,
       selected: isSelected,
-      runs: isSelected && (!slot || slot.active) && !opts.host && !opts.skip && opts.errors.length === 0 && proposal.state !== 'proposed' && proposal.by === undefined,
+      runs:
+        isSelected &&
+        (!slot || slot.active) &&
+        !opts.host &&
+        !opts.skip &&
+        opts.errors.length === 0 &&
+        proposal.state !== 'proposed' &&
+        proposal.by === undefined &&
+        !(partAt(i) === 'teardown' && teardownMode === 'no') &&
+        !(partAt(i) === 'setup' && setupMode === 'never') &&
+        !(i === readyIdx && setupMode !== 'auto'),
       uses,
       captures: (opts.checks?.captures ?? []).map((c) => c.name),
     };
@@ -333,15 +375,40 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   const steps: StepResult[] = [];
   let stopped = false;
   // The run's progress by estimates: the blocks this run will run, and the ones it has run.
-  const planned = blocks.flatMap((b, i) => (b.runs ? [i] : []));
+  // A teardown not chosen is listed too: the progress says it is offered.
+  const planned = blocks.flatMap((b, i) => (b.runs || (partAt(i) === 'teardown' && b.selected) ? [i] : []));
   // A runbook call's estimate is what it runs (callEstimateSeconds).
   const estimates = locs.map((loc) => (isCallLanguage(loc.language) ? callEstimateSeconds(o.file, loc.info, loc.source) : parseCellOptions(loc.info).estimateSeconds));
   const finished = new Set<number>();
+  // The ready check's answer: undefined until it ran.
+  let readyUp: boolean | undefined;
+  const readyAnswers: boolean[] = [];
+  let setupMs = 0;
+  const partOfStep = (i: number): { part?: 'setup' | 'teardown' } => {
+    const p = partAt(i);
+    return p === 'setup' || p === 'teardown' ? { part: p } : {};
+  };
   const progressLine = (): string | undefined =>
-    formatRunbookEstimate(runbookEstimate(planned.map((i) => ({ estimateSeconds: estimates[i], state: finished.has(i) ? 'done' : 'pending' }))));
+    formatRunbookEstimate(
+      runbookEstimate(
+        planned.filter((i) => i !== readyIdx).map((i) => ({ estimateSeconds: estimates[i], state: finished.has(i) ? 'done' : 'pending', ...partOfStep(i) })),
+        {
+          setup: readyIdx === undefined || setupMode !== 'auto' ? 'run' : readyUp === undefined ? 'unchecked' : readyUp ? 'up' : 'run',
+          teardown: teardownMode === 'no' ? 'offered' : 'chosen',
+        },
+      ),
+    );
+  // The ready check runs before the steps it guards, wherever it is in the file.
+  const order = [...locs.keys()];
+  if (readyIdx !== undefined && blocks.some((b, i) => i < readyIdx && b.runs && guarded(i))) {
+    order.splice(order.indexOf(readyIdx), 1);
+    order.unshift(readyIdx);
+  }
+  const label = (opts: { name?: string }): string => redact(o.readyFirst ? (runbookTitle(original) ?? fileName) : (opts.name ?? runbookTitle(original) ?? fileName));
 
   try {
-    for (const [i, loc] of locs.entries()) {
+    for (const i of order) {
+      const loc = locs[i]!;
       listManual(i - 1);
       const slot = slots[loc.cellIndex];
       if (slot && counted.has(slot.group)) {
@@ -350,6 +417,8 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       } else if (slot) counted.add(slot.group);
       const n = numbers[i]!;
       const opts = parseCellOptions(loc.info);
+      const part = partAt(i);
+      const isReady = i === readyIdx;
       const firstLine = loc.source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
       const result = (status: StepStatus, exit: string, extra: Partial<StepResult> = {}): StepResult => ({
         step: n,
@@ -361,9 +430,11 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         durationMs: 0,
         ...(opts.estimateSeconds !== undefined ? { estimateSeconds: opts.estimateSeconds } : {}),
         output: '',
+        ...(rp.any ? { part } : {}),
         ...extra,
       });
-      const where = `Step ${pre}${n} · ${fileName}:${loc.line + 1} · ${loc.language}`;
+      const tag = part === 'body' ? '' : part === 'ready' ? ' [ready check]' : ` [${part}]`;
+      const where = `Step ${pre}${n}${tag} · ${fileName}:${loc.line + 1} · ${loc.language}`;
 
       if (slot && !slot.active) {
         // For another OS: not run, output untouched. A group with none for this OS is skipped.
@@ -394,8 +465,34 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         steps.push(result('skipped', 'skipped', { message: `runs on the host ${opts.host}` }));
         continue;
       }
-      if (stopped) {
+      if (isReady && setupMode !== 'auto') {
+        const flag = setupMode === 'never' ? '--no-setup' : '--setup-always';
+        io.log(`– ${where}: not run (${flag})`);
+        steps.push(result('skipped', 'skipped', { message: `not run (${flag})` }));
+        continue;
+      }
+      if (part === 'setup' && setupMode === 'never') {
+        io.log(`– ${where}: setup, not run (--no-setup)`);
+        steps.push(result('skipped', 'skipped', { message: 'setup, not run (--no-setup)' }));
+        continue;
+      }
+      if (part === 'teardown' && teardownMode === 'no') {
+        // Offered, not run: the reader may go straight on to the next runbook. Output untouched.
+        io.log(`– ${where}: teardown, not run (--teardown runs it)`);
+        steps.push(result('skipped', 'skipped', { message: 'teardown, not chosen (--teardown runs it)' }));
+        continue;
+      }
+      if (stopped && !(part === 'teardown' && teardownMode === 'always')) {
         steps.push(result('not run', 'not run', { message: 'an earlier step failed' }));
+        continue;
+      }
+      if (guarded(i) && readyUp === true) {
+        io.log(`– ${where}: already up (the ready check passed), skipped`);
+        text =
+          setCellOutput(text, loc.cellIndex, { kind: 'new', text: '[md-runbook] skipped: already up (the ready check passed)\n', attrs: { exit: 'skipped', ready: 'up', ran: formatLocalIso(new Date()) } }, writeOpts) ??
+          text;
+        steps.push(result('skipped', 'skipped', { message: 'already up' }));
+        finished.add(i);
         continue;
       }
 
@@ -525,7 +622,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         let copy: string | undefined;
         let resumed = false;
         const prev = callFromAttrs(loc.outputAttrs);
-        if (prev && !o.freshCopy && prev.exit !== undefined && prev.exit !== '0') {
+        if (prev && !o.freshCopy && prev.exit !== undefined && prev.exit !== '0' && prev.exit !== 'skipped') {
           const old = path.resolve(path.dirname(path.resolve(o.file)), prev.copy);
           if (fs.existsSync(old) && samePath(callTarget(o.file, prev.runbook), target)) {
             copy = old;
@@ -564,6 +661,11 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
               stepPrefix: `${pre}${n}.`,
               inheritKubeContext: inheritKube,
               ...(signedRoot ? { signedRoot } : {}),
+              // What a call runs is one step: its own setup is guarded as usual, its teardown runs.
+              setup: 'auto',
+              addSetup: false,
+              teardown: teardownMode === 'always' ? 'always' : 'success',
+              readyFirst: partAt(i) === 'setup',
             },
             { out: io.out, log: (l) => io.log(`  ${l}`) },
           );
@@ -593,9 +695,15 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
           manual: child?.manual.filter((m) => !m.ticked).length ?? 0,
         };
         const ok = child?.ok === true && !timedOut;
-        const outText = callOutputText(r, call.sections) + (failure ? `[md-runbook] ${failure}\n` : '');
+        // A setup call whose runbook's ready check passed: already up, nothing else ran.
+        const up = ok && partAt(i) === 'setup' && child?.setup?.ready === true;
+        if (partAt(i) === 'setup' && child?.setup?.ready !== undefined) readyAnswers.push(child.setup.ready);
+        if (partAt(i) === 'setup' && !up) setupMs += Date.now() - started.getTime();
+        const outText =
+          callOutputText(r, call.sections) + (up ? `[md-runbook] already up: the ready check of ${shown} passed, so its setup was skipped\n` : '') + (failure ? `[md-runbook] ${failure}\n` : '');
         const attrs: Record<string, string> = {
-          exit: ok ? '0' : '1',
+          exit: up ? 'skipped' : ok ? '0' : '1',
+          ...(up ? { ready: 'up' } : {}),
           ran: formatLocalIso(started),
           ended: formatLocalIso(ended),
           duration: formatDurationAttr(ended.getTime() - started.getTime()),
@@ -611,11 +719,11 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         io.log(`${ok ? '✓' : '✗'} Step ${pre}${n} · ${redact(shown)}: ${formatCallSteps(r)}${failure ? ` · ${redact(failure)}` : ''}`);
         finished.add(i);
         steps.push(
-          result(ok ? 'passed' : 'failed', attrs.exit!, {
+          result(up ? 'skipped' : ok ? 'passed' : 'failed', attrs.exit!, {
             durationMs: ended.getTime() - started.getTime(),
             output: redact(outText),
             call: { runbook: shown, copy: copyShown, sha256: r.sha256, steps: child?.steps ?? [], manual: child?.manual ?? [] },
-            ...(ok ? {} : { message: redact(failure ?? 'the runbook called failed') }),
+            ...(up ? { message: 'already up' } : ok ? {} : { message: redact(failure ?? 'the runbook called failed') }),
           }),
         );
         if (!ok && !opts.continueOnError && !o.keepGoing) stopped = true;
@@ -774,13 +882,16 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
 
       const ended = new Date();
       const exit = exitLabel(r);
-      const check = outcome ? (outcome.ok ? 'ok' : 'failed') : undefined;
+      // The ready check answers up or down; either way it passed (check=ok), and the run goes on.
+      const answer = isReady ? (outcome ? outcome.ok : isSuccess(r)) && !r.cancelled : undefined;
+      const check = isReady ? 'ok' : outcome ? (outcome.ok ? 'ok' : 'failed') : undefined;
       const attrs: Record<string, string> = {
         exit,
         ran: formatLocalIso(started),
         ended: formatLocalIso(ended),
         duration: formatDurationAttr(ended.getTime() - started.getTime()),
         ...(check ? { check } : {}),
+        ...(answer !== undefined ? { ready: answer ? 'up' : 'down' } : {}),
         ...(attempts > 1 ? { attempts: String(attempt) } : {}),
         ...(opts.name !== undefined ? { name: opts.name } : {}),
         ...(contextFromParam ? { 'kube-context': contextFromParam } : {}),
@@ -794,7 +905,16 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       text =
         setCellOutput(text, loc.cellIndex, { kind: 'new', text: attemptText, attrs, ...(previous && history.length ? { previous, history } : {}) }, writeOpts) ??
         text;
-      const ok = outcome ? outcome.ok : isSuccess(r);
+      const ok = isReady ? !r.cancelled : outcome ? outcome.ok : isSuccess(r);
+      if (answer !== undefined) {
+        readyUp = answer;
+        readyAnswers.push(answer);
+        const guardedLeft = blocks.flatMap((b, k) => (b.runs && guarded(k) && estimates[k] !== undefined ? [estimates[k]!] : []));
+        const setupTime = guardedLeft.length ? ` - ${formatLeft(guardedLeft.reduce((a, b) => a + b, 0))} to set it up` : '';
+        io.log(answer ? `Setup: ${label(opts)} is already up - setup skipped` : `Setup: ${label(opts)} is not up${setupTime}`);
+        note(n, redact(opts.name ?? firstLine), answer ? 'ready check: up, setup skipped' : 'ready check: not up, the setup runs');
+      }
+      if (part === 'setup') setupMs += ended.getTime() - started.getTime();
       entry?.end({ exit, durationMs: ended.getTime() - started.getTime(), ...(check ? { check } : {}), ...(attempts > 1 ? { attempt, attempts } : {}) });
       transcriptFile?.flush();
       // Without ran/ended: "5m ago" means nothing in a terminal.
@@ -831,7 +951,13 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     );
   }
   const ok = steps.every((s) => s.status === 'passed' || s.status === 'skipped') && !(evidence && unticked.length > 0);
-  return { steps, manual: manual.map(({ after: _after, ...m }) => ({ ...m, text: redact(m.text) })), text, ok, redact };
+  // The ready check ran first: back in file order for the reports.
+  if (order[0] !== 0) steps.sort((a, b) => a.step - b.step);
+  if (rp.any && teardownMode === 'no' && blocks.some((b, i) => partAt(i) === 'teardown' && b.selected)) {
+    io.log('☐ teardown not run: run again with --teardown (or --from with its step) when you stop for the day');
+  }
+  const setup = rp.any ? { setup: { ...(readyAnswers.length ? { ready: readyAnswers.every(Boolean) } : {}), seconds: Math.round(setupMs / 100) / 10 } } : {};
+  return { steps, manual: manual.map(({ after: _after, ...m }) => ({ ...m, text: redact(m.text) })), text, ok, redact, ...setup };
 }
 
 const xml = (s: string): string =>

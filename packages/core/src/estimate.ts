@@ -86,6 +86,27 @@ export interface EstimateStep {
   elapsedSeconds?: number;
   /** The block's cell index, where known (textEstimateSteps). */
   cell?: number;
+  /** setup or teardown (parts.ts); undefined: the runbook's own steps. */
+  part?: 'setup' | 'teardown';
+}
+
+/** Totals of one part of a runbook (setup, its own steps, teardown). */
+export interface PartEstimate {
+  totalSeconds: number;
+  doneSeconds: number;
+  leftSeconds: number;
+  blocks: number;
+  unestimated: number;
+}
+
+/**
+ * How the setup and teardown count: the setup `unchecked` (the ready check hasn't run: it may be
+ * skipped), `up` (skipped: it counts 0) or `run` (the default); the teardown `offered` (the
+ * default: not chosen yet, so it never counts in the time left) or `chosen`.
+ */
+export interface PartStates {
+  setup?: 'unchecked' | 'up' | 'run';
+  teardown?: 'offered' | 'chosen';
 }
 
 export interface RunbookEstimate {
@@ -102,24 +123,66 @@ export interface RunbookEstimate {
   unestimated: number;
   /** Of those, the ones not finished yet. */
   unestimatedLeft: number;
+  /**
+   * Each part on its own, when the runbook has setup or teardown steps. The totals above count
+   * the setup unless it is unchecked or up, and the teardown only once chosen.
+   */
+  parts?: { setup: PartEstimate; body: PartEstimate; teardown: PartEstimate; states: Required<PartStates> };
 }
 
-/** Done so far over the total, by estimates, and the time left. */
-export function runbookEstimate(steps: readonly EstimateStep[]): RunbookEstimate {
-  const r: RunbookEstimate = { totalSeconds: 0, doneSeconds: 0, leftSeconds: 0, blocks: steps.length, unestimated: 0, unestimatedLeft: 0 };
+function addStep(r: { totalSeconds: number; doneSeconds: number; leftSeconds: number; unestimated: number }, s: EstimateStep): boolean {
+  if (s.estimateSeconds === undefined) {
+    r.unestimated++;
+    return s.state !== 'done';
+  }
+  r.totalSeconds += s.estimateSeconds;
+  if (s.state === 'done') r.doneSeconds += s.estimateSeconds;
+  else if (s.state === 'running') r.leftSeconds += Math.max(0, s.estimateSeconds - (s.elapsedSeconds ?? 0));
+  else r.leftSeconds += s.estimateSeconds;
+  return false;
+}
+
+/**
+ * Done so far over the total, by estimates, and the time left. A runbook without setup or
+ * teardown steps counts every step; one with them counts as `states` says (PartStates).
+ */
+export function runbookEstimate(steps: readonly EstimateStep[], states: PartStates = {}): RunbookEstimate {
+  const st: Required<PartStates> = { setup: states.setup ?? 'run', teardown: states.teardown ?? 'offered' };
+  const hasParts = steps.some((s) => s.part !== undefined);
+  const counts = (s: EstimateStep): boolean =>
+    s.part === undefined || (s.part === 'setup' ? st.setup === 'run' : st.teardown === 'chosen');
+  const r: RunbookEstimate = { totalSeconds: 0, doneSeconds: 0, leftSeconds: 0, blocks: 0, unestimated: 0, unestimatedLeft: 0 };
+  const part = (): PartEstimate => ({ totalSeconds: 0, doneSeconds: 0, leftSeconds: 0, blocks: 0, unestimated: 0 });
+  const parts = { setup: part(), body: part(), teardown: part() };
   for (const s of steps) {
-    if (s.estimateSeconds === undefined) {
-      r.unestimated++;
-      if (s.state !== 'done') r.unestimatedLeft++;
-      continue;
-    }
-    r.totalSeconds += s.estimateSeconds;
-    if (s.state === 'done') r.doneSeconds += s.estimateSeconds;
-    else if (s.state === 'running') r.leftSeconds += Math.max(0, s.estimateSeconds - (s.elapsedSeconds ?? 0));
-    else r.leftSeconds += s.estimateSeconds;
+    const p = parts[s.part ?? 'body'];
+    p.blocks++;
+    addStep(p, s);
+    if (hasParts && !counts(s)) continue;
+    r.blocks++;
+    if (addStep(r, s)) r.unestimatedLeft++;
   }
   if (r.totalSeconds > 0) r.fraction = r.doneSeconds / r.totalSeconds;
+  if (hasParts) r.parts = { ...parts, states: st };
   return r;
+}
+
+/**
+ * The setup and teardown in a few words, after the runbook's progress: `setup ✓ already up`,
+ * `+19m if the setup runs`, `setup up to 19m`, `teardown 2m, offered`. Undefined without parts.
+ */
+export function formatParts(e: RunbookEstimate): string | undefined {
+  const p = e.parts;
+  if (!p) return undefined;
+  const out: string[] = [];
+  const t = (x: PartEstimate): string => (x.unestimated === x.blocks ? '' : ` ${formatEstimate(x.totalSeconds)}`);
+  if (p.setup.blocks > 0) {
+    if (p.states.setup === 'up') out.push('setup ✓ already up');
+    else if (p.states.setup === 'unchecked') out.push(p.setup.unestimated === p.setup.blocks ? 'setup unless already up' : `+${formatEstimate(p.setup.totalSeconds)} if the setup runs`);
+    else if (p.setup.leftSeconds === 0 && p.setup.doneSeconds > 0) out.push('setup ✓');
+  }
+  if (p.teardown.blocks > 0) out.push(p.states.teardown === 'chosen' ? `teardown${t(p.teardown)}` : `teardown${t(p.teardown)}, offered`);
+  return out.length ? out.join(' · ') : undefined;
 }
 
 /**
@@ -130,6 +193,8 @@ export function formatRunbookEstimate(e: RunbookEstimate, width = 10): string | 
   if (e.fraction === undefined) return undefined;
   const parts = [`${progressBar(e.fraction, width)} ${Math.floor(e.fraction * 100)}%`, e.leftSeconds > 0 ? `${formatLeft(e.leftSeconds)} left` : 'nothing left'];
   if (e.unestimatedLeft > 0) parts.push(withoutEstimate(e.unestimatedLeft));
+  const more = formatParts(e);
+  if (more) parts.push(more);
   return parts.join(' · ');
 }
 
@@ -158,8 +223,18 @@ export interface EstimateSummary {
   unestimated: number;
   /** Per cell: the block's estimate in seconds (undefined: none, or not a block that counts). */
   perCell: (number | undefined)[];
-  /** Per cell: the block counts (a code cell, not `skip`, one per `os=` group). */
+  /** Per cell: the block counts (a code cell, not `skip`, not the ready check, one per `os=` group). */
   counts: boolean[];
+  /** The setup and teardown steps' sums (parts.ts), included in the sections and the total. */
+  parts: { setup: SectionSums; teardown: SectionSums };
+  /** The setup may be skipped: the runbook has a ready check, or a setup step is a call (the runbook called may have one). */
+  guarded: boolean;
+}
+
+export interface SectionSums {
+  seconds: number;
+  blocks: number;
+  unestimated: number;
 }
 
 /**
@@ -196,6 +271,7 @@ export function estimateRunbook(text: string, here?: OsName, callEstimate?: (inf
   const perCell: (number | undefined)[] = [];
   const counts: boolean[] = [];
   const sections: SectionEstimate[] = [];
+  const parts = { setup: { seconds: 0, blocks: 0, unestimated: 0 }, teardown: { seconds: 0, blocks: 0, unestimated: 0 } };
   let current: SectionEstimate | undefined;
   cells.forEach((c, i) => {
     if (c.kind !== 'code') {
@@ -210,7 +286,8 @@ export function estimateRunbook(text: string, here?: OsName, callEstimate?: (inf
     }
     const o = opts[i];
     const slot = slots[i];
-    let countsHere = o !== undefined && !o.skip;
+    // The ready check is a quick look, not a step that takes time.
+    let countsHere = o !== undefined && !o.skip && o.part !== 'ready';
     let e = o?.estimateSeconds;
     if (countsHere && slot) {
       if (counted.has(slot.group)) countsHere = false;
@@ -229,6 +306,12 @@ export function estimateRunbook(text: string, here?: OsName, callEstimate?: (inf
     current.blocks++;
     if (e === undefined) current.unestimated++;
     else current.seconds += e;
+    if (o?.part === 'setup' || o?.part === 'teardown') {
+      const p = parts[o.part];
+      p.blocks++;
+      if (e === undefined) p.unestimated++;
+      else p.seconds += e;
+    }
   });
   return {
     sections,
@@ -237,6 +320,8 @@ export function estimateRunbook(text: string, here?: OsName, callEstimate?: (inf
     unestimated: sections.reduce((t, s) => t + s.unestimated, 0),
     perCell,
     counts,
+    parts,
+    guarded: opts.some((o, i) => o?.part === 'ready' || (o?.part === 'setup' && isCallLanguage(cells[i]!.languageId))),
   };
 }
 
@@ -268,14 +353,46 @@ export function textEstimateSteps(
   const steps: EstimateStep[] = [];
   cells.forEach((c, i) => {
     const o = opts[i];
-    if (c.kind !== 'code' || o?.skip || (slots[i] && !slots[i]!.active)) return;
-    const e = o?.estimateSeconds !== undefined ? { estimateSeconds: o.estimateSeconds } : {};
+    if (c.kind !== 'code' || o?.skip || o?.part === 'ready' || (slots[i] && !slots[i]!.active)) return;
+    const e = {
+      ...(o?.estimateSeconds !== undefined ? { estimateSeconds: o.estimateSeconds } : {}),
+      ...(o?.part === 'setup' || o?.part === 'teardown' ? { part: o.part } : {}),
+    };
     if (running?.cellIndex === i) return void steps.push({ ...e, cell: i, state: 'running', elapsedSeconds: running.elapsedSeconds });
     const a = c.output?.attrs;
     const state = stepState(a?.exit, a?.lines !== undefined, a?.check);
     steps.push({ ...e, cell: i, state: state === 'done' || state === 'skipped' ? 'done' : 'pending' });
   });
   return steps;
+}
+
+/**
+ * How the setup and teardown stand, from the outputs in the text: the setup `up` when the ready
+ * check or a setup step says so (`ready=up`), `run` once a setup step ran or the check said
+ * down, `unchecked` while a check may still skip it (the runbook's own, or a setup call's);
+ * the teardown `chosen` once a teardown step ran.
+ */
+export function textPartStates(text: string): Required<PartStates> {
+  let readyAttr: string | undefined;
+  let guarded = false;
+  let setupUp = false;
+  let setupRan = false;
+  let teardownRan = false;
+  for (const c of parse(text).cells) {
+    if (c.kind !== 'code' || !isCodeMeta(c.meta)) continue;
+    const o = parseCellOptions(c.meta.info);
+    const a = c.output?.attrs;
+    if (o.part === 'ready') {
+      guarded = true;
+      readyAttr ??= a?.ready;
+    } else if (o.part === 'setup') {
+      if (isCallLanguage(c.languageId)) guarded = true;
+      if (a?.ready === 'up') setupUp = true;
+      else if (a?.exit !== undefined && a.exit !== 'skipped') setupRan = true;
+    } else if (o.part === 'teardown' && a?.exit !== undefined && a.exit !== 'skipped') teardownRan = true;
+  }
+  const setup = setupUp || (!setupRan && readyAttr === 'up') ? 'up' : setupRan || readyAttr === 'down' || !guarded ? 'run' : 'unchecked';
+  return { setup, teardown: teardownRan ? 'chosen' : 'offered' };
 }
 
 /** Reads a runbook a call names: src= as written, from the file the call is in (undefined: the first). */

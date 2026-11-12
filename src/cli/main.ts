@@ -53,6 +53,13 @@ Options:
   --section TEXT       Run only the steps under headings that start with TEXT, e.g. "3." or
                        "Rollback" (repeatable; with --from/--to, both must hold)
   --keep-going         Carry on after a failed step
+  --teardown           Also run the teardown steps (teardown option) after a run that passed;
+                       without it they are listed, not run (you may go on to the next runbook)
+  --teardown=always    Run the teardown steps after a failure too (CI that must clean up)
+  --setup              With --from/--to/--section: also run the setup steps (setup option), and
+                       the ready check first, so a resumed run brings back what is down
+  --setup-always       Run the setup steps even when the ready check (ready option) says up
+  --no-setup           Run neither the setup steps nor the ready check
   --copy-folder DIR    Where runbook calls (\`\`\`runbook blocks) write the copies of the runbooks
                        they run, relative to each one (default: next to it)
   --allowed-signers FILE
@@ -81,7 +88,8 @@ exits with 1 when it finds an error (with --strict: also a warning).
 estimate adds up the blocks' estimate= options (e.g. estimate=2m30s): one line per # and ##
 section with its time and the blocks without an estimate, then the runbook's total. A run
 prints a step's estimate on its "▶ Step N" line, warns when the step took more than twice it,
-and in a terminal shows after each step how far the run is and about how long is left.
+and in a terminal shows after each step how far the run is and about how long is left. With
+setup or teardown steps, a "Parts:" line says how long each part takes.
 
 \${secret:NAME} values come from the environment variable NAME and are redacted from output.
 On GitHub Actions, a summary table is added to the job summary.
@@ -154,6 +162,16 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
       case '--input': pair(a, o.inputs); break;
       case '--yes': o.yes = true; break;
       case '--keep-going': o.keepGoing = true; break;
+      case '--teardown': o.teardown = 'success'; break;
+      case '--teardown=always': o.teardown = 'always'; break;
+      case '--setup': o.addSetup = true; break;
+      case '--setup-always':
+      case '--no-setup': {
+        const mode = a === '--no-setup' ? 'never' : 'always';
+        if (o.setup && o.setup !== mode) throw new UsageError('--setup-always and --no-setup exclude each other');
+        o.setup = mode;
+        break;
+      }
       case '--from':
       case '--to': {
         const v = value(a);
@@ -248,6 +266,17 @@ export function estimate(argv: readonly string[], out: (line: string) => void = 
     out(file);
     for (const [h, t] of rows) out(`  ${h.length > width ? h.slice(0, width - 1) + '…' : h.padEnd(width)}  ${t}`);
     out(`  Total: ${time(s.totalSeconds, s.blocks, s.unestimated)} for ${s.blocks} block${s.blocks === 1 ? '' : 's'}`);
+    const { setup, teardown } = s.parts;
+    if (setup.blocks > 0 || teardown.blocks > 0) {
+      const body = { seconds: s.totalSeconds - setup.seconds - teardown.seconds, blocks: s.blocks - setup.blocks - teardown.blocks, unestimated: s.unestimated - setup.unestimated - teardown.unestimated };
+      out(
+        `  Parts: ${[
+          ...(setup.blocks > 0 ? [`setup ${time(setup.seconds, setup.blocks, setup.unestimated)}${s.guarded ? ' (skipped when already up)' : ''}`] : []),
+          `runbook ${time(body.seconds, body.blocks, body.unestimated)}`,
+          ...(teardown.blocks > 0 ? [`teardown ${time(teardown.seconds, teardown.blocks, teardown.unestimated)} (offered)`] : []),
+        ].join(' · ')}`,
+      );
+    }
   });
   return failed ? 1 : 0;
 }
@@ -327,7 +356,10 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (options.report) writeFile(options.report, html());
   if (options.junit) writeFile(options.junit, junitReport(file, summary.steps, summary.manual));
   // record: the run timeline and its summary (core/incident.ts), for audit tools and postmortems.
-  if (options.json) writeFile(options.json, JSON.stringify({ file, ok: summary.ok, steps: summary.steps, manual: summary.manual, record: buildTimeline(summary.text) }, null, 2) + '\n');
+  if (options.json) {
+    const setup = summary.setup ? { setup: summary.setup } : {};
+    writeFile(options.json, JSON.stringify({ file, ok: summary.ok, ...setup, steps: summary.steps, manual: summary.manual, record: buildTimeline(summary.text) }, null, 2) + '\n');
+  }
   const ghSummary = process.env.GITHUB_STEP_SUMMARY;
   if (ghSummary) fs.appendFileSync(ghSummary, markdownSummary(file, summary.steps, summary.manual) + '\n');
   let pdfFailed = false;

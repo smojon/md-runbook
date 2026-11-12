@@ -46,6 +46,11 @@ export interface CellOptions {
   lines?: 'any';
   /** retry=N: up to N attempts in all, `every` apart (default 5 s). */
   retry?: { attempts: number; everyMs: number };
+  /**
+   * `setup`, `teardown` or `ready` (parts.ts): a setup step (skipped when the runbook's ready check
+   * says it is up), a teardown step (offered at the end, not run unasked), or the ready check.
+   */
+  part?: 'setup' | 'teardown' | 'ready';
   /** Recognized keys with invalid values. */
   errors: string[];
 }
@@ -159,6 +164,10 @@ export function parseCellOptions(info: string): CellOptions {
       else if (k === 'confirm') opts.confirm = true;
       else if (k === 'no-confirm') opts.confirm = false;
       else if (k === 'terminal') opts.terminal = true;
+      else if (k === 'setup' || k === 'teardown' || k === 'ready') {
+        if (opts.part !== undefined && opts.part !== k) opts.errors.push(`${k}: a block is only one of setup, teardown and ready (it is already ${opts.part})`);
+        else opts.part = k;
+      }
     } else if (k === 'timeout') {
       const s = Number(value.replace(/s$/i, ''));
       if (value.trim() === '' || !Number.isFinite(s) || s < 0) opts.errors.push(`timeout=${value}: expected seconds (0 = none)`);
