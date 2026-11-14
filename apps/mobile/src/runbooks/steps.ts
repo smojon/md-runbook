@@ -2,7 +2,7 @@
  * The runbook's steps by name, as VS Code's Runbook Steps view lists them (src/stepsView.ts):
  * each `#`/`##` chapter, then each step with its state, number, name and time; checklist items
  * are steps done by hand; the ready check says what it answered; a teardown not run yet is
- * offered; a failed step has the last line of its error. The Steps view (a phone's Steps tab,
+ * offered; a failed step has the last line of its error; a chapter with one step is one row. The Steps view (a phone's Steps tab,
  * the wide screen's side panel) draws these rows.
  */
 import { isCodeMeta, parseLineSet, taskItems } from '@md-runbook/core';
@@ -28,7 +28,12 @@ export type StepsRow =
       item?: number;
       /** 1-based step number; none for the ready check and a teardown offered. */
       step?: number;
+      /** The step's name; for a chapter's lone step (mergeLoneSteps), the chapter's heading. */
       label: string;
+      /** A chapter's lone step, shown as one row: the chapter's level (1 or 2). */
+      chapter?: number;
+      /** A chapter's lone step: the step's own name, when it isn't the heading. */
+      detail?: string;
       state: StepRowState;
       /** `est. 2m`, `12s of 1m` while it runs, `took 3m10s (+40s)`, `by hand`, `already up`. */
       time?: string;
@@ -237,7 +242,27 @@ export function stepsRows({ cells, progress, running, waiting, callEstimates, le
       ...(error !== undefined ? { error } : {}),
     });
   });
-  return rows;
+  return mergeLoneSteps(rows);
+}
+
+/**
+ * A chapter with only one step under it is one row (as VS Code's Steps view, src/stepsView.ts):
+ * the heading, with the step's state, number and time, and the step's own name under it when it
+ * differs. Only a numbered step (not the ready check or a teardown offered), with nothing else
+ * before the next chapter; a chapter with no step or several keeps its row.
+ */
+export function mergeLoneSteps(rows: readonly StepsRow[]): StepsRow[] {
+  const merged: StepsRow[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!;
+    const next = rows[i + 1];
+    const after = rows[i + 2];
+    if (r.kind === 'chapter' && next?.kind === 'step' && next.step !== undefined && (after === undefined || after.kind === 'chapter')) {
+      merged.push({ ...next, label: r.title, chapter: r.level, ...(next.label !== r.title ? { detail: next.label } : {}) });
+      i++;
+    } else merged.push(r);
+  }
+  return merged;
 }
 
 /** A checklist item Run all waits at: its Markdown cell, its place there, and its text. */

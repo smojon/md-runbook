@@ -26,7 +26,7 @@ export interface StepsHeader {
   headline: string;
   /** The run waits for an answer (amber), or a step failed (red). */
   tone?: 'waiting' | 'failed';
-  /** `41% · 4 min left · ends ≈ 14:32`, with estimates. */
+  /** `41% · 4 min left · ends ≈ 14:32`, with estimates; while the run waits, what for (`Take it down now? …`). */
   line?: string;
   fraction?: number;
   /** Before a run: what the steps still to do will need, count by count (each one a button). */
@@ -75,7 +75,7 @@ export function StepsHead({ header, onPreflight }: { header: StepsHeader; onPref
         </View>
       ) : null}
       {header.line ? (
-        <Text testID="steps-progress" style={styles.sub}>
+        <Text testID="steps-progress" style={[styles.sub, header.tone === 'waiting' && styles.subWaiting]} numberOfLines={2}>
           {header.line}
         </Text>
       ) : null}
@@ -164,6 +164,8 @@ const useStyles = themedStyles((c) => ({
   pressed: { opacity: 0.6 },
   bar: { flexDirection: 'row', marginTop: 8 },
   sub: { fontSize: 13, color: c.muted, marginTop: 4 },
+  // What the run waits for (the headline says that it waits).
+  subWaiting: { color: c.text },
   preflight: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: 6 },
   part: { flexDirection: 'row', alignItems: 'center' },
   preflightText: { fontSize: 13, color: c.warningText },

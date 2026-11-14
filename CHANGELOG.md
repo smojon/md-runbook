@@ -30,6 +30,9 @@
   the background, never holds up a run, and is logged as a `report` event. The run summary
   format gets client `gate` and its `gate` field (still version 1). See
   [run reports from the gate](docs/features/signed-runbooks.md#run-reports-from-the-gate).
+- App: in Steps, a chapter with one step is one row, the heading with the step's name under it, as
+  in VS Code. While Run all waits, the header says what for (`Take it down now? Stop the lab`,
+  `Done by hand? …`, `Confirm …`, `Values to fill in: …`), not `100% · nothing left`.
 
 ## 0.23.0
 
