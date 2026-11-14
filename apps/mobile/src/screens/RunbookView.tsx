@@ -1752,12 +1752,31 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           : choice && host
             ? [{ id: 'run', label: choice.label, kind: 'primary', onPress: () => runSequence(choice.from) }]
             : [];
+  // While the run waits, the header's second line says what for, not the share and the time (at
+  // the teardown offered, "100% · nothing left": right, the teardown isn't a step, but unclear).
+  const stepName = (i: number): string => {
+    const c = cells[i];
+    return (c && stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId, headings[i])) || t.cellNumber(i + 1);
+  };
+  const waitingLine =
+    manualAsk !== undefined
+      ? t.notifyWaitsManual(manualAsk.text)
+      : asking !== undefined
+        ? t.stepsWaitsValues(asking.needs.map((n) => n.name).join(', '))
+        : confirming !== undefined
+          ? t.stepsWaitsConfirm(stepName(confirming.cellIndex))
+          : teardownOffer !== undefined
+            ? t.notifyWaitsTeardown(teardownOffer.labels.join(', '))
+            : undefined;
   const stepsHeader: StepsHeader = {
-    headline: waiting ? t.pinnedWaiting : progress ? runHeadline(progress, runningStep) : '',
+    headline: waiting ? t.stepsWaiting : progress ? runHeadline(progress, runningStep) : '',
     ...(waiting ? { tone: 'waiting' as const } : failedCell !== undefined ? { tone: 'failed' as const } : {}),
-    ...(estimate.fraction !== undefined && progress
-      ? { fraction: estimate.fraction, line: estimateLines(estimate, progress.pending, queued || running !== undefined).main }
-      : {}),
+    ...(estimate.fraction !== undefined && progress ? { fraction: estimate.fraction } : {}),
+    ...(waitingLine !== undefined
+      ? { line: waitingLine }
+      : estimate.fraction !== undefined && progress
+        ? { line: estimateLines(estimate, progress.pending, queued || running !== undefined).main }
+        : {}),
     actions: headActions,
     ...(notice && !wide ? { notice } : {}),
   };

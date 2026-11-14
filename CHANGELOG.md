@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- App: in Steps, a chapter with one step is one row, the heading with the step's name under it, as
+  in VS Code. While Run all waits, the header says what for (`Take it down now? Stop the lab`,
+  `Done by hand? …`, `Confirm …`, `Values to fill in: …`), not `100% · nothing left`.
+
 ## 0.23.0
 
 The Steps view in VS Code and the app, a team runbook library, whole-runbook signatures and run
