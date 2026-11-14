@@ -11,6 +11,7 @@ import { isCodeMeta } from '@md-runbook/core';
 import { stepLabel } from '@md-runbook/core/estimate';
 import { SECTION } from './config';
 import { META_KEY } from './outputs';
+import { isCallCopy } from './calls';
 import { RunPipeline } from './pipeline';
 import { notebookProgress } from './progress';
 import { onDidChangeWaiting, waitingIn } from './waiting';
@@ -51,20 +52,22 @@ export function endMessage(nb: vscode.NotebookDocument): { text: string; failedC
 
 export function registerNotifications(pipeline: RunPipeline, context: vscode.ExtensionContext): void {
   pipeline.observers.push({
-    onDidRunSequence: async (nb, runs) => {
-      if (runs.length < 2 || !enabled() || !lookingAway(nb)) return;
+    // Not awaited: the controller waits for its observers, and a notification can stay up for hours.
+    // A call's copy says nothing of its own: the calling cell reports on it.
+    onDidRunSequence: (nb, runs) => {
+      if (runs.length < 2 || !enabled() || !lookingAway(nb) || isCallCopy(nb.uri)) return;
       const m = endMessage(nb);
       if (!m) return;
       if (m.failed) {
-        const pick = await vscode.window.showWarningMessage(`md-runbook: ${m.text}`, 'Go to Step', 'Resume Run');
-        if (pick === 'Go to Step') await goTo(nb, m.failedCell);
-        if (pick === 'Resume Run') {
-          await goTo(nb, m.failedCell);
-          await vscode.commands.executeCommand('mdRunbook.resumeRun', nb.uri);
-        }
+        void vscode.window.showWarningMessage(`md-runbook: ${m.text}`, 'Go to Step', 'Resume Run').then(async (pick) => {
+          if (pick === 'Go to Step') await goTo(nb, m.failedCell);
+          if (pick === 'Resume Run') {
+            await goTo(nb, m.failedCell);
+            await vscode.commands.executeCommand('mdRunbook.resumeRun', nb.uri);
+          }
+        });
       } else {
-        const pick = await vscode.window.showInformationMessage(`md-runbook: ${m.text}`, 'Open');
-        if (pick === 'Open') await goTo(nb, undefined);
+        void vscode.window.showInformationMessage(`md-runbook: ${m.text}`, 'Open').then((pick) => (pick === 'Open' ? goTo(nb, undefined) : undefined));
       }
     },
   });

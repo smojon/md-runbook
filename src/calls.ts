@@ -32,6 +32,11 @@ interface Passed {
 
 const passed = new Map<string, Passed>();
 
+/** `uri` is the copy a runbook call made and runs (its caller reports on it). */
+export function isCallCopy(uri: vscode.Uri): boolean {
+  return passed.has(uri.toString());
+}
+
 /** A parameter the call that opened this copy passed (secrets.ts asks for the others). */
 export function passedParam(uri: vscode.Uri, name: string): string | undefined {
   return passed.get(uri.toString())?.params[name];
