@@ -214,6 +214,7 @@ params:
   - NAMESPACE        # asked, no default
   - REGION: eu-west-1
   - REPLICAS: "3"    # quotes are removed
+  - TARGET: staging  # Where to deploy. One of: staging, prod.
 ---
 ```
 
@@ -233,6 +234,14 @@ default `eu-west-1`, without the comment. To put `#` in a value, quote it (`- TA
 `- BACKUP: ""` is an empty default (the parameter is never asked for); `- BACKUP:` alone is no
 default. A
 value that is not understood (`mode: sometimes`) is ignored with a lint warning.
+
+A `params:` item's comment is its description: the launch form in VS Code shows it beside the
+field. A trailing `One of: a, b, c` in the comment (any case) lists the values allowed:
+`- TARGET: staging  # Where to deploy. One of: staging, prod.` gives the description
+`Where to deploy.` and the choices `staging` and `prod`, and the form shows a list to pick from.
+The list ends at the end of the comment or at a period followed by a space, so `1.2` can be a
+choice; `, or` and ` or ` separate too, and quotes around a choice are removed. The linter warns
+when a default is not one of its choices.
 
 `kube-context:` is a guard against the wrong cluster. Before each cell, `kubectl config
 current-context` runs where the cell would run: the session shell, or the app's SSH host,

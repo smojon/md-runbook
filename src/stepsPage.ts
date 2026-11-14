@@ -5,6 +5,9 @@
  * click, the hover and the keyboard focus survive the updates (every second while a step runs).
  * A step that waits for a question asked on its cell shows that question's answers as buttons.
  * With no runbook: a short empty state with Open Sample Runbook and Open as Runbook.
+ * Before a Run All, the launch form (launch.ts) stands in for the list: a <form> with the
+ * parameters and inputs to fill in, the secrets to set, the risky steps, the steps by hand, the
+ * time and the context; Enter or Start runs, Escape or Back goes back to the list.
  *
  * The script is in a template string: no backslashes, no backticks and no `${` in it.
  */
@@ -97,6 +100,29 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
   .empty { color: var(--vscode-descriptionForeground); margin: 2px 0 0 2px; }
   .empty p { margin: 0 0 10px; }
   .empty .btn { display: block; width: 100%; margin-bottom: 6px; }
+  /* The launch form (Run All…), in place of the list. */
+  .launch { margin: 0 0 0 2px; }
+  .lhead { display: flex; align-items: center; gap: 4px; margin: 0 0 2px -4px; }
+  .lhead h2 { font-size: 1em; font-weight: 600; margin: 0; }
+  .launch fieldset { border: none; padding: 0; margin: 12px 0 0; min-width: 0; }
+  .launch legend { padding: 0; font-weight: 600; margin-bottom: 4px; }
+  .field { margin: 0 0 10px; }
+  .field label { display: block; font-family: var(--vscode-editor-font-family); font-size: .95em; }
+  .desc { color: var(--vscode-descriptionForeground); font-size: .92em; margin: 1px 0 3px; }
+  .field input, .field select { box-sizing: border-box; width: 100%; padding: 3px 6px; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; }
+  .field select { color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border-color: var(--vscode-dropdown-border, transparent); }
+  .field input::placeholder { color: var(--vscode-input-placeholderForeground); }
+  .field input:focus, .field select:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+  .field [aria-invalid="true"] { border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)); }
+  .ferr, .lerr { color: var(--vscode-errorForeground); font-size: .92em; margin-top: 3px; }
+  .litems { list-style: none; margin: 0; padding: 0; }
+  .litems li { margin: 0 0 8px; }
+  .srow { display: flex; align-items: center; gap: 6px; }
+  .srow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--vscode-editor-font-family); font-size: .95em; }
+  .srow .btn { padding: 1px 8px; font-size: .92em; }
+  .cmd { margin: 3px 0 0; padding: 4px 6px; white-space: pre-wrap; word-break: break-all; font-family: var(--vscode-editor-font-family); font-size: .85em; background: var(--vscode-textCodeBlock-background); border-radius: 2px; }
+  .lfoot { margin-top: 14px; }
+  .lfoot .btn { display: inline-flex; align-items: center; gap: 4px; }
   /* High contrast: an outlined track (a filled one looks like a full bar), the cells on screen as a left border. */
   body.vscode-high-contrast .barwrap .track, body.vscode-high-contrast-light .barwrap .track { background: transparent; border: 1px solid var(--vscode-contrastBorder); }
   body.vscode-high-contrast .rail::before, body.vscode-high-contrast-light .rail::before { background: transparent; width: 0; left: 9px; border-left: 1px dashed var(--vscode-contrastBorder); border-radius: 0; }
@@ -123,6 +149,20 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
   </div>
   <div id="rail" class="rail" role="tree" aria-label="Steps of the runbook"><div id="railfill" class="railfill"></div></div>
 </div>
+<form id="launch" class="launch" hidden novalidate aria-labelledby="lTitle">
+  <div class="lhead">
+    <button type="button" class="act codicon codicon-arrow-left" id="lBack" title="Back to the steps (Escape)" aria-label="Back to the steps"></button>
+    <h2 id="lTitle">Run All</h2>
+  </div>
+  <div id="lSub" class="sub"></div>
+  <div id="lBody"></div>
+  <div id="lError" class="lerr" role="alert" hidden></div>
+  <div class="hacts lfoot">
+    <button type="submit" class="btn" id="lStart"><span class="codicon codicon-run-all" aria-hidden="true"></span>Start</button>
+    <button type="button" class="btn secondary" id="lCancel">Back</button>
+  </div>
+  <div id="lNote" class="pre" hidden></div>
+</form>
 <script nonce="${n}">
   const vscode = acquireVsCodeApi();
   const post = (msg) => vscode.postMessage(msg);
@@ -134,6 +174,8 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
   /** Set a text (and hide the element when there is none), only when it changed. */
   const put = (node, text) => { const t = text || ''; if (node.textContent !== t) node.textContent = t; node.hidden = !t; };
   const attr = (node, name, value) => { if (value === undefined) node.removeAttribute(name); else if (node.getAttribute(name) !== value) node.setAttribute(name, value); };
+  // A line break (a backslash escape would become a real one in the template string).
+  const NL = String.fromCharCode(10);
   // State in a symbol too, not colour alone (the running step has a spinning icon beside its name).
   const GLYPH = { done: '✓', skipped: '↷', failed: '✕', running: '', waiting: '❚❚', pending: '' };
   const STATE = { done: 'done', skipped: 'skipped', failed: 'failed', running: 'running', waiting: 'waiting for you', pending: 'to do' };
@@ -221,7 +263,7 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
       put(row.querySelector('.needs'), r.needs ? 'needs ' + r.needs.join(', ') : '');
       put(row.querySelector('.err'), r.error);
       // The last lines it printed, in full on hover.
-      attr(row.querySelector('.err'), 'title', r.errors && r.errors.length > 1 ? r.errors.join('\n') : undefined);
+      attr(row.querySelector('.err'), 'title', r.errors && r.errors.length > 1 ? r.errors.join(NL) : undefined);
       // A question asked on the cell (Done / Skip / Stop, the teardown offer): its buttons, always shown, keys 1, 2, 3.
       const answers = r.answers || [];
       const ans = row.querySelector('.answers');
@@ -310,7 +352,8 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
   function draw(m) {
     model = m;
     emptyEl.hidden = true;
-    main.hidden = false;
+    // The launch form stands in for the list while it is open; the list keeps up behind it.
+    main.hidden = !!launch;
     // Say a change of state once (failed, waiting, done), not the clock every second.
     if (m.state !== lastState && lastState !== undefined) live.textContent = m.headline;
     lastState = m.state;
@@ -364,9 +407,216 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
 
   function drawEmpty() {
     model = undefined;
+    if (launch) closeLaunch(false);
     main.hidden = true;
     emptyEl.hidden = false;
   }
+
+  // The launch form (Run All…): built when it opens; sent again (a secret just set), the same
+  // fields stay as they are, with what was typed, and only the secrets' rows change.
+  const launchEl = $('launch'), lSub = $('lSub'), lBody = $('lBody'), lError = $('lError'), lNote = $('lNote');
+  let launch;
+  let launchKey;
+  const secretRows = new Map();
+  const stepName = (x) => (x.step !== undefined ? 'Step ' + x.step + ' · ' : '') + x.label;
+
+  /** A labelled field: the name, its description, the control, and a line for its error. */
+  function field(kind, name, desc, control) {
+    const id = 'f-' + kind + '-' + name;
+    const wrap = el('div', 'field');
+    const label = el('label', '', name);
+    label.htmlFor = id;
+    control.id = id;
+    control.name = kind + ':' + name;
+    wrap.append(label);
+    const by = [];
+    if (desc) {
+      const d = el('div', 'desc', desc);
+      d.id = 'd-' + kind + '-' + name;
+      by.push(d.id);
+      wrap.append(d);
+    }
+    const err = el('div', 'ferr');
+    err.id = 'e-' + kind + '-' + name;
+    err.hidden = true;
+    by.push(err.id);
+    control.setAttribute('aria-describedby', by.join(' '));
+    wrap.append(control, err);
+    return wrap;
+  }
+
+  function section(title, note, children) {
+    const fs = el('fieldset');
+    fs.append(el('legend', '', title));
+    if (note) fs.append(el('div', 'desc', note));
+    fs.append(...children);
+    return fs;
+  }
+
+  function paramField(p) {
+    let control;
+    const ok = p.value !== undefined && (!p.choices || p.choices.indexOf(p.value) >= 0);
+    if (p.choices) {
+      control = el('select');
+      if (!ok) { const none = el('option', '', 'Choose one…'); none.value = ''; control.append(none); }
+      for (const c of p.choices) { const o = el('option', '', c); o.value = c; control.append(o); }
+      control.value = ok ? p.value : '';
+    } else {
+      control = el('input');
+      control.type = 'text';
+      control.value = ok ? p.value : '';
+    }
+    const from = p.from === 'session' ? 'set for this session' : p.from === 'last' ? 'last used' : '';
+    const def = p.default !== undefined && p.from !== 'default' ? 'default ' + (p.default === '' ? '(empty)' : p.default) : '';
+    return field('param', p.name, [p.description || '', def, from].filter(Boolean).join(' · '), control);
+  }
+
+  function inputField(i) {
+    const control = el('input');
+    control.type = i.secret ? 'password' : 'text';
+    if (i.secret) control.placeholder = i.set ? 'Set for this session: empty keeps it' : 'Empty: asked when the run starts';
+    else if (i.value !== undefined) control.value = i.value;
+    return field('input', i.name, i.secret ? 'Secret: not shown, not remembered' : '', control);
+  }
+
+  function secretRow(s) {
+    const li = el('li', 'srow');
+    const icon = el('span', 'codicon codicon-key');
+    icon.setAttribute('aria-hidden', 'true');
+    const state = el('span', 'desc');
+    const set = el('button', 'btn secondary', 'Set…');
+    set.type = 'button';
+    set.title = 'Set Secret ' + s.name + ' (stored in the OS keychain)';
+    set.setAttribute('aria-label', 'Set secret ' + s.name);
+    set.addEventListener('click', () => post({ launchSecret: s.name }));
+    li.append(icon, el('span', 'name', s.name), state, set);
+    li.stateEl = state;
+    li.setBtn = set;
+    return li;
+  }
+
+  function updateSecret(li, s) {
+    put(li.stateEl, s.stored ? (s.askAllow ? 'stored · the run asks to allow it here' : 'stored') : 'not stored');
+    li.setBtn.hidden = s.stored;
+  }
+
+  function stepLink(x) {
+    const a = el('a', 'link', stepName(x));
+    a.href = '#';
+    a.title = 'Go to the step';
+    a.addEventListener('click', (ev) => { ev.preventDefault(); post({ go: x.index }); });
+    return a;
+  }
+
+  /** Build the form for a new launch model, or update the one shown. */
+  function drawLaunch(l) {
+    if (launch && launch.uri !== l.uri) closeLaunch(false);
+    const first = !launch;
+    launch = l;
+    const key = JSON.stringify([l.uri, l.params.map((p) => [p.name, p.choices]), l.inputs.map((i) => [i.name, i.secret]), l.secrets.map((s) => s.name), l.risky.map((r) => [r.index, r.lines]), l.byHand.map((b) => b.index)]);
+    if (key !== launchKey) {
+      // Typed values survive a new build of the same fields.
+      const typed = new Map();
+      for (const c of launchEl.querySelectorAll('input, select')) if (c.name) typed.set(c.name, c.value);
+      launchKey = key;
+      secretRows.clear();
+      const parts = [];
+      if (l.params.length) parts.push(section('Parameters', '', l.params.map(paramField)));
+      if (l.inputs.length) parts.push(section('Inputs', '', l.inputs.map(inputField)));
+      if (l.secrets.length) {
+        const ul = el('ul', 'litems');
+        for (const s of l.secrets) { const li = secretRow(s); secretRows.set(s.name, li); ul.append(li); }
+        parts.push(section('Secrets', 'From the OS keychain, never shown.', [ul]));
+      }
+      if (l.risky.length) {
+        const ul = el('ul', 'litems');
+        for (const r of l.risky) {
+          const li = el('li');
+          li.append(stepLink(r));
+          if (r.match) li.append(el('div', 'desc', 'matches “' + r.match + '”'));
+          li.append(el('pre', 'cmd', r.lines.join(NL) + (r.more ? NL + '… ' + r.more + ' more line' + (r.more === 1 ? '' : 's') : '')));
+          ul.append(li);
+        }
+        parts.push(section('Risky steps', 'Each one still asks for your confirmation when it runs.', [ul]));
+      }
+      if (l.byHand.length) {
+        const ul = el('ul', 'litems');
+        for (const b of l.byHand) { const li = el('li'); li.append(stepLink(b)); ul.append(li); }
+        parts.push(section('Steps by hand', l.byHandWaits ? 'The run waits at each one until you tick it, skip it or stop.' : 'Reminders: the run goes on past them (manual-steps: continue).', [ul]));
+      }
+      const where = (l.context || []).map((c) => c.name + ': ' + c.value);
+      if (l.kubeContext) where.push('kube-context: ' + l.kubeContext + ' (checked before each step)');
+      if (l.contextLater) where.push('Recorded when the first step runs.');
+      if (where.length) parts.push(section('Context', '', where.map((w) => el('div', 'desc', w))));
+      if (!l.params.length && !l.inputs.length && !l.secrets.length) parts.unshift(el('p', 'desc', 'Nothing to type or set.'));
+      lBody.replaceChildren(...parts);
+      for (const c of launchEl.querySelectorAll('input, select')) if (typed.has(c.name)) c.value = typed.get(c.name);
+    }
+    for (const s of l.secrets) { const li = secretRows.get(s.name); if (li) updateSecret(li, s); }
+    put(lSub, [l.title, l.time].filter(Boolean).join(' · '));
+    const missing = l.secrets.filter((s) => !s.stored).map((s) => s.name);
+    put(lNote, missing.length ? (missing.length === 1 ? 'Secret ' + missing[0] + ' is not stored: the run asks for it when it gets there.' : missing.length + ' secrets are not stored: the run asks for each when it gets there.') : '');
+    if (first) {
+      put(lError, '');
+      emptyEl.hidden = true;
+      main.hidden = true;
+      launchEl.hidden = false;
+      live.textContent = 'Run All: check the values, then Start.';
+      const go = launchEl.querySelector('#lBody input, #lBody select') || $('lStart');
+      go.focus();
+    }
+  }
+
+  /** Close the form (Back, Escape, Start, or the extension's word), back to the list. */
+  function closeLaunch(tell) {
+    if (!launch) return;
+    launch = undefined;
+    launchKey = undefined;
+    secretRows.clear();
+    lBody.replaceChildren();
+    launchEl.hidden = true;
+    if (tell) post({ launchBack: true });
+    if (model) {
+      main.hidden = false;
+      const stop = rail.querySelector('.row[tabindex="0"]');
+      if (stop) stop.focus();
+    } else emptyEl.hidden = false;
+  }
+
+  /** A field's error, or none; the first wrong field gets the focus. */
+  function fieldError(name, text) {
+    const c = launchEl.querySelector('[name="' + name + '"]');
+    if (!c) return false;
+    const err = $('e-' + name.replace(':', '-'));
+    attr(c, 'aria-invalid', text ? 'true' : undefined);
+    if (err) put(err, text);
+    return !!text;
+  }
+
+  launchEl.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    if (!launch) return;
+    const params = {}, inputs = {};
+    let wrong;
+    for (const p of launch.params) {
+      const c = launchEl.querySelector('[name="param:' + p.name + '"]');
+      if (!c) continue;
+      const bad = p.choices && p.choices.indexOf(c.value) < 0 ? 'Choose one of: ' + p.choices.join(', ') : '';
+      if (fieldError('param:' + p.name, bad) && !wrong) wrong = c;
+      params[p.name] = c.value;
+    }
+    for (const i of launch.inputs) {
+      const c = launchEl.querySelector('[name="input:' + i.name + '"]');
+      if (c) inputs[i.name] = c.value;
+    }
+    if (wrong) { put(lError, 'Check the values marked above.'); wrong.focus(); return; }
+    put(lError, '');
+    post({ launchStart: { params, inputs } });
+  });
+  launchEl.addEventListener('input', (ev) => { if (ev.target.name && ev.target.getAttribute('aria-invalid')) fieldError(ev.target.name, ''); });
+  launchEl.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); closeLaunch(true); } });
+  $('lBack').addEventListener('click', () => closeLaunch(true));
+  $('lCancel').addEventListener('click', () => closeLaunch(true));
 
   // Up/Down (Home/End) move between rows; Enter goes to the row's cell; R, F, D, S, U and Space act on its step.
   rail.addEventListener('keydown', (e) => {
@@ -398,7 +648,18 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
       post({ go: row.r.index });
     }
   });
-  window.addEventListener('message', (e) => { if (e.data && e.data.model) draw(e.data.model); else if (e.data && e.data.empty) drawEmpty(); });
+  window.addEventListener('message', (e) => {
+    const d = e.data || {};
+    if (d.model) draw(d.model);
+    else if (d.empty) drawEmpty();
+    else if (d.launch) drawLaunch(d.launch);
+    else if (d.launchClose) closeLaunch(false);
+    else if (d.launchError) {
+      // Start refused a value (checked again there): say which, keep the form.
+      put(lError, d.launchError.error);
+      if (d.launchError.field && fieldError(d.launchError.field, d.launchError.error)) launchEl.querySelector('[name="' + d.launchError.field + '"]').focus();
+    }
+  });
   post({ ready: true });
 </script></body></html>`;
 }

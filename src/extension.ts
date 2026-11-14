@@ -113,7 +113,19 @@ export function activate(context: vscode.ExtensionContext): void {
   registerOpenHint(context);
   // What a step will need before it runs: the Steps view's preflight line, and the agent-mode tools.
   const preflight: PreflightSources = { confirmation: (cell, source) => safety.confirmation(cell, source), values: (nb, source) => secrets.values(nb, source) };
-  registerStepsView(context, pipeline, preflight);
+  registerStepsView(
+    context,
+    pipeline,
+    preflight,
+    // The launch form before a Run All (launch.ts).
+    {
+      confirmation: (cell, source) => safety.confirmation(cell, source),
+      launchValues: (nb, cells) => secrets.launchValues(nb, cells),
+      setSessionValues: (nb, values) => secrets.setSessionValues(nb, values),
+      setSecret: (name) => secrets.setSecret(name),
+      context: (nb) => safety.context(nb),
+    },
+  );
   registerNotifications(pipeline, context);
   registerLineRuns(context, controller, { safety, secrets });
   registerAutoSave(pipeline);

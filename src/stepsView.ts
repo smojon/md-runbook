@@ -17,7 +17,7 @@ import { SECTION } from './config';
 import { rollbackOf } from './failedActions';
 import { notifiesOnStart, onDidChangeMarks, pausesBefore } from './stepMarks';
 import { lastGreenLine, onDidChangeRuns, runsOf } from './runs';
-import { currentRunbook, editorOf, onDidChangeCurrentRunbook, showRunbook } from './currentRunbook';
+import { currentRunbook, editorOf, inFront, onDidChangeCurrentRunbook, showRunbook } from './currentRunbook';
 import { isCallLanguage } from '@md-runbook/core/call';
 import { cellPart } from './controller';
 import { blockEstimate, lastDuration, notebookEstimateSteps, notebookPartStates, runningSince } from './estimates';
@@ -25,8 +25,11 @@ import { META_KEY, outputMeta } from './outputs';
 import { isManualMark } from '@md-runbook/core/progress';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { cellAttrs, notebookHeadings, notebookProgress, progressStatus, selectRunbookKernel } from './progress';
-import { RunPipeline } from './pipeline';
+import { RunPipeline, WillRun } from './pipeline';
 import { isTestMode } from './secrets';
+import { isCallCopy } from './calls';
+import { LaunchModel, LaunchSources, launchModel, markStartedFromForm, startValues, takeStartedFromForm } from './launch';
+import { isRunAll } from './session';
 import { stepsPage } from './stepsPage';
 import { setTaskBox } from './taskLists';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -366,16 +369,30 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
   };
 }
 
+/**
+ * Run All opens the launch form (mdRunbook.execution.launchForm). Under the test runner only when
+ * a test turns it on: the other tests run whole runbooks and answer the boxes.
+ */
+function launchFormOn(context: vscode.ExtensionContext): boolean {
+  const c = vscode.workspace.getConfiguration(SECTION);
+  if (!isTestMode(context)) return c.get<boolean>('execution.launchForm', true);
+  const i = c.inspect<boolean>('execution.launchForm');
+  return (i?.workspaceValue ?? i?.globalValue) === true;
+}
+
 class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly sources?: PreflightSources,
+    private readonly launchSources?: LaunchSources,
   ) {}
   private view: vscode.WebviewView | undefined;
   private timer: NodeJS.Timeout | undefined;
   private ticker: NodeJS.Timeout | undefined;
   /** The last model posted (tests read it). */
   last: StepsModel | undefined;
+  /** The runbook the launch form is open for (its URI), shown in place of the list. */
+  private launchFor: string | undefined;
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
@@ -403,8 +420,18 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
         openAsRunbook?: unknown;
         answer?: unknown;
         cell?: unknown;
+        launchStart?: unknown;
+        launchBack?: unknown;
+        launchSecret?: unknown;
       };
-      if (msg.ready) this.refresh();
+      if (msg.ready) {
+        this.refresh();
+        if (this.launchFor) this.postLaunch();
+      }
+      // The launch form: Start, Back (or Escape), and a secret's Set.
+      if (msg.launchStart !== undefined) void this.startLaunch(msg.launchStart);
+      if (msg.launchBack === true) this.launchFor = undefined;
+      if (typeof msg.launchSecret === 'string') void this.setLaunchSecret(msg.launchSecret);
       if (typeof msg.answer === 'string' && typeof msg.cell === 'number') {
         // A button of the question asked on that cell (waiting.ts): the same as the one on the cell.
         const nb = this.notebook();
@@ -493,6 +520,89 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
     if (cell?.kind === vscode.NotebookCellKind.Markup) await setTaskBox(cell, offset, checked);
   }
 
+  /** The launch form is open for the runbook the view shows. */
+  launchOpen(): boolean {
+    return this.launchFor !== undefined && this.launchFor === this.notebook()?.uri.toString();
+  }
+
+  /** The launch form's content for the runbook the view shows (launch.ts). */
+  launchModel(): LaunchModel | undefined {
+    const nb = this.notebook();
+    return nb && this.launchSources ? launchModel(nb, stepsModel(nb).rows, this.launchSources) : undefined;
+  }
+
+  /** Open the launch form for `nb` in place of the list, bringing the view to front. */
+  async openLaunch(nb: vscode.NotebookDocument): Promise<void> {
+    if (!this.launchSources) return;
+    this.launchFor = nb.uri.toString();
+    await vscode.commands.executeCommand(`${STEPS_VIEW}.focus`);
+    this.postLaunch();
+  }
+
+  /** Send the form (again: a secret just set shows as stored; the fields keep what was typed). */
+  private postLaunch(): void {
+    const m = this.launchModel();
+    if (!m || m.uri !== this.launchFor) return this.closeLaunch();
+    void this.view?.webview.postMessage({ launch: m });
+  }
+
+  private closeLaunch(): void {
+    if (this.launchFor === undefined) return;
+    this.launchFor = undefined;
+    void this.view?.webview.postMessage({ launchClose: true });
+  }
+
+  /** The form's Set for a secret not stored yet: Set Secret with the name given, then the form again. */
+  private async setLaunchSecret(name: string): Promise<void> {
+    const m = this.launchModel();
+    if (!m || !this.launchSources || !m.secrets.some((s) => s.name === name)) return;
+    await this.launchSources.setSecret(name);
+    if (this.launchFor) this.postLaunch();
+  }
+
+  /**
+   * The form's Start: its values go into this session's values (secrets.ts), then Run All runs as
+   * the view's Run All does, and asks for none of them again. Undefined, or why it didn't start.
+   */
+  async startLaunch(sent: unknown): Promise<string | undefined> {
+    const nb = this.notebook();
+    const m = this.launchModel();
+    if (!nb || !m || !this.launchSources) return 'no runbook';
+    if (this.launchFor !== undefined && this.launchFor !== m.uri) return 'the form is for another runbook';
+    const values = startValues(m, sent);
+    if ('error' in values) {
+      void this.view?.webview.postMessage({ launchError: values });
+      return values.error;
+    }
+    this.launchSources.setSessionValues(nb, values);
+    this.closeLaunch();
+    markStartedFromForm(nb);
+    await this.run(0, Number.MAX_SAFE_INTEGER);
+    return undefined;
+  }
+
+  /** The Steps view's Run All: the launch form when it has something to show (the setting on), else the run. */
+  async runAll(): Promise<void> {
+    const nb = this.notebook();
+    if (nb && launchFormOn(this.context) && this.launchModel()?.needed) return this.openLaunch(nb);
+    if (nb) markStartedFromForm(nb); // nothing to ask: the toolbar's hook needn't look again
+    await this.run(0, Number.MAX_SAFE_INTEGER);
+  }
+
+  /**
+   * Before any run (the first observer): a Run All from the notebook's toolbar opens the launch
+   * form instead, when the runbook has a value to type, a secret to set or a risky step. Not for
+   * a run the form or the view started, a range or a single cell, a runbook call's copy, or a
+   * runbook that isn't in front.
+   */
+  beforeRun(nb: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[]): WillRun {
+    if (takeStartedFromForm(nb)) return;
+    if (cells.length < 2 || !launchFormOn(this.context) || !inFront(nb) || isCallCopy(nb.uri) || !isRunAll(nb, cells) || !this.launchSources) return;
+    if (!launchModel(nb, stepsModel(nb).rows, this.launchSources).needed) return;
+    void this.openLaunch(nb);
+    return { cancel: 'md-runbook: check the launch form in the Steps view, then Start' };
+  }
+
   /** Redraw soon (changes come in bursts), and every second while a block runs. */
   refresh(): void {
     this.timer ??= setTimeout(() => {
@@ -517,6 +627,8 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
     if (this.view) this.view.description = nb ? path.posix.basename(nb.uri.path) : undefined;
     const m = this.model();
     this.last = m;
+    // The form is for one runbook: another one in the view closes it.
+    if (this.launchFor !== undefined && m?.uri !== this.launchFor) this.closeLaunch();
     const running = m?.state === 'running' || m?.state === 'waiting';
     setContext('mdRunbook.runbookRunning', running);
     setContext('mdRunbook.canResume', !!m?.canResume);
@@ -549,8 +661,10 @@ async function openAsRunbook(): Promise<void> {
   if (uri) await vscode.commands.executeCommand('mdRunbook.openAsRunbook', uri);
 }
 
-export function registerStepsView(context: vscode.ExtensionContext, pipeline?: RunPipeline, sources?: PreflightSources): void {
-  const view = new StepsView(context, sources);
+export function registerStepsView(context: vscode.ExtensionContext, pipeline?: RunPipeline, sources?: PreflightSources, launchSources?: LaunchSources): void {
+  const view = new StepsView(context, sources, launchSources);
+  // First of all, before any value is asked up front: the toolbar's Run All opens the launch form.
+  pipeline?.observers.unshift({ onWillRunSequence: (nb, cells) => view.beforeRun(nb, cells) });
   // Shown once, on the first Run All, so it's found; not again (the icon stays in the activity bar).
   pipeline?.observers.push({
     onWillRunSequence: async (_nb, cells) => {
@@ -578,12 +692,22 @@ export function registerStepsView(context: vscode.ExtensionContext, pipeline?: R
       setContext('mdRunbook.selectionIsCall', !!cell && cell.kind === vscode.NotebookCellKind.Code && isCallLanguage(cell.document.languageId));
     }),
     vscode.commands.registerCommand('mdRunbook.showSteps', () => vscode.commands.executeCommand(`${STEPS_VIEW}.focus`)),
-    vscode.commands.registerCommand('mdRunbook.steps.runAll', async () => {
-      await view.run(0, Number.MAX_SAFE_INTEGER);
+    vscode.commands.registerCommand('mdRunbook.steps.runAll', () => view.runAll()),
+    // Run All…: the launch form, whatever the setting says.
+    vscode.commands.registerCommand('mdRunbook.launch', async () => {
+      const nb = currentRunbook();
+      if (!nb) return void vscode.window.showInformationMessage('md-runbook: open a runbook first.');
+      await view.openLaunch(nb);
     }),
     vscode.commands.registerCommand('mdRunbook.steps.stop', () => vscode.commands.executeCommand('notebook.cancelExecution')),
-    // For tests: the view's model for the active runbook.
+    // For tests: the view's model for the active runbook, and the launch form's (with whether it is open).
     vscode.commands.registerCommand('mdRunbook._steps', () => view.model()),
+    vscode.commands.registerCommand('mdRunbook._launchModel', () => {
+      const m = view.launchModel();
+      return m ? { ...m, open: view.launchOpen() } : undefined;
+    }),
   );
+  // For tests: the form's Start with these values (the page sends the same message).
+  if (isTestMode(context)) context.subscriptions.push(vscode.commands.registerCommand('mdRunbook._launchStart', (values: unknown) => view.startLaunch(values)));
   view.refresh();
 }

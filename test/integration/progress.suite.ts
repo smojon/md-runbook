@@ -2,7 +2,7 @@
 import { strict as assert } from 'node:assert';
 import * as vscode from 'vscode';
 import type { Progress } from '@md-runbook/core';
-import { LANG, Test, answerOnCells, closeAll, openRunbook, outputText, read, runCells, selectKernel, step, waitFor, waitForRun, writeFile } from './suite';
+import { LANG, Test, answerOnCells, closeAll, openRunbook, outputText, read, runCells, selectKernel, setConfig, step, waitFor, waitForRun, writeFile } from './suite';
 
 export const tests: Test[] = [];
 const test = (name: string, fn: () => Promise<void>): void => void tests.push({ name, fn });
@@ -286,6 +286,96 @@ test('Steps view preflight: what each step will need, and a summary before a run
     { kind: 'byHand', text: '1 step by hand', index: 3 },
   ]);
   await closeAll();
+});
+
+test('the launch form: what a Run All needs; the toolbar Run All opens it; Start runs without asking', async () => {
+  const uri = writeFile(
+    'launch-form.md',
+    '---\nparams:\n  - LF_TARGET: staging  # Where to deploy. One of: staging, prod.\nmanual-steps: continue\n---\n\n# Launch\n\n' +
+      `\`\`\`${LANG} name="Deploy"\necho "target=\${param:LF_TARGET} who=\${input:LF_WHO}"\n\`\`\`\n\n- [ ] Tell the team\n\n` +
+      `\`\`\`${LANG} name="Clean up"\necho "delete old \${secret:LF_TOKEN}"\n\`\`\`\n`,
+  );
+  await vscode.commands.executeCommand('mdRunbook._test.deleteSecret', 'LF_TOKEN');
+  const editor = await openRunbook(uri);
+  const code = editor.notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
+  type Launch = {
+    params: { name: string; description?: string; choices?: string[]; default?: string; value?: string; from?: string }[];
+    inputs: { name: string; secret: boolean }[];
+    secrets: { name: string; stored: boolean }[];
+    risky: { label: string; match: string; lines: string[] }[];
+    byHand: { label: string }[];
+    byHandWaits: boolean;
+    needed: boolean;
+    open: boolean;
+  };
+  const form = async (): Promise<Launch> => (await vscode.commands.executeCommand<Launch>('mdRunbook._launchModel'))!;
+  const waitingNow = async (): Promise<(string | undefined)[]> => (await vscode.commands.executeCommand<(string | undefined)[]>('mdRunbook._waiting')) ?? [];
+  const waitUntil = async (what: string, check: () => Promise<boolean>, ms: number): Promise<void> => {
+    const end = Date.now() + ms;
+    while (!(await check())) {
+      if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  try {
+    const m = await form();
+    const p = m.params[0]!;
+    assert.deepEqual([m.params.length, p.name, p.description, p.choices, p.default], [1, 'LF_TARGET', 'Where to deploy.', ['staging', 'prod'], 'staging']);
+    // The default, or the value last used (kept in the workspace, from an earlier run of the suite).
+    assert.ok(p.value === 'staging' || (p.from === 'last' && p.value !== undefined), JSON.stringify(p));
+    assert.deepEqual(m.inputs.map((i) => [i.name, i.secret]), [['LF_WHO', false]]);
+    assert.deepEqual(m.secrets, [{ name: 'LF_TOKEN', stored: false }]);
+    assert.deepEqual(
+      m.risky.map((r) => [r.label, r.match, r.lines[0]]),
+      [['Clean up', 'delete', 'echo "delete old ${secret:LF_TOKEN}"']],
+    );
+    assert.deepEqual(m.byHand.map((b) => b.label), ['Tell the team']);
+    assert.equal(m.byHandWaits, false);
+    assert.equal(m.needed, true);
+    assert.equal(m.open, false);
+
+    // The toolbar's Run All (here a run of every cell) opens the form instead of running.
+    await setConfig('execution.launchForm', true);
+    await runCells(editor, 0, editor.notebook.cellCount);
+    await waitUntil('the form to open', async () => (await form()).open, 10_000);
+    assert.equal(code[0]!.outputs.length, 0, 'nothing ran');
+    assert.ok((await waitingNow()).every((w) => w === undefined), 'no box was opened');
+
+    // Start checks a parameter with choices.
+    const refused = await vscode.commands.executeCommand<string | undefined>('mdRunbook._launchStart', { params: { LF_TARGET: 'qa' }, inputs: { LF_WHO: 'ops' } });
+    assert.equal(refused, 'LF_TARGET must be one of: staging, prod');
+    assert.equal((await form()).open, true, 'the form stays open');
+
+    await vscode.commands.executeCommand('mdRunbook._test.setSecret', 'LF_TOKEN', 'lf-secret-value-123');
+    assert.deepEqual((await form()).secrets, [{ name: 'LF_TOKEN', stored: true }]);
+    // The risky step's confirmation is not the form's business: switched off here, to see that nothing else asks.
+    await setConfig('execution.confirm', 'never');
+    const started = vscode.commands.executeCommand<string | undefined>('mdRunbook._launchStart', { params: { LF_TARGET: 'prod' }, inputs: { LF_WHO: 'ops' } });
+    const asked = new Set<string>();
+    await waitUntil(
+      'both steps to run',
+      async () => {
+        for (const w of await waitingNow()) if (w !== undefined) asked.add(w);
+        return /target=/.test(outputText(code[0]!)) && /delete old/.test(outputText(code[1]!));
+      },
+      30_000,
+    );
+    await waitForRun(code[1]!);
+    assert.equal(await started, undefined);
+    assert.deepEqual([...asked], [], 'the run asked nothing');
+    assert.equal(code[0]!.executionSummary?.success, true, outputText(code[0]!));
+    assert.match(outputText(code[0]!), /target=prod who=ops/);
+    assert.match(outputText(code[1]!), /delete old \[REDACTED\]/);
+    const after = await form();
+    assert.equal(after.open, false);
+    assert.deepEqual([after.params[0]?.value, after.params[0]?.from], ['prod', 'session']);
+  } finally {
+    await setConfig('execution.launchForm', undefined);
+    await setConfig('execution.confirm', undefined);
+    await vscode.commands.executeCommand('mdRunbook._test.deleteSecret', 'LF_TOKEN');
+    await vscode.commands.executeCommand('mdRunbook.resetInputs');
+    await closeAll();
+  }
 });
 
 test('a run stays in the status bar while another file is in front, named, and a click goes back', async () => {

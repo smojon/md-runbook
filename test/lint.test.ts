@@ -100,6 +100,14 @@ describe('lintRunbook', () => {
     ]);
   });
 
+  it('front matter params: a default that is not one of its choices', () => {
+    const md = (items: string): string => `---\nparams:\n${items}---\n\n` + fence('bash', 'echo ${param:NS} ${param:SIZE}');
+    assert.deepEqual(messages(md('  - NS: staging  # Where. One of: staging, prod.\n  - SIZE  # One of: s, m\n')), []);
+    assert.deepEqual(messages(md('  - NS: stage  # Where. One of: staging, prod.\n  - SIZE: m\n')), [
+      '3 warning: front matter params: the default of NS, "stage", is not one of its choices (staging, prod)',
+    ]);
+  });
+
   it('formats problems as file:line: severity: message', () => {
     assert.equal(formatProblem('r.md', { severity: 'error', message: 'boom', line: 4 }), 'r.md:5: error: boom');
   });

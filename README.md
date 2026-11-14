@@ -393,6 +393,7 @@ extension is also disabled in untrusted workspaces (Restricted Mode).
 | `mdRunbook.redaction.patterns` | `[]` | Extra regexes (strings or `{ pattern, flags }`). |
 | `mdRunbook.redaction.applyToLiveOutput` | `true` | Also redact the output shown in the editor. |
 | `mdRunbook.execution.stopOnFailure` | `true` | Run All stops at the first failed cell. |
+| `mdRunbook.execution.launchForm` | `true` | Run All first opens the launch form in the Steps view when the runbook has a parameter, an input, a secret not stored or a risky step. Off: Run All asks for the values in boxes. |
 | `mdRunbook.execution.followRun` | `true` | Run All scrolls the cell about to run into view while you follow it (scroll away to stop). |
 | `mdRunbook.notifications.enabled` | `true` | A notification when a run ends or waits for you while you're in another editor or window. A run of one cell notifies after `notifications.afterSeconds` (30); `notifications.system` (off) also uses the system's notification centre. |
 | `mdRunbook.estimates.learn` | `true` | A block without `estimate=` learns its usual time from its runs that passed (`est. ~1m15s`), kept on this machine. |

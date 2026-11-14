@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { dotenvSecrets, envRef, findRefs, isRedactableValue, looksLikeSecretValue, looksSecret, looksSecretKey, parseDotenv, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
+import { dotenvSecrets, envRef, findRefs, isRedactableValue, looksLikeSecretValue, looksSecret, looksSecretKey, paramComment, parseDotenv, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 
 describe('variable references', () => {
   it('finds unique references in order, with secrecy', () => {
@@ -56,18 +56,54 @@ describe('front matter params', () => {
     });
   });
 
-  it('drops a comment after an item, with or without a default (as docs/syntax.md shows)', () => {
-    const fm = '---\nparams:\n  - ENV          # DEV or PROD: asked, no default\n  - REPLICAS: "3"    # quotes are removed\n  - A: 1 # x\n  - TAG: "v1 #2"\n  - URL: a#b\n  - B: ""  # empty default\n  - C: \'\'\n  - D:\n---\n';
+  it('keeps a comment after an item as its description, with or without a default (as docs/syntax.md shows)', () => {
+    const fm = '---\nparams:\n  - ENV          # DEV or PROD: asked, no default\n  - REPLICAS: "3"    # quotes are removed\n  - A: 1 # x\n  - TAG: "v1 #2"\n  - URL: a#b\n  - B: ""  # empty default\n  - C: \'\'\n  - D:\n  - E: #\n---\n';
     assert.deepEqual(parseFrontMatter(fm)?.params, [
-      { name: 'ENV' },
-      { name: 'REPLICAS', default: '3' },
-      { name: 'A', default: '1' },
+      { name: 'ENV', description: 'DEV or PROD: asked, no default' },
+      { name: 'REPLICAS', default: '3', description: 'quotes are removed' },
+      { name: 'A', default: '1', description: 'x' },
       { name: 'TAG', default: 'v1 #2' },
       { name: 'URL', default: 'a#b' },
-      { name: 'B', default: '' },
+      { name: 'B', default: '', description: 'empty default' },
       { name: 'C', default: '' },
       { name: 'D' },
+      { name: 'E' },
     ]);
+  });
+
+  it('takes the choices from a trailing "One of:" in the comment', () => {
+    const fm = [
+      '---',
+      'params:',
+      '  - NAMESPACE: staging  # The namespace to deploy to. One of: staging, prod.',
+      '  - MODE   # one of: fast, safe',
+      '  - TAG: "v1 # not a comment"  # Release tag. ONE OF: v1 # not a comment, v2',
+      "  - SIZE: m # Size, one of: s, m or l",
+      "  - Q: 'a#b'#Quoted. One of: 'a#b', \"c d\", , c d.",
+      '  - X: 1 # One of: a. Then more text.',
+      '  - Y: 1 # One of:',
+      '---',
+      '',
+    ].join('\n');
+    assert.deepEqual(parseFrontMatter(fm)?.params, [
+      { name: 'NAMESPACE', default: 'staging', description: 'The namespace to deploy to.', choices: ['staging', 'prod'] },
+      { name: 'MODE', choices: ['fast', 'safe'] },
+      { name: 'TAG', default: 'v1 # not a comment', description: 'Release tag.', choices: ['v1 # not a comment', 'v2'] },
+      { name: 'SIZE', default: 'm', description: 'Size', choices: ['s', 'm', 'l'] },
+      { name: 'Q', default: 'a#b', description: 'Quoted.', choices: ['a#b', 'c d'] },
+      { name: 'X', default: '1', description: 'One of: a. Then more text.' },
+      { name: 'Y', default: '1', description: 'One of:' },
+    ]);
+  });
+
+  it('paramComment: description and choices', () => {
+    assert.deepEqual(paramComment(''), {});
+    assert.deepEqual(paramComment('  Where it goes  '), { description: 'Where it goes' });
+    assert.deepEqual(paramComment('One of: a, b'), { choices: ['a', 'b'] });
+    assert.deepEqual(paramComment('Pick (one of: a, b, a)'), { description: 'Pick', choices: ['a', 'b'] });
+    assert.deepEqual(paramComment('Version (one of: 1.2, 1.3)'), { description: 'Version', choices: ['1.2', '1.3'] });
+    assert.deepEqual(paramComment('Pick: one of: a, b, or c.'), { description: 'Pick', choices: ['a', 'b', 'c'] });
+    assert.deepEqual(paramComment('someone of: a'), { description: 'someone of: a' });
   });
 
   it('accepts unindented items and ... as terminator', () => {
