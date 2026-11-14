@@ -19,6 +19,7 @@ import { signCommand, verifyCommand } from './sign';
 import { qrCommand } from './qr';
 import { auditCommand } from './audit';
 import { allowedAddresses, prepareReport, sendCliReport, verifyRunCommand } from './report';
+import { publishCommand } from './publish';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 
 declare const MD_RUNBOOK_VERSION: string | undefined;
@@ -29,6 +30,7 @@ const USAGE = `Usage: md-runbook run <file.md> [options]
        md-runbook sign <file.md> --key KEY [options]   (see md-runbook sign --help)
        md-runbook verify <file.md> [--allowed-signers FILE]
        md-runbook verify-run <envelope.json> --allowed-runners FILE   (a signed run report)
+       md-runbook publish <file.md> --library URL [--path PATH]   (a signed runbook, to a team library)
        md-runbook qr <file.md> [options]               (see md-runbook qr --help)
        md-runbook link <file.md> [options]             (the qr options; prints the link)
        md-runbook audit <gate log>... [options]        (see md-runbook audit --help)
@@ -145,7 +147,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   // Only as the first argument: a value such as a parameter `-h` must not turn a run into help.
   if (args.length === 0 || args[0] === '-h' || args[0] === '--help') return 'help';
   if (args[0] === '--version') return 'version';
-  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected run, lint, estimate, sign, verify, verify-run, qr, link or audit)`);
+  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected run, lint, estimate, sign, verify, verify-run, publish, qr, link or audit)`);
   args.shift();
   const o: ParsedArgs['options'] = { file: '', write: true, params: {}, inputs: {}, yes: false, keepGoing: false, shell: {} };
   let pdf: string | undefined;
@@ -310,6 +312,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (argv[0] === 'sign') return signCommand(argv.slice(1));
   if (argv[0] === 'verify') return verifyCommand(argv.slice(1));
   if (argv[0] === 'verify-run') return verifyRunCommand(argv.slice(1));
+  if (argv[0] === 'publish') return publishCommand(argv.slice(1));
   if (argv[0] === 'qr') return qrCommand(argv.slice(1));
   if (argv[0] === 'link') return qrCommand(argv.slice(1), undefined, true);
   if (argv[0] === 'audit') return auditCommand(argv.slice(1));

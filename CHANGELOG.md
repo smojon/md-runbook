@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- **The library server (apps/library-server).** A small service, with its own container image,
+  that runs next to the web app on the same name, behind the same reverse proxy.
+  - **Publishing:** `POST /v1/library/runbooks/<path>`, with an upload token. It takes a runbook
+    only when the whole runbook is signed by one of the library's `allowed_signers` (checked with
+    ssh-keygen, as the gate checks it), unchanged since signing, not expired, named as its file,
+    and of a higher version than any published at that path. It writes the file into the folder
+    the web app serves, atomically, and writes `index.json` again. Deleting is off unless
+    `LIBRARY_ALLOW_DELETE=true`.
+  - **`md-runbook publish FILE --library URL`** sends one from the command line or CI (token in
+    `MD_RUNBOOK_LIBRARY_TOKEN`).
+  - **Run summaries:** `POST /v1/runs` is an address for `report-runs:`. It checks summaries
+    strictly, checks runner signatures against `RUNS_ALLOWED_RUNNERS`, and keeps them
+    append-only, marked `runner-signed`, `gate` or `unverified`. `RUNS_REQUIRE_SIGNED=true` refuses
+    the unverified ones. `GET /v1/runs` and `/v1/runs/last-green` ("last ran green by X at T")
+    need a read token.
+  - **Alertmanager:** `POST /v1/alerts` maps each alert (alertname and label matchers, in a JSON
+    alert map) to a library runbook. It records the alert with the link that opens that runbook,
+    pinned to its hash, with `host` and parameters taken from the labels, and `ALERT`,
+    `ALERT_FINGERPRINT` and `ALERT_STARTS_AT`. `GET /v1/alerts/recent` lists them. Nothing is
+    pushed to phones yet: that needs Firebase and APNs credentials.
+  - See [apps/library-server](apps/library-server/README.md).
+- **md-runbook-gate sends run reports.** With `report_to` (and `report_token_file`) in
+  `gate.conf`, the gate sends a run summary of each signed runbook a session ran when the session
+  ends, whatever client ran it. The summary is client `gate`: signed name, version, manifest
+  hash, signers, the key, the server, and each signed block's result. It is sent with curl in
+  the background, never holds up a run, and is logged as a `report` event. The run summary
+  format gets client `gate` and its `gate` field (still version 1). See
+  [run reports from the gate](docs/features/signed-runbooks.md#run-reports-from-the-gate).
 - **Run reports.** With `report-runs: https://…` in a runbook's front matter, VS Code, the app
   and the command line send that address a short summary at the end of every run.
   - **What's in it:** which runbook (name, title, hash, signed version), who ran it, where and

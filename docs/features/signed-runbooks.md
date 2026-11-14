@@ -216,6 +216,8 @@ revoked  = /etc/md-runbook/revoked     # manifest hashes, one per line
 floors   = /etc/md-runbook/floors      # NAME LOWEST-VERSION, one per line
 signers  = 1               # distinct trusted signers a runbook needs: 1 (default) to 5
 log      = syslog          # (default) or a file
+report_to = https://runbooks.example.net/v1/runs   # optional: run reports (below)
+report_token_file = /etc/md-runbook/report-token   # its bearer token
 ```
 
 With SSH certificates the CA puts the restriction into each certificate, and servers need no
@@ -251,6 +253,11 @@ runs on a bastion host that holds the credentials (a kubeconfig for a service ac
 support engineers run the signed runbooks against the cluster without ever holding its
 credentials.
 
+**A team library** of signed runbooks: the [library server](../../apps/library-server/README.md)
+publishes a runbook into the folder the web app serves only when it is signed as a whole by
+the library's `allowed_signers`, unchanged and unexpired, named as its file, and of a higher
+version than the one published: `md-runbook publish FILE --library URL`.
+
 ## Running
 
 The app needs no setting: it finds the gate when it connects (its answer to the app's first
@@ -276,7 +283,8 @@ One JSON line per event, to syslog (tag `md-runbook-gate`) or a file: `session`,
 (runbook, version, manifest hash, signer; for the runbook a [call](calls.md) runs, also
 `called-by`, the caller's manifest hash, and `call`, the call's number), `param` (name and
 value), `run` (block and command),
-`end` (exit code), `unsigned` (hash of the code), `refused` (the reason), `stop`. Each carries
+`end` (exit code), `unsigned` (hash of the code), `refused` (the reason), `stop`, `report` (a
+run report sent or not, below). Each carries
 the time, the account, the client address and the key: its fingerprint with
 `ExposeAuthInfo yes` in `sshd_config`, or the name given with `--who=NAME`.
 
@@ -290,6 +298,48 @@ ran says so: `ops/release v9 · called by ops/upgrade v4 (call 1)`. That link is
 said when it loaded the runbook called (the `called` request, gate protocol 2): it lets you follow
 a call in the log, and it grants nothing, since each runbook's own signature is what the gate
 checks.
+
+## Run reports from the gate
+
+A client can be changed not to [report its runs](run-reports.md); the gate can't be skipped on a
+gated server. With `report_to` in `gate.conf`, the gate sends a run summary itself when a session
+ends: one per signed runbook the session ran, whatever client ran it.
+
+```
+# /etc/md-runbook/gate.conf
+report_to = https://runbooks.example.net/v1/runs
+report_token_file = /etc/md-runbook/report-token   # a file with the bearer token
+```
+
+The summary has the [run report format](run-reports.md#the-format-version-1) with client
+`gate`:
+
+- `runbook.signed`: the signed name, version, manifest hash and the signers the gate accepted
+  (`trusted: true`). There is no `file` or `sha256`: the gate never sees the runbook's text,
+  only its signed manifest.
+- `who`: the key's fingerprint (with `ExposeAuthInfo yes`), or `--who=NAME`, else the account.
+- `gate`: the server's name (`uname -n`), the account, and the SSH client's address (`from`).
+- `steps`: the signed bash blocks, in order, each labelled by the first line of its code (as
+  the gate runs it, with placeholders rewritten as signed): `passed` (ran whole, or its last command
+  ran, exit 0), `failed` (a non-zero exit), or `not-run`. `ran` lists the blocks the session ran;
+  `stopped: true` when one of them never ended (the session was cut, or a block ran `exit`).
+
+Never an output or a parameter value. The gate sends it with `curl`, in the background once the
+session is over, so it never holds up or fails a run; it tries 3 times (not again after a `4xx`
+other than 408 and 429) and logs a `report` event with `sent` or `failed` and the HTTP status. The
+token is read from its file at the end of the session and passed to curl in a header file,
+never on its command line. An address that isn't https (http only for localhost) is logged as
+`report` `off` at the start of each session, and nothing is sent.
+
+The [library server](../../apps/library-server/README.md) keeps a gate's summary as verified
+(`trust: gate`) when it comes with one of its `RUNS_GATE_TOKENS`, and refuses `client: "gate"`
+from anyone else. The token file must be readable by the gate's account, so a block, or someone
+who can run commands as that account, could send a summary with it too: give each server its
+own token. The gate's log stays the record to audit; the summaries are the team's view of it.
+
+The address comes from `gate.conf` only. A signed runbook's own `report-runs:` is not read here:
+the gate gets the manifest, which signs a hash of the runbook's text but not the text itself, so
+it can't see the front matter.
 
 ## Limits
 

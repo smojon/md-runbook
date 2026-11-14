@@ -23,7 +23,7 @@ A summary holds names, states and times only:
 - the runbook: its file name (no folder), title, the SHA-256 of its text without outputs, and for
   a signed runbook its signed name, version, the manifest's SHA-256 and the signer;
 - who ran it (the user name on the machine, or the name set in the app) and where: `vscode`,
-  `app-ios`, `app-android`, `app-web` or `cli`;
+  `app-ios`, `app-android`, `app-web` or `cli` (`gate`: md-runbook-gate's own report, below);
 - when the run started and ended;
 - each step, in order: its number, its label (the heading or `name=`, else the first line of
   its code as written, at most 120 characters), its state (`passed`, `failed`, `skipped`,
@@ -86,6 +86,11 @@ Empty values are left out. No other parameter's value is ever read for the summa
   trusts. `signer` is the principal that matched, otherwise only what the file says.
 - `stopped: true` when the run was stopped or timed out.
 - Times are ISO 8601 in UTC; `ms` is whole milliseconds.
+- **Client `gate`**, [md-runbook-gate's own report](signed-runbooks.md#run-reports-from-the-gate)
+  of a session on a server: `runbook.signed` is always there, `runbook.file` and `runbook.sha256`
+  are not (the gate sees only the signed manifest), and `gate` says where it ran:
+  `{ "host": "web-1", "account": "support", "from": "192.0.2.7" }`. Only a gate's summary may
+  carry `gate`, or leave out the file and hash. The format version stays 1: these are additions.
 
 A server should refuse a `v` it doesn't know and any field not listed here. Core's
 `runSummaryProblems` (`packages/core/src/runReport.ts`) does this check.
@@ -204,14 +209,31 @@ verifies as a run summary, and a run summary's signature (`md-runbook-run`) neve
 runbook. Keep runner keys out of the servers' `allowed_signers`, or give them only
 `namespaces="md-runbook-run"`.
 
+## Receiving them: the library server
+
+The [library server](../../apps/library-server/README.md) receives summaries at
+`https://<your web app>/v1/runs` (`report-runs: https://runbooks.example.net/v1/runs`), next to
+the team library it publishes to:
+
+- It checks each one strictly with `runSummaryProblems`, and that its totals and `green` agree
+  with its steps.
+- It checks a signed one against its allowed runners (`RUNS_ALLOWED_RUNNERS`) with ssh-keygen.
+- It keeps every summary as one JSON line, append-only, with when it arrived and how far it can
+  be believed: `runner-signed`, `gate` (sent by md-runbook-gate with a gate token) or
+  `unverified`. `RUNS_REQUIRE_SIGNED=true` refuses the unverified ones.
+- `report-runs-token: ${secret:NAME}` is its `RUNS_TOKENS`: the client sends it as
+  `Authorization: Bearer`, which the server checks.
+- `GET /v1/runs?runbook=…` lists the team's recent runs, and `GET /v1/runs/last-green?runbook=…`
+  answers "last ran green by X at T", verified or not (a read token).
+
 ## Limits
 
 - **A client can't be forced.** Someone with a modified client, or `curl`, can run a runbook's
   commands without reporting, or send a summary that says what they like. A signature proves
   only which key sent the summary, not that the steps really ran as it says. Real enforcement is
   on the server: the [gate](signed-runbooks.md#setting-up-a-server) logs every signed block it
-  runs, and having the gate send these reports itself is planned next. So is the library
-  server's endpoint that receives them.
+  runs, and with `report_to` it [sends its own summary](signed-runbooks.md#run-reports-from-the-gate)
+  of every session, whatever the client did.
 - A report goes out after the run. A client that crashes or is killed first sends nothing.
 - The app checks trusted signers in JavaScript, for Ed25519 and ECDSA P-256 keys. A signature
   made with another key type (RSA, a FIDO `sk-` key, a certificate) is not trusted there, so the
