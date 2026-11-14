@@ -205,6 +205,7 @@ practice: training-1 # the app runs every cell on this host, whatever host= says
 kube-context: prod-eu # every cell runs only while kubectl's current context is prod-eu; a cell's kube-context= wins
 kube-context-mode: pin # check (default) | pin: cells run on their kube-context without changing your default context
 git-bash-path-conversion: off # on (default) | off: Git Bash on Windows leaves /opt/x-style arguments alone
+manual-steps: continue # pause (default) | continue: Run All waits at an unticked checklist item, or runs on
 env:                 # variables for every cell run in VS Code or the command line; a cell's env.NAME= wins
   NO_PROXY: localhost,127.0.0.1,.nip.io
   PAGER: cat
@@ -388,7 +389,10 @@ runs cells in order and stops at the first failure unless the cell has `continue
 Cells of one runbook never run concurrently.
 
 A task-list item is a **manual step**: done when it is ticked (`- [x]`), by a person in VS Code
-or the app, or by editing the file. Nothing runs it. `md-runbook run` lists the unticked ones of
+or the app, or by editing the file. Nothing runs it. **Run All waits at one that isn't ticked**
+(in VS Code and the app): **Done** ticks it, **Skip** goes on without ticking it, **Stop** ends
+the run there; Resume Run (the app: Continue) asks again. `manual-steps: continue` in the front
+matter makes Run All run past them, as reminders. `md-runbook run` lists the unticked ones of
 the steps it runs (see [the command line](features/cli.md#manual-steps)), and a run that keeps
 evidence (`evidence: true` or `incident:`) fails when one is not ticked, so a check nobody did
 never passes unrecorded.

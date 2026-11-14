@@ -122,6 +122,11 @@ export interface FrontMatter {
   /** `git-bash-path-conversion: off`: on Windows, Git Bash doesn't rewrite POSIX-looking arguments (node/runbookEnv.ts). */
   gitBashPathConversion?: 'on' | 'off';
   /**
+   * `manual-steps:` what Run All does at an unticked checklist item (`- [ ]`): `pause` (the default:
+   * it waits for you to tick it, skip it or stop) or `continue` (the items are reminders).
+   */
+  manualSteps?: 'pause' | 'continue';
+  /**
    * `env:` variables for every cell run on this machine (VS Code and the command line), below a
    * cell's own `env.NAME=` (node/runbookEnv.ts). Not used on an SSH host: the front matter isn't signed.
    */
@@ -174,6 +179,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
   let kubeContext: string | undefined;
   let kubeContextMode: KubeContextMode | undefined;
   let gitBashPathConversion: 'on' | 'off' | undefined;
+  let manualSteps: 'pause' | 'continue' | undefined;
   // No prototype: a variable named constructor or __proto__ is a plain entry.
   const env: Record<string, string> = Object.create(null) as Record<string, string>;
   let inParams = false;
@@ -196,6 +202,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
         ...(kubeContext ? { kubeContext } : {}),
         ...(kubeContextMode ? { kubeContextMode } : {}),
         ...(gitBashPathConversion ? { gitBashPathConversion } : {}),
+        ...(manualSteps ? { manualSteps } : {}),
         ...(Object.keys(env).length > 0 ? { env } : {}),
       };
     }
@@ -237,6 +244,8 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       if (km !== undefined && (KUBE_CONTEXT_MODES as readonly string[]).includes(km)) kubeContextMode = km as KubeContextMode;
       const pc = value('git-bash-path-conversion')?.toLowerCase();
       if (pc === 'on' || pc === 'off') gitBashPathConversion = pc;
+      const ms = value('manual-steps')?.toLowerCase();
+      if (ms === 'pause' || ms === 'continue') manualSteps = ms;
       continue;
     }
     if (inEnv) {

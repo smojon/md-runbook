@@ -33,6 +33,14 @@ describe('front matter: kube-context-mode and git-bash-path-conversion', () => {
     assert.equal(parseFrontMatter('---\nkube-context-mode: pin\n---\n')?.kubeContext, undefined);
   });
 
+  it('manual-steps: pause or continue; anything else is ignored with a warning', () => {
+    assert.equal(parseFrontMatter('---\nmanual-steps: Continue\n---\n')?.manualSteps, 'continue');
+    assert.equal(parseFrontMatter('---\nmanual-steps: pause\n---\n')?.manualSteps, 'pause');
+    assert.equal(parseFrontMatter('---\nmanual-steps: skip\n---\n')?.manualSteps, undefined);
+    const bad = lintRunbook('---\nmanual-steps: skip\n---\n\n- [ ] tell the team\n');
+    assert.ok(bad.some((p) => p.line === 1 && /front matter manual-steps: "skip" is ignored \(expected pause or continue\)/.test(p.message)));
+  });
+
   it('lint: bad values, pin without a context, pin on a host or a practice host', () => {
     const bad = lintRunbook('---\nkube-context: lab\nkube-context-mode: always\ngit-bash-path-conversion: false\n---\n\n```bash\necho\n```\n');
     assert.ok(bad.some((p) => p.line === 2 && /front matter kube-context-mode: "always" is ignored \(expected check or pin\)/.test(p.message)));

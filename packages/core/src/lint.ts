@@ -152,7 +152,7 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
     const lines = text.replace(/^﻿/, '').split(/\r?\n/);
     const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));
     for (let i = 1; i < end; i++) {
-      const m = /^(mode|timeout|cwd|kube-context|kube-context-mode|git-bash-path-conversion)\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
+      const m = /^(mode|timeout|cwd|kube-context|kube-context-mode|git-bash-path-conversion|manual-steps)\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
       if (!m) continue;
       const key = m[1]!.toLowerCase();
       const ignored =
@@ -161,7 +161,8 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
         (key === 'cwd' && fm.cwd === undefined) ||
         (key === 'kube-context' && fm.kubeContext === undefined) ||
         (key === 'kube-context-mode' && fm.kubeContextMode === undefined) ||
-        (key === 'git-bash-path-conversion' && fm.gitBashPathConversion === undefined);
+        (key === 'git-bash-path-conversion' && fm.gitBashPathConversion === undefined) ||
+        (key === 'manual-steps' && fm.manualSteps === undefined);
       if (ignored) {
         const expected: Record<string, string> = {
           mode: 'session or isolated',
@@ -170,6 +171,7 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
           'kube-context': 'a Kubernetes context name, e.g. prod-eu, or ${param:NAME}',
           'kube-context-mode': 'check or pin',
           'git-bash-path-conversion': 'on or off',
+          'manual-steps': 'pause or continue',
         };
         problems.push({ severity: 'warning', line: i, message: `front matter ${key}: "${m[2]}" is ignored (expected ${expected[key]})` });
       }
