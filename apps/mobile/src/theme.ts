@@ -29,6 +29,8 @@ export interface Palette {
   ok: string;
   error: string;
   warning: string;
+  /** Amber for text: darker in the light theme, where `warning` (for icons and bars) is under 4.5:1 on white. */
+  warningText: string;
   accent: string;
   onAccent: string;
   link: string;
@@ -67,6 +69,7 @@ export const light: Palette = {
   ok: '#388a34',
   error: '#e51400',
   warning: '#bf8803',
+  warningText: '#8a6100',
   accent: '#005fb8',
   onAccent: '#ffffff',
   link: '#005fb8',
@@ -113,6 +116,7 @@ export const dark: Palette = {
   ok: '#73c991',
   error: '#f14c4c',
   warning: '#cca700',
+  warningText: '#cca700',
   accent: '#0078d4',
   onAccent: '#ffffff',
   link: '#4daafc',

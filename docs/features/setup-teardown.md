@@ -84,16 +84,16 @@ run, and the progress reads their estimate as *up to*.
 | --- | --- | --- | --- |
 | Ready check | Runs first; says *already up* or *not up* | The same, on the selected host | The same: `Setup: … is already up - setup skipped` |
 | Setup steps, already up | Skipped (`exit=skipped ready=up`) | Skipped | Skipped |
-| Teardown steps | Offered at the end: **Take Down** or **Not Now** | Offered at the end: **Take down** or **Not now** | Not run; `--teardown` runs them after a run that passed, `--teardown=always` after a failure too |
+| Teardown steps | Offered at the end: **Take Down** or **Leave It Up** | Offered at the end: **Take down** or **Leave it up** | Not run; `--teardown` runs them after a run that passed, `--teardown=always` after a failure too |
 
-- **Not now** leaves the teardown steps as they were (not *skipped*): you can run them by hand
+- **Leave it up** leaves the teardown steps as they were (not *skipped*): you can run them by hand
   later. Run All doesn't ask again for that runbook until you reload the VS Code window or restart
   the app; **Continue** (Resume Run) with only the teardown left offers it again.
 - `--yes` never runs a teardown: a teardown is a choice about when you stop, not a confirmation.
 - A runbook called as one of the steps (not with `setup` or `teardown`) runs whole: its own setup
   is guarded by its own ready check, and its teardown runs with it.
 
-<img src="../app/setup-teardown-offer.png" alt="The md-runbook app at the end of a guide: Run the teardown now: Stop the lab? with Take down and Not now" width="320">
+<img src="../app/setup-teardown-offer.png" alt="The md-runbook app at the end of a guide: Take it down now? Stop the lab, with Take down and Leave it up" width="320">
 
 The ready check's output is kept like any other (`exit=1 check=ok ready=down`): it passed as a
 check, whatever it answered.

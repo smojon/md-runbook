@@ -6,7 +6,7 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
 import { Progress, checklist, computeProgress, formatLocalIso, isCodeMeta, nextUncheckedOffset, outputBlockAttrs, runbookEstimate } from '@md-runbook/core';
-import { PartEstimate, RunbookEstimate, formatEstimate, formatFinish, formatTimeLeft, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
+import { PartEstimate, RunbookEstimate, formatEstimate, formatFinish, formatTimeLeft, remaining, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
 import { isManualMark } from '@md-runbook/core/progress';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { osGroups } from '@md-runbook/core/os';
@@ -123,8 +123,10 @@ export function progressTooltip(nb: vscode.NotebookDocument, p: Progress, e: Run
   md.isTrusted = { enabledCommands: ['mdRunbook.revealNextStep', 'mdRunbook.resumeRun', 'mdRunbook._revealCell', 'mdRunbook.steps.focus'] };
   const complete = p.done + p.skipped;
   const head: string[] = [`**${complete} of ${p.total} steps done**`];
-  if (e.fraction !== undefined) head.push(`${Math.floor(e.fraction * 100)}% by the estimates`);
-  if (e.fraction !== undefined && e.leftSeconds > 0) head.push(`${formatTimeLeft(e.leftSeconds)} left`, `done ≈ ${formatFinish(e.leftSeconds, now)}`);
+  // Never "100%" or "nothing left" while a step is open (one done by hand has no time).
+  const r = remaining(e, p.pending);
+  if (r.percent !== undefined) head.push(`${r.percent}% by the estimates`, r.left);
+  if (e.fraction !== undefined && e.leftSeconds > 0) head.push(`ends ≈ ${formatFinish(e.leftSeconds, now)}`);
   md.appendMarkdown(head.join(' · ') + '\n\n');
   if (running) md.appendMarkdown(`Running: ${escapeMd(labelOf(running))} (cell ${running.index + 1})\n\n`);
   const counts = [`${p.done} done`, `${p.skipped} skipped`, `${p.failed} failed`, `${p.pending} to do`];
@@ -141,7 +143,8 @@ export function progressTooltip(nb: vscode.NotebookDocument, p: Progress, e: Run
       const s = parts.states.setup;
       rows.push(`| Setup | ${s === 'up' ? '✓ already up' : s === 'unchecked' ? 'unless already up' : state(parts.setup)} | ${s === 'up' ? '' : time(parts.setup)} |`);
     }
-    rows.push(`| Steps | ${state(parts.body)} | ${time(parts.body)} |`);
+    const body = state(parts.body);
+    rows.push(`| Steps | ${body === '✓ done' && p.pending > 0 ? `${p.pending} to do` : body} | ${time(parts.body)} |`);
     if (parts.teardown.blocks > 0) rows.push(`| Teardown | ${parts.states.teardown === 'chosen' ? state(parts.teardown) : 'offered at the end'} | ${time(parts.teardown)} |`);
     md.appendMarkdown(rows.join('\n') + '\n\n');
   }

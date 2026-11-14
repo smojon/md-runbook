@@ -8,8 +8,8 @@
  */
 
 import * as vscode from 'vscode';
-import { formatEstimate, formatFinish, formatTimeLeft, isCodeMeta, runbookEstimate, stepState, taskItems } from '@md-runbook/core';
-import { blockProgress, overEstimate, stepLabel } from '@md-runbook/core/estimate';
+import { formatEstimate, formatFinish, isCodeMeta, runbookEstimate, stepState, taskItems } from '@md-runbook/core';
+import { blockProgress, overEstimate, remaining, stepLabel } from '@md-runbook/core/estimate';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { setContext } from './contextKeys';
 import { cellPart } from './controller';
@@ -45,6 +45,8 @@ export interface StepsModel {
   state: 'idle' | 'running' | 'failed' | 'done' | 'waiting';
   /** By the estimates: share done, time left, finish time. */
   fraction?: number;
+  /** The share done as shown: never 100 while a step is open. */
+  percent?: number;
   left?: string;
   rows: StepsRow[];
   /** The cells on screen, first and last index. */
@@ -131,12 +133,14 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     });
   }
   const done = p.pending === 0 && p.failed === 0 && p.total > 0;
+  // Never "100%" or "nothing left" while a step is open (core remaining()).
+  const rest = remaining(e, p.pending);
   return {
     title: nb.uri.path.split('/').pop() ?? 'runbook',
     headline: status.text.replace(/^\$\([^)]+\)\s*/, ''),
     state: waiting ? 'waiting' : anyRunning ? 'running' : p.firstFailed ? 'failed' : done ? 'done' : 'idle',
     ...(e.fraction !== undefined ? { fraction: e.fraction } : {}),
-    ...(e.fraction !== undefined ? { left: e.leftSeconds > 0 ? `${formatTimeLeft(e.leftSeconds)} left · done ≈ ${formatFinish(e.leftSeconds, now)}` : 'nothing left' } : {}),
+    ...(rest.percent !== undefined ? { percent: rest.percent, left: rest.left + (e.leftSeconds > 0 ? ` · ends ≈ ${formatFinish(e.leftSeconds, now)}` : '') } : {}),
     rows,
     ...(visible ? { visible } : {}),
   };
@@ -174,12 +178,16 @@ function page(webview: vscode.Webview): string {
   .chapter { font-weight: 600; padding-top: 8px; }
   .chapter::before { content: ''; position: absolute; left: 4px; width: 11px; height: 2px; background: var(--vscode-descriptionForeground); }
   .chapter.l1 { font-size: 1.05em; }
-  .dot { position: absolute; left: 5px; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--vscode-descriptionForeground); background: var(--vscode-sideBar-background); box-sizing: border-box; }
+  .dot { position: absolute; left: 3px; width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--vscode-descriptionForeground); background: var(--vscode-sideBar-background); box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 8px; line-height: 1; color: var(--vscode-sideBar-background); font-weight: 700; }
+  .row:focus { outline: none; }
+  .row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .done .dot { background: var(--vscode-testing-iconPassed, #388a34); border-color: var(--vscode-testing-iconPassed, #388a34); }
   .failed .dot { background: var(--vscode-testing-iconFailed, #e51400); border-color: var(--vscode-testing-iconFailed, #e51400); }
   .running .dot { background: var(--vscode-progressBar-background); border-color: var(--vscode-progressBar-background); animation: pulse 1.2s ease-in-out infinite; }
   .waiting .dot { background: var(--vscode-editorWarning-foreground); border-color: var(--vscode-editorWarning-foreground); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .running .dot, .waiting .dot { animation: none; } }
   .num { color: var(--vscode-descriptionForeground); min-width: 1.6em; text-align: right; }
   .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .time { color: var(--vscode-descriptionForeground); white-space: nowrap; font-size: .92em; }
@@ -190,12 +198,23 @@ function page(webview: vscode.Webview): string {
   .stepbar.over .fill { background: var(--vscode-editorWarning-foreground); }
   .empty { color: var(--vscode-descriptionForeground); }
 </style></head><body>
+<div id="live" class="sr" role="status" aria-live="polite"></div>
 <div id="root" class="empty">Open a runbook to see its steps.</div>
 <script nonce="${n}">
   const vscode = acquireVsCodeApi();
   const root = document.getElementById('root');
+  const live = document.getElementById('live');
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  // State in a symbol too, not colour alone.
+  const GLYPH = { done: '✓', failed: '✕', running: '▶', waiting: '❚❚', pending: '' };
+  const STATE = { done: 'done', failed: 'failed', running: 'running', waiting: 'waiting for you', pending: 'to do' };
+  let lastState;
   function draw(m) {
+    // Keep the keyboard focus across redraws (every second while a step runs).
+    const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : undefined;
+    // Say a change of state once (failed, waiting, done), not the clock every second.
+    if (m.state !== lastState && lastState !== undefined) live.textContent = m.headline;
+    lastState = m.state;
     root.className = '';
     root.replaceChildren();
     const head = el('div', 'head');
@@ -203,22 +222,27 @@ function page(webview: vscode.Webview): string {
     if (m.fraction !== undefined) {
       const w = el('div', 'barwrap'); w.append(el('div', 'track'));
       const f = el('div', 'fill'); f.style.width = Math.round(m.fraction * 100) + '%'; w.append(f); head.append(w);
-      head.append(el('div', 'sub', Math.floor(m.fraction * 100) + '% · ' + m.left));
+      head.append(el('div', 'sub', m.percent + '% · ' + m.left));
     }
     root.append(head);
     const rail = el('div', 'rail');
+    rail.setAttribute('role', 'tree');
+    rail.setAttribute('aria-label', 'Steps of the runbook');
     const fill = el('div', 'railfill');
     rail.append(fill);
     let reached;
     for (const r of m.rows) {
       const row = el('div', 'row ' + (r.kind === 'chapter' ? 'chapter l' + r.level : r.state));
       row.dataset.index = r.index;
+      row.dataset.key = r.kind + ':' + r.index + ':' + (r.step !== undefined ? r.step : r.title || r.label);
+      row.tabIndex = -1;
+      row.setAttribute('role', 'treeitem');
       if (m.visible && r.index >= m.visible.first && r.index <= m.visible.last) row.classList.add('seen');
       if (r.kind === 'chapter') {
         row.append(el('span', 'label', r.title));
         row.title = 'Go to ' + r.title;
       } else {
-        row.append(el('span', 'dot'));
+        row.append(el('span', 'dot', GLYPH[r.state]));
         row.append(el('span', 'num', r.step !== undefined ? String(r.step) : '·'));
         row.append(el('span', 'label', r.label));
         if (r.time) row.append(el('span', 'time' + (r.over ? ' over' : ''), r.time));
@@ -226,16 +250,41 @@ function page(webview: vscode.Webview): string {
           const b = el('div', 'stepbar' + (r.over ? ' over' : ''));
           const bf = el('div', 'fill'); bf.style.width = Math.round(r.fraction * 100) + '%'; b.append(bf); row.append(b);
         }
-        row.title = (r.step !== undefined ? 'Step ' + r.step + ': ' : '') + r.label + ' (' + (r.state === 'pending' ? 'to do' : r.state) + ')';
+        row.title = (r.step !== undefined ? 'Step ' + r.step + ': ' : '') + r.label + ' (' + STATE[r.state] + (r.time ? ', ' + r.time : '') + ')';
+        if (r.state === 'running' || r.state === 'waiting') row.setAttribute('aria-current', 'step');
         if (r.state !== 'pending') reached = row;
       }
+      row.setAttribute('aria-label', row.title);
       row.addEventListener('click', () => vscode.postMessage({ go: r.index }));
       rail.append(row);
     }
     root.append(rail);
+    // One tab stop for the list: the focused row, else the running one, else the first.
+    const rows = [...rail.querySelectorAll('.row')];
+    const again = focused !== undefined ? rows.find((x) => x.dataset.key === focused) : undefined;
+    const stop = again || rail.querySelector('[aria-current]') || rows[0];
+    if (stop) stop.tabIndex = 0;
+    if (again) again.focus();
     // The rail fills down to the last step reached (running, done or failed).
     requestAnimationFrame(() => { fill.style.height = reached ? (reached.offsetTop + reached.offsetHeight / 2) + 'px' : '0'; });
   }
+  // Up/Down (Home/End) move between rows; Enter or Space goes to the row's cell.
+  root.addEventListener('keydown', (e) => {
+    const row = e.target.closest && e.target.closest('.row');
+    if (!row) return;
+    const rows = [...root.querySelectorAll('.row')];
+    const i = rows.indexOf(row);
+    const to = e.key === 'ArrowDown' ? rows[i + 1] : e.key === 'ArrowUp' ? rows[i - 1] : e.key === 'Home' ? rows[0] : e.key === 'End' ? rows[rows.length - 1] : undefined;
+    if (to) {
+      e.preventDefault();
+      row.tabIndex = -1;
+      to.tabIndex = 0;
+      to.focus();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      vscode.postMessage({ go: Number(row.dataset.index) });
+    }
+  });
   window.addEventListener('message', (e) => { if (e.data && e.data.model) draw(e.data.model); else if (e.data && e.data.empty) { root.className = 'empty'; root.textContent = 'Open a runbook to see its steps.'; } });
   vscode.postMessage({ ready: true });
 </script></body></html>`;

@@ -521,19 +521,20 @@ const en = {
   /** Setup and teardown (core/parts.ts). */
   callAlreadyUp: (runbook: string) => `already up: the ready check of ${runbook} passed, so its setup was skipped`,
   setupAlreadyUp: 'skipped: already up (the ready check passed)',
-  teardownTitle: (what: string) => `Run the teardown now: ${what}?`,
-  teardownBody:
-    "Not now if you go straight on to the next runbook: the teardown stays as it is, to run later. Run all won't ask again for this runbook until the app restarts.",
+  teardownTitle: 'Take it down now?',
+  teardownBody: 'Leave it up to keep it for the next runbook. Continue offers this again.',
   teardownTake: 'Take down',
-  teardownNotNow: 'Not now',
+  teardownNotNow: 'Leave it up',
   estimateSetupUp: 'setup ✓ already up',
   estimateSetupMaybe: (time: string) => `+${time} if the setup runs`,
   estimateTeardownOffered: (time: string) => `teardown ${time}, offered`,
   /** The run bar's short forms, each after its icon (the long forms above are what a screen reader says). */
   barPercent: (percent: number) => `${percent}%`,
-  barFinish: (time: string) => `≈ ${time}`,
+  // A no-break space: "ends ≈ 14:32" stays on one line.
+  barFinish: (time: string) => `ends ≈ ${time}`,
   barSetupDone: 'setup ✓',
   cellNumber: (n: number) => `cell ${n}`,
+  runAnswer: '↓ Answer',
   pinnedWaiting: 'Waiting for you: answer under the cell',
   pinnedShowHint: 'Shows the cell',
   callOutside: (src: string) => `src="${src}" leaves the site (or repository) this runbook came from: the app doesn't fetch it`,

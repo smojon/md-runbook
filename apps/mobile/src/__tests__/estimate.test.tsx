@@ -35,10 +35,10 @@ describe('estimate= (how long a cell takes)', () => {
     expect(screen.queryByTestId('cell-2-estimate')).toBeNull();
     expect(screen.getByTestId('run-estimate-text')).toHaveProp(
       'accessibilityLabel',
-      expect.stringMatching(/^41% · 4 min left · ≈ \d\d:\d\d · 1 block without an estimate$/),
+      expect.stringMatching(/^41% · 4 min left · ends ≈\s\d\d:\d\d · 1 block without an estimate$/),
     );
     // On screen, in words: how far, how long, when it ends; then what has no estimate.
-    expect(screen.getByTestId('estimate-main')).toHaveTextContent(/^41% · 4 min left · ≈ \d\d:\d\d$/);
+    expect(screen.getByTestId('estimate-main')).toHaveTextContent(/^41% · 4 min left · ends ≈\s\d\d:\d\d$/);
     expect(screen.getByTestId('estimate-more')).toHaveTextContent('1 block without an estimate');
   });
 
@@ -61,7 +61,7 @@ describe('estimate= (how long a cell takes)', () => {
     await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/ \d+s of 1s$/));
     expect(screen.getByTestId('cell-1-timing')).toBeTruthy();
     await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/\+\d+s over 1s$/), { timeout: 5000 });
-    expect(screen.getByTestId('run-estimate-text')).toHaveProp('accessibilityLabel', '0% · nothing left');
+    expect(screen.getByTestId('run-estimate-text')).toHaveProp('accessibilityLabel', '0% · 1 step left');
     expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 1 of 1 · sleep 100');
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-1-stop'));

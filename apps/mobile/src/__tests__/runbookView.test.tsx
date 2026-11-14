@@ -70,13 +70,13 @@ describe('Run all / Continue (the one-tap action)', () => {
       fireEvent.press(screen.getByTestId('rail-chapter-3'));
     });
     expect(screen.getByTestId('rail-chapter-name')).toHaveTextContent('Clean up');
-    expect(screen.getByTestId('rail-tick-1')).toHaveProp('accessibilityLabel', 'Step 1, to do');
+    expect(screen.getByTestId('rail-tick-1')).toHaveProp('accessibilityLabel', 'Step 1: echo one, to do');
     await act(async () => {
       fireEvent.press(screen.getByTestId('run-primary'));
     });
-    await waitFor(() => expect(screen.getByTestId('rail-tick-2')).toHaveProp('accessibilityLabel', 'Step 2, failed'));
-    expect(screen.getByTestId('rail-tick-1')).toHaveProp('accessibilityLabel', 'Step 1, done');
-    expect(screen.getByTestId('rail-tick-4')).toHaveProp('accessibilityLabel', 'Step 3, to do');
+    await waitFor(() => expect(screen.getByTestId('rail-tick-2')).toHaveProp('accessibilityLabel', 'Step 2: echo two, failed'));
+    expect(screen.getByTestId('rail-tick-1')).toHaveProp('accessibilityLabel', 'Step 1: echo one, done');
+    expect(screen.getByTestId('rail-tick-4')).toHaveProp('accessibilityLabel', 'Step 3: echo three, to do');
     expect(screen.getByTestId('progress-rail')).toHaveProp('accessibilityLabel', 'Step 2 of 3 failed');
   });
 

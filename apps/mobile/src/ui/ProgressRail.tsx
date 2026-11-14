@@ -5,7 +5,7 @@
  * for the part on screen. A tick goes to its step; a crossbar to its chapter, named for a moment. Positions are by cell: the runbook's cells spread over the rail's height.
  */
 import { useEffect, useState } from 'react';
-import { Animated, Pressable, Text, View } from 'react-native';
+import { AccessibilityInfo, Animated, Pressable, Text, View } from 'react-native';
 import { themedStyles, usePalette } from '../theme';
 
 export type RailState = 'done' | 'failed' | 'running' | 'pending';
@@ -22,6 +22,8 @@ export interface RailTick {
   index: number;
   /** 1-based step number, for screen readers. */
   step: number;
+  /** The step's name, for screen readers. */
+  label?: string;
   state: RailState;
 }
 
@@ -58,8 +60,19 @@ export function ProgressRail({
   }, [named]);
   const [pulse] = useState(() => new Animated.Value(1));
   const running = ticks.some((t) => t.state === 'running');
+  // The system's Reduce Motion: the running tick holds still.
+  const [still, setStill] = useState(false);
   useEffect(() => {
-    if (!running) return undefined;
+    let live = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((on) => live && setStill(on));
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setStill);
+    return () => {
+      live = false;
+      sub.remove();
+    };
+  }, []);
+  useEffect(() => {
+    if (!running || still) return undefined;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 0.3, duration: 600, useNativeDriver: false }),
@@ -68,7 +81,7 @@ export function ProgressRail({
     );
     loop.start();
     return () => loop.stop();
-  }, [running, pulse]);
+  }, [running, still, pulse]);
 
   const span = Math.max(1, cells);
   const at = (index: number): number => ((index + 0.5) / span) * height;
@@ -114,10 +127,14 @@ export function ProgressRail({
         </Pressable>
       ))}
       {named ? (
-        <View testID="rail-chapter-name" pointerEvents="none" style={[styles.name, { top: Math.max(0, at(named.index) - 12) }]}>
-          <Text style={styles.nameText} numberOfLines={1}>
-            {named.title}
-          </Text>
+        // A holder of its own width: inside the 16 px rail, native layout left the text no room
+        // (the name showed as an empty pill on iOS and Android; the web lays it out differently).
+        <View pointerEvents="none" style={[styles.nameHolder, { top: Math.max(0, at(named.index) - 12) }]}>
+          <View testID="rail-chapter-name" style={styles.name}>
+            <Text style={styles.nameText} numberOfLines={1}>
+              {named.title}
+            </Text>
+          </View>
         </View>
       ) : null}
       {/* Before the rail is measured, every tick sits at the top (they move once it is). */}
@@ -126,7 +143,7 @@ export function ProgressRail({
           key={t.index}
           testID={`rail-tick-${t.index}`}
           accessibilityRole="button"
-          accessibilityLabel={`Step ${t.step}, ${t.state === 'pending' ? 'to do' : t.state}`}
+          accessibilityLabel={`Step ${t.step}${t.label ? `: ${t.label}` : ''}, ${t.state === 'pending' ? 'to do' : t.state}`}
           hitSlop={6}
           onPress={() => onGo(t.index)}
           style={[styles.hit, { top: at(t.index) - 8 }]}
@@ -148,10 +165,9 @@ const useStyles = themedStyles((c) => ({
   rail: { width: 16, alignSelf: 'stretch', marginVertical: 8, zIndex: 2 },
   chapterHit: { position: 'absolute', left: 0, width: 16, height: 12, justifyContent: 'center' },
   chapter: { height: 2, marginHorizontal: 1, borderRadius: 1, backgroundColor: c.muted },
+  nameHolder: { position: 'absolute', left: 18, width: 240, alignItems: 'flex-start' },
   name: {
-    position: 'absolute',
-    left: 18,
-    maxWidth: 220,
+    maxWidth: 240,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Fixes from a design review of the new progress.** The chapter name on the app's rail showed
+  as an empty pill on iOS and Android. The app's run bar no longer shows a red Stop and "100% ·
+  nothing left" while the run waits for an answer: it says **Waiting for you** in amber and its
+  button goes to the question. Neither client says "100%" or "nothing left" while a step is still
+  open (a step done by hand has no time): `99% · 1 step left`. The finish time reads `ends ≈ 14:32`
+  everywhere. A ready check's `exit 1` no longer prints a red notice in the app (the output line
+  says "ready: not up"). The teardown question is plainer in both clients: **Take it down now?**
+  with **Take down** / **Leave it up**.
+- **Accessibility.** The Runbook Steps view works with the keyboard (Up/Down, Home/End, Enter), has
+  tree roles, shows each step's state as a symbol as well as a colour, announces a change of state,
+  and stops its pulse with reduced motion. In the app, amber text is darker in the light theme
+  (4.5:1 on white), the rail's pulse stops with Reduce Motion, and its ticks name their step.
 - **VS Code: the Runbook Steps view** (its own icon in the activity bar): the same rail as the
   app's, with room for names: chapters and steps with their state, name and time, the running
   step's bar, the cells on screen shaded; click a row to go to it.

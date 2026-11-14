@@ -56,6 +56,7 @@ import {
   formatEstimate,
   formatFinish,
   formatTimeLeft,
+  remaining,
   runbookEstimate,
   stepLabel,
   textEstimateSteps,
@@ -110,7 +111,7 @@ import { transportReady } from '../ssh/transport';
 import { mono, themedStyles, usePalette } from '../theme';
 import { ActionGroup, ActionsSheet, AppAction } from '../ui/ActionsSheet';
 
-/** Runbooks whose teardown was declined (Not now): Run all doesn't offer it again until the app restarts. */
+/** Runbooks whose teardown was declined (Leave it up): Run all doesn't offer it again until the app restarts. */
 const teardownDeclined = new Set<string>();
 
 /** A teardown step (core/parts.ts). */
@@ -317,7 +318,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       const s = stepState(a?.exit, a?.lines !== undefined, a?.check);
       const state: RailState =
         running?.cellIndex === i ? 'running' : s === 'done' || s === 'skipped' ? 'done' : s === 'failed' ? 'failed' : 'pending';
-      return [{ index: i, step, state }];
+      const label = stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId);
+      return [{ index: i, step, state, ...(label ? { label } : {}) }];
     });
   }, [cells, progress, running]);
   const railChapters = useMemo(
@@ -380,7 +382,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         readyUp?: boolean;
         /** The teardown offer's answer; a called runbook runs whole (`run`). */
         takeDown?: boolean | 'run';
-        /** Continue with only the teardown left: offer it even after Not now. */
+        /** Continue with only the teardown left: offer it even after Leave it up. */
         askAgain?: boolean;
       }
     | undefined
@@ -749,7 +751,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       q.takeDown = false;
     }
     if (q.takeDown === false) {
-      // Not now: the teardown steps stay as they are.
+      // Leave it up: the teardown steps stay as they are.
       q.cells = q.cells.filter((i) => partAt(i) !== 'teardown');
       if (q.call !== undefined && partAt(q.call) === 'teardown') delete q.call;
     }
@@ -1440,6 +1442,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 canRun={host !== undefined}
                 running={queued}
                 {...(runningStep ? { runningCell: runningStep } : {})}
+                waiting={asking !== undefined || confirming !== undefined || teardownOffer !== undefined}
+                onAnswer={() => {
+                  const at = asking?.request.cellIndex ?? confirming?.cellIndex ?? teardownOffer?.cellIndex;
+                  if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
+                }}
                 onRun={runSequence}
                 onStop={stopSequence}
                 onMore={() => setShowActions(true)}
@@ -1876,12 +1883,17 @@ function RunBar({
   canRun,
   running,
   runningCell,
+  waiting = false,
+  onAnswer,
   onRun,
   onStop,
   onMore,
   onLayout,
 }: {
   progress: Progress | undefined;
+  /** The run waits for the reader (values, a confirmation, the teardown offer): Answer goes there. */
+  waiting?: boolean;
+  onAnswer?(): void;
   /** By the blocks' estimates; shown when one has an estimate. */
   estimate?: RunbookEstimate;
   canRun: boolean;
@@ -1906,6 +1918,30 @@ function RunBar({
   const finished = progress.pending === 0 && progress.failed === 0 && progress.offered === 0;
   const resume = !fresh && !finished && progress.resume.length > 0;
   const label = running ? t.stopRun : fresh || finished || !resume ? (finished ? t.runAgain : t.runAll) : t.continueRunbook;
+  if (waiting) {
+    // Not "100%" and a red Stop while the run waits for an answer far below: say so, and go there.
+    return (
+      <View testID="run-bar" style={styles.runBar} onLayout={(e) => onLayout?.(e.nativeEvent.layout.y + e.nativeEvent.layout.height)}>
+        <Pressable
+          testID="run-primary"
+          accessibilityRole="button"
+          onPress={() => onAnswer?.()}
+          style={[styles.runPrimary, styles.runAnswer]}
+        >
+          <Text style={styles.runPrimaryText}>{t.runAnswer}</Text>
+        </Pressable>
+        <View style={styles.grow}>
+          <Text testID="run-progress" style={[styles.runProgress, styles.runWaiting]} numberOfLines={2}>
+            {t.pinnedWaiting}
+          </Text>
+          <Pressable testID="run-stop" accessibilityRole="button" onPress={onStop}>
+            <Text style={styles.secondaryText}>{t.stopRun}</Text>
+          </Pressable>
+        </View>
+        {more}
+      </View>
+    );
+  }
   return (
     <View testID="run-bar" style={styles.runBar} onLayout={(e) => onLayout?.(e.nativeEvent.layout.y + e.nativeEvent.layout.height)}>
       <Pressable
@@ -1924,7 +1960,7 @@ function RunBar({
         {estimate?.fraction !== undefined ? (
           <View testID="run-estimate" style={styles.estimateRow}>
             <TimeBar fraction={estimate.fraction} segments={barSegments(estimate)} />
-            <EstimateLine estimate={estimate} />
+            <EstimateLine estimate={estimate} open={progress.pending} />
           </View>
         ) : null}
         {resume && !running ? (
@@ -1979,9 +2015,10 @@ function barSegments(e: RunbookEstimate): BarSegment[] | undefined {
  * The lines under the run bar, in words: `41% · 4 min left · ≈ 14:32`, then the setup and
  * teardown and what has no estimate (`setup ✓ · teardown 2m, offered · 1 without an estimate`).
  */
-function estimateLines(e: RunbookEstimate, now = Date.now()): { main: string; more?: string } {
-  const percent = Math.floor(e.fraction! * 100);
-  const main = [t.barPercent(percent), e.leftSeconds > 0 ? t.estimateLeft(formatTimeLeft(e.leftSeconds)) : t.estimateNothingLeft];
+function estimateLines(e: RunbookEstimate, open: number, now = Date.now()): { main: string; more?: string } {
+  // Never "100%" or "nothing left" while a step is open (a step done by hand has no time).
+  const r = remaining(e, open);
+  const main = [t.barPercent(r.percent ?? 0), r.left];
   if (e.leftSeconds > 0) main.push(t.barFinish(formatFinish(e.leftSeconds, now)));
   const more: string[] = [];
   const p = e.parts;
@@ -1997,9 +2034,9 @@ function estimateLines(e: RunbookEstimate, now = Date.now()): { main: string; mo
   return { main: main.join(' · '), ...(more.length ? { more: more.join(' · ') } : {}) };
 }
 
-function EstimateLine({ estimate }: { estimate: RunbookEstimate }) {
+function EstimateLine({ estimate, open }: { estimate: RunbookEstimate; open: number }) {
   const styles = useStyles();
-  const lines = estimateLines(estimate);
+  const lines = estimateLines(estimate, open);
   return (
     <View testID="run-estimate-text" accessible accessibilityLabel={[lines.main, lines.more].filter(Boolean).join(' · ')}>
       <Text testID="estimate-main" style={styles.estimatePieceText}>
@@ -2576,8 +2613,10 @@ const useStyles = themedStyles((c) => ({
     borderBottomColor: c.border,
   },
   pinnedText: { fontSize: 14, color: c.text },
+  runAnswer: { backgroundColor: c.warning },
+  runWaiting: { color: c.warningText, fontWeight: '600' },
   withRail: { flex: 1, flexDirection: 'row' },
-  pinnedWaiting: { color: c.warning, fontWeight: '600' },
+  pinnedWaiting: { color: c.warningText, fontWeight: '600' },
   pinnedStop: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, backgroundColor: c.error },
   pinnedStopText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   params: { marginVertical: 6 },

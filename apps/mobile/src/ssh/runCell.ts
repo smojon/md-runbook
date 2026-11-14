@@ -301,6 +301,9 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   // `exit N` ended the host's shell: its exit code is the cell's, and the next cell opens a new
   // shell, as in the extension's session mode, which says so the same way.
   const noteEnded = (r: SessionRunResult): void => {
+    // Not for the ready check: its `exit 1` is a normal "not up", and the output line says so
+    // ("ready: not up"); a red notice under it read as a failure.
+    if (opts.part === 'ready') return;
     if (r.shellEnded && r.exitCode !== null && r.error === undefined && !r.timedOut && !r.cancelled)
       write(t.shellEndedNote(r.exitCode) + '\n', 'stderr');
   };

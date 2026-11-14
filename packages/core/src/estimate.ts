@@ -49,6 +49,18 @@ export function formatTimeLeft(seconds: number): string {
 }
 
 /**
+ * The share done by the estimates, and what is left, for a runbook with `open` steps still to do
+ * (pending, by any measure: a step done by hand or one without an estimate has no time). Never
+ * "100%" or "nothing left" while a step is open: `99%` and `1 step left` instead.
+ */
+export function remaining(e: { fraction?: number; leftSeconds: number }, open: number): { percent?: number; left: string } {
+  const pct = e.fraction === undefined ? undefined : Math.floor(e.fraction * 100);
+  const percent = pct === undefined ? undefined : open > 0 ? Math.min(99, pct) : pct;
+  const left = e.leftSeconds > 0 ? `${formatTimeLeft(e.leftSeconds)} left` : open > 0 ? `${open} step${open === 1 ? '' : 's'} left` : 'nothing left';
+  return { ...(percent !== undefined ? { percent } : {}), left };
+}
+
+/**
  * What to call a step on a status line: its `name=`, a call's first section or src=, else the
  * block's first line (cut at 40 characters).
  */

@@ -569,7 +569,7 @@ const useStyles = themedStyles((c) => ({
   statusLeft: { flex: 1 },
   statusText: { fontSize: 12, color: c.muted, flexShrink: 1 },
   why: { fontSize: 12, lineHeight: 17, color: c.muted, marginLeft: 38, paddingHorizontal: 4, paddingTop: 2 },
-  whyProposed: { color: c.warning },
+  whyProposed: { color: c.warningText },
   problems: { marginLeft: 38, paddingHorizontal: 4, paddingTop: 4, gap: 6 },
   problem: { flexDirection: 'row', gap: 6, alignItems: 'flex-start' },
   problemIcon: { paddingTop: 2 },
@@ -582,6 +582,6 @@ const useStyles = themedStyles((c) => ({
   outputHeader: { fontSize: 12, color: c.muted },
   estimate: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 0 },
   timing: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 4 },
-  overText: { color: c.warning },
+  overText: { color: c.warningText },
   outputText: { fontFamily: mono, fontSize: 13, lineHeight: 19, color: c.text },
 }));

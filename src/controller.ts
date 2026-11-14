@@ -188,10 +188,10 @@ function teardownLabel(cell: vscode.NotebookCell): string {
 async function askTeardown(_notebook: vscode.NotebookDocument, labels: readonly string[]): Promise<boolean> {
   const take = 'Take Down';
   const answer = await vscode.window.showInformationMessage(
-    `Run the teardown now: ${labels.join(', ')}?`,
-    { modal: true, detail: "Choose Not Now if you go straight on to the next runbook: the teardown stays as it is, to run later. Run All won't ask again for this runbook until the window is reloaded." },
+    `Take it down now? ${labels.join(', ')}`,
+    { modal: true, detail: 'Leave it up to keep it for the next runbook. Resume Run offers this again.' },
     take,
-    'Not Now',
+    'Leave It Up',
   );
   return answer === take;
 }
@@ -232,7 +232,7 @@ export class RunbookController implements vscode.Disposable {
   private readonly running = new Map<string, AbortController>();
   /** Notebooks this controller is the kernel of. */
   private readonly selected = new Set<string>();
-  /** Notebooks whose teardown was declined (Not Now): Run All doesn't offer it again this session. */
+  /** Notebooks whose teardown was declined (Leave It Up): Run All doesn't offer it again this session. */
   private readonly teardownDeclined = new Set<string>();
   /** Asks whether to run the teardown (replaced in tests). */
   askTeardown: (notebook: vscode.NotebookDocument, labels: readonly string[]) => Promise<boolean> = askTeardown;
@@ -435,7 +435,7 @@ export class RunbookController implements vscode.Disposable {
     for (const o of this.pipeline.observers) await o.onDidRunSequence?.(notebook, runs);
   }
 
-  /** Whether to run the teardown cells now: asked once per runbook until Not Now. */
+  /** Whether to run the teardown cells now: asked once per runbook until Leave It Up. */
   private async chooseTeardown(notebook: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[], askAgain = false): Promise<boolean> {
     const key = notebook.uri.toString();
     if (this.teardownDeclined.has(key) && !askAgain) return false;

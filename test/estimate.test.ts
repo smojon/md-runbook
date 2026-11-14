@@ -17,6 +17,7 @@ import {
   isOverEstimate,
   overEstimate,
   progressBar,
+  remaining,
   runbookEstimate,
   stepLabel,
   suggestedEstimate,
@@ -332,6 +333,13 @@ describe('status line helpers', () => {
     assert.equal(formatTimeLeft(60), '1m');
     assert.equal(formatTimeLeft(150), '3 min');
     assert.equal(formatTimeLeft(3600 + 600), '1 h 10 min');
+  });
+
+  it('never 100% or nothing left while a step is open', () => {
+    assert.deepEqual(remaining({ fraction: 1, leftSeconds: 0 }, 1), { percent: 99, left: '1 step left' });
+    assert.deepEqual(remaining({ fraction: 1, leftSeconds: 0 }, 0), { percent: 100, left: 'nothing left' });
+    assert.deepEqual(remaining({ fraction: 0.41, leftSeconds: 210 }, 3), { percent: 41, left: '4 min left' });
+    assert.deepEqual(remaining({ leftSeconds: 0 }, 2), { left: '2 steps left' });
   });
 
   it('finish time is local HH:MM', () => {

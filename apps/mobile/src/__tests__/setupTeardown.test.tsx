@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 describe('setup and teardown in Run all', () => {
-  it('the ready check says up: the setup is skipped; Not now leaves the teardown and is not asked again', async () => {
+  it('the ready check says up: the setup is skipped; Leave it up leaves the teardown and is not asked again', async () => {
     const script: FakeRun[] = [{ exitCode: 0 }, { stdout: 'work\n', exitCode: 0 }, { exitCode: 0 }, { stdout: 'work\n', exitCode: 0 }];
     mockConnection = fakeConnection(script);
     const rb = addRunbook('guide.md', GUIDE);
@@ -62,9 +62,9 @@ describe('setup and teardown in Run all', () => {
     // Before the check: the setup is what it may add, the teardown is offered.
     expect(screen.getByTestId('run-estimate-text')).toHaveProp(
       'accessibilityLabel',
-      expect.stringMatching(/55 min left · ≈ \d\d:\d\d · \+19m if the setup runs · teardown 2m, offered$/),
+      expect.stringMatching(/55 min left · ends ≈\s\d\d:\d\d · \+19m if the setup runs · teardown 2m, offered$/),
     );
-    expect(screen.getByTestId('estimate-main')).toHaveTextContent(/^0% · 55 min left · ≈ \d\d:\d\d$/);
+    expect(screen.getByTestId('estimate-main')).toHaveTextContent(/^0% · 55 min left · ends ≈\s\d\d:\d\d$/);
     expect(screen.getByTestId('estimate-more')).toHaveTextContent('+19m if the setup runs · teardown 2m, offered');
     expect(screen.getByTestId('bar-setup')).toBeTruthy();
     expect(screen.getByTestId('bar-teardown')).toBeTruthy();
@@ -73,7 +73,8 @@ describe('setup and teardown in Run all', () => {
       fireEvent.press(screen.getByTestId('run-primary'));
     });
     await waitFor(() => expect(screen.getByTestId('teardown-card')).toBeTruthy());
-    expect(screen.getByTestId('teardown-title')).toHaveTextContent('Run the teardown now: Stop the lab?');
+    expect(screen.getByTestId('teardown-title')).toHaveTextContent('Take it down now?');
+    expect(screen.getByTestId('teardown-what')).toHaveTextContent('Stop the lab');
     expect(sources()).toEqual(['test -f lab.up', 'echo work']);
     const text = getRunbook(rb.id)!.text;
     expect(text).toMatch(/exit=0 [^\n]*check=ok [^\n]*ready=up/);

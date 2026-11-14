@@ -21,13 +21,13 @@ function flagCommands(flag: string): { ready: string; up: string; down: string }
     : { ready: `test -f "${f}"`, up: `touch "${f}"`, down: `rm -f "${f}"` };
 }
 
-/** Answer the teardown offer with `answer` (Take Down / Not Now), counting the times it is asked. */
+/** Answer the teardown offer with `answer` (Take Down / Leave It Up), counting the times it is asked. */
 function stubTeardown(answer: () => string): { asked: string[]; restore: () => void } {
   const w = vscode.window as unknown as { showInformationMessage: (...args: unknown[]) => Thenable<unknown> };
   const original = w.showInformationMessage;
   const asked: string[] = [];
   w.showInformationMessage = (message: unknown, ...rest: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('Run the teardown now')) {
+    if (typeof message === 'string' && message.startsWith('Take it down now?')) {
       asked.push(message);
       return Promise.resolve(answer());
     }
@@ -39,14 +39,14 @@ function stubTeardown(answer: () => string): { asked: string[]; restore: () => v
 /** A finished run's end time, to wait for the next one. */
 const endOf = (cell: vscode.NotebookCell): number => cell.executionSummary?.timing?.endTime ?? 0;
 
-test('Run All: the ready check skips a setup already up, and the teardown is offered (Not Now)', async () => {
+test('Run All: the ready check skips a setup already up, and the teardown is offered (Leave It Up)', async () => {
   const flag = path.join(work, 'parts-lab.up');
   const c = flagCommands(flag);
   const uri = writeFile(
     'parts-guide.md',
     ['# Guide', '', fence(`${LANG} ready name="the lab"`, c.ready), '## 1. Start', '', fence(`${LANG} setup`, c.up), '## 2. Work', '', fence(LANG, 'echo work'), '## 3. Stop', '', fence(`${LANG} teardown name="Stop the lab"`, c.down)].join('\n'),
   );
-  const stub = stubTeardown(() => 'Not Now');
+  const stub = stubTeardown(() => 'Leave It Up');
   try {
     const editor = await openRunbook(uri);
     const cells = editor.notebook.getCells().filter((x) => x.kind === vscode.NotebookCellKind.Code);
@@ -59,13 +59,13 @@ test('Run All: the ready check skips a setup already up, and the teardown is off
     assert.equal(ready!.executionSummary?.success, true, outputText(ready!));
     assert.equal(setup!.executionSummary?.success, true, outputText(setup!));
     assert.ok(fs.existsSync(flag), 'the setup ran');
-    assert.equal(teardown!.outputs.length, 0, 'Not Now leaves the teardown as it was');
+    assert.equal(teardown!.outputs.length, 0, 'Leave It Up leaves the teardown as it was');
 
     const before = endOf(work1!);
     await step('run all (warm)', runCells(editor, 0, editor.notebook.cellCount));
     await waitFor('second run', () => endOf(work1!) > before, 60_000);
     assert.match(outputText(setup!), /already up \(the ready check passed\)/);
-    assert.equal(stub.asked.length, 1, 'Not Now: not asked again for this runbook');
+    assert.equal(stub.asked.length, 1, 'Leave It Up: not asked again for this runbook');
     assert.ok(fs.existsSync(flag), 'the teardown did not run');
 
     assert.ok(await step('save', editor.notebook.save()));
@@ -90,7 +90,7 @@ test('Run All: a setup call runs the ready check of the runbook it calls; Take D
     'parts-caller.md',
     ['# Guide 3', '', fence('runbook src=parts-ka4.md section="Start the lab" setup', ''), fence(LANG, 'echo work'), fence('runbook src=parts-ka4.md section="Stop the lab" teardown', '')].join('\n'),
   );
-  let answer = 'Not Now';
+  let answer = 'Leave It Up';
   const stub = stubTeardown(() => answer);
   try {
     const editor = await openRunbook(uri);
@@ -102,7 +102,7 @@ test('Run All: a setup call runs the ready check of the runbook it calls; Take D
     await waitFor('the teardown offer', () => stub.asked.length === 1);
     await closeAll();
 
-    // A new window session would ask again; here Not Now holds, so run the teardown by hand.
+    // A new window session would ask again; here Leave It Up holds, so run the teardown by hand.
     const editor2 = await openRunbook(uri);
     const [setup2, body2, teardown2] = editor2.notebook.getCells().filter((x) => x.kind === vscode.NotebookCellKind.Code);
     const before = endOf(body2!);
