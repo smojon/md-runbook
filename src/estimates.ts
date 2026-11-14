@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isCallLanguage, isDynamicSrc, parseCall } from '@md-runbook/core/call';
 import { callEstimateSeconds } from '@md-runbook/core/node';
-import { EstimateStep, blockBar, blockProgress, formatBlockProgress, formatEstimate, formatLearned, isCodeMeta, isCopyFileName, isOverEstimate, learnedEstimate, overEstimate, stepHistoryKey, stepState, suggestedEstimate, withDuration } from '@md-runbook/core';
+import { EstimateStep, HISTORY_RUNS, blockBar, blockProgress, formatBlockProgress, formatEstimate, formatLearned, isCodeMeta, isCopyFileName, isOverEstimate, learnedEstimate, overEstimate, stepHistoryKey, stepState, suggestedEstimate, withDuration } from '@md-runbook/core';
 import { parseCellOptions, setInfoOption } from '@md-runbook/core/cellOptions';
 import { withInfo } from '@md-runbook/core/proposal';
 import { parseInterval } from '@md-runbook/core/checks';
@@ -62,12 +62,24 @@ function historyOf(uri: vscode.Uri): string {
   return dir ? vscode.Uri.file(path.join(dir, original)).toString() : vscode.Uri.joinPath(uri, '..', original).toString();
 }
 
-/** A block without estimate=: the usual time of its past runs that passed (learnedEstimate), or undefined. */
-export function learnedSeconds(cell: vscode.NotebookCell): number | undefined {
+/** A block's past runs that passed (seconds, oldest first), for its learned estimate; undefined without any. */
+function learnedRuns(cell: vscode.NotebookCell): number[] | undefined {
   if (!memento || cell.kind !== vscode.NotebookCellKind.Code || !optionsOn() || !learning() || isCallLanguage(cell.document.languageId)) return undefined;
   const meta: unknown = cell.metadata?.[META_KEY];
   if (!isCodeMeta(meta)) return undefined;
-  const runs = memento.get<History>(HISTORY_KEY)?.[historyOf(cell.notebook.uri)]?.[stepHistoryKey(meta.info, cell.document.getText())];
+  return memento.get<History>(HISTORY_KEY)?.[historyOf(cell.notebook.uri)]?.[stepHistoryKey(meta.info, cell.document.getText())];
+}
+
+/** From 3 runs on, how much they varied: ` (28s–41s over its last 4 runs)`; else ''. */
+function learnedRange(cell: vscode.NotebookCell): string {
+  const runs = learnedRuns(cell)?.slice(-HISTORY_RUNS);
+  if (!runs || runs.length < 3) return '';
+  return ` (${formatEstimate(Math.min(...runs))}–${formatEstimate(Math.max(...runs))} over its last ${runs.length} runs)`;
+}
+
+/** A block without estimate=: the usual time of its past runs that passed (learnedEstimate), or undefined. */
+export function learnedSeconds(cell: vscode.NotebookCell): number | undefined {
+  const runs = learnedRuns(cell);
   return runs ? learnedEstimate(runs) : undefined;
 }
 
@@ -222,7 +234,7 @@ export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { tex
   }
   const est = block.seconds;
   const fmt = block.learned ? formatLearned : formatEstimate;
-  const learnedNote = block.learned ? '; it has no estimate=, so this is the usual time of its last runs that passed' : '';
+  const learnedNote = block.learned ? `${learnedRange(cell)}; it has no estimate=, so this is the usual time of its last runs that passed` : '';
   const since = runningSince(cell);
   if (since !== undefined) {
     const elapsed = (now - since) / 1000;

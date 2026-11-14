@@ -2365,7 +2365,8 @@ function estimateLines(e: RunbookEstimate, open: number, running: boolean, now =
   // Never "100%" or "nothing left" while a step is open (a step done by hand has no time); "at
   // least" while steps without an estimate are to do; the end time only while it runs (core).
   const r = remaining(e, open);
-  const main = [t.barPercent(r.percent ?? 0), r.left];
+  // A share by the estimates only when every step left has one.
+  const main = [...(e.unestimatedLeft > 0 ? [] : [t.barPercent(r.percent ?? 0)]), r.left];
   const ends = finishTime(e, running, now);
   if (ends) main.push(t.barFinish(ends));
   const more: string[] = [];

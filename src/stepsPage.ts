@@ -301,7 +301,7 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
     resumeBtn.hidden = !m.canResume;
     barwrap.hidden = m.fraction === undefined;
     if (m.fraction !== undefined) barfill.style.width = Math.round(m.fraction * 100) + '%';
-    put(sub, m.fraction !== undefined ? m.percent + '% · ' + m.left : '');
+    put(sub, m.fraction !== undefined ? (m.share || m.percent + '%') + ' · ' + m.left : '');
     drawPreflight(m);
     // One element per row key, updated in place; the list is put together again only when the rows change.
     const seenKeys = new Map();

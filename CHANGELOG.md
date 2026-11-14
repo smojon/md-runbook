@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Progress by steps while some have no estimate:** the Steps view and the status bar tooltip say
+  `2 of 6 steps · at least 5s left` instead of a percentage the estimates can't back, and the bar
+  goes by steps then (the app drops the percentage too). From 3 runs on, a learned estimate's
+  tooltip says how much they varied (`28s–41s over its last 4 runs`).
 - **Transcripts go in a `.md-runbook` folder** next to the runbook
   (`.md-runbook/deploy.runbook.transcript.log`), not beside every runbook. In a Git repository, the
   first one offers to add `.md-runbook/` to `.gitignore` (**Add to .gitignore** / **Not Now** /

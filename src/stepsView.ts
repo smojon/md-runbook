@@ -84,6 +84,8 @@ export interface StepsModel {
   fraction?: number;
   /** The share done as shown: never 100 while a step is open. */
   percent?: number;
+  /** How far, as shown: `41%` by the estimates, or `2 of 6 steps` while steps without one are to do. */
+  share?: string;
   left?: string;
   rows: StepsRow[];
   /** Steps still to do or failed (the view's badge). */
@@ -310,10 +312,13 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     // While the run waits for the reader, say so, as the status bar does.
     headline: waiting ? `Waiting for you: ${waiting.what}` : status.text.replace(/^\$\([^)]+\)\s*/, ''),
     state: waiting ? 'waiting' : anyRunning ? 'running' : p.firstFailed ? 'failed' : done ? 'done' : 'idle',
-    ...(e.fraction !== undefined ? { fraction: e.fraction } : {}),
+    // With steps that have no estimate still to do, the estimates can't say how far the run is:
+    // the bar and the share go by steps then.
+    ...(e.fraction !== undefined ? { fraction: e.unestimatedLeft > 0 && p.total > 0 ? (p.done + p.skipped) / p.total : e.fraction } : {}),
     ...(rest.percent !== undefined
       ? {
           percent: rest.percent,
+          share: e.unestimatedLeft > 0 ? `${p.done + p.skipped} of ${p.total} steps` : `${rest.percent}%`,
           // Stopped at a failure: what is left to do, not a time (nothing runs).
           left:
             p.firstFailed && !anyRunning

@@ -135,7 +135,8 @@ export function progressTooltip(nb: vscode.NotebookDocument, p: Progress, e: Run
   const head: string[] = [`**${complete} of ${p.total} steps done**`];
   // Never "100%" or "nothing left" while a step is open (one done by hand has no time).
   const r = remaining(e, p.pending);
-  if (r.percent !== undefined) head.push(`${r.percent}% by the estimates`, r.left);
+  // A share by the estimates only when every step left has one (else the steps done above say how far).
+  if (r.percent !== undefined) head.push(...(e.unestimatedLeft > 0 ? [] : [`${r.percent}% by the estimates`]), r.left);
   const ends = e.fraction !== undefined ? finishTime(e, running !== undefined, now) : undefined;
   if (ends) head.push(`ends ≈ ${ends}`);
   md.appendMarkdown(head.join(' · ') + '\n\n');

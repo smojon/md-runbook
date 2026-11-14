@@ -22,6 +22,8 @@ before the run what each step will need from you (a confirmation, a secret, a va
 runs, so the status bar can say how long is left; it keeps showing the run, and a notification
 says when it ends or waits for you, while you work in another file.
 
+![A run in VS Code: the Steps view on the left with three steps done and a step by hand waiting with Done, Skip and Stop, which are also on the code block it waits before; the status bar says Waiting for you](docs/vscode-steps-run.png)
+
 ![A runbook open as a notebook after Run All](docs/1-notebook.png)
 
 The same file saved and opened as plain Markdown, with output blocks and redacted secrets:
