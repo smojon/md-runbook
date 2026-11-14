@@ -15,6 +15,7 @@ import { registerLint } from './lint';
 import { RunPipeline } from './pipeline';
 import { registerEstimates } from './estimates';
 import { registerProgress } from './progress';
+import { registerWaiting } from './waiting';
 import { registerSafety } from './safety';
 import { isTestMode, registerSecrets } from './secrets';
 import { registerLinkHandler } from './linkHandler';
@@ -95,6 +96,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerCalls(context, pipeline, controller);
   registerProgress(context, pipeline, controller);
   registerEstimates(context);
+  registerWaiting(context);
   registerLineRuns(context, controller, { safety, secrets });
   registerAutoSave(pipeline);
   registerOpenTiming(context);

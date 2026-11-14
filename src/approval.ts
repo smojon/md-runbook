@@ -31,6 +31,7 @@ import { META_KEY } from './outputs';
 import { CellPlan, CellPreparer, PrepareContext, RunPipeline } from './pipeline';
 import { setContext } from './contextKeys';
 import { NOTEBOOK_TYPE } from './serializer';
+import { whileWaiting } from './waiting';
 
 /** Cell metadata key: hash of the code when it was approved in this editor session. */
 export const APPROVAL_KEY = 'mdRunbookApproval';
@@ -306,19 +307,19 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
       ...(options.length > 0 ? ['Fence options that change how it runs:', ...options.map((o) => `  ${o}`)] : []),
     ];
     const reason = p.reason ? `\n\nReason given: ${p.reason}` : '';
-    const pick = await vscode.window.showWarningMessage(
-      `Approve cell ${cell.index + 1} proposed by ${p.by}?`,
-      { modal: true, detail: `${lines.join('\n')}${reason}` },
-      typed ? 'Approve…' : 'Approve',
+    const pick = await whileWaiting(cell, 'your approval', () =>
+      vscode.window.showWarningMessage(`Approve cell ${cell.index + 1} proposed by ${p.by}?`, { modal: true, detail: `${lines.join('\n')}${reason}` }, typed ? 'Approve…' : 'Approve'),
     );
     if (!pick) return false;
     if (!typed) return true;
-    const answer = await vscode.window.showInputBox({
-      title: `md-runbook: approve cell ${cell.index + 1}`,
-      prompt: 'Type "run" to approve this cell. It can then run with your credentials.',
-      ignoreFocusOut: true,
-      validateInput: (v) => (v === '' || v.trim().toLowerCase() === 'run' ? undefined : 'Type run to approve, or press Escape.'),
-    });
+    const answer = await whileWaiting(cell, 'your approval', () =>
+      vscode.window.showInputBox({
+        title: `md-runbook: approve cell ${cell.index + 1}`,
+        prompt: 'Type "run" to approve this cell. It can then run with your credentials.',
+        ignoreFocusOut: true,
+        validateInput: (v) => (v === '' || v.trim().toLowerCase() === 'run' ? undefined : 'Type run to approve, or press Escape.'),
+      }),
+    );
     return answer?.trim().toLowerCase() === 'run';
   }
 

@@ -25,9 +25,11 @@ import {
   rewriteRefs,
 } from '@md-runbook/core/secrets';
 import { META_KEY } from './outputs';
+import { currentOs } from '@md-runbook/core/os';
 import { CellPlan, PrepareContext, RunPipeline } from './pipeline';
 import { SECTION } from './config';
 import { NOTEBOOK_TYPE } from './serializer';
+import { whileWaiting } from './waiting';
 
 /** SecretStorage can't enumerate, so the names are kept here. */
 const INDEX_KEY = 'mdRunbook.secretNames';
@@ -39,6 +41,16 @@ const validateName = (v: string): string | undefined =>
 function runbookName(nb: vscode.NotebookDocument): string {
   return path.posix.basename(nb.uri.path);
 }
+
+/** Where a value is asked for: the runbook and, when known, the cell that uses it. */
+interface Asking {
+  notebook: vscode.NotebookDocument;
+  cell?: vscode.NotebookCell;
+  token?: vscode.CancellationToken;
+}
+
+/** " · cell 4" in a prompt's title: the box opens at the top of the window, away from the cell. */
+const forCell = (a: Asking): string => (a.cell ? ` · cell ${a.cell.index + 1}` : '');
 
 function activeRunbook(): vscode.NotebookDocument | undefined {
   const nb = vscode.window.activeNotebookEditor?.notebook;
@@ -108,13 +120,15 @@ class SecretsFeature {
    * Secrets live in the OS keychain for all workspaces, so the first time runbooks in a workspace
    * use one, the user is asked to allow it (remembered for that workspace).
    */
-  private async allowedHere(name: string, ctx: PrepareContext): Promise<void> {
+  private async allowedHere(name: string, ctx: Asking): Promise<void> {
     const allowed = this.context.workspaceState.get<string[]>(ALLOWED_KEY, []);
     if (allowed.includes(name)) return;
-    const answer = await vscode.window.showWarningMessage(
-      `Allow runbooks in this workspace to use the stored secret ${name}?`,
-      { modal: true, detail: `${runbookName(ctx.notebook)} references \${secret:${name}}. The value is passed to the cell as an environment variable and redacted from output by exact match.` },
-      'Allow',
+    const answer = await whileWaiting(ctx.cell, `allow secret ${name}`, () =>
+      vscode.window.showWarningMessage(
+        `Allow runbooks in this workspace to use the stored secret ${name}?`,
+        { modal: true, detail: `${runbookName(ctx.notebook)} references \${secret:${name}}. The value is passed to the cell as an environment variable and redacted from output by exact match.` },
+        'Allow',
+      ),
     );
     if (answer !== 'Allow') throw new Error(`secret ${name} was not allowed for this workspace`);
     await this.context.workspaceState.update(ALLOWED_KEY, [...allowed, name]);
@@ -127,22 +141,23 @@ class SecretsFeature {
   }
 
   /** A stored secret; if it's missing, ask for it once and store it. */
-  private async secret(name: string, ctx: PrepareContext): Promise<string> {
+  private async secret(name: string, ctx: Asking): Promise<string> {
     const token = ctx.token;
     const stored = await this.context.secrets.get(KEY_PREFIX + name);
     if (stored !== undefined) {
       await this.allowedHere(name, ctx);
       return stored;
     }
-    if (stored !== undefined) return stored;
-    const value = await vscode.window.showInputBox(
-      {
-        title: `md-runbook: secret ${name}`,
-        prompt: `Secret ${name} is not set. Enter a value to store it in the OS keychain.`,
-        password: true,
-        ignoreFocusOut: true,
-      },
-      token,
+    const value = await whileWaiting(ctx.cell, `secret ${name}`, () =>
+      vscode.window.showInputBox(
+        {
+          title: `md-runbook: secret ${name}${forCell(ctx)}`,
+          prompt: `Secret ${name} is not set. Enter a value to store it in the OS keychain.`,
+          password: true,
+          ignoreFocusOut: true,
+        },
+        token,
+      ),
     );
     if (!value) throw new Error(`secret ${name} is not set (md-runbook: Set Secret)`);
     await this.storeSecret(name, value);
@@ -157,20 +172,22 @@ class SecretsFeature {
     return m;
   }
 
-  private async input(name: string, secret: boolean, ctx: PrepareContext): Promise<string> {
+  private async input(name: string, secret: boolean, ctx: Asking): Promise<string> {
     const cache = this.session(this.inputs, ctx.notebook);
     const cached = cache.get(name);
     if (cached !== undefined) return cached;
-    const value = await vscode.window.showInputBox(
-      { title: `${runbookName(ctx.notebook)}: input ${name}`, prompt: `Value for ${name}`, password: secret, ignoreFocusOut: true },
-      ctx.token,
+    const value = await whileWaiting(ctx.cell, `input ${name}`, () =>
+      vscode.window.showInputBox(
+        { title: `${runbookName(ctx.notebook)}: input ${name}${forCell(ctx)}`, prompt: `Value for ${name}`, password: secret, ignoreFocusOut: true },
+        ctx.token,
+      ),
     );
     if (value === undefined) throw new Error(`input ${name} cancelled`);
     cache.set(name, value);
     return value;
   }
 
-  private async param(name: string, ctx: PrepareContext): Promise<string> {
+  private async param(name: string, ctx: Asking): Promise<string> {
     // A copy run by a runbook call: the value the call passed.
     const fromCall = passedParam(ctx.notebook.uri, name);
     if (fromCall !== undefined) return fromCall;
@@ -182,9 +199,11 @@ class SecretsFeature {
     const value =
       def !== undefined && useDefaults
         ? def
-        : await vscode.window.showInputBox(
-            { title: `${runbookName(ctx.notebook)}: parameter ${name}`, prompt: `Value for ${name}`, value: def, ignoreFocusOut: true },
-            ctx.token,
+        : await whileWaiting(ctx.cell, `parameter ${name}`, () =>
+            vscode.window.showInputBox(
+              { title: `${runbookName(ctx.notebook)}: parameter ${name}${forCell(ctx)}`, prompt: `Value for ${name}`, value: def, ignoreFocusOut: true },
+              ctx.token,
+            ),
           );
     if (value === undefined) throw new Error(`parameter ${name} cancelled`);
     cache.set(name, value);
@@ -322,6 +341,42 @@ class SecretsFeature {
     });
   }
 
+  /**
+   * Run All (several cells): ask now, at the click, for the parameters and inputs of the cells
+   * about to run, instead of halfway through when the reader may have looked away. Not for the
+   * setup, ready check and teardown (they may not run), skipped cells, cells for another OS or
+   * another host, or an assistant's cells. False: Escape, so nothing should run.
+   */
+  async askUpFront(nb: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[]): Promise<boolean> {
+    const fm = frontMatter(nb);
+    const seen = new Set<string>();
+    for (const cell of cells) {
+      if (cell.kind !== vscode.NotebookCellKind.Code || !shellKindForLanguage(cell.document.languageId)) continue;
+      const meta: unknown = cell.metadata?.[META_KEY];
+      const info = isCodeMeta(meta) ? meta.info : '';
+      const o = parseCellOptions(info);
+      if (o.skip || o.part !== undefined || o.host !== undefined || (o.os && !o.os.includes(currentOs())) || proposalOf(info).by !== undefined) continue;
+      let refs: ReturnType<typeof findRefs>;
+      try {
+        refs = cellRefs(cell.document.getText(), info, fm);
+      } catch {
+        continue; // a name used as two kinds: the run reports it
+      }
+      for (const r of refs) {
+        if ((r.kind !== 'param' && r.kind !== 'input') || seen.has(`${r.kind}:${r.name}`)) continue;
+        seen.add(`${r.kind}:${r.name}`);
+        if (r.kind === 'param' && passedParam(nb.uri, r.name) !== undefined) continue;
+        try {
+          if (r.kind === 'param') await this.param(r.name, { notebook: nb, cell });
+          else await this.input(r.name, r.secret, { notebook: nb, cell });
+        } catch {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   forget(nb: vscode.NotebookDocument): void {
     this.inputs.delete(nb.uri.toString());
     this.params.delete(nb.uri.toString());
@@ -455,6 +510,8 @@ export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunP
   const f = new SecretsFeature(context);
   pipeline.preparers.push(f);
   pipeline.observers.push({
+    // One cell asks when it runs (right away); a run of several asks for all its values first.
+    onWillRunSequence: (nb, cells) => (cells.length > 1 ? f.askUpFront(nb, cells) : undefined),
     onDidRunCell: (run) => {
       if (!run.captured) return;
       const meta: unknown = run.cell.metadata?.[META_KEY];

@@ -551,6 +551,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       return true;
     } else if (outcome.kind === 'needs') {
       setAsking({ request, hostId: target.id, needs: outcome.needs });
+      list.current?.scrollToIndex({ index: request.cellIndex, viewPosition: 0.2 });
       return true;
     } else {
       clearQueue();
@@ -1510,17 +1511,6 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 onClearAll={() => updateInputs({})}
               />
             ) : null}
-            {asking ? (
-              <NeedsCard
-                needs={asking.needs}
-                onRun={(v) => void provide(v)}
-                onCancel={() => {
-                  clearQueue();
-                  setNotice(t.needsCancelled(asking.needs.map((n) => n.name).join(', ')));
-                  setAsking(undefined);
-                }}
-              />
-            ) : null}
             {otherHost ? (
               <View testID="other-host" style={styles.trust}>
                 <Text style={styles.trustTitle}>{t.otherHostTitle(otherHost.target.name)}</Text>
@@ -1589,6 +1579,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               below={
                 teardownOffer?.cellIndex === index ? (
                   <TeardownCard labels={teardownOffer.labels} onTake={() => answerTeardown(true)} onNotNow={() => answerTeardown(false)} />
+                ) : asking?.request.cellIndex === index ? (
+                  // Under the cell that needs the values, where the reader looks, not at the top.
+                  <NeedsCard
+                    needs={asking.needs}
+                    onRun={(v) => void provide(v)}
+                    onCancel={() => {
+                      clearQueue();
+                      setNotice(t.needsCancelled(asking.needs.map((n) => n.name).join(', ')));
+                      setAsking(undefined);
+                    }}
+                  />
                 ) : confirming?.cellIndex === index ? (
                   <ConfirmCard
                     cell={index + 1}
@@ -1953,11 +1954,12 @@ function NeedsCard({
   return (
     <View testID="needs" style={styles.trust}>
       <Text style={styles.trustTitle}>{t.needsTitle}</Text>
-      {needs.map((n) => (
+      {needs.map((n, i) => (
         <View key={n.name} style={styles.param}>
           <Text style={styles.paramName}>{n.kind === 'secret' ? t.needSecret(n.name) : n.name}</Text>
           <TextInput
             testID={`need-${n.name}`}
+            autoFocus={i === 0}
             accessibilityLabel={n.name}
             style={styles.paramInput}
             value={values[n.name] ?? ''}

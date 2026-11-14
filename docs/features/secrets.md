@@ -92,6 +92,15 @@ ends in `_PASSWORD`, `_TOKEN` or `_SECRET`.
 Cancelling the input box fails the cell with `input NAME cancelled`; nothing is run. Run All
 stops there as with any failure.
 
+**When you're asked.** The input box is VS Code's own and opens at the top of the window, so
+md-runbook asks before the cell starts (it shows as queued, its timer not running) and, while
+the box is open, says so on the cell's status line and in the status bar (yellow, **Waiting for
+you: input NAME**; click it to show the cell); the box's title names the cell. **Run All** (and
+any run of several cells) asks for the inputs and parameters of all its cells at the click,
+before anything runs; Escape there cancels the run. Not asked up front: the setup, ready check
+and teardown, skipped cells and cells for another OS or host. (To have the box in the middle of
+the window instead, pick *Quick Input Position: Center* in VS Code's Customize Layout.)
+
 **md-runbook: Set Inputs** asks for every input the runbook uses, with the current value filled
 in, to set or change them before running (a secret input is masked and never shown; leaving it
 empty keeps the current value).

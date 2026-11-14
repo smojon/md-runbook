@@ -62,6 +62,57 @@ test('params: front-matter default, Set Parameters values, Reset Inputs', async 
   }
 });
 
+/** What each cell of the active runbook waits for (waiting.ts). */
+const waitingNow = async (): Promise<(string | undefined)[]> => ((await vscode.commands.executeCommand('mdRunbook._waiting')) as (string | undefined)[] | undefined) ?? [];
+const waitUntil = async (what: string, check: () => Promise<boolean>, ms = 15_000): Promise<void> => {
+  const end = Date.now() + ms;
+  while (!(await check())) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+};
+
+test('an input is asked before the cell starts, shown as waiting; Escape fails the cell', async () => {
+  try {
+    const uri = writeFile('ask-first.md', `# Ask first\n\n\`\`\`${LANG}\n${echo('who=${input:ASKED_WHO}')}\n\`\`\`\n`);
+    const editor = await openRunbook(uri);
+    const cell = editor.notebook.getCells().find((c) => c.kind === vscode.NotebookCellKind.Code)!;
+    const running = runCells(editor, cell.index, cell.index + 1);
+    await waitUntil('the cell to say what it waits for', async () => (await waitingNow())[cell.index] === 'input ASKED_WHO');
+    // Not started: no live output yet (a started cell gets one right away).
+    assert.equal(cell.outputs.length, 0, 'nothing runs while the box is open');
+    await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
+    await running;
+    assert.equal(await waitForRun(cell), false, outputText(cell));
+    assert.match(outputText(cell), /input ASKED_WHO cancelled/);
+    assert.equal((await waitingNow())[cell.index], undefined, 'no longer waiting');
+  } finally {
+    await closeAll();
+  }
+});
+
+test('Run All asks for the values of all its cells first; Escape there runs nothing', async () => {
+  try {
+    const uri = writeFile(
+      'ask-up-front.md',
+      `# Up front\n\n\`\`\`${LANG}\n${echo('first')}\n\`\`\`\n\n\`\`\`${LANG}\n${echo('who=${input:UP_FRONT_WHO}')}\n\`\`\`\n`,
+    );
+    const editor = await openRunbook(uri);
+    const code = editor.notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
+    const running = runCells(editor, code[0]!.index, code[1]!.index + 1);
+    // Asked at the click for the second cell's input, before the first cell runs.
+    await waitUntil('the input to be asked up front', async () => (await waitingNow())[code[1]!.index] === 'input UP_FRONT_WHO');
+    assert.equal(code[0]!.outputs.length, 0, 'the first cell has not run yet');
+    await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
+    await running;
+    await waitUntil('the prompt to close', async () => (await waitingNow()).every((w) => w === undefined), 5_000);
+    assert.equal(code[0]!.outputs.length, 0, 'nothing ran');
+    assert.equal(code[1]!.outputs.length, 0, 'nothing ran');
+  } finally {
+    await closeAll();
+  }
+});
+
 test('inputs: values set with Set Inputs are used without asking, and can be changed', async () => {
   try {
     const uri = writeFile('inputs.md', `# Inputs\n\n\`\`\`${LANG}\n${echo('who=${input:WHO}')}\n\`\`\`\n`);

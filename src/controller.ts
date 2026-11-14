@@ -348,7 +348,13 @@ export class RunbookController implements vscode.Disposable {
       return undefined;
     };
     try {
-      for (const o of this.pipeline.observers) await o.onWillRunSequence?.(notebook, cells);
+      for (const o of this.pipeline.observers) {
+        if ((await o.onWillRunSequence?.(notebook, cells)) === false) {
+          // Cancelled before anything ran (e.g. Escape on a value asked up front): the cells keep their outputs.
+          vscode.window.setStatusBarMessage('md-runbook: run cancelled, nothing ran', 8000);
+          return;
+        }
+      }
       for (let next = 0; next < executions.length; next++) {
         const exec = executions[next]!;
         handled = next;
@@ -421,10 +427,6 @@ export class RunbookController implements vscode.Disposable {
 
   private async runCell(exec: vscode.NotebookCellExecution, notebook: vscode.NotebookDocument, cfg: ExecutionConfig, lineRun?: LineRun, alreadyUp = false): Promise<RunRecord> {
     const cell = exec.cell;
-    const started = new Date();
-    exec.executionOrder = ++this.executionOrder;
-    exec.start(started.getTime());
-
     const fmTimeout = runbookDefaults(notebook, cell)?.timeoutSeconds;
     const fmTimeoutMs = fmTimeout !== undefined ? fmTimeout * 1000 : undefined;
     const plan: CellPlan = {
@@ -439,6 +441,29 @@ export class RunbookController implements vscode.Disposable {
       continueOnError: false,
       ...(lineRun ? { steps: lineRun.steps.map((s) => s.text) } : {}),
     };
+
+    // Ask first (values, confirmations), while the cell still shows as queued: a prompt opens at
+    // the top of the window, and a spinner and timer running meanwhile read as a slow cell.
+    const previousOutputs = [...cell.outputs];
+    const ctx: PrepareContext = { cell, notebook, token: exec.token, previousOutputs };
+    let prepareError: string | undefined;
+    if (lineRun && cell.document.getText() !== lineRun.cellText) {
+      prepareError = 'md-runbook: the cell changed after this line run was started; run it again';
+    }
+    try {
+      if (prepareError !== undefined) throw new Error(prepareError);
+      if (alreadyUp) {
+        // A setup step, and the ready check said up: nothing to ask, nothing to run.
+        plan.skip = 'already up (the ready check passed)';
+        plan.attrs.ready = 'up';
+      } else for (const p of this.pipeline.preparers) await p.prepare(plan, ctx);
+    } catch (e) {
+      prepareError = e instanceof Error ? e.message : String(e);
+    }
+
+    const started = new Date();
+    exec.executionOrder = ++this.executionOrder;
+    exec.start(started.getTime());
     /** Line runs: indexes of the steps that ran. */
     const ranSteps: number[] = [];
     let ended = false;
@@ -467,7 +492,6 @@ export class RunbookController implements vscode.Disposable {
       };
 
       let unflushed: Chunk[] = [];
-      const previousOutputs = [...cell.outputs];
       // One output per stretch of one stream: VS Code shows a single item of each output (its
       // items are alternative forms of one thing), so stderr items next to stdout ones were never shown.
       let live = new vscode.NotebookCellOutput([], runMeta('running'));
@@ -532,22 +556,7 @@ export class RunbookController implements vscode.Disposable {
         await exec.appendOutput(outputs);
       };
 
-      const ctx: PrepareContext = { cell, notebook, token: exec.token, previousOutputs };
       const failed = (error: string): ExecuteResult => ({ exitCode: null, signal: null, timedOut: false, cancelled: false, error, durationMs: 0 });
-      let prepareError: string | undefined;
-      if (lineRun && cell.document.getText() !== lineRun.cellText) {
-        prepareError = 'md-runbook: the cell changed after this line run was started; run it again';
-      }
-      try {
-        if (prepareError !== undefined) throw new Error(prepareError);
-        if (alreadyUp) {
-          // A setup step, and the ready check said up: nothing to ask, nothing to run.
-          plan.skip = 'already up (the ready check passed)';
-          plan.attrs.ready = 'up';
-        } else for (const p of this.pipeline.preparers) await p.prepare(plan, ctx);
-      } catch (e) {
-        prepareError = e instanceof Error ? e.message : String(e);
-      }
       knownSecrets.add(plan.secrets);
       const holdTranscript = !lineRun && (plan.checks?.captures ?? []).some((c) => c.secret);
       cellTranscript = startCellTranscript(cell, lineRun ? undefined : plan.source, holdTranscript);

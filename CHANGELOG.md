@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A value to type no longer looks like a slow cell.** VS Code's input box opens at the top of
+  the window, easy to miss while the cell's spinner and timer ran. Values and confirmations are
+  now asked before the cell starts (it shows as queued); while a box is open, the cell's status
+  line and the status bar (yellow) say **Waiting for you: parameter NAME**, and the box's title
+  names the cell. **Run All** asks for every input and parameter its cells need at the click;
+  Escape there cancels the run. In the app, the card asking for values opens under the cell that
+  needs them (it was at the top of the runbook), scrolled into view, its first field focused.
 - **App: no false "no such runbook" on calls.** A runbook opened from a file showed that error on
   every call until the file it calls was picked; lint now checks a call only once the app can read
   what it calls. The teardown card scrolls into view with its buttons, and the teardown's part of

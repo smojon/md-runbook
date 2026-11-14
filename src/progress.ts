@@ -17,6 +17,7 @@ import { META_KEY, outputMeta } from './outputs';
 import { RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
 import { setTaskBox } from './taskLists';
+import { onDidChangeWaiting, waitingIn, waitingText } from './waiting';
 
 /** Marker attributes of a code cell's current output, or undefined if it has none (or is running). */
 export function cellAttrs(cell: vscode.NotebookCell): Record<string, string> | undefined {
@@ -177,9 +178,21 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
       ticker = undefined;
     }
     if (!p || p.total === 0 || !nb) return item.hide();
+    const w = waitingIn(nb);
+    if (w) {
+      // The prompt is at the top of the window, easy to miss: say whose turn it is, in colour.
+      const t = waitingText(w.what);
+      item.text = t.statusBar;
+      item.tooltip = t.tooltip;
+      item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+      item.command = { title: 'Show the cell', command: 'mdRunbook._revealCell', arguments: [w.cell] };
+      return item.show();
+    }
     const s = progressStatus(nb, p);
     item.text = s.text;
     item.tooltip = s.tooltip;
+    item.backgroundColor = undefined;
+    item.command = 'mdRunbook.revealNextStep';
     item.show();
   };
   // Outputs stream in many small changes; coalesce them.
@@ -193,6 +206,16 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
     item,
     { dispose: () => (clearTimeout(timer), clearInterval(ticker)) },
     vscode.window.onDidChangeActiveNotebookEditor(refresh),
+    onDidChangeWaiting(refresh),
+    // The status bar item while a cell waits for the reader (waiting.ts).
+    vscode.commands.registerCommand('mdRunbook._revealCell', (cell?: unknown) => {
+      if (!isCell(cell)) return;
+      const editor = runbookEditor(cell.notebook);
+      if (!editor) return;
+      const range = new vscode.NotebookRange(cell.index, cell.index + 1);
+      editor.selections = [range];
+      editor.revealRange(range, vscode.NotebookEditorRevealType.InCenterIfOutsideViewport);
+    }),
     vscode.workspace.onDidChangeNotebookDocument((e) => {
       if (e.notebook === vscode.window.activeNotebookEditor?.notebook) refresh();
     }),
