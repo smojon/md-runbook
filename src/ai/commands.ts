@@ -9,6 +9,7 @@ import { PseudonymMap, depseudonymize } from '@md-runbook/core/aiContext';
 import { isValidApiKey } from '@md-runbook/core/anthropicStream';
 import {
   AiPrompt,
+  ExtractedProposal,
   aiNoteMarkdown,
   explainLinePrompt,
   explainOutputPrompt,
@@ -295,20 +296,30 @@ async function proposeAfter(arg: unknown, max: number, prompt: (runbook: string,
     if (choice === 'Show Answer') await openUntitled(depseudonymize(answer.text, answer.map), 'markdown', true);
     return 0;
   }
+  const n = await insertProposals(nb, cell ? cell.index + 1 : nb.cellCount, proposals);
+  if (n === 0) return 0;
+  void vscode.window.showInformationMessage(
+    `md-runbook: inserted ${n} proposed cell${n === 1 ? '' : 's'} from ${answer.provider.label}. Review each one; proposed cells must be approved before they can run.`,
+  );
+  return n;
+}
+
+/**
+ * Proposals as new code cells at `at`, fenced `proposed by=<ai.proposerName>`: the approval gate
+ * (approval.ts) skips them until a person approves each one. Suggest Next Steps and the
+ * agent-mode tool (tools.ts) both go through here, so a proposal lands the same way from either.
+ * Resolves to how many were inserted (0 if the edit failed).
+ */
+export async function insertProposals(nb: vscode.NotebookDocument, at: number, proposals: readonly ExtractedProposal[]): Promise<number> {
   const by = cfg().get<string>('ai.proposerName', 'ai') || 'ai';
   const eol = (nb.metadata?.[META_KEY] as { eol?: string } | undefined)?.eol === '\r\n' ? '\r\n' : '\n';
-  const at = cell ? cell.index + 1 : nb.cellCount;
   const data = proposals.map((p, i) => {
     const c = proposalCell(p, by, eol, at === nb.cellCount && i === proposals.length - 1);
     const d = new vscode.NotebookCellData(vscode.NotebookCellKind.Code, c.value, c.languageId);
     d.metadata = { [META_KEY]: c.meta };
     return d;
   });
-  if (!(await insertCells(nb, at, data))) return 0;
-  void vscode.window.showInformationMessage(
-    `md-runbook: inserted ${data.length} proposed cell${data.length === 1 ? '' : 's'} from ${answer.provider.label}. Review each one; proposed cells must be approved before they can run.`,
-  );
-  return data.length;
+  return (await insertCells(nb, at, data)) ? data.length : 0;
 }
 
 /** Summarize Incident: inserts or updates the "## Findings (AI draft)" markdown cell at the end. */

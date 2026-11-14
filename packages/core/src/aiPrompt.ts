@@ -9,7 +9,7 @@ import { depseudonymize, PseudonymMap, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from '.
 import type { CodeMeta } from './model';
 import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
 import { parse } from './parser';
-import { proposalOf, proposedInfo } from './proposal';
+import { infoSafe, proposalOf, proposedInfo } from './proposal';
 
 export interface AiPrompt {
   system: string;
@@ -86,6 +86,8 @@ export interface ExtractedProposal {
   lang: string;
   code: string;
   reason?: string;
+  /** The step's name (`name=`), when the proposer gives one (VS Code's agent-mode tool does). */
+  name?: string;
 }
 
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
@@ -155,7 +157,8 @@ export function proposalMarkdown(p: ExtractedProposal, by: string, eol: '\n' | '
   const longest = Math.max(0, ...(code.match(/`+/g) ?? []).map((r) => r.length));
   const fence = '`'.repeat(Math.max(3, longest + 1));
   const body = code.split('\n').join(eol);
-  return `${fence}${proposedInfo(p.lang, by, p.reason)}${eol}${body}${eol}${fence}${eol}`;
+  const name = p.name !== undefined ? infoSafe(p.name, 60) : '';
+  return `${fence}${proposedInfo(p.lang, by, p.reason)}${name ? ` name="${name}"` : ''}${eol}${body}${eol}${fence}${eol}`;
 }
 
 export interface ProposalCell {

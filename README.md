@@ -171,6 +171,10 @@ Each has its own page with examples and settings:
 - **[AI assistance](docs/features/ai.md):** **Explain Output**, **Suggest Next Steps** and
   **Summarize Incident** with VS Code's language models (e.g. Claude via GitHub Copilot) or the
   Claude API with your own key. Off by default; every send is confirmed and can be previewed.
+- **[Agent mode tools](docs/features/ai.md#use-md-runbook-from-vs-codes-agent-mode):** in Copilot's
+  agent mode (VS Code 1.99 or later), `#runbookState` reads where a run is and why a step failed
+  (output redacted), and `#proposeRunbookStep` adds a step as a proposal that you approve before
+  it can run.
 - **[Terminal mode](docs/features/terminal.md):** run a cell in a real VS Code terminal so you can
   answer password prompts and confirmations; output and exit code are still saved. Off by
   default; enable it with `mdRunbook.terminal.mode` and mark cells with ```` ```bash terminal ````.

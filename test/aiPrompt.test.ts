@@ -17,6 +17,7 @@ import {
   summarizeIncidentPrompt,
 } from '@md-runbook/core/aiPrompt';
 import { proposalOf } from '@md-runbook/core/proposal';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SseParser, anthropicRequest, interpretEvent } from '@md-runbook/core/anthropicStream';
 
 describe('aiPrompt builders', () => {
@@ -89,6 +90,14 @@ describe('proposal cells', () => {
     const md = proposalMarkdown({ lang: 'bash', code: 'echo ```x```', reason: 'say "hi"' }, 'ai');
     assert.equal(md, '````bash proposed by=ai reason="say hi"\necho ```x```\n````\n');
     assert.equal(proposalOf((parse(md).cells[0]!.meta as CodeMeta).info).state, 'proposed');
+  });
+
+  it('writes a name given with the proposal (the agent-mode tool), made safe for the info string', () => {
+    const md = proposalMarkdown({ lang: 'bash', code: 'kubectl get pods', reason: 'pods', name: 'List "pods"\nnow' }, 'ai');
+    assert.equal(md, '```bash proposed by=ai reason="pods" name="List pods now"\nkubectl get pods\n```\n');
+    const info = (parse(md).cells[0]!.meta as CodeMeta).info;
+    assert.equal(proposalOf(info).state, 'proposed');
+    assert.equal(parseCellOptions(info).name, 'List pods now');
   });
 
   it('inserts as a separate block that survives serialize', () => {
