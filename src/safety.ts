@@ -155,7 +155,7 @@ async function askToRun(plan: CellPlan, cell: vscode.NotebookCell, match: string
   const retries = plan.retry && plan.retry.attempts > 1 ? `\n\nIt runs up to ${plan.retry.attempts} times (retry=) until it passes.` : '';
   const detail =
     (ctxLines.length > 0 ? `Context the cell will run in:\n${ctxLines.join('\n')}` : 'No context recorded (see mdRunbook.output.recordContext).') + retries;
-  const answer = await whileWaiting(cell, 'your confirmation', () => vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run'));
+  const answer = await whileWaiting(cell, 'your confirmation', () => vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run'), 'dialog');
   if (answer !== 'Run') {
     plan.skip = 'not confirmed';
     plan.skipExit = 'declined'; // not done: progress keeps it pending, Resume Run offers it again

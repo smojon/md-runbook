@@ -129,6 +129,7 @@ class SecretsFeature {
         { modal: true, detail: `${runbookName(ctx.notebook)} references \${secret:${name}}. The value is passed to the cell as an environment variable and redacted from output by exact match.` },
         'Allow',
       ),
+      'dialog',
     );
     if (answer !== 'Allow') throw new Error(`secret ${name} was not allowed for this workspace`);
     await this.context.workspaceState.update(ALLOWED_KEY, [...allowed, name]);

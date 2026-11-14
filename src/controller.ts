@@ -198,6 +198,7 @@ async function askManual(cell: vscode.NotebookCell, item: string): Promise<Manua
       'Done',
       'Skip',
     ),
+    'dialog',
   );
   return answer === 'Done' ? 'done' : answer === 'Skip' ? 'skip' : 'stop';
 }

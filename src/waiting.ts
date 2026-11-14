@@ -8,10 +8,14 @@
 import * as vscode from 'vscode';
 import { NOTEBOOK_TYPE } from './serializer';
 
+/** Where the question is: VS Code's input box (top of the window) or a dialog (the middle). */
+export type WaitingWhere = 'box' | 'dialog';
+
 interface Waiting {
   cell: vscode.NotebookCell;
   /** What is asked, e.g. "parameter NAMESPACE". */
   what: string;
+  where: WaitingWhere;
 }
 
 const waiting = new Map<string, Waiting>();
@@ -25,6 +29,11 @@ export function waitingFor(cell: vscode.NotebookCell): string | undefined {
   return waiting.get(keyOf(cell))?.what;
 }
 
+/** Where the question `cell` waits on is. */
+export function waitingWhere(cell: vscode.NotebookCell): WaitingWhere {
+  return waiting.get(keyOf(cell))?.where ?? 'box';
+}
+
 /** The first cell of `nb` that waits for the reader. */
 export function waitingIn(nb: vscode.NotebookDocument): Waiting | undefined {
   for (const w of waiting.values()) if (w.cell.notebook === nb) return w;
@@ -32,10 +41,10 @@ export function waitingIn(nb: vscode.NotebookDocument): Waiting | undefined {
 }
 
 /** Run `ask` (a prompt) with `cell` shown as waiting for `what`. */
-export async function whileWaiting<T>(cell: vscode.NotebookCell | undefined, what: string, ask: () => Thenable<T>): Promise<T> {
+export async function whileWaiting<T>(cell: vscode.NotebookCell | undefined, what: string, ask: () => Thenable<T>, where: WaitingWhere = 'box'): Promise<T> {
   if (!cell) return ask();
   const key = keyOf(cell);
-  const entry = { cell, what };
+  const entry = { cell, what, where };
   waiting.set(key, entry);
   changed.fire();
   try {
@@ -47,11 +56,12 @@ export async function whileWaiting<T>(cell: vscode.NotebookCell | undefined, wha
 }
 
 /** The text on the waiting cell's status line, and the status bar's. */
-export function waitingText(what: string): { cell: string; statusBar: string; tooltip: string } {
+export function waitingText(what: string, where: WaitingWhere = 'box'): { cell: string; statusBar: string; tooltip: string } {
+  const place = where === 'box' ? 'in the box at the top of the window' : 'in the dialog';
   return {
-    cell: `$(edit) Waiting for you: ${what} (in the box at the top of the window)`,
+    cell: `$(edit) Waiting for you: ${what} (${place})`,
     statusBar: `$(edit) Waiting for you: ${what}`,
-    tooltip: `The run waits for ${what}: answer in the box at the top of the window (Escape cancels). Click to show the cell.`,
+    tooltip: `The run waits for ${what}: answer ${place} (Escape cancels). Click to show the cell.`,
   };
 }
 
@@ -61,7 +71,7 @@ class WaitingStatus implements vscode.NotebookCellStatusBarItemProvider {
   provideCellStatusBarItems(cell: vscode.NotebookCell): vscode.NotebookCellStatusBarItem[] {
     const what = waitingFor(cell);
     if (what === undefined) return [];
-    const t = waitingText(what);
+    const t = waitingText(what, waitingWhere(cell));
     const item = new vscode.NotebookCellStatusBarItem(t.cell, vscode.NotebookCellStatusBarAlignment.Left);
     item.tooltip = t.tooltip;
     // Before the estimate and VS Code's own items: it is what the reader must act on.

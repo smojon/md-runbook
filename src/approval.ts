@@ -309,6 +309,7 @@ class ApprovalFeature implements vscode.NotebookCellStatusBarItemProvider, vscod
     const reason = p.reason ? `\n\nReason given: ${p.reason}` : '';
     const pick = await whileWaiting(cell, 'your approval', () =>
       vscode.window.showWarningMessage(`Approve cell ${cell.index + 1} proposed by ${p.by}?`, { modal: true, detail: `${lines.join('\n')}${reason}` }, typed ? 'Approve…' : 'Approve'),
+      'dialog',
     );
     if (!pick) return false;
     if (!typed) return true;

@@ -240,7 +240,7 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
     const w = waitingIn(nb);
     if (w) {
       // The prompt is at the top of the window, easy to miss: say whose turn it is, in colour.
-      const t = waitingText(w.what);
+      const t = waitingText(w.what, w.where);
       item.text = t.statusBar;
       item.tooltip = t.tooltip;
       item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
