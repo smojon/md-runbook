@@ -118,6 +118,7 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
     </div>
     <div id="barwrap" class="barwrap" hidden><div class="track"></div><div id="barfill" class="fill"></div></div>
     <div id="sub" class="sub" hidden></div>
+    <div id="green" class="sub green" hidden></div>
     <div id="pre" class="pre" hidden></div>
   </div>
   <div id="rail" class="rail" role="tree" aria-label="Steps of the runbook"><div id="railfill" class="railfill"></div></div>
@@ -127,6 +128,7 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
   const post = (msg) => vscode.postMessage(msg);
   const $ = (id) => document.getElementById(id);
   const live = $('live'), emptyEl = $('empty'), main = $('main'), headline = $('headline'), hacts = $('hacts'), resumeBtn = $('resume');
+  const green = $('green');
   const barwrap = $('barwrap'), barfill = $('barfill'), sub = $('sub'), pre = $('pre'), rail = $('rail'), railfill = $('railfill');
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   /** Set a text (and hide the element when there is none), only when it changed. */
@@ -321,6 +323,8 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
     if (m.fraction !== undefined) barfill.style.width = Math.round(m.fraction * 100) + '%';
     put(sub, m.fraction !== undefined ? (m.share || m.percent + '%') + ' · ' + m.left : '');
     drawPreflight(m);
+    put(green, m.green);
+    green.hidden = !m.green;
     // One element per row key, updated in place; the list is put together again only when the rows change.
     const seenKeys = new Map();
     const want = m.rows.map((r) => {

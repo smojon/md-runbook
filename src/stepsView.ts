@@ -16,6 +16,7 @@ import { setContext } from './contextKeys';
 import { SECTION } from './config';
 import { rollbackOf } from './failedActions';
 import { notifiesOnStart, onDidChangeMarks, pausesBefore } from './stepMarks';
+import { lastGreenLine, onDidChangeRuns, runsOf } from './runs';
 import { currentRunbook, editorOf, onDidChangeCurrentRunbook, showRunbook } from './currentRunbook';
 import { isCallLanguage } from '@md-runbook/core/call';
 import { cellPart } from './controller';
@@ -90,6 +91,8 @@ export interface StepsModel {
   title: string;
   /** The runbook's URI (the rows' right-click menu acts on it). */
   uri: string;
+  /** How fresh the runbook is: `Last ran green: 3 days ago (by smojon)`, `Never ran green` once it has run (runs.ts). */
+  green?: string;
   headline: string;
   state: 'idle' | 'running' | 'failed' | 'done' | 'waiting';
   /** By the estimates: share done, time left, finish time. */
@@ -335,6 +338,8 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
   return {
     title: nb.uri.path.split('/').pop() ?? 'runbook',
     uri: nb.uri.toString(),
+    // Once it has a run on record: when every step last passed (the "verified" date of a runbook).
+    ...(runsOf(nb).length > 0 ? { green: lastGreenLine(nb) } : {}),
     // While the run waits for the reader, say so, as the status bar does.
     headline: waiting ? `Waiting for you: ${waiting.what}` : status.text.replace(/^\$\([^)]+\)\s*/, ''),
     state: waiting ? 'waiting' : anyRunning ? 'running' : p.firstFailed ? 'failed' : done ? 'done' : 'idle',
@@ -561,6 +566,7 @@ export function registerStepsView(context: vscode.ExtensionContext, pipeline?: R
     vscode.window.onDidChangeActiveNotebookEditor(() => view.refresh()),
     onDidChangeCurrentRunbook(() => view.refresh()),
     onDidChangeMarks(() => view.refresh()),
+    onDidChangeRuns(() => view.refresh()),
     vscode.window.onDidChangeNotebookEditorVisibleRanges(() => view.refresh()),
     vscode.workspace.onDidChangeNotebookDocument((e) => {
       if (e.notebook.notebookType === NOTEBOOK_TYPE) view.refresh();
