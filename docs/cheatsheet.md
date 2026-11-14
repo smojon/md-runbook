@@ -69,6 +69,9 @@ action by the same groups, with a search field (Ctrl/⌘+K in a browser).
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
 | **Mark Step Done** / **Mark Step Skipped** / **Unmark Step** | cell ⋯; Mark Step Done: Ctrl+Alt+D (⌃⌘D) | Steps you do by hand (call the vendor, check a dashboard): record them, so progress and Resume Run know where you are. | the cell’s ⋯ (or a long press) |
+| **Run Until Here** | Steps view: right-click a step; cell ⋯ | You want the run to stop after this step: runs from the first step still to do up to this one. | Not yet in the app |
+| **Pause Before This Step** / **Don't Pause Here** | Steps view: right-click a step; cell ⋯ | Run All should stop before a step (to check something first): it asks **Continue** or **Stop** on the cell. For this session; the file doesn't change. | Not yet in the app |
+| **Notify Me When It Starts** / **Don't Notify Me** | Steps view: right-click a step; cell ⋯ | You want to be told when a step starts (a long run, a step you must watch): a notification, once. | Not yet in the app |
 | **Check Next Item** | ⋯ of a Markdown cell | Tick the next `- [ ]` item of a checklist without editing the text. | tap the task box; ⋯ More → Check Next Item |
 | **Compare With Previous Run** | cell ⋯ | "Was it like this yesterday?": diff the output with the run before (with output history turned on). | the cell’s ⋯ → Compare With Previous Run (with Hosts & settings → Output history on) |
 

@@ -37,6 +37,7 @@ import { knownSecrets } from './knownSecrets';
 import { NOTEBOOK_TYPE } from './serializer';
 import { CellTranscript, startCellTranscript } from './transcript';
 import { setTaskBox } from './taskLists';
+import { pauseBefore, stepStarting } from './stepMarks';
 import { askOnCell } from './waiting';
 
 const FLUSH_MS = 100;
@@ -447,6 +448,14 @@ export class RunbookController implements vscode.Disposable {
           exec.end(undefined);
           continue;
         }
+        // Pause Before This Step (stepMarks.ts): Continue or Stop, asked on the cell.
+        if (executions.length > 1 && !(await pauseBefore(exec.cell))) {
+          stopped = exec.cell;
+          stoppedByHand = true;
+          exec.start();
+          exec.end(undefined);
+          continue;
+        }
         const part = several && !lineRun ? cellPart(exec.cell) : 'body';
         if (part === 'teardown' && options.teardown !== 'run') {
           // Offered, not run unasked: the reader may go straight on to the next runbook.
@@ -569,6 +578,8 @@ export class RunbookController implements vscode.Disposable {
     const started = new Date();
     exec.executionOrder = ++this.executionOrder;
     exec.start(started.getTime());
+    // Notify Me When It Starts (stepMarks.ts), once.
+    stepStarting(cell, (title, body) => void vscode.commands.executeCommand('mdRunbook._notifyNow', title, body));
     /** Line runs: indexes of the steps that ran. */
     const ranSteps: number[] = [];
     let ended = false;

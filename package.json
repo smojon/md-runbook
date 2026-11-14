@@ -630,6 +630,31 @@
         "title": "Settings…",
         "category": "md-runbook",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "mdRunbook.runUntilHere",
+        "title": "Run Until Here",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.togglePauseBefore",
+        "title": "Pause Before This Step",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.removePause",
+        "title": "Don't Pause Here",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.toggleNotifyOnStart",
+        "title": "Notify Me When It Starts",
+        "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.cancelNotify",
+        "title": "Don't Notify Me",
+        "category": "md-runbook"
       }
     ],
     "menus": {
@@ -1065,6 +1090,14 @@
         {
           "command": "mdRunbook.toggleTranscript",
           "when": "notebookType == md-runbook"
+        },
+        {
+          "command": "mdRunbook.removePause",
+          "when": "false"
+        },
+        {
+          "command": "mdRunbook.cancelNotify",
+          "when": "false"
         }
       ],
       "notebook/cell/title": [
@@ -1132,6 +1165,21 @@
           "command": "mdRunbook.stepStop",
           "when": "notebookType == md-runbook && mdRunbook.stepPaused && notebookCellExecutionState == executing",
           "group": "inline/cell@3"
+        },
+        {
+          "command": "mdRunbook.runUntilHere",
+          "when": "notebookType == md-runbook && notebookCellType == code",
+          "group": "1_progress@4"
+        },
+        {
+          "command": "mdRunbook.togglePauseBefore",
+          "when": "notebookType == md-runbook && notebookCellType == code",
+          "group": "1_progress@5"
+        },
+        {
+          "command": "mdRunbook.toggleNotifyOnStart",
+          "when": "notebookType == md-runbook && notebookCellType == code",
+          "group": "1_progress@6"
         }
       ],
       "notebook/cell/execute": [
@@ -1384,6 +1432,33 @@
         {
           "command": "mdRunbook.openSettings",
           "group": "2_settings@1"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "mdRunbook.runUntilHere",
+          "when": "webviewId == 'mdRunbook.steps' && webviewSection == 'step'",
+          "group": "1_run@1"
+        },
+        {
+          "command": "mdRunbook.togglePauseBefore",
+          "when": "webviewId == 'mdRunbook.steps' && webviewSection == 'step' && !mdRunbookPaused",
+          "group": "2_marks@1"
+        },
+        {
+          "command": "mdRunbook.removePause",
+          "when": "webviewId == 'mdRunbook.steps' && webviewSection == 'step' && mdRunbookPaused",
+          "group": "2_marks@1"
+        },
+        {
+          "command": "mdRunbook.toggleNotifyOnStart",
+          "when": "webviewId == 'mdRunbook.steps' && webviewSection == 'step' && !mdRunbookNotify",
+          "group": "2_marks@2"
+        },
+        {
+          "command": "mdRunbook.cancelNotify",
+          "when": "webviewId == 'mdRunbook.steps' && webviewSection == 'step' && mdRunbookNotify",
+          "group": "2_marks@2"
         }
       ]
     },

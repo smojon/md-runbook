@@ -157,6 +157,12 @@ export function registerNotifications(pipeline: RunPipeline, context: vscode.Ext
     vscode.window.onDidChangeActiveTextEditor(checkWaiting),
     vscode.window.onDidChangeWindowState(checkWaiting),
     { dispose: () => open.forEach((close) => close()) },
+    // A notification asked for (Notify Me When It Starts): VS Code's, and the system's when that is on.
+    vscode.commands.registerCommand('mdRunbook._notifyNow', (title?: unknown, body?: unknown) => {
+      if (typeof title !== 'string' || typeof body !== 'string') return;
+      systemNotify(title, body);
+      void vscode.window.showInformationMessage(`md-runbook: ${title}: ${body}`);
+    }),
     // For tests: the end-of-run notification's text for the active runbook.
     vscode.commands.registerCommand('mdRunbook._endMessage', () => {
       const nb = vscode.window.activeNotebookEditor?.notebook;

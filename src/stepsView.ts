@@ -13,6 +13,7 @@ import { formatEstimate, formatLearned, isCodeMeta, parseLineSet, runbookEstimat
 import { blockProgress, finishTime, overEstimate, remaining, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { setContext } from './contextKeys';
+import { notifiesOnStart, onDidChangeMarks, pausesBefore } from './stepMarks';
 import { currentRunbook, editorOf, onDidChangeCurrentRunbook, showRunbook } from './currentRunbook';
 import { isCallLanguage } from '@md-runbook/core/call';
 import { cellPart } from './controller';
@@ -53,6 +54,9 @@ export type StepsRow =
       runnable?: boolean;
       /** Marked done or skipped by hand (Mark Step): Unmark undoes it. */
       marked?: boolean;
+      /** Pause Before This Step / Notify Me When It Starts (stepMarks.ts). */
+      paused?: boolean;
+      notify?: boolean;
       /** Preflight: what running it will need from you (a confirmation, a secret, a value, an approval). */
       needs?: string[];
       /** The step is the only one under a `#`/`##` heading: one row, named by the heading (its level). */
@@ -78,6 +82,8 @@ export interface PreflightPart {
 
 export interface StepsModel {
   title: string;
+  /** The runbook's URI (the rows' right-click menu acts on it). */
+  uri: string;
   headline: string;
   state: 'idle' | 'running' | 'failed' | 'done' | 'waiting';
   /** By the estimates: share done, time left, finish time. */
@@ -283,6 +289,8 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
       ...(fraction !== undefined ? { fraction } : {}),
       runnable: true,
       ...(isManualMark(a) ? { marked: true } : {}),
+      ...(pausesBefore(cell) ? { paused: true } : {}),
+      ...(notifiesOnStart(cell) ? { notify: true } : {}),
       ...(needs.length ? { needs } : {}),
       ...(error ? { error } : {}),
       ...(answers.length ? { answers } : {}),
@@ -309,6 +317,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
   const rest = remaining(e, p.pending);
   return {
     title: nb.uri.path.split('/').pop() ?? 'runbook',
+    uri: nb.uri.toString(),
     // While the run waits for the reader, say so, as the status bar does.
     headline: waiting ? `Waiting for you: ${waiting.what}` : status.text.replace(/^\$\([^)]+\)\s*/, ''),
     state: waiting ? 'waiting' : anyRunning ? 'running' : p.firstFailed ? 'failed' : done ? 'done' : 'idle',
@@ -527,6 +536,7 @@ export function registerStepsView(context: vscode.ExtensionContext, pipeline?: R
     vscode.window.registerWebviewViewProvider(STEPS_VIEW, view),
     vscode.window.onDidChangeActiveNotebookEditor(() => view.refresh()),
     onDidChangeCurrentRunbook(() => view.refresh()),
+    onDidChangeMarks(() => view.refresh()),
     vscode.window.onDidChangeNotebookEditorVisibleRanges(() => view.refresh()),
     vscode.workspace.onDidChangeNotebookDocument((e) => {
       if (e.notebook.notebookType === NOTEBOOK_TYPE) view.refresh();

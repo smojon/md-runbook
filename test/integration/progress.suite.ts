@@ -309,3 +309,34 @@ test('a run stays in the status bar while another file is in front, named, and a
   await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
   await closeAll();
 });
+
+test('Pause Before This Step stops Run All there and asks on the cell; Run Until Here stops after a step', async () => {
+  const uri = writeFile('pause-before.md', `# Pause\n\n${fence('echo one')}\n${fence('echo two')}\n${fence('echo three')}`);
+  const editor = await openRunbook(uri);
+  const code = editor.notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
+  try {
+    await vscode.commands.executeCommand('mdRunbook.togglePauseBefore', code[1]);
+    const marks = (await vscode.commands.executeCommand<{ pause: boolean }[]>('mdRunbook._marks'))!;
+    assert.equal(marks[code[1]!.index]?.pause, true);
+    const answer = answerOnCells('paused before', () => 'stop');
+    try {
+      await runCells(editor, 0, editor.notebook.cellCount);
+      await waitForRun(code[0]!);
+      await waitFor('the pause to be asked', () => answer.asked.length > 0, 15_000);
+    } finally {
+      answer.restore();
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(code[1]!.outputs.length, 0, 'stopped before the paused step');
+    assert.equal(code[2]!.outputs.length, 0);
+    await vscode.commands.executeCommand('mdRunbook.removePause', code[1]);
+    // Run Until Here: from the first step still to do (the second) up to and including it.
+    await vscode.commands.executeCommand('mdRunbook.runUntilHere', code[1]);
+    await waitForRun(code[1]!);
+    await new Promise((r) => setTimeout(r, 500));
+    assert.ok(code[1]!.outputs.length > 0, 'ran up to here');
+    assert.equal(code[2]!.outputs.length, 0, 'and not after');
+  } finally {
+    await closeAll();
+  }
+});

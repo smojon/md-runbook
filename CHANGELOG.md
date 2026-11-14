@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **VS Code: Run Until Here, Pause Before This Step, Notify Me When It Starts.** Right-click a step
+  in the Steps view (or the cell's ⋯). A pause makes Run All stop before the step and ask
+  Continue / Stop on the cell; a notification comes when the step starts, once. For the session;
+  the file doesn't change. From the VS Code review's feature ideas.
 - **Progress by steps while some have no estimate:** the Steps view and the status bar tooltip say
   `2 of 6 steps · at least 5s left` instead of a percentage the estimates can't back, and the bar
   goes by steps then (the app drops the percentage too). From 3 runs on, a learned estimate's

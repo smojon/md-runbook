@@ -68,6 +68,7 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
   .waiting .dot { background: var(--vscode-editorWarning-foreground); border-color: var(--vscode-editorWarning-foreground); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
   .spin { flex: none; font-size: 12px !important; color: var(--vscode-progressBar-background); }
+  .mark { flex: none; font-size: 12px !important; color: var(--vscode-descriptionForeground); }
   @media (prefers-reduced-motion: reduce) { .running .dot, .waiting .dot, .codicon-modifier-spin { animation: none !important; } }
   .num { color: var(--vscode-descriptionForeground); min-width: 1.6em; text-align: right; }
   .lab { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -171,7 +172,7 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
     else {
       const lab = el('span', 'lab');
       const line = el('span', 'labline');
-      line.append(el('span', 'label'), el('span', 'spin codicon codicon-sync codicon-modifier-spin'));
+      line.append(el('span', 'label'), el('span', 'spin codicon codicon-sync codicon-modifier-spin'), el('span', 'mark codicon codicon-debug-pause'), el('span', 'mark codicon codicon-bell'));
       line.lastChild.setAttribute('aria-hidden', 'true');
       lab.append(line, el('span', 'detail'), el('span', 'needs'), el('span', 'err'), el('span', 'answers'));
       const bar = el('div', 'stepbar');
@@ -199,6 +200,15 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
       put(row.querySelector('.num'), r.step !== undefined ? String(r.step) : '·');
       put(row.querySelector('.label'), r.label);
       row.querySelector('.spin').hidden = r.state !== 'running';
+      // The marks a reader put on it (stepMarks.ts), and its right-click menu (package.json webview/context).
+      const pause = row.querySelector('.codicon-debug-pause');
+      pause.hidden = !r.paused;
+      pause.title = 'Run All pauses before this step';
+      const bell = row.querySelector('.codicon-bell');
+      bell.hidden = !r.notify;
+      bell.title = 'A notification when this step starts';
+      const ctx = r.runnable && !r.task ? JSON.stringify({ webviewSection: 'step', preventDefaultContextMenuItems: true, mdRunbookUri: m.uri, mdRunbookCell: r.index, mdRunbookPaused: !!r.paused, mdRunbookNotify: !!r.notify }) : undefined;
+      if (row.dataset.vscodeContext !== ctx) { if (ctx) row.dataset.vscodeContext = ctx; else delete row.dataset.vscodeContext; }
       put(row.querySelector('.detail'), r.detail);
       put(row.querySelector('.needs'), r.needs ? 'needs ' + r.needs.join(', ') : '');
       put(row.querySelector('.err'), r.error);

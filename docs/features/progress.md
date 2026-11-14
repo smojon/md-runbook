@@ -80,6 +80,12 @@ runbook or the Steps view: **Ctrl+Alt+N** (⌃⌘N) goes to the next step, **Ctr
 resumes the run. In the runbook: **Ctrl+Alt+D** (⌃⌘D) marks the selected step done. None of them
 act while you type in a cell. Change them in **Keyboard Shortcuts** (search for `mdRunbook`).
 
+**Right-click a step** in the Steps view (or use the cell's ⋯) for **Run Until Here** (from the
+first step still to do up to this one), **Pause Before This Step** (Run All stops there and asks
+**Continue** or **Stop** on the cell; the row and the cell show a pause icon) and **Notify Me When
+It Starts** (a notification when it starts, once; a bell on the row). Pauses and notifications
+last for the session and never change the file.
+
 **Preflight.** Before a run, each step still to do says what it will need from you, and the
 view's header sums it up: `Before you run: 2 confirmations · 1 secret to set · 1 value to type ·
 1 step by hand`. A step can need your confirmation (`confirm`, or a risky command), a secret not
