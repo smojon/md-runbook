@@ -78,9 +78,11 @@ describe('a phone: Runbook | Steps', () => {
     expect(screen.getByTestId('steps-headline')).toHaveTextContent('1 of 3 steps done');
     expect(screen.getByTestId('steps-progress')).toHaveTextContent(/^at least 2 min left/);
     expect(screen.getByTestId('steps-run')).toHaveTextContent('▶ Resume');
-    expect(screen.getByTestId('steps-chapter-0')).toHaveTextContent('Guide');
+    // "Guide" has one step: one row, the heading with the step's name under it. "Check" has two.
+    expect(screen.queryByTestId('steps-chapter-0')).toBeNull();
     expect(screen.getByTestId('steps-chapter-2')).toHaveTextContent('Check');
-    expect(screen.getByTestId('steps-row-1')).toHaveProp('accessibilityLabel', 'Step 1: Say hello, to do, est. 2m');
+    expect(screen.getByTestId('steps-row-1')).toHaveProp('accessibilityLabel', 'Step 1: Guide (Say hello), to do, est. 2m');
+    expect(screen.getByTestId('steps-detail-1')).toHaveTextContent('Say hello');
     expect(screen.getByTestId('steps-state-1')).toHaveTextContent('○');
     expect(screen.getByTestId('steps-row-2')).toHaveProp('accessibilityLabel', 'Step 2: Look at the dashboard, done, by hand');
     expect(screen.getByTestId('steps-state-2')).toHaveTextContent('✓');
@@ -98,7 +100,10 @@ describe('a phone: Runbook | Steps', () => {
     await press('more-actions');
     await press('action-showSteps');
     expect(screen.getByTestId('steps-headline')).toHaveTextContent('Step 3 of 3 failed');
-    expect(screen.getByTestId('steps-row-1')).toHaveProp('accessibilityLabel', expect.stringMatching(/^Step 1: Say hello, done, took /));
+    expect(screen.getByTestId('steps-row-1')).toHaveProp(
+      'accessibilityLabel',
+      expect.stringMatching(/^Step 1: Guide \(Say hello\), done, took /),
+    );
     expect(screen.getByTestId('steps-state-3')).toHaveTextContent('✕');
     // The failed step's last error line, under its row and in what a screen reader says.
     expect(screen.getByTestId('steps-error-3')).toHaveTextContent('boom');
@@ -141,6 +146,45 @@ describe('a phone: Runbook | Steps', () => {
     expect(rows.find((r) => r.key === '1')).toMatchObject({ state: 'running', time: '12s of 2m', fraction: 0.1 });
     const waiting = stepsRows({ cells, progress, waiting: { cellIndex: 3 }, now });
     expect(waiting.find((r) => r.key === '3')).toMatchObject({ state: 'waiting' });
+  });
+
+  it('a chapter with exactly one numbered step is that step’s row; with none, two, or only the ready check, its own', () => {
+    const rowsOf = (text: string) =>
+      stepsRows({ cells: parse(text).cells, progress: textProgress(text), now: 0 }).map((r) =>
+        r.kind === 'chapter' ? `chapter ${r.title}` : `${r.step ?? '·'} ${r.label}${r.detail ? ` / ${r.detail}` : ''} l${r.chapter ?? '-'}`,
+      );
+    const text = [
+      '# Runbook',
+      '',
+      '## Build',
+      '',
+      fence('bash name="Compile"', 'make'),
+      '## Check',
+      '',
+      fence('bash', 'make test'),
+      '## Ship',
+      '',
+      fence('bash name="Tag"', 'git tag'),
+      fence('bash name="Push"', 'git push'),
+      '## Tell the team',
+      '',
+      '- [ ] Post in the channel',
+      '',
+    ].join('\n');
+    expect(rowsOf(text)).toEqual([
+      // No step of its own: its row stays.
+      'chapter Runbook',
+      // The step's own name under the heading; none when the heading names it.
+      '1 Build / Compile l2',
+      '2 Check l2',
+      'chapter Ship',
+      '3 Tag l-',
+      '4 Push l-',
+      '5 Tell the team / Post in the channel l2',
+    ]);
+    const lab = ['# Lab', '', fence('bash ready name="the lab"', 'test -f up'), fence('bash teardown name="Stop"', 'rm up')].join('\n');
+    // Only the ready check and an offered teardown: not steps, the chapter keeps its row.
+    expect(rowsOf(lab)[0]).toBe('chapter Lab');
   });
 
   it('the error line: the last stderr line, else the output’s, without colours, cut short', () => {
@@ -285,7 +329,7 @@ describe('a wide screen', () => {
     expect(screen.getByTestId('steps-panel')).toBeTruthy();
     expect(screen.queryByTestId('progress-rail')).toBeNull();
     expect(screen.queryByTestId('view-switch')).toBeNull();
-    expect(screen.getByTestId('steps-row-1')).toHaveProp('accessibilityLabel', 'Step 1: Say hello, to do, est. 2m');
+    expect(screen.getByTestId('steps-row-1')).toHaveProp('accessibilityLabel', 'Step 1: Guide (Say hello), to do, est. 2m');
     // The headline doesn't switch there: the list is in view; the run bar beside it has Run all.
     expect(screen.queryByTestId('run-steps')).toBeNull();
     expect(screen.queryByTestId('steps-run')).toBeNull();
@@ -421,6 +465,9 @@ describe('Run all at a step done by hand', () => {
     await press('view-steps');
     expect(screen.getByTestId('steps-row-2')).toHaveProp('accessibilityLabel', 'Step 2: Tell the team, waiting for you, by hand');
     expect(screen.getByTestId('steps-question-2')).toHaveTextContent('Done by hand? Tell the team');
+    // The header says what the run waits for, not the share and the time.
+    expect(screen.getByTestId('steps-headline')).toHaveTextContent(/^Waiting for you$/);
+    expect(screen.getByTestId('steps-progress')).toHaveTextContent(/^Done by hand\? Tell the team$/);
     expect(screen.getByTestId('steps-answer-2-done')).toHaveProp('accessibilityLabel', 'Done: Tell the team');
     expect(screen.getByTestId('steps-answer-2-skip')).toBeTruthy();
     expect(screen.getByTestId('steps-answer-2-stop')).toBeTruthy();
@@ -546,6 +593,7 @@ describe('the waiting row’s other questions', () => {
     await press('steps-run');
     await waitFor(() => expect(screen.getByTestId('steps-answer-1-run')).toBeTruthy());
     expect(screen.getByTestId('steps-question-1')).toHaveTextContent('Run cell 2? It runs as deploy@web-1.');
+    expect(screen.getByTestId('steps-progress')).toHaveTextContent(/^Confirm Wipe$/);
     expect(sources()).toEqual([]);
     await press('steps-answer-1-run');
     await waitFor(() => expect(sources()).toEqual(['echo wipe']));
@@ -570,8 +618,23 @@ describe('the waiting row’s other questions', () => {
     await press('steps-run');
     await waitFor(() => expect(screen.getByTestId('steps-answer-1-answer')).toBeTruthy());
     expect(screen.getByTestId('steps-question-1')).toHaveTextContent('This cell needs REGION');
+    expect(screen.getByTestId('steps-progress')).toHaveTextContent(/^Values to fill in: REGION$/);
     await press('steps-answer-1-answer');
     expect(screen.queryByTestId('steps-view')).toBeNull();
     expect(screen.getByTestId('needs')).toBeTruthy();
+  });
+
+  it('the teardown offered: the header asks it, not "100% · nothing left"', async () => {
+    script([{ stdout: 'work\n' }]);
+    const text = ['# T', '', fence('bash estimate=1m', 'echo work'), fence('bash teardown name="Stop the lab" estimate=1m', 'rm up')].join(
+      '\n',
+    );
+    const rb = addRunbook('teardown.md', text);
+    await render(<RunbookView id={rb.id} />);
+    await press('view-steps');
+    await press('steps-run');
+    await waitFor(() => expect(screen.getByTestId('steps-answer-2-take')).toBeTruthy());
+    expect(screen.getByTestId('steps-headline')).toHaveTextContent(/^Waiting for you$/);
+    expect(screen.getByTestId('steps-progress')).toHaveTextContent(/^Take it down now\? Stop the lab$/);
   });
 });

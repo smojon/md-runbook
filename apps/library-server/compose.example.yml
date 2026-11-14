@@ -1,0 +1,83 @@
+# The web app, its library server and Caddy on one name, runbooks.example.net: Caddy gets and
+# renews the certificate, sends /v1/library/, /v1/runs and /v1/alerts to the library server and
+# everything else to the web app, which serves ./library read-only at /runbooks/. Copy this file
+# and Caddyfile.example, put your own name and settings in, then `docker compose up -d`.
+#
+# Before the first start (README.md, "Run it"):
+#   mkdir -p library config secrets
+#   cp ~/allowed_signers library/allowed_signers      # the signers whose runbooks are published
+#   for t in upload runs gate read alerts; do openssl rand -hex 32 > secrets/$t; done
+#   sudo chown -R 1000:1000 library secrets           # the server runs as uid 1000 (node)
+services:
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./library:/usr/share/nginx/html/runbooks:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    expose: ['8080']
+
+  library-server:
+    build:
+      context: ../..
+      dockerfile: apps/library-server/Dockerfile
+    restart: unless-stopped
+    environment:
+      # Publishing: signed runbooks only, into the folder the web app serves.
+      LIBRARY_DIR: /library
+      LIBRARY_UPLOAD_TOKENS_FILE: /run/secrets/upload
+      LIBRARY_ALLOWED_SIGNERS: /library/allowed_signers
+      # Run summaries from VS Code, the app, the command line and md-runbook-gate.
+      RUNS_DIR: /data/runs
+      RUNS_TOKENS_FILE: /run/secrets/runs
+      RUNS_GATE_TOKENS_FILE: /run/secrets/gate
+      RUNS_READ_TOKENS_FILE: /run/secrets/read
+      # RUNS_ALLOWED_RUNNERS: /config/allowed_runners
+      # RUNS_REQUIRE_SIGNED: 'true'
+      # Alertmanager's webhook, and the links it records.
+      ALERT_MAP: /config/alert-map.json
+      ALERTS_TOKENS_FILE: /run/secrets/alerts
+      PUBLIC_URL: https://runbooks.example.net
+      # Caddy is the only client the server sees; the real address comes from its header.
+      TRUST_PROXY: 'true'
+    secrets: [upload, runs, gate, read, alerts]
+    volumes:
+      - ./library:/library
+      - ./config:/config:ro
+      - library-data:/data
+    read_only: true
+    # ssh-keygen's temporary files.
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    # Not published: only Caddy reaches it.
+    expose: ['8090']
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+secrets:
+  upload:
+    file: ./secrets/upload
+  runs:
+    file: ./secrets/runs
+  gate:
+    file: ./secrets/gate
+  read:
+    file: ./secrets/read
+  alerts:
+    file: ./secrets/alerts
+
+volumes:
+  library-data:
+  caddy-data:

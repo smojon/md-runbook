@@ -22,3 +22,10 @@ signers = 1
 
 # syslog (tag md-runbook-gate), or a file the account can append to.
 log = syslog
+
+# Run reports: at the end of each session, a summary of every signed runbook it ran (no
+# outputs, no parameter values) to this address, by curl, in the background. https (http only
+# for localhost). Never in a run's way: a failure is logged as a `report` event.
+# report_to = https://runbooks.example.net/v1/runs
+# A file holding the bearer token (one of the library server's RUNS_GATE_TOKENS).
+# report_token_file = /etc/md-runbook/report-token

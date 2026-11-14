@@ -34,6 +34,65 @@
   mine, the link's parameters and host. It no longer opens a second copy. The library's rules
   hold: a library that opens verified runbooks only refuses an unverified file through a link
   too.
+- **The library server (apps/library-server).** A small service, with its own container image,
+  that runs next to the web app on the same name, behind the same reverse proxy.
+  - **Publishing:** `POST /v1/library/runbooks/<path>`, with an upload token. It takes a runbook
+    only when the whole runbook is signed by one of the library's `allowed_signers` (checked with
+    ssh-keygen, as the gate checks it), unchanged since signing, not expired, named as its file,
+    and of a higher version than any published at that path. It writes the file into the folder
+    the web app serves, atomically, and writes `index.json` again. Deleting is off unless
+    `LIBRARY_ALLOW_DELETE=true`.
+  - **`md-runbook publish FILE --library URL`** sends one from the command line or CI (token in
+    `MD_RUNBOOK_LIBRARY_TOKEN`).
+  - **Run summaries:** `POST /v1/runs` is an address for `report-runs:`. It checks summaries
+    strictly, checks runner signatures against `RUNS_ALLOWED_RUNNERS`, and keeps them
+    append-only, marked `runner-signed`, `gate` or `unverified`. `RUNS_REQUIRE_SIGNED=true` refuses
+    the unverified ones. `GET /v1/runs` and `/v1/runs/last-green` ("last ran green by X at T")
+    need a read token.
+  - **Alertmanager:** `POST /v1/alerts` maps each alert (alertname and label matchers, in a JSON
+    alert map) to a library runbook. It records the alert with the link that opens that runbook,
+    pinned to its hash, with `host` and parameters taken from the labels, and `ALERT`,
+    `ALERT_FINGERPRINT` and `ALERT_STARTS_AT`. `GET /v1/alerts/recent` lists them. Nothing is
+    pushed to phones yet: that needs Firebase and APNs credentials.
+  - See [apps/library-server](apps/library-server/README.md).
+- **md-runbook-gate sends run reports.** With `report_to` (and `report_token_file`) in
+  `gate.conf`, the gate sends a run summary of each signed runbook a session ran when the session
+  ends, whatever client ran it. The summary is client `gate`: signed name, version, manifest
+  hash, signers, the key, the server, and each signed block's result. It is sent with curl in
+  the background, never holds up a run, and is logged as a `report` event. The run summary
+  format gets client `gate` and its `gate` field (still version 1). See
+  [run reports from the gate](docs/features/signed-runbooks.md#run-reports-from-the-gate).
+- App: in Steps, a chapter with one step is one row, the heading with the step's name under it, as
+  in VS Code. While Run all waits, the header says what for (`Take it down now? Stop the lab`,
+  `Done by hand? …`, `Confirm …`, `Values to fill in: …`), not `100% · nothing left`.
+
+## 0.23.0
+
+The Steps view in VS Code and the app, a team runbook library, whole-runbook signatures and run
+reports. Highlights, then every change below.
+
+- **Before you re-sign runbooks: update every client first.** New signatures are version 2 and
+  cover the whole runbook (front matter, prose, checklists, PowerShell and cmd blocks). Gates
+  already installed run them unchanged, but VS Code, the app and the CLI at 0.22 or older show a
+  version 2 signature as damaged. Old (version 1) signatures still verify and now show as
+  "these steps verified" (partly signed).
+- **The Steps view** in VS Code (its own side bar) and in the app (a Runbook | Steps switch on
+  phones, a side panel on wide screens): every step by name with its state and time, what each
+  will need before you run, answers to the questions a run asks (Done / Skip / Stop, Take down /
+  Leave it up), Retry and Resume after a failure, and "last ran green".
+- **A team runbook library** hosted next to the web app (`/runbooks/`, or a folder you set),
+  also on the phones by address, link or QR: your own copy of each runbook, Update / Keep mine,
+  signature states checked in the app, signers trusted per library, `signedOnly`.
+- **Run reports:** with `report-runs:` in a runbook, VS Code, the app and the CLI send a summary
+  of each run (no outputs, no values) where it says, after asking you; signed with your own key;
+  required by a signed runbook if it says so; `md-runbook verify-run` checks them.
+- **In VS Code:** a launch form before Run All, notifications, failure triage with the
+  assistant, Run Until Here / Pause Before / Notify Me, learned estimates, keys and screen-reader
+  labels, tools for VS Code's agent mode.
+- **In the app:** notifications when a run is done, fails or waits for you; preflight; the
+  library and run reports above.
+
+No Android APK is attached yet.
 
 - **Run reports.** With `report-runs: https://…` in a runbook's front matter, VS Code, the app
   and the command line send that address a short summary at the end of every run.

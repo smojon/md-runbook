@@ -2,7 +2,8 @@
  * The runbook's steps by name (runbooks/steps.ts), as VS Code's Steps view: chapters as headings,
  * each step with its state as a symbol and a colour (✓ done, ✕ failed, ▶ running, a pause icon
  * waiting for you, ○ to do), its number, its name, its time, what it will need, and for a failed
- * step the last line of its error. A tap on a row goes to its cell; a long press opens the
+ * step the last line of its error; a chapter with one step is that step's row, named by the
+ * heading, with the step's own name below. A tap on a row goes to its cell; a long press opens the
  * step's actions (Run, Run from Here, Mark Done…); a checklist item has a tick box. The row the
  * run waits at shows the question's answers as buttons (Done / Skip / Stop, …). The rows of the
  * cells on screen are shaded; the list keeps the running (or waiting) step in view.
@@ -110,13 +111,17 @@ export function StepsList({
         const asked = r.state === 'waiting' ? answers : undefined;
         const checked = r.state === 'done';
         const label =
-          t.stepsRowLabel(r.step, r.label, t.stepsState[r.state], r.time) +
+          t.stepsRowLabel(r.step, r.detail ? t.stepsMerged(r.label, r.detail) : r.label, t.stepsState[r.state], r.time) +
           (needs ? '. ' + t.stepsNeeds(needs) : '') +
           (r.error ? '. ' + t.stepsError(r.error) : '');
         // The row's own buttons (the tick box, the answers) are beside its pressable part, not in
         // it: a screen reader reaches each of them.
         return (
-          <View key={r.key} onLayout={(e) => remember(e.nativeEvent.layout.y)} style={[styles.row, seen && styles.seen]}>
+          <View
+            key={r.key}
+            onLayout={(e) => remember(e.nativeEvent.layout.y)}
+            style={[styles.row, r.chapter !== undefined && styles.merged, seen && styles.seen]}
+          >
             <View style={styles.top}>
               <Pressable
                 testID={`steps-row-${r.key}`}
@@ -152,7 +157,16 @@ export function StepsList({
                     </Animated.Text>
                   )}
                   <Text style={styles.num}>{r.step !== undefined ? String(r.step) : '·'}</Text>
-                  <Text style={[styles.label, active && styles.labelActive, r.state === 'waiting' && styles.waiting]} numberOfLines={2}>
+                  <Text
+                    style={[
+                      styles.label,
+                      r.chapter !== undefined && styles.labelChapter,
+                      r.chapter === 1 && styles.labelTop,
+                      active && styles.labelActive,
+                      r.state === 'waiting' && styles.waiting,
+                    ]}
+                    numberOfLines={2}
+                  >
                     {r.label}
                   </Text>
                   {r.time ? (
@@ -161,6 +175,12 @@ export function StepsList({
                     </Text>
                   ) : null}
                 </View>
+                {r.detail ? (
+                  // A chapter's lone step: the step's own name under the heading.
+                  <Text testID={`steps-detail-${r.key}`} style={styles.detail} numberOfLines={1}>
+                    {r.detail}
+                  </Text>
+                ) : null}
                 {needs ? (
                   <Text testID={`steps-needs-${r.key}`} style={styles.needs} numberOfLines={2}>
                     {t.stepsNeeds(needs)}
@@ -181,7 +201,7 @@ export function StepsList({
                 <Pressable
                   testID={`steps-tick-${r.key}`}
                   accessibilityRole="checkbox"
-                  accessibilityLabel={t.stepsTick(r.label)}
+                  accessibilityLabel={t.stepsTick(r.detail ?? r.label)}
                   accessibilityState={{ checked }}
                   onPress={() => onTick(r.index, r.item!, !checked)}
                   hitSlop={6}
@@ -208,7 +228,7 @@ export function StepsList({
                         key={b.id}
                         testID={`steps-answer-${r.key}-${b.id}`}
                         accessibilityRole="button"
-                        accessibilityLabel={t.stepsAnswerLabel(b.label, r.label)}
+                        accessibilityLabel={t.stepsAnswerLabel(b.label, r.detail ?? r.label)}
                         {...(b.hint ? { accessibilityHint: b.hint } : {})}
                         onPress={b.onPress}
                         style={({ pressed }) => [
@@ -242,6 +262,11 @@ const useStyles = themedStyles((c) => ({
   chapterText: { fontSize: 13, fontWeight: '600', color: c.muted, textTransform: 'uppercase', letterSpacing: 0.3 },
   chapterTop: { fontSize: 14, color: c.text },
   row: { borderRadius: 6 },
+  // A chapter's lone step: the chapter's space above, its heading as the step's name.
+  merged: { marginTop: 8 },
+  labelChapter: { fontWeight: '600' },
+  labelTop: { fontSize: 16 },
+  detail: { marginTop: 2, marginLeft: 60, fontSize: 13, color: c.muted },
   top: { flexDirection: 'row', alignItems: 'center' },
   main: { flex: 1, paddingVertical: 8, paddingHorizontal: 8, borderRadius: 6, minHeight: 44, justifyContent: 'center' },
   seen: { backgroundColor: c.lineHighlight },

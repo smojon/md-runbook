@@ -563,6 +563,12 @@ const en = {
   stepsRowLabel: (step: number | undefined, label: string, state: string, time: string | undefined) =>
     `${step !== undefined ? `Step ${step}: ` : ''}${label}, ${state}${time ? `, ${time}` : ''}`,
   stepsChapter: (title: string) => `Chapter: ${title}`,
+  /** A chapter's lone step, one row: the heading and the step's own name. */
+  stepsMerged: (heading: string, step: string) => `${heading} (${step})`,
+  /** The Steps header while the run waits: the headline, and what it waits for under it. */
+  stepsWaiting: 'Waiting for you',
+  stepsWaitsConfirm: (step: string) => `Confirm ${step}`,
+  stepsWaitsValues: (names: string) => `Values to fill in: ${names}`,
   /** Preflight: what a step will ask of you, known before the run (as in VS Code's Steps view). */
   stepsNeeds: (needs: string) => `needs ${needs}`,
   preflightApprovalNeed: 'approval (proposed)',

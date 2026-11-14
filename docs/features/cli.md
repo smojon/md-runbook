@@ -198,6 +198,16 @@ the runner and the summary, and exits 0 when the signature is good.
 | `--record` | Sign the run record instead (outputs, notes and all: an incident, a drill); `verify` then says whether it changed since and, with `--allowed-signers`, checks each signature |
 | `--cosign` | Add your signature to the signed runbook (or, with `--record`, the signed record) as it is |
 
+### Publishing to a team library
+
+`md-runbook publish file.md --library https://runbooks.example.net [--path ops/file.md]` sends a
+signed runbook to the [library server](../../apps/library-server/README.md), which puts it into
+the folder the web app serves. The server takes it only when the whole runbook is signed by one
+of the library's signers, unchanged since signing, not expired, named as its file, and of a
+higher version than the one published there. The upload token comes from
+`MD_RUNBOOK_LIBRARY_TOKEN`, never from the command line. Exit code `0` published (or already
+there), `1` refused (the reason is printed), `2` a usage error or no usable answer.
+
 ## Gate audit
 
 `md-runbook audit gate.log… [--record incident.md] [--out audit.pdf]` reports what servers with
@@ -314,7 +324,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: smojon/md-runbook@v0.22.0
+      - uses: smojon/md-runbook@v0.23.0
         with:
           runbook: runbooks/smoke.md
           params: |

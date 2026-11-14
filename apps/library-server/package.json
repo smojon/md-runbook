@@ -1,0 +1,25 @@
+{
+  "name": "@md-runbook/library-server",
+  "version": "1.0.0",
+  "description": "Next to the md-runbook web app: publishes signed runbooks to the team library, collects run summaries (signed by the runner, or sent by md-runbook-gate) and turns Alertmanager alerts into runbook links.",
+  "license": "MIT",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/apps/library-server/src/main.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/apps/library-server/src/main.js",
+    "test": "npm run build && node --test \"dist/apps/library-server/test/**/*.test.js\""
+  },
+  "dependencies": {
+    "fflate": "0.8.2",
+    "re2js": "2.8.8"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "6.0.3"
+  }
+}

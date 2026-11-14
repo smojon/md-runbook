@@ -1,0 +1,24 @@
+{
+  "routes": [
+    {
+      "alertname": "KubePodCrashLooping",
+      "matchers": ["namespace=~\"prod-.*\"", "severity!=\"info\""],
+      "runbook": "k8s/crashloop.md",
+      "host": "{{ $labels.cluster }}",
+      "params": {
+        "NAMESPACE": "{{ $labels.namespace }}",
+        "POD": "{{ $labels.pod }}"
+      },
+      "alertLabels": ["namespace", "pod"]
+    },
+    {
+      "alertname": "ApiDown",
+      "runbook": "ops/restart-api.md",
+      "params": { "TARGET": "{{ $labels.instance }}" }
+    },
+    {
+      "matchers": ["team=\"db\""],
+      "runbook": "db/restore.md"
+    }
+  ]
+}

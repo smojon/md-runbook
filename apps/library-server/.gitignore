@@ -1,0 +1,7 @@
+/dist/
+/node_modules/
+/data/
+/library/
+/compose.yml
+/Caddyfile
+/secrets/

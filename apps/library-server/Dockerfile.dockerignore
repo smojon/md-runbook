@@ -1,0 +1,8 @@
+# The build context is the repository root: send only what the server needs.
+*
+!packages/core/src
+!apps/library-server/package.json
+!apps/library-server/package-lock.json
+!apps/library-server/tsconfig.json
+!apps/library-server/src
+!apps/library-server/test

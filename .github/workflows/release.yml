@@ -30,8 +30,8 @@ jobs:
         if: runner.os != 'Linux'
         run: npm run test:integration
 
-  # The ops host (apps/ops), the probe (apps/probe), the relay (apps/relay) and the web app
-  # (apps/web) for amd64 and arm64, as ghcr.io/OWNER/md-runbook-ops:VERSION and :latest (the
+  # The ops host (apps/ops), the probe (apps/probe), the relay (apps/relay), the web app
+  # (apps/web) and the library server (apps/library-server) for amd64 and arm64, as ghcr.io/OWNER/md-runbook-ops:VERSION and :latest (the
   # others the same). The first push makes a private package: set it to public once in the
   # package's settings.
   images:
@@ -46,6 +46,7 @@ jobs:
           - {image: md-runbook-ops, context: apps}
           - {image: md-runbook-probe, context: apps}
           - {image: md-runbook-relay, context: apps/relay}
+          - {image: md-runbook-library-server, context: .}
           - {image: md-runbook-web, context: .}
     steps:
       - uses: actions/checkout@v7

@@ -10,7 +10,7 @@ are signed: [docs/features/signed-runbooks.md](../../docs/features/signed-runboo
 
 Linux or macOS with OpenSSH 8.2 or newer (`ssh-keygen -Y`), and the usual tools: `awk`,
 `base64`, `mkfifo`, `pkill`, `logger` (for syslog), `sha256sum` or `shasum`. bash if the
-runbooks need it (else the blocks run in `sh`).
+runbooks need it (else the blocks run in `sh`), `curl` for run reports (`report_to`).
 
 ## Install
 
@@ -79,6 +79,18 @@ md-runbook-probe on the [ops host](../ops/README.md) does. Neither can be set by
 
 A second connection with the command `pkill -TERM|-KILL -P PID 2>/dev/null; true` (what the app
 sends to cancel) stops the running block of a shell this gate started for the account.
+
+## Run reports
+
+With `report_to = https://…/v1/runs` in `gate.conf` (and `report_token_file`, a file with the
+bearer token), the gate sends a [run summary](../../docs/features/run-reports.md) of each signed
+runbook a session ran when the session ends: client `gate`, the signed name, version, manifest
+hash and signers, the key (`who`), the server, account and client address, and each signed
+block's label (the first line of its code) and state. Never an output or a parameter value. It
+needs `curl`; it runs in the background after the session, tries 3 times, and logs a `report`
+event (`sent` or `failed`, with the HTTP status). It never holds up or fails a run. The
+[library server](../library-server/README.md) keeps it as verified when the token is one of its
+`RUNS_GATE_TOKENS`. More in [signed runbooks](../../docs/features/signed-runbooks.md#run-reports-from-the-gate).
 
 ## Tests
 
