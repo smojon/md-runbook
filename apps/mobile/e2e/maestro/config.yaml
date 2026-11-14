@@ -9,4 +9,5 @@ executionOrder:
   flowsOrder:
     - smoke
     - run-cell
+    - steps-shots
     - open-link

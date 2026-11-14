@@ -1,0 +1,58 @@
+# Throwaway (branch steps-shots): screenshots of the Runbook | Steps switch and the Steps view while a
+# runbook with estimates runs on the CI host added by run-cell (state kept: no clearState).
+appId: dev.mdrunbook.app
+name: steps-shots
+---
+- launchApp
+- runFlow: subflows/dismiss-system-dialog.yaml
+- extendedWaitUntil:
+    visible:
+      id: open-runbook
+    timeout: 120000
+- openLink: mdrunbook://open?rb=bZDBisIwEIbveYqf9rzSVheWXfay7AN48CZC02YwwbQJZoL69lZjDYLX-ef7ZvhL_JO37oJeU39wkcEOgeXejHsh2rbtZNA4klQXQWfDqG_DnATi6EGBzSCZfusqiGCJPFY_oF47FFZ2iL5IWFniLxqrsiCjw0xWM9pNq_z87LterBZNFq1j0G88X_MHy8_Z46dNUg_yAYh71FRVmn5gix02ZC3KXIUmqFSPCVBupDf3miGpCuukgju8ngGTPCp3GjOwnDrK1dyyhFwB&host=ci
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible: 'Open'
+          timeout: 60000
+      - tapOn: 'Open'
+- extendedWaitUntil:
+    visible:
+      id: run-primary
+    timeout: 90000
+- takeScreenshot: s01-runbook-rail
+# The Steps segment before a run: the header and the "Before you run" line.
+- tapOn:
+    id: view-steps
+- takeScreenshot: s02-steps-before
+# Back to the runbook, run all, then watch it in Steps.
+- tapOn:
+    id: view-runbook
+- tapOn:
+    id: run-primary
+- extendedWaitUntil:
+    visible: '.*s of 10s.*'
+    timeout: 60000
+    optional: true
+- tapOn:
+    id: view-steps
+- takeScreenshot: s03-steps-running
+# Run all waits at the checklist item: its row has Done / Skip / Stop, and the switch a dot.
+- extendedWaitUntil:
+    visible: 'Done'
+    timeout: 150000
+    optional: true
+- takeScreenshot: s04-steps-waiting
+- tapOn:
+    text: 'Done'
+    optional: true
+- extendedWaitUntil:
+    visible: '.*Take down.*|.*Done ·.*|.*of 7 steps done.*'
+    timeout: 120000
+    optional: true
+- takeScreenshot: s05-steps-end
+- tapOn:
+    id: view-runbook
+- takeScreenshot: s06-runbook-end

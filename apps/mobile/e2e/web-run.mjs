@@ -68,6 +68,48 @@ try {
   await output.filter({ hasText: /\$ uptime/ }).waitFor();
   await page.screenshot({ path: 'web-run-03-line.png' });
   console.log('web run: a cell and a line ran over SSH through the relay');
+
+  // Throwaway (branch steps-shots): the Runbook | Steps switch and the Steps view, narrow then wide.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(
+    url +
+      '/open?rb=bZDBisIwEIbveYqf9rzSVheWXfay7AN48CZC02YwwbQJZoL69lZjDYLX-ef7ZvhL_JO37oJeU39wkcEOgeXejHsh2rbtZNA4klQXQWfDqG_DnATi6EGBzSCZfusqiGCJPFY_oF47FFZ2iL5IWFniLxqrsiCjw0xWM9pNq_z87LterBZNFq1j0G88X_MHy8_Z46dNUg_yAYh71FRVmn5gix02ZC3KXIUmqFSPCVBupDf3miGpCuukgju8ngGTPCp3GjOwnDrK1dyyhFwB&host=ci',
+  );
+  await page.getByTestId('run-primary').waitFor({ timeout: 60_000 });
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: 'web-steps-01-runbook-rail.png' });
+  await page.getByTestId('view-steps').click();
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: 'web-steps-02-steps-before.png' });
+  await page.getByTestId('view-runbook').click();
+  await page.getByTestId('run-primary').click();
+  await page.getByTestId('view-steps').click();
+  const t0 = Date.now();
+  let waited = false;
+  for (let i = 1; Date.now() - t0 < 150_000; i++) {
+    const s = String(Math.round((Date.now() - t0) / 1000)).padStart(3, '0');
+    if (i % 3 === 1) await page.screenshot({ path: `web-steps-${s}s-running.png` });
+    const done = page.getByRole('button', { name: /^Done/ }).first();
+    if (!waited && (await done.isVisible().catch(() => false))) {
+      waited = true;
+      await page.screenshot({ path: `web-steps-${s}s-waiting.png` });
+      await done.click().catch(() => undefined);
+    }
+    if (
+      waited &&
+      (await page
+        .getByText(/Take down|Done ·|of 7 steps done/)
+        .first()
+        .isVisible()
+        .catch(() => false))
+    )
+      break;
+    await page.waitForTimeout(3000);
+  }
+  await page.screenshot({ path: 'web-steps-98-end.png' });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.waitForTimeout(1000);
+  await page.screenshot({ path: 'web-steps-99-wide.png' });
 } catch (e) {
   failed = true;
   console.error(e);
