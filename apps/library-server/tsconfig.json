@@ -12,7 +12,11 @@
     "noImplicitOverride": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "paths": {
+      "fflate": ["./node_modules/fflate/lib/node.d.cts"],
+      "re2js": ["./node_modules/re2js/build/index.d.cts"]
+    }
   },
   "include": ["src", "test"]
 }
