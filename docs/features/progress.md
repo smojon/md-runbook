@@ -67,9 +67,14 @@ Runbook** and **Open as Runbook**.
 **Resume** runs it and the steps still to do (Resume Run). Under the failed row is the last line
 of its error output (stderr, else its output).
 
+**When the run waits for you** with a question on the cell (**Done by hand?**, the teardown
+offer, a risky command while another file is in front), the step's row has the same buttons as
+the cell: **Done** / **Skip** / **Stop**, **Take Down** / **Leave It Up**, **Run** / **Don't Run**.
+
 **Keyboard.** Up/Down and Home/End move between rows, Enter goes to the step's cell, and on a
 row: **R** runs the step, **F** runs from it, **D** marks it done, **S** marks it skipped, **U**
-unmarks it, and **Space** ticks or unticks a checklist item. A screen reader reads these keys
+unmarks it, and **Space** ticks or unticks a checklist item. On a row that waits for you, **1**,
+**2** and **3** press its answers (Enter works on a focused button too). A screen reader reads these keys
 with the row. Anywhere in VS Code: **Ctrl+Alt+S** (⌃⌘S on a Mac) shows the Steps view. In the
 runbook or the Steps view: **Ctrl+Alt+N** (⌃⌘N) goes to the next step, **Ctrl+Alt+R** (⌃⌘R)
 resumes the run. In the runbook: **Ctrl+Alt+D** (⌃⌘D) marks the selected step done. None of them

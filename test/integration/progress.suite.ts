@@ -202,6 +202,36 @@ test('Run All waits at an unticked checklist item: Done ticks it, Skip goes on, 
   }
 });
 
+test('Steps view: a step that waits for a question on its cell has its answers on its row', async () => {
+  const uri = writeFile('manual-steps-row.md', manualRunbook());
+  const editor = await openRunbook(uri);
+  const cells = editor.notebook.getCells();
+  type AnswerRow = { kind: string; index: number; state?: string; answers?: { id: string; label: string; icon?: string }[] };
+  const row = async (): Promise<AnswerRow | undefined> =>
+    (await vscode.commands.executeCommand<{ rows: AnswerRow[] }>('mdRunbook._steps'))!.rows.find((r) => r.kind === 'step' && r.index === 2);
+  const running = runCells(editor, 0, cells.length);
+  try {
+    let waiting: AnswerRow | undefined;
+    for (const end = Date.now() + 15_000; !waiting?.answers && Date.now() < end; ) {
+      waiting = await row();
+      if (!waiting?.answers) await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(waiting?.answers, 'the checklist row waits with its answers');
+    assert.equal(waiting.state, 'waiting');
+    assert.deepEqual(
+      waiting.answers.map((a) => a.id),
+      ['done', 'skip', 'stop'],
+    );
+    assert.ok(waiting.answers.every((a) => a.label !== ''));
+    // What the row's Stop button sends.
+    await vscode.commands.executeCommand('mdRunbook.answerWaiting', cells[2]!.document.uri.toString(), 'stop');
+    await step('run ends', running);
+    assert.equal((await row())?.answers, undefined, 'answered: no buttons left');
+  } finally {
+    await closeAll();
+  }
+});
+
 test('manual-steps: continue runs past an unticked item without asking', async () => {
   const uri = writeFile('manual-continue.md', manualRunbook('---\nmanual-steps: continue\n---\n\n'));
   const editor = await openRunbook(uri);

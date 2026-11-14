@@ -26,7 +26,7 @@ import { isTestMode } from './secrets';
 import { stepsPage } from './stepsPage';
 import { setTaskBox } from './taskLists';
 import { NOTEBOOK_TYPE } from './serializer';
-import { onDidChangeWaiting, waitingIn } from './waiting';
+import { onDidChangeWaiting, waitingAnswers, waitingIn } from './waiting';
 
 export const STEPS_VIEW = 'mdRunbook.steps';
 const REVEALED_KEY = 'mdRunbook.stepsViewShown';
@@ -61,6 +61,8 @@ export type StepsRow =
       detail?: string;
       /** A failed step: the last line of its error output (stderr, else the output), cut short. */
       error?: string;
+      /** The step waits for a question asked on its cell (waiting.ts askOnCell): its buttons. */
+      answers?: { id: string; label: string; icon?: string; tooltip?: string }[];
     };
 
 /** One count of the preflight line, which the view makes a link. */
@@ -150,6 +152,11 @@ export function errorLine(cell: vscode.NotebookCell): string | undefined {
   return line !== undefined && line.length > ERROR_MAX ? `${line.slice(0, ERROR_MAX - 1)}…` : line;
 }
 
+/** The buttons of a question asked on the cell (Done / Skip / Stop, Take Down / Leave It Up), for its row. */
+function answersOf(cell: vscode.NotebookCell): { id: string; label: string; icon?: string; tooltip?: string }[] {
+  return waitingAnswers(cell).map((a) => ({ id: a.id, label: a.label, ...(a.icon ? { icon: a.icon } : {}), ...(a.tooltip ? { tooltip: a.tooltip } : {}) }));
+}
+
 /** A chapter with only one step under it is one row: the heading, with the step's dot, number and time. */
 function mergeLoneSteps(rows: StepsRow[]): StepsRow[] {
   const merged: StepsRow[] = [];
@@ -200,15 +207,19 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
         if (!item) continue;
         // Checklist items are steps too (manual ones): numbered in order with the blocks.
         taskStep++;
+        // The first unticked item of a cell Run All waits at (controller.ts manualStepsBefore).
+        const isWaiting = !item.checked && waiting?.cell === cell && !waitingShown;
+        if (isWaiting) waitingShown = true;
+        const answers = isWaiting ? answersOf(cell) : [];
         rows.push({
           kind: 'step',
           index: i,
           step: taskStep,
           label: (lines[item.line] ?? '').replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[[ xX]\][ \t]*/, '') || 'checklist item',
-          // The first unticked item of a cell Run All waits at (controller.ts manualStepsBefore).
-          state: item.checked ? 'done' : waiting?.cell === cell && !waitingShown ? ((waitingShown = true), 'waiting') : 'pending',
+          state: item.checked ? 'done' : isWaiting ? 'waiting' : 'pending',
           time: 'by hand',
           task: { offset: item.offset, checked: item.checked },
+          ...(answers.length ? { answers } : {}),
         });
       }
       continue;
@@ -256,6 +267,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     // Preflight: only for a step still to run (or to run again), and not while one runs.
     const needs = sources && (state === 'pending' || state === 'failed') && !ready && !offered ? stepNeeds(cell, info, sources) : [];
     const error = state === 'failed' ? errorLine(cell) : undefined;
+    const answers = state === 'waiting' ? answersOf(cell) : [];
     rows.push({
       kind: 'step',
       index: i,
@@ -271,6 +283,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
       ...(isManualMark(a) ? { marked: true } : {}),
       ...(needs.length ? { needs } : {}),
       ...(error ? { error } : {}),
+      ...(answers.length ? { answers } : {}),
     });
   }
   const done = p.pending === 0 && p.failed === 0 && p.total > 0;
@@ -346,8 +359,16 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
         preflight?: unknown;
         openSample?: unknown;
         openAsRunbook?: unknown;
+        answer?: unknown;
+        cell?: unknown;
       };
       if (msg.ready) this.refresh();
+      if (typeof msg.answer === 'string' && typeof msg.cell === 'number') {
+        // A button of the question asked on that cell (waiting.ts): the same as the one on the cell.
+        const nb = this.notebook();
+        const cell = nb && msg.cell >= 0 && msg.cell < nb.cellCount ? nb.cellAt(msg.cell) : undefined;
+        if (cell) void vscode.commands.executeCommand('mdRunbook.answerWaiting', cell.document.uri.toString(), msg.answer);
+      }
       if (msg.resume === true) void this.resume();
       if (typeof msg.preflight === 'string') void this.preflight(msg.preflight);
       if (msg.openSample === true) void vscode.commands.executeCommand('mdRunbook.openSample');

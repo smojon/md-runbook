@@ -3,6 +3,7 @@
  * bar, Retry step and Resume after a failure, the preflight line with its links), then the rail
  * of chapters and steps. Each row is one element, kept by its key and updated in place, so a
  * click, the hover and the keyboard focus survive the updates (every second while a step runs).
+ * A step that waits for a question asked on its cell shows that question's answers as buttons.
  * With no runbook: a short empty state with Open Sample Runbook and Open as Runbook.
  *
  * The script is in a template string: no backslashes, no backticks and no `${` in it.
@@ -76,6 +77,9 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
   .running .label, .waiting .label { font-weight: 600; }
   .detail, .needs { color: var(--vscode-descriptionForeground); font-size: .85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .err { color: var(--vscode-errorForeground); font-family: var(--vscode-editor-font-family); font-size: .85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .answers { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+  .answers .btn { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; font-size: .92em; }
+  .answers .btn .codicon { font-size: 14px !important; }
   .time { color: var(--vscode-descriptionForeground); white-space: nowrap; font-size: .92em; }
   .time.over { color: var(--vscode-editorWarning-foreground); }
   .stepbar { position: absolute; left: 22px; right: 4px; bottom: 0; height: 2px; }
@@ -169,7 +173,7 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
       const line = el('span', 'labline');
       line.append(el('span', 'label'), el('span', 'spin codicon codicon-sync codicon-modifier-spin'));
       line.lastChild.setAttribute('aria-hidden', 'true');
-      lab.append(line, el('span', 'detail'), el('span', 'needs'), el('span', 'err'));
+      lab.append(line, el('span', 'detail'), el('span', 'needs'), el('span', 'err'), el('span', 'answers'));
       const bar = el('div', 'stepbar');
       bar.append(el('div', 'fill'));
       row.append(el('span', 'dot'), el('span', 'num'), lab, el('span', 'time'), el('span', 'acts'), bar);
@@ -198,6 +202,23 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
       put(row.querySelector('.detail'), r.detail);
       put(row.querySelector('.needs'), r.needs ? 'needs ' + r.needs.join(', ') : '');
       put(row.querySelector('.err'), r.error);
+      // A question asked on the cell (Done / Skip / Stop, the teardown offer): its buttons, always shown, keys 1, 2, 3.
+      const answers = r.answers || [];
+      const ans = row.querySelector('.answers');
+      const asig = answers.map((a) => a.id + '=' + a.label + '=' + (a.icon || '')).join('|');
+      if (ans.dataset.sig !== asig) {
+        ans.dataset.sig = asig;
+        ans.replaceChildren(...answers.map((a, i) => {
+          const b = el('button', 'btn' + (i > 0 ? ' secondary' : ''));
+          if (a.icon) { const icon = el('span', 'codicon codicon-' + a.icon); icon.setAttribute('aria-hidden', 'true'); b.append(icon); }
+          b.append(a.label);
+          b.title = (a.tooltip || a.label) + ' (' + (i + 1) + ')';
+          b.setAttribute('aria-label', a.label + ': ' + r.label);
+          b.addEventListener('click', (ev) => { ev.stopPropagation(); if (row.r) post({ answer: a.id, cell: row.r.index }); });
+          return b;
+        }));
+      }
+      ans.hidden = answers.length === 0;
       const time = row.querySelector('.time');
       put(time, r.time);
       const tcls = 'time' + (r.over ? ' over' : '');
@@ -233,7 +254,8 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
       title = (r.step !== undefined ? 'Step ' + r.step + ': ' : '') + r.label + (r.detail ? ' (' + r.detail + ')' : '') + ', ' + STATE[r.state] + (r.time ? ', ' + r.time : '') + (r.needs ? '. Needs ' + r.needs.join(', ') : '') + (r.error ? '. Error: ' + r.error : '');
       attr(row, 'aria-current', r.state === 'running' || r.state === 'waiting' ? 'step' : undefined);
       // The keys a screen reader user can press on the row.
-      attr(row, 'aria-description', ['Enter goes to the cell'].concat(acts.map((a) => a.keyName + ' ' + a.title.toLowerCase())).join(', '));
+      const keys = (r.answers || []).map((a, i) => (i + 1) + ' ' + a.label).concat(acts.map((a) => a.keyName + ' ' + a.title.toLowerCase()));
+      attr(row, 'aria-description', ['Enter goes to the cell'].concat(keys).join(', '));
     }
     if (row.title !== title) row.title = title;
     attr(row, 'aria-label', title);
@@ -342,7 +364,11 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
     if (e.target !== row || e.ctrlKey || e.altKey || e.metaKey || !row.r) return;
     const key = e.key === ' ' ? ' ' : e.key.toLowerCase();
     const act = actionsFor(row.r).find((a) => a.key === key);
-    if (act) {
+    const answer = row.r.answers && /^[1-9]$/.test(e.key) ? row.r.answers[Number(e.key) - 1] : undefined;
+    if (answer) {
+      e.preventDefault();
+      post({ answer: answer.id, cell: row.r.index });
+    } else if (act) {
       e.preventDefault();
       post(act.msg);
     } else if (e.key === 'Enter' || e.key === ' ') {
