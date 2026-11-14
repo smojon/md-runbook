@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **App: a progress rail down the left edge**, always in view: it fills from the top as the run
+  goes down the runbook, with a tick per step (green done, red failed, pulsing while it runs), a
+  crossbar per chapter and a pale box for the part on screen. Tap a tick to go to its step, a
+  crossbar to go to its chapter.
 - **Enter is often enough.** A parameter or input asked for opens with the value you used last
   time for that runbook, and says when (`last used yesterday; Enter keeps it`); a parameter never
   given shows its default. Never for secrets or masked inputs. In VS Code and in the app.

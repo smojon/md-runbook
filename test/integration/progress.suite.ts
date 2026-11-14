@@ -15,7 +15,7 @@ test('Mark Step Done / Skipped records a manual output that is saved', async () 
   const editor = await openRunbook(uri);
   const nb = editor.notebook;
   const [, one, two] = nb.getCells();
-  assert.deepEqual({ ...(await progress()) }, { total: 3, done: 0, failed: 0, skipped: 0, pending: 3, firstPending: { cell: 1, step: 1 }, resume: [1, 2, 3] });
+  assert.deepEqual({ ...(await progress()) }, { total: 3, done: 0, failed: 0, skipped: 0, pending: 3, firstPending: { cell: 1, step: 1 }, resume: [1, 2, 3], offered: 0, stepOfCell: [undefined, 1, 2, 3] });
 
   await step('mark done', vscode.commands.executeCommand('mdRunbook.markStepDone', one));
   await step('mark skipped', vscode.commands.executeCommand('mdRunbook.markStepSkipped', two));

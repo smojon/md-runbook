@@ -41,7 +41,7 @@ import {
   shellKindForLanguage,
   taskItems,
 } from '@md-runbook/core';
-import { isManualMark } from '@md-runbook/core/progress';
+import { isManualMark, stepState } from '@md-runbook/core/progress';
 import type { Captured } from '@md-runbook/core/checks';
 import { DEFAULT_POLICY, PolicyResult, approvalScope, evaluatePolicy } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
@@ -49,6 +49,7 @@ import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
+import { headingsOf } from '@md-runbook/core/title';
 import type { Progress, RunbookEstimate } from '@md-runbook/core';
 import {
   callEstimate,
@@ -63,6 +64,7 @@ import {
 import { TeardownCard } from '../cells/TeardownCard';
 
 import { BarSegment, TimeBar, useNow } from '../ui/TimeBar';
+import { ProgressRail, RailChapter, RailState, RailTick } from '../ui/ProgressRail';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId, signSshsig } from '@md-runbook/ssh';
 import { approvalOf, approveCell, rejectCell } from '../approvals/store';
@@ -305,6 +307,36 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const step = progress?.stepOfCell[running.cellIndex];
     return { index: running.cellIndex, label, ...(step !== undefined ? { step } : {}) };
   }, [running, cells, progress]);
+  // The rail on the left: a tick per step where it is in the runbook, filled down to the run.
+  const railTicks = useMemo((): RailTick[] => {
+    if (!progress) return [];
+    return cells.flatMap((c, i) => {
+      const step = progress.stepOfCell[i];
+      if (step === undefined || c.kind !== 'code') return [];
+      const a = c.output?.attrs;
+      const s = stepState(a?.exit, a?.lines !== undefined, a?.check);
+      const state: RailState =
+        running?.cellIndex === i ? 'running' : s === 'done' || s === 'skipped' ? 'done' : s === 'failed' ? 'failed' : 'pending';
+      return [{ index: i, step, state }];
+    });
+  }, [cells, progress, running]);
+  const railChapters = useMemo(
+    (): RailChapter[] =>
+      cells.flatMap((c, i) =>
+        c.kind === 'code'
+          ? []
+          : headingsOf(i === 0 ? withoutFrontMatter(c.value) : c.value)
+              .filter((h) => h.level <= 2)
+              .slice(0, 1)
+              .map((h) => ({ index: i, title: h.text })),
+      ),
+    [cells],
+  );
+  const [visibleCells, setVisibleCells] = useState<{ first: number; last: number } | undefined>();
+  const [onViewable] = useState(() => ({ viewableItems }: { viewableItems: readonly { index?: number | null }[] }) => {
+    const shown = viewableItems.map((v) => v.index).filter((i): i is number => typeof i === 'number');
+    if (shown.length > 0) setVisibleCells({ first: Math.min(...shown), last: Math.max(...shown) });
+  });
   // Scrolled past the run bar: the slim bar on top keeps the run in view.
   const [barBottom, setBarBottom] = useState(0);
   const [pastBar, setPastBar] = useState(false);
@@ -1377,295 +1409,313 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   return (
     <View style={styles.screen}>
       <Stack.Screen options={{ title: runbook.title }} />
-      <FlatList
-        ref={list}
-        onScroll={(e) => setPastBar(barBottom > 0 && e.nativeEvent.contentOffset.y > barBottom)}
-        scrollEventThrottle={100}
-        onScrollToIndexFailed={(info) => list.current?.scrollToOffset({ offset: info.averageItemLength * info.index })}
-        style={styles.screen}
-        contentContainerStyle={styles.content}
-        contentInsetAdjustmentBehavior="automatic"
-        data={cells}
-        keyExtractor={(_, i) => String(i)}
-        ListHeaderComponent={
-          <View>
-            <RunBar
-              progress={progress}
-              estimate={estimate}
-              canRun={host !== undefined}
-              running={queued}
-              {...(runningStep ? { runningCell: runningStep } : {})}
-              onRun={runSequence}
-              onStop={stopSequence}
-              onMore={() => setShowActions(true)}
-              onLayout={setBarBottom}
-            />
-            <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
-            <AssistantSheet {...assistant.sheet} />
-            <DiffSheet diff={diff} onClose={() => setDiff(undefined)} />
-            <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />
-            <SaveBar runbook={runbook} />
-            {fromLink ? <LinkNotes context={fromLink} /> : null}
-            {signed ? <SignedBanner status={signed} verified={verified} /> : null}
-            {problems.all.length > 0 ? (
-              <ProblemsCard
-                problems={problems}
-                open={problemsOpen}
-                onToggle={() => setProblemsOpen(!problemsOpen)}
-                onGo={(index) => list.current?.scrollToIndex({ index, viewPosition: 0.2 })}
-                onFix={fixOption}
+      <View style={styles.withRail}>
+        {railTicks.length > 1 && progress ? (
+          <ProgressRail
+            cells={cells.length}
+            ticks={railTicks}
+            chapters={railChapters}
+            {...(visibleCells ? { visible: visibleCells } : {})}
+            label={runHeadline(progress, runningStep)}
+            onGo={(index) => list.current?.scrollToIndex({ index, viewPosition: 0.2 })}
+          />
+        ) : null}
+        <FlatList
+          ref={list}
+          onViewableItemsChanged={onViewable}
+          viewabilityConfig={VIEWABILITY}
+          onScroll={(e) => setPastBar(barBottom > 0 && e.nativeEvent.contentOffset.y > barBottom)}
+          scrollEventThrottle={100}
+          onScrollToIndexFailed={(info) => list.current?.scrollToOffset({ offset: info.averageItemLength * info.index })}
+          style={styles.screen}
+          contentContainerStyle={styles.content}
+          contentInsetAdjustmentBehavior="automatic"
+          data={cells}
+          keyExtractor={(_, i) => String(i)}
+          ListHeaderComponent={
+            <View>
+              <RunBar
+                progress={progress}
+                estimate={estimate}
+                canRun={host !== undefined}
+                running={queued}
+                {...(runningStep ? { runningCell: runningStep } : {})}
+                onRun={runSequence}
+                onStop={stopSequence}
+                onMore={() => setShowActions(true)}
+                onLayout={setBarBottom}
               />
-            ) : null}
-            {showQr ? <QrCard text={runbook.text} host={host?.name} params={paramValues} onClose={() => setShowQr(false)} /> : null}
-            {incidentCard === 'start' ? <StartIncidentCard onStart={startIncident} onCancel={() => setIncidentCard(undefined)} /> : null}
-            {incidentCard === 'note' ? <NoteCard onAdd={addNote} onCancel={() => setIncidentCard(undefined)} /> : null}
-            {incidentCard === 'record' ? (
-              <RecordCard text={runbook.text} onSign={() => void signRecord()} onCancel={() => setIncidentCard(undefined)} />
-            ) : null}
-            {signing ? (
-              <SignCard
-                key={signing.request.kind}
-                request={signing.request}
-                busy={signing.busy}
-                errors={signing.errors}
-                onSign={(input, signer) => void doSign(input, signer)}
-                onCancel={() => setSigning(undefined)}
-              />
-            ) : null}
-            {params.length > 0 ? (
-              <ParamsCard specs={params} values={paramValues} onChange={(name, value) => setParamValue(runbook.id, name, value)} />
-            ) : null}
-            {practiceHost ? (
-              <View testID="practice-banner" style={[styles.linkNotes, { borderLeftColor: palette.warning }]}>
-                <Text style={styles.signedBody}>{t.practiceOn(practiceHost.name)}</Text>
-              </View>
-            ) : practiceName ? (
-              <Text testID="practice-missing" style={styles.warning}>
-                {t.practiceMissing(practiceName)}
-              </Text>
-            ) : null}
-            {groupPick !== undefined ? (
-              <View testID="group-card" style={styles.qrCard}>
-                <Text style={styles.signedTitle}>{t.groupPickTitle}</Text>
-                <Text style={styles.signedBody}>{t.groupPickHelp}</Text>
-                <View style={styles.cardChips}>
-                  {hostGroups.map((g) => (
+              <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
+              <AssistantSheet {...assistant.sheet} />
+              <DiffSheet diff={diff} onClose={() => setDiff(undefined)} />
+              <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />
+              <SaveBar runbook={runbook} />
+              {fromLink ? <LinkNotes context={fromLink} /> : null}
+              {signed ? <SignedBanner status={signed} verified={verified} /> : null}
+              {problems.all.length > 0 ? (
+                <ProblemsCard
+                  problems={problems}
+                  open={problemsOpen}
+                  onToggle={() => setProblemsOpen(!problemsOpen)}
+                  onGo={(index) => list.current?.scrollToIndex({ index, viewPosition: 0.2 })}
+                  onFix={fixOption}
+                />
+              ) : null}
+              {showQr ? <QrCard text={runbook.text} host={host?.name} params={paramValues} onClose={() => setShowQr(false)} /> : null}
+              {incidentCard === 'start' ? <StartIncidentCard onStart={startIncident} onCancel={() => setIncidentCard(undefined)} /> : null}
+              {incidentCard === 'note' ? <NoteCard onAdd={addNote} onCancel={() => setIncidentCard(undefined)} /> : null}
+              {incidentCard === 'record' ? (
+                <RecordCard text={runbook.text} onSign={() => void signRecord()} onCancel={() => setIncidentCard(undefined)} />
+              ) : null}
+              {signing ? (
+                <SignCard
+                  key={signing.request.kind}
+                  request={signing.request}
+                  busy={signing.busy}
+                  errors={signing.errors}
+                  onSign={(input, signer) => void doSign(input, signer)}
+                  onCancel={() => setSigning(undefined)}
+                />
+              ) : null}
+              {params.length > 0 ? (
+                <ParamsCard specs={params} values={paramValues} onChange={(name, value) => setParamValue(runbook.id, name, value)} />
+              ) : null}
+              {practiceHost ? (
+                <View testID="practice-banner" style={[styles.linkNotes, { borderLeftColor: palette.warning }]}>
+                  <Text style={styles.signedBody}>{t.practiceOn(practiceHost.name)}</Text>
+                </View>
+              ) : practiceName ? (
+                <Text testID="practice-missing" style={styles.warning}>
+                  {t.practiceMissing(practiceName)}
+                </Text>
+              ) : null}
+              {groupPick !== undefined ? (
+                <View testID="group-card" style={styles.qrCard}>
+                  <Text style={styles.signedTitle}>{t.groupPickTitle}</Text>
+                  <Text style={styles.signedBody}>{t.groupPickHelp}</Text>
+                  <View style={styles.cardChips}>
+                    {hostGroups.map((g) => (
+                      <Pressable
+                        key={g}
+                        testID={`group-${g}`}
+                        accessibilityRole="button"
+                        onPress={() => void runOnGroup(groupPick, g)}
+                        style={styles.chip}
+                      >
+                        <Text style={styles.chipText}>{t.groupChip(g, hosts.filter((h) => h.group === g).length)}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <View style={styles.cardButtons}>
                     <Pressable
-                      key={g}
-                      testID={`group-${g}`}
+                      testID="group-cancel"
                       accessibilityRole="button"
-                      onPress={() => void runOnGroup(groupPick, g)}
-                      style={styles.chip}
+                      onPress={() => setGroupPick(undefined)}
+                      style={styles.qrClose}
                     >
-                      <Text style={styles.chipText}>{t.groupChip(g, hosts.filter((h) => h.group === g).length)}</Text>
+                      <Text style={styles.link}>{t.cancel}</Text>
                     </Pressable>
+                  </View>
+                </View>
+              ) : null}
+              {groupRun ? (
+                <View testID="group-results" style={styles.qrCard}>
+                  <Text style={styles.signedTitle}>{t.groupResultsTitle(groupRun.group)}</Text>
+                  {groupRun.results.map((r) => (
+                    <Text key={r.host} testID={`group-result-${r.host}`} style={r.ok === false ? styles.warning : styles.signedBody}>
+                      {`${r.ok === undefined ? '…' : r.ok ? '✓' : '✗'} ${r.host}`}
+                    </Text>
                   ))}
-                </View>
-                <View style={styles.cardButtons}>
-                  <Pressable
-                    testID="group-cancel"
-                    accessibilityRole="button"
-                    onPress={() => setGroupPick(undefined)}
-                    style={styles.qrClose}
-                  >
-                    <Text style={styles.link}>{t.cancel}</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : null}
-            {groupRun ? (
-              <View testID="group-results" style={styles.qrCard}>
-                <Text style={styles.signedTitle}>{t.groupResultsTitle(groupRun.group)}</Text>
-                {groupRun.results.map((r) => (
-                  <Text key={r.host} testID={`group-result-${r.host}`} style={r.ok === false ? styles.warning : styles.signedBody}>
-                    {`${r.ok === undefined ? '…' : r.ok ? '✓' : '✗'} ${r.host}`}
-                  </Text>
-                ))}
-                <View style={styles.cardButtons}>
-                  <Pressable
-                    testID="group-results-close"
-                    accessibilityRole="button"
-                    onPress={() => setGroupRun(undefined)}
-                    style={styles.qrClose}
-                  >
-                    <Text style={styles.link}>{t.close}</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : null}
-            {practiceCard ? (
-              <View testID="practice-card" style={styles.qrCard}>
-                <Text style={styles.signedTitle}>{t.practiceTitle}</Text>
-                <Text style={styles.signedBody}>{t.practiceHelp}</Text>
-                <View style={styles.cardChips}>
-                  {hosts.map((h) => (
+                  <View style={styles.cardButtons}>
                     <Pressable
-                      key={h.id}
-                      testID={`practice-host-${h.id}`}
+                      testID="group-results-close"
                       accessibilityRole="button"
-                      accessibilityState={{ selected: h.id === practiceHost?.id }}
+                      onPress={() => setGroupRun(undefined)}
+                      style={styles.qrClose}
+                    >
+                      <Text style={styles.link}>{t.close}</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
+              {practiceCard ? (
+                <View testID="practice-card" style={styles.qrCard}>
+                  <Text style={styles.signedTitle}>{t.practiceTitle}</Text>
+                  <Text style={styles.signedBody}>{t.practiceHelp}</Text>
+                  <View style={styles.cardChips}>
+                    {hosts.map((h) => (
+                      <Pressable
+                        key={h.id}
+                        testID={`practice-host-${h.id}`}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: h.id === practiceHost?.id }}
+                        onPress={() => {
+                          setPracticeId(h.id);
+                          setPracticeCard(false);
+                        }}
+                        style={[styles.chip, h.id === practiceHost?.id && styles.chipOn]}
+                      >
+                        <Text style={[styles.chipText, h.id === practiceHost?.id && styles.chipTextOn]}>{h.name}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <View style={styles.cardButtons}>
+                    <Pressable
+                      testID="practice-close"
+                      accessibilityRole="button"
+                      onPress={() => setPracticeCard(false)}
+                      style={styles.qrClose}
+                    >
+                      <Text style={styles.link}>{t.close}</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
+              <HostPicker hosts={hosts} selected={host} onSelect={setHostId} />
+              {/* A setup step (the web's relay), not an error: a note with the way to it. */}
+              {transportIssue ? (
+                <Text testID="transport-issue" style={styles.setupNote}>
+                  {transportIssue}{' '}
+                  <Link href={{ pathname: '/hosts', params: {} }}>
+                    <Text style={styles.inlineLink}>{t.setUpRelay}</Text>
+                  </Link>
+                </Text>
+              ) : null}
+              {notice ? (
+                <Text testID="run-notice" role="alert" style={styles.warning}>
+                  {notice}
+                </Text>
+              ) : null}
+              {Object.keys(typedInputs).length > 0 ? (
+                <InputsCard
+                  inputs={typedInputs}
+                  onChange={(name, value) => updateInputs({ ...inputs.current, [name]: { ...inputs.current[name]!, value } })}
+                  onClear={(name) => updateInputs(Object.fromEntries(Object.entries(inputs.current).filter(([k]) => k !== name)))}
+                  onClearAll={() => updateInputs({})}
+                />
+              ) : null}
+              {otherHost ? (
+                <View testID="other-host" style={styles.trust}>
+                  <Text style={styles.trustTitle}>{t.otherHostTitle(otherHost.target.name)}</Text>
+                  <Text style={styles.trustBody}>{t.otherHostBody(otherHost.target.name, otherHost.selected?.name)}</Text>
+                  <View style={styles.actions}>
+                    <Pressable testID="other-host-accept" accessibilityRole="button" onPress={allowOtherHost} style={styles.button}>
+                      <Text style={styles.buttonText}>{t.otherHostAccept(otherHost.target.name)}</Text>
+                    </Pressable>
+                    <Pressable
+                      testID="other-host-decline"
+                      accessibilityRole="button"
                       onPress={() => {
-                        setPracticeId(h.id);
-                        setPracticeCard(false);
+                        clearQueue();
+                        setOtherHost(undefined);
                       }}
-                      style={[styles.chip, h.id === practiceHost?.id && styles.chipOn]}
+                      style={styles.secondary}
                     >
-                      <Text style={[styles.chipText, h.id === practiceHost?.id && styles.chipTextOn]}>{h.name}</Text>
+                      <Text style={styles.secondaryText}>{t.trustDecline}</Text>
                     </Pressable>
-                  ))}
+                  </View>
                 </View>
-                <View style={styles.cardButtons}>
-                  <Pressable
-                    testID="practice-close"
-                    accessibilityRole="button"
-                    onPress={() => setPracticeCard(false)}
-                    style={styles.qrClose}
-                  >
-                    <Text style={styles.link}>{t.close}</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : null}
-            <HostPicker hosts={hosts} selected={host} onSelect={setHostId} />
-            {/* A setup step (the web's relay), not an error: a note with the way to it. */}
-            {transportIssue ? (
-              <Text testID="transport-issue" style={styles.setupNote}>
-                {transportIssue}{' '}
-                <Link href={{ pathname: '/hosts', params: {} }}>
-                  <Text style={styles.inlineLink}>{t.setUpRelay}</Text>
-                </Link>
-              </Text>
-            ) : null}
-            {notice ? (
-              <Text testID="run-notice" role="alert" style={styles.warning}>
-                {notice}
-              </Text>
-            ) : null}
-            {Object.keys(typedInputs).length > 0 ? (
-              <InputsCard
-                inputs={typedInputs}
-                onChange={(name, value) => updateInputs({ ...inputs.current, [name]: { ...inputs.current[name]!, value } })}
-                onClear={(name) => updateInputs(Object.fromEntries(Object.entries(inputs.current).filter(([k]) => k !== name)))}
-                onClearAll={() => updateInputs({})}
-              />
-            ) : null}
-            {otherHost ? (
-              <View testID="other-host" style={styles.trust}>
-                <Text style={styles.trustTitle}>{t.otherHostTitle(otherHost.target.name)}</Text>
-                <Text style={styles.trustBody}>{t.otherHostBody(otherHost.target.name, otherHost.selected?.name)}</Text>
-                <View style={styles.actions}>
-                  <Pressable testID="other-host-accept" accessibilityRole="button" onPress={allowOtherHost} style={styles.button}>
-                    <Text style={styles.buttonText}>{t.otherHostAccept(otherHost.target.name)}</Text>
-                  </Pressable>
-                  <Pressable
-                    testID="other-host-decline"
-                    accessibilityRole="button"
-                    onPress={() => {
-                      clearQueue();
-                      setOtherHost(undefined);
-                    }}
-                    style={styles.secondary}
-                  >
-                    <Text style={styles.secondaryText}>{t.trustDecline}</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : null}
-            {trust && trustHost ? (
-              <TrustCard
-                host={trustHost}
-                trust={trust}
-                onAccept={acceptTrust}
-                onDecline={() => {
-                  clearQueue();
-                  setTrust(undefined);
-                }}
-              />
-            ) : null}
-          </View>
-        }
-        renderItem={({ item, index }) =>
-          item.kind === 'markup' ? (
-            <View style={styles.markup}>
-              <MarkdownView
-                testID={`cell-${index}`}
-                markdown={index === 0 ? withoutFrontMatter(item.value) : item.value}
-                firstTask={tasks.first[index]}
-                onToggleTask={tasks.aligned ? toggleTask : undefined}
-              />
+              ) : null}
+              {trust && trustHost ? (
+                <TrustCard
+                  host={trustHost}
+                  trust={trust}
+                  onAccept={acceptTrust}
+                  onDecline={() => {
+                    clearQueue();
+                    setTrust(undefined);
+                  }}
+                />
+              ) : null}
             </View>
-          ) : (
-            <CodeCell
-              cell={item}
-              index={index}
-              canRun={host !== undefined}
-              {...(callEstimates.has(index) ? { callEstimate: callEstimates.get(index)! } : {})}
-              running={running?.cellIndex === index ? running : undefined}
-              busy={running !== undefined && running.cellIndex !== index}
-              checked={checks.get(index) ?? EMPTY}
-              onRun={(mode, line) => void run({ cellIndex: index, mode, line }, host)}
-              onStop={stopSequence}
-              onToggleCheck={(step) => toggleCheck(index, step)}
-              breakpoints={breakpoints.get(index) ?? NO_BREAKS}
-              onToggleBreakpoint={(step) => toggleBreakpoint(index, step)}
-              onExplainLine={(step) => assistant.ask('explainLine', index, lineLabel(step))}
-              onActions={() => setCellSheet(cellActions(index))}
-              {...(problems.byCell.has(index) ? { problems: problems.byCell.get(index)! } : {})}
-              onFix={(from, to) => fixOption(index, from, to)}
-              runbookId={approvalId}
-              platform={host?.platform}
-              below={
-                teardownOffer?.cellIndex === index ? (
-                  <TeardownCard labels={teardownOffer.labels} onTake={() => answerTeardown(true)} onNotNow={() => answerTeardown(false)} />
-                ) : asking?.request.cellIndex === index ? (
-                  // Under the cell that needs the values, where the reader looks, not at the top.
-                  <NeedsCard
-                    runbookId={runbook.id}
-                    needs={asking.needs}
-                    onRun={(v) => void provide(v)}
-                    onCancel={() => {
-                      clearQueue();
-                      setNotice(t.needsCancelled(asking.needs.map((n) => n.name).join(', ')));
-                      setAsking(undefined);
-                    }}
-                  />
-                ) : confirming?.cellIndex === index ? (
-                  <ConfirmCard
-                    cell={index + 1}
-                    match={confirming.match}
-                    runsAs={confirming.runsAs}
-                    attempts={confirming.attempts}
-                    onRun={() => {
-                      const go = confirming.go;
-                      setConfirming(undefined);
-                      go();
-                    }}
-                    onCancel={() => {
-                      // As in VS Code: a cell that wasn't confirmed doesn't run, and Run all stops there.
-                      clearQueue();
-                      setConfirming(undefined);
-                      setNotice(t.confirmDeclined(index + 1));
-                    }}
-                  />
-                ) : approving?.index === index && isCodeMeta(item.meta) ? (
-                  <ApproveCard
-                    code={item.value}
-                    info={item.meta.info}
-                    by={proposalOf(item.meta.info).by ?? 'someone'}
-                    reason={proposalOf(item.meta.info).reason}
-                    result={approving.result}
-                    typed={DEFAULT_POLICY.requireTypedConfirmation}
-                    runsAs={((h) => (h ? `${h.username}@${h.name}` : undefined))(hostOfCell(index))}
-                    onApprove={() => decide(true)}
-                    onReject={() => decide(false)}
-                    onCancel={() => setApproving(undefined)}
-                  />
-                ) : undefined
-              }
-            />
-          )
-        }
-      />
+          }
+          renderItem={({ item, index }) =>
+            item.kind === 'markup' ? (
+              <View style={styles.markup}>
+                <MarkdownView
+                  testID={`cell-${index}`}
+                  markdown={index === 0 ? withoutFrontMatter(item.value) : item.value}
+                  firstTask={tasks.first[index]}
+                  onToggleTask={tasks.aligned ? toggleTask : undefined}
+                />
+              </View>
+            ) : (
+              <CodeCell
+                cell={item}
+                index={index}
+                canRun={host !== undefined}
+                {...(callEstimates.has(index) ? { callEstimate: callEstimates.get(index)! } : {})}
+                running={running?.cellIndex === index ? running : undefined}
+                busy={running !== undefined && running.cellIndex !== index}
+                checked={checks.get(index) ?? EMPTY}
+                onRun={(mode, line) => void run({ cellIndex: index, mode, line }, host)}
+                onStop={stopSequence}
+                onToggleCheck={(step) => toggleCheck(index, step)}
+                breakpoints={breakpoints.get(index) ?? NO_BREAKS}
+                onToggleBreakpoint={(step) => toggleBreakpoint(index, step)}
+                onExplainLine={(step) => assistant.ask('explainLine', index, lineLabel(step))}
+                onActions={() => setCellSheet(cellActions(index))}
+                {...(problems.byCell.has(index) ? { problems: problems.byCell.get(index)! } : {})}
+                onFix={(from, to) => fixOption(index, from, to)}
+                runbookId={approvalId}
+                platform={host?.platform}
+                below={
+                  teardownOffer?.cellIndex === index ? (
+                    <TeardownCard
+                      labels={teardownOffer.labels}
+                      onTake={() => answerTeardown(true)}
+                      onNotNow={() => answerTeardown(false)}
+                    />
+                  ) : asking?.request.cellIndex === index ? (
+                    // Under the cell that needs the values, where the reader looks, not at the top.
+                    <NeedsCard
+                      runbookId={runbook.id}
+                      needs={asking.needs}
+                      onRun={(v) => void provide(v)}
+                      onCancel={() => {
+                        clearQueue();
+                        setNotice(t.needsCancelled(asking.needs.map((n) => n.name).join(', ')));
+                        setAsking(undefined);
+                      }}
+                    />
+                  ) : confirming?.cellIndex === index ? (
+                    <ConfirmCard
+                      cell={index + 1}
+                      match={confirming.match}
+                      runsAs={confirming.runsAs}
+                      attempts={confirming.attempts}
+                      onRun={() => {
+                        const go = confirming.go;
+                        setConfirming(undefined);
+                        go();
+                      }}
+                      onCancel={() => {
+                        // As in VS Code: a cell that wasn't confirmed doesn't run, and Run all stops there.
+                        clearQueue();
+                        setConfirming(undefined);
+                        setNotice(t.confirmDeclined(index + 1));
+                      }}
+                    />
+                  ) : approving?.index === index && isCodeMeta(item.meta) ? (
+                    <ApproveCard
+                      code={item.value}
+                      info={item.meta.info}
+                      by={proposalOf(item.meta.info).by ?? 'someone'}
+                      reason={proposalOf(item.meta.info).reason}
+                      result={approving.result}
+                      typed={DEFAULT_POLICY.requireTypedConfirmation}
+                      runsAs={((h) => (h ? `${h.username}@${h.name}` : undefined))(hostOfCell(index))}
+                      onApprove={() => decide(true)}
+                      onReject={() => decide(false)}
+                      onCancel={() => setApproving(undefined)}
+                    />
+                  ) : undefined
+                }
+              />
+            )
+          }
+        />
+      </View>
       {pastBar && progress && (queued || asking || confirming) ? (
         <PinnedRunBar
           progress={progress}
@@ -1718,7 +1768,6 @@ function PinnedRunBar({
         <Text style={[styles.pinnedText, waiting && styles.pinnedWaiting]} numberOfLines={1}>
           {line}
         </Text>
-        {estimate.fraction !== undefined ? <TimeBar fraction={estimate.fraction} segments={barSegments(estimate)} /> : null}
       </Pressable>
       <Pressable testID="pinned-run-stop" accessibilityRole="button" onPress={onStop} style={styles.pinnedStop}>
         <Text style={styles.pinnedStopText}>{t.stopRun}</Text>
@@ -1728,6 +1777,8 @@ function PinnedRunBar({
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
+/** A cell counts as on screen once half of it shows (the rail's pale box). */
+const VIEWABILITY = { itemVisiblePercentThreshold: 50 };
 const NO_BREAKS: ReadonlySet<number> = new Set();
 const NO_LINT: RunbookProblems = { all: [], byCell: new Map(), runbook: [] };
 
@@ -2524,7 +2575,8 @@ const useStyles = themedStyles((c) => ({
     borderBottomWidth: 1,
     borderBottomColor: c.border,
   },
-  pinnedText: { fontSize: 14, color: c.text, marginBottom: 4 },
+  pinnedText: { fontSize: 14, color: c.text },
+  withRail: { flex: 1, flexDirection: 'row' },
   pinnedWaiting: { color: c.warning, fontWeight: '600' },
   pinnedStop: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, backgroundColor: c.error },
   pinnedStopText: { color: '#fff', fontSize: 14, fontWeight: '600' },

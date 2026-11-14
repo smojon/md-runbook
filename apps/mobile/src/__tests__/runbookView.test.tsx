@@ -55,6 +55,28 @@ describe('Run all / Continue (the one-tap action)', () => {
     expect(screen.getByTestId('run-progress')).toHaveTextContent('3 of 4 steps done');
   });
 
+  it('the rail on the left: a tick per step in its state, filled down to the run', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    script([{ stdout: 'one\n' }, { stderr: 'boom\n', exitCode: 1 }]);
+    const r = addRunbook('rail.md', '# Rail\n\n```bash\necho one\n```\n\n```bash\necho two\n```\n\n## Clean up\n\n```bash\necho three\n```\n');
+    await render(<RunbookView id={r.id} />);
+    expect(screen.getByTestId('progress-rail')).toHaveProp('accessibilityLabel', '0 of 3 steps done');
+    // A crossbar per chapter: a tap names it beside the rail (and goes there).
+    expect(screen.getByTestId('rail-chapter-0')).toHaveProp('accessibilityLabel', 'Chapter: Rail');
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('rail-chapter-3'));
+    });
+    expect(screen.getByTestId('rail-chapter-name')).toHaveTextContent('Clean up');
+    expect(screen.getByTestId('rail-tick-1')).toHaveProp('accessibilityLabel', 'Step 1, to do');
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('run-primary'));
+    });
+    await waitFor(() => expect(screen.getByTestId('rail-tick-2')).toHaveProp('accessibilityLabel', 'Step 2, failed'));
+    expect(screen.getByTestId('rail-tick-1')).toHaveProp('accessibilityLabel', 'Step 1, done');
+    expect(screen.getByTestId('rail-tick-4')).toHaveProp('accessibilityLabel', 'Step 3, to do');
+    expect(screen.getByTestId('progress-rail')).toHaveProp('accessibilityLabel', 'Step 2 of 3 failed');
+  });
+
   it('stops at a failure; Continue resumes from the failed cell, Run again when all is done', async () => {
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
     const plain = '# Restart\n\n```bash\necho one\n```\n\n```bash\necho two\n```\n\n```bash\necho three\n```\n';

@@ -129,7 +129,7 @@ export function progressTooltip(nb: vscode.NotebookDocument, p: Progress, e: Run
   if (running) md.appendMarkdown(`Running: ${escapeMd(labelOf(running))} (cell ${running.index + 1})\n\n`);
   const counts = [`${p.done} done`, `${p.skipped} skipped`, `${p.failed} failed`, `${p.pending} to do`];
   if (p.offered > 0) counts.push(`${p.offered} teardown step${p.offered === 1 ? '' : 's'} offered`);
-  if (e.unestimatedLeft > 0) counts.push(withoutEstimate(e.unestimatedLeft));
+  if (e.fraction !== undefined && e.unestimatedLeft > 0) counts.push(withoutEstimate(e.unestimatedLeft));
   md.appendMarkdown(counts.join(' · ') + '\n\n');
   const parts = e.parts;
   if (parts) {

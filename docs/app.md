@@ -22,9 +22,18 @@ phone's light or dark setting, with VS Code's default colours.
 
 The top of a runbook has one button that does the obvious thing: **▶ Run all**, then
 **▶ Continue** after a stop (from the failed or pending step on), **↻ Run again** when every step
-is done, **■ Stop** while it runs; next to it how far the runbook is ("3 of 7 steps done · step 4
-failed"). It stops at the first failure (unless the cell has `continue-on-error`), leaves
-proposals out and says so, and pauses for a host key, a secret or an input as a single cell does.
+is done, **■ Stop** while it runs; next to it how far the runbook is ("Step 4 of 7 · Push image"
+while it runs, "Step 4 of 7 failed", "Done · 7 of 7"), and by the blocks' estimates the share
+done, the time left and when it ends ("41% · 4 min left · ≈ 14:32"). It stops at the first
+failure (unless the cell has `continue-on-error`), leaves proposals out and says so, and pauses
+for a host key, a secret or an input as a single cell does. Scrolled down during a run, a slim
+bar on top keeps the step and Stop in view.
+
+**The rail on the left** shows the whole runbook at once and is always in view: it fills from
+the top as the run goes down, with a tick per step where it is in the runbook (green done, red
+failed, pulsing while it runs), a crossbar per `#`/`##` chapter and a pale box for the part on
+screen. Tap a tick to go to its step, a crossbar to go to its chapter (its name shows for a
+moment).
 
 **⋯ More** lists every other action in the extension's groups and names (Run, Steps, Values,
 Assistant, Share, Help), each with when it matters, and a search field: type part of a name
