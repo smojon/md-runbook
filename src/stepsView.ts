@@ -73,6 +73,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
   const waiting = waitingIn(nb);
   const rows: StepsRow[] = [];
   let anyRunning = false;
+  let waitingShown = false;
   /** The last step number given (a block's from the progress, checklist items counted on). */
   let taskStep = 0;
   for (const cell of nb.getCells()) {
@@ -89,7 +90,8 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
           index: i,
           step: taskStep,
           label: (lines[item.line] ?? '').replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[[ xX]\][ \t]*/, '') || 'checklist item',
-          state: item.checked ? 'done' : 'pending',
+          // The first unticked item of a cell Run All waits at (controller.ts manualStepsBefore).
+          state: item.checked ? 'done' : waiting?.cell === cell && !waitingShown ? ((waitingShown = true), 'waiting') : 'pending',
           time: 'by hand',
           task: { offset: item.offset, checked: item.checked },
         });
@@ -153,7 +155,8 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
   const rest = remaining(e, p.pending);
   return {
     title: nb.uri.path.split('/').pop() ?? 'runbook',
-    headline: status.text.replace(/^\$\([^)]+\)\s*/, ''),
+    // While the run waits for the reader, say so, as the status bar does.
+    headline: waiting ? `Waiting for you: ${waiting.what}` : status.text.replace(/^\$\([^)]+\)\s*/, ''),
     state: waiting ? 'waiting' : anyRunning ? 'running' : p.firstFailed ? 'failed' : done ? 'done' : 'idle',
     ...(e.fraction !== undefined ? { fraction: e.fraction } : {}),
     ...(rest.percent !== undefined ? { percent: rest.percent, left: rest.left + (e.leftSeconds > 0 ? ` · ends ≈ ${formatFinish(e.leftSeconds, now)}` : '') } : {}),
@@ -282,7 +285,7 @@ function page(webview: vscode.Webview): string {
         if (r.task) act(r.task.checked ? '☑' : '☐', r.task.checked ? 'Untick' : 'Tick (done by hand)', { tick: r.index, offset: r.task.offset, checked: !r.task.checked });
         else if (r.runnable && r.state !== 'running' && r.state !== 'waiting') {
           act('▶', 'Run this step', { run: r.index });
-          act('⏬', 'Run from here', { runFrom: r.index });
+          act('↧', 'Run from here', { runFrom: r.index });
           if (r.state !== 'done') act('✓', 'Mark done', { mark: r.index, as: 'done' });
           if (r.state !== 'done') act('↷', 'Mark skipped', { mark: r.index, as: 'skipped' });
         }
