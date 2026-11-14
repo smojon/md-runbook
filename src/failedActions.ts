@@ -5,7 +5,10 @@
  */
 
 import * as vscode from 'vscode';
+import { isCodeMeta } from '@md-runbook/core';
+import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { stepState } from '@md-runbook/core/progress';
+import { META_KEY } from './outputs';
 import { SECTION } from './config';
 import { showRunbook } from './currentRunbook';
 import { anyRunning } from './estimates';
@@ -20,6 +23,18 @@ export function hasFailed(cell: vscode.NotebookCell): boolean {
 }
 
 const cellRef = (cell: vscode.NotebookCell): [string, number] => [cell.notebook.uri.toString(), cell.index];
+
+/** on-failure="Rollback" on a failed step: the step named so in the same runbook, if there is one. */
+export function rollbackOf(cell: vscode.NotebookCell): { name: string; cell: vscode.NotebookCell } | undefined {
+  const meta: unknown = cell.metadata?.[META_KEY];
+  const name = isCodeMeta(meta) ? parseCellOptions(meta.info).onFailure : undefined;
+  if (!name) return undefined;
+  const target = cell.notebook.getCells().find((c) => {
+    const m: unknown = c.metadata?.[META_KEY];
+    return c.kind === vscode.NotebookCellKind.Code && isCodeMeta(m) && parseCellOptions(m.info).name === name;
+  });
+  return target ? { name, cell: target } : undefined;
+}
 
 function cellOf(uri: unknown, index: unknown): vscode.NotebookCell | undefined {
   if (typeof uri !== 'string' || typeof index !== 'number') return undefined;
@@ -47,8 +62,12 @@ class FailedActions implements vscode.NotebookCellStatusBarItemProvider {
       item('$(debug-continue) Resume from Here', 'Run this step and the ones after it', 'mdRunbook.resumeFromHere', cellRef(cell)),
       item('$(check) Mark Done', 'Done by hand instead: mark this step done', 'mdRunbook.markStepDone', [cell]),
     ];
+    // on-failure="Rollback": the step to run when this one fails, offered here.
+    const fallback = rollbackOf(cell);
+    if (fallback) items.push(item(`$(debug-reverse-continue) Run ${fallback.name}`, `Run the step "${fallback.name}" (on-failure)`, 'mdRunbook.retryStep', cellRef(fallback.cell)));
     if (vscode.workspace.getConfiguration(SECTION).get<string>('ai.provider', 'off') !== 'off') {
       items.push(item('$(sparkle) Explain', 'Ask the assistant why it failed', 'mdRunbook.ai.explainOutput', [cell]));
+      items.push(item('$(lightbulb) Suggest a Fix', 'Ask the assistant for a fix, added after this step as a proposal to approve', 'mdRunbook.ai.suggestFix', [cell]));
     }
     items.forEach((i, n) => (i.priority = 900 - n));
     return items;

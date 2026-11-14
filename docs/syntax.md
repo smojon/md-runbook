@@ -104,6 +104,7 @@ Tokens are separated by spaces or tabs. There are three forms:
 | `no-confirm` | flag | Never ask, even for a risky command. Ignored unless the user enabled it in their settings. |
 | `terminal` | flag | Run in a VS Code terminal (interactive). Ignored unless terminal mode is enabled. Never for assistant cells. |
 | `env.NAME=value` | any | Environment variable for this cell. |
+| `on-failure="Rollback"` | a step's name | When this block fails, its cell and its row in the Steps view offer to run the step with that `name=` (a rollback, a cleanup). Nothing runs by itself. |
 | `name="…"` | any | Step name, copied into the output marker as `name=`. Without it, a block that is the only one under a `##` (or deeper) heading is called by that heading, else by its first line. |
 | `expect=MATCH` | text or `/regex/flags` | Cell fails unless the output contains the text / matches the regex. |
 | `expect-not=MATCH` | text or `/regex/flags` | Cell fails if the output contains / matches it. |

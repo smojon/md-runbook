@@ -64,6 +64,15 @@ export function suggestNextStepsPrompt(runbook: string, max: number, upToCell?: 
   );
 }
 
+/** A step failed: propose what fixes it (or finds the cause), to insert after it as proposals. */
+export function suggestFixPrompt(runbook: string, failedCell: string, max: number): AiPrompt {
+  const n = Math.max(1, Math.floor(max));
+  return wrap(
+    runbook,
+    `Task: ${failedCell} failed; its output is in the runbook. Propose at most ${n} command block${n === 1 ? '' : 's'} that fix the cause or, if the cause isn't clear from the output, find it: a corrected version of the failed command, or a step to run before it again. Each block is preceded by one sentence saying what it fixes or checks and why. Prefer read-only checks when unsure. If nothing useful can be proposed, say why instead.`,
+  );
+}
+
 /** Draft the findings section for the runbook. */
 export function summarizeIncidentPrompt(runbook: string): AiPrompt {
   return wrap(

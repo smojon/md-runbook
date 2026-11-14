@@ -16,6 +16,7 @@ import {
   findingsMarkdown,
   isFindingsCell,
   proposalCell,
+  suggestFixPrompt,
   suggestNextStepsPrompt,
   summarizeIncidentPrompt,
 } from '@md-runbook/core/aiPrompt';
@@ -271,16 +272,22 @@ async function explainLine(uri?: unknown, line?: unknown, lines?: unknown): Prom
 }
 
 async function suggestNextSteps(arg?: unknown): Promise<number> {
+  const max = Math.max(1, cfg().get<number>('ai.maxProposals', 3));
+  return proposeAfter(arg, max, (r, cell) => suggestNextStepsPrompt(r, max, cell ? cellLabel(cell) : undefined), 'suggesting next steps');
+}
+
+/** Suggest a Fix: for a failed step, proposals that fix it (or find the cause), right after it, behind approval. */
+async function suggestFix(arg?: unknown): Promise<number> {
+  const max = Math.min(2, Math.max(1, cfg().get<number>('ai.maxProposals', 3)));
+  return proposeAfter(arg, max, (r, cell) => suggestFixPrompt(r, cell ? cellLabel(cell) : 'the last step that ran', max), 'suggesting a fix');
+}
+
+/** Ask the assistant for command blocks and insert them as proposals after the target cell (else at the end). */
+async function proposeAfter(arg: unknown, max: number, prompt: (runbook: string, cell: vscode.NotebookCell | undefined) => AiPrompt, verb: string): Promise<number> {
   const nb = activeRunbook(arg);
   if (!nb) return 0;
   const cell = targetCell(arg);
-  const max = Math.max(1, cfg().get<number>('ai.maxProposals', 3));
-  const answer = (await ask(
-    nb,
-    cell ? codeCellsUpTo(nb, cell.index) : undefined,
-    (r) => suggestNextStepsPrompt(r, max, cell ? cellLabel(cell) : undefined),
-    'suggesting next steps',
-  ));
+  const answer = (await ask(nb, cell ? codeCellsUpTo(nb, cell.index) : undefined, (r) => prompt(r, cell), verb));
   if (!answer) return 0;
   const proposals = extractProposals(answer.text, answer.map).slice(0, max);
   if (proposals.length === 0) {
@@ -329,6 +336,7 @@ export function registerAi(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('mdRunbook.ai.explainOutput', explainOutput),
     vscode.commands.registerCommand('mdRunbook.ai.explainLine', explainLine),
     vscode.commands.registerCommand('mdRunbook.ai.suggestNextSteps', suggestNextSteps),
+    vscode.commands.registerCommand('mdRunbook.ai.suggestFix', suggestFix),
     vscode.commands.registerCommand('mdRunbook.ai.summarizeIncident', summarizeIncident),
     vscode.commands.registerCommand('mdRunbook.ai.setAnthropicKey', setAnthropicKey),
     // While the assistant is off its actions are hidden: this one shows instead, so it can be found.

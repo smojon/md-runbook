@@ -455,3 +455,10 @@ describe('learned estimates (a block without estimate=)', () => {
     );
   });
 });
+
+describe('on-failure= (the step to offer when one fails)', () => {
+  it('names a step; empty is an error', () => {
+    assert.equal(parseCellOptions('bash on-failure="Roll back"').onFailure, 'Roll back');
+    assert.match(parseCellOptions('bash on-failure=""').errors.join(), /on-failure: empty step name/);
+  });
+});

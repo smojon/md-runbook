@@ -337,6 +337,12 @@
         "icon": "$(sparkle)"
       },
       {
+        "command": "mdRunbook.ai.suggestFix",
+        "title": "Suggest a Fix",
+        "category": "md-runbook",
+        "icon": "$(lightbulb)"
+      },
+      {
         "command": "mdRunbook.ai.turnOn",
         "title": "Turn On the Assistant…",
         "category": "md-runbook",
@@ -932,6 +938,10 @@
           "when": "notebookType == md-runbook"
         },
         {
+          "command": "mdRunbook.ai.suggestFix",
+          "when": "notebookType == md-runbook"
+        },
+        {
           "command": "mdRunbook.ai.summarizeIncident",
           "when": "notebookType == md-runbook"
         },
@@ -1147,6 +1157,11 @@
           "group": "2_ai@2"
         },
         {
+          "command": "mdRunbook.ai.suggestFix",
+          "when": "notebookType == md-runbook && notebookCellType == code && notebookCellHasOutputs && config.mdRunbook.ai.provider != off",
+          "group": "2_ai@3"
+        },
+        {
           "command": "mdRunbook.copyCellForAi",
           "when": "notebookType == md-runbook && notebookCellType == code",
           "group": "inline/cell@110"
@@ -1336,6 +1351,11 @@
         {
           "command": "mdRunbook.ai.suggestNextSteps",
           "group": "1_ask@1",
+          "when": "notebookType == md-runbook && config.mdRunbook.ai.provider != off"
+        },
+        {
+          "command": "mdRunbook.ai.suggestFix",
+          "group": "1_ask@2",
           "when": "notebookType == md-runbook && config.mdRunbook.ai.provider != off"
         },
         {

@@ -13,6 +13,8 @@ import { formatEstimate, formatLearned, isCodeMeta, parseLineSet, runbookEstimat
 import { blockProgress, finishTime, overEstimate, remaining, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { setContext } from './contextKeys';
+import { SECTION } from './config';
+import { rollbackOf } from './failedActions';
 import { notifiesOnStart, onDidChangeMarks, pausesBefore } from './stepMarks';
 import { currentRunbook, editorOf, onDidChangeCurrentRunbook, showRunbook } from './currentRunbook';
 import { isCallLanguage } from '@md-runbook/core/call';
@@ -57,6 +59,10 @@ export type StepsRow =
       /** Pause Before This Step / Notify Me When It Starts (stepMarks.ts). */
       paused?: boolean;
       notify?: boolean;
+      /** A failed step: its last lines (stderr first), its on-failure step, the assistant's actions. */
+      errors?: string[];
+      rollback?: { name: string; index: number };
+      assistant?: boolean;
       /** Preflight: what running it will need from you (a confirmation, a secret, a value, an approval). */
       needs?: string[];
       /** The step is the only one under a `#`/`##` heading: one row, named by the heading (its level). */
@@ -139,6 +145,11 @@ const decoder = new TextDecoder();
 
 /** Why a step failed, in one line: the last non-empty line of its stderr, else of its output. */
 export function errorLine(cell: vscode.NotebookCell): string | undefined {
+  return errorLines(cell, 1)[0];
+}
+
+/** The last `n` lines a failed step printed (stderr first, else its output), each cut to ERROR_MAX. */
+export function errorLines(cell: vscode.NotebookCell, n = 5): string[] {
   const err: string[] = [];
   const out: string[] = [];
   for (const o of cell.outputs) {
@@ -155,9 +166,9 @@ export function errorLine(cell: vscode.NotebookCell): string | undefined {
       } else (item.mime === STDERR ? err : out).push(...lines);
     }
   }
-  const last = (lines: string[]): string | undefined => lines.map((l) => l.trim()).filter(Boolean).pop();
-  const line = last(err) ?? last(out);
-  return line !== undefined && line.length > ERROR_MAX ? `${line.slice(0, ERROR_MAX - 1)}…` : line;
+  const tail = (lines: string[]): string[] => lines.map((l) => l.trim()).filter(Boolean).slice(-n);
+  const lines = tail(err).length > 0 ? tail(err) : tail(out);
+  return lines.map((l) => (l.length > ERROR_MAX ? `${l.slice(0, ERROR_MAX - 1)}…` : l));
 }
 
 /** The buttons of a question asked on the cell (Done / Skip / Stop, Take Down / Leave It Up), for its row. */
@@ -274,7 +285,11 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     const label = stepLabel(info, cell.document.getText(), cell.document.languageId, headings[i]) || `cell ${i + 1}`;
     // Preflight: only for a step still to run (or to run again), and not while one runs.
     const needs = sources && (state === 'pending' || state === 'failed') && !ready && !offered ? stepNeeds(cell, info, sources) : [];
-    const error = state === 'failed' ? errorLine(cell) : undefined;
+    const errors = state === 'failed' ? errorLines(cell) : [];
+    const error = errors[errors.length - 1];
+    // Failure triage on the row: on-failure="Rollback", and the assistant's Explain / Suggest a Fix.
+    const rollback = state === 'failed' ? rollbackOf(cell) : undefined;
+    const assistant = state === 'failed' && vscode.workspace.getConfiguration(SECTION).get<string>('ai.provider', 'off') !== 'off';
     const answers = state === 'waiting' ? answersOf(cell) : [];
     rows.push({
       kind: 'step',
@@ -292,7 +307,9 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
       ...(pausesBefore(cell) ? { paused: true } : {}),
       ...(notifiesOnStart(cell) ? { notify: true } : {}),
       ...(needs.length ? { needs } : {}),
-      ...(error ? { error } : {}),
+      ...(error ? { error, errors } : {}),
+      ...(rollback ? { rollback: { name: rollback.name, index: rollback.cell.index } } : {}),
+      ...(assistant ? { assistant } : {}),
       ...(answers.length ? { answers } : {}),
     });
   }
@@ -366,6 +383,8 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
         ready?: boolean;
         go?: unknown;
         run?: unknown;
+        explain?: unknown;
+        fix?: unknown;
         runFrom?: unknown;
         mark?: unknown;
         unmark?: unknown;
@@ -393,6 +412,11 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
       if (msg.openAsRunbook === true) void openAsRunbook();
       if (typeof msg.go === 'number') void this.go(msg.go);
       if (typeof msg.run === 'number') void this.run(msg.run, msg.run + 1);
+      // Failure triage: the assistant's Explain and Suggest a Fix, on the failed step.
+      if (typeof msg.explain === 'number' || typeof msg.fix === 'number') {
+        const cell = this.notebook()?.cellAt((msg.explain ?? msg.fix) as number);
+        if (cell) void vscode.commands.executeCommand(typeof msg.explain === 'number' ? 'mdRunbook.ai.explainOutput' : 'mdRunbook.ai.suggestFix', cell);
+      }
       if (typeof msg.runFrom === 'number') void this.run(msg.runFrom, Number.MAX_SAFE_INTEGER);
       if (typeof msg.mark === 'number' && (msg.as === 'done' || msg.as === 'skipped')) void this.mark(msg.mark, msg.as);
       if (typeof msg.unmark === 'number') {

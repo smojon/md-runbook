@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Failure triage:** a failed step's cell and Steps row offer **Explain** and **Suggest a Fix** (the
+  assistant proposes a corrected command or a check, added after the step as a proposal to approve),
+  and the new `on-failure="Rollback"` option offers the step with that name. The error line under
+  the row shows its last lines on hover.
 - **VS Code: Run Until Here, Pause Before This Step, Notify Me When It Starts.** Right-click a step
   in the Steps view (or the cell's ⋯). A pause makes Run All stop before the step and ask
   Continue / Stop on the cell; a notification comes when the step starts, once. For the session;

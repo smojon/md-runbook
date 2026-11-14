@@ -160,6 +160,12 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
         a.push({ id: 'skip', key: 's', keyName: 'S', icon: 'debug-step-over', title: 'Mark skipped', msg: { mark: r.index, as: 'skipped' } });
       }
       if (r.marked) a.push({ id: 'unmark', key: 'u', keyName: 'U', icon: 'discard', title: 'Unmark', msg: { unmark: r.index } });
+      // Failure triage: the on-failure step, and the assistant's Explain / Suggest a Fix.
+      if (r.rollback) a.push({ id: 'rollback', key: 'b', keyName: 'B', icon: 'debug-reverse-continue', title: 'Run ' + r.rollback.name + ' (on-failure)', msg: { run: r.rollback.index } });
+      if (r.assistant) {
+        a.push({ id: 'explain', key: 'e', keyName: 'E', icon: 'sparkle', title: 'Explain why it failed', msg: { explain: r.index } });
+        a.push({ id: 'fix', key: 'x', keyName: 'X', icon: 'lightbulb', title: 'Suggest a fix (a proposal to approve)', msg: { fix: r.index } });
+      }
     }
     return a;
   }
@@ -212,6 +218,8 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
       put(row.querySelector('.detail'), r.detail);
       put(row.querySelector('.needs'), r.needs ? 'needs ' + r.needs.join(', ') : '');
       put(row.querySelector('.err'), r.error);
+      // The last lines it printed, in full on hover.
+      attr(row.querySelector('.err'), 'title', r.errors && r.errors.length > 1 ? r.errors.join('\n') : undefined);
       // A question asked on the cell (Done / Skip / Stop, the teardown offer): its buttons, always shown, keys 1, 2, 3.
       const answers = r.answers || [];
       const ans = row.querySelector('.answers');

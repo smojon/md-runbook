@@ -86,6 +86,11 @@ first step still to do up to this one), **Pause Before This Step** (Run All stop
 It Starts** (a notification when it starts, once; a bell on the row). Pauses and notifications
 last for the session and never change the file.
 
+**When a step fails**, its cell's status line and its row in the Steps view offer what to do next:
+**Retry**, **Resume from Here**, **Mark Done**, the step named by `on-failure="Rollback"` if the
+block has one, and with the assistant on, **Explain** and **Suggest a Fix** (a proposal added
+after the step, to approve before it runs). Hover the error line under the row for its last lines.
+
 **Preflight.** Before a run, each step still to do says what it will need from you, and the
 view's header sums it up: `Before you run: 2 confirmations · 1 secret to set · 1 value to type ·
 1 step by hand`. A step can need your confirmation (`confirm`, or a risky command), a secret not

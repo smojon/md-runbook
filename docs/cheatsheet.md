@@ -95,6 +95,7 @@ secret values are redacted from the output.
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
 | **Suggest Next Steps** | Assistant ▾, cell ⋯ | You're stuck in an incident: get proposed commands as cells that only run after you approve them. Needs an AI provider. | ⋯ More → Assistant, or the cell’s ⋯ (Claude with your own key; every send confirmed, with the leak check) |
+| **Suggest a Fix** | Assistant ▾, a failed cell's status line and ⋯, its Steps row | A step failed: get a corrected command or a step that finds the cause, added right after it as a proposal you approve before it runs. Needs an AI provider. | Not yet in the app |
 | **Explain Output** / **Explain** (a line) | cell ⋯ / line hover | An error or an output you don't understand: get it explained next to the runbook. | the cell’s ⋯ → Explain Output; tap a line → Explain |
 | **Summarize Incident** | Assistant ▾ | Write the findings of an incident at the end of the runbook, as a draft to edit. | ⋯ More → Assistant, or the cell’s ⋯ (Claude with your own key; every send confirmed, with the leak check) |
 | **Copy for AI** / **Copy Cell for AI** | Assistant ▾ / the cell's copy icon | Use the chat assistant you already have: copy the runbook with names pseudonymized and secrets removed. | ⋯ More → Copy for AI; the cell’s ⋯ → Copy Cell for AI |

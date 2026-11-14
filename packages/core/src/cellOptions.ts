@@ -28,6 +28,8 @@ export interface CellOptions {
   terminal?: boolean;
   env: Record<string, string>;
   name?: string;
+  /** on-failure="Rollback": the step (by its name=) to offer when this one fails. */
+  onFailure?: string;
   /** expect=, expect-not=, expect-exit=, capture=, capture-secret= (undefined when none is set). */
   checks?: CellChecks;
   /** os=windows,linux: the block is only for these systems (an alternative of the blocks around it). */
@@ -195,6 +197,9 @@ export function parseCellOptions(info: string): CellOptions {
       else opts.cwd = value;
     } else if (k === 'name') {
       opts.name = value;
+    } else if (k === 'on-failure') {
+      if (value.trim() === '') opts.errors.push('on-failure: empty step name');
+      else opts.onFailure = value.trim();
     } else if (k === 'expect' || k === 'expect-not') {
       try {
         checks()[k === 'expect' ? 'expect' : 'expectNot'] = parseMatcher(value);
