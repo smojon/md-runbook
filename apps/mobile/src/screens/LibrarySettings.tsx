@@ -1,7 +1,7 @@
 /**
  * Hosts & settings → Team library: the library's address (on the phones there is none until one
  * is set; on the web the app's own /runbooks/ by default), a check that reads it, Remove, and
- * Share library as a QR code (mdrunbook://library?url=…).
+ * Share library as a QR code (mdrunbook://library?url=…); the trusted signers, with Remove.
  */
 import { qrMatrix } from '@md-runbook/core/qr';
 import { useState } from 'react';
@@ -11,13 +11,17 @@ import {
   defaultLibraryBase,
   fetchLibrary,
   libraryBase,
+  libraryHost,
   libraryLink,
   libraryUrlProblem,
   normalizeLibraryUrl,
   refreshLibrary,
+  useLibrary,
+  withdrawnKeys,
 } from '../runbooks/library';
 import { setLibraryUrl, useLibraryUrlSetting } from '../settings/store';
-import { themedStyles, usePalette } from '../theme';
+import { removeTrustedSigner, sameSigner, shownPrincipal, useTrustedSigners } from '../signing/trust';
+import { mono, themedStyles, usePalette } from '../theme';
 import { QrView } from '../ui/QrView';
 
 export function LibrarySettings({ fetcher }: { fetcher?: typeof fetch }) {
@@ -130,6 +134,47 @@ export function LibrarySettings({ fetcher }: { fetcher?: typeof fetch }) {
           <Text style={styles.help}>{t.libraryShareHelp}</Text>
         </View>
       ) : null}
+      <TrustedSignersList />
+    </View>
+  );
+}
+
+/** Hosts & settings → Team library → Trusted signers: every key trusted, the library it counts for, Remove. */
+function TrustedSignersList() {
+  const styles = useStyles();
+  const signers = useTrustedSigners();
+  const lib = useLibrary();
+  // The library read now: keys trusted from it that its allowed_signers no longer lists are flagged.
+  const withdrawn = lib.library ? withdrawnKeys(lib.library) : [];
+  return (
+    <View testID="trusted-signers">
+      <Text style={styles.label}>{t.trustedSignersTitle}</Text>
+      <Text style={styles.help}>{signers.length > 0 ? t.trustedSignersHelp : t.trustedSignersNone}</Text>
+      {signers.map((s, i) => (
+        <View key={s.from + s.keyType + s.key + s.principals.join(',')} testID={`trusted-signer-${i}`} style={styles.signer}>
+          <View style={styles.signerText}>
+            <Text style={styles.body}>{s.principals.map((p) => t.signerPrincipal(shownPrincipal(p))).join(', ')}</Text>
+            <Text style={styles.mono} selectable>
+              {`${s.keyType} ${s.fingerprint}`}
+            </Text>
+            <Text style={styles.help}>{t.trustedFrom(libraryHost(s.from))}</Text>
+            {withdrawn.some((w) => w.from === s.from && sameSigner(w, s)) ? (
+              <Text testID={`trusted-signer-withdrawn-${i}`} style={styles.error}>
+                {t.trustedWithdrawn}
+              </Text>
+            ) : null}
+          </View>
+          <Pressable
+            testID={`trusted-signer-remove-${i}`}
+            accessibilityRole="button"
+            accessibilityLabel={`${t.trustedRemove} ${s.principals.join(', ')}`}
+            onPress={() => removeTrustedSigner(s)}
+            style={styles.removeButton}
+          >
+            <Text style={styles.removeText}>{t.trustedRemove}</Text>
+          </Pressable>
+        </View>
+      ))}
     </View>
   );
 }
@@ -171,4 +216,18 @@ const useStyles = themedStyles((colors) => ({
   ok: { fontSize: 13, color: colors.ok, marginTop: 8 },
   error: { fontSize: 13, color: colors.error, marginTop: 8 },
   qrBox: { alignItems: 'center', marginTop: 12 },
+  signer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    marginTop: 8,
+  },
+  signerText: { flex: 1 },
+  body: { fontSize: 14, color: colors.text, lineHeight: 20 },
+  mono: { fontSize: 12, color: colors.muted, fontFamily: mono },
+  removeButton: { paddingVertical: 8, paddingHorizontal: 6 },
+  removeText: { fontSize: 15, color: colors.link },
 }));

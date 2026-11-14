@@ -764,23 +764,53 @@ const en = {
   libraryEmpty: 'The team library has no runbooks yet.',
   libraryUrlInvalid: 'Not a library address: use the https address of the folder, such as https://runbooks.example.net/runbooks/.',
   libraryUrlHttps: 'Only https addresses (http only for localhost).',
+  libraryUrlUserinfo: 'Not a library address: no user name or password before the host (user@host).',
+  libraryRedirected: (host: string) => `redirected to another server (${host}): not read`,
   libraryBadIndex: 'its index.json is not a list of runbooks',
   libraryUnreadable: 'This runbook could not be read from the library.',
   libraryChecking: 'Checking the signature…',
-  librarySignedOnly: (kind: 'unsigned' | 'changed' | 'invalid' | 'verified' | 'unknown') =>
-    kind === 'unsigned'
-      ? 'Not openable: this library opens signed runbooks only, and this one is not signed.'
-      : kind === 'invalid'
-        ? 'Not openable: this library opens signed runbooks only, and this signature does not check out.'
-        : 'Not openable: this library opens signed runbooks only, and this one changed since signing.',
+  librarySignedOnly: (s: { kind: string; unsigned?: number; manifest?: { expires?: string } }) =>
+    'Not openable: this library opens verified runbooks only, and ' +
+    (s.kind === 'unsigned'
+      ? 'this one is not signed.'
+      : s.kind === 'invalid'
+        ? 'its signature does not check out.'
+        : s.kind === 'unknown'
+          ? 'no signer you trust for this library signed it (trust its signers first).'
+          : s.kind === 'partial'
+            ? `its signature leaves ${s.unsigned === 1 ? '1 block' : `${s.unsigned} blocks`} that can run uncovered.`
+            : s.kind === 'expired'
+              ? `its signature expired on ${s.manifest?.expires ?? '?'}.`
+              : 'this one changed since signing.'),
+  librarySignedOnlyOlder: (version: number, seen: number) =>
+    `Not openable: this library opens verified runbooks only, and this is version ${version}, older than version ${seen} seen before.`,
+  libraryCopyRefused: (why: string) => `Your copy can't be opened from here. ${why}`,
+  librarySignedOnlyDropped:
+    'This library opened verified runbooks only, and its index.json no longer asks for that. The app keeps opening verified runbooks only until you agree.',
+  libraryAllowUnverified: 'Open unverified runbooks too',
   libraryYourCopy: 'Your copy',
   libraryOpening: 'Opening…',
-  sigVerified: (names: readonly string[]) => `Signed by ${names.join(', ')}, verified`,
+  /** A verified signer: with the key's fingerprint when the key may sign under any name its pattern matches. */
+  sigSigner: (name: string, fingerprint?: string) => (fingerprint ? `${name} (key ${fingerprint})` : name),
+  sigVerified: (names: readonly string[], coverage: 'whole' | 'partial') =>
+    `Signed by ${names.join(', ')}: ${coverage === 'whole' ? 'whole runbook verified' : 'these steps verified'}`,
+  sigPartial: (n: number) => `Partly signed: ${n === 1 ? '1 block that can run is' : `${n} blocks that can run are`} not covered`,
+  sigExpiredState: (names: readonly string[], date: string) => `Signed by ${names.join(', ')}, expired on ${date}`,
   sigUnknown: 'Signed, unknown signer',
   sigUnsigned: 'Not signed',
   sigChanged: 'Changed since signing',
   sigInvalid: (names: readonly string[]) => `Signature does not check out for ${names.join(', ')}`,
   sigExpired: (date: string) => `expired ${date}`,
+  sigManifest: (name: string, version: number) => `${name}, version ${version}`,
+  sigOtherName: 'signed under another name than this file’s',
+  sigOlder: (seen: number) => `older than version ${seen} seen before`,
+  sigCoversSteps:
+    'The signature covers the shell blocks and runbook calls, not the text around them: instructions, checklists, the title and outputs may have changed.',
+  signedOutside: (n: number) =>
+    n === 1
+      ? '1 block that can run (PowerShell, cmd) is not covered by the signature: check it yourself before you run it.'
+      : `${n} blocks that can run (PowerShell, cmd) are not covered by the signature: check them yourself before you run them.`,
+  copyNotOpenable: (why: string) => `${why} Opening it from Team runbooks is refused.`,
   updateAvailable: 'Update available',
   updateGo: 'Update',
   updateAnyway: 'Update anyway',
@@ -796,15 +826,47 @@ const en = {
   updateOtherSigner: (was: string, now: string) =>
     was === now ? `The new version is signed by ${now} with another key than yours.` : `The new version is signed by ${now}, not ${was}.`,
   updateSignatureBroken: (was: string) => `The new version changed since ${was} signed it.`,
+  updatePartlySigned: (n: number) =>
+    n === 1
+      ? 'The new version has 1 block that can run outside its signature.'
+      : `The new version has ${n} blocks that can run outside its signature.`,
+  updateExpired: (date: string) => `The new version’s signature expired on ${date}.`,
+  updateOlderVersion: (name: string, now: number, seen: number) =>
+    `The new version is ${name} version ${now}, older than version ${seen} (yours, or seen before): someone may have put back an old version.`,
   librarySigners: (n: number) => (n === 1 ? 'This library publishes 1 signer.' : `This library publishes ${n} signers.`),
   librarySignersSkipped: (n: number) =>
-    n === 1 ? '1 line of its allowed_signers is not used here.' : `${n} lines of its allowed_signers are not used here.`,
+    n === 1
+      ? '1 line of its allowed_signers is not used here (a certificate authority, another namespace, an unknown option or a damaged line).'
+      : `${n} lines of its allowed_signers are not used here (certificate authorities, other namespaces, unknown options or damaged lines).`,
   trustSigners: 'Trust these signers',
   trustSignersPrompt: (host: string) =>
-    `These keys come from ${host}, the same server as the runbooks: it is vouching for itself. Whoever can change the runbooks there can change this list too. Trust them only if you trust that server, and better, compare the fingerprints with what the signers tell you.`,
+    `Trust these keys for the team library at ${host} only: its runbooks signed with them then show "Signed by" and the name, and a library that opens verified runbooks only opens them. Other libraries and runbooks from links don't use them. The keys come from the same server as the runbooks: it is vouching for itself, and whoever can change the runbooks there can change this list too. Trust them only if you trust that server, and better, compare the fingerprints with what the signers tell you.`,
+  /** What a principal of an allowed_signers line lets the key sign as. */
+  signerPrincipal: (p: string) =>
+    p.startsWith('!')
+      ? `not as ${p.slice(1)}`
+      : p === '*'
+        ? 'any name at all (a key for everyone: check the fingerprint)'
+        : /^\*[^*?]+$/.test(p)
+          ? `any name ending in ${p.slice(1)}`
+          : /[*?]/.test(p)
+            ? `any name matching ${p}`
+            : p,
   trustSignersGo: 'Trust them',
-  trustedSigners: (n: number) => (n === 1 ? 'You trust this library’s signer.' : `You trust this library’s ${n} signers.`),
+  trustedSigners: (n: number) =>
+    n === 1 ? 'You trust this library’s signer, for this library only.' : `You trust this library’s ${n} signers, for this library only.`,
   untrustSigners: 'Stop trusting',
+  signersWithdrawn: (n: number) =>
+    n === 1
+      ? '1 key you trusted from this library is no longer in its allowed_signers: it no longer counts here.'
+      : `${n} keys you trusted from this library are no longer in its allowed_signers: they no longer count here.`,
+  untrustWithdrawn: 'Forget them',
+  trustedSignersTitle: 'Trusted signers',
+  trustedSignersHelp: 'Keys you trusted from a team library’s allowed_signers. Each one counts only for the library it came from.',
+  trustedSignersNone: 'None yet: a team library offers its signers under Team runbooks.',
+  trustedFrom: (host: string) => `For ${host}`,
+  trustedWithdrawn: 'No longer published by this library: it no longer counts.',
+  trustedRemove: 'Remove',
 
   // The team library's address (Hosts & settings) and links to it
   libraryTitle: 'Team library',

@@ -6,7 +6,7 @@
 import { router } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { t } from '../i18n';
-import { libraryBase, libraryUrlProblem, normalizeLibraryUrl, refreshLibrary } from '../runbooks/library';
+import { libraryBase, libraryHost, libraryUrlProblem, normalizeLibraryUrl, refreshLibrary } from '../runbooks/library';
 import { setLibraryUrl, useLibraryUrlSetting } from '../settings/store';
 import { themedStyles } from '../theme';
 
@@ -28,8 +28,9 @@ export function LibraryAdd({ url }: { url: string | undefined }) {
       </ScrollView>
     );
   }
+  // The parsed address, as it will be stored and fetched: the host and address shown are the ones used.
   const base = normalizeLibraryUrl(url);
-  const host = new URL(base).host;
+  const host = libraryHost(base);
   const current = libraryBase();
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>

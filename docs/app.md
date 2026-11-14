@@ -270,22 +270,39 @@ and **⋯ More → Share → Show QR Code** shows a code of this runbook for ano
 
 A team can host its runbooks in a folder on a web server (the web app's container serves one at
 `/runbooks/`, [apps/web](../apps/web/README.md#a-team-library)), and the start screen lists them
-under **Team runbooks**, by subfolder, each with its signature: **Signed by alice@example.net,
-verified**, **Signed, unknown signer**, **Not signed** or **Changed since signing**.
+under **Team runbooks**, by subfolder, each with its signature (**Signed by alice@example.net:
+these steps verified**, **Partly signed**, **Signed, unknown signer**, **Not signed** or
+**Changed since signing**) and its signed name and version (`ops/restart, version 4`). The opened
+copy's banner says the same, checked the same way.
 
+- **What "verified" means:** the shell blocks and runbook calls are as alice signed them, with a
+  key you trust for this library. The text around them (instructions, checklists, the title,
+  outputs) is not signed yet, so the label says "these steps". A runbook with a PowerShell or cmd
+  block the signature doesn't cover is **Partly signed**, not verified.
+- **Flagged in the row:** a signed name that is not the file's (a signed runbook served under
+  another name), a version older than one this library showed before (someone put an old version
+  back), and an expired signature (which is not verified).
 - **Opening one makes your copy.** Your runs and outputs stay in your copy; the file on the
   server is never changed. Opening it again opens your copy. Remove it like any runbook.
 - **Update available:** when the file on the server changed, its row offers **Update** and
-  **Keep mine**. Update takes the new version and keeps the outputs of the blocks that didn't
-  change; it asks first when outputs would be lost, when your copy has changes of its own (edits,
-  ticked boxes), or when the new version is no longer signed, is signed by someone else or with
-  another key, or changed since it was signed. Keep mine hides that version until the next one.
+  **Keep mine**. Update checks the new version's signature again and takes it, keeping the
+  outputs of the blocks that didn't change; it asks first when outputs would be lost, when your
+  copy has changes of its own (edits, ticked boxes), or when the new version is no longer signed,
+  is signed by someone else or with another key, changed since it was signed, is partly signed,
+  expired, or older than your version. Keep mine hides that version until the next one.
 - **Signers:** if the library publishes an `allowed_signers` file, **Trust these signers** shows
-  each name and key fingerprint and asks first. The list comes from the same server as the
-  runbooks, so it is that server vouching for itself: compare the fingerprints with what the
-  signers tell you. Once trusted, the app checks the signatures itself; **Stop trusting** undoes it.
-- A library can open **signed runbooks only** (`"signedOnly": true` in its index.json): the
-  others are listed, greyed out, with the reason.
+  each name (and what a pattern such as `*@example.net` lets a key sign as) and key fingerprint,
+  and asks first. The list comes from the same server as the runbooks, so it is that server
+  vouching for itself: compare the fingerprints with what the signers tell you. Trust counts for
+  that library only. Once trusted, the app checks the signatures itself; **Stop trusting** undoes
+  it, and a key the library no longer publishes stops counting and is offered to forget.
+  **Hosts & settings → Team library → Trusted signers** lists every trusted key, the library it
+  counts for, and **Remove**.
+- A library can open **verified runbooks only** (`"signedOnly": true` in its index.json): the
+  others (unsigned, unknown signer, partly signed, expired, older than a version seen before) are
+  listed, greyed out, with the reason, and your copy is checked again when you open it from
+  there. Once a library asked for it, the app keeps it on if index.json stops asking, until you
+  tap **Open unverified runbooks too**.
 - The list is read on start (at most once a minute), and again with the refresh button next to
   **Team runbooks** or by pulling the list down on a phone. Offline, your copies still work, and
   the runbooks read before stay listed.
@@ -294,8 +311,10 @@ verified**, **Signed, unknown signer**, **Not signed** or **Changed since signin
 (or for a library elsewhere) set its address:
 
 - **Hosts & settings → Team library:** type the folder's `https` address
-  (`https://runbooks.example.net/runbooks/`; `http` only for `localhost`), **Check** reads it and
-  says how many runbooks it has, **Save** keeps it, **Remove** forgets it.
+  (`https://runbooks.example.net/runbooks/`; `http` only for `localhost`; no `user@` before the
+  host, no backslashes or blanks), **Check** reads it and says how many runbooks it has, **Save**
+  keeps it, **Remove** forgets it. The app keeps the address as parsed (host in lower case), and
+  that is the address it reads and shows.
 - **A link:** `mdrunbook://library?url=https%3A%2F%2Frunbooks.example.net%2Frunbooks%2F` (or the
   web app's `/library?url=…`) asks "Add the team library at runbooks.example.net?" before adding it.
 - **A QR code:** **Share library** in that section shows the link as a QR code; on another phone,
@@ -303,7 +322,7 @@ verified**, **Signed, unknown signer**, **Not signed** or **Changed since signin
 
 The phones read the library directly; a web app on another domain needs the library's server to
 allow it (CORS). No tokens or passwords are sent: the library is for runbooks anyone who can reach
-the server may read.
+the server may read. A file over 2 MB, or a redirect to another server, is not read.
 
 ## Try it
 

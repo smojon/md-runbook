@@ -121,11 +121,32 @@ const b64url = (b: Uint8Array): string => Buffer.from(b).toString('base64').repl
 
 /** SK keys: whether the authenticator saw the user (OpenSSH's default; `no-touch-required` is not honoured). */
 const FLAG_USER_PRESENT = 0x01;
+/** WebAuthn authenticator data flags: attested credential data (never in an assertion), extensions present. */
+const FLAG_ATTESTED_DATA = 0x40;
+const FLAG_EXTENSIONS = 0x80;
+/** The smallest RSA modulus accepted, in bits. */
+export const MIN_RSA_BITS = 2048;
+
+/** Why a signature can't be checked on this device (no Web Crypto, a key type or algorithm it lacks): "can't check", not "bad". */
+export class CannotCheck extends Error {}
+
+/** `SHA-256`/`SHA-512` for the SSHSIG hash names md-runbook accepts. */
+export const sshsigHash = (name: string): 'SHA-256' | 'SHA-512' | undefined =>
+  name === 'sha512' ? 'SHA-512' : name === 'sha256' ? 'SHA-256' : undefined;
+
+/** Bits of an unsigned big-endian number (an mpint's magnitude). */
+function bitLength(v: Uint8Array): number {
+  let i = 0;
+  while (i < v.length && v[i] === 0) i++;
+  if (i === v.length) return 0;
+  return (v.length - i - 1) * 8 + (32 - Math.clz32(v[i]!));
+}
 
 /**
  * Whether `signature` (the SSHSIG blob, base64) is a valid signature of `message` in
- * md-runbook's namespace by the key it names. `false` for a bad or foreign signature; throws
- * when it can't be checked here (key type, no Web Crypto).
+ * md-runbook's namespace by the key it names. `false` for a bad, malformed or foreign signature;
+ * throws CannotCheck only when it can't be checked here (no Web Crypto, a key type or algorithm
+ * this device lacks: Web Crypto's NotSupportedError).
  */
 export async function verifySshsig(
   b64: string,
@@ -134,91 +155,111 @@ export async function verifySshsig(
 ): Promise<boolean> {
   const s = parseSshsig(b64);
   if (!s || s.namespace !== SIGNATURE_NAMESPACE) return false;
-  if (!subtle) throw new Error('no Web Crypto');
-  const hashName = s.hashAlgorithm === 'sha512' ? 'SHA-512' : s.hashAlgorithm === 'sha256' ? 'SHA-256' : undefined;
+  if (!subtle) throw new CannotCheck('no Web Crypto');
+  const hashName = sshsigHash(s.hashAlgorithm);
   if (!hashName) return false;
-  const digest = new Uint8Array(await subtle.digest(hashName, own(new TextEncoder().encode(message))));
-  // What the key signed (PROTOCOL.sshsig): the preamble, then the namespace, reserved, hash name and hash.
-  const signed = cat(MAGIC, str(s.namespace), str(s.reserved), str(s.hashAlgorithm), str(digest));
+  try {
+    const digest = new Uint8Array(await subtle.digest(hashName, own(new TextEncoder().encode(message))));
+    // What the key signed (PROTOCOL.sshsig): the preamble, then the namespace, reserved, hash name and hash.
+    const signed = cat(MAGIC, str(s.namespace), str(s.reserved), str(s.hashAlgorithm), str(digest));
+    const result = await check(s, signed, subtle);
+    return result === true;
+  } catch (e) {
+    // Only a missing algorithm is "can't check"; a malformed key or signature is a bad signature.
+    if (e instanceof CannotCheck) throw e;
+    if (typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'NotSupportedError') {
+      throw new CannotCheck(e instanceof Error ? e.message : 'not supported');
+    }
+    return false;
+  }
+}
 
+/** The key's check of the signed data; throws on anything malformed (the caller makes that `false`). */
+async function check(s: Sshsig, signed: Uint8Array, subtle: SubtleCrypto): Promise<boolean> {
   const key = new Reader(s.publicKey);
   const keyType = key.text();
   const sig = new Reader(s.signature);
   const sigType = sig.text();
   const sigData = sig.bytes();
-  try {
-    switch (keyType) {
-      case 'ssh-ed25519': {
-        if (sigType !== keyType) return false;
-        const k = await subtle.importKey('raw', own(key.bytes()), { name: 'Ed25519' }, false, ['verify']);
-        return await subtle.verify({ name: 'Ed25519' }, k, own(sigData), own(signed));
-      }
-      case 'ecdsa-sha2-nistp256':
-      case 'ecdsa-sha2-nistp384':
-      case 'ecdsa-sha2-nistp521': {
-        if (sigType !== keyType) return false;
-        const curveName = key.text();
-        const c = CURVES[curveName];
-        if (!c || keyType !== `ecdsa-sha2-${curveName}`) return false;
-        const k = await subtle.importKey('raw', own(key.bytes()), { name: 'ECDSA', namedCurve: c.curve }, false, ['verify']);
-        return await subtle.verify({ name: 'ECDSA', hash: c.hash }, k, ecdsaRaw(sigData, c.size), own(signed));
-      }
-      case 'ssh-rsa': {
-        // SSHSIG never uses SHA-1 (ssh-rsa signatures).
-        const hash = sigType === 'rsa-sha2-512' ? 'SHA-512' : sigType === 'rsa-sha2-256' ? 'SHA-256' : undefined;
-        if (!hash) return false;
-        const e = key.bytes();
-        const n = key.bytes();
-        const strip = (v: Uint8Array): Uint8Array => (v[0] === 0 ? v.subarray(1) : v);
-        const k = await subtle.importKey(
-          'jwk',
-          { kty: 'RSA', e: b64url(strip(e)), n: b64url(strip(n)), ext: true },
-          { name: 'RSASSA-PKCS1-v1_5', hash },
-          false,
-          ['verify'],
-        );
-        return await subtle.verify({ name: 'RSASSA-PKCS1-v1_5' }, k, own(sigData), own(signed));
-      }
-      case 'sk-ssh-ed25519@openssh.com': {
-        if (sigType !== keyType) return false;
-        const pk = key.bytes();
-        const application = key.bytes();
-        const flags = sig.u8();
-        const counter = sig.raw(4);
-        if (!(flags & FLAG_USER_PRESENT)) return false;
-        const k = await subtle.importKey('raw', own(pk), { name: 'Ed25519' }, false, ['verify']);
-        const data = cat(sha256Bytes(application), new Uint8Array([flags]), counter, sha256Bytes(signed));
-        return await subtle.verify({ name: 'Ed25519' }, k, own(sigData), own(data));
-      }
-      case 'sk-ecdsa-sha2-nistp256@openssh.com': {
-        if (key.text() !== 'nistp256') return false;
-        const point = key.bytes();
-        const application = key.bytes();
-        const flags = sig.u8();
-        const counter = sig.raw(4);
-        if (!(flags & FLAG_USER_PRESENT)) return false;
-        let data: Uint8Array;
-        if (sigType === keyType) {
-          data = cat(sha256Bytes(application), new Uint8Array([flags]), counter, sha256Bytes(signed));
-        } else if (sigType === 'webauthn-sk-ecdsa-sha2-nistp256@openssh.com') {
-          // A passkey: the browser signed authenticator data ‖ SHA-256(client data), and the client
-          // data carries what SSH signs as its challenge (PROTOCOL.u2f; sshd compares this preamble).
-          const origin = sig.text();
-          const clientData = sig.bytes();
-          const extensions = sig.bytes();
-          const preamble = new TextEncoder().encode(`{"type":"webauthn.get","challenge":"${b64url(signed)}","origin":"${origin}"`);
-          if (!equal(clientData.subarray(0, preamble.length), preamble)) return false;
-          data = cat(sha256Bytes(application), new Uint8Array([flags]), counter, extensions, sha256Bytes(clientData));
-        } else return false;
-        const k = await subtle.importKey('raw', own(point), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
-        return await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, k, ecdsaRaw(sigData, 32), own(data));
-      }
-      default:
-        throw new Error(`can't check ${keyType} signatures`);
+  /** No bytes after the last field, in the key and in the signature (OpenSSH: SSH_ERR_UNEXPECTED_TRAILING_DATA). */
+  const end = (): boolean => key.done && sig.done;
+  switch (keyType) {
+    case 'ssh-ed25519': {
+      if (sigType !== keyType) return false;
+      const pk = key.bytes();
+      if (!end()) return false;
+      const k = await subtle.importKey('raw', own(pk), { name: 'Ed25519' }, false, ['verify']);
+      return subtle.verify({ name: 'Ed25519' }, k, own(sigData), own(signed));
     }
-  } catch (e) {
-    // A malformed key or signature is a bad signature; a missing algorithm is "can't check".
-    if (e instanceof Error && /^(short|bad ecdsa signature)$/.test(e.message)) return false;
-    throw e;
+    case 'ecdsa-sha2-nistp256':
+    case 'ecdsa-sha2-nistp384':
+    case 'ecdsa-sha2-nistp521': {
+      if (sigType !== keyType) return false;
+      const curveName = key.text();
+      const c = CURVES[curveName];
+      if (!c || keyType !== `ecdsa-sha2-${curveName}`) return false;
+      const point = key.bytes();
+      if (!end()) return false;
+      const k = await subtle.importKey('raw', own(point), { name: 'ECDSA', namedCurve: c.curve }, false, ['verify']);
+      return subtle.verify({ name: 'ECDSA', hash: c.hash }, k, ecdsaRaw(sigData, c.size), own(signed));
+    }
+    case 'ssh-rsa': {
+      // SSHSIG never uses SHA-1 (ssh-rsa signatures).
+      const hash = sigType === 'rsa-sha2-512' ? 'SHA-512' : sigType === 'rsa-sha2-256' ? 'SHA-256' : undefined;
+      if (!hash) return false;
+      const e = key.bytes();
+      const n = key.bytes();
+      if (!end() || bitLength(n) < MIN_RSA_BITS) return false;
+      const strip = (v: Uint8Array): Uint8Array => (v[0] === 0 ? v.subarray(1) : v);
+      const k = await subtle.importKey(
+        'jwk',
+        { kty: 'RSA', e: b64url(strip(e)), n: b64url(strip(n)), ext: true },
+        { name: 'RSASSA-PKCS1-v1_5', hash },
+        false,
+        ['verify'],
+      );
+      return subtle.verify({ name: 'RSASSA-PKCS1-v1_5' }, k, own(sigData), own(signed));
+    }
+    case 'sk-ssh-ed25519@openssh.com': {
+      if (sigType !== keyType) return false;
+      const pk = key.bytes();
+      const application = key.bytes();
+      const flags = sig.u8();
+      const counter = sig.raw(4);
+      if (!end() || !(flags & FLAG_USER_PRESENT)) return false;
+      const k = await subtle.importKey('raw', own(pk), { name: 'Ed25519' }, false, ['verify']);
+      const data = cat(sha256Bytes(application), new Uint8Array([flags]), counter, sha256Bytes(signed));
+      return subtle.verify({ name: 'Ed25519' }, k, own(sigData), own(data));
+    }
+    case 'sk-ecdsa-sha2-nistp256@openssh.com': {
+      if (key.text() !== 'nistp256') return false;
+      const point = key.bytes();
+      const application = key.bytes();
+      const flags = sig.u8();
+      const counter = sig.raw(4);
+      if (!(flags & FLAG_USER_PRESENT)) return false;
+      let data: Uint8Array;
+      if (sigType === keyType) {
+        if (!end()) return false;
+        data = cat(sha256Bytes(application), new Uint8Array([flags]), counter, sha256Bytes(signed));
+      } else if (sigType === 'webauthn-sk-ecdsa-sha2-nistp256@openssh.com') {
+        // A passkey: the browser signed authenticator data ‖ SHA-256(client data), and the client
+        // data carries what SSH signs as its challenge (PROTOCOL.u2f; sshd compares this preamble).
+        const origin = sig.text();
+        const clientData = sig.bytes();
+        const extensions = sig.bytes();
+        if (!end()) return false;
+        // As ssh-ecdsa-sk.c: no quote in the origin, no attested data, extensions flagged iff present.
+        if (origin.includes('"') || flags & FLAG_ATTESTED_DATA) return false;
+        if (Boolean(flags & FLAG_EXTENSIONS) !== extensions.length > 0) return false;
+        const preamble = new TextEncoder().encode(`{"type":"webauthn.get","challenge":"${b64url(signed)}","origin":"${origin}"`);
+        if (!equal(clientData.subarray(0, preamble.length), preamble)) return false;
+        data = cat(sha256Bytes(application), new Uint8Array([flags]), counter, extensions, sha256Bytes(clientData));
+      } else return false;
+      const k = await subtle.importKey('raw', own(point), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+      return subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, k, ecdsaRaw(sigData, 32), own(data));
+    }
+    default:
+      throw new CannotCheck(`can't check ${keyType} signatures`);
   }
 }

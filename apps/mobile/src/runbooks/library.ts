@@ -6,28 +6,37 @@
  *
  * The folder's files come from its `index.json` when there is one (titles, folders, signedOnly),
  * else from the server's listing of the folder (nginx `autoindex_format json`), subfolders as
- * groups. An `allowed_signers` file next to them is offered to trust (signing/trust.ts).
+ * groups. An `allowed_signers` file next to them is offered to trust, for this library only
+ * (signing/trust.ts). The app remembers per library the highest signed version of each name
+ * and whether it asked for signedOnly (LibraryMemory).
  *
  * Opening a library runbook makes the user's own copy (source 'library'): runs and outputs stay
  * theirs, the shared file is never changed. When the library's file changes, the copy offers
  * Update (outputs of unchanged blocks are kept) or Keep mine.
  */
-import { useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Platform } from 'react-native';
 import { DEFAULT_WRITE_OPTIONS, clearOutputBlocks, isCodeMeta, parse, serialize, toCellInputs } from '@md-runbook/core';
 import type { CellInput } from '@md-runbook/core';
-import { readSignature } from '@md-runbook/core/signing';
+import { readSignature, signedStatus } from '@md-runbook/core/signing';
 import { runbookTitle } from '@md-runbook/core/title';
 import { t } from '../i18n';
 import { loadSettings, libraryUrlSetting } from '../settings/store';
+import { getJson, setJson } from '../storage/kv';
 import {
   AllowedSigner,
   SignatureState,
-  isSignedIntact,
+  TrustedSigner,
+  isExpired,
+  isVerified,
   loadTrustedSigners,
+  manifestOf,
   parseAllowedSigners,
+  sameSigner,
+  shownName,
   signatureState,
-  trustedSigners,
+  trustedFor,
+  useTrustedSigners,
 } from '../signing/trust';
 import { parseSshsig } from '../signing/verify';
 import { textHash } from './origin';
@@ -50,25 +59,51 @@ export const LIBRARY_CACHE_MS = 60_000;
 
 // ---- the address ----
 
-/** Why this can't be a library address, or undefined: https only (http for this machine). */
+/** Control characters (C0, DEL) and bidi controls: refused anywhere in an address. */
+const hasControl = (s: string): boolean =>
+  [...s].some((c) => {
+    const n = c.codePointAt(0)!;
+    return n < 0x20 || n === 0x7f || (n >= 0x200e && n <= 0x200f) || (n >= 0x202a && n <= 0x202e) || (n >= 0x2066 && n <= 0x2069);
+  });
+
+/**
+ * Why this can't be a library address, or undefined: https only (http for this machine), no
+ * user name or password, no query or fragment. Backslashes, blanks and control characters are
+ * refused before parsing: URL parsers disagree on them (a backslash is a slash to the web's
+ * parser, not to every phone's), so the host shown could differ from the host fetched.
+ */
 export function libraryUrlProblem(url: string): string | undefined {
+  const s = url.trim();
+  if (/[\s\\]/.test(s) || hasControl(s)) return t.libraryUrlInvalid;
+  // user:password@ before the host, whatever a parser would make of it.
+  if (/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i.test(s)) return t.libraryUrlUserinfo;
   let u: URL;
   try {
-    u = new URL(url.trim());
+    u = new URL(s);
   } catch {
     return t.libraryUrlInvalid;
   }
+  if (u.username || u.password) return t.libraryUrlUserinfo;
   if (u.protocol === 'https:') return u.search || u.hash ? t.libraryUrlInvalid : undefined;
   if (u.protocol === 'http:' && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname))
     return u.search || u.hash ? t.libraryUrlInvalid : undefined;
   return t.libraryUrlHttps;
 }
 
-/** The address as a folder (ends with /). */
+/**
+ * The address as the app stores, fetches and shows it: the parsed URL's own form (`href`: host in
+ * lower case and punycode, the path normalised), as a folder (ends with /). Check it with
+ * libraryUrlProblem first.
+ */
 export function normalizeLibraryUrl(url: string): string {
-  // String work, not URL setters (React Native's URL has none).
   const s = url.trim();
-  return s.endsWith('/') ? s : s + '/';
+  let href: string;
+  try {
+    href = new URL(s).href;
+  } catch {
+    href = s;
+  }
+  return href.endsWith('/') ? href : href + '/';
 }
 
 /** On the web: the app's own /runbooks/ (the container's library); none on the phones. */
@@ -106,6 +141,15 @@ export function libraryLinkUrl(link: string): string | undefined {
       ? u.host === 'library' || u.pathname.replace(/^\/+/, '') === 'library'
       : /^https?:$/.test(u.protocol) && u.pathname === '/library';
   return isLibrary ? (u.searchParams.get('url') ?? undefined) : undefined;
+}
+
+/** The host a library address names, as the prompts show it (the parsed URL's, as fetched). */
+export function libraryHost(base: string): string {
+  try {
+    return new URL(base).host;
+  } catch {
+    return base;
+  }
 }
 
 // ---- reading a library ----
@@ -195,24 +239,115 @@ export interface LibraryEntry {
 
 export interface Library {
   base: string;
+  /** Open verified runbooks only: index.json's signedOnly, or kept on by the app (signedOnlyDropped). */
   signedOnly: boolean;
+  /** index.json no longer asks for signedOnly, but this library did before: the app keeps it on until the user agrees. */
+  signedOnlyDropped?: boolean;
   entries: LibraryEntry[];
-  /** The library's allowed_signers, when it has one. */
+  /** The library's allowed_signers: read (an empty list when it has none), undefined when it couldn't be read. */
   signers?: { list: AllowedSigner[]; skipped: number };
 }
 
 export type LibraryFetch = { kind: 'none' } | { kind: 'error'; message: string } | { kind: 'ok'; library: Library };
 
 const urlOf = (base: string, path: string): string => base + path.split('/').map(encodeURIComponent).join('/');
-/** An HTML page where JSON or a file was asked for (a single-page app's fallback). */
-const looksHtml = (s: string): boolean => /^\s*</.test(s);
+/**
+ * An HTML page where JSON or a file was asked for (a single-page app's fallback). Only a page that
+ * says so: a runbook may start with `<!-- … -->` or `<img …>`.
+ */
+const looksHtml = (s: string): boolean => /^\s*<(!doctype\s+html|html[\s>])/i.test(s);
 
-async function getText(fetcher: typeof fetch, url: string): Promise<{ status: number; text?: string }> {
-  const res = await fetcher(url, { cache: 'no-cache' });
+const originOf = (url: string): string | undefined => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+};
+
+interface Got {
+  status: number;
+  text?: string;
+  /** Why it was not taken (a redirect to another server). */
+  error?: string;
+}
+
+/** The body, at most `cap` bytes: read as a stream where the runtime has one (browsers), cut off past the cap. */
+async function readCapped(res: Response, cap: number): Promise<string | undefined> {
+  const reader = typeof res.body?.getReader === 'function' ? res.body.getReader() : undefined;
+  if (!reader) {
+    const text = await res.text();
+    return new TextEncoder().encode(text).length > cap ? undefined : text;
+  }
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.length;
+    if (bytes > cap) {
+      void reader.cancel().catch(() => undefined);
+      return undefined;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
+/**
+ * React Native's fetch has no streams (whatwg-fetch over XMLHttpRequest reads the whole body
+ * first): there the library is read with XMLHttpRequest, whose progress events let a body past
+ * the cap be stopped while it arrives.
+ */
+function xhrGet(url: string, cap: number): Promise<Got & { url?: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let over = false;
+    xhr.open('GET', url);
+    xhr.setRequestHeader('Cache-Control', 'no-cache');
+    xhr.responseType = 'text';
+    xhr.onprogress = (e: ProgressEvent) => {
+      if (e.loaded > cap && !over) {
+        over = true;
+        xhr.abort();
+        resolve({ status: 413 });
+      }
+    };
+    xhr.onload = () => {
+      if (over) return;
+      const status = xhr.status;
+      const text: string = typeof xhr.responseText === 'string' ? xhr.responseText : '';
+      const ok = status >= 200 && status < 300;
+      resolve({
+        status,
+        url: xhr.responseURL || undefined,
+        ...(ok ? (new TextEncoder().encode(text).length > cap ? { status: 413 } : { text }) : {}),
+      });
+    };
+    xhr.onerror = () => !over && reject(new TypeError('Network request failed'));
+    xhr.ontimeout = () => !over && reject(new TypeError('Network request timed out'));
+    xhr.onabort = () => !over && reject(new TypeError('Network request aborted'));
+    xhr.send();
+  });
+}
+
+/** Read one file of the library: refused past MAX_RUNBOOK_BYTES, or when a redirect took it to another server. */
+async function getText(fetcher: typeof fetch | undefined, url: string): Promise<Got> {
+  if (!fetcher && Platform.OS !== 'web' && typeof XMLHttpRequest !== 'undefined') {
+    const got = await xhrGet(url, MAX_RUNBOOK_BYTES);
+    if (got.url && originOf(got.url) !== originOf(url)) return { status: 0, error: t.libraryRedirected(libraryHost(got.url)) };
+    return got.text === undefined ? { status: got.status } : { status: got.status, text: got.text };
+  }
+  const res = await (fetcher ?? fetch)(url, { cache: 'no-cache' });
+  // Followed redirects stay on the library's server: the host the app names is the one that served the text.
+  if (typeof res.url === 'string' && res.url !== '' && originOf(res.url) !== originOf(url)) {
+    return { status: 0, error: t.libraryRedirected(libraryHost(res.url)) };
+  }
   if (!res.ok) return { status: res.status };
   if (Number(res.headers?.get('content-length') ?? 0) > MAX_RUNBOOK_BYTES) return { status: 413 };
-  const text = await res.text();
-  return text.length > MAX_RUNBOOK_BYTES ? { status: 413 } : { status: res.status, text };
+  const text = await readCapped(res, MAX_RUNBOOK_BYTES);
+  return text === undefined ? { status: 413 } : { status: res.status, text };
 }
 
 const jsonOf = (text: string | undefined): unknown => {
@@ -225,8 +360,12 @@ const jsonOf = (text: string | undefined): unknown => {
 };
 
 /** The list of runbooks: index.json, else the server's listing (nothing: no library). */
-async function listLibrary(base: string, fetcher: typeof fetch): Promise<{ index: LibraryIndex; allowedSigners?: boolean } | LibraryFetch> {
+async function listLibrary(
+  base: string,
+  fetcher: typeof fetch | undefined,
+): Promise<{ index: LibraryIndex; allowedSigners?: boolean } | LibraryFetch> {
   const idx = await getText(fetcher, base + 'index.json');
+  if (idx.error) return { kind: 'error', message: idx.error };
   if (idx.text !== undefined && !looksHtml(idx.text)) {
     const parsed = parseIndexJson(jsonOf(idx.text));
     if (!parsed) return { kind: 'error', message: t.libraryBadIndex };
@@ -237,6 +376,7 @@ async function listLibrary(base: string, fetcher: typeof fetch): Promise<{ index
   let allowedSigners = false;
   const walk = async (dir: string, depth: number): Promise<boolean> => {
     const res = await getText(fetcher, dir ? urlOf(base, dir) + '/' : base);
+    if (res.error) throw new Error(res.error);
     const listing = parseAutoindex(jsonOf(res.text));
     if (!listing) return false;
     if (!dir) allowedSigners = listing.allowedSigners;
@@ -249,8 +389,11 @@ async function listLibrary(base: string, fetcher: typeof fetch): Promise<{ index
   return { index: { files: files.map((path) => ({ path })), signedOnly: false }, allowedSigners };
 }
 
-/** Read the library at `base`: its runbooks' texts, titles and folders, and its allowed_signers. */
-export async function fetchLibrary(base: string, fetcher: typeof fetch = fetch): Promise<LibraryFetch> {
+/**
+ * Read the library at `base`: its runbooks' texts, titles and folders, and its allowed_signers.
+ * `fetcher`: tests; by default the browser's fetch, or XMLHttpRequest on the phones (getText).
+ */
+export async function fetchLibrary(base: string, fetcher?: typeof fetch): Promise<LibraryFetch> {
   let listed: Awaited<ReturnType<typeof listLibrary>>;
   try {
     listed = await listLibrary(base, fetcher);
@@ -277,7 +420,7 @@ export async function fetchLibrary(base: string, fetcher: typeof fetch = fetch):
             fileName,
             folder,
             title: fallback,
-            error: got.status === 413 ? t.fileTooLarge(fileName) : `HTTP ${got.status}`,
+            error: got.error ?? (got.status === 413 ? t.fileTooLarge(fileName) : `HTTP ${got.status}`),
           };
         } else {
           entries[i] = {
@@ -295,19 +438,103 @@ export async function fetchLibrary(base: string, fetcher: typeof fetch = fetch):
     }
   };
   await Promise.all(Array.from({ length: Math.min(6, index.files.length) }, worker));
-  let signers: Library['signers'];
+  // The library publishes no signers (none listed, 404): an empty list, so keys trusted from it
+  // before stop counting. A failed read (offline, a server error) leaves it unknown.
+  let signers: Library['signers'] = listed.allowedSigners === false ? { list: [], skipped: 0 } : undefined;
   if (listed.allowedSigners !== false) {
     try {
       const got = await getText(fetcher, base + 'allowed_signers');
       if (got.text !== undefined && !looksHtml(got.text)) {
         const parsed = parseAllowedSigners(got.text);
         signers = { list: parsed.signers, skipped: parsed.skipped };
+      } else if (!got.error && (got.status === 404 || got.status === 410 || got.text !== undefined)) {
+        signers = { list: [], skipped: 0 };
       }
     } catch {
       signers = undefined;
     }
   }
   return { kind: 'ok', library: { base, signedOnly: index.signedOnly, entries, ...(signers ? { signers } : {}) } };
+}
+
+// ---- what the app remembers of each library: the highest signed versions, signedOnly ----
+
+/**
+ * Per library address: the highest version of each signed name seen with a signature that
+ * checked out (a lower one later is a downgrade, as the gate's version floors), and whether the
+ * library ever asked for signedOnly (kept on when index.json stops asking, until the user agrees).
+ */
+interface LibraryMemory {
+  versions: Record<string, Record<string, number>>;
+  signedOnly: string[];
+}
+const MEMORY_KEY = 'library.memory.v1';
+const isMemory = (v: unknown): v is LibraryMemory =>
+  typeof v === 'object' &&
+  v !== null &&
+  typeof (v as LibraryMemory).versions === 'object' &&
+  (v as LibraryMemory).versions !== null &&
+  Object.values((v as LibraryMemory).versions).every(
+    (m) => typeof m === 'object' && m !== null && Object.values(m).every((n) => typeof n === 'number'),
+  ) &&
+  Array.isArray((v as LibraryMemory).signedOnly) &&
+  (v as LibraryMemory).signedOnly.every((b) => typeof b === 'string');
+
+let memory: LibraryMemory = { versions: {}, signedOnly: [] };
+let memoryLoaded: Promise<void> | undefined;
+
+function loadLibraryMemory(): Promise<void> {
+  return (memoryLoaded ??= (async () => {
+    memory = (await getJson(MEMORY_KEY, isMemory)) ?? memory;
+  })());
+}
+
+function saveMemory(next: LibraryMemory): void {
+  memory = next;
+  void setJson(MEMORY_KEY, memory).catch(() => undefined);
+}
+
+/** The highest version of `name` seen from the library at `base`, with a signature that checked out. */
+export const highestVersion = (base: string, name: string): number | undefined => memory.versions[base]?.[name];
+
+/** Remember the versions of these states whose signatures checked out (a forged manifest can't raise the floor). */
+function noteVersions(base: string, states: readonly SignatureState[]): void {
+  const mine = { ...(memory.versions[base] ?? {}) };
+  let changed = false;
+  for (const s of states) {
+    if (!('verified' in s) || s.verified.length === 0) continue;
+    const { name, version } = s.manifest;
+    if ((mine[name] ?? 0) < version) {
+      mine[name] = version;
+      changed = true;
+    }
+  }
+  if (changed) saveMemory({ ...memory, versions: { ...memory.versions, [base]: mine } });
+}
+
+/** The higher version seen before, when the state's signed version is lower (a downgrade). */
+export function olderThanSeen(base: string, s: SignatureState | undefined): number | undefined {
+  const m = manifestOf(s);
+  const seen = m ? highestVersion(base, m.name) : undefined;
+  return m && seen !== undefined && m.version < seen ? seen : undefined;
+}
+
+/** The library with the signedOnly the app keeps: once a library asked for it, it stays on until the user agrees. */
+function withPolicy(lib: Library): Library {
+  if (lib.signedOnly) {
+    if (!memory.signedOnly.includes(lib.base)) saveMemory({ ...memory, signedOnly: [...memory.signedOnly, lib.base] });
+    return lib;
+  }
+  return memory.signedOnly.includes(lib.base) ? { ...lib, signedOnly: true, signedOnlyDropped: true } : lib;
+}
+
+/** The user agreed: the library at `base` opens unverified runbooks again (its index.json no longer asks for signedOnly). */
+export function allowUnverified(base: string): void {
+  saveMemory({ ...memory, signedOnly: memory.signedOnly.filter((b) => b !== base) });
+  const lib = state.library;
+  if (lib?.base === base && lib.signedOnlyDropped) {
+    set({ ...state, library: { ...lib, signedOnly: false, signedOnlyDropped: false } });
+  }
 }
 
 // ---- the library the list shows ----
@@ -318,7 +545,10 @@ export interface LibraryState {
   status: 'idle' | 'loading' | 'ready' | 'none' | 'error';
   library?: Library;
   error?: string;
-  /** Each runbook's signature, by path (filled in after the texts arrive). */
+  /**
+   * Each runbook's signature, by the hash of the text it was computed from (entry.hash): a text
+   * that changed has no state until it is checked, never the previous version's.
+   */
   signatures: Readonly<Record<string, SignatureState>>;
   fetchedAt?: number;
   /** A read is going on (the refresh button spins). */
@@ -347,11 +577,39 @@ export function useLibrary(): LibraryState {
   );
 }
 
+/** The entry's signature state, if it was computed from the entry's text as it is now. */
+export const signatureOf = (s: LibraryState, entry: LibraryEntry): SignatureState | undefined =>
+  entry.hash === undefined ? undefined : s.signatures[entry.hash];
+
+/**
+ * The keys a library's runbooks are checked against: those trusted from that library, and of
+ * those, only the ones it still publishes (a key the team removed from allowed_signers stops
+ * counting) once its allowed_signers was read.
+ */
+export function libraryKeys(lib: Pick<Library, 'base' | 'signers'>): TrustedSigner[] {
+  const mine = trustedFor(lib.base);
+  const published = lib.signers?.list;
+  return published ? mine.filter((k) => published.some((s) => sameSigner(s, k))) : mine;
+}
+
+/** Keys trusted from this library that its allowed_signers no longer lists (offered to remove). */
+export function withdrawnKeys(lib: Pick<Library, 'base' | 'signers'>): TrustedSigner[] {
+  const published = lib.signers?.list;
+  return published ? trustedFor(lib.base).filter((k) => !published.some((s) => sameSigner(s, k))) : [];
+}
+
 async function signaturesOf(library: Library): Promise<Record<string, SignatureState>> {
   const out: Record<string, SignatureState> = {};
-  for (const e of library.entries) if (e.text !== undefined) out[e.path] = await signatureState(e.text, trustedSigners());
+  const keys = libraryKeys(library);
+  for (const e of library.entries)
+    if (e.text !== undefined && e.hash !== undefined && !out[e.hash]) out[e.hash] = await signatureState(e.text, keys);
+  noteVersions(library.base, Object.values(out));
   return out;
 }
+
+/** The states still true for the new texts: those of texts that didn't change. */
+const keptFor = (signatures: Readonly<Record<string, SignatureState>>, library: Library): Record<string, SignatureState> =>
+  Object.fromEntries(library.entries.flatMap((e) => (e.hash && signatures[e.hash] ? [[e.hash, signatures[e.hash]!]] : [])));
 
 /**
  * Read the library (on start, on pull to refresh). Within LIBRARY_CACHE_MS of the last read
@@ -360,7 +618,7 @@ async function signaturesOf(library: Library): Promise<Record<string, SignatureS
 export function refreshLibrary(opts: { force?: boolean; fetcher?: typeof fetch } = {}): Promise<void> {
   if (inFlight) return inFlight.base === libraryBase() ? inFlight.done : inFlight.done.then(() => refreshLibrary(opts));
   const done = (async () => {
-    await Promise.all([loadSettings(), loadTrustedSigners(), loadRunbooks()]);
+    await Promise.all([loadSettings(), loadTrustedSigners(), loadRunbooks(), loadLibraryMemory()]);
     const base = libraryBase() ?? '';
     if (!base) return set({ ...IDLE });
     const fresh = state.base === base && state.fetchedAt !== undefined && Date.now() - state.fetchedAt < LIBRARY_CACHE_MS;
@@ -370,15 +628,22 @@ export function refreshLibrary(opts: { force?: boolean; fetcher?: typeof fetch }
       status: state.base === base && state.library ? state.status : 'loading',
       busy: true,
     });
-    const got = await fetchLibrary(base, opts.fetcher ?? fetch);
+    const got = await fetchLibrary(base, opts.fetcher);
     if (libraryBase() !== base) return set({ ...state, busy: false });
     if (got.kind === 'none') return set({ base, status: 'none', signatures: {}, fetchedAt: Date.now() });
     // Offline or a server error: what was read before stays listed.
     if (got.kind === 'error')
       return set({ ...state, base, status: state.library ? 'ready' : 'error', error: got.message, fetchedAt: Date.now(), busy: false });
-    set({ base, status: 'ready', library: got.library, signatures: state.base === base ? state.signatures : {}, fetchedAt: Date.now() });
-    const signatures = await signaturesOf(got.library);
-    if (state.library === got.library) set({ ...state, signatures });
+    const library = withPolicy(got.library);
+    set({
+      base,
+      status: 'ready',
+      library,
+      signatures: state.base === base ? keptFor(state.signatures, library) : {},
+      fetchedAt: Date.now(),
+    });
+    const signatures = await signaturesOf(library);
+    if (state.library === library) set({ ...state, signatures });
   })().finally(() => {
     if (inFlight?.done === done) inFlight = undefined;
   });
@@ -397,17 +662,99 @@ export async function recheckSignatures(): Promise<void> {
 /** Tests. */
 export function resetLibrary(): void {
   inFlight = undefined;
+  memory = { versions: {}, signedOnly: [] };
+  memoryLoaded = undefined;
   set(IDLE);
+}
+
+// ---- what a library runbook's signature says, for the list and the opened copy ----
+
+/** The file name without `.md`, as signPlan makes a default signed name (only the last part is compared). */
+const nameOfPath = (path: string): string =>
+  (path.split('/').pop() ?? '')
+    .replace(/(\.runbook)?\.(md|markdown)$/i, '')
+    .replace(/[^A-Za-z0-9._/-]+/g, '-')
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .toLowerCase();
+
+/** Whether the signed name fits the file it is served as (its last part is the file's name): `ops/restart` fits `restart.md`. */
+export const nameFitsPath = (name: string, path: string): boolean => (name.split('/').pop() ?? '').toLowerCase() === nameOfPath(path);
+
+export interface SignedFacts {
+  name: string;
+  version: number;
+  /** The signed name is not this file's (a signed runbook served under another name). */
+  otherName: boolean;
+  /** A higher version of this name was seen from this library before. */
+  olderThan?: number;
+  /** The manifest's expiry day, when it is over. */
+  expired?: string;
+}
+
+/** The signed name, version, expiry and downgrade of a library runbook's state (undefined: not signed and unchanged). */
+export function signedFacts(base: string, path: string, s: SignatureState | undefined, now = Date.now()): SignedFacts | undefined {
+  const m = manifestOf(s);
+  if (!m) return undefined;
+  const older = olderThanSeen(base, s);
+  return {
+    name: m.name,
+    version: m.version,
+    otherName: !nameFitsPath(m.name, path),
+    ...(older !== undefined ? { olderThan: older } : {}),
+    ...(isExpired(m.expires, now) ? { expired: m.expires! } : {}),
+  };
+}
+
+/** Whether the list may show the state as verified (green): verified, under its own name, not a downgrade. */
+export const looksVerified = (s: SignatureState | undefined, facts: SignedFacts | undefined): boolean =>
+  isVerified(s) && !facts?.otherName && facts?.olderThan === undefined;
+
+/**
+ * A library copy's signature state, as the list computes it for the library's file: the opened
+ * copy's banner shows the same label (screens/RunbookView.tsx), checked against the keys trusted
+ * from the copy's library.
+ */
+export function useLibraryCopyState(
+  copy: Runbook | undefined,
+): { base: string; state: SignatureState; facts: SignedFacts | undefined; signedOnly: boolean } | undefined {
+  const lib = useLibrary();
+  const trusted = useTrustedSigners();
+  const ref = copy?.source === 'library' ? copy.library : undefined;
+  const text = ref ? copy?.text : undefined;
+  const library = ref && lib.library?.base === ref.base ? lib.library : undefined;
+  const [got, setGot] = useState<{ text: string; state: SignatureState } | undefined>();
+  useEffect(() => {
+    if (!ref || text === undefined) return;
+    let live = true;
+    void signatureState(text, libraryKeys(library ?? { base: ref.base })).then((state) => {
+      if (live) setGot({ text, state });
+    });
+    return () => {
+      live = false;
+    };
+  }, [ref, text, library, trusted]);
+  if (!ref || !got || got.text !== text) return undefined;
+  return { base: ref.base, state: got.state, facts: signedFacts(ref.base, ref.path, got.state), signedOnly: library?.signedOnly ?? false };
 }
 
 // ---- copies ----
 
-/** Whether the entry can be opened (a signedOnly library opens signed, unchanged runbooks only). */
-export function openableReason(lib: Pick<Library, 'signedOnly'>, entry: LibraryEntry, sig: SignatureState | undefined): string | undefined {
+/**
+ * Whether the entry can be opened. A signedOnly library opens verified runbooks only: signed by a
+ * signer trusted for this library, every runnable block covered, not expired, not older than a
+ * version seen before.
+ */
+export function openableReason(
+  lib: Pick<Library, 'base' | 'signedOnly'>,
+  entry: Pick<LibraryEntry, 'text' | 'error'>,
+  sig: SignatureState | undefined,
+): string | undefined {
   if (entry.text === undefined) return entry.error ?? t.libraryUnreadable;
   if (!lib.signedOnly) return undefined;
   if (!sig) return t.libraryChecking;
-  return isSignedIntact(sig) ? undefined : t.librarySignedOnly(sig.kind);
+  if (!isVerified(sig)) return t.librarySignedOnly(sig);
+  const older = olderThanSeen(lib.base, sig);
+  return older !== undefined ? t.librarySignedOnlyOlder(sig.manifest.version, older) : undefined;
 }
 
 const refOf = (base: string, entry: LibraryEntry & { text: string; hash: string }) => ({
@@ -419,17 +766,22 @@ const refOf = (base: string, entry: LibraryEntry & { text: string; hash: string 
 
 /**
  * Open a library runbook: the user's copy when they have one, else a new copy of the library's
- * text. A signedOnly library refuses unsigned or changed runbooks (checked here, not only in the list).
+ * text. A signedOnly library opens verified runbooks only: checked here on the text itself (not
+ * only in the list), the user's copy included.
  */
 export async function openLibraryRunbook(
   lib: Library,
   entry: LibraryEntry,
 ): Promise<{ kind: 'opened'; runbook: Runbook } | { kind: 'error'; message: string }> {
-  await loadRunbooks();
+  await Promise.all([loadRunbooks(), loadLibraryMemory()]);
+  const keys = libraryKeys(lib);
   const mine = libraryCopy(lib.base, entry.path);
-  if (mine) return { kind: 'opened', runbook: mine };
+  if (mine) {
+    const why = lib.signedOnly ? openableReason(lib, mine, await signatureState(mine.text, keys)) : undefined;
+    return why ? { kind: 'error', message: t.libraryCopyRefused(why) } : { kind: 'opened', runbook: mine };
+  }
   if (entry.text === undefined || entry.hash === undefined) return { kind: 'error', message: entry.error ?? t.libraryUnreadable };
-  const why = openableReason(lib, entry, await signatureState(entry.text, trustedSigners()));
+  const why = openableReason(lib, entry, await signatureState(entry.text, keys));
   if (why) return { kind: 'error', message: why };
   return {
     kind: 'opened',
@@ -476,7 +828,12 @@ export type UpdateWarning =
   | { kind: 'own-edits' }
   | { kind: 'signature-dropped'; was: string }
   | { kind: 'other-signer'; was: string; now: string }
-  | { kind: 'signature-broken'; was: string };
+  | { kind: 'signature-broken'; was: string }
+  /** The new version's signature leaves runnable blocks uncovered. */
+  | { kind: 'partly-signed'; count: number }
+  | { kind: 'expired'; on: string }
+  /** The new version is signed with a lower version than the copy's, or than one seen before. */
+  | { kind: 'older-version'; name: string; now: number; seen: number };
 
 /** The key of a block's first signature, to notice a re-signing by another key under the same name. */
 const signerKey = (sig: string): string | undefined => {
@@ -484,11 +841,16 @@ const signerKey = (sig: string): string | undefined => {
   return s ? Array.from(s.publicKey, (b) => b.toString(16).padStart(2, '0')).join('') : undefined;
 };
 
-/** What Update would do to the copy: the new text and what the user should know first. */
+/**
+ * What Update would do to the copy: the new text and what the user should know first. `next`:
+ * the new text's state, computed for this update (never one kept from an earlier read);
+ * `seen`: the highest version of its signed name seen from the library (highestVersion).
+ */
 export function planUpdate(
   copy: Runbook,
   entry: LibraryEntry & { text: string },
   next: SignatureState,
+  seen?: number,
 ): { text: string; warnings: UpdateWarning[] } {
   const { text, lost } = carryOutputs(copy.text, entry.text);
   const warnings: UpdateWarning[] = [];
@@ -497,10 +859,18 @@ export function planUpdate(
   const was = readSignature(copy.text);
   const now = readSignature(entry.text);
   if (was) {
-    if (!now) warnings.push({ kind: 'signature-dropped', was: was.signer });
+    if (!now) warnings.push({ kind: 'signature-dropped', was: shownName(was.signer) });
     else if (now.signer !== was.signer || signerKey(now.signature) !== signerKey(was.signature))
-      warnings.push({ kind: 'other-signer', was: was.signer, now: now.signer });
-    else if (next.kind === 'changed' || next.kind === 'invalid') warnings.push({ kind: 'signature-broken', was: was.signer });
+      warnings.push({ kind: 'other-signer', was: shownName(was.signer), now: shownName(now.signer) });
+    else if (next.kind === 'changed' || next.kind === 'invalid') warnings.push({ kind: 'signature-broken', was: shownName(was.signer) });
+  }
+  if (next.kind === 'partial') warnings.push({ kind: 'partly-signed', count: next.unsigned });
+  const m = manifestOf(next);
+  if (m?.expires && isExpired(m.expires)) warnings.push({ kind: 'expired', on: m.expires });
+  if (m) {
+    const mine = signedStatus(copy.text)?.manifest;
+    const floor = Math.max(seen ?? 0, mine?.name === m.name ? mine.version : 0);
+    if (m.version < floor) warnings.push({ kind: 'older-version', name: m.name, now: m.version, seen: floor });
   }
   return { text, warnings };
 }

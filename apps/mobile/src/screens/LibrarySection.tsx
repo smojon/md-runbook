@@ -10,28 +10,57 @@ import { t } from '../i18n';
 import {
   Library,
   LibraryEntry,
+  SignedFacts,
   UpdateWarning,
+  allowUnverified,
   applyUpdate,
   copyStatus,
+  highestVersion,
   keepMine,
+  libraryHost,
+  libraryKeys,
+  looksVerified,
   openLibraryRunbook,
   openableReason,
   planUpdate,
   recheckSignatures,
   refreshLibrary,
+  signatureOf,
+  signedFacts,
   useLibrary,
+  withdrawnKeys,
 } from '../runbooks/library';
 import { libraryCopy, useRunbooks } from '../runbooks/store';
 import { useLibraryUrlSetting } from '../settings/store';
-import { SignatureState, isTrustedSigner, signatureState, trustSigners, untrustSigners, useTrustedSigners } from '../signing/trust';
+import {
+  SignatureState,
+  SignerCheck,
+  isTrustedSigner,
+  manifestOf,
+  shownName,
+  shownPrincipal,
+  signatureState,
+  trustSigners,
+  trustedFor,
+  untrustSigners,
+  useTrustedSigners,
+} from '../signing/trust';
 import { mono, themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
 
+const signerNames = (checks: readonly SignerCheck[]): string[] =>
+  checks.map((c) => t.sigSigner(c.name, c.wildcard ? c.fingerprint : undefined));
+
+/** What a runbook's signature is worth, in a few words: the same in the list and in the opened copy's banner. */
 export function sigLabel(s: SignatureState | undefined): string {
   if (!s) return t.libraryChecking;
   switch (s.kind) {
     case 'verified':
-      return t.sigVerified(s.signers);
+      return t.sigVerified(signerNames(s.verified), s.coverage);
+    case 'expired':
+      return t.sigExpiredState(signerNames(s.verified), s.manifest.expires ?? '?');
+    case 'partial':
+      return t.sigPartial(s.unsigned);
     case 'unknown':
       return t.sigUnknown;
     case 'unsigned':
@@ -39,14 +68,21 @@ export function sigLabel(s: SignatureState | undefined): string {
     case 'changed':
       return t.sigChanged;
     case 'invalid':
-      return t.sigInvalid(s.signers);
+      return t.sigInvalid(s.signers.map(shownName));
   }
 }
 
-const expiredOn = (s: SignatureState | undefined): string | undefined =>
-  s && (s.kind === 'verified' || s.kind === 'unknown') && s.expires && s.expires < new Date().toISOString().slice(0, 10)
-    ? s.expires
-    : undefined;
+/** The signed name and version, and what is wrong with them: another name than the file's, a downgrade, an expiry. */
+export function factsLabel(facts: SignedFacts | undefined, s: SignatureState | undefined): string | undefined {
+  if (!facts) return undefined;
+  return [
+    t.sigManifest(facts.name, facts.version),
+    ...(facts.otherName ? [t.sigOtherName] : []),
+    ...(facts.olderThan !== undefined ? [t.sigOlder(facts.olderThan)] : []),
+    // An expired state says it already.
+    ...(facts.expired && s?.kind !== 'expired' ? [t.sigExpired(facts.expired)] : []),
+  ].join(' · ');
+}
 
 export function LibrarySection() {
   const styles = useStyles();
@@ -95,7 +131,22 @@ export function LibrarySection() {
     <View testID="library">
       {heading}
       {lib.error ? <Text style={styles.meta}>{t.libraryStale(lib.error)}</Text> : null}
-      {library.signers && library.signers.list.length > 0 ? <SignersCard library={library} /> : null}
+      {library.signedOnlyDropped ? (
+        <View testID="library-signed-only-dropped" style={styles.card}>
+          <Text style={[styles.body, styles.warn]}>{t.librarySignedOnlyDropped}</Text>
+          <View style={styles.buttons}>
+            <Pressable
+              testID="library-allow-unverified"
+              accessibilityRole="button"
+              onPress={() => allowUnverified(library.base)}
+              style={styles.secondary}
+            >
+              <Text style={styles.secondaryText}>{t.libraryAllowUnverified}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+      {(library.signers && library.signers.list.length > 0) || withdrawnKeys(library).length > 0 ? <SignersCard library={library} /> : null}
       {library.entries.length === 0 ? <Text style={styles.meta}>{t.libraryEmpty}</Text> : null}
       {folders.map((folder) => {
         const entries = library.entries.filter((e) => e.folder === folder);
@@ -111,7 +162,7 @@ export function LibrarySection() {
                 key={e.path}
                 library={library}
                 entry={e}
-                sig={lib.signatures[e.path]}
+                sig={signatureOf(lib, e)}
                 first={i === 0}
                 last={i === entries.length - 1}
               />
@@ -123,24 +174,47 @@ export function LibrarySection() {
   );
 }
 
-/** The library's allowed_signers: offered to trust, after showing who and which keys, never silently. */
+/**
+ * The library's allowed_signers: offered to trust for this library only, after showing who (and
+ * what a pattern lets a key sign as) and which keys, never silently; keys it no longer publishes.
+ */
 function SignersCard({ library }: { library: Library }) {
   const styles = useStyles();
   useTrustedSigners();
   const [asking, setAsking] = useState(false);
-  const list = library.signers!.list;
-  const untrusted = list.filter((s) => !isTrustedSigner(s));
-  const host = new URL(library.base).host;
+  const list = library.signers?.list ?? [];
+  const untrusted = list.filter((s) => !isTrustedSigner(s, library.base));
+  const withdrawn = withdrawnKeys(library);
+  const host = libraryHost(library.base);
   return (
     <View testID="library-signers" style={styles.card}>
-      <Text style={styles.body}>{untrusted.length > 0 ? t.librarySigners(list.length) : t.trustedSigners(list.length)}</Text>
-      {library.signers!.skipped > 0 ? <Text style={styles.meta}>{t.librarySignersSkipped(library.signers!.skipped)}</Text> : null}
-      {asking ? (
+      {list.length > 0 ? (
+        <Text style={styles.body}>{untrusted.length > 0 ? t.librarySigners(list.length) : t.trustedSigners(list.length)}</Text>
+      ) : null}
+      {library.signers && library.signers.skipped > 0 ? (
+        <Text style={styles.meta}>{t.librarySignersSkipped(library.signers.skipped)}</Text>
+      ) : null}
+      {withdrawn.length > 0 ? (
+        <View testID="library-signers-withdrawn">
+          <Text style={[styles.body, styles.warn]}>{t.signersWithdrawn(withdrawn.length)}</Text>
+          <View style={styles.buttons}>
+            <Pressable
+              testID="library-untrust-withdrawn"
+              accessibilityRole="button"
+              onPress={() => untrustSigners(withdrawn, library.base)}
+              style={styles.secondary}
+            >
+              <Text style={styles.secondaryText}>{t.untrustWithdrawn}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+      {list.length === 0 ? null : asking ? (
         <View testID="library-trust-prompt">
           <Text style={[styles.body, styles.warn]}>{t.trustSignersPrompt(host)}</Text>
           {untrusted.map((s) => (
             <View key={s.keyType + s.key + s.principals.join(',')} style={styles.signer}>
-              <Text style={styles.body}>{s.principals.join(', ')}</Text>
+              <Text style={styles.body}>{s.principals.map((p) => t.signerPrincipal(shownPrincipal(p))).join(', ')}</Text>
               <Text style={styles.mono} selectable>
                 {`${s.keyType} ${s.fingerprint}`}
               </Text>
@@ -171,7 +245,12 @@ function SignersCard({ library }: { library: Library }) {
         </View>
       ) : (
         <View style={styles.buttons}>
-          <Pressable testID="library-untrust" accessibilityRole="button" onPress={() => untrustSigners(list)} style={styles.secondary}>
+          <Pressable
+            testID="library-untrust"
+            accessibilityRole="button"
+            onPress={() => untrustSigners(trustedFor(library.base), library.base)}
+            style={styles.secondary}
+          >
             <Text style={styles.secondaryText}>{t.untrustSigners}</Text>
           </Pressable>
         </View>
@@ -192,6 +271,12 @@ function warningText(w: UpdateWarning): string {
       return t.updateOtherSigner(w.was, w.now);
     case 'signature-broken':
       return t.updateSignatureBroken(w.was);
+    case 'partly-signed':
+      return t.updatePartlySigned(w.count);
+    case 'expired':
+      return t.updateExpired(w.on);
+    case 'older-version':
+      return t.updateOlderVersion(w.name, w.now, w.seen);
   }
 }
 
@@ -216,9 +301,14 @@ function LibraryRow({
   const [error, setError] = useState<string | undefined>();
   const [confirm, setConfirm] = useState<{ text: string; warnings: UpdateWarning[] } | undefined>();
   const status = copy ? copyStatus(copy, entry) : 'current';
-  const expired = expiredOn(sig);
-  const sigColor =
-    sig?.kind === 'verified' ? colors.ok : sig?.kind === 'invalid' || sig?.kind === 'changed' ? colors.warningText : colors.muted;
+  const facts = signedFacts(library.base, entry.path, sig);
+  const green = looksVerified(sig, facts);
+  // Verified but not green: under another name than the file's, or a downgrade.
+  const sigColor = green
+    ? colors.ok
+    : sig?.kind === 'invalid' || sig?.kind === 'changed' || sig?.kind === 'partial' || sig?.kind === 'expired' || sig?.kind === 'verified'
+      ? colors.warningText
+      : colors.muted;
   const open = async (): Promise<void> => {
     setError(undefined);
     const r = await openLibraryRunbook(library, entry);
@@ -227,15 +317,19 @@ function LibraryRow({
   };
   const update = async (force: boolean): Promise<void> => {
     if (!copy || entry.text === undefined || entry.hash === undefined) return;
+    const text = entry.text;
     setError(undefined);
-    const next = sig ?? (await signatureState(entry.text));
+    // Always checked again here, on the text being taken: never a state kept from an earlier read.
+    const next = await signatureState(text, libraryKeys(library));
     const refused = openableReason(library, entry, next);
     if (refused) return setError(t.updateRefused(refused));
-    const plan = planUpdate(copy, { ...entry, text: entry.text }, next);
+    const m = manifestOf(next);
+    const plan = planUpdate(copy, { ...entry, text }, next, m ? highestVersion(library.base, m.name) : undefined);
     if (plan.warnings.length > 0 && !force) return setConfirm(plan);
-    applyUpdate(copy.id, library.base, { ...entry, text: entry.text, hash: entry.hash }, plan.text);
+    applyUpdate(copy.id, library.base, { ...entry, text, hash: entry.hash }, plan.text);
     setConfirm(undefined);
   };
+  const factsText = factsLabel(facts, sig);
   return (
     <View style={[styles.row, first && styles.rowFirst, last && styles.rowLast]}>
       <Pressable
@@ -248,18 +342,26 @@ function LibraryRow({
         style={styles.rowLink}
       >
         <View style={styles.badge}>
-          <Codicon name={sig?.kind === 'verified' ? 'verified' : 'library'} size={18} color={why ? colors.muted : colors.link} />
+          <Codicon name={green ? 'verified' : 'library'} size={18} color={why ? colors.muted : colors.link} />
         </View>
         <View style={styles.rowText}>
           <Text style={[styles.title, why !== undefined && styles.dim]} numberOfLines={2}>
             {entry.title}
           </Text>
-          <Text testID={`library-sig-${entry.path}`} style={[styles.meta, { color: sigColor }]} numberOfLines={2}>
+          <Text testID={`library-sig-${entry.path}`} style={[styles.meta, { color: sigColor }]} numberOfLines={3}>
             {entry.text === undefined ? (entry.error ?? t.libraryUnreadable) : sigLabel(sig)}
-            {expired ? ` · ${t.sigExpired(expired)}` : ''}
             {copy ? ` · ${t.libraryYourCopy}` : ''}
             {status === 'kept' ? ` · ${t.updateKept}` : ''}
           </Text>
+          {factsText ? (
+            <Text
+              testID={`library-facts-${entry.path}`}
+              style={[styles.meta, facts?.otherName || facts?.olderThan !== undefined || facts?.expired ? styles.warn : null]}
+              numberOfLines={2}
+            >
+              {factsText}
+            </Text>
+          ) : null}
           {why && entry.text !== undefined ? (
             <Text testID={`library-why-${entry.path}`} style={styles.meta}>
               {why}

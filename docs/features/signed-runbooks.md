@@ -263,29 +263,58 @@ checks.
 ## In a hosted library
 
 A team library ([the app](../app.md#team-runbooks), [hosting it](../../apps/web/README.md#a-team-library))
-shows each runbook's signature in the list. The app checks the signatures itself, against the
-signers the user chose to trust:
+shows each runbook's signature in the list, with the signed name and version; the opened copy's
+banner says the same. The app checks the signatures itself, against the signers the user chose
+to trust for that library:
 
-- **Signed by alice@example.net, verified:** the blocks are unchanged since signing, and the
-  signature checks out with a key the user trusts for the name in the signature block (OpenSSH's
-  rules: principals and patterns, `namespaces=`, `valid-after` / `valid-before`).
-- **Signed, unknown signer:** unchanged, but signed by no one the user trusts.
-- **Signature does not check out for alice@example.net:** a trusted name, but signed with another
-  key, or a signature that doesn't verify.
+- **Signed by alice@example.net: these steps verified:** the shell blocks and runbook calls are
+  unchanged since signing, every block the app could run is among them, and the signature checks
+  out with a key the user trusts, from this library, for the name in the signature block
+  (OpenSSH's rules: principals and patterns, `namespaces=`, `valid-after` / `valid-before`). That
+  is all it proves: the prose, checklists, title, front matter and outputs are not in the
+  manifest (see [What is signed](#what-is-signed)), and the banner says so. When a key may sign
+  under any name its pattern matches (`*`, `*@example.net`), the label adds the key's
+  fingerprint. "Whole runbook verified" is kept for a manifest that signs the whole text.
+- **Partly signed:** the signed blocks check out, but the runbook has blocks that can run outside
+  the signature (PowerShell, cmd: the gate's shell is bash, so the manifest has never signed
+  them). Not verified.
+- **Signed by alice@example.net, expired on 2026-12-31:** checked, but past the manifest's
+  `expires` day (UTC, as the gate). Not verified.
+- **Signed, unknown signer:** unchanged, but signed by no one the user trusts for this library
+  (or not checkable on this device).
+- **Signature does not check out for alice@example.net:** a trusted name but another key, a
+  signature that doesn't verify, a signature that is not one (malformed, truncated, for another
+  namespace), or a signer name an `allowed_signers` principal couldn't spell the same way.
 - **Changed since signing** and **Not signed**, as everywhere else.
 
+Next to it the row shows the signed **name and version**, and flags a name that is not the
+file's (`db/drop-staging` served as `restart-web.md`) and a **version older** than one this
+library showed before with a signature that checked out: the app remembers the highest version of
+each signed name per library, as the gate's version floors do on a server.
+
 The library may publish its `allowed_signers` (the gate's file). The app offers it under **Trust
-these signers**, with the names and key fingerprints, and asks first: the list comes from the
-server that serves the runbooks, so the server is vouching for itself. An index.json with
-`"signedOnly": true` makes the app list unsigned and changed runbooks as not openable. An update
-whose new version drops the signature, comes from another signer or key, or changed since signing
-says so before it replaces the user's copy.
+these signers**, with the names, what a pattern lets a key sign as, and the key fingerprints, and
+asks first: the list comes from the server that serves the runbooks, so the server is vouching
+for itself. Trusted keys count for that library only; a key the library stops publishing stops
+counting; **Hosts & settings → Team library → Trusted signers** lists them all, with **Remove**.
+Lines with an option OpenSSH doesn't know are skipped, as OpenSSH skips them.
+
+An index.json with `"signedOnly": true` makes the app open **verified** runbooks only: unsigned,
+changed, partly signed, expired, unknown-signer and older-version runbooks are listed as not
+openable, with the reason, and a copy the user already has is checked again when opened from the
+list. Once a library asked for it, the app keeps it on when index.json stops asking, until the
+user agrees. An update whose new version drops the signature, comes from another signer or key,
+changed since signing, is partly signed, expired or older says so before it replaces the user's
+copy; its signature is checked again for the update, never taken from an earlier read.
 
 The app checks `ssh-ed25519`, ECDSA (`nistp256`, `nistp384`, `nistp521`), RSA (`rsa-sha2-256`,
 `rsa-sha2-512`), and security-key and passkey signatures (`sk-ssh-ed25519`, `sk-ecdsa-sha2-nistp256`,
-`webauthn-sk-ecdsa-sha2-nistp256`, what the app's passkey makes). Certificate authorities
-(`cert-authority` lines) are not used. This check tells the user what they are opening; the gate
-on the server is still what decides what runs.
+`webauthn-sk-ecdsa-sha2-nistp256`, what the app's passkey makes), with OpenSSH's checks: no bytes
+after the signature's fields, RSA keys of 2048 bits or more, for passkeys no attested data, an
+extensions field present exactly when flagged and no quote in the origin. Certificate authorities
+(`cert-authority` lines) are not used. Key validity (`valid-after` / `valid-before`) and expiry
+are judged by the device's clock. This check tells the user what they are opening; the gate on
+the server is still what decides what runs.
 
 ## Limits
 

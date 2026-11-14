@@ -49,6 +49,9 @@ import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
+import { openableReason, useLibraryCopyState } from '../runbooks/library';
+import { shownName, unsignedRunnable } from '../signing/trust';
+import { factsLabel, sigLabel } from './LibrarySection';
 import { textProgress } from '@md-runbook/core/textProgress';
 import { headingsOf } from '@md-runbook/core/title';
 import type { Progress, RunbookEstimate } from '@md-runbook/core';
@@ -248,6 +251,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
   const progress = useMemo(() => (runbook ? textProgress(runbook.text) : undefined), [runbook]);
   const signed = useMemo(() => (runbook ? signedStatus(runbook.text) : undefined), [runbook]);
+  /** Blocks that can run outside the signature (PowerShell, cmd: manifest v1 signs bash and runbook calls only). */
+  const outsideSignature = useMemo(() => (runbook && signed ? unsignedRunnable(runbook.text, signed) : 0), [runbook, signed]);
+  /** A team library copy: its signature checked as the list checks it (the banner says the same). */
+  const libraryCopyState = useLibraryCopyState(runbook);
   /** Whether it can be co-signed now (Co-sign Runbook), or why not. */
   const cosign = useMemo(() => (runbook ? cosignCheck(runbook.text) : undefined), [runbook]);
   const params = useMemo(() => (runbook ? runbookParams(runbook.text) : []), [runbook]);
@@ -1880,7 +1887,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               ) : null}
               <SaveBar runbook={runbook} />
               {fromLink ? <LinkNotes context={fromLink} /> : null}
-              {signed ? <SignedBanner status={signed} verified={verified} /> : null}
+              {signed ? <SignedBanner status={signed} verified={verified} outside={outsideSignature} library={libraryCopyState} /> : null}
               {problems.all.length > 0 ? (
                 <ProblemsCard
                   problems={problems}
@@ -3015,10 +3022,28 @@ function LinkNotes({ context }: { context: LinkContext }) {
   );
 }
 
-/** A signed runbook: who signed which version, and the blocks changed since (a gate refuses those). */
-function SignedBanner({ status, verified }: { status: SignedStatus; verified: { host: string; principal: string } | undefined }) {
+/**
+ * A signed runbook: who signed which version, and the blocks changed since (a gate refuses those)
+ * or never signed (PowerShell, cmd). A library copy says what the team runbooks list says, checked
+ * the same way (useLibraryCopyState): who verified, which steps, under which name and version.
+ */
+function SignedBanner({
+  status,
+  verified,
+  outside,
+  library,
+}: {
+  status: SignedStatus;
+  verified: { host: string; principal: string } | undefined;
+  /** Runnable blocks the signature doesn't cover (unsignedRunnable). */
+  outside: number;
+  library: ReturnType<typeof useLibraryCopyState>;
+}) {
   const styles = useStyles();
   const m = status.manifest;
+  const facts = library ? factsLabel(library.facts, library.state) : undefined;
+  // The library opens verified runbooks only: say so when this copy isn't one (any more).
+  const refused = library?.signedOnly ? openableReason({ base: library.base, signedOnly: true }, { text: '' }, library.state) : undefined;
   return (
     <View testID="signed-banner" style={styles.signed}>
       <Text style={styles.signedTitle}>{t.signedTitle(m.name, m.version)}</Text>
@@ -3026,12 +3051,37 @@ function SignedBanner({ status, verified }: { status: SignedStatus; verified: { 
         <Text testID="signed-verified" style={styles.signedBody}>
           {t.signedVerified(verified.host, verified.principal)}
         </Text>
-      ) : (
+      ) : null}
+      {library ? (
+        <>
+          <Text testID="signed-library-state" style={library.state.kind === 'verified' ? styles.signedBody : styles.warning}>
+            {sigLabel(library.state)}
+          </Text>
+          {facts && (library.facts?.otherName || library.facts?.olderThan !== undefined || library.facts?.expired) ? (
+            <Text testID="signed-library-facts" style={styles.warning}>
+              {facts}
+            </Text>
+          ) : null}
+          {library.state.kind === 'verified' && library.state.coverage === 'partial' ? (
+            <Text style={styles.signedBody}>{t.sigCoversSteps}</Text>
+          ) : null}
+          {refused ? (
+            <Text testID="signed-library-refused" style={styles.warning}>
+              {t.copyNotOpenable(refused)}
+            </Text>
+          ) : null}
+        </>
+      ) : verified ? null : (
         <Text testID="signed-claim" style={styles.signedBody}>
-          {t.signedClaim(signerNames(status.block))}
+          {t.signedClaim(signerNames(status.block).map(shownName))}
         </Text>
       )}
       <Text style={styles.signedBody}>{m.expires ? t.signedUntil(m.expires) + ' ' + t.signedBody : t.signedBody}</Text>
+      {outside > 0 ? (
+        <Text testID="signed-outside" style={styles.warning}>
+          {t.signedOutside(outside)}
+        </Text>
+      ) : null}
       {status.changed.length > 0 ? (
         <Text testID="signed-changed" style={styles.warning}>
           {t.signedChanged(status.changed.length)}

@@ -17,15 +17,26 @@
   runbooks in a `runbooks/` folder (a read-only volume or files built into an image; nginx lists it
   as JSON, or an `index.json` names titles and folders), and every user sees them under **Team
   runbooks**, grouped by subfolder. Opening one makes the user's own copy; when the file on the
-  server changes, the copy offers **Update** (outputs of unchanged blocks kept, asks first when
-  some would be lost, or when the signature is dropped or from another signer) or **Keep mine**.
-  Each runbook shows its signature: **Signed by …, verified** (checked in the app against signers
-  the user trusts), **Signed, unknown signer**, **Not signed**, **Changed since signing**. A
-  library's `allowed_signers` is offered under **Trust these signers**, with names and
-  fingerprints, never trusted silently; `"signedOnly": true` lists unsigned runbooks as not
-  openable. The phones use a library at the address set under **Hosts & settings → Team library**,
-  or added with a `mdrunbook://library?url=…` link or its QR code (**Share library**). GitHub Pages
-  publishes `apps/mobile/public/runbooks/` with a generated index.json.
+  server changes, the copy offers **Update** (the new version's signature checked again; outputs
+  of unchanged blocks kept; asks first when some would be lost, or when the signature is dropped,
+  from another signer, partly covering, expired or of an older version) or **Keep mine**. Each
+  runbook shows its signature, the same in the list and in the opened copy: **Signed by …: these
+  steps verified** (checked in the app against signers the user trusts for that library; the
+  prose is not signed, so the label doesn't claim it), **Partly signed** (PowerShell or cmd blocks
+  outside the signature), **Signed, unknown signer**, **Not signed**, **Changed since signing**,
+  with the signed name and version, and flags for a name that is not the file's, a version older
+  than one seen before and an expired signature. A library's `allowed_signers` is offered under
+  **Trust these signers**, with names, what a pattern lets a key sign as, and fingerprints, never
+  trusted silently; trust counts for that library only, keys it stops publishing stop counting, and
+  **Hosts & settings → Team library → Trusted signers** lists them with **Remove**.
+  `"signedOnly": true` opens verified runbooks only, and stays on in the app if index.json stops
+  asking, until the user agrees. Addresses with a user name, backslashes or blanks are refused, and
+  the parsed address is the one stored, read and shown; files over 2 MB are cut off while they
+  arrive, and redirects to another server refused. The phones use a library at the address set
+  under **Hosts & settings → Team library**, or added with a `mdrunbook://library?url=…` link or its
+  QR code (**Share library**). The web container serves the folder without its hidden files and
+  without links to other owners' files; the folder is public to anyone who reaches the app. GitHub
+  Pages publishes `apps/mobile/public/runbooks/` with a generated index.json.
 - **Failure triage:** a failed step's cell and Steps row offer **Explain** and **Suggest a Fix** (the
   assistant proposes a corrected command or a check, added after the step as a proposal to approve),
   and the new `on-failure="Rollback"` option offers the step with that name. The error line under

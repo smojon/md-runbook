@@ -24,7 +24,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { flushRunbooks, getRunbook, loadRunbooks, resetRunbooks, updateRunbookText } from '../runbooks/store';
 import { resetSettings, setLibraryUrl } from '../settings/store';
 import { signRunbook, signPlan } from '../signing/sign';
-import { parseAllowedSigners, resetTrustedSigners, signatureState, trustSigners, trustedSigners, untrustSigners } from '../signing/trust';
+import {
+  parseAllowedSigners,
+  resetTrustedSigners,
+  signatureState,
+  trustSigners,
+  trustedFor,
+  trustedSigners,
+  untrustSigners,
+} from '../signing/trust';
 import { keyFingerprint, verifySshsig } from '../signing/verify';
 import { textHash } from '../runbooks/origin';
 
@@ -143,8 +151,8 @@ describe('reading a library', () => {
       { path: 'r.md', title: 'Given title', text: RUNBOOK },
       { path: 'gone.md', title: 'gone', error: 'HTTP 404' },
     ]);
-    // No listing there: allowed_signers is asked for anyway (404: none).
-    expect(got.library.signers).toBeUndefined();
+    // No listing there: allowed_signers is asked for anyway (404: it publishes none).
+    expect(got.library.signers).toEqual({ list: [], skipped: 0 });
   });
 
   it('no library (404, a listing that is not JSON) is none; a server error says so', async () => {
@@ -292,22 +300,33 @@ describe('signatures in the library', () => {
 
   it('verified with a trusted key; unknown signer when untrusted; another key under a trusted name does not check out', async () => {
     const text = await signed(RUNBOOK, 'alice@example.net', alice);
-    expect(await signatureState(text)).toEqual({ kind: 'unknown', signers: ['alice@example.net'] });
+    const keys = () => trustedFor(BASE);
+    expect(await signatureState(text, keys())).toEqual({
+      kind: 'unknown',
+      signers: ['alice@example.net'],
+      manifest: { name: 'restart', version: 1, scopes: [] },
+    });
     const list = parseAllowedSigners(await line(alice, 'alice@example.net')).signers;
     trustSigners(list, BASE);
     expect(trustedSigners()).toHaveLength(1);
-    expect(await signatureState(text)).toEqual({ kind: 'verified', signers: ['alice@example.net'] });
+    expect(await signatureState(text, keys())).toEqual({
+      kind: 'verified',
+      signers: ['alice@example.net'],
+      manifest: { name: 'restart', version: 1, scopes: [] },
+      verified: [{ name: 'alice@example.net', fingerprint: list[0]!.fingerprint, wildcard: false }],
+      coverage: 'partial',
+    });
     // Bob signs as alice: the name is trusted, the key is not hers.
     const forged = await signed(RUNBOOK, 'alice@example.net', bob);
-    expect(await signatureState(forged)).toEqual({ kind: 'invalid', signers: ['alice@example.net'] });
+    expect(await signatureState(forged, keys())).toEqual({ kind: 'invalid', signers: ['alice@example.net'] });
     // A changed block, and no signature at all.
-    expect(await signatureState(text.replace('systemctl status api', 'rm -rf /'))).toEqual({
+    expect(await signatureState(text.replace('systemctl status api', 'rm -rf /'), keys())).toEqual({
       kind: 'changed',
       signers: ['alice@example.net'],
     });
-    expect(await signatureState(RUNBOOK)).toEqual({ kind: 'unsigned' });
-    untrustSigners(list);
-    expect(await signatureState(text)).toMatchObject({ kind: 'unknown' });
+    expect(await signatureState(RUNBOOK, keys())).toEqual({ kind: 'unsigned' });
+    untrustSigners(list, BASE);
+    expect(await signatureState(text, keys())).toMatchObject({ kind: 'unknown' });
   });
 
   it('a trusted key past its valid-before is not trusted any more', async () => {
@@ -364,13 +383,19 @@ describe('signatures in the library', () => {
     const library: Library = { base: BASE, signedOnly: true, entries: [] };
     expect(openableReason(library, e(RUNBOOK, 'u.md'), { kind: 'unsigned' })).toMatch(/not signed/);
     expect(openableReason(library, e(good, 'c.md'), { kind: 'changed', signers: ['alice@example.net'] })).toMatch(/changed since signing/);
-    expect(openableReason(library, e(good, 's.md'), { kind: 'unknown', signers: ['alice@example.net'] })).toBeUndefined();
-    expect(openableReason({ signedOnly: false }, e(RUNBOOK, 'u.md'), { kind: 'unsigned' })).toBeUndefined();
+    const manifest = { name: 'restart', version: 1, scopes: [] };
+    // Signed and unchanged is not enough: no signer trusted for this library, not openable.
+    expect(openableReason(library, e(good, 's.md'), { kind: 'unknown', signers: ['alice@example.net'], manifest })).toMatch(
+      /trust its signers first/,
+    );
+    expect(openableReason({ base: BASE, signedOnly: false }, e(RUNBOOK, 'u.md'), { kind: 'unsigned' })).toBeUndefined();
     // Opening checks again (not only the list).
     expect(await openLibraryRunbook(library, e(RUNBOOK, 'u.md'))).toMatchObject({
       kind: 'error',
       message: expect.stringMatching(/not signed/),
     });
+    expect(await openLibraryRunbook(library, e(good, 's.md'))).toMatchObject({ kind: 'error', message: expect.stringMatching(/trust/) });
+    trustSigners(parseAllowedSigners(await allowedSignersLine(alice, 'alice@example.net')).signers, BASE);
     expect(await openLibraryRunbook(library, e(good, 's.md'))).toMatchObject({ kind: 'opened' });
   });
 
@@ -386,17 +411,29 @@ describe('signatures in the library', () => {
     ]);
     const bobV2 = await signed(RUNBOOK + '\nv2\n', 'bob@example.net', bob);
     expect(
-      planUpdate(copy, { ...e1, text: bobV2, hash: textHash(bobV2) }, { kind: 'unknown', signers: ['bob@example.net'] }).warnings,
+      planUpdate(
+        copy,
+        { ...e1, text: bobV2, hash: textHash(bobV2) },
+        { kind: 'unknown', signers: ['bob@example.net'], manifest: { name: 'restart', version: 1, scopes: [] } },
+      ).warnings,
     ).toEqual([{ kind: 'other-signer', was: 'alice@example.net', now: 'bob@example.net' }]);
     // Same name, another key.
     const sameName = await signed(RUNBOOK + '\nv2\n', 'alice@example.net', bob);
     expect(
-      planUpdate(copy, { ...e1, text: sameName, hash: textHash(sameName) }, { kind: 'unknown', signers: ['alice@example.net'] }).warnings,
+      planUpdate(
+        copy,
+        { ...e1, text: sameName, hash: textHash(sameName) },
+        { kind: 'unknown', signers: ['alice@example.net'], manifest: { name: 'restart', version: 1, scopes: [] } },
+      ).warnings,
     ).toEqual([{ kind: 'other-signer', was: 'alice@example.net', now: 'alice@example.net' }]);
     // Re-signed by alice: nothing to flag.
     const aliceV2 = await signed(RUNBOOK + '\nv2\n', 'alice@example.net', alice);
     expect(
-      planUpdate(copy, { ...e1, text: aliceV2, hash: textHash(aliceV2) }, { kind: 'unknown', signers: ['alice@example.net'] }).warnings,
+      planUpdate(
+        copy,
+        { ...e1, text: aliceV2, hash: textHash(aliceV2) },
+        { kind: 'unknown', signers: ['alice@example.net'], manifest: { name: 'restart', version: 1, scopes: [] } },
+      ).warnings,
     ).toEqual([]);
   });
 });
@@ -414,7 +451,7 @@ describe('the library the list shows', () => {
     );
     await refreshLibrary({ fetcher });
     expect(libraryState()).toMatchObject({ base: 'https://runbooks.example.net/team/', status: 'ready' });
-    expect(libraryState().signatures).toEqual({ 'a.md': { kind: 'unsigned' } });
+    expect(libraryState().signatures).toEqual({ [textHash(RUNBOOK)]: { kind: 'unsigned' } });
     const n = seen.length;
     await refreshLibrary({ fetcher });
     expect(seen.length).toBe(n);
