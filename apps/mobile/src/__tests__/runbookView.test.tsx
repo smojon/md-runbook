@@ -58,7 +58,10 @@ describe('Run all / Continue (the one-tap action)', () => {
   it('the rail on the left: a tick per step in its state, filled down to the run', async () => {
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
     script([{ stdout: 'one\n' }, { stderr: 'boom\n', exitCode: 1 }]);
-    const r = addRunbook('rail.md', '# Rail\n\n```bash\necho one\n```\n\n```bash\necho two\n```\n\n## Clean up\n\n```bash\necho three\n```\n');
+    const r = addRunbook(
+      'rail.md',
+      '# Rail\n\n```bash\necho one\n```\n\n```bash\necho two\n```\n\n## Clean up\n\n```bash\necho three\n```\n',
+    );
     await render(<RunbookView id={r.id} />);
     expect(screen.getByTestId('progress-rail')).toHaveProp('accessibilityLabel', '0 of 3 steps done');
     // A crossbar per chapter: a tap names it beside the rail (and goes there).
