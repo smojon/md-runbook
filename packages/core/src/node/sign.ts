@@ -53,6 +53,8 @@ export interface SignOptions {
    * waiting; such keys sign through the agent (`key` = the .pub file).
    */
   interactive?: boolean;
+  /** The signature's namespace: a runbook's (`md-runbook`, the default) or a run summary's (`md-runbook-run`). */
+  namespace?: string;
 }
 
 /** Sign `manifest` with `key` (a private key file, or a public one whose key is in the agent); the SSHSIG blob, base64. */
@@ -61,7 +63,7 @@ export async function sshSign(manifest: string, key: string, opts: SignOptions =
   try {
     const file = path.join(dir, 'manifest');
     fs.writeFileSync(file, manifest, 'utf8');
-    const r = await run(opts.sshKeygen ?? 'ssh-keygen', ['-Y', 'sign', '-q', '-f', key, '-n', SIGNATURE_NAMESPACE, file], opts.interactive === false ? '' : 'inherit');
+    const r = await run(opts.sshKeygen ?? 'ssh-keygen', ['-Y', 'sign', '-q', '-f', key, '-n', opts.namespace ?? SIGNATURE_NAMESPACE, file], opts.interactive === false ? '' : 'inherit');
     if (r.code !== 0 || !fs.existsSync(file + '.sig')) throw new Error(`ssh-keygen could not sign: ${r.stderr.trim() || `exit ${r.code}`}`);
     return unarmorSignature(fs.readFileSync(file + '.sig', 'utf8'));
   } finally {
@@ -73,7 +75,7 @@ export async function sshSign(manifest: string, key: string, opts: SignOptions =
  * Check a signature against an `allowed_signers` file, as md-runbook-gate does: the principal
  * whose key made it, or an error saying why not.
  */
-export async function sshVerify(manifest: string, signature: string, allowedSigners: string, sshKeygen = 'ssh-keygen'): Promise<string> {
+export async function sshVerify(manifest: string, signature: string, allowedSigners: string, sshKeygen = 'ssh-keygen', namespace = SIGNATURE_NAMESPACE): Promise<string> {
   const dir = tempDir();
   try {
     const sig = path.join(dir, 'manifest.sig');
@@ -84,7 +86,7 @@ export async function sshVerify(manifest: string, signature: string, allowedSign
     if (principals.length === 0) throw new Error(`no key in ${allowedSigners} made this signature`);
     let why = '';
     for (const p of principals) {
-      const r = await run(sshKeygen, ['-Y', 'verify', '-f', allowedSigners, '-I', p, '-n', SIGNATURE_NAMESPACE, '-s', sig], manifest);
+      const r = await run(sshKeygen, ['-Y', 'verify', '-f', allowedSigners, '-I', p, '-n', namespace, '-s', sig], manifest);
       if (r.code === 0) return p;
       why = (r.stderr || r.stdout).trim();
     }

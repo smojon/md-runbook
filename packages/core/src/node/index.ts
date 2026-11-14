@@ -9,5 +9,6 @@ export { RegQuery, expandWindowsVars, freshenPath, mergePath, parseRegQuery, reg
 export { gitBashCandidates, pwshWrapper, resolveShell } from './shell';
 export { KubeconfigPins, NO_PATH_CONVERSION, RunbookEnvOptions, runbookEnv, userKubeconfig, withRunbookEnv } from './runbookEnv';
 export { SignOptions, checkSignedSteps, keyComment, manifestHash, sshSign, sshVerify } from './sign';
+export { signRunSummary, trustedRunbookSigner, verifyRunEnvelope } from './runReport';
 export { MAX_TRANSCRIPT_BYTES, TranscriptFile } from './transcript';
 export { callEstimateSeconds, callTarget, fileSha256, matchRunbooks, recordValues, relativeToCaller, runbookReader, samePath, writeCallCopy } from './call';

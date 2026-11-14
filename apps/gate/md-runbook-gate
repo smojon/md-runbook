@@ -283,6 +283,8 @@ do_load() {
     refuse "$rid" "the manifest is not base64"
     return
   }
+  # Version 2 manifests keep this header: their `text` item (a hash of the whole runbook, for
+  # clients) is read by no one here, as items are read by key.
   [ "$(head -n 1 "$work/manifest")" = 'md-runbook-manifest 1' ] || {
     refuse "$rid" "not an md-runbook manifest, or a newer version than this gate reads"
     return

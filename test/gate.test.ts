@@ -168,6 +168,22 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.match(log, /"event":"end".*"exit":0/);
   });
 
+  it('runs version 2 manifests (the whole text signed) and version 1 ones, signed before', async () => {
+    for (const version of [2, 1] as const) {
+      const g = start();
+      await g.hello();
+      const r = buildManifest(RUNBOOK, meta({ patterns: PATTERNS }), { version });
+      if ('errors' in r) throw new Error(r.errors.join('; '));
+      const manifest = formatManifest(r.manifest);
+      assert.equal(/^text [0-9a-f]{64}$/m.test(manifest), version === 2);
+      const load = await g.request('load', toBase64(manifest), await sshSign(manifest, key));
+      assert.equal(load.code, 0, load.err);
+      const one = await g.request('run', '1');
+      assert.deepEqual([one.code, one.out], [0, 'one kept\n']);
+      await g.close();
+    }
+  });
+
   it('refuses a changed manifest, a stranger\'s signature and unsigned text (by default)', async () => {
     const g = start();
     await g.hello();
