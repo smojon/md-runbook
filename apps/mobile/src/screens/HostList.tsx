@@ -5,7 +5,8 @@ import { FlatList, Linking, Platform, Pressable, StyleSheet, Text, TextInput, Vi
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
-import { KeyStorage, appAllowedSignersLine, appKeyInfo, appPublicKeyLine, setKeyNeedsUser } from '../ssh/appKey';
+import { KeyStorage, appAllowedRunnersLine, appAllowedSignersLine, appKeyInfo, appPublicKeyLine, setKeyNeedsUser } from '../ssh/appKey';
+import { forgetConsent, loadConsents, useConsents } from '../reports/send';
 import { passkeysAvailable } from '../ssh/passkey';
 import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import {
@@ -14,6 +15,8 @@ import {
   setOutputSetting,
   setSignerName,
   setNotifyRuns,
+  setReportAddresses,
+  setTrustedSigners,
   useHistorySize,
   useOutputSettings,
   useSignerName,
@@ -99,6 +102,7 @@ export function HostList() {
           )}
           <AppKeySection />
           <SigningSection />
+          <ReportsSection />
           <SecretsSection />
           <HistorySection />
           <ColorSection />
@@ -263,7 +267,9 @@ function SigningSection() {
   const [typed, setName] = useState<string | undefined>();
   const name = typed ?? saved;
   const [line, setLine] = useState<string | undefined>();
+  const [runnersLine, setRunnersLine] = useState<string | undefined>();
   const [copied, setCopied] = useState(false);
+  const [copiedRunners, setCopiedRunners] = useState(false);
   // Only a name allowed_signers reads as written gets a line (and is saved).
   const principal = SIGNER_NAME_RE.test(name.trim()) ? name.trim() : undefined;
   useEffect(() => {
@@ -276,16 +282,29 @@ function SigningSection() {
         (l) => live && setLine(l),
         () => live && setLine(undefined),
       );
+    // The same key, for the run reports it signs (namespace md-runbook-run).
+    Promise.resolve()
+      .then(() => appAllowedRunnersLine(principal))
+      .then(
+        (l) => live && setRunnersLine(l),
+        () => live && setRunnersLine(undefined),
+      );
     return () => {
       live = false;
     };
   }, [principal]);
   // A line made for an earlier, valid name isn't shown for an invalid one.
   const shown = principal === undefined ? undefined : line;
+  const shownRunners = principal === undefined ? undefined : runnersLine;
   const copy = async (): Promise<void> => {
     if (!shown) return;
     await Clipboard.setStringAsync(shown);
     setCopied(true);
+  };
+  const copyRunners = async (): Promise<void> => {
+    if (!shownRunners) return;
+    await Clipboard.setStringAsync(shownRunners);
+    setCopiedRunners(true);
   };
   return (
     <View testID="signing" style={styles.section}>
@@ -299,6 +318,7 @@ function SigningSection() {
         onChangeText={(v) => {
           setName(v);
           setCopied(false);
+          setCopiedRunners(false);
         }}
         onEndEditing={() => principal !== undefined && setSignerName(principal)}
         onBlur={() => principal !== undefined && setSignerName(principal)}
@@ -325,6 +345,79 @@ function SigningSection() {
       >
         <Text style={styles.buttonText}>{copied ? t.copied : t.copy}</Text>
       </Pressable>
+      <Text style={styles.help}>{t.allowedRunnersHelp}</Text>
+      <Text testID="allowed-runners-line" style={styles.key} selectable>
+        {shownRunners ?? (principal === undefined ? t.signerNameFirst : t.appKeyLoading)}
+      </Text>
+      <Pressable
+        testID="copy-allowed-runners"
+        accessibilityRole="button"
+        disabled={!shownRunners}
+        onPress={() => void copyRunners()}
+        style={[styles.button, !shownRunners && styles.disabled]}
+      >
+        <Text style={styles.buttonText}>{copiedRunners ? t.copied : t.copy}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+/**
+ * Run reports (report-runs: in a runbook): the addresses allowed without asking, the signers whose
+ * signed runbooks may require reporting, and the answers given so far (each can be forgotten).
+ */
+function ReportsSection() {
+  const styles = useStyles();
+  const colors = usePalette();
+  const s = useOutputSettings();
+  const consents = useConsents();
+  useEffect(() => void loadConsents(), []);
+  // What is typed, until it is saved (on leaving the field).
+  const [addresses, setAddresses] = useState<string | undefined>();
+  const [signers, setSigners] = useState<string | undefined>();
+  return (
+    <View testID="reports-setting" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.reportsTitle}</Text>
+      <Text style={styles.help}>{t.reportsHelp}</Text>
+      <Text style={styles.label}>{t.reportAddresses}</Text>
+      <Text style={styles.help}>{t.reportAddressesHelp}</Text>
+      <TextInput
+        testID="report-addresses"
+        style={styles.input}
+        value={addresses ?? s.reportAddresses.join('\n')}
+        onChangeText={setAddresses}
+        onEndEditing={() => addresses !== undefined && setReportAddresses(addresses)}
+        onBlur={() => addresses !== undefined && setReportAddresses(addresses)}
+        placeholder={t.reportAddressesPlaceholder}
+        placeholderTextColor={colors.placeholder}
+        autoCapitalize="none"
+        autoCorrect={false}
+        multiline
+      />
+      <Text style={styles.label}>{t.reportTrustedSigners}</Text>
+      <Text style={styles.help}>{t.reportTrustedSignersHelp}</Text>
+      <TextInput
+        testID="report-trusted-signers"
+        style={[styles.input, styles.secretName]}
+        value={signers ?? s.trustedSigners}
+        onChangeText={setSigners}
+        onEndEditing={() => signers !== undefined && setTrustedSigners(signers)}
+        onBlur={() => signers !== undefined && setTrustedSigners(signers)}
+        placeholder={t.trustedSignersPlaceholder}
+        placeholderTextColor={colors.placeholder}
+        autoCapitalize="none"
+        autoCorrect={false}
+        multiline
+      />
+      {Object.keys(consents).length > 0 ? <Text style={styles.label}>{t.reportAnswers}</Text> : null}
+      {Object.entries(consents).map(([key, answer]) => (
+        <View key={key} style={styles.secretRow}>
+          <Text style={[styles.help, styles.switchText]}>{answer === 'allow' ? t.reportAnswerAllow(key) : t.reportAnswerNever(key)}</Text>
+          <Pressable testID={`forget-report-${key}`} accessibilityRole="button" onPress={() => void forgetConsent(key)}>
+            <Text style={styles.link}>{t.forgetReportAnswer}</Text>
+          </Pressable>
+        </View>
+      ))}
     </View>
   );
 }

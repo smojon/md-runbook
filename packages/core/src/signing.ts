@@ -9,6 +9,14 @@
  * inside the file, base64 in an HTML comment at the end, next to the SSH signature (SSHSIG,
  * `ssh-keygen -Y sign -n md-runbook`). Clients compare the file's cells with it to show which
  * cells are signed.
+ *
+ * Manifest version 2 also signs the whole text: a `text` item holds the SHA-256 of the runbook as
+ * reviewed (signedText: without the signature block, stored outputs, notes and ticked boxes), so
+ * clients can tell "the whole runbook is as signed" (prose, front matter, checklists, PowerShell
+ * blocks) from "its bash blocks are". The header line stays `md-runbook-manifest 1`: gates
+ * installed before read items by key and ignore `text`, so they run v2 manifests unchanged. A
+ * manifest without `text` is version 1 (signed before), and still verifies: only its blocks are
+ * signed.
  */
 
 import { callRefs, isCallLanguage, parseCall } from './call';
@@ -17,9 +25,11 @@ import { FenceOpen, isFenceClose, langOf, matchFenceOpen } from './fence';
 import { kubeContextParam } from './kubeContext';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
-import { VAR_NAME_RE, findRefs, parseFrontMatter, rewriteRefs } from './secrets';
+import { VAR_NAME_RE, findRefs, parseFrontMatter, reportAddressProblem, rewriteRefs } from './secrets';
+import { sha256Hex } from './sha256';
 import { shellKindForLanguage } from './shellKind';
 import { splitSteps } from './steps';
+import { clearOutputBlocks } from './writer';
 
 /** The `-n` namespace of every md-runbook signature: a signature for anything else doesn't verify. */
 export const SIGNATURE_NAMESPACE = 'md-runbook';
@@ -92,7 +102,52 @@ export interface ManifestCall {
 export interface Manifest extends ManifestMeta {
   cells: ManifestCell[];
   calls: ManifestCall[];
+  /**
+   * Version 2: SHA-256 (hex) of the whole runbook as signed (signedText). Absent in a version 1
+   * manifest, which signs only the bash/sh blocks and runbook calls.
+   */
+  text?: string;
 }
+
+/** 2 when the manifest signs the whole text, 1 when only its blocks and calls. */
+export const manifestVersion = (m: Pick<Manifest, 'text'>): 1 | 2 => (m.text !== undefined ? 2 : 1);
+
+const RECORD_BLOCK_RE = /^<!-- md-runbook:record-signature v1 [^\n]*\n(?:[^\n]*\n)*?-->[ \t]*(?:\n|$)/gm;
+const NOTE_BLOCK_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b.*?-->[ \t]*\n(?:[ \t]*>.*(?:\n|$))*/gm;
+const TASK_BOX_RE = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[)[xX](\](?=[ \t]|$))/;
+
+/**
+ * The text a version 2 signature covers: line endings as LF, no BOM, and without what running the
+ * runbook adds: its signature block, a run record's signature, stored outputs (with their
+ * history), notes (Add Note) and ticks in checklists. Trailing blank lines don't count.
+ */
+export function signedText(text: string): string {
+  let t = withoutSignature(text.replace(/^\uFEFF/, '')).replace(/\r\n?/g, '\n');
+  t = t.replace(RECORD_BLOCK_RE, '');
+  t = clearOutputBlocks(t);
+  t = t.replace(NOTE_BLOCK_RE, '');
+  // Ticks, outside code blocks.
+  let open: FenceOpen | null = null;
+  t = t
+    .split('\n')
+    .map((line) => {
+      if (open) {
+        if (isFenceClose(line, open)) open = null;
+        return line;
+      }
+      const f = matchFenceOpen(line);
+      if (f) {
+        open = f;
+        return line;
+      }
+      return line.replace(TASK_BOX_RE, '$1 $2');
+    })
+    .join('\n');
+  return t.replace(/\s+$/, '') + '\n';
+}
+
+/** SHA-256 (hex) of signedText: the `text` item of a version 2 manifest. */
+export const signedTextHash = (text: string): string => sha256Hex(signedText(text));
 
 // ---- base64 of UTF-8 text, without Buffer (the app's runtimes have none) ----
 
@@ -180,8 +235,11 @@ function hiddenFences(text: string): string[] {
   return problems;
 }
 
-/** The manifest of a runbook, or the reasons it can't be signed (each names the cell). */
-export function buildManifest(text: string, meta: ManifestMeta): { manifest: Manifest } | { errors: string[] } {
+/**
+ * The manifest of a runbook, or the reasons it can't be signed (each names the cell). Version 2
+ * (the whole text signed) unless `version: 1` (co-signing a manifest signed before).
+ */
+export function buildManifest(text: string, meta: ManifestMeta, opts: { version?: 1 | 2 } = {}): { manifest: Manifest } | { errors: string[] } {
   const errors: string[] = [];
   if (!RUNBOOK_NAME_RE.test(meta.name)) errors.push(`name "${meta.name}": use letters, digits and . _ / - (at most 100)`);
   if (!Number.isInteger(meta.version) || meta.version < 1) errors.push(`version ${meta.version}: expected a positive whole number`);
@@ -199,6 +257,8 @@ export function buildManifest(text: string, meta: ManifestMeta): { manifest: Man
   // Servers run signed cells in bash (md-runbook-gate), and the front matter isn't signed.
   const unix = parseFrontMatter(text)?.shell?.unix;
   if (unix && unix !== 'bash') errors.push(`front matter shell: ${unix}: servers run signed runbooks in bash; remove it, or write shell: bash`);
+  // A signature can make reporting required (runReport.ts): its settings must read as written.
+  errors.push(...reportSigningErrors(text));
   // capture-secret= values reach the gate as parameters too, and the gate logs every parameter
   // value: a signed cell can't use them.
   const secretCaptures = new Set<string>();
@@ -278,7 +338,38 @@ export function buildManifest(text: string, meta: ManifestMeta): { manifest: Man
   // Only the patterns the cells and calls use.
   const used = new Set([...cells.flatMap((c) => c.needs), ...calls.flatMap((c) => c.needs)]);
   const patterns = Object.fromEntries(Object.entries(meta.patterns).filter(([k]) => used.has(k)));
-  return { manifest: { ...meta, scopes: [...new Set(meta.scopes)], patterns, cells, calls } };
+  const whole = opts.version === 1 ? {} : { text: signedTextHash(text) };
+  return { manifest: { ...meta, scopes: [...new Set(meta.scopes)], patterns, cells, calls, ...whole } };
+}
+
+/** Run report lines of the front matter (runReport.ts) that can't be signed as written. */
+export function reportSigningErrors(text: string): string[] {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  if (lines[0]?.trimEnd() !== '---') return [];
+  const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));
+  if (end < 0) return [];
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  let wants = false;
+  for (const line of lines.slice(1, end)) {
+    const m = /^(report-runs(?:-required|-signed|-token)?)\s*:\s*(.*?)\s*$/i.exec(line);
+    if (!m) continue;
+    const key = m[1]!.toLowerCase();
+    const value = m[2]!.replace(/\s+#.*$/, '').replace(/^(["'])(.*)\1$/, '$2');
+    if (seen.has(key)) errors.push(`front matter ${key}: written twice (keep one)`);
+    seen.add(key);
+    if (key === 'report-runs') {
+      const why = reportAddressProblem(value);
+      if (why) errors.push(`front matter report-runs: ${why}`);
+    } else if (key === 'report-runs-token') {
+      if (!/^\$\{secret:[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)) errors.push('front matter report-runs-token: only ${secret:NAME}, never a token in the file');
+    } else {
+      if (!/^(true|false|yes|no|on|off)$/i.test(value)) errors.push(`front matter ${key}: expected true or false`);
+      if (/^(true|yes|on)$/i.test(value)) wants = true;
+    }
+  }
+  if (!seen.has('report-runs') && (wants || seen.has('report-runs-token'))) errors.push('front matter report-runs-required, -signed or -token without report-runs: (the address)');
+  return errors;
 }
 
 /** The manifest as signed: one item per line, values that could hold anything in base64. */
@@ -286,6 +377,8 @@ export function formatManifest(m: Manifest): string {
   const lines = [MANIFEST_HEADER, `name ${m.name}`, `version ${m.version}`];
   if (m.expires) lines.push(`expires ${m.expires}`);
   if (m.scopes.length > 0) lines.push(`scope ${m.scopes.join(' ')}`);
+  // Version 2. A key of its own: md-runbook-gate reads items by key and doesn't use it.
+  if (m.text !== undefined) lines.push(`text ${m.text}`);
   for (const [name, re] of Object.entries(m.patterns)) lines.push(`param ${name} ${toBase64(re)}`);
   for (const c of m.cells) {
     lines.push(`cell ${c.n} ${c.lines}`, `info ${toBase64(c.info)}`, `code ${toBase64(c.code)}`);
@@ -344,6 +437,10 @@ export function parseManifest(text: string): Manifest {
         break;
       case 'scope':
         m.scopes = line.split(' ').slice(1);
+        break;
+      case 'text':
+        if (!a || !/^[0-9a-f]{64}$/.test(a) || b !== undefined || m.text !== undefined) throw new Error('manifest: bad text');
+        m.text = a;
         break;
       case 'param':
         m.patterns[a ?? ''] = b64(b, 'pattern');
@@ -426,7 +523,12 @@ const COSIGN_RE = /cosign signer=(\S+) signed=(\d{4}-\d{2}-\d{2})\r?\n([A-Za-z0-
 const wrap = (b64: string): string => b64.replace(/.{1,76}/g, '$&\n').trimEnd();
 
 /** A signer name as the block can hold it: one word, nothing that would end the HTML comment (`--`, `>`). */
-export const signerLabel = (name: string): string => name.replace(/[^\w@.+-]+/g, '_').replace(/-{2,}/g, '-') || 'unknown';
+export const signerLabel = (name: string): string =>
+  name
+    .replace(/[^A-Za-z0-9_@.+-]+/g, '_')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+/, '')
+    .slice(0, 100) || 'unknown';
 
 /**
  * A signer name that is the same in the signature block and as a principal in a server's
@@ -471,9 +573,12 @@ function findBlock(text: string): RegExpExecArray | undefined {
 export function readSignature(text: string): SignatureBlock | undefined {
   const m = findBlock(text);
   if (!m) return undefined;
+  // A name allowed_signers would read differently (a pattern, a list) is no signer's name.
+  if (!SIGNER_NAME_RE.test(m[1]!)) return undefined;
   const manifest = fromBase64(m[3]!.replace(/\s+/g, ''));
   if (manifest === undefined) return undefined;
   const cosigners = [...(m[5] ?? '').trim().matchAll(COSIGN_RE)].map((c) => ({ signer: c[1]!, signed: c[2]!, signature: c[3]!.replace(/\s+/g, '') }));
+  if (cosigners.some((c) => !SIGNER_NAME_RE.test(c.signer))) return undefined;
   return { signer: m[1]!, signed: m[2]!, manifest, signature: m[4]!.replace(/\s+/g, ''), ...(cosigners.length ? { cosigners } : {}) };
 }
 
@@ -488,7 +593,8 @@ export function cosignable(text: string, block: SignatureBlock): boolean {
   } catch {
     return false;
   }
-  const built = buildManifest(text, { name: m.name, version: m.version, ...(m.expires ? { expires: m.expires } : {}), scopes: m.scopes, patterns: m.patterns });
+  // A version 1 manifest is co-signed as version 1 (co-signing never changes what was signed).
+  const built = buildManifest(text, { name: m.name, version: m.version, ...(m.expires ? { expires: m.expires } : {}), scopes: m.scopes, patterns: m.patterns }, { version: manifestVersion(m) });
   return !('errors' in built) && formatManifest(built.manifest) === block.manifest;
 }
 
@@ -558,7 +664,23 @@ export interface SignedStatus {
   calls: Map<number, ManifestCall>;
   /** Manifest numbers of signed calls no longer in the file as signed. */
   missingCalls: number[];
+  /**
+   * 2: the signature covers the whole runbook (prose, front matter, every block); 1: only its
+   * bash/sh blocks and runbook calls ("partly signed": signed before manifest version 2).
+   */
+  version: 1 | 2;
+  /** Version 2 only: the text changed since signing (outside outputs, notes and ticks). Always false for version 1. */
+  textChanged: boolean;
+  /**
+   * Indexes of runnable cells a version 1 signature doesn't cover and never could (PowerShell,
+   * cmd): in a "partly signed" runbook they are not signed. Version 2: in `changed` when added.
+   */
+  unsigned: number[];
 }
+
+/** The text and every block are as signed (version 2), nothing moved or missing. */
+export const wholeRunbookSigned = (s: SignedStatus): boolean =>
+  s.version === 2 && !s.textChanged && s.changed.length === 0 && s.missing.length === 0 && s.moved.length === 0 && s.missingCalls.length === 0 && s.unsigned.length === 0;
 
 /**
  * Compare the file's cells with its signed manifest. A cell is signed when its info string and
@@ -581,7 +703,15 @@ export function signedStatus(text: string): SignedStatus | undefined {
   let highest = 0;
   for (const c of bashCells(text)) {
     const code = rewriteRefs(c.value, 'bash');
-    const k = free.findIndex((m) => m.info === c.info && m.code === code);
+    // The same code with other placeholders (${X} made ${input:X}) is not the cell signed.
+    let names: string[] | undefined;
+    try {
+      names = findRefs(c.value).map((r) => r.name);
+    } catch {
+      names = undefined;
+    }
+    const sameNeeds = (m: ManifestCell): boolean => !!names && names.length === m.needs.length && names.every((n) => m.needs.includes(n));
+    const k = free.findIndex((m) => m.info === c.info && m.code === code && sameNeeds(m));
     if (k < 0) {
       changed.push(c.index);
       continue;
@@ -599,7 +729,29 @@ export function signedStatus(text: string): SignedStatus | undefined {
     if (k < 0) changed.push(c.index);
     else calls.set(c.index, freeCalls.splice(k, 1)[0]!);
   }
-  return { block, manifest, cells, changed: changed.sort((a, b) => a - b), missing: free.map((m) => m.n), moved, calls, missingCalls: freeCalls.map((m) => m.n) };
+  // Other runnable blocks (PowerShell, cmd): never in a manifest. With the whole text signed
+  // (version 2) adding one changes the text; a version 1 signature never covered them.
+  const version = manifestVersion(manifest);
+  const textChanged = version === 2 && signedTextHash(text) !== manifest.text;
+  const unsigned: number[] = [];
+  parse(text).cells.forEach((cell, index) => {
+    if (cell.kind !== 'code' || !isCodeMeta(cell.meta) || isCallLanguage(cell.languageId)) return;
+    const kind = shellKindForLanguage(cell.languageId);
+    if (kind && kind !== 'bash') unsigned.push(index);
+  });
+  return {
+    block,
+    manifest,
+    cells,
+    changed: changed.sort((a, b) => a - b),
+    missing: free.map((m) => m.n),
+    moved,
+    calls,
+    missingCalls: freeCalls.map((m) => m.n),
+    version,
+    textChanged,
+    unsigned: version === 2 && !textChanged ? [] : unsigned,
+  };
 }
 
 /**

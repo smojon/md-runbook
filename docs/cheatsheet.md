@@ -150,6 +150,7 @@ secret values are redacted from the output.
 | `md-runbook estimate file.md` | How long each section takes, from the blocks' `estimate=` options. |
 | `md-runbook sign file.md --key KEY` | Release a runbook for servers with md-runbook-gate, from your machine or from CI. |
 | `md-runbook verify file.md` | Check what a signature covers and which blocks changed since signing. |
+| `md-runbook verify-run envelope.json --allowed-runners FILE` | On a server: check a signed run report (who ran what), as sent to a runbook's `report-runs:` address. |
 
 Moving a runbook between VS Code and the app:
 [switching](https://github.com/smojon/md-runbook/blob/main/docs/switching.md).

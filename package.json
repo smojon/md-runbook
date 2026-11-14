@@ -1861,6 +1861,16 @@
             "markdownDescription": "Browser that **Export Report (PDF)** prints with: Google Chrome, Microsoft Edge or Chromium (the program file). Empty = the first one found in the usual install locations. User settings only.",
             "scope": "machine",
             "order": 2
+          },
+          "mdRunbook.reports.allowedAddresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "markdownDescription": "Addresses a runbook may report its runs to without asking (`report-runs:` in its front matter): a host (`reports.example.net`), an origin (`https://reports.example.net:8443`) or an address prefix. Elsewhere you are asked once per address: Allow, Not now or Never. A run summary holds the runbook's name and hash, who ran it, when, and each step's label, result and duration; never outputs, values or secrets. User settings only. See [run reports](https://github.com/smojon/md-runbook/blob/main/docs/features/run-reports.md).",
+            "scope": "machine",
+            "order": 3
           }
         }
       },
@@ -2245,8 +2255,15 @@
             "type": "string",
             "default": "",
             "scope": "machine",
-            "markdownDescription": "SSH key for **md-runbook: Sign Runbook**: a key file, or a `.pub` file whose key is in the SSH agent (needed for keys with a passphrase). Empty = ask each time. See [signed runbooks](https://github.com/smojon/md-runbook/blob/main/docs/features/signed-runbooks.md).",
+            "markdownDescription": "SSH key for **md-runbook: Sign Runbook**: a key file, or a `.pub` file whose key is in the SSH agent (needed for keys with a passphrase). Empty = ask each time. Run summaries are signed with it too (namespace `md-runbook-run`), when a runbook reports its runs. See [signed runbooks](https://github.com/smojon/md-runbook/blob/main/docs/features/signed-runbooks.md).",
             "order": 1
+          },
+          "mdRunbook.signing.allowedSigners": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "markdownDescription": "The signers you trust, as an OpenSSH `allowed_signers` file (the one your servers' md-runbook-gate uses). A runbook signed by one of them, and unchanged since signing, can require that its runs are reported (`report-runs-required`, `report-runs-signed`). Empty = no runbook can require it: you are asked instead. Checked with `ssh-keygen -Y verify`. User settings only.",
+            "order": 2
           }
         }
       }

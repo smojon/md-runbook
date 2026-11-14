@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- **Run reports.** With `report-runs: https://…` in a runbook's front matter, VS Code, the app
+  and the command line send that address a short summary at the end of every run.
+  - **What's in it:** which runbook (name, title, hash, signed version), who ran it, where and
+    when, each step's label, result and duration, and which alert the run answered (the `ALERT`,
+    `ALERT_FINGERPRINT` and `ALERT_STARTS_AT` parameters). Never an output, a value or a secret.
+  - **Consent:** you are asked once per address (Allow / Not now / Never), unless
+    `mdRunbook.reports.allowedAddresses`, the app's settings or `--report-to-allowed` allow it.
+  - **Signing:** the summary is signed with your SSH key when one is set (namespace
+    `md-runbook-run`). `md-runbook verify-run ENVELOPE --allowed-runners FILE` checks it.
+  - **Required reports:** `report-runs-required: true` and `report-runs-signed: true` make the
+    report, and its signature, a condition of running. They count only in a runbook signed as a
+    whole by a signer you trust: VS Code's new `mdRunbook.signing.allowedSigners`, the app's
+    trusted signers, or `--allowed-signers`.
+  - **Delivery:** a report that can't be sent is queued and tried again; it never slows a run.
+  - **Limit:** in the end a client can't be forced to report. Enforcement on the server comes
+    next.
+  - See [run reports](docs/features/run-reports.md).
+- **Signed runbooks: the whole runbook is signed (manifest version 2).**
+  - New signatures also cover the text: prose, front matter, checklists, PowerShell and cmd
+    blocks. Outputs, notes and ticked boxes are left out.
+  - Runbooks signed before still verify, and show as **partly signed** (only their bash blocks).
+  - A block now counts as signed only with the placeholders it was signed with: `${X}` turned
+    into `${input:X}` no longer does.
+  - A signer name must be one that allowed_signers can hold.
+  - Gates already installed run the new signatures unchanged.
+  - From the signature review.
+
 - **VS Code: the launch form.** **Run All…** (Run ▾, the Steps view's ⋯) shows, in the Steps view,
   one sheet before a run: the parameters with their descriptions and choices, the inputs, the
   secrets not stored yet (**Set** each), the risky steps with their commands, the steps by hand,

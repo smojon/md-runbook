@@ -654,4 +654,13 @@ describe('runCell: `exit N` in a cell', () => {
     expect(r).toMatchObject({ kind: 'done', attrs: { exit: 'error', check: 'ok', ready: 'down' } });
     expect(r.kind === 'done' && r.summary).toMatch(/^✗ error · ready: not up/);
   });
+
+  it('a declared parameter no cell uses, with an empty default (alert links fill it), neither asks nor blocks', async () => {
+    const text = ['---', 'params:', '  - ALERT:', '  - ALERT_FINGERPRINT: ""', '---', '', '```bash', 'uptime', '```', ''].join('\n');
+    const cellIndex = parse(text).cells.findIndex((c) => c.kind === 'code');
+    const conn = fakeConnection([{ stdout: 'up\n', exitCode: 0 }]);
+    const r = await runCell({ host, text, cellIndex, connection: conn, params: {} });
+    expect(r).toMatchObject({ kind: 'done', attrs: { exit: '0' } });
+    expect(conn.calls[0]?.opts.env).not.toHaveProperty('ALERT');
+  });
 });

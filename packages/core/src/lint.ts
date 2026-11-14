@@ -11,9 +11,9 @@ import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
 import { CodeCellLocation, locateCodeCells } from './locate';
-import { FRONT_MATTER_ENV_ENTRY, findRefs, parseFrontMatter } from './secrets';
+import { FRONT_MATTER_ENV_ENTRY, findRefs, parseFrontMatter, reportAddressProblem } from './secrets';
 import { POWERSHELLS, UNIX_SHELLS, parseShells, shellKindForLanguage } from './shellKind';
-import { signedStatus } from './signing';
+import { readSignature, signedStatus } from './signing';
 import { CALL_OPTIONS, NOT_ON_A_CALL, callRefs, checkCall, isCallLanguage, isDynamicSrc, parseCall, srcGlob } from './call';
 import { partProblems } from './parts';
 
@@ -130,6 +130,65 @@ function lintFrontMatterEnv(lines: string[], end: number, signed: boolean): Lint
   return problems;
 }
 
+/**
+ * The run report settings (`report-runs:` and the rest, core/runReport.ts): an address that isn't
+ * https, a literal token, and `-required`/`-signed` a client won't honour (not signed, or the
+ * signature doesn't cover them as written).
+ */
+function lintReportRuns(text: string, lines: readonly string[], end: number): LintProblem[] {
+  const problems: LintProblem[] = [];
+  const at: Record<string, number> = {};
+  for (let i = 1; i < end; i++) {
+    const m = /^(report-runs(?:-required|-signed|-token)?)\s*:\s*(.*?)\s*$/i.exec(lines[i]!);
+    if (!m) continue;
+    const key = m[1]!.toLowerCase();
+    const value = m[2]!.replace(/\s+#.*$/, '').replace(/^(["'])(.*)\1$/, '$2');
+    if (at[key] !== undefined) {
+      problems.push({ severity: 'warning', line: i, message: `front matter ${key}: written twice: the first one counts` });
+      continue;
+    }
+    at[key] = i;
+    if (key === 'report-runs') {
+      const why = reportAddressProblem(value);
+      if (why) problems.push({ severity: 'warning', line: i, message: `front matter report-runs: "${value}" is ignored: ${why}` });
+    } else if (key === 'report-runs-token') {
+      if (/^\$\{secret:[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)) continue;
+      problems.push({
+        severity: 'error',
+        line: i,
+        message: 'front matter report-runs-token: never write a token in the file (anyone who reads it can send reports): use ${secret:NAME}, kept in your secret store',
+      });
+    } else if (!/^(true|false|yes|no|on|off)$/i.test(value)) {
+      problems.push({ severity: 'warning', line: i, message: `front matter ${key}: "${value}" is ignored (expected true or false)` });
+    }
+  }
+  const fm = parseFrontMatter(text);
+  const wants = [fm?.reportRunsRequired ? 'report-runs-required' : undefined, fm?.reportRunsSigned ? 'report-runs-signed' : undefined].filter((k): k is string => !!k);
+  if (!fm?.reportRuns) {
+    for (const k of [...wants, ...(fm?.reportRunsToken ? ['report-runs-token'] : [])]) {
+      problems.push({ severity: 'warning', line: at[k] ?? 0, message: `front matter ${k}: has no effect without report-runs: (the address)` });
+    }
+    return problems;
+  }
+  if (wants.length === 0) return problems;
+  // Honoured only when a signature a client trusts covers the whole text (core/runReport.ts reportTrustProblem).
+  const status = signedStatus(text);
+  let why: string | undefined;
+  if (!readSignature(text)) why = 'the runbook is not signed';
+  else if (!status) why = 'the signature block is damaged';
+  else if (status.version !== 2) why = 'the signature covers only its blocks, not the front matter: sign the runbook again';
+  else if (status.textChanged) why = 'the runbook changed since signing: sign it again';
+  // Signed as written: honoured where the signer is trusted (nothing to say).
+  if (why) {
+    problems.push({
+      severity: 'warning',
+      line: at[wants[0]!] ?? 0,
+      message: `front matter ${wants.join(' and ')}: ignored, ${why}. Until then clients ask before reporting (they honour these only in a runbook signed by a signer they trust)`,
+    });
+  }
+  return problems;
+}
+
 export interface LintOptions {
   /**
    * The text of a runbook a call's static src= names (relative to the file linted), undefined when
@@ -201,6 +260,7 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
       for (const name of twice) problems.push({ severity: 'warning', line: i, message: `front matter shell: "${name}" is ignored: one shell per kind of cell, the first one counts` });
     }
     problems.push(...lintFrontMatterEnv(lines, end, signedStatus(text) !== undefined));
+    problems.push(...lintReportRuns(text, lines, end));
     // params: a default that isn't one of the choices its comment gives ("One of: a, b").
     for (const p of fm.params) {
       if (!p.choices || p.default === undefined || p.choices.includes(p.default)) continue;
@@ -321,6 +381,25 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
         line: loc.line,
         cell: { index: loc.cellIndex },
         message: `block moved since the runbook was signed: it was signed as block ${signed.cells.get(loc.cellIndex)!.n}, after blocks that now come later`,
+      });
+    }
+    // Manifest version 2 signs the whole text; version 1 only the bash/sh blocks and calls.
+    if (signed.textChanged) {
+      problems.push({
+        severity: 'warning',
+        line: Math.max(0, signatureLine(text)),
+        message: 'the runbook changed since signing (its prose, front matter, checklists or other blocks): clients no longer show it as signed as a whole (sign it again)',
+      });
+    }
+    for (const loc of locs.filter((l) => signed.unsigned.includes(l.cellIndex))) {
+      problems.push({
+        severity: 'warning',
+        line: loc.line,
+        cell: { index: loc.cellIndex },
+        message:
+          signed.version === 1
+            ? 'block not covered by the signature: it was signed before manifest version 2, which signs only bash/sh blocks (sign the runbook again to cover the whole runbook)'
+            : 'block not covered by the signature any more: the runbook changed since signing (sign it again)',
       });
     }
     if (signed.missingCalls.length > 0) {

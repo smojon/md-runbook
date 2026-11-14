@@ -85,13 +85,44 @@ review becomes the release (the [command line](cli.md#getting-it) on the runner)
 
 ## What is signed
 
-The signature covers what the gate runs, not what changes when someone runs the runbook:
+The signature covers the whole runbook as reviewed, and what the gate runs, but not what changes
+when someone runs the runbook:
 
 | Covered | Not covered |
 | --- | --- |
-| each `bash`/`sh` block's code, fence options, `cwd=` and `env.*` | prose, outputs, ticked boxes, output markers |
-| each block's commands for line runs | other languages' blocks (the gate runs bash) |
-| the name, version, expiry date, scopes, parameter patterns | |
+| each `bash`/`sh` block's code, fence options, `cwd=` and `env.*`, and the placeholders it uses | outputs and output markers, their history |
+| each block's commands for line runs | ticked boxes (`- [x]`), notes (Add Note) |
+| the name, version, expiry date, scopes, parameter patterns | a run record's signature |
+| the whole text (manifest version 2): prose, headings, checklists, front matter, PowerShell and cmd blocks | |
+
+**Manifest version 2.** In signatures made by releases after 0.22.0, the manifest also holds `text`: the SHA-256 of
+the runbook without what a run adds to it. That lets clients tell **signed as a whole** from
+**partly signed**.
+
+- **Signed with 0.22.0 or earlier.** Only the bash/sh blocks and calls are signed. The signature still
+  verifies and the bash blocks still count as signed, but the editor, lint and the app say
+  "partly signed". A PowerShell or cmd block in such a runbook is never signed, and a change to
+  a paragraph or the front matter goes unnoticed. Sign it again to cover the whole runbook.
+- **Text changed since signing.** A changed sentence, a new `- [ ]` item, a changed
+  `manual-steps:`, an added PowerShell block: the runbook is "changed since signing".
+  - Its unchanged bash blocks still run through a gate.
+  - Clients no longer show the runbook as signed as a whole.
+  - Its [run report settings](run-reports.md#required-and-signed-reports) lapse until it is
+    signed again.
+- **Gates.** The header line stays `md-runbook-manifest 1`, and the gate ignores `text`: it
+  reads items by key and never sees the text. Gates already installed run version 2 signatures
+  unchanged, and new gates still run version 1 ones.
+- **Co-signing** a version 1 manifest keeps it version 1, since co-signing never changes what
+  was signed.
+
+**Signer names** in the block (`signer=`, `cosign signer=`) must be names allowed_signers can
+hold as a principal: ASCII letters, digits and `@ . _ + -`, with no patterns or lists. A block
+with another name is not read as a signature.
+
+**Run summaries are signed in another namespace.** A [run report](run-reports.md) is signed with
+the runner's key as `ssh-keygen -Y sign -n md-runbook-run`. A runbook signature never verifies
+as a run summary, nor the reverse, even with a key allowed for both. Keep runners' keys out of
+the servers' `allowed_signers`, or limit them to `namespaces="md-runbook-run"`.
 
 The signer signs a **manifest**: one item per line, values in base64, so the gate never parses
 Markdown. It travels in the file, in an HTML comment at the end (invisible on screen, like the
@@ -120,9 +151,9 @@ request there could miss them.
 
 **Parameters.** `${param:NAME}` reaches the shell as an environment variable, never as text in
 the code. Each needs a pattern (`--pattern NAME=REGEX`, a POSIX extended regular expression the
-whole value must match); the gate checks the value and refuses newlines. The front matter isn't
-signed, so the app doesn't take a signed block's parameter values from its defaults: they are
-typed on the runbook.
+whole value must match); the gate checks the value and refuses newlines. The gate never sees
+the front matter (and a version 1 signature doesn't cover it), so the app doesn't take a signed
+block's parameter values from its defaults: they are typed on the runbook.
 
 **Inputs and captured values.** `${input:NAME}` (asked when the cell runs) and `${out:NAME}` (a
 value an earlier block captured with `capture=`) are signed like parameters: each needs a

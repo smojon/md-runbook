@@ -1,7 +1,8 @@
 /**
  * `md-runbook run <file.md>`: run a runbook outside VS Code and write its outputs into the file.
  * Exit code 0 when every step passed (or was skipped), 1 when a step failed or could not run,
- * 2 for a usage error.
+ * 2 for a usage error, 3 when the run passed but the run report its signed runbook requires
+ * could not be sent (report.ts).
  */
 
 import * as fs from 'node:fs';
@@ -17,6 +18,8 @@ import { findBrowser, htmlToPdf } from './pdf';
 import { signCommand, verifyCommand } from './sign';
 import { qrCommand } from './qr';
 import { auditCommand } from './audit';
+import { allowedAddresses, prepareReport, sendCliReport, verifyRunCommand } from './report';
+import { parseFrontMatter } from '@md-runbook/core/secrets';
 
 declare const MD_RUNBOOK_VERSION: string | undefined;
 
@@ -25,6 +28,7 @@ const USAGE = `Usage: md-runbook run <file.md> [options]
        md-runbook estimate <file.md>...                (how long each section takes, by estimate=)
        md-runbook sign <file.md> --key KEY [options]   (see md-runbook sign --help)
        md-runbook verify <file.md> [--allowed-signers FILE]
+       md-runbook verify-run <envelope.json> --allowed-runners FILE   (a signed run report)
        md-runbook qr <file.md> [options]               (see md-runbook qr --help)
        md-runbook link <file.md> [options]             (the qr options; prints the link)
        md-runbook audit <gate log>... [options]        (see md-runbook audit --help)
@@ -77,6 +81,14 @@ Options:
   --notify URL         Post a summary to a chat webhook (Slack, Teams Workflows, Discord, Google
                        Chat); better: the environment variable MD_RUNBOOK_NOTIFY_URL
   --notify-on WHEN     failure (default) or always; or MD_RUNBOOK_NOTIFY_ON
+  --report-to-allowed ADDRESS
+                       Send the run summary to the runbook's report-runs: address when it is
+                       ADDRESS (a host, or an address prefix; repeatable, comma-separated; or
+                       MD_RUNBOOK_REPORT_ALLOWED). Without it nothing is sent, and a signed
+                       runbook that requires its report doesn't run (exit 2). Only names, step
+                       results and times are sent: never outputs, values or secrets
+  --key KEY            Sign the run summary with this SSH key (namespace md-runbook-run); needed
+                       for a signed runbook with report-runs-signed: true
   --quiet              Only print the summary
   -h, --help           Show this help
   --version            Show the version
@@ -84,6 +96,9 @@ Options:
 lint checks runbooks without running them (invalid or unknown cell options, \${out:NAME}
 without an earlier capture=NAME, undeclared \${param:NAME}, ignored front matter values) and
 exits with 1 when it finds an error (with --strict: also a warning).
+
+A run report that can't be sent is tried 3 times, then a warning; the exit code is 3 only when
+the runbook required it (signed as a whole by a signer of --allowed-signers) and the run passed.
 
 estimate adds up the blocks' estimate= options (e.g. estimate=2m30s): one line per # and ##
 section with its time and the blocks without an estimate, then the runbook's total. A run
@@ -114,6 +129,10 @@ function writeFile(file: string, data: string): void {
 
 export interface ParsedArgs {
   options: Omit<CliOptions, 'env' | 'signal'>;
+  /** --report-to-allowed values, as given. */
+  reportAllowed: string[];
+  /** --key: signs the run summary. */
+  key?: string;
   pdf?: string;
   browser?: string;
   notify?: string;
@@ -126,7 +145,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   // Only as the first argument: a value such as a parameter `-h` must not turn a run into help.
   if (args.length === 0 || args[0] === '-h' || args[0] === '--help') return 'help';
   if (args[0] === '--version') return 'version';
-  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected run, lint, estimate, sign, verify, qr, link or audit)`);
+  if (args[0] !== 'run') throw new UsageError(`unknown command "${args[0]}" (expected run, lint, estimate, sign, verify, verify-run, qr, link or audit)`);
   args.shift();
   const o: ParsedArgs['options'] = { file: '', write: true, params: {}, inputs: {}, yes: false, keepGoing: false, shell: {} };
   let pdf: string | undefined;
@@ -134,6 +153,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   let notify: string | undefined;
   let notifyOn: string | undefined;
   let quiet = false;
+  const reportAllowed: string[] = [];
+  let key: string | undefined;
   const value = (flag: string): string => {
     const v = args.shift();
     if (v === undefined || v.startsWith('--')) throw new UsageError(`${flag} needs a value`);
@@ -199,6 +220,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
       case '--copy-folder': o.copyFolder = value(a); break;
       case '--fresh-copy': o.freshCopy = true; break;
       case '--allowed-signers': o.allowedSigners = value(a); break;
+      case '--report-to-allowed': reportAllowed.push(value(a)); break;
+      case '--key': key = value(a); break;
       default:
         if (a.startsWith('-')) throw new UsageError(`unknown option ${a}`);
         if (o.file) throw new UsageError(`only one runbook per run (got "${o.file}" and "${a}")`);
@@ -207,7 +230,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   }
   if (!o.file) throw new UsageError('missing the runbook file');
   if (o.from !== undefined && o.to !== undefined && o.from > o.to) throw new UsageError(`--from ${o.from} is after --to ${o.to}`);
-  return { options: o, ...(pdf ? { pdf } : {}), ...(browser ? { browser } : {}), ...(notify ? { notify } : {}), ...(notifyOn ? { notifyOn } : {}), quiet };
+  return { options: o, reportAllowed, ...(key ? { key } : {}), ...(pdf ? { pdf } : {}), ...(browser ? { browser } : {}), ...(notify ? { notify } : {}), ...(notifyOn ? { notifyOn } : {}), quiet };
 }
 
 /** `md-runbook lint`: print the problems of each file; 1 if any is an error (or, strict, a warning). */
@@ -286,6 +309,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (argv[0] === 'estimate') return estimate(argv.slice(1));
   if (argv[0] === 'sign') return signCommand(argv.slice(1));
   if (argv[0] === 'verify') return verifyCommand(argv.slice(1));
+  if (argv[0] === 'verify-run') return verifyRunCommand(argv.slice(1));
   if (argv[0] === 'qr') return qrCommand(argv.slice(1));
   if (argv[0] === 'link') return qrCommand(argv.slice(1), undefined, true);
   if (argv[0] === 'audit') return auditCommand(argv.slice(1));
@@ -322,6 +346,15 @@ export async function main(argv: readonly string[]): Promise<number> {
       process.stderr.write(`md-runbook: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   };
+  // The run report (report-runs: in the front matter): checked before anything runs.
+  const original = fs.readFileSync(options.file, 'utf8');
+  const reportOptions = { allowed: allowedAddresses(parsed.reportAllowed, process.env), ...(parsed.key ? { key: parsed.key } : {}), ...(options.allowedSigners ? { allowedSigners: options.allowedSigners } : {}) };
+  const report = await prepareReport(original, reportOptions, (l) => void (quiet || process.stdout.write(l + '\n')));
+  if (typeof report === 'string') {
+    process.stderr.write(`md-runbook: not run: ${report}\n`);
+    return 2;
+  }
+  const startedAt = Date.now();
   const abort = new AbortController();
   const onSignal = (): void => abort.abort();
   process.once('SIGINT', onSignal);
@@ -380,6 +413,17 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 
   if (notify && (notify.on === 'always' || !summary.ok)) await send(notifyText(file, summary, runLink(process.env)));
+  // The run summary: names, step results and times, never outputs or values (the parameters only for ALERT…).
+  const defaults = Object.fromEntries((parseFrontMatter(original)?.params ?? []).flatMap((p) => (p.default !== undefined ? [[p.name, p.default]] : [])));
+  const reported = report
+    ? await sendCliReport(
+        report,
+        { file: options.file, text: original, started: startedAt, ended: Date.now(), steps: summary.steps, manual: summary.manual, params: { ...defaults, ...options.params } },
+        reportOptions,
+        process.env,
+        (l) => void process.stderr.write(`md-runbook: ${l}\n`),
+      )
+    : true;
 
   const count = (s: string): number => summary.steps.filter((x) => x.status === s).length;
   const parts = [`${count('passed')} passed`, `${count('failed')} failed`];
@@ -398,7 +442,9 @@ export async function main(argv: readonly string[]): Promise<number> {
     `\n${summary.ok ? '✓' : '✗'} ${file}: ${summary.steps.length} step${summary.steps.length === 1 ? '' : 's'}, ${parts.join(', ')}${took}` +
       `${options.write ? ` · outputs written to ${target}` : ''}\n`,
   );
-  return summary.ok && !pdfFailed ? 0 : 1;
+  if (!(summary.ok && !pdfFailed)) return 1;
+  // Required, and not sent: the run passed, but a server can't know it did.
+  return !reported && report?.plan.required ? 3 : 0;
 }
 
 if (require.main === module) {

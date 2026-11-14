@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
+import { cellRefs } from '@md-runbook/core/cellOptions';
 import { dotenvSecrets, envRef, findRefs, isRedactableValue, looksLikeSecretValue, looksSecret, looksSecretKey, paramComment, parseDotenv, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 
 describe('variable references', () => {
@@ -176,5 +177,23 @@ describe('.env parser', () => {
     assert.ok(looksSecretKey('DB_PASSWORD') && looksSecretKey('MY_API_KEY') && looksSecretKey('KEY') && looksSecretKey('SESSION_COOKIE'));
     assert.ok(!looksSecretKey('REGION') && !looksSecretKey('KEYCLOAK_URL') && !looksSecretKey('AUTHOR') && !looksSecretKey('MONKEY_COUNT'));
     assert.ok(!looksLikeSecretValue('eu-west-1') && !looksLikeSecretValue('/very/long/path/to/some/dir123') && looksLikeSecretValue('Zx8kQ2mP9vL4tR7wB3nY6'));
+  });
+});
+
+describe('declared parameters no block uses', () => {
+  it('are no reference of any block, so nothing asks for them (VS Code upFrontRefs and the launch form, the CLI)', () => {
+    // An alert link's values (p.ALERT=…), declared with empty defaults, used by no cell: the run
+    // report reads them, the run never waits for them.
+    const text = '---\nparams:\n  - ALERT: ""\n  - ALERT_FINGERPRINT: ""\n  - ALERT_STARTS_AT: ""\n  - REGION: eu\n---\n\n# SOP\n';
+    const fm = parseFrontMatter(text)!;
+    assert.deepEqual(
+      fm.params.map((p) => [p.name, p.default]),
+      [['ALERT', ''], ['ALERT_FINGERPRINT', ''], ['ALERT_STARTS_AT', ''], ['REGION', 'eu']],
+    );
+    // upFrontRefs collects cellRefs of the cells to run: the code, its checks, its kube-context.
+    assert.deepEqual(cellRefs('kubectl get pods -n ${param:REGION}', 'bash expect="ok"', fm).map((r) => r.name), ['REGION']);
+    assert.deepEqual(cellRefs('echo hi', 'bash', fm), []);
+    // Only a kube-context naming one makes it a block's reference.
+    assert.deepEqual(cellRefs('echo hi', 'bash', { ...fm, kubeContext: '${param:ALERT}' }).map((r) => r.name), ['ALERT']);
   });
 });

@@ -207,6 +207,10 @@ kube-context: prod-eu # every cell runs only while kubectl's current context is 
 kube-context-mode: pin # check (default) | pin: cells run on their kube-context without changing your default context
 git-bash-path-conversion: off # on (default) | off: Git Bash on Windows leaves /opt/x-style arguments alone
 manual-steps: continue # pause (default) | continue: Run All waits at an unticked checklist item, or runs on
+report-runs: https://reports.example.net/runs # a summary of every run goes here (asked once per address)
+report-runs-required: true # the run starts only once reporting is agreed to (signed runbooks only, see below)
+report-runs-signed: true   # the summary must be signed with your SSH key (signed runbooks only)
+report-runs-token: ${secret:REPORTS_TOKEN} # optional bearer token, from your secret store
 env:                 # variables for every cell run in VS Code or the command line; a cell's env.NAME= wins
   NO_PROXY: localhost,127.0.0.1,.nip.io
   PAGER: cat
@@ -242,6 +246,18 @@ field. A trailing `One of: a, b, c` in the comment (any case) lists the values a
 The list ends at the end of the comment or at a period followed by a space, so `1.2` can be a
 choice; `, or` and ` or ` separate too, and quotes around a choice are removed. The linter warns
 when a default is not one of its choices.
+
+`report-runs:` names where VS Code, the app and the command line send a [run summary](features/run-reports.md)
+at the end of each run: which runbook, who, when, and each step's label, result and duration,
+never an output, a value or a secret. The address is `https://`, or `http://` for `localhost`,
+`127.0.0.1` and `[::1]` only, without a user name or password in it. You are asked once per
+address (Allow / Not now / Never) unless your settings allow it already; the command line sends
+only to addresses given with `--report-to-allowed`. `report-runs-token:` takes only
+`${secret:NAME}`, sent as `Authorization: Bearer`; a token written in the file is a lint error
+and is never sent. `report-runs-required: true` (a notice before the run: Run / Don't run) and
+`report-runs-signed: true` (signed with your key, else the run doesn't start) count only in a
+runbook signed as a whole (manifest version 2) by a signer your client trusts, and unchanged since
+signing. Otherwise they are ignored, and lint says why. The first `report-runs:` line counts.
 
 `kube-context:` is a guard against the wrong cluster. Before each cell, `kubectl config
 current-context` runs where the cell would run: the session shell, or the app's SSH host,
@@ -460,13 +476,23 @@ BASE64 (wrapped at 76 columns)
 ```
 
 The manifest is the signed text: `md-runbook-manifest 1`, then one item per line (`name`,
-`version`, `expires`, `scope`, `param NAME PATTERN`, and per bash/sh block `cell N all|any`,
+`version`, `expires`, `scope`, `text SHA256`, `param NAME PATTERN`, and per bash/sh block `cell N all|any`,
 `info`, `code`, `needs NAME`, `cwd`, `env NAME VALUE`, `step`), values that can hold anything in
 base64, then `end`. `code` and `step` are the block's code and its commands with
 `${param:NAME}` written as `${NAME}`. The signature is OpenSSH's SSHSIG over the manifest with
 namespace `md-runbook`, without its armor lines. A block is signed while its fence info string
-and code equal a manifest cell's; signing again replaces the block. Never write or edit it by
-hand: change the runbook and sign it again.
+and code equal a manifest cell's and it uses the same placeholder names (`needs`); signing again
+replaces the block. Never write or edit it by hand: change the runbook and sign it again.
+
+`text` (manifest version 2, signatures made by releases after 0.22.0) is the SHA-256 of the
+whole runbook as signed: the file with LF line endings, without a BOM, its signature block, a run
+record's signature, output blocks (with their history), notes, and the ticks of checklist items,
+trailing blank lines dropped. The runbook is then "signed as a whole": prose, front matter,
+checklists and PowerShell or cmd blocks too. A manifest without `text` (signed before) signs only
+the bash/sh blocks and runbook calls ("partly signed"). It still verifies, and the header stays
+`md-runbook-manifest 1`, so gates installed before run both. `NAME` in `signer=` is one word of
+ASCII letters, digits and `@ . _ + -`, as in allowed_signers; a block with any other name is not
+read as a signature.
 
 ### Run record signature
 

@@ -14,6 +14,7 @@ import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
 import { ExternalKeyPair, allowedSignersLine, generateKey, importPrivateKey, privateKeyPem, publicKeyLine } from '@md-runbook/ssh';
 import { Buffer } from 'buffer';
 import { Platform } from 'react-native';
+import { RUN_SIGNATURE_NAMESPACE } from '@md-runbook/core/runReport';
 import { HardwareKey } from '../../modules/hardware-key';
 import { deleteSecret, getSecret, setSecret } from '../storage/secure';
 import { createPasskey, forgetPasskey, loadPasskey, passkeysAvailable } from './passkey';
@@ -138,4 +139,12 @@ export async function setKeyNeedsUser(on: boolean): Promise<AppKey> {
 /** `principal namespaces="md-runbook" ecdsa-sha2-nistp256 AAAA…`: the line for the servers' allowed_signers (signing runbooks). */
 export async function appAllowedSignersLine(principal: string): Promise<string> {
   return allowedSignersLine(await appKey(), principal);
+}
+
+/**
+ * `principal namespaces="md-runbook-run" ecdsa-sha2-nistp256 AAAA…`: the line for a server's
+ * allowed runners file, which checks the run reports this app signs (core runReport.ts).
+ */
+export async function appAllowedRunnersLine(principal: string): Promise<string> {
+  return allowedSignersLine(await appKey(), principal, RUN_SIGNATURE_NAMESPACE);
 }

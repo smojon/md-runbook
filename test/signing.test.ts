@@ -13,6 +13,7 @@ import {
   readSignature,
   signedStatus,
   signedStepIndex,
+  signedTextHash,
   toBase64,
   unarmorSignature,
   withSignature,
@@ -64,8 +65,15 @@ describe('signing: the manifest', () => {
   });
 
   it('is plain lines, one item each, so the gate reads it with awk', () => {
-    const text = manifestOf(fence('bash', 'echo hi'), { scopes: ['web', 'staging'] });
-    assert.equal(text, 'md-runbook-manifest 1\nname ops/restart\nversion 3\nscope web staging\ncell 1 all\ninfo YmFzaA==\ncode ZWNobyBoaQ==\nstep ZWNobyBoaQ==\nend\n');
+    const runbook = fence('bash', 'echo hi');
+    const text = manifestOf(runbook, { scopes: ['web', 'staging'] });
+    // Version 2: the whole text's hash, as a key of its own (the gate reads items by key).
+    const hash = signedTextHash(runbook);
+    assert.equal(text, `md-runbook-manifest 1\nname ops/restart\nversion 3\nscope web staging\ntext ${hash}\ncell 1 all\ninfo YmFzaA==\ncode ZWNobyBoaQ==\nstep ZWNobyBoaQ==\nend\n`);
+    // Version 1, as signed before (and co-signed as it was): byte for byte what it always was.
+    const v1 = buildManifest(runbook, meta({ scopes: ['web', 'staging'] }), { version: 1 });
+    assert.ok(!('errors' in v1));
+    if (!('errors' in v1)) assert.equal(formatManifest(v1.manifest), 'md-runbook-manifest 1\nname ops/restart\nversion 3\nscope web staging\ncell 1 all\ninfo YmFzaA==\ncode ZWNobyBoaQ==\nstep ZWNobyBoaQ==\nend\n');
   });
 
   it('refuses what the gate could not hold to its signature', () => {

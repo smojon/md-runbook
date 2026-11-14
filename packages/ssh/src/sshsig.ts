@@ -76,11 +76,12 @@ export async function signSshsig(pair: KeyPair, message: string, namespace: stri
 
 /**
  * The key's line for a server's `allowed_signers` (OpenSSH's format), for signatures in
- * md-runbook's namespace only: `principal namespaces="md-runbook" ecdsa-sha2-nistp256 AAAA…`.
+ * md-runbook's namespace only: `principal namespaces="md-runbook" ecdsa-sha2-nistp256 AAAA…` (or
+ * another namespace: `md-runbook-run` for a server's allowed runners, run reports).
  */
-export async function allowedSignersLine(pair: KeyPair, principal: string): Promise<string> {
+export async function allowedSignersLine(pair: KeyPair, principal: string, namespace: string = SIGNATURE_NAMESPACE): Promise<string> {
   if (!SIGNER_NAME_RE.test(principal)) throw new Error(`not a signer name: ${principal}`);
   const publicKey = await pair.getPublicKeyBytes();
   if (!publicKey) throw new Error('the key has no public half');
-  return `${principal} namespaces="${SIGNATURE_NAMESPACE}" ${pair.keyAlgorithmName} ${publicKey.toString('base64')}`;
+  return `${principal} namespaces="${namespace}" ${pair.keyAlgorithmName} ${publicKey.toString('base64')}`;
 }

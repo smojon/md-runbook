@@ -159,7 +159,37 @@ export interface FrontMatter {
    * cell's own `env.NAME=` (node/runbookEnv.ts). Not used on an SSH host: the front matter isn't signed.
    */
   env?: Record<string, string>;
+  /**
+   * `report-runs:` where every client sends a run summary at the end of a run (runReport.ts): an
+   * https address (http only for localhost). Absent when missing or not such an address (lint says so).
+   */
+  reportRuns?: string;
+  /** `report-runs-required: true`: the run doesn't start unless it may be reported (only honoured when signed and trusted). */
+  reportRunsRequired?: boolean;
+  /** `report-runs-signed: true`: the summary must be signed with the runner's key (only honoured when signed and trusted). */
+  reportRunsSigned?: boolean;
+  /** `report-runs-token: ${secret:NAME}`: the secret's NAME, sent as a bearer token. A literal token is ignored (lint error). */
+  reportRunsToken?: string;
 }
+
+/**
+ * Why `url` can't be a run report address, or undefined: https only, http only for localhost, no
+ * user name or password in it, no spaces. Without URL (the app's runtimes differ): by pattern.
+ */
+export function reportAddressProblem(url: string): string | undefined {
+  const m = /^([a-z]+):\/\/([^/?#\s]*)([/?#][^\s]*)?$/i.exec(url);
+  if (!m) return 'not an address (expected https://host/path)';
+  const scheme = m[1]!.toLowerCase();
+  const authority = m[2]!;
+  if (authority.includes('@')) return 'no user name or password in the address (use report-runs-token: ${secret:NAME})';
+  const host = /^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::(\d{1,5}))?$/.exec(authority);
+  if (!host || host[1] === '' || host[1]!.startsWith('.') || host[1]!.endsWith('-')) return `"${authority}" is not a host name`;
+  if (scheme === 'https') return undefined;
+  if (scheme === 'http') return isLocalHost(host[1]!) ? undefined : 'http is only for localhost: use https';
+  return `${scheme}: is not https`;
+}
+
+const isLocalHost = (host: string): boolean => /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/i.test(host);
 
 /**
  * A front matter value as written, quoted (`"a # b"`, `'it''s'`) or bare, and its trailing
@@ -218,6 +248,10 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
   let kubeContextMode: KubeContextMode | undefined;
   let gitBashPathConversion: 'on' | 'off' | undefined;
   let manualSteps: 'pause' | 'continue' | undefined;
+  let reportRuns: string | undefined;
+  let reportRunsRequired: boolean | undefined;
+  let reportRunsSigned: boolean | undefined;
+  let reportRunsToken: string | undefined;
   // No prototype: a variable named constructor or __proto__ is a plain entry.
   const env: Record<string, string> = Object.create(null) as Record<string, string>;
   let inParams = false;
@@ -242,6 +276,10 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
         ...(gitBashPathConversion ? { gitBashPathConversion } : {}),
         ...(manualSteps ? { manualSteps } : {}),
         ...(Object.keys(env).length > 0 ? { env } : {}),
+        ...(reportRuns ? { reportRuns } : {}),
+        ...(reportRunsRequired ? { reportRunsRequired } : {}),
+        ...(reportRunsSigned ? { reportRunsSigned } : {}),
+        ...(reportRunsToken ? { reportRunsToken } : {}),
       };
     }
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
@@ -284,6 +322,16 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       if (pc === 'on' || pc === 'off') gitBashPathConversion = pc;
       const ms = value('manual-steps')?.toLowerCase();
       if (ms === 'pause' || ms === 'continue') manualSteps = ms;
+      // The first one counts (a second could otherwise send the summary elsewhere unnoticed).
+      const rr = value('report-runs');
+      if (rr !== undefined && reportRuns === undefined && reportAddressProblem(rr) === undefined) reportRuns = rr;
+      const rq = value('report-runs-required');
+      if (rq !== undefined) reportRunsRequired = /^(true|yes|on)$/i.test(rq);
+      const rs = value('report-runs-signed');
+      if (rs !== undefined) reportRunsSigned = /^(true|yes|on)$/i.test(rs);
+      // Only a reference to a secret: never a literal token in the file (lint errors on one).
+      const rt = /^report-runs-token\s*:\s*["']?\$\{secret:([A-Za-z_][A-Za-z0-9_]*)\}["']?\s*(#.*)?$/i.exec(line);
+      if (rt) reportRunsToken = rt[1];
       continue;
     }
     if (inEnv) {

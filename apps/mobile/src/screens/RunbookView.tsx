@@ -137,6 +137,10 @@ import { NotifyOfferCard } from '../notifications/OfferCard';
 import { useOpenRequest } from '../notifications/open';
 import { declineNotifications, shouldOffer, turnOnNotifications } from '../notifications/runs';
 import { EndedNote, RunPhase, useRunNotifications } from '../notifications/useRunNotifications';
+import { reportRequiredText } from '@md-runbook/core/runReport';
+import { ReportConsentCard, ReportRequiredCard } from '../reports/ReportCards';
+import { agreeRequired, reportGate } from '../reports/send';
+import { useReportWhenOver, useRunReports } from '../reports/useRunReports';
 
 /** Runbooks whose teardown was declined (Leave it up): Run all doesn't offer it again until the app restarts. */
 const teardownDeclined = new Set<string>();
@@ -466,10 +470,24 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const handedToCall = useRef(false);
   /** The first Run all offers notifications (once: Notify me or Not now). */
   const [notifyOffer, setNotifyOffer] = useState(false);
+  /** A signed runbook that runs only when its run is reported: its notice, and the run it holds back. */
+  const [reportAsk, setReportAsk] = useState<{ text: string; go(): void } | undefined>();
   const clearQueue = (): void => {
     queue.current = undefined;
     setQueued(false);
   };
+  /** Run reports (report-runs:): the runs' summaries, and the question asked at the end of one. */
+  const reports = useRunReports(
+    runbook,
+    () => handedToCall.current,
+    // A pager alert's link sets p.ALERT and the like, whether or not a cell uses them.
+    () => {
+      const values: Record<string, string> = {};
+      for (const p of runbook ? (parseFrontMatter(runbook.text)?.params ?? []) : [])
+        if (p.default !== undefined) values[p.name] = p.default;
+      return { ...values, ...paramValues };
+    },
+  );
   const [notice, setNotice] = useState<string | undefined>(() =>
     fromLink?.cosign && cosign && 'why' in cosign
       ? cosign.why === 'changed'
@@ -530,12 +548,38 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     [id],
   );
 
+  /**
+   * Run reports (report-runs:): whether a run may start now. `wait`: the notice of a runbook that
+   * requires reporting is up, and Run there does `go`; `stop`: it can't run (no key to sign with).
+   */
+  const reportAllows = async (go: () => void): Promise<'go' | 'wait' | 'stop'> => {
+    if (!runbook) return 'stop';
+    const gate = await reportGate(runbook.id, getRunbook(runbook.id)?.text ?? runbook.text);
+    if (gate.kind === 'go') return 'go';
+    if (gate.kind === 'refuse') {
+      clearQueue();
+      setNotice(t.reportNeedsKey);
+      return 'stop';
+    }
+    const { plan } = gate;
+    setReportAsk({
+      text: reportRequiredText(plan),
+      go: () => {
+        agreeRequired(runbook.id, plan);
+        go();
+      },
+    });
+    return 'wait';
+  };
   const run = async (request: RunRequest, on: Host | undefined): Promise<void> => {
     if (!runbook || busy.current) return;
     busy.current = true;
     let waiting: boolean | void = false;
     try {
-      waiting = await runOne(request, on);
+      const gate = await reportAllows(() => void runRef.current(request, on));
+      // Waiting on the notice, or not run: Run all doesn't go on (Run there runs this cell, and the queue from it).
+      if (gate === 'go') reports.begin();
+      waiting = gate === 'go' ? await runOne(request, on) : true;
     } finally {
       busy.current = false;
     }
@@ -720,6 +764,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (!runbook || busy.current) return;
     const members = hosts.filter((h) => h.group === group);
     if (members.length === 0) return;
+    if ((await reportAllows(() => void runOnGroup(cellIndex, group, confirmed))) !== 'go') return;
     // A risky cell asks once, before the round, naming every account it runs as.
     const cell = parse(runbook.text).cells[cellIndex];
     const match =
@@ -738,6 +783,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     busy.current = true;
     const started = new Date();
     const parts: { host: Host; exit: string; check?: string; text: string }[] = [];
+    // A group run doesn't go through the run phase: it is reported when it ends.
+    const reportGroup = (): void => reports.ended(started.getTime());
     const show = (): void =>
       setGroupRun({ group, results: members.map((h) => ({ host: h.name, ok: okOf(parts.find((p) => p.host.id === h.id)) })) });
     const okOf = (p: (typeof parts)[number] | undefined): boolean | undefined => (p ? p.exit === '0' && p.check !== 'failed' : undefined);
@@ -813,6 +860,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       DEFAULT_WRITE_OPTIONS,
     );
     if (next !== undefined) updateRunbookText(runbook.id, next);
+    reportGroup();
   };
   /** Start the next cell of Run all / Continue (with the newest render's state). */
   const runNext = (): void => {
@@ -968,6 +1016,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setQueued(true);
     setNotice(undefined);
     handedToCall.current = false;
+    reports.begin(true);
     void shouldOffer().then((yes) => yes && setNotifyOffer(true));
     runNext();
   };
@@ -1479,6 +1528,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   };
   const stopSequence = (): void => {
     clearQueue();
+    setReportAsk(undefined);
     setConfirming(undefined);
     setTeardownOffer(undefined);
     setManualAsk(undefined);
@@ -1776,6 +1826,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     return { body: notice ? `${body}\n${notice}` : body, ...(failed ? { cellIndex: failed.cell } : {}) };
   };
   useRunNotifications(runbook, runPhase, endedNote);
+  // And its report (report-runs:), when it is over: sent, or asked about once per address.
+  useReportWhenOver(reports, runPhase.kind, runbook?.text);
   // A tap on such a notification: this runbook, at its step.
   useOpenRequest(runbook?.id, (cellIndex) =>
     setTimeout(() => {
@@ -1883,6 +1935,29 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                     setNotifyOffer(false);
                     declineNotifications();
                   }}
+                />
+              ) : null}
+              {reportAsk ? (
+                <ReportRequiredCard
+                  text={reportAsk.text}
+                  onRun={() => {
+                    const { go } = reportAsk;
+                    setReportAsk(undefined);
+                    go();
+                  }}
+                  onDecline={() => {
+                    setReportAsk(undefined);
+                    clearQueue();
+                    setNotice(t.reportDeclined);
+                  }}
+                />
+              ) : null}
+              {reports.ask ? (
+                <ReportConsentCard
+                  text={reports.ask.text}
+                  onAllow={() => reports.answer('allow')}
+                  onNotNow={() => reports.answer('not-now')}
+                  onNever={() => reports.answer('never')}
                 />
               ) : null}
               <SaveBar runbook={runbook} />

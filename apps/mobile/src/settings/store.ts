@@ -3,7 +3,9 @@
  * (mdRunbook.output.historySize there, 0 by default: the file only has the latest run), and how
  * output is coloured (mdRunbook.output.colorLevels, stderrInRed and forceColor), and the name the
  * app signs runbooks with, and whether a runbook's `no-confirm` is honoured; and whether runs notify
- * (asked once, at the first Run all).
+ * (asked once, at the first Run all); and for run reports (`report-runs:`), the addresses allowed
+ * without asking (the extension's mdRunbook.reports.allowedAddresses) and the signers whose
+ * runbook signatures the app trusts (allowed_signers lines).
  */
 import { useSyncExternalStore } from 'react';
 import { getJson, setJson } from '../storage/kv';
@@ -47,6 +49,16 @@ export interface Settings {
    * phones no library.
    */
   libraryUrl: string;
+  /**
+   * Run report addresses sent to without asking (core addressAllowed: a host, an origin, or an
+   * address prefix), one per entry.
+   */
+  reportAddresses: string[];
+  /**
+   * allowed_signers lines (OpenSSH's format): the signers whose runbook signatures this app trusts.
+   * Only a runbook signed by one of them can make reporting required or signed (core reportPlan).
+   */
+  trustedSigners: string;
 }
 
 const DEFAULTS: Settings = {
@@ -60,6 +72,8 @@ const DEFAULTS: Settings = {
   allowNoConfirm: false,
   signerName: '',
   libraryUrl: '',
+  reportAddresses: [],
+  trustedSigners: '',
 };
 
 /** Saved settings, older ones (only historySize) completed with the defaults. */
@@ -95,6 +109,8 @@ async function readSettings(): Promise<void> {
       signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
       libraryUrl: typeof saved.libraryUrl === 'string' ? saved.libraryUrl : '',
       ...(typeof saved.notifyRuns === 'boolean' ? { notifyRuns: saved.notifyRuns } : {}),
+      reportAddresses: Array.isArray(saved.reportAddresses) ? saved.reportAddresses.filter((a): a is string => typeof a === 'string') : [],
+      trustedSigners: typeof saved.trustedSigners === 'string' ? saved.trustedSigners : '',
     };
   }
   emit();
@@ -140,6 +156,21 @@ export function setLibraryUrl(url: string): void {
 
 export function useLibraryUrlSetting(): string {
   return useSettings().libraryUrl;
+}
+
+/** Run report addresses allowed without asking. */
+export const reportAddresses = (): readonly string[] => settings.reportAddresses;
+
+/** From text: one address per line (or separated by commas or spaces). */
+export function setReportAddresses(text: string): void {
+  update({ reportAddresses: [...new Set(text.split(/[\s,]+/).filter((a) => a !== ''))] });
+}
+
+/** The allowed_signers lines of the signers this app trusts. */
+export const trustedSigners = (): string => settings.trustedSigners;
+
+export function setTrustedSigners(text: string): void {
+  update({ trustedSigners: text.trim() });
 }
 
 export function useSignerName(): string {

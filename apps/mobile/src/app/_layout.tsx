@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { loadApprovals } from '../approvals/store';
 import { loadSettings } from '../settings/store';
+import { retryReports } from '../reports/send';
 import { loadHosts } from '../hosts/store';
 import { loadRunbooks } from '../runbooks/store';
 import { loadPins } from '../runbooks/pins';
@@ -56,6 +57,8 @@ export default function RootLayout() {
     void loadRunbooks();
     void loadPins();
     void loadViewModes();
+    // Run reports that couldn't be sent before (no network, the server down).
+    void retryReports();
   }, []);
   return (
     <>
