@@ -84,7 +84,7 @@ describe('Run all / Resume (the one-tap action)', () => {
     });
     expect(screen.getByTestId('steps-row-1')).toHaveProp('accessibilityLabel', expect.stringMatching(/^Step 1: echo one, done/));
     expect(screen.getByTestId('steps-row-2')).toHaveProp('accessibilityLabel', expect.stringMatching(/^Step 2: echo two, failed/));
-    expect(screen.getByTestId('steps-row-4')).toHaveProp('accessibilityLabel', 'Step 3: echo three, to do');
+    expect(screen.getByTestId('steps-row-4')).toHaveProp('accessibilityLabel', 'Step 3: Clean up, to do');
   });
 
   it('stops at a failure; Resume goes on from the failed cell, Run again when all is done', async () => {

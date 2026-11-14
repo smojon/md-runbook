@@ -19,6 +19,7 @@ import {
   progressBar,
   remaining,
   runbookEstimate,
+  stepHeadings,
   stepLabel,
   suggestedEstimate,
   terminalBarWidth,
@@ -382,5 +383,28 @@ describe('status line helpers', () => {
     assert.equal(stepLabel('bash name="Push image"', 'docker push x', 'bash'), 'Push image');
     assert.equal(stepLabel('bash', '\n  kubectl rollout status deploy/api --timeout=10m --watch\n', 'bash'), 'kubectl rollout status deploy/api --tim…');
     assert.equal(stepLabel('runbook src=../lab.md section="Start the lab"', '', 'runbook'), 'Start the lab');
+    assert.equal(stepLabel('bash', 'systemctl restart api', 'bash', 'Restart the API'), 'Restart the API');
+    assert.equal(stepLabel('bash name=Go', 'x', 'bash', 'Restart the API'), 'Go');
+  });
+
+  it('step headings: a ## heading names the only block under it', () => {
+    const md = (text: string) => ({ kind: 'markup' as const, text });
+    const code = (text: string) => ({ kind: 'code' as const, text });
+    assert.deepEqual(
+      stepHeadings([
+        md('---\ntitle: x\n---\n# Deploy'),
+        code('echo intro'),
+        md('## Restart `api`'),
+        code('systemctl restart api'),
+        md('## Check'),
+        code('curl a'),
+        code('curl b'),
+        md('Some text, no heading'),
+        md('### **Clean up**'),
+        code('rm x'),
+      ]),
+      [undefined, undefined, undefined, 'Restart api', undefined, undefined, undefined, undefined, undefined, 'Clean up'],
+    );
+    assert.deepEqual(stepHeadings([code('before any heading'), md('## A')]), [undefined, undefined]);
   });
 });

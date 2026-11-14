@@ -18,7 +18,7 @@ import { cellEstimate, lastDuration, notebookEstimateSteps, notebookPartStates, 
 import { META_KEY } from './outputs';
 import { isManualMark } from '@md-runbook/core/progress';
 import { proposalOf } from '@md-runbook/core/proposal';
-import { cellAttrs, notebookProgress, progressStatus, selectRunbookKernel } from './progress';
+import { cellAttrs, notebookHeadings, notebookProgress, progressStatus, selectRunbookKernel } from './progress';
 import { RunPipeline } from './pipeline';
 import { isTestMode } from './secrets';
 import { setTaskBox } from './taskLists';
@@ -108,6 +108,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
   let waitingShown = false;
   /** The last step number given (a block's from the progress, checklist items counted on). */
   let taskStep = 0;
+  const headings = notebookHeadings(nb);
   for (const cell of nb.getCells()) {
     const i = cell.index;
     if (cell.kind === vscode.NotebookCellKind.Markup) {
@@ -167,7 +168,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
       } else if (took !== undefined && state !== 'pending') time = formatEstimate(took);
       else if (est !== undefined) time = `est. ${formatEstimate(est)}`;
     }
-    const label = stepLabel(info, cell.document.getText(), cell.document.languageId) || `cell ${i + 1}`;
+    const label = stepLabel(info, cell.document.getText(), cell.document.languageId, headings[i]) || `cell ${i + 1}`;
     // Preflight: only for a step still to run (or to run again), and not while one runs.
     const needs = sources && (state === 'pending' || state === 'failed') && !ready && !offered ? stepNeeds(cell, info, sources) : [];
     rows.push({

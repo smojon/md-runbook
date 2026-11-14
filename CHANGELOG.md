@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A step without `name=` is called by its heading.** A block that is the only one under a `##`
+  (or deeper) heading takes that heading as its step name in the status bar, the Steps view, the
+  notifications and the app (`Step 3/6 · Restart the API`), instead of its first command. Blocks
+  sharing a heading keep their first line, which tells them apart.
 - **App: preflight in the Steps sheet.** As in VS Code, each step still to do says what it will
   need (your confirmation, a secret not stored on this device, an input, an approval), and the
   sheet's header sums it up before a run. The pinned run bar now starts past the rail (its first

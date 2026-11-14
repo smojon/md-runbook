@@ -7,13 +7,10 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { isCodeMeta } from '@md-runbook/core';
-import { stepLabel } from '@md-runbook/core/estimate';
 import { SECTION } from './config';
-import { META_KEY } from './outputs';
 import { isCallCopy } from './calls';
 import { RunPipeline } from './pipeline';
-import { notebookProgress } from './progress';
+import { labelOf, notebookProgress } from './progress';
 import { onDidChangeWaiting, waitingIn } from './waiting';
 
 function enabled(): boolean {
@@ -41,10 +38,8 @@ export function endMessage(nb: vscode.NotebookDocument): { text: string; failedC
   const p = notebookProgress(nb);
   const name = nameOf(nb);
   if (p.firstFailed) {
-    const cell = nb.cellAt(p.firstFailed.cell);
-    const meta: unknown = cell.metadata?.[META_KEY];
-    const label = stepLabel(isCodeMeta(meta) ? meta.info : '', cell.document.getText(), cell.document.languageId);
-    return { text: `${name}: step ${p.firstFailed.step} of ${p.total} failed${label ? ` — ${label}` : ''}`, failedCell: p.firstFailed.cell, failed: true };
+    const label = labelOf(nb.cellAt(p.firstFailed.cell));
+    return { text: `${name}: step ${p.firstFailed.step} of ${p.total} failed — ${label}`, failedCell: p.firstFailed.cell, failed: true };
   }
   if (p.pending === 0 && p.total > 0) return { text: `${name}: done · ${p.done + p.skipped} of ${p.total}${p.offered > 0 ? ' · teardown offered' : ''}`, failed: false };
   return undefined;

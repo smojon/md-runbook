@@ -91,6 +91,7 @@ export {
   overEstimate,
   progressBar,
   runbookEstimate,
+  stepHeadings,
   stepLabel,
   suggestedEstimate,
   terminalBarWidth,

@@ -64,7 +64,17 @@ import {
 } from '@md-runbook/core/estimate';
 import { TeardownCard } from '../cells/TeardownCard';
 import { ManualCard } from '../cells/ManualCard';
-import { ManualItem, StepNeed, StepsRow, lastCodeCell, preflightLine, stepsRows, uncheckedBefore, withItemTicked } from '../runbooks/steps';
+import {
+  ManualItem,
+  StepNeed,
+  StepsRow,
+  cellHeadings,
+  lastCodeCell,
+  preflightLine,
+  stepsRows,
+  uncheckedBefore,
+  withItemTicked,
+} from '../runbooks/steps';
 import { StepsHead, StepsHeader, StepsSheet } from '../ui/StepsSheet';
 import { StepsList } from '../ui/StepsList';
 
@@ -309,14 +319,18 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     ),
     partStates,
   );
+  // The headings that name blocks without a name= (the only block under its heading).
+  const headings = useMemo(() => cellHeadings(cells), [cells]);
   // The block running now, named for the run bar and the slim bar pinned on top while it runs.
   const runningStep = useMemo((): RunningStep | undefined => {
     const c = running ? cells[running.cellIndex] : undefined;
     if (!running || !c) return undefined;
-    const label = stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId) || t.cellNumber(running.cellIndex + 1);
+    const label =
+      stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId, headings[running.cellIndex]) ||
+      t.cellNumber(running.cellIndex + 1);
     const step = progress?.stepOfCell[running.cellIndex];
     return { index: running.cellIndex, label, ...(step !== undefined ? { step } : {}) };
-  }, [running, cells, progress]);
+  }, [running, cells, progress, headings]);
   // The rail on the left: a tick per step where it is in the runbook, filled down to the run.
   const railTicks = useMemo((): RailTick[] => {
     if (!progress) return [];
@@ -327,10 +341,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       const s = stepState(a?.exit, a?.lines !== undefined, a?.check);
       const state: RailState =
         running?.cellIndex === i ? 'running' : s === 'done' || s === 'skipped' ? 'done' : s === 'failed' ? 'failed' : 'pending';
-      const label = stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId);
+      const label = stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId, headings[i]);
       return [{ index: i, step, state, ...(label ? { label } : {}) }];
     });
-  }, [cells, progress, running]);
+  }, [cells, progress, running, headings]);
   const railChapters = useMemo(
     (): RailChapter[] =>
       cells.flatMap((c, i) =>

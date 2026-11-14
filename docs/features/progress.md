@@ -25,7 +25,7 @@ the app's run bar:
 | When | Status bar |
 | --- | --- |
 | Not running | `☰ 2/6 · ~4 min` (steps done or skipped, and the time left by the blocks' estimates) |
-| A block runs | `⟳ Step 3/6 · Push image · 1m 40s left` (the block's `name=`, else its first line) |
+| A block runs | `⟳ Step 3/6 · Push image · 1m 40s left` (the block's `name=`, else its heading, else its first line) |
 | A step failed | `✗ Step 4/6 failed`, on a red background |
 | All done | `✓ Done · 6/6 · teardown offered` |
 | A value or a confirmation is asked | `✎ Waiting for you: parameter NAMESPACE`, on a yellow background |
@@ -46,7 +46,7 @@ Steps** on the toolbar and in Run ▾; **All steps** in the status bar's tooltip
 on the first Run All; drag it to the secondary side bar to keep it beside the runbook) is the runbook's progress as a rail beside its
 steps, like the app's rail: at the top, where the run is, the bar and the time left; then each
 `#`/`##` chapter and each step with its state on the rail (done, failed, running, waiting for
-you, to do), its name (`name=`, else its first line) and its time (`est. 2m`, `12s of 1m` while
+you, to do), its name (`name=`, else its heading, else its first line) and its time (`est. 2m`, `12s of 1m` while
 it runs, with a bar, `took 3m10s (+40s)` after a run over its estimate). The rail fills down to
 the step the run has reached, and the cells on screen are shaded. Click a row to go to it; its
 buttons (on hover or with the keyboard) run that step, run from it, or mark it done or skipped,

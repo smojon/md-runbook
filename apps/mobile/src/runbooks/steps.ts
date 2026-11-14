@@ -8,7 +8,7 @@ import { isCodeMeta, taskItems } from '@md-runbook/core';
 import type { ParsedCell, Progress } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
-import { blockProgress, formatEstimate, overEstimate, stepLabel } from '@md-runbook/core/estimate';
+import { blockProgress, formatEstimate, overEstimate, stepHeadings, stepLabel } from '@md-runbook/core/estimate';
 import { stepState } from '@md-runbook/core/progress';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { t } from '../i18n';
@@ -92,10 +92,16 @@ export function checklistText(markdown: string, line: number): string {
   return (markdown.split(/\r?\n/)[line] ?? '').replace(TASK_PREFIX, '').trim() || t.stepsChecklistItem;
 }
 
+/** The headings that name blocks without a name= (core stepHeadings), one per cell. */
+export function cellHeadings(cells: readonly ParsedCell[]): (string | undefined)[] {
+  return stepHeadings(cells.map((c) => ({ kind: c.kind === 'markup' ? 'markup' : 'code', text: c.value })));
+}
+
 export function stepsRows({ cells, progress, running, waiting, callEstimates, needsOf, now }: StepsInput): StepsRow[] {
   const rows: StepsRow[] = [];
   /** The last step number given (a block's from the progress, checklist items counted on). */
   let taskStep = 0;
+  const headings = cellHeadings(cells);
   cells.forEach((cell, i) => {
     if (cell.kind === 'markup') {
       const text = i === 0 ? withoutFrontMatter(cell.value) : cell.value;
@@ -160,7 +166,7 @@ export function stepsRows({ cells, progress, running, waiting, callEstimates, ne
       } else if (took !== undefined && state !== 'pending') time = t.stepsTook(formatEstimate(took));
       else if (est !== undefined) time = t.estimate(formatEstimate(est));
     }
-    const label = stepLabel(info, cell.value, cell.languageId) || t.cellNumber(i + 1);
+    const label = stepLabel(info, cell.value, cell.languageId, headings[i]) || t.cellNumber(i + 1);
     // Preflight: for a step still to run (or to run again), not the ready check or a teardown offered.
     const needs = needsOf && (state === 'pending' || state === 'failed') && !ready && !offered ? needsOf(i, cell) : [];
     rows.push({

@@ -6,7 +6,7 @@
 import * as os from 'node:os';
 import * as vscode from 'vscode';
 import { Progress, checklist, computeProgress, formatLocalIso, isCodeMeta, nextUncheckedOffset, outputBlockAttrs, runbookEstimate } from '@md-runbook/core';
-import { PartEstimate, RunbookEstimate, formatEstimate, formatFinish, formatTimeLeft, remaining, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
+import { PartEstimate, RunbookEstimate, formatEstimate, formatFinish, formatTimeLeft, remaining, stepHeadings, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
 import { isManualMark } from '@md-runbook/core/progress';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { osGroups } from '@md-runbook/core/os';
@@ -80,9 +80,15 @@ function runningCell(nb: vscode.NotebookDocument): vscode.NotebookCell | undefin
   return nb.getCells().find((c) => runningSince(c) !== undefined);
 }
 
-function labelOf(cell: vscode.NotebookCell): string {
+/** The headings that name blocks without a name= (core stepHeadings): one per cell of `nb`. */
+export function notebookHeadings(nb: vscode.NotebookDocument): (string | undefined)[] {
+  return stepHeadings(nb.getCells().map((c) => ({ kind: c.kind === vscode.NotebookCellKind.Markup ? 'markup' : 'code', text: c.document.getText() })));
+}
+
+/** What to call the step of `cell`: its name=, its heading, its first line, else `cell N`. */
+export function labelOf(cell: vscode.NotebookCell, headings = notebookHeadings(cell.notebook)): string {
   const meta: unknown = cell.metadata?.[META_KEY];
-  return stepLabel(isCodeMeta(meta) ? meta.info : '', cell.document.getText(), cell.document.languageId) || `cell ${cell.index + 1}`;
+  return stepLabel(isCodeMeta(meta) ? meta.info : '', cell.document.getText(), cell.document.languageId, headings[cell.index]) || `cell ${cell.index + 1}`;
 }
 
 /**

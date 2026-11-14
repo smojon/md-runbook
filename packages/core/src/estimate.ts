@@ -60,11 +60,14 @@ export function remaining(e: { fraction?: number; leftSeconds: number }, open: n
   return { ...(percent !== undefined ? { percent } : {}), left };
 }
 
+const cut = (s: string): string => (s.length > 40 ? `${s.slice(0, 39)}…` : s);
+
 /**
  * What to call a step on a status line: its `name=`, a call's first section or src=, else the
+ * heading it sits under when it's the only block there (`heading`, from stepHeadings), else the
  * block's first line (cut at 40 characters).
  */
-export function stepLabel(info: string, source: string, language: string): string {
+export function stepLabel(info: string, source: string, language: string, heading?: string): string {
   const name = parseCellOptions(info).name;
   if (name) return name;
   if (isCallLanguage(language)) {
@@ -72,8 +75,36 @@ export function stepLabel(info: string, source: string, language: string): strin
     const what = call.sections[0] ?? call.src;
     if (what) return what;
   }
-  const first = source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
-  return first.length > 40 ? `${first.slice(0, 39)}…` : first;
+  if (heading) return cut(heading);
+  return cut(source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '');
+}
+
+/**
+ * For each cell, the heading that can name it as a step: the nearest `##` (or deeper) heading
+ * above a code cell when that cell is the only code cell under it (`## Restart the API` over one
+ * block). Several blocks under one heading get none (their first lines tell them apart), nor do
+ * markup cells, blocks above every heading, and blocks right under a `#` heading (the runbook's
+ * title: naming a step after it says nothing new). Inline code ticks and emphasis are dropped.
+ */
+export function stepHeadings(cells: readonly { kind: 'markup' | 'code'; text: string }[]): (string | undefined)[] {
+  const out: (string | undefined)[] = cells.map(() => undefined);
+  let heading: string | undefined;
+  let under: number[] = [];
+  const close = (): void => {
+    if (heading !== undefined && under.length === 1) out[under[0]!] = heading;
+  };
+  cells.forEach((c, i) => {
+    if (c.kind === 'markup') {
+      const hs = headingsOf(i === 0 ? withoutFrontMatter(c.text) : c.text);
+      const last = hs[hs.length - 1];
+      if (!last) return;
+      close();
+      heading = last.level === 1 ? undefined : last.text.replace(/`|\*\*|__/g, '').trim() || undefined;
+      under = [];
+    } else if (heading !== undefined) under.push(i);
+  });
+  close();
+  return out;
 }
 
 /** When a run ends if the estimates hold: `14:32` (local time, 24 h). */

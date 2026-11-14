@@ -72,7 +72,7 @@ describe('the Steps sheet', () => {
     expect(screen.getByTestId('steps-state-1')).toHaveTextContent('○');
     expect(screen.getByTestId('steps-row-2')).toHaveProp('accessibilityLabel', 'Step 2: Look at the dashboard, done, by hand');
     expect(screen.getByTestId('steps-state-2')).toHaveTextContent('✓');
-    expect(screen.getByTestId('steps-row-3')).toHaveProp('accessibilityLabel', 'Step 3: echo two, to do');
+    expect(screen.getByTestId('steps-row-3')).toHaveProp('accessibilityLabel', 'Step 3: Check, to do');
     await act(async () => {
       fireEvent.press(screen.getByTestId('steps-close'));
     });
@@ -92,7 +92,7 @@ describe('the Steps sheet', () => {
     expect(screen.getByTestId('steps-headline')).toHaveTextContent('Step 3 of 3 failed');
     expect(screen.getByTestId('steps-row-1')).toHaveProp('accessibilityLabel', expect.stringMatching(/^Step 1: Say hello, done, took /));
     expect(screen.getByTestId('steps-state-3')).toHaveTextContent('✕');
-    expect(screen.getByTestId('steps-row-3')).toHaveProp('accessibilityLabel', expect.stringMatching(/^Step 3: echo two, failed/));
+    expect(screen.getByTestId('steps-row-3')).toHaveProp('accessibilityLabel', expect.stringMatching(/^Step 3: Check, failed/));
     await act(async () => {
       fireEvent.press(screen.getByTestId('steps-row-3'));
     });
@@ -205,7 +205,7 @@ describe('the rail as a scrubber', () => {
       fireEvent(rail, 'responderMove', { nativeEvent: { locationY: 0, pageY: 450 } });
     });
     expect(screen.getByTestId('rail-bubble-chapter')).toHaveTextContent('Check');
-    expect(screen.getByTestId('rail-bubble-step')).toHaveTextContent('3 · echo two');
+    expect(screen.getByTestId('rail-bubble-step')).toHaveTextContent('3 · Check');
     await act(async () => {
       fireEvent(rail, 'responderRelease', { nativeEvent: { locationY: 0, pageY: 450 } });
     });
