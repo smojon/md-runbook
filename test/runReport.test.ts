@@ -105,6 +105,31 @@ describe('run reports: the summary', () => {
     assert.match(runSummaryProblems({ ...s, client: 'curl' }).join('\n'), /client/);
     assert.match(runSummaryProblems({ ...s, alert: { name: 'A', labels: { 'bad name': 'x' } } }).join('\n'), /not a label name/);
   });
+
+  it("a gate's summary: no file or hash of the text, always the signed runbook, and where it ran", () => {
+    const signed = { name: 'ops/restart', version: 3, manifest: 'ab'.repeat(32), signer: 'ops@example.net', trusted: true };
+    const g = {
+      v: 1,
+      runbook: { signed },
+      who: 'SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG',
+      client: 'gate',
+      started: '2026-11-14T09:00:00Z',
+      ended: '2026-11-14T09:00:05Z',
+      steps: [{ n: 1, label: 'systemctl stop api', state: 'passed' }],
+      ran: [1],
+      totals: { steps: 1, passed: 1, failed: 0, skipped: 0, notRun: 0, byHand: 0 },
+      green: true,
+      gate: { host: 'web-1', account: 'support', from: '192.0.2.7' },
+    };
+    assert.deepEqual(runSummaryProblems(g), []);
+    assert.match(runSummaryProblems({ ...g, runbook: {} }).join('\n'), /runbook.signed: a gate runs signed runbooks only/);
+    assert.match(runSummaryProblems({ ...g, gate: { host: 'web-1', account: 'support', shell: 'x' } }).join('\n'), /unknown field "shell"/);
+    // Only a gate's summary may leave the file and hash out, or say where it ran.
+    const other = runSummaryProblems({ ...g, client: 'cli' }).join('\n');
+    assert.match(other, /runbook.file/);
+    assert.match(other, /runbook.sha256/);
+    assert.match(other, /unknown field "gate"/);
+  });
 });
 
 describe('run reports: the front matter and what a client honours', () => {

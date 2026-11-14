@@ -22,7 +22,11 @@ export const RUN_SUMMARY_VERSION = 1;
 /** The `-n` namespace of a run summary's signature: a runbook signature (`md-runbook`) never verifies as one, nor the reverse. */
 export const RUN_SIGNATURE_NAMESPACE = 'md-runbook-run';
 
-export const RUN_CLIENTS = ['vscode', 'app-ios', 'app-android', 'app-web', 'cli'] as const;
+/**
+ * Where a run was reported from. `gate`: md-runbook-gate's own record of a session on a server
+ * (GateRunSummary): it never sees the runbook's text, only its signed manifest.
+ */
+export const RUN_CLIENTS = ['vscode', 'app-ios', 'app-android', 'app-web', 'cli', 'gate'] as const;
 export type RunClient = (typeof RUN_CLIENTS)[number];
 
 /**
@@ -136,6 +140,29 @@ export interface RunSummaryReport {
   alert?: RunSummaryAlert;
 }
 
+/** Where a gate's summary comes from: the server, the account the key logs in to, the SSH client's address. */
+export interface RunSummaryGate {
+  host: string;
+  account: string;
+  from?: string;
+}
+
+/**
+ * md-runbook-gate's summary of what a session ran of one signed runbook (client `gate`, the same
+ * format version). The gate has only the signed manifest, so `runbook.file` and `runbook.sha256`
+ * are absent and `runbook.signed` is always there (`trusted`: the gate checked it against its
+ * allowed_signers). `who` is the key's fingerprint (or `--who=`); steps are the signed blocks, in
+ * order, labelled by the first line of their code.
+ */
+export interface GateRunSummary extends Omit<RunSummaryReport, 'runbook' | 'client'> {
+  client: 'gate';
+  runbook: Omit<RunSummaryRunbook, 'file' | 'sha256' | 'signed'> & { file?: string; sha256?: string; signed: NonNullable<RunSummaryRunbook['signed']> };
+  gate?: RunSummaryGate;
+}
+
+/** A summary as a server receives it: a client's, or a gate's. */
+export type ReceivedRunSummary = RunSummaryReport | GateRunSummary;
+
 export interface RunSummaryInput {
   /** The runbook's file name (a path is cut to its last part). */
   file: string;
@@ -243,13 +270,16 @@ function onlyKeys(o: Record<string, unknown>, keys: readonly string[], where: st
 
 /**
  * What is wrong with a summary as received: [] when it is a well-formed version 1 summary. Strict:
- * unknown fields are refused, so a summary can't carry anything else (outputs, values).
+ * unknown fields are refused, so a summary can't carry anything else (outputs, values). A gate's
+ * summary (client `gate`, GateRunSummary) may leave out the runbook's file and hash, must name
+ * the signed runbook, and may carry `gate`; no other client's may.
  */
 export function runSummaryProblems(x: unknown): string[] {
   const out: string[] = [];
   if (!isObj(x)) return ['not a JSON object'];
   if (x.v !== RUN_SUMMARY_VERSION) return [`v: ${JSON.stringify(x.v)} is not a summary version this reads (${RUN_SUMMARY_VERSION})`];
-  onlyKeys(x, ['v', 'runbook', 'who', 'client', 'started', 'ended', 'steps', 'ran', 'totals', 'green', 'stopped', 'alert'], 'summary', out);
+  const fromGate = x.client === 'gate';
+  onlyKeys(x, ['v', 'runbook', 'who', 'client', 'started', 'ended', 'steps', 'ran', 'totals', 'green', 'stopped', 'alert', ...(fromGate ? ['gate'] : [])], 'summary', out);
   const str = (v: unknown, where: string, max = RUN_LABEL_MAX): void => {
     if (typeof v !== 'string' || v === '' || v.length > max || /[\r\n]/.test(v)) out.push(`${where}: expected one line of text (at most ${max})`);
   };
@@ -257,10 +287,11 @@ export function runSummaryProblems(x: unknown): string[] {
   if (!isObj(rb)) out.push('runbook: missing');
   else {
     onlyKeys(rb, ['file', 'title', 'sha256', 'signed'], 'runbook', out);
-    str(rb.file, 'runbook.file', 255);
+    if (!(fromGate && rb.file === undefined)) str(rb.file, 'runbook.file', 255);
     if (typeof rb.file === 'string' && /[\\/]/.test(rb.file)) out.push('runbook.file: a file name, without folders');
     if (rb.title !== undefined) str(rb.title, 'runbook.title');
-    if (typeof rb.sha256 !== 'string' || !HEX64.test(rb.sha256)) out.push('runbook.sha256: expected 64 hex digits');
+    if (!(fromGate && rb.sha256 === undefined) && (typeof rb.sha256 !== 'string' || !HEX64.test(rb.sha256))) out.push('runbook.sha256: expected 64 hex digits');
+    if (fromGate && rb.signed === undefined) out.push('runbook.signed: a gate runs signed runbooks only');
     if (rb.signed !== undefined) {
       const s = rb.signed;
       if (!isObj(s)) out.push('runbook.signed: expected an object');
@@ -298,6 +329,16 @@ export function runSummaryProblems(x: unknown): string[] {
   }
   if (typeof x.green !== 'boolean') out.push('green: expected true or false');
   if (x.stopped !== undefined && x.stopped !== true) out.push('stopped: expected true, or absent');
+  if (x.gate !== undefined) {
+    const g = x.gate;
+    if (!isObj(g)) out.push('gate: expected an object');
+    else {
+      onlyKeys(g, ['host', 'account', 'from'], 'gate', out);
+      str(g.host, 'gate.host', 255);
+      str(g.account, 'gate.account', 64);
+      if (g.from !== undefined) str(g.from, 'gate.from', 64);
+    }
+  }
   if (x.alert !== undefined) {
     const a = x.alert;
     if (!isObj(a)) out.push('alert: expected an object');
