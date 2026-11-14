@@ -15,6 +15,7 @@ import { registerLint } from './lint';
 import { RunPipeline } from './pipeline';
 import { registerEstimates } from './estimates';
 import { registerProgress } from './progress';
+import { registerRuns } from './runs';
 import { registerWaiting } from './waiting';
 import { registerStepsView } from './stepsView';
 import { registerCurrentRunbook } from './currentRunbook';
@@ -100,6 +101,8 @@ export function activate(context: vscode.ExtensionContext): void {
   pipeline.preparers.push(safety.final);
   const controller = new RunbookController(pipeline);
   registerCalls(context, pipeline, controller);
+  // Before progress: a run is recorded before the status bar tooltip (last ran green) redraws.
+  registerRuns(context, pipeline);
   registerProgress(context, pipeline, controller);
   registerEstimates(context, pipeline);
   registerWaiting(context);

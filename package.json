@@ -627,6 +627,12 @@
         "icon": "$(output)"
       },
       {
+        "command": "mdRunbook.showRuns",
+        "title": "Show Runs…",
+        "category": "md-runbook",
+        "icon": "$(history)"
+      },
+      {
         "command": "mdRunbook.toggleTranscript",
         "title": "Transcript",
         "category": "md-runbook"
@@ -1098,6 +1104,10 @@
           "when": "notebookType == md-runbook"
         },
         {
+          "command": "mdRunbook.showRuns",
+          "when": "notebookType == md-runbook"
+        },
+        {
           "command": "mdRunbook.toggleTranscript",
           "when": "notebookType == md-runbook"
         },
@@ -1299,8 +1309,12 @@
           "group": "3_outputs@2"
         },
         {
+          "command": "mdRunbook.showRuns",
+          "group": "3_outputs@3"
+        },
+        {
           "command": "mdRunbook.toggleTranscript",
-          "group": "3_outputs@3",
+          "group": "3_outputs@4",
           "toggled": "config.mdRunbook.output.transcript"
         },
         {

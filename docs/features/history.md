@@ -2,7 +2,8 @@
 
 md-runbook can keep earlier outputs of a cell, mark whether a re-run changed the output, show
 a diff against the previous run, run a runbook as a timestamped copy so the original stays
-a clean template, and append every run to a transcript file as it happens.
+a clean template, append every run to a transcript file as it happens, and list the runs of
+a runbook with when it last ran green.
 
 ## Output history
 
@@ -142,6 +143,41 @@ Turn it off with `mdRunbook.output.transcript`, or put the files elsewhere with
 with `mdRunbook.output.transcriptExtension` (`.transcript.log`: what replaces `.md`; a dot first,
 no spaces or slashes, not `.md`). All three are user settings only. The command line writes one
 with [`--transcript FILE`](cli.md#options).
+
+## Run history
+
+VS Code keeps a short record of each run of a runbook: one cell, a range, Run All or Resume Run.
+It is kept in the workspace's storage on this machine. It is never written into the runbook.
+
+Each record has when the run started and ended, who ran it (the user name on this machine), the
+cells it ran, how many passed, failed and were skipped, the first step that failed, and whether
+every step of the runbook was done afterwards.
+
+**Show Runs…** (Run ▾, or the Command Palette) lists the runs of the runbook in front, newest
+first:
+
+```text
+✓ Done · 6 of 6 · 14 Nov 14:32 · 3m10s
+  by smojon · 6 passed
+✗ Step 4 of 6 failed — Push image · 13 Nov 09:05 · 1m2s
+  by smojon · 3 passed, 1 failed
+```
+
+Pick a run to open the [transcript](#transcript) at its first entry. Without one (the
+transcript was off, or the file was rotated away), the runbook opens instead.
+
+- **Last ran green.** A run after which every step was done, with nothing failed and nothing to
+  do, is a green run. The status bar tooltip says `Last ran green: 3 days ago (by smojon)`, or
+  `Never ran green`. Runbooks rot: this tells you whether this one still worked lately.
+- **Steps that never ran.** Once a runbook has a run recorded, a code step that never ran in any
+  recorded run and has no output now gets a hint in the Problems panel: "This step has never run
+  here." Blocks that don't run here (`skip`, `host=`, another OS's block, a proposal) get none.
+  The hint shows in the runbook view only. A step is known by its `name=`, else by its text, so
+  editing an unnamed step makes it new.
+- **Run copies count for their runbook.** A run of `deploy.20261114-142000.md` is listed with
+  the runs of `deploy.md`, as for learned times. A runbook call's copy has no record of its own:
+  the call is a step of the runbook that called it.
+- **Capped:** the last 50 runs of each runbook, for the 200 runbooks run most recently.
 
 ## Settings
 

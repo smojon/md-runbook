@@ -10,6 +10,11 @@
   in the Steps view (or the cell's ⋯). A pause makes Run All stop before the step and ask
   Continue / Stop on the cell; a notification comes when the step starts, once. For the session;
   the file doesn't change. From the VS Code review's feature ideas.
+- **Run history and "last ran green":** VS Code keeps a short record of each run (when, who, how
+  far, which step failed), on this machine and never in the file. **Show Runs…** (Run ▾) lists
+  them, newest first; pick one to open the transcript at that run. The status bar tooltip says
+  `Last ran green: 3 days ago (by smojon)` or `Never ran green`. Once a runbook has a run, a step
+  that never ran in one gets a hint: "This step has never run here." From the VS Code review.
 - **Progress by steps while some have no estimate:** the Steps view and the status bar tooltip say
   `2 of 6 steps · at least 5s left` instead of a percentage the estimates can't back, and the bar
   goes by steps then (the app drops the percentage too). From 3 runs on, a learned estimate's
