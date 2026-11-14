@@ -561,6 +561,18 @@ const en = {
   stepsRowLabel: (step: number | undefined, label: string, state: string, time: string | undefined) =>
     `${step !== undefined ? `Step ${step}: ` : ''}${label}, ${state}${time ? `, ${time}` : ''}`,
   stepsChapter: (title: string) => `Chapter: ${title}`,
+  /** Preflight: what a step will ask of you, known before the run (as in VS Code's Steps view). */
+  stepsNeeds: (needs: string) => `needs ${needs}`,
+  preflightApprovalNeed: 'approval (proposed)',
+  preflightConfirmNeed: 'your confirmation',
+  preflightSecretNeed: (name: string) => `secret ${name} (not stored)`,
+  preflightInputNeed: (name: string) => `input ${name}`,
+  preflight: (parts: string) => `Before you run: ${parts}`,
+  preflightConfirm: (n: number) => (n === 0 ? undefined : n === 1 ? '1 confirmation' : `${n} confirmations`),
+  preflightSecret: (n: number) => (n === 0 ? undefined : n === 1 ? '1 secret to set' : `${n} secrets to set`),
+  preflightInput: (n: number) => (n === 0 ? undefined : n === 1 ? '1 value to type' : `${n} values to type`),
+  preflightApproval: (n: number) => (n === 0 ? undefined : n === 1 ? '1 proposal to approve' : `${n} proposals to approve`),
+  preflightByHand: (n: number) => (n === 0 ? undefined : n === 1 ? '1 step by hand' : `${n} steps by hand`),
   noStepsYet: 'This runbook has no steps yet.',
   /** The rail: a tap shows the steps; a drag along it goes to one. */
   railHint: 'Shows the steps. Drag along the rail to go to a step.',

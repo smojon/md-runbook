@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **App: preflight in the Steps sheet.** As in VS Code, each step still to do says what it will
+  need (your confirmation, a secret not stored on this device, an input, an approval), and the
+  sheet's header sums it up before a run. The pinned run bar now starts past the rail (its first
+  letters were under it), and a step waiting for you shows a pause icon (web drew ❚❚ as one bar).
 - **VS Code: preflight in the Steps view.** Before a run, each step still to do says what it will
   need from you (your confirmation, a secret not stored yet, an input or parameter, an approval),
   and the header sums it up: `Before you run: 2 confirmations · 1 secret to set · 1 step by hand`.

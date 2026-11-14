@@ -58,7 +58,10 @@ says what it answered (`not up → setup runs`). Up/Down, Home/End and Enter wor
 view's header sums it up: `Before you run: 2 confirmations · 1 secret to set · 1 value to type ·
 1 step by hand`. A step can need your confirmation (`confirm`, or a risky command), a secret not
 stored yet, an input or parameter to type, a value from an earlier step (`${out:…}`), or an
-approval (a proposed cell). Nothing is asked or sent to find this out.
+approval (a proposed cell). Nothing is asked or sent to find this out. The app's Steps sheet (and
+the side panel on a wide screen) says the same: under each step what it needs, and the line
+above the list (confirmations, secrets not stored on this device, inputs not typed yet,
+proposals, steps by hand).
 
 **A notification when you look away.** When a run of several cells ends or starts waiting for
 you while its runbook isn't the editor in front (another file, another window), a notification

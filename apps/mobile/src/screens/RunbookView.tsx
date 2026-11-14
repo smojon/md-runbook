@@ -45,7 +45,7 @@ import { isManualMark, stepState } from '@md-runbook/core/progress';
 import type { Captured } from '@md-runbook/core/checks';
 import { DEFAULT_POLICY, PolicyResult, approvalScope, evaluatePolicy } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
-import { parseFrontMatter } from '@md-runbook/core/secrets';
+import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
@@ -64,12 +64,12 @@ import {
 } from '@md-runbook/core/estimate';
 import { TeardownCard } from '../cells/TeardownCard';
 import { ManualCard } from '../cells/ManualCard';
-import { ManualItem, StepsRow, lastCodeCell, stepsRows, uncheckedBefore, withItemTicked } from '../runbooks/steps';
+import { ManualItem, StepNeed, StepsRow, lastCodeCell, preflightLine, stepsRows, uncheckedBefore, withItemTicked } from '../runbooks/steps';
 import { StepsHead, StepsHeader, StepsSheet } from '../ui/StepsSheet';
 import { StepsList } from '../ui/StepsList';
 
 import { BarSegment, TimeBar, useNow } from '../ui/TimeBar';
-import { ProgressRail, RailChapter, RailState, RailTick } from '../ui/ProgressRail';
+import { ProgressRail, RAIL_WIDTH, RailChapter, RailState, RailTick } from '../ui/ProgressRail';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId, signSshsig } from '@md-runbook/ssh';
 import { approvalOf, approveCell, rejectCell } from '../approvals/store';
@@ -110,7 +110,7 @@ import { LineMode, isStepping, lineLabel, planLines } from '../ssh/lineRuns';
 import { confirmationOf, runnability } from '../ssh/cells';
 import { disconnect, isConnected } from '../ssh/connections';
 import { NeededValue, runCell } from '../ssh/runCell';
-import { storeSecret } from '../secrets/store';
+import { loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import { transportReady } from '../ssh/transport';
 import { mono, themedStyles, usePalette } from '../theme';
 import { ActionGroup, ActionsSheet, AppAction } from '../ui/ActionsSheet';
@@ -1490,6 +1490,27 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const waitingCell = manualAsk?.cellIndex ?? asking?.request.cellIndex ?? confirming?.cellIndex ?? teardownOffer?.cellIndex;
   const waiting = waitingCell !== undefined;
   const waitingItem = manualAsk?.item;
+  // Preflight: what each step still to do will ask of you, known now (nothing asked, nothing run).
+  const secretNames = useSecretNames();
+  useEffect(() => void loadSecretNames(), []);
+  /** What running a code cell will ask of you (a plain function: the steps memo below calls it). */
+  const needsOf = (_index: number, cell: (typeof cells)[number]): StepNeed[] => {
+    if (cell.kind !== 'code' || !isCodeMeta(cell.meta)) return [];
+    const needs: StepNeed[] = [];
+    if (/^(proposed|unverified)$/.test(approvalOf(cell.meta.info, cell.value, approvalId))) needs.push({ kind: 'approval' });
+    if (confirmationOf(cell.value, cell.meta.info, outputSettings().allowNoConfirm) !== undefined) needs.push({ kind: 'confirm' });
+    let refs: ReturnType<typeof findRefs> = [];
+    try {
+      refs = findRefs(cell.value);
+    } catch {
+      // A name used as two kinds: the run says so.
+    }
+    for (const r of refs) {
+      if (r.kind === 'secret' && !secretNames.includes(r.name)) needs.push({ kind: 'secret', name: r.name });
+      if (r.kind === 'input' && typedInputs[r.name] === undefined) needs.push({ kind: 'input', name: r.name });
+    }
+    return needs;
+  };
   // The steps by name (the Steps sheet, the wide screen's panel), as VS Code's Runbook Steps view.
   const stepRows = useMemo(
     (): StepsRow[] =>
@@ -1502,10 +1523,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               ? { waiting: { cellIndex: waitingCell, ...(waitingItem !== undefined ? { item: waitingItem } : {}) } }
               : {}),
             callEstimates,
+            needsOf,
             now,
           })
         : [],
-    [cells, progress, running, waitingCell, waitingItem, callEstimates, now],
+    // needsOf reads approvalId, secretNames and typedInputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cells, progress, running, waitingCell, waitingItem, callEstimates, approvalId, secretNames, typedInputs, now],
   );
   const hasSteps = stepRows.some((r) => r.kind === 'step');
   const stepsHeader: StepsHeader = {
@@ -1515,6 +1539,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       ? { fraction: estimate.fraction, line: estimateLines(estimate, progress.pending).main }
       : {}),
   };
+  // Before a run only: once it runs, the run bar and the cards say what it waits for.
+  const preflight = !queued && !running && !waiting ? preflightLine(stepRows) : undefined;
+  if (preflight) stepsHeader.preflight = preflight;
   const goToCell = (index: number): void => {
     setStepsOpen(false);
     list.current?.scrollToIndex({ index, viewPosition: 0.2 });
@@ -1880,7 +1907,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           estimate={estimate}
           {...(runningStep ? { runningCell: runningStep } : {})}
           waiting={waiting}
-          left={panel ? PANEL_WIDTH : 0}
+          left={panel ? PANEL_WIDTH : railShown ? RAIL_WIDTH : 0}
           onShow={() => {
             const at = waitingCell ?? runningStep?.index;
             if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
@@ -1923,7 +1950,7 @@ function PinnedRunBar({
   estimate: RunbookEstimate;
   runningCell?: RunningStep;
   waiting: boolean;
-  /** Where it starts: past the side panel of a wide screen. */
+  /** Where it starts: past the side panel of a wide screen, or past the rail. */
   left?: number;
   onShow(): void;
   onStop(): void;

@@ -19,6 +19,8 @@ export interface StepsHeader {
   /** `41% · 4 min left · ends ≈ 14:32`, with estimates. */
   line?: string;
   fraction?: number;
+  /** Before a run: what the steps still to do will need (`Before you run: 1 confirmation · 1 secret to set`). */
+  preflight?: string;
 }
 
 export function StepsHead({ header }: { header: StepsHeader }) {
@@ -36,6 +38,11 @@ export function StepsHead({ header }: { header: StepsHeader }) {
       {header.line ? (
         <Text testID="steps-progress" style={styles.sub}>
           {header.line}
+        </Text>
+      ) : null}
+      {header.preflight ? (
+        <Text testID="steps-preflight" style={styles.preflight}>
+          {header.preflight}
         </Text>
       ) : null}
     </View>
@@ -99,4 +106,5 @@ const useStyles = themedStyles((c) => ({
   waiting: { color: c.warningText },
   bar: { flexDirection: 'row', marginTop: 8 },
   sub: { fontSize: 13, color: c.muted, marginTop: 4 },
+  preflight: { fontSize: 13, color: c.warningText, marginTop: 4 },
 }));

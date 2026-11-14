@@ -6,7 +6,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { addHost, resetHosts } from '../hosts/store';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
-import { stepsRows, uncheckedBefore, withItemTicked } from '../runbooks/steps';
+import { preflightLine, stepsRows, uncheckedBefore, withItemTicked } from '../runbooks/steps';
 import { RunbookView } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
 import { parse } from '@md-runbook/core';
@@ -99,7 +99,7 @@ describe('the Steps sheet', () => {
     expect(screen.queryByTestId('steps-sheet')).toBeNull();
   });
 
-  it('a running step shows ▶ and its time against the estimate; one waiting for you shows ❚❚', async () => {
+  it('a running step shows ▶ and its time against the estimate; one waiting for you shows the pause icon', async () => {
     const rb = addRunbook('rows.md', GUIDE);
     const cells = parse(getRunbook(rb.id)!.text).cells;
     const progress = textProgress(getRunbook(rb.id)!.text);
@@ -108,6 +108,38 @@ describe('the Steps sheet', () => {
     expect(rows.find((r) => r.key === '1')).toMatchObject({ state: 'running', time: '12s of 2m', fraction: 0.1 });
     const waiting = stepsRows({ cells, progress, waiting: { cellIndex: 3 }, now });
     expect(waiting.find((r) => r.key === '3')).toMatchObject({ state: 'waiting' });
+  });
+
+  it('preflight: each step says what it will need, and the header sums it up before a run', async () => {
+    mockWidth = 1280;
+    const text = [
+      '# Deploy',
+      '',
+      fence('bash name="Wipe cache" confirm', 'echo wipe'),
+      fence('bash name="Push"', 'echo ${secret:PREFLIGHT_TOKEN} ${input:REGION}'),
+      '- [ ] Tell the team',
+      '',
+      fence('bash name="Done"', 'echo done'),
+    ].join('\n');
+    const rb = addRunbook('preflight.md', text);
+    await render(<RunbookView id={rb.id} />);
+    expect(screen.getByTestId('steps-preflight')).toHaveTextContent(
+      'Before you run: 1 confirmation · 1 secret to set · 1 value to type · 1 step by hand',
+    );
+    expect(screen.getByTestId('steps-needs-1')).toHaveTextContent('needs your confirmation');
+    expect(screen.getByTestId('steps-needs-2')).toHaveTextContent('needs secret PREFLIGHT_TOKEN (not stored), input REGION');
+    expect(screen.getByTestId('steps-row-2')).toHaveProp('accessibilityLabel', expect.stringMatching(/\. needs secret PREFLIGHT_TOKEN/));
+    expect(screen.queryByTestId('steps-needs-4')).toBeNull();
+  });
+
+  it('preflight in the rows: done steps need nothing', () => {
+    const cells = parse(['# A', '', fence('bash confirm', 'echo a')].join('\n')).cells;
+    const progress = textProgress(['# A', '', fence('bash confirm', 'echo a')].join('\n'));
+    const rows = stepsRows({ cells, progress, needsOf: () => [{ kind: 'confirm' }], now: 0 });
+    expect(rows.find((r) => r.kind === 'step')).toMatchObject({ needs: [{ kind: 'confirm' }] });
+    expect(preflightLine(rows)).toBe('Before you run: 1 confirmation');
+    const running = stepsRows({ cells, progress, needsOf: () => [{ kind: 'confirm' }], running: { cellIndex: 1, startedAt: 0 }, now: 0 });
+    expect(running.find((r) => r.kind === 'step')).not.toHaveProperty('needs');
   });
 
   it('names the ready check by what it answered and the teardown as offered', () => {

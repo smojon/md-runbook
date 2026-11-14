@@ -35,7 +35,41 @@ export type StepsRow =
       over?: boolean;
       /** The running step's share of its estimate, 0 to 1. */
       fraction?: number;
+      /** Preflight: what running it will need from you (a step still to do, or failed). */
+      needs?: StepNeed[];
     };
+
+/** Something a step will ask of you when it runs, known before the run (as the extension's Steps view). */
+export type StepNeed = { kind: 'approval' } | { kind: 'confirm' } | { kind: 'secret' | 'input'; name: string };
+
+/** A need in a few words: `your confirmation`, `secret API_TOKEN (not stored)`. */
+export function needText(n: StepNeed): string {
+  return n.kind === 'approval'
+    ? t.preflightApprovalNeed
+    : n.kind === 'confirm'
+      ? t.preflightConfirmNeed
+      : n.kind === 'secret'
+        ? t.preflightSecretNeed(n.name)
+        : t.preflightInputNeed(n.name);
+}
+
+/**
+ * Preflight in one line, before a run: what the steps still to do will need (`Before you run: 2
+ * confirmations · 1 secret to set · 1 step by hand`), or undefined when they need nothing.
+ */
+export function preflightLine(rows: readonly StepsRow[]): string | undefined {
+  const steps = rows.filter((r): r is Extract<StepsRow, { kind: 'step' }> => r.kind === 'step');
+  const count = (kind: StepNeed['kind']): number => steps.reduce((n, r) => n + (r.needs ?? []).filter((x) => x.kind === kind).length, 0);
+  const byHand = steps.filter((r) => r.item !== undefined && r.state !== 'done').length;
+  const parts = [
+    t.preflightConfirm(count('confirm')),
+    t.preflightSecret(count('secret')),
+    t.preflightInput(count('input')),
+    t.preflightApproval(count('approval')),
+    t.preflightByHand(byHand),
+  ].filter((p): p is string => p !== undefined);
+  return parts.length ? t.preflight(parts.join(' · ')) : undefined;
+}
 
 export interface StepsInput {
   cells: readonly ParsedCell[];
@@ -46,6 +80,8 @@ export interface StepsInput {
   waiting?: { cellIndex: number; item?: number };
   /** A runbook call's estimate on its cell (null: its src= has placeholders). */
   callEstimates?: ReadonlyMap<number, number | null>;
+  /** Preflight: what running code cell `index` will need from you now (nothing asked, nothing run). */
+  needsOf?: (index: number, cell: ParsedCell) => StepNeed[];
   now: number;
 }
 
@@ -56,7 +92,7 @@ export function checklistText(markdown: string, line: number): string {
   return (markdown.split(/\r?\n/)[line] ?? '').replace(TASK_PREFIX, '').trim() || t.stepsChecklistItem;
 }
 
-export function stepsRows({ cells, progress, running, waiting, callEstimates, now }: StepsInput): StepsRow[] {
+export function stepsRows({ cells, progress, running, waiting, callEstimates, needsOf, now }: StepsInput): StepsRow[] {
   const rows: StepsRow[] = [];
   /** The last step number given (a block's from the progress, checklist items counted on). */
   let taskStep = 0;
@@ -125,6 +161,8 @@ export function stepsRows({ cells, progress, running, waiting, callEstimates, no
       else if (est !== undefined) time = t.estimate(formatEstimate(est));
     }
     const label = stepLabel(info, cell.value, cell.languageId) || t.cellNumber(i + 1);
+    // Preflight: for a step still to run (or to run again), not the ready check or a teardown offered.
+    const needs = needsOf && (state === 'pending' || state === 'failed') && !ready && !offered ? needsOf(i, cell) : [];
     rows.push({
       kind: 'step',
       key: String(i),
@@ -135,6 +173,7 @@ export function stepsRows({ cells, progress, running, waiting, callEstimates, no
       ...(time !== undefined ? { time } : {}),
       ...(over ? { over } : {}),
       ...(fraction !== undefined ? { fraction } : {}),
+      ...(needs.length ? { needs } : {}),
     });
   });
   return rows;

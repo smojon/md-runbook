@@ -1,6 +1,6 @@
 /**
  * The runbook's steps by name (runbooks/steps.ts): chapters as headings, each step with its state
- * as a symbol and a colour (✓ done, ✕ failed, ▶ running, ❚❚ waiting for you, ○ to do), its
+ * as a symbol and a colour (✓ done, ✕ failed, ▶ running, a pause icon waiting for you, ○ to do), its
  * number, its name and its time. A row goes to its cell. The rows of the cells on screen are
  * shaded; the list keeps the running (or waiting) step in view. The Steps sheet and the wide
  * screen's side panel both draw it.
@@ -8,12 +8,14 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Pressable, ScrollView, ScrollViewInstance, Text, View } from 'react-native';
 import { t } from '../i18n';
+import { needText } from '../runbooks/steps';
 import type { StepRowState, StepsRow } from '../runbooks/steps';
 import { Palette, themedStyles, usePalette } from '../theme';
+import { Codicon } from './Codicon';
 import { usePulse } from './motion';
 import { TimeBar } from './TimeBar';
 
-const GLYPH: Record<StepRowState, string> = { done: '✓', failed: '✕', running: '▶', waiting: '❚❚', pending: '○' };
+const GLYPH: Record<StepRowState, string> = { done: '✓', failed: '✕', running: '▶', waiting: '', pending: '○' };
 
 function glyphColor(c: Palette, s: StepRowState): string {
   return s === 'done' ? c.ok : s === 'failed' ? c.error : s === 'running' ? c.accent : s === 'waiting' ? c.warningText : c.muted;
@@ -74,24 +76,32 @@ export function StepsList({
           );
         }
         const active = r.state === 'running' || r.state === 'waiting';
+        const needs = r.needs?.map(needText).join(', ');
         return (
           <Pressable
             key={r.key}
             testID={`steps-row-${r.key}`}
             accessibilityRole="button"
-            accessibilityLabel={t.stepsRowLabel(r.step, r.label, t.stepsState[r.state], r.time)}
+            accessibilityLabel={t.stepsRowLabel(r.step, r.label, t.stepsState[r.state], r.time) + (needs ? '. ' + t.stepsNeeds(needs) : '')}
             accessibilityState={{ selected: active }}
             onPress={() => onGo(r.index)}
             onLayout={(e) => remember(e.nativeEvent.layout.y)}
             style={({ pressed }) => [styles.row, seen && styles.seen, pressed && styles.pressed]}
           >
             <View style={styles.line}>
-              <Animated.Text
-                testID={`steps-state-${r.key}`}
-                style={[styles.glyph, { color: glyphColor(c, r.state) }, r.state === 'running' && { opacity: pulse }]}
-              >
-                {GLYPH[r.state]}
-              </Animated.Text>
+              {r.state === 'waiting' ? (
+                // The pause icon, not a ❚❚ text glyph: some fonts (web) drew that as one tall bar.
+                <View testID={`steps-state-${r.key}`} style={styles.glyphBox}>
+                  <Codicon name="debug-pause" size={14} color={glyphColor(c, r.state)} />
+                </View>
+              ) : (
+                <Animated.Text
+                  testID={`steps-state-${r.key}`}
+                  style={[styles.glyph, { color: glyphColor(c, r.state) }, r.state === 'running' && { opacity: pulse }]}
+                >
+                  {GLYPH[r.state]}
+                </Animated.Text>
+              )}
               <Text style={styles.num}>{r.step !== undefined ? String(r.step) : '·'}</Text>
               <Text style={[styles.label, active && styles.labelActive, r.state === 'waiting' && styles.waiting]} numberOfLines={2}>
                 {r.label}
@@ -102,6 +112,11 @@ export function StepsList({
                 </Text>
               ) : null}
             </View>
+            {needs ? (
+              <Text testID={`steps-needs-${r.key}`} style={styles.needs} numberOfLines={2}>
+                {t.stepsNeeds(needs)}
+              </Text>
+            ) : null}
             {r.fraction !== undefined ? (
               <View style={styles.bar}>
                 <TimeBar fraction={r.fraction} over={r.over === true} />
@@ -124,6 +139,7 @@ const useStyles = themedStyles((c) => ({
   pressed: { backgroundColor: c.codeBackground },
   line: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   glyph: { width: 22, fontSize: 14, textAlign: 'center', fontWeight: '700' },
+  glyphBox: { width: 22, alignItems: 'center' },
   num: { minWidth: 22, fontSize: 13, color: c.muted, textAlign: 'right', fontVariant: ['tabular-nums'] },
   label: { flex: 1, fontSize: 15, color: c.text },
   labelActive: { fontWeight: '600' },
@@ -131,4 +147,5 @@ const useStyles = themedStyles((c) => ({
   time: { fontSize: 13, color: c.muted, fontVariant: ['tabular-nums'] },
   over: { color: c.warningText },
   bar: { marginTop: 6, marginLeft: 60 },
+  needs: { marginTop: 2, marginLeft: 60, fontSize: 13, color: c.warningText },
 }));
