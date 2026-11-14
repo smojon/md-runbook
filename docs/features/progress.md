@@ -47,18 +47,38 @@ on the first Run All; drag it to the secondary side bar to keep it beside the ru
 steps, like the app's rail: at the top, where the run is, the bar and the time left; then each
 `#`/`##` chapter and each step with its state on the rail (done, failed, running, waiting for
 you, to do), its name (`name=`, else its heading, else its first line) and its time (`est. 2m`, `12s of 1m` while
-it runs, with a bar, `took 3m10s (+40s)` after a run over its estimate). The rail fills down to
-the step the run has reached, and the cells on screen are shaded. Click a row to go to it; its
-buttons (on hover or with the keyboard) run that step, run from it, or mark it done or skipped,
-and tick or untick a checklist item. The title bar has **Run All** (**Stop** while it runs),
-**Resume Run** when there is something to resume, and **Go to Next Step**. The ready check's row
-says what it answered (`not up → setup runs`). Up/Down, Home/End and Enter work in the list.
+it runs, with a bar and a spinning icon, `took 3m10s (+40s)` after a run over its estimate). A
+chapter with only one step is one row: the heading, with the step's dot, number and time (and
+the step's own name under it when it has another one). Checklist items stay under the heading
+they are written under. The rail fills down to the step the run has reached, and the cells on
+screen are shaded (a line on the left in high contrast). Click a row to go to it; its buttons
+(on hover or focus, beside the time) run that step, run from it, mark it done or skipped, unmark
+it, or tick a checklist item. The title bar has **Run All** (**Stop** while it runs), **Resume
+Run** when there is something to resume, and **Go to Next Step**. The ready check's row says
+what it answered (`not up → setup runs`). The view follows the runbook you work on: the one in
+front, else the one that runs or waits for you. With no runbook open it offers **Open Sample
+Runbook** and **Open as Runbook**.
+
+**When a step fails**, the header has two buttons: **Retry step** runs the failed step again, and
+**Resume** runs it and the steps still to do (Resume Run). Under the failed row is the last line
+of its error output (stderr, else its output).
+
+**Keyboard.** Up/Down and Home/End move between rows, Enter goes to the step's cell, and on a
+row: **R** runs the step, **F** runs from it, **D** marks it done, **S** marks it skipped, **U**
+unmarks it, and **Space** ticks or unticks a checklist item. A screen reader reads these keys
+with the row. Anywhere in VS Code: **Ctrl+Alt+S** (⌃⌘S on a Mac) shows the Steps view. In the
+runbook or the Steps view: **Ctrl+Alt+N** (⌃⌘N) goes to the next step, **Ctrl+Alt+R** (⌃⌘R)
+resumes the run. In the runbook: **Ctrl+Alt+D** (⌃⌘D) marks the selected step done. None of them
+act while you type in a cell. Change them in **Keyboard Shortcuts** (search for `mdRunbook`).
 
 **Preflight.** Before a run, each step still to do says what it will need from you, and the
 view's header sums it up: `Before you run: 2 confirmations · 1 secret to set · 1 value to type ·
 1 step by hand`. A step can need your confirmation (`confirm`, or a risky command), a secret not
 stored yet, an input or parameter to type, a value from an earlier step (`${out:…}`), or an
-approval (a proposed cell). Nothing is asked or sent to find this out. The app's Steps sheet (and
+approval (a proposed cell). Nothing is asked or sent to find this out. Each count is a link:
+values to type open **Set Parameters** and **Set Inputs**, secrets open **Set Secret** (the names
+are in the link's tooltip), and confirmations, proposals and steps by hand go to the first step
+that needs one. The app's Steps sheet (and
 the side panel on a wide screen) says the same: under each step what it needs, and the line
 above the list (confirmations, secrets not stored on this device, inputs not typed yet,
 proposals, steps by hand).

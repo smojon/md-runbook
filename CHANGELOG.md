@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **VS Code: a calmer, clearer Steps view.** A chapter with only one step is one row. Checklist
+  items stay under their own heading. Rows are updated in place, so a click, the hover and the
+  keyboard focus are no longer lost while a step runs. The row buttons are VS Code icons, beside
+  the time instead of over it, and the running step has a spinning icon by its name. After a
+  failure the header has **Retry step** and **Resume**, and the failed row shows the last line of
+  its error output. Each count of the preflight line is a link (Set Parameters or Set Inputs, Set
+  Secret, or the first step that needs it), in plain grey rather than amber. In high contrast the
+  bars have an outlined track. The view no longer disappears: with no runbook it offers **Open
+  Sample Runbook** and **Open as Runbook**.
+- **VS Code: keys for the run.** Ctrl+Alt+R resumes the run, Ctrl+Alt+N goes to the next step,
+  Ctrl+Alt+S shows the Steps view, Ctrl+Alt+D marks the selected step done (⌃⌘ on a Mac). In the
+  Steps view, on a row: R runs the step, F runs from it, D marks it done, S skipped, U unmarks it,
+  Space ticks a checklist item. Screen readers hear the block's estimate in words ("12 seconds of
+  20 seconds") instead of the bar's characters, and the status bar's progress without icon
+  names. The session and context status bar items have their own names in the status bar menu.
 - **Estimates that learn.** A block without `estimate=` shows its usual time once it has run:
   the median of its last 5 runs that passed, with a `~` (`est. ~1m15s`), and it counts in the
   time left and the end time, in VS Code and the app. Kept on the machine, never in the file;

@@ -45,7 +45,21 @@ const builds = [
   },
 ];
 
+// The Steps view's row buttons are codicons: the view loads the font and its CSS from out/codicons
+// (packaged by .vscodeignore; vsce runs with --no-dependencies, so node_modules is not shipped).
+function copyCodicons() {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dist = path.dirname(require.resolve('@vscode/codicons/dist/codicon.css'));
+  const out = path.join(__dirname, '..', 'out', 'codicons');
+  fs.mkdirSync(out, { recursive: true });
+  for (const f of ['codicon.css', 'codicon.ttf']) fs.copyFileSync(path.join(dist, f), path.join(out, f));
+  // The font is CC BY 4.0: its licence goes with it.
+  fs.copyFileSync(path.join(dist, '..', 'LICENSE'), path.join(out, 'LICENSE'));
+}
+
 (async () => {
+  copyCodicons();
   for (const options of builds) {
     if (watch) await (await esbuild.context(options)).watch();
     else await esbuild.build(options);

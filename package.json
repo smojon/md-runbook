@@ -104,7 +104,6 @@
           "type": "webview",
           "id": "mdRunbook.steps",
           "name": "Steps",
-          "when": "mdRunbook.runbookActive",
           "icon": "$(checklist)"
         }
       ]
@@ -2071,6 +2070,30 @@
         "when": "notebookType == md-runbook && notebookCellEditorFocused && notebookCellType == code"
       },
       {
+        "command": "mdRunbook.resumeRun",
+        "key": "ctrl+alt+r",
+        "mac": "ctrl+cmd+r",
+        "when": "mdRunbook.canResume && !mdRunbook.runbookRunning && !inputFocus && (notebookType == md-runbook || focusedView == mdRunbook.steps)"
+      },
+      {
+        "command": "mdRunbook.revealNextStep",
+        "key": "ctrl+alt+n",
+        "mac": "ctrl+cmd+n",
+        "when": "!inputFocus && (notebookType == md-runbook || focusedView == mdRunbook.steps)"
+      },
+      {
+        "command": "mdRunbook.showSteps",
+        "key": "ctrl+alt+s",
+        "mac": "ctrl+cmd+s",
+        "when": "!inputFocus"
+      },
+      {
+        "command": "mdRunbook.markStepDone",
+        "key": "ctrl+alt+d",
+        "mac": "ctrl+cmd+d",
+        "when": "notebookType == md-runbook && notebookEditorFocused && !inputFocus"
+      },
+      {
         "command": "mdRunbook.stepNext",
         "key": "f10",
         "when": "mdRunbook.stepPaused && !inDebugMode"
@@ -2247,6 +2270,7 @@
     "@md-runbook/core": "*",
     "@types/node": "^20.19.43",
     "@types/vscode": "^1.85.0",
+    "@vscode/codicons": "0.0.46-24",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",

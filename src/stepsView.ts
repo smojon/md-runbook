@@ -3,13 +3,13 @@
  * as the app's rail but with room for names. At the top, where the run is (the status bar's
  * words), the bar and the time left; then the chapters (`#`/`##` headings) and the steps, each
  * with its state on the rail, its name and its time; the running one with its bar against its
- * estimate; a pale band for the cells on screen. A row goes to its cell. Shown while a runbook is
- * the active editor.
+ * estimate; a pale band for the cells on screen. A row goes to its cell. It shows the current
+ * runbook (currentRunbook.ts), and an empty state when there is none. The page is in stepsPage.ts.
  */
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { formatEstimate, formatFinish, formatLearned, isCodeMeta, runbookEstimate, stepState, taskItems } from '@md-runbook/core';
+import { formatEstimate, formatFinish, formatLearned, isCodeMeta, parseLineSet, runbookEstimate, stepState, taskItems } from '@md-runbook/core';
 import { blockProgress, overEstimate, remaining, stepLabel } from '@md-runbook/core/estimate';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { setContext } from './contextKeys';
@@ -17,12 +17,13 @@ import { currentRunbook, editorOf, onDidChangeCurrentRunbook, showRunbook } from
 import { isCallLanguage } from '@md-runbook/core/call';
 import { cellPart } from './controller';
 import { blockEstimate, lastDuration, notebookEstimateSteps, notebookPartStates, runningSince } from './estimates';
-import { META_KEY } from './outputs';
+import { META_KEY, outputMeta } from './outputs';
 import { isManualMark } from '@md-runbook/core/progress';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { cellAttrs, notebookHeadings, notebookProgress, progressStatus, selectRunbookKernel } from './progress';
 import { RunPipeline } from './pipeline';
 import { isTestMode } from './secrets';
+import { stepsPage } from './stepsPage';
 import { setTaskBox } from './taskLists';
 import { NOTEBOOK_TYPE } from './serializer';
 import { onDidChangeWaiting, waitingIn } from './waiting';
@@ -54,7 +55,24 @@ export type StepsRow =
       marked?: boolean;
       /** Preflight: what running it will need from you (a confirmation, a secret, a value, an approval). */
       needs?: string[];
+      /** The step is the only one under a `#`/`##` heading: one row, named by the heading (its level). */
+      chapter?: number;
+      /** Such a row's own step name, when it differs from the heading. */
+      detail?: string;
+      /** A failed step: the last line of its error output (stderr, else the output), cut short. */
+      error?: string;
     };
+
+/** One count of the preflight line, which the view makes a link. */
+export interface PreflightPart {
+  kind: 'confirmation' | 'secret' | 'value' | 'proposal' | 'byHand';
+  /** `2 secrets to set`. */
+  text: string;
+  /** The first step that needs it (a confirmation, a proposal, a step by hand). */
+  index?: number;
+  /** The secrets to set, by name. */
+  names?: string[];
+}
 
 export interface StepsModel {
   title: string;
@@ -70,6 +88,10 @@ export interface StepsModel {
   open: number;
   /** Preflight, before a run: what the steps still to do will need, in one line. */
   preflight?: string;
+  /** The same line's counts, each a link in the view. */
+  preflightParts?: PreflightPart[];
+  /** After a failure: the failed step's cell (Retry step). */
+  failedCell?: number;
   /** Resume Run has something to do (a step done, and one still to do or failed). */
   canResume: boolean;
   /** The cells on screen, first and last index. */
@@ -99,6 +121,51 @@ export function stepNeeds(cell: vscode.NotebookCell, info: string, sources: Pref
   return needs;
 }
 
+const STDERR = 'application/vnd.code.notebook.stderr';
+const STDOUT = 'application/vnd.code.notebook.stdout';
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+const ERROR_MAX = 120;
+const decoder = new TextDecoder();
+
+/** Why a step failed, in one line: the last non-empty line of its stderr, else of its output. */
+export function errorLine(cell: vscode.NotebookCell): string | undefined {
+  const err: string[] = [];
+  const out: string[] = [];
+  for (const o of cell.outputs) {
+    const m = outputMeta(o);
+    // The status line, earlier runs and cloud tables are not what the step printed.
+    if (m?.status || m?.earlier || m?.cloud) continue;
+    for (const item of o.items) {
+      if (item.mime !== STDERR && item.mime !== STDOUT && item.mime !== 'text/plain') continue;
+      const lines = decoder.decode(item.data).replace(ANSI_RE, '').split(/\r?\n/);
+      if (m?.persisted) {
+        // Loaded from the file: one text, its stderr lines listed on the output marker.
+        const errs = parseLineSet(cellAttrs(cell)?.stderr);
+        lines.forEach((l, n) => (errs.has(n) ? err : out).push(l));
+      } else (item.mime === STDERR ? err : out).push(...lines);
+    }
+  }
+  const last = (lines: string[]): string | undefined => lines.map((l) => l.trim()).filter(Boolean).pop();
+  const line = last(err) ?? last(out);
+  return line !== undefined && line.length > ERROR_MAX ? `${line.slice(0, ERROR_MAX - 1)}…` : line;
+}
+
+/** A chapter with only one step under it is one row: the heading, with the step's dot, number and time. */
+function mergeLoneSteps(rows: StepsRow[]): StepsRow[] {
+  const merged: StepsRow[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!;
+    const next = rows[i + 1];
+    const after = rows[i + 2];
+    // Only a numbered step (not the ready check or an offered teardown), and nothing else before the next chapter.
+    if (r.kind === 'chapter' && next?.kind === 'step' && next.step !== undefined && (after === undefined || after.kind === 'chapter')) {
+      merged.push({ ...next, label: r.title, chapter: r.level, ...(next.label !== r.title ? { detail: next.label } : {}) });
+      i++;
+    } else merged.push(r);
+  }
+  return merged;
+}
+
 /** The view's content for a runbook, from the same model as the status bar. */
 export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: number; last: number }, now = Date.now(), sources?: PreflightSources): StepsModel {
   const p = notebookProgress(nb);
@@ -115,10 +182,23 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     const i = cell.index;
     if (cell.kind === vscode.NotebookCellKind.Markup) {
       const text = cell.document.getText();
-      for (const h of headingsOf(i === 0 ? withoutFrontMatter(text) : text)) if (h.level <= 2) rows.push({ kind: 'chapter', index: i, title: h.text, level: h.level });
-      // Checklist items are steps too (manual ones): numbered in order with the blocks.
       const lines = text.split(/\r?\n/);
-      for (const item of taskItems(text)) {
+      // Headings and checklist items in line order, so an item stays under its own heading.
+      const body = i === 0 ? withoutFrontMatter(text) : text;
+      const above = lines.length - body.split(/\r?\n/).length;
+      const marks = [
+        ...headingsOf(body)
+          .filter((h) => h.level <= 2)
+          .map((h) => ({ line: h.line + above, heading: h, item: undefined })),
+        ...taskItems(text).map((item) => ({ line: item.line, heading: undefined, item })),
+      ].sort((a, b) => a.line - b.line);
+      for (const { heading: h, item } of marks) {
+        if (h) {
+          rows.push({ kind: 'chapter', index: i, title: h.text, level: h.level });
+          continue;
+        }
+        if (!item) continue;
+        // Checklist items are steps too (manual ones): numbered in order with the blocks.
         taskStep++;
         rows.push({
           kind: 'step',
@@ -175,6 +255,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     const label = stepLabel(info, cell.document.getText(), cell.document.languageId, headings[i]) || `cell ${i + 1}`;
     // Preflight: only for a step still to run (or to run again), and not while one runs.
     const needs = sources && (state === 'pending' || state === 'failed') && !ready && !offered ? stepNeeds(cell, info, sources) : [];
+    const error = state === 'failed' ? errorLine(cell) : undefined;
     rows.push({
       kind: 'step',
       index: i,
@@ -189,21 +270,26 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
       runnable: true,
       ...(isManualMark(a) ? { marked: true } : {}),
       ...(needs.length ? { needs } : {}),
+      ...(error ? { error } : {}),
     });
   }
   const done = p.pending === 0 && p.failed === 0 && p.total > 0;
   // Preflight in one line: what the steps still to do will need, before a run.
-  const count = (test: (n: string) => boolean): number => rows.reduce((t, r) => t + (r.kind === 'step' ? (r.needs ?? []).filter(test).length : 0), 0);
-  const byHand = rows.filter((r) => r.kind === 'step' && r.task && !r.task.checked).length;
-  const tally: [number, string, string][] = [
-    [count((n) => n === 'your confirmation'), 'confirmation', 'confirmations'],
-    [count((n) => n.startsWith('secret ')), 'secret to set', 'secrets to set'],
-    [count((n) => n.startsWith('input ') || n.startsWith('parameter ')), 'value to type', 'values to type'],
-    [count((n) => n.startsWith('approval')), 'proposal to approve', 'proposals to approve'],
-    [byHand, 'step by hand', 'steps by hand'],
+  const steps = rows.filter((r): r is Extract<StepsRow, { kind: 'step' }> => r.kind === 'step');
+  const needing = (test: (n: string) => boolean): string[] => steps.flatMap((r) => (r.needs ?? []).filter(test));
+  const first = (test: (r: Extract<StepsRow, { kind: 'step' }>) => boolean): number | undefined => steps.find(test)?.index;
+  const isConfirm = (n: string): boolean => n === 'your confirmation';
+  const isApproval = (n: string): boolean => n.startsWith('approval');
+  const secrets = needing((n) => n.startsWith('secret '));
+  const tally: [number, string, string, Omit<PreflightPart, 'text'>][] = [
+    [needing(isConfirm).length, 'confirmation', 'confirmations', { kind: 'confirmation', index: first((r) => !!r.needs?.some(isConfirm)) }],
+    [secrets.length, 'secret to set', 'secrets to set', { kind: 'secret', names: secrets.map((n) => n.split(' ')[1] ?? n) }],
+    [needing((n) => n.startsWith('input ') || n.startsWith('parameter ')).length, 'value to type', 'values to type', { kind: 'value' }],
+    [needing(isApproval).length, 'proposal to approve', 'proposals to approve', { kind: 'proposal', index: first((r) => !!r.needs?.some(isApproval)) }],
+    [steps.filter((r) => r.task && !r.task.checked).length, 'step by hand', 'steps by hand', { kind: 'byHand', index: first((r) => !!r.task && !r.task.checked) }],
   ];
-  const parts = tally.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`);
-  const preflight = sources && !anyRunning && !waiting && parts.length ? `Before you run: ${parts.join(' · ')}` : undefined;
+  const parts: PreflightPart[] = tally.filter(([n]) => n > 0).map(([n, one, many, part]) => ({ ...part, text: `${n} ${n === 1 ? one : many}` }));
+  const preflight = sources && !anyRunning && !waiting && parts.length ? `Before you run: ${parts.map((x) => x.text).join(' · ')}` : undefined;
   // Never "100%" or "nothing left" while a step is open (core remaining()).
   const rest = remaining(e, p.pending);
   return {
@@ -213,190 +299,13 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     state: waiting ? 'waiting' : anyRunning ? 'running' : p.firstFailed ? 'failed' : done ? 'done' : 'idle',
     ...(e.fraction !== undefined ? { fraction: e.fraction } : {}),
     ...(rest.percent !== undefined ? { percent: rest.percent, left: rest.left + (e.leftSeconds > 0 ? ` · ends ≈ ${formatFinish(e.leftSeconds, now)}` : '') } : {}),
-    rows,
+    rows: mergeLoneSteps(rows),
     open: p.pending + p.failed,
-    ...(preflight ? { preflight } : {}),
+    ...(preflight ? { preflight, preflightParts: parts } : {}),
+    ...(!waiting && !anyRunning && p.firstFailed ? { failedCell: p.firstFailed.cell } : {}),
     canResume: p.resume.length > 0 && p.done + p.skipped + p.failed > 0,
     ...(visible ? { visible } : {}),
   };
-}
-
-function nonce(): string {
-  let s = '';
-  for (let i = 0; i < 32; i++) s += 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'.charAt(Math.floor(Math.random() * 62));
-  return s;
-}
-
-/** The view's page: draws what the extension posts (a StepsModel); a click asks to go to a cell. */
-function page(webview: vscode.Webview): string {
-  const n = nonce();
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${n}';">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  body { padding: 6px 8px 12px 6px; color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
-  .head { margin: 2px 0 8px 2px; }
-  .headline { font-weight: 600; }
-  .headline.failed { color: var(--vscode-errorForeground); }
-  .headline.waiting { color: var(--vscode-editorWarning-foreground); }
-  .sub { color: var(--vscode-descriptionForeground); margin-top: 2px; }
-  .bar { height: 6px; border-radius: 3px; background: var(--vscode-progressBar-background); opacity: .25; position: relative; margin-top: 6px; }
-  .barwrap { position: relative; margin-top: 6px; height: 6px; }
-  .barwrap .track { position: absolute; inset: 0; border-radius: 3px; background: var(--vscode-editorWidget-border, #8884); }
-  .barwrap .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--vscode-progressBar-background); }
-  .rail { position: relative; }
-  .rail::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 3px; border-radius: 2px; background: var(--vscode-editorWidget-border, #8884); }
-  .railfill { position: absolute; left: 8px; top: 0; width: 3px; border-radius: 2px; background: var(--vscode-progressBar-background); }
-  .row { position: relative; display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 22px; border-radius: 4px; cursor: pointer; min-height: 20px; }
-  .row:hover { background: var(--vscode-list-hoverBackground); }
-  .row.seen { background: color-mix(in srgb, var(--vscode-editor-inactiveSelectionBackground) 40%, transparent); }
-  .chapter { font-weight: 600; padding-top: 8px; }
-  .chapter::before { content: ''; position: absolute; left: 4px; width: 11px; height: 2px; background: var(--vscode-descriptionForeground); }
-  .chapter.l1 { font-size: 1.05em; }
-  .dot { position: absolute; left: 3px; width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--vscode-descriptionForeground); background: var(--vscode-sideBar-background); box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 8px; line-height: 1; color: var(--vscode-sideBar-background); font-weight: 700; }
-  .row:focus { outline: none; }
-  .row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-  .done .dot { background: var(--vscode-testing-iconPassed, #388a34); border-color: var(--vscode-testing-iconPassed, #388a34); }
-  .failed .dot { background: var(--vscode-testing-iconFailed, #e51400); border-color: var(--vscode-testing-iconFailed, #e51400); }
-  .skipped .dot { background: var(--vscode-descriptionForeground); border-color: var(--vscode-descriptionForeground); }
-  .skipped .label { color: var(--vscode-descriptionForeground); }
-  .running .dot { background: var(--vscode-progressBar-background); border-color: var(--vscode-progressBar-background); animation: pulse 1.2s ease-in-out infinite; }
-  .waiting .dot { background: var(--vscode-editorWarning-foreground); border-color: var(--vscode-editorWarning-foreground); animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 50% { opacity: .3; } }
-  @media (prefers-reduced-motion: reduce) { .running .dot, .waiting .dot { animation: none; } }
-  .num { color: var(--vscode-descriptionForeground); min-width: 1.6em; text-align: right; }
-  .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .time { color: var(--vscode-descriptionForeground); white-space: nowrap; font-size: .92em; }
-  .time.over { color: var(--vscode-editorWarning-foreground); }
-  .running .label, .waiting .label { font-weight: 600; }
-  .lab { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .lab .label { flex: none; }
-  .needs { color: var(--vscode-editorWarning-foreground); font-size: .85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pre { margin-top: 4px; color: var(--vscode-editorWarning-foreground); font-size: .92em; }
-  .stepbar { position: absolute; left: 22px; right: 4px; bottom: 0; height: 2px; }
-  .stepbar .fill { height: 2px; background: var(--vscode-progressBar-background); }
-  .stepbar.over .fill { background: var(--vscode-editorWarning-foreground); }
-  .empty { color: var(--vscode-descriptionForeground); }
-  .acts { display: none; gap: 2px; }
-  .row:hover .acts, .row:focus-within .acts { display: flex; }
-  .row:hover .time, .row:focus-within .time { display: none; }
-  .act { border: none; background: transparent; color: var(--vscode-icon-foreground, var(--vscode-foreground)); cursor: pointer; padding: 0 3px; border-radius: 3px; font-size: 12px; line-height: 18px; }
-  .act:hover { background: var(--vscode-toolbar-hoverBackground); }
-  .act:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
-</style></head><body>
-<div id="live" class="sr" role="status" aria-live="polite"></div>
-<div id="root" class="empty">Open a runbook to see its steps.</div>
-<script nonce="${n}">
-  const vscode = acquireVsCodeApi();
-  const root = document.getElementById('root');
-  const live = document.getElementById('live');
-  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
-  // State in a symbol too, not colour alone.
-  const GLYPH = { done: '✓', skipped: '↷', failed: '✕', running: '▶', waiting: '❚❚', pending: '' };
-  const STATE = { done: 'done', skipped: 'skipped', failed: 'failed', running: 'running', waiting: 'waiting for you', pending: 'to do' };
-  let lastState;
-  function draw(m) {
-    // Keep the keyboard focus across redraws (every second while a step runs).
-    const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : undefined;
-    // Say a change of state once (failed, waiting, done), not the clock every second.
-    if (m.state !== lastState && lastState !== undefined) live.textContent = m.headline;
-    lastState = m.state;
-    root.className = '';
-    root.replaceChildren();
-    const head = el('div', 'head');
-    head.append(el('div', 'headline ' + m.state, m.headline));
-    if (m.fraction !== undefined) {
-      const w = el('div', 'barwrap'); w.append(el('div', 'track'));
-      const f = el('div', 'fill'); f.style.width = Math.round(m.fraction * 100) + '%'; w.append(f); head.append(w);
-      head.append(el('div', 'sub', m.percent + '% · ' + m.left));
-    }
-    if (m.preflight) head.append(el('div', 'pre', m.preflight));
-    root.append(head);
-    const rail = el('div', 'rail');
-    rail.setAttribute('role', 'tree');
-    rail.setAttribute('aria-label', 'Steps of the runbook');
-    const fill = el('div', 'railfill');
-    rail.append(fill);
-    let reached;
-    for (const r of m.rows) {
-      const row = el('div', 'row ' + (r.kind === 'chapter' ? 'chapter l' + r.level : r.state));
-      row.dataset.index = r.index;
-      row.dataset.key = r.kind + ':' + r.index + ':' + (r.step !== undefined ? r.step : r.title || r.label);
-      row.tabIndex = -1;
-      row.setAttribute('role', 'treeitem');
-      if (m.visible && r.index >= m.visible.first && r.index <= m.visible.last) row.classList.add('seen');
-      if (r.kind === 'chapter') {
-        row.append(el('span', 'label', r.title));
-        row.title = 'Go to ' + r.title;
-      } else {
-        row.append(el('span', 'dot', GLYPH[r.state]));
-        row.append(el('span', 'num', r.step !== undefined ? String(r.step) : '·'));
-        const lab = el('span', 'lab');
-        lab.append(el('span', 'label', r.label));
-        if (r.needs) lab.append(el('span', 'needs', 'needs ' + r.needs.join(', ')));
-        row.append(lab);
-        if (r.time) row.append(el('span', 'time' + (r.over ? ' over' : ''), r.time));
-        // Its own buttons (on hover or focus): run it, run from it, mark it; tick a checklist item.
-        const acts = el('span', 'acts');
-        const act = (text, title, msg) => {
-          const b = el('button', 'act', text);
-          b.title = title;
-          b.setAttribute('aria-label', title + ': ' + r.label);
-          b.addEventListener('click', (ev) => { ev.stopPropagation(); vscode.postMessage(msg); });
-          acts.append(b);
-        };
-        if (r.task) act(r.task.checked ? '☑' : '☐', r.task.checked ? 'Untick' : 'Tick (done by hand)', { tick: r.index, offset: r.task.offset, checked: !r.task.checked });
-        else if (r.runnable && r.state !== 'running' && r.state !== 'waiting') {
-          act('▶', 'Run this step', { run: r.index });
-          act('↧', 'Run from here', { runFrom: r.index });
-          if (r.state === 'pending' || r.state === 'failed') act('✓', 'Mark done', { mark: r.index, as: 'done' });
-          if (r.state === 'pending' || r.state === 'failed') act('↷', 'Mark skipped', { mark: r.index, as: 'skipped' });
-          if (r.marked) act('↺', 'Unmark', { unmark: r.index });
-        }
-        if (acts.childElementCount) row.append(acts);
-        if (r.fraction !== undefined) {
-          const b = el('div', 'stepbar' + (r.over ? ' over' : ''));
-          const bf = el('div', 'fill'); bf.style.width = Math.round(r.fraction * 100) + '%'; b.append(bf); row.append(b);
-        }
-        row.title = (r.step !== undefined ? 'Step ' + r.step + ': ' : '') + r.label + ' (' + STATE[r.state] + (r.time ? ', ' + r.time : '') + ')' + (r.needs ? '. Needs ' + r.needs.join(', ') : '');
-        if (r.state === 'running' || r.state === 'waiting') row.setAttribute('aria-current', 'step');
-        if (r.state !== 'pending') reached = row;
-      }
-      row.setAttribute('aria-label', row.title);
-      row.addEventListener('click', () => vscode.postMessage({ go: r.index }));
-      rail.append(row);
-    }
-    root.append(rail);
-    // One tab stop for the list: the focused row, else the running one, else the first.
-    const rows = [...rail.querySelectorAll('.row')];
-    const again = focused !== undefined ? rows.find((x) => x.dataset.key === focused) : undefined;
-    const stop = again || rail.querySelector('[aria-current]') || rows[0];
-    if (stop) stop.tabIndex = 0;
-    if (again) again.focus();
-    // The rail fills down to the last step reached (running, done or failed).
-    requestAnimationFrame(() => { fill.style.height = reached ? (reached.offsetTop + reached.offsetHeight / 2) + 'px' : '0'; });
-  }
-  // Up/Down (Home/End) move between rows; Enter or Space goes to the row's cell.
-  root.addEventListener('keydown', (e) => {
-    const row = e.target.closest && e.target.closest('.row');
-    if (!row) return;
-    const rows = [...root.querySelectorAll('.row')];
-    const i = rows.indexOf(row);
-    const to = e.key === 'ArrowDown' ? rows[i + 1] : e.key === 'ArrowUp' ? rows[i - 1] : e.key === 'Home' ? rows[0] : e.key === 'End' ? rows[rows.length - 1] : undefined;
-    if (to) {
-      e.preventDefault();
-      row.tabIndex = -1;
-      to.tabIndex = 0;
-      to.focus();
-    } else if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      vscode.postMessage({ go: Number(row.dataset.index) });
-    }
-  });
-  window.addEventListener('message', (e) => { if (e.data && e.data.model) draw(e.data.model); else if (e.data && e.data.empty) { root.className = 'empty'; root.textContent = 'Open a runbook to see its steps.'; } });
-  vscode.postMessage({ ready: true });
-</script></body></html>`;
 }
 
 class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -412,11 +321,32 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
-    view.webview.options = { enableScripts: true };
-    view.webview.html = page(view.webview);
+    // The row buttons are codicons, shipped with the extension (scripts/build.js copies them to out/codicons).
+    const codicons = vscode.Uri.joinPath(this.context.extensionUri, 'out', 'codicons');
+    view.webview.options = { enableScripts: true, localResourceRoots: [codicons] };
+    view.webview.html = stepsPage(view.webview, view.webview.asWebviewUri(vscode.Uri.joinPath(codicons, 'codicon.css')));
     view.webview.onDidReceiveMessage((m: unknown) => {
-      const msg = m as { ready?: boolean; go?: unknown; run?: unknown; runFrom?: unknown; mark?: unknown; unmark?: unknown; as?: unknown; tick?: unknown; offset?: unknown; checked?: unknown };
+      const msg = m as {
+        ready?: boolean;
+        go?: unknown;
+        run?: unknown;
+        runFrom?: unknown;
+        mark?: unknown;
+        unmark?: unknown;
+        as?: unknown;
+        tick?: unknown;
+        offset?: unknown;
+        checked?: unknown;
+        resume?: unknown;
+        preflight?: unknown;
+        openSample?: unknown;
+        openAsRunbook?: unknown;
+      };
       if (msg.ready) this.refresh();
+      if (msg.resume === true) void this.resume();
+      if (typeof msg.preflight === 'string') void this.preflight(msg.preflight);
+      if (msg.openSample === true) void vscode.commands.executeCommand('mdRunbook.openSample');
+      if (msg.openAsRunbook === true) void openAsRunbook();
       if (typeof msg.go === 'number') void this.go(msg.go);
       if (typeof msg.run === 'number') void this.run(msg.run, msg.run + 1);
       if (typeof msg.runFrom === 'number') void this.run(msg.runFrom, Number.MAX_SAFE_INTEGER);
@@ -454,6 +384,30 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
       ranges: [{ start, end: Math.min(end, nb.cellCount) }],
       document: nb.uri,
     });
+  }
+
+  /** Resume Run for the runbook the view shows (it acts on a runbook on screen). */
+  private async resume(): Promise<void> {
+    const nb = this.notebook();
+    if (!nb) return;
+    if (!editorOf(nb)) await showRunbook(nb);
+    await vscode.commands.executeCommand('mdRunbook.resumeRun', nb.uri);
+  }
+
+  /** A click on a count of the preflight line: set the values or a secret, or go to the first step that needs it. */
+  private async preflight(kind: string): Promise<void> {
+    const nb = this.notebook();
+    const m = this.model();
+    const part = m?.preflightParts?.find((p) => p.kind === kind);
+    if (!nb || !m || !part) return;
+    if (part.index !== undefined) return this.go(part.index);
+    if (kind === 'secret') return void (await vscode.commands.executeCommand('mdRunbook.setSecret'));
+    if (kind !== 'value') return;
+    // Set Parameters and Set Inputs ask for the runbook in front.
+    await showRunbook(nb);
+    const needs = m.rows.flatMap((r) => (r.kind === 'step' ? (r.needs ?? []) : []));
+    if (needs.some((n) => n.startsWith('parameter '))) await vscode.commands.executeCommand('mdRunbook.setParameters');
+    if (needs.some((n) => n.startsWith('input '))) await vscode.commands.executeCommand('mdRunbook.setInputs');
   }
 
   private async mark(index: number, as: 'done' | 'skipped'): Promise<void> {
@@ -509,6 +463,17 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
     clearTimeout(this.timer);
     clearInterval(this.ticker);
   }
+}
+
+/** The empty view's Open as Runbook: the Markdown file in front, else one picked in a dialog. */
+async function openAsRunbook(): Promise<void> {
+  const doc = vscode.window.activeTextEditor?.document;
+  let uri = doc?.languageId === 'markdown' && !doc.isUntitled ? doc.uri : undefined;
+  if (!uri) {
+    const picked = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { Markdown: ['md', 'markdown'] }, openLabel: 'Open as Runbook' });
+    uri = picked?.[0];
+  }
+  if (uri) await vscode.commands.executeCommand('mdRunbook.openAsRunbook', uri);
 }
 
 export function registerStepsView(context: vscode.ExtensionContext, pipeline?: RunPipeline, sources?: PreflightSources): void {

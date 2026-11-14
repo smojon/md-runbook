@@ -1,6 +1,9 @@
 **
 !out/dist/extension.js
 !out/webview/index.js
+!out/codicons/codicon.css
+!out/codicons/codicon.ttf
+!out/codicons/LICENSE
 !images/icon.png
 !images/line-checked.svg
 !images/steps.svg

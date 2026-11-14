@@ -87,6 +87,10 @@ test('Resume Run continues from the failed step after it is fixed', async () => 
   let p = await progress();
   assert.deepEqual(p.firstFailed, { cell: 1, step: 2 });
   assert.deepEqual(p.resume, [1, 2]);
+  // The Steps view: Retry step acts on the failed cell; its row shows the last line it printed.
+  const failed = (await vscode.commands.executeCommand<{ failedCell?: number; rows: { index: number; error?: string }[] }>('mdRunbook._steps'))!;
+  assert.equal(failed.failedCell, 1);
+  assert.equal(failed.rows.find((r) => r.index === 1)?.error, 'broken');
   const firstOrder = c0!.executionSummary?.executionOrder;
 
   const edit = new vscode.WorkspaceEdit();
@@ -120,20 +124,22 @@ test('Clear Outputs Above / Below', async () => {
   await closeAll();
 });
 
+type Row = { kind: string; index: number; step?: number; label?: string; title?: string; state?: string; time?: string; chapter?: number; detail?: string; error?: string };
+/** A Steps view row as text: `# Title` for a chapter, `2 name state time` for a step, `# 2 heading (name) …` for a chapter merged with its only step. */
+const shownRow = (r: Row): string =>
+  r.kind === 'chapter' ? `# ${r.title}` : `${r.chapter ? '# ' : ''}${r.step} ${r.label}${r.detail ? ` (${r.detail})` : ''} ${r.state}${r.time ? ` ${r.time}` : ''}`;
+
 test('Runbook Steps view: chapters and steps in order, each with its state and time', async () => {
   const uri = writeFile(
     'steps-view.md',
     `# Deploy\n\n${fence('echo one')}\n## Clean up\n\n\`\`\`${LANG} estimate=2m name="Remove the lab"\necho two\n\`\`\`\n`,
   );
   const editor = await openRunbook(uri);
-  type Row = { kind: string; index: number; step?: number; label?: string; title?: string; state?: string; time?: string };
   const model = async (): Promise<{ headline: string; rows: Row[]; open: number; canResume: boolean }> =>
     (await vscode.commands.executeCommand<{ headline: string; rows: Row[]; open: number; canResume: boolean }>('mdRunbook._steps'))!;
   const before = await model();
-  assert.deepEqual(
-    before.rows.map((r) => (r.kind === 'chapter' ? `# ${r.title}` : `${r.step} ${r.label} ${r.state}${r.time ? ` ${r.time}` : ''}`)),
-    ['# Deploy', '1 echo one pending', '# Clean up', '2 Remove the lab pending est. 2m'],
-  );
+  // A chapter with one step is one row: the heading, with the step's own name under it.
+  assert.deepEqual(before.rows.map(shownRow), ['# 1 Deploy (echo one) pending', '# 2 Clean up (Remove the lab) pending est. 2m']);
   assert.equal(before.headline, '0/2 · ~2 min');
   assert.equal(before.open, 2, 'the badge: steps left');
   assert.equal(before.canResume, false, 'nothing to resume before a run');
@@ -142,6 +148,23 @@ test('Runbook Steps view: chapters and steps in order, each with its state and t
   assert.equal(after.rows.find((r) => r.index === 1)?.state, 'done');
   assert.equal(after.open, 1);
   assert.equal(after.canResume, true, 'a step done, one to do: Resume Run shows');
+  await closeAll();
+});
+
+test('Steps view: checklist items stay under their own heading; a chapter with several steps keeps its row', async () => {
+  const uri = writeFile(
+    'steps-order.md',
+    `# Prep\n\n- [ ] ask for access\n\n## Notify\n\n- [ ] tell the team\n- [ ] post a status\n\n\`\`\`${LANG} name="Go"\necho go\n\`\`\`\n`,
+  );
+  await openRunbook(uri);
+  const m = (await vscode.commands.executeCommand<{ rows: Row[] }>('mdRunbook._steps'))!;
+  assert.deepEqual(m.rows.map(shownRow), [
+    '# 1 Prep (ask for access) pending by hand',
+    '# Notify',
+    '2 tell the team pending by hand',
+    '3 post a status pending by hand',
+    '4 Go pending',
+  ]);
   await closeAll();
 });
 
@@ -227,13 +250,20 @@ test('Steps view preflight: what each step will need, and a summary before a run
     `# Deploy\n\n\`\`\`${LANG} confirm name="Restart"\necho restart\n\`\`\`\n\n\`\`\`${LANG} name="Login"\necho "\${input:PF_USER}" "\${secret:PF_NOT_STORED_TOKEN}"\n\`\`\`\n\n- [ ] Tell the team\n\n\`\`\`${LANG} name="Done"\necho ok\n\`\`\`\n`,
   );
   await openRunbook(uri);
-  type Row = { kind: string; label?: string; needs?: string[] };
-  const m = (await vscode.commands.executeCommand<{ preflight?: string; rows: Row[] }>('mdRunbook._steps'))!;
+  type NeedsRow = { kind: string; label?: string; needs?: string[] };
+  const m = (await vscode.commands.executeCommand<{ preflight?: string; preflightParts?: unknown[]; rows: NeedsRow[] }>('mdRunbook._steps'))!;
   const needs = (label: string): string[] | undefined => m.rows.find((r) => r.label === label)?.needs;
   assert.deepEqual(needs('Restart'), ['your confirmation']);
   assert.deepEqual(needs('Login'), ['input PF_USER', 'secret PF_NOT_STORED_TOKEN (not stored)']);
   assert.equal(needs('Done'), undefined);
   assert.equal(m.preflight, 'Before you run: 1 confirmation · 1 secret to set · 1 value to type · 1 step by hand');
+  // Each count is a link: where it goes (the first step that needs it) or what it sets.
+  assert.deepEqual(m.preflightParts, [
+    { kind: 'confirmation', text: '1 confirmation', index: 1 },
+    { kind: 'secret', text: '1 secret to set', names: ['PF_NOT_STORED_TOKEN'] },
+    { kind: 'value', text: '1 value to type' },
+    { kind: 'byHand', text: '1 step by hand', index: 3 },
+  ]);
   await closeAll();
 });
 
