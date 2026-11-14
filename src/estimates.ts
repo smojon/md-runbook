@@ -188,14 +188,18 @@ export function anyRunning(nb: vscode.NotebookDocument): boolean {
  * it, how long it took (`est. 2m30s · took 3m10s (+40s)`, a click sets estimate= to it), with a
  * warning past twice it. Undefined for a block without an estimate.
  */
-export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { text: string; tooltip: string; setTo?: number } | undefined {
+export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { text: string; tooltip: string; label: string; setTo?: number } | undefined {
   const block = blockEstimate(cell);
   if (block === undefined) {
     // A call whose src= has placeholders: what it runs is known when it runs.
     const meta: unknown = cell.metadata?.[META_KEY];
     const src = isCallLanguage(cell.document.languageId) && isCodeMeta(meta) ? parseCall(meta.info, '').src : undefined;
     if (src !== undefined && isDynamicSrc(src) && optionsOn()) {
-      return { text: '$(watch) estimate unknown until run', tooltip: `src="${src}" is known when the call runs; add estimate= to the block to show one.` };
+      return {
+        text: '$(watch) estimate unknown until run',
+        tooltip: `src="${src}" is known when the call runs; add estimate= to the block to show one.`,
+        label: 'Estimate unknown until the call runs',
+      };
     }
     return undefined;
   }
@@ -205,9 +209,12 @@ export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { tex
   const since = runningSince(cell);
   if (since !== undefined) {
     const elapsed = (now - since) / 1000;
-    const over = blockProgress(elapsed, est).overSeconds > 0;
+    const overSeconds = blockProgress(elapsed, est).overSeconds;
+    const over = overSeconds > 0;
     return {
       text: `${over ? '$(warning)' : '$(watch)'} ${formatBlockProgress(elapsed, est, BAR_WIDTH, blockBar)}`,
+      // Read out as words, not the bar's block characters.
+      label: over ? `Running, ${spoken(overSeconds)} over the estimate of ${spoken(est)}` : `Running, ${spoken(elapsed)} of ${spoken(est)}`,
       tooltip: block.learned
         ? `Running for ${formatEstimate(elapsed)}; this block usually takes ${fmt(est)}${learnedNote}.`
         : `Running for ${formatEstimate(elapsed)}; this block's estimate (estimate=) is ${formatEstimate(est)}.`,
@@ -220,6 +227,7 @@ export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { tex
     return {
       text: `${isOverEstimate(took, est) ? '$(warning)' : '$(watch)'} est. ${fmt(est)} · took ${formatEstimate(took)} (+${formatEstimate(extra)})`,
       tooltip: `The last run took ${formatEstimate(took)}, ${formatEstimate(extra)} more than ${block.learned ? 'this block usually takes' : "this block's estimate"}. Click to set estimate=${formatEstimate(setTo)}.`,
+      label: `Estimate ${spoken(est)}, the last run took ${spoken(took)}, ${spoken(extra)} more`,
       setTo,
     };
   }
@@ -227,10 +235,25 @@ export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { tex
     return {
       text: `$(watch) est. ${fmt(est)}`,
       tooltip: `This block usually takes ${formatEstimate(est)}${learnedNote}. Click to write it into the runbook as estimate=${formatEstimate(est)}.`,
+      label: `Usually takes about ${spoken(est)}`,
       setTo: est,
     };
   }
-  return { text: `$(watch) est. ${formatEstimate(est)}`, tooltip: 'How long this block takes, as measured on a real run (estimate=). It does not change how it runs.' };
+  return {
+    text: `$(watch) est. ${formatEstimate(est)}`,
+    tooltip: 'How long this block takes, as measured on a real run (estimate=). It does not change how it runs.',
+    label: `Estimate ${spoken(est)}`,
+  };
+}
+
+/** A duration as a screen reader should say it: `2 minutes 30 seconds` (formatEstimate's `2m30s`). */
+function spoken(seconds: number): string {
+  const whole = Math.round(Math.max(0, seconds));
+  const h = Math.floor(whole / 3600);
+  const m = Math.floor((whole % 3600) / 60);
+  const s = whole % 60;
+  const unit = (n: number, name: string): string => `${n} ${name}${n === 1 ? '' : 's'}`;
+  return [h ? unit(h, 'hour') : '', m ? unit(m, 'minute') : '', s || (!h && !m) ? unit(s, 'second') : ''].filter(Boolean).join(' ');
 }
 
 /** Set a block's estimate= (from its last run): the fence options are in the cell's metadata. */
@@ -256,6 +279,7 @@ class EstimateStatus implements vscode.NotebookCellStatusBarItemProvider, vscode
     if (!s) return [];
     const item = new vscode.NotebookCellStatusBarItem(s.text, vscode.NotebookCellStatusBarAlignment.Left);
     item.tooltip = s.tooltip;
+    item.accessibilityInformation = { label: s.label };
     if (s.setTo !== undefined) item.command = { title: 'Set estimate=', command: SET_ESTIMATE, arguments: [cell.notebook.uri.toString(), cell.index, s.setTo] };
     return [item];
   }

@@ -73,7 +73,8 @@ export function registerSessions(context: vscode.ExtensionContext, pipeline: Run
     return o ? { mode: o, source: 'toggle' } : inheritedMode(nb);
   };
 
-  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  const status = vscode.window.createStatusBarItem('mdRunbook.session', vscode.StatusBarAlignment.Left, 100);
+  status.name = 'md-runbook session';
   status.command = 'mdRunbook.sessionMenu';
   const updateStatus = (): void => {
     const nb = activeRunbook();

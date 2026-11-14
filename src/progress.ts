@@ -255,11 +255,14 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
     // Behind another file: only while it runs or waits for you, named, and a click shows it.
     if (!front && !running && !w) return item.hide();
     const named = (text: string): string => (front ? text : `${path.posix.basename(nb.uri.path).replace(/\.md$/i, '')} · ${text}`);
+    // For a screen reader: no icon names, "Step 2 of 5", commas between the parts.
+    const spoken = (text: string): string => text.replace(/\$\([^)]+\)\s*/g, '').replace(/(\d+)\/(\d+)/g, '$1 of $2').replace(/ · /g, ', ');
     if (w) {
       // The prompt is at the top of the window, easy to miss: say whose turn it is, in colour.
       const t = waitingText(w.what, w.where);
       item.text = named(t.statusBar);
       item.tooltip = t.tooltip;
+      item.accessibilityInformation = { label: spoken(item.text) };
       item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
       item.command = { title: 'Show the cell', command: 'mdRunbook._revealCell', arguments: [w.cell] };
       shown = true;
@@ -268,6 +271,7 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
     const s = progressStatus(nb, p);
     item.text = named(s.text);
     item.tooltip = s.tooltip;
+    item.accessibilityInformation = { label: spoken(item.text) };
     item.backgroundColor = s.failed ? new vscode.ThemeColor('statusBarItem.errorBackground') : undefined;
     shown = true;
     item.command = front ? 'mdRunbook.revealNextStep' : { title: 'Show the runbook', command: 'mdRunbook._showRunbook', arguments: [nb.uri.toString()] };

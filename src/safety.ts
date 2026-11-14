@@ -60,7 +60,7 @@ class ContextRecorder implements CellPreparer, vscode.Disposable {
   private readonly cache = new Map<string, { at: number; sig: string; values: Promise<Record<string, string>> }>();
   /** Last values per notebook, for the status bar. */
   private readonly last = new Map<string, Record<string, string>>();
-  private readonly item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  private readonly item = Object.assign(vscode.window.createStatusBarItem('mdRunbook.context', vscode.StatusBarAlignment.Left, 100), { name: 'md-runbook context' });
 
   async prepare(plan: CellPlan, { notebook }: PrepareContext): Promise<void> {
     if (plan.skip !== undefined) return;
