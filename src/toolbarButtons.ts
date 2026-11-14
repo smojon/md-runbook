@@ -21,7 +21,11 @@ export function registerToolbarButtons(context: vscode.ExtensionContext): void {
       const items: Item[] = [];
       for (const section of menuSections(contributes, `mdRunbook.toolbar.${name}`, value)) {
         if (items.length) items.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
-        for (const c of section) items.push({ label: c.icon ? `$(${c.icon}) ${c.title}` : c.title, command: c.command });
+        for (const c of section) {
+          // A switch shows its state (the toolbar's ⋯ submenu shows a ✓; a list doesn't by itself).
+          const label = c.on === true ? `$(check) ${c.title}` : c.icon ? `$(${c.icon}) ${c.title}` : c.title;
+          items.push({ label, command: c.command, ...(c.on !== undefined ? { description: c.on ? 'on' : 'off' } : {}) });
+        }
       }
       const pick = vscode.window.createQuickPick<Item>();
       pick.items = items;

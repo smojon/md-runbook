@@ -33,6 +33,8 @@ const ELSEWHERE: Record<string, string> = {
   'mdRunbook.toggleBreakpointAt': 'the line hover (Breakpoint)',
   'mdRunbook.copyLineAt': 'the line hover',
   'mdRunbook.runToLineAt': 'the line hover',
+  'mdRunbook.approveProposal': "a proposed cell's status line (Approve), and Go to Next Proposal in Assistant ▾",
+  'mdRunbook.rejectProposal': "a proposed cell's status line (Reject)",
 };
 
 describe('menus', () => {

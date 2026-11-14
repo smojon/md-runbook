@@ -380,7 +380,7 @@
         "command": "mdRunbook.copyCellForAi",
         "title": "Copy Cell for AI",
         "category": "md-runbook",
-        "icon": "$(copy)"
+        "icon": "$(sparkle)"
       },
       {
         "command": "mdRunbook.pasteAiProposal",
@@ -649,17 +649,17 @@
         {
           "command": "mdRunbook.clearAllOutputs",
           "when": "resourceExtname == .md",
-          "group": "navigation@100"
+          "group": "7_mdRunbook@1"
         },
         {
           "command": "mdRunbook.exportReport",
           "when": "resourceExtname == .md",
-          "group": "navigation@101"
+          "group": "7_mdRunbook@2"
         },
         {
           "command": "mdRunbook.exportReportPdf",
           "when": "resourceExtname == .md",
-          "group": "navigation@102"
+          "group": "7_mdRunbook@3"
         }
       ],
       "editor/title": [
@@ -747,6 +747,18 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "mdRunbook.steps.runAll",
+          "when": "mdRunbook.runbookActive"
+        },
+        {
+          "command": "mdRunbook.steps.stop",
+          "when": "mdRunbook.runbookActive"
+        },
+        {
+          "command": "mdRunbook.showSteps",
+          "when": "mdRunbook.runbookActive"
+        },
         {
           "command": "mdRunbook.openAsRunbook",
           "when": "resourceExtname == .md"
@@ -1040,47 +1052,47 @@
         {
           "command": "mdRunbook.markStepDone",
           "when": "notebookType == md-runbook && notebookCellType == code",
-          "group": "mdRunbook-progress@1"
+          "group": "1_progress@1"
         },
         {
           "command": "mdRunbook.markStepSkipped",
           "when": "notebookType == md-runbook && notebookCellType == code",
-          "group": "mdRunbook-progress@2"
+          "group": "1_progress@2"
         },
         {
           "command": "mdRunbook.unmarkStep",
           "when": "notebookType == md-runbook && notebookCellType == code",
-          "group": "mdRunbook-progress@3"
+          "group": "1_progress@3"
         },
         {
           "command": "mdRunbook.checkNextItem",
           "when": "notebookType == md-runbook && notebookCellType == markup",
-          "group": "mdRunbook-progress@1"
+          "group": "1_progress@1"
         },
         {
           "command": "mdRunbook.clearOutputsAbove",
           "when": "notebookType == md-runbook",
-          "group": "mdRunbook-clear@1"
+          "group": "9_clear@1"
         },
         {
           "command": "mdRunbook.clearOutputsBelow",
           "when": "notebookType == md-runbook",
-          "group": "mdRunbook-clear@2"
+          "group": "9_clear@2"
         },
         {
           "command": "mdRunbook.compareWithPreviousRun",
           "when": "notebookType == md-runbook && notebookCellType == code && notebookCellHasOutputs",
-          "group": "md-runbook@1"
+          "group": "3_compare@1"
         },
         {
           "command": "mdRunbook.ai.explainOutput",
           "when": "notebookType == md-runbook && notebookCellType == code && notebookCellHasOutputs && config.mdRunbook.ai.provider != off",
-          "group": "md-runbook-ai@1"
+          "group": "2_ai@1"
         },
         {
           "command": "mdRunbook.ai.suggestNextSteps",
           "when": "notebookType == md-runbook && notebookCellType == code && config.mdRunbook.ai.provider != off",
-          "group": "md-runbook-ai@2"
+          "group": "2_ai@2"
         },
         {
           "command": "mdRunbook.copyCellForAi",
@@ -1101,16 +1113,6 @@
           "command": "mdRunbook.stepStop",
           "when": "notebookType == md-runbook && mdRunbook.stepPaused && notebookCellExecutionState == executing",
           "group": "inline/cell@3"
-        },
-        {
-          "command": "mdRunbook.approveProposal",
-          "group": "mdRunbook-proposal@1",
-          "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.hasProposals"
-        },
-        {
-          "command": "mdRunbook.rejectProposal",
-          "group": "mdRunbook-proposal@2",
-          "when": "notebookType == md-runbook && notebookCellType == code && mdRunbook.hasProposals"
         }
       ],
       "notebook/cell/execute": [
@@ -1177,20 +1179,22 @@
           "group": "1_run@2"
         },
         {
-          "command": "mdRunbook.revealNextStep",
+          "command": "mdRunbook.runCallFresh",
+          "when": "mdRunbook.selectionIsCall",
           "group": "1_run@3"
         },
         {
-          "command": "mdRunbook.showSteps",
-          "group": "1_run@3b"
-        },
-        {
-          "command": "mdRunbook.runCallFresh",
+          "command": "mdRunbook.openCallCopy",
+          "when": "mdRunbook.selectionIsCall",
           "group": "1_run@4"
         },
         {
-          "command": "mdRunbook.openCallCopy",
-          "group": "1_run@5"
+          "command": "mdRunbook.showSteps",
+          "group": "1_steps@1"
+        },
+        {
+          "command": "mdRunbook.revealNextStep",
+          "group": "1_steps@2"
         },
         {
           "command": "mdRunbook.sessionMenu",

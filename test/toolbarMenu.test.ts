@@ -40,6 +40,24 @@ describe('toolbar lists', () => {
     assert.equal(menuSections(pkg.contributes, 'mdRunbook.toolbar.assistant', (k) => ctx[k]).length, 4);
   });
 
+  it('a switch shows its state; Show Steps sits with Go to Next Step, not first; call items need a selected call', () => {
+    const ctx: Record<string, unknown> = { notebookType: 'md-runbook', 'config.mdRunbook.output.transcript': true };
+    const run = menuSections(pkg.contributes, 'mdRunbook.toolbar.run', (k) => ctx[k]);
+    const flat = run.flat();
+    assert.equal(flat.find((c) => c.command === 'mdRunbook.toggleTranscript')?.on, true);
+    assert.equal(flat[0]!.command, 'mdRunbook.resumeRun', 'Resume Run first');
+    assert.deepEqual(
+      run.find((s) => s.some((c) => c.command === 'mdRunbook.showSteps'))!.map((c) => c.command),
+      ['mdRunbook.showSteps', 'mdRunbook.revealNextStep'],
+    );
+    assert.ok(!flat.some((c) => c.command === 'mdRunbook.runCallFresh'), 'no call selected');
+    ctx['mdRunbook.selectionIsCall'] = true;
+    ctx['config.mdRunbook.output.transcript'] = false;
+    const again = menuSections(pkg.contributes, 'mdRunbook.toolbar.run', (k) => ctx[k]).flat();
+    assert.ok(again.some((c) => c.command === 'mdRunbook.runCallFresh'));
+    assert.equal(again.find((c) => c.command === 'mdRunbook.toggleTranscript')?.on, false);
+  });
+
   it('every list has a toolbar button, and every menu is also in the toolbar ⋯', () => {
     const toolbar = pkg.contributes.menus['notebook/toolbar']!;
     for (const n of MENUS) {

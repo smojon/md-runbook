@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Menus tidied after a review.** In VS Code: Run ▾ lists Resume Run first again, with Show Steps
+  and Go to Next Step together; its runbook-call items show only while a call is selected; the
+  toolbar lists show whether a switch (Transcript) is on; Approve / Reject Proposed Cell no longer
+  appear in every cell's menu (a proposed cell has them on its status line); the cell menu puts
+  Clear Outputs Above / Below last; Copy Cell for AI has the AI icon; a Markdown file's right-click
+  menu keeps only Open as Runbook at the top. In the Steps view, a skipped step has its own symbol
+  and a step marked by hand can be unmarked.
 - **Run All waits at a step done by hand.** An unticked checklist item (`- [ ]`) between two blocks
   is a step too: Run All stops there and asks **Done by hand?** — **Done** ticks it, **Skip** goes
   on without ticking it, **Cancel** stops the run (Resume Run asks again). `manual-steps: continue`

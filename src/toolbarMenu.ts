@@ -10,6 +10,8 @@ export interface MenuEntry {
   submenu?: string;
   when?: string;
   group?: string;
+  /** A when clause: the item is a switch, on while it holds (shown with its state in the lists). */
+  toggled?: string;
 }
 export interface Contributes {
   commands: { command: string; title: string; icon?: unknown }[];
@@ -20,6 +22,8 @@ export interface MenuCommand {
   title: string;
   /** A codicon name, e.g. "debug-continue". */
   icon?: string;
+  /** A switch (`toggled` in package.json): whether it is on now. */
+  on?: boolean;
 }
 
 /**
@@ -60,7 +64,7 @@ export function menuSections(c: Contributes, menu: string, value: (key: string) 
     const icon = typeof cmd.icon === 'string' ? /^\$\(([\w-]+)\)$/.exec(cmd.icon)?.[1] : undefined;
     const group = order(e)[0];
     if (!sections.has(group)) sections.set(group, []);
-    sections.get(group)!.push({ command: cmd.command, title: cmd.title, ...(icon ? { icon } : {}) });
+    sections.get(group)!.push({ command: cmd.command, title: cmd.title, ...(icon ? { icon } : {}), ...(e.toggled ? { on: whenHolds(e.toggled, value) } : {}) });
   }
   return [...sections.values()];
 }

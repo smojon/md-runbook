@@ -12,9 +12,11 @@ import { formatEstimate, formatFinish, isCodeMeta, runbookEstimate, stepState, t
 import { blockProgress, overEstimate, remaining, stepLabel } from '@md-runbook/core/estimate';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { setContext } from './contextKeys';
+import { isCallLanguage } from '@md-runbook/core/call';
 import { cellPart } from './controller';
 import { cellEstimate, lastDuration, notebookEstimateSteps, notebookPartStates, runningSince } from './estimates';
 import { META_KEY } from './outputs';
+import { isManualMark } from '@md-runbook/core/progress';
 import { cellAttrs, notebookProgress, progressStatus, selectRunbookKernel } from './progress';
 import { RunPipeline } from './pipeline';
 import { isTestMode } from './secrets';
@@ -25,7 +27,7 @@ import { onDidChangeWaiting, waitingIn } from './waiting';
 export const STEPS_VIEW = 'mdRunbook.steps';
 const REVEALED_KEY = 'mdRunbook.stepsViewShown';
 
-export type StepRowState = 'done' | 'failed' | 'running' | 'pending' | 'waiting';
+export type StepRowState = 'done' | 'skipped' | 'failed' | 'running' | 'pending' | 'waiting';
 
 export type StepsRow =
   | { kind: 'chapter'; index: number; title: string; level: number }
@@ -45,6 +47,8 @@ export type StepsRow =
       task?: { offset: number; checked: boolean };
       /** A code cell that can be run from the view. */
       runnable?: boolean;
+      /** Marked done or skipped by hand (Mark Step): Unmark undoes it. */
+      marked?: boolean;
     };
 
 export interface StepsModel {
@@ -111,7 +115,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     const est = cellEstimate(cell);
     const a = cellAttrs(cell);
     const s = stepState(a?.exit, a?.lines !== undefined, a?.check);
-    let state: StepRowState = s === 'done' || s === 'skipped' ? 'done' : s === 'failed' ? 'failed' : 'pending';
+    let state: StepRowState = s === 'done' ? 'done' : s === 'skipped' ? 'skipped' : s === 'failed' ? 'failed' : 'pending';
     let time: string | undefined;
     let over = false;
     let fraction: number | undefined;
@@ -148,6 +152,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
       ...(over ? { over } : {}),
       ...(fraction !== undefined ? { fraction } : {}),
       runnable: true,
+      ...(isManualMark(a) ? { marked: true } : {}),
     });
   }
   const done = p.pending === 0 && p.failed === 0 && p.total > 0;
@@ -205,6 +210,8 @@ function page(webview: vscode.Webview): string {
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .done .dot { background: var(--vscode-testing-iconPassed, #388a34); border-color: var(--vscode-testing-iconPassed, #388a34); }
   .failed .dot { background: var(--vscode-testing-iconFailed, #e51400); border-color: var(--vscode-testing-iconFailed, #e51400); }
+  .skipped .dot { background: var(--vscode-descriptionForeground); border-color: var(--vscode-descriptionForeground); }
+  .skipped .label { color: var(--vscode-descriptionForeground); }
   .running .dot { background: var(--vscode-progressBar-background); border-color: var(--vscode-progressBar-background); animation: pulse 1.2s ease-in-out infinite; }
   .waiting .dot { background: var(--vscode-editorWarning-foreground); border-color: var(--vscode-editorWarning-foreground); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
@@ -233,8 +240,8 @@ function page(webview: vscode.Webview): string {
   const live = document.getElementById('live');
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   // State in a symbol too, not colour alone.
-  const GLYPH = { done: '✓', failed: '✕', running: '▶', waiting: '❚❚', pending: '' };
-  const STATE = { done: 'done', failed: 'failed', running: 'running', waiting: 'waiting for you', pending: 'to do' };
+  const GLYPH = { done: '✓', skipped: '↷', failed: '✕', running: '▶', waiting: '❚❚', pending: '' };
+  const STATE = { done: 'done', skipped: 'skipped', failed: 'failed', running: 'running', waiting: 'waiting for you', pending: 'to do' };
   let lastState;
   function draw(m) {
     // Keep the keyboard focus across redraws (every second while a step runs).
@@ -286,8 +293,9 @@ function page(webview: vscode.Webview): string {
         else if (r.runnable && r.state !== 'running' && r.state !== 'waiting') {
           act('▶', 'Run this step', { run: r.index });
           act('↧', 'Run from here', { runFrom: r.index });
-          if (r.state !== 'done') act('✓', 'Mark done', { mark: r.index, as: 'done' });
-          if (r.state !== 'done') act('↷', 'Mark skipped', { mark: r.index, as: 'skipped' });
+          if (r.state === 'pending' || r.state === 'failed') act('✓', 'Mark done', { mark: r.index, as: 'done' });
+          if (r.state === 'pending' || r.state === 'failed') act('↷', 'Mark skipped', { mark: r.index, as: 'skipped' });
+          if (r.marked) act('↺', 'Unmark', { unmark: r.index });
         }
         if (acts.childElementCount) row.append(acts);
         if (r.fraction !== undefined) {
@@ -347,12 +355,16 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
     view.webview.options = { enableScripts: true };
     view.webview.html = page(view.webview);
     view.webview.onDidReceiveMessage((m: unknown) => {
-      const msg = m as { ready?: boolean; go?: unknown; run?: unknown; runFrom?: unknown; mark?: unknown; as?: unknown; tick?: unknown; offset?: unknown; checked?: unknown };
+      const msg = m as { ready?: boolean; go?: unknown; run?: unknown; runFrom?: unknown; mark?: unknown; unmark?: unknown; as?: unknown; tick?: unknown; offset?: unknown; checked?: unknown };
       if (msg.ready) this.refresh();
       if (typeof msg.go === 'number') void this.go(msg.go);
       if (typeof msg.run === 'number') void this.run(msg.run, msg.run + 1);
       if (typeof msg.runFrom === 'number') void this.run(msg.runFrom, Number.MAX_SAFE_INTEGER);
       if (typeof msg.mark === 'number' && (msg.as === 'done' || msg.as === 'skipped')) void this.mark(msg.mark, msg.as);
+      if (typeof msg.unmark === 'number') {
+        const cell = this.editor()?.notebook.cellAt(msg.unmark);
+        if (cell) void vscode.commands.executeCommand('mdRunbook.unmarkStep', cell);
+      }
       if (typeof msg.tick === 'number' && typeof msg.offset === 'number' && typeof msg.checked === 'boolean') void this.tick(msg.tick, msg.offset, msg.checked);
     });
     view.onDidChangeVisibility(() => this.refresh());
@@ -455,6 +467,11 @@ export function registerStepsView(context: vscode.ExtensionContext, pipeline?: R
       if (e.notebook.notebookType === NOTEBOOK_TYPE) view.refresh();
     }),
     onDidChangeWaiting(() => view.refresh()),
+    // Run ▾ shows the runbook-call items only while a call is selected (they act on it).
+    vscode.window.onDidChangeNotebookEditorSelection((e) => {
+      const cell = e.notebookEditor.notebook.notebookType === NOTEBOOK_TYPE ? e.notebookEditor.notebook.cellAt(e.selections[0]?.start ?? 0) : undefined;
+      setContext('mdRunbook.selectionIsCall', !!cell && cell.kind === vscode.NotebookCellKind.Code && isCallLanguage(cell.document.languageId));
+    }),
     vscode.commands.registerCommand('mdRunbook.showSteps', () => vscode.commands.executeCommand(`${STEPS_VIEW}.focus`)),
     vscode.commands.registerCommand('mdRunbook.steps.runAll', async () => {
       const editor = vscode.window.activeNotebookEditor ?? vscode.window.visibleNotebookEditors.find((e) => e.notebook.notebookType === NOTEBOOK_TYPE);
