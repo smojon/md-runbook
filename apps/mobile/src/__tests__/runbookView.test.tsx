@@ -64,20 +64,26 @@ describe('Run all / Continue (the one-tap action)', () => {
     );
     await render(<RunbookView id={r.id} />);
     expect(screen.getByTestId('progress-rail')).toHaveProp('accessibilityLabel', '0 of 3 steps done');
-    // A crossbar per chapter: a tap names it beside the rail (and goes there).
-    expect(screen.getByTestId('rail-chapter-0')).toHaveProp('accessibilityLabel', 'Chapter: Rail');
-    await act(async () => {
-      fireEvent.press(screen.getByTestId('rail-chapter-3'));
-    });
-    expect(screen.getByTestId('rail-chapter-name')).toHaveTextContent('Clean up');
-    expect(screen.getByTestId('rail-tick-1')).toHaveProp('accessibilityLabel', 'Step 1: echo one, to do');
+    // A crossbar per chapter, a tick per step.
+    expect(screen.getByTestId('rail-chapter-0')).toBeTruthy();
+    expect(screen.getByTestId('rail-chapter-3')).toBeTruthy();
+    for (const i of [1, 2, 4]) expect(screen.getByTestId(`rail-tick-${i}`)).toBeTruthy();
     await act(async () => {
       fireEvent.press(screen.getByTestId('run-primary'));
     });
-    await waitFor(() => expect(screen.getByTestId('rail-tick-2')).toHaveProp('accessibilityLabel', 'Step 2: echo two, failed'));
-    expect(screen.getByTestId('rail-tick-1')).toHaveProp('accessibilityLabel', 'Step 1: echo one, done');
-    expect(screen.getByTestId('rail-tick-4')).toHaveProp('accessibilityLabel', 'Step 3: echo three, to do');
-    expect(screen.getByTestId('progress-rail')).toHaveProp('accessibilityLabel', 'Step 2 of 3 failed');
+    await waitFor(() => expect(screen.getByTestId('progress-rail')).toHaveProp('accessibilityLabel', 'Step 2 of 3 failed'));
+    // Filled down past the failed step (the rail is measured first).
+    await act(async () => {
+      fireEvent(screen.getByTestId('progress-rail'), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 44, height: 500 } } });
+    });
+    expect(screen.getByTestId('progress-rail-fill')).toHaveStyle({ height: 254 });
+    // A tap on the rail (or the screen reader's activate) lists the steps by name, in their state.
+    await act(async () => {
+      fireEvent(screen.getByTestId('progress-rail'), 'accessibilityTap');
+    });
+    expect(screen.getByTestId('steps-row-1')).toHaveProp('accessibilityLabel', expect.stringMatching(/^Step 1: echo one, done/));
+    expect(screen.getByTestId('steps-row-2')).toHaveProp('accessibilityLabel', expect.stringMatching(/^Step 2: echo two, failed/));
+    expect(screen.getByTestId('steps-row-4')).toHaveProp('accessibilityLabel', 'Step 3: echo three, to do');
   });
 
   it('stops at a failure; Continue resumes from the failed cell, Run again when all is done', async () => {

@@ -63,6 +63,10 @@ import {
   textPartStates,
 } from '@md-runbook/core/estimate';
 import { TeardownCard } from '../cells/TeardownCard';
+import { ManualCard } from '../cells/ManualCard';
+import { ManualItem, StepsRow, lastCodeCell, stepsRows, uncheckedBefore, withItemTicked } from '../runbooks/steps';
+import { StepsHead, StepsHeader, StepsSheet } from '../ui/StepsSheet';
+import { StepsList } from '../ui/StepsList';
 
 import { BarSegment, TimeBar, useNow } from '../ui/TimeBar';
 import { ProgressRail, RailChapter, RailState, RailTick } from '../ui/ProgressRail';
@@ -290,7 +294,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : [],
     [runbook, reader],
   );
-  const now = useNow(running !== undefined && estimateSteps.some((s) => s.estimateSeconds !== undefined));
+  /** The Steps sheet (every step by name); on a wide screen the same list is a side panel instead of the rail. */
+  const [stepsOpen, setStepsOpen] = useState(false);
+  const { width: windowWidth } = useWindowDimensions();
+  const wide = windowWidth >= WIDE;
+  // The clock moves the bars against estimates, and the running step's time in the list.
+  const now = useNow(running !== undefined && (estimateSteps.some((s) => s.estimateSeconds !== undefined) || stepsOpen || wide));
   const partStates = useMemo(() => (runbook ? textPartStates(runbook.text) : undefined), [runbook]);
   const estimate = runbookEstimate(
     estimateSteps.map((s) =>
@@ -384,9 +393,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         takeDown?: boolean | 'run';
         /** Continue with only the teardown left: offer it even after Leave it up. */
         askAgain?: boolean;
+        /** Wait at unticked checklist items (steps done by hand); off with `manual-steps: continue`. */
+        manual: boolean;
+        /** Checklist items answered Skip in this run (`cell:item`). */
+        skipped: Set<string>;
+        /** The last cell Run all took from `cells` (ran, skipped as already up, or left with the teardown). */
+        last?: number;
       }
     | undefined
   >(undefined);
+  /** A step done by hand Run all waits at, with its card under its Markdown cell. */
+  const [manualAsk, setManualAsk] = useState<ManualItem | undefined>();
   // The teardown offer (core/parts.ts), under the first teardown step.
   const [teardownOffer, setTeardownOffer] = useState<{ cellIndex: number; labels: string[] } | undefined>();
   const [queued, setQueued] = useState(false);
@@ -737,6 +754,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       return c && isCodeMeta(c.meta) ? parseCellOptions(c.meta.info).part : undefined;
     };
     const upcoming = q.cells[0] ?? q.call;
+    // A step done by hand (an unticked `- [ ]`) between the block before and the next one waits
+    // for Done, Skip or Stop; at the end, the ones after the runbook's last block (as VS Code).
+    if (q.manual) {
+      const upTo = upcoming ?? (q.last !== undefined && q.last === lastCodeCell(parsedCells) ? parsedCells.length : undefined);
+      const item = upTo !== undefined ? uncheckedBefore(parsedCells, upTo, q.skipped) : undefined;
+      if (item) {
+        setManualAsk(item);
+        setTimeout(() => list.current?.scrollToIndex({ index: item.cellIndex, viewPosition: 0.2 }), 100);
+        return;
+      }
+    }
     // The teardown is offered, not run unasked: you may go straight on to the next runbook.
     if (upcoming !== undefined && partAt(upcoming) === 'teardown' && q.takeDown === undefined) {
       if (!teardownDeclined.has(runbook.id) || q.askAgain) {
@@ -751,14 +779,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       q.takeDown = false;
     }
     if (q.takeDown === false) {
-      // Leave it up: the teardown steps stay as they are.
+      // Leave it up: the teardown steps stay as they are (passed over, as far as the run goes).
+      const left = q.cells.filter((i) => partAt(i) === 'teardown');
+      if (left.length > 0) q.last = Math.max(q.last ?? -1, ...left);
       q.cells = q.cells.filter((i) => partAt(i) !== 'teardown');
       if (q.call !== undefined && partAt(q.call) === 'teardown') delete q.call;
     }
     // The ready check said up: the setup steps it guards are skipped.
     const guarded = (i: number): boolean => q.readyUp === true && (q.readyFirst ? partAt(i) !== 'ready' : partAt(i) === 'setup');
     if (q.cells[0] !== undefined && guarded(q.cells[0])) {
-      skipAlreadyUp(q.cells.shift()!);
+      q.last = q.cells.shift()!;
+      skipAlreadyUp(q.last);
       return runNext();
     }
     if (q.cells.length === 0 && q.call !== undefined && guarded(q.call)) {
@@ -773,7 +804,27 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       else if (q.proposed > 0) setNotice(t.proposedNotRun(q.proposed));
       return;
     }
+    q.last = next;
     void runRef.current({ cellIndex: next }, q.on);
+  };
+  /** The answer at a step done by hand: tick it and go on, go on without ticking it, or stop there. */
+  const answerManual = (answer: 'done' | 'skip' | 'stop'): void => {
+    const ask = manualAsk;
+    setManualAsk(undefined);
+    const q = queue.current;
+    if (!runbook || !ask || !q) return;
+    if (answer === 'stop') {
+      clearQueue();
+      setNotice(t.manualStopped);
+      return;
+    }
+    // Not asked again in this run, whatever the box says now.
+    q.skipped.add(`${ask.cellIndex}:${ask.item}`);
+    if (answer === 'done') {
+      const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+      write(withItemTicked(latest, parse(latest).cells, ask.cellIndex, ask.item));
+    }
+    runNext();
   };
   /**
    * Run a runbook call: its copy is made (or a failed run's continued), given the parameters, and
@@ -834,6 +885,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       proposed: verdicts.filter((v) => !v.can.ok && v.can.why === 'proposed' && (call === undefined || v.i < call)).length,
       ...(call !== undefined ? { call } : {}),
       ...(opts.readyFirst ? { readyFirst: true } : {}),
+      manual: parseFrontMatter(runbook.text)?.manualSteps !== 'continue',
+      skipped: new Set<string>(),
       // Continue with only the teardown left is a request for it: offer it again.
       ...(from === 'resume' && candidates.length > 0 && candidates.every((i) => isTeardown(parsed[i])) ? { askAgain: true } : {}),
       // What a call runs, runs whole: its teardown isn't offered.
@@ -972,6 +1025,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
           },
         },
+        { ...meta('showSteps', 'steps', progress?.total ? undefined : t.noStepsYet), run: () => setStepsOpen(true) },
         { ...meta('nextProblem', 'run', problems.all.length > 0 ? undefined : t.noProblems), run: () => goToNextProblem() },
         {
           ...meta('restartSession', 'run', hosts.some((h) => isConnected(h.id, runbook.id)) ? undefined : t.noSessionOpen),
@@ -1299,6 +1353,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     clearQueue();
     setConfirming(undefined);
     setTeardownOffer(undefined);
+    setManualAsk(undefined);
     if (running?.paused) running.paused.stop();
     else running?.abort.abort();
   };
@@ -1398,6 +1453,45 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       return new Map(m).set(cellIndex, next);
     });
 
+  // Where the run waits for an answer: a card under that cell (a value, a confirmation, the
+  // teardown offer, a step done by hand). The run bar, the pinned bar and the steps say so.
+  const waitingCell = manualAsk?.cellIndex ?? asking?.request.cellIndex ?? confirming?.cellIndex ?? teardownOffer?.cellIndex;
+  const waiting = waitingCell !== undefined;
+  const waitingItem = manualAsk?.item;
+  // The steps by name (the Steps sheet, the wide screen's panel), as VS Code's Runbook Steps view.
+  const stepRows = useMemo(
+    (): StepsRow[] =>
+      progress
+        ? stepsRows({
+            cells,
+            progress,
+            ...(running ? { running: { cellIndex: running.cellIndex, startedAt: running.startedAt } } : {}),
+            ...(waitingCell !== undefined
+              ? { waiting: { cellIndex: waitingCell, ...(waitingItem !== undefined ? { item: waitingItem } : {}) } }
+              : {}),
+            callEstimates,
+            now,
+          })
+        : [],
+    [cells, progress, running, waitingCell, waitingItem, callEstimates, now],
+  );
+  const hasSteps = stepRows.some((r) => r.kind === 'step');
+  const stepsHeader: StepsHeader = {
+    headline: waiting ? t.pinnedWaiting : progress ? runHeadline(progress, runningStep) : '',
+    waiting,
+    ...(estimate.fraction !== undefined && progress
+      ? { fraction: estimate.fraction, line: estimateLines(estimate, progress.pending).main }
+      : {}),
+  };
+  const goToCell = (index: number): void => {
+    setStepsOpen(false);
+    list.current?.scrollToIndex({ index, viewPosition: 0.2 });
+  };
+  const panel = wide && hasSteps;
+  const railShown = !wide && railTicks.length > 1 && progress !== undefined;
+  // The runbook at a readable width on a wide screen (a tablet, a browser), not stretched across it.
+  const side = Math.max(12, (windowWidth - (panel ? PANEL_WIDTH : 0) - MAX_CONTENT) / 2);
+
   // Scroll views as the screen's root with automatic insets (see RunbookList).
   if (!runbook) {
     return (
@@ -1412,14 +1506,23 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     <View style={styles.screen}>
       <Stack.Screen options={{ title: runbook.title }} />
       <View style={styles.withRail}>
-        {railTicks.length > 1 && progress ? (
+        {panel ? (
+          <View testID="steps-panel" style={styles.panel}>
+            <Text accessibilityRole="header" style={styles.panelTitle}>
+              {t.stepsTitle}
+            </Text>
+            <StepsHead header={stepsHeader} />
+            <StepsList rows={stepRows} {...(visibleCells ? { visible: visibleCells } : {})} onGo={goToCell} />
+          </View>
+        ) : railShown && progress ? (
           <ProgressRail
             cells={cells.length}
             ticks={railTicks}
             chapters={railChapters}
             {...(visibleCells ? { visible: visibleCells } : {})}
             label={runHeadline(progress, runningStep)}
-            onGo={(index) => list.current?.scrollToIndex({ index, viewPosition: 0.2 })}
+            onGo={goToCell}
+            onOpen={() => setStepsOpen(true)}
           />
         ) : null}
         <FlatList
@@ -1430,7 +1533,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           scrollEventThrottle={100}
           onScrollToIndexFailed={(info) => list.current?.scrollToOffset({ offset: info.averageItemLength * info.index })}
           style={styles.screen}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, railShown ? styles.contentRail : { paddingHorizontal: side }]}
           contentInsetAdjustmentBehavior="automatic"
           data={cells}
           keyExtractor={(_, i) => String(i)}
@@ -1442,11 +1545,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 canRun={host !== undefined}
                 running={queued}
                 {...(runningStep ? { runningCell: runningStep } : {})}
-                waiting={asking !== undefined || confirming !== undefined || teardownOffer !== undefined}
+                waiting={waiting}
                 onAnswer={() => {
-                  const at = asking?.request.cellIndex ?? confirming?.cellIndex ?? teardownOffer?.cellIndex;
-                  if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
+                  if (waitingCell !== undefined) list.current?.scrollToIndex({ index: waitingCell, viewPosition: 0.2 });
                 }}
+                {...(hasSteps && !panel ? { onSteps: () => setStepsOpen(true) } : {})}
                 onRun={runSequence}
                 onStop={stopSequence}
                 onMore={() => setShowActions(true)}
@@ -1645,6 +1748,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                   firstTask={tasks.first[index]}
                   onToggleTask={tasks.aligned ? toggleTask : undefined}
                 />
+                {manualAsk?.cellIndex === index ? (
+                  // Under the checklist Run all waits at, as the other cards under their cell.
+                  <ManualCard
+                    text={manualAsk.text}
+                    onDone={() => answerManual('done')}
+                    onSkip={() => answerManual('skip')}
+                    onStop={() => answerManual('stop')}
+                  />
+                ) : null}
               </View>
             ) : (
               <CodeCell
@@ -1723,22 +1835,37 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           }
         />
       </View>
-      {pastBar && progress && (queued || asking || confirming || teardownOffer) ? (
+      {pastBar && progress && (queued || waiting) ? (
         <PinnedRunBar
           progress={progress}
           estimate={estimate}
           {...(runningStep ? { runningCell: runningStep } : {})}
-          waiting={asking !== undefined || confirming !== undefined || teardownOffer !== undefined}
+          waiting={waiting}
+          left={panel ? PANEL_WIDTH : 0}
           onShow={() => {
-            const at = asking?.request.cellIndex ?? confirming?.cellIndex ?? teardownOffer?.cellIndex ?? runningStep?.index;
+            const at = waitingCell ?? runningStep?.index;
             if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
           }}
           onStop={stopSequence}
         />
       ) : null}
+      <StepsSheet
+        visible={stepsOpen && !panel}
+        rows={stepRows}
+        {...(visibleCells ? { cells: visibleCells } : {})}
+        header={stepsHeader}
+        onGo={goToCell}
+        onClose={() => setStepsOpen(false)}
+      />
     </View>
   );
 }
+
+/** From this window width (a tablet, a browser), the steps are a side panel instead of the rail. */
+const WIDE = 900;
+const PANEL_WIDTH = 300;
+/** The runbook's widest column: lines of text a reader can follow, code with room. */
+const MAX_CONTENT = 860;
 
 /**
  * The run, pinned on top while the run bar is scrolled away: one line (`Step 3 of 6 · Push image ·
@@ -1749,6 +1876,7 @@ function PinnedRunBar({
   estimate,
   runningCell,
   waiting,
+  left: offset = 0,
   onShow,
   onStop,
 }: {
@@ -1756,6 +1884,8 @@ function PinnedRunBar({
   estimate: RunbookEstimate;
   runningCell?: RunningStep;
   waiting: boolean;
+  /** Where it starts: past the side panel of a wide screen. */
+  left?: number;
   onShow(): void;
   onStop(): void;
 }) {
@@ -1764,7 +1894,7 @@ function PinnedRunBar({
     estimate.fraction !== undefined && estimate.leftSeconds > 0 ? ` · ${t.estimateLeft(formatTimeLeft(estimate.leftSeconds))}` : '';
   const line = waiting ? t.pinnedWaiting : `${runHeadline(progress, runningCell)}${left}`;
   return (
-    <View testID="pinned-run-bar" style={styles.pinned}>
+    <View testID="pinned-run-bar" style={[styles.pinned, { left: offset }]}>
       <Pressable
         testID="pinned-run-show"
         accessibilityRole="button"
@@ -1885,6 +2015,7 @@ function RunBar({
   runningCell,
   waiting = false,
   onAnswer,
+  onSteps,
   onRun,
   onStop,
   onMore,
@@ -1894,6 +2025,8 @@ function RunBar({
   /** The run waits for the reader (values, a confirmation, the teardown offer): Answer goes there. */
   waiting?: boolean;
   onAnswer?(): void;
+  /** The headline shows every step by name (the Steps sheet), with a › to say so. */
+  onSteps?(): void;
   /** By the blocks' estimates; shown when one has an estimate. */
   estimate?: RunbookEstimate;
   canRun: boolean;
@@ -1906,11 +2039,34 @@ function RunBar({
   onLayout?(bottom: number): void;
 }) {
   const styles = useStyles();
+  const colors = usePalette();
   const more = (
     <Pressable testID="more-actions" accessibilityRole="button" onPress={onMore} style={styles.more}>
       <Text style={styles.secondaryText}>{t.moreActions}</Text>
     </Pressable>
   );
+  // Where the run is; a tap on it lists every step by name.
+  const headline = (text: string, waitingStyle: boolean) => {
+    const words = (
+      <Text testID="run-progress" style={[styles.runProgress, waitingStyle && styles.runWaiting, styles.shrink]} numberOfLines={2}>
+        {text}
+      </Text>
+    );
+    if (!onSteps) return words;
+    return (
+      <Pressable
+        testID="run-steps"
+        accessibilityRole="button"
+        accessibilityHint={t.stepsShowHint}
+        onPress={onSteps}
+        hitSlop={6}
+        style={({ pressed }) => [styles.headline, pressed && styles.pressedText]}
+      >
+        {words}
+        <Codicon name="chevron-right" size={14} color={colors.muted} />
+      </Pressable>
+    );
+  };
   if (!progress || progress.total === 0) return <View style={styles.runBar}>{more}</View>;
   const complete = progress.done + progress.skipped;
   const fresh = complete === 0 && progress.failed === 0;
@@ -1931,9 +2087,7 @@ function RunBar({
           <Text style={styles.runPrimaryText}>{t.runAnswer}</Text>
         </Pressable>
         <View style={styles.grow}>
-          <Text testID="run-progress" style={[styles.runProgress, styles.runWaiting]} numberOfLines={2}>
-            {t.pinnedWaiting}
-          </Text>
+          {headline(t.pinnedWaiting, true)}
           <Pressable testID="run-stop" accessibilityRole="button" onPress={onStop}>
             <Text style={styles.secondaryText}>{t.stopRun}</Text>
           </Pressable>
@@ -1954,9 +2108,7 @@ function RunBar({
         <Text style={styles.runPrimaryText}>{label}</Text>
       </Pressable>
       <View style={styles.grow}>
-        <Text testID="run-progress" style={styles.runProgress} numberOfLines={2}>
-          {runHeadline(progress, runningCell)}
-        </Text>
+        {headline(runHeadline(progress, runningCell), false)}
         {estimate?.fraction !== undefined ? (
           <View testID="run-estimate" style={styles.estimateRow}>
             <TimeBar fraction={estimate.fraction} segments={barSegments(estimate)} />
@@ -2616,6 +2768,20 @@ const useStyles = themedStyles((c) => ({
   runAnswer: { backgroundColor: c.warning },
   runWaiting: { color: c.warningText, fontWeight: '600' },
   withRail: { flex: 1, flexDirection: 'row' },
+  // Beside the rail's column (its 44 px touch strip): no padding of the list's own on the left.
+  contentRail: { paddingLeft: 0 },
+  panel: {
+    width: PANEL_WIDTH,
+    borderRightWidth: 1,
+    borderRightColor: c.border,
+    paddingHorizontal: 10,
+    paddingTop: 12,
+    backgroundColor: c.background,
+  },
+  panelTitle: { fontSize: 13, fontWeight: '600', color: c.muted, textTransform: 'uppercase', marginLeft: 2 },
+  headline: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', maxWidth: '100%' },
+  shrink: { flexShrink: 1 },
+  pressedText: { opacity: 0.6 },
   pinnedWaiting: { color: c.warningText, fontWeight: '600' },
   pinnedStop: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, backgroundColor: c.error },
   pinnedStopText: { color: '#fff', fontSize: 14, fontWeight: '600' },

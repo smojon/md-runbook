@@ -19,6 +19,16 @@
   view's icon shows how many steps are left. **Show Steps** is on the toolbar and in Run ▾, and the
   view opens by itself on the first Run All. The view is called **Steps**, and the ready check's row
   says what it answered (`not up → setup runs`). The share done now moves during a long step.
+- **App: the steps by name, and Run all waits at a step done by hand.** Tap the run bar's
+  headline, the rail, or ⋯ More → **Show Steps** for a list of every step, the same rows as VS
+  Code's Steps view: chapters as headings, each step with its state as a symbol and a
+  colour, its number, name and time; tap one to go there. Press and drag along the rail and a
+  bubble names the chapter and step under your finger; let go to go there (its touch strip is 44
+  px wide, beside the cells). On a tablet or a browser window 900 px or wider the list is a panel
+  on the left instead of the rail, and the runbook keeps a readable width. Run all now stops at a
+  checklist item that isn't ticked, with a **Done by hand?** card under it: **Done** ticks it,
+  **Skip** goes on, **Stop** ends the run (Continue asks again); `manual-steps: continue` in the
+  front matter turns that off.
 - **Fixes from a design review of the new progress.** The chapter name on the app's rail showed
   as an empty pill on iOS and Android. The app's run bar no longer shows a red Stop and "100% ·
   nothing left" while the run waits for an answer: it says **Waiting for you** in amber and its

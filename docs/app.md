@@ -29,11 +29,32 @@ failure (unless the cell has `continue-on-error`), leaves proposals out and says
 for a host key, a secret or an input as a single cell does. Scrolled down during a run, a slim
 bar on top keeps the step and Stop in view.
 
+**Run all waits at a step done by hand**: a checklist item that isn't ticked (`- [ ]`) between
+the block before and the next one. A card under it asks **Done by hand?** with the item's text:
+**Done** ticks the box in the runbook and goes on, **Skip** goes on without ticking it, **Stop**
+ends the run there (Continue asks again). The run bar says the run waits for you, and **↓
+Answer** goes to the card. Ticked items never wait, items after the last block are asked once
+the run gets there, and a single cell's ▷ never waits. `manual-steps: continue` in the front
+matter turns this off (the items are then reminders), as in VS Code ([syntax](syntax.md#steps-and-progress)).
+
+**Steps** lists every step by name, the same rows as VS Code's Runbook Steps view: the `#`/`##`
+chapters as headings, then each step with its state as a symbol and a colour (✓ done, ✕ failed,
+▶ running, ❚❚ waiting for you, ○ to do), its number, its name and its time (`est. 2m`, `12s of
+1m` while it runs, `took 3m10s (+40s)` after a run over its estimate, `by hand` for a checklist
+item); the ready check says what it answered and a teardown not run yet says *offered*. Tap the
+run bar's headline (it has a ›), the rail, or ⋯ More → **Show Steps**; tap a row to go to it.
+
 **The rail on the left** shows the whole runbook at once and is always in view: it fills from
 the top as the run goes down, with a tick per step where it is in the runbook (green done, red
-failed, pulsing while it runs), a crossbar per `#`/`##` chapter and a pale box for the part on
-screen. Tap a tick to go to its step, a crossbar to go to its chapter (its name shows for a
-moment).
+failed, pulsing while it runs, still with Reduce Motion), a crossbar per `#`/`##` chapter and a
+pale box for the part on screen. Tap it for Steps; press and drag along it and a bubble names
+the chapter and the step under your finger, let go to go there. Its touch strip is 44 px wide,
+beside the cells rather than over them; the scrubber follows up and down only, so a sideways
+swipe from the edge stays the system's back gesture.
+
+**On a wide screen** (a tablet, a browser window 900 px or wider) Steps is a panel on the left
+instead of the rail, always open, with the cells on screen shaded and the running step in view;
+the runbook keeps a readable width instead of stretching across the window.
 
 **⋯ More** lists every other action in the extension's groups and names (Run, Steps, Values,
 Assistant, Share, Help), each with when it matters, and a search field: type part of a name
