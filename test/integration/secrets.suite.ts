@@ -72,7 +72,7 @@ const waitUntil = async (what: string, check: () => Promise<boolean>, ms = 15_00
   }
 };
 
-test('an input is asked before the cell starts, shown as waiting; Escape fails the cell', async () => {
+test('an input is asked before the cell starts, shown as waiting; Escape leaves the step to do', async () => {
   try {
     const uri = writeFile('ask-first.md', `# Ask first\n\n\`\`\`${LANG}\n${echo('who=${input:ASKED_WHO}')}\n\`\`\`\n`);
     const editor = await openRunbook(uri);
@@ -83,8 +83,9 @@ test('an input is asked before the cell starts, shown as waiting; Escape fails t
     assert.equal(cell.outputs.length, 0, 'nothing runs while the box is open');
     await vscode.commands.executeCommand('workbench.action.closeQuickOpen');
     await running;
-    assert.equal(await waitForRun(cell), false, outputText(cell));
-    assert.match(outputText(cell), /input ASKED_WHO cancelled/);
+    // Not run and not failed: no ✓ or ✗, and the step is still to do (exit=unanswered).
+    assert.equal(await waitForRun(cell), undefined, outputText(cell));
+    assert.match(outputText(cell), /skipped: input ASKED_WHO cancelled/);
     assert.equal((await waitingNow())[cell.index], undefined, 'no longer waiting');
   } finally {
     await closeAll();
@@ -151,7 +152,7 @@ test('stored secrets are injected as env vars and never persisted', async () => 
   }
 });
 
-test('cancelling an input fails the cell without running it', async () => {
+test('cancelling an input leaves the cell to do without running it', async () => {
   const uri = writeFile('input.md', `\`\`\`${LANG}\n${echo('ran ${input:MDRB_ASK}')}\n\`\`\`\n`);
   const editor = await openRunbook(uri);
   const cell = editor.notebook.cellAt(0);
@@ -166,7 +167,7 @@ test('cancelling an input fails the cell without running it', async () => {
     20_000,
   );
   await step('execute command', running);
-  assert.equal(cell.executionSummary?.success, false);
+  assert.equal(cell.executionSummary?.success, undefined);
   assert.match(outputText(cell), /input MDRB_ASK cancelled/);
   assert.doesNotMatch(outputText(cell), /ran /);
   await closeAll();

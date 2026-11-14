@@ -65,7 +65,7 @@ describe('the Steps sheet', () => {
     expect(screen.getByTestId('steps-sheet')).toBeTruthy();
     // The header says what the run bar says.
     expect(screen.getByTestId('steps-headline')).toHaveTextContent('1 of 3 steps done');
-    expect(screen.getByTestId('steps-progress')).toHaveTextContent(/^0% · 2 min left/);
+    expect(screen.getByTestId('steps-progress')).toHaveTextContent(/^0% · at least 2 min left/);
     expect(screen.getByTestId('steps-chapter-0')).toHaveTextContent('Guide');
     expect(screen.getByTestId('steps-chapter-2')).toHaveTextContent('Check');
     expect(screen.getByTestId('steps-row-1')).toHaveProp('accessibilityLabel', 'Step 1: Say hello, to do, est. 2m');

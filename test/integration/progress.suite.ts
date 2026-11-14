@@ -2,7 +2,7 @@
 import { strict as assert } from 'node:assert';
 import * as vscode from 'vscode';
 import type { Progress } from '@md-runbook/core';
-import { LANG, Test, closeAll, openRunbook, outputText, read, runCells, selectKernel, step, waitFor, waitForRun, writeFile } from './suite';
+import { LANG, Test, answerOnCells, closeAll, openRunbook, outputText, read, runCells, selectKernel, step, waitFor, waitForRun, writeFile } from './suite';
 
 export const tests: Test[] = [];
 const test = (name: string, fn: () => Promise<void>): void => void tests.push({ name, fn });
@@ -170,17 +170,8 @@ test('Steps view: checklist items stay under their own heading; a chapter with s
 
 /** Answer "Done by hand?" with `answer` (Done / Skip / undefined = Cancel), counting the questions. */
 function stubManual(answer: () => string | undefined): { asked: string[]; restore: () => void } {
-  const w = vscode.window as unknown as { showInformationMessage: (...args: unknown[]) => Thenable<unknown> };
-  const original = w.showInformationMessage;
-  const asked: string[] = [];
-  w.showInformationMessage = (message: unknown, ...rest: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('Done by hand?')) {
-      asked.push(message);
-      return Promise.resolve(answer());
-    }
-    return original.call(vscode.window, message, ...rest);
-  };
-  return { asked, restore: () => void (w.showInformationMessage = original) };
+  // Asked with buttons on the checklist cell (Done / Skip / Stop); undefined stops, as Cancel did.
+  return answerOnCells('Done by hand?', () => { const a = answer(); return a === 'Done' ? 'done' : a === 'Skip' ? 'skip' : 'stop'; });
 }
 
 const manualRunbook = (front = ''): string => `${front}# Deploy\n\n${fence('echo one')}\n- [ ] Tell #checkout the deploy is done\n\n${fence('echo two')}`;

@@ -26,7 +26,7 @@ import {
 } from '@md-runbook/core/secrets';
 import { META_KEY } from './outputs';
 import { currentOs } from '@md-runbook/core/os';
-import { CellPlan, PrepareContext, RunPipeline } from './pipeline';
+import { CellPlan, PrepareContext, PromptCancelled, RunPipeline } from './pipeline';
 import { SECTION } from './config';
 import { NOTEBOOK_TYPE } from './serializer';
 import { whileWaiting } from './waiting';
@@ -205,7 +205,7 @@ class SecretsFeature {
         ctx.token,
       ),
     );
-    if (value === undefined) throw new Error(`input ${name} cancelled`);
+    if (value === undefined) throw new PromptCancelled(`input ${name} cancelled`);
     cache.set(name, value);
     if (!secret) this.remember(ctx.notebook, 'input', name, value);
     return value;
@@ -237,7 +237,7 @@ class SecretsFeature {
         ctx.token,
       ),
     );
-    if (value === undefined) throw new Error(`parameter ${name} cancelled`);
+    if (value === undefined) throw new PromptCancelled(`parameter ${name} cancelled`);
     cache.set(name, value);
     this.remember(ctx.notebook, 'param', name, value);
     return value;

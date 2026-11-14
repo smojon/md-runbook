@@ -23,8 +23,8 @@ test('estimate=: the block shows it, a run shows its bar, the status bar the tim
   assert.deepEqual(before.cells, [undefined, '$(watch) est. 10m', undefined, '$(watch) est. 1s']);
   assert.equal(before.runbook.totalSeconds, 601);
   assert.equal(before.runbook.unestimated, 1);
-  assert.match(before.status.text, /^\$\(checklist\) 0\/3 · ~10 min$/);
-  assert.match(before.status.tooltip, /\*\*0 of 3 steps done\*\* · 0% by the estimates · 10 min left · ends ≈ \d\d:\d\d/);
+  assert.match(before.status.text, /^\$\(checklist\) 0\/3 · at least 10 min$/);
+  assert.match(before.status.tooltip, /\*\*0 of 3 steps done\*\* · 0% by the estimates · at least 10 min left\n/);
   assert.match(before.status.tooltip, /1 block without an estimate/);
 
   // The sleeping block: past its estimate of 1 s, the bar stays full and says how much over.

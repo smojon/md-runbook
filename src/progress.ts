@@ -7,7 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { Progress, checklist, computeProgress, formatLocalIso, isCodeMeta, nextUncheckedOffset, outputBlockAttrs, runbookEstimate } from '@md-runbook/core';
-import { PartEstimate, RunbookEstimate, formatEstimate, formatFinish, formatTimeLeft, remaining, stepHeadings, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
+import { PartEstimate, RunbookEstimate, finishTime, formatEstimate, formatTimeLeft, remaining, stepHeadings, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
 import { isManualMark } from '@md-runbook/core/progress';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { osGroups } from '@md-runbook/core/os';
@@ -104,6 +104,8 @@ export function labelOf(cell: vscode.NotebookCell, headings = notebookHeadings(c
 export function progressStatus(nb: vscode.NotebookDocument, p: Progress = notebookProgress(nb), now = Date.now()): ProgressStatus {
   const e = runbookEstimate(notebookEstimateSteps(nb, cellAttrs, now), notebookPartStates(nb, cellAttrs));
   const left = e.fraction !== undefined && e.leftSeconds > 0 ? e.leftSeconds : undefined;
+  // A floor while steps without any estimate are still to do.
+  const leftText = (s: number): string => `${e.unestimatedLeft > 0 ? 'at least ' : ''}${formatTimeLeft(s)} left`;
   const running = runningCell(nb);
   const complete = p.done + p.skipped;
   let text: string;
@@ -111,13 +113,13 @@ export function progressStatus(nb: vscode.NotebookDocument, p: Progress = notebo
     const step = p.stepOfCell[running.index];
     const part = cellPart(running);
     const where = step !== undefined ? `Step ${step}/${p.total}` : part === 'ready' ? 'Ready check' : part === 'teardown' ? 'Teardown' : `Cell ${running.index + 1}`;
-    text = `$(sync~spin) ${where} · ${labelOf(running)}${left !== undefined ? ` · ${formatTimeLeft(left)} left` : ''}`;
+    text = `$(sync~spin) ${where} · ${labelOf(running)}${left !== undefined ? ` · ${leftText(left)}` : ''}`;
   } else if (p.firstFailed) {
     text = `$(error) Step ${p.firstFailed.step}/${p.total} failed`;
   } else if (p.pending === 0 && p.total > 0) {
     text = `$(pass-filled) Done · ${complete}/${p.total}${p.offered > 0 ? ' · teardown offered' : ''}`;
   } else {
-    text = `$(checklist) ${complete}/${p.total}${left !== undefined ? ` · ~${formatTimeLeft(left)}` : ''}`;
+    text = `$(checklist) ${complete}/${p.total}${left !== undefined ? ` · ${e.unestimatedLeft > 0 ? 'at least ' : '~'}${formatTimeLeft(left)}` : ''}`;
   }
   return { text, tooltip: progressTooltip(nb, p, e, running, now), failed: !running && p.firstFailed !== undefined };
 }
@@ -134,7 +136,8 @@ export function progressTooltip(nb: vscode.NotebookDocument, p: Progress, e: Run
   // Never "100%" or "nothing left" while a step is open (one done by hand has no time).
   const r = remaining(e, p.pending);
   if (r.percent !== undefined) head.push(`${r.percent}% by the estimates`, r.left);
-  if (e.fraction !== undefined && e.leftSeconds > 0) head.push(`ends ≈ ${formatFinish(e.leftSeconds, now)}`);
+  const ends = e.fraction !== undefined ? finishTime(e, running !== undefined, now) : undefined;
+  if (ends) head.push(`ends ≈ ${ends}`);
   md.appendMarkdown(head.join(' · ') + '\n\n');
   if (running) md.appendMarkdown(`Running: ${escapeMd(labelOf(running))} (cell ${running.index + 1})\n\n`);
   const counts = [`${p.done} done`, `${p.skipped} skipped`, `${p.failed} failed`, `${p.pending} to do`];

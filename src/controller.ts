@@ -31,13 +31,13 @@ import { ShellSettings, isCodeMeta, taskItems } from '@md-runbook/core';
 import { SECTION } from './config';
 import { ExecutionConfig, colorConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, cloudOutput, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
-import { CellPlan, ExecuteIO, PrepareContext, RunPipeline, RunRecord } from './pipeline';
+import { CellPlan, ExecuteIO, PrepareContext, PromptCancelled, RunPipeline, RunRecord } from './pipeline';
 import { copyOrigin } from './copyOrigins';
 import { knownSecrets } from './knownSecrets';
 import { NOTEBOOK_TYPE } from './serializer';
 import { CellTranscript, startCellTranscript } from './transcript';
 import { setTaskBox } from './taskLists';
-import { whileWaiting } from './waiting';
+import { askOnCell } from './waiting';
 
 const FLUSH_MS = 100;
 /** `kubectl config current-context` only reads the kubeconfig. */
@@ -189,18 +189,29 @@ function teardownLabel(cell: vscode.NotebookCell): string {
 /** The answer to a step done by hand that Run All reached: tick it, go on without, or stop there. */
 export type ManualAnswer = 'done' | 'skip' | 'stop';
 
-/** Ask about an unticked checklist item Run All reached (modal: the run waits for the answer). */
-async function askManual(cell: vscode.NotebookCell, item: string): Promise<ManualAnswer> {
-  const answer = await whileWaiting(cell, 'a step done by hand', () =>
-    vscode.window.showInformationMessage(
-      `Done by hand? ${item}`,
-      { modal: true, detail: 'Run All waits for this step. Done ticks it; Skip goes on without ticking it; Cancel stops the run here (Resume Run asks again).' },
-      'Done',
-      'Skip',
-    ),
-    'dialog',
+/**
+ * Ask about an unticked checklist item Run All reached, on the cell itself (no dialog: the window
+ * is what the step needs): Done, Skip or Stop as buttons on its status line and its Steps row.
+ * Ticking the box in the notebook counts as Done.
+ */
+async function askManual(cell: vscode.NotebookCell, item: string, offset?: number): Promise<ManualAnswer> {
+  const answer = await askOnCell(
+    cell,
+    `Done by hand? ${item}`,
+    [
+      { id: 'done', label: 'Done', icon: 'check', tooltip: 'Ticks it and goes on' },
+      { id: 'skip', label: 'Skip', icon: 'debug-step-over', tooltip: 'Goes on without ticking it' },
+      { id: 'stop', label: 'Stop', icon: 'debug-stop', tooltip: 'Stops the run here (Resume Run asks again)' },
+    ],
+    (settle) =>
+      offset === undefined
+        ? undefined
+        : vscode.workspace.onDidChangeNotebookDocument((e) => {
+            if (e.notebook !== cell.notebook || !e.cellChanges.some((c) => c.cell === cell)) return;
+            if (taskItems(cell.document.getText()).some((t) => t.offset === offset && t.checked)) settle('done');
+          }),
   );
-  return answer === 'Done' ? 'done' : answer === 'Skip' ? 'skip' : 'stop';
+  return answer === 'done' ? 'done' : answer === 'skip' ? 'skip' : 'stop';
 }
 
 /** The text of a checklist item's line, without its `- [ ]`. */
@@ -209,16 +220,15 @@ function taskText(cell: vscode.NotebookCell, line: number): string {
   return text.trim() || 'a checklist item';
 }
 
-/** Ask whether to run the teardown now (modal: Run All waits for the answer). */
-async function askTeardown(_notebook: vscode.NotebookDocument, labels: readonly string[]): Promise<boolean> {
-  const take = 'Take Down';
-  const answer = await vscode.window.showInformationMessage(
-    `Take it down now? ${labels.join(', ')}`,
-    { modal: true, detail: 'Leave it up to keep it for the next runbook. Resume Run offers this again.' },
-    take,
-    'Leave It Up',
-  );
-  return answer === take;
+/** Ask whether to run the teardown now, on its first cell (Run All waits for the answer). */
+async function askTeardown(_notebook: vscode.NotebookDocument, labels: readonly string[], cells: readonly vscode.NotebookCell[] = []): Promise<boolean> {
+  const at = cells[0];
+  if (!at) return false;
+  const answer = await askOnCell(at, `Take it down now? ${labels.join(', ')}`, [
+    { id: 'take', label: 'Take Down', icon: 'trash', tooltip: 'Runs the teardown now' },
+    { id: 'leave', label: 'Leave It Up', icon: 'debug-step-over', tooltip: 'Keeps it for the next runbook. Resume Run offers this again.' },
+  ]);
+  return answer === 'take';
 }
 
 /** A run of some lines of one cell: Run Line or Selection, Run Lines One by One, Step Through. */
@@ -260,9 +270,9 @@ export class RunbookController implements vscode.Disposable {
   /** Notebooks whose teardown was declined (Leave It Up): Run All doesn't offer it again this session. */
   private readonly teardownDeclined = new Set<string>();
   /** Asks whether to run the teardown (replaced in tests). */
-  askTeardown: (notebook: vscode.NotebookDocument, labels: readonly string[]) => Promise<boolean> = askTeardown;
+  askTeardown: (notebook: vscode.NotebookDocument, labels: readonly string[], cells?: readonly vscode.NotebookCell[]) => Promise<boolean> = askTeardown;
   /** Tests replace it: the answer to a step done by hand that Run All reached. */
-  askManual: (cell: vscode.NotebookCell, item: string) => Promise<ManualAnswer> = askManual;
+  askManual: (cell: vscode.NotebookCell, item: string, offset?: number) => Promise<ManualAnswer> = askManual;
 
   constructor(readonly pipeline: RunPipeline = new RunPipeline()) {
     this.controller = vscode.notebooks.createNotebookController(CONTROLLER_ID, NOTEBOOK_TYPE, 'md-runbook shell');
@@ -474,10 +484,8 @@ export class RunbookController implements vscode.Disposable {
     }
     if (stoppedByHand) {
       vscode.window.setStatusBarMessage('md-runbook: stopped at a step done by hand (Resume Run asks again)', 8000);
-    } else if (stopped && executions[executions.length - 1]!.cell !== stopped) {
-      const why = runs[runs.length - 1]?.plan.stopSequence ? 'was not confirmed' : 'failed';
-      vscode.window.setStatusBarMessage(`md-runbook: stopped after cell ${stopped.index + 1} ${why}`, 8000);
     }
+    // A failed or declined step: the progress item says which step (one number, not a cell's).
     for (const o of this.pipeline.observers) await o.onDidRunSequence?.(notebook, runs);
   }
 
@@ -493,9 +501,9 @@ export class RunbookController implements vscode.Disposable {
       if (cell.kind !== vscode.NotebookCellKind.Markup) continue;
       for (const item of taskItems(cell.document.getText())) {
         if (item.checked) continue;
-        const answer = await this.askManual(cell, taskText(cell, item.line));
+        const answer = await this.askManual(cell, taskText(cell, item.line), item.offset);
         if (answer === 'stop') return false;
-        if (answer === 'done') await setTaskBox(cell, item.offset, true);
+        if (answer === 'done' && !taskItems(cell.document.getText()).some((t) => t.offset === item.offset && t.checked)) await setTaskBox(cell, item.offset, true);
       }
     }
     return true;
@@ -505,7 +513,7 @@ export class RunbookController implements vscode.Disposable {
   private async chooseTeardown(notebook: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[], askAgain = false): Promise<boolean> {
     const key = notebook.uri.toString();
     if (this.teardownDeclined.has(key) && !askAgain) return false;
-    const take = await this.askTeardown(notebook, [...new Set(cells.map(teardownLabel))]);
+    const take = await this.askTeardown(notebook, [...new Set(cells.map(teardownLabel))], cells);
     if (!take) this.teardownDeclined.add(key);
     return take;
   }
@@ -543,7 +551,12 @@ export class RunbookController implements vscode.Disposable {
         plan.attrs.ready = 'up';
       } else for (const p of this.pipeline.preparers) await p.prepare(plan, ctx);
     } catch (e) {
-      prepareError = e instanceof Error ? e.message : String(e);
+      if (e instanceof PromptCancelled) {
+        // Escape on a prompt: not run, still to do (Resume Run asks again), and the run stops.
+        plan.skip = e.message;
+        plan.skipExit = 'unanswered';
+        plan.stopSequence = true;
+      } else prepareError = e instanceof Error ? e.message : String(e);
     }
 
     const started = new Date();

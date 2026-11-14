@@ -326,7 +326,7 @@ system:admin
 
 | Attribute | Value |
 | --- | --- |
-| `exit` | `0` or another exit code; `timeout`; `cancelled`; `error` (the shell could not start); a signal name such as `SIGKILL`, or `unknown`; `skipped` (the `skip` option or marked skipped); `done` (marked done by hand); `declined` (a confirmation was refused); `proposed` (an unapproved proposal that Run All passed over) |
+| `exit` | `0` or another exit code; `timeout`; `cancelled`; `error` (the shell could not start); a signal name such as `SIGKILL`, or `unknown`; `skipped` (the `skip` option or marked skipped); `done` (marked done by hand); `declined` (a confirmation was refused); `unanswered` (Escape on a value prompt: not run, still to do); `proposed` (an unapproved proposal that Run All passed over) |
 | `ran`, `ended` | start and end, local time with UTC offset (`2026-10-18T14:20:00+02:00`) |
 | `duration` | elapsed seconds with millisecond precision, `1.234s` |
 | `name` | the cell's `name=` option |
@@ -380,7 +380,7 @@ A runbook's **steps** are its cells plus GitHub task-list items in Markdown (`- 
 
 - **done** with `check=ok`, `exit=0` or `exit=done` (and no `lines=`);
 - **skipped** with `exit=skipped`;
-- **pending** with no output, `exit=declined`, `exit=proposed`, or a partial `lines=` run;
+- **pending** with no output, `exit=declined`, `exit=unanswered`, `exit=proposed`, or a partial `lines=` run;
 - **failed** with `check=failed` or any other exit.
 
 A group of adjacent `os=` blocks is one step, judged by the block for the current OS. A
