@@ -298,6 +298,12 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   let outcome: CheckOutcome | undefined;
   const judge = (r: SessionRunResult): CheckOutcome | undefined =>
     checks && r.exitCode !== null && !r.timedOut && !r.cancelled ? evaluateChecks(checks, r.exitCode, transcript, stdout) : undefined;
+  // `exit N` ended the host's shell: its exit code is the cell's, and the next cell opens a new
+  // shell, as in the extension's session mode, which says so the same way.
+  const noteEnded = (r: SessionRunResult): void => {
+    if (r.shellEnded && r.exitCode !== null && r.error === undefined && !r.timedOut && !r.cancelled)
+      write(t.shellEndedNote(r.exitCode) + '\n', 'stderr');
+  };
   try {
     // The first connection tells what the server runs; a cell for the other kind doesn't run.
     await conn.session.connect();
@@ -329,6 +335,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
         if (attempts > 1) p.onAttempt?.(attempt, attempts);
         result = await conn.session.run(asRun(cell.value), runOpts, signed());
         outcome = judge(result);
+        noteEnded(result);
         const passed = outcome ? outcome.ok : isSuccess(result);
         if (passed || attempt >= attempts || result.cancelled || p.signal?.aborted) break;
         const why = outcome?.failures[0] ?? (result.timedOut ? 'timed out' : (result.error ?? `exit code ${exitLabel(result)}`));
@@ -360,6 +367,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
         write(echoCommand(kind, steps[i]!.text), 'stdout');
         const r = await conn.session.run(asRun(steps[i]!.text), runOpts, signed(steps[i]!));
         ran.push(i);
+        noteEnded(r);
         result = { ...r, durationMs: result.durationMs + r.durationMs, newShell: result.newShell || r.newShell };
         if (r.exitCode !== 0) {
           if (i < steps.length - 1 && !r.cancelled && !r.timedOut)

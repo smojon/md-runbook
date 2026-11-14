@@ -121,10 +121,10 @@ describe('ssh: live server', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }
     await session.close();
   });
 
-  it('`exit` in a cell ends the shell; the result says so', async () => {
+  it('`exit` in a cell ends the shell; the result says so, with the exit code', async () => {
     const s = await RemoteShell.connect(await open(), opts());
     const r = await s.run('exit 4');
-    assert.equal(r.shellEnded, true);
+    assert.deepEqual([r.exitCode, r.error, r.shellEnded], [4, undefined, true]);
     assert.equal(s.isOpen, false);
     await s.close();
   });

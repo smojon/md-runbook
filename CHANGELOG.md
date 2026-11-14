@@ -20,6 +20,15 @@
   one before it is still in view (scroll away to stop; `mdRunbook.execution.followRun`).
 - **`md-runbook run`: the progress bar fits the terminal** (10 to 30 characters, still ASCII; 20
   in a CI log).
+- **App: `exit N` in a cell records exit code N.** A cell that ended with `exit 1` (a ready check,
+  `test -f x || exit 1`) showed `error` and "the remote shell ended", and a ready check read it
+  wrongly. The app now takes the exit status the server sends when the shell ends, as VS Code's
+  session mode does: exit 0 means up, anything else not up, and the output says
+  `[md-runbook] the shell ended (exit 1); the next cell starts a new one`. Through
+  md-runbook-gate, whose own exit status isn't the cell's, it stays an error. The output line names
+  the ready check's answer (`✓ exit 1 · ready: not up`, also in VS Code's CodeLens and the command
+  line), an error is never shown with a ✓, and the icon beside a cell in the app follows the
+  same rule (a cell that passed its check with exit 1 no longer shows a red icon).
 - **A value to type no longer looks like a slow cell.** VS Code's input box opens at the top of
   the window, easy to miss while the cell's spinner and timer ran. Values and confirmations are
   now asked before the cell starts (it shows as queued); while a box is open, the cell's status

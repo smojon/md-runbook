@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { DEFAULT_WRITE_OPTIONS, locateCodeCells, minimalChange, outputSummary, parse, setCellOutput } from '@md-runbook/core';
+import { DEFAULT_WRITE_OPTIONS, locateCodeCells, minimalChange, outputSummary, outputVerdict, parse, setCellOutput } from '@md-runbook/core';
 import { listFixtures, readFixture } from './helpers';
 
 const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
@@ -88,6 +88,26 @@ describe('outputSummary', () => {
     assert.equal(outputSummary({ exit: '1', ran: '2026-10-18T12:09:50Z' }, now), '✗ exit 1 · just now');
     assert.equal(outputSummary({ exit: 'timeout', duration: '90.000s' }, now), '✗ timeout · 1m30s');
     assert.equal(outputSummary({}, now), '✗ ?');
+  });
+
+  it("says the ready check's answer; an error is never a ✓, even with check=ok", () => {
+    assert.equal(outputSummary({ exit: '0', check: 'ok', ready: 'up' }, now), '✓ exit 0 · ready: already up');
+    assert.equal(outputSummary({ exit: '1', check: 'ok', ready: 'down' }, now), '✓ exit 1 · ready: not up');
+    assert.equal(outputSummary({ exit: 'skipped', ready: 'up' }, now), '– skipped · ready: already up');
+    // The check couldn't run (connection lost): read as "not up", but shown as the failure it is.
+    assert.equal(outputSummary({ exit: 'error', check: 'ok', ready: 'down' }, now), '✗ error · ready: not up');
+    assert.equal(outputSummary({ exit: 'timeout', check: 'ok', ready: 'down' }, now), '✗ timeout · ready: not up');
+    const blocks: Record<string, string>[] = [
+      { exit: '1', check: 'ok' },
+      { exit: 'done' },
+      { exit: 'declined' },
+      { exit: 'error', check: 'ok' },
+      { exit: '0', check: 'failed' },
+    ];
+    assert.deepEqual(
+      blocks.map((b) => outputVerdict(b)),
+      ['ok', 'ok', 'neutral', 'failed', 'failed'],
+    );
   });
 });
 

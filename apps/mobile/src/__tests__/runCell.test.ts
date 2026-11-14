@@ -607,3 +607,51 @@ describe('runCell: retry= and every=', () => {
     expect(conn.calls.map((c) => c.signed?.cell)).toEqual([1, 1]);
   });
 });
+
+describe('runCell: `exit N` in a cell', () => {
+  // Cells: 0 heading, 1 the ready check, 2 a step that exits early, 3 the next step.
+  const text = (ready: string): string =>
+    `# Lab\n\n\`\`\`bash ready\n${ready}\n\`\`\`\n\n\`\`\`bash\ntest -f x || exit 1\n\`\`\`\n\n\`\`\`bash\necho next\n\`\`\`\n`;
+
+  it('exit 1 ends only that cell: exit code 1 recorded, and the next cell runs in a new shell', async () => {
+    // As RemoteSession reports it: the shell's exit status, and a new shell for the next cell.
+    const conn = fakeConnection([{ stdout: 'checking\n', exitCode: 1, shellEnded: true }, { stdout: 'next\n' }]);
+    const r = await runCell({ host, text: text('exit 0'), cellIndex: 2, connection: conn });
+    if (r.kind !== 'done') throw new Error(r.kind);
+    expect(r.attrs.exit).toBe('1');
+    expect(r.summary).toMatch(/^✗ exit 1/);
+    const out = parse(r.text).cells[2]?.output?.text ?? '';
+    expect(out).toContain('the shell ended (exit 1); the next cell starts a new one');
+    expect(out).not.toContain('the remote shell ended');
+    const next = await runCell({ host, text: r.text, cellIndex: 3, connection: conn });
+    expect(next).toMatchObject({ kind: 'done', attrs: { exit: '0' }, result: { newShell: true } });
+  });
+
+  it('a ready check: exit 1 is "not up", exit 0 is "up"; either way the check passed', async () => {
+    const down = await runCell({
+      host,
+      text: text('exit 1'),
+      cellIndex: 1,
+      connection: fakeConnection([{ exitCode: 1, shellEnded: true }]),
+    });
+    expect(down).toMatchObject({ kind: 'done', attrs: { exit: '1', check: 'ok', ready: 'down' } });
+    expect(down.kind === 'done' && down.summary).toMatch(/^✓ exit 1 · ready: not up/);
+    const up = await runCell({ host, text: text('exit 0'), cellIndex: 1, connection: fakeConnection([{ exitCode: 0, shellEnded: true }]) });
+    expect(up).toMatchObject({ kind: 'done', attrs: { exit: '0', check: 'ok', ready: 'up' } });
+    expect(up.kind === 'done' && up.summary).toMatch(/^✓ exit 0 · ready: already up/);
+  });
+
+  it('a ready check that could not run (the connection was lost) reads as not up, and shows ✗ error, not ✓ error', async () => {
+    const conn = fakeConnection([{ exitCode: 0 }]);
+    const run = conn.session.run.bind(conn.session);
+    conn.session.run = async (...a: Parameters<typeof run>) => ({
+      ...(await run(...a)),
+      exitCode: null,
+      error: 'the connection closed',
+      shellEnded: true,
+    });
+    const r = await runCell({ host, text: text('exit 1'), cellIndex: 1, connection: conn });
+    expect(r).toMatchObject({ kind: 'done', attrs: { exit: 'error', check: 'ok', ready: 'down' } });
+    expect(r.kind === 'done' && r.summary).toMatch(/^✗ error · ready: not up/);
+  });
+});

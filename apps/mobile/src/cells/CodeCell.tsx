@@ -10,6 +10,7 @@ import {
   formatEstimate,
   isCodeMeta,
   outputSummary,
+  outputVerdict,
   overEstimate,
   parseLineSet,
   shellKindForLanguage,
@@ -112,15 +113,14 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
   // A runbook call (```runbook) runs too: ▷ opens its copy and runs it there (runbooks/calls.ts).
   const isCall = !can.ok && can.why === 'call';
   const runnable = (can.ok || isCall) && p.canRun;
-  const exit = cell.output?.attrs.exit;
+  // The same verdict as the ✓/✗ of the output's summary line (a check decides over the exit code).
+  const verdict = running || cell.output?.attrs.exit === undefined ? undefined : outputVerdict(cell.output.attrs);
   const last: { icon: CodiconName; color: string; label: string } | undefined =
-    running || exit === undefined
-      ? undefined
-      : exit === '0' && cell.output?.attrs.check !== 'failed'
-        ? { icon: 'check', color: c.ok, label: t.ranOk }
-        : exit === 'skipped'
-          ? undefined
-          : { icon: 'error', color: c.error, label: t.ranFailed };
+    verdict === 'ok'
+      ? { icon: 'check', color: c.ok, label: t.ranOk }
+      : verdict === 'failed'
+        ? { icon: 'error', color: c.error, label: t.ranFailed }
+        : undefined;
   // estimate=: how long the cell takes; while it runs, a bar against it (full at it, then "over").
   const estimate = p.callEstimate ?? (isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).estimateSeconds : undefined);
   // The fence options as written, but estimate= once: the chip beside them shows it.

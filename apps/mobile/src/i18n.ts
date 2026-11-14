@@ -275,6 +275,7 @@ const en = {
       `Proposed by ${detail ?? 'someone'} · not approved: it doesn't run until it is (⋯ → Approve Proposed Cell)`,
   },
   timedOutNote: (seconds: number) => `[md-runbook] timed out after ${seconds}s; the cell's processes were stopped`,
+  shellEndedNote: (exit: number) => `[md-runbook] the shell ended (exit ${exit}); the next cell starts a new one`,
   checkFailedNote: (why: string) => `[md-runbook] check failed: ${why}`,
   lineFailedNote: (lines: string) => `[md-runbook] line ${lines} failed; the lines after it were not run`,
   retryNote: (attempt: number, attempts: number, why: string, wait: string) =>

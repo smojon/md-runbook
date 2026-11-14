@@ -84,12 +84,26 @@ export function minimalChange(a: string, b: string): TextChange {
   return { start: p, end: a.length - s, text: b.slice(p, b.length - s) };
 }
 
+/** How an output block reads at a glance: passed (✓), failed (✗), or neither (– skipped, declined, …). */
+export type OutputVerdict = 'ok' | 'failed' | 'neutral';
+
+export function outputVerdict(attrs: Record<string, string>): OutputVerdict {
+  const exit = attrs.exit ?? '?';
+  if (attrs.check === 'failed') return 'failed';
+  if (exit === '0' || exit === 'done') return 'ok';
+  // A check decides over the exit code (expect-exit=1), once the block ran to an exit code. An
+  // error or a timeout stays a failure, also for a ready check, which reads it as "not up".
+  if (attrs.check === 'ok' && /^-?\d+$/.test(exit)) return 'ok';
+  return ['skipped', 'declined', 'proposed', 'running'].includes(exit) ? 'neutral' : 'failed';
+}
+
 /** Short CodeLens summary of an output block, e.g. "✓ exit 0 · 1.2s · 5m ago". */
 export function outputSummary(attrs: Record<string, string>, now: Date = new Date()): string {
   const exit = attrs.exit ?? '?';
-  const icon =
-    attrs.check === 'failed' ? '✗' : attrs.check === 'ok' || exit === '0' || exit === 'done' ? '✓' : ['skipped', 'declined', 'proposed', 'running'].includes(exit) ? '–' : '✗';
+  const icon = { ok: '✓', failed: '✗', neutral: '–' }[outputVerdict(attrs)];
   const parts = [`${icon} ${/^-?\d+$/.test(exit) ? `exit ${exit}` : exit}`];
+  // The ready check's answer (and a setup step skipped for it), as the extension's status line says it.
+  if (attrs.ready !== undefined) parts.push(attrs.ready === 'up' ? 'ready: already up' : 'ready: not up');
   if (attrs.check === 'failed') parts.push('check failed');
   if (attrs.attempts) parts.push(`${attrs.attempts} attempts`);
   if (attrs.lines) parts.push(`lines ${attrs.lines}`);

@@ -8,6 +8,8 @@ export interface FakeRun {
   stderr?: string;
   exitCode?: number;
   newShell?: boolean;
+  /** The cell ended the shell (`exit N`): `exitCode` is N, and the next run reports a new shell. */
+  shellEnded?: boolean;
   /** Fail the run: the server's key is `hostKey` (not trusted). */
   unknownHostKey?: string;
   /** Fail the run with this error. */
@@ -25,6 +27,8 @@ export function fakeConnection(
 ): Connection & { calls: { source: string; opts: RemoteRunOptions; signed?: SignedRun }[]; contextChecks: number } {
   const calls: { source: string; opts: RemoteRunOptions; signed?: SignedRun }[] = [];
   let i = 0;
+  /** The last run ended the shell: the next one is in a new shell, as RemoteSession reports it. */
+  let ended = false;
   const conn = {
     calls,
     contextChecks: 0,
@@ -49,7 +53,17 @@ export function fakeConnection(
         }
         if (step.stdout) opts.onStdout?.(step.stdout);
         if (step.stderr) opts.onStderr?.(step.stderr);
-        return { exitCode: step.exitCode ?? 0, signal: null, timedOut: false, cancelled: false, durationMs: 5, newShell: step.newShell };
+        const newShell = step.newShell ?? (ended || undefined);
+        ended = step.shellEnded ?? false;
+        return {
+          exitCode: step.exitCode ?? 0,
+          signal: null,
+          timedOut: false,
+          cancelled: false,
+          durationMs: 5,
+          newShell,
+          ...(step.shellEnded ? { shellEnded: true } : {}),
+        };
       },
       async kubeContext(opts: RemoteRunOptions = {}): Promise<SessionRunResult> {
         conn.contextChecks++;

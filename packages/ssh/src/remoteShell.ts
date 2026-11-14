@@ -89,13 +89,22 @@ export interface RemoteRunOptions extends CellCommandOptions {
 export interface RemoteRunResult extends RunResult {
   /**
    * The shell ended during the cell (connection lost, `exit` in the cell, or a cell that didn't
-   * stop): its folder and variables are gone, and the next cell needs a new shell.
+   * stop): its folder and variables are gone, and the next cell needs a new shell. After `exit N`
+   * (or a failure under `set -e`) `exitCode` is N, as in the extension's session mode.
    */
   shellEnded?: boolean;
 }
 
 /** The shell ended while something waited for it. */
-export class ShellEndedError extends Error {}
+export class ShellEndedError extends Error {
+  constructor(
+    message: string,
+    /** The shell's exit status, when the server sent one (`exit N` in a cell). */
+    readonly exitStatus?: number,
+  ) {
+    super(message);
+  }
+}
 
 interface Exchange {
   out: SentinelFilter;
@@ -151,7 +160,8 @@ export class RemoteShell {
       if (e.dataTypeCode === SshExtendedDataType.STDERR) this.deliver('err', this.decoderErr.decode(e.data, { stream: true }));
       channel.adjustWindow(e.data.length);
     });
-    channel.onClosed(() => this.end('the remote shell ended'));
+    // The server sends the shell's exit status before closing its channel (`exit N` in a cell).
+    channel.onClosed((e) => this.end('the remote shell ended', e.exitStatus));
     session.onClosed((e) => this.end(e.message ? `the connection closed: ${e.message}` : 'the connection closed'));
   }
 
@@ -355,6 +365,10 @@ export class RemoteShell {
       return result({ exitCode: timedOut || cancelled ? null : code, timedOut, cancelled });
     } catch (e) {
       if (!(e instanceof ShellEndedError)) throw e;
+      // `exit N` in the cell (or a failure under `set -e`) ended the shell: the cell's exit code
+      // is N, as in the extension's session mode; the next cell opens a new shell. Not through
+      // md-runbook-gate: its own exit status (0) is not the cell's.
+      if (!timedOut && !cancelled && e.exitStatus !== undefined && !this.gateInfo) return result({ exitCode: e.exitStatus, shellEnded: true });
       return result({ timedOut, cancelled, shellEnded: true, ...(timedOut || cancelled ? {} : { error: e.message }) });
     } finally {
       clearTimeout(timer);
@@ -402,10 +416,10 @@ export class RemoteShell {
   }
 
   /** The shell is gone: fail the running cell and close the connection (and its keep-alive timer). */
-  private end(why: string): void {
+  private end(why: string, exitStatus?: number): void {
     if (this.ended) return;
     this.ended = true;
-    this.current?.fail(new ShellEndedError(why));
+    this.current?.fail(new ShellEndedError(why, exitStatus));
     if (!this.starting) void this.session.close(SshDisconnectReason.byApplication).catch(() => undefined);
   }
 

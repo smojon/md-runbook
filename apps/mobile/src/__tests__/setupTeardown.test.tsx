@@ -122,6 +122,29 @@ describe('setup and teardown in Run all', () => {
     await waitFor(() => expect(sources()).toEqual(['test -f lab.up', 'touch lab.up', 'echo work', 'rm lab.up']));
     await waitFor(() => expect(getRunbook(rb.id)!.text).toMatch(/rm lab\.up\n```\n<!-- md-runbook:output start exit=0/));
   });
+
+  it('a ready check that ends with `exit 1` (ending the shell) says not up; the setup runs in a new shell', async () => {
+    const text = GUIDE.replace('test -f lab.up', 'exit 1');
+    mockConnection = fakeConnection([
+      { exitCode: 1, shellEnded: true },
+      { exitCode: 0 },
+      { stdout: 'work\n', exitCode: 0 },
+      { exitCode: 0 },
+    ]);
+    const rb = addRunbook('guide-3.md', text);
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('run-primary'));
+    });
+    await waitFor(() => expect(screen.getByTestId('teardown-card')).toBeTruthy());
+    expect(sources()).toEqual(['exit 1', 'touch lab.up', 'echo work']);
+    const saved = getRunbook(rb.id)!.text;
+    expect(saved).toMatch(/exit=1 [^\n]*check=ok [^\n]*ready=down/);
+    expect(saved).not.toContain('the remote shell ended');
+    // The output line and the icon beside the cell agree: the check answered (not up).
+    expect(screen.getByTestId('cell-1-output')).toHaveTextContent(/✓ exit 1 · ready: not up/);
+    expect(screen.getByTestId('cell-1-status').props.accessibilityLabel).toBe('Succeeded');
+  });
 });
 
 describe('a setup call', () => {

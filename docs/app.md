@@ -92,7 +92,9 @@ says so.
 
 The ▷ beside a cell runs it in a shell on the selected host; the shell stays open between
 cells, as in the extension's session mode. Each runbook has its own shell on a host, so one
-runbook can't read another's secrets or change the commands its cells run with. Tapping a line
+runbook can't read another's secrets or change the commands its cells run with. As there, `exit N`
+in a cell ends the shell: the cell gets exit code N and the next cell starts in a new shell (use
+`return N` to leave a cell early and keep the shell). Tapping a line
 opens its actions:
 
 - **Run line**, **Run lines 1-N** and **Run lines N-end**.
