@@ -29,6 +29,11 @@ press Ctrl+. (Cmd+. on macOS), then choose **Change "retires" to "retry"**. It r
 on the block's fence and keeps its value as written. This works in the runbook view and in the
 Markdown editor.
 
+Once a runbook has a run recorded ([run history](history.md#run-history)), the runbook view also
+gives a hint (information, not a warning) on a code step that never ran in any recorded run and
+has no output now: "This step has never run here." The command line and the app don't have it:
+the records are kept by VS Code on this machine.
+
 ## In the app
 
 The md-runbook app (iPhone, Android, browser) runs the same checks when a runbook opens and after

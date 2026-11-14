@@ -12,6 +12,7 @@ import { renameInfoOption } from '@md-runbook/core/cellOptions';
 import { LintProblem, lintRunbook, suggestOption } from '@md-runbook/core/lint';
 import { withInfo } from '@md-runbook/core/proposal';
 import { META_KEY } from './outputs';
+import { neverRanCells, onDidChangeRuns, runsKeyOf } from './runs';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
 import { timed } from './timings';
 
@@ -21,6 +22,9 @@ const TYPO_CODE = 'unknown-cell-option';
 /** Its fix, read back from the message: the code action gets copies of the diagnostics, without extra fields. */
 const TYPO_RE = /unknown cell option "([^"]+)" \(ignored\): did you mean "([^"]+)"\?/;
 const FENCE_LINE_RE = /^(\s*(?:`{3,}|~{3,}))(.*)$/;
+/** The hint on a step that never ran in a recorded run (only in the runbook view: the records are per notebook). */
+const NEVER_RAN = 'This step has never run here.';
+const NEVER_RAN_CODE = 'never-ran';
 
 function toDiagnostic(p: LintProblem, range: vscode.Range, prefix = ''): vscode.Diagnostic {
   const d = new vscode.Diagnostic(range, prefix + p.message, p.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning);
@@ -127,6 +131,13 @@ export function registerLint(context: vscode.ExtensionContext): void {
             : toDiagnostic(p, lineRange(doc, p.cell.sourceLine));
       byCell.set(index, [...(byCell.get(index) ?? []), d]);
     }
+    // Steps that never ran in any recorded run (runs.ts): a hint, once the runbook has a run.
+    for (const index of neverRanCells(nb)) {
+      const d = new vscode.Diagnostic(lineRange(nb.cellAt(index).document, 0), NEVER_RAN, vscode.DiagnosticSeverity.Information);
+      d.source = 'md-runbook';
+      d.code = NEVER_RAN_CODE;
+      byCell.set(index, [...(byCell.get(index) ?? []), d]);
+    }
     const uris: vscode.Uri[] = [];
     for (const [index, ds] of byCell) {
       const uri = nb.cellAt(index).document.uri;
@@ -168,6 +179,10 @@ export function registerLint(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidOpenNotebookDocument((nb) => isRunbook(nb) && timed('lint', nb.uri.fsPath, () => lintNotebook(nb))),
     vscode.workspace.onDidChangeNotebookDocument((e) => isRunbook(e.notebook) && later(e.notebook.uri.toString(), () => lintNotebook(e.notebook))),
     vscode.workspace.onDidCloseNotebookDocument((nb) => isRunbook(nb) && clearNotebook(nb)),
+    // A run recorded: the never-ran hints of that runbook (and its copies' original) change.
+    onDidChangeRuns((key) => {
+      for (const nb of vscode.workspace.notebookDocuments) if (isRunbook(nb) && runsKeyOf(nb.uri) === key) later(nb.uri.toString(), () => lintNotebook(nb));
+    }),
     vscode.workspace.onDidOpenTextDocument((doc) => timed('lint text', doc.uri.fsPath, () => lintText(doc))),
     vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'markdown' && later(e.document.uri.toString(), () => lintText(e.document))),
     vscode.workspace.onDidCloseTextDocument((doc) => doc.uri.scheme !== 'vscode-notebook-cell' && collection.delete(doc.uri)),

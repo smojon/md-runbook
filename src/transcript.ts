@@ -30,7 +30,7 @@ const files = new Map<string, TranscriptFile>();
 let reportedExtension: string | undefined;
 
 /** Where a runbook's transcript is (whether it is on or not), or undefined for a runbook that is not a file on disk. */
-export function transcriptPathFor(nb: vscode.NotebookDocument): string | undefined {
+export function transcriptPathFor(nb: { uri: vscode.Uri }): string | undefined {
   if (nb.uri.scheme !== 'file') return undefined;
   const c = vscode.workspace.getConfiguration(SECTION);
   let ext = c.get<string>('output.transcriptExtension', DEFAULT_TRANSCRIPT_EXTENSION).trim() || DEFAULT_TRANSCRIPT_EXTENSION;

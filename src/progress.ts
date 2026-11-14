@@ -17,6 +17,7 @@ import { CONTROLLER_ID, RunbookController, cellPart } from './controller';
 import { anyRunning, estimateItem, notebookEstimateSteps, notebookPartStates, runningSince } from './estimates';
 import { META_KEY, outputMeta } from './outputs';
 import { RunPipeline } from './pipeline';
+import { lastGreenLine } from './runs';
 import { NOTEBOOK_TYPE } from './serializer';
 import { setTaskBox } from './taskLists';
 import { onDidChangeWaiting, waitingIn, waitingText } from './waiting';
@@ -160,6 +161,7 @@ export function progressTooltip(nb: vscode.NotebookDocument, p: Progress, e: Run
     if (parts.teardown.blocks > 0) rows.push(`| Teardown | ${parts.states.teardown === 'chosen' ? state(parts.teardown) : 'offered at the end'} | ${time(parts.teardown)} |`);
     md.appendMarkdown(rows.join('\n') + '\n\n');
   }
+  md.appendMarkdown(escapeMd(lastGreenLine(nb)) + '\n\n');
   const links: string[] = [];
   if (running) links.push(`[Show the running step](command:mdRunbook._revealCell?${encodeURIComponent(JSON.stringify([{ uri: nb.uri.toString(), index: running.index }]))})`);
   else if (p.firstFailed || p.firstPending) links.push(`[Go to the ${p.firstFailed ? 'failed' : 'next'} step](command:mdRunbook.revealNextStep)`);

@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isCallLanguage, isDynamicSrc, parseCall } from '@md-runbook/core/call';
 import { callEstimateSeconds } from '@md-runbook/core/node';
-import { EstimateStep, HISTORY_RUNS, blockBar, blockProgress, formatBlockProgress, formatEstimate, formatLearned, isCodeMeta, isCopyFileName, isOverEstimate, learnedEstimate, overEstimate, stepHistoryKey, stepState, suggestedEstimate, withDuration } from '@md-runbook/core';
+import { EstimateStep, HISTORY_RUNS, blockBar, blockProgress, formatBlockProgress, formatEstimate, formatLearned, isCodeMeta, isOverEstimate, learnedEstimate, overEstimate, stepHistoryKey, stepState, suggestedEstimate, withDuration } from '@md-runbook/core';
 import { parseCellOptions, setInfoOption } from '@md-runbook/core/cellOptions';
 import { withInfo } from '@md-runbook/core/proposal';
 import { parseInterval } from '@md-runbook/core/checks';
@@ -18,6 +18,7 @@ import { SECTION } from './config';
 import { copyOrigin } from './copyOrigins';
 import { META_KEY, outputMeta } from './outputs';
 import type { RunPipeline, RunRecord } from './pipeline';
+import { originalName } from './runHistory';
 import { NOTEBOOK_TYPE } from './serializer';
 
 /** How often a running block's bar (and the runbook's time left) moves on. */
@@ -51,12 +52,12 @@ const learning = (): boolean => vscode.workspace.getConfiguration(SECTION).get<b
 
 /**
  * Whose history a runbook uses: its own, and for a run copy (`deploy.20261114-142000.md`) the
- * runbook it was copied from, so teams that always run copies learn too.
+ * runbook it was copied from, so teams that always run copies learn too. The run history
+ * (runs.ts) keys its records the same way.
  */
-function historyOf(uri: vscode.Uri): string {
-  const name = path.posix.basename(uri.path);
-  if (!isCopyFileName(name)) return uri.toString();
-  const original = name.replace(/\.\d{8}-\d{6}(?:-\d+)?\.md$/i, '.md');
+export function historyOf(uri: vscode.Uri): string {
+  const original = originalName(path.posix.basename(uri.path));
+  if (original === undefined) return uri.toString();
   // A copy made in another folder (output.copyFolder) knows where the original's cells run.
   const dir = copyOrigin(uri);
   return dir ? vscode.Uri.file(path.join(dir, original)).toString() : vscode.Uri.joinPath(uri, '..', original).toString();
