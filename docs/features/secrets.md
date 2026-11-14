@@ -101,6 +101,12 @@ before anything runs; Escape there cancels the run. Not asked up front: the setu
 and teardown, skipped cells and cells for another OS or host. (To have the box in the middle of
 the window instead, pick *Quick Input Position: Center* in VS Code's Customize Layout.)
 
+**The value you used last time is filled in.** For a parameter or an input that isn't secret,
+the box opens with the value last given for that runbook (kept in the workspace, never for a
+secret or masked input), and says when: `Value for REGION (last used yesterday; Enter keeps
+it)`. Enter takes it again; typing replaces it. A parameter never given before shows its
+default. The app does the same in the card that asks for values.
+
 **md-runbook: Set Inputs** asks for every input the runbook uses, with the current value filled
 in, to set or change them before running (a secret input is masked and never shown; leaving it
 empty keeps the current value).

@@ -79,7 +79,17 @@ import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, hostLabel, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
-import { ParamSpec, checkParam, runbookParams, setParamValue, useParamValues } from '../runbooks/params';
+import {
+  LastInput,
+  ParamSpec,
+  ago,
+  checkParam,
+  lastInputs,
+  rememberInput,
+  runbookParams,
+  setParamValue,
+  useParamValues,
+} from '../runbooks/params';
 import { canDownload } from '../runbooks/files';
 import { saveRunbook } from '../runbooks/save';
 import { exportRecordJson, exportReport, requestCosign, shareRunbook } from '../share/export';
@@ -1307,7 +1317,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     for (const n of needs) {
       const v = values[n.name] ?? '';
       if (n.kind === 'secret') await storeSecret(n.name, v);
-      else next = { ...next, [n.name]: { value: v, masked: n.masked } };
+      else {
+        next = { ...next, [n.name]: { value: v, masked: n.masked } };
+        // Filled in next time (never a masked value).
+        if (!n.masked) rememberInput(runbook!.id, n.name, v);
+      }
     }
     updateInputs(next);
     setAsking(undefined);
@@ -1606,6 +1620,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 ) : asking?.request.cellIndex === index ? (
                   // Under the cell that needs the values, where the reader looks, not at the top.
                   <NeedsCard
+                    runbookId={runbook.id}
                     needs={asking.needs}
                     onRun={(v) => void provide(v)}
                     onCancel={() => {
@@ -2017,10 +2032,12 @@ function InputsCard({
 
 /** Ask for the secrets and inputs a cell needs: secrets are stored for every runbook, inputs kept while this one is open. */
 function NeedsCard({
+  runbookId,
   needs,
   onRun,
   onCancel,
 }: {
+  runbookId: string;
   needs: readonly NeededValue[];
   onRun(values: Record<string, string>): void;
   onCancel(): void;
@@ -2028,6 +2045,20 @@ function NeedsCard({
   const styles = useStyles();
   const colors = usePalette();
   const [values, setValues] = useState<Record<string, string>>({});
+  // The value last typed for each (not masked) input of this runbook: filled in, Run keeps it.
+  const [last, setLast] = useState<Record<string, LastInput>>({});
+  useEffect(() => {
+    let live = true;
+    void lastInputs(runbookId).then((l) => {
+      if (!live) return;
+      const shown = Object.fromEntries(needs.filter((n) => n.kind === 'input' && !n.masked && l[n.name]).map((n) => [n.name, l[n.name]!]));
+      setLast(shown);
+      setValues((v) => ({ ...Object.fromEntries(Object.entries(shown).map(([k, x]) => [k, x.value])), ...v }));
+    });
+    return () => {
+      live = false;
+    };
+  }, [runbookId, needs]);
   const complete = needs.every((n) => (values[n.name] ?? '') !== '');
   return (
     <View testID="needs" style={styles.trust}>
@@ -2047,7 +2078,9 @@ function NeedsCard({
             autoCapitalize="none"
             autoCorrect={false}
           />
-          <Text style={styles.paramHint}>{n.kind === 'secret' ? t.needSecretHint : t.needInputHint}</Text>
+          <Text testID={`need-${n.name}-hint`} style={styles.paramHint}>
+            {n.kind === 'secret' ? t.needSecretHint : last[n.name] ? t.needLastUsed(ago(last[n.name]!.at)) : t.needInputHint}
+          </Text>
         </View>
       ))}
       <View style={styles.actions}>

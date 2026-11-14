@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Enter is often enough.** A parameter or input asked for opens with the value you used last
+  time for that runbook, and says when (`last used yesterday; Enter keeps it`); a parameter never
+  given shows its default. Never for secrets or masked inputs. In VS Code and in the app.
 - **Progress you can read at a glance, in the same words everywhere.** VS Code's status bar says
   where the run is (`⟳ Step 3/6 · Push image · 1m 40s left`, `✗ Step 4/6 failed` in red,
   `✓ Done · 6/6 · teardown offered`), and its tooltip is a table of the setup, steps and

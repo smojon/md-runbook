@@ -145,3 +145,51 @@ export function resetParamValues(): void {
   loading.clear();
   emit();
 }
+
+// ---- the last value of each input, per runbook (never a masked one) ----
+
+/** A value typed for an `${input:NAME}`, and when: the card asking for it next time starts with it. */
+export interface LastInput {
+  value: string;
+  at: number;
+}
+type LastInputs = Record<string, LastInput>;
+const isLastInputs = (v: unknown): v is LastInputs =>
+  typeof v === 'object' &&
+  v !== null &&
+  Object.values(v).every(
+    (x) => typeof x === 'object' && x !== null && typeof (x as LastInput).value === 'string' && typeof (x as LastInput).at === 'number',
+  );
+const lastKeyOf = (runbookId: string): string => `inputs.last.v1.${runbookId}`;
+const lasts = new Map<string, LastInputs>();
+
+/** The last values typed for the runbook's inputs (loaded once; empty until then). */
+export async function lastInputs(runbookId: string): Promise<LastInputs> {
+  const known = lasts.get(runbookId);
+  if (known) return known;
+  const v = (await getJson(lastKeyOf(runbookId), isLastInputs)) ?? {};
+  lasts.set(runbookId, { ...v, ...(lasts.get(runbookId) ?? {}) });
+  return lasts.get(runbookId)!;
+}
+
+export function rememberInput(runbookId: string, name: string, value: string, now = Date.now()): void {
+  const next = { ...(lasts.get(runbookId) ?? {}), [name]: { value, at: now } };
+  lasts.set(runbookId, next);
+  void setJson(lastKeyOf(runbookId), next).catch((e: unknown) => console.warn('input not saved', e));
+}
+
+/** "just now", "5 min ago", "3 h ago", "yesterday", "2 days ago". */
+export function ago(at: number, now = Date.now()): string {
+  const min = Math.floor(Math.max(0, now - at) / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? 'yesterday' : `${d} days ago`;
+}
+
+/** Tests: forget the last inputs. */
+export function resetLastInputs(): void {
+  lasts.clear();
+}

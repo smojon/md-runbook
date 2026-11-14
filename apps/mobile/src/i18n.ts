@@ -573,6 +573,7 @@ const en = {
   needsTitle: 'This cell needs',
   needSecret: (name: string) => `Secret ${name}`,
   needSecretHint: 'Stored in this device’s keychain for every runbook. Redacted from the output.',
+  needLastUsed: (when: string) => `Last used ${when}: Run keeps it, or type a new value.`,
   needInputHint: 'Kept while this runbook is open.',
   needsRun: 'Run',
   needsCancelled: (names: string) => `Cancelled: ${names} not given, nothing was run`,

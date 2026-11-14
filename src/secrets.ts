@@ -172,18 +172,41 @@ class SecretsFeature {
     return m;
   }
 
+  /**
+   * The value a parameter or a non-secret input had the last time it was given for this runbook
+   * (kept in the workspace's state, never for secrets), to fill the box in: Enter takes it again.
+   */
+  private last(nb: vscode.NotebookDocument, kind: 'param' | 'input', name: string): { value: string; at: number } | undefined {
+    const all = this.context.workspaceState.get<Record<string, Record<string, { value: string; at: number }>>>(LAST_KEY, {});
+    return all[nb.uri.toString()]?.[`${kind}:${name}`];
+  }
+
+  private remember(nb: vscode.NotebookDocument, kind: 'param' | 'input', name: string, value: string): void {
+    const all = { ...this.context.workspaceState.get<Record<string, Record<string, { value: string; at: number }>>>(LAST_KEY, {}) };
+    all[nb.uri.toString()] = { ...all[nb.uri.toString()], [`${kind}:${name}`]: { value, at: Date.now() } };
+    void this.context.workspaceState.update(LAST_KEY, all);
+  }
+
   private async input(name: string, secret: boolean, ctx: Asking): Promise<string> {
     const cache = this.session(this.inputs, ctx.notebook);
     const cached = cache.get(name);
     if (cached !== undefined) return cached;
+    const last = secret ? undefined : this.last(ctx.notebook, 'input', name);
     const value = await whileWaiting(ctx.cell, `input ${name}`, () =>
       vscode.window.showInputBox(
-        { title: `${runbookName(ctx.notebook)}: input ${name}${forCell(ctx)}`, prompt: `Value for ${name}`, password: secret, ignoreFocusOut: true },
+        {
+          title: `${runbookName(ctx.notebook)}: input ${name}${forCell(ctx)}`,
+          prompt: last ? `Value for ${name} (last used ${ago(last.at)}; Enter keeps it)` : `Value for ${name}`,
+          ...(last ? { value: last.value } : {}),
+          password: secret,
+          ignoreFocusOut: true,
+        },
         ctx.token,
       ),
     );
     if (value === undefined) throw new Error(`input ${name} cancelled`);
     cache.set(name, value);
+    if (!secret) this.remember(ctx.notebook, 'input', name, value);
     return value;
   }
 
@@ -196,17 +219,26 @@ class SecretsFeature {
     if (cached !== undefined) return cached;
     const def = declaredParams(ctx.notebook).find((p) => p.name === name)?.default;
     const useDefaults = vscode.workspace.getConfiguration(SECTION).get<boolean>('params.useDefaults', false);
-    const value =
-      def !== undefined && useDefaults
-        ? def
-        : await whileWaiting(ctx.cell, `parameter ${name}`, () =>
-            vscode.window.showInputBox(
-              { title: `${runbookName(ctx.notebook)}: parameter ${name}${forCell(ctx)}`, prompt: `Value for ${name}`, value: def, ignoreFocusOut: true },
-              ctx.token,
-            ),
-          );
+    if (def !== undefined && useDefaults) {
+      cache.set(name, def);
+      return def;
+    }
+    // Filled in: the value last used for this runbook, else the default (Enter takes it).
+    const last = this.last(ctx.notebook, 'param', name);
+    const value = await whileWaiting(ctx.cell, `parameter ${name}`, () =>
+      vscode.window.showInputBox(
+        {
+          title: `${runbookName(ctx.notebook)}: parameter ${name}${forCell(ctx)}`,
+          prompt: last ? `Value for ${name} (last used ${ago(last.at)}; Enter keeps it)` : def !== undefined ? `Value for ${name} (the default; Enter keeps it)` : `Value for ${name}`,
+          value: last?.value ?? def,
+          ignoreFocusOut: true,
+        },
+        ctx.token,
+      ),
+    );
     if (value === undefined) throw new Error(`parameter ${name} cancelled`);
     cache.set(name, value);
+    this.remember(ctx.notebook, 'param', name, value);
     return value;
   }
 
@@ -412,11 +444,12 @@ class SecretsFeature {
       const value = await vscode.window.showInputBox({
         title: `${runbookName(nb)}: parameter ${p.name}`,
         prompt: `Value for ${p.name}`,
-        value: cache.get(p.name) ?? p.default,
+        value: cache.get(p.name) ?? this.last(nb, 'param', p.name)?.value ?? p.default,
         ignoreFocusOut: true,
       });
       if (value === undefined) return;
       cache.set(p.name, value);
+      this.remember(nb, 'param', p.name, value);
     }
   }
 
@@ -440,13 +473,14 @@ class SecretsFeature {
       const value = await vscode.window.showInputBox({
         title: `${runbookName(nb)}: input ${name}`,
         prompt: secret && current !== undefined ? `Value for ${name} (empty keeps the current one)` : `Value for ${name}`,
-        value: secret ? undefined : current,
+        value: secret ? undefined : (current ?? this.last(nb, 'input', name)?.value),
         password: secret,
         ignoreFocusOut: true,
       });
       if (value === undefined) return;
       if (secret && value === '' && current !== undefined) continue;
       cache.set(name, value);
+      if (!secret) this.remember(nb, 'input', name, value);
     }
   }
 
@@ -480,6 +514,19 @@ class SecretsFeature {
 }
 
 const ALLOWED_KEY = 'mdRunbook.allowedSecrets';
+/** Per runbook: the last value of each parameter and non-secret input (never secrets). */
+const LAST_KEY = 'mdRunbook.lastValues';
+
+/** "just now", "5 min ago", "3 h ago", "2 days ago". */
+export function ago(at: number, now = Date.now()): string {
+  const min = Math.floor(Math.max(0, now - at) / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? 'yesterday' : `${d} days ago`;
+}
 
 /** A `${kind:name}` reference as it stands now (see `peek`). */
 export interface RefValue {

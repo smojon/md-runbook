@@ -591,6 +591,34 @@ describe('runbook parameters', () => {
 });
 
 describe('secrets and inputs', () => {
+  it('the next time, an input is filled in with the value last typed for the runbook (never a masked one)', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const r = addRunbook('last.md', '# Last\n\n```bash\necho "${input:REGION}" "${input:DB_PASSWORD}"\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('needs')).toBeTruthy());
+    expect(screen.getByTestId('need-REGION').props.value).toBe('');
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('need-REGION'), 'eu-west-1');
+      fireEvent.changeText(screen.getByTestId('need-DB_PASSWORD'), 'pw-1');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('needs-run'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(1));
+
+    // The runbook opened again (a new session): asked again, REGION filled in, the password not.
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('need-REGION').props.value).toBe('eu-west-1'));
+    expect(screen.getByTestId('need-REGION-hint')).toHaveTextContent(/^Last used just now/);
+    expect(screen.getByTestId('need-DB_PASSWORD').props.value).toBe('');
+  });
+
   it('a cell asks for them, stores the secret, keeps the input, then runs', async () => {
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
     const r = addRunbook('api.md', '# API\n\n```bash\ncurl -u "${input:USER}:${secret:API_KEY}" https://api\n```\n');
