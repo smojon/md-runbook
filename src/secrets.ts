@@ -26,6 +26,7 @@ import {
   parseFrontMatter,
   rewriteRefs,
 } from '@md-runbook/core/secrets';
+import { ALERT_PARAMS } from '@md-runbook/core/runReport';
 import { META_KEY } from './outputs';
 import { currentOs } from '@md-runbook/core/os';
 import { CellPlan, PrepareContext, PromptCancelled, RunPipeline } from './pipeline';
@@ -518,6 +519,25 @@ class SecretsFeature {
     for (const v of values) m.set(v.name, { ...v, fromAssistant });
   }
 
+  /**
+   * The run's ALERT, ALERT_FINGERPRINT and ALERT_LABELS parameter values (a run report says which
+   * alert a run answered, core/runReport.ts): no other parameter.
+   */
+  alertParams(nb: vscode.NotebookDocument): Record<string, string> {
+    const cache = this.params.get(nb.uri.toString());
+    const out: Record<string, string> = {};
+    for (const k of ALERT_PARAMS) {
+      const v = cache?.get(k);
+      if (v !== undefined) out[k] = v;
+    }
+    return out;
+  }
+
+  /** A stored secret's value, or undefined; asks nothing (a run report's token). */
+  storedSecret(name: string): Thenable<string | undefined> {
+    return this.context.secrets.get(KEY_PREFIX + name);
+  }
+
   /** Set parameter values for `nb` without asking (a runbook link's values, already checked by parseRunbookLink). */
   fillParameters(nb: vscode.NotebookDocument, values: Readonly<Record<string, string>>): void {
     const cache = this.session(this.params, nb);
@@ -674,6 +694,10 @@ export interface SecretsInfo {
   setSessionValues(notebook: vscode.NotebookDocument, values: { params?: Readonly<Record<string, string>>; inputs?: Readonly<Record<string, string>> }): void;
   /** Set Secret for one name (the value is typed in a masked box). */
   setSecret(name: string): Promise<void>;
+  /** The run's ALERT, ALERT_FINGERPRINT and ALERT_LABELS parameter values, for its run report. */
+  alertParams(notebook: vscode.NotebookDocument): Record<string, string>;
+  /** A stored secret, without asking (a run report's token). */
+  storedSecret(name: string): Thenable<string | undefined>;
 }
 
 /** Test-only helpers are registered only under the extension test runner (or the test harness). */
@@ -723,5 +747,7 @@ export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunP
     launchValues: (nb, cells) => f.launchValues(nb, cells),
     setSessionValues: (nb, values) => f.setSessionValues(nb, values),
     setSecret: (name) => f.setSecretCommand(name),
+    alertParams: (nb) => f.alertParams(nb),
+    storedSecret: (name) => f.storedSecret(name),
   };
 }

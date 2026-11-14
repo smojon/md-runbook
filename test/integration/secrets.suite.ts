@@ -114,6 +114,23 @@ test('Run All asks for the values of all its cells first; Escape there runs noth
   }
 });
 
+test('declared parameters no block uses (an alert link\'s ALERT, empty defaults) are never asked, and the run goes on', async () => {
+  try {
+    const uri = writeFile(
+      'unused-params.md',
+      `---\nparams:\n  - ALERT: ""\n  - ALERT_FINGERPRINT: ""\n  - ALERT_STARTS_AT: ""\n---\n\n# SOP\n\n\`\`\`${LANG}\n${echo('first')}\n\`\`\`\n\n\`\`\`${LANG}\n${echo('second')}\n\`\`\`\n`,
+    );
+    const editor = await openRunbook(uri);
+    const code = editor.notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
+    await runCells(editor, code[0]!.index, code[1]!.index + 1);
+    assert.match(outputText(code[0]!), /first/);
+    assert.match(outputText(code[1]!), /second/);
+    assert.ok((await waitingNow()).every((w) => w === undefined), 'nothing was asked');
+  } finally {
+    await closeAll();
+  }
+});
+
 test('inputs: values set with Set Inputs are used without asking, and can be changed', async () => {
   try {
     const uri = writeFile('inputs.md', `# Inputs\n\n\`\`\`${LANG}\n${echo('who=${input:WHO}')}\n\`\`\`\n`);

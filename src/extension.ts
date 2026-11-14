@@ -17,6 +17,7 @@ import { RunPipeline } from './pipeline';
 import { registerEstimates } from './estimates';
 import { registerProgress } from './progress';
 import { registerRuns } from './runs';
+import { registerRunReports } from './runReports';
 import { registerWaiting } from './waiting';
 import { PreflightSources, registerStepsView } from './stepsView';
 import { registerCurrentRunbook } from './currentRunbook';
@@ -127,6 +128,8 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   );
   registerNotifications(pipeline, context);
+  // Run reports (report-runs: in the front matter): after the launch form, which may cancel a Run All.
+  registerRunReports(context, pipeline, secrets);
   registerLineRuns(context, controller, { safety, secrets });
   registerAutoSave(pipeline);
   registerOpenTiming(context);
