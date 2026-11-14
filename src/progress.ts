@@ -4,6 +4,7 @@
  */
 
 import * as os from 'node:os';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { Progress, checklist, computeProgress, formatLocalIso, isCodeMeta, nextUncheckedOffset, outputBlockAttrs, runbookEstimate } from '@md-runbook/core';
 import { PartEstimate, RunbookEstimate, formatEstimate, formatFinish, formatTimeLeft, remaining, stepHeadings, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
@@ -11,6 +12,7 @@ import { isManualMark } from '@md-runbook/core/progress';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { osGroups } from '@md-runbook/core/os';
 import { SECTION } from './config';
+import { currentRunbook, inFront, onDidChangeCurrentRunbook, showRunbook } from './currentRunbook';
 import { CONTROLLER_ID, RunbookController, cellPart } from './controller';
 import { anyRunning, estimateItem, notebookEstimateSteps, notebookPartStates, runningSince } from './estimates';
 import { META_KEY, outputMeta } from './outputs';
@@ -229,35 +231,46 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
   const item = vscode.window.createStatusBarItem('mdRunbook.progress', vscode.StatusBarAlignment.Left, 100);
   item.name = 'md-runbook progress';
   item.command = 'mdRunbook.revealNextStep';
+  /** Whether the item is on screen (for tests). */
+  let shown = false;
   let timer: NodeJS.Timeout | undefined;
   // While a block runs, the time left moves on without any output.
   let ticker: NodeJS.Timeout | undefined;
   const update = (): void => {
     timer = undefined;
-    const nb = vscode.window.activeNotebookEditor?.notebook;
-    const p = nb?.notebookType === NOTEBOOK_TYPE && vscode.workspace.getConfiguration(SECTION).get<boolean>('progress.statusBar', true) ? notebookProgress(nb) : undefined;
+    // The runbook in front, else one that runs or waits for you (currentRunbook.ts): a run stays
+    // in the status bar while another file is in front, named so you know which one.
+    const nb = currentRunbook();
+    const p = nb && vscode.workspace.getConfiguration(SECTION).get<boolean>('progress.statusBar', true) ? notebookProgress(nb) : undefined;
     const running = !!p && !!nb && anyRunning(nb);
     if (running && !ticker) ticker = setInterval(refresh, 1000);
     if (!running && ticker) {
       clearInterval(ticker);
       ticker = undefined;
     }
+    shown = false;
     if (!p || p.total === 0 || !nb) return item.hide();
     const w = waitingIn(nb);
+    const front = inFront(nb);
+    // Behind another file: only while it runs or waits for you, named, and a click shows it.
+    if (!front && !running && !w) return item.hide();
+    const named = (text: string): string => (front ? text : `${path.posix.basename(nb.uri.path).replace(/\.md$/i, '')} · ${text}`);
     if (w) {
       // The prompt is at the top of the window, easy to miss: say whose turn it is, in colour.
       const t = waitingText(w.what, w.where);
-      item.text = t.statusBar;
+      item.text = named(t.statusBar);
       item.tooltip = t.tooltip;
       item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
       item.command = { title: 'Show the cell', command: 'mdRunbook._revealCell', arguments: [w.cell] };
+      shown = true;
       return item.show();
     }
     const s = progressStatus(nb, p);
-    item.text = s.text;
+    item.text = named(s.text);
     item.tooltip = s.tooltip;
     item.backgroundColor = s.failed ? new vscode.ThemeColor('statusBarItem.errorBackground') : undefined;
-    item.command = 'mdRunbook.revealNextStep';
+    shown = true;
+    item.command = front ? 'mdRunbook.revealNextStep' : { title: 'Show the runbook', command: 'mdRunbook._showRunbook', arguments: [nb.uri.toString()] };
     item.show();
   };
   // Outputs stream in many small changes; coalesce them.
@@ -271,9 +284,11 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
     item,
     { dispose: () => (clearTimeout(timer), clearInterval(ticker)) },
     vscode.window.onDidChangeActiveNotebookEditor(refresh),
+    vscode.window.onDidChangeActiveTextEditor(refresh),
     onDidChangeWaiting(refresh),
+    onDidChangeCurrentRunbook(refresh),
     // The status bar item while a cell waits for the reader (waiting.ts).
-    vscode.commands.registerCommand('mdRunbook._revealCell', (arg?: unknown) => {
+    vscode.commands.registerCommand('mdRunbook._revealCell', async (arg?: unknown) => {
       // A cell (the waiting item), or { uri, index } from a tooltip link.
       const ref = arg as { uri?: unknown; index?: unknown } | undefined;
       const cell = isCell(arg)
@@ -282,14 +297,11 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
           ? vscode.workspace.notebookDocuments.find((d) => d.uri.toString() === ref.uri)?.cellAt(ref.index as number)
           : undefined;
       if (!cell) return;
-      const editor = runbookEditor(cell.notebook);
-      if (!editor) return;
-      const range = new vscode.NotebookRange(cell.index, cell.index + 1);
-      editor.selections = [range];
-      editor.revealRange(range, vscode.NotebookEditorRevealType.InCenterIfOutsideViewport);
+      // Brings the runbook to front when another file is (the status bar item while you look away).
+      await showRunbook(cell.notebook, cell.index);
     }),
     vscode.workspace.onDidChangeNotebookDocument((e) => {
-      if (e.notebook === vscode.window.activeNotebookEditor?.notebook) refresh();
+      if (e.notebook.notebookType === NOTEBOOK_TYPE) refresh();
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration(`${SECTION}.progress`)) refresh();
@@ -335,6 +347,11 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
       return nb ? notebookProgress(nb) : undefined;
     }),
     // For tests: the estimates of a runbook: the status bar text and each cell's estimate item.
+    // For tests: the status bar item as shown, after the pending update.
+    vscode.commands.registerCommand('mdRunbook._statusItem', () => {
+      if (timer) (clearTimeout(timer), update());
+      return shown ? { text: item.text, command: typeof item.command === 'string' ? item.command : item.command?.command } : undefined;
+    }),
     vscode.commands.registerCommand('mdRunbook._estimates', (uri?: vscode.Uri) => {
       const nb = uri ? vscode.workspace.notebookDocuments.find((d) => d.uri.toString() === uri.toString()) : runbookEditor()?.notebook;
       if (!nb) return undefined;

@@ -7,11 +7,13 @@
  * the active editor.
  */
 
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { formatEstimate, formatFinish, formatLearned, isCodeMeta, runbookEstimate, stepState, taskItems } from '@md-runbook/core';
 import { blockProgress, overEstimate, remaining, stepLabel } from '@md-runbook/core/estimate';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { setContext } from './contextKeys';
+import { currentRunbook, editorOf, onDidChangeCurrentRunbook, showRunbook } from './currentRunbook';
 import { isCallLanguage } from '@md-runbook/core/call';
 import { cellPart } from './controller';
 import { blockEstimate, lastDuration, notebookEstimateSteps, notebookPartStates, runningSince } from './estimates';
@@ -420,7 +422,7 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
       if (typeof msg.runFrom === 'number') void this.run(msg.runFrom, Number.MAX_SAFE_INTEGER);
       if (typeof msg.mark === 'number' && (msg.as === 'done' || msg.as === 'skipped')) void this.mark(msg.mark, msg.as);
       if (typeof msg.unmark === 'number') {
-        const cell = this.editor()?.notebook.cellAt(msg.unmark);
+        const cell = this.notebook()?.cellAt(msg.unmark);
         if (cell) void vscode.commands.executeCommand('mdRunbook.unmarkStep', cell);
       }
       if (typeof msg.tick === 'number' && typeof msg.offset === 'number' && typeof msg.checked === 'boolean') void this.tick(msg.tick, msg.offset, msg.checked);
@@ -429,37 +431,38 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
     view.onDidDispose(() => (this.view = undefined));
   }
 
-  private editor(): vscode.NotebookEditor | undefined {
-    const e = vscode.window.activeNotebookEditor;
-    return e?.notebook.notebookType === NOTEBOOK_TYPE ? e : undefined;
+  /** The runbook the view shows: the one in front, else one that runs or waits, else the last one (currentRunbook.ts). */
+  private notebook(): vscode.NotebookDocument | undefined {
+    return currentRunbook();
   }
 
+  /** Goes to the cell, bringing the runbook to front if another file is. */
   private async go(index: number): Promise<void> {
-    const editor = this.editor();
-    if (!editor || index < 0 || index >= editor.notebook.cellCount) return;
-    const range = new vscode.NotebookRange(index, index + 1);
-    editor.selections = [range];
-    editor.revealRange(range, vscode.NotebookEditorRevealType.InCenterIfOutsideViewport);
+    const nb = this.notebook();
+    if (!nb || index < 0 || index >= nb.cellCount) return;
+    await showRunbook(nb, index);
   }
 
   /** Run the code cells from `start` up to (not including) `end`, as Run Below does. */
   async run(start: number, end: number): Promise<void> {
-    const editor = this.editor();
-    if (!editor || start < 0 || start >= editor.notebook.cellCount) return;
-    await selectRunbookKernel(this.context, editor.notebook);
+    const nb = this.notebook();
+    if (!nb || start < 0 || start >= nb.cellCount) return;
+    // The kernel is picked through an editor: bring the runbook to front first if it's behind.
+    if (!editorOf(nb)) await showRunbook(nb);
+    await selectRunbookKernel(this.context, nb);
     await vscode.commands.executeCommand('notebook.cell.execute', {
-      ranges: [{ start, end: Math.min(end, editor.notebook.cellCount) }],
-      document: editor.notebook.uri,
+      ranges: [{ start, end: Math.min(end, nb.cellCount) }],
+      document: nb.uri,
     });
   }
 
   private async mark(index: number, as: 'done' | 'skipped'): Promise<void> {
-    const cell = this.editor()?.notebook.cellAt(index);
+    const cell = this.notebook()?.cellAt(index);
     if (cell) await vscode.commands.executeCommand(as === 'done' ? 'mdRunbook.markStepDone' : 'mdRunbook.markStepSkipped', cell);
   }
 
   private async tick(index: number, offset: number, checked: boolean): Promise<void> {
-    const cell = this.editor()?.notebook.cellAt(index);
+    const cell = this.notebook()?.cellAt(index);
     if (cell?.kind === vscode.NotebookCellKind.Markup) await setTaskBox(cell, offset, checked);
   }
 
@@ -472,16 +475,19 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
   }
 
   model(): StepsModel | undefined {
-    const editor = this.editor();
-    if (!editor) return undefined;
-    const r = editor.visibleRanges;
+    const nb = this.notebook();
+    if (!nb) return undefined;
+    // The cells on screen, when the runbook is (not while another file is in front).
+    const r = editorOf(nb)?.visibleRanges ?? [];
     const visible = r.length > 0 ? { first: Math.min(...r.map((x) => x.start)), last: Math.max(...r.map((x) => x.end - 1)) } : undefined;
-    return stepsModel(editor.notebook, visible, Date.now(), this.sources);
+    return stepsModel(nb, visible, Date.now(), this.sources);
   }
 
   private draw(): void {
-    const editor = this.editor();
-    setContext('mdRunbook.runbookActive', !!editor);
+    const nb = this.notebook();
+    setContext('mdRunbook.runbookActive', !!nb);
+    // Its name under the view's title: which runbook the steps are of (another file may be in front).
+    if (this.view) this.view.description = nb ? path.posix.basename(nb.uri.path) : undefined;
     const m = this.model();
     this.last = m;
     const running = m?.state === 'running' || m?.state === 'waiting';
@@ -520,6 +526,7 @@ export function registerStepsView(context: vscode.ExtensionContext, pipeline?: R
     view,
     vscode.window.registerWebviewViewProvider(STEPS_VIEW, view),
     vscode.window.onDidChangeActiveNotebookEditor(() => view.refresh()),
+    onDidChangeCurrentRunbook(() => view.refresh()),
     vscode.window.onDidChangeNotebookEditorVisibleRanges(() => view.refresh()),
     vscode.workspace.onDidChangeNotebookDocument((e) => {
       if (e.notebook.notebookType === NOTEBOOK_TYPE) view.refresh();
@@ -532,10 +539,7 @@ export function registerStepsView(context: vscode.ExtensionContext, pipeline?: R
     }),
     vscode.commands.registerCommand('mdRunbook.showSteps', () => vscode.commands.executeCommand(`${STEPS_VIEW}.focus`)),
     vscode.commands.registerCommand('mdRunbook.steps.runAll', async () => {
-      const editor = vscode.window.activeNotebookEditor ?? vscode.window.visibleNotebookEditors.find((e) => e.notebook.notebookType === NOTEBOOK_TYPE);
-      if (editor?.notebook.notebookType !== NOTEBOOK_TYPE) return;
-      await selectRunbookKernel(context, editor.notebook);
-      await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: editor.notebook.cellCount }], document: editor.notebook.uri });
+      await view.run(0, Number.MAX_SAFE_INTEGER);
     }),
     vscode.commands.registerCommand('mdRunbook.steps.stop', () => vscode.commands.executeCommand('notebook.cancelExecution')),
     // For tests: the view's model for the active runbook.

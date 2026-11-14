@@ -236,3 +236,25 @@ test('Steps view preflight: what each step will need, and a summary before a run
   assert.equal(m.preflight, 'Before you run: 1 confirmation · 1 secret to set · 1 value to type · 1 step by hand');
   await closeAll();
 });
+
+test('a run stays in the status bar while another file is in front, named, and a click goes back', async () => {
+  const sleep = process.platform === 'win32' ? 'Start-Sleep -Seconds 4' : 'sleep 4';
+  const uri = writeFile('look-away.md', `# Look away\n\n${fence('echo one')}\n${fence(sleep)}`);
+  const editor = await openRunbook(uri);
+  const running = runCells(editor, 0, editor.notebook.cellCount);
+  type Item = { text: string; command?: string } | undefined;
+  const item = async (): Promise<Item> => vscode.commands.executeCommand<Item>('mdRunbook._statusItem');
+  await waitFor('the second step to run', () => editor.notebook.cellAt(2).outputs.length > 0, 15_000);
+  const other = await vscode.workspace.openTextDocument({ content: 'notes', language: 'plaintext' });
+  await vscode.window.showTextDocument(other);
+  const away = await item();
+  assert.match(away?.text ?? '', /^look-away · .*Step 2\/2/, 'named, with the step');
+  assert.equal(away?.command, 'mdRunbook._showRunbook');
+  await step('run ends', running);
+  await waitForRun(editor.notebook.cellAt(2));
+  // Over, and another file in front: nothing to say.
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await item(), undefined);
+  await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+  await closeAll();
+});
