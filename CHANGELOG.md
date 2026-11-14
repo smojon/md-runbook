@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- **The web app on a phone, paired from a laptop.** This sets up a phone's browser for a web app
+  reached through a tunnel or a reverse proxy.
+  - **This server's relay:** when the web app's own address answers `/v1/server-info` as a relay,
+    Hosts & settings → Relay fills in the address. You enter only the token. An address you set
+    is never replaced.
+  - **Pair a device** (Relay, on the laptop) shows a QR code with the relay's address and token,
+    and optionally the hosts with their host keys. It warns that the code holds a secret and hides
+    after a minute (**Show again**). **Copy pairing link** gives `https://<web app>/pair#…`: the
+    token is in the fragment, which browsers never send. The app reads it once, removes it from
+    the address bar and asks **Set up the relay from this link?** first.
+  - **Pair with another device** (Relay, on the phone) scans the code with the browser's camera.
+    That needs an https page; on http the app says so and points to the link.
+  - Host keys from a pairing are trusted only if you tick it, as for an imported hosts list.
+    Afterwards the phone shows its own key (Copy, QR code) under **Add this key to the server's
+    authorized_keys**.
+  - **Hosts lists** (Share hosts) may name the relay's address, never its token. No token is ever
+    in a URL's query.
+- **The web app's public address:** share links, QR codes and pairing links use the address other
+  devices reach the web app at, not the one the page was opened from. Set it with the container's
+  `MD_RUNBOOK_PUBLIC_URL`, or in Hosts & settings → **Public address of this web app**.
+- **The library folder:** the web container's `MD_RUNBOOK_LIBRARY` (default `/runbooks/`, e.g.
+  `/sop/`) moves the team library to another path. The container writes both settings to
+  `/config.json` at start (in `/tmp`, read-only friendly, no secrets) and refuses invalid values
+  ([apps/web](apps/web/README.md#settings)).
+- **Show QR Code links to the runbook's address** when it came from one (a team library copy, a
+  `url=` link): `/open?url=…&sha256=…`. The code is small for any size and pinned to the text
+  without outputs. Runbooks without an address still travel in the code (`rb=`). The card says
+  which kind it shows ([QR codes](docs/switching.md#qr-codes)).
+- **A runbook link into the team library opens the library copy:** its outputs, Update / Keep
+  mine, the link's parameters and host. It no longer opens a second copy. The library's rules
+  hold: a library that opens verified runbooks only refuses an unverified file through a link
+  too.
+
 - **Run reports.** With `report-runs: https://…` in a runbook's front matter, VS Code, the app
   and the command line send that address a short summary at the end of every run.
   - **What's in it:** which runbook (name, title, hash, signed version), who ran it, where and

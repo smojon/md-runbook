@@ -65,6 +65,11 @@ as pinned. **Hosts & settings → Links → Open only signed runbooks from links
 unsigned; servers with md-runbook-gate check the signature itself. The web app takes the same
 fields at its own address, `https://<web app>/open?…`.
 
+A link whose `url=` is a file in the app's team library opens the library copy, not a copy of its
+own: its outputs, Update / Keep mine, and the library's rules (a library that opens verified
+runbooks only refuses an unverified file through a link too). See
+[team runbooks](app.md#team-runbooks).
+
 ### QR codes
 
 A runbook link fits in a QR code, for a label on a machine, a slide or a colleague's screen.
@@ -76,9 +81,22 @@ A runbook link fits in a QR code, for a label on a machine, a slide or a colleag
   sheet with one code per machine, each with its own host and parameter values
   ([options](features/cli.md#qr-codes-and-labels)).
 - **In the app:** **Scan a code** on the start screen opens a code like any link: nothing runs,
-  and the runbook says whether it is signed. **⋯ More → Share → Show QR Code** shows a code of
-  the runbook (without outputs, optionally with the selected host and parameter values) for
-  another phone to scan.
+  and the runbook says whether it is signed. **⋯ More → Share → Show QR Code** shows a code for
+  another phone to scan, optionally with the selected host and parameter values. The card says
+  which kind of code it shows:
+  - **Link to its address** (the default for a runbook that came from an address: a team library
+    copy, or one opened from a `url=` link): `https://<web app>/open?url=<its address>&sha256=<hash>`.
+    The hash is of its text without outputs. The code is small whatever the runbook's size, and
+    pinned: the other phone downloads the runbook and refuses any other text. A library file
+    opens as that phone's own library copy. The address starts with the web app's
+    [public address](app.md#the-public-address) when it is on the web app's own server. This
+    kind isn't offered when your copy has edits of its own, or when the file there changed since
+    your copy: the card says why.
+  - **The runbook itself** (`rb=`, without outputs), for runbooks with no address or with the
+    switch off: no network needed, up to about 3 KB of runbook.
+
+  On the web, codes start with the web app's public address when it is `https`, so a phone's
+  camera opens them in the browser; otherwise they are `mdrunbook://open?…` links for the app.
 
 A code made of the runbook itself works where there is no network: the phone only needs to reach
 the machine. A sticker can be replaced, so sign runbooks you put on labels; servers with

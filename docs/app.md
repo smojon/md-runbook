@@ -207,6 +207,65 @@ A browser can't open SSH connections, so the web app goes through a small relay 
 yourself ([apps/relay](../apps/relay/README.md)). SSH still runs in the browser: the relay only
 sees encrypted traffic, and it only connects to the servers on its list.
 
+**Hosts & settings → Relay (web)** holds the relay's address and token.
+
+- **This server's relay:** when the web app's own address answers `/v1/server-info` as a relay
+  (a proxy or tunnel that sends `/v1/` to the relay, next to the web app), the address is filled
+  in and shown as "this server's relay". You still enter the token. An address you set yourself
+  is never replaced by it.
+- **The token** travels as a WebSocket subprotocol, so only letters, digits and `-._~!#$%&'*+^|`
+  work: make one with `openssl rand -hex 32`.
+
+### Pairing a phone's browser
+
+To use the web app in a phone's browser (through a tunnel, for example) without typing the token
+on the phone:
+
+1. **On the laptop**, open Hosts & settings → Relay → **Pair a device**. It shows a QR code with
+   the relay's address and token, and, with **With the hosts and their trusted host keys**, your
+   hosts. The code holds a secret: anyone who scans it can use your relay. Show it only to your
+   own device. It hides itself after a minute (**Show again**). **Copy pairing link** copies the
+   same as a link, `https://<web app>/pair#mdrb-pair.v1.…`, to open on the phone instead.
+2. **On the phone**, open the web app at its public address, then Hosts & settings → Relay →
+   **Pair with another device**, and scan the code. Or open the pairing link.
+3. The phone asks **Set up the relay from this code?** (or **…from this link?**) and shows the
+   relay and the hosts. Hosts with a name it already has are left alone. Their host keys are
+   trusted only if you tick **Trust the host keys in this list**, as for an imported hosts list.
+4. Then it shows **This device's key** with **Copy** and as a QR code: **Add this key to the
+   server's authorized_keys**. The browser makes its own key, and the app can't put it on a
+   server you log in to without a password, so whoever looks after the server adds that line.
+
+The token is never in a URL's query. A pairing link carries it in the fragment, the part after
+`#`, which browsers never send to a server. The app reads the fragment once, when the page loads,
+and removes it from the address bar and the history (`history.replaceState`) before asking. The
+browser camera needs a secure page (https, or `localhost`). On an `http://` address the app says
+so: use **Copy pairing link** instead. A hosts list (Share hosts) may name the relay's address
+(**With the relay's address**), never its token.
+
+The pairing code is `mdrb-pair.v1.` followed by deflated JSON in base64url (as `rb=` links):
+`{"format":"md-runbook pair v1","relay":"wss://…","token":"…","hosts":[…]}`, with `hosts` in the
+hosts list's format. The relay and a 64-character token make a 57 × 57 code (version 10). Each
+host with its key adds about 300 characters, so with more than one or two hosts the code gets
+large, and the card warns that a phone may not read it. 15 hosts are about the most one code
+holds. For more, leave the hosts out and use Share hosts.
+
+### The public address
+
+Share links, QR codes and pairing links start with the web app's **public address**: the one other
+devices reach it at, not the one the page was opened from. On the laptop that runs the container
+the page is `http://localhost:8080`, but a phone needs the tunnel's `https://….trycloudflare.com`.
+The address comes from, in order:
+
+1. **Hosts & settings → Public address of this web app** (web), when set;
+2. the container's `MD_RUNBOOK_PUBLIC_URL` ([apps/web](../apps/web/README.md#settings));
+3. the page's own address.
+
+It must be `https` (`http` only for `localhost`). Addresses on the page's own address follow it.
+For example, a library copy's `http://localhost:8080/runbooks/restart.md` is linked to as
+`https://<public address>/runbooks/restart.md`, and the relay `ws://localhost:8080` is handed on
+as `wss://<public address>`. On an `http` page with no `https` public address, QR codes keep the
+app's own `mdrunbook://open?…` links.
+
 ## Parameters, secrets and inputs
 
 As in the extension, a value never becomes part of the script: `${param:NAME}`,
@@ -340,8 +399,19 @@ says the same, checked the same way.
   **Team runbooks** or by pulling the list down on a phone. Offline, your copies still work, and
   the runbooks read before stay listed.
 
-**On the web**, the library is the app's own `/runbooks/`, if its server has one. **On a phone**
-(or for a library elsewhere) set its address:
+- **A runbook link to a file in the library** (`/open?url=https://<web app>/runbooks/restart.md&…`,
+  from an alert, a mail or Show QR Code) opens **the library copy**: the same one Team runbooks
+  opens, with its outputs and Update / Keep mine, and the link's `p.NAME=` values and `host=`
+  filled in. It is not a second copy. The library's rules hold as from the list: a library that
+  opens verified runbooks only refuses an unverified one. It also refuses a file it doesn't list,
+  and, when it can't be read and you have no copy yet, says to try again later. The link's
+  `sha256=` pin is checked against the library's file, and **Open only signed runbooks from
+  links** still applies. The library is read first if it hasn't been yet. An address under the
+  web app's public address counts as the library's too.
+
+**On the web**, the library is the app's own `/runbooks/`, if its server has one, or the folder
+its server names (`MD_RUNBOOK_LIBRARY=/sop/`: [apps/web](../apps/web/README.md#settings)).
+**On a phone** (or for a library elsewhere), set its address:
 
 - **Hosts & settings → Team library:** type the folder's `https` address
   (`https://runbooks.example.net/runbooks/`; `http` only for `localhost`; no `user@` before the
