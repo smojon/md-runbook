@@ -151,8 +151,10 @@ hold:
 1. The runbook carries a signature that verifies against **signers this client trusts**:
    - VS Code: an `allowed_signers` file named in `mdRunbook.signing.allowedSigners`, checked with
      `ssh-keygen -Y verify`;
-   - the app: the allowed_signers lines under **Hosts & settings → Run reports → Trusted
-     signers**, checked in the app itself (Ed25519 and ECDSA P-256 keys);
+   - the app: the keys under [Hosts & settings → Trusted signers](../app.md#trusted-signers) that count
+     for the runbook (for a team library copy, those trusted from its library and those added by
+     you; for any other runbook, those added by you), checked in the app itself, the same check
+     as the team library's "whole runbook verified";
    - the command line: `md-runbook run --allowed-signers FILE`.
 2. The signature covers **the whole runbook**: [manifest version 2](signed-runbooks.md#what-is-signed),
    which signs the text, front matter included. A runbook signed before that version only had
@@ -193,11 +195,8 @@ md-runbook verify-run envelope.json --allowed-runners /etc/md-runbook/allowed_ru
 
 It exits `0` when the signature is good, printing the runner and the summary, and `1` when it
 is not. `-` reads standard input. A library server can do the same with core:
-
-- `verifyRunEnvelope(json, allowedRunnersFile)` in `@md-runbook/core/node`, which uses
-  ssh-keygen;
-- `parseRunEnvelope` and `verifySshsig` (`@md-runbook/core/sshsigVerify`), which need only Web
-  Crypto.
+`verifyRunEnvelope(json, allowedRunnersFile)` in `@md-runbook/core/node`, which uses ssh-keygen
+(`parseRunEnvelope` checks the envelope's form without it).
 
 **Namespaces keep the two kinds of signature apart.** A runbook signature (`md-runbook`) never
 verifies as a run summary, and a run summary's signature (`md-runbook-run`) never verifies as a
@@ -213,6 +212,6 @@ runbook. Keep runner keys out of the servers' `allowed_signers`, or give them on
   runs, and having the gate send these reports itself is planned next. So is the library
   server's endpoint that receives them.
 - A report goes out after the run. A client that crashes or is killed first sends nothing.
-- The app checks trusted signers in JavaScript, for Ed25519 and ECDSA P-256 keys. A signature
-  made with another key type (RSA, a FIDO `sk-` key, a certificate) is not trusted there, so the
-  app asks instead.
+- The app checks signatures itself (Ed25519, ECDSA, RSA, security keys and passkeys). A line
+  for a certificate authority (`cert-authority`) is not used there, so a runbook signed with a
+  certificate is asked about instead.

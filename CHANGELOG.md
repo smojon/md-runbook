@@ -14,7 +14,7 @@
   - **Required reports:** `report-runs-required: true` and `report-runs-signed: true` make the
     report, and its signature, a condition of running. They count only in a runbook signed as a
     whole by a signer you trust: VS Code's new `mdRunbook.signing.allowedSigners`, the app's
-    trusted signers, or `--allowed-signers`.
+    **Trusted signers** (the same list as the team library's), or `--allowed-signers`.
   - **Delivery:** a report that can't be sent is queued and tried again; it never slows a run.
   - **Limit:** in the end a client can't be forced to report. Enforcement on the server comes
     next.
@@ -47,19 +47,33 @@
   server changes, the copy offers **Update** (the new version's signature checked again; outputs
   of unchanged blocks kept; asks first when some would be lost, or when the signature is dropped,
   from another signer, partly covering, expired or of an older version) or **Keep mine**. Each
-  runbook shows its signature, the same in the list and in the opened copy: **Signed by …: these
-  steps verified** (checked in the app against signers the user trusts for that library; the
-  prose is not signed, so the label doesn't claim it), **Partly signed** (PowerShell or cmd blocks
-  outside the signature), **Signed, unknown signer**, **Not signed**, **Changed since signing**,
-  with the signed name and version, and flags for a name that is not the file's, a version older
-  than one seen before and an expired signature. A library's `allowed_signers` is offered under
-  **Trust these signers**, with names, what a pattern lets a key sign as, and fingerprints, never
-  trusted silently; trust counts for that library only, keys it stops publishing stop counting, and
-  **Hosts & settings → Team library → Trusted signers** lists them with **Remove**.
-  `"signedOnly": true` opens verified runbooks only, and stays on in the app if index.json stops
-  asking, until the user agrees. Addresses with a user name, backslashes or blanks are refused, and
+  runbook shows its signature, the same in the list and in the opened copy: **Signed by …: whole
+  runbook verified** (manifest version 2, text as signed) or **these steps verified** (signed
+  before: the bash blocks only, the prose not claimed), checked in the app against signers the
+  user trusts; **Partly signed** (an older signature with PowerShell or cmd blocks outside it),
+  **Signed, unknown signer**, **Not signed**, **Changed since signing** (also any text change of a
+  version 2 signature), with the signed name and version, and flags for a name that is not the end
+  of the file's path, a version older than one of this file seen before and an expired signature.
+  A library's `allowed_signers` is offered under **Trust these signers**, with names, what a
+  pattern lets a key sign as, and fingerprints, never trusted silently; trust counts for that
+  library only, with the options the library publishes now, and keys it stops publishing stop
+  counting (remembered while it can't be read). `"signedOnly": true` opens verified runbooks only
+  (and refuses one signed under another file's name), stays on in the app if index.json stops
+  asking, until the user agrees, and holds wherever a copy is opened: a copy that isn't verified
+  any more runs nothing and says why, and its row offers **Replace with the library's version**
+  instead of a Keep mine that would leave it refused. **Forget the versions seen** resets a
+  library's version floors.
+- **App: one list of trusted signers.** **Hosts & settings → Trusted signers** lists every key the
+  app counts, for the team library and run reports alike, each with where it counts: trusted from
+  a team library (that library only, flagged **No longer published** when it drops the key), or
+  **added by you** (pasted allowed_signers lines, every runbook). The two lists of the builds
+  before move into it once. The app has one signature verifier (Ed25519, ECDSA P-256/384/521,
+  RSA, security keys and passkeys), with the namespace always given: `md-runbook` for runbooks,
+  `md-runbook-run` for run summaries. Addresses with a user name, backslashes or blanks are refused, and
   the parsed address is the one stored, read and shown; files over 2 MB are cut off while they
-  arrive, and redirects to another server refused. The phones use a library at the address set
+  arrive, a library past 20 MB in all is not read further, a read that stalls gives up after 30
+  seconds, and redirects to another server refused (as is an answer that doesn't say where it
+  came from). The phones use a library at the address set
   under **Hosts & settings → Team library**, or added with a `mdrunbook://library?url=…` link or its
   QR code (**Share library**). The web container serves the folder without its hidden files and
   without links to other owners' files; the folder is public to anyone who reaches the app. GitHub
