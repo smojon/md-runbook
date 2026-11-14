@@ -1,7 +1,9 @@
 /**
  * Scan a code: the camera reads a runbook QR code (a label on a machine, a code a colleague shows)
  * and opens its runbook link (core/runbookLink.ts) as any link does: nothing runs, the runbook
- * says whether it is signed, and its host and parameters are filled in.
+ * says whether it is signed, and its host and parameters are filled in. Also hosts lists, team
+ * libraries and pairing codes (Relay → Pair a device on another device), each to the screen that
+ * asks before anything is added.
  */
 import { parseRunbookLink } from '@md-runbook/core/runbookLink';
 import { BarcodeScanningResult, CameraView, useCameraPermissions } from 'expo-camera';
@@ -11,6 +13,9 @@ import { Linking, Platform, Pressable, Text, View } from 'react-native';
 import { t } from '../i18n';
 import { libraryLinkUrl } from '../runbooks/library';
 import { openRunbookLink } from '../runbooks/openLink';
+import { looksLikePairing } from '../pairing/payload';
+import { setPendingPairing } from '../pairing/pending';
+import { cameraUsable } from '../ui/webCamera';
 import { themedStyles } from '../theme';
 
 export function ScanScreen() {
@@ -23,6 +28,12 @@ export function ScanScreen() {
   const onScanned = (result: BarcodeScanningResult): void => {
     if (busy.current) return;
     busy.current = true;
+    // A pairing code (another device's Relay → Pair a device): to the screen that asks first. Handed
+    // over in memory: the token never goes in a route's query.
+    if (looksLikePairing(result.data)) {
+      setPendingPairing(result.data, 'code');
+      return router.replace('/pair');
+    }
     // A colleague's hosts (Share hosts → Show as a QR code): to the import screen, which asks first.
     const hosts = /^mdrunbook:\/\/hosts\/import\?(?:.*&)?h=([A-Za-z0-9_-]+)/.exec(result.data)?.[1];
     if (hosts) return router.replace({ pathname: '/hosts/import', params: { h: hosts } });
@@ -45,6 +56,17 @@ export function ScanScreen() {
     });
   };
 
+  // A browser offers the camera only on an https page (or localhost): say so, with what works instead.
+  if (!cameraUsable()) {
+    return (
+      <View style={[styles.screen, styles.center]}>
+        <Text style={styles.title}>{t.scanTitle}</Text>
+        <Text testID="scan-no-camera" style={styles.help}>
+          {t.pairNoCamera}
+        </Text>
+      </View>
+    );
+  }
   if (!permission) return <View style={styles.screen} />;
   if (!permission.granted) {
     const blocked = !permission.canAskAgain && Platform.OS !== 'web';

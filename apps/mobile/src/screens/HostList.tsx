@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { Link } from 'expo-router';
+import { Link, router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { FlatList, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
@@ -15,13 +15,26 @@ import {
   setOutputSetting,
   setSignerName,
   setNotifyRuns,
+  setPublicUrl,
   setReportAddresses,
   useHistorySize,
   useOutputSettings,
+  usePublicUrlSetting,
   useSignerName,
 } from '../settings/store';
 import { notificationsSupported, turnOnNotifications } from '../notifications/runs';
-import { badTokenCharacter, getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
+import {
+  badTokenCharacter,
+  getRelayToken,
+  getRelayUrlSetting,
+  relayUrlProblem,
+  sameOriginRelay,
+  setRelaySettings,
+} from '../ssh/relaySettings';
+import { publicBaseOf, toPublicRelayUrl } from '../settings/publicAddress';
+import { normalizePublicUrl, publicUrlProblem, runtimeConfig, useRuntimeConfig } from '../settings/runtimeConfig';
+import { cameraUsable } from '../ui/webCamera';
+import { PairDeviceCard } from './Pairing';
 import { SIGNER_NAME_RE } from '@md-runbook/core/signing';
 import { mono, themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
@@ -111,6 +124,7 @@ export function HostList() {
           <LibrarySettings />
           <SafetySection />
           <NotificationsSection />
+          {Platform.OS === 'web' ? <PublicAddressSection /> : null}
           {Platform.OS === 'web' ? <RelaySection /> : null}
         </>
       }
@@ -665,52 +679,77 @@ function SecretsSection() {
   );
 }
 
+/**
+ * Relay (web): its address (by default this server's relay, when the page's own origin answers as
+ * one) and token; Pair a device shows them as a code for another device's web app, and Pair with
+ * another device scans such a code (pairing/payload.ts).
+ */
 function RelaySection() {
   const styles = useStyles();
+  const colors = usePalette();
   const [url, setUrl] = useState('');
+  /** This server's relay, when the page's origin is one. */
+  const [own, setOwn] = useState<string | undefined>();
   const [token, setToken] = useState('');
   const [saved, setSaved] = useState(false);
   const [tokenProblem, setTokenProblem] = useState<string | undefined>();
+  const [pairing, setPairing] = useState(false);
+  const [noCamera, setNoCamera] = useState(false);
   useEffect(() => {
     let live = true;
-    void getRelaySettings().then((s) => {
-      if (live && s) {
-        setUrl(s.url);
-        setToken(s.token);
-      }
+    void Promise.all([getRelayUrlSetting(), getRelayToken(), sameOriginRelay()]).then(([set, tok, here]) => {
+      if (!live) return;
+      setOwn(here);
+      // The address the user set wins; none set: this server's relay.
+      setUrl((typed) => typed || set || here || '');
+      setToken((typed) => typed || tok);
     });
     return () => {
       live = false;
     };
   }, []);
+  const urlProblem = url.trim() === '' ? undefined : relayUrlProblem(url);
   const save = async (): Promise<void> => {
     // Refused here rather than as a failed connection later: the browser can't send such a token.
     const bad = badTokenCharacter(token);
     setTokenProblem(bad === undefined ? undefined : t.relayTokenInvalid(bad));
-    if (bad !== undefined) return;
+    if (bad !== undefined || urlProblem) return;
     await setRelaySettings({ url, token });
     setSaved(true);
   };
   return (
-    <View style={styles.section}>
+    <View testID="relay-settings" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.relayTitle}</Text>
       <Text style={styles.help}>{t.relayHelp}</Text>
       <Text style={styles.label}>{t.relayUrl}</Text>
       <TextInput
         testID="relay-url"
+        accessibilityLabel={t.relayUrl}
         style={styles.input}
         value={url}
         onChangeText={(v) => {
           setUrl(v);
           setSaved(false);
         }}
-        placeholder={t.relayUrlPlaceholder}
+        placeholder={own ?? t.relayUrlPlaceholder}
+        placeholderTextColor={colors.placeholder}
         autoCapitalize="none"
         autoCorrect={false}
       />
+      {own && url.trim().replace(/\/+$/, '') === own ? (
+        <Text testID="relay-same-origin" style={styles.help}>
+          {t.relaySameOrigin(own)}
+        </Text>
+      ) : null}
+      {urlProblem ? (
+        <Text testID="relay-url-problem" style={styles.error}>
+          {t.relayUrlProblem[urlProblem]}
+        </Text>
+      ) : null}
       <Text style={styles.label}>{t.relayToken}</Text>
       <TextInput
         testID="relay-token"
+        accessibilityLabel={t.relayToken}
         style={styles.input}
         value={token}
         onChangeText={(v) => {
@@ -726,9 +765,118 @@ function RelaySection() {
           {tokenProblem}
         </Text>
       ) : null}
-      <Pressable testID="relay-save" accessibilityRole="button" onPress={() => void save()} style={styles.button}>
-        <Text style={styles.buttonText}>{saved ? t.relaySaved : t.save}</Text>
-      </Pressable>
+      <View style={styles.chips}>
+        <Pressable
+          testID="relay-save"
+          accessibilityRole="button"
+          disabled={urlProblem !== undefined}
+          onPress={() => void save()}
+          style={[styles.button, urlProblem !== undefined && styles.disabled]}
+        >
+          <Text style={styles.buttonText}>{saved ? t.relaySaved : t.save}</Text>
+        </Pressable>
+        <Pressable
+          testID="relay-pair-device"
+          accessibilityRole="button"
+          aria-expanded={pairing}
+          onPress={() => setPairing(!pairing)}
+          style={styles.button}
+        >
+          <Text style={styles.buttonText}>{t.pairDevice}</Text>
+        </Pressable>
+        <Pressable
+          testID="relay-pair-with"
+          accessibilityRole="button"
+          onPress={() => {
+            if (cameraUsable()) router.push('/scan');
+            else setNoCamera(true);
+          }}
+          style={styles.button}
+        >
+          <Text style={styles.buttonText}>{t.pairWithDevice}</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.help}>{t.pairWithDeviceHelp}</Text>
+      {noCamera ? (
+        <Text testID="relay-no-camera" role="alert" style={styles.error}>
+          {t.pairNoCamera}
+        </Text>
+      ) : null}
+      {/* Remounted after a save: it hands on what is saved. */}
+      {pairing ? <PairDeviceCard key={saved ? 'saved' : 'before'} onClose={() => setPairing(false)} /> : null}
+    </View>
+  );
+}
+
+/**
+ * Public address of this web app (web): what share links, QR codes and pairing links start with
+ * (settings/publicAddress.ts), when other devices reach this web app at another address than this
+ * page's (a tunnel, a reverse proxy). Empty: the server's MD_RUNBOOK_PUBLIC_URL, else this page's.
+ */
+function PublicAddressSection() {
+  const styles = useStyles();
+  const colors = usePalette();
+  const saved = usePublicUrlSetting();
+  useRuntimeConfig();
+  const [draft, setDraft] = useState<string | undefined>();
+  const value = draft ?? saved;
+  const problem = value.trim() === '' ? undefined : publicUrlProblem(value);
+  const now = publicBaseOf();
+  return (
+    <View testID="public-address" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.publicUrlTitle}</Text>
+      <Text style={styles.help}>{t.publicUrlHelp}</Text>
+      <TextInput
+        testID="public-url"
+        accessibilityLabel={t.publicUrlTitle}
+        style={styles.input}
+        value={value}
+        onChangeText={setDraft}
+        placeholder={runtimeConfig().publicUrl ?? t.publicUrlPlaceholder}
+        placeholderTextColor={colors.placeholder}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+      />
+      {problem ? (
+        <Text testID="public-url-problem" style={styles.error}>
+          {t.publicUrlProblem[problem]}
+        </Text>
+      ) : null}
+      {now ? (
+        <Text testID="public-url-now" style={styles.help}>
+          {t.publicUrlNow(now.base, now.source)}
+        </Text>
+      ) : null}
+      <View style={styles.chips}>
+        {draft !== undefined && draft.trim() !== saved ? (
+          <Pressable
+            testID="public-url-save"
+            accessibilityRole="button"
+            disabled={problem !== undefined}
+            onPress={() => {
+              setPublicUrl(draft.trim() === '' ? '' : normalizePublicUrl(draft));
+              setDraft(undefined);
+            }}
+            style={[styles.button, problem !== undefined && styles.disabled]}
+          >
+            <Text style={styles.buttonText}>{t.save}</Text>
+          </Pressable>
+        ) : null}
+        {saved ? (
+          <Pressable
+            testID="public-url-remove"
+            accessibilityRole="button"
+            onPress={() => {
+              setPublicUrl('');
+              setDraft(undefined);
+            }}
+            style={styles.button}
+          >
+            <Text style={styles.buttonText}>{t.publicUrlRemove}</Text>
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -843,7 +991,22 @@ function ShareHostsSection({ hosts }: { hosts: readonly Host[] }) {
   const [withKeys, setWithKeys] = useState(false);
   const [qr, setQr] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const matrix = qr ? qrMatrix(hostsLink(hosts, withKeys)) : undefined;
+  /** The web: the relay's address, as other devices reach it (never its token). */
+  const [relayUrl, setRelayUrl] = useState<string | undefined>();
+  const [withRelay, setWithRelay] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    let live = true;
+    void Promise.all([getRelayUrlSetting(), sameOriginRelay()]).then(([set, here]) => {
+      const url = set || here;
+      if (live && url) setRelayUrl(toPublicRelayUrl(url));
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const relay = withRelay ? relayUrl : undefined;
+  const matrix = qr ? qrMatrix(hostsLink(hosts, withKeys, relay)) : undefined;
   return (
     <View testID="share-hosts" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.hostsShareTitle}</Text>
@@ -854,12 +1017,27 @@ function ShareHostsSection({ hosts }: { hosts: readonly Host[] }) {
         </View>
         <Toggle testID="share-hosts-keys" accessibilityLabel={t.hostsWithKeys} value={withKeys} onValueChange={setWithKeys} />
       </View>
+      {relayUrl ? (
+        <View style={styles.switchRow}>
+          <View style={styles.switchText}>
+            <Text style={styles.switchLabel}>{t.hostsWithRelay(relayUrl)}</Text>
+          </View>
+          <Toggle
+            testID="share-hosts-relay"
+            accessibilityLabel={t.hostsWithRelay(relayUrl)}
+            value={withRelay}
+            onValueChange={setWithRelay}
+          />
+        </View>
+      ) : null}
       <View style={styles.chips}>
         <Pressable
           testID="share-hosts-file"
           accessibilityRole="button"
           onPress={() =>
-            void shareHostsFile(hostsJson(hosts, withKeys)).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+            void shareHostsFile(hostsJson(hosts, withKeys, relay)).catch((e: unknown) =>
+              setError(e instanceof Error ? e.message : String(e)),
+            )
           }
           style={styles.button}
         >

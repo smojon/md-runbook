@@ -1,13 +1,15 @@
 /**
  * Import hosts (hosts/share.ts): from a hosts link or QR code (`h`), or pasted text (a hosts.json
  * file or a link). Shows what would be added; hosts with a name the app already has are left
- * alone. The sender's host keys are trusted only when the user says so.
+ * alone. The sender's host keys are trusted only when the user says so; so is the relay address a
+ * web app's list may name (never its token).
  */
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { readHosts, importHosts } from '../hosts/share';
 import { useHosts } from '../hosts/store';
+import { setRelayUrl } from '../ssh/relaySettings';
 import { t } from '../i18n';
 import { themedStyles, usePalette } from '../theme';
 import { Toggle } from '../ui/Toggle';
@@ -18,12 +20,19 @@ export function HostsImport({ packed }: { packed: string | undefined }) {
   const existing = useHosts();
   const [text, setText] = useState(packed ?? '');
   const [trustKeys, setTrustKeys] = useState(false);
+  /** The web: the list names its relay (an address only); used when the user says so. */
+  const [useRelay, setUseRelay] = useState(false);
   const [done, setDone] = useState<{ added: string[]; skipped: string[] } | undefined>();
   const read = useMemo(() => (text.trim() ? readHosts(text) : undefined), [text]);
   const hosts = read && 'hosts' in read ? read.hosts : [];
   const have = new Set(existing.map((h) => h.name.toLowerCase()));
   const fresh = hosts.filter((h) => !have.has(h.name.toLowerCase()));
   const withKeys = fresh.some((h) => h.hostKey);
+  const relay = Platform.OS === 'web' && read && 'hosts' in read ? read.relay : undefined;
+  const go = (): void => {
+    if (relay && useRelay) void setRelayUrl(relay);
+    setDone(importHosts(hosts, trustKeys));
+  };
 
   return (
     <ScrollView
@@ -71,6 +80,15 @@ export function HostsImport({ packed }: { packed: string | undefined }) {
           <Toggle testID="hosts-trust-keys" accessibilityLabel={t.hostsTrustKeys} value={trustKeys} onValueChange={setTrustKeys} />
         </View>
       ) : null}
+      {relay && !done ? (
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>{t.hostsUseRelay(relay)}</Text>
+            <Text style={styles.help}>{t.hostsUseRelayHelp}</Text>
+          </View>
+          <Toggle testID="hosts-use-relay" accessibilityLabel={t.hostsUseRelay(relay)} value={useRelay} onValueChange={setUseRelay} />
+        </View>
+      ) : null}
       {done ? (
         <Text testID="hosts-import-done" style={styles.help}>
           {t.hostsImported(done.added.length, done.skipped.length)}
@@ -80,7 +98,7 @@ export function HostsImport({ packed }: { packed: string | undefined }) {
           testID="hosts-import-go"
           accessibilityRole="button"
           disabled={fresh.length === 0}
-          onPress={() => setDone(importHosts(hosts, trustKeys))}
+          onPress={go}
           style={[styles.button, fresh.length === 0 && styles.disabled]}
         >
           <Text style={styles.buttonText}>{t.hostsImportGo(fresh.length)}</Text>

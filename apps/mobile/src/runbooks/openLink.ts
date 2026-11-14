@@ -3,14 +3,26 @@
  * a file on GitHub or GitLab. The app keeps a copy (a link can't be saved back to); Share Runbook
  * or Download hands it on. The same link opened again (each click on an alert's link) opens that
  * copy, as long as the runbook at the address is unchanged; Start Incident makes a copy per incident.
+ * A link to a runbook of the team library opens the library copy instead (openInLibrary).
  */
-import { linkTrust, parseRunbookLink, rawRunbookUrl } from '@md-runbook/core/runbookLink';
+import { clearOutputBlocks } from '@md-runbook/core';
+import { LinkTrust, RunbookLink, linkTrust, parseRunbookLink, rawRunbookUrl } from '@md-runbook/core/runbookLink';
 import { getHosts, loadHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { loadSettings, outputSettings } from '../settings/store';
+import { loadRuntimeConfig } from '../settings/runtimeConfig';
+import {
+  libraryHost,
+  libraryState,
+  libraryTarget,
+  loadLibraryMemory,
+  openLibraryRunbook,
+  refreshLibrary,
+  signedOnlyPolicy,
+} from './library';
 import { setLinkContext } from './linkContext';
 import { runbookParams, setParamValue } from './params';
-import { MAX_RUNBOOK_BYTES, Runbook, addRunbook, linkKey, linkedRunbook, loadRunbooks, titleOf } from './store';
+import { MAX_RUNBOOK_BYTES, Runbook, addRunbook, libraryCopy, linkKey, linkedRunbook, loadRunbooks, titleOf } from './store';
 
 /** The raw file behind a link (in core, shared with VS Code's link handler). */
 export { rawRunbookUrl };
@@ -34,11 +46,16 @@ function fileNameOf(url: string): string {
  */
 export async function openRunbookLink(
   link: string,
-  fetcher: typeof fetch = fetch,
+  fetcher?: typeof fetch,
 ): Promise<{ kind: 'opened'; runbook: Runbook } | { kind: 'error'; message: string }> {
   const parsed = parseRunbookLink(link);
   if (!parsed.ok) return { kind: 'error', message: t.linkProblem[parsed.problem] };
   const l = parsed.link;
+  // A runbook of the team library: its copy there, under the library's rules.
+  if (l.url !== undefined) {
+    const fromLibrary = await openInLibrary(l, fetcher);
+    if (fromLibrary) return fromLibrary;
+  }
   let text: string;
   let fileName: string;
   let source: string;
@@ -57,7 +74,7 @@ export async function openRunbookLink(
     source = url;
     fileName = fileNameOf(url);
     try {
-      const res = await fetcher(url);
+      const res = await (fetcher ?? fetch)(url);
       if (!res.ok) return { kind: 'error', message: t.linkFailed(`HTTP ${res.status}`) };
       // Too large: refused before reading it, where the server says its size.
       if (Number(res.headers?.get('content-length') ?? 0) > MAX_RUNBOOK_BYTES) return { kind: 'error', message: t.fileTooLarge(fileName) };
@@ -76,6 +93,12 @@ export async function openRunbookLink(
 
   const key = linkKey(source, text);
   const runbook = linkedRunbook(key) ?? addRunbook(fileName, text, undefined, key);
+  applyLink(runbook, l, text, trust);
+  return { kind: 'opened', runbook };
+}
+
+/** Fill in the link's parameters and remember its host and action for the runbook screen. */
+function applyLink(runbook: Runbook, l: RunbookLink, text: string, trust: Exclude<LinkTrust, 'mismatch'>): void {
   const declared = new Set(runbookParams(text).map((p) => p.name));
   const ignoredParams: string[] = [];
   for (const [name, value] of Object.entries(l.params)) {
@@ -90,5 +113,50 @@ export async function openRunbookLink(
     ignoredParams,
     cosign: l.action === 'cosign',
   });
-  return { kind: 'opened', runbook };
+}
+
+/**
+ * A link to a runbook of the team library the app reads (runbooks/library.ts libraryTarget): it
+ * opens THE library copy, the one Team runbooks opens (its outputs, Update / Keep mine), with the
+ * link's parameters and host, never a second copy. The library's rules hold as when it is opened
+ * from the list (openLibraryRunbook: signedOnly, trusted signers, versions seen), and the link's
+ * own: its sha256 pin, and Only signed links. The library is read first when it isn't yet (within
+ * a minute of the last read, what was read is used).
+ *
+ * When the library can't be read or doesn't list the file: the user's copy when there is one (the
+ * runbook screen still holds it to the library's rules: copyRefusal); else, for a library that
+ * opens verified runbooks only, the link is refused (a link must not get round signedOnly); else
+ * undefined, and the link opens as any other.
+ */
+async function openInLibrary(
+  l: RunbookLink,
+  fetcher: typeof fetch | undefined,
+): Promise<{ kind: 'opened'; runbook: Runbook } | { kind: 'error'; message: string } | undefined> {
+  await Promise.all([loadSettings(), loadRuntimeConfig(fetcher)]);
+  const target = libraryTarget(l.url!);
+  if (!target) return undefined;
+  await Promise.all([loadHosts(), loadRunbooks(), loadLibraryMemory()]);
+  await refreshLibrary({ fetcher });
+  const s = libraryState();
+  const lib = s.base === target.base && s.status === 'ready' ? s.library : undefined;
+  const entry = lib?.entries.find((e) => e.path === target.path);
+  const opened = async (
+    text: string,
+    open: () => Promise<{ kind: 'opened'; runbook: Runbook } | { kind: 'error'; message: string }>,
+  ): Promise<{ kind: 'opened'; runbook: Runbook } | { kind: 'error'; message: string }> => {
+    const trust = linkTrust(l, text);
+    if (trust === 'mismatch') return { kind: 'error', message: t.linkMismatch };
+    if (trust !== 'signed' && outputSettings().signedLinksOnly) return { kind: 'error', message: t.linkUnsignedRefused };
+    const r = await open();
+    if (r.kind === 'opened') applyLink(r.runbook, l, r.runbook.text, trust);
+    return r;
+  };
+  if (lib && entry?.text !== undefined) {
+    const text = entry.text;
+    return opened(text, () => openLibraryRunbook(lib, entry));
+  }
+  const mine = libraryCopy(target.base, target.path);
+  if (mine) return opened(clearOutputBlocks(mine.text), async () => ({ kind: 'opened', runbook: mine }));
+  if (!signedOnlyPolicy(target.base)) return undefined;
+  return { kind: 'error', message: lib ? t.libraryLinkNotListed(target.path) : t.libraryLinkUnavailable(libraryHost(target.base)) };
 }

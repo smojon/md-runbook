@@ -8,6 +8,8 @@ import { loadSettings } from '../settings/store';
 import { retryReports } from '../reports/send';
 import { loadHosts } from '../hosts/store';
 import { loadRunbooks } from '../runbooks/store';
+import { capturePairingFragment } from '../pairing/pending';
+import { loadRuntimeConfig } from '../settings/runtimeConfig';
 import { loadPins } from '../runbooks/pins';
 import { loadViewModes } from '../runbooks/viewMode';
 import { useNotificationTaps } from '../notifications/open';
@@ -16,6 +18,10 @@ import { usePalette } from '../theme';
 import { CODICON_FONT, codiconFont } from '../ui/Codicon';
 import { HomeTitle, HostsButton } from '../ui/HomeHeader';
 import { useAppShortcuts } from '../ui/useAppShortcuts';
+
+// A pairing link (/pair#…): its token is read from the fragment and taken out of the address bar
+// as soon as the app loads, before anything else can see or keep it (pairing/pending.ts).
+if (Platform.OS === 'web') capturePairingFragment();
 
 /** A runbook or host opened by a link has the list under it, so the back arrow is always there. */
 export const unstable_settings = { initialRouteName: 'index' };
@@ -54,6 +60,8 @@ export default function RootLayout() {
     void loadHosts();
     void loadApprovals();
     void loadSettings();
+    // The web container's /config.json: its public address and library folder.
+    void loadRuntimeConfig();
     void loadRunbooks();
     void loadPins();
     void loadViewModes();
@@ -82,6 +90,7 @@ export default function RootLayout() {
         <Stack.Screen name="library" options={{ title: t.libraryAddTitle }} />
         <Stack.Screen name="scan" options={{ title: t.scanTitle }} />
         <Stack.Screen name="hosts/import" options={{ title: t.hostsImportTitle }} />
+        <Stack.Screen name="pair" options={{ title: t.pairTitle }} />
         <Stack.Screen name="hosts/[id]" options={{ title: t.editHostTitle }} />
       </Stack>
     </>

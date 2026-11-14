@@ -24,6 +24,8 @@ import { sha256Hex } from '@md-runbook/core/sha256';
 import { runbookTitle } from '@md-runbook/core/title';
 import { t } from '../i18n';
 import { loadSettings, libraryUrlSetting } from '../settings/store';
+import { DEFAULT_LIBRARY_PATH, loadRuntimeConfig, pageOrigin, runtimeConfig } from '../settings/runtimeConfig';
+import { fromPublicUrl } from '../settings/publicAddress';
 import { getJson, setJson } from '../storage/kv';
 import {
   AllowedSigner,
@@ -122,11 +124,14 @@ export function normalizeLibraryUrl(url: string): string {
   return href.endsWith('/') ? href : href + '/';
 }
 
-/** On the web: the app's own /runbooks/ (the container's library); none on the phones. */
+/**
+ * On the web: the app's own library folder, /runbooks/ or the container's MD_RUNBOOK_LIBRARY
+ * (/config.json, settings/runtimeConfig.ts); none on the phones.
+ */
 export function defaultLibraryBase(): string | undefined {
   if (Platform.OS !== 'web') return undefined;
-  const origin = (globalThis as { location?: { origin?: string } }).location?.origin;
-  return origin && /^https?:\/\//.test(origin) ? `${origin}/runbooks/` : undefined;
+  const origin = pageOrigin();
+  return origin ? `${origin}${runtimeConfig().library ?? DEFAULT_LIBRARY_PATH}` : undefined;
 }
 
 /** The library the app reads: the address set in the settings, else the default. */
@@ -267,6 +272,36 @@ export interface Library {
 export type LibraryFetch = { kind: 'none' } | { kind: 'error'; message: string } | { kind: 'ok'; library: Library };
 
 const urlOf = (base: string, path: string): string => base + path.split('/').map(encodeURIComponent).join('/');
+
+/** The address of the library file at `path` (as fetched: a runbook link to it names this). */
+export const libraryFileUrl = urlOf;
+
+/**
+ * The library runbook an address names, or undefined: an address under the library the app reads
+ * (or under the web app's public address for it: settings/publicAddress.ts), of a Markdown file
+ * at a path the library could list. Query and fragment are not part of a library file's address.
+ */
+export function libraryTarget(url: string): { base: string; path: string } | undefined {
+  const base = libraryBase();
+  if (!base) return undefined;
+  let u: URL;
+  try {
+    u = new URL(fromPublicUrl(url.trim()));
+  } catch {
+    return undefined;
+  }
+  if (u.search || u.hash) return undefined;
+  const href = u.href;
+  if (!href.startsWith(base)) return undefined;
+  let path: string;
+  try {
+    path = href.slice(base.length).split('/').map(decodeURIComponent).join('/');
+  } catch {
+    return undefined;
+  }
+  return safePath(path) && isMarkdown(path) && urlOf(base, path) === href ? { base, path } : undefined;
+}
+
 /**
  * An HTML page where JSON or a file was asked for (a single-page app's fallback). Only a page that
  * says so: a runbook may start with `<!-- … -->` or `<img …>`.
@@ -721,7 +756,8 @@ const keptFor = (signatures: Readonly<Record<string, SignatureState>>, library: 
 export function refreshLibrary(opts: { force?: boolean; fetcher?: typeof fetch } = {}): Promise<void> {
   if (inFlight) return inFlight.base === libraryBase() ? inFlight.done : inFlight.done.then(() => refreshLibrary(opts));
   const done = (async () => {
-    await Promise.all([loadSettings(), loadTrustedSigners(), loadRunbooks(), loadLibraryMemory()]);
+    // The container's library folder (MD_RUNBOOK_LIBRARY) comes with /config.json.
+    await Promise.all([loadSettings(), loadTrustedSigners(), loadRunbooks(), loadLibraryMemory(), loadRuntimeConfig(opts.fetcher)]);
     const base = libraryBase() ?? '';
     if (!base) return set({ ...IDLE });
     const fresh = state.base === base && state.fetchedAt !== undefined && Date.now() - state.fetchedAt < LIBRARY_CACHE_MS;

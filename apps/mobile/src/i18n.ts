@@ -950,6 +950,94 @@ const en = {
   reportAnswerAllow: (address: string) => `Allowed: ${address}`,
   reportAnswerNever: (address: string) => `Never: ${address}`,
   forgetReportAnswer: 'Forget',
+
+  // The relay on the web app's own origin, and pairing (pairing/payload.ts)
+  relaySameOrigin: (url: string) => `This server’s relay (${url}): this web app’s own address answers as a relay. Enter its token.`,
+  relayUrlProblem: {
+    invalid: 'Not a relay address: wss://relay.example.net',
+    insecure: 'The relay’s address must be wss:// (ws:// only on this machine).',
+  },
+  pairDevice: 'Pair a device',
+  pairDeviceHelp:
+    'Set up another device’s web app with this relay (your phone’s browser, at this web app’s public address): on that device, open Hosts & settings → Relay → Pair with another device and scan this code.',
+  pairWithHosts: 'With the hosts and their trusted host keys',
+  pairSecretWarning:
+    'This code holds the relay’s token, a secret: anyone who scans or copies it can use your relay. Show it only to your own device, never on a shared screen or in a call.',
+  pairHidden: 'Hidden after a minute: the code holds a secret.',
+  pairShowAgain: 'Show again',
+  pairHide: 'Hide',
+  pairCopyLink: 'Copy pairing link',
+  pairLinkCopied:
+    'Pairing link copied. It holds the token too: open it only on your own device (the token is in the part after #, which browsers never send), then clear the clipboard.',
+  pairNeedsRelay: 'Save the relay’s address and token first: pairing hands them on.',
+  pairFor: (url: string) => `For the web app at ${url}.`,
+  pairUnreachable: (url: string) =>
+    `${url} is this page’s own address, which another device can’t reach: set Public address of this web app (Hosts & settings) to the address it reaches, such as a tunnel’s.`,
+  pairLarge: (n: number) =>
+    `A large code (${n} × ${n}): if the other device doesn’t read it, leave out the hosts or use Copy pairing link.`,
+  pairTooLarge: 'Too much for one code: leave out the hosts, or use Copy pairing link.',
+  pairWithDevice: 'Pair with another device',
+  pairWithDeviceHelp:
+    'Scan the code another device shows under Relay → Pair a device: the relay’s address and token, and the hosts if it includes them, are set up here.',
+  pairNoCamera:
+    'The camera works only on an https page (or on localhost), and this browser offers none here. On the other device, use Copy pairing link instead and open that link here.',
+  pairTitle: 'Pair with another device',
+  pairAskLink: 'Set up the relay from this link?',
+  pairAskCode: 'Set up the relay from this code?',
+  pairBody: (relay: string) => `The relay at ${relay} and its token are saved in this browser; cells then run through it.`,
+  pairReplaces: (url: string) => `This replaces the relay set up here (${url}).`,
+  pairAddHosts: (n: number) => (n === 1 ? 'Add this host' : `Add these ${n} hosts`),
+  pairGo: 'Set up',
+  pairNotNow: 'Not now',
+  pairDone: 'The relay is set up.',
+  pairDeclined: 'Nothing was set up.',
+  pairNone: 'No pairing to set up here: open the pairing link again, or scan the code with Pair with another device.',
+  pairProblem: {
+    'not-pairing': 'That is not a pairing code.',
+    newer: 'This pairing code is from a newer md-runbook: update this web app.',
+    damaged: 'This pairing code is damaged or incomplete.',
+  },
+  pairKeyTitle: 'This device’s key',
+  pairKeyLabel: 'Add this key to the server’s authorized_keys',
+  pairKeyHelp:
+    'The app can’t add it to a server you log in to without a password: add this line to the authorized_keys of the user the hosts name (or ask whoever looks after the server).',
+  pairKeyQr: 'Show as a QR code',
+
+  // The web app's public address (settings/publicAddress.ts)
+  publicUrlTitle: 'Public address of this web app',
+  publicUrlHelp:
+    'The address other devices reach this web app at, such as a tunnel’s or a reverse proxy’s https address. Share links, QR codes and pairing links use it instead of this page’s address.',
+  publicUrlPlaceholder: 'https://runbooks.example.net',
+  publicUrlNow: (url: string, source: 'setting' | 'container' | 'page') =>
+    `Used now: ${url} (${source === 'setting' ? 'set here' : source === 'container' ? 'from the server: MD_RUNBOOK_PUBLIC_URL' : 'this page’s address'}).`,
+  publicUrlProblem: {
+    invalid: 'Not a web address, such as https://runbooks.example.net (no ?… or #…).',
+    https: 'The address must be https (http only on this machine).',
+  },
+  publicUrlRemove: 'Remove',
+
+  // Hosts lists that name the relay (an address only)
+  hostsWithRelay: (url: string) => `With the relay’s address (${url}), never its token`,
+  hostsUseRelay: (url: string) => `Use the relay at ${url}`,
+  hostsUseRelayHelp: 'Its token is not in the list: enter it under Relay, or pair with the sender’s device.',
+
+  // Show QR Code: a link to the runbook's address, or the runbook itself
+  qrLinkMode: 'Link to its address',
+  qrModeLink: (url: string) =>
+    `Links to ${url}, pinned to this version (sha256): the other device downloads it from there and refuses any other text.`,
+  qrModeText: 'Carries the runbook itself (rb=), without its outputs.',
+  qrHelpLink:
+    'Another device scans it with Scan a code or its camera. A team library runbook opens as that device’s own copy of it, with the selected host and parameter values if included.',
+  qrNoLink: {
+    edited: 'It can’t link to its address: your copy has edits of its own.',
+    changed: 'It can’t link to its address: the file there changed since your copy (Update it first).',
+    https: 'It can’t link to its address: that address is not https (set Public address of this web app).',
+  },
+
+  // A runbook link into the team library (runbooks/openLink.ts)
+  libraryLinkUnavailable: (host: string) =>
+    `This runbook is in the team library at ${host}, which opens verified runbooks only, and the library can’t be read now: try again when it can.`,
+  libraryLinkNotListed: (path: string) => `${path} is not listed in the team library, which opens verified runbooks only.`,
 } as const;
 
 export type Strings = typeof en;

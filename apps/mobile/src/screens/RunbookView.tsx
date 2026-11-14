@@ -22,7 +22,6 @@ import {
   withRecordCosigner,
   withRecordSignature,
 } from '@md-runbook/core/record';
-import { formatRunbookLink } from '@md-runbook/core/runbookLink';
 import { QrView } from '../ui/QrView';
 import { Toggle } from '../ui/Toggle';
 import {
@@ -49,7 +48,9 @@ import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
-import { copyRefusal, useLibraryCopyState, useOwnKeysState } from '../runbooks/library';
+import { copyRefusal, useLibrary, useLibraryCopyState, useOwnKeysState } from '../runbooks/library';
+import { qrLink, runbookAddress } from '../runbooks/address';
+import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { SignatureState, coverage, shownName, unsignedRunnable } from '../signing/trust';
 import { factsLabel, sigLabel } from './LibrarySection';
 import { textProgress } from '@md-runbook/core/textProgress';
@@ -2005,7 +2006,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                   onFix={fixOption}
                 />
               ) : null}
-              {showQr ? <QrCard text={runbook.text} host={host?.name} params={paramValues} onClose={() => setShowQr(false)} /> : null}
+              {showQr ? <QrCard runbook={runbook} host={host?.name} params={paramValues} onClose={() => setShowQr(false)} /> : null}
               {incidentCard === 'start' ? <StartIncidentCard onStart={startIncident} onCancel={() => setIncidentCard(undefined)} /> : null}
               {incidentCard === 'note' ? <NoteCard onAdd={addNote} onCancel={() => setIncidentCard(undefined)} /> : null}
               {incidentCard === 'record' ? (
@@ -2896,16 +2897,19 @@ function ParamsCard({
  * not used (a host the app doesn't have, parameters the runbook doesn't take).
  */
 /**
- * Show QR Code: the runbook in a code (rb=, without its outputs) that another phone scans with
- * Scan a code; optionally with the selected host and the parameter values typed here.
+ * Show QR Code: a code another phone scans with Scan a code (or its camera, for the web app's
+ * https links), optionally with the selected host and the parameter values typed here. A runbook
+ * that came from an address (a team library copy, a url= link) is linked to there, pinned with its
+ * sha256 (runbooks/address.ts): small for any size. Others travel in the code (rb=, without their
+ * outputs), up to what a code holds. The card says which.
  */
 function QrCard({
-  text,
+  runbook,
   host,
   params,
   onClose,
 }: {
-  text: string;
+  runbook: Runbook;
   host: string | undefined;
   params: Readonly<Record<string, string>>;
   onClose(): void;
@@ -2913,24 +2917,45 @@ function QrCard({
   const styles = useStyles();
   const { width } = useWindowDimensions();
   const [withValues, setWithValues] = useState(false);
-  const matrix = useMemo(() => {
-    const values = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== ''));
-    const link = formatRunbookLink({
-      text: clearOutputBlocks(text),
+  const library = useLibrary();
+  // Where public links point may arrive after the card opened (/config.json).
+  useRuntimeConfig();
+  const address = runbookAddress(runbook, library);
+  const linkable = address !== undefined && 'url' in address ? address : undefined;
+  const [toAddress, setToAddress] = useState(true);
+  const useAddress = linkable !== undefined && toAddress;
+  // Made on each render of the card (it renders rarely): the public address and the library may
+  // change while it is open.
+  const values = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== ''));
+  const matrix = qrMatrix(
+    qrLink(runbook, useAddress ? linkable : undefined, {
       ...(withValues && host ? { host } : {}),
       params: withValues ? values : {},
-    });
-    return qrMatrix(link);
-  }, [text, host, params, withValues]);
+    }),
+  );
   return (
     <View testID="qr-card" style={styles.qrCard}>
       <Text style={styles.signedTitle}>{t.qrTitle}</Text>
+      {linkable ? (
+        <View style={styles.qrSwitch}>
+          <Text style={[styles.signedBody, styles.qrSwitchText]}>{t.qrLinkMode}</Text>
+          <Toggle testID="qr-link-mode" accessibilityLabel={t.qrLinkMode} value={toAddress} onValueChange={setToAddress} />
+        </View>
+      ) : null}
+      <Text testID="qr-mode" style={styles.signedBody}>
+        {useAddress ? t.qrModeLink(linkable.url) : t.qrModeText}
+      </Text>
+      {address !== undefined && 'problem' in address ? (
+        <Text testID="qr-no-link" style={styles.signedBody}>
+          {t.qrNoLink[address.problem]}
+        </Text>
+      ) : null}
       {matrix ? (
         <>
           <View style={styles.qrBox}>
             <QrView testID="qr-code" matrix={matrix} size={Math.min(width - 64, 320)} />
           </View>
-          <Text style={styles.signedBody}>{t.qrHelp}</Text>
+          <Text style={styles.signedBody}>{useAddress ? t.qrHelpLink : t.qrHelp}</Text>
           <View style={styles.qrSwitch}>
             <Text style={[styles.signedBody, styles.qrSwitchText]}>{t.qrWithHostParams}</Text>
             <Toggle testID="qr-with-values" accessibilityLabel={t.qrWithHostParams} value={withValues} onValueChange={setWithValues} />

@@ -22,6 +22,8 @@ import {
   useLibrary,
 } from '../runbooks/library';
 import { setLibraryUrl, useLibraryUrlSetting } from '../settings/store';
+import { toPublicUrl } from '../settings/publicAddress';
+import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { themedStyles, usePalette } from '../theme';
 import { QrView } from '../ui/QrView';
 
@@ -40,6 +42,8 @@ export function LibrarySettings({ fetcher }: { fetcher?: typeof fetch }) {
   const [check, setCheck] = useState<{ ok: boolean; text: string } | undefined>();
   const [checking, setChecking] = useState(false);
   const [qr, setQr] = useState(false);
+  // The container's library folder (MD_RUNBOOK_LIBRARY) may arrive after the screen opened.
+  useRuntimeConfig();
   const fallback = defaultLibraryBase();
   const problem = draft.trim() === '' ? undefined : libraryUrlProblem(draft);
   /** The address the check reads: what is typed, else the default. */
@@ -67,7 +71,7 @@ export function LibrarySettings({ fetcher }: { fetcher?: typeof fetch }) {
     setCheck(undefined);
     void refreshLibrary({ force: true });
   };
-  const matrix = qr && effective ? qrMatrix(libraryLink(effective)) : undefined;
+  const matrix = qr && effective ? qrMatrix(libraryLink(toPublicUrl(effective))) : undefined;
   return (
     <View testID="library-settings" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.libraryTitle}</Text>

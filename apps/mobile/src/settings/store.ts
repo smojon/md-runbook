@@ -51,6 +51,13 @@ export interface Settings {
    */
   libraryUrl: string;
   /**
+   * The web app's public address (Hosts & settings → Public address of this web app), e.g. a
+   * tunnel's https://…trycloudflare.com: share links, QR codes and pairing links use it instead of
+   * the address the page was opened from. Empty: the container's MD_RUNBOOK_PUBLIC_URL
+   * (settings/runtimeConfig.ts), else the page's own origin.
+   */
+  publicUrl: string;
+  /**
    * Run report addresses sent to without asking (core addressAllowed: a host, an origin, or an
    * address prefix), one per entry.
    */
@@ -68,6 +75,7 @@ const DEFAULTS: Settings = {
   allowNoConfirm: false,
   signerName: '',
   libraryUrl: '',
+  publicUrl: '',
   reportAddresses: [],
 };
 
@@ -103,6 +111,7 @@ async function readSettings(): Promise<void> {
       allowNoConfirm: flag('allowNoConfirm'),
       signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
       libraryUrl: typeof saved.libraryUrl === 'string' ? saved.libraryUrl : '',
+      publicUrl: typeof saved.publicUrl === 'string' ? saved.publicUrl : '',
       ...(typeof saved.notifyRuns === 'boolean' ? { notifyRuns: saved.notifyRuns } : {}),
       reportAddresses: Array.isArray(saved.reportAddresses) ? saved.reportAddresses.filter((a): a is string => typeof a === 'string') : [],
       // `trustedSigners` (allowed_signers text, before the one list) is moved by signing/trust.ts
@@ -152,6 +161,18 @@ export function setLibraryUrl(url: string): void {
 
 export function useLibraryUrlSetting(): string {
   return useSettings().libraryUrl;
+}
+
+/** The web app's public address as set ('' when not set: see Settings.publicUrl). */
+export const publicUrlSetting = (): string => settings.publicUrl;
+
+/** Set (or with '' remove) the public address; settings/publicAddress.ts checks it first. */
+export function setPublicUrl(url: string): void {
+  update({ publicUrl: url.trim() });
+}
+
+export function usePublicUrlSetting(): string {
+  return useSettings().publicUrl;
 }
 
 /** Run report addresses allowed without asking. */
