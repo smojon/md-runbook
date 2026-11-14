@@ -67,8 +67,45 @@ jobs:
           code="$(curl -s -o passwd.out -w '%{http_code}' http://127.0.0.1:8081/runbooks/passwd.md)"
           test "$code" != 200
           ! grep -q '^root:' passwd.out
+      - name: Writes /config.json from the environment, with no secrets; serves the library at MD_RUNBOOK_LIBRARY
+        run: |
+          # Without settings: the default library folder only, as JSON, read again on every visit.
+          curl -fsS -D headers-config.txt http://127.0.0.1:8080/config.json | tee config.json
+          jq -e '. == {"library": "/runbooks/"}' config.json
+          grep -qi '^content-type: application/json' headers-config.txt
+          grep -qi '^cache-control: no-cache' headers-config.txt
+          mkdir -p sop/.git
+          printf '# Restart\n' > sop/restart.md
+          printf '[core]\n' > sop/.git/config
+          chmod -R a+rX sop
+          docker run -d --name web-config -p 127.0.0.1:8082:8080 --read-only --tmpfs /tmp --cap-drop ALL \
+            -e MD_RUNBOOK_PUBLIC_URL=https://runbooks.example.net/ -e MD_RUNBOOK_LIBRARY=/sop/ \
+            -e RELAY_TOKEN=do-not-leak-this \
+            -v "$PWD/sop:/usr/share/nginx/html/sop:ro" md-runbook-web
+          for _ in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:8082/ && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8082/config.json | tee config-set.json
+          jq -e '. == {"publicUrl": "https://runbooks.example.net", "library": "/sop/"}' config-set.json
+          # Only the two settings: never a token or any other variable of the container.
+          ! grep -qi 'token\|do-not-leak' config-set.json
+          # The library at /sop/, with the library's rules (JSON listing, hidden files 404).
+          curl -fsS http://127.0.0.1:8082/sop/ | jq -e 'map(.name) | index("restart.md") != null'
+          curl -fsS -D headers-sop.txt http://127.0.0.1:8082/sop/restart.md | grep -q '^# Restart'
+          grep -qi '^content-type: text/markdown' headers-sop.txt
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8082/sop/.git/config)" = 404
+          # The app's routes are still the app.
+          curl -fsS 'http://127.0.0.1:8082/open?url=https%3A%2F%2Fexample.net%2Fr.md' | grep -q '_expo/static/js'
+          # A value that isn't valid stops the container (not a server that hands out wrong links).
+          for bad in 'MD_RUNBOOK_PUBLIC_URL=http://runbooks.example.net' 'MD_RUNBOOK_PUBLIC_URL=https://x.example.net/?a=1' \
+                     'MD_RUNBOOK_LIBRARY=/../etc/' 'MD_RUNBOOK_LIBRARY=/runbook/x/'; do
+            set +e
+            timeout 30 docker run --rm --read-only --tmpfs /tmp --cap-drop ALL -e "$bad" md-runbook-web
+            code=$?
+            set -e
+            test "$code" != 0 && test "$code" != 124
+          done
       - name: Web server log
         if: always()
         run: |
           docker logs web || true
           docker logs web-lib || true
+          docker logs web-config || true

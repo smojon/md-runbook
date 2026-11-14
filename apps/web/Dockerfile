@@ -20,7 +20,12 @@ RUN npx expo export --platform web
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY apps/web/library.conf /etc/nginx/md-runbook-library.conf
+# Run by nginx's entrypoint before nginx starts: /config.json from MD_RUNBOOK_PUBLIC_URL and
+# MD_RUNBOOK_LIBRARY, written to /tmp (the container runs read-only).
+COPY --chmod=0755 apps/web/40-md-runbook-config.sh /docker-entrypoint.d/40-md-runbook-config.sh
 COPY --from=build /src/apps/mobile/dist /usr/share/nginx/html
 # A team library: a runbooks/ folder at /usr/share/nginx/html/runbooks, mounted read-only
 # (-v ./runbooks:/usr/share/nginx/html/runbooks:ro) or copied into an image built on this one.
+# With MD_RUNBOOK_LIBRARY=/sop/, the folder at /usr/share/nginx/html/sop.
 EXPOSE 8080

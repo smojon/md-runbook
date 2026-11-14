@@ -4,6 +4,8 @@
 !packages/core/src
 !packages/ssh/src
 !apps/web/nginx.conf
+!apps/web/library.conf
+!apps/web/40-md-runbook-config.sh
 apps/mobile/node_modules
 apps/mobile/dist
 apps/mobile/.expo
