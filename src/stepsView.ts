@@ -8,7 +8,7 @@
  */
 
 import * as vscode from 'vscode';
-import { formatEstimate, formatFinish, formatTimeLeft, isCodeMeta, runbookEstimate, stepState } from '@md-runbook/core';
+import { formatEstimate, formatFinish, formatTimeLeft, isCodeMeta, runbookEstimate, stepState, taskItems } from '@md-runbook/core';
 import { blockProgress, overEstimate, stepLabel } from '@md-runbook/core/estimate';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { setContext } from './contextKeys';
@@ -59,14 +59,30 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
   const waiting = waitingIn(nb);
   const rows: StepsRow[] = [];
   let anyRunning = false;
+  /** The last step number given (a block's from the progress, checklist items counted on). */
+  let taskStep = 0;
   for (const cell of nb.getCells()) {
     const i = cell.index;
     if (cell.kind === vscode.NotebookCellKind.Markup) {
       const text = cell.document.getText();
       for (const h of headingsOf(i === 0 ? withoutFrontMatter(text) : text)) if (h.level <= 2) rows.push({ kind: 'chapter', index: i, title: h.text, level: h.level });
+      // Checklist items are steps too (manual ones): numbered in order with the blocks.
+      const lines = text.split(/\r?\n/);
+      for (const item of taskItems(text)) {
+        taskStep++;
+        rows.push({
+          kind: 'step',
+          index: i,
+          step: taskStep,
+          label: (lines[item.line] ?? '').replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[[ xX]\][ \t]*/, '') || 'checklist item',
+          state: item.checked ? 'done' : 'pending',
+          time: 'by hand',
+        });
+      }
       continue;
     }
     const step = p.stepOfCell[i];
+    if (step !== undefined) taskStep = step;
     const meta: unknown = cell.metadata?.[META_KEY];
     const info = isCodeMeta(meta) ? meta.info : '';
     // Not a step: the ready check (a quick look) and a teardown not run yet (offered).
@@ -154,7 +170,7 @@ function page(webview: vscode.Webview): string {
   .railfill { position: absolute; left: 8px; top: 0; width: 3px; border-radius: 2px; background: var(--vscode-progressBar-background); }
   .row { position: relative; display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 22px; border-radius: 4px; cursor: pointer; min-height: 20px; }
   .row:hover { background: var(--vscode-list-hoverBackground); }
-  .row.seen { background: var(--vscode-editor-inactiveSelectionBackground); }
+  .row.seen { background: color-mix(in srgb, var(--vscode-editor-inactiveSelectionBackground) 40%, transparent); }
   .chapter { font-weight: 600; padding-top: 8px; }
   .chapter::before { content: ''; position: absolute; left: 4px; width: 11px; height: 2px; background: var(--vscode-descriptionForeground); }
   .chapter.l1 { font-size: 1.05em; }

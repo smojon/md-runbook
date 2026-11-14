@@ -19,8 +19,8 @@ import { NOTEBOOK_TYPE } from './serializer';
 
 /** How often a running block's bar (and the runbook's time left) moves on. */
 const TICK_MS = 1000;
-/** The running block's bar on its status line: long enough to move every few seconds (eighths). */
-const BAR_WIDTH = 24;
+/** The running block's bar on its status line: twice the old 10, so it moves in twentieths. */
+const BAR_WIDTH = 20;
 const SET_ESTIMATE = 'mdRunbook._setEstimate';
 
 function optionsOn(): boolean {
@@ -140,7 +140,7 @@ export function anyRunning(nb: vscode.NotebookDocument): boolean {
 
 /**
  * The block's estimate on its status line: `est. 2m30s`; while it runs, its time against it as a
- * bar (`████████▌░░░… 1m of 2m30s`, then `⚠ ███…█ +1m20s over 2m30s`); after a run noticeably over
+ * bar (`████████░░… 1m of 2m30s`, then `⚠ ███…█ +1m20s over 2m30s`); after a run noticeably over
  * it, how long it took (`est. 2m30s · took 3m10s (+40s)`, a click sets estimate= to it), with a
  * warning past twice it. Undefined for a block without an estimate.
  */

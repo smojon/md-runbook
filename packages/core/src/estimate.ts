@@ -118,18 +118,15 @@ export function progressBar(fraction: number, width = 10): string {
   return `[${'#'.repeat(full)}${'.'.repeat(width - full)}]`;
 }
 
-const EIGHTHS = ['', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
-
 /**
- * `████▌░░░░░` for 0.45 (width 10): block characters in eighths, so a long block's bar moves on
- * every few seconds instead of in tenths. For UI text (a VS Code status line), not terminals.
+ * `█████░░░░░` for 0.5 (width 10): a thick bar for UI text (a VS Code status line), not terminals.
+ * Whole blocks only: the partial ones (▌) render unevenly in UI fonts, and box-drawing lines
+ * (━ ─) looked alike filled and empty.
  */
-export function blockBar(fraction: number, width = 24): string {
+export function blockBar(fraction: number, width = 20): string {
   const f = Math.min(1, Math.max(0, Number.isFinite(fraction) ? fraction : 0));
-  const eighths = Math.round(f * width * 8);
-  const full = Math.floor(eighths / 8);
-  const part = EIGHTHS[eighths % 8]!;
-  return '█'.repeat(full) + part + '░'.repeat(width - full - (part ? 1 : 0));
+  const full = Math.round(f * width);
+  return '█'.repeat(full) + '░'.repeat(width - full);
 }
 
 /** The bar's width for a terminal `columns` wide with `text` beside it: 10 to 30 (20 without a terminal). */

@@ -37,8 +37,9 @@ times, and links: go to the running, failed or next step, Resume Run. Click the 
 
 ## Runbook Steps view
 
-The **Runbook Steps** view in the Explorer (shown while a runbook is the active editor; also the
-**All steps** link in the status bar's tooltip) is the runbook's progress as a rail beside its
+The **Runbook Steps** view (its own icon in the activity bar, a rail of steps; also the **All
+steps** link in the status bar's tooltip; drag it to the secondary side bar to keep it beside
+the runbook) is the runbook's progress as a rail beside its
 steps, like the app's rail: at the top, where the run is, the bar and the time left; then each
 `#`/`##` chapter and each step with its state on the rail (done, failed, running, waiting for
 you, to do), its name (`name=`, else its first line) and its time (`est. 2m`, `12s of 1m` while
@@ -52,11 +53,11 @@ block before it is still in view: scroll away to read something else and it stop
 ## A block's bar
 
 A block with `estimate=` shows it on its status line (`⌚ est. 2m30s`). While it runs, a bar
-against it that moves every few seconds, then a warning once past it:
+against it, then a warning once past it:
 
 ```text
-⌚ █████████████▌░░░░░░░░░░ 1m10s of 2m30s
-⚠ ████████████████████████ +40s over 2m30s
+⌚ █████████░░░░░░░░░░░ 1m10s of 2m30s
+⚠ ████████████████████ +40s over 2m30s
 ```
 
 After a run that took noticeably longer (more than a quarter and at least 10 s over), the line

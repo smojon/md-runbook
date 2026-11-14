@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **VS Code: the Runbook Steps view** (Explorer, while a runbook is open): the same rail as the
+- **VS Code: the Runbook Steps view** (its own icon in the activity bar): the same rail as the
   app's, with room for names: chapters and steps with their state, name and time, the running
   step's bar, the cells on screen shaded; click a row to go to it.
 - **App: a progress rail down the left edge**, always in view: it fills from the top as the run
@@ -20,8 +20,8 @@
   stays pinned on top while you scroll during a run. The ready check is no longer counted as a
   step, and a teardown not run yet is offered, not a step left to do. The time left counts
   seconds under two minutes, so it moves while you watch.
-- **A block's bar that moves.** In VS Code the running block's bar is 24 characters in eighths
-  (it was 10 `#`, moving in tenths), with a warning icon once past its estimate. After a run
+- **A block's bar that moves.** In VS Code the running block's bar is twice as long and thick
+  (`██████░░░░`; it was 10 `#` and `.`), with a warning icon once past its estimate. After a run
   noticeably over its estimate, the block says by how much (`est. 2m30s · took 3m10s (+40s)`),
   and a click sets `estimate=` to what it took. In the app the bar is thicker, `Running · 12s of
   1m` is one line, the output line shows the estimate beside the duration, and `estimate=` is no

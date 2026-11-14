@@ -33,7 +33,7 @@ test('estimate=: the block shows it, a run shows its bar, the status bar the tim
   let over: Estimates | undefined;
   for (const end = Date.now() + 30_000; !over && Date.now() < end; await new Promise((r) => setTimeout(r, 100))) {
     const e = await estimates();
-    if (/^\$\(warning\) █{24} \+\d+s over 1s$/.test(e.cells[3] ?? '')) over = e;
+    if (/^\$\(warning\) █{20} \+\d+s over 1s$/.test(e.cells[3] ?? '')) over = e;
   }
   assert.ok(over, 'the running block went over its estimate');
   assert.equal(over.runbook.leftSeconds, 600, 'the running block has nothing left of its estimate');

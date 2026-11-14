@@ -89,8 +89,17 @@
         "priority": "option"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mdRunbook",
+          "title": "Runbook",
+          "icon": "images/steps.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "mdRunbook": [
         {
           "type": "webview",
           "id": "mdRunbook.steps",

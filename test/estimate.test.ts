@@ -354,13 +354,13 @@ describe('status line helpers', () => {
     assert.equal(suggestedEstimate(3700), 3900);
   });
 
-  it('block bar: eighths, fixed width, clamped', () => {
+  it('block bar: thick, fixed width, clamped', () => {
     assert.equal(blockBar(0, 4), '░░░░');
     assert.equal(blockBar(1, 4), '████');
     assert.equal(blockBar(2, 4), '████');
     assert.equal(blockBar(0.5, 4), '██░░');
-    assert.equal(blockBar(0.5625, 4), '██▎░');
-    for (const f of [0, 0.01, 0.33, 0.5, 0.99, 1]) assert.equal([...blockBar(f, 24)].length, 24, String(f));
+    assert.equal(blockBar(0.6, 4), '██░░');
+    for (const f of [0, 0.01, 0.33, 0.5, 0.99, 1]) assert.equal([...blockBar(f, 20)].length, 20, String(f));
   });
 
   it('terminal bar width fits the line', () => {
