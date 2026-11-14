@@ -57,6 +57,8 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--setup-always`, `--no-setup` | Run the setup steps even when the ready check says up, or run neither them nor the check. |
 | `--copy-folder DIR` | Where [runbook calls](calls.md) write the copies of the runbooks they run, relative to each one (default: next to it). |
 | `--allowed-signers FILE` | Run only as signed, as a server with md-runbook-gate would: the signature is good by a key in `FILE`, nothing changed since signing, parameters match their patterns, and the runbooks its calls run are signed and in its repository; otherwise nothing runs (exit `2`). See [signed runbooks](signed-runbooks.md#runbook-calls). |
+| `--report-to-allowed ADDRESS` | Send the [run summary](run-reports.md) to the runbook's `report-runs:` address when it is ADDRESS: a host, or an address prefix. Repeatable and comma-separated, or set `MD_RUNBOOK_REPORT_ALLOWED`. Without it nothing is sent. A signed runbook that requires its report doesn't run then (exit `2`). The report is tried 3 times. Exit `3` means the run passed but its required report could not be sent; any other failed report is only a warning. |
+| `--key KEY` | Sign the run summary with this SSH key (namespace `md-runbook-run`). A signed runbook with `report-runs-signed: true` needs it. |
 | `--fresh-copy` | A runbook call that failed before starts a new copy, instead of continuing the one it ran (keeping the steps done there). |
 | `--session` / `--isolated` | One shell process per shell for the whole runbook (like [session mode](session.md)), or one per block. Default: the front matter's `mode:`, else isolated. |
 | `--timeout SECONDS` | Default timeout per block. The front matter's `timeout:` and a block's `timeout=` win. |
@@ -179,6 +181,9 @@ plain ASCII so any console shows it); a CI log keeps plain lines. `--json` has
 `md-runbook sign file.md --key KEY` signs a runbook for servers that run md-runbook-gate, and
 `md-runbook verify file.md [--allowed-signers FILE]` shows what a signature covers and which
 blocks changed since; see [Signed runbooks](signed-runbooks.md).
+`md-runbook verify-run envelope.json --allowed-runners FILE` checks a signed
+[run summary](run-reports.md#checking-a-signed-summary-on-a-server) as a server would. It prints
+the runner and the summary, and exits 0 when the signature is good.
 
 | Option of `sign` | Meaning |
 | --- | --- |
