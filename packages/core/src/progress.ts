@@ -54,7 +54,7 @@ export interface Progress {
 /** State of a code cell from its output's exit attribute (and whether only some lines ran). */
 export function stepState(exit: string | undefined, partial = false, check?: string): StepState {
   // declined (confirmation answered No) and proposed (waiting for approval) are not done yet.
-  if (exit === undefined || exit === 'running' || exit === 'declined' || exit === 'proposed') return 'pending';
+  if (exit === undefined || exit === 'running' || exit === 'declined' || exit === 'unanswered' || exit === 'proposed') return 'pending';
   // Checks decide over the exit code (expect-exit=1 makes exit 1 a pass).
   if (check === 'failed') return 'failed';
   if (check === 'ok') return partial ? 'pending' : 'done';

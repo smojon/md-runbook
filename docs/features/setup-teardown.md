@@ -84,7 +84,7 @@ run, and the progress reads their estimate as *up to*.
 | --- | --- | --- | --- |
 | Ready check | Runs first; says *already up* or *not up* | The same, on the selected host | The same: `Setup: … is already up - setup skipped` |
 | Setup steps, already up | Skipped (`exit=skipped ready=up`) | Skipped | Skipped |
-| Teardown steps | Offered at the end: **Take Down** or **Leave It Up** | Offered at the end: **Take down** or **Leave it up** | Not run; `--teardown` runs them after a run that passed, `--teardown=always` after a failure too |
+| Teardown steps | Offered at the end, on the first teardown cell: **Take Down** or **Leave It Up** | Offered at the end: **Take down** or **Leave it up** | Not run; `--teardown` runs them after a run that passed, `--teardown=always` after a failure too |
 
 - **Leave it up** leaves the teardown steps as they were (not *skipped*): you can run them by hand
   later. Run All doesn't ask again for that runbook until you reload the VS Code window or restart

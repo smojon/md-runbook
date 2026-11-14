@@ -6,7 +6,7 @@ import { strict as assert } from 'node:assert';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as vscode from 'vscode';
-import { LANG, Test, closeAll, openRunbook, outputText, read, runCells, step, waitFor, waitForRun, work, writeFile } from './suite';
+import { LANG, Test, answerOnCells, closeAll, openRunbook, outputText, read, runCells, step, waitFor, waitForRun, work, writeFile } from './suite';
 
 export const tests: Test[] = [];
 const test = (name: string, fn: () => Promise<void>): void => void tests.push({ name, fn });
@@ -23,17 +23,8 @@ function flagCommands(flag: string): { ready: string; up: string; down: string }
 
 /** Answer the teardown offer with `answer` (Take Down / Leave It Up), counting the times it is asked. */
 function stubTeardown(answer: () => string): { asked: string[]; restore: () => void } {
-  const w = vscode.window as unknown as { showInformationMessage: (...args: unknown[]) => Thenable<unknown> };
-  const original = w.showInformationMessage;
-  const asked: string[] = [];
-  w.showInformationMessage = (message: unknown, ...rest: unknown[]) => {
-    if (typeof message === 'string' && message.startsWith('Take it down now?')) {
-      asked.push(message);
-      return Promise.resolve(answer());
-    }
-    return original.call(vscode.window, message, ...rest);
-  };
-  return { asked, restore: () => void (w.showInformationMessage = original) };
+  // Asked with buttons on the first teardown cell (Take Down / Leave It Up).
+  return answerOnCells('Take it down now?', () => (answer() === 'Take Down' ? 'take' : 'leave'));
 }
 
 /** A finished run's end time, to wait for the next one. */

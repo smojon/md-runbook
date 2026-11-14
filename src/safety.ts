@@ -17,7 +17,9 @@ import { knownSecrets } from './knownSecrets';
 import { META_KEY } from './outputs';
 import { CellPlan, CellPreparer, PrepareContext, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
-import { whileWaiting } from './waiting';
+import { inFront } from './currentRunbook';
+import { labelOf, notebookProgress } from './progress';
+import { askOnCell, whileWaiting } from './waiting';
 
 function cfg(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration(SECTION);
@@ -146,16 +148,42 @@ export function cellConfirmOption(info: string): boolean | undefined {
   return o === false && !c.get<boolean>('execution.allowNoConfirmOption', false) ? undefined : o;
 }
 
-/** Ask the user; on anything but Run the cell is recorded as declined and Run All stops. */
+/** The step as people read it: `Roll out (step 3 of 5, deploy-checkout)`. */
+function stepTitle(cell: vscode.NotebookCell): string {
+  const p = notebookProgress(cell.notebook);
+  const step = p.stepOfCell[cell.index];
+  const name = path.posix.basename(cell.notebook.uri.path).replace(/\.md$/i, '');
+  return `${labelOf(cell)} (${step !== undefined ? `step ${step} of ${p.total}, ` : ''}${name})`;
+}
+
+/** The command as it will run, a few lines of it. */
+function commandPreview(source: string): string {
+  const lines = source.split(/\r?\n/).filter((l) => l.trim() !== '');
+  return lines.slice(0, 6).join('\n') + (lines.length > 6 ? `\n… (${lines.length - 6} more lines)` : '');
+}
+
+/**
+ * Ask the user; on anything but Run the cell is recorded as declined and Run All stops. A dialog
+ * while the runbook is in front; on the cell (its buttons, the Steps view, a notification) while
+ * another file is, so the question doesn't land on top of something unrelated.
+ */
 async function askToRun(plan: CellPlan, cell: vscode.NotebookCell, match: string): Promise<void> {
   const ctxLines = Object.keys(recordContextCommands())
     .filter((k) => k in plan.attrs)
     .map((k) => `${k}: ${plan.attrs[k]}`);
-  const message = match === '' ? `Run cell ${cell.index + 1}?` : `Cell ${cell.index + 1} contains a risky command: “${match.trim()}”`;
-  const retries = plan.retry && plan.retry.attempts > 1 ? `\n\nIt runs up to ${plan.retry.attempts} times (retry=) until it passes.` : '';
-  const detail =
-    (ctxLines.length > 0 ? `Context the cell will run in:\n${ctxLines.join('\n')}` : 'No context recorded (see mdRunbook.output.recordContext).') + retries;
-  const answer = await whileWaiting(cell, 'your confirmation', () => vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run'), 'dialog');
+  const title = stepTitle(cell);
+  const message = match === '' ? `Run ${title}?` : `Risky command in ${title}: “${match.trim()}”`;
+  const retries = plan.retry && plan.retry.attempts > 1 ? `It runs up to ${plan.retry.attempts} times (retry=) until it passes.` : '';
+  const detail = [commandPreview(plan.source), ctxLines.length > 0 ? `It runs in:\n${ctxLines.join('\n')}` : '', retries].filter((s) => s !== '').join('\n\n');
+  const what = `confirm ${labelOf(cell)}`;
+  const answer = inFront(cell.notebook)
+    ? await whileWaiting(cell, what, () => vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run'), 'dialog')
+    : (await askOnCell(cell, what, [
+        { id: 'run', label: 'Run', icon: 'play', tooltip: `${message}\n\n${detail}` },
+        { id: 'no', label: "Don't Run", icon: 'circle-slash', tooltip: 'Stops the run here (Resume Run asks again)' },
+      ])) === 'run'
+      ? 'Run'
+      : undefined;
   if (answer !== 'Run') {
     plan.skip = 'not confirmed';
     plan.skipExit = 'declined'; // not done: progress keeps it pending, Resume Run offers it again

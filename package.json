@@ -160,6 +160,11 @@
         "category": "md-runbook"
       },
       {
+        "command": "mdRunbook.forgetLearnedTimes",
+        "title": "Forget Learned Times…",
+        "category": "md-runbook"
+      },
+      {
         "command": "mdRunbook.setParameters",
         "title": "Set Parameters",
         "category": "md-runbook"
@@ -802,6 +807,10 @@
           "when": "notebookType == md-runbook"
         },
         {
+          "command": "mdRunbook.forgetLearnedTimes",
+          "when": "notebookType == md-runbook"
+        },
+        {
           "command": "mdRunbook.setParameters",
           "when": "notebookType == md-runbook"
         },
@@ -1250,6 +1259,10 @@
           "group": "1_runbook@3"
         },
         {
+          "command": "mdRunbook.forgetLearnedTimes",
+          "group": "1_runbook@4"
+        },
+        {
           "command": "mdRunbook.setSecret",
           "group": "2_secrets@1"
         },
@@ -1401,8 +1414,21 @@
           "mdRunbook.notifications.enabled": {
             "type": "boolean",
             "default": true,
-            "description": "When a run of several cells ends (done, or a step failed) or waits for you while its runbook isn't the editor in front, show a notification with a button to go there.",
+            "description": "When a run ends (done, or a step failed) or waits for you while its runbook isn't the editor in front, show a notification with a button to go there. A run ends with one when it ran several cells or took longer than notifications.afterSeconds.",
             "order": 5
+          },
+          "mdRunbook.notifications.afterSeconds": {
+            "type": "number",
+            "default": 30,
+            "minimum": 0,
+            "description": "A run of one cell notifies when it ends if it took at least this many seconds (a run of several cells always does).",
+            "order": 6
+          },
+          "mdRunbook.notifications.system": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also send these notifications to the system's notification centre while the VS Code window is in the background (Windows toast, macOS notification, notify-send on Linux). Best effort: it needs that system tool.",
+            "order": 7
           },
           "mdRunbook.execution.followRun": {
             "type": "boolean",
@@ -1651,8 +1677,14 @@
           "mdRunbook.progress.statusBar": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Show the active runbook's progress in the status bar (e.g. `4/7 · ✗ step 5`). Click it to go to the failed or next pending step.",
+            "markdownDescription": "Show the runbook's progress in the status bar (e.g. `Step 3/6 · Push image · 1m 40s left`); while it runs or waits for you with another file in front, named. Click it to go to the step.",
             "order": 11
+          },
+          "mdRunbook.estimates.learn": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "A block without `estimate=` learns its usual time from its runs that passed (the median of the last 5, shown `est. ~1m15s`). Kept on this machine, never in the file. **Forget Learned Times** clears them.",
+            "order": 12
           },
           "mdRunbook.statusBar.contextAttr": {
             "type": "string",

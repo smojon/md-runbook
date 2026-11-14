@@ -80,6 +80,13 @@ export interface LineRunScope {
   onEnd(fn: () => void): void;
 }
 
+/**
+ * Thrown by a preparer when the reader cancels a question it asked (Escape on a value prompt): the
+ * cell is not run and stays to do (exit=unanswered), and Run All stops there, as a declined
+ * confirmation does. Not a failure: nothing ran.
+ */
+export class PromptCancelled extends Error {}
+
 export interface CellPreparer {
   /** Mutate the plan. Throwing fails the cell with the error message. */
   prepare(plan: CellPlan, ctx: PrepareContext): Promise<void> | void;

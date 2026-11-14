@@ -55,7 +55,7 @@ import type { Progress, RunbookEstimate } from '@md-runbook/core';
 import {
   callEstimate,
   formatEstimate,
-  formatFinish,
+  finishTime,
   formatTimeLeft,
   remaining,
   runbookEstimate,
@@ -1596,7 +1596,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     headline: waiting ? t.pinnedWaiting : progress ? runHeadline(progress, runningStep) : '',
     waiting,
     ...(estimate.fraction !== undefined && progress
-      ? { fraction: estimate.fraction, line: estimateLines(estimate, progress.pending).main }
+      ? { fraction: estimate.fraction, line: estimateLines(estimate, progress.pending, queued || running !== undefined).main }
       : {}),
   };
   // Before a run only: once it runs, the run bar and the cards say what it waits for.
@@ -2294,7 +2294,7 @@ function RunBar({
         {estimate?.fraction !== undefined ? (
           <View testID="run-estimate" style={styles.estimateRow}>
             <TimeBar fraction={estimate.fraction} segments={barSegments(estimate)} />
-            <EstimateLine estimate={estimate} open={progress.pending} />
+            <EstimateLine estimate={estimate} open={progress.pending} running={running} />
           </View>
         ) : null}
         {resume && !running ? (
@@ -2361,11 +2361,13 @@ function barSegments(e: RunbookEstimate): BarSegment[] | undefined {
  * The lines under the run bar, in words: `41% · 4 min left · ≈ 14:32`, then the setup and
  * teardown and what has no estimate (`setup ✓ · teardown 2m, offered · 1 without an estimate`).
  */
-function estimateLines(e: RunbookEstimate, open: number, now = Date.now()): { main: string; more?: string } {
-  // Never "100%" or "nothing left" while a step is open (a step done by hand has no time).
+function estimateLines(e: RunbookEstimate, open: number, running: boolean, now = Date.now()): { main: string; more?: string } {
+  // Never "100%" or "nothing left" while a step is open (a step done by hand has no time); "at
+  // least" while steps without an estimate are to do; the end time only while it runs (core).
   const r = remaining(e, open);
   const main = [t.barPercent(r.percent ?? 0), r.left];
-  if (e.leftSeconds > 0) main.push(t.barFinish(formatFinish(e.leftSeconds, now)));
+  const ends = finishTime(e, running, now);
+  if (ends) main.push(t.barFinish(ends));
   const more: string[] = [];
   const p = e.parts;
   if (p && p.setup.blocks > 0) {
@@ -2380,9 +2382,9 @@ function estimateLines(e: RunbookEstimate, open: number, now = Date.now()): { ma
   return { main: main.join(' · '), ...(more.length ? { more: more.join(' · ') } : {}) };
 }
 
-function EstimateLine({ estimate, open }: { estimate: RunbookEstimate; open: number }) {
+function EstimateLine({ estimate, open, running }: { estimate: RunbookEstimate; open: number; running: boolean }) {
   const styles = useStyles();
-  const lines = estimateLines(estimate, open);
+  const lines = estimateLines(estimate, open, running);
   return (
     <View testID="run-estimate-text" accessible accessibilityLabel={[lines.main, lines.more].filter(Boolean).join(' · ')}>
       <Text testID="estimate-main" style={styles.estimatePieceText}>

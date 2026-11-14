@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **VS Code: a run stays on screen when you look away.** With another file in front, the status
+  bar keeps a running or waiting runbook, named (`deploy-checkout · Step 2/5 · …`), and a click
+  brings it back; the Steps view follows the same runbook. From the VS Code review.
+- **VS Code: questions on the cell, not in dialogs.** **Done by hand?** (Done / Skip / Stop) and
+  the teardown offer (Take Down / Leave It Up) are buttons on the cell and its Steps row, so the
+  window stays free; ticking the box counts as Done. A risky command's question names the step
+  and the runbook and shows the command; with another file in front it's asked on the cell too.
+- **VS Code: a failed step has its next moves on it:** Retry, Resume from Here, Mark Done and,
+  with the assistant on, Explain. Escape on a value prompt no longer fails the step: it stays to
+  do (`exit=unanswered`). The "stopped after cell N" message is gone (the status bar says which
+  step).
+- **Notifications:** a run of one cell that took 30 s or more notifies too
+  (`notifications.afterSeconds`); a question's notice closes itself once answered and isn't shown
+  when a box or dialog already is; **Don't Show Again**; opt-in system notifications
+  (`notifications.system`).
+- **Honest time left:** `at least 4 min left · 2 blocks without an estimate` while steps without
+  any estimate are to do, and `ends ≈` only while a run is going (VS Code and the app). Learned
+  times: run copies learn into their runbook, **Forget Learned Times…**, `estimates.learn`.
 - **Estimates that learn.** A block without `estimate=` shows its usual time once it has run:
   the median of its last 5 runs that passed, with a `~` (`est. ~1m15s`), and it counts in the
   time left and the end time, in VS Code and the app. Kept on the machine, never in the file;

@@ -13,20 +13,24 @@ you did by hand, and picks a stopped run up where it failed.
 - **Checklist items:** GitHub task-list items in Markdown (`- [ ]`, `* [x]`, `1. [ ]`) count
   as steps too: `[x]` is done, `[ ]` is pending. Items inside fenced code blocks don't count.
   They are steps done by hand: **Run All waits at one that isn't ticked** and asks **Done by
-  hand?** (**Done** ticks it, **Skip** goes on without ticking it, **Cancel** stops the run there;
-  Resume Run asks again). Put `manual-steps: continue` in the front matter to run past them, as
+  hand?** on the cell itself, not in a dialog, so the window stays free for the step: **Done**
+  ticks it, **Skip** goes on without ticking it, **Stop** stops the run there (Resume Run asks
+  again). The buttons are on the cell's status line and its row in the Steps view; ticking the
+  box yourself counts as Done. Put `manual-steps: continue` in the front matter to run past them, as
   reminders.
 
 ## Status bar
 
 While a runbook is the active editor, the status bar shows its progress, in the same words as
-the app's run bar:
+the app's run bar. While it runs or waits for you with another file in front, the item stays,
+named (`deploy-checkout · ⟳ Step 2/5 · Build the image · 22s left`), and a click brings the
+runbook back. The Steps view follows the same runbook, with its name under the view's title.
 
 | When | Status bar |
 | --- | --- |
-| Not running | `☰ 2/6 · ~4 min` (steps done or skipped, and the time left by the blocks' estimates) |
+| Not running | `☰ 2/6 · ~4 min` (steps done or skipped, and the time left by the blocks' estimates; `at least 4 min` while steps without any estimate are still to do) |
 | A block runs | `⟳ Step 3/6 · Push image · 1m 40s left` (the block's `name=`, else its heading, else its first line) |
-| A step failed | `✗ Step 4/6 failed`, on a red background |
+| A step failed | `✗ Step 4/6 failed`, on a red background; the failed cell's status line has **Retry**, **Resume from Here**, **Mark Done** and, with the assistant on, **Explain** |
 | All done | `✓ Done · 6/6 · teardown offered` |
 | A value or a confirmation is asked | `✎ Waiting for you: parameter NAMESPACE`, on a yellow background |
 
@@ -35,7 +39,7 @@ do: a runbook whose own steps are done reads **Done**, and Resume Run offers the
 time left counts seconds under two minutes, so it moves while you watch.
 
 The tooltip has one line for where the run is (`2 of 6 steps done · 41% by the estimates · 4 min
-left · done ≈ 14:32`), the counts, a table of the setup, the steps and the teardown with their
+left · ends ≈ 14:32`; the end time only while it runs and every step left has an estimate), the counts, a table of the setup, the steps and the teardown with their
 times, and links: go to the running, failed or next step, Resume Run. Click the item (or run
 **md-runbook: Go to Next Step**) to jump to the first failed step, or else the next pending one.
 
@@ -63,11 +67,27 @@ the side panel on a wide screen) says the same: under each step what it needs, a
 above the list (confirmations, secrets not stored on this device, inputs not typed yet,
 proposals, steps by hand).
 
-**A notification when you look away.** When a run of several cells ends or starts waiting for
-you while its runbook isn't the editor in front (another file, another window), a notification
-says so: `deploy-checkout: step 4 of 6 failed — Push image` with **Go to Step** and **Resume
-Run**, `deploy-checkout: done · 6 of 6` with **Open**, or `deploy-checkout waits for you: a step
-done by hand` with **Show**. Nothing while you watch the runbook (`mdRunbook.notifications.enabled`).
+**A notification when you look away.** When a run ends while its runbook isn't the editor in
+front (another file, another window), a notification says so: `deploy-checkout: step 4 of 6
+failed — Push image` with **Go to Step** and **Resume Run**, or `deploy-checkout: done · 6 of 6`
+with **Open**. A run of one cell notifies only when it took at least 30 s
+(`mdRunbook.notifications.afterSeconds`). A question asked on the cell (a step by hand, the
+teardown, a risky command while another file is in front) shows a notice that closes by itself
+once answered; a value box or a dialog shows itself, so no notice for those. Nothing while you
+watch the runbook. **Don't Show Again** turns them off (`mdRunbook.notifications.enabled`).
+With `mdRunbook.notifications.system` (off by default), they also go to the system's
+notification centre while the window is in the background: a Windows toast, a macOS
+notification, or `notify-send` on Linux (best effort: it needs that tool).
+
+**Questions name the step.** A risky command asks `Risky command in Roll out (step 3 of 5,
+deploy-checkout): “apply”` with the command itself under it. While the runbook is in front it's a
+dialog; with another file in front it's asked on the cell instead (**Run** / **Don't Run**), so it
+doesn't land on top of something else. Escape on a value prompt doesn't fail the step: it isn't
+run, stays to do (`exit=unanswered`), and the run stops there.
+
+**Estimates that learn** can be forgotten with **Values ▾ → Forget Learned Times…** (this
+runbook's or every runbook's) and turned off with `mdRunbook.estimates.learn`. A run copy
+(`deploy.20261114-142000.md`) learns into the runbook it was copied from.
 
 **Run All follows the run.** Before each block, the notebook scrolls it into view, as long as the
 block before it is still in view: scroll away to read something else and it stops following

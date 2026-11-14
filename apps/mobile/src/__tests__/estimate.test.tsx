@@ -35,10 +35,10 @@ describe('estimate= (how long a cell takes)', () => {
     expect(screen.queryByTestId('cell-2-estimate')).toBeNull();
     expect(screen.getByTestId('run-estimate-text')).toHaveProp(
       'accessibilityLabel',
-      expect.stringMatching(/^41% · 4 min left · ends ≈\s\d\d:\d\d · 1 block without an estimate$/),
+      expect.stringMatching(/^41% · at least 4 min left · 1 block without an estimate$/),
     );
     // On screen, in words: how far, how long, when it ends; then what has no estimate.
-    expect(screen.getByTestId('estimate-main')).toHaveTextContent(/^41% · 4 min left · ends ≈\s\d\d:\d\d$/);
+    expect(screen.getByTestId('estimate-main')).toHaveTextContent(/^41% · at least 4 min left$/);
     expect(screen.getByTestId('estimate-more')).toHaveTextContent('1 block without an estimate');
   });
 

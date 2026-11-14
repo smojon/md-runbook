@@ -19,6 +19,7 @@ import {
   progressBar,
   remaining,
   runbookEstimate,
+  finishTime,
   formatLearned,
   learnedEstimate,
   stepHeadings,
@@ -345,6 +346,14 @@ describe('status line helpers', () => {
     assert.deepEqual(remaining({ fraction: 1, leftSeconds: 0 }, 0), { percent: 100, left: 'nothing left' });
     assert.deepEqual(remaining({ fraction: 0.41, leftSeconds: 210 }, 3), { percent: 41, left: '4 min left' });
     assert.deepEqual(remaining({ leftSeconds: 0 }, 2), { left: '2 steps left' });
+    // Steps without any estimate still to do: the time left is a floor.
+    assert.deepEqual(remaining({ fraction: 0.41, leftSeconds: 210, unestimatedLeft: 2 }, 3), { percent: 41, left: 'at least 4 min left' });
+    // The end time only while it runs, and only when every step still to do has an estimate.
+    const now = new Date(2026, 10, 14, 14, 0, 0).getTime();
+    assert.equal(finishTime({ leftSeconds: 150 }, true, now), '14:02');
+    assert.equal(finishTime({ leftSeconds: 150 }, false, now), undefined);
+    assert.equal(finishTime({ leftSeconds: 150, unestimatedLeft: 1 }, true, now), undefined);
+    assert.equal(finishTime({ leftSeconds: 0 }, true, now), undefined);
   });
 
   it('finish time is local HH:MM', () => {

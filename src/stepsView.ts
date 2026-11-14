@@ -9,8 +9,8 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { formatEstimate, formatFinish, formatLearned, isCodeMeta, runbookEstimate, stepState, taskItems } from '@md-runbook/core';
-import { blockProgress, overEstimate, remaining, stepLabel } from '@md-runbook/core/estimate';
+import { formatEstimate, formatLearned, isCodeMeta, runbookEstimate, stepState, taskItems } from '@md-runbook/core';
+import { blockProgress, finishTime, overEstimate, remaining, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { setContext } from './contextKeys';
 import { currentRunbook, editorOf, onDidChangeCurrentRunbook, showRunbook } from './currentRunbook';
@@ -212,7 +212,12 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     headline: waiting ? `Waiting for you: ${waiting.what}` : status.text.replace(/^\$\([^)]+\)\s*/, ''),
     state: waiting ? 'waiting' : anyRunning ? 'running' : p.firstFailed ? 'failed' : done ? 'done' : 'idle',
     ...(e.fraction !== undefined ? { fraction: e.fraction } : {}),
-    ...(rest.percent !== undefined ? { percent: rest.percent, left: rest.left + (e.leftSeconds > 0 ? ` · ends ≈ ${formatFinish(e.leftSeconds, now)}` : '') } : {}),
+    ...(rest.percent !== undefined
+      ? {
+          percent: rest.percent,
+          left: [rest.left, e.unestimatedLeft > 0 ? withoutEstimate(e.unestimatedLeft) : '', ((t) => (t ? `ends ≈ ${t}` : ''))(finishTime(e, anyRunning, now))].filter((s) => s !== '').join(' · '),
+        }
+      : {}),
     rows,
     open: p.pending + p.failed,
     ...(preflight ? { preflight } : {}),

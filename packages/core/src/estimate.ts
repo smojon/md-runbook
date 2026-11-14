@@ -53,11 +53,22 @@ export function formatTimeLeft(seconds: number): string {
  * (pending, by any measure: a step done by hand or one without an estimate has no time). Never
  * "100%" or "nothing left" while a step is open: `99%` and `1 step left` instead.
  */
-export function remaining(e: { fraction?: number; leftSeconds: number }, open: number): { percent?: number; left: string } {
+export function remaining(e: { fraction?: number; leftSeconds: number; unestimatedLeft?: number }, open: number): { percent?: number; left: string } {
   const pct = e.fraction === undefined ? undefined : Math.floor(e.fraction * 100);
   const percent = pct === undefined ? undefined : open > 0 ? Math.min(99, pct) : pct;
-  const left = e.leftSeconds > 0 ? `${formatTimeLeft(e.leftSeconds)} left` : open > 0 ? `${open} step${open === 1 ? '' : 's'} left` : 'nothing left';
+  // Steps without any estimate still to do take time nobody knows: the time left is a floor.
+  const floor = (e.unestimatedLeft ?? 0) > 0 ? 'at least ' : '';
+  const left = e.leftSeconds > 0 ? `${floor}${formatTimeLeft(e.leftSeconds)} left` : open > 0 ? `${open} step${open === 1 ? '' : 's'} left` : 'nothing left';
   return { ...(percent !== undefined ? { percent } : {}), left };
+}
+
+/**
+ * When the run ends at the estimates' pace (`14:32`), only while it runs and every step still to
+ * do has an estimate: before a run nobody has started the clock, after a failure it has stopped,
+ * and an unestimated step makes any end time a guess.
+ */
+export function finishTime(e: { leftSeconds: number; unestimatedLeft?: number }, running: boolean, now: number = Date.now()): string | undefined {
+  return running && e.leftSeconds > 0 && !((e.unestimatedLeft ?? 0) > 0) ? formatFinish(e.leftSeconds, now) : undefined;
 }
 
 const cut = (s: string): string => (s.length > 40 ? `${s.slice(0, 39)}…` : s);

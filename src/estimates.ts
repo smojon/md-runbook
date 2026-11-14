@@ -4,16 +4,18 @@
  * whole runbook for the progress item in the status bar (progress.ts).
  */
 
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isCallLanguage, isDynamicSrc, parseCall } from '@md-runbook/core/call';
 import { callEstimateSeconds } from '@md-runbook/core/node';
-import { EstimateStep, blockBar, blockProgress, formatBlockProgress, formatEstimate, formatLearned, isCodeMeta, isOverEstimate, learnedEstimate, overEstimate, stepHistoryKey, stepState, suggestedEstimate, withDuration } from '@md-runbook/core';
+import { EstimateStep, blockBar, blockProgress, formatBlockProgress, formatEstimate, formatLearned, isCodeMeta, isCopyFileName, isOverEstimate, learnedEstimate, overEstimate, stepHistoryKey, stepState, suggestedEstimate, withDuration } from '@md-runbook/core';
 import { parseCellOptions, setInfoOption } from '@md-runbook/core/cellOptions';
 import { withInfo } from '@md-runbook/core/proposal';
 import { parseInterval } from '@md-runbook/core/checks';
 import { osGroups } from '@md-runbook/core/os';
 import { PartStates } from '@md-runbook/core/estimate';
 import { SECTION } from './config';
+import { copyOrigin } from './copyOrigins';
 import { META_KEY, outputMeta } from './outputs';
 import type { RunPipeline, RunRecord } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -45,12 +47,27 @@ const HISTORY_RUNBOOKS = 200;
 type History = Record<string, Record<string, number[]>>;
 let memento: vscode.Memento | undefined;
 
+const learning = (): boolean => vscode.workspace.getConfiguration(SECTION).get<boolean>('estimates.learn', true);
+
+/**
+ * Whose history a runbook uses: its own, and for a run copy (`deploy.20261114-142000.md`) the
+ * runbook it was copied from, so teams that always run copies learn too.
+ */
+function historyOf(uri: vscode.Uri): string {
+  const name = path.posix.basename(uri.path);
+  if (!isCopyFileName(name)) return uri.toString();
+  const original = name.replace(/\.\d{8}-\d{6}(?:-\d+)?\.md$/i, '.md');
+  // A copy made in another folder (output.copyFolder) knows where the original's cells run.
+  const dir = copyOrigin(uri);
+  return dir ? vscode.Uri.file(path.join(dir, original)).toString() : vscode.Uri.joinPath(uri, '..', original).toString();
+}
+
 /** A block without estimate=: the usual time of its past runs that passed (learnedEstimate), or undefined. */
 export function learnedSeconds(cell: vscode.NotebookCell): number | undefined {
-  if (!memento || cell.kind !== vscode.NotebookCellKind.Code || !optionsOn() || isCallLanguage(cell.document.languageId)) return undefined;
+  if (!memento || cell.kind !== vscode.NotebookCellKind.Code || !optionsOn() || !learning() || isCallLanguage(cell.document.languageId)) return undefined;
   const meta: unknown = cell.metadata?.[META_KEY];
   if (!isCodeMeta(meta)) return undefined;
-  const runs = memento.get<History>(HISTORY_KEY)?.[cell.notebook.uri.toString()]?.[stepHistoryKey(meta.info, cell.document.getText())];
+  const runs = memento.get<History>(HISTORY_KEY)?.[historyOf(cell.notebook.uri)]?.[stepHistoryKey(meta.info, cell.document.getText())];
   return runs ? learnedEstimate(runs) : undefined;
 }
 
@@ -64,12 +81,12 @@ export function blockEstimate(cell: vscode.NotebookCell): { seconds: number; lea
 
 /** Keeps how long a run that passed took, for its step's learned estimate (not line runs, skips or the ready check). */
 async function recordRun(run: RunRecord): Promise<void> {
-  if (!memento || !run.success || run.plan.steps || run.plan.skip || run.ready !== undefined || run.cell.kind !== vscode.NotebookCellKind.Code) return;
+  if (!memento || !learning() || !run.success || run.plan.steps || run.plan.skip || run.ready !== undefined || run.cell.kind !== vscode.NotebookCellKind.Code) return;
   const meta: unknown = run.cell.metadata?.[META_KEY];
   const ms = run.attrs.duration !== undefined ? parseInterval(run.attrs.duration) : undefined;
   if (!isCodeMeta(meta) || ms === undefined) return;
   const all: History = { ...(memento.get<History>(HISTORY_KEY) ?? {}) };
-  const nb = run.notebook.uri.toString();
+  const nb = historyOf(run.notebook.uri);
   const steps = { ...(all[nb] ?? {}) };
   const key = stepHistoryKey(meta.info, run.cell.document.getText());
   steps[key] = withDuration(steps[key], ms / 1000);
@@ -282,6 +299,24 @@ export function registerEstimates(context: vscode.ExtensionContext, pipeline?: R
   const status = new EstimateStatus();
   memento = context.workspaceState;
   pipeline?.observers.push({ onDidRunCell: (run) => recordRun(run).then(() => status.refresh()) });
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mdRunbook.forgetLearnedTimes', async (arg?: unknown) => {
+      const nb = arg instanceof vscode.Uri ? vscode.workspace.notebookDocuments.find((d) => d.uri.toString() === arg.toString()) : vscode.window.activeNotebookEditor?.notebook;
+      const name = nb?.notebookType === NOTEBOOK_TYPE ? path.posix.basename(nb.uri.path) : undefined;
+      const pick = await vscode.window.showQuickPick(
+        [
+          ...(name ? [{ label: `Forget the times of ${name}`, id: 'one' }] : []),
+          { label: 'Forget the times of every runbook', id: 'all' },
+        ],
+        { title: 'Forget Learned Times', placeHolder: 'Blocks without estimate= learn their usual time again from their next runs' },
+      );
+      if (!pick || !memento) return;
+      const all: History = { ...(memento.get<History>(HISTORY_KEY) ?? {}) };
+      if (pick.id === 'one' && nb) delete all[historyOf(nb.uri)];
+      await memento.update(HISTORY_KEY, pick.id === 'all' ? {} : all);
+      status.refresh();
+    }),
+  );
   context.subscriptions.push(
     status,
     vscode.notebooks.registerNotebookCellStatusBarItemProvider(NOTEBOOK_TYPE, status),

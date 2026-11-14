@@ -336,3 +336,28 @@ test(`${isWin ? 'cmd' : 'sh'} blocks run`, async () => {
   assert.match(outputText(editor.notebook.cellAt(0)), /other shell/);
   await closeAll();
 });
+
+/**
+ * Answer the questions asked with buttons on a cell (waiting.ts askOnCell) whose text starts with
+ * `prefix`, with the answer id `pick` returns (undefined: leave it unanswered), counting them.
+ */
+export function answerOnCells(prefix: string, pick: () => string | undefined): { asked: string[]; restore: () => void } {
+  const asked: string[] = [];
+  type Asked = { cell: string; what: string; answers: string[] };
+  let busy = false;
+  const timer = setInterval(() => {
+    if (busy) return;
+    busy = true;
+    void (async () => {
+      const open = (await vscode.commands.executeCommand<Asked[]>('mdRunbook._waitingAnswers')) ?? [];
+      for (const q of open) {
+        if (!q.what.startsWith(prefix)) continue;
+        const id = pick();
+        if (id === undefined || !q.answers.includes(id)) continue;
+        asked.push(q.what);
+        await vscode.commands.executeCommand('mdRunbook.answerWaiting', q.cell, id);
+      }
+    })().finally(() => (busy = false));
+  }, 50);
+  return { asked, restore: () => clearInterval(timer) };
+}

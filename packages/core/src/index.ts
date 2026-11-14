@@ -87,6 +87,7 @@ export {
   formatRunbookEstimate,
   formatTimeLeft,
   remaining,
+  finishTime,
   isOverEstimate,
   overEstimate,
   progressBar,
