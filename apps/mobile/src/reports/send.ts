@@ -4,9 +4,11 @@
  * answers to "may this runbook report its runs to …?", and sending at the end of a run, signed
  * with the app's key when it can be, queued and tried again when the server can't be reached.
  *
- * Trust: `report-runs-required` and `-signed` count only when the runbook's signature is good by
- * one of the signers under Hosts & settings → Run reports → Trusted signers (allowed_signers
- * lines, checked in JavaScript: core sshsigVerify.ts) and covers the report settings as written.
+ * Trust: `report-runs-required` and `-signed` count only when the runbook is verified against
+ * the keys it is checked against everywhere in the app (Hosts & settings → Trusted signers: for a
+ * team library copy, the keys trusted from its library; for every runbook, the keys added by
+ * you), and the signature covers the whole runbook, its front matter included (signing/trust.ts
+ * reportSigner, the same signatureState and coverage() as the library's states and the banner).
  * Otherwise the run is reported only once you allow it.
  */
 import { useSyncExternalStore } from 'react';
@@ -25,12 +27,14 @@ import {
   pruneReports,
   reportBody,
   reportPlan,
-  trustedSignerOf,
 } from '@md-runbook/core/runReport';
 import { armorSignature } from '@md-runbook/core/signing';
 import { signSshsig } from '@md-runbook/ssh';
 import { readSecret } from '../secrets/store';
-import { loadSettings, outputSettings, reportAddresses, signerName, trustedSigners } from '../settings/store';
+import { getRunbook } from '../runbooks/store';
+import { runbookKeys } from '../runbooks/library';
+import { loadSettings, outputSettings, reportAddresses, signerName } from '../settings/store';
+import { keysId, loadTrustedSigners, reportSigner } from '../signing/trust';
 import { appKeyInfo } from '../ssh/appKey';
 import { getJson, setJson } from '../storage/kv';
 
@@ -48,20 +52,24 @@ export interface RunbookReport {
 }
 
 /** One entry: a runbook's text changes with every output written, the check is redone then. */
-let lastPlan: { text: string; allowed: string; result: Promise<RunbookReport | undefined> } | undefined;
+let lastPlan: { text: string; keys: string; result: Promise<RunbookReport | undefined> } | undefined;
 
-/** Where and how the runbook's runs are reported; undefined when it names no address. */
-export async function planOf(text: string): Promise<RunbookReport | undefined> {
+/**
+ * Where and how the runbook's runs are reported; undefined when it names no address. `runbookId`:
+ * the runbook it is, whose library (if it is a library copy) decides which keys count.
+ */
+export async function planOf(text: string, runbookId?: string): Promise<RunbookReport | undefined> {
   if (!/^report-runs\s*:/im.test(text)) return undefined;
-  await loadSettings();
-  const allowed = trustedSigners();
-  if (lastPlan?.text === text && lastPlan.allowed === allowed) return lastPlan.result;
+  await Promise.all([loadSettings(), loadTrustedSigners()]);
+  const keys = runbookKeys(runbookId !== undefined ? getRunbook(runbookId) : undefined);
+  const id = keysId(keys);
+  if (lastPlan?.text === text && lastPlan.keys === id) return lastPlan.result;
   const result = (async () => {
-    const signer = await trustedSignerOf(text, allowed).catch(() => undefined);
+    const signer = await reportSigner(text, keys).catch(() => undefined);
     const plan = reportPlan(text, signer);
     return plan ? { plan, ...(signer !== undefined ? { signer } : {}) } : undefined;
   })();
-  lastPlan = { text, allowed, result };
+  lastPlan = { text, keys: id, result };
   return result;
 }
 
@@ -139,7 +147,7 @@ export type Gate = { kind: 'go' } | { kind: 'ask'; plan: ReportPlan } | { kind: 
  * doesn't start without the app's key.
  */
 export async function reportGate(runbookId: string, text: string): Promise<Gate> {
-  const r = await planOf(text);
+  const r = await planOf(text, runbookId);
   if (!r || (!r.plan.required && !r.plan.signed)) return { kind: 'go' };
   if (r.plan.signed) {
     try {

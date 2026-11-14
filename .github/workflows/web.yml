@@ -35,6 +35,40 @@ jobs:
           curl -fsSI "http://127.0.0.1:8080$bundle" | tee headers.txt
           grep -qi 'cache-control: public, max-age=31536000, immutable' headers.txt
           test "$(docker inspect -f '{{.Config.User}}' md-runbook-web)" != root
+      - name: Serves a team library as JSON listings, and none without one
+        run: |
+          # No runbooks/ folder: 404, which the app takes as no library (not the app's page).
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/runbooks/)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/runbooks/index.json)" = 404
+          mkdir -p lib/ops lib/.git
+          printf '# Hello\n' > lib/hello.md
+          printf '# Restore\n' > lib/ops/restore.md
+          # Hidden files (a git checkout, an .env) and a link out of the folder: never served.
+          printf '[core]\n' > lib/.git/config
+          printf 'TOKEN=secret\n' > lib/.env
+          printf '# Hidden\n' > lib/ops/.draft.md
+          chmod -R a+rX lib
+          ln -s /etc/passwd lib/passwd.md
+          docker run -d --name web-lib -p 127.0.0.1:8081:8080 --read-only --tmpfs /tmp --cap-drop ALL \
+            -v "$PWD/lib:/usr/share/nginx/html/runbooks:ro" md-runbook-web
+          for _ in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:8081/ && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8081/runbooks/ | tee listing.json
+          jq -e 'map(.name) | (index("hello.md") != null) and (index("ops") != null)' listing.json
+          jq -e '.[] | select(.name == "ops") | .type == "directory"' listing.json
+          curl -fsS http://127.0.0.1:8081/runbooks/ops/ | jq -e '.[0].name == "restore.md" and .[0].type == "file"'
+          curl -fsS -D headers-lib.txt http://127.0.0.1:8081/runbooks/hello.md | grep -q '^# Hello'
+          grep -qi '^content-type: text/markdown' headers-lib.txt
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/runbooks/nothing.md)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/runbooks/.git/config)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/runbooks/.git/)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/runbooks/.env)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/runbooks/ops/.draft.md)" = 404
+          # The link to /etc/passwd (another owner than the link): refused, whatever the status.
+          code="$(curl -s -o passwd.out -w '%{http_code}' http://127.0.0.1:8081/runbooks/passwd.md)"
+          test "$code" != 200
+          ! grep -q '^root:' passwd.out
       - name: Web server log
         if: always()
-        run: docker logs web || true
+        run: |
+          docker logs web || true
+          docker logs web-lib || true

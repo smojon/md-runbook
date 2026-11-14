@@ -245,6 +245,30 @@ of validity, a pattern for each value a signed block uses), or shows the blocks 
 **Hosts & settings → Signing runbooks** you set your name for signatures and copy the key's line
 for the servers' `allowed_signers`.
 
+### Trusted signers
+
+**Hosts & settings → Trusted signers** is the one list of keys whose signatures the app counts,
+for the team library and for [run reports](features/run-reports.md#required-and-signed-reports)
+alike. Each entry says where it counts:
+
+- **From the team library at runbooks.example.net:** a key you trusted from that library's
+  `allowed_signers` (Team runbooks → **Trust these signers**). It counts for that library's
+  runbooks only, and stops counting once the library no longer publishes it (flagged **No longer
+  published**, also while the library can't be read).
+- **Added by you:** `allowed_signers` lines you paste under **Add signers**. They count for every
+  runbook: the team library's, and runbooks from files and links.
+
+**Remove** takes a key off the list. A runbook is **verified** only when its signature checks out
+with a key that counts for it, under the name its signature block gives:
+
+- **Whole runbook verified:** signed with manifest version 2, and the text is as signed: prose,
+  front matter, checklists, PowerShell and cmd blocks included (outputs and ticked boxes aside).
+- **These steps verified:** signed before manifest version 2. Only the bash blocks and runbook
+  calls are signed; the text around them may have changed. Not enough to require run reports.
+- **Partly signed:** signed before manifest version 2, with PowerShell or cmd blocks the
+  signature doesn't cover. Not verified.
+- **Changed since signing:** a block changed, or (manifest version 2) any of the text. Not verified.
+
 ## Saving
 
 <img src="app/web-saved.png" width="720" alt="A runbook opened from a file, with Saved and Save to the file">
@@ -265,6 +289,75 @@ incident.
 and **⋯ More → Share → Show QR Code** shows a code of this runbook for another phone.
 **⋯ More → Share Runbook** hands the file on. More in
 [Moving between VS Code and the app](switching.md#runbook-links).
+
+## Team runbooks
+
+A team can host its runbooks in a folder on a web server (the web app's container serves one at
+`/runbooks/`, [apps/web](../apps/web/README.md#a-team-library)), and the start screen lists them
+under **Team runbooks**, by subfolder, each with its signature (**Signed by alice@example.net:
+whole runbook verified** or **these steps verified**, **Partly signed**, **Signed, unknown
+signer**, **Not signed** or **Changed since signing**: see [Trusted signers](#trusted-signers) for what
+each means) and its signed name and version (`ops/restart, version 4`). The opened copy's banner
+says the same, checked the same way.
+
+- **What "verified" means:** the signature checks out with a key under **Trusted signers** that
+  counts for this library (trusted from it, or added by you), and covers every block the app
+  could run. **Whole runbook verified** covers the text too; **these steps verified** (signed
+  before manifest version 2) the bash blocks and runbook calls only.
+- **Flagged in the row:** a signed name that is not the end of the file's path (`ops/restart`
+  fits `ops/restart.md`, not `restart.md` or `staging/restart.md`: a signed runbook served under
+  another name), a version older than one of this file this library showed before (someone put an
+  old version back), and an expired signature (which is not verified).
+- **Opening one makes your copy.** Your runs and outputs stay in your copy; the file on the
+  server is never changed. Opening it again opens your copy. Remove it like any runbook.
+- **Update available:** when the file on the server changed, its row offers **Update** and
+  **Keep mine**. Update checks the new version's signature again and takes it, keeping the
+  outputs of the blocks that didn't change; it asks first when outputs would be lost, when your
+  copy has changes of its own (edits, ticked boxes), or when the new version is no longer signed,
+  is signed by someone else or with another key, changed since it was signed, is partly signed,
+  expired, or older than your version; and asks again if the library changed while it asked. Keep
+  mine hides that version until the next one.
+- **A copy the library refuses** (it opens verified runbooks only, and your copy is edited, older
+  than the version it has now, or no longer signed by a key you trust) is never a dead end: its
+  row offers **Replace with the library's version**, and **Keep mine** is not offered when keeping
+  would leave a copy the library refuses.
+- **Signers:** if the library publishes an `allowed_signers` file, **Trust these signers** shows
+  each name (and what a pattern such as `*@example.net` lets a key sign as) and key fingerprint,
+  and asks first. The list comes from the same server as the runbooks, so it is that server
+  vouching for itself: compare the fingerprints with what the signers tell you. Trust counts for
+  that library only. Once trusted, the app checks the signatures itself; **Stop trusting** undoes
+  it, and a key the library no longer publishes stops counting and is offered to forget.
+  [Hosts & settings → Trusted signers](#trusted-signers) lists every trusted key with where it counts,
+  and **Remove**.
+- A library can open **verified runbooks only** (`"signedOnly": true` in its index.json): the
+  others (unsigned, unknown signer, partly signed, expired, signed under another file's name,
+  older than a version seen before) are listed, greyed out, with the reason, and your copy is
+  checked again when you open it from there. A copy that isn't verified any more doesn't run
+  wherever you open it (pinned on the start screen, a library that isn't listed or can't be
+  read): the runbook screen says why. Once a library asked for it, the app keeps it on if
+  index.json stops asking, until you tap **Open unverified runbooks too**.
+- The list is read on start (at most once a minute), and again with the refresh button next to
+  **Team runbooks** or by pulling the list down on a phone. Offline, your copies still work, and
+  the runbooks read before stay listed.
+
+**On the web**, the library is the app's own `/runbooks/`, if its server has one. **On a phone**
+(or for a library elsewhere) set its address:
+
+- **Hosts & settings → Team library:** type the folder's `https` address
+  (`https://runbooks.example.net/runbooks/`; `http` only for `localhost`; no `user@` before the
+  host, no backslashes or blanks), **Check** reads it and says how many runbooks it has, **Save**
+  keeps it, **Remove** forgets it. The app keeps the address as parsed (host in lower case), and
+  that is the address it reads and shows. **Forget the versions seen** clears the versions the
+  app remembers for this library (after a runbook was renumbered, or signed with too high a
+  version by mistake).
+- **A link:** `mdrunbook://library?url=https%3A%2F%2Frunbooks.example.net%2Frunbooks%2F` (or the
+  web app's `/library?url=…`) asks "Add the team library at runbooks.example.net?" before adding it.
+- **A QR code:** **Share library** in that section shows the link as a QR code; on another phone,
+  **Scan a code** (or the camera) adds the library after the same question.
+
+The phones read the library directly; a web app on another domain needs the library's server to
+allow it (CORS). No tokens or passwords are sent: the library is for runbooks anyone who can reach
+the server may read. A file over 2 MB, or a redirect to another server, is not read.
 
 ## Try it
 

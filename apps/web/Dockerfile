@@ -21,4 +21,6 @@ RUN npx expo export --platform web
 FROM nginxinc/nginx-unprivileged:1.29-alpine
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/apps/mobile/dist /usr/share/nginx/html
+# A team library: a runbooks/ folder at /usr/share/nginx/html/runbooks, mounted read-only
+# (-v ./runbooks:/usr/share/nginx/html/runbooks:ro) or copied into an image built on this one.
 EXPOSE 8080

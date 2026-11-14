@@ -100,9 +100,11 @@ the runbook without what a run adds to it. That lets clients tell **signed as a 
 **partly signed**.
 
 - **Signed with 0.22.0 or earlier.** Only the bash/sh blocks and calls are signed. The signature still
-  verifies and the bash blocks still count as signed, but the editor, lint and the app say
-  "partly signed". A PowerShell or cmd block in such a runbook is never signed, and a change to
-  a paragraph or the front matter goes unnoticed. Sign it again to cover the whole runbook.
+  verifies and the bash blocks still count as signed, but the editor and lint say "partly
+  signed", and the app "these steps verified" (or **Partly signed** when PowerShell or cmd blocks
+  are outside the signature). A PowerShell or cmd block in such a runbook is never signed, and a
+  change to a paragraph or the front matter goes unnoticed. Sign it again to cover the whole
+  runbook.
 - **Text changed since signing.** A changed sentence, a new `- [ ]` item, a changed
   `manual-steps:`, an added PowerShell block: the runbook is "changed since signing".
   - Its unchanged bash blocks still run through a gate.
@@ -340,6 +342,76 @@ own token. The gate's log stays the record to audit; the summaries are the team'
 The address comes from `gate.conf` only. A signed runbook's own `report-runs:` is not read here:
 the gate gets the manifest, which signs a hash of the runbook's text but not the text itself, so
 it can't see the front matter.
+
+## In a hosted library
+
+A team library ([the app](../app.md#team-runbooks), [hosting it](../../apps/web/README.md#a-team-library))
+shows each runbook's signature in the list, with the signed name and version; the opened copy's
+banner says the same. The app checks the signatures itself, against its one list of
+[trusted signers](../app.md#trusted-signers) (the same list decides run reports' required and signed
+settings): the keys the user trusted from that library, and the keys the user added, which
+count for every runbook. Every check of the app (the list, the banner, signedOnly, run reports)
+reads one answer for what the signature covers:
+
+- **Signed by alice@example.net: whole runbook verified:** manifest version 2 and the text as
+  signed (prose, front matter, checklists, PowerShell and cmd blocks; outputs, notes and ticked
+  boxes aside), and the signature checks out with a key that counts for this runbook, for the
+  name in the signature block (OpenSSH's rules: principals and patterns, `namespaces=`,
+  `valid-after` / `valid-before`). When a key may sign under any name its pattern matches (`*`,
+  `*@example.net`), the label adds the key's fingerprint.
+- **Signed by alice@example.net: these steps verified:** the same check of a manifest version 1
+  signature: the bash blocks and runbook calls are unchanged since signing and every block the
+  app could run is among them. That is all it proves: the prose, checklists, title, front matter
+  and outputs are not in a version 1 manifest (see [What is signed](#what-is-signed)), and the
+  banner says so.
+- **Partly signed:** a version 1 signature whose blocks check out, but the runbook has blocks
+  that can run outside it (PowerShell, cmd: version 1 never signs them). Not verified. With
+  version 2 such a block is part of the text: adding one makes the runbook **changed since
+  signing**, never partly signed.
+- **Signed by alice@example.net, expired on 2026-12-31:** checked, but past the manifest's
+  `expires` day (UTC, as the gate). Not verified.
+- **Signed, unknown signer:** unchanged, but signed by no one the user trusts for this library
+  (or not checkable on this device).
+- **Signature does not check out for alice@example.net:** a trusted name but another key, a
+  signature that doesn't verify, a signature that is not one (malformed, truncated, for another
+  namespace), or a signer name an `allowed_signers` principal couldn't spell the same way.
+- **Changed since signing** (a block changed, or with version 2 any of the text) and **Not
+  signed**, as everywhere else.
+
+Next to it the row shows the signed **name and version**, and flags a name that is not the end of
+the file's path (`db/drop-staging` served as `restart-web.md`, `staging/restart` as
+`prod/restart.md`) and a **version older** than one of this file this library showed before with
+a signature that checked out: the app remembers the highest version per library, path and signed
+name, as the gate's version floors do on a server (**Hosts & settings → Team library → Forget
+the versions seen** clears them).
+
+The library may publish its `allowed_signers` (the gate's file). The app offers it under **Trust
+these signers**, with the names, what a pattern lets a key sign as, and the key fingerprints, and
+asks first: the list comes from the server that serves the runbooks, so the server is vouching
+for itself. Trusted keys count for that library only, with the options the library publishes
+their lines with now (a `valid-before=` added to retire a key is followed); a key the library
+stops publishing stops counting, and is remembered so while the file can't be read;
+**Hosts & settings → Trusted signers** lists them all with where each counts, and **Remove**.
+Lines with an option OpenSSH doesn't know are skipped, as OpenSSH skips them.
+
+An index.json with `"signedOnly": true` makes the app open **verified** runbooks only: unsigned,
+changed, partly signed, expired, unknown-signer, other-name and older-version runbooks are
+listed as not openable, with the reason, and a copy the user already has is checked again when
+opened from the list, and before any of its blocks runs, wherever it was opened from (by the
+policy the app remembers when the library isn't read). A refused copy is offered **Replace with
+the library's version**. Once a library asked for it, the app keeps it on when index.json stops
+asking, until the user agrees. An update whose new version drops the signature, comes from another signer or key,
+changed since signing, is partly signed, expired or older says so before it replaces the user's
+copy; its signature is checked again for the update, never taken from an earlier read.
+
+The app checks `ssh-ed25519`, ECDSA (`nistp256`, `nistp384`, `nistp521`), RSA (`rsa-sha2-256`,
+`rsa-sha2-512`), and security-key and passkey signatures (`sk-ssh-ed25519`, `sk-ecdsa-sha2-nistp256`,
+`webauthn-sk-ecdsa-sha2-nistp256`, what the app's passkey makes), with OpenSSH's checks: no bytes
+after the signature's fields, RSA keys of 2048 bits or more, for passkeys no attested data, an
+extensions field present exactly when flagged and no quote in the origin. Certificate authorities
+(`cert-authority` lines) are not used. Key validity (`valid-after` / `valid-before`) and expiry
+are judged by the device's clock. This check tells the user what they are opening; the gate on
+the server is still what decides what runs.
 
 ## Limits
 

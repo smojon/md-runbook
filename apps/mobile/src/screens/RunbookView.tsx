@@ -49,6 +49,9 @@ import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
+import { copyRefusal, useLibraryCopyState, useOwnKeysState } from '../runbooks/library';
+import { SignatureState, coverage, shownName, unsignedRunnable } from '../signing/trust';
+import { factsLabel, sigLabel } from './LibrarySection';
 import { textProgress } from '@md-runbook/core/textProgress';
 import { headingsOf } from '@md-runbook/core/title';
 import type { Progress, RunbookEstimate } from '@md-runbook/core';
@@ -252,6 +255,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
   const progress = useMemo(() => (runbook ? textProgress(runbook.text) : undefined), [runbook]);
   const signed = useMemo(() => (runbook ? signedStatus(runbook.text) : undefined), [runbook]);
+  /** Blocks that can run outside the signature (PowerShell, cmd: manifest v1 signs bash and runbook calls only). */
+  const outsideSignature = useMemo(() => (runbook && signed ? unsignedRunnable(runbook.text, signed) : 0), [runbook, signed]);
+  /** A team library copy: its signature checked as the list checks it (the banner says the same). */
+  const libraryCopyState = useLibraryCopyState(runbook);
+  /** Any other runbook: its signature against the keys added by you (Hosts & settings → Trusted signers), when there are any. */
+  const ownKeysState = useOwnKeysState(runbook);
+  /**
+   * A library copy that must not run: its library opens verified runbooks only, and this copy
+   * isn't one (copyRefusal). Asked wherever a cell is asked whether it can run.
+   */
+  const libraryRefused = copyRefusal(runbook, libraryCopyState);
   /** Whether it can be co-signed now (Co-sign Runbook), or why not. */
   const cosign = useMemo(() => (runbook ? cosignCheck(runbook.text) : undefined), [runbook]);
   const params = useMemo(() => (runbook ? runbookParams(runbook.text) : []), [runbook]);
@@ -564,8 +578,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     });
     return 'wait';
   };
+  /** A refused library copy runs nothing: the queue stops, and the notice says why. */
+  const refusedHere = (): boolean => {
+    if (!libraryRefused) return false;
+    clearQueue();
+    setNotice(t.copyNotRunnable(libraryRefused));
+    return true;
+  };
   const run = async (request: RunRequest, on: Host | undefined): Promise<void> => {
-    if (!runbook || busy.current) return;
+    if (!runbook || busy.current || refusedHere()) return;
     busy.current = true;
     let waiting: boolean | void = false;
     try {
@@ -754,7 +775,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
    */
   const runOnGroup = async (cellIndex: number, group: string, confirmed = false): Promise<void> => {
     setGroupPick(undefined);
-    if (!runbook || busy.current) return;
+    if (!runbook || busy.current || refusedHere()) return;
     const members = hosts.filter((h) => h.group === group);
     if (members.length === 0) return;
     if ((await reportAllows(() => void runOnGroup(cellIndex, group, confirmed))) !== 'go') return;
@@ -945,7 +966,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
    * opened to run; its result comes back to this cell when that run ends (runbooks/calls.ts).
    */
   const runCallAt = async (cellIndex: number, fresh = false): Promise<void> => {
-    if (!runbook) return;
+    if (!runbook || refusedHere()) return;
     const fm = parseFrontMatter(runbook.text);
     const values: Record<string, string> = {};
     for (const p of fm?.params ?? []) if (p.default !== undefined) values[p.name] = p.default;
@@ -982,7 +1003,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   };
   /** Run all (from the top) or Continue (the failed or pending cells from the first such one on); `only`: just these cells. */
   const runSequence = (from: 'start' | 'resume', only?: readonly number[], opts: { readyFirst?: boolean } = {}): void => {
-    if (!runbook || busy.current || !host) return;
+    if (!runbook || busy.current || !host || refusedHere()) return;
     const parsed = parse(runbook.text).cells;
     const candidates = only
       ? [...only]
@@ -1418,7 +1439,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (!runbook || !cell || cell.kind !== 'code') return [];
     const can = runnability(cell, approvalId, host?.platform);
     const isCall = !can.ok && can.why === 'call';
-    const why = !host ? t.noRunNow : can.ok || isCall ? undefined : t.notRunnable[can.why](can.detail);
+    const why = !host
+      ? t.noRunNow
+      : libraryRefused
+        ? t.copyNotRunnable(libraryRefused)
+        : can.ok || isCall
+          ? undefined
+          : t.notRunnable[can.why](can.detail);
     const proposal = isCodeMeta(cell.meta) ? approvalOf(cell.meta.info, cell.value, approvalId) : 'none';
     // A runbook call: run it in a new copy, or open the copy its last run made.
     const lastCopy = isCall ? callFromAttrs(cell.output?.attrs)?.copy : undefined;
@@ -1955,7 +1982,20 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               ) : null}
               <SaveBar runbook={runbook} />
               {fromLink ? <LinkNotes context={fromLink} /> : null}
-              {signed ? <SignedBanner status={signed} verified={verified} /> : null}
+              {signed ? (
+                <SignedBanner
+                  status={signed}
+                  verified={verified}
+                  outside={outsideSignature}
+                  library={libraryCopyState}
+                  own={ownKeysState}
+                  refused={libraryRefused}
+                />
+              ) : libraryRefused ? (
+                <View testID="library-refused" style={styles.signed}>
+                  <Text style={styles.warning}>{t.copyNotRunnable(libraryRefused)}</Text>
+                </View>
+              ) : null}
               {problems.all.length > 0 ? (
                 <ProblemsCard
                   problems={problems}
@@ -3090,10 +3130,36 @@ function LinkNotes({ context }: { context: LinkContext }) {
   );
 }
 
-/** A signed runbook: who signed which version, and the blocks changed since (a gate refuses those). */
-function SignedBanner({ status, verified }: { status: SignedStatus; verified: { host: string; principal: string } | undefined }) {
+/**
+ * A signed runbook: who signed which version, and the blocks changed since (a gate refuses those)
+ * or never signed (PowerShell, cmd). A library copy says what the team runbooks list says, checked
+ * the same way (useLibraryCopyState): who verified, the whole runbook or which steps (coverage()),
+ * under which name and version. Another runbook says so too when keys added by you check it.
+ */
+function SignedBanner({
+  status,
+  verified,
+  outside,
+  library,
+  own,
+  refused,
+}: {
+  status: SignedStatus;
+  verified: { host: string; principal: string } | undefined;
+  /** Runnable blocks the signature doesn't cover (unsignedRunnable). */
+  outside: number;
+  library: ReturnType<typeof useLibraryCopyState>;
+  /** Not a library copy: the state against the keys added by you (useOwnKeysState). */
+  own: SignatureState | undefined;
+  /** Why this library copy doesn't run (copyRefusal). */
+  refused: string | undefined;
+}) {
   const styles = useStyles();
   const m = status.manifest;
+  const facts = library ? factsLabel(library.facts, library.state) : undefined;
+  // What the signature covers, as the library's states and run reports count it.
+  const covers = coverage(status);
+  const checked = library?.state ?? (own && own.kind !== 'unknown' ? own : undefined);
   return (
     <View testID="signed-banner" style={styles.signed}>
       <Text style={styles.signedTitle}>{t.signedTitle(m.name, m.version)}</Text>
@@ -3101,12 +3167,48 @@ function SignedBanner({ status, verified }: { status: SignedStatus; verified: { 
         <Text testID="signed-verified" style={styles.signedBody}>
           {t.signedVerified(verified.host, verified.principal)}
         </Text>
-      ) : (
+      ) : null}
+      {library ? (
+        <>
+          <Text testID="signed-library-state" style={library.state.kind === 'verified' ? styles.signedBody : styles.warning}>
+            {sigLabel(library.state)}
+          </Text>
+          {facts && (library.facts?.otherName || library.facts?.olderThan !== undefined || library.facts?.expired) ? (
+            <Text testID="signed-library-facts" style={styles.warning}>
+              {facts}
+            </Text>
+          ) : null}
+          {refused ? (
+            <Text testID="signed-library-refused" style={styles.warning}>
+              {t.copyNotRunnable(refused)}
+            </Text>
+          ) : null}
+        </>
+      ) : checked ? (
+        <Text testID="signed-own-state" style={checked.kind === 'verified' ? styles.signedBody : styles.warning}>
+          {sigLabel(checked)}
+        </Text>
+      ) : verified ? null : (
         <Text testID="signed-claim" style={styles.signedBody}>
-          {t.signedClaim(signerNames(status.block))}
+          {t.signedClaim(signerNames(status.block).map(shownName))}
         </Text>
       )}
+      {checked?.kind === 'verified' ? (
+        <Text testID="signed-coverage" style={styles.signedBody}>
+          {checked.coverage === 'whole' ? t.sigCoversWhole : t.sigCoversSteps}
+        </Text>
+      ) : null}
       <Text style={styles.signedBody}>{m.expires ? t.signedUntil(m.expires) + ' ' + t.signedBody : t.signedBody}</Text>
+      {covers === 'changed' ? (
+        <Text testID="signed-text-changed" style={styles.warning}>
+          {t.signedTextChanged}
+        </Text>
+      ) : null}
+      {outside > 0 ? (
+        <Text testID="signed-outside" style={styles.warning}>
+          {t.signedOutside(outside)}
+        </Text>
+      ) : null}
       {status.changed.length > 0 ? (
         <Text testID="signed-changed" style={styles.warning}>
           {t.signedChanged(status.changed.length)}

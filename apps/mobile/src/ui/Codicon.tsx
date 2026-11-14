@@ -50,6 +50,10 @@ const GLYPHS = {
   question: 0xeb32,
   'arrow-up': 0xeaa1,
   'arrow-down': 0xea9a,
+  refresh: 0xeb37,
+  library: 0xeb9c,
+  verified: 0xeb77,
+  unverified: 0xeb76,
 } as const;
 
 export type CodiconName = keyof typeof GLYPHS;

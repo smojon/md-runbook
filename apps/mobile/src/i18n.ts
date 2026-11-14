@@ -16,6 +16,7 @@ const en = {
   unpin: 'Unpin',
   example: 'Example',
   fromFile: 'From a file',
+  fromLibrary: (fileName: string) => `${fileName} from the team library`,
   openLinkPlaceholder: 'https://github.com/…/runbook.md',
   open: 'Open',
   linkInvalid: 'Not a runbook link: use an https address (a GitHub or GitLab file link works too).',
@@ -753,6 +754,175 @@ const en = {
   notifyPausedBody:
     'Your phone pauses md-runbook soon after you leave it, so the step that was running may have been cut off. Open md-runbook to check it and go on.',
 
+  // The team library: runbooks a server hosts for everyone (runbooks/library.ts)
+  librarySection: 'Team runbooks',
+  libraryFolder: (folder: string) => `Team runbooks · ${folder}`,
+  libraryRefresh: 'Refresh team runbooks',
+  libraryLoading: 'Loading team runbooks…',
+  libraryFailed: (why: string) => `Team runbooks could not be loaded: ${why}`,
+  libraryStale: (why: string) => `Showing the team runbooks read earlier (${why}).`,
+  libraryEmpty: 'The team library has no runbooks yet.',
+  libraryUrlInvalid: 'Not a library address: use the https address of the folder, such as https://runbooks.example.net/runbooks/.',
+  libraryUrlHttps: 'Only https addresses (http only for localhost).',
+  libraryUrlUserinfo: 'Not a library address: no user name or password before the host (user@host).',
+  libraryRedirected: (host: string) => `redirected to another server (${host}): not read`,
+  libraryNoFinalUrl: 'the answer did not say which server it came from: not read',
+  libraryTooLarge: 'not read: the library holds more text than the app reads from one library (20 MB)',
+  libraryBadIndex: 'its index.json is not a list of runbooks',
+  libraryUnreadable: 'This runbook could not be read from the library.',
+  libraryChecking: 'Checking the signature…',
+  librarySignedOnly: (s: { kind: string; unsigned?: number; manifest?: { expires?: string } }) =>
+    'Not openable: this library opens verified runbooks only, and ' +
+    (s.kind === 'unsigned'
+      ? 'this one is not signed.'
+      : s.kind === 'invalid'
+        ? 'its signature does not check out.'
+        : s.kind === 'unknown'
+          ? 'no signer you trust for this library signed it (trust its signers first).'
+          : s.kind === 'partial'
+            ? `its signature leaves ${s.unsigned === 1 ? '1 block' : `${s.unsigned} blocks`} that can run uncovered.`
+            : s.kind === 'expired'
+              ? `its signature expired on ${s.manifest?.expires ?? '?'}.`
+              : 'this one changed since signing.'),
+  librarySignedOnlyOtherName: (name: string, path: string) =>
+    `Not openable: this library opens verified runbooks only, and this one is signed as ${name}, which is not the name of ${path}.`,
+  librarySignedOnlyOlder: (version: number, seen: number) =>
+    `Not openable: this library opens verified runbooks only, and this is version ${version}, older than version ${seen} seen before.`,
+  libraryCopyRefused: (why: string) => `Your copy can't be opened from here. ${why}`,
+  librarySignedOnlyDropped:
+    'This library opened verified runbooks only, and its index.json no longer asks for that. The app keeps opening verified runbooks only until you agree.',
+  libraryAllowUnverified: 'Open unverified runbooks too',
+  libraryYourCopy: 'Your copy',
+  libraryOpening: 'Opening…',
+  /** A verified signer: with the key's fingerprint when the key may sign under any name its pattern matches. */
+  sigSigner: (name: string, fingerprint?: string) => (fingerprint ? `${name} (key ${fingerprint})` : name),
+  sigVerified: (names: readonly string[], coverage: 'whole' | 'partial') =>
+    `Signed by ${names.join(', ')}: ${coverage === 'whole' ? 'whole runbook verified' : 'these steps verified'}`,
+  sigPartial: (n: number) => `Partly signed: ${n === 1 ? '1 block that can run is' : `${n} blocks that can run are`} not covered`,
+  sigExpiredState: (names: readonly string[], date: string) => `Signed by ${names.join(', ')}, expired on ${date}`,
+  sigUnknown: 'Signed, unknown signer',
+  sigUnsigned: 'Not signed',
+  sigChanged: 'Changed since signing',
+  sigInvalid: (names: readonly string[]) => `Signature does not check out for ${names.join(', ')}`,
+  sigExpired: (date: string) => `expired ${date}`,
+  sigManifest: (name: string, version: number) => `${name}, version ${version}`,
+  sigOtherName: 'signed under another name than this file’s',
+  sigOlder: (seen: number) => `older than version ${seen} seen before`,
+  sigCoversSteps:
+    'The signature covers the shell blocks and runbook calls, not the text around them: instructions, checklists, the title and outputs may have changed.',
+  signedOutside: (n: number) =>
+    n === 1
+      ? '1 block that can run (PowerShell, cmd) is not covered by the signature: check it yourself before you run it.'
+      : `${n} blocks that can run (PowerShell, cmd) are not covered by the signature: check them yourself before you run them.`,
+  copyNotOpenable: (why: string) => `${why} Opening it from Team runbooks is refused.`,
+  copyNotRunnable: (why: string) =>
+    `${why} This copy of a team runbook doesn’t run until it is verified again: under Team runbooks, replace it with the library’s version.`,
+  sigCoversWhole: 'The signature covers the whole runbook: its text, front matter and every block (outputs and ticked boxes aside).',
+  signedTextChanged: 'The runbook changed since it was signed (its text, front matter or a block): the signature no longer vouches for it.',
+  libraryReplace: 'Replace with the library’s version',
+  libraryReplaceHelp: 'Your copy can’t be opened here any more',
+  libraryVersionsTitle: 'Versions seen',
+  libraryVersionsHelp:
+    'The app remembers the highest signed version of each runbook in this library, and refuses an older one (someone may have put back an old version). Forget them when a runbook was renumbered, or signed with too high a version by mistake.',
+  libraryVersionsForgotten: 'Forgotten: the next refresh remembers the versions it sees.',
+  libraryForgetVersions: 'Forget the versions seen',
+  updateAvailable: 'Update available',
+  updateGo: 'Update',
+  updateAnyway: 'Update anyway',
+  keepMine: 'Keep mine',
+  updateKept: 'Newer version skipped',
+  updateRefused: (why: string) => `The new version can't be taken: ${why}`,
+  updateLostOutputs: (n: number) =>
+    n === 1
+      ? "1 output can't be kept: its block changed in the new version."
+      : `${n} outputs can't be kept: their blocks changed in the new version.`,
+  updateOwnEdits: 'Your copy has changes of its own (edits, ticked boxes): the new version replaces them.',
+  updateSignatureDropped: (was: string) => `The new version is not signed (yours was signed by ${was}).`,
+  updateOtherSigner: (was: string, now: string) =>
+    was === now ? `The new version is signed by ${now} with another key than yours.` : `The new version is signed by ${now}, not ${was}.`,
+  updateSignatureBroken: (was: string) => `The new version changed since ${was} signed it.`,
+  updatePartlySigned: (n: number) =>
+    n === 1
+      ? 'The new version has 1 block that can run outside its signature.'
+      : `The new version has ${n} blocks that can run outside its signature.`,
+  updateExpired: (date: string) => `The new version’s signature expired on ${date}.`,
+  updateOlderVersion: (name: string, now: number, seen: number) =>
+    `The new version is ${name} version ${now}, older than version ${seen} (yours, or seen before): someone may have put back an old version.`,
+  librarySigners: (n: number) => (n === 1 ? 'This library publishes 1 signer.' : `This library publishes ${n} signers.`),
+  librarySignersSkipped: (n: number) =>
+    n === 1
+      ? '1 line of its allowed_signers is not used here (a certificate authority, another namespace, an unknown option or a damaged line).'
+      : `${n} lines of its allowed_signers are not used here (certificate authorities, other namespaces, unknown options or damaged lines).`,
+  trustSigners: 'Trust these signers',
+  trustSignersPrompt: (host: string) =>
+    `Trust these keys for the team library at ${host} only: its runbooks signed with them then show "Signed by" and the name, and a library that opens verified runbooks only opens them. Other libraries and runbooks from links don't use them. The keys come from the same server as the runbooks: it is vouching for itself, and whoever can change the runbooks there can change this list too. Trust them only if you trust that server, and better, compare the fingerprints with what the signers tell you.`,
+  /** What a principal of an allowed_signers line lets the key sign as. */
+  signerPrincipal: (p: string) =>
+    p.startsWith('!')
+      ? `not as ${p.slice(1)}`
+      : p === '*'
+        ? 'any name at all (a key for everyone: check the fingerprint)'
+        : /^\*[^*?]+$/.test(p)
+          ? `any name ending in ${p.slice(1)}`
+          : /[*?]/.test(p)
+            ? `any name matching ${p}`
+            : p,
+  trustSignersGo: 'Trust them',
+  trustedSigners: (n: number) =>
+    n === 1 ? 'You trust this library’s signer, for this library only.' : `You trust this library’s ${n} signers, for this library only.`,
+  untrustSigners: 'Stop trusting',
+  signersWithdrawn: (n: number) =>
+    n === 1
+      ? '1 key you trusted from this library is no longer in its allowed_signers: it no longer counts here.'
+      : `${n} keys you trusted from this library are no longer in its allowed_signers: they no longer count here.`,
+  untrustWithdrawn: 'Forget them',
+  trustedSignersTitle: 'Trusted signers',
+  trustedSignersHelp:
+    'The keys whose signatures the app counts: a runbook is “verified” only when one of them signed it, and only such a runbook can require its runs to be reported. Keys trusted from a team library’s allowed_signers count only for the library they came from; keys added by you count for every runbook.',
+  trustedSignersNone:
+    'None yet: a team library offers its signers under Team runbooks, or add allowed_signers lines below. Until then, signatures are shown but not verified.',
+  trustedFrom: (host: string) => `From the team library at ${host}: counts for its runbooks only`,
+  trustedByYou: 'Added by you: counts for every runbook',
+  trustedWithdrawn: 'No longer published by this library: it no longer counts.',
+  trustedRemove: 'Remove',
+  trustedAddLabel: 'Add signers',
+  trustedAddHelp:
+    'allowed_signers lines (as on the servers, OpenSSH’s format), one per line. Ed25519, ECDSA, RSA and security-key signatures are checked on this device.',
+  trustedAddGo: 'Add',
+  trustedAdded: (added: number, already: number, skipped: number) =>
+    [
+      added === 1 ? '1 signer added.' : `${added} signers added.`,
+      ...(already > 0 ? [already === 1 ? '1 was there already.' : `${already} were there already.`] : []),
+      ...(skipped > 0
+        ? [
+            skipped === 1
+              ? '1 line not used (another namespace, a certificate authority, an unknown option or a damaged line).'
+              : `${skipped} lines not used (other namespaces, certificate authorities, unknown options or damaged lines).`,
+          ]
+        : []),
+    ].join(' '),
+
+  // The team library's address (Hosts & settings) and links to it
+  libraryTitle: 'Team library',
+  libraryHelp:
+    'Runbooks your team hosts in a folder on a web server: the list shows them under Team runbooks, and opening one makes your own copy.',
+  libraryHelpWeb: (url: string) => `Empty: this web app’s own library (${url}), if its server has one.`,
+  libraryUrl: 'Library address',
+  libraryUrlPlaceholder: 'https://runbooks.example.net/runbooks/',
+  libraryCheck: 'Check',
+  libraryChecked: (n: number) => (n === 1 ? '1 runbook' : `${n} runbooks`),
+  libraryNone: 'No library at this address (nothing listed there).',
+  librarySave: 'Save',
+  libraryRemove: 'Remove',
+  libraryShare: 'Share library',
+  libraryShareHelp: 'Scan with md-runbook (Scan a code) or the phone’s camera to add this library.',
+  libraryAddTitle: 'Add a team library',
+  libraryAddPrompt: (host: string) => `Add the team library at ${host}?`,
+  libraryAddBody: (url: string) => `The app will list the runbooks at ${url} under Team runbooks. Nothing is run or trusted by adding it.`,
+  libraryAddReplaces: (url: string) => `This replaces the library you have now (${url}).`,
+  libraryAddGo: 'Add',
+  libraryAddLinkInvalid: 'This link names no library address (url=…).',
+
   // Run reports (report-runs: in the front matter)
   reportConsentTitle: 'Report this run?',
   reportAllow: 'Allow',
@@ -771,9 +941,8 @@ const en = {
   reportAddresses: 'Addresses allowed without asking',
   reportAddressesHelp: 'One per line: a host (reports.example.net), or an address (https://reports.example.net/runs).',
   reportAddressesPlaceholder: 'reports.example.net',
-  trustedSigners: 'Trusted signers',
-  trustedSignersHelp:
-    'allowed_signers lines (as on the servers) of the people whose signed runbooks may require reporting. Only such a runbook can: other runbooks ask. Ed25519 and ECDSA P-256 keys are checked here.',
+  reportsTrustHelp:
+    'A runbook can require its runs to be reported (report-runs-required, report-runs-signed) only when it is verified as a whole: signed with manifest version 2 by a signer under Trusted signers (for a team library copy, its library’s or yours). Other runbooks ask.',
   trustedSignersPlaceholder: 'ops@example.net namespaces="md-runbook" ssh-ed25519 AAAA…',
   allowedRunnersHelp:
     'Servers that check signed run reports: add this line to their allowed runners file (the reports are signed with this app’s key):',

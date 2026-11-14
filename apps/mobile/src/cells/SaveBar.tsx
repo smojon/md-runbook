@@ -23,7 +23,7 @@ export function SaveBar({ runbook }: { runbook: Runbook }) {
     setBusy(false);
   };
 
-  if (!runbook.origin && !(canDownload && runbook.source === 'file')) {
+  if (!runbook.origin && !(canDownload && runbook.source !== 'bundled')) {
     return (
       <View style={styles.bar}>
         <Text testID="save-state" style={styles.state}>
