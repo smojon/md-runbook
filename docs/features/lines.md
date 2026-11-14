@@ -48,7 +48,7 @@ web-7c9d…     1/1     Running   0          3d
 ````
 
 To try it, open [`examples/sample.runbook.md`](../../examples/sample.runbook.md) (section 13) or
-run **md-runbook: Open Sample Runbook**.
+run **md-runbook: Open Feature Tour**.
 
 ## The line hover
 

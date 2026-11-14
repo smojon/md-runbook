@@ -19,7 +19,8 @@ action by the same groups, with a search field (Ctrl/⌘+K in a browser).
 | --- | --- | --- | --- |
 | **Open as Runbook** | right-click a `.md` in the Explorer; the notebook icon of a Markdown editor | You have a Markdown file with shell blocks and want to run them step by step, with the output kept in the file. | **Open a runbook…** on the start screen |
 | **Open as Markdown Text** | toolbar (Markdown icon) | You want to edit the raw file: fix a typo in prose, rearrange sections, review the diff. | — |
-| **Open Sample Runbook** | Help ▾ | You're new and want to try every feature on a safe file. Nothing is written until you save it. | on the start screen; ⋯ More → Help |
+| **Open Sample Runbook** | Help ▾ | You're new: a short deploy, six steps, under a minute, with the Steps view beside it (a step by hand, a confirmation, a smoke test that fails once, a teardown). Nothing is written until you save it. | on the start screen; ⋯ More → Help |
+| **Open Feature Tour** | Help ▾ | You want to try every feature, one section each, on a safe file. | Not in the app (its samples cover the same) |
 | **Get Started** | Help ▾ | A short tour of the main features, the first time you use it. | — |
 | **Cheat Sheet** | Help ▾ | This page, inside VS Code: "is there a button for…?" | ⋯ More → Help (opens this page) |
 | **Settings…** | Help ▾ | Every md-runbook setting in one list (where outputs go, the transcript, redaction, the shells, the assistant), with what each does. | **Hosts & Settings** on the start screen; ⋯ More → Help → Hosts & Settings |

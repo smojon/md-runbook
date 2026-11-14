@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **The first five minutes:** **Open Sample Runbook** opens a short deploy (six steps, under a
+  minute: a parameter, estimates, a confirmation, a step by hand, a smoke test that fails once to
+  show Retry and Resume, a teardown) with the Steps view; the old sample is **Open Feature Tour**.
+  A Markdown file that looks like a runbook offers **Open as Runbook** once (or **Always for
+  \*.runbook.md**). The walkthrough has a "Watch a run" step.
 - **Settings:** a **Progress and notifications** group (status bar, follow the run, learned
   estimates, notifications) and a **Reports** group, instead of both inside "Saved output" and
   "Running cells". The README starts with "try it in a minute" and what the run looks like.

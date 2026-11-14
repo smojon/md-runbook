@@ -19,6 +19,7 @@ import { registerWaiting } from './waiting';
 import { registerStepsView } from './stepsView';
 import { registerCurrentRunbook } from './currentRunbook';
 import { registerFailedActions } from './failedActions';
+import { registerOpenHint } from './openHint';
 import { registerNotifications } from './notify';
 import { registerSafety } from './safety';
 import { isTestMode, registerSecrets } from './secrets';
@@ -103,6 +104,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerWaiting(context);
   registerCurrentRunbook(context);
   registerFailedActions(context);
+  registerOpenHint(context);
   registerStepsView(context, pipeline, { confirmation: (cell, source) => safety.confirmation(cell, source), values: (nb, source) => secrets.values(nb, source) });
   registerNotifications(pipeline, context);
   registerLineRuns(context, controller, { safety, secrets });

@@ -72,8 +72,10 @@ md-runbook does **not** replace the normal Markdown editor. To open a file as a 
 - the command **md-runbook: Open as Runbook**.
 
 New to it? **Help → Welcome → Get started with Markdown Runbook** is a short walkthrough, and
-**md-runbook: Open Sample Runbook** opens a safe sample to try (untitled, so nothing is written
-until you save it).
+**md-runbook: Open Sample Runbook** opens a short, safe sample to try, and **Open Feature Tour**
+one section per feature (both untitled, so nothing is written until you save them). A Markdown
+file that looks like a runbook (`*.runbook.md`, saved outputs, or runbook front matter) offers
+**Open as Runbook** once when it opens in the text editor.
 
 To make it the default for some files, add for example
 `"workbench.editorAssociations": { "*.runbook.md": "md-runbook" }`.
@@ -89,7 +91,7 @@ opens a list of its actions (type to filter); the toolbar's **⋯** has the same
 | **Values** ▾ | Set Parameters, Set Inputs, Reset Inputs, Set / List / Delete Secret |
 | **Assistant** ▾ | Suggest Next Steps, Summarize Incident, Copy for AI, Paste AI Proposal, Check for Leaks, proposals, the API key |
 | **Share** ▾ | Export Report (HTML, PDF), Sign Runbook |
-| **Help** ▾ | Get Started, Cheat Sheet, Open Sample Runbook |
+| **Help** ▾ | Get Started, Cheat Sheet, Open Sample Runbook, Open Feature Tour |
 
 A cell's **⋯** menu has its own actions (mark the step done or skipped, clear outputs above or
 below, compare with the previous run, explain the output, approve or reject a proposal), and

@@ -463,6 +463,11 @@
         "category": "md-runbook"
       },
       {
+        "command": "mdRunbook.openFeatureTour",
+        "title": "Open Feature Tour",
+        "category": "md-runbook"
+      },
+      {
         "command": "mdRunbook.exportReportPdf",
         "title": "Export Report (PDF)",
         "category": "md-runbook",
@@ -1373,6 +1378,10 @@
           "group": "1_help@3"
         },
         {
+          "command": "mdRunbook.openFeatureTour",
+          "group": "1_help@4"
+        },
+        {
           "command": "mdRunbook.openSettings",
           "group": "2_settings@1"
         }
@@ -2181,6 +2190,18 @@
             "completionEvents": [
               "onCommand:notebook.cell.execute",
               "onCommand:notebook.execute"
+            ]
+          },
+          {
+            "id": "watch",
+            "title": "Watch a run: status bar, Steps view, Resume",
+            "description": "The Steps view lists every step by name, says what each will need before you run, and has Retry and Resume when one fails.\n[Show Steps](command:mdRunbook.showSteps)",
+            "media": {
+              "markdown": "walkthrough/watch.md"
+            },
+            "completionEvents": [
+              "onCommand:mdRunbook.showSteps",
+              "onView:mdRunbook.steps"
             ]
           },
           {
