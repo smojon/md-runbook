@@ -41,6 +41,12 @@ export interface Settings {
    * after Not now or a refused permission, and then never offered again (the setting turns them on).
    */
   notifyRuns?: boolean;
+  /**
+   * The team library's address (runbooks/library.ts), an https URL of a folder such as
+   * https://runbooks.example.net/runbooks/. Empty: on the web the app's own /runbooks/, on the
+   * phones no library.
+   */
+  libraryUrl: string;
 }
 
 const DEFAULTS: Settings = {
@@ -53,6 +59,7 @@ const DEFAULTS: Settings = {
   keyNeedsUser: false,
   allowNoConfirm: false,
   signerName: '',
+  libraryUrl: '',
 };
 
 /** Saved settings, older ones (only historySize) completed with the defaults. */
@@ -86,6 +93,7 @@ async function readSettings(): Promise<void> {
       keyNeedsUser: flag('keyNeedsUser'),
       allowNoConfirm: flag('allowNoConfirm'),
       signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
+      libraryUrl: typeof saved.libraryUrl === 'string' ? saved.libraryUrl : '',
       ...(typeof saved.notifyRuns === 'boolean' ? { notifyRuns: saved.notifyRuns } : {}),
     };
   }
@@ -120,6 +128,18 @@ export function setNotifyRuns(on: boolean): void {
 
 export function setSignerName(name: string): void {
   update({ signerName: name.trim() });
+}
+
+/** The team library's address as set ('' when not set: see Settings.libraryUrl). */
+export const libraryUrlSetting = (): string => settings.libraryUrl;
+
+/** Set (or with '' remove) the team library's address; runbooks/library.ts checks it first. */
+export function setLibraryUrl(url: string): void {
+  update({ libraryUrl: url.trim() });
+}
+
+export function useLibraryUrlSetting(): string {
+  return useSettings().libraryUrl;
 }
 
 export function useSignerName(): string {

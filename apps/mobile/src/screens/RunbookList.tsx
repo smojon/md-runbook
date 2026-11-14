@@ -1,5 +1,5 @@
 import { Link, router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { parse } from '@md-runbook/core';
 import { checkCore } from '../coreCheck';
@@ -7,10 +7,13 @@ import { t } from '../i18n';
 import { openRunbookFile } from '../runbooks/openFile';
 import { openRunbookLink } from '../runbooks/openLink';
 import { forgetOrigin } from '../runbooks/files';
+import { refreshLibrary, useLibrary } from '../runbooks/library';
 import { Runbook, hasUnsavedChanges, removeRunbook, useRunbooks } from '../runbooks/store';
+import { useLibraryUrlSetting } from '../settings/store';
 import { setPinned, usePins } from '../runbooks/pins';
 import { themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
+import { LibrarySection } from './LibrarySection';
 
 export function RunbookList() {
   const styles = useStyles();
@@ -22,10 +25,27 @@ export function RunbookList() {
     [runbooks],
   );
   const pins = usePins();
-  /** Pinned runbooks first (in the order pinned), then the others, each group a card under its heading. */
+  const library = useLibrary();
+  // The team library: read on start (and when its address changes), again on pull to refresh.
+  const libraryUrl = useLibraryUrlSetting();
+  useEffect(() => {
+    void refreshLibrary();
+  }, [libraryUrl]);
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = (): void => {
+    setRefreshing(true);
+    void refreshLibrary({ force: true }).finally(() => setRefreshing(false));
+  };
+  /**
+   * Pinned runbooks first (in the order pinned), then the others, each group a card under its
+   * heading. Copies of the team library's runbooks are under Team runbooks, unless the library no
+   * longer lists them (or can't be read).
+   */
   const rows = useMemo(() => {
+    const listed = new Set((library.library?.entries ?? []).map((e) => e.path));
+    const inLibrary = (r: Runbook): boolean => r.source === 'library' && r.library?.base === library.base && listed.has(r.library.path);
     const pinned = pins.flatMap((id) => items.filter((i) => i.id === id));
-    const rest = items.filter((i) => !pins.includes(i.id));
+    const rest = items.filter((i) => !pins.includes(i.id) && !inLibrary(i));
     const out: ListRow[] = [];
     const group = (title: string, list: typeof items, isPinned: boolean): void => {
       if (list.length === 0) return;
@@ -37,7 +57,7 @@ export function RunbookList() {
     group(t.pinnedSection, pinned, true);
     group(t.runbooksSection, rest, false);
     return out;
-  }, [items, pins]);
+  }, [items, pins, library]);
   const [error, setError] = useState<string | undefined>();
   /** Open a link…: the address being typed (undefined: the field is closed). */
   const [link, setLink] = useState<string | undefined>();
@@ -64,6 +84,8 @@ export function RunbookList() {
       contentInsetAdjustmentBehavior="automatic"
       data={rows}
       keyExtractor={(r) => r.key}
+      refreshing={refreshing}
+      onRefresh={onRefresh}
       ListHeaderComponent={
         <View style={styles.header}>
           <View style={styles.actions}>
@@ -132,11 +154,14 @@ export function RunbookList() {
         )
       }
       ListFooterComponent={
-        core.ok ? undefined : (
-          <Text testID="core-error" role="alert" style={[styles.status, { color: colors.error }]}>
-            {t.coreFailed(core.why)}
-          </Text>
-        )
+        <>
+          <LibrarySection />
+          {core.ok ? null : (
+            <Text testID="core-error" role="alert" style={[styles.status, { color: colors.error }]}>
+              {t.coreFailed(core.why)}
+            </Text>
+          )}
+        </>
       }
     />
   );
@@ -166,7 +191,7 @@ function RunbookRow({ item, first, last, pinned }: { item: Runbook & { cells: nu
               </Text>
               <Text style={styles.meta} numberOfLines={1}>
                 {t.commands(item.cells)}
-                {` · ${item.source === 'file' ? (item.fileName ?? t.fromFile) : t.example}`}
+                {` · ${item.source === 'bundled' ? t.example : item.source === 'library' ? t.fromLibrary(item.fileName ?? item.title) : (item.fileName ?? t.fromFile)}`}
                 {unsaved ? ` · ${t.unsaved}` : ''}
               </Text>
             </View>
@@ -186,7 +211,7 @@ function RunbookRow({ item, first, last, pinned }: { item: Runbook & { cells: nu
             <Codicon name={pinned ? 'pinned' : 'pin'} size={16} color={pinned ? colors.link : colors.muted} />
           </Pressable>
         ) : null}
-        {item.source === 'file' && !confirming ? (
+        {item.source !== 'bundled' && !confirming ? (
           <Pressable
             testID={`remove-${item.id}`}
             accessibilityRole="button"

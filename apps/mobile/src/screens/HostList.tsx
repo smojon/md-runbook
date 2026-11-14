@@ -28,6 +28,7 @@ import { QrView } from '../ui/QrView';
 import { qrMatrix } from '@md-runbook/core/qr';
 import { hostsJson, hostsLink } from '../hosts/share';
 import { shareHostsFile } from '../share/export';
+import { LibrarySettings } from './LibrarySettings';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
 export function HostList() {
@@ -102,6 +103,7 @@ export function HostList() {
           <HistorySection />
           <ColorSection />
           <LinksSection />
+          <LibrarySettings />
           <SafetySection />
           <NotificationsSection />
           {Platform.OS === 'web' ? <RelaySection /> : null}
