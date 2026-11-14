@@ -201,6 +201,16 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
       for (const name of twice) problems.push({ severity: 'warning', line: i, message: `front matter shell: "${name}" is ignored: one shell per kind of cell, the first one counts` });
     }
     problems.push(...lintFrontMatterEnv(lines, end, signedStatus(text) !== undefined));
+    // params: a default that isn't one of the choices its comment gives ("One of: a, b").
+    for (const p of fm.params) {
+      if (!p.choices || p.default === undefined || p.choices.includes(p.default)) continue;
+      const line = lines.findIndex((l, i) => i > 0 && i < end && new RegExp(`^\\s*-\\s+${p.name}\\b`).test(l));
+      problems.push({
+        severity: 'warning',
+        line: Math.max(0, line),
+        message: `front matter params: the default of ${p.name}, "${p.default}", is not one of its choices (${p.choices.join(', ')})`,
+      });
+    }
   }
   // kube-context-mode: pin sets KUBECONFIG for cells run on this machine; on an SSH host the context is only checked.
   const pin = fm?.kubeContextMode === 'pin';

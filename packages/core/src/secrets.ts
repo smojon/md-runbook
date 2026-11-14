@@ -85,6 +85,34 @@ export function rewriteRefs(source: string, shell: ShellKind): string {
 export interface RunbookParam {
   name: string;
   default?: string;
+  /** The item's ` # comment`, without its "One of: …" part. */
+  description?: string;
+  /** The values allowed, from a trailing "One of: a, b, c" in the comment. */
+  choices?: string[];
+}
+
+/**
+ * A parameter's comment as a description and choices: a trailing "One of: a, b, c" (any case, up
+ * to the end or a closing period, maybe in parentheses; `, or` and ` or ` also separate) gives
+ * the choices, the rest the description.
+ */
+export function paramComment(comment: string): { description?: string; choices?: string[] } {
+  const text = comment.trim();
+  // A period ends the list only before a space or the end, so `1.2` can be a choice.
+  const m = /(?:^|\s|\()one of:\s*((?:[^.()]|\.(?=\S))*?)\s*\)?\s*\.?\s*$/i.exec(text);
+  const choices = m
+    ? [
+        ...new Set(
+          m[1]!
+            .split(/\s*,\s*(?:or\s+)?|\s+or\s+/i)
+            .map((c) => unquote(c.trim()))
+            .filter((c) => c !== ''),
+        ),
+      ]
+    : [];
+  if (!m || choices.length === 0) return text !== '' ? { description: text } : {};
+  const description = text.slice(0, m.index).replace(/[\s,;:(-]+$/, '');
+  return { ...(description !== '' ? { description } : {}), choices };
 }
 
 function unquote(v: string): string {
@@ -133,12 +161,22 @@ export interface FrontMatter {
   env?: Record<string, string>;
 }
 
-/** A front matter value as written: quoted (`"a # b"`, `'it''s'`) or bare, a trailing ` # comment` dropped. */
-function scalar(raw: string): string {
+/**
+ * A front matter value as written, quoted (`"a # b"`, `'it''s'`) or bare, and its trailing
+ * ` # comment` (a `#` inside quotes, or with no space before it, is part of the value).
+ */
+function scalarAndComment(raw: string): { value: string; comment?: string } {
   const v = raw.trim();
-  const quoted = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s*(?:#.*)?$/.exec(v);
-  if (quoted) return unquote(quoted[1]!);
-  return v.startsWith('#') ? '' : v.replace(/\s+#.*$/, '');
+  const quoted = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s*(?:#(.*))?$/.exec(v);
+  if (quoted) return { value: unquote(quoted[1]!), ...(quoted[2] !== undefined ? { comment: quoted[2].trim() } : {}) };
+  if (v.startsWith('#')) return { value: '', comment: v.slice(1).trim() };
+  const c = /\s+#(.*)$/.exec(v);
+  return c ? { value: v.slice(0, c.index), comment: c[1]!.trim() } : { value: v };
+}
+
+/** A front matter value as written, a trailing ` # comment` dropped. */
+function scalar(raw: string): string {
+  return scalarAndComment(raw).value;
 }
 
 /** An `env:` entry: an indented `NAME: value` (`NAME:` alone is the empty string). */
@@ -256,15 +294,16 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
     }
     if (!inParams) continue;
     // `- NAME`, `- NAME: default`, each with an optional ` # comment` (the default as any scalar:
-    // quoted, or bare up to the comment).
-    const item = /^\s*-\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:(?:\s+(.*?)|\s*)|\s+#.*|)\s*$/.exec(line);
+    // quoted, or bare up to the comment). The comment is the description, and its trailing
+    // "One of: a, b" the choices (paramComment).
+    const item = /^\s*-\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:(?:\s+(.*?)|\s*)|\s+(#.*)|)\s*$/.exec(line);
     if (!item) continue;
     const name = item[1]!;
     if (params.some((p) => p.name === name)) continue;
-    const value = item[2] !== undefined ? scalar(item[2]) : '';
+    const { value, comment } = scalarAndComment(item[2] ?? item[3] ?? '');
     // `- B: ""` is an empty default (a quoted value, even empty); `- B:` alone is none.
     const quoted = /^["']/.test(item[2]?.trim() ?? '');
-    params.push(value !== '' || quoted ? { name, default: value } : { name });
+    params.push({ name, ...(value !== '' || quoted ? { default: value } : {}), ...(comment !== undefined ? paramComment(comment) : {}) });
   }
   return undefined; // never closed: not front matter
 }
