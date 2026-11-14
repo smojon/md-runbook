@@ -31,10 +31,11 @@ describe('toolbar lists', () => {
     const assistant = menuSections(pkg.contributes, 'mdRunbook.toolbar.assistant', (k) => ctx[k]);
     const ids = assistant.map((s) => s.map((c) => c.command));
     assert.deepEqual(ids, [
+      ['mdRunbook.ai.turnOn'],
       ['mdRunbook.copyForAi', 'mdRunbook.pasteAiProposal', 'mdRunbook.checkForLeaks'],
       ['mdRunbook.ai.setAnthropicKey', 'mdRunbook.ai.clearAnthropicKey'],
     ]);
-    assert.deepEqual(assistant[0]![0], { command: 'mdRunbook.copyForAi', title: 'Copy for AI', icon: 'sparkle' });
+    assert.deepEqual(assistant[1]![0], { command: 'mdRunbook.copyForAi', title: 'Copy for AI', icon: 'sparkle' });
     ctx['config.mdRunbook.ai.provider'] = 'anthropic';
     ctx['mdRunbook.hasProposals'] = true;
     assert.equal(menuSections(pkg.contributes, 'mdRunbook.toolbar.assistant', (k) => ctx[k]).length, 4);

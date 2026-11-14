@@ -21,7 +21,7 @@ phone's light or dark setting, with VS Code's default colours.
 ## One tap to run, everything else one tap away
 
 The top of a runbook has one button that does the obvious thing: **▶ Run all**, then
-**▶ Continue** after a stop (from the failed or pending step on), **↻ Run again** when every step
+**▶ Resume** after a stop (from the failed or pending step on), **↻ Run again** when every step
 is done, **■ Stop** while it runs; next to it how far the runbook is ("Step 4 of 7 · Push image"
 while it runs, "Step 4 of 7 failed", "Done · 7 of 7"), and by the blocks' estimates the share
 done, the time left and when it ends ("41% · 4 min left · ≈ 14:32"). It stops at the first
@@ -32,7 +32,7 @@ bar on top keeps the step and Stop in view.
 **Run all waits at a step done by hand**: a checklist item that isn't ticked (`- [ ]`) between
 the block before and the next one. A card under it asks **Done by hand?** with the item's text:
 **Done** ticks the box in the runbook and goes on, **Skip** goes on without ticking it, **Stop**
-ends the run there (Continue asks again). The run bar says the run waits for you, and **↓
+ends the run there (Resume asks again). The run bar says the run waits for you, and **↓
 Answer** goes to the card. Ticked items never wait, items after the last block are asked once
 the run gets there, and a single cell's ▷ never waits. `manual-steps: continue` in the front
 matter turns this off (the items are then reminders), as in VS Code ([syntax](syntax.md#steps-and-progress)).

@@ -391,7 +391,7 @@ Cells of one runbook never run concurrently.
 A task-list item is a **manual step**: done when it is ticked (`- [x]`), by a person in VS Code
 or the app, or by editing the file. Nothing runs it. **Run All waits at one that isn't ticked**
 (in VS Code and the app): **Done** ticks it, **Skip** goes on without ticking it, **Stop** ends
-the run there; Resume Run (the app: Continue) asks again. `manual-steps: continue` in the front
+the run there; Resume Run (the app: Resume) asks again. `manual-steps: continue` in the front
 matter makes Run All run past them, as reminders. `md-runbook run` lists the unticked ones of
 the steps it runs (see [the command line](features/cli.md#manual-steps)), and a run that keeps
 evidence (`evidence: true` or `incident:`) fails when one is not ticked, so a check nobody did

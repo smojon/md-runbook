@@ -333,6 +333,12 @@
         "icon": "$(sparkle)"
       },
       {
+        "command": "mdRunbook.ai.turnOn",
+        "title": "Turn On the Assistant…",
+        "category": "md-runbook",
+        "icon": "$(sparkle)"
+      },
+      {
         "command": "mdRunbook.ai.summarizeIncident",
         "title": "Summarize Incident",
         "category": "md-runbook",
@@ -1257,6 +1263,11 @@
         }
       ],
       "mdRunbook.toolbar.assistant": [
+        {
+          "command": "mdRunbook.ai.turnOn",
+          "group": "1_ask@0",
+          "when": "notebookType == md-runbook && config.mdRunbook.ai.provider == off"
+        },
         {
           "command": "mdRunbook.ai.suggestNextSteps",
           "group": "1_ask@1",

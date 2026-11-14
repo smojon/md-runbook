@@ -88,8 +88,8 @@ describe('setup and teardown in Run all', () => {
     expect(screen.queryByTestId('teardown-card')).toBeNull();
     expect(getRunbook(rb.id)!.text).not.toMatch(/rm lab\.up\n```\n<!-- md-runbook:output/);
 
-    // Continue, with only the teardown left, asks for it: offered again.
-    expect(screen.getByTestId('run-primary')).toHaveTextContent('▶ Continue');
+    // Resume, with only the teardown left, asks for it: offered again.
+    expect(screen.getByTestId('run-primary')).toHaveTextContent('▶ Resume');
     await act(async () => {
       fireEvent.press(screen.getByTestId('run-primary'));
     });

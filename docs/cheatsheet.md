@@ -10,7 +10,7 @@ are in its **⋯** menu, and each line of a code cell shows its actions when you
 know what you want, Ctrl+Shift+P (⌘⇧P) and type part of its name.
 
 In the app, the top of a runbook has one button that does the obvious thing (**▶ Run all**, then
-**▶ Continue** after a stop, **↻ Run again** when all is done), and **⋯ More** lists every other
+**▶ Resume** after a stop, **↻ Run again** when all is done), and **⋯ More** lists every other
 action by the same groups, with a search field (Ctrl/⌘+K in a browser).
 
 ## Opening a runbook
@@ -29,7 +29,7 @@ action by the same groups, with a search field (Ctrl/⌘+K in a browser).
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
 | **Run cell** / **Run All** / Run Above / Run Below | the cell's ▷, the toolbar's Run All (VS Code's own) | The normal way: run one step, or the whole procedure top to bottom. Run All stops at the first failure. | ▷ on each cell; **▶ Run all** at the top of the runbook; a cell's ⋯ → **Run from Here** |
-| **Resume Run** | toolbar, Run ▾ | A step failed, you fixed the cause: carry on from the failed step without re-running the ones that worked. | **▶ Continue** at the top after a stop; ⋯ More → Resume Run |
+| **Resume Run** | toolbar, Run ▾ | A step failed, you fixed the cause: carry on from the failed step without re-running the ones that worked. | **▶ Resume** at the top after a stop; ⋯ More → Resume Run |
 | **Run All as Copy** | Run ▾ | The runbook is a template (a release checklist, an incident procedure): every run goes into a new dated copy, so the original stays clean and each run has its own record. | ⋯ More → Run All as Copy (the copy opens and runs) |
 | **```runbook src=…```** (a runbook call) | a block in the runbook ([calls](features/calls.md)) | A procedure that is the same every time wraps a part that changes (the release's own file), or reuses another one (the way back): run that file as one step, with the parameters you pass, as a dated copy of its own. | ▷ on the call: the copy opens and runs there, and the result comes back to the call (a runbook opened from a link gets the file next to it; one opened from a file asks you to pick it once) |
 | **Run Runbook Call with a Fresh Copy**, **Open the Copy a Runbook Call Ran** | Run ▾ (for the selected call), or **Fresh copy** and **Open …** on the call cell's status bar | A call failed and running it again would continue its copy: start over in a new one instead. Or look at the steps and outputs of the copy it ran. | the call's ⋯ → Run with a Fresh Copy / Open the Copy It Ran |
@@ -97,6 +97,7 @@ secret values are redacted from the output.
 | **Check for Leaks** | Assistant ▾ | Before you share a runbook or its output: find tokens, keys and internal host names in it. | ⋯ More → Check for Leaks |
 | **Approve Proposed Cell** / **Reject Proposed Cell**, **Approve All Proposals**, **Go to Next Proposal** | cell ⋯ and the cell's status line / Assistant ▾ (when there are proposals) | Commands written by an assistant or a colleague never run until you read and approve them. | the cell’s ⋯ → Approve / Reject; ⋯ More → Assistant (the extension’s built-in policy, approvals kept on the device) |
 | **Set Anthropic API Key** / **Clear Anthropic API Key** | Assistant ▾ | Using Claude directly as the AI provider. | ⋯ More → Assistant |
+| **Turn On the Assistant…** | Assistant ▾ (while it's off) | The assistant is off by default and nothing is sent anywhere: choose VS Code's models (Copilot) or the Anthropic API to see Suggest Next Steps, Summarize Incident and Explain Output. | — (the app's assistant actions are always listed; each asks before sending) |
 
 ## Share
 

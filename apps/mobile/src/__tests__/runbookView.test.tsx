@@ -35,7 +35,7 @@ beforeEach(() => {
   script([{ stdout: 'ok\n' }]);
 });
 
-describe('Run all / Continue (the one-tap action)', () => {
+describe('Run all / Resume (the one-tap action)', () => {
   const text =
     '# Restart\n\n```bash\necho one\n```\n\n```bash proposed by=ai\necho proposal\n```\n\n```bash\necho two\n```\n\n```bash\necho three\n```\n';
   const outputOf = (rb: string, cell: number) => parse(getRunbook(rb)!.text).cells[cell]?.output?.attrs.exit;
@@ -87,7 +87,7 @@ describe('Run all / Continue (the one-tap action)', () => {
     expect(screen.getByTestId('steps-row-4')).toHaveProp('accessibilityLabel', 'Step 3: echo three, to do');
   });
 
-  it('stops at a failure; Continue resumes from the failed cell, Run again when all is done', async () => {
+  it('stops at a failure; Resume goes on from the failed cell, Run again when all is done', async () => {
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
     const plain = '# Restart\n\n```bash\necho one\n```\n\n```bash\necho two\n```\n\n```bash\necho three\n```\n';
     script([{ stdout: 'one\n' }, { stderr: 'boom\n', exitCode: 1 }]);
@@ -100,7 +100,7 @@ describe('Run all / Continue (the one-tap action)', () => {
     expect(mockConnection.calls).toHaveLength(2);
     expect(outputOf(r.id, 2)).toBe('1');
     expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 2 of 3 failed');
-    expect(screen.getByTestId('run-primary')).toHaveTextContent('▶ Continue');
+    expect(screen.getByTestId('run-primary')).toHaveTextContent('▶ Resume');
 
     script([{ stdout: 'two\n' }, { stdout: 'three\n' }]);
     await act(async () => {

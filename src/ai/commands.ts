@@ -331,6 +331,13 @@ export function registerAi(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('mdRunbook.ai.suggestNextSteps', suggestNextSteps),
     vscode.commands.registerCommand('mdRunbook.ai.summarizeIncident', summarizeIncident),
     vscode.commands.registerCommand('mdRunbook.ai.setAnthropicKey', setAnthropicKey),
+    // While the assistant is off its actions are hidden: this one shows instead, so it can be found.
+    vscode.commands.registerCommand('mdRunbook.ai.turnOn', async () => {
+      if (providerSetting() !== 'off') return void vscode.window.showInformationMessage('md-runbook: the assistant is on (mdRunbook.ai.provider).');
+      if (await resolveProvider()) {
+        void vscode.window.showInformationMessage('md-runbook: the assistant is on. Suggest Next Steps, Summarize Incident and Explain Output are in Assistant ▾ and the cell ⋯; each send is confirmed first.');
+      }
+    }),
     vscode.commands.registerCommand('mdRunbook.ai.clearAnthropicKey', clearAnthropicKey),
   );
   // Hidden, for integration tests only: canned answers instead of a real model (undefined = off).

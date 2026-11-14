@@ -98,7 +98,7 @@ it finishes (`✓ first`, `✗ second (1)`) and ends with the result:
 The md-runbook app (phone and web) runs a call the same way: ▷ on the call (or Run all reaching
 it) makes the copy, gives it the parameters the call passes, and opens it; its steps run there
 (the call's sections), and when that run ends the result comes back to the call's step, and the
-app goes back to the runbook that called it, where **Continue** goes on after the call. A call
+app goes back to the runbook that called it, where **Resume** goes on after the call. A call
 that failed continues in its copy when run again.
 
 Where the app finds the runbook a call names:

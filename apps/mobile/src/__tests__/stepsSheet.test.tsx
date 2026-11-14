@@ -258,7 +258,7 @@ describe('Run all at a step done by hand', () => {
     expect(screen.queryByTestId('manual-card')).toBeNull();
   });
 
-  it('Stop ends the run there; Continue asks again', async () => {
+  it('Stop ends the run there; Resume asks again', async () => {
     script([{ stdout: 'one\n' }, { stdout: 'two\n' }]);
     const rb = addRunbook('deploy-stop.md', DEPLOY);
     await run(rb.id);
@@ -267,10 +267,10 @@ describe('Run all at a step done by hand', () => {
       fireEvent.press(screen.getByTestId('manual-stop'));
     });
     expect(screen.queryByTestId('manual-card')).toBeNull();
-    expect(screen.getByTestId('run-notice')).toHaveTextContent('Run all stopped at a step done by hand: Continue asks again.');
+    expect(screen.getByTestId('run-notice')).toHaveTextContent('Run all stopped at a step done by hand: Resume asks again.');
     await act(async () => new Promise((r) => setTimeout(r, 50)));
     expect(sources()).toEqual(['echo one']);
-    expect(screen.getByTestId('run-primary')).toHaveTextContent('▶ Continue');
+    expect(screen.getByTestId('run-primary')).toHaveTextContent('▶ Resume');
     await act(async () => {
       fireEvent.press(screen.getByTestId('run-primary'));
     });

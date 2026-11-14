@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **"Resume" everywhere, and the assistant can be found when it's off.** The app's button after a
+  stop is **▶ Resume**, as VS Code's Resume Run ("Continue" stays for line stepping). In VS Code,
+  Assistant ▾ shows **Turn On the Assistant…** while the assistant is off (its other actions stay
+  hidden until then): it asks which provider to use, and nothing is sent before you choose.
 - **App: menus tidied after a review.** A cell's ⋯ has **Run from Here** (this step and every one
   after it) and, on a proposed cell, **Review Proposal…** first. ⋯ More → Values has **Set
   Inputs**: every `${input:…}` the runbook uses, set before a run. **Clear All Outputs** asks first
@@ -33,7 +37,7 @@
   px wide, beside the cells). On a tablet or a browser window 900 px or wider the list is a panel
   on the left instead of the rail, and the runbook keeps a readable width. Run all now stops at a
   checklist item that isn't ticked, with a **Done by hand?** card under it: **Done** ticks it,
-  **Skip** goes on, **Stop** ends the run (Continue asks again); `manual-steps: continue` in the
+  **Skip** goes on, **Stop** ends the run (Resume asks again); `manual-steps: continue` in the
   front matter turns that off.
 - **Fixes from a design review of the new progress.** The chapter name on the app's rail showed
   as an empty pill on iOS and Android. The app's run bar no longer shows a red Stop and "100% ·
