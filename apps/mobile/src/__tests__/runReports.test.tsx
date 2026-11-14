@@ -7,18 +7,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
 import { RUN_SIGNATURE_NAMESPACE, canonicalJson, runSummaryProblems } from '@md-runbook/core/runReport';
-import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
-import { verifySshsig } from '@md-runbook/core/sshsigVerify';
+import { SIGNATURE_NAMESPACE, buildManifest, formatManifest, unarmorSignature, withSignature } from '@md-runbook/core/signing';
 import { allowedSignersLine, generateKey, signSshsig } from '@md-runbook/ssh';
 import { addHost, resetHosts } from '../hosts/store';
 import { queuedReports, resetReports, retryReports } from '../reports/send';
-import { addRunbook, resetRunbooks } from '../runbooks/store';
+import { addLibraryCopy, addRunbook, resetRunbooks } from '../runbooks/store';
+import { libraryHash, loadLibraryMemory, resetLibrary } from '../runbooks/library';
 import { openRunbookLink } from '../runbooks/openLink';
 import { resetParamValues } from '../runbooks/params';
 import { formatRunbookLink } from '@md-runbook/core/runbookLink';
 import { RunbookView } from '../screens/RunbookView';
 import { resetSecretNames, storeSecret } from '../secrets/store';
-import { resetSettings, setReportAddresses, setTrustedSigners } from '../settings/store';
+import { resetSettings, setReportAddresses } from '../settings/store';
+import { addSigners, parseAllowedSigners, resetTrustedSigners, trustSigners } from '../signing/trust';
+import { parseSshsig, verifySshsig } from '../signing/verify';
+import { Buffer } from 'buffer';
 import { fakeConnection } from '../testing/fakeConnection';
 
 jest.mock('expo-router', () => ({
@@ -58,6 +61,8 @@ beforeEach(async () => {
   resetSecretNames();
   resetReports();
   resetParamValues();
+  resetTrustedSigners();
+  resetLibrary();
   mockPair = {};
   mockConnection = fakeConnection([
     { stdout: ' 10:00:00 up 1 day, secret-ish output\n', exitCode: 0 },
@@ -153,12 +158,20 @@ describe('asking before reporting a run', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const envelope = JSON.parse(sent()[0]!.body);
     expect(envelope.signature).toMatch(/^-----BEGIN SSH SIGNATURE-----/);
-    const runners = await allowedSignersLine(key, 'phone@example.net', RUN_SIGNATURE_NAMESPACE);
-    expect(await verifySshsig(canonicalJson(envelope.summary), envelope.signature, RUN_SIGNATURE_NAMESPACE, runners)).toBe(
-      'phone@example.net',
+    // Checked with the app's one verifier, in the run summaries' namespace, by the app's key.
+    const blob = unarmorSignature(envelope.signature);
+    const runners = parseAllowedSigners(
+      await allowedSignersLine(key, 'phone@example.net', RUN_SIGNATURE_NAMESPACE),
+      RUN_SIGNATURE_NAMESPACE,
     );
-    // Not a runbook signature: another namespace doesn't verify.
-    await expect(verifySshsig(canonicalJson(envelope.summary), envelope.signature, 'md-runbook', runners)).rejects.toThrow();
+    expect(Buffer.from(parseSshsig(blob)!.publicKey).toString('base64')).toBe(runners.signers[0]!.key);
+    expect(await verifySshsig(blob, canonicalJson(envelope.summary), RUN_SIGNATURE_NAMESPACE)).toBe(true);
+    // Not a runbook signature: in the runbooks' namespace it doesn't verify, nor as runners' line for runbooks.
+    expect(await verifySshsig(blob, canonicalJson(envelope.summary), SIGNATURE_NAMESPACE)).toBe(false);
+    expect(parseAllowedSigners(await allowedSignersLine(key, 'phone@example.net', RUN_SIGNATURE_NAMESPACE), SIGNATURE_NAMESPACE)).toEqual({
+      signers: [],
+      skipped: 1,
+    });
   });
 });
 
@@ -180,7 +193,8 @@ describe('a signed runbook that requires reporting', () => {
   });
 
   it("from a trusted signer: a notice before anything runs; Don't run runs nothing, Run runs and reports", async () => {
-    setTrustedSigners(await allowedSignersLine(signer, 'ops@example.net'));
+    // Added by you (Hosts & settings → Trusted signers): counts for every runbook.
+    expect(addSigners(await allowedSignersLine(signer, 'ops@example.net'))).toMatchObject({ added: 1 });
     const rb = addRunbook('check.md', text);
     await render(<RunbookView id={rb.id} />);
     await act(async () => {
@@ -214,6 +228,62 @@ describe('a signed runbook that requires reporting', () => {
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(screen.queryByTestId('report-required')).toBeNull();
+  });
+
+  const LIB = 'https://runbooks.example.net/team/';
+  const LINE = async (): Promise<string> => allowedSignersLine(signer, 'ops@example.net');
+  const copyOf = (t: string, base = LIB) =>
+    addLibraryCopy('check.md', t, { base, path: 'ops/check.md', hash: libraryHash(t), bare: libraryHash(t) });
+
+  it("a team library copy: its library's trusted keys count for it", async () => {
+    await loadLibraryMemory();
+    trustSigners(parseAllowedSigners(await LINE(), SIGNATURE_NAMESPACE).signers, LIB);
+    const rb = copyOf(text);
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('report-required')).toBeTruthy());
+    expect(mockConnection.calls).toHaveLength(0);
+  });
+
+  it("a key trusted from another library doesn't count for this library's copy", async () => {
+    await loadLibraryMemory();
+    trustSigners(parseAllowedSigners(await LINE(), SIGNATURE_NAMESPACE).signers, 'https://other.example.net/lib/');
+    const rb = copyOf(text);
+    await render(<RunbookView id={rb.id} />);
+    await runCell();
+    expect(screen.queryByTestId('report-required')).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('report-consent')).toBeTruthy());
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a library's key doesn't count for a runbook from elsewhere", async () => {
+    trustSigners(parseAllowedSigners(await LINE(), SIGNATURE_NAMESPACE).signers, LIB);
+    const rb = addRunbook('check.md', text);
+    await render(<RunbookView id={rb.id} />);
+    await runCell();
+    expect(screen.queryByTestId('report-required')).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('report-consent')).toBeTruthy());
+  });
+
+  it('signed before manifest version 2 (only its blocks): the front matter is not signed, so it asks', async () => {
+    const unsigned = runbookText([`report-runs: ${URL}`, 'report-runs-required: true']);
+    const built = buildManifest(unsigned, { name: 'ops/check', version: 1, scopes: [], patterns: {} }, { version: 1 });
+    if ('errors' in built) throw new Error(built.errors.join('; '));
+    const manifest = formatManifest(built.manifest);
+    const v1 = withSignature(unsigned, {
+      signer: 'ops@example.net',
+      signed: '2026-11-14',
+      manifest,
+      signature: await signSshsig(signer, manifest),
+    });
+    addSigners(await LINE());
+    const rb = addRunbook('check.md', v1);
+    await render(<RunbookView id={rb.id} />);
+    await runCell();
+    expect(screen.queryByTestId('report-required')).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('report-consent')).toBeTruthy());
   });
 
   it('from a signer the app does not trust: no notice, the run is asked about like any other', async () => {

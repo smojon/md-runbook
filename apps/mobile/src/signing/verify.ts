@@ -1,12 +1,14 @@
 /**
  * Checking an OpenSSH signature (PROTOCOL.sshsig, what `ssh-keygen -Y verify` checks) in the app,
- * with Web Crypto: the team library shows "Signed by …, verified" only when a runbook's signature
- * checks out against a key the user chose to trust (signing/trust.ts). Key types: ssh-ed25519,
+ * with Web Crypto: the app's one verifier. A runbook shows "Signed by …, verified", and its
+ * report-runs-required/-signed count, only when its signature checks out against a key the user
+ * chose to trust (signing/trust.ts). The namespace is always the caller's: `md-runbook` for
+ * runbooks, `md-runbook-run` for run summaries; a signature made in one never checks out in the
+ * other. Key types: ssh-ed25519,
  * ecdsa-sha2-nistp256/384/521, rsa-sha2-256/512 signatures of ssh-rsa keys, and security keys
  * and passkeys (sk-ssh-ed25519, sk-ecdsa-sha2-nistp256, webauthn-sk-ecdsa-sha2-nistp256: the
  * app's own passkey signatures). Anything else, or a runtime without Web Crypto, is "can't check".
  */
-import { SIGNATURE_NAMESPACE } from '@md-runbook/core/signing';
 import { sha256Bytes } from '@md-runbook/core/sha256';
 import { Buffer } from 'buffer';
 
@@ -143,18 +145,20 @@ function bitLength(v: Uint8Array): number {
 }
 
 /**
- * Whether `signature` (the SSHSIG blob, base64) is a valid signature of `message` in
- * md-runbook's namespace by the key it names. `false` for a bad, malformed or foreign signature;
- * throws CannotCheck only when it can't be checked here (no Web Crypto, a key type or algorithm
- * this device lacks: Web Crypto's NotSupportedError).
+ * Whether `signature` (the SSHSIG blob, base64) is a valid signature of `message` in `namespace`
+ * (no default: `md-runbook` for runbooks, `md-runbook-run` for run summaries) by the key it names.
+ * `false` for a bad, malformed or foreign signature, or one made in another namespace; throws
+ * CannotCheck only when it can't be checked here (no Web Crypto, a key type or algorithm this
+ * device lacks: Web Crypto's NotSupportedError).
  */
 export async function verifySshsig(
   b64: string,
   message: string,
+  namespace: string,
   subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle,
 ): Promise<boolean> {
   const s = parseSshsig(b64);
-  if (!s || s.namespace !== SIGNATURE_NAMESPACE) return false;
+  if (!namespace || !s || s.namespace !== namespace) return false;
   if (!subtle) throw new CannotCheck('no Web Crypto');
   const hashName = sshsigHash(s.hashAlgorithm);
   if (!hashName) return false;

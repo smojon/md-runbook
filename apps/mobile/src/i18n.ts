@@ -766,6 +766,8 @@ const en = {
   libraryUrlHttps: 'Only https addresses (http only for localhost).',
   libraryUrlUserinfo: 'Not a library address: no user name or password before the host (user@host).',
   libraryRedirected: (host: string) => `redirected to another server (${host}): not read`,
+  libraryNoFinalUrl: 'the answer did not say which server it came from: not read',
+  libraryTooLarge: 'not read: the library holds more text than the app reads from one library (20 MB)',
   libraryBadIndex: 'its index.json is not a list of runbooks',
   libraryUnreadable: 'This runbook could not be read from the library.',
   libraryChecking: 'Checking the signature…',
@@ -782,6 +784,8 @@ const en = {
             : s.kind === 'expired'
               ? `its signature expired on ${s.manifest?.expires ?? '?'}.`
               : 'this one changed since signing.'),
+  librarySignedOnlyOtherName: (name: string, path: string) =>
+    `Not openable: this library opens verified runbooks only, and this one is signed as ${name}, which is not the name of ${path}.`,
   librarySignedOnlyOlder: (version: number, seen: number) =>
     `Not openable: this library opens verified runbooks only, and this is version ${version}, older than version ${seen} seen before.`,
   libraryCopyRefused: (why: string) => `Your copy can't be opened from here. ${why}`,
@@ -811,6 +815,17 @@ const en = {
       ? '1 block that can run (PowerShell, cmd) is not covered by the signature: check it yourself before you run it.'
       : `${n} blocks that can run (PowerShell, cmd) are not covered by the signature: check them yourself before you run them.`,
   copyNotOpenable: (why: string) => `${why} Opening it from Team runbooks is refused.`,
+  copyNotRunnable: (why: string) =>
+    `${why} This copy of a team runbook doesn’t run until it is verified again: under Team runbooks, replace it with the library’s version.`,
+  sigCoversWhole: 'The signature covers the whole runbook: its text, front matter and every block (outputs and ticked boxes aside).',
+  signedTextChanged: 'The runbook changed since it was signed (its text, front matter or a block): the signature no longer vouches for it.',
+  libraryReplace: 'Replace with the library’s version',
+  libraryReplaceHelp: 'Your copy can’t be opened here any more',
+  libraryVersionsTitle: 'Versions seen',
+  libraryVersionsHelp:
+    'The app remembers the highest signed version of each runbook in this library, and refuses an older one (someone may have put back an old version). Forget them when a runbook was renumbered, or signed with too high a version by mistake.',
+  libraryVersionsForgotten: 'Forgotten: the next refresh remembers the versions it sees.',
+  libraryForgetVersions: 'Forget the versions seen',
   updateAvailable: 'Update available',
   updateGo: 'Update',
   updateAnyway: 'Update anyway',
@@ -862,11 +877,30 @@ const en = {
       : `${n} keys you trusted from this library are no longer in its allowed_signers: they no longer count here.`,
   untrustWithdrawn: 'Forget them',
   trustedSignersTitle: 'Trusted signers',
-  trustedSignersHelp: 'Keys you trusted from a team library’s allowed_signers. Each one counts only for the library it came from.',
-  trustedSignersNone: 'None yet: a team library offers its signers under Team runbooks.',
-  trustedFrom: (host: string) => `For ${host}`,
+  trustedSignersHelp:
+    'The keys whose signatures the app counts: a runbook is “verified” only when one of them signed it, and only such a runbook can require its runs to be reported. Keys trusted from a team library’s allowed_signers count only for the library they came from; keys added by you count for every runbook.',
+  trustedSignersNone:
+    'None yet: a team library offers its signers under Team runbooks, or add allowed_signers lines below. Until then, signatures are shown but not verified.',
+  trustedFrom: (host: string) => `From the team library at ${host}: counts for its runbooks only`,
+  trustedByYou: 'Added by you: counts for every runbook',
   trustedWithdrawn: 'No longer published by this library: it no longer counts.',
   trustedRemove: 'Remove',
+  trustedAddLabel: 'Add signers',
+  trustedAddHelp:
+    'allowed_signers lines (as on the servers, OpenSSH’s format), one per line. Ed25519, ECDSA, RSA and security-key signatures are checked on this device.',
+  trustedAddGo: 'Add',
+  trustedAdded: (added: number, already: number, skipped: number) =>
+    [
+      added === 1 ? '1 signer added.' : `${added} signers added.`,
+      ...(already > 0 ? [already === 1 ? '1 was there already.' : `${already} were there already.`] : []),
+      ...(skipped > 0
+        ? [
+            skipped === 1
+              ? '1 line not used (another namespace, a certificate authority, an unknown option or a damaged line).'
+              : `${skipped} lines not used (other namespaces, certificate authorities, unknown options or damaged lines).`,
+          ]
+        : []),
+    ].join(' '),
 
   // The team library's address (Hosts & settings) and links to it
   libraryTitle: 'Team library',
@@ -907,9 +941,8 @@ const en = {
   reportAddresses: 'Addresses allowed without asking',
   reportAddressesHelp: 'One per line: a host (reports.example.net), or an address (https://reports.example.net/runs).',
   reportAddressesPlaceholder: 'reports.example.net',
-  reportTrustedSigners: 'Trusted signers',
-  reportTrustedSignersHelp:
-    'allowed_signers lines (as on the servers) of the people whose signed runbooks may require reporting. Only such a runbook can: other runbooks ask. Ed25519 and ECDSA P-256 keys are checked here.',
+  reportsTrustHelp:
+    'A runbook can require its runs to be reported (report-runs-required, report-runs-signed) only when it is verified as a whole: signed with manifest version 2 by a signer under Trusted signers (for a team library copy, its library’s or yours). Other runbooks ask.',
   trustedSignersPlaceholder: 'ops@example.net namespaces="md-runbook" ssh-ed25519 AAAA…',
   allowedRunnersHelp:
     'Servers that check signed run reports: add this line to their allowed runners file (the reports are signed with this app’s key):',

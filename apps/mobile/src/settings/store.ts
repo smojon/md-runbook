@@ -3,9 +3,10 @@
  * (mdRunbook.output.historySize there, 0 by default: the file only has the latest run), and how
  * output is coloured (mdRunbook.output.colorLevels, stderrInRed and forceColor), and the name the
  * app signs runbooks with, and whether a runbook's `no-confirm` is honoured; and whether runs notify
- * (asked once, at the first Run all); and for run reports (`report-runs:`), the addresses allowed
- * without asking (the extension's mdRunbook.reports.allowedAddresses) and the signers whose
- * runbook signatures the app trusts (allowed_signers lines).
+ * (asked once, at the first Run all); the team library's address; and for run reports
+ * (`report-runs:`), the addresses allowed without asking (the extension's
+ * mdRunbook.reports.allowedAddresses). The signers the app trusts are one list of their own
+ * (signing/trust.ts), for the team library and run reports alike.
  */
 import { useSyncExternalStore } from 'react';
 import { getJson, setJson } from '../storage/kv';
@@ -54,11 +55,6 @@ export interface Settings {
    * address prefix), one per entry.
    */
   reportAddresses: string[];
-  /**
-   * allowed_signers lines (OpenSSH's format): the signers whose runbook signatures this app trusts.
-   * Only a runbook signed by one of them can make reporting required or signed (core reportPlan).
-   */
-  trustedSigners: string;
 }
 
 const DEFAULTS: Settings = {
@@ -73,7 +69,6 @@ const DEFAULTS: Settings = {
   signerName: '',
   libraryUrl: '',
   reportAddresses: [],
-  trustedSigners: '',
 };
 
 /** Saved settings, older ones (only historySize) completed with the defaults. */
@@ -110,7 +105,8 @@ async function readSettings(): Promise<void> {
       libraryUrl: typeof saved.libraryUrl === 'string' ? saved.libraryUrl : '',
       ...(typeof saved.notifyRuns === 'boolean' ? { notifyRuns: saved.notifyRuns } : {}),
       reportAddresses: Array.isArray(saved.reportAddresses) ? saved.reportAddresses.filter((a): a is string => typeof a === 'string') : [],
-      trustedSigners: typeof saved.trustedSigners === 'string' ? saved.trustedSigners : '',
+      // `trustedSigners` (allowed_signers text, before the one list) is moved by signing/trust.ts
+      // migrateTrustedSigners and left out here: the next save drops it.
     };
   }
   emit();
@@ -164,13 +160,6 @@ export const reportAddresses = (): readonly string[] => settings.reportAddresses
 /** From text: one address per line (or separated by commas or spaces). */
 export function setReportAddresses(text: string): void {
   update({ reportAddresses: [...new Set(text.split(/[\s,]+/).filter((a) => a !== ''))] });
-}
-
-/** The allowed_signers lines of the signers this app trusts. */
-export const trustedSigners = (): string => settings.trustedSigners;
-
-export function setTrustedSigners(text: string): void {
-  update({ trustedSigners: text.trim() });
 }
 
 export function useSignerName(): string {

@@ -16,7 +16,6 @@ import {
   setSignerName,
   setNotifyRuns,
   setReportAddresses,
-  setTrustedSigners,
   useHistorySize,
   useOutputSettings,
   useSignerName,
@@ -32,6 +31,7 @@ import { qrMatrix } from '@md-runbook/core/qr';
 import { hostsJson, hostsLink } from '../hosts/share';
 import { shareHostsFile } from '../share/export';
 import { LibrarySettings } from './LibrarySettings';
+import { TrustedSignersSection } from './TrustedSigners';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
 export function HostList() {
@@ -102,6 +102,7 @@ export function HostList() {
           )}
           <AppKeySection />
           <SigningSection />
+          <TrustedSignersSection />
           <ReportsSection />
           <SecretsSection />
           <HistorySection />
@@ -363,8 +364,9 @@ function SigningSection() {
 }
 
 /**
- * Run reports (report-runs: in a runbook): the addresses allowed without asking, the signers whose
- * signed runbooks may require reporting, and the answers given so far (each can be forgotten).
+ * Run reports (report-runs: in a runbook): the addresses allowed without asking, and the answers
+ * given so far (each can be forgotten). Which signed runbooks may require reporting is decided by
+ * the one list of trusted signers (TrustedSignersSection).
  */
 function ReportsSection() {
   const styles = useStyles();
@@ -374,7 +376,6 @@ function ReportsSection() {
   useEffect(() => void loadConsents(), []);
   // What is typed, until it is saved (on leaving the field).
   const [addresses, setAddresses] = useState<string | undefined>();
-  const [signers, setSigners] = useState<string | undefined>();
   return (
     <View testID="reports-setting" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.reportsTitle}</Text>
@@ -394,21 +395,9 @@ function ReportsSection() {
         autoCorrect={false}
         multiline
       />
-      <Text style={styles.label}>{t.reportTrustedSigners}</Text>
-      <Text style={styles.help}>{t.reportTrustedSignersHelp}</Text>
-      <TextInput
-        testID="report-trusted-signers"
-        style={[styles.input, styles.secretName]}
-        value={signers ?? s.trustedSigners}
-        onChangeText={setSigners}
-        onEndEditing={() => signers !== undefined && setTrustedSigners(signers)}
-        onBlur={() => signers !== undefined && setTrustedSigners(signers)}
-        placeholder={t.trustedSignersPlaceholder}
-        placeholderTextColor={colors.placeholder}
-        autoCapitalize="none"
-        autoCorrect={false}
-        multiline
-      />
+      <Text testID="reports-trust-help" style={styles.help}>
+        {t.reportsTrustHelp}
+      </Text>
       {Object.keys(consents).length > 0 ? <Text style={styles.label}>{t.reportAnswers}</Text> : null}
       {Object.entries(consents).map(([key, answer]) => (
         <View key={key} style={styles.secretRow}>

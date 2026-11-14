@@ -4,7 +4,6 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { webcrypto } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { lintRunbook } from '@md-runbook/core/lint';
 import { parseFrontMatter, reportAddressProblem } from '@md-runbook/core/secrets';
@@ -25,9 +24,7 @@ import {
   reportConsentText,
   reportPlan,
   runSummaryProblems,
-  trustedSignerOf,
 } from '@md-runbook/core/runReport';
-import { SubtleLike, parseAllowedSigners, verifySshsig } from '@md-runbook/core/sshsigVerify';
 import { signRunSummary, sshSign, sshVerify, trustedRunbookSigner, verifyRunEnvelope } from '@md-runbook/core/node';
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';
@@ -39,7 +36,6 @@ const signedWith = (text: string, version: 1 | 2 = 2, m: Partial<ManifestMeta> =
   if ('errors' in r) throw new Error(r.errors.join('; '));
   return withSignature(text, { signer: 'ops@example.net', signed: '2026-11-14', manifest: formatManifest(r.manifest), signature: SIG });
 };
-const subtle = webcrypto.subtle as unknown as SubtleLike;
 
 const REPORTING = '---\nreport-runs: https://reports.example.net/runs\nreport-runs-required: true\nreport-runs-signed: true\nreport-runs-token: ${secret:REPORT_TOKEN}\n---\n\n';
 const BODY = '# Restart the API\n\n- [ ] Tell the channel\n\n## Stop\n\n' + fence('bash', 'systemctl stop api') + '## Start\n\n' + fence('bash', 'systemctl start api --target ${param:TARGET}');
@@ -284,15 +280,12 @@ describe('run reports: signatures with real keys (ssh-keygen)', () => {
     const r = await verifyRunEnvelope(body, allowedRunners);
     assert.equal(r.signer, 'ana@example.net');
     assert.deepEqual(r.envelope.summary, summary);
-    // The same check in JavaScript (what a server without ssh-keygen, or the app, would use).
-    assert.equal(await verifySshsig(canonicalJson(summary), signature, RUN_SIGNATURE_NAMESPACE, fs.readFileSync(allowedRunners, 'utf8'), subtle), 'ana@example.net');
   });
 
   it('tampering: any change to the summary, or a key not allowed, fails', async () => {
     const signature = await signRunSummary(summary, runner, { interactive: false });
     const tampered = reportBody({ ...summary, green: !summary.green }, { signature });
     await assert.rejects(verifyRunEnvelope(tampered, allowedRunners), /does not verify/);
-    await assert.rejects(verifySshsig(canonicalJson({ ...summary, who: 'bob' }), signature, RUN_SIGNATURE_NAMESPACE, fs.readFileSync(allowedRunners, 'utf8'), subtle), /does not verify/);
     const stranger = await signRunSummary(summary, ecdsa, { interactive: false });
     await assert.rejects(verifyRunEnvelope(reportBody(summary, { signature: stranger }), allowedRunners));
     assert.match(JSON.stringify(parseRunEnvelope('{"summary":{},"signature":"x"}')), /signature: expected an SSH signature/);
@@ -303,14 +296,13 @@ describe('run reports: signatures with real keys (ssh-keygen)', () => {
     // Signed as a runbook (namespace md-runbook) by a key allowed for both: not a run summary.
     const asRunbook = armorSignature(await sshSign(message, runner, { interactive: false }));
     await assert.rejects(verifyRunEnvelope(reportBody(summary, { signature: asRunbook }), allowedRunners));
-    await assert.rejects(verifySshsig(message, asRunbook, RUN_SIGNATURE_NAMESPACE, fs.readFileSync(allowedSigners, 'utf8'), subtle), /not "md-runbook-run"/);
     // Signed as a run summary: not a runbook signature, even with allowed_signers allowing the key.
     const asRun = await signRunSummary(summary, runner, { interactive: false });
     const blob = asRun.replace(/-----(BEGIN|END) SSH SIGNATURE-----/g, '').replace(/\s+/g, '');
     await assert.rejects(sshVerify(message, blob, allowedSigners));
   });
 
-  it("a runbook's signer is trusted when allowed_signers has its key (ssh-keygen and JavaScript agree; Ed25519 and P-256)", async () => {
+  it("a runbook's signer is trusted when allowed_signers has its key (ssh-keygen; Ed25519 and P-256)", async () => {
     const text = REPORTING + BODY;
     const r = buildManifest(text, meta({ patterns: { TARGET: '[a-z-]+' } }));
     if ('errors' in r) throw new Error(r.errors.join('; '));
@@ -321,18 +313,10 @@ describe('run reports: signatures with real keys (ssh-keygen)', () => {
     ] as const) {
       const file = withSignature(text, { signer: who, signed: '2026-11-14', manifest, signature: await sshSign(manifest, key, { interactive: false }) });
       assert.equal(await trustedRunbookSigner(file, allowedSigners), who);
-      assert.equal(await trustedSignerOf(file, fs.readFileSync(allowedSigners, 'utf8'), subtle), who);
-      assert.equal(await trustedSignerOf(file, '', subtle), undefined);
-      assert.equal(reportPlan(file, await trustedSignerOf(file, fs.readFileSync(allowedSigners, 'utf8'), subtle))!.required, true);
+      assert.equal(reportPlan(file, await trustedRunbookSigner(file, allowedSigners))!.required, true);
       // Changed after signing: the signature still verifies, but the runbook isn't as signed.
       assert.equal(reportPlan(file.replace('Tell the channel', 'Tell nobody'), who)!.required, false);
     }
-    // valid-before in the past, or another namespace: not trusted.
-    const pub = fs.readFileSync(ecdsa + '.pub', 'utf8').trim().split(' ').slice(0, 2).join(' ');
-    const file = withSignature(text, { signer: 'ops@example.net', signed: '2026-11-14', manifest, signature: await sshSign(manifest, ecdsa, { interactive: false }) });
-    assert.equal(await trustedSignerOf(file, `ops@example.net namespaces="md-runbook",valid-before="20200101" ${pub}\n`, subtle), undefined);
-    assert.equal(await trustedSignerOf(file, `ops@example.net namespaces="other" ${pub}\n`, subtle), undefined);
-    assert.equal(await trustedSignerOf(file, `ops@example.net ${pub}\n`, subtle), 'ops@example.net');
-    assert.deepEqual(parseAllowedSigners(`# c\na@x,b@x namespaces="md-runbook",valid-after="20200101" ${pub} comment\n`)[0]!.principals, ['a@x', 'b@x']);
+    // The app's own checks (valid-before, namespaces, key types) are in apps/mobile runReports.test.tsx and librarySecurity.test.ts.
   });
 });

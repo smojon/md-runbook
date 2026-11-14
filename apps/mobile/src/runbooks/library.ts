@@ -7,8 +7,9 @@
  * The folder's files come from its `index.json` when there is one (titles, folders, signedOnly),
  * else from the server's listing of the folder (nginx `autoindex_format json`), subfolders as
  * groups. An `allowed_signers` file next to them is offered to trust, for this library only
- * (signing/trust.ts). The app remembers per library the highest signed version of each name
- * and whether it asked for signedOnly (LibraryMemory).
+ * (signing/trust.ts: the one list of trusted signers). The app remembers per library the highest
+ * signed version of each runbook (path and signed name) and whether it asked for signedOnly
+ * (LibraryMemory).
  *
  * Opening a library runbook makes the user's own copy (source 'library'): runs and outputs stay
  * theirs, the shared file is never changed. When the library's file changes, the copy offers
@@ -18,7 +19,8 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Platform } from 'react-native';
 import { DEFAULT_WRITE_OPTIONS, clearOutputBlocks, isCodeMeta, parse, serialize, toCellInputs } from '@md-runbook/core';
 import type { CellInput } from '@md-runbook/core';
-import { readSignature, signedStatus } from '@md-runbook/core/signing';
+import { SIGNATURE_NAMESPACE, readSignature, signedStatus } from '@md-runbook/core/signing';
+import { sha256Hex } from '@md-runbook/core/sha256';
 import { runbookTitle } from '@md-runbook/core/title';
 import { t } from '../i18n';
 import { loadSettings, libraryUrlSetting } from '../settings/store';
@@ -27,10 +29,15 @@ import {
   AllowedSigner,
   SignatureState,
   TrustedSigner,
+  addedByYou,
+  isAddedByYou,
   isExpired,
   isVerified,
+  keysFor,
+  keysId,
   loadTrustedSigners,
   manifestOf,
+  noteWithdrawn,
   parseAllowedSigners,
   sameSigner,
   shownName,
@@ -39,7 +46,6 @@ import {
   useTrustedSigners,
 } from '../signing/trust';
 import { parseSshsig } from '../signing/verify';
-import { textHash } from './origin';
 import {
   MAX_RUNBOOK_BYTES,
   Runbook,
@@ -56,6 +62,16 @@ export const MAX_LIBRARY_FILES = 200;
 const MAX_DEPTH = 3;
 /** A library fetched less than this long ago is not fetched again on start (pull to refresh does). */
 export const LIBRARY_CACHE_MS = 60_000;
+/** One read may take this long (a server that stalls doesn't hold up every later refresh). */
+export const LIBRARY_TIMEOUT_MS = 30_000;
+/** At most this much text is read from one library, all its runbooks together (characters). */
+export const MAX_LIBRARY_CHARS = 20 * 1024 * 1024;
+
+/**
+ * SHA-256 (hex) of a library text: what the signature states, copies and updates are keyed by.
+ * Never a short hash (runbooks/origin.ts textHash) that another text could be made to share.
+ */
+export const libraryHash = (text: string): string => sha256Hex(text);
 
 // ---- the address ----
 
@@ -265,6 +281,18 @@ const originOf = (url: string): string | undefined => {
   }
 };
 
+/**
+ * Why an answer can't be taken as the library's, or undefined: it came from another server; or,
+ * a 2xx answer, it doesn't say where it came from (no final address, or one that can't be read),
+ * so it could have been redirected anywhere.
+ */
+export function redirectedAway(status: number, finalUrl: string | undefined, asked: string): string | undefined {
+  const from = finalUrl ? originOf(finalUrl) : undefined;
+  if (from !== undefined && from === originOf(asked)) return undefined;
+  if (from !== undefined) return t.libraryRedirected(libraryHost(finalUrl!));
+  return status >= 200 && status < 300 ? t.libraryNoFinalUrl : undefined;
+}
+
 interface Got {
   status: number;
   text?: string;
@@ -307,6 +335,7 @@ function xhrGet(url: string, cap: number): Promise<Got & { url?: string }> {
     xhr.open('GET', url);
     xhr.setRequestHeader('Cache-Control', 'no-cache');
     xhr.responseType = 'text';
+    xhr.timeout = LIBRARY_TIMEOUT_MS;
     xhr.onprogress = (e: ProgressEvent) => {
       if (e.loaded > cap && !over) {
         over = true;
@@ -336,18 +365,24 @@ function xhrGet(url: string, cap: number): Promise<Got & { url?: string }> {
 async function getText(fetcher: typeof fetch | undefined, url: string): Promise<Got> {
   if (!fetcher && Platform.OS !== 'web' && typeof XMLHttpRequest !== 'undefined') {
     const got = await xhrGet(url, MAX_RUNBOOK_BYTES);
-    if (got.url && originOf(got.url) !== originOf(url)) return { status: 0, error: t.libraryRedirected(libraryHost(got.url)) };
+    const away = redirectedAway(got.status, got.url, url);
+    if (away) return { status: 0, error: away };
     return got.text === undefined ? { status: got.status } : { status: got.status, text: got.text };
   }
-  const res = await (fetcher ?? fetch)(url, { cache: 'no-cache' });
-  // Followed redirects stay on the library's server: the host the app names is the one that served the text.
-  if (typeof res.url === 'string' && res.url !== '' && originOf(res.url) !== originOf(url)) {
-    return { status: 0, error: t.libraryRedirected(libraryHost(res.url)) };
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), LIBRARY_TIMEOUT_MS);
+  try {
+    const res = await (fetcher ?? fetch)(url, { cache: 'no-cache', signal: abort.signal });
+    // Followed redirects stay on the library's server: the host the app names is the one that served the text.
+    const away = redirectedAway(res.status, typeof res.url === 'string' ? res.url : undefined, url);
+    if (away) return { status: 0, error: away };
+    if (!res.ok) return { status: res.status };
+    if (Number(res.headers?.get('content-length') ?? 0) > MAX_RUNBOOK_BYTES) return { status: 413 };
+    const text = await readCapped(res, MAX_RUNBOOK_BYTES);
+    return text === undefined ? { status: 413 } : { status: res.status, text };
+  } finally {
+    clearTimeout(timer);
   }
-  if (!res.ok) return { status: res.status };
-  if (Number(res.headers?.get('content-length') ?? 0) > MAX_RUNBOOK_BYTES) return { status: 413 };
-  const text = await readCapped(res, MAX_RUNBOOK_BYTES);
-  return text === undefined ? { status: 413 } : { status: res.status, text };
 }
 
 const jsonOf = (text: string | undefined): unknown => {
@@ -405,6 +440,8 @@ export async function fetchLibrary(base: string, fetcher?: typeof fetch): Promis
   // A few at a time: a library of a hundred runbooks is a hundred requests.
   const entries: LibraryEntry[] = new Array(index.files.length);
   let next = 0;
+  /** Text read so far: past MAX_LIBRARY_CHARS the rest is not read. */
+  let total = 0;
   const worker = async (): Promise<void> => {
     while (next < index.files.length) {
       const i = next++;
@@ -412,9 +449,16 @@ export async function fetchLibrary(base: string, fetcher?: typeof fetch): Promis
       const fileName = f.path.split('/').pop()!;
       const folder = f.folder ?? dirOf(f.path);
       const fallback = f.title ?? fileName.replace(/\.(md|markdown)$/i, '');
+      if (total > MAX_LIBRARY_CHARS) {
+        entries[i] = { path: f.path, fileName, folder, title: fallback, error: t.libraryTooLarge };
+        continue;
+      }
       try {
         const got = await getText(fetcher, urlOf(base, f.path));
-        if (got.text === undefined || looksHtml(got.text)) {
+        total += got.text?.length ?? 0;
+        if (got.text !== undefined && total > MAX_LIBRARY_CHARS) {
+          entries[i] = { path: f.path, fileName, folder, title: fallback, error: t.libraryTooLarge };
+        } else if (got.text === undefined || looksHtml(got.text)) {
           entries[i] = {
             path: f.path,
             fileName,
@@ -429,7 +473,7 @@ export async function fetchLibrary(base: string, fetcher?: typeof fetch): Promis
             folder,
             title: f.title ?? runbookTitle(got.text) ?? fallback,
             text: got.text,
-            hash: textHash(got.text),
+            hash: libraryHash(got.text),
           };
         }
       } catch (e) {
@@ -445,7 +489,7 @@ export async function fetchLibrary(base: string, fetcher?: typeof fetch): Promis
     try {
       const got = await getText(fetcher, base + 'allowed_signers');
       if (got.text !== undefined && !looksHtml(got.text)) {
-        const parsed = parseAllowedSigners(got.text);
+        const parsed = parseAllowedSigners(got.text, SIGNATURE_NAMESPACE);
         signers = { list: parsed.signers, skipped: parsed.skipped };
       } else if (!got.error && (got.status === 404 || got.status === 410 || got.text !== undefined)) {
         signers = { list: [], skipped: 0 };
@@ -460,9 +504,11 @@ export async function fetchLibrary(base: string, fetcher?: typeof fetch): Promis
 // ---- what the app remembers of each library: the highest signed versions, signedOnly ----
 
 /**
- * Per library address: the highest version of each signed name seen with a signature that
- * checked out (a lower one later is a downgrade, as the gate's version floors), and whether the
- * library ever asked for signedOnly (kept on when index.json stops asking, until the user agrees).
+ * Per library address: the highest version of each runbook seen with a signature that checked
+ * out, by its path and signed name together (floorKey: two files signed `restore` in different
+ * folders don't share a floor; a lower version later is a downgrade, as the gate's version
+ * floors), and whether the library ever asked for signedOnly (kept on when index.json stops
+ * asking, until the user agrees).
  */
 interface LibraryMemory {
   versions: Record<string, Record<string, number>>;
@@ -482,10 +528,13 @@ const isMemory = (v: unknown): v is LibraryMemory =>
 
 let memory: LibraryMemory = { versions: {}, signedOnly: [] };
 let memoryLoaded: Promise<void> | undefined;
+let memoryReady = false;
 
-function loadLibraryMemory(): Promise<void> {
+/** Read what the app remembers of the libraries (once; later calls wait for the same read). */
+export function loadLibraryMemory(): Promise<void> {
   return (memoryLoaded ??= (async () => {
     memory = (await getJson(MEMORY_KEY, isMemory)) ?? memory;
+    memoryReady = true;
   })());
 }
 
@@ -494,29 +543,59 @@ function saveMemory(next: LibraryMemory): void {
   void setJson(MEMORY_KEY, memory).catch(() => undefined);
 }
 
-/** The highest version of `name` seen from the library at `base`, with a signature that checked out. */
-export const highestVersion = (base: string, name: string): number | undefined => memory.versions[base]?.[name];
+/** A version floor's key: the file's path in the library and its signed name (a path holds no newline a name could fake). */
+const floorKey = (path: string, name: string): string => `${path}\n${name}`;
 
-/** Remember the versions of these states whose signatures checked out (a forged manifest can't raise the floor). */
-function noteVersions(base: string, states: readonly SignatureState[]): void {
+/** The highest version of the runbook at `path`, signed as `name`, seen from the library at `base` with a signature that checked out. */
+export const highestVersion = (base: string, path: string, name: string): number | undefined =>
+  memory.versions[base]?.[floorKey(path, name)];
+
+/** Remember the versions of these runbooks whose signatures checked out (a forged manifest can't raise the floor). */
+function noteVersions(base: string, seen: readonly { path: string; state: SignatureState }[]): void {
   const mine = { ...(memory.versions[base] ?? {}) };
   let changed = false;
-  for (const s of states) {
+  for (const { path, state: s } of seen) {
     if (!('verified' in s) || s.verified.length === 0) continue;
     const { name, version } = s.manifest;
-    if ((mine[name] ?? 0) < version) {
-      mine[name] = version;
+    const k = floorKey(path, name);
+    if ((mine[k] ?? 0) < version) {
+      mine[k] = version;
       changed = true;
     }
   }
   if (changed) saveMemory({ ...memory, versions: { ...memory.versions, [base]: mine } });
 }
 
-/** The higher version seen before, when the state's signed version is lower (a downgrade). */
-export function olderThanSeen(base: string, s: SignatureState | undefined): number | undefined {
+/** The higher version seen before at this path under this name, when the state's signed version is lower (a downgrade). */
+export function olderThanSeen(base: string, path: string, s: SignatureState | undefined): number | undefined {
   const m = manifestOf(s);
-  const seen = m ? highestVersion(base, m.name) : undefined;
+  const seen = m ? highestVersion(base, path, m.name) : undefined;
   return m && seen !== undefined && m.version < seen ? seen : undefined;
+}
+
+/** Whether versions are remembered for the library at `base` (Hosts & settings offers to forget them). */
+export const hasRememberedVersions = (base: string): boolean => Object.keys(memory.versions[base] ?? {}).length > 0;
+
+/**
+ * Forget the versions seen from the library at `base` (Hosts & settings → Team library): a
+ * version signed too high by mistake, or a runbook renumbered, no longer holds back the ones after.
+ */
+export function forgetVersions(base: string): void {
+  const versions = { ...memory.versions };
+  delete versions[base];
+  saveMemory({ ...memory, versions });
+  // The rows and banners say "older than … seen before" from these: shown again.
+  set({ ...state });
+}
+
+/**
+ * Whether the library at `base` opens verified runbooks only: as read now, else as remembered (a
+ * library that asked for it once, until the user agreed otherwise), also before it was read.
+ */
+export function signedOnlyPolicy(base: string): boolean {
+  const lib = state.library;
+  if (lib?.base === base) return lib.signedOnly;
+  return memory.signedOnly.includes(base);
 }
 
 /** The library with the signedOnly the app keeps: once a library asked for it, it stays on until the user agrees. */
@@ -550,6 +629,8 @@ export interface LibraryState {
    * that changed has no state until it is checked, never the previous version's.
    */
   signatures: Readonly<Record<string, SignatureState>>;
+  /** The keys the signatures were checked with (keysId of libraryKeys): with other keys, none is kept. */
+  keys?: string;
   fetchedAt?: number;
   /** A read is going on (the refresh button spins). */
   busy?: boolean;
@@ -582,29 +663,51 @@ export const signatureOf = (s: LibraryState, entry: LibraryEntry): SignatureStat
   entry.hash === undefined ? undefined : s.signatures[entry.hash];
 
 /**
- * The keys a library's runbooks are checked against: those trusted from that library, and of
- * those, only the ones it still publishes (a key the team removed from allowed_signers stops
- * counting) once its allowed_signers was read.
+ * The keys a library's runbooks are checked against (keysFor the library): those trusted from that
+ * library and not withdrawn, and those added by you. Once its allowed_signers was read, of the
+ * library's own only those it still publishes, with the options it publishes them with (a
+ * valid-before= or namespaces= the team added to retire a key is followed).
  */
 export function libraryKeys(lib: Pick<Library, 'base' | 'signers'>): TrustedSigner[] {
-  const mine = trustedFor(lib.base);
+  const own = keysFor(lib.base).filter((k) => !isAddedByYou(k));
   const published = lib.signers?.list;
-  return published ? mine.filter((k) => published.some((s) => sameSigner(s, k))) : mine;
+  const fromLibrary = published
+    ? own.flatMap((k) => {
+        const line = published.find((s) => sameSigner(s, k));
+        return line ? [{ ...line, from: k.from }] : [];
+      })
+    : own;
+  return [...fromLibrary, ...addedByYou()];
 }
 
-/** Keys trusted from this library that its allowed_signers no longer lists (offered to remove). */
+/**
+ * The keys a runbook is checked against: for a library copy, its library's (libraryKeys, as read
+ * now when that library is the one read); for any other runbook, the keys added by you.
+ */
+export function runbookKeys(r: Pick<Runbook, 'source' | 'library'> | undefined): TrustedSigner[] {
+  const base = r?.source === 'library' ? r.library?.base : undefined;
+  if (base === undefined) return keysFor(undefined);
+  return libraryKeys(state.library?.base === base ? state.library : { base });
+}
+
+/** Keys trusted from this library that its allowed_signers no longer lists, or didn't when last read (offered to remove). */
 export function withdrawnKeys(lib: Pick<Library, 'base' | 'signers'>): TrustedSigner[] {
   const published = lib.signers?.list;
-  return published ? trustedFor(lib.base).filter((k) => !published.some((s) => sameSigner(s, k))) : [];
+  return published
+    ? trustedFor(lib.base).filter((k) => !published.some((s) => sameSigner(s, k)))
+    : trustedFor(lib.base).filter((k) => k.withdrawn);
 }
 
-async function signaturesOf(library: Library): Promise<Record<string, SignatureState>> {
+async function signaturesOf(library: Library): Promise<{ signatures: Record<string, SignatureState>; keys: string }> {
   const out: Record<string, SignatureState> = {};
   const keys = libraryKeys(library);
   for (const e of library.entries)
     if (e.text !== undefined && e.hash !== undefined && !out[e.hash]) out[e.hash] = await signatureState(e.text, keys);
-  noteVersions(library.base, Object.values(out));
-  return out;
+  noteVersions(
+    library.base,
+    library.entries.flatMap((e) => (e.hash !== undefined && out[e.hash] ? [{ path: e.path, state: out[e.hash]! }] : [])),
+  );
+  return { signatures: out, keys: keysId(keys) };
 }
 
 /** The states still true for the new texts: those of texts that didn't change. */
@@ -635,15 +738,20 @@ export function refreshLibrary(opts: { force?: boolean; fetcher?: typeof fetch }
     if (got.kind === 'error')
       return set({ ...state, base, status: state.library ? 'ready' : 'error', error: got.message, fetchedAt: Date.now(), busy: false });
     const library = withPolicy(got.library);
+    // Keys it no longer publishes are remembered as withdrawn: they don't count while it can't be read either.
+    if (library.signers) noteWithdrawn(base, library.signers.list);
+    const keys = keysId(libraryKeys(library));
     set({
       base,
       status: 'ready',
       library,
-      signatures: state.base === base ? keptFor(state.signatures, library) : {},
+      // States checked with other keys (a key trusted, withdrawn or retired since) are not shown meanwhile.
+      signatures: state.base === base && state.keys === keys ? keptFor(state.signatures, library) : {},
+      keys,
       fetchedAt: Date.now(),
     });
-    const signatures = await signaturesOf(library);
-    if (state.library === library) set({ ...state, signatures });
+    const checked = await signaturesOf(library);
+    if (state.library === library) set({ ...state, ...checked });
   })().finally(() => {
     if (inFlight?.done === done) inFlight = undefined;
   });
@@ -655,8 +763,8 @@ export function refreshLibrary(opts: { force?: boolean; fetcher?: typeof fetch }
 export async function recheckSignatures(): Promise<void> {
   const lib = state.library;
   if (!lib) return;
-  const signatures = await signaturesOf(lib);
-  if (state.library === lib) set({ ...state, signatures });
+  const checked = await signaturesOf(lib);
+  if (state.library === lib) set({ ...state, ...checked });
 }
 
 /** Tests. */
@@ -664,21 +772,31 @@ export function resetLibrary(): void {
   inFlight = undefined;
   memory = { versions: {}, signedOnly: [] };
   memoryLoaded = undefined;
+  memoryReady = false;
   set(IDLE);
 }
 
 // ---- what a library runbook's signature says, for the list and the opened copy ----
 
-/** The file name without `.md`, as signPlan makes a default signed name (only the last part is compared). */
+/** The path as a signed name is written: without `.md`, each part as signPlan makes a name of a file name, lower case. */
 const nameOfPath = (path: string): string =>
-  (path.split('/').pop() ?? '')
+  path
     .replace(/(\.runbook)?\.(md|markdown)$/i, '')
-    .replace(/[^A-Za-z0-9._/-]+/g, '-')
-    .replace(/^[^A-Za-z0-9]+/, '')
+    .split('/')
+    .map((part) => part.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[^A-Za-z0-9]+/, ''))
+    .join('/')
     .toLowerCase();
 
-/** Whether the signed name fits the file it is served as (its last part is the file's name): `ops/restart` fits `restart.md`. */
-export const nameFitsPath = (name: string, path: string): boolean => (name.split('/').pop() ?? '').toLowerCase() === nameOfPath(path);
+/**
+ * Whether the signed name fits the file it is served as: the whole name is the end of the path,
+ * part by part. `restart` fits `restart.md` and `ops/restart.md`; `ops/restart` fits
+ * `ops/restart.md` and `x/ops/restart.md`, not `restart.md` or `staging/restart.md`.
+ */
+export function nameFitsPath(name: string, path: string): boolean {
+  const n = name.toLowerCase();
+  const p = nameOfPath(path);
+  return n !== '' && (p === n || p.endsWith('/' + n));
+}
 
 export interface SignedFacts {
   name: string;
@@ -695,7 +813,7 @@ export interface SignedFacts {
 export function signedFacts(base: string, path: string, s: SignatureState | undefined, now = Date.now()): SignedFacts | undefined {
   const m = manifestOf(s);
   if (!m) return undefined;
-  const older = olderThanSeen(base, s);
+  const older = olderThanSeen(base, path, s);
   return {
     name: m.name,
     version: m.version,
@@ -716,7 +834,7 @@ export const looksVerified = (s: SignatureState | undefined, facts: SignedFacts 
  */
 export function useLibraryCopyState(
   copy: Runbook | undefined,
-): { base: string; state: SignatureState; facts: SignedFacts | undefined; signedOnly: boolean } | undefined {
+): { base: string; path: string; state: SignatureState; facts: SignedFacts | undefined; signedOnly: boolean } | undefined {
   const lib = useLibrary();
   const trusted = useTrustedSigners();
   const ref = copy?.source === 'library' ? copy.library : undefined;
@@ -726,34 +844,91 @@ export function useLibraryCopyState(
   useEffect(() => {
     if (!ref || text === undefined) return;
     let live = true;
-    void signatureState(text, libraryKeys(library ?? { base: ref.base })).then((state) => {
+    void (async () => {
+      // Opened straight from the main list: the keys and the remembered policy first.
+      await Promise.all([loadTrustedSigners(), loadLibraryMemory()]);
+      const state = await signatureState(text, libraryKeys(library ?? { base: ref.base }));
       if (live) setGot({ text, state });
-    });
+    })();
     return () => {
       live = false;
     };
   }, [ref, text, library, trusted]);
   if (!ref || !got || got.text !== text) return undefined;
-  return { base: ref.base, state: got.state, facts: signedFacts(ref.base, ref.path, got.state), signedOnly: library?.signedOnly ?? false };
+  return {
+    base: ref.base,
+    path: ref.path,
+    state: got.state,
+    facts: signedFacts(ref.base, ref.path, got.state),
+    signedOnly: signedOnlyPolicy(ref.base),
+  };
+}
+
+/**
+ * A runbook that is not a library copy (a file, a link, one made here): its signature against the
+ * keys added by you, when you added any (they count for every runbook); undefined otherwise, or
+ * until it is checked.
+ */
+export function useOwnKeysState(r: Runbook | undefined): SignatureState | undefined {
+  const trusted = useTrustedSigners();
+  const text = r && r.source !== 'library' && readSignature(r.text) ? r.text : undefined;
+  const [got, setGot] = useState<{ text: string; keys: string; state: SignatureState } | undefined>();
+  const keys = keysFor(undefined);
+  const id = keysId(keys);
+  useEffect(() => {
+    if (text === undefined) return;
+    let live = true;
+    void (async () => {
+      await loadTrustedSigners();
+      const mine = keysFor(undefined);
+      if (mine.length === 0) return;
+      const state = await signatureState(text, mine);
+      if (live) setGot({ text, keys: keysId(mine), state });
+    })();
+    return () => {
+      live = false;
+    };
+  }, [text, trusted]);
+  return got && text !== undefined && got.text === text && got.keys === id && keys.length > 0 ? got.state : undefined;
+}
+
+/**
+ * Why a library copy must not run, or undefined: its library opens verified runbooks only (as
+ * read now, or as remembered when it isn't read: signedOnlyPolicy) and the copy isn't one any
+ * more: unsigned, edited, expired, older than a version seen, under another name, or its key
+ * withdrawn. The runbook screen asks this wherever it asks whether a cell can run, so a copy
+ * opened from the main list (pinned, no longer listed, the library unreadable or not read yet)
+ * is held to the same rule as one opened from Team runbooks.
+ */
+export function copyRefusal(copy: Runbook | undefined, copyState: ReturnType<typeof useLibraryCopyState>): string | undefined {
+  const ref = copy?.source === 'library' ? copy.library : undefined;
+  if (!copy || !ref) return undefined;
+  // What the app remembers isn't read yet (the first moments after a start): not run until it is.
+  if (!memoryReady) return t.libraryChecking;
+  if (!signedOnlyPolicy(ref.base)) return undefined;
+  const state = copyState && copyState.base === ref.base ? copyState.state : undefined;
+  return openableReason({ base: ref.base, signedOnly: true }, { text: copy.text, path: ref.path }, state);
 }
 
 // ---- copies ----
 
 /**
- * Whether the entry can be opened. A signedOnly library opens verified runbooks only: signed by a
- * signer trusted for this library, every runnable block covered, not expired, not older than a
- * version seen before.
+ * Whether the entry (or a copy of it: its text, the library's path) can be opened. A signedOnly
+ * library opens verified runbooks only: signed by a signer trusted for this library (or added by
+ * you), every runnable block covered, not expired, signed under a name that fits its path
+ * (nameFitsPath), not older than a version of it seen before.
  */
 export function openableReason(
   lib: Pick<Library, 'base' | 'signedOnly'>,
-  entry: Pick<LibraryEntry, 'text' | 'error'>,
+  entry: Pick<LibraryEntry, 'text' | 'error' | 'path'>,
   sig: SignatureState | undefined,
 ): string | undefined {
   if (entry.text === undefined) return entry.error ?? t.libraryUnreadable;
   if (!lib.signedOnly) return undefined;
   if (!sig) return t.libraryChecking;
   if (!isVerified(sig)) return t.librarySignedOnly(sig);
-  const older = olderThanSeen(lib.base, sig);
+  if (!nameFitsPath(sig.manifest.name, entry.path)) return t.librarySignedOnlyOtherName(sig.manifest.name, entry.path);
+  const older = olderThanSeen(lib.base, entry.path, sig);
   return older !== undefined ? t.librarySignedOnlyOlder(sig.manifest.version, older) : undefined;
 }
 
@@ -761,7 +936,7 @@ const refOf = (base: string, entry: LibraryEntry & { text: string; hash: string 
   base,
   path: entry.path,
   hash: entry.hash,
-  bare: textHash(clearOutputBlocks(entry.text)),
+  bare: libraryHash(clearOutputBlocks(entry.text)),
 });
 
 /**
@@ -777,7 +952,9 @@ export async function openLibraryRunbook(
   const keys = libraryKeys(lib);
   const mine = libraryCopy(lib.base, entry.path);
   if (mine) {
-    const why = lib.signedOnly ? openableReason(lib, mine, await signatureState(mine.text, keys)) : undefined;
+    const why = lib.signedOnly
+      ? openableReason(lib, { text: mine.text, path: entry.path }, await signatureState(mine.text, keys))
+      : undefined;
     return why ? { kind: 'error', message: t.libraryCopyRefused(why) } : { kind: 'opened', runbook: mine };
   }
   if (entry.text === undefined || entry.hash === undefined) return { kind: 'error', message: entry.error ?? t.libraryUnreadable };
@@ -844,7 +1021,7 @@ const signerKey = (sig: string): string | undefined => {
 /**
  * What Update would do to the copy: the new text and what the user should know first. `next`:
  * the new text's state, computed for this update (never one kept from an earlier read);
- * `seen`: the highest version of its signed name seen from the library (highestVersion).
+ * `seen`: the highest version of this path under its signed name seen from the library (highestVersion).
  */
 export function planUpdate(
   copy: Runbook,
@@ -855,7 +1032,7 @@ export function planUpdate(
   const { text, lost } = carryOutputs(copy.text, entry.text);
   const warnings: UpdateWarning[] = [];
   if (lost > 0) warnings.push({ kind: 'lost-outputs', count: lost });
-  if (copy.library && textHash(clearOutputBlocks(copy.text)) !== copy.library.bare) warnings.push({ kind: 'own-edits' });
+  if (copy.library && libraryHash(clearOutputBlocks(copy.text)) !== copy.library.bare) warnings.push({ kind: 'own-edits' });
   const was = readSignature(copy.text);
   const now = readSignature(entry.text);
   if (was) {

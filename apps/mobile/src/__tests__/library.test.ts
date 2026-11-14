@@ -1,3 +1,4 @@
+import { SIGNATURE_NAMESPACE } from '@md-runbook/core/signing';
 import { createHash, generateKeyPairSync, sign as nodeSign } from 'node:crypto';
 import { Buffer } from 'buffer';
 import { allowedSignersLine, generateKey } from '@md-runbook/ssh';
@@ -18,6 +19,7 @@ import {
   planUpdate,
   refreshLibrary,
   resetLibrary,
+  libraryHash,
 } from '../runbooks/library';
 import type { Library, LibraryEntry } from '../runbooks/library';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -34,7 +36,6 @@ import {
   untrustSigners,
 } from '../signing/trust';
 import { keyFingerprint, verifySshsig } from '../signing/verify';
-import { textHash } from '../runbooks/origin';
 
 const BASE = 'https://app.example.net/runbooks/';
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n';
@@ -48,8 +49,8 @@ function server(files: Record<string, string>, seen: string[] = []): typeof fetc
     seen.push(url);
     const body = files[url];
     return body === undefined
-      ? { ok: false, status: 404, headers: new Headers(), text: async () => 'not found' }
-      : { ok: true, status: 200, headers: new Headers(), text: async () => body };
+      ? { ok: false, status: 404, url, headers: new Headers(), text: async () => 'not found' }
+      : { ok: true, status: 200, url, headers: new Headers(), text: async () => body };
   }) as unknown as typeof fetch;
 }
 
@@ -130,7 +131,7 @@ describe('reading a library', () => {
     );
     expect(got.kind).toBe('ok');
     if (got.kind !== 'ok') return;
-    expect(got.library.entries.map((e) => [e.path, e.folder, e.title, e.hash === textHash(e.text ?? '')])).toEqual([
+    expect(got.library.entries.map((e) => [e.path, e.folder, e.title, e.hash === libraryHash(e.text ?? '')])).toEqual([
       ['hello.md', '', 'hello', true],
       ['ops/db restore.md', 'ops', 'Restart the API', true],
     ]);
@@ -188,7 +189,7 @@ describe('copies of library runbooks', () => {
     folder: 'ops',
     title: 'Restart',
     text,
-    hash: textHash(text),
+    hash: libraryHash(text),
   });
 
   it('opening makes the user’s copy; opening again opens it; the library file is not touched', async () => {
@@ -288,7 +289,7 @@ describe('signatures in the library', () => {
       `ca@example.net cert-authority ${(await line(bob, 'x')).split(' ').slice(2).join(' ')}`,
       'broken line',
     ].join('\n');
-    const { signers, skipped } = parseAllowedSigners(text);
+    const { signers, skipped } = parseAllowedSigners(text, SIGNATURE_NAMESPACE);
     expect(skipped).toBe(3);
     expect(signers.map((s) => [s.principals, s.keyType, s.namespaces])).toEqual([
       [['alice@example.net'], 'ecdsa-sha2-nistp256', ['md-runbook']],
@@ -306,7 +307,7 @@ describe('signatures in the library', () => {
       signers: ['alice@example.net'],
       manifest: { name: 'restart', version: 1, scopes: [] },
     });
-    const list = parseAllowedSigners(await line(alice, 'alice@example.net')).signers;
+    const list = parseAllowedSigners(await line(alice, 'alice@example.net'), SIGNATURE_NAMESPACE).signers;
     trustSigners(list, BASE);
     expect(trustedSigners()).toHaveLength(1);
     expect(await signatureState(text, keys())).toEqual({
@@ -314,7 +315,7 @@ describe('signatures in the library', () => {
       signers: ['alice@example.net'],
       manifest: { name: 'restart', version: 1, scopes: [] },
       verified: [{ name: 'alice@example.net', fingerprint: list[0]!.fingerprint, wildcard: false }],
-      coverage: 'partial',
+      coverage: 'whole',
     });
     // Bob signs as alice: the name is trusted, the key is not hers.
     const forged = await signed(RUNBOOK, 'alice@example.net', bob);
@@ -332,7 +333,10 @@ describe('signatures in the library', () => {
   it('a trusted key past its valid-before is not trusted any more', async () => {
     const text = await signed(RUNBOOK, 'alice@example.net', alice);
     const [name, , ...key] = (await line(alice, 'alice@example.net')).split(' ');
-    const list = parseAllowedSigners(`${name} namespaces="md-runbook",valid-before="20200101" ${key.join(' ')}`).signers;
+    const list = parseAllowedSigners(
+      `${name} namespaces="md-runbook",valid-before="20200101" ${key.join(' ')}`,
+      SIGNATURE_NAMESPACE,
+    ).signers;
     expect(list).toHaveLength(1);
     expect(await signatureState(text, list)).toMatchObject({ kind: 'unknown' });
   });
@@ -363,23 +367,30 @@ describe('signatures in the library', () => {
     const ed = generateKeyPairSync('ed25519');
     const edPub = Buffer.concat([str('ssh-ed25519'), str(Buffer.from(ed.publicKey.export({ format: 'jwk' }).x!, 'base64url'))]);
     const edSig = sshsig(edPub, 'ssh-ed25519', (d) => Buffer.from(nodeSign(null, d, ed.privateKey)), 'manifest');
-    expect(await verifySshsig(edSig, 'manifest')).toBe(true);
-    expect(await verifySshsig(edSig, 'other manifest')).toBe(false);
+    expect(await verifySshsig(edSig, 'manifest', SIGNATURE_NAMESPACE)).toBe(true);
+    expect(await verifySshsig(edSig, 'other manifest', SIGNATURE_NAMESPACE)).toBe(false);
     expect(keyFingerprint(edPub)).toMatch(/^SHA256:[A-Za-z0-9+/]{43}$/);
 
     const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const jwk = rsa.publicKey.export({ format: 'jwk' });
     const rsaPub = Buffer.concat([str('ssh-rsa'), mpint(Buffer.from(jwk.e!, 'base64url')), mpint(Buffer.from(jwk.n!, 'base64url'))]);
     const rsaSig = sshsig(rsaPub, 'rsa-sha2-512', (d) => Buffer.from(nodeSign('sha512', d, rsa.privateKey)), 'manifest');
-    expect(await verifySshsig(rsaSig, 'manifest')).toBe(true);
-    expect(await verifySshsig(rsaSig, 'manifest!')).toBe(false);
+    expect(await verifySshsig(rsaSig, 'manifest', SIGNATURE_NAMESPACE)).toBe(true);
+    expect(await verifySshsig(rsaSig, 'manifest!', SIGNATURE_NAMESPACE)).toBe(false);
     // A damaged blob is no signature.
-    expect(await verifySshsig(rsaSig.replace(/^U/, 'A'), 'manifest')).toBe(false);
+    expect(await verifySshsig(rsaSig.replace(/^U/, 'A'), 'manifest', SIGNATURE_NAMESPACE)).toBe(false);
   });
 
   it('signedOnly: unsigned and changed runbooks are listed as not openable, with why; signed ones open', async () => {
     const good = await signed(RUNBOOK, 'alice@example.net', alice);
-    const e = (text: string, path: string): LibraryEntry => ({ path, fileName: path, folder: '', title: path, text, hash: textHash(text) });
+    const e = (text: string, path: string): LibraryEntry => ({
+      path,
+      fileName: path,
+      folder: '',
+      title: path,
+      text,
+      hash: libraryHash(text),
+    });
     const library: Library = { base: BASE, signedOnly: true, entries: [] };
     expect(openableReason(library, e(RUNBOOK, 'u.md'), { kind: 'unsigned' })).toMatch(/not signed/);
     expect(openableReason(library, e(good, 'c.md'), { kind: 'changed', signers: ['alice@example.net'] })).toMatch(/changed since signing/);
@@ -394,26 +405,29 @@ describe('signatures in the library', () => {
       kind: 'error',
       message: expect.stringMatching(/not signed/),
     });
-    expect(await openLibraryRunbook(library, e(good, 's.md'))).toMatchObject({ kind: 'error', message: expect.stringMatching(/trust/) });
-    trustSigners(parseAllowedSigners(await allowedSignersLine(alice, 'alice@example.net')).signers, BASE);
-    expect(await openLibraryRunbook(library, e(good, 's.md'))).toMatchObject({ kind: 'opened' });
+    expect(await openLibraryRunbook(library, e(good, 'restart.md'))).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/trust/),
+    });
+    trustSigners(parseAllowedSigners(await allowedSignersLine(alice, 'alice@example.net'), SIGNATURE_NAMESPACE).signers, BASE);
+    expect(await openLibraryRunbook(library, e(good, 'restart.md'))).toMatchObject({ kind: 'opened' });
   });
 
   it('an update that drops the signature, or comes from another signer, is flagged', async () => {
     const v1 = await signed(RUNBOOK, 'alice@example.net', alice);
-    const e1: LibraryEntry = { path: 'r.md', fileName: 'r.md', folder: '', title: 'r', text: v1, hash: textHash(v1) };
+    const e1: LibraryEntry = { path: 'r.md', fileName: 'r.md', folder: '', title: 'r', text: v1, hash: libraryHash(v1) };
     const r = await openLibraryRunbook({ base: BASE, signedOnly: false, entries: [e1] }, e1);
     if (r.kind !== 'opened') throw new Error(r.message);
     const copy = getRunbook(r.runbook.id)!;
     const unsignedV2 = RUNBOOK + '\nv2\n';
-    expect(planUpdate(copy, { ...e1, text: unsignedV2, hash: textHash(unsignedV2) }, { kind: 'unsigned' }).warnings).toEqual([
+    expect(planUpdate(copy, { ...e1, text: unsignedV2, hash: libraryHash(unsignedV2) }, { kind: 'unsigned' }).warnings).toEqual([
       { kind: 'signature-dropped', was: 'alice@example.net' },
     ]);
     const bobV2 = await signed(RUNBOOK + '\nv2\n', 'bob@example.net', bob);
     expect(
       planUpdate(
         copy,
-        { ...e1, text: bobV2, hash: textHash(bobV2) },
+        { ...e1, text: bobV2, hash: libraryHash(bobV2) },
         { kind: 'unknown', signers: ['bob@example.net'], manifest: { name: 'restart', version: 1, scopes: [] } },
       ).warnings,
     ).toEqual([{ kind: 'other-signer', was: 'alice@example.net', now: 'bob@example.net' }]);
@@ -422,7 +436,7 @@ describe('signatures in the library', () => {
     expect(
       planUpdate(
         copy,
-        { ...e1, text: sameName, hash: textHash(sameName) },
+        { ...e1, text: sameName, hash: libraryHash(sameName) },
         { kind: 'unknown', signers: ['alice@example.net'], manifest: { name: 'restart', version: 1, scopes: [] } },
       ).warnings,
     ).toEqual([{ kind: 'other-signer', was: 'alice@example.net', now: 'alice@example.net' }]);
@@ -431,7 +445,7 @@ describe('signatures in the library', () => {
     expect(
       planUpdate(
         copy,
-        { ...e1, text: aliceV2, hash: textHash(aliceV2) },
+        { ...e1, text: aliceV2, hash: libraryHash(aliceV2) },
         { kind: 'unknown', signers: ['alice@example.net'], manifest: { name: 'restart', version: 1, scopes: [] } },
       ).warnings,
     ).toEqual([]);
@@ -451,7 +465,7 @@ describe('the library the list shows', () => {
     );
     await refreshLibrary({ fetcher });
     expect(libraryState()).toMatchObject({ base: 'https://runbooks.example.net/team/', status: 'ready' });
-    expect(libraryState().signatures).toEqual({ [textHash(RUNBOOK)]: { kind: 'unsigned' } });
+    expect(libraryState().signatures).toEqual({ [libraryHash(RUNBOOK)]: { kind: 'unsigned' } });
     const n = seen.length;
     await refreshLibrary({ fetcher });
     expect(seen.length).toBe(n);

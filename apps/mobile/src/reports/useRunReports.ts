@@ -62,7 +62,7 @@ export function useRunReports(
     const text = getRunbook(r.id)?.text;
     if (text === undefined) return;
     void (async () => {
-      const report = await planOf(text);
+      const report = await planOf(text, r.id);
       const summary =
         report &&
         appRunSummary({

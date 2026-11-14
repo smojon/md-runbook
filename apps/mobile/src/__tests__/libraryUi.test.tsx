@@ -1,17 +1,31 @@
+import { SIGNATURE_NAMESPACE, buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { router } from 'expo-router';
-import { allowedSignersLine, generateKey } from '@md-runbook/ssh';
-import { defaultLibraryBase, libraryBase, libraryLink, libraryLinkUrl, refreshLibrary, resetLibrary } from '../runbooks/library';
+import { allowedSignersLine, generateKey, signSshsig } from '@md-runbook/ssh';
+import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
+import {
+  defaultLibraryBase,
+  libraryBase,
+  libraryLink,
+  libraryLinkUrl,
+  libraryState,
+  openLibraryRunbook,
+  refreshLibrary,
+  resetLibrary,
+} from '../runbooks/library';
+import { addHost, resetHosts } from '../hosts/store';
+import { openTransport } from '../ssh/transport';
 import { getRunbook, resetRunbooks, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { libraryUrlSetting, resetSettings, setLibraryUrl } from '../settings/store';
-import { parseAllowedSigners, resetTrustedSigners, trustSigners, trustedSigners } from '../signing/trust';
+import { addSigners, parseAllowedSigners, resetTrustedSigners, trustSigners, trustedSigners } from '../signing/trust';
 import { signPlan, signRunbook } from '../signing/sign';
 import { LibraryAdd } from '../screens/LibraryAdd';
 import { LibrarySection } from '../screens/LibrarySection';
 import { LibrarySettings } from '../screens/LibrarySettings';
 import { RunbookView } from '../screens/RunbookView';
+import { TrustedSignersSection } from '../screens/TrustedSigners';
 
 jest.mock('expo-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
@@ -28,8 +42,8 @@ function server(files: Record<string, string>): typeof fetch {
   return (async (url: string) => {
     const body = files[url];
     return body === undefined
-      ? { ok: false, status: 404, headers: new Headers(), text: async () => '' }
-      : { ok: true, status: 200, headers: new Headers(), text: async () => body };
+      ? { ok: false, status: 404, url, headers: new Headers(), text: async () => '' }
+      : { ok: true, status: 200, url, headers: new Headers(), text: async () => body };
   }) as unknown as typeof fetch;
 }
 
@@ -42,6 +56,14 @@ async function type(id: string, text: string): Promise<void> {
   await act(async () => {
     fireEvent.changeText(screen.getByTestId(id), text);
   });
+}
+
+/** Signed as before manifest version 2: the bash blocks only ("these steps verified"). */
+async function signedV1(text: string, key: KeyPair, signer = 'alice@example.net'): Promise<string> {
+  const built = buildManifest(text, { name: 'restart', version: 1, scopes: [], patterns: {} }, { version: 1 });
+  if ('errors' in built) throw new Error(built.errors.join('; '));
+  const manifest = formatManifest(built.manifest);
+  return withSignature(text, { signer, signed: '2026-11-14', manifest, signature: await signSshsig(key, manifest) });
 }
 
 /** The copies, as the list sees them (re-renders the section when they change). */
@@ -207,7 +229,7 @@ describe('Team runbooks on the list', () => {
     await press('library-trust-go');
     expect(trustedSigners()).toEqual([expect.objectContaining({ from: LIB })]);
     await waitFor(() =>
-      expect(screen.getByTestId('library-sig-ops/restart.md')).toHaveTextContent('Signed by alice@example.net: these steps verified'),
+      expect(screen.getByTestId('library-sig-ops/restart.md')).toHaveTextContent('Signed by alice@example.net: whole runbook verified'),
     );
 
     // Opening makes the user's copy.
@@ -248,8 +270,9 @@ describe('Team runbooks on the list', () => {
     expect(screen.getByTestId('library-sig-ops/restart.md')).toHaveTextContent(/Newer version skipped/);
   });
 
-  it('the opened copy says what the list says: a PowerShell block outside the signature is partly signed in both', async () => {
+  it('the opened copy says what the list says: a PowerShell block outside a version 1 signature is partly signed in both', async () => {
     const alice = await generateKey();
+    const v1 = await signedV1(RUNBOOK, alice);
     const signedR = await signRunbook(
       RUNBOOK,
       signPlan(RUNBOOK, 'restart.md'),
@@ -258,14 +281,14 @@ describe('Team runbooks on the list', () => {
       alice,
     );
     if (!signedR.ok) throw new Error('not signed');
-    const withPwsh = signedR.text.replace(
-      '# Restart the API\n',
-      '# Restart the API\n\n```powershell\nRemove-Item -Recurse C:\\data\n```\n',
-    );
+    const pwsh = (s: string): string =>
+      s.replace('# Restart the API\n', '# Restart the API\n\n```powershell\nRemove-Item -Recurse C:\\data\n```\n');
     const files: Record<string, string> = {
-      [LIB + 'index.json']: JSON.stringify(['restart.md', 'db.md']),
-      [LIB + 'restart.md']: withPwsh,
-      [LIB + 'db.md']: signedR.text,
+      [LIB + 'index.json']: JSON.stringify(['restart.md', 'db.md', 'whole.md']),
+      [LIB + 'restart.md']: pwsh(v1),
+      [LIB + 'db.md']: v1,
+      // Signed as a whole (version 2), then a PowerShell block added: changed, not partly signed.
+      [LIB + 'whole.md']: pwsh(signedR.text),
       [LIB + 'allowed_signers']: (await allowedSignersLine(alice, 'alice@example.net')) + '\n',
     };
     setLibraryUrl(LIB);
@@ -279,6 +302,7 @@ describe('Team runbooks on the list', () => {
     // The same signed runbook served as db.md: verified, but under another name than the file's.
     await waitFor(() => expect(screen.getByTestId('library-sig-db.md')).toHaveTextContent(/these steps verified/));
     expect(screen.getByTestId('library-facts-db.md')).toHaveTextContent(/^restart, version 1 · signed under another name/);
+    expect(screen.getByTestId('library-sig-whole.md')).toHaveTextContent('Changed since signing');
     await press('library-restart.md');
     await waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
     const id = (jest.mocked(router.push).mock.calls[0]![0] as unknown as { params: { id: string } }).params.id;
@@ -290,6 +314,107 @@ describe('Team runbooks on the list', () => {
     expect(screen.getByTestId('signed-outside')).toHaveTextContent(/PowerShell, cmd/);
     expect(screen.queryByTestId('signed-claim')).toBeNull();
   });
+
+  it('a whole runbook signature: the banner says the whole runbook is verified, and nothing is partly signed', async () => {
+    const alice = await generateKey();
+    const text = RUNBOOK + '\n```powershell\nRestart-Service api\n```\n';
+    const signedR = await signRunbook(
+      text,
+      signPlan(text, 'restart.md'),
+      { name: 'restart', scopes: '', days: '', patterns: {} },
+      'alice@example.net',
+      alice,
+    );
+    if (!signedR.ok) throw new Error('not signed');
+    const files: Record<string, string> = {
+      [LIB + 'index.json']: JSON.stringify({ signedOnly: true, runbooks: ['restart.md'] }),
+      [LIB + 'restart.md']: signedR.text,
+      [LIB + 'allowed_signers']: (await allowedSignersLine(alice, 'alice@example.net')) + '\n',
+    };
+    setLibraryUrl(LIB);
+    await refreshLibrary({ fetcher: server(files) });
+    trustSigners(libraryState().library!.signers!.list, LIB);
+    await refreshLibrary({ fetcher: server(files), force: true });
+    const opened = await openLibraryRunbook(libraryState().library!, libraryState().library!.entries[0]!);
+    if (opened.kind !== 'opened') throw new Error(opened.message);
+    await render(<RunbookView id={opened.runbook.id} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('signed-library-state')).toHaveTextContent('Signed by alice@example.net: whole runbook verified'),
+    );
+    expect(screen.getByTestId('signed-coverage')).toHaveTextContent(/covers the whole runbook/);
+    expect(screen.queryByTestId('signed-outside')).toBeNull();
+    expect(screen.queryByTestId('signed-library-refused')).toBeNull();
+  });
+});
+
+describe('a copy the library refuses (signedOnly): the recheck of 2026-11-14', () => {
+  async function libraryWithCopy(): Promise<{ id: string; files: Record<string, string>; alice: KeyPair; text: string }> {
+    const alice = await generateKey();
+    const signedR = await signRunbook(
+      RUNBOOK,
+      signPlan(RUNBOOK, 'restart.md'),
+      { name: 'restart', scopes: '', days: '', patterns: {} },
+      'alice@example.net',
+      alice,
+    );
+    if (!signedR.ok) throw new Error('not signed');
+    const files: Record<string, string> = {
+      [LIB + 'index.json']: JSON.stringify({ signedOnly: true, runbooks: ['restart.md'] }),
+      [LIB + 'restart.md']: signedR.text,
+      [LIB + 'allowed_signers']: (await allowedSignersLine(alice, 'alice@example.net')) + '\n',
+    };
+    setLibraryUrl(LIB);
+    await refreshLibrary({ fetcher: server(files) });
+    trustSigners(libraryState().library!.signers!.list, LIB);
+    await refreshLibrary({ fetcher: server(files), force: true });
+    const opened = await openLibraryRunbook(libraryState().library!, libraryState().library!.entries[0]!);
+    if (opened.kind !== 'opened') throw new Error(opened.message);
+    return { id: opened.runbook.id, files, alice, text: signedR.text };
+  }
+
+  it('D: an edited copy runs nothing from the runbook screen and says why, also before the library is read', async () => {
+    resetHosts();
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const { id } = await libraryWithCopy();
+    // The user's own edit of a signed block: not verified any more.
+    updateRunbookText(id, getRunbook(id)!.text.replace('systemctl restart api', 'systemctl restart api --now'));
+    // A start offline: the library isn't read; the policy the app remembers holds.
+    resetLibrary();
+    await render(<RunbookView id={id} />);
+    await waitFor(() => expect(screen.getByTestId('signed-library-refused')).toHaveTextContent(/changed since signing/));
+    await press('cell-1-run');
+    expect(screen.getByTestId('run-notice')).toHaveTextContent(/doesn’t run until it is verified again/);
+    expect(openTransport).not.toHaveBeenCalled();
+  });
+
+  it('D: an unsigned copy gets a banner too', async () => {
+    const { id } = await libraryWithCopy();
+    updateRunbookText(id, RUNBOOK);
+    await render(<RunbookView id={id} />);
+    await waitFor(() => expect(screen.getByTestId('library-refused')).toHaveTextContent(/not signed/));
+  });
+
+  it('E: a refused copy is offered the library’s version, and Keep mine is not offered', async () => {
+    const { id, files, alice } = await libraryWithCopy();
+    // The library moves to version 2: the floor is 2, the copy (version 1) is refused from now on.
+    const resigned = await signRunbook(
+      RUNBOOK + '\nv2\n',
+      { ...signPlan(RUNBOOK + '\nv2\n', 'restart.md'), version: 2 },
+      { name: 'restart', scopes: '', days: '', patterns: {} },
+      'alice@example.net',
+      alice,
+    );
+    if (!resigned.ok) throw new Error('not signed');
+    files[LIB + 'restart.md'] = resigned.text;
+    await render(<Copies />);
+    await act(() => refreshLibrary({ fetcher: server(files), force: true }));
+    await waitFor(() => expect(screen.getByTestId('library-copy-why-restart.md')).toHaveTextContent(/older than version 2/));
+    expect(screen.getByTestId('library-replace-restart.md')).toHaveTextContent('Replace with the library’s version');
+    expect(screen.queryByTestId('library-keep-restart.md')).toBeNull();
+    await press('library-replace-restart.md');
+    await waitFor(() => expect(getRunbook(id)?.text).toBe(resigned.text));
+    await waitFor(() => expect(screen.queryByTestId('library-copy-why-restart.md')).toBeNull());
+  });
 });
 
 describe('Hosts & settings → Trusted signers', () => {
@@ -298,23 +423,64 @@ describe('Hosts & settings → Trusted signers', () => {
     const bob = await generateKey();
     const aliceLine = await allowedSignersLine(alice, 'alice@example.net');
     const bobLine = (await allowedSignersLine(bob, 'x')).replace(/^x /, '*@example.net ');
-    trustSigners(parseAllowedSigners(aliceLine + '\n' + bobLine).signers, LIB);
-    trustSigners(parseAllowedSigners(aliceLine).signers, 'https://other.example.net/lib/');
+    trustSigners(parseAllowedSigners(aliceLine + '\n' + bobLine, SIGNATURE_NAMESPACE).signers, LIB);
+    trustSigners(parseAllowedSigners(aliceLine, SIGNATURE_NAMESPACE).signers, 'https://other.example.net/lib/');
     // The library now publishes alice only.
     setLibraryUrl(LIB);
     await refreshLibrary({ fetcher: server({ [LIB + 'index.json']: '[]', [LIB + 'allowed_signers']: aliceLine + '\n' }) });
-    await render(<LibrarySettings />);
-    expect(screen.getByTestId('trusted-signers')).toHaveTextContent(/Each one counts only for the library it came from/);
+    // One list for the team library and run reports alike, each entry with where it counts.
+    addSigners((await allowedSignersLine(bob, 'ops@example.net')) + '\n');
+    await render(<TrustedSignersSection />);
+    expect(screen.getByTestId('trusted-signers')).toHaveTextContent(/count only for the library they came from/);
     expect(screen.getByTestId('trusted-signer-0')).toHaveTextContent(/alice@example.net/);
-    expect(screen.getByTestId('trusted-signer-0')).toHaveTextContent(/For runbooks\.example\.net/);
+    expect(screen.getByTestId('trusted-signer-scope-0')).toHaveTextContent(/From the team library at runbooks\.example\.net/);
     expect(screen.getByTestId('trusted-signer-1')).toHaveTextContent(/any name ending in @example.net/);
     expect(screen.getByTestId('trusted-signer-withdrawn-1')).toHaveTextContent(/No longer published/);
     expect(screen.queryByTestId('trusted-signer-withdrawn-0')).toBeNull();
-    expect(screen.getByTestId('trusted-signer-2')).toHaveTextContent(/For other\.example\.net/);
+    expect(screen.getByTestId('trusted-signer-scope-2')).toHaveTextContent(/other\.example\.net/);
+    expect(screen.getByTestId('trusted-signer-scope-3')).toHaveTextContent(/Added by you: counts for every runbook/);
     await press('trusted-signer-remove-1');
     expect(trustedSigners().map((s) => [s.principals[0], s.from])).toEqual([
       ['alice@example.net', LIB],
       ['alice@example.net', 'https://other.example.net/lib/'],
+      ['ops@example.net', 'you'],
     ]);
+    // Add: pasted lines, a line for run summaries only is not used.
+    const carol = await generateKey();
+    await type(
+      'trusted-signers-add',
+      (await allowedSignersLine(carol, 'carol@example.net')) + '\n' + (await allowedSignersLine(carol, 'x', 'md-runbook-run')),
+    );
+    await press('trusted-signers-add-go');
+    expect(screen.getByTestId('trusted-signers-added')).toHaveTextContent(/1 signer added\. 1 line not used/);
+    expect(trustedSigners().at(-1)).toMatchObject({ principals: ['carol@example.net'], from: 'you' });
+  });
+});
+
+describe('Hosts & settings → Team library', () => {
+  it('Forget the versions seen', async () => {
+    const alice = await generateKey();
+    const signedR = await signRunbook(
+      RUNBOOK,
+      { ...signPlan(RUNBOOK, 'restart.md'), version: 7 },
+      { name: 'restart', scopes: '', days: '', patterns: {} },
+      'alice@example.net',
+      alice,
+    );
+    if (!signedR.ok) throw new Error('not signed');
+    const files = {
+      [LIB + 'index.json']: '["restart.md"]',
+      [LIB + 'restart.md']: signedR.text,
+      [LIB + 'allowed_signers']: (await allowedSignersLine(alice, 'alice@example.net')) + '\n',
+    };
+    setLibraryUrl(LIB);
+    await refreshLibrary({ fetcher: server(files) });
+    trustSigners(libraryState().library!.signers!.list, LIB);
+    await refreshLibrary({ fetcher: server(files), force: true });
+    await render(<LibrarySettings />);
+    expect(screen.getByTestId('library-versions')).toHaveTextContent(/refuses an older one/);
+    await press('library-forget-versions');
+    expect(screen.getByTestId('library-versions')).toHaveTextContent(/Forgotten/);
+    expect(screen.queryByTestId('library-forget-versions')).toBeNull();
   });
 });

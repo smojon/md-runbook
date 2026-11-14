@@ -30,7 +30,7 @@ import {
   useLibrary,
   withdrawnKeys,
 } from '../runbooks/library';
-import { libraryCopy, useRunbooks } from '../runbooks/store';
+import { Runbook, libraryCopy, useRunbooks } from '../runbooks/store';
 import { useLibraryUrlSetting } from '../settings/store';
 import {
   SignatureState,
@@ -280,6 +280,24 @@ function warningText(w: UpdateWarning): string {
   }
 }
 
+/** The copy's own signature state, when its library opens verified runbooks only (checked as the library's file is). */
+function useCopyState(library: Library, copy: Runbook | undefined): SignatureState | undefined {
+  const trusted = useTrustedSigners();
+  const text = copy && library.signedOnly ? copy.text : undefined;
+  const [got, setGot] = useState<{ text: string; state: SignatureState } | undefined>();
+  useEffect(() => {
+    if (text === undefined) return;
+    let live = true;
+    void signatureState(text, libraryKeys(library)).then((state) => {
+      if (live) setGot({ text, state });
+    });
+    return () => {
+      live = false;
+    };
+  }, [text, library, trusted]);
+  return got && got.text === text ? got.state : undefined;
+}
+
 function LibraryRow({
   library,
   entry,
@@ -298,9 +316,21 @@ function LibraryRow({
   useRunbooks();
   const copy = libraryCopy(library.base, entry.path);
   const why = copy ? undefined : openableReason(library, entry, sig);
+  const copyState = useCopyState(library, copy);
+  /** signedOnly: why the user's copy is refused (unsigned, edited, older than a version seen, …). */
+  const mineWhy =
+    copy && library.signedOnly && copyState ? openableReason(library, { text: copy.text, path: entry.path }, copyState) : undefined;
+  /**
+   * A refused copy is never a dead end: the library's version, when it opens, replaces it (with
+   * the update's warnings), whether or not the copy is behind it.
+   */
+  const replace = mineWhy !== undefined && entry.hash !== undefined && openableReason(library, entry, sig) === undefined;
   const [error, setError] = useState<string | undefined>();
-  const [confirm, setConfirm] = useState<{ text: string; warnings: UpdateWarning[] } | undefined>();
+  /** The update's warnings, for the library's text with this hash (a newer text asks again). */
+  const [confirm, setConfirm] = useState<{ text: string; warnings: UpdateWarning[]; hash: string } | undefined>();
   const status = copy ? copyStatus(copy, entry) : 'current';
+  // Keep mine would leave a copy the library refuses: not offered then (Replace is).
+  const canKeep = status === 'update' && (!library.signedOnly || (copyState !== undefined && mineWhy === undefined));
   const facts = signedFacts(library.base, entry.path, sig);
   const green = looksVerified(sig, facts);
   // Verified but not green: under another name than the file's, or a downgrade.
@@ -318,14 +348,16 @@ function LibraryRow({
   const update = async (force: boolean): Promise<void> => {
     if (!copy || entry.text === undefined || entry.hash === undefined) return;
     const text = entry.text;
+    // "Update anyway" answers the warnings shown for this text: refreshed since, the new text asks again.
+    const sure = force && confirm?.hash === entry.hash;
     setError(undefined);
     // Always checked again here, on the text being taken: never a state kept from an earlier read.
     const next = await signatureState(text, libraryKeys(library));
     const refused = openableReason(library, entry, next);
     if (refused) return setError(t.updateRefused(refused));
     const m = manifestOf(next);
-    const plan = planUpdate(copy, { ...entry, text }, next, m ? highestVersion(library.base, m.name) : undefined);
-    if (plan.warnings.length > 0 && !force) return setConfirm(plan);
+    const plan = planUpdate(copy, { ...entry, text }, next, m ? highestVersion(library.base, entry.path, m.name) : undefined);
+    if (plan.warnings.length > 0 && !sure) return setConfirm({ ...plan, hash: entry.hash });
     applyUpdate(copy.id, library.base, { ...entry, text, hash: entry.hash }, plan.text);
     setConfirm(undefined);
   };
@@ -367,27 +399,34 @@ function LibraryRow({
               {why}
             </Text>
           ) : null}
+          {mineWhy ? (
+            <Text testID={`library-copy-why-${entry.path}`} style={[styles.meta, styles.warn]}>
+              {t.libraryCopyRefused(mineWhy)}
+            </Text>
+          ) : null}
         </View>
       </Pressable>
-      {status === 'update' && !confirm ? (
+      {(status === 'update' || replace) && !confirm ? (
         <View testID={`library-update-${entry.path}`} style={styles.update}>
-          <Text style={[styles.meta, styles.updateText]}>{t.updateAvailable}</Text>
+          <Text style={[styles.meta, styles.updateText]}>{replace ? t.libraryReplaceHelp : t.updateAvailable}</Text>
           <Pressable
-            testID={`library-update-go-${entry.path}`}
+            testID={replace ? `library-replace-${entry.path}` : `library-update-go-${entry.path}`}
             accessibilityRole="button"
             onPress={() => void update(false)}
             style={styles.primary}
           >
-            <Text style={styles.primaryText}>{t.updateGo}</Text>
+            <Text style={styles.primaryText}>{replace ? t.libraryReplace : t.updateGo}</Text>
           </Pressable>
-          <Pressable
-            testID={`library-keep-${entry.path}`}
-            accessibilityRole="button"
-            onPress={() => copy && keepMine(copy.id, entry)}
-            style={styles.secondary}
-          >
-            <Text style={styles.secondaryText}>{t.keepMine}</Text>
-          </Pressable>
+          {canKeep ? (
+            <Pressable
+              testID={`library-keep-${entry.path}`}
+              accessibilityRole="button"
+              onPress={() => copy && keepMine(copy.id, entry)}
+              style={styles.secondary}
+            >
+              <Text style={styles.secondaryText}>{t.keepMine}</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
       {confirm ? (

