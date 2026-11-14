@@ -132,6 +132,8 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
   /** Set a text (and hide the element when there is none), only when it changed. */
   const put = (node, text) => { const t = text || ''; if (node.textContent !== t) node.textContent = t; node.hidden = !t; };
   const attr = (node, name, value) => { if (value === undefined) node.removeAttribute(name); else if (node.getAttribute(name) !== value) node.setAttribute(name, value); };
+  // A line break (a backslash escape would become a real one in the template string).
+  const NL = String.fromCharCode(10);
   // State in a symbol too, not colour alone (the running step has a spinning icon beside its name).
   const GLYPH = { done: '✓', skipped: '↷', failed: '✕', running: '', waiting: '❚❚', pending: '' };
   const STATE = { done: 'done', skipped: 'skipped', failed: 'failed', running: 'running', waiting: 'waiting for you', pending: 'to do' };
@@ -219,7 +221,7 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
       put(row.querySelector('.needs'), r.needs ? 'needs ' + r.needs.join(', ') : '');
       put(row.querySelector('.err'), r.error);
       // The last lines it printed, in full on hover.
-      attr(row.querySelector('.err'), 'title', r.errors && r.errors.length > 1 ? r.errors.join('\n') : undefined);
+      attr(row.querySelector('.err'), 'title', r.errors && r.errors.length > 1 ? r.errors.join(NL) : undefined);
       // A question asked on the cell (Done / Skip / Stop, the teardown offer): its buttons, always shown, keys 1, 2, 3.
       const answers = r.answers || [];
       const ans = row.querySelector('.answers');
