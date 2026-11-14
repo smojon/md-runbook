@@ -391,6 +391,7 @@ const en = {
     approveAllProposals: ['Approve All Proposals', 'Go through every proposal, one card each.'],
     runCell: ['Run Cell', 'Run this step on the chosen host.'],
     runFromHere: ['Run from Here', 'Run this step and every one after it, as Run all does.'],
+    runUntilHere: ['Run Until Here', 'Run from the first step still to do up to this one, then stop.'],
     stepThrough: ['Step Through Lines', 'Risky change: run one command, look at the result, then decide to go on.'],
     runCallFresh: [
       'Run with a Fresh Copy',
@@ -545,7 +546,7 @@ const en = {
   runAnswer: '↓ Answer',
   pinnedWaiting: 'Waiting for you: answer under the cell',
   pinnedShowHint: 'Shows the cell',
-  /** The Steps sheet and the wide screen's side panel: every step by name (as VS Code's Runbook Steps view). */
+  /** The Steps view (a phone's Steps tab, the wide screen's side panel): every step by name (as VS Code's Runbook Steps view). */
   stepsTitle: 'Steps',
   stepsShowHint: 'Shows every step by name',
   stepsListLabel: 'Steps of the runbook',
@@ -573,7 +574,30 @@ const en = {
   preflightInput: (n: number) => (n === 0 ? undefined : n === 1 ? '1 value to type' : `${n} values to type`),
   preflightApproval: (n: number) => (n === 0 ? undefined : n === 1 ? '1 proposal to approve' : `${n} proposals to approve`),
   preflightByHand: (n: number) => (n === 0 ? undefined : n === 1 ? '1 step by hand' : `${n} steps by hand`),
+  /** A count of the preflight line: what a tap on it does. */
+  preflightGoHint: 'Goes to the first step that needs it',
+  preflightInputsHint: 'Opens Set Inputs',
+  preflightSecretsHint: 'Opens Secrets',
+  /** The Steps view: after a failure, on a step's row, and the run waiting there. */
+  stepsRetry: 'Retry step',
+  stepsRetryHint: 'Runs the failed step again',
+  stepsResume: 'Resume',
+  stepsResumeHint: 'Runs the failed step and the steps still to do',
+  stepsError: (line: string) => `Error: ${line}`,
+  stepsRowHint: 'Shows the step in the runbook',
+  stepsRowActionsHint: 'Shows the step in the runbook. Long press for its actions.',
+  stepsActions: 'Actions',
+  stepsTick: (label: string) => `Done by hand: ${label}`,
+  stepsAnswer: 'Answer',
+  stepsAnswerHint: 'Shows the question in the runbook',
+  stepsAnswerLabel: (answer: string, label: string) => `${answer}: ${label}`,
+  /** A phone: the runbook or its steps, switched at the top (remembered per runbook). */
+  viewSwitch: 'Show',
+  viewRunbook: 'Runbook',
+  viewSteps: 'Steps',
+  viewStepsWaiting: 'Steps, waiting for you',
   noStepsYet: 'This runbook has no steps yet.',
+  nothingUntilHere: 'Nothing to run up to here: the steps before it are done.',
   /** The rail: a tap shows the steps; a drag along it goes to one. */
   railHint: 'Shows the steps. Drag along the rail to go to a step.',
   /** Run all at a checklist item not ticked yet (a step done by hand). */

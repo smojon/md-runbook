@@ -10,6 +10,7 @@ import { runbookTitle } from '@md-runbook/core/title';
 import { deleteDoc, readDoc, writeDoc } from '../storage/docs';
 import { getJson, setJson } from '../storage/kv';
 import { resetStepHistory } from './history';
+import { resetViewModes } from './viewMode';
 import { Origin, isOrigin, textHash } from './origin';
 import { BUNDLED } from './sample';
 
@@ -215,7 +216,8 @@ export function resetRunbooks(): void {
   all = bundled();
   loaded = undefined;
   writes.clear();
-  // Their step history (learned estimates) goes with them.
+  // Their step history (learned estimates) and what a phone shows of each go with them.
   resetStepHistory();
+  resetViewModes();
   emit();
 }

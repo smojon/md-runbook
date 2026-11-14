@@ -71,6 +71,11 @@ of its error output (stderr, else its output).
 offer, a risky command while another file is in front), the step's row has the same buttons as
 the cell: **Done** / **Skip** / **Stop**, **Take Down** / **Leave It Up**, **Run** / **Don't Run**.
 
+**In the app** the same view is the **Steps** side of a phone's **Runbook | Steps** switch (and
+the side panel on a wide screen): the same header with Retry step and Resume, the same rows with
+their error line, a tick box for checklist items, a long press for a step's actions, and the
+waiting step's answers as buttons ([the app](../app.md)).
+
 **Keyboard.** Up/Down and Home/End move between rows, Enter goes to the step's cell, and on a
 row: **R** runs the step, **F** runs from it, **D** marks it done, **S** marks it skipped, **U**
 unmarks it, and **Space** ticks or unticks a checklist item. On a row that waits for you, **1**,
@@ -98,10 +103,10 @@ stored yet, an input or parameter to type, a value from an earlier step (`${out:
 approval (a proposed cell). Nothing is asked or sent to find this out. Each count is a link:
 values to type open **Set Parameters** and **Set Inputs**, secrets open **Set Secret** (the names
 are in the link's tooltip), and confirmations, proposals and steps by hand go to the first step
-that needs one. The app's Steps sheet (and
+that needs one. The app's Steps view (and
 the side panel on a wide screen) says the same: under each step what it needs, and the line
 above the list (confirmations, secrets not stored on this device, inputs not typed yet,
-proposals, steps by hand).
+proposals, steps by hand), each count a button there too.
 
 **Launch form.** **Run All…** (Run ▾, or the Steps view's ⋯) opens one sheet in the Steps view, in
 place of the list, before anything runs. It lists the parameters, each with its description from

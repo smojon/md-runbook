@@ -2,9 +2,10 @@
  * The runbook's steps by name, as VS Code's Runbook Steps view lists them (src/stepsView.ts):
  * each `#`/`##` chapter, then each step with its state, number, name and time; checklist items
  * are steps done by hand; the ready check says what it answered; a teardown not run yet is
- * offered. The Steps sheet and the wide screen's side panel draw these rows.
+ * offered; a failed step has the last line of its error. The Steps view (a phone's Steps tab,
+ * the wide screen's side panel) draws these rows.
  */
-import { isCodeMeta, taskItems } from '@md-runbook/core';
+import { isCodeMeta, parseLineSet, taskItems } from '@md-runbook/core';
 import type { ParsedCell, Progress } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
@@ -37,6 +38,8 @@ export type StepsRow =
       fraction?: number;
       /** Preflight: what running it will need from you (a step still to do, or failed). */
       needs?: StepNeed[];
+      /** A failed step: the last line of its error output (stderr, else its output), cut short. */
+      error?: string;
     };
 
 /** Something a step will ask of you when it runs, known before the run (as the extension's Steps view). */
@@ -53,22 +56,70 @@ export function needText(n: StepNeed): string {
         : t.preflightInputNeed(n.name);
 }
 
+/** One count of the preflight line, and the first step it is about (none for values and secrets). */
+export interface PreflightPart {
+  kind: StepNeed['kind'] | 'byHand';
+  /** `2 confirmations`. */
+  text: string;
+  /** The first step that needs it (its cell): confirmations, proposals, steps by hand. */
+  index?: number;
+}
+
+/**
+ * Preflight, before a run: what the steps still to do will need, count by count (`2
+ * confirmations`, `1 secret to set`, `1 step by hand`); empty when they need nothing.
+ */
+export function preflightParts(rows: readonly StepsRow[]): PreflightPart[] {
+  const steps = rows.filter((r): r is Extract<StepsRow, { kind: 'step' }> => r.kind === 'step');
+  const count = (kind: StepNeed['kind']): number => steps.reduce((n, r) => n + (r.needs ?? []).filter((x) => x.kind === kind).length, 0);
+  const first = (kind: StepNeed['kind']): number | undefined => steps.find((r) => r.needs?.some((x) => x.kind === kind))?.index;
+  const open = steps.filter((r) => r.item !== undefined && r.state !== 'done');
+  const parts: (PreflightPart | undefined)[] = [
+    part('confirm', t.preflightConfirm(count('confirm')), first('confirm')),
+    part('secret', t.preflightSecret(count('secret'))),
+    part('input', t.preflightInput(count('input'))),
+    part('approval', t.preflightApproval(count('approval')), first('approval')),
+    part('byHand', t.preflightByHand(open.length), open[0]?.index),
+  ];
+  return parts.filter((p): p is PreflightPart => p !== undefined);
+}
+
+function part(kind: PreflightPart['kind'], text: string | undefined, index?: number): PreflightPart | undefined {
+  return text === undefined ? undefined : { kind, text, ...(index !== undefined ? { index } : {}) };
+}
+
 /**
  * Preflight in one line, before a run: what the steps still to do will need (`Before you run: 2
  * confirmations · 1 secret to set · 1 step by hand`), or undefined when they need nothing.
  */
 export function preflightLine(rows: readonly StepsRow[]): string | undefined {
-  const steps = rows.filter((r): r is Extract<StepsRow, { kind: 'step' }> => r.kind === 'step');
-  const count = (kind: StepNeed['kind']): number => steps.reduce((n, r) => n + (r.needs ?? []).filter((x) => x.kind === kind).length, 0);
-  const byHand = steps.filter((r) => r.item !== undefined && r.state !== 'done').length;
-  const parts = [
-    t.preflightConfirm(count('confirm')),
-    t.preflightSecret(count('secret')),
-    t.preflightInput(count('input')),
-    t.preflightApproval(count('approval')),
-    t.preflightByHand(byHand),
-  ].filter((p): p is string => p !== undefined);
-  return parts.length ? t.preflight(parts.join(' · ')) : undefined;
+  const parts = preflightParts(rows);
+  return parts.length ? t.preflight(parts.map((p) => p.text).join(' · ')) : undefined;
+}
+
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+const ERROR_MAX = 120;
+
+/**
+ * Why a step failed, in one line (as VS Code's Steps view): the last non-empty line of its saved
+ * output's stderr lines (listed on the output marker, `stderr=`), else of its output, cut short.
+ */
+export function errorLine(output: ParsedCell['output']): string | undefined {
+  if (!output) return undefined;
+  const errs = parseLineSet(output.attrs.stderr);
+  const err: string[] = [];
+  const out: string[] = [];
+  output.text
+    .replace(ANSI_RE, '')
+    .split(/\r?\n/)
+    .forEach((l, n) => (errs.has(n) ? err : out).push(l));
+  const last = (lines: string[]): string | undefined =>
+    lines
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .pop();
+  const line = last(err) ?? last(out);
+  return line !== undefined && line.length > ERROR_MAX ? `${line.slice(0, ERROR_MAX - 1)}…` : line;
 }
 
 export interface StepsInput {
@@ -171,6 +222,7 @@ export function stepsRows({ cells, progress, running, waiting, callEstimates, le
     const label = stepLabel(info, cell.value, cell.languageId, headings[i]) || t.cellNumber(i + 1);
     // Preflight: for a step still to run (or to run again), not the ready check or a teardown offered.
     const needs = needsOf && (state === 'pending' || state === 'failed') && !ready && !offered ? needsOf(i, cell) : [];
+    const error = state === 'failed' ? errorLine(cell.output) : undefined;
     rows.push({
       kind: 'step',
       key: String(i),
@@ -182,6 +234,7 @@ export function stepsRows({ cells, progress, running, waiting, callEstimates, le
       ...(over ? { over } : {}),
       ...(fraction !== undefined ? { fraction } : {}),
       ...(needs.length ? { needs } : {}),
+      ...(error !== undefined ? { error } : {}),
     });
   });
   return rows;
@@ -227,13 +280,28 @@ export function lastCodeCell(cells: readonly ParsedCell[]): number {
  * the task boxes on screen are.
  */
 export function withItemTicked(text: string, cells: readonly ParsedCell[], cellIndex: number, item: number): string | undefined {
+  return withItemSet(text, cells, cellIndex, item, true);
+}
+
+/**
+ * The runbook's text with checklist item `item` of Markdown cell `cellIndex` ticked (`checked`)
+ * or unticked, or undefined when it is that way already or isn't there (the text changed): the
+ * Steps view's tick box.
+ */
+export function withItemSet(
+  text: string,
+  cells: readonly ParsedCell[],
+  cellIndex: number,
+  item: number,
+  checked: boolean,
+): string | undefined {
   let k = item;
   for (let i = 0; i < cellIndex; i++) if (cells[i]!.kind === 'markup') k += taskItems(cells[i]!.value).length;
   const found = taskItems(text)[k];
   const own = taskItems(cells[cellIndex]?.value ?? '')[item];
-  if (!found || found.checked || !own) return undefined;
+  if (!found || found.checked === checked || !own) return undefined;
   // The same item: its line reads the same in the cell and in the file.
   const line = (s: string, n: number): string => (s.split('\n')[n] ?? '').replace(/\r$/, '');
   if (line(text, found.line) !== line(cells[cellIndex]!.value, own.line)) return undefined;
-  return text.slice(0, found.offset) + 'x' + text.slice(found.offset + 1);
+  return text.slice(0, found.offset) + (checked ? 'x' : ' ') + text.slice(found.offset + 1);
 }

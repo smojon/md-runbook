@@ -34,6 +34,17 @@
   it. Both refuse while `mdRunbook.ai.provider` is `off`, and `#proposeRunbookStep` also refuses
   while `mdRunbook.approval.enabled` is off. A proposal can now carry a step name (`name=`). From
   the VS Code review.
+- **App: the Steps view, as in VS Code, on phones too.** A phone (or a narrow browser window) has a
+  **Runbook | Steps** switch at the top, remembered for each runbook; the runbook keeps its rail,
+  and a tap on the rail, the run bar's headline or ⋯ More → Show Steps switch to Steps (the
+  bottom sheet is gone). While the run waits for you, Steps has a dot; it never switches by
+  itself. Steps (and the side panel on a wide screen) has VS Code's header: where the run is, the
+  bar, the time left, **Retry step** and **Resume** after a failure, Run all / Stop on a phone,
+  and a preflight line whose counts go to the first step that needs them (values open Set
+  Inputs). A failed row shows the last line of its error; a long press on a row opens the step's
+  actions (with the new **Run Until Here**); a checklist item has a tick box; the step the run
+  waits at has the card's answers as buttons (Done / Skip / Stop, Take down / Leave it up, Run /
+  Cancel), or **Answer** for a question you type into.
 - **Progress by steps while some have no estimate:** the Steps view and the status bar tooltip say
   `2 of 6 steps · at least 5s left` instead of a percentage the estimates can't back, and the bar
   goes by steps then (the app drops the percentage too). From 3 runs on, a learned estimate's
