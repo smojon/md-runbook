@@ -140,7 +140,7 @@ test('Runbook Steps view: chapters and steps in order, each with its state and t
   const before = await model();
   // A chapter with one step is one row: the heading, with the step's own name under it.
   assert.deepEqual(before.rows.map(shownRow), ['# 1 Deploy (echo one) pending', '# 2 Clean up (Remove the lab) pending est. 2m']);
-  assert.equal(before.headline, '0/2 · ~2 min');
+  assert.equal(before.headline, '0/2 · at least 2 min');
   assert.equal(before.open, 2, 'the badge: steps left');
   assert.equal(before.canResume, false, 'nothing to resume before a run');
   await step('mark done', vscode.commands.executeCommand('mdRunbook.markStepDone', editor.notebook.cellAt(1)));
