@@ -65,6 +65,9 @@
 - App: in Steps, a chapter with one step is one row, the heading with the step's name under it, as
   in VS Code. While Run all waits, the header says what for (`Take it down now? Stop the lab`,
   `Done by hand? …`, `Confirm …`, `Values to fill in: …`), not `100% · nothing left`.
+- fflate 0.8.3, for [GHSA-px8p-9vwx-vf98](https://github.com/advisories/GHSA-px8p-9vwx-vf98)
+  (a malformed ZIP64 archive could make `unzipSync` loop). md-runbook only deflates and inflates
+  runbook links with it and never unzips, so it was not affected.
 
 ## 0.23.0
 

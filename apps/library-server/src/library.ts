@@ -51,19 +51,27 @@ export function decodePath(rest: string): string {
   return path;
 }
 
-/** The file name without `.md`, as the app's default signed name is made (only the last part is compared). */
+/** The path without `.md`, each part made as the app's default signed name is made. */
 const nameOfPath = (path: string): string =>
-  (path.split('/').pop() ?? '')
+  path
     .replace(/(\.runbook)?\.(md|markdown)$/i, '')
-    .replace(/[^A-Za-z0-9._/-]+/g, '-')
-    .replace(/^[^A-Za-z0-9]+/, '')
+    .split('/')
+    .map((part) => part.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[^A-Za-z0-9]+/, ''))
+    .join('/')
     .toLowerCase();
 
 /**
- * Whether the signed name fits the file it is served as (its last part is the file's name):
- * `ops/restart` fits `restart.md` and `restart.runbook.md`. The app's rule (runbooks/library.ts).
+ * Whether the signed name fits the file it is served as: the whole name is the end of the path
+ * in the library, part by part. `restart` fits `restart.md` and `ops/restart.runbook.md`;
+ * `ops/restart` fits `ops/restart.md` and `x/ops/restart.md`, not `restart.md` or
+ * `staging/restart.md`. The app's rule (apps/mobile/src/runbooks/library.ts), so the server never
+ * publishes a runbook the app then refuses to open.
  */
-export const nameFitsPath = (name: string, path: string): boolean => (name.split('/').pop() ?? '').toLowerCase() === nameOfPath(path);
+export function nameFitsPath(name: string, path: string): boolean {
+  const n = name.toLowerCase();
+  const p = nameOfPath(path);
+  return n !== '' && (p === n || p.endsWith('/' + n));
+}
 
 const today = (now: Date): string => now.toISOString().slice(0, 10);
 
@@ -112,7 +120,7 @@ export async function checkRunbook(text: string, path: string, o: { allowedSigne
   } else if (!wholeRunbookSigned(status)) throw new HttpError(422, 'the runbook changed since signing (outside outputs, notes and ticked boxes): sign it again');
   const now = o.now ?? new Date();
   if (m.expires && today(now) > m.expires) throw new HttpError(422, `the signature expired on ${m.expires}`);
-  if (!nameFitsPath(m.name, path)) throw new HttpError(422, `the signed name ${m.name} doesn't fit the file ${path.split('/').pop()}: its last part must be the file's name (without .md)`);
+  if (!nameFitsPath(m.name, path)) throw new HttpError(422, `the signed name ${m.name} doesn't fit the file ${path}: the whole name must be the end of its path in the library (without .md)`);
   const signer = await trustedRunbookSigner(text, o.allowedSigners, o.sshKeygen);
   if (!signer) throw new HttpError(403, "the signature is not from a signer in the library's allowed_signers (or the manifest was changed after signing)");
   return { name: m.name, version: m.version, signer, manifest: sha256Hex(block.manifest), manifestVersion: v, ...(m.expires ? { expires: m.expires } : {}) };

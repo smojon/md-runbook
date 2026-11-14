@@ -24,10 +24,14 @@ describe('library: paths', () => {
       );
   });
 
-  it('the signed name must fit the file: its last part is the file name without .md', () => {
+  it('the signed name must fit the file: the whole name is the end of its path, without .md', () => {
     assert.ok(nameFitsPath('ops/restart-api', 'ops/restart-api.md'));
+    assert.ok(nameFitsPath('ops/restart-api', 'x/ops/restart-api.md'));
     assert.ok(nameFitsPath('restart-api', 'other/Restart-API.runbook.md'));
     assert.ok(!nameFitsPath('ops/restart-api', 'ops/stop-api.md'));
+    assert.ok(!nameFitsPath('ops/restart-api', 'restart-api.md'));
+    assert.ok(!nameFitsPath('staging/restart', 'prod/restart.md'));
+    assert.ok(!nameFitsPath('restart', 'prerestart.md'));
   });
 });
 
@@ -117,7 +121,7 @@ describe('library: publishing', () => {
       const expired = await post('ops/restart-api.md', await signRunbook(RUNBOOK, { expires: '2020-01-01' }, keys.signer));
       assert.match(expired.json.error, /expired on 2020-01-01/);
       const otherName = await post('ops/stop-api.md', signed);
-      assert.deepEqual([otherName.status, /doesn't fit the file stop-api.md/.test(otherName.json.error)], [422, true]);
+      assert.deepEqual([otherName.status, /doesn't fit the file ops\/stop-api.md/.test(otherName.json.error)], [422, true]);
       const stranger = await post('ops/restart-api.md', await signRunbook(RUNBOOK, {}, keys.stranger));
       assert.deepEqual([stranger.status, /not from a signer in the library's allowed_signers/.test(stranger.json.error)], [403, true]);
       for (const bad of ['..%2Fx.md', '.git/config.md', 'x.sh']) assert.equal((await post(bad, signed)).status, 400, bad);
@@ -180,7 +184,7 @@ describe('library: publishing', () => {
       assert.equal((await call(`${url}/v1/library/runbooks/ops/restart-api.md`, 'DELETE', undefined, UPLOAD)).status, 405);
       const big = await signRunbook(RUNBOOK + 'x'.repeat(3000) + '\n', {}, keys.signer);
       assert.equal((await call(`${url}/v1/library/runbooks/ops/restart-api.md`, 'POST', big, UPLOAD)).status, 413);
-      const linked = await call(`${url}/v1/library/runbooks/linked/restart-api.md`, 'POST', await signRunbook(RUNBOOK, {}, keys.signer), UPLOAD);
+      const linked = await call(`${url}/v1/library/runbooks/linked/restart-api.md`, 'POST', await signRunbook(RUNBOOK, { name: 'restart-api' }, keys.signer), UPLOAD);
       assert.equal(linked.status, 409);
       assert.deepEqual(fs.readdirSync(outside), []);
     } finally {

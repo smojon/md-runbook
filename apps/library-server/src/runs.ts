@@ -52,7 +52,7 @@ export function summaryMismatches(s: ReceivedRunSummary): string[] {
 /**
  * Whether a summary is of the runbook `q`: a signed name (`ops/restart-api`), or a path in the
  * library (`ops/restart-api.md`), which matches the file name a client sends and the signed name
- * a gate sends (its last part is the file's name).
+ * a gate sends (the name is the end of the path, as the library checks when publishing).
  */
 export function summaryMatches(s: ReceivedRunSummary, q: string): boolean {
   const query = q.replace(/^\/+/, '');

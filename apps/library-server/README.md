@@ -48,8 +48,10 @@ name, version, signer and manifest hash, or the reason it refused:
    signed before version 2 has only its bash blocks signed: refused unless `LIBRARY_ACCEPT_V1=true`,
    and then only with its blocks as signed (`422`).
 3. **Not expired** (`422`).
-4. **Named as its file.** The last part of the signed name is the file name without `.md`:
-   `ops/restart-api` fits `restart-api.md` and `restart-api.runbook.md`, as the app checks (`422`).
+4. **Named as its file.** The whole signed name is the end of the path in the library, part by
+   part, without `.md`: `ops/restart-api` fits `ops/restart-api.md` and
+   `team/ops/restart-api.runbook.md`, not `restart-api.md` or `staging/restart-api.md`;
+   `restart-api` fits any `restart-api.md`. The app checks the same before it opens one (`422`).
 5. **A higher version** than the one published at that path, and than any published there
    before, even if that file was deleted since (`409`). Sending the same text again answers
    `200` with `"unchanged": true`.
