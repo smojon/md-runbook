@@ -260,6 +260,33 @@ said when it loaded the runbook called (the `called` request, gate protocol 2): 
 a call in the log, and it grants nothing, since each runbook's own signature is what the gate
 checks.
 
+## In a hosted library
+
+A team library ([the app](../app.md#team-runbooks), [hosting it](../../apps/web/README.md#a-team-library))
+shows each runbook's signature in the list. The app checks the signatures itself, against the
+signers the user chose to trust:
+
+- **Signed by alice@example.net, verified:** the blocks are unchanged since signing, and the
+  signature checks out with a key the user trusts for the name in the signature block (OpenSSH's
+  rules: principals and patterns, `namespaces=`, `valid-after` / `valid-before`).
+- **Signed, unknown signer:** unchanged, but signed by no one the user trusts.
+- **Signature does not check out for alice@example.net:** a trusted name, but signed with another
+  key, or a signature that doesn't verify.
+- **Changed since signing** and **Not signed**, as everywhere else.
+
+The library may publish its `allowed_signers` (the gate's file). The app offers it under **Trust
+these signers**, with the names and key fingerprints, and asks first: the list comes from the
+server that serves the runbooks, so the server is vouching for itself. An index.json with
+`"signedOnly": true` makes the app list unsigned and changed runbooks as not openable. An update
+whose new version drops the signature, comes from another signer or key, or changed since signing
+says so before it replaces the user's copy.
+
+The app checks `ssh-ed25519`, ECDSA (`nistp256`, `nistp384`, `nistp521`), RSA (`rsa-sha2-256`,
+`rsa-sha2-512`), and security-key and passkey signatures (`sk-ssh-ed25519`, `sk-ecdsa-sha2-nistp256`,
+`webauthn-sk-ecdsa-sha2-nistp256`, what the app's passkey makes). Certificate authorities
+(`cert-authority` lines) are not used. This check tells the user what they are opening; the gate
+on the server is still what decides what runs.
+
 ## Limits
 
 - The gate controls what the account can start, not what a signed block does once it runs: the

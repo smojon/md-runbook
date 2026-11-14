@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **App: Team runbooks, a library hosted with the web app.** Whoever hosts the web app puts
+  runbooks in a `runbooks/` folder (a read-only volume or files built into an image; nginx lists it
+  as JSON, or an `index.json` names titles and folders), and every user sees them under **Team
+  runbooks**, grouped by subfolder. Opening one makes the user's own copy; when the file on the
+  server changes, the copy offers **Update** (outputs of unchanged blocks kept, asks first when
+  some would be lost, or when the signature is dropped or from another signer) or **Keep mine**.
+  Each runbook shows its signature: **Signed by …, verified** (checked in the app against signers
+  the user trusts), **Signed, unknown signer**, **Not signed**, **Changed since signing**. A
+  library's `allowed_signers` is offered under **Trust these signers**, with names and
+  fingerprints, never trusted silently; `"signedOnly": true` lists unsigned runbooks as not
+  openable. The phones use a library at the address set under **Hosts & settings → Team library**,
+  or added with a `mdrunbook://library?url=…` link or its QR code (**Share library**). GitHub Pages
+  publishes `apps/mobile/public/runbooks/` with a generated index.json.
 - **Failure triage:** a failed step's cell and Steps row offer **Explain** and **Suggest a Fix** (the
   assistant proposes a corrected command or a check, added after the step as a proposal to approve),
   and the new `on-failure="Rollback"` option offers the step with that name. The error line under
