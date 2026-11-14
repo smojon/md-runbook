@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.23.0
+
+The Steps view in VS Code and the app, a team runbook library, whole-runbook signatures and run
+reports. Highlights, then every change below.
+
+- **Before you re-sign runbooks: update every client first.** New signatures are version 2 and
+  cover the whole runbook (front matter, prose, checklists, PowerShell and cmd blocks). Gates
+  already installed run them unchanged, but VS Code, the app and the CLI at 0.22 or older show a
+  version 2 signature as damaged. Old (version 1) signatures still verify and now show as
+  "these steps verified" (partly signed).
+- **The Steps view** in VS Code (its own side bar) and in the app (a Runbook | Steps switch on
+  phones, a side panel on wide screens): every step by name with its state and time, what each
+  will need before you run, answers to the questions a run asks (Done / Skip / Stop, Take down /
+  Leave it up), Retry and Resume after a failure, and "last ran green".
+- **A team runbook library** hosted next to the web app (`/runbooks/`, or a folder you set),
+  also on the phones by address, link or QR: your own copy of each runbook, Update / Keep mine,
+  signature states checked in the app, signers trusted per library, `signedOnly`.
+- **Run reports:** with `report-runs:` in a runbook, VS Code, the app and the CLI send a summary
+  of each run (no outputs, no values) where it says, after asking you; signed with your own key;
+  required by a signed runbook if it says so; `md-runbook verify-run` checks them.
+- **In VS Code:** a launch form before Run All, notifications, failure triage with the
+  assistant, Run Until Here / Pause Before / Notify Me, learned estimates, keys and screen-reader
+  labels, tools for VS Code's agent mode.
+- **In the app:** notifications when a run is done, fails or waits for you; preflight; the
+  library and run reports above.
+
+No Android APK is attached yet.
+
 - **Run reports.** With `report-runs: https://…` in a runbook's front matter, VS Code, the app
   and the command line send that address a short summary at the end of every run.
   - **What's in it:** which runbook (name, title, hash, signed version), who ran it, where and
