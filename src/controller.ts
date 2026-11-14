@@ -417,9 +417,11 @@ export class RunbookController implements vscode.Disposable {
     };
     try {
       for (const o of this.pipeline.observers) {
-        if ((await o.onWillRunSequence?.(notebook, cells)) === false) {
-          // Cancelled before anything ran (e.g. Escape on a value asked up front): the cells keep their outputs.
-          vscode.window.setStatusBarMessage('md-runbook: run cancelled, nothing ran', 8000);
+        const will = await o.onWillRunSequence?.(notebook, cells);
+        if (will === false || (typeof will === 'object' && will !== null)) {
+          // Cancelled before anything ran (e.g. Escape on a value asked up front, or the launch
+          // form opened instead): the cells keep their outputs.
+          vscode.window.setStatusBarMessage(typeof will === 'object' ? will.cancel : 'md-runbook: run cancelled, nothing ran', 8000);
           return;
         }
       }

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **VS Code: the launch form.** **Run All…** (Run ▾, the Steps view's ⋯) shows, in the Steps view,
+  one sheet before a run: the parameters with their descriptions and choices, the inputs, the
+  secrets not stored yet (**Set** each), the risky steps with their commands, the steps by hand,
+  the time and the context. **Start** runs without asking for the values again; the risky steps
+  still ask when they run. Run All opens it too when there is something on it
+  (`mdRunbook.execution.launchForm`, on by default). From the VS Code review's feature ideas.
+- **Parameter descriptions and choices:** a `params:` item's comment is its description, and a
+  trailing `One of: staging, prod` lists the values allowed
+  (`- TARGET: staging  # Where to deploy. One of: staging, prod.`). The linter warns when the
+  default is not one of them.
+
 - **Failure triage:** a failed step's cell and Steps row offer **Explain** and **Suggest a Fix** (the
   assistant proposes a corrected command or a check, added after the step as a proposal to approve),
   and the new `on-failure="Rollback"` option offers the step with that name. The error line under

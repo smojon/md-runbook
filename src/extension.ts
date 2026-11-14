@@ -107,7 +107,19 @@ export function activate(context: vscode.ExtensionContext): void {
   registerFailedActions(context);
   registerStepMarks(context);
   registerOpenHint(context);
-  registerStepsView(context, pipeline, { confirmation: (cell, source) => safety.confirmation(cell, source), values: (nb, source) => secrets.values(nb, source) });
+  registerStepsView(
+    context,
+    pipeline,
+    { confirmation: (cell, source) => safety.confirmation(cell, source), values: (nb, source) => secrets.values(nb, source) },
+    // The launch form before a Run All (launch.ts).
+    {
+      confirmation: (cell, source) => safety.confirmation(cell, source),
+      launchValues: (nb, cells) => secrets.launchValues(nb, cells),
+      setSessionValues: (nb, values) => secrets.setSessionValues(nb, values),
+      setSecret: (name) => secrets.setSecret(name),
+      context: (nb) => safety.context(nb),
+    },
+  );
   registerNotifications(pipeline, context);
   registerLineRuns(context, controller, { safety, secrets });
   registerAutoSave(pipeline);

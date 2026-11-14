@@ -18,8 +18,10 @@ import {
   RefKind,
   RunbookParam,
   VAR_NAME_RE,
+  VarRef,
   dotenvSecrets,
   findRefs,
+  looksSecret,
   parseDotenv,
   parseFrontMatter,
   rewriteRefs,
@@ -65,6 +67,12 @@ function frontMatter(nb: vscode.NotebookDocument): FrontMatter | undefined {
   return first?.kind === vscode.NotebookCellKind.Markup ? parseFrontMatter(first.document.getText()) : undefined;
 }
 
+/** A parameter with choices (`One of: a, b` in its comment): the box takes only one of them. */
+function choicesCheck(p: RunbookParam | undefined): Pick<vscode.InputBoxOptions, 'validateInput'> {
+  const choices = p?.choices;
+  return choices ? { validateInput: (v) => (choices.includes(v) ? undefined : `One of: ${choices.join(', ')}`) } : {};
+}
+
 /** Declared parameters of a runbook. */
 function declaredParams(nb: vscode.NotebookDocument): RunbookParam[] {
   return frontMatter(nb)?.params ?? [];
@@ -81,6 +89,37 @@ function usedRefs(nb: vscode.NotebookDocument): ReturnType<typeof findRefs> {
       out.push(...cellRefs(cell.document.getText(), isCodeMeta(meta) ? meta.info : '', fm));
     } catch {
       // a name used as two kinds: the run reports it
+    }
+  }
+  return out;
+}
+
+/**
+ * The parameters, inputs and secrets a run of `cells` uses, once each, with the first cell that
+ * uses it: not the setup, ready check and teardown (they may not run), skipped cells, cells for
+ * another OS or another host, or an assistant's cells; not a parameter a runbook call passed.
+ */
+function upFrontRefs(nb: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[]): { ref: VarRef; cell: vscode.NotebookCell }[] {
+  const fm = frontMatter(nb);
+  const seen = new Set<string>();
+  const out: { ref: VarRef; cell: vscode.NotebookCell }[] = [];
+  for (const cell of cells) {
+    if (cell.kind !== vscode.NotebookCellKind.Code || !shellKindForLanguage(cell.document.languageId)) continue;
+    const meta: unknown = cell.metadata?.[META_KEY];
+    const info = isCodeMeta(meta) ? meta.info : '';
+    const o = parseCellOptions(info);
+    if (o.skip || o.part !== undefined || o.host !== undefined || (o.os && !o.os.includes(currentOs())) || proposalOf(info).by !== undefined) continue;
+    let refs: VarRef[];
+    try {
+      refs = cellRefs(cell.document.getText(), info, fm);
+    } catch {
+      continue; // a name used as two kinds: the run reports it
+    }
+    for (const r of refs) {
+      if (r.kind === 'out' || seen.has(`${r.kind}:${r.name}`)) continue;
+      seen.add(`${r.kind}:${r.name}`);
+      if (r.kind === 'param' && passedParam(nb.uri, r.name) !== undefined) continue;
+      out.push({ ref: r, cell });
     }
   }
   return out;
@@ -218,7 +257,8 @@ class SecretsFeature {
     const cache = this.session(this.params, ctx.notebook);
     const cached = cache.get(name);
     if (cached !== undefined) return cached;
-    const def = declaredParams(ctx.notebook).find((p) => p.name === name)?.default;
+    const declared = declaredParams(ctx.notebook).find((p) => p.name === name);
+    const def = declared?.default;
     const useDefaults = vscode.workspace.getConfiguration(SECTION).get<boolean>('params.useDefaults', false);
     if (def !== undefined && useDefaults) {
       cache.set(name, def);
@@ -230,9 +270,12 @@ class SecretsFeature {
       vscode.window.showInputBox(
         {
           title: `${runbookName(ctx.notebook)}: parameter ${name}${forCell(ctx)}`,
-          prompt: last ? `Value for ${name} (last used ${ago(last.at)}; Enter keeps it)` : def !== undefined ? `Value for ${name} (the default; Enter keeps it)` : `Value for ${name}`,
+          prompt:
+            (declared?.description ? `${declared.description} ` : '') +
+            (last ? `Value for ${name} (last used ${ago(last.at)}; Enter keeps it)` : def !== undefined ? `Value for ${name} (the default; Enter keeps it)` : `Value for ${name}`),
           value: last?.value ?? def,
           ignoreFocusOut: true,
+          ...choicesCheck(declared),
         },
         ctx.token,
       ),
@@ -381,33 +424,86 @@ class SecretsFeature {
    * another host, or an assistant's cells. False: Escape, so nothing should run.
    */
   async askUpFront(nb: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[]): Promise<boolean> {
-    const fm = frontMatter(nb);
-    const seen = new Set<string>();
-    for (const cell of cells) {
-      if (cell.kind !== vscode.NotebookCellKind.Code || !shellKindForLanguage(cell.document.languageId)) continue;
-      const meta: unknown = cell.metadata?.[META_KEY];
-      const info = isCodeMeta(meta) ? meta.info : '';
-      const o = parseCellOptions(info);
-      if (o.skip || o.part !== undefined || o.host !== undefined || (o.os && !o.os.includes(currentOs())) || proposalOf(info).by !== undefined) continue;
-      let refs: ReturnType<typeof findRefs>;
+    for (const { ref: r, cell } of upFrontRefs(nb, cells)) {
+      if (r.kind !== 'param' && r.kind !== 'input') continue;
       try {
-        refs = cellRefs(cell.document.getText(), info, fm);
+        if (r.kind === 'param') await this.param(r.name, { notebook: nb, cell });
+        else await this.input(r.name, r.secret, { notebook: nb, cell });
       } catch {
-        continue; // a name used as two kinds: the run reports it
-      }
-      for (const r of refs) {
-        if ((r.kind !== 'param' && r.kind !== 'input') || seen.has(`${r.kind}:${r.name}`)) continue;
-        seen.add(`${r.kind}:${r.name}`);
-        if (r.kind === 'param' && passedParam(nb.uri, r.name) !== undefined) continue;
-        try {
-          if (r.kind === 'param') await this.param(r.name, { notebook: nb, cell });
-          else await this.input(r.name, r.secret, { notebook: nb, cell });
-        } catch {
-          return false;
-        }
+        return false;
       }
     }
     return true;
+  }
+
+  /**
+   * The launch form's values for a run of `cells` (the same ones askUpFront asks, and the secrets
+   * they use): each parameter with its description and choices, filled in with the value of this
+   * session, else the last one used, else the default; each input (a secret one never filled in);
+   * each secret, stored or not. Asks nothing.
+   */
+  launchValues(nb: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[]): LaunchValues {
+    const declared = declaredParams(nb);
+    const params: LaunchValues['params'] = [];
+    const inputs: LaunchValues['inputs'] = [];
+    const secrets: LaunchValues['secrets'] = [];
+    const stored = new Set(this.names());
+    const allowed = new Set(this.context.workspaceState.get<string[]>(ALLOWED_KEY, []));
+    const session = (map: Map<string, Map<string, string>>, name: string): string | undefined => map.get(nb.uri.toString())?.get(name);
+    const addSecret = (name: string): void => {
+      if (!secrets.some((s) => s.name === name)) secrets.push({ name, stored: stored.has(name), ...(stored.has(name) && !allowed.has(name) ? { askAllow: true } : {}) });
+    };
+    for (const { ref: r } of upFrontRefs(nb, cells)) {
+      if (r.kind === 'param') {
+        const p = declared.find((d) => d.name === r.name);
+        const now = session(this.params, r.name);
+        const last = this.last(nb, 'param', r.name)?.value;
+        const value = now ?? last ?? p?.default;
+        params.push({
+          name: r.name,
+          ...(p?.description ? { description: p.description } : {}),
+          ...(p?.choices ? { choices: p.choices } : {}),
+          ...(p?.default !== undefined ? { default: p.default } : {}),
+          ...(value !== undefined ? { value, from: now !== undefined ? 'session' : last !== undefined ? 'last' : 'default' } : {}),
+        });
+      } else if (r.kind === 'input') {
+        const now = session(this.inputs, r.name);
+        if (r.secret) inputs.push({ name: r.name, secret: true, ...(now !== undefined ? { set: true } : {}) });
+        else {
+          const value = now ?? this.last(nb, 'input', r.name)?.value;
+          inputs.push({ name: r.name, secret: false, ...(value !== undefined ? { value } : {}) });
+        }
+      } else if (r.kind === 'secret') addSecret(r.name);
+    }
+    // Secrets every cell gets (mdRunbook.secrets.inject): asked when missing too.
+    for (const name of vscode.workspace.getConfiguration(SECTION).get<string[]>('secrets.inject', [])) if (!validateName(name)) addSecret(name);
+    // Declared first, in the order of the front matter, then the others in the order of use.
+    const order = (name: string): number => {
+      const i = declared.findIndex((d) => d.name === name);
+      return i < 0 ? declared.length : i;
+    };
+    params.sort((a, b) => order(a.name) - order(b.name));
+    return { params, inputs, secrets };
+  }
+
+  /**
+   * Values for this session, as if typed in the boxes (the launch form's Start): a Run All then
+   * finds them and asks nothing. Remembered as the last values, except secret inputs.
+   */
+  setSessionValues(nb: vscode.NotebookDocument, values: { params?: Readonly<Record<string, string>>; inputs?: Readonly<Record<string, string>> }): void {
+    const secretInputs = new Set(usedRefs(nb).filter((r) => r.kind === 'input' && r.secret).map((r) => r.name));
+    const params = this.session(this.params, nb);
+    for (const [k, v] of Object.entries(values.params ?? {})) {
+      if (!VAR_NAME_RE.test(k)) continue;
+      params.set(k, v);
+      this.remember(nb, 'param', k, v);
+    }
+    const inputs = this.session(this.inputs, nb);
+    for (const [k, v] of Object.entries(values.inputs ?? {})) {
+      if (!VAR_NAME_RE.test(k)) continue;
+      inputs.set(k, v);
+      if (!secretInputs.has(k) && !looksSecret(k)) this.remember(nb, 'input', k, v);
+    }
   }
 
   forget(nb: vscode.NotebookDocument): void {
@@ -438,15 +534,16 @@ class SecretsFeature {
       return;
     }
     // Declared ones first (with their defaults), then any other the cells use.
-    const params: { name: string; default?: string }[] = [...declaredParams(nb)];
+    const params: RunbookParam[] = [...declaredParams(nb)];
     for (const r of usedRefs(nb)) if (r.kind === 'param' && !params.some((p) => p.name === r.name)) params.push({ name: r.name });
     if (params.length === 0) return void vscode.window.showInformationMessage('md-runbook: this runbook has no parameters (${param:NAME}).');
     for (const p of params) {
       const value = await vscode.window.showInputBox({
         title: `${runbookName(nb)}: parameter ${p.name}`,
-        prompt: `Value for ${p.name}`,
+        prompt: (p.description ? `${p.description} ` : '') + `Value for ${p.name}`,
         value: cache.get(p.name) ?? this.last(nb, 'param', p.name)?.value ?? p.default,
         ignoreFocusOut: true,
+        ...choicesCheck(p),
       });
       if (value === undefined) return;
       cache.set(p.name, value);
@@ -485,8 +582,15 @@ class SecretsFeature {
     }
   }
 
-  async setSecretCommand(): Promise<void> {
-    const n = await vscode.window.showInputBox({ title: 'md-runbook: Set Secret', prompt: 'Secret name, used as ${secret:NAME}', validateInput: validateName });
+  /**
+   * Set Secret: the name, then the value (masked). `name` (the launch form's Set button, never a
+   * command argument) skips the first box; the value is always typed.
+   */
+  async setSecretCommand(name?: string): Promise<void> {
+    const n =
+      name !== undefined && !validateName(name)
+        ? name
+        : await vscode.window.showInputBox({ title: 'md-runbook: Set Secret', prompt: 'Secret name, used as ${secret:NAME}', validateInput: validateName });
     if (!n) return;
     const v = await vscode.window.showInputBox({
       title: `md-runbook: Set Secret ${n}`,
@@ -542,11 +646,34 @@ export interface RefValue {
   note?: string;
 }
 
+/** The values a run of some cells uses, for the launch form (SecretsFeature.launchValues). */
+export interface LaunchValues {
+  params: {
+    name: string;
+    description?: string;
+    choices?: string[];
+    default?: string;
+    /** What the field starts with, and where it comes from. */
+    value?: string;
+    from?: 'session' | 'last' | 'default';
+  }[];
+  /** A secret input is never filled in: `set` says this session has a value for it. */
+  inputs: { name: string; secret: boolean; value?: string; set?: boolean }[];
+  /** `askAllow`: stored, but this workspace hasn't used it yet (the run asks to allow it). */
+  secrets: { name: string; stored: boolean; askAllow?: boolean }[];
+}
+
 export interface SecretsInfo {
   /** The references in `source` and their current values, without asking for anything. */
   values(notebook: vscode.NotebookDocument, source: string): RefValue[];
   /** Fill parameter values for this session (a runbook link's p.NAME=); a run still uses them as values, never as code. */
   fillParameters(notebook: vscode.NotebookDocument, values: Readonly<Record<string, string>>): void;
+  /** The launch form's parameters, inputs and secrets for a run of `cells`; asks nothing. */
+  launchValues(notebook: vscode.NotebookDocument, cells: readonly vscode.NotebookCell[]): LaunchValues;
+  /** The launch form's Start: the values for this session, remembered as the last ones (never secrets). */
+  setSessionValues(notebook: vscode.NotebookDocument, values: { params?: Readonly<Record<string, string>>; inputs?: Readonly<Record<string, string>> }): void;
+  /** Set Secret for one name (the value is typed in a masked box). */
+  setSecret(name: string): Promise<void>;
 }
 
 /** Test-only helpers are registered only under the extension test runner (or the test harness). */
@@ -590,5 +717,11 @@ export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunP
       if (nb) f.forget(nb);
     }),
   );
-  return { values: (nb, source) => f.peek(nb, source), fillParameters: (nb, values) => f.fillParameters(nb, values) };
+  return {
+    values: (nb, source) => f.peek(nb, source),
+    fillParameters: (nb, values) => f.fillParameters(nb, values),
+    launchValues: (nb, cells) => f.launchValues(nb, cells),
+    setSessionValues: (nb, values) => f.setSessionValues(nb, values),
+    setSecret: (name) => f.setSecretCommand(name),
+  };
 }

@@ -97,7 +97,9 @@ md-runbook asks before the cell starts (it shows as queued, its timer not runnin
 the box is open, says so on the cell's status line and in the status bar (yellow, **Waiting for
 you: input NAME**; click it to show the cell); the box's title names the cell. **Run All** (and
 any run of several cells) asks for the inputs and parameters of all its cells at the click,
-before anything runs; Escape there cancels the run. Not asked up front: the setup, ready check
+before anything runs; Escape there cancels the run. With `mdRunbook.execution.launchForm` on (the
+default), Run All first opens the launch form in the Steps view instead, where you fill them all in
+at once ([progress](progress.md#steps-view)). Not asked up front: the setup, ready check
 and teardown, skipped cells and cells for another OS or host. (To have the box in the middle of
 the window instead, pick *Quick Input Position: Center* in VS Code's Customize Layout.)
 
@@ -125,6 +127,7 @@ params:
   - NAMESPACE
   - REGION: eu-west-1
   - REPLICAS: "3"
+  - TARGET: staging  # Where to deploy. One of: staging, prod.
 ---
 
 # Deploy
@@ -135,6 +138,13 @@ Each item is `- NAME` or `- NAME: default`; other keys are ignored. The first ti
 asks for all of them at once (the declared ones and any other the cells use). Values last until
 the runbook is closed or **Reset Inputs** is run. With `mdRunbook.params.useDefaults` on, parameters that have a default
 are not asked for. Parameters are not secret and not redacted.
+
+**Descriptions and choices.** A comment after the item (`# …`) describes the parameter. A
+trailing `One of: a, b, c` in it lists the values allowed. The launch form
+([progress](progress.md#steps-view)) shows the description under the field, and a list to pick
+from when there are choices; **Start** takes only one of them. The input boxes show the
+description too, and take only one of the choices. The linter warns when the default is not one
+of the choices.
 
 Front matter is plain Markdown to md-runbook; it is saved byte for byte like everything else.
 

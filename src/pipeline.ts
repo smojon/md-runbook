@@ -118,9 +118,15 @@ export interface RunRecord {
   ready?: boolean;
 }
 
+/** What an observer says before a run: nothing (go on), `false` or `{ cancel }` (nothing runs). */
+export type WillRun = void | boolean | { cancel: string };
+
 export interface RunObserver {
-  /** A run of `cells` (one cell, a range or Run All) is about to start; `false` cancels it (nothing runs). */
-  onWillRunSequence?(notebook: vscode.NotebookDocument, cells: vscode.NotebookCell[]): void | boolean | Promise<void | boolean>;
+  /**
+   * A run of `cells` (one cell, a range or Run All) is about to start; `false` cancels it (nothing
+   * runs), and `{ cancel }` too, with its own words in the status bar (the launch form opened).
+   */
+  onWillRunSequence?(notebook: vscode.NotebookDocument, cells: vscode.NotebookCell[]): WillRun | Promise<WillRun>;
   onDidRunCell?(run: RunRecord): void | Promise<void>;
   /** A Run All / multi-cell run finished (or stopped). */
   onDidRunSequence?(notebook: vscode.NotebookDocument, runs: RunRecord[]): void | Promise<void>;

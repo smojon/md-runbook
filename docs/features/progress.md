@@ -103,6 +103,19 @@ the side panel on a wide screen) says the same: under each step what it needs, a
 above the list (confirmations, secrets not stored on this device, inputs not typed yet,
 proposals, steps by hand).
 
+**Launch form.** **Run All…** (Run ▾, or the Steps view's ⋯) opens one sheet in the Steps view, in
+place of the list, before anything runs. It lists the parameters, each with its description from
+the front matter and a list to pick from when the comment says `One of: …`, filled in with this
+session's value, else the last one used, else the default. Then the inputs to type (secret ones
+masked, never filled in), the secrets not stored yet with a **Set** button each, the risky steps
+with their first command lines, the steps done by hand, the time the run takes and, with
+`mdRunbook.output.recordContext`, the context it last recorded. **Start** (or Enter) keeps the
+values for the session and runs: nothing is asked again in boxes. The risky steps still ask for
+your confirmation when they run, and a secret left unset is asked when the run gets there.
+Escape or **Back** closes the form; nothing runs. With `mdRunbook.execution.launchForm` on (the
+default), the toolbar's **Run All** and the Steps view's open the form too, when the runbook has
+a parameter, an input, a secret not stored or a risky step; otherwise they just run.
+
 **A notification when you look away.** When a run ends while its runbook isn't the editor in
 front (another file, another window), a notification says so: `deploy-checkout: step 4 of 6
 failed — Push image` with **Go to Step** and **Resume Run**, or `deploy-checkout: done · 6 of 6`

@@ -230,6 +230,12 @@
         "icon": "$(run-all)"
       },
       {
+        "command": "mdRunbook.launch",
+        "title": "Run All…",
+        "category": "md-runbook",
+        "icon": "$(checklist)"
+      },
+      {
         "command": "mdRunbook.steps.stop",
         "title": "Stop the Run",
         "category": "md-runbook",
@@ -681,6 +687,11 @@
           "group": "navigation@2"
         },
         {
+          "command": "mdRunbook.launch",
+          "when": "view == mdRunbook.steps && mdRunbook.runbookActive && !mdRunbook.runbookRunning",
+          "group": "1_run@1"
+        },
+        {
           "command": "mdRunbook.revealNextStep",
           "when": "view == mdRunbook.steps",
           "group": "2_go@1"
@@ -799,6 +810,10 @@
         },
         {
           "command": "mdRunbook.steps.stop",
+          "when": "mdRunbook.runbookActive"
+        },
+        {
+          "command": "mdRunbook.launch",
           "when": "mdRunbook.runbookActive"
         },
         {
@@ -1257,18 +1272,22 @@
           "group": "1_run@1"
         },
         {
-          "command": "mdRunbook.runAllAsCopy",
+          "command": "mdRunbook.launch",
           "group": "1_run@2"
+        },
+        {
+          "command": "mdRunbook.runAllAsCopy",
+          "group": "1_run@3"
         },
         {
           "command": "mdRunbook.runCallFresh",
           "when": "mdRunbook.selectionIsCall",
-          "group": "1_run@3"
+          "group": "1_run@4"
         },
         {
           "command": "mdRunbook.openCallCopy",
           "when": "mdRunbook.selectionIsCall",
-          "group": "1_run@4"
+          "group": "1_run@5"
         },
         {
           "command": "mdRunbook.showSteps",
@@ -1570,6 +1589,12 @@
             "scope": "machine",
             "markdownDescription": "Let runbooks with `kube-context-mode: pin` pin their Kubernetes context: each cell gets a `KUBECONFIG` whose first file only sets the current context to the runbook's `kube-context`, followed by your own kubeconfig, so kubectl and helm use that context without changing your default. Off: such runbooks only check the context (a cell runs only while `kubectl config current-context` is that context). User settings only.",
             "order": 10
+          },
+          "mdRunbook.execution.launchForm": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "**Run All** (the toolbar's and the Steps view's) first opens the launch form in the Steps view when the runbook has a parameter, an input, a secret not stored yet or a risky step: fill in the values, see what will ask, then **Start**. Off: Run All runs right away and asks for the values in boxes, one after another. **md-runbook: Run All…** always opens the form.",
+            "order": 11
           }
         }
       },
