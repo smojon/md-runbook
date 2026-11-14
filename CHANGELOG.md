@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Tools for VS Code's agent mode** (VS Code 1.95 or later; agent mode needs 1.99):
+  `#runbookState` gives the agent each step's state and time, what the run waits for, the
+  "Before you run" line, and a failed step's code and last 20 output lines, redacted (secret
+  values and typed-in values never). `#proposeRunbookStep` adds a step as a proposed cell, after
+  VS Code asks you. It lands like one from **Suggest Next Steps** and doesn't run until you approve
+  it. Both refuse while `mdRunbook.ai.provider` is `off`, and `#proposeRunbookStep` also refuses
+  while `mdRunbook.approval.enabled` is off. A proposal can now carry a step name (`name=`). From
+  the VS Code review.
 - **Progress by steps while some have no estimate:** the Steps view and the status bar tooltip say
   `2 of 6 steps · at least 5s left` instead of a percentage the estimates can't back, and the bar
   goes by steps then (the app drops the percentage too). From 3 runs on, a learned estimate's

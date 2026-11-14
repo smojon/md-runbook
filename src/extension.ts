@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { registerAi } from './ai/commands';
+import { registerLmTools } from './ai/tools';
 import { registerApproval } from './approval';
 import { registerAutoSave } from './autoSave';
 import { registerOpenTiming } from './openTiming';
@@ -16,7 +17,7 @@ import { RunPipeline } from './pipeline';
 import { registerEstimates } from './estimates';
 import { registerProgress } from './progress';
 import { registerWaiting } from './waiting';
-import { registerStepsView } from './stepsView';
+import { PreflightSources, registerStepsView } from './stepsView';
 import { registerCurrentRunbook } from './currentRunbook';
 import { registerFailedActions } from './failedActions';
 import { registerOpenHint } from './openHint';
@@ -105,7 +106,9 @@ export function activate(context: vscode.ExtensionContext): void {
   registerCurrentRunbook(context);
   registerFailedActions(context);
   registerOpenHint(context);
-  registerStepsView(context, pipeline, { confirmation: (cell, source) => safety.confirmation(cell, source), values: (nb, source) => secrets.values(nb, source) });
+  // What a step will need before it runs: the Steps view's preflight line, and the agent-mode tools.
+  const preflight: PreflightSources = { confirmation: (cell, source) => safety.confirmation(cell, source), values: (nb, source) => secrets.values(nb, source) };
+  registerStepsView(context, pipeline, preflight);
   registerNotifications(pipeline, context);
   registerLineRuns(context, controller, { safety, secrets });
   registerAutoSave(pipeline);
@@ -113,6 +116,8 @@ export function activate(context: vscode.ExtensionContext): void {
   registerCodeLens(context);
   registerReport(context);
   registerAi(context);
+  // Agent mode: read the run state, add a proposed step (only where VS Code has the tools API).
+  registerLmTools(context, preflight);
   registerAiContext(context);
   registerTaskLists(context);
   registerWalkthrough(context);

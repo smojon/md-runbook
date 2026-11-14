@@ -86,6 +86,58 @@ kubectl get pods -n checkout
 `cmd` blocks in the answer are used; anything else is ignored. The reason comes from the block's
 info string or, failing that, from the sentence before it.
 
+## Use md-runbook from VS Code's agent mode
+
+md-runbook gives VS Code's agent mode (GitHub Copilot, or another chat that uses VS Code's
+language model tools) two tools. The agent picks them when they fit, or you name them with `#`
+in the chat:
+
+| Tool | Reference | What it does |
+| --- | --- | --- |
+| Runbook Run State | `#runbookState` | Reads where the run is. Changes nothing. |
+| Propose Runbook Step | `#proposeRunbookStep` | Adds one step as a [proposed cell](#proposed-cells). Runs nothing. |
+
+For example: *"#runbookState why did the rollout fail? Propose a read-only check."*
+
+**Runbook Run State** reads the runbook in front, or the one that runs or waits for you. The
+agent can also name another open runbook by path or file name. It returns plain text:
+
+- the runbook's name and path, and where the run is, in the status bar's words;
+- every step, with its number, name, state (done, skipped, failed, pending, running, waiting) and
+  its time or estimate, under its `#`/`##` chapter;
+- what the run waits for: a parameter, a secret, a confirmation or an approval (by name only),
+  and where it is asked;
+- the **Before you run** line of the Steps view, and what each step still to do needs;
+- for each failed step (the first three), its code and the last 20 lines of its output.
+
+The output is redacted before the tool returns it, even if redaction is off for saved files: the
+secret values seen this session, your redaction patterns (the default ones when
+`mdRunbook.redaction.enabled` is off), and anything **Check for Leaks** would flag. It is marked
+as untrusted data. Secret values and the values you type in are never included.
+
+**Propose Runbook Step** adds one code block (`bash`, `sh`, `pwsh`, `powershell` or `cmd`) with
+a reason and, optionally, a name. It goes after the step the agent names, else after the failed
+step, else at the end. VS Code asks you first, with the code:
+
+> Add a proposed step to deploy-checkout.md after step 3?
+
+Your **Continue** only adds the cell. It lands the same way as one from **Suggest Next Steps**:
+fenced `proposed by=ai reason="…"`, with **Approve** and **Reject** on the cell. It doesn't run
+until you approve it. The [command policy](approval.md) and read-only credentials apply as for
+any assistant's cell. The agent is told so, and that nothing ran.
+
+Both tools follow the assistant's settings:
+
+- With `mdRunbook.ai.provider` set to `off` (the default), both refuse, and the agent is asked to
+  have you run **md-runbook: Turn On the Assistant**. Nothing from your runbooks is shared with
+  a model until you turn it on. Either provider turns the tools on; the agent uses its own model.
+- With `mdRunbook.approval.enabled` off, **Propose Runbook Step** refuses, because a proposal
+  would then run without approval.
+
+The tools need VS Code 1.95 or later, where the language model tools API is stable. Agent mode
+itself needs VS Code 1.99 or later. On older versions md-runbook works as before, without the
+tools.
+
 ## Security defaults
 
 Every setting defaults to the most cautious choice:
