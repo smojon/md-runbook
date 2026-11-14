@@ -46,6 +46,14 @@ COPY runbooks/ /usr/share/nginx/html/runbooks/
 The files must be readable by the container's user (`chmod -R a+rX runbooks`). Without the
 folder, `/runbooks/` answers 404 and the app shows no library.
 
+**The folder is public to anyone who can reach the web app**: every file in it is listed and
+readable without logging in, as the app itself is. Put nothing there you would not hand to every
+user, and keep the container inside your network if the runbooks are internal. Hidden files and
+folders (`.git/`, `.env`, `.draft.md`) answer 404 even when asked for by name, and symbolic links
+to files of another owner (a link to `/etc/passwd`) are refused (`disable_symlinks
+if_not_owner`), but a git checkout's other files, backups (`deploy.md~`) and anything else are
+served.
+
 ```
 runbooks/
 ├── index.json          optional: names, titles, folders, signedOnly
@@ -69,15 +77,22 @@ runbooks/
   ```
 
 - **allowed_signers** (optional, OpenSSH's format, the same file as md-runbook-gate's): the app
-  shows its names and key fingerprints under **Trust these signers** and asks first. It never
-  trusts them by itself: the server vouches for itself, so whoever can change the runbooks can
-  change this file too. Once trusted, a signed runbook says **Signed by alice@example.net,
-  verified**; otherwise **Signed, unknown signer**, **Not signed** or **Changed since signing**
-  ([signed runbooks](../../docs/features/signed-runbooks.md#in-a-hosted-library)).
-- **`"signedOnly": true`** in index.json: unsigned runbooks, and runbooks changed since signing,
-  are listed as not openable, with the reason.
+  shows its names (and what a pattern such as `*@example.net` lets a key sign as) and key
+  fingerprints under **Trust these signers** and asks first. It never trusts them by itself: the
+  server vouches for itself, so whoever can change the runbooks can change this file too. Trust
+  counts for this library only, and a key you remove from the file stops counting in the app.
+  Once trusted, a signed runbook says **Signed by alice@example.net: these steps verified**, with
+  its signed name and version; otherwise **Partly signed**, **Signed, unknown signer**, **Not
+  signed** or **Changed since signing**
+  ([signed runbooks](../../docs/features/signed-runbooks.md#in-a-hosted-library)). Lines with
+  options OpenSSH doesn't know are skipped, as OpenSSH skips them.
+- **`"signedOnly": true`** in index.json: only verified runbooks open (signed by a signer the user
+  trusts for this library, no runnable block outside the signature, not expired, not older than a
+  version seen before); the others are listed as not openable, with the reason. Once a library
+  asked for it, the app keeps it on if index.json stops asking, until the user agrees.
 - Files are served with `Cache-Control: no-cache`; the app reads the library on start (at most
-  once a minute) and on **Refresh**. Hidden files (`.name`) are not listed.
+  once a minute) and on **Refresh**. Hidden files (`.name`) are neither listed nor served. The
+  app refuses a file over 2 MB and a redirect to another server.
 - **Another origin:** the phone apps read the library from anywhere. A web app served from another
   domain reads it only if the library's server allows that origin (CORS:
   `add_header Access-Control-Allow-Origin https://app.example.net always;`). This container sends

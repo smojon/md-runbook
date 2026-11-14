@@ -40,10 +40,15 @@ jobs:
           # No runbooks/ folder: 404, which the app takes as no library (not the app's page).
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/runbooks/)" = 404
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/runbooks/index.json)" = 404
-          mkdir -p lib/ops
+          mkdir -p lib/ops lib/.git
           printf '# Hello\n' > lib/hello.md
           printf '# Restore\n' > lib/ops/restore.md
+          # Hidden files (a git checkout, an .env) and a link out of the folder: never served.
+          printf '[core]\n' > lib/.git/config
+          printf 'TOKEN=secret\n' > lib/.env
+          printf '# Hidden\n' > lib/ops/.draft.md
           chmod -R a+rX lib
+          ln -s /etc/passwd lib/passwd.md
           docker run -d --name web-lib -p 127.0.0.1:8081:8080 --read-only --tmpfs /tmp --cap-drop ALL \
             -v "$PWD/lib:/usr/share/nginx/html/runbooks:ro" md-runbook-web
           for _ in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:8081/ && break; sleep 1; done
@@ -54,6 +59,14 @@ jobs:
           curl -fsS -D headers-lib.txt http://127.0.0.1:8081/runbooks/hello.md | grep -q '^# Hello'
           grep -qi '^content-type: text/markdown' headers-lib.txt
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/runbooks/nothing.md)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/runbooks/.git/config)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/runbooks/.git/)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/runbooks/.env)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/runbooks/ops/.draft.md)" = 404
+          # The link to /etc/passwd (another owner than the link): refused, whatever the status.
+          code="$(curl -s -o passwd.out -w '%{http_code}' http://127.0.0.1:8081/runbooks/passwd.md)"
+          test "$code" != 200
+          ! grep -q '^root:' passwd.out
       - name: Web server log
         if: always()
         run: |
