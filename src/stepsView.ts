@@ -314,7 +314,11 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     ...(rest.percent !== undefined
       ? {
           percent: rest.percent,
-          left: [rest.left, e.unestimatedLeft > 0 ? withoutEstimate(e.unestimatedLeft) : '', ((t) => (t ? `ends ≈ ${t}` : ''))(finishTime(e, anyRunning, now))].filter((s) => s !== '').join(' · '),
+          // Stopped at a failure: what is left to do, not a time (nothing runs).
+          left:
+            p.firstFailed && !anyRunning
+              ? `${p.pending + p.failed} step${p.pending + p.failed === 1 ? '' : 's'} to do`
+              : [rest.left, e.unestimatedLeft > 0 ? withoutEstimate(e.unestimatedLeft) : '', ((t) => (t ? `ends ≈ ${t}` : ''))(finishTime(e, anyRunning, now))].filter((s) => s !== '').join(' · '),
         }
       : {}),
     rows: mergeLoneSteps(rows),

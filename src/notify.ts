@@ -130,8 +130,8 @@ export function registerNotifications(pipeline: RunPipeline, context: vscode.Ext
   // asked on the cell (a value box or a dialog shows itself); it closes once answered.
   const told = new Map<string, string>();
   const open = new Map<string, () => void>();
-  context.subscriptions.push(
-    onDidChangeWaiting(() => {
+  /** Says so for each runbook that waits for an answer on a cell while you look away. */
+  const checkWaiting = (): void => {
       for (const nb of vscode.workspace.notebookDocuments) {
         const key = nb.uri.toString();
         const w = waitingIn(nb);
@@ -149,7 +149,13 @@ export function registerNotifications(pipeline: RunPipeline, context: vscode.Ext
           () => new Promise<void>((resolve) => open.set(key, resolve)),
         );
       }
-    }),
+  };
+  context.subscriptions.push(
+    onDidChangeWaiting(checkWaiting),
+    // A question asked while you watched, then you looked away: say so then.
+    vscode.window.onDidChangeActiveNotebookEditor(checkWaiting),
+    vscode.window.onDidChangeActiveTextEditor(checkWaiting),
+    vscode.window.onDidChangeWindowState(checkWaiting),
     { dispose: () => open.forEach((close) => close()) },
     // For tests: the end-of-run notification's text for the active runbook.
     vscode.commands.registerCommand('mdRunbook._endMessage', () => {

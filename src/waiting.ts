@@ -27,6 +27,11 @@ interface Waiting {
   where: WaitingWhere;
   /** With where = 'cell': the buttons, and what a click does. */
   answers?: readonly WaitingAnswer[];
+  /**
+   * Where the buttons show, when not on `cell` itself: a Markdown cell shows its status line only
+   * while it's edited, so a checklist item's question shows on the code block that waits after it.
+   */
+  shownOn?: vscode.NotebookCell;
   answer?: (id: string) => void;
 }
 
@@ -83,6 +88,7 @@ export function askOnCell(
   answers: readonly WaitingAnswer[],
   settle?: (answer: (id: string | undefined) => void) => vscode.Disposable | undefined,
   token?: vscode.CancellationToken,
+  shownOn?: vscode.NotebookCell,
 ): Promise<string | undefined> {
   return new Promise((resolve) => {
     const key = keyOf(cell);
@@ -94,7 +100,7 @@ export function askOnCell(
       changed.fire();
       resolve(id);
     };
-    const entry: Waiting = { cell, what, where: 'cell', answers, answer: done };
+    const entry: Waiting = { cell, what, where: 'cell', answers, answer: done, ...(shownOn ? { shownOn } : {}) };
     waiting.set(key, entry);
     const s = settle?.(done);
     if (s) subs.push(s);
@@ -132,8 +138,9 @@ class WaitingStatus implements vscode.NotebookCellStatusBarItemProvider {
   readonly onDidChangeCellStatusBarItems = onDidChangeWaiting;
 
   provideCellStatusBarItems(cell: vscode.NotebookCell): vscode.NotebookCellStatusBarItem[] {
-    const w = waiting.get(keyOf(cell));
-    if (!w) return [];
+    // Its own question, else one shown on it for another cell (a checklist item above it).
+    const w = waiting.get(keyOf(cell)) ?? [...waiting.values()].find((x) => x.shownOn && keyOf(x.shownOn) === keyOf(cell));
+    if (!w || (w.shownOn && keyOf(w.shownOn) !== keyOf(cell))) return [];
     const t = waitingText(w.what, w.where);
     const item = new vscode.NotebookCellStatusBarItem(t.cell, vscode.NotebookCellStatusBarAlignment.Left);
     item.tooltip = t.tooltip;
@@ -144,7 +151,7 @@ class WaitingStatus implements vscode.NotebookCellStatusBarItemProvider {
       const b = new vscode.NotebookCellStatusBarItem(`${a.icon ? `$(${a.icon}) ` : ''}${a.label}`, vscode.NotebookCellStatusBarAlignment.Left);
       b.tooltip = a.tooltip ?? a.label;
       b.priority = 999 - i;
-      b.command = { title: a.label, command: 'mdRunbook.answerWaiting', arguments: [cell.document.uri.toString(), a.id] };
+      b.command = { title: a.label, command: 'mdRunbook.answerWaiting', arguments: [w.cell.document.uri.toString(), a.id] };
       b.accessibilityInformation = { label: `${a.label}: ${w.what}` };
       return b;
     });

@@ -195,6 +195,11 @@ export type ManualAnswer = 'done' | 'skip' | 'stop';
  * Ticking the box in the notebook counts as Done.
  */
 async function askManual(cell: vscode.NotebookCell, item: string, offset?: number): Promise<ManualAnswer> {
+  // The buttons go on the code block that waits after it (a Markdown cell shows no status line
+  // unless it's edited), else on the block before it.
+  const cells = cell.notebook.getCells();
+  const code = (c: vscode.NotebookCell): boolean => c.kind === vscode.NotebookCellKind.Code;
+  const shownOn = cells.slice(cell.index + 1).find(code) ?? cells.slice(0, cell.index).reverse().find(code);
   const answer = await askOnCell(
     cell,
     `Done by hand? ${item}`,
@@ -210,6 +215,8 @@ async function askManual(cell: vscode.NotebookCell, item: string, offset?: numbe
             if (e.notebook !== cell.notebook || !e.cellChanges.some((c) => c.cell === cell)) return;
             if (taskItems(cell.document.getText()).some((t) => t.offset === offset && t.checked)) settle('done');
           }),
+    undefined,
+    shownOn,
   );
   return answer === 'done' ? 'done' : answer === 'skip' ? 'skip' : 'stop';
 }

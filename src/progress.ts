@@ -267,7 +267,8 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
       item.tooltip = t.tooltip;
       item.accessibilityInformation = { label: spoken(item.text) };
       item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-      item.command = { title: 'Show the cell', command: 'mdRunbook._revealCell', arguments: [w.cell] };
+      // The cell with the buttons, when they show on another one (a checklist item's).
+      item.command = { title: 'Show the cell', command: 'mdRunbook._revealCell', arguments: [w.shownOn ?? w.cell] };
       shown = true;
       return item.show();
     }
