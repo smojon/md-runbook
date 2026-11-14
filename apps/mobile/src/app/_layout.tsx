@@ -8,6 +8,7 @@ import { loadSettings } from '../settings/store';
 import { loadHosts } from '../hosts/store';
 import { loadRunbooks } from '../runbooks/store';
 import { loadPins } from '../runbooks/pins';
+import { loadViewModes } from '../runbooks/viewMode';
 import { useNotificationTaps } from '../notifications/open';
 import { t } from '../i18n';
 import { usePalette } from '../theme';
@@ -54,6 +55,7 @@ export default function RootLayout() {
     void loadSettings();
     void loadRunbooks();
     void loadPins();
+    void loadViewModes();
   }, []);
   return (
     <>

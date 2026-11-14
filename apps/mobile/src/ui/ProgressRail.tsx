@@ -5,8 +5,8 @@
  * for the part on screen. Positions are by cell: the runbook's cells spread over the rail's height.
  *
  * The rail is a scrubber: press and drag along it and a bubble names the chapter and the step at
- * the finger; let go and the runbook goes there. A plain tap shows the Steps sheet, the list of
- * every step by name (the visible way to the same places, and what a screen reader opens).
+ * the finger; let go and the runbook goes there. A plain tap switches to the Steps tab, the list
+ * of every step by name (the visible way to the same places, and what a screen reader opens).
  *
  * The touch strip is 44 px wide (the rail drawn in it is thin) and takes a column of its own, so
  * it never covers a cell's ▷. The drawn rail sits 20 px in from the screen's edge, away from the
@@ -37,6 +37,13 @@ export interface RailTick {
   state: RailState;
 }
 
+/** A view covered by another (a phone's Steps tab over the runbook): out of a screen reader's reach. */
+export const COVERED = {
+  accessibilityElementsHidden: true,
+  importantForAccessibility: 'no-hide-descendants',
+  'aria-hidden': true,
+} as const;
+
 /** The width of the touch strip (and of the rail's column). */
 export const RAIL_WIDTH = 44;
 const TICK = 8;
@@ -61,7 +68,10 @@ export function ProgressRail({
   onGo,
   onOpen,
   label,
+  covered = false,
 }: {
+  /** Under a phone's Steps tab: hidden from screen readers (it stays laid out). */
+  covered?: boolean;
   /** The runbook's chapters (`#` and `##` headings), in order. */
   chapters?: readonly RailChapter[];
   /** How many cells the runbook has: a cell's place on the rail is index / cells. */
@@ -71,7 +81,7 @@ export function ProgressRail({
   visible?: { first: number; last: number };
   /** A scrub ended here: go to the cell. */
   onGo(index: number): void;
-  /** A tap: show the Steps sheet. */
+  /** A tap: show the Steps tab. */
   onOpen(): void;
   /** What a screen reader says for the whole rail, e.g. "Step 3 of 6". */
   label: string;
@@ -174,7 +184,8 @@ export function ProgressRail({
       testID="progress-rail"
       style={styles.rail}
       onLayout={(e) => setHeight(e.nativeEvent.layout.height)}
-      accessible
+      {...(covered ? COVERED : {})}
+      accessible={!covered}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={t.railHint}

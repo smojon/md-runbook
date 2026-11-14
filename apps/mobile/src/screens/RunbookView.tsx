@@ -67,20 +67,24 @@ import { TeardownCard } from '../cells/TeardownCard';
 import { ManualCard } from '../cells/ManualCard';
 import {
   ManualItem,
+  PreflightPart,
   StepNeed,
   StepsRow,
   cellHeadings,
   lastCodeCell,
-  preflightLine,
+  preflightParts,
   stepsRows,
   uncheckedBefore,
+  withItemSet,
   withItemTicked,
 } from '../runbooks/steps';
-import { StepsHead, StepsHeader, StepsSheet } from '../ui/StepsSheet';
-import { StepsList } from '../ui/StepsList';
+import { StepsHeadAction, StepsHeader, StepsView } from '../ui/StepsView';
+import type { StepAnswer, StepsAnswers } from '../ui/StepsList';
+import { ViewSwitch } from '../ui/ViewSwitch';
+import { loadViewModes, setViewMode, useViewMode } from '../runbooks/viewMode';
 
 import { BarSegment, TimeBar, useNow } from '../ui/TimeBar';
-import { ProgressRail, RAIL_WIDTH, RailChapter, RailState, RailTick } from '../ui/ProgressRail';
+import { COVERED, ProgressRail, RAIL_WIDTH, RailChapter, RailState, RailTick } from '../ui/ProgressRail';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId, signSshsig } from '@md-runbook/ssh';
 import { approvalOf, approveCell, rejectCell } from '../approvals/store';
@@ -329,12 +333,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : [],
     [runbook, reader, stepHistory],
   );
-  /** The Steps sheet (every step by name); on a wide screen the same list is a side panel instead of the rail. */
-  const [stepsOpen, setStepsOpen] = useState(false);
+  /**
+   * A narrow screen shows the runbook or its Steps (every step by name), as the switch at the top
+   * was left for this runbook; a wide one shows the Steps as a side panel beside the runbook.
+   */
+  const viewMode = useViewMode(runbook?.id);
+  useEffect(() => void loadViewModes(), []);
   const { width: windowWidth } = useWindowDimensions();
   const wide = windowWidth >= WIDE;
+  const stepsShown = !wide && viewMode === 'steps';
   // The clock moves the bars against estimates, and the running step's time in the list.
-  const now = useNow(running !== undefined && (estimateSteps.some((s) => s.estimateSeconds !== undefined) || stepsOpen || wide));
+  const now = useNow(running !== undefined && (estimateSteps.some((s) => s.estimateSeconds !== undefined) || stepsShown || wide));
   const partStates = useMemo(() => (runbook ? textPartStates(runbook.text) : undefined), [runbook]);
   const estimate = runbookEstimate(
     estimateSteps.map((s) =>
@@ -1098,7 +1107,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
           },
         },
-        { ...meta('showSteps', 'steps', progress?.total ? undefined : t.noStepsYet), run: () => setStepsOpen(true) },
+        { ...meta('showSteps', 'steps', progress?.total ? undefined : t.noStepsYet), run: () => openSteps() },
         { ...meta('nextProblem', 'steps', problems.all.length > 0 ? undefined : t.noProblems), run: () => goToNextProblem() },
         {
           ...meta('restartSession', 'run', hosts.some((h) => isConnected(h.id, runbook.id)) ? undefined : t.noSessionOpen),
@@ -1353,6 +1362,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       ),
     );
   };
+  /** Run Until Here: the steps still to do (Resume's) up to cell `index`. */
+  const untilHere = (index: number): number[] => (runbook ? textProgress(runbook.text).resume.filter((i) => i <= index) : []);
   const cellActions = (index: number): AppAction[] => {
     const cell = cells[index];
     if (!runbook || !cell || cell.kind !== 'code') return [];
@@ -1386,6 +1397,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               .cells.map((c, i) => (c.kind === 'code' && i >= index ? i : -1))
               .filter((i) => i >= 0),
           ),
+      },
+      {
+        // As VS Code's: from the first step still to do (or failed) up to this one.
+        ...meta('runUntilHere', 'run', !host ? t.noRunNow : untilHere(index).length > 0 ? undefined : t.nothingUntilHere),
+        run: () => runSequence('start', untilHere(index)),
       },
       { ...meta('stepThrough', 'run', why), run: () => void run({ cellIndex: index, mode: 'step', line: 0 }, host) },
       {
@@ -1439,6 +1455,20 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (!runbook) return;
     const r = await saveRunbook(runbook.id);
     setNotice(r.kind === 'conflict' ? t.conflictTitle : r.kind === 'error' ? r.message : r.kind === 'downloaded' ? undefined : t.saved);
+  };
+  /** The confirmation's answers (its card under the cell, and the waiting step's row). */
+  const confirmRun = (): void => {
+    if (!confirming) return;
+    const go = confirming.go;
+    setConfirming(undefined);
+    go();
+  };
+  const confirmCancel = (): void => {
+    if (!confirming) return;
+    // As in VS Code: a cell that wasn't confirmed doesn't run, and Run all stops there.
+    clearQueue();
+    setConfirming(undefined);
+    setNotice(t.confirmDeclined(confirming.cellIndex + 1));
   };
   const stopSequence = (): void => {
     clearQueue();
@@ -1570,7 +1600,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     }
     return needs;
   };
-  // The steps by name (the Steps sheet, the wide screen's panel), as VS Code's Runbook Steps view.
+  // The question asked at a cell, the host's key and another host's (cards at the top) included:
+  // the step's row in the Steps view waits there.
+  const askedAt = waitingCell ?? trust?.request.cellIndex ?? otherHost?.request.cellIndex;
+  // The steps by name (a phone's Steps, the wide screen's panel), as VS Code's Runbook Steps view.
   const stepRows = useMemo(
     (): StepsRow[] =>
       progress
@@ -1578,8 +1611,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             cells,
             progress,
             ...(running ? { running: { cellIndex: running.cellIndex, startedAt: running.startedAt } } : {}),
-            ...(waitingCell !== undefined
-              ? { waiting: { cellIndex: waitingCell, ...(waitingItem !== undefined ? { item: waitingItem } : {}) } }
+            ...(askedAt !== undefined
+              ? { waiting: { cellIndex: askedAt, ...(waitingItem !== undefined ? { item: waitingItem } : {}) } }
               : {}),
             callEstimates,
             learnedEstimates,
@@ -1589,22 +1622,86 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : [],
     // needsOf reads approvalId, secretNames and typedInputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cells, progress, running, waitingCell, waitingItem, callEstimates, learnedEstimates, approvalId, secretNames, typedInputs, now],
+    [cells, progress, running, askedAt, waitingItem, callEstimates, learnedEstimates, approvalId, secretNames, typedInputs, now],
   );
   const hasSteps = stepRows.some((r) => r.kind === 'step');
+  /** A phone shows its Steps tab (the runbook's list stays mounted under it, where it was). */
+  const showSteps = stepsShown && hasSteps;
+  /**
+   * Show the runbook at a cell (or, `top`, at the cards above the cells); from a phone's Steps,
+   * the Runbook tab too (the list stays laid out under Steps, so it scrolls there at once).
+   */
+  const showInRunbook = (at: number | 'top'): void => {
+    if (at === 'top') list.current?.scrollToOffset({ offset: 0 });
+    else list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
+    if (showSteps && runbook) setViewMode(runbook.id, 'runbook');
+  };
+  const goToCell = (index: number): void => showInRunbook(index);
+  /** Show Steps (the run bar's headline, a tap on the rail, ⋯ More): a phone's Steps tab; a wide screen has them beside it. */
+  const openSteps = (): void => {
+    if (runbook && !wide) setViewMode(runbook.id, 'steps');
+  };
+  const failedCell = !queued && !running && askedAt === undefined ? progress?.firstFailed?.cell : undefined;
+  const choice = progress ? runChoice(progress) : undefined;
+  // The header's buttons, as object literals with their handlers (never called during render).
+  const headActions: StepsHeadAction[] =
+    failedCell !== undefined && host
+      ? [
+          // As VS Code's Steps view: the failed step again, or it and the steps still to do.
+          {
+            id: 'retry',
+            label: t.stepsRetry,
+            hint: t.stepsRetryHint,
+            kind: 'primary',
+            onPress: () => void run({ cellIndex: failedCell }, host),
+          },
+          ...(progress?.resume.length
+            ? [
+                {
+                  id: 'resume' as const,
+                  label: t.stepsResume,
+                  hint: t.stepsResumeHint,
+                  kind: 'secondary' as const,
+                  onPress: () => runSequence('resume'),
+                },
+              ]
+            : []),
+        ]
+      : wide
+        ? []
+        : queued || running || waiting
+          ? // A phone's Steps has no run bar above it: Run all and Stop are here.
+            [{ id: 'stop', label: t.stopRun, kind: 'stop', onPress: () => stopSequence() }]
+          : choice && host
+            ? [{ id: 'run', label: choice.label, kind: 'primary', onPress: () => runSequence(choice.from) }]
+            : [];
   const stepsHeader: StepsHeader = {
     headline: waiting ? t.pinnedWaiting : progress ? runHeadline(progress, runningStep) : '',
-    waiting,
+    ...(waiting ? { tone: 'waiting' as const } : failedCell !== undefined ? { tone: 'failed' as const } : {}),
     ...(estimate.fraction !== undefined && progress
       ? { fraction: estimate.fraction, line: estimateLines(estimate, progress.pending, queued || running !== undefined).main }
       : {}),
+    actions: headActions,
+    ...(notice && !wide ? { notice } : {}),
   };
   // Before a run only: once it runs, the run bar and the cards say what it waits for.
-  const preflight = !queued && !running && !waiting ? preflightLine(stepRows) : undefined;
-  if (preflight) stepsHeader.preflight = preflight;
-  const goToCell = (index: number): void => {
-    setStepsOpen(false);
-    list.current?.scrollToIndex({ index, viewPosition: 0.2 });
+  const preflight = !queued && !running && askedAt === undefined ? preflightParts(stepRows) : [];
+  if (preflight.length) stepsHeader.preflight = preflight;
+  /** A count of the preflight line: the first step that needs it, or where values and secrets are set. */
+  const onPreflight = (p: PreflightPart): void => {
+    if (p.index !== undefined) return showInRunbook(p.index);
+    if (p.kind === 'secret') return router.push('/hosts');
+    if (p.kind === 'input') {
+      setShowInputs(true);
+      showInRunbook('top');
+    }
+  };
+  /** A checklist item's tick box; at the item Run all waits at, ticking it is Done (as in VS Code). */
+  const tickItem = (index: number, item: number, checked: boolean): void => {
+    if (!runbook) return;
+    if (checked && manualAsk?.cellIndex === index && manualAsk.item === item) return answerManual('done');
+    const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+    write(withItemSet(latest, parse(latest).cells, index, item, checked));
   };
 
   // While the app is away: a notification when the run ends or waits (the question it waits on,
@@ -1625,7 +1722,37 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               : otherHost !== undefined
                 ? t.otherHostTitle(otherHost.target.name)
                 : undefined;
-  const askedAt = waitingCell ?? trust?.request.cellIndex ?? otherHost?.request.cellIndex;
+  // The waiting step's row has the question's answers, the same as its card (VS Code's Done / Skip
+  // / Stop on the row); a question to type into (values, a host's key) has Answer, which goes there.
+  // (Object literals with their handlers, never called during render.)
+  const stepButtons: StepAnswer[] = manualAsk
+    ? [
+        { id: 'done', label: t.manualDone, onPress: () => answerManual('done') },
+        { id: 'skip', label: t.manualSkip, onPress: () => answerManual('skip') },
+        { id: 'stop', label: t.manualStop, kind: 'stop', onPress: () => answerManual('stop') },
+      ]
+    : teardownOffer
+      ? [
+          { id: 'take', label: t.teardownTake, onPress: () => answerTeardown(true) },
+          { id: 'leave', label: t.teardownNotNow, onPress: () => answerTeardown(false) },
+        ]
+      : confirming
+        ? [
+            { id: 'run', label: t.confirmRun, onPress: () => confirmRun() },
+            { id: 'cancel', label: t.trustDecline, onPress: () => confirmCancel() },
+          ]
+        : [
+            {
+              id: 'answer',
+              label: t.stepsAnswer,
+              hint: t.stepsAnswerHint,
+              onPress: () => showInRunbook(asking ? asking.request.cellIndex : 'top'),
+            },
+          ];
+  const stepAnswers: StepsAnswers | undefined =
+    waitingWhat !== undefined && askedAt !== undefined
+      ? { question: waitingWhat + (confirming?.runsAs ? ` ${t.confirmRunsAs(confirming.runsAs)}` : ''), buttons: stepButtons }
+      : undefined;
   const runPhase: RunPhase =
     waitingWhat !== undefined && askedAt !== undefined
       ? { kind: 'waiting', cellIndex: askedAt, what: waitingWhat }
@@ -1650,6 +1777,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     }, 100),
   );
   const panel = wide && hasSteps;
+  /** The runbook's list under a phone's Steps tab: out of a screen reader's reach. */
+  const underSteps = showSteps ? COVERED : {};
   const railShown = !wide && railTicks.length > 1 && progress !== undefined;
   // The runbook at a readable width on a wide screen (a tablet, a browser), not stretched across it.
   const side = Math.max(12, (windowWidth - (panel ? PANEL_WIDTH : 0) - MAX_CONTENT) / 2);
@@ -1664,17 +1793,35 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       </ScrollView>
     );
   }
+  // The Steps view: a phone's Steps tab, or the panel beside the runbook on a wide screen.
+  const stepsView = {
+    header: stepsHeader,
+    rows: stepRows,
+    ...(visibleCells ? { visible: visibleCells } : {}),
+    answers: stepAnswers,
+    onGo: (index: number) => goToCell(index),
+    onActions: (index: number) => setCellSheet(cellActions(index)),
+    onTick: (index: number, item: number, checked: boolean) => tickItem(index, item, checked),
+    onPreflight: (p: PreflightPart) => onPreflight(p),
+  };
   return (
     <View style={styles.screen}>
       <Stack.Screen options={{ title: runbook.title }} />
+      {/* Fixed under the title, not in the list: the other view stays one tap away while the runbook scrolls. */}
+      {!wide && hasSteps ? (
+        <ViewSwitch
+          value={showSteps ? 'steps' : 'runbook'}
+          waiting={runPhase.kind === 'waiting'}
+          onChange={(mode) => setViewMode(runbook.id, mode)}
+        />
+      ) : null}
       <View style={styles.withRail}>
         {panel ? (
           <View testID="steps-panel" style={styles.panel}>
             <Text accessibilityRole="header" style={styles.panelTitle}>
               {t.stepsTitle}
             </Text>
-            <StepsHead header={stepsHeader} />
-            <StepsList rows={stepRows} {...(visibleCells ? { visible: visibleCells } : {})} onGo={goToCell} />
+            <StepsView testID="steps-panel-view" {...stepsView} />
           </View>
         ) : railShown && progress ? (
           <ProgressRail
@@ -1684,11 +1831,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             {...(visibleCells ? { visible: visibleCells } : {})}
             label={runHeadline(progress, runningStep)}
             onGo={goToCell}
-            onOpen={() => setStepsOpen(true)}
+            onOpen={openSteps}
+            covered={showSteps}
           />
         ) : null}
         <FlatList
           ref={list}
+          {...underSteps}
           onViewableItemsChanged={onViewable}
           viewabilityConfig={VIEWABILITY}
           onScroll={(e) => setPastBar(barBottom > 0 && e.nativeEvent.contentOffset.y > barBottom)}
@@ -1711,7 +1860,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 onAnswer={() => {
                   if (waitingCell !== undefined) list.current?.scrollToIndex({ index: waitingCell, viewPosition: 0.2 });
                 }}
-                {...(hasSteps && !panel ? { onSteps: () => setStepsOpen(true) } : {})}
+                {...(hasSteps && !panel ? { onSteps: openSteps } : {})}
                 onRun={runSequence}
                 onStop={stopSequence}
                 onMore={() => setShowActions(true)}
@@ -1729,10 +1878,6 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                   }}
                 />
               ) : null}
-              <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
-              <AssistantSheet {...assistant.sheet} />
-              <DiffSheet diff={diff} onClose={() => setDiff(undefined)} />
-              <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />
               <SaveBar runbook={runbook} />
               {fromLink ? <LinkNotes context={fromLink} /> : null}
               {signed ? <SignedBanner status={signed} verified={verified} /> : null}
@@ -1985,17 +2130,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                       match={confirming.match}
                       runsAs={confirming.runsAs}
                       attempts={confirming.attempts}
-                      onRun={() => {
-                        const go = confirming.go;
-                        setConfirming(undefined);
-                        go();
-                      }}
-                      onCancel={() => {
-                        // As in VS Code: a cell that wasn't confirmed doesn't run, and Run all stops there.
-                        clearQueue();
-                        setConfirming(undefined);
-                        setNotice(t.confirmDeclined(index + 1));
-                      }}
+                      onRun={confirmRun}
+                      onCancel={confirmCancel}
                     />
                   ) : approving?.index === index && isCodeMeta(item.meta) ? (
                     <ApproveCard
@@ -2016,31 +2152,49 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             )
           }
         />
+        {/* In the runbook's column: under the Runbook | Steps switch, not over it. */}
+        {pastBar && progress && (queued || waiting) && !showSteps ? (
+          <PinnedRunBar
+            progress={progress}
+            estimate={estimate}
+            {...(runningStep ? { runningCell: runningStep } : {})}
+            waiting={waiting}
+            left={panel ? PANEL_WIDTH : railShown ? RAIL_WIDTH : 0}
+            onShow={() => {
+              const at = waitingCell ?? runningStep?.index;
+              if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
+            }}
+            onStop={stopSequence}
+          />
+        ) : null}
+        {/*
+            A phone's Steps tab, over the runbook's column: the runbook stays mounted and laid out
+            under it (hidden from screen readers), so it keeps its place, its cards and its run,
+            and a row can scroll it to a step.
+          */}
+        {showSteps ? (
+          <View style={styles.stepsTab}>
+            <StepsView testID="steps-view" {...stepsView} />
+          </View>
+        ) : null}
       </View>
-      {pastBar && progress && (queued || waiting) ? (
-        <PinnedRunBar
-          progress={progress}
-          estimate={estimate}
-          {...(runningStep ? { runningCell: runningStep } : {})}
-          waiting={waiting}
-          left={panel ? PANEL_WIDTH : railShown ? RAIL_WIDTH : 0}
-          onShow={() => {
-            const at = waitingCell ?? runningStep?.index;
-            if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
-          }}
-          onStop={stopSequence}
-        />
-      ) : null}
-      <StepsSheet
-        visible={stepsOpen && !panel}
-        rows={stepRows}
-        {...(visibleCells ? { cells: visibleCells } : {})}
-        header={stepsHeader}
-        onGo={goToCell}
-        onClose={() => setStepsOpen(false)}
-      />
+      {/* The sheets at the screen's root: they open from the Steps tab too, while the runbook is hidden. */}
+      <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
+      <AssistantSheet {...assistant.sheet} />
+      <DiffSheet diff={diff} onClose={() => setDiff(undefined)} />
+      <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />
     </View>
   );
+}
+
+/** The run bar's main button when nothing runs: Run all, Resume after a stop, Run again when all is done. */
+function runChoice(progress: Progress): { label: string; from: 'start' | 'resume'; resume: boolean } {
+  const complete = progress.done + progress.skipped;
+  const fresh = complete === 0 && progress.failed === 0;
+  // An offered teardown left: Resume offers it again (the headline already says Done).
+  const finished = progress.pending === 0 && progress.failed === 0 && progress.offered === 0;
+  const resume = !fresh && !finished && progress.resume.length > 0;
+  return { label: finished ? t.runAgain : resume ? t.continueRunbook : t.runAll, from: resume ? 'resume' : 'start', resume };
 }
 
 /** From this window width (a tablet, a browser), the steps are a side panel instead of the rail. */
@@ -2207,7 +2361,7 @@ function RunBar({
   /** The run waits for the reader (values, a confirmation, the teardown offer): Answer goes there. */
   waiting?: boolean;
   onAnswer?(): void;
-  /** The headline shows every step by name (the Steps sheet), with a › to say so. */
+  /** The headline shows every step by name (a phone's Steps tab), with a › to say so. */
   onSteps?(): void;
   /** By the blocks' estimates; shown when one has an estimate. */
   estimate?: RunbookEstimate;
@@ -2250,12 +2404,9 @@ function RunBar({
     );
   };
   if (!progress || progress.total === 0) return <View style={styles.runBar}>{more}</View>;
-  const complete = progress.done + progress.skipped;
-  const fresh = complete === 0 && progress.failed === 0;
-  // An offered teardown left: Continue offers it again (the headline already says Done).
-  const finished = progress.pending === 0 && progress.failed === 0 && progress.offered === 0;
-  const resume = !fresh && !finished && progress.resume.length > 0;
-  const label = running ? t.stopRun : fresh || finished || !resume ? (finished ? t.runAgain : t.runAll) : t.continueRunbook;
+  const choice = runChoice(progress);
+  const resume = choice.resume;
+  const label = running ? t.stopRun : choice.label;
   if (waiting) {
     // Not "100%" and a red Stop while the run waits for an answer far below: say so, and go there.
     return (
@@ -3006,6 +3157,17 @@ const useStyles = themedStyles((c) => ({
   runAnswer: { backgroundColor: c.warning },
   runWaiting: { color: c.warningText, fontWeight: '600' },
   withRail: { flex: 1, flexDirection: 'row' },
+  // Over the runbook's column, which stays laid out under it.
+  stepsTab: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 10,
+    backgroundColor: c.background,
+    zIndex: 3,
+  },
   // Beside the rail's column (its 44 px touch strip): no padding of the list's own on the left.
   contentRail: { paddingLeft: 0 },
   panel: {
