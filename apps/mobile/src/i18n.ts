@@ -702,6 +702,32 @@ const en = {
   installKeyFailed: (why: string) => `Not installed: ${why}`,
   trustAccept: 'Trust and run',
   trustDecline: 'Cancel',
+
+  // Notifications: a run that ends or waits while the app is in the background (the web: the tab is hidden)
+  notifyTitle: 'Notifications',
+  notifyRuns: 'Notify me about runs in the background',
+  notifyRunsHelp:
+    'A notification when a run is done, fails or waits for you while md-runbook is in the background. Your phone pauses md-runbook from a few seconds to half a minute after you leave it, so a step still running then is cut off: the notification says so, and you go on when you are back.',
+  notifyRunsHelpWeb: 'A browser notification when a run is done, fails or waits for you while this tab is hidden.',
+  notifyBlocked: 'Notifications are turned off for md-runbook in the system settings.',
+  notifyBlockedWeb: 'This browser blocks notifications from this site: allow them in its site settings.',
+  notifyOfferTitle: 'Get a notification when this run needs you?',
+  notifyOfferBody:
+    'When the run is done, fails or waits for an answer while md-runbook is in the background. Your phone pauses md-runbook soon after you leave it: then the notification says the run is paused.',
+  notifyOfferBodyWeb: 'When the run is done, fails or waits for an answer while this tab is hidden.',
+  notifyOfferYes: 'Notify me',
+  notifyOfferNo: 'Not now',
+  notifyChannel: 'Runs',
+  notifyChannelHelp: 'A run is done, failed or waits for you',
+  /** The run bar's words, after the runbook's name: `Deploy checkout` / `Step 4 of 6 failed — Push image`. */
+  notifyFailedStep: (headline: string, label: string) => `${headline} — ${label}`,
+  notifyWaits: (runbook: string) => `${runbook} waits for you`,
+  notifyWaitsManual: (item: string) => `Done by hand? ${item}`,
+  notifyWaitsTeardown: (steps: string) => `Take it down now? ${steps}`,
+  notifyWaitsNeeds: (names: string) => `This cell needs ${names}`,
+  notifyPaused: (runbook: string) => `${runbook} is paused in the background`,
+  notifyPausedBody:
+    'Your phone pauses md-runbook soon after you leave it, so the step that was running may have been cut off. Open md-runbook to check it and go on.',
 } as const;
 
 export type Strings = typeof en;

@@ -2,7 +2,8 @@
  * App settings that mirror the extension's: how many earlier runs each cell keeps in the file
  * (mdRunbook.output.historySize there, 0 by default: the file only has the latest run), and how
  * output is coloured (mdRunbook.output.colorLevels, stderrInRed and forceColor), and the name the
- * app signs runbooks with, and whether a runbook's `no-confirm` is honoured.
+ * app signs runbooks with, and whether a runbook's `no-confirm` is honoured; and whether runs notify
+ * (asked once, at the first Run all).
  */
 import { useSyncExternalStore } from 'react';
 import { getJson, setJson } from '../storage/kv';
@@ -34,6 +35,12 @@ export interface Settings {
    * and the principal suggested for the servers' allowed_signers. Empty until set.
    */
   signerName: string;
+  /**
+   * Notifications when a run is done, fails or waits for you while the app is in the background
+   * (the web: the tab is hidden). Undefined until asked (the first Run all offers them); false
+   * after Not now or a refused permission, and then never offered again (the setting turns them on).
+   */
+  notifyRuns?: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -79,6 +86,7 @@ async function readSettings(): Promise<void> {
       keyNeedsUser: flag('keyNeedsUser'),
       allowNoConfirm: flag('allowNoConfirm'),
       signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
+      ...(typeof saved.notifyRuns === 'boolean' ? { notifyRuns: saved.notifyRuns } : {}),
     };
   }
   emit();
@@ -102,6 +110,13 @@ export function setOutputSetting(key: OutputFlag, on: boolean): void {
 }
 
 export const signerName = (): string => settings.signerName;
+
+/** Whether runs notify: undefined until asked (see Settings.notifyRuns). */
+export const notifyRuns = (): boolean | undefined => settings.notifyRuns;
+
+export function setNotifyRuns(on: boolean): void {
+  update({ notifyRuns: on });
+}
 
 export function setSignerName(name: string): void {
   update({ signerName: name.trim() });

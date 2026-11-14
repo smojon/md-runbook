@@ -1,7 +1,8 @@
 /**
  * iOS: background time while a cell runs (about half a minute), so switching to another app for a
- * moment doesn't cut the cell's connection. Null on Android (it keeps a backgrounded app's
- * connections), on the web and in Jest.
+ * moment doesn't cut the cell's connection. Null on Android (no such API: Android 14+ freezes a
+ * cached app about ten seconds after it leaves the screen and closes its TCP connections; see
+ * src/notifications/runs.ts), on the web and in Jest.
  */
 import { requireOptionalNativeModule } from 'expo-modules-core';
 

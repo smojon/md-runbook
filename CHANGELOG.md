@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **App: notifications when a run needs you.** While the app is in the background (or the
+  browser tab is hidden), a run that is done, fails or waits for an answer sends a notification
+  in the run bar's words, and a tap opens the runbook at that step. The first Run all offers them
+  and the system asks only after **Notify me**; **Hosts & Settings → Notifications** turns them on
+  or off. A phone stops a backgrounded app within seconds to half a minute, so leaving the app
+  mid-run gives a notification that the run is paused rather than a result that won't come.
+  Local notifications only (expo-notifications, no push); the iOS and Android apps need a new build.
 - **A step without `name=` is called by its heading.** A block that is the only one under a `##`
   (or deeper) heading takes that heading as its step name in the status bar, the Steps view, the
   notifications and the app (`Step 3/6 · Restart the API`), instead of its first command. Blocks

@@ -36,6 +36,12 @@
       "expo-status-bar",
       "expo-sharing",
       [
+        "expo-notifications",
+        {
+          "enableRemoteNotifications": false
+        }
+      ],
+      [
         "expo-camera",
         {
           "cameraPermission": "md-runbook uses the camera to scan runbook QR codes, such as the labels on machines.",

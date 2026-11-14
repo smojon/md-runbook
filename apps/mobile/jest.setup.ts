@@ -26,6 +26,27 @@ jest.mock('./src/storage/docs', () => ({
   deleteDoc: async (id: string) => void mockDocs.delete(id),
 }));
 
+// Local notifications (native): nothing asked yet; asking grants; scheduling returns ids. Tests
+// change the answers with jest.mocked(...) and read what was scheduled.
+jest.mock('expo-notifications', () => {
+  let next = 1;
+  return {
+    AndroidImportance: { DEFAULT: 5, HIGH: 6 },
+    SchedulableTriggerInputTypes: { TIME_INTERVAL: 'timeInterval' },
+    DEFAULT_ACTION_IDENTIFIER: 'expo.modules.notifications.actions.DEFAULT',
+    setNotificationHandler: jest.fn(),
+    setNotificationChannelAsync: jest.fn(async () => null),
+    getPermissionsAsync: jest.fn(async () => ({ status: 'undetermined', granted: false, canAskAgain: true, expires: 'never' })),
+    requestPermissionsAsync: jest.fn(async () => ({ status: 'granted', granted: true, canAskAgain: true, expires: 'never' })),
+    scheduleNotificationAsync: jest.fn(async () => `n${next++}`),
+    cancelScheduledNotificationAsync: jest.fn(async () => undefined),
+    dismissNotificationAsync: jest.fn(async () => undefined),
+    addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+    getLastNotificationResponse: jest.fn(() => null),
+    clearLastNotificationResponse: jest.fn(),
+  };
+});
+
 jest.mock('react-native-tcp-socket', () => ({
   __esModule: true,
   default: {

@@ -156,6 +156,25 @@ others. A cell for the other kind of server shows why it doesn't run there.
 
 <img src="app/web-line-actions-dark.png" width="720" alt="The web app in dark mode: a code line tapped, with Run line 2, Run lines 1-2, Check, Breakpoint and Explain under it">
 
+## Notifications
+
+The first **Run all** offers a notification when a run is done, fails or waits for you (a value
+to type, a risky command to confirm, the teardown offer, a step done by hand) while the app is
+in the background, or, in a browser, while the tab is hidden. The system asks for the permission
+only after **Notify me**; **Not now** isn't asked again, and **Hosts & Settings → Notifications**
+turns them on or off. They say what the run bar says ("Deploy checkout" · "Step 4 of 6 failed —
+Push image"), and a tap opens the runbook at that step. Nothing leaves the device: they are local
+notifications, not push.
+
+A phone doesn't keep a backgrounded app running. iOS suspends md-runbook about half a minute after
+you leave it (the time it asks for while a cell runs), and Android 14 and later freeze it about ten
+seconds after it is cached, closing its connections. A run in progress stops there; the step that
+was running may be cut off with its connection. So when you leave the app during a run, it
+schedules a notification for about then that says the run is paused; if the run ends or waits
+first, that one is taken back and you get the result instead. Back in the app, the run shows where
+it stopped, and **▶ Resume** goes on. A browser keeps a hidden tab running (more slowly),
+so the web app has no paused notification.
+
 ## In a browser, through the relay
 
 <img src="app/web-relay-run.png" width="720" alt="The web app after a line ran over SSH through the relay">

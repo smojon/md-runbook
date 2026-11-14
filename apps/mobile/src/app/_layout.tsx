@@ -8,6 +8,7 @@ import { loadSettings } from '../settings/store';
 import { loadHosts } from '../hosts/store';
 import { loadRunbooks } from '../runbooks/store';
 import { loadPins } from '../runbooks/pins';
+import { useNotificationTaps } from '../notifications/open';
 import { t } from '../i18n';
 import { usePalette } from '../theme';
 import { CODICON_FONT, codiconFont } from '../ui/Codicon';
@@ -36,6 +37,12 @@ function AppShortcutsSync() {
   return null;
 }
 
+/** A tap on a run's notification opens its runbook at the step. */
+function NotificationTaps() {
+  useNotificationTaps();
+  return null;
+}
+
 export default function RootLayout() {
   const c = usePalette();
   useWebFocusStyle(c.accent);
@@ -52,6 +59,7 @@ export default function RootLayout() {
     <>
       <StatusBar style="auto" />
       <AppShortcutsSync />
+      <NotificationTaps />
       <Stack
         screenOptions={{
           headerStyle: { backgroundColor: c.background },

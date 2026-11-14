@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { FlatList, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
@@ -13,10 +13,12 @@ import {
   setHistorySize,
   setOutputSetting,
   setSignerName,
+  setNotifyRuns,
   useHistorySize,
   useOutputSettings,
   useSignerName,
 } from '../settings/store';
+import { notificationsSupported, turnOnNotifications } from '../notifications/runs';
 import { badTokenCharacter, getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { SIGNER_NAME_RE } from '@md-runbook/core/signing';
 import { mono, themedStyles, usePalette } from '../theme';
@@ -101,6 +103,7 @@ export function HostList() {
           <ColorSection />
           <LinksSection />
           <SafetySection />
+          <NotificationsSection />
           {Platform.OS === 'web' ? <RelaySection /> : null}
         </>
       }
@@ -424,6 +427,49 @@ function SafetySection() {
           onValueChange={(on) => setOutputSetting('allowNoConfirm', on)}
         />
       </View>
+    </View>
+  );
+}
+
+/** Notifications about runs while the app is away (offered at the first Run all; here on or off). */
+function NotificationsSection() {
+  const styles = useStyles();
+  const s = useOutputSettings();
+  /** Turned on, and the system said no: where to allow them. */
+  const [blocked, setBlocked] = useState(false);
+  if (!notificationsSupported()) return null;
+  const web = Platform.OS === 'web';
+  return (
+    <View testID="notify-settings" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.notifyTitle}</Text>
+      <View style={styles.switchRow}>
+        <View style={styles.switchText}>
+          <Text style={styles.switchLabel}>{t.notifyRuns}</Text>
+          <Text style={styles.help}>{web ? t.notifyRunsHelpWeb : t.notifyRunsHelp}</Text>
+        </View>
+        <Toggle
+          testID="setting-notifyRuns"
+          accessibilityLabel={t.notifyRuns}
+          value={s.notifyRuns === true}
+          onValueChange={(on) => {
+            setBlocked(false);
+            if (!on) return setNotifyRuns(false);
+            void turnOnNotifications().then((ok) => setBlocked(!ok));
+          }}
+        />
+      </View>
+      {blocked ? (
+        <View style={styles.switchText}>
+          <Text testID="notify-blocked" style={styles.help}>
+            {web ? t.notifyBlockedWeb : t.notifyBlocked}
+          </Text>
+          {web ? null : (
+            <Pressable testID="notify-open-settings" accessibilityRole="button" onPress={() => void Linking.openSettings()}>
+              <Text style={styles.link}>{t.openSettings}</Text>
+            </Pressable>
+          )}
+        </View>
+      ) : null}
     </View>
   );
 }

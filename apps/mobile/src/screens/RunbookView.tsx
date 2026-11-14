@@ -124,6 +124,10 @@ import { loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import { transportReady } from '../ssh/transport';
 import { mono, themedStyles, usePalette } from '../theme';
 import { ActionGroup, ActionsSheet, AppAction } from '../ui/ActionsSheet';
+import { NotifyOfferCard } from '../notifications/OfferCard';
+import { useOpenRequest } from '../notifications/open';
+import { declineNotifications, shouldOffer, turnOnNotifications } from '../notifications/runs';
+import { EndedNote, RunPhase, useRunNotifications } from '../notifications/useRunNotifications';
 
 /** Runbooks whose teardown was declined (Leave it up): Run all doesn't offer it again until the app restarts. */
 const teardownDeclined = new Set<string>();
@@ -421,6 +425,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   // The teardown offer (core/parts.ts), under the first teardown step.
   const [teardownOffer, setTeardownOffer] = useState<{ cellIndex: number; labels: string[] } | undefined>();
   const [queued, setQueued] = useState(false);
+  /** Run all went on in a runbook call's copy: that run says how it ends, not this one. */
+  const handedToCall = useRef(false);
+  /** The first Run all offers notifications (once: Notify me or Not now). */
+  const [notifyOffer, setNotifyOffer] = useState(false);
   const clearQueue = (): void => {
     queue.current = undefined;
     setQueued(false);
@@ -814,8 +822,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (next === undefined) {
       clearQueue();
       // A runbook call: Run all goes on in its copy (the steps after the call wait for Continue here).
-      if (q.call !== undefined) void runCallAt(q.call);
-      else if (q.proposed > 0) setNotice(t.proposedNotRun(q.proposed));
+      if (q.call !== undefined) {
+        handedToCall.current = true;
+        void runCallAt(q.call);
+      } else if (q.proposed > 0) setNotice(t.proposedNotRun(q.proposed));
       return;
     }
     q.last = next;
@@ -908,6 +918,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     };
     setQueued(true);
     setNotice(undefined);
+    handedToCall.current = false;
+    void shouldOffer().then((yes) => yes && setNotifyOffer(true));
     runNext();
   };
   const [showActions, setShowActions] = useState(false);
@@ -1560,6 +1572,49 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setStepsOpen(false);
     list.current?.scrollToIndex({ index, viewPosition: 0.2 });
   };
+
+  // While the app is away: a notification when the run ends or waits (the question it waits on,
+  // the host-key and other-host ones included), and "paused" when the phone stops the app mid-run.
+  const waitingWhat =
+    manualAsk !== undefined
+      ? t.notifyWaitsManual(manualAsk.text)
+      : asking !== undefined
+        ? t.notifyWaitsNeeds(asking.needs.map((n) => n.name).join(', '))
+        : confirming !== undefined
+          ? confirming.match.trim() === ''
+            ? t.confirmTitle(confirming.cellIndex + 1)
+            : t.confirmRiskyTitle(confirming.cellIndex + 1, confirming.match.trim())
+          : teardownOffer !== undefined
+            ? t.notifyWaitsTeardown(teardownOffer.labels.join(', '))
+            : trust !== undefined
+              ? (trust.changed ? t.trustChangedTitle : t.trustTitle)(trustHost?.name ?? '')
+              : otherHost !== undefined
+                ? t.otherHostTitle(otherHost.target.name)
+                : undefined;
+  const askedAt = waitingCell ?? trust?.request.cellIndex ?? otherHost?.request.cellIndex;
+  const runPhase: RunPhase =
+    waitingWhat !== undefined && askedAt !== undefined
+      ? { kind: 'waiting', cellIndex: askedAt, what: waitingWhat }
+      : queued || running
+        ? { kind: 'running', ...(running ? { cellIndex: running.cellIndex } : {}) }
+        : { kind: 'idle' };
+  const endedNote = (): EndedNote => {
+    if (handedToCall.current || !progress) return undefined;
+    const failed = progress.firstFailed;
+    const c = failed ? cells[failed.cell] : undefined;
+    const label = failed && c && isCodeMeta(c.meta) ? stepLabel(c.meta.info, c.value, c.languageId, headings[failed.cell]) : '';
+    const headline = runHeadline(progress);
+    const body = failed && label ? t.notifyFailedStep(headline, label) : headline;
+    return { body: notice ? `${body}\n${notice}` : body, ...(failed ? { cellIndex: failed.cell } : {}) };
+  };
+  useRunNotifications(runbook, runPhase, endedNote);
+  // A tap on such a notification: this runbook, at its step.
+  useOpenRequest(runbook?.id, (cellIndex) =>
+    setTimeout(() => {
+      if (cellIndex === undefined) list.current?.scrollToOffset({ offset: 0 });
+      else list.current?.scrollToIndex({ index: cellIndex, viewPosition: 0.2 });
+    }, 100),
+  );
   const panel = wide && hasSteps;
   const railShown = !wide && railTicks.length > 1 && progress !== undefined;
   // The runbook at a readable width on a wide screen (a tablet, a browser), not stretched across it.
@@ -1628,6 +1683,18 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 onMore={() => setShowActions(true)}
                 onLayout={setBarBottom}
               />
+              {notifyOffer ? (
+                <NotifyOfferCard
+                  onYes={() => {
+                    setNotifyOffer(false);
+                    void turnOnNotifications();
+                  }}
+                  onNo={() => {
+                    setNotifyOffer(false);
+                    declineNotifications();
+                  }}
+                />
+              ) : null}
               <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
               <AssistantSheet {...assistant.sheet} />
               <DiffSheet diff={diff} onClose={() => setDiff(undefined)} />
