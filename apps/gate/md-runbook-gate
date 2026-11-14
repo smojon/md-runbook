@@ -68,6 +68,8 @@ revoked=
 floors=
 signers=1
 log=syslog
+report_to=
+report_token_file=
 if [ -e "$config" ]; then
   [ -r "$config" ] || fatal "can't read $config"
   while IFS= read -r line || [ -n "$line" ]; do
@@ -83,6 +85,8 @@ if [ -e "$config" ]; then
       floors) floors=$v ;;
       signers) signers=$v ;;
       log) log=$v ;;
+      report_to) report_to=$v ;;
+      report_token_file) report_token_file=$v ;;
       *) fatal "$config: unknown setting \"$k\"" ;;
     esac
   done <"$config"
@@ -94,6 +98,17 @@ case $unsigned in allow | refuse) ;; *) fatal "unsigned = $unsigned: expected al
 case $signers in [1-5]) ;; *) fatal "signers = $signers: expected 1 to 5" ;; esac
 if [ "$log" != syslog ]; then
   touch "$log" 2>/dev/null && [ -w "$log" ] || fatal "can't write the log $log"
+fi
+# Run reports (report_to): optional, and never in a run's way. A bad address is logged at the
+# start of each session and nothing is sent; the runs go on.
+report_on=
+report_problem=
+if [ -n "$report_to" ]; then
+  if printf '%s\n' "$report_to" | grep -Eqx 'https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/%+=-]*)?|http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/%+=-]*)?'; then
+    report_on=1
+  else
+    report_problem="report_to must be an https address without user name or query (http only for localhost)"
+  fi
 fi
 
 account=$(id -un 2>/dev/null || echo "?")
@@ -206,6 +221,124 @@ case $cmd in
     ;;
 esac
 
+# ---- run reports (report_to in gate.conf) ----
+# At the end of a session, one run summary per signed runbook the session ran (the format of
+# docs/features/run-reports.md, client "gate"): its signed name, version, manifest hash and
+# signers, the key (who), the server, account and client address, and each signed block's state.
+# Never a parameter value or an output. Sent by curl in the background after the session, so it
+# never holds up or fails a run; each try is logged as a `report` event.
+#
+# While the session runs: $work/report-runs gets "N HASH CELL STEP TIME" per run (STEP - for a
+# whole block), and the shell adds "N EXIT TIME" to $work/report-exits when run N ends. A run
+# with no end (the session was cut, or a block ran `exit`) makes the summary `stopped`.
+
+# report_json HASH NOW: the summary of the runbook with manifest HASH, from the files above.
+report_json() {
+  rh=$1
+  : >"$out/labels"
+  for n in $(awk '$1 == "cell" { print $2 }' "$work/rb-$rh"); do
+    is_num "$n" || continue
+    code64=$(awk -v cell="$n" '$1 == "cell" { c = $2 } $1 == "code" && c == cell { print $2; exit }' "$work/rb-$rh")
+    # The first line of the block's code with words, its spaces collapsed, at most 120 characters.
+    label=$(printf '%s' "$code64" | b64d 2>/dev/null | awk 'NF { $1 = $1; print; exit }' | cut -c 1-120)
+    [ -n "$label" ] || label="Step $n"
+    last=$(awk -v cell="$n" '$1 == "cell" { c = $2 } $1 == "step" && c == cell { i++ } END { print i - 1 }' "$work/rb-$rh")
+    printf '%s\t%s\t%s\n' "$n" "$(json_str "$label")" "$last" >>"$out/labels"
+  done
+  # A block's state is its last run's: failed on a non-zero exit; passed when it ran whole, or
+  # its last command ran; otherwise (only some commands, or no end) not-run.
+  # The file names through the environment: awk -v would read backslashes in them as escapes.
+  tail=$(L="$out/labels" E="$work/report-exits" R="$work/report-runs" awk -F '\t' -v h="$rh" -v now="$2" '
+    FILENAME == ENVIRON["L"] { label[$1] = $2; last[$1] = $3; if ($1 + 0 > cells) cells = $1 + 0; next }
+    FILENAME == ENVIRON["E"] { rc[$1] = $2; et[$1] = $3; next }
+    FILENAME == ENVIRON["R"] {
+      if ($2 != h) next
+      c = $3 + 0
+      if (started == "") started = $5
+      ran[c] = 1
+      if (!($1 in rc)) { state[c] = "not-run"; stopped = 1; next }
+      if (et[$1] > ended) ended = et[$1]
+      if (rc[$1] != 0) state[c] = "failed"
+      else if ($4 == "-" || $4 + 0 == last[c] + 0) state[c] = "passed"
+      else state[c] = "not-run"
+    }
+    END {
+      steps = ""; rl = ""; p = 0; f = 0; nr = 0
+      for (n = 1; n <= cells; n++) {
+        s = (n in state) ? state[n] : "not-run"
+        if (s == "passed") p++; else if (s == "failed") f++; else nr++
+        steps = steps (n > 1 ? "," : "") "{\"n\":" n ",\"label\":" label[n] ",\"state\":\"" s "\"}"
+        if (n in ran) rl = rl (rl == "" ? "" : ",") n
+      }
+      if (started == "") started = now
+      if (ended == "" || stopped) ended = now
+      printf "\"steps\":[%s],\"ran\":[%s],\"totals\":{\"steps\":%d,\"passed\":%d,\"failed\":%d,\"skipped\":0,\"notRun\":%d,\"byHand\":0},", steps, rl, cells, p, f, nr
+      printf "\"green\":%s,\"started\":\"%s\",\"ended\":\"%s\"%s", (cells > 0 && f == 0 && nr == 0) ? "true" : "false", started, ended, stopped ? ",\"stopped\":true" : ""
+    }' "$out/labels" "$work/report-exits" "$work/report-runs")
+  rname=$(sed -n 1p "$work/rb-$rh.meta")
+  rversion=$(sed -n 2p "$work/rb-$rh.meta")
+  is_num "$rversion" || rversion=0
+  rsigner=$(sed -n 3p "$work/rb-$rh.meta" | cut -c 1-120)
+  rwho=$(printf '%s' "${who:-$account}" | cut -c 1-120)
+  rfrom=
+  [ -n "$client" ] && rfrom=",\"from\":$(json_str "$(printf '%s' "$client" | cut -c 1-64)")"
+  printf '{"v":1,"client":"gate","runbook":{"signed":{"name":%s,"version":%s,"manifest":"%s","signer":%s,"trusted":true}},"who":%s,"gate":{"host":%s,"account":%s%s},%s}' \
+    "$(json_str "$rname")" "$rversion" "$rh" "$(json_str "$rsigner")" "$(json_str "$rwho")" \
+    "$(json_str "$(uname -n 2>/dev/null | cut -c 1-255)")" "$(json_str "$(printf '%s' "$account" | cut -c 1-64)")" "$rfrom" "$tail"
+}
+
+send_reports() {
+  [ -n "$report_on" ] && [ -s "$work/report-runs" ] || return 0
+  command -v curl >/dev/null 2>&1 || {
+    log_event event report status skipped reason "no curl on this server"
+    return 0
+  }
+  out=$(mktemp -d "${TMPDIR:-/tmp}/md-runbook-report.XXXXXX") || {
+    log_event event report status skipped reason "can't create a folder for the report"
+    return 0
+  }
+  # The token goes in a header file, never on curl's command line (other accounts see that).
+  : >"$out/headers"
+  if [ -n "$report_token_file" ]; then
+    tok=$(tr -d ' \t\r\n' <"$report_token_file" 2>/dev/null)
+    [ -n "$tok" ] || {
+      log_event event report status skipped reason "can't read the token file $report_token_file"
+      rm -rf "$out"
+      return 0
+    }
+    printf 'authorization: Bearer %s\n' "$tok" >"$out/headers"
+  fi
+  printf 'content-type: application/json\n' >>"$out/headers"
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  i=0
+  for h in $(cut -f 2 "$work/report-runs" | awk '!seen[$0]++'); do
+    printf '%s' "$h" | grep -qx '[0-9a-f]\{64\}' && [ -f "$work/rb-$h" ] || continue
+    i=$((i + 1))
+    report_json "$h" "$now" >"$out/$i.json"
+    printf '%s\t%s\t%s\n' "$i" "$(sed -n 1p "$work/rb-$h.meta")" "$(sed -n 2p "$work/rb-$h.meta")" >>"$out/list"
+  done
+  [ "$i" -gt 0 ] || {
+    rm -rf "$out"
+    return 0
+  }
+  # In the background, detached from the SSH channel: the session ends now. Up to 3 tries.
+  (
+    trap '' HUP
+    tab=$(printf '\t')
+    while IFS=$tab read -r n rname rversion; do
+      code=000
+      for pause in 0 2 5; do
+        [ "$pause" = 0 ] || sleep "$pause"
+        code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 --proto =https,http -H @"$out/headers" --data-binary @"$out/$n.json" -- "$report_to" 2>/dev/null) || true
+        case $code in 2??) break ;; 4??) [ "$code" = 408 ] || [ "$code" = 429 ] || break ;; esac
+      done
+      case $code in 2??) status=sent ;; *) status=failed ;; esac
+      log_event event report status "$status" http "$code" url "$report_to" runbook "$rname" version "$rversion"
+    done <"$out/list"
+    rm -rf "$out"
+  ) </dev/null >/dev/null 2>&1 3<&- &
+}
+
 # ---- a session ----
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/md-runbook-gate.XXXXXX") || fatal "can't create a work folder"
@@ -213,6 +346,7 @@ child=
 cleanup() {
   [ -n "$child" ] && kill "$child" 2>/dev/null
   [ -n "$child" ] && rm -f "$state/pids/$child"
+  send_reports
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -234,6 +368,11 @@ fi
 child=$!
 : >"$state/pids/$child"
 log_event event session unsigned "$unsigned" scopes "$scopes" key_scopes "$key_scopes"
+[ -n "$report_problem" ] && log_event event report status off reason "$report_problem"
+if [ -n "$report_on" ]; then
+  : >"$work/report-runs"
+  : >"$work/report-exits"
+fi
 
 loaded=
 principal=
@@ -382,6 +521,11 @@ do_load() {
   done
   loaded=1
   step_cell=
+  # For the run report: what this manifest is, kept by its hash for the end of the session.
+  if [ -n "$report_on" ]; then
+    cp "$work/manifest" "$work/rb-$mhash" 2>/dev/null
+    printf '%s\n%s\n%s\n' "$mname" "$mversion" "$principal" >"$work/rb-$mhash.meta" 2>/dev/null
+  fi
   if [ -n "$cb" ]; then
     log_event event load id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal" called-by "$cb" call "$cc"
   else
@@ -470,6 +614,12 @@ EOF
 EOF
     fi
     echo 'rm -f "$__mdrb_f"'
+    if [ -n "$report_on" ]; then
+      printf '__mdrb_n=%s\n__mdrb_rx=%s\n' "$runs" "$(sq "$work/report-exits")"
+      cat <<'EOF'
+printf '%s\t%s\t%s\n' "$__mdrb_n" "$__mdrb_rc" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$__mdrb_rx" 2>/dev/null
+EOF
+    fi
     if [ "$log" = syslog ]; then
       cat <<'EOF'
 logger -t md-runbook-gate -- "{\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event\":\"end\",\"id\":\"$__mdrb_id\",\"exit\":$__mdrb_rc}" 2>/dev/null
@@ -535,6 +685,7 @@ do_run() {
     return
   }
   log_event event run id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal" cell "$cell" step "$k"
+  [ -n "$report_on" ] && printf '%s\t%s\t%s\t%s\t%s\n' "$runs" "$mhash" "$cell" "${k:--}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$work/report-runs"
   emit_run "$rid" "$cell" "$work/run-$runs"
 }
 

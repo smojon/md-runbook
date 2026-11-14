@@ -7,11 +7,13 @@
 import { strict as assert } from 'node:assert';
 import { ChildProcess, execFileSync, spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Manifest, ManifestMeta, buildManifest, formatManifest, toBase64 } from '@md-runbook/core/signing';
 import { manifestHash, sshSign } from '@md-runbook/core/node';
+import { runSummaryProblems } from '@md-runbook/core/runReport';
 
 const GATE = path.resolve(__dirname, '..', '..', 'apps', 'gate', 'md-runbook-gate');
 const SH = process.env.MD_RUNBOOK_GATE_SH ?? (process.platform === 'win32' ? '' : '/bin/sh');
@@ -20,6 +22,8 @@ const fence = (info: string, body: string): string => '```' + info + '\n' + body
 
 /** pkill is on every Linux and macOS server, not in Git for Windows. */
 const hasPkill = (): boolean => !!SH && /^\//.test(spawnSync(SH, ['-c', 'command -v pkill'], { encoding: 'utf8' }).stdout ?? '');
+/** The gate sends run reports with curl. */
+const hasCurl = (): boolean => !!SH && /\S/.test(spawnSync(SH, ['-c', 'command -v curl'], { encoding: 'utf8' }).stdout ?? '');
 
 interface Reply {
   code: number;
@@ -427,6 +431,94 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     await g.request('load', m, s);
     g.child.stdin!.write('run 0000abcd 1\n');
     assert.equal(await g.exited, 0);
+  });
+
+  it('report_to: at the end of a session it posts a run summary (client gate) per signed runbook it ran', { skip: !hasCurl() && 'no curl' }, async () => {
+    const got: { auth: string | undefined; body: string }[] = [];
+    let answer = 202;
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (d: Buffer) => (body += d.toString('utf8')));
+      req.on('end', () => {
+        got.push({ auth: req.headers.authorization, body });
+        res.writeHead(answer).end();
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as { port: number }).port;
+    const tokenFile = path.join(dir, 'report-token');
+    fs.writeFileSync(tokenFile, 'a-report-token-of-at-least-24-chars\n');
+    const logFile = path.join(dir, 'gate.log');
+    const reportEvents = (): string[] => fs.readFileSync(logFile, 'utf8').split('\n').filter((l) => /"event":"report"/.test(l));
+    const waitFor = async (what: () => boolean): Promise<void> => {
+      for (let i = 0; i < 100 && !what(); i++) await new Promise((r) => setTimeout(r, 150));
+      assert.ok(what(), 'timed out');
+    };
+    writeConf([`report_to = http://127.0.0.1:${port}/v1/runs`, `report_token_file = ${tokenFile}`]);
+    try {
+      const before = reportEvents().length;
+      const g = start();
+      await g.hello();
+      const text = fence('bash', '  echo   ok  ') + fence('bash', 'false') + fence('bash', 'echo a\necho b') + fence('bash', 'echo never');
+      const [m, s, hash] = await signed(text, { name: 'ops/report', version: 4 });
+      assert.equal((await g.request('load', m, s)).code, 0);
+      assert.equal((await g.request('run', '1')).code, 0);
+      assert.equal((await g.request('run', '2')).code, 1);
+      assert.equal((await g.request('step', '3', '0')).code, 0);
+      assert.equal(await g.close(), 0);
+      await waitFor(() => got.length === 1 && reportEvents().length > before);
+      assert.equal(got[0]!.auth, 'Bearer a-report-token-of-at-least-24-chars');
+      const summary = JSON.parse(got[0]!.body);
+      assert.deepEqual(runSummaryProblems(summary), []);
+      assert.equal(summary.client, 'gate');
+      assert.deepEqual(summary.runbook, { signed: { name: 'ops/report', version: 4, manifest: hash, signer: 'ops@example.net', trusted: true } });
+      assert.deepEqual(
+        summary.steps.map((x: { label: string; state: string }) => [x.label, x.state]),
+        [
+          ['echo ok', 'passed'],
+          ['false', 'failed'],
+          ['echo a', 'not-run'],
+          ['echo never', 'not-run'],
+        ],
+      );
+      assert.deepEqual(summary.ran, [1, 2, 3]);
+      assert.deepEqual(summary.totals, { steps: 4, passed: 1, failed: 1, skipped: 0, notRun: 2, byHand: 0 });
+      assert.equal(summary.green, false);
+      assert.equal(summary.who, os.userInfo().username);
+      assert.equal(summary.gate.account, os.userInfo().username);
+      assert.ok(summary.started <= summary.ended);
+      assert.match(reportEvents().at(-1)!, /"status":"sent","http":"202".*"runbook":"ops\/report","version":"4"/);
+      assert.doesNotMatch(fs.readFileSync(logFile, 'utf8'), /a-report-token/, 'the token is never logged');
+
+      // A refusal (4xx) is logged and not tried again; the session itself ended as usual.
+      answer = 400;
+      const g2 = start();
+      await g2.hello();
+      await g2.request('load', m, s);
+      await g2.request('run', '1');
+      assert.equal(await g2.close(), 0);
+      await waitFor(() => got.length === 2 && reportEvents().length > before + 1);
+      assert.match(reportEvents().at(-1)!, /"status":"failed","http":"400"/);
+    } finally {
+      server.close();
+      writeConf([]);
+    }
+  });
+
+  it('report_to: a bad address is logged at the start of the session, and the runs go on', async () => {
+    const logFile = path.join(dir, 'gate.log');
+    writeConf(['report_to = ftp://reports.example.net/runs']);
+    try {
+      const g = start();
+      await g.hello();
+      const [m, s] = await signed(fence('bash', 'echo fine'), {});
+      await g.request('load', m, s);
+      assert.equal((await g.request('run', '1')).out, 'fine\n');
+      assert.equal(await g.close(), 0);
+      assert.match(fs.readFileSync(logFile, 'utf8'), /"event":"report","status":"off","reason":"report_to must be an https address/);
+    } finally {
+      writeConf([]);
+    }
   });
 
   it('ignores lines that are not requests, refuses unknown ones, and fails closed on a bad config', async () => {
