@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.24.0
+
+A library server for teams, pairing a phone's browser from a laptop, and links that open the
+library's own copy. Highlights, then every change below.
+
+- **The library server** (`ghcr.io/smojon/md-runbook-library-server`, new, amd64 and arm64)
+  runs next to the web app. It publishes signed runbooks into the team library (whole-runbook
+  signatures from its `allowed_signers` only, versions only go up; `md-runbook publish` from CI),
+  collects run summaries from VS Code, the app, the CLI and now the gate itself (`report_to` in
+  `gate.conf`), answers "last ran green", and turns Alertmanager alerts into links that open the
+  right library runbook. Nothing is pushed to phones yet.
+- **Pair a device:** the web app shows a QR code (or **Copy pairing link**) that sets up
+  another device's browser with this server's relay, and optionally your hosts. The web app
+  finds a relay on its own server by itself, and shows the device's key to add to
+  `authorized_keys`.
+- **The web container** reads `MD_RUNBOOK_PUBLIC_URL` (the address links and QR codes use) and
+  `MD_RUNBOOK_LIBRARY` (the library's folder, default `/runbooks/`).
+- **A runbook link into the team library opens your library copy** (with Update / Keep mine),
+  and a runbook's QR code can link to its address, pinned to its hash, instead of carrying the
+  whole text.
+- **In the app's Steps:** a chapter with one step is one row, and while a run waits the header
+  says what for.
+
+No Android APK is attached yet.
+
 - **The web app on a phone, paired from a laptop.** This sets up a phone's browser for a web app
   reached through a tunnel or a reverse proxy.
   - **This server's relay:** when the web app's own address answers `/v1/server-info` as a relay,
