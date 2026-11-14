@@ -137,7 +137,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
     : cell.languageId;
   // After a run noticeably over the estimate: by how much (core's overEstimate), beside the output.
   const tookSeconds = cell.output?.attrs.duration !== undefined ? parseInterval(cell.output.attrs.duration) : undefined;
-  const overBy = estimate !== undefined && tookSeconds !== undefined ? overEstimate(tookSeconds / 1000, estimate) : undefined;
+  const overBy = declared !== undefined && tookSeconds !== undefined ? overEstimate(tookSeconds / 1000, declared) : undefined;
   const now = useNow(running?.startedAt !== undefined && estimate !== undefined);
   const elapsed = running?.startedAt !== undefined ? Math.max(0, (now - running.startedAt) / 1000) : undefined;
   const timing = estimate !== undefined && elapsed !== undefined ? blockProgress(elapsed, estimate) : undefined;
@@ -375,10 +375,11 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
             {t.output}
             {' · '}
             {outputSummary(cell.output.attrs)}
-            {estimate !== undefined && tookSeconds !== undefined ? (
+            {/* Against an estimate= in the file only: a learned one comes from this very run. */}
+            {declared !== undefined && tookSeconds !== undefined ? (
               <Text testID={`cell-${index}-took`} style={overBy !== undefined ? styles.overText : undefined}>
                 {' · '}
-                {overBy !== undefined ? t.tookOver(fmtEst(estimate), formatEstimate(overBy)) : t.estimate(fmtEst(estimate))}
+                {overBy !== undefined ? t.tookOver(formatEstimate(declared), formatEstimate(overBy)) : t.estimate(formatEstimate(declared))}
               </Text>
             ) : null}
           </Text>

@@ -53,6 +53,8 @@ describe('estimate= (how long a cell takes)', () => {
     });
     await waitFor(() => expect(screen.getByTestId('cell-1-estimate')).toHaveTextContent(/est\. ~5s$/));
     expect(screen.queryByTestId('estimate-more')).toBeNull();
+    // The output line doesn't compare the run with an estimate it was learned from.
+    expect(screen.queryByTestId('cell-1-took')).toBeNull();
   });
 
   it('says nothing about estimates in a runbook without any', async () => {
