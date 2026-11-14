@@ -202,3 +202,21 @@ test('manual-steps: continue runs past an unticked item without asking', async (
     await closeAll();
   }
 });
+
+test('the end-of-run notification names the failed step, or says done', async () => {
+  const uri = writeFile('notify-end.md', `# Deploy\n\n\`\`\`${LANG} name="Build"\necho built\n\`\`\`\n\n\`\`\`${LANG} name="Push image"\nexit 3\n\`\`\`\n`);
+  const editor = await openRunbook(uri);
+  const code = editor.notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
+  try {
+    await runCells(editor, 0, editor.notebook.cellCount);
+    await waitForRun(code[1]!);
+    const failed = await vscode.commands.executeCommand<{ text: string; failed: boolean }>('mdRunbook._endMessage');
+    assert.equal(failed?.text, 'notify-end: step 2 of 2 failed — Push image');
+    assert.equal(failed?.failed, true);
+    await step('mark done', vscode.commands.executeCommand('mdRunbook.markStepDone', code[1]));
+    const done = await vscode.commands.executeCommand<{ text: string; failed: boolean }>('mdRunbook._endMessage');
+    assert.equal(done?.text, 'notify-end: done · 2 of 2');
+  } finally {
+    await closeAll();
+  }
+});

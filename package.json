@@ -1398,6 +1398,12 @@
             "description": "When running several cells (Run All, Run Above/Below), stop at the first cell that fails, times out or is cancelled.",
             "order": 3
           },
+          "mdRunbook.notifications.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "When a run of several cells ends (done, or a step failed) or waits for you while its runbook isn't the editor in front, show a notification with a button to go there.",
+            "order": 5
+          },
           "mdRunbook.execution.followRun": {
             "type": "boolean",
             "default": true,
@@ -1419,47 +1425,47 @@
             "default": "off",
             "scope": "machine",
             "markdownDescription": "Run cells in a real VS Code terminal so interactive prompts work. **Off by default.** Needs VS Code 1.93+ terminal shell integration (bash, zsh, PowerShell; cmd cells run from a PowerShell terminal). Assistant-written cells never run in a terminal. User settings only.",
-            "order": 5
+            "order": 6
           },
           "mdRunbook.session.resetOnRunAll": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on (or exposes) state left by earlier runs. Single cells, ranges and **Resume Run** keep the session. User settings only.",
             "scope": "machine",
-            "order": 6
+            "order": 7
           },
           "mdRunbook.cellOptions.enabled": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Apply per-cell options from the fence line (`timeout=`, `cwd=`, `env.NAME=`, `continue-on-error`, `skip`, `confirm`). Turn off to ignore options written in runbooks.",
-            "order": 7
+            "order": 8
           },
           "mdRunbook.shell.bashPath": {
             "type": "string",
             "default": "",
             "scope": "machine",
             "markdownDescription": "Path to bash for `sh`/`bash` blocks. On Windows, Git Bash is found automatically (Program Files, LocalAppData, Scoop, next to `git.exe`); the WSL launcher is never used. User settings only.",
-            "order": 8
+            "order": 9
           },
           "mdRunbook.shell.pwshPath": {
             "type": "string",
             "default": "",
             "scope": "machine",
             "markdownDescription": "Path to PowerShell for `pwsh`/`powershell` blocks. Default: `pwsh` on PATH, falling back to Windows PowerShell (`powershell.exe`). User settings only.",
-            "order": 9
+            "order": 10
           },
           "mdRunbook.execution.refreshPath": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Windows: give each cell the `PATH` directories added since VS Code started (read from the registry, as a new terminal does), so a tool a runbook just installed is found without restarting VS Code. Directories are only added, at the end: the inherited `PATH` keeps its order. A session gets them when it starts (**Restart Session** starts a new one); a running session keeps its `PATH`.",
-            "order": 10
+            "order": 11
           },
           "mdRunbook.execution.kubeContextPin": {
             "type": "boolean",
             "default": true,
             "scope": "machine",
             "markdownDescription": "Let runbooks with `kube-context-mode: pin` pin their Kubernetes context: each cell gets a `KUBECONFIG` whose first file only sets the current context to the runbook's `kube-context`, followed by your own kubeconfig, so kubectl and helm use that context without changing your default. Off: such runbooks only check the context (a cell runs only while `kubectl config current-context` is that context). User settings only.",
-            "order": 11
+            "order": 12
           }
         }
       },
@@ -1565,65 +1571,65 @@
             "default": "",
             "markdownDescription": "Folder for **Run All as Copy**, relative to the runbook's folder (or absolute). Empty = next to the runbook. Cells of a copy still run in the original runbook's folder. User settings only.",
             "scope": "machine",
-            "order": 5
+            "order": 6
           },
           "mdRunbook.output.transcript": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Append every run of a cell to a transcript next to the runbook (`deploy.runbook.md` -> `deploy.runbook.transcript.log`) as its output arrives: the command, each output line (`| ` stdout, `! ` stderr), the exit code and time, and checklist items ticked. It is on disk even if the runbook is never saved, and can be followed with `tail -f`. Redacted like a saved runbook. Add `*.transcript.log` to `.gitignore`. User settings only.",
             "scope": "machine",
-            "order": 5
+            "order": 6
           },
           "mdRunbook.output.transcriptFolder": {
             "type": "string",
             "default": "",
             "markdownDescription": "Folder for the transcripts (`#mdRunbook.output.transcript#`), relative to the runbook's folder (or absolute). Empty = next to the runbook. User settings only.",
             "scope": "machine",
-            "order": 5
+            "order": 6
           },
           "mdRunbook.output.transcriptExtension": {
             "type": "string",
             "default": ".transcript.log",
             "markdownDescription": "What replaces `.md` in a transcript's name (`#mdRunbook.output.transcript#`): a dot first, no spaces or slashes, not `.md`. User settings only.",
             "scope": "machine",
-            "order": 5
+            "order": 6
           },
           "mdRunbook.output.maxLines": {
             "type": "integer",
             "default": 2000,
             "minimum": 0,
             "description": "Maximum lines of output written to the file (head and tail are kept, with a note). 0 = unlimited.",
-            "order": 6
+            "order": 7
           },
           "mdRunbook.output.stripAnsi": {
             "type": "boolean",
             "default": true,
             "description": "Remove ANSI escape codes (colours, cursor movement) from output written to the file.",
-            "order": 7
+            "order": 8
           },
           "mdRunbook.output.colorLevels": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Colour log levels in the output as log viewers do (Grafana, VS Code): `FATAL`/`CRITICAL` purple, `ERROR`/`FAILED` red, `WARN` yellow, `INFO`/`NOTICE` blue, `DEBUG` grey, `TRACE` light blue, `OK`/`PASSED`/`SUCCESS` green. Display only: the file keeps plain text. Lines with colours of their own keep them.",
-            "order": 7
+            "order": 8
           },
           "mdRunbook.output.stderrInRed": {
             "type": "boolean",
             "default": true,
             "description": "Show what a cell writes to stderr in red, also when the runbook is opened again (the output block records which lines came from stderr).",
-            "order": 7
+            "order": 8
           },
           "mdRunbook.output.forceColor": {
             "type": "boolean",
             "default": false,
             "markdownDescription": "Ask programs for colours although their output is not a terminal: cells get `FORCE_COLOR=1` and `CLICOLOR_FORCE=1` (Node tools, many CLIs, macOS/BSD tools). The colours show in the output; the file keeps plain text unless `#mdRunbook.output.stripAnsi#` is off. Some tools need their own flag (`ls --color=always`, `git -c color.ui=always`).",
-            "order": 7
+            "order": 8
           },
           "mdRunbook.output.cloudViews": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "When a cell prints JSON from the AWS or Google Cloud CLI (`aws ec2 describe-instances`, `gcloud compute instances list --format=json`, …), show a table of the resources under the output with a link to each in the cloud console: EC2 instances, EKS clusters, Compute Engine instances, GKE clusters, Cloud Run services. Display only.",
-            "order": 7
+            "order": 8
           },
           "mdRunbook.output.recordContext": {
             "type": "object",
@@ -1633,40 +1639,40 @@
             },
             "markdownDescription": "Commands whose first output line is recorded as an attribute of each output block, e.g. `{ \"context\": \"kubectl config current-context\" }` writes `context=prod-eu`. Run through the platform shell in the .md file's folder with a 5 s timeout; failures record `unknown`. User settings only.",
             "scope": "machine",
-            "order": 8
+            "order": 9
           },
           "mdRunbook.output.recordContextCacheSeconds": {
             "type": "number",
             "default": 30,
             "minimum": 0,
             "description": "Reuse recorded context values for this many seconds per runbook instead of running the commands before every cell. 0 = run them every time.",
-            "order": 9
+            "order": 10
           },
           "mdRunbook.progress.statusBar": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Show the active runbook's progress in the status bar (e.g. `4/7 · ✗ step 5`). Click it to go to the failed or next pending step.",
-            "order": 10
+            "order": 11
           },
           "mdRunbook.statusBar.contextAttr": {
             "type": "string",
             "default": "context",
             "markdownDescription": "Which `mdRunbook.output.recordContext` attribute to show in the status bar for the active runbook.",
-            "order": 11
+            "order": 12
           },
           "mdRunbook.report.folder": {
             "type": "string",
             "default": "",
             "markdownDescription": "Folder for `<name>.report.html` written by **Export Report (HTML)**. Empty = next to the `.md` file. A relative path is resolved against the file's workspace folder (or the file's folder outside a workspace); an absolute path is used as is. User settings only.",
             "scope": "machine",
-            "order": 12
+            "order": 13
           },
           "mdRunbook.report.browserPath": {
             "type": "string",
             "default": "",
             "markdownDescription": "Browser that **Export Report (PDF)** prints with: Google Chrome, Microsoft Edge or Chromium (the program file). Empty = the first one found in the usual install locations. User settings only.",
             "scope": "machine",
-            "order": 13
+            "order": 14
           }
         }
       },

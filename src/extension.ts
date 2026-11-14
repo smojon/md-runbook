@@ -17,6 +17,7 @@ import { registerEstimates } from './estimates';
 import { registerProgress } from './progress';
 import { registerWaiting } from './waiting';
 import { registerStepsView } from './stepsView';
+import { registerNotifications } from './notify';
 import { registerSafety } from './safety';
 import { isTestMode, registerSecrets } from './secrets';
 import { registerLinkHandler } from './linkHandler';
@@ -99,6 +100,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerEstimates(context);
   registerWaiting(context);
   registerStepsView(context, pipeline);
+  registerNotifications(pipeline, context);
   registerLineRuns(context, controller, { safety, secrets });
   registerAutoSave(pipeline);
   registerOpenTiming(context);

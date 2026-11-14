@@ -54,6 +54,12 @@ and tick or untick a checklist item. The title bar has **Run All** (**Stop** whi
 **Resume Run** when there is something to resume, and **Go to Next Step**. The ready check's row
 says what it answered (`not up → setup runs`). Up/Down, Home/End and Enter work in the list.
 
+**A notification when you look away.** When a run of several cells ends or starts waiting for
+you while its runbook isn't the editor in front (another file, another window), a notification
+says so: `deploy-checkout: step 4 of 6 failed — Push image` with **Go to Step** and **Resume
+Run**, `deploy-checkout: done · 6 of 6` with **Open**, or `deploy-checkout waits for you: a step
+done by hand` with **Show**. Nothing while you watch the runbook (`mdRunbook.notifications.enabled`).
+
 **Run All follows the run.** Before each block, the notebook scrolls it into view, as long as the
 block before it is still in view: scroll away to read something else and it stops following
 (`mdRunbook.execution.followRun`, on by default).
@@ -121,3 +127,4 @@ disappear from the file on the next save.
 | --- | --- | --- |
 | `mdRunbook.progress.statusBar` | `true` | Show the active runbook's progress in the status bar. |
 | `mdRunbook.execution.followRun` | `true` | When running several cells, scroll the cell about to run into view while the previous one is still in view. |
+| `mdRunbook.notifications.enabled` | `true` | When a run of several cells ends (done, or a step failed) or waits for you while its runbook isn't the editor in front, show a notification with a button to go there. |

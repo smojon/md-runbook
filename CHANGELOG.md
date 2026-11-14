@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **VS Code: a notification when you look away.** A run of several cells that ends (done, or a
+  step failed) or starts waiting for you while its runbook isn't the editor in front says so,
+  with a button to go to the step, resume the run or answer (`mdRunbook.notifications.enabled`).
 - **"Resume" everywhere, and the assistant can be found when it's off.** The app's button after a
   stop is **▶ Resume**, as VS Code's Resume Run ("Continue" stays for line stepping). In VS Code,
   Assistant ▾ shows **Turn On the Assistant…** while the assistant is off (its other actions stay
