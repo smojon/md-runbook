@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Alert } from 'react-native';
 import { parse } from '@md-runbook/core';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { addHost, resetHosts } from '../hosts/store';
@@ -131,9 +132,15 @@ describe('⋯ More: every action, by group or by search', () => {
       fireEvent.changeText(screen.getByTestId('actions-search'), 'clear out');
     });
     expect(screen.queryByTestId('action-resumeRun')).toBeNull();
+    // Clear All Outputs asks first (it can't be undone): answer Clear all.
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((x) => x.style === 'destructive')?.onPress?.();
+    });
     await act(async () => {
       fireEvent.press(screen.getByTestId('action-clearAllOutputs'));
     });
+    expect(alert).toHaveBeenCalledWith(expect.stringMatching(/^Clear every output/), undefined, expect.any(Array));
+    alert.mockRestore();
     expect(parse(getRunbook(r.id)!.text).cells[1]?.output).toBeUndefined();
     expect(screen.queryByTestId('actions-sheet')).toBeNull();
   });
@@ -618,6 +625,49 @@ describe('runbook parameters', () => {
   it('a runbook without parameters has no card', async () => {
     await render(<RunbookView id="sample" />);
     expect(screen.queryByTestId('params')).toBeNull();
+  });
+});
+
+describe('menus from the menu review', () => {
+  it('Run from Here runs this cell and every one after it', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    script([{ stdout: 'two\n' }, { stdout: 'three\n' }]);
+    const r = addRunbook('from-here.md', '# From\n\n```bash\necho one\n```\n\n```bash\necho two\n```\n\n```bash\necho three\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-2-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-runFromHere'));
+    });
+    await waitFor(() => expect(mockConnection.calls.map((c) => c.source)).toEqual(['echo two', 'echo three']));
+  });
+
+  it('Set Inputs lists the inputs the runbook uses before a run, and sets one', async () => {
+    const r = addRunbook('set-inputs.md', '# Inputs\n\n```bash\necho "${input:REGION}" "${input:DB_PASSWORD}"\n```\n');
+    await render(<RunbookView id={r.id} />);
+    expect(screen.queryByTestId('inputs')).toBeNull();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-setInputs'));
+    });
+    expect(screen.getByText('REGION = (not set)')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('input-set-DB_PASSWORD'));
+    });
+    expect(screen.getByTestId('input-value-DB_PASSWORD').props.secureTextEntry).toBe(true);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('input-set-REGION'));
+    });
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('input-value-REGION'), 'eu-west-1');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('input-save-REGION'));
+    });
+    expect(screen.getByText('REGION = eu-west-1')).toBeTruthy();
   });
 });
 

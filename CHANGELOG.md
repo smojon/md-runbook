@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **App: menus tidied after a review.** A cell's ⋯ has **Run from Here** (this step and every one
+  after it) and, on a proposed cell, **Review Proposal…** first. ⋯ More → Values has **Set
+  Inputs**: every `${input:…}` the runbook uses, set before a run. **Clear All Outputs** asks first
+  and comes last in Run. Go to Next Step and Go to Next Problem moved to Steps, and the settings
+  screen has one name, **Hosts & Settings**, in Help. On a phone the search field no longer opens
+  the keyboard when a sheet opens.
 - **Menus tidied after a review.** In VS Code: Run ▾ lists Resume Run first again, with Show Steps
   and Go to Next Step together; its runbook-call items show only while a call is selected; the
   toolbar lists show whether a switch (Transcript) is on; Approve / Reject Proposed Cell no longer

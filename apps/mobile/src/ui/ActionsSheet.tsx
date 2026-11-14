@@ -4,7 +4,7 @@
  * VS Code; Ctrl/⌘+K opens it with a keyboard). Each action says when it matters.
  */
 import { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { t } from '../i18n';
 import { themedStyles, usePalette } from '../theme';
 import { Grabber } from './Grabber';
@@ -21,8 +21,9 @@ export interface AppAction {
   disabled?: string;
 }
 
-export type ActionGroup = 'run' | 'steps' | 'values' | 'assistant' | 'share' | 'help';
-const GROUPS: readonly ActionGroup[] = ['run', 'steps', 'values', 'assistant', 'share', 'help'];
+export type ActionGroup = 'review' | 'run' | 'steps' | 'values' | 'assistant' | 'share' | 'help';
+// Review first: a proposed cell's gate comes before running it.
+const GROUPS: readonly ActionGroup[] = ['review', 'run', 'steps', 'values', 'assistant', 'share', 'help'];
 
 /** Actions whose title, hint or group contain every word of `query`, case-insensitively. */
 export function matchActions(actions: readonly AppAction[], query: string): AppAction[] {
@@ -59,7 +60,8 @@ export function ActionsSheet({ actions, visible, onClose }: { actions: readonly 
           placeholderTextColor={colors.placeholder}
           autoCapitalize="none"
           autoCorrect={false}
-          autoFocus
+          // Not on a phone: the keyboard would cover most of the sheet (Ctrl/⌘+K on the web still types).
+          autoFocus={Platform.OS === 'web'}
           onSubmitEditing={() => {
             const first = shown.find((a) => !a.disabled);
             if (first) pick(first);

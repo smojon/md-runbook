@@ -4,7 +4,7 @@ import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
 import { LinkContext, forgetLinkContext, linkContext } from '../runbooks/linkContext';
-import { FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Alert, FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import {
   MILESTONES,
   Milestone,
@@ -46,7 +46,7 @@ import type { Captured } from '@md-runbook/core/checks';
 import { DEFAULT_POLICY, PolicyResult, approvalScope, evaluatePolicy } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
-import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
 import { headingsOf } from '@md-runbook/core/title';
@@ -897,6 +897,20 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     runNext();
   };
   const [showActions, setShowActions] = useState(false);
+  // Set Inputs: the inputs card lists every input the runbook uses, set or not.
+  const [showInputs, setShowInputs] = useState(false);
+  const usedInputs = useMemo((): [string, boolean][] => {
+    const used = new Map<string, boolean>();
+    for (const c of runbook ? parse(runbook.text).cells : []) {
+      if (c.kind !== 'code' || !isCodeMeta(c.meta)) continue;
+      try {
+        for (const r of cellRefs(c.value, c.meta.info)) if (r.kind === 'input') used.set(r.name, (used.get(r.name) ?? false) || r.secret);
+      } catch {
+        // a name used as two kinds: the run reports it
+      }
+    }
+    return [...used];
+  }, [runbook]);
   const assistant = useAssistant(runbook, setNotice);
   const list = useRef<FlatList<ParsedCell>>(null);
   // Ctrl/⌘+K opens the actions with a keyboard (the browser, an iPad with a keyboard).
@@ -1019,14 +1033,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           run: () => runSequence('resume'),
         },
         {
-          ...meta('nextStep', 'run'),
+          ...meta('nextStep', 'steps'),
           run: () => {
             const at = progress?.firstFailed?.cell ?? progress?.firstPending?.cell;
             if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
           },
         },
         { ...meta('showSteps', 'steps', progress?.total ? undefined : t.noStepsYet), run: () => setStepsOpen(true) },
-        { ...meta('nextProblem', 'run', problems.all.length > 0 ? undefined : t.noProblems), run: () => goToNextProblem() },
+        { ...meta('nextProblem', 'steps', problems.all.length > 0 ? undefined : t.noProblems), run: () => goToNextProblem() },
         {
           ...meta('restartSession', 'run', hosts.some((h) => isConnected(h.id, runbook.id)) ? undefined : t.noSessionOpen),
           run: () => {
@@ -1060,12 +1074,16 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             list.current?.scrollToOffset({ offset: 0 });
           },
         },
-        { ...meta('clearAllOutputs', 'run'), run: () => updateRunbookText(runbook.id, clearOutputBlocks(runbook.text)) },
+        {
+          ...meta('clearAllOutputs', 'run'),
+          run: () =>
+            confirmThen(t.clearAllConfirm, t.clearAllConfirmButton, () => updateRunbookText(runbook.id, clearOutputBlocks(runbook.text))),
+        },
         {
           ...meta('checkNextItem', 'steps', checkNextItem(runbook.text) === undefined ? t.noTaskLeft : undefined),
           run: () => write(checkNextItem(runbook.text)),
         },
-        { ...meta('hosts', 'run'), run: () => router.push('/hosts') },
+        { ...meta('hosts', 'help'), run: () => router.push('/hosts') },
         { ...meta('suggestNextSteps', 'assistant'), run: () => assistant.ask('suggest') },
         { ...meta('summarizeIncident', 'assistant'), run: () => assistant.ask('summarize') },
         { ...meta('copyForAi', 'assistant'), run: () => assistant.copyForAi() },
@@ -1089,6 +1107,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           },
         },
         ...(params.length > 0 ? [{ ...meta('setParameters', 'values'), run: () => list.current?.scrollToOffset({ offset: 0 }) }] : []),
+        {
+          ...meta('setInputs', 'values', usedInputs.length > 0 ? undefined : t.noInputsUsed),
+          run: () => {
+            setShowInputs(true);
+            list.current?.scrollToOffset({ offset: 0 });
+          },
+        },
         {
           ...meta('resetInputs', 'values', Object.keys(typedInputs).length > 0 ? undefined : t.noInputsYet),
           run: () => {
@@ -1290,12 +1315,19 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ]
         : []),
       ...(proposal === 'proposed' || proposal === 'unverified'
-        ? [
-            { ...meta('approveProposal', 'assistant'), run: () => openApprove(index, false) },
-            { ...meta('rejectProposal', 'assistant'), run: () => openApprove(index, false) },
-          ]
+        ? [{ ...meta('approveProposal', 'review'), run: () => openApprove(index, false) }]
         : []),
       { ...meta('runCell', 'run', why), run: () => void run({ cellIndex: index }, host) },
+      {
+        ...meta('runFromHere', 'run', host ? undefined : t.noRunNow),
+        run: () =>
+          runSequence(
+            'start',
+            parse(runbook.text)
+              .cells.map((c, i) => (c.kind === 'code' && i >= index ? i : -1))
+              .filter((i) => i >= 0),
+          ),
+      },
       { ...meta('stepThrough', 'run', why), run: () => void run({ cellIndex: index, mode: 'step', line: 0 }, host) },
       {
         ...meta(
@@ -1696,10 +1728,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                   {notice}
                 </Text>
               ) : null}
-              {Object.keys(typedInputs).length > 0 ? (
+              {Object.keys(typedInputs).length > 0 || showInputs ? (
                 <InputsCard
                   inputs={typedInputs}
-                  onChange={(name, value) => updateInputs({ ...inputs.current, [name]: { ...inputs.current[name]!, value } })}
+                  unset={
+                    showInputs
+                      ? usedInputs.filter(([name]) => typedInputs[name] === undefined).map(([name, masked]) => ({ name, masked }))
+                      : []
+                  }
+                  onChange={(name, value, masked) =>
+                    updateInputs({ ...inputs.current, [name]: { ...(inputs.current[name] ?? { masked: masked ?? false }), value } })
+                  }
                   onClear={(name) => updateInputs(Object.fromEntries(Object.entries(inputs.current).filter(([k]) => k !== name)))}
                   onClearAll={() => updateInputs({})}
                 />
@@ -2126,6 +2165,18 @@ function RunBar({
   );
 }
 
+/** Ask before something that can't be undone: the platform's own dialog (the browser's confirm on the web). */
+function confirmThen(message: string, ok: string, then: () => void): void {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && window.confirm(message)) then();
+    return;
+  }
+  Alert.alert(message, undefined, [
+    { text: t.trustDecline, style: 'cancel' },
+    { text: ok, style: 'destructive', onPress: then },
+  ]);
+}
+
 /** An `${input:NAME}` value typed while this runbook is open. */
 interface TypedInput {
   value: string;
@@ -2205,12 +2256,15 @@ function EstimateLine({ estimate, open }: { estimate: RunbookEstimate; open: num
 
 function InputsCard({
   inputs,
+  unset = [],
   onChange,
   onClear,
   onClearAll,
 }: {
   inputs: Readonly<Record<string, TypedInput>>;
-  onChange(name: string, value: string): void;
+  /** Inputs the runbook uses that have no value yet (Set Inputs). */
+  unset?: readonly { name: string; masked: boolean }[];
+  onChange(name: string, value: string, masked?: boolean): void;
   onClear(name: string): void;
   onClearAll(): void;
 }) {
@@ -2253,6 +2307,44 @@ function InputsCard({
                 accessibilityRole="button"
                 onPress={() => {
                   onChange(name, editing.value);
+                  setEditing(undefined);
+                }}
+                style={styles.button}
+              >
+                <Text style={styles.buttonText}>{t.save}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ))}
+      {unset.map(({ name, masked }) => (
+        <View key={name} style={styles.param}>
+          <View style={styles.inputRow}>
+            <Text style={styles.paramName}>{`${name} = ${t.notSet}`}</Text>
+            {editing?.name !== name ? (
+              <Pressable testID={`input-set-${name}`} accessibilityRole="button" onPress={() => setEditing({ name, value: '' })}>
+                <Text style={styles.secondaryText}>{t.setInput}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          {editing?.name === name ? (
+            <View style={styles.inputRow}>
+              <TextInput
+                testID={`input-value-${name}`}
+                accessibilityLabel={name}
+                style={[styles.paramInput, styles.grow]}
+                value={editing.value}
+                onChangeText={(value) => setEditing({ name, value })}
+                secureTextEntry={masked}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoFocus
+              />
+              <Pressable
+                testID={`input-save-${name}`}
+                accessibilityRole="button"
+                onPress={() => {
+                  onChange(name, editing.value, masked);
                   setEditing(undefined);
                 }}
                 style={styles.button}

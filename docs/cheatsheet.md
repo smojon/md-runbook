@@ -22,13 +22,13 @@ action by the same groups, with a search field (Ctrl/⌘+K in a browser).
 | **Open Sample Runbook** | Help ▾ | You're new and want to try every feature on a safe file. Nothing is written until you save it. | on the start screen; ⋯ More → Help |
 | **Get Started** | Help ▾ | A short tour of the main features, the first time you use it. | — |
 | **Cheat Sheet** | Help ▾ | This page, inside VS Code: "is there a button for…?" | ⋯ More → Help (opens this page) |
-| **Settings…** | Help ▾ | Every md-runbook setting in one list (where outputs go, the transcript, redaction, the shells, the assistant), with what each does. | Hosts & settings on the start screen |
+| **Settings…** | Help ▾ | Every md-runbook setting in one list (where outputs go, the transcript, redaction, the shells, the assistant), with what each does. | **Hosts & Settings** on the start screen; ⋯ More → Help → Hosts & Settings |
 
 ## Running
 
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
-| **Run cell** / **Run All** / Run Above / Run Below | the cell's ▷, the toolbar's Run All (VS Code's own) | The normal way: run one step, or the whole procedure top to bottom. Run All stops at the first failure. | ▷ on each cell; **▶ Run all** at the top of the runbook |
+| **Run cell** / **Run All** / Run Above / Run Below | the cell's ▷, the toolbar's Run All (VS Code's own) | The normal way: run one step, or the whole procedure top to bottom. Run All stops at the first failure. | ▷ on each cell; **▶ Run all** at the top of the runbook; a cell's ⋯ → **Run from Here** |
 | **Resume Run** | toolbar, Run ▾ | A step failed, you fixed the cause: carry on from the failed step without re-running the ones that worked. | **▶ Continue** at the top after a stop; ⋯ More → Resume Run |
 | **Run All as Copy** | Run ▾ | The runbook is a template (a release checklist, an incident procedure): every run goes into a new dated copy, so the original stays clean and each run has its own record. | ⋯ More → Run All as Copy (the copy opens and runs) |
 | **```runbook src=…```** (a runbook call) | a block in the runbook ([calls](features/calls.md)) | A procedure that is the same every time wraps a part that changes (the release's own file), or reuses another one (the way back): run that file as one step, with the parameters you pass, as a dated copy of its own. | ▷ on the call: the copy opens and runs there, and the result comes back to the call (a runbook opened from a link gets the file next to it; one opened from a file asks you to pick it once) |
@@ -42,7 +42,7 @@ action by the same groups, with a search field (Ctrl/⌘+K in a browser).
 | **Session…**, **Restart Session**, **Stop Session** | Run ▾ | The session got into a bad state (wrong folder, a stuck login): start again from a clean shell without closing the runbook. | ⋯ More → Restart Session |
 | **Open Transcript** | Run ▾ | Follow a run as it happens, or find one you never saved: every run of a cell is appended to `<runbook>.transcript.log` next to the runbook (command, output, exit, time; redacted). It opens beside the runbook and grows with each run. | — |
 | **Transcript** (✓ while on) | Run ▾ | Turn the transcript off, or on again. It is a user setting (`mdRunbook.output.transcript`, on by default), so it holds for every runbook on this machine; files already written stay. | — |
-| **Clear All Outputs** | Run ▾, right-click the file in the Explorer | Before sharing or committing a runbook as a template, without the last run's output. | ⋯ More → Clear All Outputs |
+| **Clear All Outputs** | Run ▾, right-click the file in the Explorer | Before sharing or committing a runbook as a template, without the last run's output. | ⋯ More → Clear All Outputs (it asks first) |
 | **Start Incident** | Run ▾ | You're paged: a dated run copy with `incident:` and `severity:`, where every run records who ran it and where, every attempt is kept, and a first note marks when it was detected. Export Report then shows the incident record and timeline. | ⋯ More → Start Incident |
 | **Add Note** | Run ▾ | During an incident or a drill: record a decision ("called the DBA, failover approved") or a milestone (detected, mitigated, resolved) with the time and your name, for the timeline and the postmortem. | ⋯ More → Add Note |
 | **Clear Outputs Above** / **Clear Outputs Below** | cell ⋯ | You rerun the second half of a procedure and want to see clearly what ran this time. | the cell’s ⋯ (or a long press) |
@@ -76,7 +76,7 @@ action by the same groups, with a search field (Ctrl/⌘+K in a browser).
 | Action | Where | When it matters to you | App |
 | --- | --- | --- | --- |
 | **Set Parameters** | Values ▾ | One runbook for several targets (`${param:NAMESPACE}`, `${param:REGION}`): set them once before running, instead of answering a prompt per cell. | the **Parameters** card on the runbook |
-| **Set Inputs** | Values ▾ | Values that differ per run (a ticket number, a user name, `${input:NAME}`): set or change them before running. | asked when a cell needs one; the **Inputs** card shows, changes and clears them |
+| **Set Inputs** | Values ▾ | Values that differ per run (a ticket number, a user name, `${input:NAME}`): set or change them before running. | asked when a cell needs one; ⋯ More → **Set Inputs** lists every input before a run; the **Inputs** card shows, changes and clears them |
 | **Reset Inputs** | Values ▾ | You start a new run with other values: forget this runbook's inputs and parameters, so they're asked again. | **Clear all inputs** on the Inputs card; ⋯ More → Reset Inputs (inputs only: the app keeps parameters per runbook; change them on the Parameters card) |
 | **Set Secret** | Values ▾ | Store a token or password once (`${secret:NAME}`) in the OS keychain, instead of pasting it into commands. Setting it again changes it. | asked the first time; **Hosts & settings → Secrets → Add a secret / Change** |
 | **List Secrets** | Values ▾ | See which secrets are stored (never their values) and copy a `${secret:NAME}` reference to write into a cell. | Hosts & settings → Secrets |
