@@ -1,0 +1,82 @@
+name: Library server
+# The library server (apps/library-server): its tests (real ssh-keygen keys and signatures),
+# then the container image built from the repository root and started the way a user runs it,
+# probed from outside.
+on:
+  push:
+    branches: ['**']
+    paths: ['apps/library-server/**', 'packages/core/src/**', '.github/workflows/library-server.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: library-server-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: apps/library-server
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/library-server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Tests
+        run: npm test
+      - name: Audit (runtime dependencies)
+        run: npm audit --omit=dev --audit-level=low
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the image
+        run: docker build -t md-runbook-library-server -f apps/library-server/Dockerfile .
+      - name: Refuses to start without settings, or a library without a token
+        run: |
+          set +e
+          docker run --rm md-runbook-library-server
+          a=$?
+          docker run --rm -e LIBRARY_DIR=/library md-runbook-library-server
+          b=$?
+          set -e
+          test "$a" = 2
+          test "$b" = 2
+      - name: Starts read-only, answers, refuses a wrong token and an unsigned runbook, keeps a gate's summary
+        run: |
+          mkdir -p library && touch library/allowed_signers && sudo chown -R 1000:1000 library
+          upload="$(openssl rand -hex 24)"; gate="$(openssl rand -hex 24)"
+          docker run -d --name lib -p 127.0.0.1:8090:8090 --read-only --tmpfs /tmp --cap-drop ALL \
+            -v "$PWD/library:/library" --tmpfs /data:uid=1000,gid=1000 \
+            -e LIBRARY_DIR=/library -e LIBRARY_UPLOAD_TOKENS="ci:$upload" \
+            -e RUNS_DIR=/data/runs -e RUNS_GATE_TOKENS="gate:$gate" md-runbook-library-server
+          for _ in $(seq 1 20); do curl -fsS http://127.0.0.1:8090/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8090/v1/server-info | tee info.json
+          grep -q '"capabilities":\["library","runs"\]' info.json
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          test "$(code -X POST --data-binary '# x' -H 'authorization: Bearer wrong-token-wrong-token-wrong' http://127.0.0.1:8090/v1/library/runbooks/x.md)" = 401
+          test "$(code -X POST --data-binary '# x' -H "authorization: Bearer $upload" http://127.0.0.1:8090/v1/library/runbooks/x.md)" = 422
+          test "$(code -X POST --data-binary '# x' -H "authorization: Bearer $upload" http://127.0.0.1:8090/v1/library/runbooks/.git/x.md)" = 400
+          summary='{"v":1,"client":"gate","runbook":{"signed":{"name":"ops/x","version":1,"manifest":"'"$(printf 'ab%.0s' $(seq 32))"'","signer":"ops@example.net","trusted":true}},"who":"ci","steps":[{"n":1,"label":"true","state":"passed"}],"ran":[1],"totals":{"steps":1,"passed":1,"failed":0,"skipped":0,"notRun":0,"byHand":0},"green":true,"started":"2026-11-14T10:00:00Z","ended":"2026-11-14T10:00:01Z"}'
+          test "$(code -X POST --data-binary "$summary" -H "authorization: Bearer $gate" http://127.0.0.1:8090/v1/runs)" = 202
+          docker exec lib sh -c 'command -v ssh-keygen && cat /data/runs/*.jsonl' | tee runs.txt
+          grep -q '"trust":"gate"' runs.txt
+          test "$(docker inspect -f '{{.Config.User}}' md-runbook-library-server)" = node
+          if docker logs lib 2>&1 | grep -q "$upload"; then echo 'the token is in the log'; exit 1; fi
+      - name: Server log
+        if: always()
+        run: docker logs lib || true

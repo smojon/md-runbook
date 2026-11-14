@@ -18,3 +18,6 @@ Released with md-runbook as `ghcr.io/smojon/md-runbook-web:VERSION`, for amd64 a
   in the app ([runbook links](../../docs/switching.md#runbook-links)). The runbook is downloaded
   by the browser, so its server must allow your origin (CORS), or serve it from the same origin.
 - The relay ([apps/relay](../relay/README.md)) is what lets the web app run cells over SSH.
+- The library server ([apps/library-server](../library-server/README.md)), on the same origin
+  under `/v1/library/`, `/v1/runs` and `/v1/alerts`, publishes signed runbooks into the team
+  library, collects run summaries and turns alerts into runbook links. It too is part of the app.
