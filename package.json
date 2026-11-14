@@ -1640,8 +1640,8 @@
           },
           "mdRunbook.output.transcriptFolder": {
             "type": "string",
-            "default": "",
-            "markdownDescription": "Folder for the transcripts (`#mdRunbook.output.transcript#`), relative to the runbook's folder (or absolute). Empty = next to the runbook. User settings only.",
+            "default": ".md-runbook",
+            "markdownDescription": "Folder for the transcripts (`#mdRunbook.output.transcript#`), relative to the runbook's folder (or absolute). Default `.md-runbook`, next to the runbook; the first transcript there in a Git repository offers to add it to `.gitignore`. Empty = beside the runbook. User settings only.",
             "scope": "machine",
             "order": 8
           },

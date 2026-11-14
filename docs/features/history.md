@@ -91,10 +91,11 @@ place is saved only when you save it, so nothing is written into your file witho
 
 ## Transcript
 
-Every run of a cell is also appended to a **transcript**, a plain text file next to the runbook,
-as its output arrives: `deploy.runbook.md` gets `deploy.runbook.transcript.log`. It is on disk
+Every run of a cell is also appended to a **transcript**, a plain text file in a `.md-runbook`
+folder next to the runbook, as its output arrives: `deploy.runbook.md` gets
+`.md-runbook/deploy.runbook.transcript.log`. It is on disk
 even if the runbook is never saved or VS Code closes, so a run can be followed live from another
-window (`tail -f deploy.runbook.transcript.log`, or an assistant watching the file) and looked at
+window (`tail -f .md-runbook/deploy.runbook.transcript.log`, or an assistant watching the file) and looked at
 afterwards:
 
 ```text
@@ -125,12 +126,16 @@ $ git push http://localhost:3000/lab/platform.git main
 - The folder is created when needed. If the file can't be written, a warning says so once and
   the transcript stops for the session; the runs are not affected.
 
-The transcript is on by default. It holds what the outputs hold, so keep it out of Git:
+The transcript is on by default. It holds what the outputs hold, so keep it out of Git: in a Git
+repository, the first transcript written offers **Add to .gitignore**, which adds
 
 ```gitignore
-*.transcript.log
-*.transcript.log.1
+# md-runbook run transcripts
+.md-runbook/
 ```
+
+(**Don't Ask Again** stops the offer). Transcripts kept beside the runbooks (an empty
+`transcriptFolder`) need `*.transcript.log` and `*.transcript.log.1` instead.
 
 Turn it off with `mdRunbook.output.transcript`, or put the files elsewhere with
 `mdRunbook.output.transcriptFolder` (relative to the runbook's folder, or absolute) and name them
@@ -147,5 +152,5 @@ with [`--transcript FILE`](cli.md#options).
 | `mdRunbook.output.copyFolder` | `""` | Folder for run copies, relative to the runbook's folder (or absolute). Empty = next to the runbook. |
 | `mdRunbook.output.saveAfterRun` | `"copies"` | Save after each run: `"copies"` only run copies, `true` every runbook, `false` never. |
 | `mdRunbook.output.transcript` | `true` | Append every run to `<runbook>.transcript.log` as it happens ([Transcript](#transcript)). |
-| `mdRunbook.output.transcriptFolder` | `""` | Folder for transcripts, relative to the runbook's folder (or absolute). Empty = next to the runbook. |
+| `mdRunbook.output.transcriptFolder` | `".md-runbook"` | Folder for transcripts, relative to the runbook's folder (or absolute). Empty = beside the runbook. |
 | `mdRunbook.output.transcriptExtension` | `".transcript.log"` | What replaces `.md` in a transcript's name. |

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Transcripts go in a `.md-runbook` folder** next to the runbook
+  (`.md-runbook/deploy.runbook.transcript.log`), not beside every runbook. In a Git repository, the
+  first one offers to add `.md-runbook/` to `.gitignore` (**Add to .gitignore** / **Not Now** /
+  **Don't Ask Again**). An empty `mdRunbook.output.transcriptFolder` keeps them beside the runbook.
+  From the VS Code review.
 - **The first five minutes:** **Open Sample Runbook** opens a short deploy (six steps, under a
   minute: a parameter, estimates, a confirmation, a step by hand, a smoke test that fails once to
   show Retry and Resume, a teardown) with the Steps view; the old sample is **Open Feature Tour**.

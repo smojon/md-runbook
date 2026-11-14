@@ -1,8 +1,12 @@
 /**
  * The runbook's transcript (core/transcript.ts): every run of a cell appended to
- * `<runbook>.transcript.log` as it happens, so it is on disk even if the runbook is never saved.
- * `mdRunbook.output.transcript` (on by default), `.transcriptFolder`, `.transcriptExtension`.
+ * `.md-runbook/<runbook>.transcript.log` as it happens, so it is on disk even if the runbook is
+ * never saved. `mdRunbook.output.transcript` (on by default), `.transcriptFolder` (`.md-runbook`,
+ * next to the runbook; empty = beside it), `.transcriptExtension`. The first transcript in that
+ * folder inside a Git repository whose .gitignore doesn't cover it offers to add it there.
  */
+
+import * as fs from 'node:fs';
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -39,8 +43,67 @@ export function transcriptPathFor(nb: vscode.NotebookDocument): string | undefin
     ext = DEFAULT_TRANSCRIPT_EXTENSION;
   }
   const dir = path.dirname(nb.uri.fsPath);
-  const folder = c.get<string>('output.transcriptFolder', '').trim();
+  const folder = c.get<string>('output.transcriptFolder', DEFAULT_FOLDER).trim();
   return path.join(folder ? path.resolve(dir, folder) : dir, transcriptFileName(path.basename(nb.uri.fsPath), ext));
+}
+
+/** Where transcripts go by default: a folder next to the runbook, not a file beside each one. */
+export const DEFAULT_FOLDER = '.md-runbook';
+const NEVER_GITIGNORE = 'mdRunbook.transcript.gitignoreNever';
+/** Repositories asked about this session (once each). */
+const askedRepos = new Set<string>();
+let globalState: vscode.Memento | undefined;
+
+/** Remember where to keep "Don't Ask Again" (called once at activation). */
+export function initTranscripts(context: vscode.ExtensionContext): void {
+  globalState = context.globalState;
+}
+
+/** The Git repository a path is in (the folder with .git), or undefined. */
+function repoOf(file: string): string | undefined {
+  for (let dir = path.dirname(file); ; ) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) return undefined;
+    dir = up;
+  }
+}
+
+/** Whether the repository's .gitignore already names the transcript folder (a simple check, by name). */
+function ignored(repo: string, folderName: string): boolean {
+  try {
+    return fs
+      .readFileSync(path.join(repo, '.gitignore'), 'utf8')
+      .split(/\r?\n/)
+      .some((l) => l.trim().replace(/^\/|\/$/g, '').replace(/^\*\*\//, '') === folderName);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The first transcript written into a transcript folder (`.md-runbook`) of a Git repository whose
+ * .gitignore doesn't name it: offer to add it, once per repository and session.
+ */
+function offerGitignore(file: string): void {
+  const folder = path.dirname(file);
+  const name = path.basename(folder);
+  if (!name.startsWith('.') || globalState?.get<boolean>(NEVER_GITIGNORE)) return;
+  const repo = repoOf(file);
+  if (!repo || askedRepos.has(repo) || ignored(repo, name)) return;
+  askedRepos.add(repo);
+  const add = 'Add to .gitignore';
+  const never = "Don't Ask Again";
+  void vscode.window
+    .showInformationMessage(`md-runbook keeps run transcripts in ${name}/ next to the runbook. Add ${name}/ to the repository's .gitignore?`, add, 'Not Now', never)
+    .then(async (pick) => {
+      if (pick === never) await globalState?.update(NEVER_GITIGNORE, true);
+      if (pick !== add) return;
+      const gi = path.join(repo, '.gitignore');
+      const before = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';
+      const eol = before.includes('\r\n') ? '\r\n' : '\n';
+      fs.writeFileSync(gi, `${before}${before === '' || before.endsWith('\n') ? '' : eol}# md-runbook run transcripts${eol}${name}/${eol}`);
+    });
 }
 
 /** Whether runs are written to the transcript (mdRunbook.output.transcript, on by default). */
@@ -57,6 +120,7 @@ export function transcriptFileFor(nb: vscode.NotebookDocument): TranscriptFile |
   if (!f) {
     f = new TranscriptFile(file, (e) => void vscode.window.showWarningMessage(`md-runbook: the transcript ${file} can't be written, so it stops for this session: ${e.message}`));
     files.set(file, f);
+    offerGitignore(file);
   }
   return f;
 }
@@ -130,6 +194,7 @@ export function noteTaskBox(nb: vscode.NotebookDocument, item: string, checked: 
  * so a learner finds the transcript, and every setting, without knowing their names.
  */
 export function registerTranscriptCommands(context: vscode.ExtensionContext): void {
+  initTranscripts(context);
   const notebook = (): vscode.NotebookDocument | undefined => vscode.window.activeNotebookEditor?.notebook;
   context.subscriptions.push(
     vscode.commands.registerCommand('mdRunbook.openTranscript', async () => {

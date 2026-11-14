@@ -8,3 +8,5 @@ packages/*/dist/
 # md-runbook transcripts (mdRunbook.output.transcript)
 *.transcript.log
 *.transcript.log.1
+# md-runbook transcripts in their folder (mdRunbook.output.transcriptFolder)
+.md-runbook/
