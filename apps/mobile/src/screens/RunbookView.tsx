@@ -1716,14 +1716,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           }
         />
       </View>
-      {pastBar && progress && (queued || asking || confirming) ? (
+      {pastBar && progress && (queued || asking || confirming || teardownOffer) ? (
         <PinnedRunBar
           progress={progress}
           estimate={estimate}
           {...(runningStep ? { runningCell: runningStep } : {})}
-          waiting={asking !== undefined || confirming !== undefined}
+          waiting={asking !== undefined || confirming !== undefined || teardownOffer !== undefined}
           onShow={() => {
-            const at = asking?.request.cellIndex ?? confirming?.cellIndex ?? runningStep?.index;
+            const at = asking?.request.cellIndex ?? confirming?.cellIndex ?? teardownOffer?.cellIndex ?? runningStep?.index;
             if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
           }}
           onStop={stopSequence}
