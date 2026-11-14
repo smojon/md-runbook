@@ -752,6 +752,35 @@ const en = {
   notifyPaused: (runbook: string) => `${runbook} is paused in the background`,
   notifyPausedBody:
     'Your phone pauses md-runbook soon after you leave it, so the step that was running may have been cut off. Open md-runbook to check it and go on.',
+
+  // Run reports (report-runs: in the front matter)
+  reportConsentTitle: 'Report this run?',
+  reportAllow: 'Allow',
+  reportNotNow: 'Not now',
+  reportNever: 'Never',
+  reportRequiredTitle: 'This runbook reports its runs',
+  reportRequiredRun: 'Run',
+  reportRequiredDecline: 'Don’t run',
+  reportDeclined: 'Not run: this runbook runs only when its runs are reported.',
+  reportNeedsKey:
+    'Not run: this runbook requires its run reports to be signed with this app’s key, and the key could not be used. Under Hosts & settings → This app’s key, make one (on the web: turn “Use a passkey” off, or off and on again to make a passkey), then run again.',
+  reportWhoDefault: 'md-runbook app',
+  reportsTitle: 'Run reports',
+  reportsHelp:
+    'A runbook can name an address (report-runs:) its runs are reported to: which runbook ran, who ran it, when, and how each step ended. Never outputs, values or secrets. You are asked once per address.',
+  reportAddresses: 'Addresses allowed without asking',
+  reportAddressesHelp: 'One per line: a host (reports.example.net), or an address (https://reports.example.net/runs).',
+  reportAddressesPlaceholder: 'reports.example.net',
+  trustedSigners: 'Trusted signers',
+  trustedSignersHelp:
+    'allowed_signers lines (as on the servers) of the people whose signed runbooks may require reporting. Only such a runbook can: other runbooks ask. Ed25519 and ECDSA P-256 keys are checked here.',
+  trustedSignersPlaceholder: 'ops@example.net namespaces="md-runbook" ssh-ed25519 AAAA…',
+  allowedRunnersHelp:
+    'Servers that check signed run reports: add this line to their allowed runners file (the reports are signed with this app’s key):',
+  reportAnswers: 'Your answers',
+  reportAnswerAllow: (address: string) => `Allowed: ${address}`,
+  reportAnswerNever: (address: string) => `Never: ${address}`,
+  forgetReportAnswer: 'Forget',
 } as const;
 
 export type Strings = typeof en;
