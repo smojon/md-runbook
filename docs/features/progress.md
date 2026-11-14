@@ -187,6 +187,9 @@ disappear from the file on the next save.
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `mdRunbook.progress.statusBar` | `true` | Show the active runbook's progress in the status bar. |
+| `mdRunbook.progress.statusBar` | `true` | Show the runbook's progress in the status bar; while it runs or waits with another file in front, named. |
 | `mdRunbook.execution.followRun` | `true` | When running several cells, scroll the cell about to run into view while the previous one is still in view. |
-| `mdRunbook.notifications.enabled` | `true` | When a run of several cells ends (done, or a step failed) or waits for you while its runbook isn't the editor in front, show a notification with a button to go there. |
+| `mdRunbook.notifications.enabled` | `true` | When a run ends (done, or a step failed) or waits for you on the cell while its runbook isn't the editor in front, show a notification with a button to go there. |
+| `mdRunbook.notifications.afterSeconds` | `30` | A run of one cell notifies when it took at least this long (several cells always do). |
+| `mdRunbook.notifications.system` | `false` | Also send them to the system's notification centre while the window is in the background (Windows toast, macOS notification, `notify-send`). |
+| `mdRunbook.estimates.learn` | `true` | Blocks without `estimate=` learn their usual time from their runs that passed; **Forget Learned Times…** clears them. |

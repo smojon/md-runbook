@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Settings:** a **Progress and notifications** group (status bar, follow the run, learned
+  estimates, notifications) and a **Reports** group, instead of both inside "Saved output" and
+  "Running cells". The README starts with "try it in a minute" and what the run looks like.
 - **VS Code: a calmer, clearer Steps view.** A chapter with only one step is one row. Checklist
   items stay under their own heading. Rows are updated in place, so a click, the hover and the
   keyboard focus are no longer lost while a step runs. The row buttons are VS Code icons, beside

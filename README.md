@@ -14,6 +14,14 @@ inside the same `.md` file. It runs natively on **Windows** (PowerShell, cmd, Gi
 - Output streams live into the cell. On save it is written right after the code block, and it
   is **redacted for secrets** first.
 
+**Try it in a minute:** install it (below), run **md-runbook: Open Sample Runbook**, then **Run
+All**. The **Steps** view on the left lists every step by name with its state and time, says
+before the run what each step will need from you (a confirmation, a secret, a value), and has
+**Resume** and **Retry step** when one fails. Steps done by hand wait for you on the cell
+(**Done** / **Skip** / **Stop**). Blocks without an estimate learn their usual time from past
+runs, so the status bar can say how long is left; it keeps showing the run, and a notification
+says when it ends or waits for you, while you work in another file.
+
 ![A runbook open as a notebook after Run All](docs/1-notebook.png)
 
 The same file saved and opened as plain Markdown, with output blocks and redacted secrets:
@@ -32,7 +40,7 @@ Or build the `.vsix` yourself and install it:
 ```sh
 npm ci
 npm run package          # produces md-runbook-<version>.vsix
-code --install-extension md-runbook-0.1.0.vsix
+code --install-extension md-runbook-*.vsix
 ```
 
 You can also use **Extensions view → ⋯ → Install from VSIX…**.
@@ -224,9 +232,12 @@ Each has its own page with examples and settings:
   dialog before risky commands (`delete`, `drain`, `rm -rf`, `--force`, …), and the cluster
   context (`kubectl config current-context`, `oc whoami --show-server`) recorded in each output
   marker and shown in the status bar.
-- **[Progress, manual steps and Resume](docs/features/progress.md):** mark steps done or skipped
-  without running them, tick Markdown checklists, see `4/7 · ✗ step 5` in the status bar, and
-  **Resume Run** from the first failed or unrun step. Also Clear Outputs Above / Below.
+- **[Progress, the Steps view and Resume](docs/features/progress.md):** the status bar says where
+  the run is (`Step 3/6 · Push image · 1m 40s left`), also while another file is in front; the
+  **Steps** view lists every step by name, with what each will need before you run and Retry /
+  Resume when one fails; checklist items are steps done by hand that Run All waits at; mark steps
+  done or skipped without running them, and **Resume Run** from the first failed or unrun step.
+  Notifications when a run ends or waits while you look away. Also Clear Outputs Above / Below.
 - **[How long it takes](docs/syntax.md#steps-and-progress):** `estimate=2m30s` on a block, as
   measured on a real run. The block shows it, and while it runs a bar fills at the estimate; the
   runbook shows how far it is and about how long is left, in VS Code, the app and
@@ -375,7 +386,8 @@ extension is also disabled in untrusted workspaces (Restricted Mode).
 | `mdRunbook.redaction.applyToLiveOutput` | `true` | Also redact the output shown in the editor. |
 | `mdRunbook.execution.stopOnFailure` | `true` | Run All stops at the first failed cell. |
 | `mdRunbook.execution.followRun` | `true` | Run All scrolls the cell about to run into view while you follow it (scroll away to stop). |
-| `mdRunbook.notifications.enabled` | `true` | A notification when a run ends or waits for you while you're in another editor or window. |
+| `mdRunbook.notifications.enabled` | `true` | A notification when a run ends or waits for you while you're in another editor or window. A run of one cell notifies after `notifications.afterSeconds` (30); `notifications.system` (off) also uses the system's notification centre. |
+| `mdRunbook.estimates.learn` | `true` | A block without `estimate=` learns its usual time from its runs that passed (`est. ~1m15s`), kept on this machine. |
 | `mdRunbook.execution.timeoutSeconds` | `0` | Kill a cell's process tree after N seconds. `0` = no timeout. |
 | `mdRunbook.execution.refreshPath` | `true` | Windows: add the `PATH` directories installed since VS Code started to each cell. |
 | `mdRunbook.execution.kubeContextPin` | `true` | Runbooks with `kube-context-mode: pin` run their cells against their `kube-context` (a `KUBECONFIG` that sets only the current context, then yours). Off: they are only checked. User settings only. |
