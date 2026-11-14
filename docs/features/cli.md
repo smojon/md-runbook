@@ -169,8 +169,9 @@ guide.md
 
 `md-runbook run` puts a step's estimate on its `▶ Step N` line, prints a warning (not a failure)
 when the step took more than twice its estimate and over a minute more, and in a terminal shows
-after each step how far the run is by the estimates and about how long is left
-(`[####......] 40% · about 6 min left`); a CI log keeps plain lines. `--json` has
+after each step how far the run is by the estimates and how long is left
+(`[########............] 40% · 6 min left`, the bar as wide as the terminal leaves room for, in
+plain ASCII so any console shows it); a CI log keeps plain lines. `--json` has
 `estimateSeconds` per step, the JUnit report an `estimate` property per test case.
 
 ## Signing runbooks

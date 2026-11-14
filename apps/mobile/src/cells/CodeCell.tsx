@@ -4,8 +4,18 @@
  * command's actions (Run line, Run lines 1-N, Run lines N-end, Check), checked commands get a
  * mark beside them, a status line (checked-lines run, language and options) and the output.
  */
-import { ParsedCell, blockProgress, formatEstimate, isCodeMeta, outputSummary, parseLineSet, shellKindForLanguage } from '@md-runbook/core';
-import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import {
+  ParsedCell,
+  blockProgress,
+  formatEstimate,
+  isCodeMeta,
+  outputSummary,
+  overEstimate,
+  parseLineSet,
+  shellKindForLanguage,
+} from '@md-runbook/core';
+import { parseCellOptions, rewriteInfoTokens } from '@md-runbook/core/cellOptions';
+import { parseInterval } from '@md-runbook/core/checks';
 import { OutputText } from './OutputText';
 import { CloudView } from './CloudView';
 import { cloudView } from '@md-runbook/core/cloudViews';
@@ -111,9 +121,17 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
         : exit === 'skipped'
           ? undefined
           : { icon: 'error', color: c.error, label: t.ranFailed };
-  const info = isCodeMeta(cell.meta) ? cell.meta.info : cell.languageId;
   // estimate=: how long the cell takes; while it runs, a bar against it (full at it, then "over").
   const estimate = p.callEstimate ?? (isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).estimateSeconds : undefined);
+  // The fence options as written, but estimate= once: the chip beside them shows it.
+  const info = isCodeMeta(cell.meta)
+    ? estimate !== undefined
+      ? rewriteInfoTokens(cell.meta.info, (tok) => (tok.key.toLowerCase() === 'estimate' ? '' : undefined))
+      : cell.meta.info
+    : cell.languageId;
+  // After a run noticeably over the estimate: by how much (core's overEstimate), beside the output.
+  const tookSeconds = cell.output?.attrs.duration !== undefined ? parseInterval(cell.output.attrs.duration) : undefined;
+  const overBy = estimate !== undefined && tookSeconds !== undefined ? overEstimate(tookSeconds / 1000, estimate) : undefined;
   const now = useNow(running?.startedAt !== undefined && estimate !== undefined);
   const elapsed = running?.startedAt !== undefined ? Math.max(0, (now - running.startedAt) / 1000) : undefined;
   const timing = estimate !== undefined && elapsed !== undefined ? blockProgress(elapsed, estimate) : undefined;
@@ -330,16 +348,19 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                     ? t.retryWaiting(running.attempt.n, running.attempt.of, formatWait(running.attempt.waitMs))
                     : t.runningAttempt(running.attempt.n, running.attempt.of)
                   : t.running}
+              {timing && estimate !== undefined && elapsed !== undefined ? (
+                <Text testID={`cell-${index}-timing-text`} style={timing.overSeconds > 0 ? styles.overText : undefined}>
+                  {' · '}
+                  {timing.overSeconds > 0
+                    ? t.estimateOver(formatEstimate(timing.overSeconds), formatEstimate(estimate))
+                    : t.estimateOf(formatEstimate(elapsed), formatEstimate(estimate))}
+                </Text>
+              ) : null}
             </Text>
           )}
           {timing && estimate !== undefined && elapsed !== undefined ? (
             <View testID={`cell-${index}-timing`} style={styles.timing}>
               <TimeBar fraction={timing.fraction} over={timing.overSeconds > 0} />
-              <Text style={[styles.outputHeader, timing.overSeconds > 0 && styles.overText]}>
-                {timing.overSeconds > 0
-                  ? t.estimateOver(formatEstimate(timing.overSeconds), formatEstimate(estimate))
-                  : t.estimateOf(formatEstimate(elapsed), formatEstimate(estimate))}
-              </Text>
             </View>
           ) : null}
           {running.live !== '' ? <OutputText style={styles.outputText} text={running.live} /> : null}
@@ -350,6 +371,12 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
             {t.output}
             {' · '}
             {outputSummary(cell.output.attrs)}
+            {estimate !== undefined && tookSeconds !== undefined ? (
+              <Text testID={`cell-${index}-took`} style={overBy !== undefined ? styles.overText : undefined}>
+                {' · '}
+                {overBy !== undefined ? t.tookOver(formatEstimate(estimate), formatEstimate(overBy)) : t.estimate(formatEstimate(estimate))}
+              </Text>
+            ) : null}
           </Text>
           {cell.output.text !== '' ? (
             <OutputText style={styles.outputText} text={cell.output.text} stderr={cell.output.attrs.stderr} />
@@ -554,7 +581,7 @@ const useStyles = themedStyles((c) => ({
   output: { marginLeft: 34, marginTop: 4, paddingHorizontal: 8, paddingVertical: 6, gap: 4 },
   outputHeader: { fontSize: 12, color: c.muted },
   estimate: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 0 },
-  timing: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 4 },
+  timing: { flexDirection: 'row', alignItems: 'center', marginTop: 6, marginBottom: 4 },
   overText: { color: c.warning },
   outputText: { fontFamily: mono, fontSize: 13, lineHeight: 19, color: c.text },
 }));

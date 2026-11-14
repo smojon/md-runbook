@@ -374,6 +374,7 @@ extension is also disabled in untrusted workspaces (Restricted Mode).
 | `mdRunbook.redaction.patterns` | `[]` | Extra regexes (strings or `{ pattern, flags }`). |
 | `mdRunbook.redaction.applyToLiveOutput` | `true` | Also redact the output shown in the editor. |
 | `mdRunbook.execution.stopOnFailure` | `true` | Run All stops at the first failed cell. |
+| `mdRunbook.execution.followRun` | `true` | Run All scrolls the cell about to run into view while you follow it (scroll away to stop). |
 | `mdRunbook.execution.timeoutSeconds` | `0` | Kill a cell's process tree after N seconds. `0` = no timeout. |
 | `mdRunbook.execution.refreshPath` | `true` | Windows: add the `PATH` directories installed since VS Code started to each cell. |
 | `mdRunbook.execution.kubeContextPin` | `true` | Runbooks with `kube-context-mode: pin` run their cells against their `kube-context` (a `KUBECONFIG` that sets only the current context, then yours). Off: they are only checked. User settings only. |

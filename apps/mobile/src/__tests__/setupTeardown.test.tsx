@@ -62,11 +62,10 @@ describe('setup and teardown in Run all', () => {
     // Before the check: the setup is what it may add, the teardown is offered.
     expect(screen.getByTestId('run-estimate-text')).toHaveProp(
       'accessibilityLabel',
-      expect.stringMatching(/about 55 min left · \+19m if the setup runs · teardown 2m, offered/),
+      expect.stringMatching(/55 min left · ≈ \d\d:\d\d · \+19m if the setup runs · teardown 2m, offered$/),
     );
-    expect(screen.getByTestId('estimate-left')).toHaveTextContent(/~55m$/);
-    expect(screen.getByTestId('estimate-setup')).toHaveTextContent(/\+19m\?$/);
-    expect(screen.getByTestId('estimate-teardown')).toHaveTextContent(/2m\?$/);
+    expect(screen.getByTestId('estimate-main')).toHaveTextContent(/^0% · 55 min left · ≈ \d\d:\d\d$/);
+    expect(screen.getByTestId('estimate-more')).toHaveTextContent('+19m if the setup runs · teardown 2m, offered');
     expect(screen.getByTestId('bar-setup')).toBeTruthy();
     expect(screen.getByTestId('bar-teardown')).toBeTruthy();
 

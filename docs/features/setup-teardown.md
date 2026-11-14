@@ -104,19 +104,19 @@ The time left counts the runbook's own steps, the setup while it runs, and a tea
 it is chosen. Before the check, the setup is shown as what it may add:
 
 ```text
-[..........] 0% · about 55 min left · +19m if the setup runs · teardown 2m, offered
-[####......] 40% · about 33 min left · setup ✓ already up · teardown 2m, offered
+[....................] 0% · 55 min left · +19m if the setup runs · teardown 2m, offered
+[########............] 40% · 33 min left · setup ✓ already up · teardown 2m, offered
 ```
 
-- **The app** draws one bar in three segments: the setup outlined until the check (removed when
-  already up), the runbook's own steps, and the teardown dashed until chosen. Under it, one short
-  line with icons: `0% · ⌚ ~55m · ↑ +19m? · ↓ 2m?`. ⌚ is the time left, ↑ the setup, ↓ the
-  teardown, and `?` means it may run: the ready check may skip the setup, and the teardown is
-  offered, not chosen yet. Once the check says up, ↑ shows `✓ up`. A screen reader reads the
-  line in full words.
+- **The app** draws one bar in three segments: the setup in a pale accent until the check
+  (removed when already up), the runbook's own steps, and the teardown paler than the track until
+  chosen. Under it, in words: `0% · 55 min left · ≈ 14:32`, then a smaller line with the parts:
+  `+19m if the setup runs · teardown 2m, offered` (`setup ✓ already up` once the check says up).
 
   <img src="../app/setup-teardown-before.png" alt="The md-runbook app before a run: the bar in three parts, and under it 0%, about 55 min left, +19m if the setup runs, teardown 2m offered" width="320">
-- **VS Code** shows the parts in the status bar item and its tooltip.
+- **VS Code** shows the parts in the status bar item and, as a table with their times, in its
+  tooltip. With the runbook's own steps done and the teardown offered, both read **Done ·
+  teardown offered**; Resume Run (the app: Continue) offers the teardown again.
 - **`md-runbook run`** tags its step lines `[setup]`, `[teardown]` and `[ready check]`.
 - **`md-runbook estimate`** adds a line with the parts:
   `Parts: setup 19m (skipped when already up) · runbook 55m · teardown 2m (offered)`.

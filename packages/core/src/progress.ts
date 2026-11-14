@@ -24,6 +24,11 @@ export interface ProgressCell {
   elsewhere?: boolean;
   /** Task-list items of a markup cell, in order: true = checked. */
   tasks?: boolean[];
+  /**
+   * The block's part (parts.ts). The ready check is a quick look, not a step; a teardown step not
+   * run yet is offered, not pending (it runs only when chosen).
+   */
+  part?: 'ready' | 'setup' | 'body' | 'teardown';
 }
 
 export interface Progress {
@@ -38,6 +43,12 @@ export interface Progress {
   firstPending?: { cell: number; step: number };
   /** Code cells Resume Run executes: failed or pending ones from the first such cell on. */
   resume: number[];
+  /** Teardown steps not run yet: offered at the end, not counted in `total` until they run. */
+  offered: number;
+  /** Cell index of the first offered teardown step. */
+  firstOffered?: number;
+  /** Per cell index: the 1-based step number of a code cell that counts as a step. */
+  stepOfCell: (number | undefined)[];
 }
 
 /** State of a code cell from its output's exit attribute (and whether only some lines ran). */
@@ -59,7 +70,7 @@ export function isManualMark(attrs: Record<string, string> | undefined): boolean
 }
 
 export function computeProgress(cells: readonly ProgressCell[]): Progress {
-  const p: Progress = { total: 0, done: 0, failed: 0, skipped: 0, pending: 0, resume: [] };
+  const p: Progress = { total: 0, done: 0, failed: 0, skipped: 0, pending: 0, resume: [], offered: 0, stepOfCell: cells.map(() => undefined) };
   const activeGroups = new Set(cells.filter((c) => c.os?.active).map((c) => c.os!.group));
   const counted = new Set<number>();
   cells.forEach((c, i) => {
@@ -82,7 +93,20 @@ export function computeProgress(cells: readonly ProgressCell[]): Progress {
       p.skipped++;
       return;
     }
+    if (c.part === 'ready') {
+      // Not a step, but Resume Run runs it again before the setup it guards.
+      const s = stepState(c.exit, c.partial, c.check);
+      if ((s === 'pending' || s === 'failed') && !c.elsewhere) p.resume.push(i);
+      return;
+    }
+    if (c.part === 'teardown' && !c.elsewhere && stepState(c.exit, c.partial, c.check) === 'pending') {
+      p.offered++;
+      p.firstOffered ??= i;
+      p.resume.push(i);
+      return;
+    }
     p.total++;
+    p.stepOfCell[i] = p.total;
     if (c.elsewhere) {
       p.skipped++;
       return;

@@ -67,7 +67,7 @@ describe('Run all / Continue (the one-tap action)', () => {
     await waitFor(() => expect(screen.getByTestId('run-notice').props.children).toMatch(/stopped at a failed step/));
     expect(mockConnection.calls).toHaveLength(2);
     expect(outputOf(r.id, 2)).toBe('1');
-    expect(screen.getByTestId('run-progress')).toHaveTextContent('1 of 3 steps done · step 2 failed');
+    expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 2 of 3 failed');
     expect(screen.getByTestId('run-primary')).toHaveTextContent('▶ Continue');
 
     script([{ stdout: 'two\n' }, { stdout: 'three\n' }]);
@@ -77,7 +77,7 @@ describe('Run all / Continue (the one-tap action)', () => {
     await waitFor(() => expect(mockConnection.calls).toHaveLength(2));
     expect(mockConnection.calls.map((c) => c.source)).toEqual(['echo two', 'echo three']);
     await waitFor(() => expect(screen.getByTestId('run-primary')).toHaveTextContent('↻ Run again'));
-    expect(screen.getByTestId('run-progress')).toHaveTextContent('3 of 3 steps done');
+    expect(screen.getByTestId('run-progress')).toHaveTextContent('Done · 3 of 3');
   });
 });
 

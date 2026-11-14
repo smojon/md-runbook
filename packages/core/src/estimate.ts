@@ -35,6 +35,61 @@ export function formatLeft(seconds: number): string {
 }
 
 /**
+ * Time left for a status line: `45s`, `1m 40s` under two minutes (it moves while you watch), then
+ * `4 min`, `1 h 10 min`.
+ */
+export function formatTimeLeft(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 120) return s === 60 ? '1m' : `1m ${s - 60}s`;
+  const min = Math.round(s / 60);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  return `${h} h${min % 60 ? ` ${min % 60} min` : ''}`;
+}
+
+/**
+ * What to call a step on a status line: its `name=`, a call's first section or src=, else the
+ * block's first line (cut at 40 characters).
+ */
+export function stepLabel(info: string, source: string, language: string): string {
+  const name = parseCellOptions(info).name;
+  if (name) return name;
+  if (isCallLanguage(language)) {
+    const call = parseCall(info, source);
+    const what = call.sections[0] ?? call.src;
+    if (what) return what;
+  }
+  const first = source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
+  return first.length > 40 ? `${first.slice(0, 39)}…` : first;
+}
+
+/** When a run ends if the estimates hold: `14:32` (local time, 24 h). */
+export function formatFinish(leftSeconds: number, now: number = Date.now()): string {
+  const d = new Date(now + Math.max(0, leftSeconds) * 1000);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * Seconds a finished run took over its estimate, worth showing next to it: more than a quarter
+ * over and at least 10 s (a 5 s block taking 7 s is noise). Undefined otherwise.
+ */
+export function overEstimate(actualSeconds: number, estimateSeconds: number): number | undefined {
+  const over = actualSeconds - estimateSeconds;
+  return over >= 10 && actualSeconds > estimateSeconds * 1.25 ? over : undefined;
+}
+
+/**
+ * The estimate a run suggests: what it took, rounded up to a round figure (`3m10s` → `3m15s`,
+ * `47s` → `50s`), as `estimate=` would be written.
+ */
+export function suggestedEstimate(actualSeconds: number): number {
+  const s = Math.max(1, actualSeconds);
+  const step = s < 60 ? 5 : s < 600 ? 15 : s < 3600 ? 60 : 300;
+  return Math.ceil(s / step) * step;
+}
+
+/**
  * The run took much longer than its estimate: more than twice it and more than a minute over
  * (a 5 s block taking 12 s is no news; a 2 min block taking 6 is).
  */
@@ -56,23 +111,43 @@ export function blockProgress(elapsedSeconds: number, estimateSeconds: number): 
   return { fraction: Math.min(1, elapsed / estimateSeconds), overSeconds: Math.max(0, elapsed - estimateSeconds) };
 }
 
-/** `[####......]` for 0.4 (width 10); clamped to 0..1. */
+/** `[####......]` for 0.4 (width 10); clamped to 0..1. Plain ASCII: any terminal shows it. */
 export function progressBar(fraction: number, width = 10): string {
   const f = Math.min(1, Math.max(0, Number.isFinite(fraction) ? fraction : 0));
   const full = Math.round(f * width);
   return `[${'#'.repeat(full)}${'.'.repeat(width - full)}]`;
 }
 
+const EIGHTHS = ['', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+
+/**
+ * `████▌░░░░░` for 0.45 (width 10): block characters in eighths, so a long block's bar moves on
+ * every few seconds instead of in tenths. For UI text (a VS Code status line), not terminals.
+ */
+export function blockBar(fraction: number, width = 24): string {
+  const f = Math.min(1, Math.max(0, Number.isFinite(fraction) ? fraction : 0));
+  const eighths = Math.round(f * width * 8);
+  const full = Math.floor(eighths / 8);
+  const part = EIGHTHS[eighths % 8]!;
+  return '█'.repeat(full) + part + '░'.repeat(width - full - (part ? 1 : 0));
+}
+
+/** The bar's width for a terminal `columns` wide with `text` beside it: 10 to 30 (20 without a terminal). */
+export function terminalBarWidth(columns: number | undefined, text: number): number {
+  if (!columns) return 20;
+  return Math.max(10, Math.min(30, columns - text - 4));
+}
+
 /**
  * A running block's state in one line: `[####......] 1m10s of 2m30s`, or past its estimate
- * `[##########] +1m20s over 2m30s`.
+ * `[##########] +1m20s over 2m30s`. `bar` draws the bar (progressBar, or blockBar for UI text).
  */
-export function formatBlockProgress(elapsedSeconds: number, estimateSeconds: number, width = 10): string {
+export function formatBlockProgress(elapsedSeconds: number, estimateSeconds: number, width = 10, bar: (fraction: number, width: number) => string = progressBar): string {
   const p = blockProgress(elapsedSeconds, estimateSeconds);
-  const bar = progressBar(p.fraction, width);
+  const drawn = bar(p.fraction, width);
   return p.overSeconds > 0
-    ? `${bar} +${formatEstimate(p.overSeconds)} over ${formatEstimate(estimateSeconds)}`
-    : `${bar} ${formatEstimate(elapsedSeconds)} of ${formatEstimate(estimateSeconds)}`;
+    ? `${drawn} +${formatEstimate(p.overSeconds)} over ${formatEstimate(estimateSeconds)}`
+    : `${drawn} ${formatEstimate(elapsedSeconds)} of ${formatEstimate(estimateSeconds)}`;
 }
 
 export type EstimateState = 'done' | 'running' | 'pending';
@@ -191,7 +266,7 @@ export function formatParts(e: RunbookEstimate): string | undefined {
  */
 export function formatRunbookEstimate(e: RunbookEstimate, width = 10): string | undefined {
   if (e.fraction === undefined) return undefined;
-  const parts = [`${progressBar(e.fraction, width)} ${Math.floor(e.fraction * 100)}%`, e.leftSeconds > 0 ? `${formatLeft(e.leftSeconds)} left` : 'nothing left'];
+  const parts = [`${progressBar(e.fraction, width)} ${Math.floor(e.fraction * 100)}%`, e.leftSeconds > 0 ? `${formatTimeLeft(e.leftSeconds)} left` : 'nothing left'];
   if (e.unestimatedLeft > 0) parts.push(withoutEstimate(e.unestimatedLeft));
   const more = formatParts(e);
   if (more) parts.push(more);

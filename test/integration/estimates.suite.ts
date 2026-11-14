@@ -23,8 +23,9 @@ test('estimate=: the block shows it, a run shows its bar, the status bar the tim
   assert.deepEqual(before.cells, [undefined, '$(watch) est. 10m', undefined, '$(watch) est. 1s']);
   assert.equal(before.runbook.totalSeconds, 601);
   assert.equal(before.runbook.unestimated, 1);
-  assert.match(before.status.text, /^\$\(checklist\) 0\/3 · about 10 min left$/);
-  assert.match(before.status.tooltip, /By the estimates: \[\.{10}\] 0% · about 10 min left · 1 block without an estimate\./);
+  assert.match(before.status.text, /^\$\(checklist\) 0\/3 · ~10 min$/);
+  assert.match(before.status.tooltip, /\*\*0 of 3 steps done\*\* · 0% by the estimates · 10 min left · done ≈ \d\d:\d\d/);
+  assert.match(before.status.tooltip, /1 block without an estimate/);
 
   // The sleeping block: past its estimate of 1 s, the bar stays full and says how much over.
   const cell = editor.notebook.cellAt(3);
@@ -32,13 +33,14 @@ test('estimate=: the block shows it, a run shows its bar, the status bar the tim
   let over: Estimates | undefined;
   for (const end = Date.now() + 30_000; !over && Date.now() < end; await new Promise((r) => setTimeout(r, 100))) {
     const e = await estimates();
-    if (/^\$\(watch\) \[#{10}\] \+\d+s over 1s$/.test(e.cells[3] ?? '')) over = e;
+    if (/^\$\(warning\) █{24} \+\d+s over 1s$/.test(e.cells[3] ?? '')) over = e;
   }
   assert.ok(over, 'the running block went over its estimate');
   assert.equal(over.runbook.leftSeconds, 600, 'the running block has nothing left of its estimate');
   await waitForRun(cell);
   const after = await estimates();
-  assert.equal(after.cells[3], '$(watch) est. 1s', 'a few seconds over is no warning');
+  // A few seconds over is no warning (a slow machine may show how long it took, 10 s and more over).
+  assert.match(after.cells[3] ?? '', /^\$\(watch\) est\. 1s( · took \d+s \(\+\d+s\))?$/);
   assert.equal(after.runbook.doneSeconds, 1);
   await closeAll();
 });

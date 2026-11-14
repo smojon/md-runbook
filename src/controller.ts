@@ -156,6 +156,21 @@ export function cellPart(cell: vscode.NotebookCell): RunbookPart {
   return (isCodeMeta(meta) ? parseCellOptions(meta.info).part : undefined) ?? 'body';
 }
 
+/**
+ * Run All follows the run: the cell about to run is scrolled into view, as long as the one before
+ * it is still in view (the reader didn't scroll away to read something else). The first cell is
+ * shown when it is out of view. Off with mdRunbook.execution.followRun.
+ */
+function followRun(notebook: vscode.NotebookDocument, previous: vscode.NotebookCell | undefined, next: vscode.NotebookCell): void {
+  if (!vscode.workspace.getConfiguration(SECTION).get<boolean>('execution.followRun', true)) return;
+  for (const editor of vscode.window.visibleNotebookEditors) {
+    if (editor.notebook !== notebook) continue;
+    const inView = (i: number): boolean => editor.visibleRanges.some((r) => i >= r.start && i < r.end);
+    if (previous && !inView(previous.index)) continue;
+    editor.revealRange(new vscode.NotebookRange(next.index, next.index + 1), vscode.NotebookEditorRevealType.InCenterIfOutsideViewport);
+  }
+}
+
 /** How a teardown cell is named in the offer: its name=, a call's section=, or its first line. */
 function teardownLabel(cell: vscode.NotebookCell): string {
   const meta: unknown = cell.metadata?.[META_KEY];
@@ -335,6 +350,8 @@ export class RunbookController implements vscode.Disposable {
     let readyUp: boolean | undefined;
     let takeDown: boolean | undefined;
     const several = executions.length > 1;
+    /** The cell the run showed last (followRun). */
+    let lastShown: vscode.NotebookCell | undefined;
     const runs: RunRecord[] = [];
     const cells = executions.map((e) => e.cell);
     /** Index of the last execution started (runCell ends its own, even when it throws). */
@@ -386,6 +403,8 @@ export class RunbookController implements vscode.Disposable {
         }
         const guarded = readyUp === true && (options.readyFirst ? part !== 'ready' : part === 'setup');
         // A cell with breakpoints runs line by line and pauses at them.
+        if (several) followRun(notebook, lastShown, exec.cell);
+        lastShown = exec.cell;
         const run = await this.runCell(exec, notebook, cfg, lineRun ?? this.pipeline.lineRunFor?.(exec.cell), guarded);
         runs.push(run);
         if (part === 'ready' && run.ready !== undefined) readyUp = run.ready;

@@ -141,6 +141,20 @@ export function renameInfoOption(info: string, from: string, to: string): string
 }
 
 /**
+ * `info` with option `key` set to `value`: the first `key=…` (any case) replaced, else
+ * ` key=value` added at the end. Everything else stays byte for byte.
+ */
+export function setInfoOption(info: string, key: string, value: string): string {
+  let found = false;
+  const out = rewriteInfoTokens(info, (t) => {
+    if (found || t.key.toLowerCase() !== key.toLowerCase()) return undefined;
+    found = true;
+    return `${key}=${value}`;
+  });
+  return found ? out : `${info.replace(/[ \t]+$/, '')} ${key}=${value}`;
+}
+
+/**
  * The `${…}` references a block uses: in its code, then in its checks (expect=, expect-not=),
  * which are filled in before they are judged, then its kube-context's (`kube-context=${param:NAME}`,
  * or the front matter's for a block without one). Only the code's are rewritten into the script.

@@ -1314,6 +1314,12 @@
             "description": "When running several cells (Run All, Run Above/Below), stop at the first cell that fails, times out or is cancelled.",
             "order": 3
           },
+          "mdRunbook.execution.followRun": {
+            "type": "boolean",
+            "default": true,
+            "description": "When running several cells (Run All, Resume Run, Run Above/Below), scroll the cell about to run into view, as long as the previous one is still in view (scroll away to stop following).",
+            "order": 4
+          },
           "mdRunbook.terminal.mode": {
             "type": "string",
             "enum": [
@@ -1329,47 +1335,47 @@
             "default": "off",
             "scope": "machine",
             "markdownDescription": "Run cells in a real VS Code terminal so interactive prompts work. **Off by default.** Needs VS Code 1.93+ terminal shell integration (bash, zsh, PowerShell; cmd cells run from a PowerShell terminal). Assistant-written cells never run in a terminal. User settings only.",
-            "order": 4
+            "order": 5
           },
           "mdRunbook.session.resetOnRunAll": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "In session mode, start **Run All** in a fresh session, so a full run never depends on (or exposes) state left by earlier runs. Single cells, ranges and **Resume Run** keep the session. User settings only.",
             "scope": "machine",
-            "order": 5
+            "order": 6
           },
           "mdRunbook.cellOptions.enabled": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Apply per-cell options from the fence line (`timeout=`, `cwd=`, `env.NAME=`, `continue-on-error`, `skip`, `confirm`). Turn off to ignore options written in runbooks.",
-            "order": 6
+            "order": 7
           },
           "mdRunbook.shell.bashPath": {
             "type": "string",
             "default": "",
             "scope": "machine",
             "markdownDescription": "Path to bash for `sh`/`bash` blocks. On Windows, Git Bash is found automatically (Program Files, LocalAppData, Scoop, next to `git.exe`); the WSL launcher is never used. User settings only.",
-            "order": 7
+            "order": 8
           },
           "mdRunbook.shell.pwshPath": {
             "type": "string",
             "default": "",
             "scope": "machine",
             "markdownDescription": "Path to PowerShell for `pwsh`/`powershell` blocks. Default: `pwsh` on PATH, falling back to Windows PowerShell (`powershell.exe`). User settings only.",
-            "order": 8
+            "order": 9
           },
           "mdRunbook.execution.refreshPath": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Windows: give each cell the `PATH` directories added since VS Code started (read from the registry, as a new terminal does), so a tool a runbook just installed is found without restarting VS Code. Directories are only added, at the end: the inherited `PATH` keeps its order. A session gets them when it starts (**Restart Session** starts a new one); a running session keeps its `PATH`.",
-            "order": 9
+            "order": 10
           },
           "mdRunbook.execution.kubeContextPin": {
             "type": "boolean",
             "default": true,
             "scope": "machine",
             "markdownDescription": "Let runbooks with `kube-context-mode: pin` pin their Kubernetes context: each cell gets a `KUBECONFIG` whose first file only sets the current context to the runbook's `kube-context`, followed by your own kubeconfig, so kubectl and helm use that context without changing your default. Off: such runbooks only check the context (a cell runs only while `kubectl config current-context` is that context). User settings only.",
-            "order": 10
+            "order": 11
           }
         }
       },

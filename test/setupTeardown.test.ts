@@ -136,7 +136,7 @@ describe('setup and teardown: estimates', () => {
     assert.equal(e.parts?.teardown.totalSeconds, 2 * 60);
     assert.equal(formatParts(e), '+19m if the setup runs · teardown 2m, offered');
     assert.equal(formatParts(runbookEstimate(steps, { setup: 'up' })), 'setup ✓ already up · teardown 2m, offered');
-    assert.match(formatRunbookEstimate(runbookEstimate(steps, { setup: 'up' }))!, /0% · about 55 min left · setup ✓ already up · teardown 2m, offered$/);
+    assert.match(formatRunbookEstimate(runbookEstimate(steps, { setup: 'up' }))!, /0% · 55 min left · setup ✓ already up · teardown 2m, offered$/);
   });
 
   it('leaves a runbook without parts as it was', () => {

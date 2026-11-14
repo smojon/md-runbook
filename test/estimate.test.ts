@@ -5,15 +5,22 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import {
+  blockBar,
   blockProgress,
   estimateRunbook,
   formatBlockProgress,
   formatEstimate,
+  formatFinish,
   formatLeft,
   formatRunbookEstimate,
+  formatTimeLeft,
   isOverEstimate,
+  overEstimate,
   progressBar,
   runbookEstimate,
+  stepLabel,
+  suggestedEstimate,
+  terminalBarWidth,
   textEstimateSteps,
 } from '@md-runbook/core/estimate';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
@@ -136,7 +143,7 @@ describe('the runbook', () => {
     assert.equal(e.leftSeconds, 120 + 300);
     assert.equal(e.unestimated, 2);
     assert.equal(e.unestimatedLeft, 1);
-    assert.equal(formatRunbookEstimate(e), '[##........] 20% · about 7 min left · 1 block without an estimate');
+    assert.equal(formatRunbookEstimate(e), '[##........] 20% · 7 min left · 1 block without an estimate');
   });
 
   it('a running block past its estimate leaves nothing of it, never less', () => {
@@ -304,9 +311,9 @@ describe('estimate= in a run', { skip: !hasBash && 'bash not installed' }, () =>
     assert.ok(!('estimateSeconds' in r.steps[1]!));
     const progress = r.printed.split('\n').filter((l) => l.startsWith('  ['));
     assert.deepEqual(progress, [
-      '  [#######...] 71% · about 1 min left · 1 block without an estimate',
-      '  [#######...] 71% · about 1 min left',
-      '  [##########] 100% · nothing left',
+      '  [##############......] 71% · 1m left · 1 block without an estimate',
+      '  [##############......] 71% · 1m left',
+      '  [####################] 100% · nothing left',
     ]);
     assert.doesNotMatch(r.printed, /more than twice its estimate/);
   });
@@ -314,5 +321,58 @@ describe('estimate= in a run', { skip: !hasBash && 'bash not installed' }, () =>
   it('no progress lines when not asked (not a terminal)', async () => {
     const r = await run(md, false);
     assert.doesNotMatch(r.printed, /^ {2}\[/m);
+  });
+});
+
+describe('status line helpers', () => {
+  it('time left moves in seconds under two minutes', () => {
+    assert.equal(formatTimeLeft(0), '0s');
+    assert.equal(formatTimeLeft(45.4), '45s');
+    assert.equal(formatTimeLeft(100), '1m 40s');
+    assert.equal(formatTimeLeft(60), '1m');
+    assert.equal(formatTimeLeft(150), '3 min');
+    assert.equal(formatTimeLeft(3600 + 600), '1 h 10 min');
+  });
+
+  it('finish time is local HH:MM', () => {
+    const now = new Date(2026, 10, 14, 14, 30, 0).getTime();
+    assert.equal(formatFinish(125, now), '14:32');
+    assert.equal(formatFinish(-5, now), '14:30');
+  });
+
+  it('a finished run over its estimate is shown from a quarter and 10 s over', () => {
+    assert.equal(overEstimate(7, 5), undefined, 'noise');
+    assert.equal(overEstimate(190, 150), 40);
+    assert.equal(overEstimate(160, 150), undefined, 'under a quarter');
+    assert.equal(overEstimate(16.5, 3), 13.5);
+  });
+
+  it('suggests a round estimate from a run', () => {
+    assert.equal(suggestedEstimate(47), 50);
+    assert.equal(suggestedEstimate(190), 195);
+    assert.equal(suggestedEstimate(16.5), 20);
+    assert.equal(suggestedEstimate(3700), 3900);
+  });
+
+  it('block bar: eighths, fixed width, clamped', () => {
+    assert.equal(blockBar(0, 4), '░░░░');
+    assert.equal(blockBar(1, 4), '████');
+    assert.equal(blockBar(2, 4), '████');
+    assert.equal(blockBar(0.5, 4), '██░░');
+    assert.equal(blockBar(0.5625, 4), '██▎░');
+    for (const f of [0, 0.01, 0.33, 0.5, 0.99, 1]) assert.equal([...blockBar(f, 24)].length, 24, String(f));
+  });
+
+  it('terminal bar width fits the line', () => {
+    assert.equal(terminalBarWidth(undefined, 90), 20);
+    assert.equal(terminalBarWidth(80, 90), 10);
+    assert.equal(terminalBarWidth(200, 90), 30);
+    assert.equal(terminalBarWidth(120, 90), 26);
+  });
+
+  it('step label: name=, then a call section, then the first line', () => {
+    assert.equal(stepLabel('bash name="Push image"', 'docker push x', 'bash'), 'Push image');
+    assert.equal(stepLabel('bash', '\n  kubectl rollout status deploy/api --timeout=10m --watch\n', 'bash'), 'kubectl rollout status deploy/api --tim…');
+    assert.equal(stepLabel('runbook src=../lab.md section="Start the lab"', '', 'runbook'), 'Start the lab');
   });
 });

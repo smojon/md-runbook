@@ -394,12 +394,16 @@ evidence (`evidence: true` or `incident:`) fails when one is not ticked, so a ch
 never passes unrecorded.
 
 **Estimates.** With `estimate=` on its blocks, a runbook's progress is also counted in time:
-the estimates of the blocks done over the sum of all, and about how long is left (the blocks
-still to run; the running block counts its estimate minus the time it has run, never below
-zero). Blocks without an estimate are counted as such ("2 blocks without an estimate"), never
+the estimates of the blocks done over the sum of all, how long is left (the blocks still to
+run; the running block counts its estimate minus the time it has run, never below zero; in
+seconds under two minutes) and when the run ends at that pace (`≈ 14:32`). Blocks without an estimate are counted as such ("2 blocks without an estimate"), never
 guessed. `skip` blocks and the ready check don't count; a group of `os=` alternatives counts
 once. Shown in the extension's status bar item, at the top of the app's runbook, and by
 `md-runbook run` after each step when its output is a terminal.
+
+The ready check is not a step in the steps count either, and a teardown that hasn't run is
+*offered*, not a step still to do. A running block's bar fills against its `estimate=`; after
+a run noticeably over it (more than a quarter and 10 s), the block says by how much.
 
 **Setup and teardown.** In a runbook with `setup` or `teardown` steps, the setup counts once it
 runs (0 when the ready check said already up; before the check, as "+19m if the setup runs"),

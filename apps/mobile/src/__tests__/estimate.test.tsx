@@ -35,12 +35,11 @@ describe('estimate= (how long a cell takes)', () => {
     expect(screen.queryByTestId('cell-2-estimate')).toBeNull();
     expect(screen.getByTestId('run-estimate-text')).toHaveProp(
       'accessibilityLabel',
-      '41% by the estimates · about 4 min left · 1 block without an estimate',
+      expect.stringMatching(/^41% · 4 min left · ≈ \d\d:\d\d · 1 block without an estimate$/),
     );
-    // On screen, short: icons and times.
-    expect(screen.getByTestId('estimate-done')).toHaveTextContent('41%');
-    expect(screen.getByTestId('estimate-left')).toHaveTextContent(/~4m$/);
-    expect(screen.getByTestId('estimate-unestimated')).toHaveTextContent(/1$/);
+    // On screen, in words: how far, how long, when it ends; then what has no estimate.
+    expect(screen.getByTestId('estimate-main')).toHaveTextContent(/^41% · 4 min left · ≈ \d\d:\d\d$/);
+    expect(screen.getByTestId('estimate-more')).toHaveTextContent('1 block without an estimate');
   });
 
   it('says nothing about estimates in a runbook without any', async () => {
@@ -58,10 +57,12 @@ describe('estimate= (how long a cell takes)', () => {
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-1-run'));
     });
-    await waitFor(() => expect(screen.getByTestId('cell-1-timing')).toHaveTextContent(/of 1s$/));
-    await waitFor(() => expect(screen.getByTestId('cell-1-timing')).toHaveTextContent(/^\+\d+s over 1s$/), { timeout: 5000 });
-    expect(screen.getByTestId('run-estimate-text')).toHaveProp('accessibilityLabel', '0% by the estimates · nothing left');
-    expect(screen.getByTestId('estimate-left')).toHaveTextContent(/0m$/);
+    // One line: Running · 0s of 1s, the bar under it.
+    await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/ \d+s of 1s$/));
+    expect(screen.getByTestId('cell-1-timing')).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/\+\d+s over 1s$/), { timeout: 5000 });
+    expect(screen.getByTestId('run-estimate-text')).toHaveProp('accessibilityLabel', '0% · nothing left');
+    expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 1 of 1 · sleep 100');
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-1-stop'));
     });

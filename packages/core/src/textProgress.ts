@@ -22,7 +22,8 @@ export function textProgress(text: string, here: OsName = 'linux'): Progress {
       if (c.kind !== 'code') return { kind: 'markup', tasks: checklist(c.value) };
       const attrs = c.output?.attrs;
       const os = slots[i];
-      return { kind: 'code', exit: attrs?.exit, partial: attrs?.lines !== undefined, check: attrs?.check, ...(os ? { os } : {}) };
+      const part = opts[i]?.part;
+      return { kind: 'code', exit: attrs?.exit, partial: attrs?.lines !== undefined, check: attrs?.check, ...(os ? { os } : {}), ...(part ? { part } : {}) };
     }),
   );
 }

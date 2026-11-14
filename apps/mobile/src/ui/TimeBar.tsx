@@ -21,8 +21,8 @@ export function useNow(active: boolean, ms = 1000): number {
 
 /**
  * A part of a segmented bar: `weight` its share of the width (seconds), `fraction` how far it is,
- * `kind` how it looks: `solid`; `maybe` (a setup the ready check may skip, or read as "up to");
- * `offered` (a teardown not chosen yet).
+ * `kind` how it looks: `solid`; `maybe` (a setup the ready check may skip: pale accent);
+ * `offered` (a teardown not chosen yet: paler than the track).
  */
 export interface BarSegment {
   weight: number;
@@ -85,13 +85,13 @@ export function TimeBar({
 }
 
 const useStyles = themedStyles((c) => ({
-  track: { height: 4, borderRadius: 2, backgroundColor: c.border, overflow: 'hidden', flexGrow: 1, minWidth: 60 },
-  fill: { height: 4, backgroundColor: c.accent },
+  track: { height: 6, borderRadius: 3, backgroundColor: c.border, overflow: 'hidden', flexGrow: 1, minWidth: 60 },
+  fill: { height: 6, backgroundColor: c.accent },
   over: { backgroundColor: c.warning },
   row: { flexDirection: 'row', gap: 3, flexGrow: 1, minWidth: 60, alignItems: 'center' },
-  segment: { height: 4, flexBasis: 0, borderRadius: 2, backgroundColor: c.border, overflow: 'hidden' },
-  // A setup the ready check may skip: outlined in the accent colour until it runs.
-  maybe: { height: 6, borderWidth: 1, borderStyle: 'dashed', borderColor: c.accent, backgroundColor: 'transparent' },
-  // A teardown not chosen: a dashed outline, never filled.
-  offered: { height: 6, borderWidth: 1, borderStyle: 'dashed', borderColor: c.muted, backgroundColor: 'transparent' },
+  segment: { height: 6, flexBasis: 0, borderRadius: 3, backgroundColor: c.border, overflow: 'hidden' },
+  // A setup the ready check may skip: a pale accent until it runs (a dashed outline read as broken).
+  maybe: { backgroundColor: c.accent, opacity: 0.3 },
+  // A teardown not chosen: paler than the track, never filled.
+  offered: { opacity: 0.45 },
 }));

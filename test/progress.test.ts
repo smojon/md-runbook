@@ -61,9 +61,42 @@ describe('progress', () => {
         firstFailed: { cell: 4, step: 5 },
         firstPending: { cell: 0, step: 2 },
         resume: [4, 5],
+        offered: 0,
+        stepOfCell: [undefined, 3, 4, undefined, 5, 6, 7],
       },
     );
     assert.equal(formatProgress(p), '$(checklist) 4/7 · ✗ step 5');
+  });
+
+  it('the ready check is not a step; a teardown not run yet is offered, not pending', () => {
+    const fresh = computeProgress([
+      { kind: 'code', part: 'ready' },
+      { kind: 'code', part: 'setup' },
+      { kind: 'code' },
+      { kind: 'code', part: 'teardown' },
+    ]);
+    assert.equal(fresh.total, 2, 'setup + the body step');
+    assert.equal(fresh.pending, 2);
+    assert.equal(fresh.offered, 1);
+    assert.equal(fresh.firstOffered, 3);
+    assert.deepEqual(fresh.resume, [0, 1, 2, 3], 'Resume Run still runs the check first and offers the teardown');
+    assert.deepEqual(fresh.firstPending, { cell: 1, step: 1 });
+    assert.deepEqual(fresh.stepOfCell, [undefined, 1, 2, undefined]);
+
+    const ran = computeProgress([
+      { kind: 'code', part: 'ready', exit: '1', check: 'ok' },
+      { kind: 'code', part: 'setup', exit: '0' },
+      { kind: 'code', exit: '0' },
+      { kind: 'code', part: 'teardown' },
+    ]);
+    assert.equal(ran.done, 2);
+    assert.equal(ran.total, 2, 'all done: 2/2, the teardown offered');
+    assert.equal(ran.pending + ran.failed, 0);
+    assert.deepEqual(ran.resume, [3]);
+
+    const tornDown = computeProgress([{ kind: 'code', exit: '0' }, { kind: 'code', part: 'teardown', exit: '0' }]);
+    assert.equal(tornDown.total, 2, 'a teardown that ran counts');
+    assert.equal(tornDown.offered, 0);
   });
 
   it('resume starts at the first pending code cell when nothing failed', () => {

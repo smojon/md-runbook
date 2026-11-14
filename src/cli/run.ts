@@ -21,6 +21,7 @@ import {
   formatRunbookEstimate,
   isOverEstimate,
   runbookEstimate,
+  terminalBarWidth,
   formatDurationAttr,
   formatLocalIso,
   isCodeMeta,
@@ -388,16 +389,19 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     const p = partAt(i);
     return p === 'setup' || p === 'teardown' ? { part: p } : {};
   };
-  const progressLine = (): string | undefined =>
-    formatRunbookEstimate(
-      runbookEstimate(
-        planned.filter((i) => i !== readyIdx).map((i) => ({ estimateSeconds: estimates[i], state: finished.has(i) ? 'done' : 'pending', ...partOfStep(i) })),
-        {
-          setup: readyIdx === undefined || setupMode !== 'auto' ? 'run' : readyUp === undefined ? 'unchecked' : readyUp ? 'up' : 'run',
-          teardown: teardownMode === 'no' ? 'offered' : 'chosen',
-        },
-      ),
+  const progressLine = (): string | undefined => {
+    const e = runbookEstimate(
+      planned.filter((i) => i !== readyIdx).map((i) => ({ estimateSeconds: estimates[i], state: finished.has(i) ? 'done' : 'pending', ...partOfStep(i) })),
+      {
+        setup: readyIdx === undefined || setupMode !== 'auto' ? 'run' : readyUp === undefined ? 'unchecked' : readyUp ? 'up' : 'run',
+        teardown: teardownMode === 'no' ? 'offered' : 'chosen',
+      },
     );
+    // The bar as wide as the terminal leaves room for (ASCII: any console shows it); 20 in a log.
+    const text = formatRunbookEstimate(e, 0);
+    if (text === undefined) return undefined;
+    return formatRunbookEstimate(e, terminalBarWidth(process.stdout.isTTY ? process.stdout.columns : undefined, text.length));
+  };
   // The ready check runs before the steps it guards, wherever it is in the file.
   const order = [...locs.keys()];
   if (readyIdx !== undefined && blocks.some((b, i) => i < readyIdx && b.runs && guarded(i))) {

@@ -50,7 +50,16 @@ import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
 import type { Progress, RunbookEstimate } from '@md-runbook/core';
-import { callEstimate, formatEstimate, formatLeft, runbookEstimate, textEstimateSteps, textPartStates } from '@md-runbook/core/estimate';
+import {
+  callEstimate,
+  formatEstimate,
+  formatFinish,
+  formatTimeLeft,
+  runbookEstimate,
+  stepLabel,
+  textEstimateSteps,
+  textPartStates,
+} from '@md-runbook/core/estimate';
 import { TeardownCard } from '../cells/TeardownCard';
 
 import { BarSegment, TimeBar, useNow } from '../ui/TimeBar';
@@ -65,7 +74,7 @@ import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell, ProblemRow } from '../cells/CodeCell';
 import { RunbookProblems, fixCellOption, runbookProblems } from '../runbooks/lint';
-import { Codicon, CodiconName } from '../ui/Codicon';
+import { Codicon } from '../ui/Codicon';
 import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, hostLabel, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
@@ -278,6 +287,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     ),
     partStates,
   );
+  // The block running now, named for the run bar and the slim bar pinned on top while it runs.
+  const runningStep = useMemo((): RunningStep | undefined => {
+    const c = running ? cells[running.cellIndex] : undefined;
+    if (!running || !c) return undefined;
+    const label = stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId) || t.cellNumber(running.cellIndex + 1);
+    const step = progress?.stepOfCell[running.cellIndex];
+    return { index: running.cellIndex, label, ...(step !== undefined ? { step } : {}) };
+  }, [running, cells, progress]);
+  // Scrolled past the run bar: the slim bar on top keeps the run in view.
+  const [barBottom, setBarBottom] = useState(0);
+  const [pastBar, setPastBar] = useState(false);
   const [trust, setTrust] = useState<Trust | undefined>();
   // A cell whose host= names a host other than the selected one waits for a yes, once per host
   // while the runbook is open (a shared runbook could otherwise pick your production server).
@@ -1341,10 +1361,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     );
   }
   return (
-    <>
+    <View style={styles.screen}>
       <Stack.Screen options={{ title: runbook.title }} />
       <FlatList
         ref={list}
+        onScroll={(e) => setPastBar(barBottom > 0 && e.nativeEvent.contentOffset.y > barBottom)}
+        scrollEventThrottle={100}
         onScrollToIndexFailed={(info) => list.current?.scrollToOffset({ offset: info.averageItemLength * info.index })}
         style={styles.screen}
         contentContainerStyle={styles.content}
@@ -1358,9 +1380,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               estimate={estimate}
               canRun={host !== undefined}
               running={queued}
+              {...(runningStep ? { runningCell: runningStep } : {})}
               onRun={runSequence}
               onStop={stopSequence}
               onMore={() => setShowActions(true)}
+              onLayout={setBarBottom}
             />
             <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
             <AssistantSheet {...assistant.sheet} />
@@ -1627,7 +1651,64 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           )
         }
       />
-    </>
+      {pastBar && progress && (queued || asking || confirming) ? (
+        <PinnedRunBar
+          progress={progress}
+          estimate={estimate}
+          {...(runningStep ? { runningCell: runningStep } : {})}
+          waiting={asking !== undefined || confirming !== undefined}
+          onShow={() => {
+            const at = asking?.request.cellIndex ?? confirming?.cellIndex ?? runningStep?.index;
+            if (at !== undefined) list.current?.scrollToIndex({ index: at, viewPosition: 0.2 });
+          }}
+          onStop={stopSequence}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * The run, pinned on top while the run bar is scrolled away: one line (`Step 3 of 6 · Push image ·
+ * 1m 40s left`, or that the run waits for you) over a thin bar; a tap shows the cell, Stop stops.
+ */
+function PinnedRunBar({
+  progress,
+  estimate,
+  runningCell,
+  waiting,
+  onShow,
+  onStop,
+}: {
+  progress: Progress;
+  estimate: RunbookEstimate;
+  runningCell?: RunningStep;
+  waiting: boolean;
+  onShow(): void;
+  onStop(): void;
+}) {
+  const styles = useStyles();
+  const left =
+    estimate.fraction !== undefined && estimate.leftSeconds > 0 ? ` · ${t.estimateLeft(formatTimeLeft(estimate.leftSeconds))}` : '';
+  const line = waiting ? t.pinnedWaiting : `${runHeadline(progress, runningCell)}${left}`;
+  return (
+    <View testID="pinned-run-bar" style={styles.pinned}>
+      <Pressable
+        testID="pinned-run-show"
+        accessibilityRole="button"
+        accessibilityHint={t.pinnedShowHint}
+        onPress={onShow}
+        style={styles.grow}
+      >
+        <Text style={[styles.pinnedText, waiting && styles.pinnedWaiting]} numberOfLines={1}>
+          {line}
+        </Text>
+        {estimate.fraction !== undefined ? <TimeBar fraction={estimate.fraction} segments={barSegments(estimate)} /> : null}
+      </Pressable>
+      <Pressable testID="pinned-run-stop" accessibilityRole="button" onPress={onStop} style={styles.pinnedStop}>
+        <Text style={styles.pinnedStopText}>{t.stopRun}</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -1699,6 +1780,25 @@ function ProblemsCard({
   );
 }
 
+/** The block running now, for the run bar: its step number (none for the ready check or teardown) and name. */
+interface RunningStep {
+  index: number;
+  step?: number;
+  label: string;
+}
+
+/**
+ * The run bar's first line, in the same words as VS Code's status bar: `Step 3 of 6 · Push image`
+ * while it runs, `Step 4 of 6 failed`, `Done · 6 of 6 · teardown offered`, else `2 of 6 steps done`.
+ */
+function runHeadline(p: Progress, running?: RunningStep): string {
+  const complete = p.done + p.skipped;
+  if (running) return running.step !== undefined ? t.progressStep(running.step, p.total, running.label) : running.label;
+  if (p.firstFailed) return t.progressStepFailed(p.firstFailed.step, p.total);
+  if (p.pending === 0 && p.total > 0) return t.progressAllDone(complete, p.total, p.offered > 0);
+  return t.progressDone(complete, p.total);
+}
+
 /**
  * The one obvious action, for anyone opening the runbook: Run all, then Continue after a stop,
  * Run again when everything is done; with how far the runbook is. Everything else stays one tap
@@ -1709,18 +1809,23 @@ function RunBar({
   estimate,
   canRun,
   running,
+  runningCell,
   onRun,
   onStop,
   onMore,
+  onLayout,
 }: {
   progress: Progress | undefined;
   /** By the blocks' estimates; shown when one has an estimate. */
   estimate?: RunbookEstimate;
   canRun: boolean;
   running: boolean;
+  /** The block running now: its step number (none for the ready check or teardown) and name. */
+  runningCell?: RunningStep;
   onRun(from: 'start' | 'resume'): void;
   onStop(): void;
   onMore(): void;
+  onLayout?(bottom: number): void;
 }) {
   const styles = useStyles();
   const more = (
@@ -1731,11 +1836,12 @@ function RunBar({
   if (!progress || progress.total === 0) return <View style={styles.runBar}>{more}</View>;
   const complete = progress.done + progress.skipped;
   const fresh = complete === 0 && progress.failed === 0;
-  const finished = progress.pending === 0 && progress.failed === 0;
+  // An offered teardown left: Continue offers it again (the headline already says Done).
+  const finished = progress.pending === 0 && progress.failed === 0 && progress.offered === 0;
   const resume = !fresh && !finished && progress.resume.length > 0;
   const label = running ? t.stopRun : fresh || finished || !resume ? (finished ? t.runAgain : t.runAll) : t.continueRunbook;
   return (
-    <View testID="run-bar" style={styles.runBar}>
+    <View testID="run-bar" style={styles.runBar} onLayout={(e) => onLayout?.(e.nativeEvent.layout.y + e.nativeEvent.layout.height)}>
       <Pressable
         testID="run-primary"
         accessibilityRole="button"
@@ -1746,9 +1852,8 @@ function RunBar({
         <Text style={styles.runPrimaryText}>{label}</Text>
       </Pressable>
       <View style={styles.grow}>
-        <Text testID="run-progress" style={styles.runProgress}>
-          {t.progressDone(complete, progress.total)}
-          {progress.firstFailed ? t.progressFailed(progress.firstFailed.step) : ''}
+        <Text testID="run-progress" style={styles.runProgress} numberOfLines={2}>
+          {runHeadline(progress, runningCell)}
         </Text>
         {estimate?.fraction !== undefined ? (
           <View testID="run-estimate" style={styles.estimateRow}>
@@ -1804,68 +1909,41 @@ function barSegments(e: RunbookEstimate): BarSegment[] | undefined {
   return segments;
 }
 
-/** One piece of the line under the run bar: icons, a short text, and what a screen reader says. */
-interface EstimatePiece {
-  icons: CodiconName[];
-  text: string;
-  label: string;
-  testID: string;
-}
-
 /**
- * How far the runbook is, short enough for one line on a phone:
- * `41% · ⌚ ~4m · ? 1 · ↑ +19m? · ↓ 2m?`. The icons are the cells' own (watch = estimate);
- * "?" = may run: a setup the ready check may skip, a teardown offered, not chosen yet.
+ * The lines under the run bar, in words: `41% · 4 min left · ≈ 14:32`, then the setup and
+ * teardown and what has no estimate (`setup ✓ · teardown 2m, offered · 1 without an estimate`).
  */
-function estimatePieces(e: RunbookEstimate): EstimatePiece[] {
+function estimateLines(e: RunbookEstimate, now = Date.now()): { main: string; more?: string } {
   const percent = Math.floor(e.fraction! * 100);
-  const min = Math.round(Math.max(0, e.leftSeconds) / 60);
-  const pieces: EstimatePiece[] = [
-    { icons: [], text: `${percent}%`, label: t.estimateDone(percent), testID: 'estimate-done' },
-    {
-      icons: ['watch'],
-      text: e.leftSeconds <= 0 ? '0m' : min < 1 ? t.barUnderAMinute : t.barLeft(formatEstimate(min * 60)),
-      label: e.leftSeconds > 0 ? t.estimateLeft(formatLeft(e.leftSeconds)) : t.estimateNothingLeft,
-      testID: 'estimate-left',
-    },
-  ];
-  if (e.unestimatedLeft > 0)
-    pieces.push({
-      icons: ['question'],
-      text: String(e.unestimatedLeft),
-      label: t.withoutEstimate(e.unestimatedLeft),
-      testID: 'estimate-unestimated',
-    });
+  const main = [t.barPercent(percent), e.leftSeconds > 0 ? t.estimateLeft(formatTimeLeft(e.leftSeconds)) : t.estimateNothingLeft];
+  if (e.leftSeconds > 0) main.push(t.barFinish(formatFinish(e.leftSeconds, now)));
+  const more: string[] = [];
   const p = e.parts;
   if (p && p.setup.blocks > 0) {
-    if (p.states.setup === 'up')
-      pieces.push({ icons: ['arrow-up', 'check'], text: t.barSetupUp, label: t.estimateSetupUp, testID: 'estimate-setup' });
-    else if (p.states.setup === 'unchecked' && p.setup.totalSeconds > 0) {
-      const time = formatEstimate(p.setup.totalSeconds);
-      pieces.push({ icons: ['arrow-up'], text: t.barMaybe(time), label: t.estimateSetupMaybe(time), testID: 'estimate-setup' });
-    }
+    if (p.states.setup === 'up') more.push(t.estimateSetupUp);
+    else if (p.states.setup === 'unchecked' && p.setup.totalSeconds > 0)
+      more.push(t.estimateSetupMaybe(formatEstimate(p.setup.totalSeconds)));
+    else if (p.setup.leftSeconds === 0 && p.setup.doneSeconds > 0) more.push(t.barSetupDone);
   }
-  if (p && p.teardown.blocks > 0 && p.states.teardown === 'offered' && p.teardown.totalSeconds > 0) {
-    const time = formatEstimate(p.teardown.totalSeconds);
-    pieces.push({ icons: ['arrow-down'], text: t.barOffered(time), label: t.estimateTeardownOffered(time), testID: 'estimate-teardown' });
-  }
-  return pieces;
+  if (p && p.teardown.blocks > 0 && p.states.teardown === 'offered' && p.teardown.totalSeconds > 0)
+    more.push(t.estimateTeardownOffered(formatEstimate(p.teardown.totalSeconds)));
+  if (e.unestimatedLeft > 0) more.push(t.withoutEstimate(e.unestimatedLeft));
+  return { main: main.join(' · '), ...(more.length ? { more: more.join(' · ') } : {}) };
 }
 
 function EstimateLine({ estimate }: { estimate: RunbookEstimate }) {
   const styles = useStyles();
-  const c = usePalette();
-  const pieces = estimatePieces(estimate);
+  const lines = estimateLines(estimate);
   return (
-    <View testID="run-estimate-text" accessible accessibilityLabel={pieces.map((x) => x.label).join(' · ')} style={styles.estimatePieces}>
-      {pieces.map((x) => (
-        <View key={x.testID} testID={x.testID} style={styles.estimatePiece}>
-          {x.icons.map((icon) => (
-            <Codicon key={icon} name={icon} size={13} color={c.muted} />
-          ))}
-          <Text style={styles.estimatePieceText}>{x.text}</Text>
-        </View>
-      ))}
+    <View testID="run-estimate-text" accessible accessibilityLabel={[lines.main, lines.more].filter(Boolean).join(' · ')}>
+      <Text testID="estimate-main" style={styles.estimatePieceText}>
+        {lines.main}
+      </Text>
+      {lines.more ? (
+        <Text testID="estimate-more" style={styles.estimateMore}>
+          {lines.more}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -2396,10 +2474,27 @@ const useStyles = themedStyles((c) => ({
   runProgress: { fontSize: 14, color: c.text },
   inputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4 },
   grow: { flex: 1 },
-  estimateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  estimatePieces: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 8, rowGap: 2 },
-  estimatePiece: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  estimateRow: { gap: 4, marginTop: 4 },
   estimatePieceText: { fontSize: 14, color: c.muted },
+  estimateMore: { fontSize: 12, color: c.muted },
+  pinned: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: c.background,
+    borderBottomWidth: 1,
+    borderBottomColor: c.border,
+  },
+  pinnedText: { fontSize: 14, color: c.text, marginBottom: 4 },
+  pinnedWaiting: { color: c.warning, fontWeight: '600' },
+  pinnedStop: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, backgroundColor: c.error },
+  pinnedStopText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   params: { marginVertical: 6 },
   paramsTitle: { fontSize: 13, color: c.muted, marginBottom: 4 },
   param: { marginBottom: 8 },

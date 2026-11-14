@@ -7,8 +7,9 @@
 import * as vscode from 'vscode';
 import { isCallLanguage, isDynamicSrc, parseCall } from '@md-runbook/core/call';
 import { callEstimateSeconds } from '@md-runbook/core/node';
-import { EstimateStep, formatBlockProgress, formatEstimate, isCodeMeta, isOverEstimate, stepState } from '@md-runbook/core';
-import { parseCellOptions } from '@md-runbook/core/cellOptions';
+import { EstimateStep, blockBar, blockProgress, formatBlockProgress, formatEstimate, isCodeMeta, isOverEstimate, overEstimate, stepState, suggestedEstimate } from '@md-runbook/core';
+import { parseCellOptions, setInfoOption } from '@md-runbook/core/cellOptions';
+import { withInfo } from '@md-runbook/core/proposal';
 import { parseInterval } from '@md-runbook/core/checks';
 import { osGroups } from '@md-runbook/core/os';
 import { PartStates } from '@md-runbook/core/estimate';
@@ -18,6 +19,9 @@ import { NOTEBOOK_TYPE } from './serializer';
 
 /** How often a running block's bar (and the runbook's time left) moves on. */
 const TICK_MS = 1000;
+/** The running block's bar on its status line: long enough to move every few seconds (eighths). */
+const BAR_WIDTH = 24;
+const SET_ESTIMATE = 'mdRunbook._setEstimate';
 
 function optionsOn(): boolean {
   return vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true);
@@ -135,11 +139,12 @@ export function anyRunning(nb: vscode.NotebookDocument): boolean {
 }
 
 /**
- * The block's estimate on its status line: `est. 2m30s`; while it runs, its time against it
- * (`[####......] 1m of 2m30s`, then `[##########] +1m20s over 2m30s`); after a run that took more
- * than twice it, a warning. Undefined for a block without an estimate.
+ * The block's estimate on its status line: `est. 2m30s`; while it runs, its time against it as a
+ * bar (`████████▌░░░… 1m of 2m30s`, then `⚠ ███…█ +1m20s over 2m30s`); after a run noticeably over
+ * it, how long it took (`est. 2m30s · took 3m10s (+40s)`, a click sets estimate= to it), with a
+ * warning past twice it. Undefined for a block without an estimate.
  */
-export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { text: string; tooltip: string } | undefined {
+export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { text: string; tooltip: string; setTo?: number } | undefined {
   const est = cellEstimate(cell);
   if (est === undefined) {
     // A call whose src= has placeholders: what it runs is known when it runs.
@@ -153,16 +158,36 @@ export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { tex
   const since = runningSince(cell);
   if (since !== undefined) {
     const elapsed = (now - since) / 1000;
-    return { text: `$(watch) ${formatBlockProgress(elapsed, est)}`, tooltip: `Running for ${formatEstimate(elapsed)}; this block's estimate (estimate=) is ${formatEstimate(est)}.` };
+    const over = blockProgress(elapsed, est).overSeconds > 0;
+    return {
+      text: `${over ? '$(warning)' : '$(watch)'} ${formatBlockProgress(elapsed, est, BAR_WIDTH, blockBar)}`,
+      tooltip: `Running for ${formatEstimate(elapsed)}; this block's estimate (estimate=) is ${formatEstimate(est)}.`,
+    };
   }
   const took = lastDuration(cell);
-  if (took !== undefined && isOverEstimate(took, est)) {
+  const extra = took !== undefined ? overEstimate(took, est) : undefined;
+  if (took !== undefined && extra !== undefined) {
+    const setTo = suggestedEstimate(took);
     return {
-      text: `$(warning) est. ${formatEstimate(est)} · took ${formatEstimate(took)}`,
-      tooltip: `The last run took more than twice this block's estimate (estimate=${formatEstimate(est)}).`,
+      text: `${isOverEstimate(took, est) ? '$(warning)' : '$(watch)'} est. ${formatEstimate(est)} · took ${formatEstimate(took)} (+${formatEstimate(extra)})`,
+      tooltip: `The last run took ${formatEstimate(took)}, ${formatEstimate(extra)} more than this block's estimate. Click to set estimate=${formatEstimate(setTo)}.`,
+      setTo,
     };
   }
   return { text: `$(watch) est. ${formatEstimate(est)}`, tooltip: 'How long this block takes, as measured on a real run (estimate=). It does not change how it runs.' };
+}
+
+/** Set a block's estimate= (from its last run): the fence options are in the cell's metadata. */
+async function setEstimate(notebook: unknown, index: unknown, seconds: unknown): Promise<boolean> {
+  if (typeof notebook !== 'string' || typeof index !== 'number' || typeof seconds !== 'number' || !(seconds > 0)) return false;
+  const nb = vscode.workspace.notebookDocuments.find((d) => d.uri.toString() === notebook);
+  if (!nb || index < 0 || index >= nb.cellCount) return false;
+  const cell = nb.cellAt(index);
+  const meta: unknown = cell.metadata?.[META_KEY];
+  if (!isCodeMeta(meta)) return false;
+  const edit = new vscode.WorkspaceEdit();
+  edit.set(nb.uri, [vscode.NotebookEdit.updateCellMetadata(index, { ...cell.metadata, [META_KEY]: withInfo(meta, setInfoOption(meta.info, 'estimate', formatEstimate(seconds))) })]);
+  return vscode.workspace.applyEdit(edit);
 }
 
 class EstimateStatus implements vscode.NotebookCellStatusBarItemProvider, vscode.Disposable {
@@ -175,6 +200,7 @@ class EstimateStatus implements vscode.NotebookCellStatusBarItemProvider, vscode
     if (!s) return [];
     const item = new vscode.NotebookCellStatusBarItem(s.text, vscode.NotebookCellStatusBarAlignment.Left);
     item.tooltip = s.tooltip;
+    if (s.setTo !== undefined) item.command = { title: 'Set estimate=', command: SET_ESTIMATE, arguments: [cell.notebook.uri.toString(), cell.index, s.setTo] };
     return [item];
   }
 
@@ -201,6 +227,7 @@ export function registerEstimates(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     status,
     vscode.notebooks.registerNotebookCellStatusBarItemProvider(NOTEBOOK_TYPE, status),
+    vscode.commands.registerCommand(SET_ESTIMATE, setEstimate),
     // A run starting or ending changes the outputs.
     vscode.workspace.onDidChangeNotebookDocument((e) => {
       if (e.notebook.notebookType === NOTEBOOK_TYPE && e.cellChanges.some((c) => c.outputs !== undefined || c.metadata !== undefined)) status.refresh();

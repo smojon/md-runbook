@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Progress you can read at a glance, in the same words everywhere.** VS Code's status bar says
+  where the run is (`⟳ Step 3/6 · Push image · 1m 40s left`, `✗ Step 4/6 failed` in red,
+  `✓ Done · 6/6 · teardown offered`), and its tooltip is a table of the setup, steps and
+  teardown with one percentage, the time left and when the run ends (`done ≈ 14:32`), with links
+  to the running, failed or next step. The app's run bar says the same in words, and a slim bar
+  stays pinned on top while you scroll during a run. The ready check is no longer counted as a
+  step, and a teardown not run yet is offered, not a step left to do. The time left counts
+  seconds under two minutes, so it moves while you watch.
+- **A block's bar that moves.** In VS Code the running block's bar is 24 characters in eighths
+  (it was 10 `#`, moving in tenths), with a warning icon once past its estimate. After a run
+  noticeably over its estimate, the block says by how much (`est. 2m30s · took 3m10s (+40s)`),
+  and a click sets `estimate=` to what it took. In the app the bar is thicker, `Running · 12s of
+  1m` is one line, the output line shows the estimate beside the duration, and `estimate=` is no
+  longer repeated in the options line.
+- **Run All follows the run** in VS Code: the block about to run is scrolled into view while the
+  one before it is still in view (scroll away to stop; `mdRunbook.execution.followRun`).
+- **`md-runbook run`: the progress bar fits the terminal** (10 to 30 characters, still ASCII; 20
+  in a CI log).
 - **A value to type no longer looks like a slow cell.** VS Code's input box opens at the top of
   the window, easy to miss while the cell's spinner and timer ran. Values and confirmations are
   now asked before the cell starts (it shows as queued); while a box is open, the cell's status

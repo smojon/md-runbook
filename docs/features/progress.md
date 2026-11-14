@@ -15,15 +15,43 @@ you did by hand, and picks a stopped run up where it failed.
 
 ## Status bar
 
-While a runbook is the active editor, the status bar shows its progress:
+While a runbook is the active editor, the status bar shows its progress, in the same words as
+the app's run bar:
+
+| When | Status bar |
+| --- | --- |
+| Not running | `☰ 2/6 · ~4 min` (steps done or skipped, and the time left by the blocks' estimates) |
+| A block runs | `⟳ Step 3/6 · Push image · 1m 40s left` (the block's `name=`, else its first line) |
+| A step failed | `✗ Step 4/6 failed`, on a red background |
+| All done | `✓ Done · 6/6 · teardown offered` |
+| A value or a confirmation is asked | `✎ Waiting for you: parameter NAMESPACE`, on a yellow background |
+
+The ready check is not a step, and a teardown that hasn't run is *offered*, not a step still to
+do: a runbook whose own steps are done reads **Done**, and Resume Run offers the teardown. The
+time left counts seconds under two minutes, so it moves while you watch.
+
+The tooltip has one line for where the run is (`2 of 6 steps done · 41% by the estimates · 4 min
+left · done ≈ 14:32`), the counts, a table of the setup, the steps and the teardown with their
+times, and links: go to the running, failed or next step, Resume Run. Click the item (or run
+**md-runbook: Go to Next Step**) to jump to the first failed step, or else the next pending one.
+
+**Run All follows the run.** Before each block, the notebook scrolls it into view, as long as the
+block before it is still in view: scroll away to read something else and it stops following
+(`mdRunbook.execution.followRun`, on by default).
+
+## A block's bar
+
+A block with `estimate=` shows it on its status line (`⌚ est. 2m30s`). While it runs, a bar
+against it that moves every few seconds, then a warning once past it:
 
 ```text
-$(checklist) 4/7 · ✗ step 5
+⌚ █████████████▌░░░░░░░░░░ 1m10s of 2m30s
+⚠ ████████████████████████ +40s over 2m30s
 ```
 
-`4/7` counts done and skipped steps; `✗ step 5` names the first failed step. When nothing is
-pending or failed the icon becomes a check mark. Click it (or run **md-runbook: Go to Next
-Step**) to jump to the first failed step, or else the next pending one.
+After a run that took noticeably longer (more than a quarter and at least 10 s over), the line
+says by how much: `⌚ est. 2m30s · took 3m10s (+40s)` (a warning icon past twice the estimate and
+a minute over). Click it to set `estimate=` to what the run took, rounded up.
 
 ## Mark a step done or skipped
 
@@ -73,3 +101,4 @@ disappear from the file on the next save.
 | Setting | Default | Description |
 | --- | --- | --- |
 | `mdRunbook.progress.statusBar` | `true` | Show the active runbook's progress in the status bar. |
+| `mdRunbook.execution.followRun` | `true` | When running several cells, scroll the cell about to run into view while the previous one is still in view. |
