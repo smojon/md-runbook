@@ -18,7 +18,8 @@ export interface Runbook {
   id: string;
   title: string;
   text: string;
-  source: 'bundled' | 'file';
+  /** `library`: the user's copy of a runbook from the team library (runbooks/library.ts). */
+  source: 'bundled' | 'file' | 'library';
   fileName?: string;
   origin?: Origin;
   savedHash?: string;
@@ -27,7 +28,29 @@ export interface Runbook {
    * opening the same version again opens this runbook rather than another copy.
    */
   link?: string;
+  /** A copy of a team library runbook: which one, and the version it was made from. */
+  library?: LibraryRef;
 }
+
+/**
+ * Where a library copy came from: the library's address and the file's path in it, the text's
+ * fingerprint when the copy was made or last updated (`hash`), the same without output blocks
+ * (`bare`: the copy has edits of its own when its own differs), and a newer version the user chose
+ * to skip (Keep mine).
+ */
+export interface LibraryRef {
+  base: string;
+  path: string;
+  hash: string;
+  bare: string;
+  kept?: string;
+}
+
+const isLibraryRef = (v: unknown): v is LibraryRef =>
+  typeof v === 'object' &&
+  v !== null &&
+  ['base', 'path', 'hash', 'bare'].every((k) => typeof (v as Record<string, unknown>)[k] === 'string') &&
+  ((v as LibraryRef).kept === undefined || typeof (v as LibraryRef).kept === 'string');
 
 /** Larger files are refused: the app keeps every open runbook in memory. */
 export const MAX_RUNBOOK_BYTES = 2_000_000;
@@ -38,6 +61,7 @@ interface IndexEntry {
   origin?: Origin;
   savedHash?: string;
   link?: string;
+  library?: LibraryRef;
 }
 const INDEX_KEY = 'runbooks.v1';
 const isIndex = (v: unknown): v is IndexEntry[] =>
@@ -49,7 +73,8 @@ const isIndex = (v: unknown): v is IndexEntry[] =>
       typeof (e as IndexEntry).id === 'string' &&
       typeof (e as IndexEntry).fileName === 'string' &&
       ((e as IndexEntry).origin === undefined || isOrigin((e as IndexEntry).origin)) &&
-      ((e as IndexEntry).link === undefined || typeof (e as IndexEntry).link === 'string'),
+      ((e as IndexEntry).link === undefined || typeof (e as IndexEntry).link === 'string') &&
+      ((e as IndexEntry).library === undefined || isLibraryRef((e as IndexEntry).library)),
   );
 
 const bundled = (): Runbook[] => BUNDLED.map((r) => ({ ...r, source: 'bundled' as const }));
@@ -76,13 +101,14 @@ function persistText(id: string, text: string): void {
 }
 function persistIndex(): void {
   const index: IndexEntry[] = all
-    .filter((r) => r.source === 'file')
+    .filter((r) => r.source !== 'bundled')
     .map((r) => ({
       id: r.id,
       fileName: r.fileName ?? r.title,
       ...(r.origin ? { origin: r.origin } : {}),
       ...(r.savedHash ? { savedHash: r.savedHash } : {}),
       ...(r.link ? { link: r.link } : {}),
+      ...(r.library ? { library: r.library } : {}),
     }));
   void setJson(INDEX_KEY, index).catch((e: unknown) => console.warn('runbook list not saved', e));
 }
@@ -105,11 +131,12 @@ export function loadRunbooks(): Promise<void> {
         id: e.id,
         title: titleOf(text, e.fileName),
         text,
-        source: 'file',
+        source: e.library ? 'library' : 'file',
         fileName: e.fileName,
         origin: e.origin,
         savedHash: e.savedHash,
         ...(e.link ? { link: e.link } : {}),
+        ...(e.library ? { library: e.library } : {}),
       });
     }
     const samples = await Promise.all(
@@ -119,7 +146,7 @@ export function loadRunbooks(): Promise<void> {
       }),
     );
     // Runbooks opened while loading stay (after the remembered ones).
-    const opened = all.filter((r) => r.source === 'file' && !files.some((f) => f.id === r.id));
+    const opened = all.filter((r) => r.source !== 'bundled' && !files.some((f) => f.id === r.id));
     all = [...samples, ...files, ...opened];
     emit();
   })();
@@ -158,6 +185,27 @@ export function addRunbook(fileName: string, text: string, origin?: Origin, link
   return r;
 }
 
+/** The user's copy of a library runbook (`base`, `path`): opening it again opens this one. */
+export function libraryCopy(base: string, path: string): Runbook | undefined {
+  return all.find((r) => r.source === 'library' && r.library?.base === base && r.library.path === path);
+}
+
+/** A new copy of a library runbook in the app (runbooks/library.ts opens it). */
+export function addLibraryCopy(fileName: string, text: string, library: LibraryRef): Runbook {
+  const r = { ...addRunbook(fileName, text), source: 'library' as const, library };
+  all = all.map((x) => (x.id === r.id ? r : x));
+  persistIndex();
+  emit();
+  return r;
+}
+
+/** A library copy's version (after Update or Keep mine). */
+export function setLibraryRef(id: string, library: LibraryRef): void {
+  all = all.map((r) => (r.id === id && r.source === 'library' ? { ...r, library } : r));
+  persistIndex();
+  emit();
+}
+
 /** The newest runbook with this file name (a runbook call's copy, by the name its result records). */
 export function runbookNamed(fileName: string): Runbook | undefined {
   return [...all].reverse().find((r) => r.fileName === fileName);
@@ -165,9 +213,9 @@ export function runbookNamed(fileName: string): Runbook | undefined {
 
 /** Replace a runbook's text (a cell ran, a box was ticked). */
 export function updateRunbookText(id: string, text: string): void {
-  all = all.map((r) => (r.id === id ? { ...r, text, title: r.source === 'file' ? titleOf(text, r.fileName ?? r.title) : r.title } : r));
+  all = all.map((r) => (r.id === id ? { ...r, text, title: r.source !== 'bundled' ? titleOf(text, r.fileName ?? r.title) : r.title } : r));
   persistText(id, text);
-  if (all.some((r) => r.id === id && r.source === 'file')) persistIndex();
+  if (all.some((r) => r.id === id && r.source !== 'bundled')) persistIndex();
   emit();
 }
 
@@ -180,7 +228,7 @@ export function markSaved(id: string, text: string, origin?: Origin): void {
 
 /** Forget a runbook (the app's copy and the link to its file; the file itself stays). */
 export function removeRunbook(id: string): Runbook | undefined {
-  const r = all.find((x) => x.id === id && x.source === 'file');
+  const r = all.find((x) => x.id === id && x.source !== 'bundled');
   if (!r) return undefined;
   all = all.filter((x) => x.id !== id);
   const prev = writes.get(id) ?? Promise.resolve();

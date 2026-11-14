@@ -9,6 +9,7 @@ import { router } from 'expo-router';
 import { useRef, useState } from 'react';
 import { Linking, Platform, Pressable, Text, View } from 'react-native';
 import { t } from '../i18n';
+import { libraryLinkUrl } from '../runbooks/library';
 import { openRunbookLink } from '../runbooks/openLink';
 import { themedStyles } from '../theme';
 
@@ -25,6 +26,9 @@ export function ScanScreen() {
     // A colleague's hosts (Share hosts → Show as a QR code): to the import screen, which asks first.
     const hosts = /^mdrunbook:\/\/hosts\/import\?(?:.*&)?h=([A-Za-z0-9_-]+)/.exec(result.data)?.[1];
     if (hosts) return router.replace({ pathname: '/hosts/import', params: { h: hosts } });
+    // A team library (Share library): to the screen that asks before adding it.
+    const library = libraryLinkUrl(result.data);
+    if (library !== undefined) return router.replace({ pathname: '/library', params: { url: library } });
     const parsed = parseRunbookLink(result.data);
     if (!parsed.ok) {
       setMessage(t.scanNotRunbook);

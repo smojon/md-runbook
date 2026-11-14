@@ -266,6 +266,45 @@ and **⋯ More → Share → Show QR Code** shows a code of this runbook for ano
 **⋯ More → Share Runbook** hands the file on. More in
 [Moving between VS Code and the app](switching.md#runbook-links).
 
+## Team runbooks
+
+A team can host its runbooks in a folder on a web server (the web app's container serves one at
+`/runbooks/`, [apps/web](../apps/web/README.md#a-team-library)), and the start screen lists them
+under **Team runbooks**, by subfolder, each with its signature: **Signed by alice@example.net,
+verified**, **Signed, unknown signer**, **Not signed** or **Changed since signing**.
+
+- **Opening one makes your copy.** Your runs and outputs stay in your copy; the file on the
+  server is never changed. Opening it again opens your copy. Remove it like any runbook.
+- **Update available:** when the file on the server changed, its row offers **Update** and
+  **Keep mine**. Update takes the new version and keeps the outputs of the blocks that didn't
+  change; it asks first when outputs would be lost, when your copy has changes of its own (edits,
+  ticked boxes), or when the new version is no longer signed, is signed by someone else or with
+  another key, or changed since it was signed. Keep mine hides that version until the next one.
+- **Signers:** if the library publishes an `allowed_signers` file, **Trust these signers** shows
+  each name and key fingerprint and asks first. The list comes from the same server as the
+  runbooks, so it is that server vouching for itself: compare the fingerprints with what the
+  signers tell you. Once trusted, the app checks the signatures itself; **Stop trusting** undoes it.
+- A library can open **signed runbooks only** (`"signedOnly": true` in its index.json): the
+  others are listed, greyed out, with the reason.
+- The list is read on start (at most once a minute), and again with the refresh button next to
+  **Team runbooks** or by pulling the list down on a phone. Offline, your copies still work, and
+  the runbooks read before stay listed.
+
+**On the web**, the library is the app's own `/runbooks/`, if its server has one. **On a phone**
+(or for a library elsewhere) set its address:
+
+- **Hosts & settings → Team library:** type the folder's `https` address
+  (`https://runbooks.example.net/runbooks/`; `http` only for `localhost`), **Check** reads it and
+  says how many runbooks it has, **Save** keeps it, **Remove** forgets it.
+- **A link:** `mdrunbook://library?url=https%3A%2F%2Frunbooks.example.net%2Frunbooks%2F` (or the
+  web app's `/library?url=…`) asks "Add the team library at runbooks.example.net?" before adding it.
+- **A QR code:** **Share library** in that section shows the link as a QR code; on another phone,
+  **Scan a code** (or the camera) adds the library after the same question.
+
+The phones read the library directly; a web app on another domain needs the library's server to
+allow it (CORS). No tokens or passwords are sent: the library is for runbooks anyone who can reach
+the server may read.
+
 ## Try it
 
 - **Web:** `cd apps/mobile && npm ci && npx expo start --web`. To run cells, also start the relay

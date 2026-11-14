@@ -58,6 +58,16 @@ jobs:
         run: |
           npx expo export --platform web
           cp dist/index.html dist/404.html
+      # A team library, optional: runbooks in apps/mobile/public/runbooks are copied into the export
+      # (Expo copies public/ to dist/). Pages lists no folders, so the app reads the library's
+      # index.json: one is made from the .md files when the folder has none.
+      - name: Team library index
+        run: |
+          if [ -d dist/runbooks ] && [ ! -f dist/runbooks/index.json ]; then
+            (cd dist/runbooks && find . -type f \( -name '*.md' -o -name '*.markdown' \) | sed 's|^\./||' | LC_ALL=C sort) \
+              | jq -R . | jq -s '{runbooks: .}' > dist/runbooks/index.json
+            cat dist/runbooks/index.json
+          fi
       - uses: actions/upload-pages-artifact@v5
         with:
           path: apps/mobile/dist
