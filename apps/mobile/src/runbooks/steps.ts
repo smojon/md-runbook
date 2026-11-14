@@ -8,7 +8,7 @@ import { isCodeMeta, taskItems } from '@md-runbook/core';
 import type { ParsedCell, Progress } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
-import { blockProgress, formatEstimate, overEstimate, stepHeadings, stepLabel } from '@md-runbook/core/estimate';
+import { blockProgress, formatEstimate, formatLearned, overEstimate, stepHeadings, stepLabel } from '@md-runbook/core/estimate';
 import { stepState } from '@md-runbook/core/progress';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { t } from '../i18n';
@@ -80,6 +80,8 @@ export interface StepsInput {
   waiting?: { cellIndex: number; item?: number };
   /** A runbook call's estimate on its cell (null: its src= has placeholders). */
   callEstimates?: ReadonlyMap<number, number | null>;
+  /** Blocks without estimate=: the usual time of their runs that passed (shown `~1m`). */
+  learnedEstimates?: ReadonlyMap<number, number>;
   /** Preflight: what running code cell `index` will need from you now (nothing asked, nothing run). */
   needsOf?: (index: number, cell: ParsedCell) => StepNeed[];
   now: number;
@@ -97,7 +99,7 @@ export function cellHeadings(cells: readonly ParsedCell[]): (string | undefined)
   return stepHeadings(cells.map((c) => ({ kind: c.kind === 'markup' ? 'markup' : 'code', text: c.value })));
 }
 
-export function stepsRows({ cells, progress, running, waiting, callEstimates, needsOf, now }: StepsInput): StepsRow[] {
+export function stepsRows({ cells, progress, running, waiting, callEstimates, learnedEstimates, needsOf, now }: StepsInput): StepsRow[] {
   const rows: StepsRow[] = [];
   /** The last step number given (a block's from the progress, checklist items counted on). */
   let taskStep = 0;
@@ -134,7 +136,9 @@ export function stepsRows({ cells, progress, running, waiting, callEstimates, ne
     const offered = step === undefined && opts.part === 'teardown' && progress.resume.includes(i);
     const ready = step === undefined && opts.part === 'ready';
     if (step === undefined && !offered && !ready) return;
-    const est = callEstimates?.get(i) ?? opts.estimateSeconds ?? undefined;
+    const declared = callEstimates?.get(i) ?? opts.estimateSeconds ?? undefined;
+    const est = declared ?? learnedEstimates?.get(i);
+    const fmtEst = declared === undefined && est !== undefined ? formatLearned : formatEstimate;
     const a = cell.output?.attrs;
     const s = stepState(a?.exit, a?.lines !== undefined, a?.check);
     let state: StepRowState = s === 'done' || s === 'skipped' ? 'done' : s === 'failed' ? 'failed' : 'pending';
@@ -149,9 +153,7 @@ export function stepsRows({ cells, progress, running, waiting, callEstimates, ne
         const b = blockProgress(elapsed, est);
         fraction = b.fraction;
         over = b.overSeconds > 0;
-        time = over
-          ? t.estimateOver(formatEstimate(b.overSeconds), formatEstimate(est))
-          : t.estimateOf(formatEstimate(elapsed), formatEstimate(est));
+        time = over ? t.estimateOver(formatEstimate(b.overSeconds), fmtEst(est)) : t.estimateOf(formatEstimate(elapsed), fmtEst(est));
       } else time = formatEstimate(elapsed);
     } else if (ready && a?.ready !== undefined) {
       // What the check answered, not how long it took.
@@ -164,7 +166,7 @@ export function stepsRows({ cells, progress, running, waiting, callEstimates, ne
         time = t.stepsTookOver(formatEstimate(took), formatEstimate(extra));
         over = true;
       } else if (took !== undefined && state !== 'pending') time = t.stepsTook(formatEstimate(took));
-      else if (est !== undefined) time = t.estimate(formatEstimate(est));
+      else if (est !== undefined) time = t.estimate(fmtEst(est));
     }
     const label = stepLabel(info, cell.value, cell.languageId, headings[i]) || t.cellNumber(i + 1);
     // Preflight: for a step still to run (or to run again), not the ready check or a teardown offered.

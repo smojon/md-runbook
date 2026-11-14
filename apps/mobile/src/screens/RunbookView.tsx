@@ -47,6 +47,7 @@ import { DEFAULT_POLICY, PolicyResult, approvalScope, evaluatePolicy } from '@md
 import { proposalOf } from '@md-runbook/core/proposal';
 import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
+import { parseInterval } from '@md-runbook/core/checks';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
 import { textProgress } from '@md-runbook/core/textProgress';
 import { headingsOf } from '@md-runbook/core/title';
@@ -120,6 +121,7 @@ import { LineMode, isStepping, lineLabel, planLines } from '../ssh/lineRuns';
 import { confirmationOf, runnability } from '../ssh/cells';
 import { disconnect, isConnected } from '../ssh/connections';
 import { NeededValue, runCell } from '../ssh/runCell';
+import { learnedFor, loadStepHistory, recordStepRun, useStepHistory } from '../runbooks/history';
 import { loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import { transportReady } from '../ssh/transport';
 import { mono, themedStyles, usePalette } from '../theme';
@@ -301,12 +303,31 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     });
     return m;
   }, [runbook, reader]);
+  // A block without estimate=: the usual time of its runs that passed on this device (runbooks/history.ts).
+  const stepHistory = useStepHistory(runbook?.id);
+  useEffect(() => void loadStepHistory(), []);
+  const learnedEstimates = useMemo(() => {
+    const m = new Map<number, number>();
+    cells.forEach((c, i) => {
+      if (c.kind !== 'code' || !isCodeMeta(c.meta) || isCallLanguage(c.languageId)) return;
+      if (parseCellOptions(c.meta.info).estimateSeconds !== undefined) return;
+      const e = learnedFor(stepHistory, c.meta.info, c.value);
+      if (e !== undefined) m.set(i, e);
+    });
+    return m;
+  }, [cells, stepHistory]);
   const estimateSteps = useMemo(
     () =>
       runbook
-        ? textEstimateSteps(runbook.text, undefined, 'linux', reader ? (info, source) => callEstimate(info, source, reader) : undefined)
+        ? textEstimateSteps(
+            runbook.text,
+            undefined,
+            'linux',
+            reader ? (info, source) => callEstimate(info, source, reader) : undefined,
+            (info, source) => learnedFor(stepHistory, info, source),
+          )
         : [],
-    [runbook, reader],
+    [runbook, reader, stepHistory],
   );
   /** The Steps sheet (every step by name); on a wide screen the same list is a side panel instead of the rail. */
   const [stepsOpen, setStepsOpen] = useState(false);
@@ -637,6 +658,18 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       // Run all stops at the first failure, unless the cell says continue-on-error. Checks decide
       // over the exit code (expect-exit=, and the ready check, which always passes).
       const passed = outcome.attrs.check === 'ok' || (outcome.attrs.exit === '0' && outcome.attrs.check !== 'failed');
+      // How long it took, for its learned estimate: a whole run that passed (not a line run, not the ready check).
+      const took = outcome.attrs.duration !== undefined ? parseInterval(outcome.attrs.duration) : undefined;
+      if (
+        passed &&
+        !lines &&
+        took !== undefined &&
+        outcome.attrs.ready === undefined &&
+        cell &&
+        isCodeMeta(cell.meta) &&
+        !isCallLanguage(cell.languageId)
+      )
+        void recordStepRun(runbook.id, cell.meta.info, cell.value, took / 1000);
       if (queue.current && outcome.attrs.ready !== undefined) queue.current.readyUp = outcome.attrs.ready === 'up';
       const goOn = cell && isCodeMeta(cell.meta) && parseCellOptions(cell.meta.info).continueOnError;
       if (queue.current && (outcome.result.cancelled || (!passed && !goOn))) {
@@ -1549,13 +1582,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               ? { waiting: { cellIndex: waitingCell, ...(waitingItem !== undefined ? { item: waitingItem } : {}) } }
               : {}),
             callEstimates,
+            learnedEstimates,
             needsOf,
             now,
           })
         : [],
     // needsOf reads approvalId, secretNames and typedInputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cells, progress, running, waitingCell, waitingItem, callEstimates, approvalId, secretNames, typedInputs, now],
+    [cells, progress, running, waitingCell, waitingItem, callEstimates, learnedEstimates, approvalId, secretNames, typedInputs, now],
   );
   const hasSteps = stepRows.some((r) => r.kind === 'step');
   const stepsHeader: StepsHeader = {
@@ -1911,6 +1945,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 index={index}
                 canRun={host !== undefined}
                 {...(callEstimates.has(index) ? { callEstimate: callEstimates.get(index)! } : {})}
+                {...(learnedEstimates.has(index) ? { learnedEstimate: learnedEstimates.get(index)! } : {})}
                 running={running?.cellIndex === index ? running : undefined}
                 busy={running !== undefined && running.cellIndex !== index}
                 checked={checks.get(index) ?? EMPTY}

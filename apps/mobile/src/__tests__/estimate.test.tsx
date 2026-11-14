@@ -42,6 +42,19 @@ describe('estimate= (how long a cell takes)', () => {
     expect(screen.getByTestId('estimate-more')).toHaveTextContent('1 block without an estimate');
   });
 
+  it('a cell without estimate= learns its usual time from its runs that passed (~, not in the file)', async () => {
+    mockConnection = fakeConnection([{ stdout: 'one\n' }]);
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const r = addRunbook('learn.md', '# Steps\n\n```bash\necho one\n```\n');
+    await render(<RunbookView id={r.id} />);
+    expect(screen.queryByTestId('cell-1-estimate')).toBeNull();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('run-primary'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-estimate')).toHaveTextContent(/est\. ~5s$/));
+    expect(screen.queryByTestId('estimate-more')).toBeNull();
+  });
+
   it('says nothing about estimates in a runbook without any', async () => {
     const r = addRunbook('plain.md', '# Steps\n\n```bash\necho one\n```\n');
     await render(<RunbookView id={r.id} />);

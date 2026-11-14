@@ -132,6 +132,55 @@ export function suggestedEstimate(actualSeconds: number): number {
   return Math.ceil(s / step) * step;
 }
 
+/** How many past runs of a step its learned estimate reads. */
+export const HISTORY_RUNS = 5;
+
+/**
+ * A step's learned estimate, for a block without estimate=: the median of its last runs that
+ * passed (`durations`, oldest first, in seconds), rounded up as suggestedEstimate rounds.
+ * Undefined before its first run.
+ */
+export function learnedEstimate(durations: readonly number[]): number | undefined {
+  const last = durations.slice(-HISTORY_RUNS).filter((d) => Number.isFinite(d) && d >= 0);
+  if (last.length === 0) return undefined;
+  const sorted = [...last].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+  return suggestedEstimate(median);
+}
+
+/** `durations` with a run that took `seconds` added, the last HISTORY_RUNS kept. */
+export function withDuration(durations: readonly number[] | undefined, seconds: number): number[] {
+  return [...(durations ?? []), Math.round(seconds * 10) / 10].slice(-HISTORY_RUNS);
+}
+
+/**
+ * What a step's history is kept under, in its runbook: `name:Push image` for a named block, else
+ * its text (whitespace at line ends and blank lines ignored) as a short hash: editing a command
+ * starts its history again, as its time may change with it.
+ */
+export function stepHistoryKey(info: string, source: string): string {
+  const name = parseCellOptions(info).name;
+  if (name) return `name:${name}`;
+  const text = source
+    .split(/\r?\n/)
+    .map((l) => l.trimEnd())
+    .filter((l) => l !== '')
+    .join('\n');
+  // FNV-1a, 32 bits: short, stable across platforms, no crypto needed (not a secret, not a check).
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `text:${h.toString(16).padStart(8, '0')}`;
+}
+
+/** A learned estimate as shown: `~1m15s` (the `~` tells it from an estimate= in the file). */
+export function formatLearned(seconds: number): string {
+  return `~${formatEstimate(seconds)}`;
+}
+
 /**
  * The run took much longer than its estimate: more than twice it and more than a minute over
  * (a 5 s block taking 12 s is no news; a 2 min block taking 6 is).
@@ -453,9 +502,17 @@ export function textEstimateSteps(
   running?: { cellIndex: number; elapsedSeconds: number },
   here: OsName = 'linux',
   callEstimateOf?: (info: string, source: string) => number | undefined,
+  /** A block without estimate=: its learned estimate (learnedEstimate of its past runs), if any. */
+  learnedOf?: (info: string, source: string) => number | undefined,
 ): EstimateStep[] {
   const cells = parse(text).cells;
   const opts = cells.map((c) => (c.kind === 'code' && isCodeMeta(c.meta) ? parseCellOptions(c.meta.info) : undefined));
+  cells.forEach((c, i) => {
+    const o = opts[i];
+    if (!learnedOf || !o || o.estimateSeconds !== undefined || !isCodeMeta(c.meta) || isCallLanguage(c.languageId)) return;
+    const e = learnedOf(c.meta.info, c.value);
+    if (e !== undefined) opts[i] = { ...o, estimateSeconds: e };
+  });
   // A runbook call without estimate= takes as long as what it runs (when that can be read).
   cells.forEach((c, i) => {
     const o = opts[i];

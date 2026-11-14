@@ -8,6 +8,7 @@ import {
   ParsedCell,
   blockProgress,
   formatEstimate,
+  formatLearned,
   isCodeMeta,
   outputSummary,
   outputVerdict,
@@ -64,6 +65,8 @@ export interface CodeCellProps {
   canRun: boolean;
   /** A runbook call's estimate: what it runs (seconds), or null when that is known only when it runs. */
   callEstimate?: number | null;
+  /** No estimate=: the usual time of its runs that passed (seconds), shown as `est. ~1m`. */
+  learnedEstimate?: number;
   running: CellRun | undefined;
   /** Another cell is running. */
   busy: boolean;
@@ -122,7 +125,10 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
         ? { icon: 'error', color: c.error, label: t.ranFailed }
         : undefined;
   // estimate=: how long the cell takes; while it runs, a bar against it (full at it, then "over").
-  const estimate = p.callEstimate ?? (isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).estimateSeconds : undefined);
+  const declared = p.callEstimate ?? (isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).estimateSeconds : undefined);
+  const estimate = declared ?? p.learnedEstimate;
+  /** A learned estimate reads `~1m`: it is not in the file. */
+  const fmtEst = declared === undefined && p.learnedEstimate !== undefined ? formatLearned : formatEstimate;
   // The fence options as written, but estimate= once: the chip beside them shows it.
   const info = isCodeMeta(cell.meta)
     ? estimate !== undefined
@@ -281,9 +287,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
         {estimate !== undefined || p.callEstimate === null ? (
           <View testID={`cell-${index}-estimate`} style={styles.estimate}>
             <Codicon name="watch" size={12} color={c.muted} />
-            <Text style={styles.statusText}>
-              {estimate !== undefined ? t.estimate(formatEstimate(estimate)) : t.estimateUnknownUntilRun}
-            </Text>
+            <Text style={styles.statusText}>{estimate !== undefined ? t.estimate(fmtEst(estimate)) : t.estimateUnknownUntilRun}</Text>
           </View>
         ) : null}
         <Text style={styles.statusText} numberOfLines={1}>
@@ -352,8 +356,8 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                 <Text testID={`cell-${index}-timing-text`} style={timing.overSeconds > 0 ? styles.overText : undefined}>
                   {' · '}
                   {timing.overSeconds > 0
-                    ? t.estimateOver(formatEstimate(timing.overSeconds), formatEstimate(estimate))
-                    : t.estimateOf(formatEstimate(elapsed), formatEstimate(estimate))}
+                    ? t.estimateOver(formatEstimate(timing.overSeconds), fmtEst(estimate))
+                    : t.estimateOf(formatEstimate(elapsed), fmtEst(estimate))}
                 </Text>
               ) : null}
             </Text>
@@ -374,7 +378,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
             {estimate !== undefined && tookSeconds !== undefined ? (
               <Text testID={`cell-${index}-took`} style={overBy !== undefined ? styles.overText : undefined}>
                 {' · '}
-                {overBy !== undefined ? t.tookOver(formatEstimate(estimate), formatEstimate(overBy)) : t.estimate(formatEstimate(estimate))}
+                {overBy !== undefined ? t.tookOver(fmtEst(estimate), formatEstimate(overBy)) : t.estimate(fmtEst(estimate))}
               </Text>
             ) : null}
           </Text>

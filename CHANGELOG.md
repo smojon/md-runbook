@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Estimates that learn.** A block without `estimate=` shows its usual time once it has run:
+  the median of its last 5 runs that passed, with a `~` (`est. ~1m15s`), and it counts in the
+  time left and the end time, in VS Code and the app. Kept on the machine, never in the file;
+  editing the command starts again; a click in VS Code writes it as `estimate=`.
 - **App: notifications when a run needs you.** While the app is in the background (or the
   browser tab is hidden), a run that is done, fails or waits for an answer sends a notification
   in the run bar's words, and a tap opens the runbook at that step. The first Run all offers them

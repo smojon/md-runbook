@@ -400,8 +400,9 @@ never passes unrecorded.
 **Estimates.** With `estimate=` on its blocks, a runbook's progress is also counted in time:
 the estimates of the blocks done over the sum of all, how long is left (the blocks still to
 run; the running block counts its estimate minus the time it has run, never below zero; in
-seconds under two minutes) and when the run ends at that pace (`≈ 14:32`). Blocks without an estimate are counted as such ("2 blocks without an estimate"), never
-guessed. `skip` blocks and the ready check don't count; a group of `os=` alternatives counts
+seconds under two minutes) and when the run ends at that pace (`≈ 14:32`). A block without `estimate=` uses its learned estimate once it has run (the median of its last
+5 runs that passed, shown `~1m15s`, kept on the machine, never in the file); before that it is
+counted as a block without an estimate ("2 blocks without an estimate"). `skip` blocks and the ready check don't count; a group of `os=` alternatives counts
 once. Shown in the extension's status bar item, at the top of the app's runbook, and by
 `md-runbook run` after each step when its output is a terminal.
 

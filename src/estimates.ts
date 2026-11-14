@@ -7,7 +7,7 @@
 import * as vscode from 'vscode';
 import { isCallLanguage, isDynamicSrc, parseCall } from '@md-runbook/core/call';
 import { callEstimateSeconds } from '@md-runbook/core/node';
-import { EstimateStep, blockBar, blockProgress, formatBlockProgress, formatEstimate, isCodeMeta, isOverEstimate, overEstimate, stepState, suggestedEstimate } from '@md-runbook/core';
+import { EstimateStep, blockBar, blockProgress, formatBlockProgress, formatEstimate, formatLearned, isCodeMeta, isOverEstimate, learnedEstimate, overEstimate, stepHistoryKey, stepState, suggestedEstimate, withDuration } from '@md-runbook/core';
 import { parseCellOptions, setInfoOption } from '@md-runbook/core/cellOptions';
 import { withInfo } from '@md-runbook/core/proposal';
 import { parseInterval } from '@md-runbook/core/checks';
@@ -15,6 +15,7 @@ import { osGroups } from '@md-runbook/core/os';
 import { PartStates } from '@md-runbook/core/estimate';
 import { SECTION } from './config';
 import { META_KEY, outputMeta } from './outputs';
+import type { RunPipeline, RunRecord } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
 
 /** How often a running block's bar (and the runbook's time left) moves on. */
@@ -35,6 +36,49 @@ export function cellEstimate(cell: vscode.NotebookCell): number | undefined {
   // A runbook call takes as long as what it runs (its estimate=, else the estimates in that file).
   if (isCallLanguage(cell.document.languageId) && cell.notebook.uri.scheme === 'file') return callEstimateSeconds(cell.notebook.uri.fsPath, meta.info, cell.document.getText());
   return parseCellOptions(meta.info).estimateSeconds;
+}
+
+/** Past runs of each step that passed, per runbook (workspace state; never in the file). */
+const HISTORY_KEY = 'mdRunbook.stepHistory';
+/** Runbooks kept: the least recently run go first. */
+const HISTORY_RUNBOOKS = 200;
+type History = Record<string, Record<string, number[]>>;
+let memento: vscode.Memento | undefined;
+
+/** A block without estimate=: the usual time of its past runs that passed (learnedEstimate), or undefined. */
+export function learnedSeconds(cell: vscode.NotebookCell): number | undefined {
+  if (!memento || cell.kind !== vscode.NotebookCellKind.Code || !optionsOn() || isCallLanguage(cell.document.languageId)) return undefined;
+  const meta: unknown = cell.metadata?.[META_KEY];
+  if (!isCodeMeta(meta)) return undefined;
+  const runs = memento.get<History>(HISTORY_KEY)?.[cell.notebook.uri.toString()]?.[stepHistoryKey(meta.info, cell.document.getText())];
+  return runs ? learnedEstimate(runs) : undefined;
+}
+
+/** The block's time: its estimate=, else (`learned`) the usual time of its past runs. */
+export function blockEstimate(cell: vscode.NotebookCell): { seconds: number; learned: boolean } | undefined {
+  const declared = cellEstimate(cell);
+  if (declared !== undefined) return { seconds: declared, learned: false };
+  const learned = learnedSeconds(cell);
+  return learned !== undefined ? { seconds: learned, learned: true } : undefined;
+}
+
+/** Keeps how long a run that passed took, for its step's learned estimate (not line runs, skips or the ready check). */
+async function recordRun(run: RunRecord): Promise<void> {
+  if (!memento || !run.success || run.plan.steps || run.plan.skip || run.ready !== undefined || run.cell.kind !== vscode.NotebookCellKind.Code) return;
+  const meta: unknown = run.cell.metadata?.[META_KEY];
+  const ms = run.attrs.duration !== undefined ? parseInterval(run.attrs.duration) : undefined;
+  if (!isCodeMeta(meta) || ms === undefined) return;
+  const all: History = { ...(memento.get<History>(HISTORY_KEY) ?? {}) };
+  const nb = run.notebook.uri.toString();
+  const steps = { ...(all[nb] ?? {}) };
+  const key = stepHistoryKey(meta.info, run.cell.document.getText());
+  steps[key] = withDuration(steps[key], ms / 1000);
+  // Most recently run last: the oldest runbooks are dropped past the limit.
+  delete all[nb];
+  all[nb] = steps;
+  const names = Object.keys(all);
+  for (const old of names.slice(0, Math.max(0, names.length - HISTORY_RUNBOOKS))) delete all[old];
+  await memento.update(HISTORY_KEY, all);
 }
 
 /**
@@ -90,7 +134,7 @@ export function notebookEstimateSteps(
     // The ready check is a quick look, not a step that takes time.
     if (o?.skip || o?.part === 'ready' || o?.host !== undefined || (slots[i] && !slots[i]!.active)) return;
     const since = runningSince(c);
-    const seconds = cellEstimate(c);
+    const seconds = blockEstimate(c)?.seconds;
     const e = {
       ...(seconds !== undefined ? { estimateSeconds: seconds } : {}),
       ...(o?.part === 'setup' || o?.part === 'teardown' ? { part: o.part } : {}),
@@ -145,8 +189,8 @@ export function anyRunning(nb: vscode.NotebookDocument): boolean {
  * warning past twice it. Undefined for a block without an estimate.
  */
 export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { text: string; tooltip: string; setTo?: number } | undefined {
-  const est = cellEstimate(cell);
-  if (est === undefined) {
+  const block = blockEstimate(cell);
+  if (block === undefined) {
     // A call whose src= has placeholders: what it runs is known when it runs.
     const meta: unknown = cell.metadata?.[META_KEY];
     const src = isCallLanguage(cell.document.languageId) && isCodeMeta(meta) ? parseCall(meta.info, '').src : undefined;
@@ -155,13 +199,18 @@ export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { tex
     }
     return undefined;
   }
+  const est = block.seconds;
+  const fmt = block.learned ? formatLearned : formatEstimate;
+  const learnedNote = block.learned ? '; it has no estimate=, so this is the usual time of its last runs that passed' : '';
   const since = runningSince(cell);
   if (since !== undefined) {
     const elapsed = (now - since) / 1000;
     const over = blockProgress(elapsed, est).overSeconds > 0;
     return {
       text: `${over ? '$(warning)' : '$(watch)'} ${formatBlockProgress(elapsed, est, BAR_WIDTH, blockBar)}`,
-      tooltip: `Running for ${formatEstimate(elapsed)}; this block's estimate (estimate=) is ${formatEstimate(est)}.`,
+      tooltip: block.learned
+        ? `Running for ${formatEstimate(elapsed)}; this block usually takes ${fmt(est)}${learnedNote}.`
+        : `Running for ${formatEstimate(elapsed)}; this block's estimate (estimate=) is ${formatEstimate(est)}.`,
     };
   }
   const took = lastDuration(cell);
@@ -169,9 +218,16 @@ export function estimateItem(cell: vscode.NotebookCell, now = Date.now()): { tex
   if (took !== undefined && extra !== undefined) {
     const setTo = suggestedEstimate(took);
     return {
-      text: `${isOverEstimate(took, est) ? '$(warning)' : '$(watch)'} est. ${formatEstimate(est)} · took ${formatEstimate(took)} (+${formatEstimate(extra)})`,
-      tooltip: `The last run took ${formatEstimate(took)}, ${formatEstimate(extra)} more than this block's estimate. Click to set estimate=${formatEstimate(setTo)}.`,
+      text: `${isOverEstimate(took, est) ? '$(warning)' : '$(watch)'} est. ${fmt(est)} · took ${formatEstimate(took)} (+${formatEstimate(extra)})`,
+      tooltip: `The last run took ${formatEstimate(took)}, ${formatEstimate(extra)} more than ${block.learned ? 'this block usually takes' : "this block's estimate"}. Click to set estimate=${formatEstimate(setTo)}.`,
       setTo,
+    };
+  }
+  if (block.learned) {
+    return {
+      text: `$(watch) est. ${fmt(est)}`,
+      tooltip: `This block usually takes ${formatEstimate(est)}${learnedNote}. Click to write it into the runbook as estimate=${formatEstimate(est)}.`,
+      setTo: est,
     };
   }
   return { text: `$(watch) est. ${formatEstimate(est)}`, tooltip: 'How long this block takes, as measured on a real run (estimate=). It does not change how it runs.' };
@@ -208,7 +264,7 @@ class EstimateStatus implements vscode.NotebookCellStatusBarItemProvider, vscode
   refresh(): void {
     this.changed.fire();
     const nb = vscode.window.activeNotebookEditor?.notebook;
-    const ticking = nb?.notebookType === NOTEBOOK_TYPE && nb.getCells().some((c) => runningSince(c) !== undefined && cellEstimate(c) !== undefined);
+    const ticking = nb?.notebookType === NOTEBOOK_TYPE && nb.getCells().some((c) => runningSince(c) !== undefined && blockEstimate(c) !== undefined);
     if (ticking && !this.timer) this.timer = setInterval(() => this.refresh(), TICK_MS);
     if (!ticking && this.timer) {
       clearInterval(this.timer);
@@ -222,8 +278,10 @@ class EstimateStatus implements vscode.NotebookCellStatusBarItemProvider, vscode
   }
 }
 
-export function registerEstimates(context: vscode.ExtensionContext): void {
+export function registerEstimates(context: vscode.ExtensionContext, pipeline?: RunPipeline): void {
   const status = new EstimateStatus();
+  memento = context.workspaceState;
+  pipeline?.observers.push({ onDidRunCell: (run) => recordRun(run).then(() => status.refresh()) });
   context.subscriptions.push(
     status,
     vscode.notebooks.registerNotebookCellStatusBarItemProvider(NOTEBOOK_TYPE, status),

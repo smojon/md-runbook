@@ -54,3 +54,21 @@ test('estimate=: a runbook without estimates shows nothing of them', async () =>
   assert.doesNotMatch(e.status.tooltip, /estimate/);
   await closeAll();
 });
+
+test('a block without estimate= learns its usual time from its runs that passed', async () => {
+  const uri = writeFile('estimates-learned.md', `# Steps\n\n${fence('', 'echo learned')}`);
+  const editor = await openRunbook(uri);
+  assert.deepEqual((await estimates()).cells, [undefined, undefined]);
+  await runCells(editor, 1, 2);
+  assert.equal(await waitForRun(editor.notebook.cellAt(1)), true);
+  // Recorded after the run (an observer): the median of its runs, rounded up as estimate= would be.
+  let learned: Estimates | undefined;
+  for (const end = Date.now() + 10_000; !learned && Date.now() < end; await new Promise((r) => setTimeout(r, 100))) {
+    const e = await estimates();
+    if (e.cells[1] !== undefined) learned = e;
+  }
+  assert.equal(learned?.cells[1], '$(watch) est. ~5s');
+  assert.equal(learned?.runbook.unestimated, 0);
+  assert.equal(learned?.runbook.totalSeconds, 5);
+  await closeAll();
+});

@@ -8,13 +8,13 @@
  */
 
 import * as vscode from 'vscode';
-import { formatEstimate, formatFinish, isCodeMeta, runbookEstimate, stepState, taskItems } from '@md-runbook/core';
+import { formatEstimate, formatFinish, formatLearned, isCodeMeta, runbookEstimate, stepState, taskItems } from '@md-runbook/core';
 import { blockProgress, overEstimate, remaining, stepLabel } from '@md-runbook/core/estimate';
 import { headingsOf, withoutFrontMatter } from '@md-runbook/core/title';
 import { setContext } from './contextKeys';
 import { isCallLanguage } from '@md-runbook/core/call';
 import { cellPart } from './controller';
-import { cellEstimate, lastDuration, notebookEstimateSteps, notebookPartStates, runningSince } from './estimates';
+import { blockEstimate, lastDuration, notebookEstimateSteps, notebookPartStates, runningSince } from './estimates';
 import { META_KEY } from './outputs';
 import { isManualMark } from '@md-runbook/core/progress';
 import { proposalOf } from '@md-runbook/core/proposal';
@@ -141,7 +141,9 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     const ready = step === undefined && part === 'ready';
     if (step === undefined && !offered && !ready) continue;
     const since = runningSince(cell);
-    const est = cellEstimate(cell);
+    const block = blockEstimate(cell);
+    const est = block?.seconds;
+    const fmtEst = (s: number): string => (block?.learned ? formatLearned(s) : formatEstimate(s));
     const a = cellAttrs(cell);
     const s = stepState(a?.exit, a?.lines !== undefined, a?.check);
     let state: StepRowState = s === 'done' ? 'done' : s === 'skipped' ? 'skipped' : s === 'failed' ? 'failed' : 'pending';
@@ -157,7 +159,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
         const b = blockProgress(elapsed, est);
         fraction = b.fraction;
         over = b.overSeconds > 0;
-        time = over ? `+${formatEstimate(b.overSeconds)} over ${formatEstimate(est)}` : `${formatEstimate(elapsed)} of ${formatEstimate(est)}`;
+        time = over ? `+${formatEstimate(b.overSeconds)} over ${fmtEst(est)}` : `${formatEstimate(elapsed)} of ${fmtEst(est)}`;
       } else time = formatEstimate(elapsed);
     } else {
       const took = lastDuration(cell);
@@ -166,7 +168,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
         time = `took ${formatEstimate(took)} (+${formatEstimate(extra)})`;
         over = true;
       } else if (took !== undefined && state !== 'pending') time = formatEstimate(took);
-      else if (est !== undefined) time = `est. ${formatEstimate(est)}`;
+      else if (est !== undefined) time = `est. ${fmtEst(est)}`;
     }
     const label = stepLabel(info, cell.document.getText(), cell.document.languageId, headings[i]) || `cell ${i + 1}`;
     // Preflight: only for a step still to run (or to run again), and not while one runs.

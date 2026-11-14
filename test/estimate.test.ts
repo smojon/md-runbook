@@ -19,7 +19,11 @@ import {
   progressBar,
   remaining,
   runbookEstimate,
+  formatLearned,
+  learnedEstimate,
   stepHeadings,
+  stepHistoryKey,
+  withDuration,
   stepLabel,
   suggestedEstimate,
   terminalBarWidth,
@@ -406,5 +410,39 @@ describe('status line helpers', () => {
       [undefined, undefined, undefined, 'Restart api', undefined, undefined, undefined, undefined, undefined, 'Clean up'],
     );
     assert.deepEqual(stepHeadings([code('before any heading'), md('## A')]), [undefined, undefined]);
+  });
+});
+
+describe('learned estimates (a block without estimate=)', () => {
+  it('the median of the last 5 runs, rounded up as estimate= would be', () => {
+    assert.equal(learnedEstimate([]), undefined);
+    assert.equal(learnedEstimate([0.4]), 5);
+    assert.equal(learnedEstimate([62, 58, 300, 61, 60]), 75, 'one slow run does not move it: median 61 → 1m15s');
+    assert.equal(learnedEstimate([1000, 1000, 10, 10, 10, 10, 10]), 10, 'only the last 5 count');
+    assert.equal(learnedEstimate([20, 40]), 30);
+    assert.equal(formatLearned(75), '~1m15s');
+  });
+
+  it('keeps the last 5 durations, to a tenth of a second', () => {
+    assert.deepEqual(withDuration(undefined, 1.234), [1.2]);
+    assert.deepEqual(withDuration([1, 2, 3, 4, 5], 6), [2, 3, 4, 5, 6]);
+  });
+
+  it('a step is kept under its name, else under its text: editing the command starts again', () => {
+    assert.equal(stepHistoryKey('bash name="Push image"', 'docker push a'), 'name:Push image');
+    assert.equal(stepHistoryKey('bash name="Push image"', 'docker push b'), 'name:Push image');
+    const a = stepHistoryKey('bash', 'make build  \n\n');
+    assert.match(a, /^text:[0-9a-f]{8}$/);
+    assert.equal(stepHistoryKey('bash timeout=5m', 'make build\r\n'), a, 'line ends and blank lines do not count');
+    assert.notEqual(stepHistoryKey('bash', 'make build-all'), a);
+  });
+
+  it('the app’s runbook estimate uses them for blocks without estimate=, never over one', () => {
+    const md = ['# A', '', '```bash estimate=1m', 'echo a', '```', '', '```bash', 'echo b', '```', ''].join('\n');
+    const steps = textEstimateSteps(md, undefined, 'linux', undefined, (_info, source) => (source === 'echo a' ? 999 : 20));
+    assert.deepEqual(
+      steps.map((s) => s.estimateSeconds),
+      [60, 20],
+    );
   });
 });

@@ -87,6 +87,14 @@ After a run that took noticeably longer (more than a quarter and at least 10 s o
 says by how much: `⌚ est. 2m30s · took 3m10s (+40s)` (a warning icon past twice the estimate and
 a minute over). Click it to set `estimate=` to what the run took, rounded up.
 
+**Learned estimates.** A block without `estimate=` learns its usual time from its runs that
+passed: the median of the last 5, rounded up as `estimate=` would be, shown with a `~`
+(`⌚ est. ~1m15s`). It counts in the runbook's time left like an estimate, so a runbook gets an
+end time after one run. The times are kept on this machine (VS Code's workspace state, the app's
+storage), never in the file; a step is kept under its `name=`, else under its text, so editing
+a command starts again. Click a learned estimate to write it into the runbook as `estimate=`.
+Line runs, skipped steps and the ready check don't count.
+
 ## Mark a step done or skipped
 
 For steps you carry out by hand (or don't need), use **Mark Step Done** / **Mark Step

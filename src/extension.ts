@@ -97,7 +97,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const controller = new RunbookController(pipeline);
   registerCalls(context, pipeline, controller);
   registerProgress(context, pipeline, controller);
-  registerEstimates(context);
+  registerEstimates(context, pipeline);
   registerWaiting(context);
   registerStepsView(context, pipeline, { confirmation: (cell, source) => safety.confirmation(cell, source), values: (nb, source) => secrets.values(nb, source) });
   registerNotifications(pipeline, context);
