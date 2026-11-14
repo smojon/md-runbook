@@ -119,3 +119,24 @@ test('Clear Outputs Above / Below', async () => {
   assert.equal((await progress()).pending, 3);
   await closeAll();
 });
+
+test('Runbook Steps view: chapters and steps in order, each with its state and time', async () => {
+  const uri = writeFile(
+    'steps-view.md',
+    `# Deploy\n\n${fence('echo one')}\n## Clean up\n\n\`\`\`${LANG} estimate=2m name="Remove the lab"\necho two\n\`\`\`\n`,
+  );
+  const editor = await openRunbook(uri);
+  type Row = { kind: string; index: number; step?: number; label?: string; title?: string; state?: string; time?: string };
+  const model = async (): Promise<{ headline: string; rows: Row[] }> =>
+    (await vscode.commands.executeCommand<{ headline: string; rows: Row[] }>('mdRunbook._steps'))!;
+  const before = await model();
+  assert.deepEqual(
+    before.rows.map((r) => (r.kind === 'chapter' ? `# ${r.title}` : `${r.step} ${r.label} ${r.state}${r.time ? ` ${r.time}` : ''}`)),
+    ['# Deploy', '1 echo one pending', '# Clean up', '2 Remove the lab pending est. 2m'],
+  );
+  assert.equal(before.headline, '0/2 · ~2 min');
+  await step('mark done', vscode.commands.executeCommand('mdRunbook.markStepDone', editor.notebook.cellAt(1)));
+  const after = await model();
+  assert.equal(after.rows.find((r) => r.index === 1)?.state, 'done');
+  await closeAll();
+});

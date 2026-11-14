@@ -35,6 +35,16 @@ left · done ≈ 14:32`), the counts, a table of the setup, the steps and the te
 times, and links: go to the running, failed or next step, Resume Run. Click the item (or run
 **md-runbook: Go to Next Step**) to jump to the first failed step, or else the next pending one.
 
+## Runbook Steps view
+
+The **Runbook Steps** view in the Explorer (shown while a runbook is the active editor; also the
+**All steps** link in the status bar's tooltip) is the runbook's progress as a rail beside its
+steps, like the app's rail: at the top, where the run is, the bar and the time left; then each
+`#`/`##` chapter and each step with its state on the rail (done, failed, running, waiting for
+you, to do), its name (`name=`, else its first line) and its time (`est. 2m`, `12s of 1m` while
+it runs, with a bar, `took 3m10s (+40s)` after a run over its estimate). The rail fills down to
+the step the run has reached, and the cells on screen are shaded. Click a row to go to it.
+
 **Run All follows the run.** Before each block, the notebook scrolls it into view, as long as the
 block before it is still in view: scroll away to read something else and it stops following
 (`mdRunbook.execution.followRun`, on by default).

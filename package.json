@@ -89,6 +89,17 @@
         "priority": "option"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "mdRunbook.steps",
+          "name": "Runbook Steps",
+          "when": "mdRunbook.runbookActive",
+          "icon": "$(checklist)"
+        }
+      ]
+    },
     "notebookRenderer": [
       {
         "id": "md-runbook.taskLists",

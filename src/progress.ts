@@ -120,7 +120,7 @@ export function progressStatus(nb: vscode.NotebookDocument, p: Progress = notebo
  */
 export function progressTooltip(nb: vscode.NotebookDocument, p: Progress, e: RunbookEstimate, running: vscode.NotebookCell | undefined, now = Date.now()): vscode.MarkdownString {
   const md = new vscode.MarkdownString(undefined, true);
-  md.isTrusted = { enabledCommands: ['mdRunbook.revealNextStep', 'mdRunbook.resumeRun', 'mdRunbook._revealCell'] };
+  md.isTrusted = { enabledCommands: ['mdRunbook.revealNextStep', 'mdRunbook.resumeRun', 'mdRunbook._revealCell', 'mdRunbook.steps.focus'] };
   const complete = p.done + p.skipped;
   const head: string[] = [`**${complete} of ${p.total} steps done**`];
   if (e.fraction !== undefined) head.push(`${Math.floor(e.fraction * 100)}% by the estimates`);
@@ -149,7 +149,8 @@ export function progressTooltip(nb: vscode.NotebookDocument, p: Progress, e: Run
   if (running) links.push(`[Show the running step](command:mdRunbook._revealCell?${encodeURIComponent(JSON.stringify([{ uri: nb.uri.toString(), index: running.index }]))})`);
   else if (p.firstFailed || p.firstPending) links.push(`[Go to the ${p.firstFailed ? 'failed' : 'next'} step](command:mdRunbook.revealNextStep)`);
   if (!running && p.resume.length > 0 && complete > 0) links.push('[Resume Run](command:mdRunbook.resumeRun)');
-  if (links.length) md.appendMarkdown(links.join(' · '));
+  links.push('[All steps](command:mdRunbook.steps.focus)');
+  md.appendMarkdown(links.join(' · '));
   return md;
 }
 

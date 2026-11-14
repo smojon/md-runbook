@@ -56,7 +56,7 @@ export function runningSince(cell: vscode.NotebookCell): number | undefined {
 }
 
 /** The last finished run's duration in seconds, from its status output. */
-function lastDuration(cell: vscode.NotebookCell): number | undefined {
+export function lastDuration(cell: vscode.NotebookCell): number | undefined {
   for (const o of cell.outputs) {
     const m = outputMeta(o);
     const d = m?.status ? m.attrs?.duration : undefined;

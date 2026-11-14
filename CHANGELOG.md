@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **VS Code: the Runbook Steps view** (Explorer, while a runbook is open): the same rail as the
+  app's, with room for names: chapters and steps with their state, name and time, the running
+  step's bar, the cells on screen shaded; click a row to go to it.
 - **App: a progress rail down the left edge**, always in view: it fills from the top as the run
   goes down the runbook, with a tick per step (green done, red failed, pulsing while it runs), a
   crossbar per chapter and a pale box for the part on screen. Tap a tick to go to its step, a
