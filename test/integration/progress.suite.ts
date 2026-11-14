@@ -220,3 +220,19 @@ test('the end-of-run notification names the failed step, or says done', async ()
     await closeAll();
   }
 });
+
+test('Steps view preflight: what each step will need, and a summary before a run', async () => {
+  const uri = writeFile(
+    'preflight.md',
+    `# Deploy\n\n\`\`\`${LANG} confirm name="Restart"\necho restart\n\`\`\`\n\n\`\`\`${LANG} name="Login"\necho "\${input:PF_USER}" "\${secret:PF_NOT_STORED_TOKEN}"\n\`\`\`\n\n- [ ] Tell the team\n\n\`\`\`${LANG} name="Done"\necho ok\n\`\`\`\n`,
+  );
+  await openRunbook(uri);
+  type Row = { kind: string; label?: string; needs?: string[] };
+  const m = (await vscode.commands.executeCommand<{ preflight?: string; rows: Row[] }>('mdRunbook._steps'))!;
+  const needs = (label: string): string[] | undefined => m.rows.find((r) => r.label === label)?.needs;
+  assert.deepEqual(needs('Restart'), ['your confirmation']);
+  assert.deepEqual(needs('Login'), ['input PF_USER', 'secret PF_NOT_STORED_TOKEN (not stored)']);
+  assert.equal(needs('Done'), undefined);
+  assert.equal(m.preflight, 'Before you run: 1 confirmation · 1 secret to set · 1 value to type · 1 step by hand');
+  await closeAll();
+});

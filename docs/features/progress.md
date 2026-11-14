@@ -54,6 +54,12 @@ and tick or untick a checklist item. The title bar has **Run All** (**Stop** whi
 **Resume Run** when there is something to resume, and **Go to Next Step**. The ready check's row
 says what it answered (`not up → setup runs`). Up/Down, Home/End and Enter work in the list.
 
+**Preflight.** Before a run, each step still to do says what it will need from you, and the
+view's header sums it up: `Before you run: 2 confirmations · 1 secret to set · 1 value to type ·
+1 step by hand`. A step can need your confirmation (`confirm`, or a risky command), a secret not
+stored yet, an input or parameter to type, a value from an earlier step (`${out:…}`), or an
+approval (a proposed cell). Nothing is asked or sent to find this out.
+
 **A notification when you look away.** When a run of several cells ends or starts waiting for
 you while its runbook isn't the editor in front (another file, another window), a notification
 says so: `deploy-checkout: step 4 of 6 failed — Push image` with **Go to Step** and **Resume

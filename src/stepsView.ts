@@ -17,6 +17,7 @@ import { cellPart } from './controller';
 import { cellEstimate, lastDuration, notebookEstimateSteps, notebookPartStates, runningSince } from './estimates';
 import { META_KEY } from './outputs';
 import { isManualMark } from '@md-runbook/core/progress';
+import { proposalOf } from '@md-runbook/core/proposal';
 import { cellAttrs, notebookProgress, progressStatus, selectRunbookKernel } from './progress';
 import { RunPipeline } from './pipeline';
 import { isTestMode } from './secrets';
@@ -49,6 +50,8 @@ export type StepsRow =
       runnable?: boolean;
       /** Marked done or skipped by hand (Mark Step): Unmark undoes it. */
       marked?: boolean;
+      /** Preflight: what running it will need from you (a confirmation, a secret, a value, an approval). */
+      needs?: string[];
     };
 
 export interface StepsModel {
@@ -63,14 +66,39 @@ export interface StepsModel {
   rows: StepsRow[];
   /** Steps still to do or failed (the view's badge). */
   open: number;
+  /** Preflight, before a run: what the steps still to do will need, in one line. */
+  preflight?: string;
   /** Resume Run has something to do (a step done, and one still to do or failed). */
   canResume: boolean;
   /** The cells on screen, first and last index. */
   visible?: { first: number; last: number };
 }
 
+/** What the view can learn about a step before it runs, without asking anything (safety.ts, secrets.ts). */
+export interface PreflightSources {
+  /** undefined if running `source` won't ask for a confirmation. */
+  confirmation(cell: vscode.NotebookCell, source: string): string | undefined;
+  /** The step's `${…}` values as they stand now (a `shown` text when there is none yet). */
+  values(nb: vscode.NotebookDocument, source: string): { kind: string; name: string; shown?: string }[];
+}
+
+/** What running `cell` will need from you, in short phrases; nothing for a step that needs nothing. */
+export function stepNeeds(cell: vscode.NotebookCell, info: string, sources: PreflightSources): string[] {
+  const needs: string[] = [];
+  const source = cell.document.getText();
+  if (proposalOf(info).state === 'proposed') needs.push('approval (proposed)');
+  if (sources.confirmation(cell, source) !== undefined) needs.push('your confirmation');
+  for (const v of sources.values(cell.notebook, source)) {
+    if (v.shown === undefined) continue;
+    if (v.kind === 'secret') needs.push(`secret ${v.name} (not stored)`);
+    else if (v.kind === 'input' || v.kind === 'param') needs.push(`${v.kind === 'param' ? 'parameter' : 'input'} ${v.name}`);
+    else if (v.kind === 'out') needs.push(`${v.name} from an earlier step`);
+  }
+  return needs;
+}
+
 /** The view's content for a runbook, from the same model as the status bar. */
-export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: number; last: number }, now = Date.now()): StepsModel {
+export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: number; last: number }, now = Date.now(), sources?: PreflightSources): StepsModel {
   const p = notebookProgress(nb);
   const status = progressStatus(nb, p, now);
   const e = runbookEstimate(notebookEstimateSteps(nb, cellAttrs, now), notebookPartStates(nb, cellAttrs));
@@ -140,6 +168,8 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
       else if (est !== undefined) time = `est. ${formatEstimate(est)}`;
     }
     const label = stepLabel(info, cell.document.getText(), cell.document.languageId) || `cell ${i + 1}`;
+    // Preflight: only for a step still to run (or to run again), and not while one runs.
+    const needs = sources && (state === 'pending' || state === 'failed') && !ready && !offered ? stepNeeds(cell, info, sources) : [];
     rows.push({
       kind: 'step',
       index: i,
@@ -153,9 +183,22 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
       ...(fraction !== undefined ? { fraction } : {}),
       runnable: true,
       ...(isManualMark(a) ? { marked: true } : {}),
+      ...(needs.length ? { needs } : {}),
     });
   }
   const done = p.pending === 0 && p.failed === 0 && p.total > 0;
+  // Preflight in one line: what the steps still to do will need, before a run.
+  const count = (test: (n: string) => boolean): number => rows.reduce((t, r) => t + (r.kind === 'step' ? (r.needs ?? []).filter(test).length : 0), 0);
+  const byHand = rows.filter((r) => r.kind === 'step' && r.task && !r.task.checked).length;
+  const tally: [number, string, string][] = [
+    [count((n) => n === 'your confirmation'), 'confirmation', 'confirmations'],
+    [count((n) => n.startsWith('secret ')), 'secret to set', 'secrets to set'],
+    [count((n) => n.startsWith('input ') || n.startsWith('parameter ')), 'value to type', 'values to type'],
+    [count((n) => n.startsWith('approval')), 'proposal to approve', 'proposals to approve'],
+    [byHand, 'step by hand', 'steps by hand'],
+  ];
+  const parts = tally.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`);
+  const preflight = sources && !anyRunning && !waiting && parts.length ? `Before you run: ${parts.join(' · ')}` : undefined;
   // Never "100%" or "nothing left" while a step is open (core remaining()).
   const rest = remaining(e, p.pending);
   return {
@@ -167,6 +210,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     ...(rest.percent !== undefined ? { percent: rest.percent, left: rest.left + (e.leftSeconds > 0 ? ` · ends ≈ ${formatFinish(e.leftSeconds, now)}` : '') } : {}),
     rows,
     open: p.pending + p.failed,
+    ...(preflight ? { preflight } : {}),
     canResume: p.resume.length > 0 && p.done + p.skipped + p.failed > 0,
     ...(visible ? { visible } : {}),
   };
@@ -221,6 +265,10 @@ function page(webview: vscode.Webview): string {
   .time { color: var(--vscode-descriptionForeground); white-space: nowrap; font-size: .92em; }
   .time.over { color: var(--vscode-editorWarning-foreground); }
   .running .label, .waiting .label { font-weight: 600; }
+  .lab { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .lab .label { flex: none; }
+  .needs { color: var(--vscode-editorWarning-foreground); font-size: .85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pre { margin-top: 4px; color: var(--vscode-editorWarning-foreground); font-size: .92em; }
   .stepbar { position: absolute; left: 22px; right: 4px; bottom: 0; height: 2px; }
   .stepbar .fill { height: 2px; background: var(--vscode-progressBar-background); }
   .stepbar.over .fill { background: var(--vscode-editorWarning-foreground); }
@@ -258,6 +306,7 @@ function page(webview: vscode.Webview): string {
       const f = el('div', 'fill'); f.style.width = Math.round(m.fraction * 100) + '%'; w.append(f); head.append(w);
       head.append(el('div', 'sub', m.percent + '% · ' + m.left));
     }
+    if (m.preflight) head.append(el('div', 'pre', m.preflight));
     root.append(head);
     const rail = el('div', 'rail');
     rail.setAttribute('role', 'tree');
@@ -278,7 +327,10 @@ function page(webview: vscode.Webview): string {
       } else {
         row.append(el('span', 'dot', GLYPH[r.state]));
         row.append(el('span', 'num', r.step !== undefined ? String(r.step) : '·'));
-        row.append(el('span', 'label', r.label));
+        const lab = el('span', 'lab');
+        lab.append(el('span', 'label', r.label));
+        if (r.needs) lab.append(el('span', 'needs', 'needs ' + r.needs.join(', ')));
+        row.append(lab);
         if (r.time) row.append(el('span', 'time' + (r.over ? ' over' : ''), r.time));
         // Its own buttons (on hover or focus): run it, run from it, mark it; tick a checklist item.
         const acts = el('span', 'acts');
@@ -302,7 +354,7 @@ function page(webview: vscode.Webview): string {
           const b = el('div', 'stepbar' + (r.over ? ' over' : ''));
           const bf = el('div', 'fill'); bf.style.width = Math.round(r.fraction * 100) + '%'; b.append(bf); row.append(b);
         }
-        row.title = (r.step !== undefined ? 'Step ' + r.step + ': ' : '') + r.label + ' (' + STATE[r.state] + (r.time ? ', ' + r.time : '') + ')';
+        row.title = (r.step !== undefined ? 'Step ' + r.step + ': ' : '') + r.label + ' (' + STATE[r.state] + (r.time ? ', ' + r.time : '') + ')' + (r.needs ? '. Needs ' + r.needs.join(', ') : '');
         if (r.state === 'running' || r.state === 'waiting') row.setAttribute('aria-current', 'step');
         if (r.state !== 'pending') reached = row;
       }
@@ -343,7 +395,10 @@ function page(webview: vscode.Webview): string {
 }
 
 class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly sources?: PreflightSources,
+  ) {}
   private view: vscode.WebviewView | undefined;
   private timer: NodeJS.Timeout | undefined;
   private ticker: NodeJS.Timeout | undefined;
@@ -418,7 +473,7 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
     if (!editor) return undefined;
     const r = editor.visibleRanges;
     const visible = r.length > 0 ? { first: Math.min(...r.map((x) => x.start)), last: Math.max(...r.map((x) => x.end - 1)) } : undefined;
-    return stepsModel(editor.notebook, visible);
+    return stepsModel(editor.notebook, visible, Date.now(), this.sources);
   }
 
   private draw(): void {
@@ -447,8 +502,8 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
   }
 }
 
-export function registerStepsView(context: vscode.ExtensionContext, pipeline?: RunPipeline): void {
-  const view = new StepsView(context);
+export function registerStepsView(context: vscode.ExtensionContext, pipeline?: RunPipeline, sources?: PreflightSources): void {
+  const view = new StepsView(context, sources);
   // Shown once, on the first Run All, so it's found; not again (the icon stays in the activity bar).
   pipeline?.observers.push({
     onWillRunSequence: async (_nb, cells) => {

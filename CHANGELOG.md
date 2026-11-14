@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **VS Code: preflight in the Steps view.** Before a run, each step still to do says what it will
+  need from you (your confirmation, a secret not stored yet, an input or parameter, an approval),
+  and the header sums it up: `Before you run: 2 confirmations · 1 secret to set · 1 step by hand`.
 - **VS Code: a notification when you look away.** A run of several cells that ends (done, or a
   step failed) or starts waiting for you while its runbook isn't the editor in front says so,
   with a button to go to the step, resume the run or answer (`mdRunbook.notifications.enabled`).
