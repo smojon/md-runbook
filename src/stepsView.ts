@@ -1,5 +1,5 @@
 /**
- * The Runbook Steps view (Explorer): the runbook's progress as a rail beside its steps, the same
+ * The Steps view (its own activity-bar container): the runbook's progress as a rail beside its steps, the same
  * as the app's rail but with room for names. At the top, where the run is (the status bar's
  * words), the bar and the time left; then the chapters (`#`/`##` headings) and the steps, each
  * with its state on the rail, its name and its time; the running one with its bar against its
@@ -15,11 +15,15 @@ import { setContext } from './contextKeys';
 import { cellPart } from './controller';
 import { cellEstimate, lastDuration, notebookEstimateSteps, notebookPartStates, runningSince } from './estimates';
 import { META_KEY } from './outputs';
-import { cellAttrs, notebookProgress, progressStatus } from './progress';
+import { cellAttrs, notebookProgress, progressStatus, selectRunbookKernel } from './progress';
+import { RunPipeline } from './pipeline';
+import { isTestMode } from './secrets';
+import { setTaskBox } from './taskLists';
 import { NOTEBOOK_TYPE } from './serializer';
 import { onDidChangeWaiting, waitingIn } from './waiting';
 
 export const STEPS_VIEW = 'mdRunbook.steps';
+const REVEALED_KEY = 'mdRunbook.stepsViewShown';
 
 export type StepRowState = 'done' | 'failed' | 'running' | 'pending' | 'waiting';
 
@@ -37,6 +41,10 @@ export type StepsRow =
       over?: boolean;
       /** The running step's share of its estimate, 0 to 1. */
       fraction?: number;
+      /** A checklist item (a step done by hand): where its box is in the cell, and whether it's ticked. */
+      task?: { offset: number; checked: boolean };
+      /** A code cell that can be run from the view. */
+      runnable?: boolean;
     };
 
 export interface StepsModel {
@@ -49,6 +57,10 @@ export interface StepsModel {
   percent?: number;
   left?: string;
   rows: StepsRow[];
+  /** Steps still to do or failed (the view's badge). */
+  open: number;
+  /** Resume Run has something to do (a step done, and one still to do or failed). */
+  canResume: boolean;
   /** The cells on screen, first and last index. */
   visible?: { first: number; last: number };
 }
@@ -79,6 +91,7 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
           label: (lines[item.line] ?? '').replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[[ xX]\][ \t]*/, '') || 'checklist item',
           state: item.checked ? 'done' : 'pending',
           time: 'by hand',
+          task: { offset: item.offset, checked: item.checked },
         });
       }
       continue;
@@ -128,8 +141,11 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
       label: offered ? `${label} (teardown, offered)` : ready ? `Ready check: ${label}` : label,
       state,
       ...(time !== undefined ? { time } : {}),
+      // The ready check says what it answered, not only how long it took.
+      ...(ready && a?.ready ? { time: a.ready === 'up' ? 'already up → setup skipped' : 'not up → setup runs' } : {}),
       ...(over ? { over } : {}),
       ...(fraction !== undefined ? { fraction } : {}),
+      runnable: true,
     });
   }
   const done = p.pending === 0 && p.failed === 0 && p.total > 0;
@@ -142,6 +158,8 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     ...(e.fraction !== undefined ? { fraction: e.fraction } : {}),
     ...(rest.percent !== undefined ? { percent: rest.percent, left: rest.left + (e.leftSeconds > 0 ? ` · ends ≈ ${formatFinish(e.leftSeconds, now)}` : '') } : {}),
     rows,
+    open: p.pending + p.failed,
+    canResume: p.resume.length > 0 && p.done + p.skipped + p.failed > 0,
     ...(visible ? { visible } : {}),
   };
 }
@@ -197,6 +215,12 @@ function page(webview: vscode.Webview): string {
   .stepbar .fill { height: 2px; background: var(--vscode-progressBar-background); }
   .stepbar.over .fill { background: var(--vscode-editorWarning-foreground); }
   .empty { color: var(--vscode-descriptionForeground); }
+  .acts { display: none; gap: 2px; }
+  .row:hover .acts, .row:focus-within .acts { display: flex; }
+  .row:hover .time, .row:focus-within .time { display: none; }
+  .act { border: none; background: transparent; color: var(--vscode-icon-foreground, var(--vscode-foreground)); cursor: pointer; padding: 0 3px; border-radius: 3px; font-size: 12px; line-height: 18px; }
+  .act:hover { background: var(--vscode-toolbar-hoverBackground); }
+  .act:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
 </style></head><body>
 <div id="live" class="sr" role="status" aria-live="polite"></div>
 <div id="root" class="empty">Open a runbook to see its steps.</div>
@@ -246,6 +270,23 @@ function page(webview: vscode.Webview): string {
         row.append(el('span', 'num', r.step !== undefined ? String(r.step) : '·'));
         row.append(el('span', 'label', r.label));
         if (r.time) row.append(el('span', 'time' + (r.over ? ' over' : ''), r.time));
+        // Its own buttons (on hover or focus): run it, run from it, mark it; tick a checklist item.
+        const acts = el('span', 'acts');
+        const act = (text, title, msg) => {
+          const b = el('button', 'act', text);
+          b.title = title;
+          b.setAttribute('aria-label', title + ': ' + r.label);
+          b.addEventListener('click', (ev) => { ev.stopPropagation(); vscode.postMessage(msg); });
+          acts.append(b);
+        };
+        if (r.task) act(r.task.checked ? '☑' : '☐', r.task.checked ? 'Untick' : 'Tick (done by hand)', { tick: r.index, offset: r.task.offset, checked: !r.task.checked });
+        else if (r.runnable && r.state !== 'running' && r.state !== 'waiting') {
+          act('▶', 'Run this step', { run: r.index });
+          act('⏬', 'Run from here', { runFrom: r.index });
+          if (r.state !== 'done') act('✓', 'Mark done', { mark: r.index, as: 'done' });
+          if (r.state !== 'done') act('↷', 'Mark skipped', { mark: r.index, as: 'skipped' });
+        }
+        if (acts.childElementCount) row.append(acts);
         if (r.fraction !== undefined) {
           const b = el('div', 'stepbar' + (r.over ? ' over' : ''));
           const bf = el('div', 'fill'); bf.style.width = Math.round(r.fraction * 100) + '%'; b.append(bf); row.append(b);
@@ -291,6 +332,7 @@ function page(webview: vscode.Webview): string {
 }
 
 class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
+  constructor(private readonly context: vscode.ExtensionContext) {}
   private view: vscode.WebviewView | undefined;
   private timer: NodeJS.Timeout | undefined;
   private ticker: NodeJS.Timeout | undefined;
@@ -302,9 +344,13 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
     view.webview.options = { enableScripts: true };
     view.webview.html = page(view.webview);
     view.webview.onDidReceiveMessage((m: unknown) => {
-      const msg = m as { ready?: boolean; go?: unknown };
+      const msg = m as { ready?: boolean; go?: unknown; run?: unknown; runFrom?: unknown; mark?: unknown; as?: unknown; tick?: unknown; offset?: unknown; checked?: unknown };
       if (msg.ready) this.refresh();
       if (typeof msg.go === 'number') void this.go(msg.go);
+      if (typeof msg.run === 'number') void this.run(msg.run, msg.run + 1);
+      if (typeof msg.runFrom === 'number') void this.run(msg.runFrom, Number.MAX_SAFE_INTEGER);
+      if (typeof msg.mark === 'number' && (msg.as === 'done' || msg.as === 'skipped')) void this.mark(msg.mark, msg.as);
+      if (typeof msg.tick === 'number' && typeof msg.offset === 'number' && typeof msg.checked === 'boolean') void this.tick(msg.tick, msg.offset, msg.checked);
     });
     view.onDidChangeVisibility(() => this.refresh());
     view.onDidDispose(() => (this.view = undefined));
@@ -321,6 +367,27 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
     const range = new vscode.NotebookRange(index, index + 1);
     editor.selections = [range];
     editor.revealRange(range, vscode.NotebookEditorRevealType.InCenterIfOutsideViewport);
+  }
+
+  /** Run the code cells from `start` up to (not including) `end`, as Run Below does. */
+  async run(start: number, end: number): Promise<void> {
+    const editor = this.editor();
+    if (!editor || start < 0 || start >= editor.notebook.cellCount) return;
+    await selectRunbookKernel(this.context, editor.notebook);
+    await vscode.commands.executeCommand('notebook.cell.execute', {
+      ranges: [{ start, end: Math.min(end, editor.notebook.cellCount) }],
+      document: editor.notebook.uri,
+    });
+  }
+
+  private async mark(index: number, as: 'done' | 'skipped'): Promise<void> {
+    const cell = this.editor()?.notebook.cellAt(index);
+    if (cell) await vscode.commands.executeCommand(as === 'done' ? 'mdRunbook.markStepDone' : 'mdRunbook.markStepSkipped', cell);
+  }
+
+  private async tick(index: number, offset: number, checked: boolean): Promise<void> {
+    const cell = this.editor()?.notebook.cellAt(index);
+    if (cell?.kind === vscode.NotebookCellKind.Markup) await setTaskBox(cell, offset, checked);
   }
 
   /** Redraw soon (changes come in bursts), and every second while a block runs. */
@@ -345,12 +412,17 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
     const m = this.model();
     this.last = m;
     const running = m?.state === 'running' || m?.state === 'waiting';
+    setContext('mdRunbook.runbookRunning', running);
+    setContext('mdRunbook.canResume', !!m?.canResume);
     if (running && !this.ticker) this.ticker = setInterval(() => this.refresh(), 1000);
     if (!running && this.ticker) {
       clearInterval(this.ticker);
       this.ticker = undefined;
     }
-    if (!this.view?.visible) return;
+    if (!this.view) return;
+    // The steps left on the view's icon; its tooltip says what the run waits for or where it failed.
+    this.view.badge = m && m.open > 0 ? { value: m.open, tooltip: m.headline } : undefined;
+    if (!this.view.visible) return;
     void this.view.webview.postMessage(m ? { model: m } : { empty: true });
   }
 
@@ -360,8 +432,17 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
   }
 }
 
-export function registerStepsView(context: vscode.ExtensionContext): void {
-  const view = new StepsView();
+export function registerStepsView(context: vscode.ExtensionContext, pipeline?: RunPipeline): void {
+  const view = new StepsView(context);
+  // Shown once, on the first Run All, so it's found; not again (the icon stays in the activity bar).
+  pipeline?.observers.push({
+    onWillRunSequence: async (_nb, cells) => {
+      if (cells.length < 2 || context.globalState.get<boolean>(REVEALED_KEY) || isTestMode(context)) return;
+      await context.globalState.update(REVEALED_KEY, true);
+      await vscode.commands.executeCommand(`${STEPS_VIEW}.focus`);
+      await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+    },
+  });
   context.subscriptions.push(
     view,
     vscode.window.registerWebviewViewProvider(STEPS_VIEW, view),
@@ -371,6 +452,14 @@ export function registerStepsView(context: vscode.ExtensionContext): void {
       if (e.notebook.notebookType === NOTEBOOK_TYPE) view.refresh();
     }),
     onDidChangeWaiting(() => view.refresh()),
+    vscode.commands.registerCommand('mdRunbook.showSteps', () => vscode.commands.executeCommand(`${STEPS_VIEW}.focus`)),
+    vscode.commands.registerCommand('mdRunbook.steps.runAll', async () => {
+      const editor = vscode.window.activeNotebookEditor ?? vscode.window.visibleNotebookEditors.find((e) => e.notebook.notebookType === NOTEBOOK_TYPE);
+      if (editor?.notebook.notebookType !== NOTEBOOK_TYPE) return;
+      await selectRunbookKernel(context, editor.notebook);
+      await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [{ start: 0, end: editor.notebook.cellCount }], document: editor.notebook.uri });
+    }),
+    vscode.commands.registerCommand('mdRunbook.steps.stop', () => vscode.commands.executeCommand('notebook.cancelExecution')),
     // For tests: the view's model for the active runbook.
     vscode.commands.registerCommand('mdRunbook._steps', () => view.model()),
   );

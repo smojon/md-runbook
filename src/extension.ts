@@ -98,7 +98,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerProgress(context, pipeline, controller);
   registerEstimates(context);
   registerWaiting(context);
-  registerStepsView(context);
+  registerStepsView(context, pipeline);
   registerLineRuns(context, controller, { safety, secrets });
   registerAutoSave(pipeline);
   registerOpenTiming(context);

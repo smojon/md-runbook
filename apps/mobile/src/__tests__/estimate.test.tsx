@@ -61,7 +61,7 @@ describe('estimate= (how long a cell takes)', () => {
     await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/ \d+s of 1s$/));
     expect(screen.getByTestId('cell-1-timing')).toBeTruthy();
     await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/\+\d+s over 1s$/), { timeout: 5000 });
-    expect(screen.getByTestId('run-estimate-text')).toHaveProp('accessibilityLabel', '0% · 1 step left');
+    expect(screen.getByTestId('run-estimate-text')).toHaveProp('accessibilityLabel', '99% · 1 step left');
     expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 1 of 1 · sleep 100');
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-1-stop'));

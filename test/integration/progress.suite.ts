@@ -127,16 +127,78 @@ test('Runbook Steps view: chapters and steps in order, each with its state and t
   );
   const editor = await openRunbook(uri);
   type Row = { kind: string; index: number; step?: number; label?: string; title?: string; state?: string; time?: string };
-  const model = async (): Promise<{ headline: string; rows: Row[] }> =>
-    (await vscode.commands.executeCommand<{ headline: string; rows: Row[] }>('mdRunbook._steps'))!;
+  const model = async (): Promise<{ headline: string; rows: Row[]; open: number; canResume: boolean }> =>
+    (await vscode.commands.executeCommand<{ headline: string; rows: Row[]; open: number; canResume: boolean }>('mdRunbook._steps'))!;
   const before = await model();
   assert.deepEqual(
     before.rows.map((r) => (r.kind === 'chapter' ? `# ${r.title}` : `${r.step} ${r.label} ${r.state}${r.time ? ` ${r.time}` : ''}`)),
     ['# Deploy', '1 echo one pending', '# Clean up', '2 Remove the lab pending est. 2m'],
   );
   assert.equal(before.headline, '0/2 · ~2 min');
+  assert.equal(before.open, 2, 'the badge: steps left');
+  assert.equal(before.canResume, false, 'nothing to resume before a run');
   await step('mark done', vscode.commands.executeCommand('mdRunbook.markStepDone', editor.notebook.cellAt(1)));
   const after = await model();
   assert.equal(after.rows.find((r) => r.index === 1)?.state, 'done');
+  assert.equal(after.open, 1);
+  assert.equal(after.canResume, true, 'a step done, one to do: Resume Run shows');
   await closeAll();
+});
+
+/** Answer "Done by hand?" with `answer` (Done / Skip / undefined = Cancel), counting the questions. */
+function stubManual(answer: () => string | undefined): { asked: string[]; restore: () => void } {
+  const w = vscode.window as unknown as { showInformationMessage: (...args: unknown[]) => Thenable<unknown> };
+  const original = w.showInformationMessage;
+  const asked: string[] = [];
+  w.showInformationMessage = (message: unknown, ...rest: unknown[]) => {
+    if (typeof message === 'string' && message.startsWith('Done by hand?')) {
+      asked.push(message);
+      return Promise.resolve(answer());
+    }
+    return original.call(vscode.window, message, ...rest);
+  };
+  return { asked, restore: () => void (w.showInformationMessage = original) };
+}
+
+const manualRunbook = (front = ''): string => `${front}# Deploy\n\n${fence('echo one')}\n- [ ] Tell #checkout the deploy is done\n\n${fence('echo two')}`;
+
+test('Run All waits at an unticked checklist item: Done ticks it, Skip goes on, Cancel stops', async () => {
+  for (const [answer, ticked, second] of [
+    ['Done', true, true],
+    ['Skip', false, true],
+    [undefined, false, false],
+  ] as const) {
+    const uri = writeFile(`manual-${answer ?? 'stop'}.md`, manualRunbook());
+    const editor = await openRunbook(uri);
+    const cells = editor.notebook.getCells();
+    const code = cells.filter((c) => c.kind === vscode.NotebookCellKind.Code);
+    const stub = stubManual(() => answer);
+    try {
+      await runCells(editor, 0, cells.length);
+      await waitForRun(code[0]!);
+      if (second) await waitForRun(code[1]!);
+      else await new Promise((r) => setTimeout(r, 1500));
+      assert.deepEqual(stub.asked, ['Done by hand? Tell #checkout the deploy is done'], String(answer));
+      assert.equal(/- \[x\] Tell/.test(cells[2]!.document.getText()), ticked, `ticked after ${answer}`);
+      assert.equal(code[1]!.outputs.length > 0, second, `the second block ran after ${answer}`);
+    } finally {
+      stub.restore();
+      await closeAll();
+    }
+  }
+});
+
+test('manual-steps: continue runs past an unticked item without asking', async () => {
+  const uri = writeFile('manual-continue.md', manualRunbook('---\nmanual-steps: continue\n---\n\n'));
+  const editor = await openRunbook(uri);
+  const code = editor.notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code);
+  const stub = stubManual(() => 'Done');
+  try {
+    await runCells(editor, 0, editor.notebook.cellCount);
+    await waitForRun(code[1]!);
+    assert.deepEqual(stub.asked, []);
+  } finally {
+    stub.restore();
+    await closeAll();
+  }
 });

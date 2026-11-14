@@ -130,7 +130,7 @@ describe('a running block', () => {
 });
 
 describe('the runbook', () => {
-  it('done over the total by estimates; the running block counts what is left of it', () => {
+  it('done over the total by estimates; the running block counts its time so far', () => {
     const e = runbookEstimate([
       { estimateSeconds: 120, state: 'done' },
       { estimateSeconds: 180, state: 'running', elapsedSeconds: 60 },
@@ -140,17 +140,17 @@ describe('the runbook', () => {
     ]);
     assert.equal(e.totalSeconds, 600);
     assert.equal(e.doneSeconds, 120);
-    assert.equal(e.fraction, 0.2);
+    assert.equal(e.fraction, 0.3, 'the 60 s the running block has run count');
     assert.equal(e.leftSeconds, 120 + 300);
     assert.equal(e.unestimated, 2);
     assert.equal(e.unestimatedLeft, 1);
-    assert.equal(formatRunbookEstimate(e), '[##........] 20% · 7 min left · 1 block without an estimate');
+    assert.equal(formatRunbookEstimate(e), '[###.......] 30% · 7 min left · 1 block without an estimate');
   });
 
   it('a running block past its estimate leaves nothing of it, never less', () => {
     const e = runbookEstimate([{ estimateSeconds: 60, state: 'running', elapsedSeconds: 200 }]);
     assert.equal(e.leftSeconds, 0);
-    assert.equal(formatRunbookEstimate(e), '[..........] 0% · nothing left');
+    assert.equal(formatRunbookEstimate(e), '[##########] 100% · nothing left');
   });
 
   it('no estimate at all: no fraction, no line', () => {

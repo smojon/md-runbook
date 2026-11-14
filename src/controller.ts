@@ -27,7 +27,7 @@ import { LineStep, echoCommand, formatLineRange, formatLineRanges } from '@md-ru
 import { FrontMatter, parseFrontMatter } from '@md-runbook/core/secrets';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { RunbookPart } from '@md-runbook/core/parts';
-import { ShellSettings, isCodeMeta } from '@md-runbook/core';
+import { ShellSettings, isCodeMeta, taskItems } from '@md-runbook/core';
 import { SECTION } from './config';
 import { ExecutionConfig, colorConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, cloudOutput, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
@@ -36,6 +36,8 @@ import { copyOrigin } from './copyOrigins';
 import { knownSecrets } from './knownSecrets';
 import { NOTEBOOK_TYPE } from './serializer';
 import { CellTranscript, startCellTranscript } from './transcript';
+import { setTaskBox } from './taskLists';
+import { whileWaiting } from './waiting';
 
 const FLUSH_MS = 100;
 /** `kubectl config current-context` only reads the kubeconfig. */
@@ -184,6 +186,28 @@ function teardownLabel(cell: vscode.NotebookCell): string {
   return cell.document.getText().split(/\r?\n/).find((l) => l.trim() !== '')?.trim().slice(0, 60) ?? `cell ${cell.index + 1}`;
 }
 
+/** The answer to a step done by hand that Run All reached: tick it, go on without, or stop there. */
+export type ManualAnswer = 'done' | 'skip' | 'stop';
+
+/** Ask about an unticked checklist item Run All reached (modal: the run waits for the answer). */
+async function askManual(cell: vscode.NotebookCell, item: string): Promise<ManualAnswer> {
+  const answer = await whileWaiting(cell, 'a step done by hand', () =>
+    vscode.window.showInformationMessage(
+      `Done by hand? ${item}`,
+      { modal: true, detail: 'Run All waits for this step. Done ticks it; Skip goes on without ticking it; Cancel stops the run here (Resume Run asks again).' },
+      'Done',
+      'Skip',
+    ),
+  );
+  return answer === 'Done' ? 'done' : answer === 'Skip' ? 'skip' : 'stop';
+}
+
+/** The text of a checklist item's line, without its `- [ ]`. */
+function taskText(cell: vscode.NotebookCell, line: number): string {
+  const text = cell.document.lineAt(line).text.replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[[ xX]\][ \t]*/, '');
+  return text.trim() || 'a checklist item';
+}
+
 /** Ask whether to run the teardown now (modal: Run All waits for the answer). */
 async function askTeardown(_notebook: vscode.NotebookDocument, labels: readonly string[]): Promise<boolean> {
   const take = 'Take Down';
@@ -236,6 +260,8 @@ export class RunbookController implements vscode.Disposable {
   private readonly teardownDeclined = new Set<string>();
   /** Asks whether to run the teardown (replaced in tests). */
   askTeardown: (notebook: vscode.NotebookDocument, labels: readonly string[]) => Promise<boolean> = askTeardown;
+  /** Tests replace it: the answer to a step done by hand that Run All reached. */
+  askManual: (cell: vscode.NotebookCell, item: string) => Promise<ManualAnswer> = askManual;
 
   constructor(readonly pipeline: RunPipeline = new RunPipeline()) {
     this.controller = vscode.notebooks.createNotebookController(CONTROLLER_ID, NOTEBOOK_TYPE, 'md-runbook shell');
@@ -350,6 +376,12 @@ export class RunbookController implements vscode.Disposable {
     let readyUp: boolean | undefined;
     let takeDown: boolean | undefined;
     const several = executions.length > 1;
+    // Steps done by hand (unticked `- [ ]` items) pause Run All, unless the front matter says
+    // manual-steps: continue (core/secrets.ts). Not for one cell or a line run.
+    const first = notebook.cellCount > 0 ? notebook.cellAt(0) : undefined;
+    const manualMode = first?.kind === vscode.NotebookCellKind.Markup ? parseFrontMatter(first.document.getText())?.manualSteps : undefined;
+    const manual = several && !lineRun && manualMode !== 'continue';
+    let stoppedByHand = false;
     /** The cell the run showed last (followRun). */
     let lastShown: vscode.NotebookCell | undefined;
     const runs: RunRecord[] = [];
@@ -389,6 +421,14 @@ export class RunbookController implements vscode.Disposable {
           exec.end(undefined);
           continue;
         }
+        // Run All waits at an unticked checklist item between the block before and this one.
+        if (manual && !(await this.manualStepsBefore(notebook, exec.cell.index))) {
+          stopped = exec.cell;
+          stoppedByHand = true;
+          exec.start();
+          exec.end(undefined);
+          continue;
+        }
         const part = several && !lineRun ? cellPart(exec.cell) : 'body';
         if (part === 'teardown' && options.teardown !== 'run') {
           // Offered, not run unasked: the reader may go straight on to the next runbook.
@@ -411,6 +451,9 @@ export class RunbookController implements vscode.Disposable {
         const failedHard = !run.success && !run.plan.continueOnError && cfg.stopOnFailure;
         if ((failedHard || run.plan.stopSequence) && executions.length > 1) stopped = exec.cell;
       }
+      // And at the ones after the runbook's last block, once the run got there.
+      const lastCode = notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code).pop();
+      if (manual && !stopped && lastCode && executions.some((e) => e.cell === lastCode)) await this.manualStepsBefore(notebook, notebook.cellCount);
     } finally {
       this.cancelled.delete(notebook.uri.toString());
       // Something threw: don't leave the remaining cells pending forever. (runCell ends its own.)
@@ -428,11 +471,33 @@ export class RunbookController implements vscode.Disposable {
     } else if (excluded.length > 0 && !stopped) {
       vscode.window.setStatusBarMessage(`md-runbook: ${excluded.length} cell${excluded.length === 1 ? '' : 's'} for another OS not run`, 8000);
     }
-    if (stopped && executions[executions.length - 1]!.cell !== stopped) {
+    if (stoppedByHand) {
+      vscode.window.setStatusBarMessage('md-runbook: stopped at a step done by hand (Resume Run asks again)', 8000);
+    } else if (stopped && executions[executions.length - 1]!.cell !== stopped) {
       const why = runs[runs.length - 1]?.plan.stopSequence ? 'was not confirmed' : 'failed';
       vscode.window.setStatusBarMessage(`md-runbook: stopped after cell ${stopped.index + 1} ${why}`, 8000);
     }
     for (const o of this.pipeline.observers) await o.onDidRunSequence?.(notebook, runs);
+  }
+
+  /**
+   * The unticked checklist items (steps done by hand) between the code cell before `upTo` and
+   * `upTo`, asked one by one: Done ticks it, Skip goes on, Stop ends the run (false).
+   */
+  private async manualStepsBefore(notebook: vscode.NotebookDocument, upTo: number): Promise<boolean> {
+    const cells = notebook.getCells();
+    let from = upTo - 1;
+    while (from >= 0 && cells[from]!.kind !== vscode.NotebookCellKind.Code) from--;
+    for (const cell of cells.slice(from + 1, upTo)) {
+      if (cell.kind !== vscode.NotebookCellKind.Markup) continue;
+      for (const item of taskItems(cell.document.getText())) {
+        if (item.checked) continue;
+        const answer = await this.askManual(cell, taskText(cell, item.line));
+        if (answer === 'stop') return false;
+        if (answer === 'done') await setTaskBox(cell, item.offset, true);
+      }
+    }
+    return true;
   }
 
   /** Whether to run the teardown cells now: asked once per runbook until Leave It Up. */

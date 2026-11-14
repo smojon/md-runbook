@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Run All waits at a step done by hand.** An unticked checklist item (`- [ ]`) between two blocks
+  is a step too: Run All stops there and asks **Done by hand?** — **Done** ticks it, **Skip** goes
+  on without ticking it, **Cancel** stops the run (Resume Run asks again). `manual-steps: continue`
+  in the front matter keeps the items as reminders.
+- **VS Code: act from the Steps view.** Each step has its own buttons (run this step, run from
+  here, mark done or skipped; tick a checklist item); the title bar has Run All or Stop, Resume Run
+  (shown only when there is something to resume, also on the toolbar) and Go to Next Step; the
+  view's icon shows how many steps are left. **Show Steps** is on the toolbar and in Run ▾, and the
+  view opens by itself on the first Run All. The view is called **Steps**, and the ready check's row
+  says what it answered (`not up → setup runs`). The share done now moves during a long step.
 - **Fixes from a design review of the new progress.** The chapter name on the app's rail showed
   as an empty pill on iOS and Android. The app's run bar no longer shows a red Stop and "100% ·
   nothing left" while the run waits for an answer: it says **Waiting for you** in amber and its

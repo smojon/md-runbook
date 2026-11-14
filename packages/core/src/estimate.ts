@@ -200,7 +200,7 @@ export interface RunbookEstimate {
   doneSeconds: number;
   /** Sum of the estimates still to run; the running block counts what is left of its own (never below 0). */
   leftSeconds: number;
-  /** doneSeconds / totalSeconds, 0 to 1; undefined when no block has an estimate. */
+  /** The share of the total no longer left (the running block's time so far counts), 0 to 1; undefined when no block has an estimate. */
   fraction?: number;
   blocks: number;
   /** Blocks without an estimate (not guessed). */
@@ -246,7 +246,9 @@ export function runbookEstimate(steps: readonly EstimateStep[], states: PartStat
     r.blocks++;
     if (addStep(r, s)) r.unestimatedLeft++;
   }
-  if (r.totalSeconds > 0) r.fraction = r.doneSeconds / r.totalSeconds;
+  // What is no longer left: the running block's time so far counts (up to its estimate), so the
+  // share moves during a long block instead of only when one ends.
+  if (r.totalSeconds > 0) r.fraction = (r.totalSeconds - r.leftSeconds) / r.totalSeconds;
   if (hasParts) r.parts = { ...parts, states: st };
   return r;
 }

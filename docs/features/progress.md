@@ -12,6 +12,10 @@ you did by hand, and picks a stopped run up where it failed.
   (non-zero, `timeout`, `cancelled`, `error`, a signal).
 - **Checklist items:** GitHub task-list items in Markdown (`- [ ]`, `* [x]`, `1. [ ]`) count
   as steps too: `[x]` is done, `[ ]` is pending. Items inside fenced code blocks don't count.
+  They are steps done by hand: **Run All waits at one that isn't ticked** and asks **Done by
+  hand?** (**Done** ticks it, **Skip** goes on without ticking it, **Cancel** stops the run there;
+  Resume Run asks again). Put `manual-steps: continue` in the front matter to run past them, as
+  reminders.
 
 ## Status bar
 
@@ -35,16 +39,20 @@ left · done ≈ 14:32`), the counts, a table of the setup, the steps and the te
 times, and links: go to the running, failed or next step, Resume Run. Click the item (or run
 **md-runbook: Go to Next Step**) to jump to the first failed step, or else the next pending one.
 
-## Runbook Steps view
+## Steps view
 
-The **Runbook Steps** view (its own icon in the activity bar, a rail of steps; also the **All
-steps** link in the status bar's tooltip; drag it to the secondary side bar to keep it beside
-the runbook) is the runbook's progress as a rail beside its
+The **Steps** view (its own icon in the activity bar, which shows how many steps are left; **Show
+Steps** on the toolbar and in Run ▾; **All steps** in the status bar's tooltip; it opens by itself
+on the first Run All; drag it to the secondary side bar to keep it beside the runbook) is the runbook's progress as a rail beside its
 steps, like the app's rail: at the top, where the run is, the bar and the time left; then each
 `#`/`##` chapter and each step with its state on the rail (done, failed, running, waiting for
 you, to do), its name (`name=`, else its first line) and its time (`est. 2m`, `12s of 1m` while
 it runs, with a bar, `took 3m10s (+40s)` after a run over its estimate). The rail fills down to
-the step the run has reached, and the cells on screen are shaded. Click a row to go to it.
+the step the run has reached, and the cells on screen are shaded. Click a row to go to it; its
+buttons (on hover or with the keyboard) run that step, run from it, or mark it done or skipped,
+and tick or untick a checklist item. The title bar has **Run All** (**Stop** while it runs),
+**Resume Run** when there is something to resume, and **Go to Next Step**. The ready check's row
+says what it answered (`not up → setup runs`). Up/Down, Home/End and Enter work in the list.
 
 **Run All follows the run.** Before each block, the notebook scrolls it into view, as long as the
 block before it is still in view: scroll away to read something else and it stops following

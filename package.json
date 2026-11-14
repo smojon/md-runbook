@@ -103,7 +103,7 @@
         {
           "type": "webview",
           "id": "mdRunbook.steps",
-          "name": "Runbook Steps",
+          "name": "Steps",
           "when": "mdRunbook.runbookActive",
           "icon": "$(checklist)"
         }
@@ -212,6 +212,24 @@
         "command": "mdRunbook.revealNextStep",
         "title": "Go to Next Step",
         "category": "md-runbook"
+      },
+      {
+        "command": "mdRunbook.showSteps",
+        "title": "Show Steps",
+        "category": "md-runbook",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "mdRunbook.steps.runAll",
+        "title": "Run All",
+        "category": "md-runbook",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "mdRunbook.steps.stop",
+        "title": "Stop the Run",
+        "category": "md-runbook",
+        "icon": "$(debug-stop)"
       },
       {
         "command": "mdRunbook.runCellInEditor",
@@ -600,6 +618,28 @@
       }
     ],
     "menus": {
+      "view/title": [
+        {
+          "command": "mdRunbook.steps.runAll",
+          "when": "view == mdRunbook.steps && !mdRunbook.runbookRunning",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mdRunbook.steps.stop",
+          "when": "view == mdRunbook.steps && mdRunbook.runbookRunning",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mdRunbook.resumeRun",
+          "when": "view == mdRunbook.steps && mdRunbook.canResume && !mdRunbook.runbookRunning",
+          "group": "navigation@2"
+        },
+        {
+          "command": "mdRunbook.revealNextStep",
+          "when": "view == mdRunbook.steps",
+          "group": "2_go@1"
+        }
+      ],
       "explorer/context": [
         {
           "command": "mdRunbook.openAsRunbook",
@@ -637,8 +677,13 @@
         },
         {
           "command": "mdRunbook.resumeRun",
-          "when": "notebookType == md-runbook",
+          "when": "notebookType == md-runbook && mdRunbook.canResume",
           "group": "navigation/execute@10"
+        },
+        {
+          "command": "mdRunbook.showSteps",
+          "when": "notebookType == md-runbook",
+          "group": "navigation/execute@11"
         },
         {
           "command": "mdRunbook.sessionModeOn",
@@ -1134,6 +1179,10 @@
         {
           "command": "mdRunbook.revealNextStep",
           "group": "1_run@3"
+        },
+        {
+          "command": "mdRunbook.showSteps",
+          "group": "1_run@3b"
         },
         {
           "command": "mdRunbook.runCallFresh",
