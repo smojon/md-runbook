@@ -1,17 +1,18 @@
 # On call: from the page to the runbook
 
 When you're paged, the runbook should be one tap away, with the service and the host already
-filled in, and the run should leave a record you can show in the postmortem.
+filled in. The run should leave a record you can show in the postmortem.
 
-1. **The alert carries a runbook link.** Tapping it on the phone opens the runbook in the app with
-   the alert's host and parameters filled in (a [runbook link](../switching.md#runbook-links)).
-   Nothing runs until you tap Run.
+1. **The alert carries a [runbook link](../switching.md#runbook-links).** Tapping it on the phone
+   opens the runbook in the app with the alert's host and parameters filled in. Nothing runs until
+   you tap Run.
 2. **Start Incident** (⋯ More in the app, Run ▾ in VS Code) makes a dated copy for the incident:
-   every run records who ran it and where, every attempt is kept, and a first note marks when it
-   was detected.
+   - every run records who ran it and where;
+   - every attempt is kept;
+   - a first note marks when it was detected.
 3. **Add Note** records decisions and milestones (*detected*, *mitigated*, *resolved*) as you go.
-4. **Export Report** is the incident record and timeline for the postmortem; **Sign Run Record**
-   vouches for it; **Export Run Record (JSON)** hands it to a ticket tool.
+4. **Export Report** is the incident record and timeline for the postmortem. **Sign Run Record**
+   vouches for it. **Export Run Record (JSON)** hands it to a ticket tool.
 
 ## Making the links
 
@@ -28,16 +29,23 @@ md-runbook link runbooks/restart-api.md --labels hosts.csv     # one "host<TAB>l
 In VS Code, **Share ▾ → Open in the App** copies the same link without a host or parameters.
 
 Alerting tools fill in the host and parameters from the alert. Leave them out of the printed
-link and append them in the tool's template, URL-encoded: `&host=…` names a host as the app's
-**Hosts & settings** names it (a link never adds a host), and `&p.NAME=…` fills `${param:NAME}`.
-A signed runbook checks each value against its signed pattern, and md-runbook-gate checks it
-again on the server, so a value from an alert can't become a command.
+link and append them in the tool's template, URL-encoded:
 
-**Which kind of link.** `mdrunbook://` links open the app directly from mail, chat and most
-pager apps on a phone. Some web consoles only make `https` links clickable: there, use the web
-app's address (`--web-app https://<web app>/open`), which a phone with the app installed opens
-in the app once the web app's domain is set up for it. For a laptop, use VS Code links (next
-section). An alert can carry both kinds, one for the phone and one for the laptop.
+- `&host=…` names a host as the app's **Hosts & settings** names it (a link never adds a host);
+- `&p.NAME=…` fills `${param:NAME}`.
+
+A signed runbook checks each value against its signed pattern, and md-runbook-gate checks it
+again on the server. So a value from an alert can't become a command.
+
+**Which kind of link.**
+
+- `mdrunbook://` links open the app directly from mail, chat and most pager apps on a phone.
+- Some web consoles only make `https` links clickable: there, use the web app's address
+  (`--web-app https://<web app>/open`). A phone with the app installed opens it in the app, once
+  its domain is set up for it.
+- For a laptop, use VS Code links (next section).
+
+An alert can carry both kinds, one for the phone and one for the laptop.
 
 ## On a laptop: VS Code
 
@@ -51,23 +59,26 @@ md-runbook link runbooks/restart-api.md --vscode --host web-1 --param SERVICE=ap
 
 Clicking it opens VS Code (the md-runbook extension must be installed):
 
-- **Your workspace's copy** opens when a clone of the runbook's repository is open in VS Code
-  and the file there is the version the link pins. If your copy differs (you edited it, or have
-  another branch checked out), you choose: **Open Your Copy** or **Open the Linked Version**.
-- Otherwise the runbook is **downloaded** and opens as a copy. The same link opened again (each
-  click on an alert) opens that copy with its runs, as long as the runbook is unchanged.
+- **Your workspace's copy** opens when a clone of the runbook's repository is open in VS Code.
+  The file there must be the version the link pins. If your copy differs (edited, or another
+  branch checked out), you choose: **Open Your Copy** or **Open the Linked Version**.
+- Otherwise the runbook is **downloaded** and opens as a copy. Unless the runbook changed, the
+  same link opened again (each click on an alert) opens that copy with its runs.
 - A link that pins another version than the one at its address is refused, as in the app. A
   runbook that is neither signed nor pinned opens with a warning.
 - The link's parameters (`p.NAME=`) are filled in, and the run uses them without asking. A
-  parameter the runbook doesn't use is reported, not set. `host=` names a host of the app: in
-  VS Code, cells run on this machine or on their own `host=`, so it is only shown.
+  parameter the runbook doesn't use is reported, not set.
+- `host=` names a host of the app. In VS Code, cells run on this machine or on their own `host=`,
+  so it is only shown.
 - **Nothing runs** until you run it.
 
 Alert templates append `&host=…` and `&p.NAME=…` to a VS Code link as they do to an app link.
-VS Code decodes a link's query once before md-runbook reads it, so a value with `&`, `=`, `#`,
-`+` or `%` in it would come apart. `md-runbook link --vscode` then carries the whole app link in
-one `link=` field instead. Host names, service names and GitHub addresses don't have those
-characters.
+
+VS Code decodes a link's query once before md-runbook reads it. So a value with `&`, `=`, `#`,
+`+` or `%` in it would come apart.
+
+`md-runbook link --vscode` then carries the whole app link in one `link=` field instead. Host
+names, service names and GitHub addresses don't have those characters.
 
 ## Prometheus Alertmanager
 
@@ -86,7 +97,7 @@ groups:
 
 Grafana, PagerDuty's Prometheus integration and most receivers show `runbook_url` as a link.
 For the laptop, add a second annotation with the VS Code link (`md-runbook link --vscode`),
-for example `runbook_vscode_url`, and show it in your notification template.
+for example `runbook_vscode_url`. Show it in your notification template.
 
 ## PagerDuty
 
@@ -117,5 +128,6 @@ An alert's `details` (shown as key/value pairs, links clickable in the Opsgenie 
 
 ## Labels on machines
 
-For people at the machine rather than on a pager: `md-runbook qr --labels hosts.csv` prints a sheet
-of QR codes, one per machine, which **Scan a code** opens ([QR codes](../switching.md#qr-codes)).
+For people at the machine rather than on a pager: `md-runbook qr --labels hosts.csv` prints a
+sheet of QR codes, one per machine. **Scan a code** opens them
+([QR codes](../switching.md#qr-codes)).
