@@ -128,8 +128,8 @@ the running step is in view.
 The panel has the same header, rows and buttons (Run all stays in the run bar beside it). The
 runbook keeps a readable width instead of stretching across the window.
 
-**⋯ More** lists every other action, in the extension's groups and names: Run, Steps, Values,
-Assistant, Share, Help. Each says when it matters. It has a search field: type part of a name
+**⋯ More** lists every other action, in the extension's groups and names: Review, Run, Steps,
+Values, Assistant, Share, Help. Each says when it matters. It has a search field: type part of a name
 (Ctrl/⌘+K opens it with a keyboard).
 
 A cell's **⋯**, or a long press on it, has the cell's own actions:
@@ -250,7 +250,7 @@ An approval card names the host the cell runs on.
 The app runs `sh` and `bash` cells on Linux and macOS servers. It runs `pwsh`, `powershell` and
 `cmd` cells on Windows servers (OpenSSH Server, the Windows feature).
 
-Nothing to set up: on a Windows server, the app finds Windows PowerShell by itself. **Hosts**
+Nothing to set up: on a Windows server, the app finds Windows PowerShell by itself. **Hosts & settings**
 shows what each server runs after the first connection. As in VS Code:
 
 - PowerShell cells share one session: variables, functions and the folder carry over;
@@ -281,7 +281,7 @@ for you means:
 Notifications come while the app is in the background, or, in a browser, while the tab is hidden.
 
 The system asks for the permission only after **Notify me**. **Not now** isn't asked again, and
-**Hosts & Settings → Notifications** turns them on or off.
+**Hosts & settings → Notifications** turns them on or off.
 
 They say what the run bar says ("Deploy checkout" · "Step 4 of 6 failed — Push image"), and a
 tap opens the runbook at that step. Nothing leaves the device: they are local notifications, not
@@ -621,7 +621,7 @@ the server may read. A file over 2 MB, or a redirect to another server, is not r
 ## Try it
 
 - **Web:** `cd apps/mobile && npm ci && npx expo start --web`. To run cells, also start the relay
-  ([its README](../apps/relay/README.md)) and set its address and token under **Hosts**.
+  ([its README](../apps/relay/README.md)) and set its address and token under **Hosts & settings → Relay**.
 - **Android or iOS:** `npx expo run:android` or `npx expo run:ios` in `apps/mobile` builds the
   app for an emulator or a connected device. The phone builds need the Android SDK or Xcode.
 - **Store builds:** not published yet. The steps are in [apps/mobile/STORE.md](../apps/mobile/STORE.md).
