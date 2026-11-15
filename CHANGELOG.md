@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.26.1
+
+Prose checks: md-runbook points at text that could be shorter and simpler.
+
 - **Prose checks: keep runbooks short and simple.** See [Prose](docs/features/lint.md#prose).
   - They flag:
     - a sentence over 20 words;
