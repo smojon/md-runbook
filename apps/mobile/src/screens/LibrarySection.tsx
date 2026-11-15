@@ -343,6 +343,14 @@ function LibraryRow({
    * the update's warnings), whether or not the copy is behind it.
    */
   const replace = mineWhy !== undefined && entry.hash !== undefined && openableReason(library, entry, sig) === undefined;
+  /**
+   * signedOnly: the library's version is offered only when the library would open it (the check
+   * Update makes again on the text it takes); otherwise the row says why, with no Update or Keep
+   * mine. Not offered either until its signature is checked.
+   */
+  const theirsChecking = copy !== undefined && library.signedOnly === true && sig === undefined;
+  const theirsWhy = copy && library.signedOnly && sig !== undefined ? openableReason(library, entry, sig) : undefined;
+  const offer = theirsWhy === undefined && !theirsChecking;
   const [error, setError] = useState<string | undefined>();
   /** The update's warnings, for the library's text with this hash (a newer text asks again). */
   const [confirm, setConfirm] = useState<{ text: string; warnings: UpdateWarning[]; hash: string } | undefined>();
@@ -424,7 +432,12 @@ function LibraryRow({
           ) : null}
         </View>
       </Pressable>
-      {(status === 'update' || replace) && !confirm ? (
+      {status === 'update' && theirsWhy !== undefined ? (
+        <Text testID={`library-update-refused-${entry.path}`} style={[styles.meta, styles.warn, styles.update]}>
+          {t.libraryVersionRefused(theirsWhy)}
+        </Text>
+      ) : null}
+      {(status === 'update' || replace) && offer && !confirm ? (
         <View testID={`library-update-${entry.path}`} style={styles.update}>
           <Text style={[styles.meta, styles.updateText]}>{replace ? t.libraryReplaceHelp : t.updateAvailable}</Text>
           <Pressable

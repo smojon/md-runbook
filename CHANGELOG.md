@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Team library (verified runbooks only): no Update for a version the library wouldn't open.**
+  A row offered **Update** and **Keep mine** for a library version that was changed since
+  signing, or older than one seen before, although Update then refused it. Now such a version is
+  not offered: the row says **The library's version can't be taken, so your copy stays as it
+  is** and why. Offers wait until the library's version is checked.
+
 ## 0.25.0
 
 Pairing helps you check a team library's signers on your second device.

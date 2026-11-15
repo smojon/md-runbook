@@ -838,6 +838,8 @@ const en = {
   keepMine: 'Keep mine',
   updateKept: 'Newer version skipped',
   updateRefused: (why: string) => `The new version can't be taken: ${why}`,
+  /** signedOnly: the library's version would be refused, so it is not offered (its row says why). */
+  libraryVersionRefused: (why: string) => `The library's version can't be taken, so your copy stays as it is: ${why}`,
   updateLostOutputs: (n: number) =>
     n === 1
       ? "1 output can't be kept: its block changed in the new version."

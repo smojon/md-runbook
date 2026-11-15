@@ -246,8 +246,11 @@ describe('Team runbooks on the list', () => {
     files[LIB + 'index.json'] = JSON.stringify({ runbooks: ['ops/restart.md'] });
     await act(() => refreshLibrary({ fetcher: server(files), force: true }));
     expect(screen.getByTestId('library-signed-only-dropped')).toHaveTextContent(/keeps opening verified runbooks only/);
-    await press('library-update-go-ops/restart.md');
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/can't be taken: .*not signed/));
+    // An unsigned version is not offered while the library opens verified runbooks only: the row says why.
+    await waitFor(() =>
+      expect(screen.getByTestId('library-update-refused-ops/restart.md')).toHaveTextContent(/can't be taken.*not signed/),
+    );
+    expect(screen.queryByTestId('library-update-go-ops/restart.md')).toBeNull();
     expect(getRunbook(id)?.text).toBe(signedR.text);
     // The user agrees: Update available, and the update says the signature is gone.
     await press('library-allow-unverified');
@@ -416,6 +419,47 @@ describe('a copy the library refuses (signedOnly): the recheck of 2026-11-14', (
     await press('library-replace-restart.md');
     await waitFor(() => expect(getRunbook(id)?.text).toBe(resigned.text));
     await waitFor(() => expect(screen.queryByTestId('library-copy-why-restart.md')).toBeNull());
+  });
+
+  it('F: a library version the library would refuse is not offered: changed since signing; the row says why', async () => {
+    const { id, files, text } = await libraryWithCopy();
+    files[LIB + 'restart.md'] = text.replace('# Restart the API', '# Restart the API now');
+    await render(<Copies />);
+    await act(() => refreshLibrary({ fetcher: server(files), force: true }));
+    await waitFor(() =>
+      expect(screen.getByTestId('library-update-refused-restart.md')).toHaveTextContent(
+        /The library's version can't be taken, so your copy stays as it is: .*changed since signing/i,
+      ),
+    );
+    expect(screen.queryByTestId('library-update-go-restart.md')).toBeNull();
+    expect(screen.queryByTestId('library-keep-restart.md')).toBeNull();
+    expect(getRunbook(id)?.text).toBe(text);
+  });
+
+  it('F: nor a genuinely signed version older than one seen before', async () => {
+    const { id, files, alice, text } = await libraryWithCopy();
+    const v2 = await signRunbook(
+      RUNBOOK + '\nv2\n',
+      { ...signPlan(RUNBOOK + '\nv2\n', 'restart.md'), version: 2 },
+      { name: 'restart', scopes: '', days: '', patterns: {} },
+      'alice@example.net',
+      alice,
+    );
+    if (!v2.ok) throw new Error('not signed');
+    files[LIB + 'restart.md'] = v2.text;
+    await render(<Copies />);
+    await act(() => refreshLibrary({ fetcher: server(files), force: true }));
+    // Offered once the library's version is checked.
+    await waitFor(() => expect(screen.getByTestId('library-replace-restart.md')).toBeTruthy());
+    await press('library-replace-restart.md');
+    await waitFor(() => expect(getRunbook(id)?.text).toBe(v2.text));
+    // The library goes back to version 1, still genuinely signed.
+    files[LIB + 'restart.md'] = text;
+    await act(() => refreshLibrary({ fetcher: server(files), force: true }));
+    await waitFor(() => expect(screen.getByTestId('library-update-refused-restart.md')).toHaveTextContent(/older than version 2/));
+    expect(screen.queryByTestId('library-update-go-restart.md')).toBeNull();
+    expect(screen.queryByTestId('library-keep-restart.md')).toBeNull();
+    expect(getRunbook(id)?.text).toBe(v2.text);
   });
 });
 
