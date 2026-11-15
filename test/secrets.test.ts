@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { cellRefs } from '@md-runbook/core/cellOptions';
-import { dotenvSecrets, envRef, findRefs, isRedactableValue, looksLikeSecretValue, looksSecret, looksSecretKey, paramComment, parseDotenv, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
+import { dotenvSecrets, envRef, findRefs, isRedactableValue, looksLikeSecretValue, looksSecret, looksSecretKey, paramComment, parseDotenv, parseFrontMatter, rewriteRefs, withDotenv } from '@md-runbook/core/secrets';
 
 describe('variable references', () => {
   it('finds unique references in order, with secrecy', () => {
@@ -177,6 +177,15 @@ describe('.env parser', () => {
     assert.ok(looksSecretKey('DB_PASSWORD') && looksSecretKey('MY_API_KEY') && looksSecretKey('KEY') && looksSecretKey('SESSION_COOKIE'));
     assert.ok(!looksSecretKey('REGION') && !looksSecretKey('KEYCLOAK_URL') && !looksSecretKey('AUTHOR') && !looksSecretKey('MONKEY_COUNT'));
     assert.ok(!looksLikeSecretValue('eu-west-1') && !looksLikeSecretValue('/very/long/path/to/some/dir123') && looksLikeSecretValue('Zx8kQ2mP9vL4tR7wB3nY6'));
+  });
+
+  it('goes over the settings but under the cell’s own env.NAME= options', () => {
+    // plan.env holds mdRunbook.execution.env with the cell's options already over it.
+    const env = { PATH_HINT: 'settings', REGION: 'cell', LEVEL: 'settings' };
+    const vars = { REGION: 'dotenv', LEVEL: 'dotenv', API_URL: 'dotenv' };
+    assert.deepEqual(withDotenv(env, vars, { REGION: 'cell' }), { PATH_HINT: 'settings', REGION: 'cell', LEVEL: 'dotenv', API_URL: 'dotenv' });
+    // Cell options off (or none): the file wins over the settings.
+    assert.deepEqual(withDotenv(env, vars, {}), { PATH_HINT: 'settings', REGION: 'dotenv', LEVEL: 'dotenv', API_URL: 'dotenv' });
   });
 });
 

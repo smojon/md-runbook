@@ -181,7 +181,7 @@ read-only credentials. So a `KUBECONFIG` set by any of them is the one recorded:
 
 - Commands run through the platform shell (`cmd.exe` on Windows, `/bin/sh` elsewhere), in the
   cell's working folder. That is the runbook's folder, unless `cwd:` or `cwd=` set another.
-- Each command runs with the cell's environment set (`mdRunbook.execution.env`, `env.*` options, `.env`,
+- Each command runs with the cell's environment set (`mdRunbook.execution.env`, `.env`, `env.*` options,
   secrets, read-only credentials), and a 5 second timeout. A failing or silent command records
   `unknown`.
 - Values are cached per runbook for `mdRunbook.output.recordContextCacheSeconds`.

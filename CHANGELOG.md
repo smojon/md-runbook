@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Behaviour change, VS Code:** a cell's own `env.NAME=` option now wins over the same name in
+  the `.env` file (`mdRunbook.execution.envFile`). Before, the file won.
+
 ## 0.26.5
 
 VS Code now refuses unsigned reports when a runbook requires signed ones.

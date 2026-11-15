@@ -212,8 +212,8 @@ Environment variables are applied in this order (later wins):
 
 1. the front matter's `env:`;
 2. `mdRunbook.execution.env`;
-3. the cell's own `env.NAME=` options;
-4. the `.env` file;
+3. the `.env` file;
+4. the cell's own `env.NAME=` options;
 5. `mdRunbook.secrets.inject`;
 6. references in the cell.
 

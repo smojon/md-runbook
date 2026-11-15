@@ -423,6 +423,14 @@ export function looksLikeSecretValue(v: string): boolean {
   return /[A-Za-z]/.test(v) && /\d/.test(v) && entropy(v) >= 3.5;
 }
 
+/**
+ * Adds a parsed `.env` file to a cell's environment. It goes over `mdRunbook.execution.env` but
+ * under the cell's own `env.NAME=` options (`own`): the cell is the more specific setting.
+ */
+export function withDotenv(env: Record<string, string>, vars: Record<string, string>, own: Record<string, string>): Record<string, string> {
+  return { ...env, ...vars, ...own };
+}
+
 /** The values of a parsed `.env` file to redact by exact match. */
 export function dotenvSecrets(vars: Record<string, string>): string[] {
   return Object.entries(vars)

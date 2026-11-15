@@ -25,6 +25,7 @@ import {
   parseDotenv,
   parseFrontMatter,
   rewriteRefs,
+  withDotenv,
 } from '@md-runbook/core/secrets';
 import { ALERT_PARAMS } from '@md-runbook/core/runReport';
 import { META_KEY } from './outputs';
@@ -300,7 +301,9 @@ class SecretsFeature {
       const file = resolveEnvFile(envFile, plan.cwd, ctx.notebook.uri);
       if (fs.existsSync(file)) {
         const vars = parseDotenv(await fs.promises.readFile(file, 'utf8'));
-        Object.assign(plan.env, vars);
+        // The cell's own env.NAME= options win over the file (optionsPreparer set them already).
+        const own = c.get<boolean>('cellOptions.enabled', true) ? parseCellOptions(isCodeMeta(meta) ? meta.info : '').env : {};
+        plan.env = withDotenv(plan.env, vars, own);
         // Only values that look like secrets (by name or by entropy): REGION=eu-west-1 must not be
         // redacted everywhere for the rest of the session.
         if (c.get<boolean>('redaction.redactKnownSecrets', true)) plan.secrets.push(...dotenvSecrets(vars));

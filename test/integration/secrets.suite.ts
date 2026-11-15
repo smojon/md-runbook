@@ -13,19 +13,22 @@ const echo = (text: string): string => (isWin ? `Write-Output "${text}"` : `echo
 
 const FRONT = '---\ntitle: Deploy\nparams:\n  - REGION: eu-west-1\n---\n\n# Deploy\n\n';
 
-test('.env values are injected and redacted live and on disk', async () => {
+test('.env values are injected, under the cell’s env.NAME=, and redacted live and on disk', async () => {
   const value = 'dotenv-value-12345';
-  writeFile('.env', `# test\nexport MDRB_DOTENV_TOKEN="${value}"\n`);
+  writeFile('.env', `# test\nexport MDRB_DOTENV_TOKEN="${value}"\nMDRB_ORDER=file\n`);
   await setConfig('execution.envFile', '.env');
   try {
     const ref = isWin ? '$env:MDRB_DOTENV_TOKEN' : '$MDRB_DOTENV_TOKEN';
-    const uri = writeFile('dotenv.md', `\`\`\`${LANG}\n${lengthOf('len', ref)}\n${echo(`v=${ref}`)}\n\`\`\`\n`);
+    const order = isWin ? '$env:MDRB_ORDER' : '$MDRB_ORDER';
+    // The cell's own env.NAME= wins over the .env file.
+    const uri = writeFile('dotenv.md', `\`\`\`${LANG} env.MDRB_ORDER=cell\n${lengthOf('len', ref)}\n${echo(`v=${ref}`)}\n${echo(`order=${order}`)}\n\`\`\`\n`);
     const editor = await openRunbook(uri);
     const cell = editor.notebook.cellAt(0);
     await runCells(editor, 0, 1);
     assert.equal(await waitForRun(cell), true, outputText(cell));
     assert.match(outputText(cell), /len=18/);
     assert.match(outputText(cell), /v=\[REDACTED\]/);
+    assert.match(outputText(cell), /order=cell/);
     assert.ok(await step('save', editor.notebook.save()));
     assert.doesNotMatch(read(uri), new RegExp(value));
     assert.match(read(uri), /v=\[REDACTED\]/);
