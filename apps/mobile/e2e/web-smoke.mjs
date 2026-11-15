@@ -3,6 +3,7 @@
 // console error.
 //
 //   node e2e/web-smoke.mjs [dist-dir]
+import { Buffer } from 'node:buffer';
 import { deflateRawSync } from 'node:zlib';
 import { chromium } from 'playwright';
 import { serveDist } from './serve-dist.mjs';
