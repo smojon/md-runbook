@@ -16,6 +16,9 @@ import { markerLevel, proseSetting } from '../src/lintLevel';
 import { lint } from '../src/cli/main';
 import { formatBaseline, globToRegExp, measureFile, proseWorse } from '../src/cli/prose';
 
+// On GitHub Actions the ratchet writes to the job summary: not from these tests.
+delete process.env.GITHUB_STEP_SUMMARY;
+
 /** n words, the last one ending the sentence (prose_ratchet's test helper). */
 const sentence = (n: number): string => Array(n - 1).fill('word').join(' ') + ' end.';
 const rules = (md: string, rule: string): Array<[number, string]> => checkProse(md).filter((f) => f.rule === rule).map((f) => [f.line, f.message]);
