@@ -33,7 +33,7 @@ reach the web app can read it, and it never holds a token.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `MD_RUNBOOK_PUBLIC_URL` | none: the address the page was opened from | The address users reach the web app at, such as `https://runbooks.example.net` or a tunnel's `https://….trycloudflare.com`. Share links, QR codes (Show QR Code, Share library) and pairing links start with it. `https` only (`http` only for `localhost`), with no query, fragment or `user@`. Users can override it under Hosts & settings → **Public address of this web app**. |
+| `MD_RUNBOOK_PUBLIC_URL` | none: the address the page was opened from | The address users reach the web app at, such as `https://runbooks.example.net` or a tunnel's `https://….trycloudflare.com`. Share links, QR codes (Show QR Code, Share library) and pairing links start with it. `https` only (`http` only for `localhost` or `127.0.0.1`), with no query, fragment or `user@`. Users can override it under Hosts & settings → **Public address of this web app**. |
 | `MD_RUNBOOK_LIBRARY` | `/runbooks/` | The team library's folder on the web app's own address. With `/sop/`, the app lists the runbooks at `https://<your domain>/sop/`, and the container serves the folder mounted at `/usr/share/nginx/html/sop` with the library's rules ([below](#a-team-library)). A folder path: `/name/` or `/name/sub/`, no `..`, no hidden folders, and none of the app's own paths (`/_expo/`, `/assets/`, `/runbook/`, `/hosts/`). |
 
 An invalid value stops the container with a message saying why, rather than handing out links

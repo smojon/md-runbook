@@ -6,7 +6,7 @@ pushed. The workflow:
 2. packages the extension;
 3. publishes it to the **Visual Studio Marketplace** and **Open VSX**, each only if its token
    secret is set;
-4. creates a GitHub release with the `.vsix` attached.
+4. creates a GitHub pre-release with the `.vsix` and the command line's `.tgz` attached.
 
 ## One-time setup
 
