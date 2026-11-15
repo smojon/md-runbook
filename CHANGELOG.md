@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Behaviour change, VS Code:** a runbook that requires signed run reports doesn't run without
+  a signing key, as in the CLI and the app. Set one in `mdRunbook.signing.key`. Before,
+  it ran when the report wasn't also required, and its summary went unsigned.
+- **VS Code, CodeLens runs:** with `mdRunbook.cellOptions.enabled` off, the front matter's `cwd:`
+  and `timeout:` no longer apply, as in the runbook view.
+- **Docs:** the environment order, the environment of assistant cells, and when a run of several
+  cells asks for its values.
+
 ## 0.26.4
 
 Six more docs pages follow the prose rules, and two prose check fixes.

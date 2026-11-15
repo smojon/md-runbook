@@ -11,7 +11,6 @@ import {
   CodeCellLocation,
   ExecuteResult,
   LineBuffer,
-  ShellSettings,
   exitLabel,
   formatDurationAttr,
   formatLocalIso,
@@ -23,11 +22,11 @@ import {
   setCellOutput,
 } from '@md-runbook/core';
 import { executeCell } from '@md-runbook/core/node';
-import { ExecutionConfig, SECTION, executionConfig, redactionConfig, writeOptions } from './config';
+import { SECTION, executionConfig, redactionConfig, writeOptions } from './config';
 import { workingDirectory } from './controller';
+import { editorRunOptions } from './editorRunOptions';
 import { knownSecrets } from './knownSecrets';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { currentOs, osLabel } from '@md-runbook/core/os';
 import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
 import { proposalOf } from '@md-runbook/core/proposal';
@@ -51,38 +50,6 @@ async function textEditorGuard(loc: CodeCellLocation): Promise<string | undefine
   const message = match === '' ? 'Run this block?' : `This block contains a risky command: “${match.trim()}”`;
   const answer = await vscode.window.showWarningMessage(message, { modal: true }, 'Run');
   return answer === 'Run' ? undefined : 'not confirmed';
-}
-
-interface RunOptions {
-  skip: boolean;
-  cwd: string;
-  timeoutMs: number;
-  env: Record<string, string>;
-  /** The user's shell settings with the runbook's `shell:`. */
-  shell: ShellSettings;
-  /** Invalid cell options: the block fails with this message instead of running. */
-  error?: string;
-}
-
-/**
- * The fence options of a block (`skip`, `cwd=`, `timeout=`, `env.*`), applied like the notebook's
- * options preparer: cwd relative to the .md file's folder, invalid options fail the block.
- */
-function runOptions(info: string, baseDir: string, cfg: ExecutionConfig, docText: string): RunOptions {
-  // Front matter `cwd:`, `timeout:` and `shell:` are the runbook's defaults, as in the notebook.
-  const fm = parseFrontMatter(docText);
-  const cwd = fm?.cwd ? path.resolve(baseDir, fm.cwd) : baseDir;
-  const timeoutMs = fm?.timeoutSeconds !== undefined ? fm.timeoutSeconds * 1000 : cfg.timeoutMs;
-  const shell = fm?.shell ? { ...cfg.shell, runbook: fm.shell } : cfg.shell;
-  const out: RunOptions = { skip: false, cwd, timeoutMs, env: { ...cfg.env }, shell };
-  if (!vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true)) return out;
-  const o = parseCellOptions(info);
-  if (o.errors.length > 0) out.error = `md-runbook: invalid cell option ${o.errors.join('; ')}`;
-  if (o.skip && out.error === undefined) out.skip = true;
-  if (o.timeoutSeconds !== undefined) out.timeoutMs = o.timeoutSeconds * 1000;
-  if (o.cwd !== undefined) out.cwd = path.resolve(baseDir, o.cwd);
-  Object.assign(out.env, o.env);
-  return out;
 }
 
 export const RUN_CELL = 'mdRunbook.runCellInEditor';
@@ -173,7 +140,8 @@ class EditorRunner {
     const loc = locate(doc).find((l) => l.cellIndex === cellIndex);
     if (!loc) return false;
     const cfg = executionConfig();
-    const opts = runOptions(loc.info, workingDirectory(doc.uri), cfg, doc.getText());
+    const optionsOn = vscode.workspace.getConfiguration(SECTION).get<boolean>('cellOptions.enabled', true);
+    const opts = editorRunOptions(loc.info, workingDirectory(doc.uri), cfg, doc.getText(), optionsOn);
     if (opts.skip) {
       this.channel.show(true);
       this.channel.appendLine(`[md-runbook] skipped: ${path.basename(doc.uri.fsPath || doc.uri.path)}:${loc.line + 1} (skip option)`);

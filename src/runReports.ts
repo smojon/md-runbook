@@ -40,6 +40,7 @@ import type { RunPipeline, RunRecord } from './pipeline';
 import { cellAttrs, labelOf, notebookProgress } from './progress';
 import type { SecretsInfo } from './secrets';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
+import { SIGNING_KEY_MISSING, SIGNING_KEY_MISSING_CANCEL, reportGate, summarySigning } from './reportGate';
 
 const CONSENT_KEY = 'mdRunbook.reports.consent';
 const QUEUE_KEY = 'mdRunbook.reports.queue';
@@ -118,23 +119,25 @@ class RunReports {
     return plan ? { plan, text, ...(signer ? { signer } : {}) } : undefined;
   }
 
-  /** Before a run: a required report is agreed to (or the run doesn't start), a required signature has a key. */
+  private keySet(): boolean {
+    return this.config().get<string>('signing.key', '').trim() !== '';
+  }
+
+  /** Before a run: a required signature has a key, a required report is agreed to; else the run doesn't start. */
   async willRun(nb: vscode.NotebookDocument): Promise<void | { cancel: string }> {
     this.started.set(nb.uri.toString(), Date.now());
     const p = await this.planOf(nb);
-    if (!p || !p.plan.required) return undefined;
-    if (p.plan.signed && !this.config().get<string>('signing.key', '').trim()) {
+    if (!p) return undefined;
+    const key = `${nb.uri.toString()}\n${consentKey(p.plan)}`;
+    const gate = reportGate(p.plan, { keySet: this.keySet(), agreed: this.agreed.has(key) });
+    if (gate.kind === 'go') return undefined;
+    if (gate.kind === 'refuse') {
       const open = 'Open Settings';
       void vscode.window
-        .showErrorMessage(
-          `md-runbook: this signed runbook runs only if its run summary is signed with your SSH key, and none is set. Set mdRunbook.signing.key to your key (a key file, or a .pub whose key is in the SSH agent), and give your server's allowed runners file its line (namespace md-runbook-run).`,
-          open,
-        )
+        .showErrorMessage(SIGNING_KEY_MISSING, open)
         .then((a) => a === open && vscode.commands.executeCommand('workbench.action.openSettings', 'mdRunbook.signing.key'));
-      return { cancel: 'md-runbook: not run: the runbook requires a signed run report, and mdRunbook.signing.key is not set' };
+      return { cancel: SIGNING_KEY_MISSING_CANCEL };
     }
-    const key = `${nb.uri.toString()}\n${consentKey(p.plan)}`;
-    if (this.agreed.has(key)) return undefined;
     const run = 'Run';
     const answer = await vscode.window.showWarningMessage(`md-runbook: ${p.plan.host} gets a report of this run`, { modal: true, detail: reportRequiredText(p.plan) }, run, "Don't run");
     if (answer !== run) return { cancel: 'md-runbook: not run: this runbook runs only when its runs are reported' };
@@ -164,10 +167,16 @@ class RunReports {
       alertParams: this.secrets.alertParams(nb),
     });
     if (!(await this.allowed(plan, nb))) return;
-    // Signed when a key is set; required by a runbook that may require it.
+    // Signed when a key is set; a runbook that requires it signed sends nothing unsigned.
     const keyFile = this.config().get<string>('signing.key', '').trim();
+    const signing = summarySigning(plan, keyFile !== '');
+    if (signing === 'refuse') {
+      // The key was removed after the run started.
+      void vscode.window.showWarningMessage(`md-runbook: the run report to ${plan.host} was not sent: it must be signed, and mdRunbook.signing.key is not set`);
+      return;
+    }
     let body: string;
-    if (keyFile) {
+    if (signing === 'sign') {
       try {
         body = reportBody(summary, { signature: await signRunSummary(summary, home(keyFile), { interactive: false }) });
       } catch (e) {
