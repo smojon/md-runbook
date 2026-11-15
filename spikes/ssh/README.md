@@ -44,8 +44,8 @@ runs; 20,000 lines of output.
   need the app's own key. That fits: **P-256 is what the iPhone Secure Enclave and the Android
   Keystore hold**, so the app's key can live in hardware.
 - **Key files:** the library can't read OpenSSH's newer private key format (`BEGIN OPENSSH
-  PRIVATE KEY`, "Failed to decrypt key" even unencrypted), nor the PKCS#8 that **macOS's**
-  `ssh-keygen -m PKCS8` writes ("Expected 6 data type, found : 48", also in Node on the Mac;
+  PRIVATE KEY`, `Failed to decrypt key` even unencrypted), nor the PKCS#8 that **macOS's**
+  `ssh-keygen -m PKCS8` writes (`Expected 6 data type, found : 48`, also in Node on the Mac;
   Linux's works). Keys the library makes itself work everywhere: the app generates its own key
   (as it should anyway) and shows its public key to add to `authorized_keys`. Importing keys
   users already have would need a converter.

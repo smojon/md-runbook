@@ -89,8 +89,9 @@ describe('prose parity with prose_ratchet.py (its tests, the same counts)', () =
 
   // The rules as the author of prose_ratchet.py states them.
   it('a sentence ends at . ! ? with closing marks, before a letter or digit; · ends one too', () => {
-    // The closing marks go with the space that ends the sentence (as there: the words are the same).
-    assert.deepEqual(proseSentences('Stop! Go? "Yes." (Fine.) **Bold.** 4 left. a b'), ['Stop!', 'Go?', '"Yes.', '(Fine.', 'Bold.', '4 left.', 'a b']);
+    // The closing marks go with the space that ends the sentence (as there: the words are the same);
+    // a quotation keeps its marks.
+    assert.deepEqual(proseSentences('Stop! Go? "Yes." (Fine.) **Bold.** 4 left. a b'), ['Stop!', 'Go?', '"Yes."', '(Fine.', 'Bold.', '4 left.', 'a b']);
     assert.deepEqual(proseSentences('One · two · three'), ['One', 'two', 'three']);
     assert.deepEqual(proseSentences('See e.g. this, i.e. that, etc. vs. them, cf. those and v0.25.1 here.'), [
       'See e.g. this, i.e. that, etc. vs. them, cf. those and v0.25.1 here.',
@@ -735,19 +736,6 @@ describe('prose: counting traps, labels, quotations, a box that says the box abo
     assert.equal(checkProse('> 💡 **Did you know?** — ' + four + '\n').filter((f) => f.rule === 'prose-paragraph').length, 0); // a box
   });
 
-  it('a sentence that is mostly a direct quotation is not too long; other rules still apply', () => {
-    const quote = 'the processing of personal data shall be lawful only if and to the extent that at least one of the following applies';
-    assert.deepEqual(rules(`Article 6 says: “${quote}”.\n`, 'prose-sentence'), []);
-    assert.deepEqual(rules(`Article 6 says: "${quote}".\n`, 'prose-sentence'), []);
-    assert.deepEqual(rules(`Article 6 says «${quote}».\n`, 'prose-sentence'), []);
-    // The quote is under 60 % of the sentence: too long.
-    assert.equal(rules(`The team wrote this down in its notes for the review next week, with the checks we planned: "lawful only if one applies here".\n`, 'prose-sentence').length, 1);
-    // A quote that runs on into the next sentence counts to the end.
-    assert.deepEqual(rules(`It says: “${quote}. The controller shall be responsible for and be able to demonstrate compliance with paragraph one of this article in every single case”.\n`, 'prose-sentence'), []);
-    // Still a paragraph of its words, still padding.
-    assert.equal(rules(`Basically it says: “${quote}”.\n`, 'prose-padding').length, 1);
-  });
-
   it('a box that says what the box above it in the same section says: flagged on the later box', () => {
     const msg = 'Says what the box above says: cut one';
     const first = '> 🔑 **Key point** · The gateway checks every token against the issuer.\n\n';
@@ -758,6 +746,101 @@ describe('prose: counting traps, labels, quotations, a box that says the box abo
     assert.deepEqual(rules(first + '> 💡 **Did you know?** · The gateway checks every token only against the issuer.\n', 'prose-box-repeat'), []);
     // A new lesson: kept.
     assert.deepEqual(rules(first + '> 💡 **Did you know?** · Rotated signing keys reach the proxy within a minute.\n', 'prose-box-repeat'), []);
+  });
+});
+
+describe('prose: quotations', () => {
+  /** n words of a quotation, without a mark at the end. */
+  const words = (n: number): string => Array.from({ length: n }, (_, i) => `w${i}`).join(' ');
+  const source = 'Quote without a source: link it in the same paragraph';
+
+  it('a quotation counts as one word, wherever it is: no sentence or paragraph is too long for it', () => {
+    // 9 words of the writer's own and a quotation of 30: 10 words.
+    const s = `The data protection law of the union says this: “${words(30)}”.`;
+    assert.equal(proseWords(s), 10);
+    assert.deepEqual(rules(s + '\n', 'prose-sentence'), []);
+    assert.deepEqual(rules(`“${words(30)}”, the law says, and then it stops.\n`, 'prose-sentence'), []);
+    // Three such sentences: 30 words, not 117.
+    assert.deepEqual(rules(`${s} ${s} ${s}\n`, 'prose-paragraph'), []);
+    // The writer's own words still count.
+    assert.equal(rules(`${sentence(21).slice(0, -1)} “${words(6)}”.\n`, 'prose-sentence').length, 1);
+  });
+
+  it("marks inside a quotation end no sentence; its own last mark ends its sentence, but not before lowercase", () => {
+    assert.deepEqual(proseSentences('He wrote “Stop.” Then he left.'), ['He wrote “Stop.”', 'Then he left.']);
+    assert.deepEqual(proseSentences('It said “No.”'), ['It said “No.”']);
+    assert.deepEqual(proseSentences('“Stop!” he said. Then go.'), ['“Stop!” he said.', 'Then go.']);
+    assert.deepEqual(proseSentences('He said “Run it. Then wait? Then check!” and left.'), ['He said “Run it. Then wait? Then check!” and left.']);
+    assert.deepEqual(proseSentences('It said “No”. Then go.'), ['It said “No”.', 'Then go.']);
+  });
+
+  it('straight quotes: after a space or bracket, before a space or punctuation; never an inch mark', () => {
+    assert.deepEqual(proseSentences('He said "Run it. Then stop" and left. Fine.'), ['He said "Run it. Then stop" and left.', 'Fine.']);
+    assert.equal(proseWords('He said ("one two three four") here.'), 4);
+    assert.equal(proseWords('Cut a 3" pipe and a 5" pipe here.'), 9);
+    assert.deepEqual(proseSentences('Use a 3" pipe. Then cut it to 5".'), ['Use a 3" pipe.', 'Then cut it to 5".']);
+    assert.equal(proseWords('Set name="one two three" here.'), 5);
+  });
+
+  it('«…» is a quotation too', () => {
+    assert.equal(proseWords('Il dit «une phrase de six mots ici. Puis» et part.'), 5);
+    assert.deepEqual(proseSentences('Il dit «Non.» Puis il part.'), ['Il dit «Non.»', 'Puis il part.']);
+  });
+
+  it('no phrase rule reads a quotation', () => {
+    assert.deepEqual(rules('The guide says “basically run it simply, of course”. Basically go.\n', 'prose-padding'), [[0, 'Delete "Basically"']]);
+    assert.deepEqual(rules('"Note that it waits," the page says.\n', 'prose-opener'), []);
+    assert.deepEqual(rules('"This section describes the gateway," it says.\n', 'prose-announcing'), []);
+    assert.deepEqual(rules('- The gate checks it.\n- "It refuses," the log says.\n', 'prose-list-lean'), []);
+    assert.deepEqual(rules('## Restart the gateway\n\nThe page says “restart the gateway”.\n', 'prose-heading'), []);
+  });
+
+  it('the same quotation in 3 files is no duplicate; the writer\'s own words still are', () => {
+    const files = (text: string): Array<{ name: string; text: string }> => ['a', 'b', 'c'].map((n) => ({ name: `${n}.md`, text: `Intro of ${n}.\n\n${text}\n` }));
+    assert.equal(proseDuplicates(files(`The standard says: “${words(15)}”.`)).size, 0);
+    assert.equal(proseDuplicates(files(`> ${words(15)}.\n> — Ada Lovelace`)).size, 0);
+    assert.equal(proseDuplicates(files(`If the lab is down, the steps marked setup start it: “${words(3)}”.`)).size, 3);
+  });
+
+  it('the source hint: a quotation of 6 words or more with no link in its paragraph, item or box', () => {
+    assert.deepEqual(rules(`The standard says: “${words(6)}”.\n`, 'prose-quote-source'), [[0, source]]);
+    assert.deepEqual(rules(`- It says: "${words(6)}".\n`, 'prose-quote-source'), [[0, source]]);
+    assert.deepEqual(rules(`> 💡 **Did you know?** · It says: “${words(8)}”.\n`, 'prose-quote-source'), [[0, source]]);
+    // A link or a URL in the same unit: sourced.
+    assert.deepEqual(rules(`The [standard](https://example.org/s) says: “${words(6)}”.\n`, 'prose-quote-source'), []);
+    assert.deepEqual(rules(`It says: “${words(6)}”. See https://example.org/s.\n`, 'prose-quote-source'), []);
+    // In a box, a link anywhere in it: its source is often its last line.
+    const box = `> 💡 **Did you know?** · A breach.\n>\n> - The attackers \"${words(8)}\".\n> - More.\n>\n> The end. ([Report, 2018](https://example.org/r))\n`;
+    assert.deepEqual(rules(box, 'prose-quote-source'), []);
+    assert.deepEqual(rules(box.replace(/ \(\[Report.*\)\)/, ''), 'prose-quote-source'), [[2, source]]);
+    // A link in another paragraph doesn't count; a shorter quotation needs none.
+    assert.deepEqual(rules(`See [the standard](https://example.org/s).\n\nIt says: “${words(6)}”.\n`, 'prose-quote-source'), [[2, source]]);
+    assert.deepEqual(rules(`It says: “${words(5)}”.\n`, 'prose-quote-source'), []);
+    // A code span is not a source.
+    assert.deepEqual(rules(`It says \`[a](b)\`: “${words(6)}”.\n`, 'prose-quote-source'), [[0, source]]);
+    // Info, a warning with prose: strict.
+    const md = `It says: “${words(6)}”.\n`;
+    assert.deepEqual(lintRunbook(md).filter((p) => p.code === 'prose-quote-source').map((p) => p.severity), ['info']);
+    assert.deepEqual(lintRunbook('---\nprose: strict\n---\n' + md).filter((p) => p.code === 'prose-quote-source').map((p) => p.severity), ['warning']);
+  });
+
+  it('a block quote whose last line is its source is a quotation: not checked', () => {
+    const long = `${sentence(25).slice(0, -1)}, basically. Note that it says so.`;
+    assert.deepEqual(checkProse(`> ${long}\n> — Ada Lovelace\n`), []);
+    assert.deepEqual(checkProse(`> ${long}\n>\n> -- Ada Lovelace\n`), []);
+    assert.deepEqual(checkProse(`> ${long}\n> [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110)\n`), []);
+    assert.equal(measureProse(`Mine.\n\n> ${long}\n> — Ada Lovelace\n`).count, 1);
+    // No source line, a source line not last, or a box: checked.
+    assert.equal(rules(`> ${long}\n`, 'prose-sentence').length, 1);
+    assert.equal(rules(`> — Ada Lovelace\n> ${long}\n`, 'prose-sentence').length, 1);
+    assert.equal(rules(`> 💡 **Did you know?** · ${long}\n> — Ada Lovelace\n`, 'prose-padding').length, 1);
+  });
+
+  it('a quotation over lines: its line is where it opens, the lines after it stay right', () => {
+    const md = `He wrote:\n“${words(4)}\n${words(4)}.” Then ${sentence(21)}\n`;
+    assert.deepEqual(rules(md, 'prose-quote-source'), [[1, source]]);
+    assert.deepEqual(lines(md, 'prose-sentence'), [2]);
+    assert.deepEqual(proseSentences(`He said "${words(3)}\n${words(3)}" and left.`), [`He said "${words(3)} ${words(3)}" and left.`]);
   });
 });
 

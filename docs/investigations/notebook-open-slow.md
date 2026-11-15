@@ -23,7 +23,7 @@ while direct reads of the same file at the same moment took 50 to 100 ms.
 - **Why, from Chromium's source (read 2026-10-20):** CSS `visibility: hidden` on an out-of-process
   iframe makes Blink report the frame as "not rendered", the browser process then hides the frame's
   widget, the renderer process has no visible widget left and gets `IDLE_PRIORITY_CLASS` plus
-  Windows EcoQoS ("efficiency mode"). Section "Why a hidden frame becomes an Idle process".
+  Windows EcoQoS ("efficiency mode"). Section [Why a hidden frame becomes an Idle process](#why-a-hidden-frame-becomes-an-idle-process).
 - **Without patching VS Code:** nothing elegant. The warmup is unconditional, no setting skips it,
   and `argv.json` cannot carry the flag (checked in the 1.142.0 build). The one lever an extension
   has is to raise the webview process's priority itself from the extension host (Windows only,
@@ -465,7 +465,7 @@ Status on 2026-10-20, end of session:
 - Open: whether the "window detected unresponsive" hang (series 1, open 2) is the same cause or a
   second effect of heavy load; it did not recur in later series.
 - [x] The exact Chromium rule that puts the webview's process at Idle: read from Chromium's source
-      on 2026-10-20 (section "Why a hidden frame becomes an Idle process").
+      on 2026-10-20 (section [Why a hidden frame becomes an Idle process](#why-a-hidden-frame-becomes-an-idle-process)).
 - [x] Looked for a way around it without patching VS Code (settings, file shape, argv.json, the
       webview's own scripts): none; only the Windows-only priority nudge from the extension host,
       not recommended (section "What md-runbook can do").

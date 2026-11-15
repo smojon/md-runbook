@@ -45,9 +45,9 @@ Markdown editor:
 
 The Quick Fix renames the option on the block's fence and keeps its value as written.
 
-Once a runbook has a run recorded ([run history](history.md#run-history)), the runbook view gives
-a hint: "This step has never run here." It shows on a code step that never ran in any recorded
-run and has no output now. The hint is information, not a warning.
+The runbook view marks a code step that never ran in a recorded run
+([run history](history.md#run-history)) and has no output now. The hint is information, not a
+warning: `This step has never run here.`
 
 The command line and the app don't have it: the records are kept by VS Code on this machine.
 
@@ -113,6 +113,7 @@ simple, stupid. It doesn't judge whether a sentence is useful; you do.
 | Box in paragraphs | a box with a blank `>` line between two paragraphs (not around a list) | `Box in 2 paragraphs: make it one` |
 | Box repeats | a box's first sentence says a sentence of the paragraph right above it again (60 % of its content words, or 4 in a row) | `Box repeats this sentence: cut it here, keep the box` (on that sentence) |
 | Box repeats a box | the same, against the box before it in the section | `Says what the box above says: cut one` (on the later box) |
+| Quote without a source | a quotation of 6 words or more, with no link in its paragraph, list item or box: see [Quotations](#quotations) | `Quote without a source: link it in the same paragraph` |
 | Said in several files | only on the command line, over many files: see [A whole repository](#a-whole-repository) | `Said in 3 files: say it once and link it` |
 
 A file's average (at most 15 words a sentence) is no note any more; the ratchet still records
@@ -138,15 +139,13 @@ How text is read:
 - Prose is the text outside the front matter, code blocks, HTML comments, tables, headings,
   images and HTML lines. md-runbook's own blocks (outputs, signatures, notes) are not prose.
 - A paragraph, a list item and a quote are each a unit. A nested item is a unit of its own.
-- A code span, a link or a URL counts as one word.
+- A code span, a link, a URL or a quotation counts as one word.
 - A sentence ends at `.`, `!` or `?` before a space and a letter or digit; ` · ` ends one too.
 - No sentence ends at `e.g.`, `i.e.`, `etc.`, `vs.` or a version number (`0.25.1`).
 - Nor at initials (`L. Peter Deutsch`), `no.` before a number, or a label's `?` in running
   text (`a Did you know? box`).
 - Nor in a code span, or at a `?` in emphasis before lowercase (`*Up?* turns red`).
 - Links in parentheses alone (`([source](…), [paper](…))`) are a citation, not a sentence.
-- A sentence that is mostly a direct quotation has no length limit: a verbatim quote can't be
-  shortened. The quote is in `"…"`, `“…”` or `«…»`, of 6 words or more, and 60 % of the sentence.
 
 The counting is the same as a sister project's `prose_ratchet.py`, except for fences, and the
 baseline file has its shape. md-runbook reads fences as CommonMark does (a ```` fence can hold
@@ -202,6 +201,27 @@ Set other box limits, or turn boxes off, in `.md-runbook-prose.json`:
 ```
 
 With `"boxes": false` a labelled paragraph keeps 3 and 60, and the box hints are off.
+
+### Quotations
+
+A quotation is in `“…”`, `«…»` or `"…"`. A straight `"` opens after a space or a bracket, so
+`a 3" pipe` holds none.
+
+- A quotation counts as one word: it never makes a sentence or a paragraph too long.
+  - No rule reads its words: a `basically` in it is the source's.
+  - The same quote in 3 files is no duplicate.
+  - A `.`, `?` or `!` inside it ends no sentence; its own last one does (`He wrote “Stop.” Then…`).
+- Quote word for word, from the source you link. Shorten the words around a quote, never the quote.
+- A quotation of 6 words or more needs a link in its paragraph, list item or box.
+- Write a program's messages and output as code, between backticks, not in quotation marks. The
+  source hint then fires on people's words only.
+- A block quote whose last line is its source (a link, or `— Name`) is a quotation as a whole. It
+  isn't checked, and needs no other source:
+
+```markdown
+> Every step is checked before it runs.
+> — The team's runbook policy
+```
 
 ## A whole repository
 

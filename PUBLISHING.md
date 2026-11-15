@@ -46,7 +46,7 @@ this repository's `release.yml` because the package says so:
   - organization or user `smojon`;
   - repository `md-runbook`;
   - workflow filename `release.yml` (no environment).
-- Below it, **Publishing access**: "Require two-factor authentication and disallow tokens" is the
+- Below it, **Publishing access**: **Require two-factor authentication and disallow tokens** is the
   safest choice once trusted publishing works. It doesn't affect the workflow.
 
 A package must exist before it can have a trusted publisher. So a new package (for example after

@@ -1,7 +1,7 @@
 # Running another runbook as one step
 
 A procedure that is the same every time often wraps a part that changes every time. An upgrade
-is always "where am I, the way back is ready, checks green before, deploy, checks green after".
+is always: where am I, the way back is ready, checks green before, deploy, checks green after.
 
 What each release changes is in its own file. A `runbook` block runs that file as **one step** of
 the current runbook:

@@ -123,7 +123,7 @@ in the chat:
 | Runbook Run State | `#runbookState` | Reads where the run is. Changes nothing. |
 | Propose Runbook Step | `#proposeRunbookStep` | Adds one step as a [proposed cell](#proposed-cells). Runs nothing. |
 
-For example: *"#runbookState why did the rollout fail? Propose a read-only check."*
+For example: `#runbookState why did the rollout fail? Propose a read-only check.`
 
 **Runbook Run State** reads the runbook in front, or the one that runs or waits for you. The
 agent can also name another open runbook by path or file name. It returns plain text:
