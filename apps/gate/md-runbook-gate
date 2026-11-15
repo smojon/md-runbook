@@ -11,7 +11,7 @@
 #
 # The client (the md-runbook app) speaks a line protocol on stdin; replies end with the same
 # end-of-cell marker as a plain shell session (\036__MDRB_<id>__ <exit>, on stdout and stderr).
-#   : mdrb-gate-hello ID; ...           -> banner \036__MDRB_GATE__ 1 unsigned=allow|refuse, marker with the shell's pid
+#   : mdrb-gate-hello ID; ...           -> banner \036__MDRB_GATE__ PROTOCOL unsigned=allow|refuse (PROTOCOL: GATE_PROTOCOL below), marker with the shell's pid
 #   called ID HASH N                  -> (protocol 2) the next load is the runbook called by call N of the
 #                                        runbook with manifest sha256 HASH: logged with that load (what the
 #                                        app says, for the audit; it grants nothing)

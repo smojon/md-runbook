@@ -2,8 +2,9 @@
 
 A small SSH server for running runbooks against your clusters from the md-runbook app. It is
 an ordinary host in the app, but every login goes to md-runbook-gate, and `kubectl` is
-installed. Cluster credentials stay on this host and never reach a phone. The guide is
-[docs/features/kubernetes.md](../../docs/features/kubernetes.md).
+installed. Cluster credentials stay on this host and never reach a phone.
+
+The guide is [docs/features/kubernetes.md](../../docs/features/kubernetes.md).
 
 - **sshd** runs as the account `ops` (uid 10001), not as root, on port 2222. It accepts keys
   only: no passwords, no forwarding, no terminal.
@@ -78,9 +79,12 @@ docker compose --profile ops up -d
 ```
 
 Phones connect to port 2222 of that machine. The web app goes through the relay: add
-`ops:2222` to `RELAY_TARGETS`. Outside a cluster, kubectl needs a kubeconfig in
-`ops/kubeconfig/config`. Use a service account token with the rights above, not your own login.
-The cloud logins of EKS, GKE and AKS need their own CLIs, which this image doesn't have, so that
+`ops:2222` to `RELAY_TARGETS`.
+
+Outside a cluster, kubectl needs a kubeconfig in `ops/kubeconfig/config`. Use a service account
+token with the rights above, not your own login.
+
+The cloud logins of EKS, GKE and AKS need their own CLIs, which this image doesn't have. So this
 is one more reason to run the host inside the cluster.
 
 ## md-runbook-probe
@@ -95,31 +99,44 @@ For each target, the probe:
 1. looks up the name in DNS;
 2. opens a TCP connection;
 3. on TLS ports (443, 6443, 8443 and the like, with `--tls`, or for `tls://host:port`), checks
-   the certificate: it must be trusted, be for that name, and not expire within `--days`
-   (default 14). `--ca FILE` trusts that CA in addition to the system's CAs, `--ca-only FILE`
-   trusts it alone.
+   the certificate:
+   - it must be trusted;
+   - it must be for that name;
+   - it must not expire within `--days` (default 14).
 
-It prints one line per target, and its exit code is 1 when any check failed, so a cell fails
-on it. `--ping` also pings. ICMP is often blocked, and a container may not be allowed to send
-it, in which case the line says so. `--format json` and `--format prometheus` print the same
-checks for other programs, with labels from `--label NAME=VALUE` or per target
-(`tls://web:8443 component=proxy`) ([all options](../../docs/features/kubernetes.md#options)).
+   `--ca FILE` trusts that CA in addition to the system's CAs, `--ca-only FILE` trusts it alone.
+
+It prints one line per target. Its exit code is 1 when any check failed, so a cell fails on it.
+
+- `--ping` also pings. ICMP is often blocked, and a container may not be allowed to send it. In
+  that case the line says so.
+- `--format json` and `--format prometheus` print the same checks for other programs. Labels
+  come from `--label NAME=VALUE` or per target (`tls://web:8443 component=proxy`)
+  ([all options](../../docs/features/kubernetes.md#options)).
 
 To run only the probe, e.g. as a Pod next to your services, use the
-[probe image](../probe/README.md): no sshd, no gate, no kubectl.
+[probe image](../probe/README.md). It has no sshd, no gate, no kubectl.
 
 What keeps it as safe as the rest:
 - **It runs only as a cell**, through the gate: signed runbooks only, unless `gate.conf` allows
-  unsigned cells. A target is a host name, an IP address or a URL, and nothing else gets
-  through: no option for openssl or ping, no spaces, no shell characters.
-- **It writes an audit event for every check** to the gate's log, which is also the container's
-  output. Each event records the key, the client, the signed run that started the check, the
-  target, its address, the result, and the certificate's expiry and SHA-256 fingerprint.
+  unsigned cells. A target is a host name, an IP address or a URL. Nothing else gets through:
+  no option for openssl or ping, no spaces, no shell characters.
+- **The probe writes an audit event for every check** to the gate's log, which is also the
+  container's output. Each event records:
+  - the key, the client, and the signed run that started the check;
+  - the target, its address and the result;
+  - the certificate's expiry and SHA-256 fingerprint.
+
   `md-runbook audit` lists these events under Endpoint checks. Here `gate.conf` alone decides
   where they go; `MD_RUNBOOK_PROBE_LOG` only applies where no gate runs the probe.
 - **Export Report shows the checks** of a run record (an incident or a drill) in an Endpoint
-  checks table: when each check ran, which endpoint, up or not, and when its certificate
-  expires. The JSON export has the same data.
+  checks table:
+  - when each check ran;
+  - which endpoint;
+  - up or not;
+  - when its certificate expires.
+
+  The JSON export has the same data.
 
 ## Build it
 
@@ -129,6 +146,8 @@ docker build -t md-runbook-ops -f apps/ops/Dockerfile apps
 
 The build context is `apps/`, because the image includes the gate from `apps/gate`.
 `KUBECTL_VERSION` (a build argument) picks kubectl, and the build checks the download against
-its published SHA-256. Each md-runbook release publishes the image as
-`ghcr.io/smojon/md-runbook-ops`. The [Ops host workflow](../../.github/workflows/ops.yml) tests
+its published SHA-256.
+
+Each md-runbook release publishes the image as `ghcr.io/smojon/md-runbook-ops`. The
+[Ops host workflow](../../.github/workflows/ops.yml) tests
 it in a kind cluster and outside one.

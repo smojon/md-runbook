@@ -1,17 +1,20 @@
 # Publishing
 
 Releases are published by GitHub Actions (`.github/workflows/release.yml`) when a version tag is
-pushed. The workflow runs the full test matrix (Windows, macOS, Linux), packages the extension,
-publishes it to the **Visual Studio Marketplace** and **Open VSX** (each only if its token secret
-is set), and creates a GitHub release with the `.vsix` attached.
+pushed. The workflow:
+1. runs the full test matrix (Windows, macOS, Linux);
+2. packages the extension;
+3. publishes it to the **Visual Studio Marketplace** and **Open VSX**, each only if its token
+   secret is set;
+4. creates a GitHub pre-release with the `.vsix` and the command line's `.tgz` attached.
 
 ## One-time setup
 
 ### Visual Studio Marketplace
 
 1. Sign in at <https://marketplace.visualstudio.com/manage> with a Microsoft account and create a
-   **publisher** with the ID `smojon` (the `publisher` field in `package.json`; change that field
-   if you pick another ID).
+   **publisher** with the ID `smojon`. This ID is the `publisher` field in `package.json`; change
+   that field if you pick another ID.
 2. In Azure DevOps (<https://dev.azure.com>, any organization) open **User settings → Personal
    access tokens → New token**:
    - Organization: **All accessible organizations**
@@ -39,16 +42,19 @@ It uses npm's **trusted publishing**: no npm token is stored anywhere. npm accep
 this repository's `release.yml` because the package says so:
 
 - On <https://www.npmjs.com/package/md-runbook/access> (signed in as the package's owner), under
-  **Trusted Publisher**, choose **GitHub Actions** and enter organization or user `smojon`,
-  repository `md-runbook`, workflow filename `release.yml` (no environment).
+  **Trusted Publisher**, choose **GitHub Actions**. Enter:
+  - organization or user `smojon`;
+  - repository `md-runbook`;
+  - workflow filename `release.yml` (no environment).
 - Below it, **Publishing access**: "Require two-factor authentication and disallow tokens" is the
-  safest choice once trusted publishing works; it doesn't affect the workflow.
+  safest choice once trusted publishing works. It doesn't affect the workflow.
 
-A package must exist before it can have a trusted publisher, so a new package (for example after
-a rename) needs one publish with a token first: a granular access token with **Read and write**
-for all packages and **Bypass two-factor authentication**, stored as the repository secret
-`NPM_TOKEN` and given to the publish step as `NODE_AUTH_TOKEN`. Delete both once the trusted
-publisher is set.
+A package must exist before it can have a trusted publisher. So a new package (for example after
+a rename) needs one publish with a token first. Use a granular access token with **Read and
+write** for all packages and **Bypass two-factor authentication**.
+
+Store it as the repository secret `NPM_TOKEN`, and give it to the publish step as
+`NODE_AUTH_TOKEN`. Delete both once the trusted publisher is set.
 
 To check the package without publishing:
 `npm run compile && node scripts/pack-cli.js && (cd out/npm && npm pack --dry-run)`.
@@ -56,7 +62,7 @@ To check the package without publishing:
 ### Repository
 
 - The Marketplace page shows the README. Its screenshots use relative paths, which `vsce`
-  rewrites to `https://github.com/smojon/md-runbook/raw/HEAD/...`, so they only display when the
+  rewrites to `https://github.com/smojon/md-runbook/raw/HEAD/...`. So they only display when the
   repository is **public** and the images are on the default branch.
 - The extension name `md-runbook` must be free on both stores. If it is taken, change `name`
   (and optionally `displayName`) in `package.json`.

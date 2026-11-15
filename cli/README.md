@@ -1,9 +1,11 @@
 # md-runbook
 
 Run the shell blocks of a **Markdown runbook** from the command line, in CI, on servers or on a
-schedule, and keep their output in the same `.md` file. It is the command-line runner of the
+schedule. Their output is kept in the same `.md` file.
+
+It is the command-line runner of the
 [Markdown Runbook](https://marketplace.visualstudio.com/items?itemName=smojon.md-runbook) VS Code
-extension: the same file format, cell options, checks and secret redaction.
+extension. It has the same file format, cell options, checks and secret redaction.
 
 ```sh
 npx md-runbook run deploy.md --param TARGET=staging --report report.html --junit junit.xml
@@ -28,13 +30,17 @@ deployment "web" successfully rolled out
   `${param:NAME}` from `--param` or the front matter. Secrets are redacted from everything
   printed and written.
 - **Safe by default:** risky commands (`rm -rf`, `delete`, `--force`, …) don't run without
-  `--yes` (a run that has any stops before its first step and lists them), and cells proposed or
+  `--yes`. A run that has any stops before its first step and lists them. Cells proposed or
   written by an AI assistant never run.
-- **Part of a runbook:** `--from 6` resumes at the step a run stopped at (numbered as the run
-  prints them), `--to 9` ends earlier, and `--section "3."` runs the steps under the headings
-  that start with that text.
-- **Reports:** the filled-in runbook, `--report` (HTML), `--pdf` (with the Chrome or Edge already
-  installed), `--junit` (one test case per step), and a job summary on GitHub Actions.
+- **Part of a runbook:** `--from 6` resumes at the step a run stopped at, numbered as the run
+  prints them. `--to 9` ends earlier. `--section "3."` runs the steps under the headings that
+  start with that text.
+- **Reports:**
+  - the filled-in runbook;
+  - `--report` (HTML);
+  - `--pdf` (with the Chrome or Edge already installed);
+  - `--junit` (one test case per step);
+  - a job summary on GitHub Actions.
 - **Checks without running:** `md-runbook lint runbooks/*.md` reports invalid or unknown cell
   options and placeholders with nothing behind them, with GitHub annotations on pull requests.
 - **Notifications:** with `MD_RUNBOOK_NOTIFY_URL` set, a failed run posts a summary to Slack,

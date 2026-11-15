@@ -28,7 +28,7 @@ if [ -n "$public" ]; then
     case "$public" in
         https://?*) ;;
         http://localhost | http://localhost:* | http://127.0.0.1 | http://127.0.0.1:*) ;;
-        *) fail "MD_RUNBOOK_PUBLIC_URL must be an https:// address (http:// only for localhost): $public" ;;
+        *) fail "MD_RUNBOOK_PUBLIC_URL must be an https:// address (http:// only for localhost or 127.0.0.1): $public" ;;
     esac
     # An address only: no query, fragment, user name, quotes or blanks (it goes into JSON as it is).
     if printf '%s' "$public" | grep -q '[^]A-Za-z0-9._~:/%[-]'; then
