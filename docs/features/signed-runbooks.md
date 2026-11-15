@@ -57,7 +57,11 @@ do (a gate refuses a step bash can't read on its own at run time); sign there fo
   a FIDO `sk-` key, or a `.pub` whose key is in the SSH agent. Keys with a passphrase sign on
   the command line (it asks), or through the agent in VS Code.
 - **Signing again** keeps the name, scopes and patterns and counts the version up. Options given
-  now win. `--expires` is not carried over.
+  now win. `--expires` is not carried over. Signing an unsigned source into a signed copy
+  (`--out signed/deploy.md`) counts on from that copy's version when it is the same runbook (the
+  same signed name), and the result line says so (`version 3 (previous: 2 in signed/deploy.md)`).
+  A `--version` that isn't above the copy's is signed as asked, with a note: servers and team
+  libraries that saw the copy's version refuse a lower or equal one.
 - `verify` prints what the signature covers, the manifest's sha256, and any block changed since
   signing (with its line). Only with `--allowed-signers` does it check the signature as the gate
   would: without it, the signer's name is just what the file says (anyone can write a name next

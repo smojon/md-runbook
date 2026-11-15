@@ -24,7 +24,7 @@ import { PAIR_SHOW_MS, PairDeviceCard, PairScreen } from '../screens/Pairing';
 import { fromPublicUrl, openLinkBase, publicBaseOf, toPublicRelayUrl, toPublicUrl } from '../settings/publicAddress';
 import { loadRuntimeConfig, parseRuntimeConfig, resetRuntimeConfig, runtimeConfig } from '../settings/runtimeConfig';
 import { resetSettings, setLibraryUrl, setOutputSetting, setPublicUrl } from '../settings/store';
-import { resetTrustedSigners, trustedSigners } from '../signing/trust';
+import { loadTrustedSigners, resetTrustedSigners, trustSigners, trustedSigners } from '../signing/trust';
 import { compareWithHint, hintsFrom, resetSignerHints, signerHintFor } from '../pairing/signerHints';
 import {
   getRelaySettings,
@@ -555,6 +555,29 @@ describe('the screens', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('Pair a device: the signers name each library at the public address, also when it changes while the card is open', async () => {
+    await setRelaySettings({ url: 'wss://relay.example.net', token: TOKEN });
+    onTheWeb('https://runbook.lab.example');
+    await loadTrustedSigners();
+    trustSigners(
+      [{ principals: ['ops@lab.example'], keyType: 'ssh-ed25519', key: 'AAAA', fingerprint: FP_A }],
+      'https://runbook.lab.example/runbooks/',
+    );
+    await render(<PairDeviceCard onClose={() => undefined} />);
+    await waitFor(() => expect(screen.getByTestId('pair-with-signers')).toBeTruthy());
+    const signersInLink = async (): Promise<unknown> => {
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('pair-copy-link'));
+      });
+      const read = decodePairing(jest.mocked(Clipboard.setStringAsync).mock.calls.at(-1)![0]);
+      return 'pairing' in read ? read.pairing.signers : read;
+    };
+    expect(await signersInLink()).toEqual([{ library: 'https://runbook.lab.example/runbooks/', fingerprints: [FP_A] }]);
+    // The user sets the public address (a tunnel) with the card open: the next code names it.
+    await act(async () => setPublicUrl(PUBLIC));
+    expect(await signersInLink()).toEqual([{ library: PUBLIC + '/runbooks/', fingerprints: [FP_A] }]);
   });
 
   it('Pair a device without a relay set up: says what to do first', async () => {

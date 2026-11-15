@@ -21,6 +21,7 @@ import { decodePairing, encodePairing, pairingLink } from '../pairing/payload';
 import { capturePairingFragment, clearPendingPairing, pairingFragmentInRoute, pendingPairing } from '../pairing/pending';
 import { hintsFrom, rememberSignerHints } from '../pairing/signerHints';
 import { publicBaseOf, toPublicRelayUrl } from '../settings/publicAddress';
+import { usePublicUrlSetting } from '../settings/store';
 import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { loadTrustedSigners, useTrustedSigners } from '../signing/trust';
 import { appPublicKeyLine } from '../ssh/appKey';
@@ -47,6 +48,8 @@ export function PairDeviceCard({ onClose }: { onClose(): void }) {
   const { width } = useWindowDimensions();
   const hosts = useHosts();
   useRuntimeConfig();
+  // The public address (setting or container) names the libraries in the code: re-render when it changes.
+  usePublicUrlSetting();
   /** null while it is read. */
   const [relay, setRelay] = useState<RelaySettings | undefined | null>(null);
   useEffect(() => {
@@ -62,7 +65,6 @@ export function PairDeviceCard({ onClose }: { onClose(): void }) {
   useEffect(() => {
     void loadTrustedSigners();
   }, []);
-  const signerHints = useMemo(() => hintsFrom(trusted), [trusted]);
   const [withSigners, setWithSigners] = useState(true);
   const [hidden, setHidden] = useState(false);
   /** Bumped by Show again: the minute starts over. */
@@ -74,6 +76,9 @@ export function PairDeviceCard({ onClose }: { onClose(): void }) {
     return () => clearTimeout(timer);
   }, [hidden, shown]);
   const pub = publicBaseOf();
+  // Each library at the public address as it is now (a change of address while the card is open counts).
+  const publicAddress = pub?.base;
+  const signerHints = useMemo(() => hintsFrom(trusted), [trusted, publicAddress]); // eslint-disable-line react-hooks/exhaustive-deps
   const payload = useMemo(
     () =>
       relay
