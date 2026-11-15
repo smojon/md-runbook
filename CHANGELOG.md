@@ -2,21 +2,6 @@
 
 ## Unreleased
 
-## 0.26.1
-
-Prose checks: md-runbook points at text that could be shorter and simpler.
-
-- **Prose checks: keep runbooks short and simple.** See [Prose](docs/features/lint.md#prose).
-  - They flag:
-    - a sentence over 20 words;
-    - a file averaging over 15 words a sentence;
-    - a paragraph of over 3 sentences or 60 words;
-    - filler: openers, sentences that only announce, padding words;
-    - a sentence that says its heading again, or one said twice.
-  - They are info: VS Code lists them under Infos, and lint never fails on them.
-  - `prose: strict` in the front matter makes them warnings. `prose: off` turns them off.
-  - `md-runbook lint --prose-baseline FILE` checks a whole repository: no file may get worse.
-
 - **Prose checks: limits of your own, boxes, and new hints.** See [Prose](docs/features/lint.md#prose).
   - `.md-runbook-prose.json` can set the limits (`"limits"`) and the box limits (`"boxes"`).
   - A box's labelled paragraph may have 5 sentences and 100 words.
@@ -32,6 +17,21 @@ Prose checks: md-runbook points at text that could be shorter and simpler.
     - fewer padding words;
     - no note for a file's average;
     - citations, initials, quotes and labels such as "Did you know?" count right.
+
+## 0.26.1
+
+Prose checks: md-runbook points at text that could be shorter and simpler.
+
+- **Prose checks: keep runbooks short and simple.** See [Prose](docs/features/lint.md#prose).
+  - They flag:
+    - a sentence over 20 words;
+    - a file averaging over 15 words a sentence;
+    - a paragraph of over 3 sentences or 60 words;
+    - filler: openers, sentences that only announce, padding words;
+    - a sentence that says its heading again, or one said twice.
+  - They are info: VS Code lists them under Infos, and lint never fails on them.
+  - `prose: strict` in the front matter makes them warnings. `prose: off` turns them off.
+  - `md-runbook lint --prose-baseline FILE` checks a whole repository: no file may get worse.
 
 ## 0.26.0
 
