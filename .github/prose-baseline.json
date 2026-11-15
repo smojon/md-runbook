@@ -3,7 +3,7 @@
   "average": 19.7,
   "phrases": 1,
   "repeats": 2,
-  "sentences": 291,
+  "sentences": 293,
   "units": 104
  },
  "PUBLISHING.md": {
@@ -64,7 +64,7 @@
   "units": 8
  },
  "docs/app.md": {
-  "average": 20.6,
+  "average": 20.8,
   "sentences": 101,
   "units": 37
  },
@@ -151,7 +151,7 @@
   "units": 3
  },
  "docs/features/progress.md": {
-  "average": 23.0,
+  "average": 23.2,
   "sentences": 48,
   "units": 14
  },

@@ -92,7 +92,7 @@ simple, stupid. It doesn't judge whether a sentence is useful; you do.
 | Announcing | `This section describes…`, `The following steps show…`, `In this section…` | `Delete this sentence, it only announces: "…"` |
 | Says the heading again | the first sentence under a heading has 70 % of its words and adds at most 4 | `Says the heading again: cut it, or add what's new` |
 | Repeat | the same sentence twice in a file (6 words or more, case and emphasis ignored) | `Already said on line 12: "…"` |
-| Empty lead-in | a paragraph of at most 6 words, ending in `:`, starting with `Now`, `Then`, `Next`, `First`, `Again`, `Back to`, `Here` or `On the lab`, right before a code block | `Empty lead-in: start with what the block does, or cut it` |
+| Empty lead-in | a paragraph of at most 6 words, ending in `:`, starting with `Now`, `Then`, `Next`, `First`, `Again`, `Back to`, `Here` or `On the lab`, right before a code block; not one that says `shortened`, `abridged`, `excerpt`, `trimmed`, `the first lines` or `the last lines` | `Empty lead-in: start with what the block does, or cut it` |
 | Duration | in a runbook with `estimate=`: a duration of the whole (`This guide takes about 40 minutes`, `about 40 minutes in all`, `About 40 minutes.`), or one with `takes` or `allow` in the first paragraph of the runbook or of a section, but not one right before a block | `Duration in prose: it goes stale; the estimates show it` |
 | Choppy | 3 sentences or more in a row under 8 words each, in one paragraph or box | `Choppy: join these sentences with their link word` |
 | Leaning bullet | a bullet right after a sibling bullet, starting with `It`, `Its`, `This`, `That`, `These`, `Those`, `They`, `There`, `Then`, `So`, `But` or `And` (not in a numbered list) | `Leans on the item before: join them into a sentence, or make it stand alone` |
@@ -129,6 +129,7 @@ How text is read:
 - No sentence ends at `e.g.`, `i.e.`, `etc.`, `vs.` or a version number (`0.25.1`).
 - Nor at initials (`L. Peter Deutsch`), `no.` before a number, or a label's `?` in running
   text (`a Did you know? box`).
+- Nor in a code span, or at a `?` in emphasis before lowercase (`*Up?* turns red`).
 - Links in parentheses alone (`([source](…), [paper](…))`) are a citation, not a sentence.
 - A sentence that is mostly a direct quotation has no length limit: a verbatim quote can't be
   shortened. The quote is in `"…"`, `“…”` or `«…»`, of 6 words or more, and 60 % of the sentence.
@@ -219,6 +220,7 @@ Over many files it also finds text said in several places:
 
 - A sentence or paragraph of 8 words or more, in 3 files or more, is noted at each place.
 - Text is compared in lower case, without links or digits.
+- A sentence of at most 20 words with a link points to where it is said: it is no duplicate.
 - Paragraphs that share 60 % of their 5-word runs count as the same. A paragraph said as a whole
   is one note, not one a sentence.
 - `--prose-show` compares with every tracked file, as the ratchet does.

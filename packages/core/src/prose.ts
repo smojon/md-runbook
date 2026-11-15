@@ -56,6 +56,8 @@ export const PROSE_LIMITS = {
   duplicateWords: 8,
   /** …or its paragraphs share this share of their 5-word runs (Jaccard; 0.6 to 0.8 found the same on nevis-rest-api). */
   duplicateShingle: 5,
+  /** A sentence (or a paragraph) of at most this many words with a link is a pointer, never a duplicate. */
+  pointerWords: 20,
   duplicateJaccard: 0.6,
   /** A shorter sentence may come back (a step such as "Check the logs."). */
   repeatWords: 6,
@@ -121,6 +123,8 @@ export const PROSE_PHRASES = {
   leaning: /^(?:It|Its|This|That|These|Those|They|There|Then|So|But|And)(?![A-Za-z0-9_-])/,
   /** How an empty lead-in before a code block starts ("Now run:", "On the lab:"). */
   leadIn: /^(?:now|then|next|first|again|back to|here|on the lab)\b/,
+  /** A lead-in with one of these says something of the block ("On the lab, the image (shortened):"): not empty. */
+  leadInSays: ['shortened', 'abridged', 'excerpt', 'the last lines', 'the first lines', 'trimmed'],
   /** A duration in minutes or hours ("about 40 minutes", "five minutes", "an hour"). */
   duration:
     /(?<![\w-])(?:(?:about|around|roughly|some|~)\s*)?(?:\d+(?:[.,]\d+)?|a few|a couple of|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty|forty-five|fifty|sixty|ninety)(?:\s*(?:-|–|to)\s*\d+)?\s*(?:minutes?|mins?|hours?)\b|\b(?:half an|an) hour\b/i,
@@ -377,16 +381,31 @@ function plain(text: string): Plain {
   const t = text
     .replace(/`[^`]*`/g, keep('C'))
     .replace(/!?\[[^\]]*\]\([^)]*\)/g, keep('L'))
-    .replace(/https?:\/\/\S+/g, keep('U'));
+    .replace(/https?:\/\/\S+/g, keep('U'))
+    // In an emphasis span, a ? or ! before lowercase text ends no sentence ("*Can they read it?*
+    // turns red"), nor a . inside it ("*see fig. one*"); before a capital, or a . at its end, they do.
+    .replace(EMPHASIS_RE, (m: string, at: number, all: string) => {
+      const after = (i: number): string => (m.slice(i + 1) + all.slice(at + m.length)).replace(/^[*_"')\]\s]+/, '');
+      return m.replace(/[.?!]/g, (c, i: number) => {
+        const inside = /[^*_\s]/.test(m.slice(i + 1).replace(/[*_]+$/, ''));
+        return /^[a-z]/.test(after(i)) && (c !== '.' || inside) ? MASK[c]! : c;
+      });
+    });
   return { text: t.replace(/\*\*|__/g, ''), spans };
 }
+
+/** Emphasis spans: **…**, __…__, *…*, _…_ (code spans are placeholders by then). */
+const EMPHASIS_RE = /\*\*[^*]+?\*\*|__[^_]+?__|(?<![*A-Za-z0-9_])\*(?![\s*])[^*]+?(?<![\s*])\*(?![*A-Za-z0-9])|(?<![A-Za-z0-9_])_(?![\s_])[^_]+?(?<![\s_])_(?![A-Za-z0-9_])/g;
+const MASK: Record<string, string> = { '.': '\uE004', '?': '\uE002', '!': '\uE003' };
+/** The text with an emphasis span's marks as they were. */
+const unmask = (t: string): string => t.replace(/[\uE002-\uE004]/g, (c) => ({ '\uE004': '.', '\uE002': '?', '\uE003': '!' })[c]!);
 
 /** The text with its placeholders put back. */
 function restore(text: string, spans: readonly string[]): string {
   let t = text;
   // A link can hold a code span: put back until none is left.
   for (let i = 0; i < 5 && /[CLU]\uE000\d+\uE001/.test(t); i++) t = t.replace(SPAN_RE, (_m, _l: string, n: string) => spans[Number(n)] ?? '');
-  return t;
+  return unmask(t);
 }
 
 // Letters and digits, Latin to CJK (no \p{L}: Hermes, the app's engine, may lack it).
@@ -572,7 +591,7 @@ export function measureProse(text: string, options: ProseOptions = {}): ProseMea
       if (words > limits.sentenceWords && !isQuotation(s.text, words)) {
         found.push({ rule: 'prose-sentence', line, words, sentence, message: sentenceMessage(words, limits.sentenceWords, sentence) });
       }
-      const head = s.text.replace(/^["'(*_]+/, '').toLowerCase().replace(/\s+/g, ' ');
+      const head = unmask(s.text).replace(/^["'(*_]+/, '').toLowerCase().replace(/\s+/g, ' ');
       const guard = guarded(s.text);
       // Word rules: never guarded.
       const opener = PROSE_PHRASES.openers.find((o) => head.startsWith(o) && !WORD_RE.test(head[o.length] ?? ''));
@@ -713,11 +732,13 @@ function repeats(boxSentence: string, sentence: string): boolean {
   return false;
 }
 
+const LEAD_IN_SAYS = PROSE_PHRASES.leadInSays.map(wholeWord);
+
 /** "Now run:" right before a code block: a short paragraph, ending in a colon, that says nothing of the block. */
 function isLeadIn(unit: ProseUnit, plainText: string, words: number): boolean {
   if (!unit.beforeFence || unit.item || words === 0 || words > PROSE_LIMITS.leadInWords) return false;
-  const t = plainText.replace(/\s+/g, ' ').trim().replace(/[*_]+$/, '');
-  if (!t.endsWith(':') || guarded(t) !== undefined) return false;
+  const t = unmask(plainText).replace(/\s+/g, ' ').trim().replace(/[*_]+$/, '');
+  if (!t.endsWith(':') || guarded(t) !== undefined || LEAD_IN_SAYS.some((re) => re.test(t))) return false;
   return PROSE_PHRASES.leadIn.test(t.replace(/^["'(*_]+/, '').toLowerCase());
 }
 
@@ -772,10 +793,15 @@ export function proseDuplicates(files: readonly ProseFile[], options: ProseOptio
         else exact.set(key, [place]);
       };
       const id = `${file}:${unit.line}`;
-      for (const s of sentences) add(normalised(s.sentence), { file, line: s.line, sentence: s.sentence, unit: id, whole: sentences.length === 1 });
+      // A short sentence with a link points to where it is said: the fix for a duplicate, not one.
+      const pointer = (text: string, words: number): boolean => words <= PROSE_LIMITS.pointerWords && /[LU]\uE000/.test(text);
+      for (const s of sentences) {
+        if (!pointer(s.text, s.words)) add(normalised(s.sentence), { file, line: s.line, sentence: s.sentence, unit: id, whole: sentences.length === 1 });
+      }
       const whole = sentences.map((s) => s.sentence).join(' ');
       const words = normalised(whole);
       const place = { file, line: unit.line, sentence: whole, unit: id, whole: true };
+      if (pointer(p.text, countWords(p.text))) continue;
       if (sentences.length > 1) add(words, place);
       if (words.length >= PROSE_LIMITS.duplicateWords) {
         const n = PROSE_LIMITS.duplicateShingle;

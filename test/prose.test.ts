@@ -626,8 +626,8 @@ describe('prose: the same text in several files (repository-wide)', () => {
     assert.deepEqual([...found.keys()], ['r0.md', 'r1.md', 'r2.md']);
     assert.deepEqual(found.get('r1.md')!.map((f) => [f.line, f.message]), [[4, 'Said in 3 files: say it once and link it']]);
     assert.equal(proseDuplicates(files(2, () => said + '\n')).size, 0);
-    // Normalised: case, links and digits don't tell them apart.
-    const variants = [said, said.toUpperCase(), said.replace('lab terminal', 'lab terminal [here](lab.md) 2')];
+    // Normalised: case and digits don't tell them apart (links: see pointers below).
+    const variants = [said, said.toUpperCase(), said.replace('lab terminal', 'lab terminal 2')];
     assert.equal(proseDuplicates(files(3, (i) => variants[i]! + '\n')).size, 3);
     // Short sentences may come back anywhere.
     assert.equal(proseDuplicates(files(3, () => 'Check the logs of the pod.\n')).size, 0);
@@ -739,5 +739,36 @@ describe('prose: a paragraph said in several files is one finding', () => {
     // One sentence copied, the other not: that sentence alone.
     const one = proseDuplicates(['a', 'b', 'c'].map((n) => ({ name: `${n}.md`, text: `Intro ${n} here.\n` + para.split('\n')[1] + ` More of ${n}, written for this file alone.\n` })));
     assert.deepEqual(one.get('a.md')!.map((f) => f.line), [1]);
+  });
+});
+
+describe('prose: pointers, emphasis, lead-ins that say something', () => {
+  it('a short sentence with a link in 3 files is a pointer, not a duplicate; without the link it is one', () => {
+    const files = (text: string): Array<{ name: string; text: string }> => ['a', 'b', 'c'].map((n) => ({ name: `${n}.md`, text: `Intro of ${n}.\n\n${text}\n` }));
+    const pointer = 'If the lab is down, the steps marked setup start it ([the lab between guides](README.md#lab)).';
+    assert.equal(proseDuplicates(files(pointer)).size, 0);
+    assert.equal(proseDuplicates(files('Going on to the next guide? Leave the lab running ([the lab](README.md#lab)).')).size, 0);
+    assert.equal(proseDuplicates(files('If the lab is down, the steps marked setup start it, between the guides too.')).size, 3);
+    // Over 20 words, a link doesn't make it a pointer.
+    assert.equal(proseDuplicates(files(sentence(22).replace('word', '[word](x.md)'))).size, 3);
+  });
+
+  it('in emphasis, a ? or ! before lowercase text, or a . inside, ends no sentence; nor any mark in a code span', () => {
+    // A bold lead still ends its sentence: **Estimates.** With … and **VS Code models.** md-runbook …
+    assert.deepEqual(proseSentences('**Estimates.** With it. **Models.** md-runbook picks one.'), ['Estimates.', 'With it.', 'Models.', 'md-runbook picks one.']);
+    assert.deepEqual(proseSentences('*Can the autoscalers read their metrics?* turns red for minutes. Then it heals.'), [
+      '*Can the autoscalers read their metrics?* turns red for minutes.',
+      'Then it heals.',
+    ]);
+    assert.deepEqual(proseSentences('**Stop!** It waits. *Is it up? yes* is a panel. See *fig. one* here. Run `a. B` now.'), ['Stop!', 'It waits.', '*Is it up? yes* is a panel.', 'See *fig. one* here.', 'Run `a. B` now.']);
+    assert.deepEqual(rules('*What each autoscaler sees* has gaps. *Can the autoscalers read their metrics?* turns red for minutes at a time. It heals.\n', 'prose-choppy'), []);
+  });
+
+  it('a lead-in that says something of the block is not empty', () => {
+    const block = '\n\n```bash\necho\n```\n';
+    for (const w of ['shortened', 'abridged', 'excerpt', 'the last lines', 'the first lines', 'trimmed']) {
+      assert.deepEqual(rules(`On the lab, the output (${w}):` + block, 'prose-lead-in'), [], w);
+    }
+    assert.equal(rules('On the lab, the output:' + block, 'prose-lead-in').length, 1);
   });
 });

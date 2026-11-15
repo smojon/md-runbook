@@ -16,7 +16,10 @@
     - a guard skips sentences with a digit, code, a link, or words such as "only" and "never";
     - fewer padding words;
     - no note for a file's average;
-    - citations, initials, quotes and labels such as "Did you know?" count right.
+    - citations, initials, quotes and labels such as "Did you know?" count right;
+    - a question in emphasis (`*Can it read it?* turns red`) ends no sentence;
+    - a short sentence with a link is a pointer, not a duplicate;
+    - a lead-in that says "shortened" or "the last lines" is not empty.
 
 ## 0.26.1
 
