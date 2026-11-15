@@ -47,11 +47,6 @@
   "sentences": 2,
   "units": 0
  },
- "examples/sample.runbook.md": {
-  "average": 14.1,
-  "sentences": 23,
-  "units": 3
- },
  "packages/ssh/README.md": {
   "average": 17.1,
   "sentences": 4,
