@@ -1,12 +1,13 @@
 # md-runbook relay
 
 The md-runbook web app runs runbook cells on your servers over SSH. A browser cannot open SSH
-(TCP) connections itself, so the web app opens a WebSocket to this relay, and the relay copies
-the bytes to one of your SSH servers.
+(TCP) connections itself, so the web app opens a WebSocket to this relay. The relay copies the
+bytes to one of your SSH servers.
 
 SSH runs in the browser. The relay only ever sees encrypted SSH traffic. It does see which
-address connects to which server, and when, and that is all it logs. The phone apps connect
-directly and need no relay.
+address connects to which server, and when, and that is all it logs.
+
+The phone apps connect directly and need no relay.
 
 ## What keeps it from being an open proxy
 
@@ -48,10 +49,11 @@ a machine inside that network.
 For SSH servers that are reachable from the internet, a free VM is enough. The relay needs very
 little: one CPU and 1 GB of memory.
 
-1. Sign up at [cloud.oracle.com](https://cloud.oracle.com). Signing up asks for a card, but
-   Always Free resources are not charged. They exist only in your home region, which you choose
-   at sign-up. Upgrading the account to Pay As You Go keeps them free and stops Oracle from
-   reclaiming instances it considers idle. An idle relay counts as idle.
+1. Sign up at [cloud.oracle.com](https://cloud.oracle.com).
+   - Signing up asks for a card, but Always Free resources are not charged. They exist only in
+     your home region, which you choose at sign-up.
+   - Upgrading the account to Pay As You Go keeps them free and stops Oracle from reclaiming
+     instances it considers idle. An idle relay counts as idle.
 2. **Compute → Instances → Create instance:** image Ubuntu 24.04, shape `VM.Standard.A1.Flex`
    (1 OCPU, 6 GB). If that shape is "out of capacity", use `VM.Standard.E2.1.Micro`. Add your
    SSH public key and keep **Assign a public IPv4 address**.
@@ -114,5 +116,8 @@ Version 1:
 A future protocol gets a new path and subprotocol, and the relay keeps serving the old one for a
 while. Update the relay before the app.
 
-Each log line is JSON: `open` and `close` events with the client address, the target, the bytes
-each way and the duration, plus `refused` events with the reason.
+Each log line is JSON:
+
+- `open` and `close` events, with the client address, the target, the bytes each way and the
+  duration;
+- `refused` events, with the reason.

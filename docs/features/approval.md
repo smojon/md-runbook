@@ -106,11 +106,11 @@ make these one-click):
   Flags that take a value (`-n`, `--namespace`, `--context`, `-l`, `-o`, `-c`, …) consume
   exactly one word. So `oc -n get scale …` is not mistaken for `get`. Unknown flags take no value.
 - `kubectl` / `oc` / `helm`:
-  - any word that changes something, anywhere in the command: `scale`, `patch`, `apply`,
-    `create`, `replace`, `edit`, `set`, `label`, `annotate`, `drain`, `cordon`, `taint`,
-    `rollout`, `exec`, `rsh`, `debug`, `cp`, `port-forward`, `proxy`, `run`, `expose`, `adm`,
-    `login`, `project`, `new-app`, `start-build`, `tag`, `import`, `upgrade`, `install`,
-    `rollback`, `uninstall`, `delete`, …;
+  - any word that changes something, anywhere in the command:
+    - `scale`, `patch`, `apply`, `create`, `replace`, `edit`, `set`, `label`, `annotate`;
+    - `drain`, `cordon`, `taint`, `rollout`, `exec`, `rsh`, `debug`, `cp`, `port-forward`;
+    - `proxy`, `run`, `expose`, `adm`, `login`, `project`, `new-app`, `start-build`, `tag`;
+    - `import`, `upgrade`, `install`, `rollback`, `uninstall`, `delete`, …;
   - flags that switch credentials or server (`--kubeconfig`, `--token`, `--server`, `-s`,
     `--as`, `--as-group`, `--client-key`, helm `--kube-token`, `--kube-apiserver`, …), since
     they bypass `readOnlyEnv`;

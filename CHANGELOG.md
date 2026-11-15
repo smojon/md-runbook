@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Docs:** the Getting Started pages, the example runbooks, the contributor handoff and the
+  remaining READMEs follow the prose rules. The handoff's release and VS Code issue notes are
+  current again.
+
 ## 0.26.6
 
 A cell's own `env.NAME=` now wins over the `.env` file. The sample runbook follows the prose rules.

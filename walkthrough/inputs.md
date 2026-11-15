@@ -1,6 +1,6 @@
 # Secrets, inputs and parameters
 
-Write placeholders instead of values; they are passed as environment variables, never pasted
+Write placeholders instead of values. They are passed as environment variables, never pasted
 into the script, and the file keeps the placeholder:
 
 ```bash

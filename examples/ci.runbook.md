@@ -6,9 +6,13 @@ timeout: 120
 
 # CI smoke runbook
 
-This repository's CI runs this file with the md-runbook command line on Windows, macOS and
-Linux (through the GitHub Action in `action.yml`), and keeps the filled-in copy, the HTML and PDF
-reports and a JUnit report as build artifacts. It only prints text and uses a temporary file.
+This repository's CI runs this file:
+
+- with the md-runbook command line, through the GitHub Action in `action.yml`;
+- on Windows, macOS and Linux;
+- keeping the filled-in copy, the HTML and PDF reports and a JUnit report as build artifacts.
+
+It only prints text and uses a temporary file.
 
 ## Where are we
 

@@ -1,9 +1,9 @@
 # Problems, reports and the command line
 
-- **Problems:** mistakes such as a misspelled cell option (`retires=3`) or a `${out:NAME}` with
-  nothing captured are underlined while you edit and listed in the **Problems** panel.
+- **Problems:** mistakes are underlined while you edit and listed in the **Problems** panel. For
+  example, a misspelled cell option (`retires=3`) or a `${out:NAME}` with nothing captured.
 - **Reports:** **Export Report (HTML)** writes every step with its result and output into one
-  file; **Export Report (PDF)** prints it with the Chrome or Edge you have.
+  file. **Export Report (PDF)** prints it with the Chrome or Edge you have.
 - **Command line:** the same runbook runs without VS Code, in CI or on a schedule:
 
 ```sh

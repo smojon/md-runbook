@@ -6,9 +6,12 @@ which only prints simulated `kubectl` output, so it runs anywhere and changes no
 
 ## The demo GIF
 
-`docs/demo.gif` (top of the README) is recorded, not drawn: `scripts/demo-gif/record.js` drives a
-throwaway VS Code with the dev build through Run All, Save and Open as Markdown Text, then selects
-the first saved output block; `scripts/demo-gif/make_gif.py` turns the frames into the GIF.
+`docs/demo.gif` (top of the README) is recorded, not drawn:
+
+- `scripts/demo-gif/record.js` drives a throwaway VS Code with the dev build through Run All, Save
+  and Open as Markdown Text. Then it selects the first saved output block.
+- `scripts/demo-gif/make_gif.py` turns the frames into the GIF.
+
 `scripts/demo-gif/stills.js` takes the README's two stills (`docs/1-notebook.png`,
 `docs/2-saved-markdown.png`) the same way. Usage is at the top of each script (playwright-core
 installed outside the repo, `NODE_PATH` pointing at its `node_modules`). Take them again when the
@@ -19,7 +22,7 @@ notebook view or its toolbar changes visibly.
 - A development window with the current build:
   `code --extensionDevelopmentPath=<repo> examples/screenshots.runbook.md`
   (from a VS Code terminal: `env -u ELECTRON_RUN_AS_NODE code …`).
-- Window about **1400 × 900**, default **Dark Modern** theme, zoom 0, minimap off, side bar
+- Window about **1400 × 900**, default **Dark Modern** theme, zoom 0. Minimap off, side bar
   closed, panel closed unless the shot needs it.
 - Right-click the file → **Open as Runbook**. Clear outputs before each shot that starts fresh
   (**md-runbook: Clear All Outputs**). Don't save the demo file: outputs written into it would

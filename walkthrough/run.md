@@ -15,9 +15,12 @@ web-7c9d…   1/1     Running
 <!-- md-runbook:output end -->
 ````
 
-- The status bar shows where the run is (`Step 3/6 · Push image · 1m 40s left`), and the
-  **Steps** view on the left lists every step by name. **Resume Run** carries on from the first
-  failed or pending step; a failed cell also has **Retry** on its status line. Secrets are redacted before anything is written.
-- Every run is also appended to a **transcript**, `.md-runbook/<runbook>.transcript.log` next to
-  the runbook, saved or not: **Run ▾ › Open Transcript** follows it, **Run ▾ › Transcript** turns it off or on,
-  and **Help ▾ › Settings…** lists every setting.
+- The status bar shows where the run is: `Step 3/6 · Push image · 1m 40s left`. The **Steps**
+  view on the left lists every step by name.
+- **Resume Run** carries on from the first failed or pending step. A failed cell also has
+  **Retry** on its status line.
+- Secrets are redacted before anything is written.
+- Every run is also appended to a **transcript** next to the runbook, saved or not:
+  `.md-runbook/<runbook>.transcript.log`. **Run ▾ › Open Transcript** follows it; **Run ▾ ›
+  Transcript** turns it off or on.
+- **Help ▾ › Settings…** lists every setting.

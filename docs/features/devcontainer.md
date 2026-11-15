@@ -1,7 +1,7 @@
 # Dev containers and Codespaces
 
-The md-runbook dev container feature installs the command line and the VS Code extension in a
-[dev container](https://containers.dev) or a GitHub Codespace. Add it to your
+The md-runbook dev container feature installs the command line and the VS Code extension. It
+installs them in a [dev container](https://containers.dev) or a GitHub Codespace. Add it to your
 `.devcontainer/devcontainer.json`:
 
 ```json
@@ -35,5 +35,5 @@ Rebuild the container. Then `md-runbook run`, `md-runbook lint` and the rest of 
 - **The VS Code extension** (`smojon.md-runbook`), which VS Code installs into the container
   from the Marketplace.
 
-The feature installs software only. It doesn't run a runbook, and it doesn't add secrets: a
-runbook's `${secret:NAME}` still comes from the environment or VS Code's secret storage.
+The feature installs software only: it doesn't run a runbook or add secrets. A runbook's
+`${secret:NAME}` still comes from the environment or VS Code's secret storage.

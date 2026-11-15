@@ -1,8 +1,10 @@
 # Open probe scripts
 
-The tools behind [docs/investigations/notebook-open-slow.md](../../docs/investigations/notebook-open-slow.md):
-they launch a throwaway VS Code (the repo's test build in `.vscode-test`, its own profile folder),
-open a notebook, and measure how long it takes to show its cells. Your own VS Code is not touched.
+The tools behind [docs/investigations/notebook-open-slow.md](../../docs/investigations/notebook-open-slow.md).
+They measure how long VS Code takes to show a notebook's cells.
+
+They launch a throwaway VS Code (the repo's test build in `.vscode-test`, its own profile folder)
+and open a notebook. Your own VS Code is not touched.
 
 They are not part of the build or the tests. They need `playwright-core`, installed outside the
 repo:
@@ -17,8 +19,8 @@ Run them from that folder with `ELECTRON_RUN_AS_NODE` unset (from a VS Code term
 `<repo>/.vscode-test/vscode-win32-x64-archive-1.142.0/Code.exe` (run `npm run test:integration`
 once to download it). `<out>` is a scratch folder.
 
-Judge a fix only by alternating runs with and without it (the `exp*.js` scripts do): the
-machine's load changes too much between separate series.
+Judge a fix only by alternating runs with and without it: the machine's load changes too much
+between separate series. The `exp*.js` scripts alternate.
 
 | Script | What it does |
 | --- | --- |

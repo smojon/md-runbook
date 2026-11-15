@@ -289,8 +289,9 @@ Two consequences:
 
 - Nothing inside the webview can change this: the priority is driven by the parent's CSS and by
   media streams; a kernel preload or renderer script in the webview has no handle on it.
-- Hiding the frame also throttles its JavaScript timers. Chromium's `features.cc` states the
-  rule: "1 wake up per second in a background page or hidden cross-origin frame". The webview
+- Hiding the frame also throttles its JavaScript timers. Chromium's
+  [`features.cc`](https://github.com/chromium/chromium/blob/c050fd9ead603be28a58a5cbfcc2d3d71ae07a11/third_party/blink/common/features.cc#L905)
+  states the rule: "1 wake up per second in a background page or hidden cross-origin frame". The webview
   preload's dimension updates and other steps use `setTimeout`, so each hop can cost up to 1 s
   while the frame is hidden. This is a likely reason why the waits with the flag were 1.0 to 1.6 s
   in 7 of 12 pairs while the opacity patch gave 0.0 s in 4 of 6: the flag fixes the CPU priority

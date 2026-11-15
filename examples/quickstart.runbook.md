@@ -7,9 +7,12 @@ params:
 # Deploy the demo app
 
 A short tour: six steps, under a minute. Nothing here changes your machine: the steps print
-text, sleep, and use one file in the temp folder. Press **Run All** and watch the **Steps** view
-on the left: before the run it says what the steps will need from you, during the run where it
-is and how long is left.
+text, sleep, and use one file in the temp folder.
+
+Press **Run All** and watch the **Steps** view on the left:
+
+- before the run, it says what the steps will need from you;
+- during the run, where it is and how long is left.
 
 Each step has a block for Windows (PowerShell) and one for macOS and Linux (bash); only yours
 runs.
@@ -64,7 +67,7 @@ A step done by hand: Run All waits here, with **Done**, **Skip** and **Stop** on
 
 ## Smoke test
 
-It fails the first time, to show what happens then: **Retry** on the cell, or **Resume** in the
+It fails the first time, to show what happens then. **Retry** on the cell, or **Resume** in the
 Steps view, runs it again and it passes.
 
 ```pwsh os=windows estimate=3s
