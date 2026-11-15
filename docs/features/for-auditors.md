@@ -25,8 +25,9 @@ mechanisms support is for your own framework and your auditors to decide.
   - the patterns each parameter must match;
   - an optional last day.
 
-  Prose is not signed. Any change to a signed block, its order or a new block breaks the
-  signature for that block.
+  A version 2 signature (the default since 0.23.0) also covers the prose; the gate checks only the
+  blocks. A changed or new block breaks the signature for that block. A moved block stays signed,
+  but the tools warn that the order differs from the one reviewed.
 - **Who approved.** Signatures are SSH signatures (`ssh-keygen -Y`); the server's
   `allowed_signers` file lists the keys it trusts. So a signer is a key, not a name typed into
   the file.
@@ -77,7 +78,7 @@ mechanisms support is for your own framework and your auditors to decide.
   start, end, duration and exit code. A runbook with `incident:` or `evidence: true` (**Start
   Incident** writes it) also:
   - records who ran each step and on which machine;
-  - keeps every attempt, failed ones included.
+  - keeps at least the last 100 attempts per step, failed ones included.
 
   **Add Note** records decisions and milestones.
 
@@ -96,14 +97,16 @@ mechanisms support is for your own framework and your auditors to decide.
   - a timeline of every run, attempt and note;
   - every step with its output.
 
-  Secrets are redacted before anything is written.
+  Known secret values are always redacted before anything is written. Other secret-like patterns
+  are too, while `mdRunbook.redaction.enabled` is on (the default).
 
 ## What it does not do
 
 - It controls what the operator's key can start on a gated account. It doesn't control what a
   signed block does once it runs. The review before signing is the real control.
-- The prose of a runbook isn't signed. An altered instruction such as "now run X by hand" is not
-  stopped, though the gate would refuse X.
+- The gate doesn't check a runbook's prose. An altered instruction such as "now run X by hand"
+  isn't stopped there, but the gate still refuses that command. With a version 2 signature, VS
+  Code, the app and `md-runbook verify` show the change.
 - Client-side records are files the operator could edit; that is why the server log, `audit
   --record` and record signatures exist. A record signature shows later changes, not changes
   made before signing.

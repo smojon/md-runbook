@@ -8,7 +8,7 @@ filled in. The run should leave a record you can show in the postmortem.
    you tap Run.
 2. **Start Incident** (⋯ More in the app, Run ▾ in VS Code) makes a dated copy for the incident:
    - every run records who ran it and where;
-   - every attempt is kept;
+   - at least the last 100 attempts per step are kept;
    - a first note marks when it was detected.
 3. **Add Note** records decisions and milestones (*detected*, *mitigated*, *resolved*) as you go.
 4. **Export Report** is the incident record and timeline for the postmortem. **Sign Run Record**

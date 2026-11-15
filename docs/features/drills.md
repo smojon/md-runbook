@@ -9,8 +9,8 @@ record. md-runbook keeps it apart from production and gives you the evidence aft
    *a drill*. It makes a dated copy of the runbook with `incident: DRILL-…` and `drill: true` in
    its front matter.
 
-   Every run then records who ran it (`by=`) and where (`on=`), and every attempt is kept, failed
-   ones included.
+   Every run then records who ran it (`by=`) and where (`on=`). At least the last 100 attempts per
+   step are kept, failed ones included.
 2. **Set the target.** `rto: 30m` in the runbook's front matter (seconds, `90s`, `30m`, `1h30m`).
    The report says whether the drill met it, from the first run to *resolved* (or the last
    event).
