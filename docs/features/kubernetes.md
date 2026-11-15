@@ -1,13 +1,13 @@
 # Kubernetes
 
-Runbooks with `kubectl` cells work as they are: in VS Code and on the command line they use your
-own kubeconfig. Two things make them safer, and the app adds a third:
+Runbooks with `kubectl` cells work as they are. In VS Code and on the command line, they use
+your own kubeconfig. Two things make them safer, and the app adds a third:
 
 1. **The wrong-cluster guard.** `kube-context: prod-eu` in the front matter means no cell runs
    unless kubectl's current context is `prod-eu`. With `kube-context-mode: pin`, every cell runs
    against `prod-eu` instead, without changing your default context.
-2. **The ops host.** The app runs runbooks against your clusters through a small SSH server
-   that holds the cluster access, so no cluster credential is ever on a phone.
+2. **The ops host.** The app runs runbooks against your clusters through a small SSH server. That
+   server holds the cluster access, so no cluster credential is ever on a phone.
 3. **Endpoint and certificate checks** from inside the cluster, kept in the run record and in
    the audit.
 
@@ -19,7 +19,7 @@ kube-context: prod-eu
 ---
 ```
 
-Before each cell, `kubectl config current-context` runs where the cell would run: in the
+Before each cell, `kubectl config current-context` runs where the cell would run. That is in the
 session shell, on the app's SSH host, or through md-runbook-gate. If it doesn't print
 `prod-eu`, the cell doesn't run and says why:
 
@@ -29,8 +29,8 @@ staging-eu: nothing ran. Switch with `kubectl config use-context prod-eu`, or op
 meant for staging-eu.
 ```
 
-- The check runs before every cell, not once, so a `use-context` in an earlier cell or a
-  colleague switching contexts mid-incident is caught.
+- The check runs before every cell, not once. So it catches a `use-context` in an earlier cell,
+  or a colleague switching contexts mid-incident.
 - `kube-context=NAME` on a cell overrides the front matter for that cell. Use it in signed
   runbooks: the front matter isn't signed, but a cell's options are.
 - On a server that only runs signed runbooks, the gate still answers the check: it only reads
@@ -41,9 +41,13 @@ meant for staging-eu.
 
 The check above makes you choose the cluster: the runbook refuses to run anywhere else. That is
 awkward when your kubeconfig's default context is production and the runbook is for a lab
-cluster. You'd have to switch your default to the lab and remember to switch back, or write
-`--context lab` / `--kube-context lab` on every kubectl and helm command, where one forgotten flag
-reaches production. `kube-context-mode: pin` lets the runbook choose instead:
+cluster. You'd have to either:
+
+- switch your default to the lab, and remember to switch back;
+- or write `--context lab` / `--kube-context lab` on every kubectl and helm command. One
+  forgotten flag reaches production.
+
+`kube-context-mode: pin` lets the runbook choose instead:
 
 ```markdown
 ---
@@ -52,23 +56,26 @@ kube-context-mode: pin   # check (the default) or pin
 ---
 ```
 
-Each cell md-runbook runs on this machine (VS Code and the command line, isolated or in a
-session) gets a `KUBECONFIG` whose first file is a temporary file holding only
-`current-context: rancher-desktop`, followed by your own list (`$KUBECONFIG`, else
-`~/.kube/config`; `;` between files on Windows, `:` elsewhere). kubeconfig merging takes the
-current context from the first file that sets one, so:
+Each cell md-runbook runs on this machine gets a `KUBECONFIG` list:
+
+1. first, a temporary file holding only `current-context: rancher-desktop`;
+2. then your own list (`$KUBECONFIG`, else `~/.kube/config`; `;` between files on Windows, `:`
+   elsewhere).
+
+This holds in VS Code and on the command line, isolated or in a session. kubeconfig merging takes
+the current context from the first file that sets one, so:
 
 - kubectl, helm, k9s and every other client-go tool in the cell use `rancher-desktop`, without
   any flag;
 - your default context stays production for your terminals and other tools;
-- nothing is copied out of your kubeconfig: clusters, users and credentials are still read from
+- nothing is copied out of your kubeconfig. Clusters, users and credentials are still read from
   your files, and the temporary file has none;
 - a `kubectl config use-context` in a cell only changes the temporary file, and the next cell
   starts on `rancher-desktop` again. A context a cell creates with `kubectl config set-context`
   also goes to the temporary file and is lost after the run.
 
-Before each pinned cell, `kubectl config get-contexts rancher-desktop` runs as the cell would, and
-the cell runs only if your kubeconfig has that context and it is the current one there:
+Before each pinned cell, `kubectl config get-contexts rancher-desktop` runs as the cell would. The
+cell runs only if your kubeconfig has that context and it is the current one there:
 
 ```text
 md-runbook: this runbook pins the Kubernetes context rancher-desktop, and your kubeconfig has no
@@ -77,30 +84,35 @@ get-contexts` lists the ones you have.
 ```
 
 - A cell's `kube-context=` pins that cell to its own context. A cell with no `kube-context` gets
-  your own list (in a session too, where an earlier cell's `KUBECONFIG` would otherwise stay).
-- md-runbook sets `KUBECONFIG` for every cell of a pinned runbook, so one exported by an earlier
-  cell in a session doesn't carry over. To use another kubeconfig, give the cell `env.KUBECONFIG=`:
-  it becomes the list after the pin file. An assistant's cell with read-only credentials
-  (`mdRunbook.approval.readOnlyEnv`) is pinned in front of its read-only kubeconfig.
-- The temporary files are in a folder only you can read (0700, the files 0600), one per context,
-  rewritten before each cell. They are removed when the run ends (command line) or the runbook is
-  closed (VS Code), not after each cell: a session shell keeps its `KUBECONFIG`, and kubectl skips
-  a missing file, which would fall back to your default context. A background process a cell
-  leaves running after that sees your default context.
+  your own list. That holds in a session too, where an earlier cell's `KUBECONFIG` would
+  otherwise stay.
+- md-runbook sets `KUBECONFIG` for every cell of a pinned runbook. So one exported by an earlier
+  cell in a session doesn't carry over.
+- To use another kubeconfig, give the cell `env.KUBECONFIG=`: it becomes the list after the pin
+  file. An assistant's cell with read-only credentials (`mdRunbook.approval.readOnlyEnv`) is
+  pinned in front of its read-only kubeconfig.
+- The temporary files, one per context, are rewritten before each cell. They are in a folder only
+  you can read (0700, the files 0600).
+- The temporary files are removed when the run ends (command line) or the runbook closes (VS
+  Code). They aren't removed after each cell: a session shell keeps its `KUBECONFIG`, and kubectl
+  skips a missing file. Skipping it would fall back to your default context.
+- A background process a cell leaves running sees your default context after the files are
+  removed.
 - **Pin is only for cells run on this machine.** Cells on an SSH host (`host=`, everything in the
-  app, a `practice:` host) are only checked as above: kubectl's current context on the host must
-  already be the one named. Lint warns about a `host=` cell in a pinned runbook.
+  app, a `practice:` host) are only checked as above. kubectl's current context on the host must
+  already be the one named.
+- Lint warns about a `host=` cell in a pinned runbook.
 - Pinning gives a runbook nothing it couldn't already do: any cell can pass `--context`. It is
-  still yours to switch off: the user setting `mdRunbook.execution.kubeContextPin` (on by
-  default, user settings only) turns pinning off, and pinned runbooks are then only checked.
+  still yours to switch off, with the user setting `mdRunbook.execution.kubeContextPin` (on by
+  default, user settings only). Pinned runbooks are then only checked.
 - With pin, opening a runbook and running it acts on its cluster whatever your current context
-  is. Use it for runbooks whose cluster is fixed (a lab, one runbook per cluster); keep the check
+  is. Use pin for runbooks whose cluster is fixed (a lab, one runbook per cluster). Keep the check
   for runbooks where you should have switched on purpose.
 
 ### The context from a parameter
 
-One runbook for the same change on several clusters, tried on a lab first: make the context a
-[parameter](../syntax.md#front-matter) whose default can only touch the lab.
+Some runbooks make the same change on several clusters, tried on a lab first. For them, make the
+context a [parameter](../syntax.md#front-matter) whose default can only touch the lab.
 
 ```markdown
 ---
@@ -112,52 +124,65 @@ kube-context-mode: pin
 ```
 
 A run without parameters pins `rancher-desktop`. For production, give the context:
-`md-runbook run sessionstore-limits.runbook.md --param CONTEXT=prod-eu`, or type it when VS Code
-asks (**md-runbook: Set Parameters**), or on the app's Parameters card. No `--context` is needed
-on the kubectl and helm commands.
+
+- on the command line: `md-runbook run sessionstore-limits.runbook.md --param CONTEXT=prod-eu`;
+- in VS Code, type it when it asks (**md-runbook: Set Parameters**);
+- in the app, on the Parameters card.
+
+No `--context` is needed on the kubectl and helm commands.
 
 - The value must be a context name (letters, digits, `. _ : @ / + -`): anything else, or no value,
   and nothing runs.
 - `pin` and the check work as for a name written out. The command line's step line says
-  `Kubernetes context prod-eu`, and every output marker records it as `kube-context=prod-eu`,
-  because the value isn't in the file.
+  `Kubernetes context prod-eu` and every output marker records `kube-context=prod-eu`, because
+  the value isn't in the file.
 - A cell's `kube-context=${param:NAME}` works the same, for that cell.
 - **Signed runbooks.** A cell's options are signed, so `kube-context=${param:CONTEXT}` on a cell
-  needs a pattern when you sign (`--pattern CONTEXT='rancher-desktop|ocpasni-test'`), and the app
-  runs the cell only with a value that matches. A signed runbook can't then be pointed at a
-  cluster its signer did not allow. (The front matter isn't signed: in a signed runbook put the
-  parameter on the cells.)
+  needs a pattern when you sign (`--pattern CONTEXT='rancher-desktop|ocpasni-test'`).
+- The app runs such a cell only with a value that matches. A signed runbook can't then be pointed
+  at a cluster its signer did not allow.
+- The front matter isn't signed: in a signed runbook, put the parameter on the cells.
 - Lint treats it as any other parameter: an undeclared one is reported.
 
 ### Git Bash and paths in kubectl commands (Windows)
 
-On Windows, bash cells run in Git Bash, which rewrites arguments that look like POSIX paths when
-it starts a Windows program: `kubectl exec pod -- bash /opt/x/probe.sh` reaches kubectl as
-`C:/Program Files/Git/opt/x/probe.sh`. `git-bash-path-conversion: off` in the front matter sets
-`MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*` for the runbook's bash cells on Windows, so such
-arguments reach kubectl as written. It has no effect on other systems or on PowerShell and cmd
-cells. It is off only when asked for, since some commands need the conversion (a Windows program
-given `/c/Users/me/file`).
+On Windows, bash cells run in Git Bash. When Git Bash starts a Windows program, it rewrites
+arguments that look like POSIX paths. For example, `kubectl exec pod -- bash /opt/x/probe.sh`
+reaches kubectl as `C:/Program Files/Git/opt/x/probe.sh`.
+
+`git-bash-path-conversion: off` in the front matter sets `MSYS_NO_PATHCONV=1` and
+`MSYS2_ARG_CONV_EXCL=*` for the runbook's bash cells on Windows. So such arguments reach kubectl
+as written.
+
+It has no effect on other systems, or on PowerShell and cmd cells. Conversion is turned off only
+when asked for, since some commands need it (a Windows program given `/c/Users/me/file`).
 
 ## The ops host
 
 The app can't use your laptop's kubeconfig, and it shouldn't carry its own. Cloud logins (AWS
-IAM for EKS, Google for GKE, Entra ID for AKS) each need their own client, and a long-lived
-cluster token on a phone is the worst key to lose. Instead the app connects by SSH to the
-**ops host** ([apps/ops](../../apps/ops/README.md)), and kubectl runs there.
+IAM for EKS, Google for GKE, Entra ID for AKS) each need their own client. A long-lived cluster
+token on a phone is the worst key to lose.
 
-- **Inside the cluster (recommended).** A Deployment whose service account is the only
-  identity. Kubernetes rotates its token, and a ClusterRole decides what runbooks may do. The
-  default role reads everything except Secrets, restarts, rolls back and scales, and doesn't
-  delete. It works the same on EKS, GKE, AKS and your own clusters. Pod Security `restricted`,
-  non-root, read-only root filesystem.
+Instead the app connects by SSH to the **ops host** ([apps/ops](../../apps/ops/README.md)), and
+kubectl runs there:
+
+- **Inside the cluster (recommended).** A Deployment whose service account is the only identity:
+  - Kubernetes rotates its token, and a ClusterRole decides what runbooks may do.
+  - The default role reads everything except Secrets, restarts, rolls back and scales, and
+    doesn't delete.
+  - Works the same on EKS, GKE, AKS and your own clusters.
+  - Pod Security `restricted`, non-root, read-only root filesystem.
 - **Next to the relay.** The same image as a service in the relay's compose file, with a
   kubeconfig you mount.
 
 Either way, every login goes to md-runbook-gate. Out of the box it runs signed runbooks only,
-and it logs every request. To the app, the ops host is a host like any other: add it under
-**Hosts & settings**, put its name in a [host group](../app.md#hosts-and-the-apps-key) per
-cluster, and pin runbooks to it with `host=`.
+and it logs every request.
+
+To the app, the ops host is a host like any other:
+
+- add it under **Hosts & settings**;
+- put its name in a [host group](../app.md#hosts-and-the-apps-key) per cluster;
+- pin runbooks to it with `host=`.
 
 ## Is everything up? Endpoint and certificate checks
 
@@ -183,16 +208,20 @@ A failed line fails the cell. The checks are kept and controlled like everything
 host:
 - **Controlled.** The probe runs only as a cell, through the gate (signed runbooks only, unless
   allowed). Its targets are host names, addresses or URLs, and nothing else gets through.
-- **In the record.** Export Report (HTML, PDF) lists each check of an incident or drill record
-  under **Endpoint checks**: when, which step, which endpoint, up or not, and the certificate's
-  expiry. The JSON export carries the same data.
-- **In the audit.** Each check is a `probe` event in the gate's log. It records the key, the
-  client, the signed run that made it, the address, the result, and the certificate's expiry
-  and SHA-256 fingerprint. [`md-runbook audit`](for-auditors.md) lists these events.
+- **In the record.** Exports of an incident or drill record carry each check: when, which step,
+  which endpoint, up or not, certificate expiry. Export Report (HTML, PDF) lists them under
+  **Endpoint checks**; the JSON export carries the same data.
+- **In the audit.** Each check is a `probe` event in the gate's log;
+  [`md-runbook audit`](for-auditors.md) lists these events. An event records:
+  - the key, the client and the signed run that made it;
+  - the address and the result;
+  - the certificate's expiry and SHA-256 fingerprint.
 
-[examples/kubernetes.runbook.md](../../examples/kubernetes.runbook.md) puts it together. It
-checks the cluster, the API server, every Ingress, your own endpoints and cert-manager's
-certificates, then restarts a deployment (and rolls it back if needed).
+[examples/kubernetes.runbook.md](../../examples/kubernetes.runbook.md) puts it together:
+
+1. Checks the cluster, the API server, every Ingress, your own endpoints and cert-manager's
+   certificates.
+2. Then restarts a deployment, and rolls it back if needed.
 
 ### Options
 
@@ -208,20 +237,27 @@ certificates, then restarts a deployment (and rolls it back if needed).
 | `--format F` | `text` (the lines above, the default), `json` or `prometheus` |
 | `--label NAME=VALUE` | add a label to every metric and JSON object (repeatable); `NAME=VALUE` after a target labels that target only |
 
-A target is `host`, `host:port`, `[v6]:port` or a URL: `https://host/path`, and
-`tls://host:port` (always check TLS, on any port) or `tcp://host:port` (only TCP), which win over
-`--tls` and `--no-tls`. `-` reads targets from stdin. The exit code is 1 when a check failed and
-2 on bad usage, in every format.
+A target is `host`, `host:port`, `[v6]:port` or a URL:
+
+- `https://host/path`;
+- `tls://host:port`: always check TLS, on any port;
+- `tcp://host:port`: only TCP.
+
+The `tls://` and `tcp://` forms win over `--tls` and `--no-tls`. `-` reads targets from stdin.
+The exit code is 1 when a check failed and 2 on bad usage, in every format.
 
 Up to 0.11.0, `--ca` replaced the system's CAs, so with it public endpoints were reported as
 *not trusted*. `--ca-only` does that now.
 
 ### Formats and labels
 
-`--format json` prints one object per target and line (JSON Lines): `target`, `ok`, `address`,
-`reachable` (a TCP connection opened), `tcp_ms`, `tls` (TLS checked), `trusted` (`null` when not
-checked), `not_after`, `days_left`, `subject`, `issuer`, `detail` (the text line's detail),
-`time` and `labels`.
+`--format json` prints one object per target and line (JSON Lines), with these fields:
+
+- `target`, `ok`, `address`;
+- `reachable` (a TCP connection opened), `tcp_ms`;
+- `tls` (TLS checked), `trusted` (`null` when not checked);
+- `not_after`, `days_left`, `subject`, `issuer`;
+- `detail` (the text line's detail), `time` and `labels`.
 
 ```json
 {"time":"2026-10-27T10:00:01Z","target":"shop.example.net:443","ok":false,"address":"203.0.113.9","reachable":true,"tcp_ms":20,"tls":true,"trusted":true,"not_after":"2026-11-05T12:00:00Z","days_left":9,"subject":"shop.example.net","issuer":"R11","detail":"203.0.113.9, tcp 20ms, certificate expires in 9 days (2026-11-05), under 14, CN=shop.example.net, issuer R11","labels":{"component":"shop"}}
@@ -242,10 +278,14 @@ md_runbook_probe_ok{target="shop.example.net:443",component="shop"} 0
 md_runbook_probe_certificate_expiry_timestamp_seconds{target="shop.example.net:443",component="shop"} 1793880000
 ```
 
-Labels come from two places. `--label NAME=VALUE` is on every target. `NAME=VALUE` words after
-a target are on that target only, and win over a `--label` of the same name: on the command
-line for the target just before them, on a stdin line for every target on that line. So one
-run, and one scrape, can tell components apart, even where two share an endpoint:
+Labels come from two places:
+
+- `--label NAME=VALUE` is on every target.
+- `NAME=VALUE` words after a target are on that target only, and win over a `--label` of the
+  same name. On the command line, they label the target just before them. On a stdin line, they
+  label every target on that line.
+
+So one run, and one scrape, can tell components apart, even where two share an endpoint:
 
 ```sh
 md-runbook-probe --format prometheus --label cluster=prod - <<'EOF'
@@ -260,29 +300,36 @@ md_runbook_probe_ok{target="mariadb.mariadb.svc:3306",cluster="prod",component="
 md_runbook_probe_ok{target="mariadb.mariadb.svc:3306",cluster="prod",component="admin4"} 1
 ```
 
-A label name is a Prometheus label name (letters, digits and `_`, not `target`, not starting
-with `__`, once per target), the value has no control characters; quotes and backslashes are
-escaped. A label before any target is bad usage (exit 2). A word that doesn't start like a
-label (`NAME=`) is a target and checked as one. In Prometheus format a target with the same
-labels twice is one series; the same target with other labels is another. The text format
-prints no labels: a target listed twice is two lines.
+- Label names are Prometheus label names: letters, digits and `_`, not `target`, not starting
+  with `__`, once per target.
+- Label values have no control characters; quotes and backslashes are escaped.
+- A label before any target is bad usage (exit 2).
+- A word that doesn't start like a label (`NAME=`) is a target, and checked as one.
+- In Prometheus format, a target with the same labels twice is one series. The same target with
+  other labels is another.
+- The text format prints no labels: a target listed twice is two lines.
 
 ### Audit outside the gate
 
-Where the gate runs the probe (on the ops host), its `gate.conf` decides where the events go,
-and nothing else can change that. Elsewhere, e.g. `kubectl exec` into a Pod, the environment
-variable `MD_RUNBOOK_PROBE_LOG` may name a file, `stderr` or `syslog`; without it nothing is
-logged. In a container, `MD_RUNBOOK_PROBE_LOG=/proc/1/fd/1` puts the events into the
-container's log, where `kubectl logs` and `md-runbook audit` find them. If the destination
-can't be written (a read-only filesystem, no syslog), the probe says so once on stderr.
+Where the gate runs the probe (on the ops host), its `gate.conf` decides where the events go.
+Nothing else can change that.
+
+Elsewhere, e.g. `kubectl exec` into a Pod, the environment variable `MD_RUNBOOK_PROBE_LOG` may
+name a file, `stderr` or `syslog`. Without it, nothing is logged.
+
+In a container, `MD_RUNBOOK_PROBE_LOG=/proc/1/fd/1` puts the events into the container's log,
+where `kubectl logs` and `md-runbook audit` find them. If the destination can't be written (a
+read-only filesystem, no syslog), the probe says so once on stderr.
 
 ### The probe image
 
 The probe also comes alone, as `ghcr.io/smojon/md-runbook-probe`
 ([apps/probe](../../apps/probe/README.md)): no sshd, no gate, no kubectl, non-root, the probe
-as its entrypoint. Its example manifest runs it as a Pod next to your services, every 60 s with
-`--format prometheus` and a sidecar that serves the metrics, without a service account token
-and with a read-only root filesystem.
+as its entrypoint. Its example manifest runs it as a Pod next to your services:
+
+- every 60 s, with `--format prometheus` and a sidecar that serves the metrics;
+- without a service account token;
+- with a read-only root filesystem.
 
 ## Not there yet
 
