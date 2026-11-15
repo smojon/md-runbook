@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import jsQR from 'jsqr';
-import { QrMatrix, parseCsv, qrLabelSheet, qrMatrix, qrSvg } from '@md-runbook/core/qr';
+import { QrMatrix, parseCsv, qrFactoryOf, qrLabelSheet, qrMatrix, qrSvg } from '@md-runbook/core/qr';
 import { formatRunbookLink, parseRunbookLink, runbookDigest } from '@md-runbook/core/runbookLink';
 
 /** What a phone's reader gets from the code: the matrix drawn as pixels, decoded by jsQR. */
@@ -36,6 +36,16 @@ describe('QR codes for runbook links', () => {
     const parsed = parseRunbookLink(read);
     assert.ok(parsed.ok);
     assert.equal(parsed.link.text, RUNBOOK);
+  });
+
+  it('loads qrcode-generator both ways: the CommonJS function, or the ES module the web bundle gets', () => {
+    // 0.24.0: the web app's bundle took qrcode-generator's ES module, where require gives
+    // { default }, and every QR code on the web (Pair a device first) threw "n is not a function".
+    const fn = require('qrcode-generator');
+    assert.equal(qrFactoryOf(fn), fn);
+    assert.equal(qrFactoryOf({ __esModule: true, default: fn }), fn);
+    assert.throws(() => qrFactoryOf({}), /did not load as a function/);
+    assert.throws(() => qrFactoryOf(undefined), /did not load as a function/);
   });
 
   it('switches to level L when M is too small, and refuses what no code can hold', () => {

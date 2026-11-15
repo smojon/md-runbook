@@ -4,8 +4,18 @@
  * as it is, and the CLI turns it into a PDF.
  */
 
-// A CommonJS module (export =): a plain require works in tsc (no esModuleInterop) and in the app's Babel.
-const qrcode: typeof import('qrcode-generator') = require('qrcode-generator');
+// qrcode-generator ships CommonJS (export =) and an ES module (export default). Node, tsc and the
+// native apps load the CommonJS build, where require gives the function; Metro's web bundle loads
+// the ES module, where require gives { default }. Take the function from either.
+type QrCodeFactory = typeof import('qrcode-generator');
+/** The qrcode function from what require gave: the function itself, or an ES module's default. */
+export function qrFactoryOf(mod: unknown): QrCodeFactory {
+  if (typeof mod === 'function') return mod as QrCodeFactory;
+  const d = (mod as { default?: unknown } | null)?.default;
+  if (typeof d === 'function') return d as QrCodeFactory;
+  throw new Error('qrcode-generator did not load as a function');
+}
+const qrcode: QrCodeFactory = qrFactoryOf(require('qrcode-generator'));
 import { escapeHtml } from './markdown';
 
 /** Most bytes a QR code holds (version 40), by error correction level. */
