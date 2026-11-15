@@ -324,7 +324,7 @@ describe('practice on a host (drills)', () => {
       fireEvent.press(screen.getByTestId('cell-1-run'));
     });
     expect(connectionFor).not.toHaveBeenCalled();
-    expect(screen.getByTestId('run-notice').props.children).toMatch(/no host with that name/);
+    expect(screen.getByTestId('run-notice').props.children).toMatch(/No host named train to practise on/);
   });
 });
 
@@ -356,7 +356,7 @@ describe('run on a group', () => {
     expect(out.attrs).toMatchObject({ exit: '2', group: 'acme', hosts: 'web-1,web-2,web-3', failed: 'web-2,web-3' });
     expect(out.text).toContain('── web-1 (ops@web1.example.net) · exit 0 ──\nup 1 day\n');
     expect(out.text).toContain('── web-2 (ops@web2.example.net) · 2 ──\ndisk full\n');
-    expect(out.text).toMatch(/── web-3 .*skipped ──\n\[md-runbook\] web-3 skipped: its host key isn't trusted yet/);
+    expect(out.text).toMatch(/── web-3 .*skipped ──\n\[md-runbook\] web-3 skipped: host key not trusted yet/);
     expect(screen.getByTestId('group-result-web-2').props.children).toBe('✗ web-2');
   });
 });

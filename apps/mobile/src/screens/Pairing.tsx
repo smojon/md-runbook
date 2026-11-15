@@ -27,6 +27,7 @@ import { loadTrustedSigners, useTrustedSigners } from '../signing/trust';
 import { appPublicKeyLine } from '../ssh/appKey';
 import { RelaySettings, getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { mono, themedStyles } from '../theme';
+import { Points } from '../ui/Points';
 import { QrView } from '../ui/QrView';
 import { Toggle } from '../ui/Toggle';
 
@@ -100,7 +101,7 @@ export function PairDeviceCard({ onClose }: { onClose(): void }) {
   return (
     <View testID="pair-device" style={styles.card}>
       <Text style={styles.title}>{t.pairDevice}</Text>
-      <Text style={styles.help}>{t.pairDeviceHelp}</Text>
+      <Points items={t.pairDevicePoints} textStyle={styles.help} />
       {relay === undefined ? (
         <Text testID="pair-needs-relay" style={styles.error}>
           {t.pairNeedsRelay}
@@ -108,9 +109,13 @@ export function PairDeviceCard({ onClose }: { onClose(): void }) {
       ) : null}
       {relay ? (
         <>
-          <Text testID="pair-warning" role="alert" style={styles.warning}>
-            {t.pairSecretWarning}
-          </Text>
+          <Points
+            testID="pair-warning"
+            role="alert"
+            items={t.pairSecretPoints}
+            textStyle={styles.warningPoint}
+            style={styles.warningPoints}
+          />
           {pub ? (
             <Text style={styles.help}>
               {pub.source === 'page' && isLocal(pub.base) ? t.pairUnreachable(pub.base) : t.pairFor(pub.base)}
@@ -182,9 +187,13 @@ export function PairDeviceCard({ onClose }: { onClose(): void }) {
             </Pressable>
           </View>
           {copied ? (
-            <Text testID="pair-link-copied" role="alert" style={styles.warning}>
-              {t.pairLinkCopied}
-            </Text>
+            <Points
+              testID="pair-link-copied"
+              role="alert"
+              items={t.pairLinkCopiedPoints}
+              textStyle={styles.warningPoint}
+              style={styles.warningPoints}
+            />
           ) : null}
         </>
       ) : null}
@@ -346,7 +355,7 @@ export function PairScreen() {
                 <View style={styles.switchRow}>
                   <View style={styles.grow}>
                     <Text style={styles.label}>{t.hostsTrustKeys}</Text>
-                    <Text style={styles.help}>{t.hostsTrustKeysHelp}</Text>
+                    <Points items={t.hostsTrustKeysPoints} textStyle={styles.help} />
                   </View>
                   <Toggle testID="pair-trust-keys" accessibilityLabel={t.hostsTrustKeys} value={trustKeys} onValueChange={setTrustKeys} />
                 </View>
@@ -412,6 +421,8 @@ const useStyles = themedStyles((c) => ({
   item: { fontSize: 14, color: c.text },
   list: { marginTop: 8, gap: 4 },
   warning: { fontSize: 13, color: c.warning, lineHeight: 18, marginTop: 8 },
+  warningPoints: { marginTop: 8 },
+  warningPoint: { fontSize: 13, color: c.warning, lineHeight: 18 },
   error: { fontSize: 13, color: c.error, marginTop: 8 },
   ok: { fontSize: 14, color: c.ok },
   key: {

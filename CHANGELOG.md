@@ -5,6 +5,12 @@
 - **Trust these signers is easier to read:** a question (**Trust these keys for the team library
   at …?**) and five short points, instead of one long paragraph (about 14 lines on a phone).
 
+- **The app's texts are shorter.** A text that said one thing is now one short sentence; one
+  that said several (help under a setting, warnings, prompts such as pairing, the app's key, run
+  reports, trusted signers, notifications) is a title and short points, one idea each. The
+  warnings keep what matters (a secret in a pairing code, a server that vouches for itself, why a
+  run doesn't start); the details moved to the [app's docs](docs/app.md).
+
 - **The gate's log says which alert a run answered.** A run started from an alert link now
   carries the link's `ALERT`, `ALERT_FINGERPRINT` and `ALERT_STARTS_AT` to md-runbook-gate (the
   new `note` request, gate protocol 3), which logs them with the runbook's load; `md-runbook

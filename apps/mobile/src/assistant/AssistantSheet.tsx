@@ -11,6 +11,7 @@ import { t } from '../i18n';
 import { MarkdownView } from '../markdown/MarkdownView';
 import { mono, themedStyles, usePalette } from '../theme';
 import { Grabber } from '../ui/Grabber';
+import { Points } from '../ui/Points';
 
 export type AssistantStep =
   | { kind: 'key' }
@@ -51,7 +52,7 @@ export function AssistantSheet(p: {
           {s?.kind === 'key' ? (
             <View>
               <Text style={styles.title}>{t.aiKeyTitle}</Text>
-              <Text style={styles.body}>{t.aiKeyHelp}</Text>
+              <Points items={t.aiKeyPoints} textStyle={styles.body} />
               <TextInput
                 testID="ai-key"
                 accessibilityLabel={t.aiKeyTitle}
@@ -82,7 +83,7 @@ export function AssistantSheet(p: {
               <Text testID="ai-confirm-title" style={styles.title}>
                 {t.aiSendTitle(s.chars, s.what)}
               </Text>
-              <Text style={styles.body}>{t.aiSendBody}</Text>
+              <Points items={t.aiSendPoints} textStyle={styles.body} />
               {s.leaks.length > 0 ? (
                 <View>
                   <Text testID="ai-leaks" style={styles.warning}>

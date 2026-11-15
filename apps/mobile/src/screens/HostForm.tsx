@@ -8,6 +8,7 @@ import { InstallOutcome, installAppKey } from '../ssh/installAppKey';
 import { t } from '../i18n';
 import { disconnect } from '../ssh/connections';
 import { mono, themedStyles, usePalette } from '../theme';
+import { Points } from '../ui/Points';
 
 /** Add (`id` undefined) or edit a host. */
 export function HostForm({ id }: { id: string | undefined }) {
@@ -169,7 +170,7 @@ function InstallKeyCard({ host, onTrusted }: { host: Host; onTrusted(): void }) 
   return (
     <View testID="install-key" style={styles.card}>
       <Text style={styles.cardTitle}>{t.installKey}</Text>
-      <Text style={styles.meta}>{t.installKeyHelp(`${host.username}@${host.hostname}`)}</Text>
+      <Points items={t.installKeyPoints(`${host.username}@${host.hostname}`)} textStyle={styles.meta} />
       {outcome?.kind === 'trust' ? (
         <View testID="install-key-trust">
           <Text style={styles.error}>{outcome.changed ? t.trustChangedTitle(host.name) : t.trustTitle(host.name)}</Text>

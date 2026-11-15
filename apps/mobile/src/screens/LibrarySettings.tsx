@@ -25,6 +25,7 @@ import { setLibraryUrl, useLibraryUrlSetting } from '../settings/store';
 import { toPublicUrl } from '../settings/publicAddress';
 import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { themedStyles, usePalette } from '../theme';
+import { Points } from '../ui/Points';
 import { QrView } from '../ui/QrView';
 
 export function LibrarySettings({ fetcher }: { fetcher?: typeof fetch }) {
@@ -75,7 +76,7 @@ export function LibrarySettings({ fetcher }: { fetcher?: typeof fetch }) {
   return (
     <View testID="library-settings" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.libraryTitle}</Text>
-      <Text style={styles.help}>{t.libraryHelp}</Text>
+      <Points items={t.libraryPoints} textStyle={styles.help} />
       {fallback ? <Text style={styles.help}>{t.libraryHelpWeb(fallback)}</Text> : null}
       <Text style={styles.label}>{t.libraryUrl}</Text>
       <TextInput
@@ -145,7 +146,11 @@ export function LibrarySettings({ fetcher }: { fetcher?: typeof fetch }) {
       {effective && (hasRememberedVersions(effective) || forgotten) ? (
         <View testID="library-versions">
           <Text style={styles.label}>{t.libraryVersionsTitle}</Text>
-          <Text style={styles.help}>{forgotten ? t.libraryVersionsForgotten : t.libraryVersionsHelp}</Text>
+          {forgotten ? (
+            <Text style={styles.help}>{t.libraryVersionsForgotten}</Text>
+          ) : (
+            <Points items={t.libraryVersionsPoints} textStyle={styles.help} />
+          )}
           {forgotten ? null : (
             <Pressable
               testID="library-forget-versions"

@@ -91,7 +91,7 @@ describe('runbook links: pins, hosts, parameters, co-sign', () => {
     const link = formatRunbookLink({ url: 'https://x.example.net/restart.md', sha256: runbookDigest(RUNBOOK), params: {} });
     expect(await openRunbookLink(link, serve(RUNBOOK.replace('restart', 'stop')))).toMatchObject({
       kind: 'error',
-      message: expect.stringMatching(/not the one this link pins/),
+      message: expect.stringMatching(/isn’t the runbook this link pins/),
     });
     const r = await openRunbookLink(link, serve(RUNBOOK));
     expect(r.kind).toBe('opened');

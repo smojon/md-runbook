@@ -419,8 +419,7 @@ describe('runCell: parameters', () => {
     const cellIndex = parse(signed).cells.findIndex((c) => c.kind === 'code');
     expect(await runCell({ host, text: signed, cellIndex, connection: conn })).toEqual({
       kind: 'error',
-      message:
-        "Type a value for SERVICE under Parameters: a signed runbook doesn't use the default from the file (payments), which isn't signed.",
+      message: 'Type a value for SERVICE under Parameters: a signed runbook ignores the file’s unsigned default (payments).',
     });
     expect(conn.calls).toEqual([]);
   });
@@ -501,7 +500,7 @@ describe('runCell: capture= and ${out:NAME}', () => {
     const fromAi = { POD: { name: 'POD', value: 'x', secret: false, fromAssistant: true } };
     expect(await runCell({ host, text, cellIndex: 1, connection: conn, captures: fromAi })).toMatchObject({
       kind: 'error',
-      message: expect.stringMatching(/captured by a cell an assistant wrote/),
+      message: expect.stringMatching(/comes from a cell an assistant wrote/),
     });
     expect(conn.calls).toHaveLength(0);
   });

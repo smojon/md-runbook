@@ -12,6 +12,7 @@ import { useHosts } from '../hosts/store';
 import { setRelayUrl } from '../ssh/relaySettings';
 import { t } from '../i18n';
 import { themedStyles, usePalette } from '../theme';
+import { Points } from '../ui/Points';
 import { Toggle } from '../ui/Toggle';
 
 export function HostsImport({ packed }: { packed: string | undefined }) {
@@ -41,7 +42,7 @@ export function HostsImport({ packed }: { packed: string | undefined }) {
       contentInsetAdjustmentBehavior="automatic"
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={styles.help}>{t.hostsImportHelp}</Text>
+      <Points items={t.hostsImportPoints} textStyle={styles.help} />
       {packed === undefined ? (
         <TextInput
           testID="hosts-import-text"
@@ -75,7 +76,7 @@ export function HostsImport({ packed }: { packed: string | undefined }) {
         <View style={styles.row}>
           <View style={styles.rowText}>
             <Text style={styles.label}>{t.hostsTrustKeys}</Text>
-            <Text style={styles.help}>{t.hostsTrustKeysHelp}</Text>
+            <Points items={t.hostsTrustKeysPoints} textStyle={styles.help} />
           </View>
           <Toggle testID="hosts-trust-keys" accessibilityLabel={t.hostsTrustKeys} value={trustKeys} onValueChange={setTrustKeys} />
         </View>

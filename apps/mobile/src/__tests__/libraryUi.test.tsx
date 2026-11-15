@@ -250,7 +250,7 @@ describe('Team runbooks on the list', () => {
     files[LIB + 'ops/restart.md'] = RUNBOOK + '\nMore.\n';
     files[LIB + 'index.json'] = JSON.stringify({ runbooks: ['ops/restart.md'] });
     await act(() => refreshLibrary({ fetcher: server(files), force: true }));
-    expect(screen.getByTestId('library-signed-only-dropped')).toHaveTextContent(/keeps opening verified runbooks only/);
+    expect(screen.getByTestId('library-signed-only-dropped')).toHaveTextContent(/Until you agree, the app still opens only those/);
     // An unsigned version is not offered while the library opens verified runbooks only: the row says why.
     await waitFor(() =>
       expect(screen.getByTestId('library-update-refused-ops/restart.md')).toHaveTextContent(/can't be taken.*not signed/),
@@ -393,7 +393,7 @@ describe('a copy the library refuses (signedOnly): the recheck of 2026-11-14', (
     await render(<RunbookView id={id} />);
     await waitFor(() => expect(screen.getByTestId('signed-library-refused')).toHaveTextContent(/changed since signing/));
     await press('cell-1-run');
-    expect(screen.getByTestId('run-notice')).toHaveTextContent(/doesn’t run until it is verified again/);
+    expect(screen.getByTestId('run-notice')).toHaveTextContent(/doesn’t run until verified again/);
     expect(openTransport).not.toHaveBeenCalled();
   });
 
@@ -483,7 +483,7 @@ describe('Trust these signers, compared with what your other device trusts (a pa
     await render(<Copies />);
     await press('library-trust');
     expect(screen.getByTestId('library-signers-other')).toHaveTextContent(
-      'These differ from what your other device trusts for this library: 1 key here it doesn’t trust; 1 key it trusts is not published here. Check with the signers before you trust them.',
+      'Not what your other device trusts for this library: 1 key here it doesn’t trust; 1 key it trusts is not published here. Check with the signers first.',
     );
     expect(screen.getAllByTestId('library-signer-other-yes')).toHaveLength(1);
     expect(screen.getAllByTestId('library-signer-other-no')).toHaveLength(1);
@@ -536,7 +536,7 @@ describe('Hosts & settings → Trusted signers', () => {
     // One list for the team library and run reports alike, each entry with where it counts.
     addSigners((await allowedSignersLine(bob, 'ops@example.net')) + '\n');
     await render(<TrustedSignersSection />);
-    expect(screen.getByTestId('trusted-signers')).toHaveTextContent(/count only for the library they came from/);
+    expect(screen.getByTestId('trusted-signers')).toHaveTextContent(/Keys from a team library count for that library only/);
     expect(screen.getByTestId('trusted-signer-0')).toHaveTextContent(/alice@example.net/);
     expect(screen.getByTestId('trusted-signer-scope-0')).toHaveTextContent(/From the team library at runbooks\.example\.net/);
     expect(screen.getByTestId('trusted-signer-1')).toHaveTextContent(/any name ending in @example.net/);
@@ -583,7 +583,7 @@ describe('Hosts & settings → Team library', () => {
     trustSigners(libraryState().library!.signers!.list, LIB);
     await refreshLibrary({ fetcher: server(files), force: true });
     await render(<LibrarySettings />);
-    expect(screen.getByTestId('library-versions')).toHaveTextContent(/refuses an older one/);
+    expect(screen.getByTestId('library-versions')).toHaveTextContent(/refuses a version older than the highest it saw/);
     await press('library-forget-versions');
     expect(screen.getByTestId('library-versions')).toHaveTextContent(/Forgotten/);
     expect(screen.queryByTestId('library-forget-versions')).toBeNull();

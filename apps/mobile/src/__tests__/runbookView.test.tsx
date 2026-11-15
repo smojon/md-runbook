@@ -1008,7 +1008,7 @@ describe('the VS Code-like runbook view', () => {
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-2-run'));
     });
-    expect(screen.getByTestId('run-notice').props.children).toMatch(/runs on the host gone .*no host with that name/);
+    expect(screen.getByTestId('run-notice').props.children).toMatch(/No host named gone \(host=\)/);
     expect(connectionFor).not.toHaveBeenCalled();
   });
 

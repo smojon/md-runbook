@@ -38,6 +38,7 @@ import { PairDeviceCard } from './Pairing';
 import { SIGNER_NAME_RE } from '@md-runbook/core/signing';
 import { mono, themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
+import { Points } from '../ui/Points';
 import { Toggle } from '../ui/Toggle';
 import { QrView } from '../ui/QrView';
 import { qrMatrix } from '@md-runbook/core/qr';
@@ -229,7 +230,7 @@ function AppKeySection() {
         <View style={styles.switchRow}>
           <View style={styles.switchText}>
             <Text style={styles.switchLabel}>{web ? t.usePasskey : t.keyNeedsUser}</Text>
-            <Text style={styles.help}>{web ? t.usePasskeyHelp : t.keyNeedsUserHelp}</Text>
+            <Points items={web ? t.usePasskeyPoints : t.keyNeedsUserPoints} textStyle={styles.help} />
           </View>
           <Toggle
             testID="setting-keyNeedsUser"
@@ -241,7 +242,10 @@ function AppKeySection() {
       ) : null}
       {changing !== undefined ? (
         <View testID="key-change-confirm">
-          <Text style={styles.error}>{web ? t.passkeyChangeWarning : t.keyChangeWarning}</Text>
+          <Text style={[styles.error, styles.strong]} role="heading">
+            {t.keyChangeTitle}
+          </Text>
+          <Points items={web ? t.passkeyChangePoints : t.keyChangePoints} textStyle={[styles.error, styles.point]} />
           <View style={styles.chips}>
             <Pressable testID="key-change-go" accessibilityRole="button" onPress={() => void changeKey(changing)} style={styles.button}>
               <Text style={styles.buttonText}>{t.keyChangeGo}</Text>
@@ -324,7 +328,7 @@ function SigningSection() {
   return (
     <View testID="signing" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.signingTitle}</Text>
-      <Text style={styles.help}>{t.signingHelp}</Text>
+      <Points items={t.signingPoints} textStyle={styles.help} />
       <Text style={styles.label}>{t.signerName}</Text>
       <TextInput
         testID="signer-name"
@@ -393,7 +397,7 @@ function ReportsSection() {
   return (
     <View testID="reports-setting" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.reportsTitle}</Text>
-      <Text style={styles.help}>{t.reportsHelp}</Text>
+      <Points items={t.reportsPoints} textStyle={styles.help} />
       <Text style={styles.label}>{t.reportAddresses}</Text>
       <Text style={styles.help}>{t.reportAddressesHelp}</Text>
       <TextInput
@@ -409,9 +413,7 @@ function ReportsSection() {
         autoCorrect={false}
         multiline
       />
-      <Text testID="reports-trust-help" style={styles.help}>
-        {t.reportsTrustHelp}
-      </Text>
+      <Points testID="reports-trust-help" items={t.reportsTrustPoints} textStyle={styles.help} />
       {Object.keys(consents).length > 0 ? <Text style={styles.label}>{t.reportAnswers}</Text> : null}
       {Object.entries(consents).map(([key, answer]) => (
         <View key={key} style={styles.secretRow}>
@@ -493,7 +495,7 @@ function LinksSection() {
       <View style={styles.switchRow}>
         <View style={styles.switchText}>
           <Text style={styles.switchLabel}>{t.signedLinksOnly}</Text>
-          <Text style={styles.help}>{t.signedLinksOnlyHelp}</Text>
+          <Points items={t.signedLinksOnlyPoints} textStyle={styles.help} />
         </View>
         <Toggle
           testID="setting-signedLinksOnly"
@@ -516,7 +518,7 @@ function SafetySection() {
       <View style={styles.switchRow}>
         <View style={styles.switchText}>
           <Text style={styles.switchLabel}>{t.allowNoConfirm}</Text>
-          <Text style={styles.help}>{t.allowNoConfirmHelp}</Text>
+          <Points items={t.allowNoConfirmPoints} textStyle={styles.help} />
         </View>
         <Toggle
           testID="setting-allowNoConfirm"
@@ -543,7 +545,7 @@ function NotificationsSection() {
       <View style={styles.switchRow}>
         <View style={styles.switchText}>
           <Text style={styles.switchLabel}>{t.notifyRuns}</Text>
-          <Text style={styles.help}>{web ? t.notifyRunsHelpWeb : t.notifyRunsHelp}</Text>
+          {web ? <Text style={styles.help}>{t.notifyRunsHelpWeb}</Text> : <Points items={t.notifyRunsPoints} textStyle={styles.help} />}
         </View>
         <Toggle
           testID="setting-notifyRuns"
@@ -825,7 +827,7 @@ function PublicAddressSection() {
   return (
     <View testID="public-address" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.publicUrlTitle}</Text>
-      <Text style={styles.help}>{t.publicUrlHelp}</Text>
+      <Points items={t.publicUrlPoints} textStyle={styles.help} />
       <TextInput
         testID="public-url"
         accessibilityLabel={t.publicUrlTitle}
@@ -962,6 +964,8 @@ const useStyles = themedStyles((colors) => ({
     marginTop: 4,
   },
   error: { fontSize: 13, color: colors.error, marginTop: 8 },
+  strong: { fontWeight: '600' },
+  point: { marginTop: 2 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   groupChips: { marginTop: 0, marginBottom: 10 },
   qrBox: { alignItems: 'center', marginTop: 12 },
@@ -1010,7 +1014,7 @@ function ShareHostsSection({ hosts }: { hosts: readonly Host[] }) {
   return (
     <View testID="share-hosts" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.hostsShareTitle}</Text>
-      <Text style={styles.help}>{t.hostsShareHelp}</Text>
+      <Points items={t.hostsSharePoints} textStyle={styles.help} />
       <View style={styles.switchRow}>
         <View style={styles.switchText}>
           <Text style={styles.switchLabel}>{t.hostsWithKeys}</Text>

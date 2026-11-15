@@ -163,7 +163,7 @@ describe('a run while the app is in the background', () => {
     const [paused] = N.scheduleNotificationAsync.mock.calls[0]!;
     expect(paused.content).toEqual({
       title: 'Deploy checkout is paused in the background',
-      body: 'Your phone pauses md-runbook soon after you leave it, so the step that was running may have been cut off. Open md-runbook to check it and go on.',
+      body: 'The running step may have been cut off. Open md-runbook to check it and go on.',
       data: { runbookId: rb.id, cellIndex: build },
     });
     expect(paused.trigger).toEqual({ type: 'timeInterval', seconds: PAUSED_AFTER_SECONDS, channelId: 'runs' });

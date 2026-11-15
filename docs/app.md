@@ -178,6 +178,12 @@ functions and the folder carry over) and `cmd` cells each run in a `cmd.exe` of 
 `os=` blocks follow the server: `os=windows` runs on Windows servers, `os=linux,macos` on the
 others. A cell for the other kind of server shows why it doesn't run there.
 
+**Hosts & settings → Output history** sets how many earlier outputs each cell keeps in the file,
+collapsed under its latest one, for **Compare With Previous Run**; **Latest only** keeps none, as
+the extension does by default. **Cloud console lists** turns AWS and Google Cloud JSON output
+(EC2, EKS, Compute Engine, GKE, Cloud Run) into a list with a link to each resource in the
+console.
+
 <img src="app/web-line-actions-dark.png" width="720" alt="The web app in dark mode: a code line tapped, with Run line 2, Run lines 1-2, Check, Breakpoint and Explain under it">
 
 ## Notifications
@@ -326,7 +332,9 @@ alike. Each entry says where it counts:
   runbooks only, and stops counting once the library no longer publishes it (flagged **No longer
   published**, also while the library can't be read).
 - **Added by you:** `allowed_signers` lines you paste under **Add signers**. They count for every
-  runbook: the team library's, and runbooks from files and links.
+  runbook: the team library's, and runbooks from files and links. The lines are in OpenSSH's
+  format, as on the servers; Ed25519, ECDSA, RSA and security-key signatures are checked on the
+  device.
 
 **Remove** takes a key off the list. A runbook is **verified** only when its signature checks out
 with a key that counts for it, under the name its signature block gives:

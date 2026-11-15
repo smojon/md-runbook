@@ -938,13 +938,13 @@ describe('the recheck of 2026-11-14', () => {
     const s = await signatureState(drop, keys);
     expect(s).toMatchObject({ kind: 'verified' });
     const lib = { base: LIB, signedOnly: true };
-    expect(openableReason(lib, { text: drop, path: 'restart-web.md' }, s)).toMatch(
-      /signed as db\/drop-staging, which is not the name of restart-web\.md/,
-    );
+    expect(openableReason(lib, { text: drop, path: 'restart-web.md' }, s)).toMatch(/signed as db\/drop-staging, not restart-web\.md/);
     expect(openableReason(lib, { text: drop, path: 'db/drop-staging.md' }, s)).toBeUndefined();
     // Swapped folders: staging/restart signed, served as prod/restart.md.
     const staging = signedWith(RUNBOOK, 'alice', (m) => k.sign(m), { name: 'staging/restart' });
-    expect(openableReason(lib, { text: staging, path: 'prod/restart.md' }, await signatureState(staging, keys))).toMatch(/not the name/);
+    expect(openableReason(lib, { text: staging, path: 'prod/restart.md' }, await signatureState(staging, keys))).toMatch(
+      /signed as staging\/restart, not prod\/restart\.md/,
+    );
     // Not signedOnly: it opens, with the amber flag (signedFacts.otherName).
     expect(openableReason({ base: LIB, signedOnly: false }, { text: drop, path: 'restart-web.md' }, s)).toBeUndefined();
     expect(signedFacts(LIB, 'restart-web.md', s)).toMatchObject({ otherName: true });

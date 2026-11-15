@@ -32,23 +32,26 @@ const en = {
     'bad-host': 'This link’s host= is not a host name.',
     'bad-param': 'This link has a parameter with a bad name or a line break in its value: not opened.',
   },
-  linkMismatch:
-    'Not opened: the runbook is not the one this link pins (its sha256= differs). It changed since the link was made, or someone changed it on the way.',
-  linkUnsignedRefused: 'Not opened: this runbook is not signed, and Hosts & settings → Links opens only signed runbooks from links.',
-  linkOpenedUnverified: 'Opened from a link; the runbook is not signed: check where the link came from before you run anything.',
-  linkOpenedPinned:
-    'Opened from a link that pins this exact text, but the runbook is not signed: check where the link came from before you run anything.',
+  linkMismatch: 'Not opened: it isn’t the runbook this link pins (sha256=). It changed since, or someone changed it on the way.',
+  linkUnsignedRefused: 'Not opened: not signed, and Hosts & settings → Links opens only signed runbooks.',
+  linkOpenedUnverified: 'Opened from a link, not signed: check where the link came from before you run anything.',
+  linkOpenedPinned: 'Opened from a link that pins this text, but not signed: check where the link came from first.',
   linkOpenedSigned: 'Opened from a link: the runbook is signed and its blocks are unchanged.',
-  linkMissingHost: (name: string) => `The link asks to run on ${name}, and there is no host with that name. Add it under Hosts & settings.`,
+  linkMissingHost: (name: string) => `The link asks for the host ${name}, which you don’t have: add it under Hosts & settings.`,
   linkIgnoredParams: (names: string[]) => `The link sets ${names.join(', ')}, which this runbook doesn’t use: ignored.`,
   linksTitle: 'Links',
   signedLinksOnly: 'Open only signed runbooks from links',
-  signedLinksOnlyHelp:
-    'Runbooks from links (QR codes, pager alerts, mails) open only when signed, with no signed block changed: anyone can make a link, only a signature says who approved the runbook. Off: unsigned ones open with a warning.',
+  signedLinksOnlyPoints: [
+    'Anyone can make a link (QR codes, pager alerts, mails): only a signature says who approved it.',
+    'On: a runbook from a link opens only if signed and unchanged.',
+    'Off: unsigned ones open with a warning.',
+  ],
   safetyTitle: 'Asking before a cell runs',
   allowNoConfirm: 'Let runbooks skip the question (no-confirm)',
-  allowNoConfirmHelp:
-    'The app asks before a cell with a risky command (delete, apply, rm -rf, helm upgrade, …) or the confirm option runs. Off: a cell’s no-confirm is ignored, so a runbook can’t switch the question off.',
+  allowNoConfirmPoints: [
+    'The app asks before a risky command (delete, apply, rm -rf, helm upgrade, …) or a confirm cell runs.',
+    'Off: no-confirm is ignored, so a runbook can’t switch the question off.',
+  ],
   linkOpening: 'Opening the runbook…',
   scanCode: 'Scan a code',
   scanTitle: 'Scan a code',
@@ -59,39 +62,38 @@ const en = {
   allowCamera: 'Allow the camera',
   openSettings: 'Open settings',
   qrTitle: 'QR code of this runbook',
-  qrHelp:
-    'Another phone scans it with Scan a code. The runbook travels in the code, without its outputs, so no network is needed; it opens unsigned unless the runbook is signed.',
+  qrHelpPoints: ['Another phone scans it with Scan a code: no network needed.', 'It opens unsigned unless the runbook is signed.'],
   qrWithHostParams: 'With the selected host and parameter values',
   signRecordTitle: 'Sign Run Record',
   cosignRecordTitle: 'Co-sign Run Record',
-  recordUnsigned:
-    'Your signature says this is the record as it happened: outputs, notes and earlier attempts. Any later change shows in its report and in md-runbook verify.',
+  recordUnsigned: 'Your signature vouches for this record as it is: outputs, notes and attempts. A later change shows.',
   recordCosign: (signers: string) => `Signed by ${signers}. Your co-signature says you reviewed the record as it is.`,
   recordChanged: (signers: string) => `The record changed since ${signers} signed it. Signing again replaces their signatures.`,
   cosignRequest: (what: string, signers: string, link: string) =>
-    `Please co-sign ${what}${signers ? ` (signed by ${signers})` : ''}: open this link in the md-runbook app, review the signed blocks, then Co-sign. Send the runbook back with Share Runbook.\n${link}\n`,
+    `Please co-sign ${what}${signers ? ` (signed by ${signers})` : ''}: open this link in md-runbook, review the signed blocks, tap Co-sign, then send it back with Share Runbook.\n${link}\n`,
   recordNeedsName: 'Set your name for signatures first, under Hosts & settings → Signing runbooks.',
   recordChangedWhileSigning: 'A run changed the record while it was being signed: sign it again.',
   recordSigned: (signers: string) => `The run record is signed by ${signers}. Export Report shows it; md-runbook verify checks it.`,
   groupPickTitle: 'Run on a group',
-  groupPickHelp: 'This cell runs on each host of the group, one after the other; the output has a section per host.',
+  groupPickHelp: 'The cell runs on each host in turn, with a section per host in the output.',
   groupChip: (group: string, n: number) => `${group} (${n})`,
   groupResultsTitle: (group: string) => `Ran on ${group}`,
-  groupNotTrusted: (host: string) =>
-    `[md-runbook] ${host} skipped: its host key isn't trusted yet (run a cell on it once to check and trust it).`,
+  groupNotTrusted: (host: string) => `[md-runbook] ${host} skipped: host key not trusted yet (run a cell on it once to trust it).`,
   groupNeedsValues: 'This cell needs values first: run it once on one host (it asks for them), then on the group.',
   groupNotInPractice: 'In practice, every cell runs on the practice host.',
   noHostGroups: 'No host groups yet: give hosts a group under Hosts & settings.',
   practiceTitle: 'Practice on a host',
-  practiceHelp: 'Every cell of this runbook runs on the host you pick, whatever host= says: for drills and training on a practice server.',
+  practiceHelp: 'Every cell runs on the host you pick, whatever host= says: for drills on a practice server.',
   practiceOn: (name: string) => `Practice: every cell runs on ${name}, whatever host= says.`,
-  practiceMissing: (name: string) =>
-    `This runbook practises on ${name} (practice:), and there is no host with that name: add it under Hosts & settings before you run.`,
+  practiceMissing: (name: string) => `No host named ${name} to practise on (practice:): add it under Hosts & settings.`,
   practiceFromFrontMatter: 'This runbook names its practice host in its front matter (practice:).',
   drillChip: 'A drill',
   startIncidentTitle: 'Start Incident',
-  startIncidentHelp:
-    'A dated copy of this runbook for the incident: each run records who ran it and where, every attempt is kept, and Export Report shows the timeline.',
+  startIncidentPoints: [
+    'A dated copy of this runbook for the incident.',
+    'Each run records who ran it and where; every attempt is kept.',
+    'Export Report shows the timeline.',
+  ],
   incidentId: 'Incident ID',
   startIncidentGo: 'Start',
   incidentStarted: (id: string, title: string) => `Incident ${id} started from ${title}`,
@@ -100,8 +102,7 @@ const en = {
   notePlaceholder: 'Called the DBA, failover approved',
   noteAdded: 'Note added at the end of the runbook; Export Report puts it in the timeline.',
   milestone: { detected: 'Detected', mitigated: 'Mitigated', resolved: 'Resolved' },
-  qrTooLarge:
-    'This runbook is too large for a QR code. Use Share Runbook instead, or make a code for its address in VS Code (Make QR Code).',
+  qrTooLarge: 'Too large for a QR code: use Share Runbook, or Make QR Code in VS Code.',
   fileTooLarge: (name: string) => `${name} is larger than 2 MB and was not opened`,
   fileUnreadable: (name: string, why: string) => `${name} could not be read: ${why}`,
   outputExit: (exit: string) => `Output · exit ${exit}`,
@@ -139,7 +140,7 @@ const en = {
   signerNameRule: 'Letters, digits and @ . _ + - only (no spaces): the same name goes into the servers’ allowed_signers.',
   signerNameFirst: 'Set your name above to get the line.',
   signedNotice: (name: string, version: number, signers: string, blocks: number) =>
-    `${name} version ${version} is signed by ${signers} (${blocks} block${blocks === 1 ? '' : 's'}). The commands were not checked one by one (bash -n) on this device: VS Code and the command line check that.`,
+    `${name} version ${version} is signed by ${signers} (${blocks} block${blocks === 1 ? '' : 's'}). Not checked with bash -n here: VS Code and the command line do that.`,
   cosignedNotice: (name: string, version: number, signers: string) => `${name} version ${version} is signed by ${signers}.`,
   saveNotAllowed: 'The browser did not allow writing to the file.',
   fileLinkLost: 'The link to the file is gone: open the file again.',
@@ -175,21 +176,27 @@ const en = {
   hostGroupPlaceholder: 'a customer, a site, a team',
   allHosts: 'All',
   hostsShareTitle: 'Share hosts',
-  hostsShareHelp:
-    'Hand this list to a colleague’s app: names, addresses, users and groups. Never a private key: each phone adds its own public key to the hosts.',
+  hostsSharePoints: [
+    'For a colleague’s app: names, addresses, users and groups.',
+    'Never a private key: each phone adds its own public key to the hosts.',
+  ],
   hostsWithKeys: 'With the trusted host keys',
   hostsExportFile: 'Share as a file',
   hostsShowQr: 'Show as a QR code',
   hostsImport: 'Import…',
   hostsTooMany: 'Too many hosts for one QR code: share them as a file, or pick a group first.',
   hostsImportTitle: 'Import hosts',
-  hostsImportHelp:
-    'Hosts from a colleague: paste a hosts.json file or a hosts link, or scan their QR code (Scan a code). Hosts with a name you already have are left alone.',
+  hostsImportPoints: [
+    'Paste a colleague’s hosts.json or hosts link, or scan their QR code (Scan a code).',
+    'Hosts with a name you already have are left alone.',
+  ],
   hostsImportPlaceholder: 'Paste the hosts.json text or the link',
   hostsAlreadyHave: 'you have one of that name: skipped',
   hostsTrustKeys: 'Trust the host keys in this list',
-  hostsTrustKeysHelp:
-    'Only if you trust who sent it: their app checked these keys. Off: each host asks you to check its key on the first connection.',
+  hostsTrustKeysPoints: [
+    'Their app checked these keys: turn this on only if you trust who sent them.',
+    'Off: each host asks you to check its key at the first connection.',
+  ],
   hostsImportGo: (n: number) => (n === 1 ? 'Add 1 host' : `Add ${n} hosts`),
   hostsImported: (added: number, skipped: number) => `${added} added${skipped ? `, ${skipped} skipped (you had them)` : ''}.`,
   hostsDamaged: 'The hosts in this link are damaged (a QR code read wrong, or a link cut short).',
@@ -215,24 +222,37 @@ const en = {
   appKeyHelp: 'The key was made on this device and stays here. Add its public key to ~/.ssh/authorized_keys on each host:',
   appKeyLoading: 'Making the key…',
   keyNeedsUser: 'Ask for Face ID or a fingerprint before the key is used',
-  keyNeedsUserHelp:
-    'Each SSH login and each signature then asks for Face ID, Touch ID, a fingerprint or the screen lock, enforced by the phone’s secure hardware: a lost or stolen phone can’t use the key.',
-  keyChangeWarning:
-    'The phone’s hardware only enforces this on a key made that way, so this makes a new key. Put its public key on your hosts again (authorized_keys), and the new allowed_signers line on servers that check your signatures.',
+  keyNeedsUserPoints: [
+    'Each SSH login and each signature asks for Face ID, a fingerprint or the screen lock.',
+    'The phone’s secure hardware enforces it: a lost or stolen phone can’t use the key.',
+  ],
+  /** Before a new key is made (the toggles above): the heading, then what to do with the new key. */
+  keyChangeTitle: 'This makes a new key',
+  keyChangePoints: [
+    'The phone’s hardware enforces this only on a key made that way.',
+    'Put its public key on your hosts again (authorized_keys).',
+    'Give servers that check your signatures its new allowed_signers line.',
+  ],
   usePasskey: 'Use a passkey',
-  usePasskeyHelp:
-    'The key is then a passkey for this site, kept by Windows Hello, Touch ID, your phone or a security key: the app never sees it, and each SSH login and each signature asks for your fingerprint, face or PIN. Hosts need OpenSSH 8.4 or newer.',
-  passkeyChangeWarning:
-    'This makes a new key: put its public key on your hosts again (authorized_keys), and the new allowed_signers line on servers that check your signatures. A passkey you no longer use stays in your password manager or authenticator until you remove it there.',
+  usePasskeyPoints: [
+    'Windows Hello, Touch ID, your phone or a security key keeps the key: the app never sees it.',
+    'Each SSH login and each signature asks for your fingerprint, face or PIN.',
+    'Hosts need OpenSSH 8.4 or newer.',
+  ],
+  passkeyChangePoints: [
+    'Put its public key on your hosts again (authorized_keys).',
+    'Give servers that check your signatures its new allowed_signers line.',
+    'A passkey you no longer use stays in your password manager until you remove it there.',
+  ],
   keyChangeGo: 'Make a new key',
   keyChanged: 'New key made: copy its public key above to your hosts.',
   appKeyFailed: (why: string) => `The key could not be made: ${why}`,
   appKeyStorage: {
-    hardware: "The private key was made in this device's secure hardware and cannot be read out, not even by the app.",
+    hardware: "The private key is in this device's secure hardware: it can't be read out, not even by the app.",
     keystore: "The private key is in this device's keystore and never handed to the app.",
     'secure-store': "The private key is kept in this device's secure storage.",
     browser: "The private key is kept in this browser's storage for this site.",
-    passkey: 'The key is a passkey for this site: your authenticator keeps it and asks for you each time it is used.',
+    passkey: 'A passkey for this site: your authenticator keeps it and asks for you at each use.',
   },
   copy: 'Copy',
   copied: 'Copied',
@@ -245,7 +265,7 @@ const en = {
   relayToken: 'Relay token',
   relaySaved: 'Relay saved',
   relayTokenInvalid: (ch: string) =>
-    `The token contains ${ch === ' ' ? 'a space' : `“${ch}”`}, which a browser can’t send to the relay (it goes in the WebSocket’s protocol header). Use letters and digits: make one with openssl rand -hex 32, for the relay and here.`,
+    `A browser can’t send a token with ${ch === ' ' ? 'a space' : `“${ch}”`}. Use letters and digits (openssl rand -hex 32), on the relay and here.`,
   relayNotConfigured: 'In the browser, cells run through a relay; none is set up yet.',
   setUpRelay: 'Set up the relay',
   relayRefused: (url: string) => `The relay at ${url} refused the connection (address, token or target not allowed).`,
@@ -292,14 +312,13 @@ const en = {
   confirmDeclined: (cell: number) => `Cell ${cell} was not run: you didn’t confirm it.`,
   otherHostTitle: (name: string) => `This cell runs on ${name}`,
   otherHostBody: (name: string, selected: string | undefined) =>
-    `The runbook says host=${name} for this cell${selected ? `, not ${selected}, the host you selected` : ''}. Run it on ${name}? Check that the runbook comes from someone you trust.`,
+    `The runbook says host=${name}${selected ? `, not ${selected} (selected)` : ''}. Run it there only if the runbook comes from someone you trust.`,
   otherHostAccept: (name: string) => `Run on ${name}`,
-  noHostNamed: (name: string) =>
-    `This cell runs on the host ${name} (host=), and there is no host with that name. Add it under Hosts & settings.`,
+  noHostNamed: (name: string) => `No host named ${name} (host=): add it under Hosts & settings.`,
   cellChanged: 'The cell changed while it ran: its output was not written',
   outMissing: (name: string) => `\${out:${name}} has no value yet: run the cell with capture=${name} first`,
   outFromAssistant: (name: string) =>
-    `\${out:${name}} was captured by a cell an assistant wrote, and your own cells don’t use values an assistant cell produced: capture it in a cell of your own`,
+    `\${out:${name}} comes from a cell an assistant wrote, which your cells don’t use: capture it in your own`,
   outSecretForAssistant: (name: string) => `Cells proposed by an assistant can’t use values captured as secret (\${out:${name}})`,
 
   // All actions (the ⋯ sheet, Ctrl/⌘+K)
@@ -314,27 +333,15 @@ const en = {
     stop: ['Stop', 'Stop the running cell and the rest of Run All.'],
     nextStep: ['Go to Next Step', 'Jump to the first step that isn’t done yet.'],
     showSteps: ['Show Steps', 'Every step by name, with its state and time: tap one to go there.'],
-    nextProblem: [
-      'Go to Next Problem',
-      'Before running: jump to the next typo in a cell option or value that is never set, with its fix where there is one.',
-    ],
+    nextProblem: ['Go to Next Problem', 'Before running: jump to the next typo or unset value, with its fix if there is one.'],
     restartSession: ['Restart Session', 'The shell got into a bad state (wrong folder, a stuck login): start again from a clean one.'],
-    sessionOff: ['Session: on', 'Now one shell for the whole runbook (cd and variables carry over). Tap to give each cell a fresh shell.'],
-    sessionOn: ['Session: off', 'Now each cell starts in a fresh shell. Tap to keep one shell for the whole runbook.'],
+    sessionOff: ['Session: on', 'One shell for the whole runbook: cd and variables carry over. Tap for a fresh shell per cell.'],
+    sessionOn: ['Session: off', 'Each cell starts in a fresh shell. Tap to keep one shell for the whole runbook.'],
     runAllAsCopy: ['Run All as Copy', 'The runbook is a template: run it in a new dated copy, so the original stays clean.'],
-    runOnGroup: [
-      'Run on a Group…',
-      'One cell on every host of a group (a customer, a site), one after the other, with a section per host in the output.',
-    ],
-    practiceOnHost: [
-      'Practice on a Host…',
-      'A drill or training: every cell runs on the host you pick (a practice server), whatever host= says, so nothing reaches production.',
-    ],
+    runOnGroup: ['Run on a Group…', 'One cell on every host of a group (a customer, a site), one after the other.'],
+    practiceOnHost: ['Practice on a Host…', 'A drill: every cell runs on a practice host you pick, so nothing reaches production.'],
     stopPractice: ['Stop Practice', 'Back to the selected host, and to the hosts that cells name with host=.'],
-    startIncident: [
-      'Start Incident',
-      "You're paged: a dated copy that records who ran each step and where, keeps every attempt, and starts the incident timeline.",
-    ],
+    startIncident: ['Start Incident', "You're paged: a dated copy that records who ran what, and starts the incident timeline."],
     addNote: ['Add Note', 'A decision or a milestone (detected, mitigated, resolved), with the time and your name, for the record.'],
     clearAllOutputs: ['Clear All Outputs', 'Before sharing or saving the runbook as a template, without the last run’s output.'],
     hosts: ['Hosts & Settings', 'Servers and their keys, this app’s public key, secrets, the relay and output settings.'],
@@ -344,26 +351,11 @@ const en = {
     secrets: ['Secrets', 'Add, change or forget the tokens and passwords the runbooks use.'],
     save: ['Save to the File', 'Write the outputs into the .md file, so VS Code and Git see this run.'],
     download: ['Download', 'Keep a copy of the runbook with its outputs.'],
-    signRunbook: [
-      'Sign Runbook',
-      'Release a runbook for a support team: servers restricted to md-runbook-gate run only signed runbooks, unchanged. Signed with this app’s key.',
-    ],
-    signRecord: [
-      'Sign Run Record',
-      'Vouch for the record of an incident or a drill as it is (outputs, notes and all): a later change shows. Co-signs a record someone signed.',
-    ],
-    requestCosign: [
-      'Request Co-signature',
-      'Ask a reviewer to co-sign: a message with a link that opens this signed runbook on Co-sign Runbook in their app.',
-    ],
-    cosignRunbook: [
-      'Co-sign Runbook',
-      'Four eyes: add your signature to the signed runbook as it is, for servers that need two signers. Refused if it changed since it was signed.',
-    ],
-    exportReportHtml: [
-      'Export Report (HTML)',
-      'Send the result of a run to someone without the app or VS Code: a change record, an incident report.',
-    ],
+    signRunbook: ['Sign Runbook', 'Release it for a support team: md-runbook-gate servers run only signed, unchanged runbooks.'],
+    signRecord: ['Sign Run Record', 'Vouch for an incident’s or a drill’s record as it is; co-signs one already signed.'],
+    requestCosign: ['Request Co-signature', 'Send a reviewer a link that opens this runbook on Co-sign Runbook in their app.'],
+    cosignRunbook: ['Co-sign Runbook', 'Four eyes: add your signature, for servers that need two. Refused if it changed since signing.'],
+    exportReportHtml: ['Export Report (HTML)', 'A run’s result for someone without the app: a change record, an incident report.'],
     exportReportPdf: ['Export Report (PDF)', 'The same report as a PDF, for a ticket, an audit or a mail.'],
     exportRecordJson: [
       'Export Run Record (JSON)',
@@ -440,21 +432,24 @@ const en = {
   forceColor: 'Ask programs for colours',
   forceColorHelp: 'Cells get FORCE_COLOR=1 and CLICOLOR_FORCE=1. The file keeps plain text.',
   cloudViews: 'Cloud console lists',
-  cloudViewsHelp:
-    'AWS and Google Cloud JSON output (EC2, EKS, Compute Engine, GKE, Cloud Run) gets a list with a link to each resource in the console.',
+  cloudViewsHelp: 'AWS and Google Cloud JSON output gets a list, with a link to each resource in the console.',
   cloudTitle: (title: string, n: number) => `${title} (${n})`,
   cloudOpen: 'Open in console',
   historyTitle: 'Output history',
-  historyHelp:
-    'Earlier runs each cell keeps in the file (collapsed under its latest output), for Compare With Previous Run. 0 keeps only the latest, as the extension does by default.',
+  historyHelp: 'Earlier outputs each cell keeps in the file, for Compare With Previous Run.',
   historyKeep: (n: number) => (n === 0 ? 'Latest only' : `${n} earlier`),
   // Assistant (Claude, the user's own key)
   aiKeyTitle: 'Anthropic API key',
-  aiKeyHelp:
-    'The assistant uses Claude with your own key. It is kept in this device’s keychain, and nothing is sent until you confirm each request.',
+  aiKeyPoints: [
+    'The assistant uses Claude with your own key, kept in this device’s keychain.',
+    'Nothing is sent until you confirm each request.',
+  ],
   aiSendTitle: (chars: number, what: string) => `Send ${chars.toLocaleString('en-US')} characters of this runbook to Claude for ${what}?`,
-  aiSendBody:
-    'Outputs are redacted and marked as untrusted; host names, addresses and the like are replaced by placeholders that stay on this device. Nothing is run: suggestions arrive as proposed cells that need your approval.',
+  aiSendPoints: [
+    'Outputs are redacted and marked as untrusted.',
+    'Host names, addresses and the like become placeholders that stay on this device.',
+    'Nothing is run: suggestions arrive as proposed cells for you to approve.',
+  ],
   aiLeaksFound: (n: number) =>
     n === 1 ? 'The leak check found 1 possible secret or internal name:' : `The leak check found ${n} possible secrets or internal names:`,
   leakLine: (line: number, kind: string, preview: string) => `line ${line} · ${kind} · ${preview}`,
@@ -609,7 +604,7 @@ const en = {
   railHint: 'Shows the steps. Drag along the rail to go to a step.',
   /** Run all at a checklist item not ticked yet (a step done by hand). */
   manualTitle: 'Done by hand?',
-  manualBody: 'Run all waits for this step. Done ticks it, Skip goes on without ticking it, Stop ends the run here.',
+  manualBody: 'Run all waits here. Done ticks it, Skip goes on without ticking it, Stop ends the run.',
   manualDone: 'Done',
   manualSkip: 'Skip',
   manualStop: 'Stop',
@@ -632,7 +627,7 @@ const en = {
     `${n === 1 ? '1 manual step' : `${n} manual steps`} not ticked in ${copy}, which keeps evidence: tick ${n === 1 ? 'it' : 'them'} there and run this step again`,
   callRunning: (src: string, copy: string) => `Runs ${src} as ${copy}: when it ends, its result goes to the step that called it.`,
   callNotDone: (parent: string) =>
-    `This run isn't done: its result went to ${parent} as failed. Fix it here, or go back and run the step again (it continues this copy).`,
+    `Not done: ${parent} got this run as failed. Fix it here, or run the step there again to continue this copy.`,
   proposedNotRun: (n: number) =>
     n === 1 ? '1 proposed cell was not run: it needs approval.' : `${n} proposed cells were not run: they need approval.`,
 
@@ -641,7 +636,7 @@ const en = {
   paramPattern: (pattern: string) => `Must match ${pattern}`,
   paramMissing: (name: string) => `Enter a value for ${name} under Parameters`,
   paramSignedDefault: (name: string, value: string) =>
-    `Type a value for ${name} under Parameters: a signed runbook doesn't use the default from the file (${value}), which isn't signed.`,
+    `Type a value for ${name} under Parameters: a signed runbook ignores the file’s unsigned default (${value}).`,
   paramNewline: (name: string) => `The value of ${name} must be one line`,
   paramMismatch: (name: string, pattern: string) => `The value of ${name} doesn't match its pattern ${pattern}`,
   refUnsupported: (kind: string, name: string) =>
@@ -656,12 +651,13 @@ const en = {
   needsRun: 'Run',
   needsCancelled: (names: string) => `Cancelled: ${names} not given, nothing was run`,
   signingTitle: 'Signing runbooks',
-  signingHelp:
-    "Sign Runbook and Co-sign Runbook (in a runbook's ⋯ More) sign with this app's key, as VS Code signs with an SSH key: servers behind md-runbook-gate then run the runbook unchanged.",
+  signingPoints: [
+    "Sign Runbook and Co-sign Runbook (a runbook's ⋯ More) sign with this app's key.",
+    'Servers behind md-runbook-gate then run the runbook only unchanged.',
+  ],
   signerName: 'Your name in signatures',
   signerPlaceholder: 'you@example.net',
-  allowedSignersHelp:
-    "Ask the servers' admin to add this line to md-runbook-gate's allowed_signers (the name there is what the servers' logs show):",
+  allowedSignersHelp: "Ask the servers' admin to add this line to md-runbook-gate's allowed_signers:",
   secretsTitle: 'Secrets',
   secretsHelp: 'Values for ${secret:NAME}, stored in this device’s keychain. Change a value, or forget it to be asked again.',
   secretsNone: 'None stored yet: a cell that uses one asks for it.',
@@ -690,7 +686,7 @@ const en = {
       ? '1 block changed since signing: servers that run signed runbooks only refuse it.'
       : `${n} blocks changed since signing: servers that run signed runbooks only refuse them.`,
   signedMissing: (blocks: readonly number[], of: number) =>
-    `Signed block${blocks.length === 1 ? '' : 's'} ${blocks.join(', ')} of ${of} ${blocks.length === 1 ? "isn't" : "aren't"} in the file as signed (deleted or changed): check nothing you rely on was removed.`,
+    `Signed block${blocks.length === 1 ? '' : 's'} ${blocks.join(', ')} of ${of} ${blocks.length === 1 ? 'is' : 'are'} deleted or changed: check nothing you rely on was removed.`,
   signedMoved: (n: number) => `${n} block${n === 1 ? '' : 's'} moved since signing: the order differs from the one that was reviewed.`,
 
   // Code cells (the VS Code-like view)
@@ -722,8 +718,11 @@ const en = {
     'Compare this fingerprint with the one shown on the server (ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub) before trusting it.',
   trustChangedBody: 'Another machine may be answering at this address. Trust the new key only if you know why it changed.',
   installKey: 'Install my key…',
-  installKeyHelp: (account: string) =>
-    `Logs in once as ${account} with its password and adds this app’s public key to ~/.ssh/authorized_keys (Linux and macOS servers). The password is used for this one login and not kept.`,
+  installKeyPoints: (account: string) => [
+    `Logs in once as ${account} with its password, and adds this app’s public key to ~/.ssh/authorized_keys.`,
+    'For Linux and macOS servers.',
+    'The password is used for this one login and not kept.',
+  ],
   installKeyPassword: 'Password',
   installKeyGo: 'Install',
   installKeyBusy: 'Installing…',
@@ -737,14 +736,19 @@ const en = {
   // Notifications: a run that ends or waits while the app is in the background (the web: the tab is hidden)
   notifyTitle: 'Notifications',
   notifyRuns: 'Notify me about runs in the background',
-  notifyRunsHelp:
-    'A notification when a run is done, fails or waits for you while md-runbook is in the background. Your phone pauses md-runbook from a few seconds to half a minute after you leave it, so a step still running then is cut off: the notification says so, and you go on when you are back.',
-  notifyRunsHelpWeb: 'A browser notification when a run is done, fails or waits for you while this tab is hidden.',
+  notifyRunsPoints: [
+    'When a run is done, fails or waits for you.',
+    'Your phone pauses md-runbook within half a minute after you leave it.',
+    'A step still running then is cut off: the notification says so.',
+  ],
+  notifyRunsHelpWeb: 'When a run is done, fails or waits for you while this tab is hidden.',
   notifyBlocked: 'Notifications are turned off for md-runbook in the system settings.',
   notifyBlockedWeb: 'This browser blocks notifications from this site: allow them in its site settings.',
   notifyOfferTitle: 'Get a notification when this run needs you?',
-  notifyOfferBody:
-    'When the run is done, fails or waits for an answer while md-runbook is in the background. Your phone pauses md-runbook soon after you leave it: then the notification says the run is paused.',
+  notifyOfferPoints: [
+    'When the run is done, fails or waits for an answer while md-runbook is in the background.',
+    'Your phone pauses md-runbook soon after you leave it: the notification then says so.',
+  ],
   notifyOfferBodyWeb: 'When the run is done, fails or waits for an answer while this tab is hidden.',
   notifyOfferYes: 'Notify me',
   notifyOfferNo: 'Not now',
@@ -757,8 +761,7 @@ const en = {
   notifyWaitsTeardown: (steps: string) => `Take it down now? ${steps}`,
   notifyWaitsNeeds: (names: string) => `This cell needs ${names}`,
   notifyPaused: (runbook: string) => `${runbook} is paused in the background`,
-  notifyPausedBody:
-    'Your phone pauses md-runbook soon after you leave it, so the step that was running may have been cut off. Open md-runbook to check it and go on.',
+  notifyPausedBody: 'The running step may have been cut off. Open md-runbook to check it and go on.',
 
   // The team library: runbooks a server hosts for everyone (runbooks/library.ts)
   librarySection: 'Team runbooks',
@@ -791,12 +794,11 @@ const en = {
               ? `its signature expired on ${s.manifest?.expires ?? '?'}.`
               : 'this one changed since signing.'),
   librarySignedOnlyOtherName: (name: string, path: string) =>
-    `Not openable: this library opens verified runbooks only, and this one is signed as ${name}, which is not the name of ${path}.`,
+    `Not openable: this library opens verified runbooks only, and this one is signed as ${name}, not ${path}.`,
   librarySignedOnlyOlder: (version: number, seen: number) =>
     `Not openable: this library opens verified runbooks only, and this is version ${version}, older than version ${seen} seen before.`,
   libraryCopyRefused: (why: string) => `Your copy can't be opened from here. ${why}`,
-  librarySignedOnlyDropped:
-    'This library opened verified runbooks only, and its index.json no longer asks for that. The app keeps opening verified runbooks only until you agree.',
+  librarySignedOnlyDropped: 'This library no longer asks for verified runbooks only. Until you agree, the app still opens only those.',
   libraryAllowUnverified: 'Open unverified runbooks too',
   libraryYourCopy: 'Your copy',
   libraryOpening: 'Opening…',
@@ -814,22 +816,23 @@ const en = {
   sigManifest: (name: string, version: number) => `${name}, version ${version}`,
   sigOtherName: 'signed under another name than this file’s',
   sigOlder: (seen: number) => `older than version ${seen} seen before`,
-  sigCoversSteps:
-    'The signature covers the shell blocks and runbook calls, not the text around them: instructions, checklists, the title and outputs may have changed.',
+  sigCoversSteps: 'The signature covers the shell blocks and runbook calls only: the text around them may have changed.',
   signedOutside: (n: number) =>
     n === 1
-      ? '1 block that can run (PowerShell, cmd) is not covered by the signature: check it yourself before you run it.'
-      : `${n} blocks that can run (PowerShell, cmd) are not covered by the signature: check them yourself before you run them.`,
+      ? '1 block that can run (PowerShell, cmd) is not signed: check it yourself before you run it.'
+      : `${n} blocks that can run (PowerShell, cmd) are not signed: check them yourself before you run them.`,
   copyNotOpenable: (why: string) => `${why} Opening it from Team runbooks is refused.`,
   copyNotRunnable: (why: string) =>
-    `${why} This copy of a team runbook doesn’t run until it is verified again: under Team runbooks, replace it with the library’s version.`,
-  sigCoversWhole: 'The signature covers the whole runbook: its text, front matter and every block (outputs and ticked boxes aside).',
-  signedTextChanged: 'The runbook changed since it was signed (its text, front matter or a block): the signature no longer vouches for it.',
+    `${why} It doesn’t run until verified again: under Team runbooks, replace it with the library’s version.`,
+  sigCoversWhole: 'The signature covers the whole runbook, except outputs and ticked boxes.',
+  signedTextChanged: 'The runbook changed since it was signed: the signature no longer vouches for it.',
   libraryReplace: 'Replace with the library’s version',
   libraryReplaceHelp: 'Your copy can’t be opened here any more',
   libraryVersionsTitle: 'Versions seen',
-  libraryVersionsHelp:
-    'The app remembers the highest signed version of each runbook in this library, and refuses an older one (someone may have put back an old version). Forget them when a runbook was renumbered, or signed with too high a version by mistake.',
+  libraryVersionsPoints: [
+    'The app refuses a version older than the highest it saw: someone may have put an old one back.',
+    'Forget them if a runbook was renumbered, or signed with too high a version by mistake.',
+  ],
   libraryVersionsForgotten: 'Forgotten: the next refresh remembers the versions it sees.',
   libraryForgetVersions: 'Forget the versions seen',
   updateAvailable: 'Update available',
@@ -855,12 +858,12 @@ const en = {
       : `The new version has ${n} blocks that can run outside its signature.`,
   updateExpired: (date: string) => `The new version’s signature expired on ${date}.`,
   updateOlderVersion: (name: string, now: number, seen: number) =>
-    `The new version is ${name} version ${now}, older than version ${seen} (yours, or seen before): someone may have put back an old version.`,
+    `The new version is ${name} version ${now}, older than version ${seen} seen before: someone may have put an old one back.`,
   librarySigners: (n: number) => (n === 1 ? 'This library publishes 1 signer.' : `This library publishes ${n} signers.`),
   librarySignersSkipped: (n: number) =>
     n === 1
-      ? '1 line of its allowed_signers is not used here (a certificate authority, another namespace, an unknown option or a damaged line).'
-      : `${n} lines of its allowed_signers are not used here (certificate authorities, other namespaces, unknown options or damaged lines).`,
+      ? '1 allowed_signers line is not used (a certificate authority, another namespace, an unknown option or damaged).'
+      : `${n} allowed_signers lines are not used (certificate authorities, other namespaces, unknown options or damaged).`,
   trustSigners: 'Trust these signers',
   trustSignersTitle: (host: string) => `Trust these keys for the team library at ${host}?`,
   /** The Trust these signers prompt, one point per line. */
@@ -894,7 +897,7 @@ const en = {
           : `${missingHere} keys it trusts are not published here`
         : '',
     ].filter(Boolean);
-    return `These differ from what your other device trusts for this library: ${details.join('; ')}. Check with the signers before you trust them.`;
+    return `Not what your other device trusts for this library: ${details.join('; ')}. Check with the signers first.`;
   },
   signerTrustedOther: 'Your other device trusts this key',
   signerNotTrustedOther: 'Your other device doesn’t trust this key',
@@ -907,17 +910,21 @@ const en = {
       : `${n} keys you trusted from this library are no longer in its allowed_signers: they no longer count here.`,
   untrustWithdrawn: 'Forget them',
   trustedSignersTitle: 'Trusted signers',
-  trustedSignersHelp:
-    'The keys whose signatures the app counts: a runbook is “verified” only when one of them signed it, and only such a runbook can require its runs to be reported. Keys trusted from a team library’s allowed_signers count only for the library they came from; keys added by you count for every runbook.',
-  trustedSignersNone:
-    'None yet: a team library offers its signers under Team runbooks, or add allowed_signers lines below. Until then, signatures are shown but not verified.',
+  trustedSignersPoints: [
+    'A runbook is “verified” only when one of these keys signed it.',
+    'Only a verified runbook can require its runs to be reported.',
+    'Keys from a team library count for that library only; keys you add count for every runbook.',
+  ],
+  trustedSignersNonePoints: [
+    'None yet: signatures are shown but not verified.',
+    'Trust a team library’s signers under Team runbooks, or add allowed_signers lines below.',
+  ],
   trustedFrom: (host: string) => `From the team library at ${host}: counts for its runbooks only`,
   trustedByYou: 'Added by you: counts for every runbook',
   trustedWithdrawn: 'No longer published by this library: it no longer counts.',
   trustedRemove: 'Remove',
   trustedAddLabel: 'Add signers',
-  trustedAddHelp:
-    'allowed_signers lines (as on the servers, OpenSSH’s format), one per line. Ed25519, ECDSA, RSA and security-key signatures are checked on this device.',
+  trustedAddHelp: 'allowed_signers lines as on the servers (OpenSSH’s format), one per line.',
   trustedAddGo: 'Add',
   trustedAdded: (added: number, already: number, skipped: number) =>
     [
@@ -934,8 +941,10 @@ const en = {
 
   // The team library's address (Hosts & settings) and links to it
   libraryTitle: 'Team library',
-  libraryHelp:
-    'Runbooks your team hosts in a folder on a web server: the list shows them under Team runbooks, and opening one makes your own copy.',
+  libraryPoints: [
+    'Runbooks your team hosts in a folder on a web server.',
+    'They show under Team runbooks; opening one makes your own copy.',
+  ],
   libraryHelpWeb: (url: string) => `Empty: this web app’s own library (${url}), if its server has one.`,
   libraryUrl: 'Library address',
   libraryUrlPlaceholder: 'https://runbooks.example.net/runbooks/',
@@ -963,19 +972,25 @@ const en = {
   reportRequiredDecline: 'Don’t run',
   reportDeclined: 'Not run: this runbook runs only when its runs are reported.',
   reportNeedsKey:
-    'Not run: this runbook requires its run reports to be signed with this app’s key, and the key could not be used. Under Hosts & settings → This app’s key, make one (on the web: turn “Use a passkey” off, or off and on again to make a passkey), then run again.',
+    'Not run: its run reports must be signed with this app’s key, which could not be used: see Hosts & settings → This app’s SSH key.',
   reportWhoDefault: 'md-runbook app',
   reportsTitle: 'Run reports',
-  reportsHelp:
-    'A runbook can name an address (report-runs:) its runs are reported to: which runbook ran, who ran it, when, and how each step ended. Never outputs, values or secrets. You are asked once per address.',
+  reportsPoints: [
+    'A runbook can name an address its runs are reported to (report-runs:).',
+    'A report says which runbook ran, who ran it, when, and how each step ended.',
+    'Never outputs, values or secrets.',
+    'You are asked once per address.',
+  ],
   reportAddresses: 'Addresses allowed without asking',
   reportAddressesHelp: 'One per line: a host (reports.example.net), or an address (https://reports.example.net/runs).',
   reportAddressesPlaceholder: 'reports.example.net',
-  reportsTrustHelp:
-    'A runbook can require its runs to be reported (report-runs-required, report-runs-signed) only when it is verified as a whole: signed with manifest version 2 by a signer under Trusted signers (for a team library copy, its library’s or yours). Other runbooks ask.',
+  reportsTrustPoints: [
+    'Only a runbook verified as a whole can require reports (report-runs-required, report-runs-signed).',
+    'Verified: signed (manifest version 2) by a key under Trusted signers.',
+    'Other runbooks ask.',
+  ],
   trustedSignersPlaceholder: 'ops@example.net namespaces="md-runbook" ssh-ed25519 AAAA…',
-  allowedRunnersHelp:
-    'Servers that check signed run reports: add this line to their allowed runners file (the reports are signed with this app’s key):',
+  allowedRunnersHelp: 'For servers that check signed run reports: add this line to their allowed runners file:',
   reportAnswers: 'Your answers',
   reportAnswerAllow: (address: string) => `Allowed: ${address}`,
   reportAnswerNever: (address: string) => `Never: ${address}`,
@@ -988,35 +1003,36 @@ const en = {
     insecure: 'The relay’s address must be wss:// (ws:// only on this machine).',
   },
   pairDevice: 'Pair a device',
-  pairDeviceHelp:
-    'Set up another device’s web app with this relay (your phone’s browser, at this web app’s public address): on that device, open Hosts & settings → Relay → Pair with another device and scan this code.',
+  pairDevicePoints: [
+    'Sets up this relay in another device’s web app, such as your phone’s browser.',
+    'On that device, open this web app’s public address.',
+    'There, tap Hosts & settings → Relay → Pair with another device, and scan this code.',
+  ],
   pairWithHosts: 'With the hosts and their trusted host keys',
   pairWithSigners: (n: number) =>
     n === 1
       ? 'With the signers this device trusts for 1 library, to compare'
       : `With the signers this device trusts for ${n} libraries, to compare`,
-  pairWithSignersHelp:
-    'The other device shows which keys of each library this one trusts when you trust its signers there. It never trusts them by itself.',
-  pairSecretWarning:
-    'This code holds the relay’s token, a secret: anyone who scans or copies it can use your relay. Show it only to your own device, never on a shared screen or in a call.',
+  pairWithSignersHelp: 'Shown there when you trust a library’s signers; the other device never trusts them by itself.',
+  pairSecretPoints: [
+    'This code holds the relay’s token, a secret.',
+    'Anyone who scans or copies it can use your relay.',
+    'Show it only to your own device: never on a shared screen or in a call.',
+  ],
   pairHidden: 'Hidden after a minute: the code holds a secret.',
   pairShowAgain: 'Show again',
   pairHide: 'Hide',
   pairCopyLink: 'Copy pairing link',
-  pairLinkCopied:
-    'Pairing link copied. It holds the token too: open it only on your own device (the token is in the part after #, which browsers never send), then clear the clipboard.',
+  pairLinkCopiedPoints: ['Pairing link copied. It holds the token too.', 'Open it only on your own device, then clear the clipboard.'],
   pairNeedsRelay: 'Save the relay’s address and token first: pairing hands them on.',
   pairFor: (url: string) => `For the web app at ${url}.`,
   pairUnreachable: (url: string) =>
-    `${url} is this page’s own address, which another device can’t reach: set Public address of this web app (Hosts & settings) to the address it reaches, such as a tunnel’s.`,
-  pairLarge: (n: number) =>
-    `A large code (${n} × ${n}): if the other device doesn’t read it, leave out the hosts or use Copy pairing link.`,
+    `Another device can’t reach ${url}: set Public address of this web app (Hosts & settings), such as a tunnel’s.`,
+  pairLarge: (n: number) => `A large code (${n} × ${n}): if it doesn’t scan, leave out the hosts or use Copy pairing link.`,
   pairTooLarge: 'Too much for one code: leave out the hosts, or use Copy pairing link.',
   pairWithDevice: 'Pair with another device',
-  pairWithDeviceHelp:
-    'Scan the code another device shows under Relay → Pair a device: the relay’s address and token, and the hosts if it includes them, are set up here.',
-  pairNoCamera:
-    'The camera works only on an https page (or on localhost), and this browser offers none here. On the other device, use Copy pairing link instead and open that link here.',
+  pairWithDeviceHelp: 'Scan the code another device shows under Relay → Pair a device to set up its relay here.',
+  pairNoCamera: 'No camera here (https pages only). On the other device, tap Copy pairing link, then open that link here.',
   pairTitle: 'Pair with another device',
   pairAskLink: 'Set up the relay from this link?',
   pairAskCode: 'Set up the relay from this code?',
@@ -1024,13 +1040,13 @@ const en = {
   pairReplaces: (url: string) => `This replaces the relay set up here (${url}).`,
   pairSigners: (n: number) =>
     (n === 1 ? 'Also the signers your other device trusts for 1 library' : `Also the signers your other device trusts for ${n} libraries`) +
-    ': kept to compare when you trust a library’s signers here, never trusted by themselves.',
+    ': only to compare, never trusted by themselves.',
   pairAddHosts: (n: number) => (n === 1 ? 'Add this host' : `Add these ${n} hosts`),
   pairGo: 'Set up',
   pairNotNow: 'Not now',
   pairDone: 'The relay is set up.',
   pairDeclined: 'Nothing was set up.',
-  pairNone: 'No pairing to set up here: open the pairing link again, or scan the code with Pair with another device.',
+  pairNone: 'Nothing to pair: open the pairing link again, or scan the code with Pair with another device.',
   pairProblem: {
     'not-pairing': 'That is not a pairing code.',
     newer: 'This pairing code is from a newer md-runbook: update this web app.',
@@ -1038,14 +1054,15 @@ const en = {
   },
   pairKeyTitle: 'This device’s key',
   pairKeyLabel: 'Add this key to the server’s authorized_keys',
-  pairKeyHelp:
-    'The app can’t add it to a server you log in to without a password: add this line to the authorized_keys of the user the hosts name (or ask whoever looks after the server).',
+  pairKeyHelp: 'Without a password login the app can’t add it itself: add it yourself, or ask the server’s admin.',
   pairKeyQr: 'Show as a QR code',
 
   // The web app's public address (settings/publicAddress.ts)
   publicUrlTitle: 'Public address of this web app',
-  publicUrlHelp:
-    'The address other devices reach this web app at, such as a tunnel’s or a reverse proxy’s https address. Share links, QR codes and pairing links use it instead of this page’s address.',
+  publicUrlPoints: [
+    'The https address other devices reach this web app at, such as a tunnel’s or a reverse proxy’s.',
+    'Share links, QR codes and pairing links use it instead of this page’s address.',
+  ],
   publicUrlPlaceholder: 'https://runbooks.example.net',
   publicUrlNow: (url: string, source: 'setting' | 'container' | 'page') =>
     `Used now: ${url} (${source === 'setting' ? 'set here' : source === 'container' ? 'from the server: MD_RUNBOOK_PUBLIC_URL' : 'this page’s address'}).`,
@@ -1062,11 +1079,12 @@ const en = {
 
   // Show QR Code: a link to the runbook's address, or the runbook itself
   qrLinkMode: 'Link to its address',
-  qrModeLink: (url: string) =>
-    `Links to ${url}, pinned to this version (sha256): the other device downloads it from there and refuses any other text.`,
+  qrModeLink: (url: string) => `Links to ${url}, pinned to this version (sha256): the other device refuses any other text.`,
   qrModeText: 'Carries the runbook itself (rb=), without its outputs.',
-  qrHelpLink:
-    'Another device scans it with Scan a code or its camera. A team library runbook opens as that device’s own copy of it, with the selected host and parameter values if included.',
+  qrHelpLinkPoints: [
+    'Another device scans it with Scan a code or its camera.',
+    'A team library runbook opens there as that device’s own copy.',
+  ],
   qrNoLink: {
     edited: 'It can’t link to its address: your copy has edits of its own.',
     changed: 'It can’t link to its address: the file there changed since your copy (Update it first).',
@@ -1075,7 +1093,7 @@ const en = {
 
   // A runbook link into the team library (runbooks/openLink.ts)
   libraryLinkUnavailable: (host: string) =>
-    `This runbook is in the team library at ${host}, which opens verified runbooks only, and the library can’t be read now: try again when it can.`,
+    `The team library at ${host} opens verified runbooks only, and can’t be read now: try again later.`,
   libraryLinkNotListed: (path: string) => `${path} is not listed in the team library, which opens verified runbooks only.`,
 } as const;
 

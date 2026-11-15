@@ -11,6 +11,7 @@ import { t } from '../i18n';
 import { libraryHost, useLibrary, withdrawnKeys } from '../runbooks/library';
 import { addSigners, isAddedByYou, removeTrustedSigner, sameSigner, shownPrincipal, useTrustedSigners } from '../signing/trust';
 import { mono, themedStyles, usePalette } from '../theme';
+import { Points } from '../ui/Points';
 
 export function TrustedSignersSection() {
   const styles = useStyles();
@@ -28,7 +29,7 @@ export function TrustedSignersSection() {
   return (
     <View testID="trusted-signers" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.trustedSignersTitle}</Text>
-      <Text style={styles.help}>{signers.length > 0 ? t.trustedSignersHelp : t.trustedSignersNone}</Text>
+      <Points items={signers.length > 0 ? t.trustedSignersPoints : t.trustedSignersNonePoints} textStyle={styles.help} />
       {signers.map((s, i) => {
         const withdrawn = !isAddedByYou(s) && (s.withdrawn || withdrawnNow.some((w) => w.from === s.from && sameSigner(w, s)));
         return (

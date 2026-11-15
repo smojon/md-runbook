@@ -6,6 +6,7 @@
 import { Platform, Pressable, Text, View } from 'react-native';
 import { t } from '../i18n';
 import { themedStyles } from '../theme';
+import { Points } from '../ui/Points';
 
 export function NotifyOfferCard(p: { onYes(): void; onNo(): void }) {
   const styles = useStyles();
@@ -14,7 +15,11 @@ export function NotifyOfferCard(p: { onYes(): void; onNo(): void }) {
       <Text accessibilityRole="header" style={styles.title}>
         {t.notifyOfferTitle}
       </Text>
-      <Text style={styles.body}>{Platform.OS === 'web' ? t.notifyOfferBodyWeb : t.notifyOfferBody}</Text>
+      {Platform.OS === 'web' ? (
+        <Text style={styles.body}>{t.notifyOfferBodyWeb}</Text>
+      ) : (
+        <Points items={t.notifyOfferPoints} textStyle={styles.body} />
+      )}
       <View style={styles.actions}>
         <Pressable testID="notify-offer-yes" accessibilityRole="button" onPress={p.onYes} style={styles.button}>
           <Text style={styles.buttonText}>{t.notifyOfferYes}</Text>

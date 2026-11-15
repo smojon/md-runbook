@@ -22,6 +22,7 @@ import {
   withRecordCosigner,
   withRecordSignature,
 } from '@md-runbook/core/record';
+import { Points } from '../ui/Points';
 import { QrView } from '../ui/QrView';
 import { Toggle } from '../ui/Toggle';
 import {
@@ -2974,7 +2975,7 @@ function QrCard({
           <View style={styles.qrBox}>
             <QrView testID="qr-code" matrix={matrix} size={Math.min(width - 64, 320)} />
           </View>
-          <Text style={styles.signedBody}>{useAddress ? t.qrHelpLink : t.qrHelp}</Text>
+          <Points items={useAddress ? t.qrHelpLinkPoints : t.qrHelpPoints} textStyle={styles.signedBody} />
           <View style={styles.qrSwitch}>
             <Text style={[styles.signedBody, styles.qrSwitchText]}>{t.qrWithHostParams}</Text>
             <Toggle testID="qr-with-values" accessibilityLabel={t.qrWithHostParams} value={withValues} onValueChange={setWithValues} />
@@ -3020,7 +3021,7 @@ function StartIncidentCard({
   return (
     <View testID="incident-card" style={styles.qrCard}>
       <Text style={styles.signedTitle}>{t.startIncidentTitle}</Text>
-      <Text style={styles.signedBody}>{t.startIncidentHelp}</Text>
+      <Points items={t.startIncidentPoints} textStyle={styles.signedBody} />
       <TextInput
         testID="incident-id"
         accessibilityLabel={t.incidentId}

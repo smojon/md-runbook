@@ -180,7 +180,9 @@ With **signed** honoured, the client must sign the summary. Without a key the ru
 start, and the message says how to set one up:
 
 - VS Code: `mdRunbook.signing.key`, the same key as **Sign Runbook**;
-- the app: its own key (Secure Enclave, Android Keystore), as for Sign Runbook;
+- the app: its own key (Secure Enclave, Android Keystore), as for Sign Runbook. When it can't
+  be used, make a new one under Hosts & settings → This app's SSH key (on the web: turn **Use a
+  passkey** off, or off and on again for a new passkey);
 - the command line: `--key KEY`.
 
 Without `report-runs-signed`, a summary is signed whenever a key is set, and sent unsigned
