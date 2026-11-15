@@ -234,6 +234,15 @@ on the phone:
 4. Then it shows **This device's key** with **Copy** and as a QR code: **Add this key to the
    server's authorized_keys**. The browser makes its own key, and the app can't put it on a
    server you log in to without a password, so whoever looks after the server adds that line.
+5. **The signers, to compare.** When the laptop trusts signers of a team library, the code also
+   carries, per library, its address and the fingerprints of those keys (**With the signers this
+   device trusts for N libraries, to compare**, on by default). The phone keeps them on **Set up**,
+   never as trust. When you then press **Trust these signers** for that library on the phone, each
+   key says **Your other device trusts this key** or **Your other device doesn't trust this key**,
+   and the prompt says **The same keys your other device trusts for this library** or that they
+   differ (a key the laptop doesn't trust, or one it trusts that the library no longer publishes):
+   a library whose list changed between your two devices shows here. A link can confirm or warn
+   about the keys the library publishes; it can't add one, and trusting is still your press.
 
 The token is never in a URL's query. A pairing link carries it in the fragment, the part after
 `#`, which browsers never send to a server. The app reads the fragment once, when the page loads,
@@ -243,8 +252,10 @@ so: use **Copy pairing link** instead. A hosts list (Share hosts) may name the r
 (**With the relay's address**), never its token.
 
 The pairing code is `mdrb-pair.v1.` followed by deflated JSON in base64url (as `rb=` links):
-`{"format":"md-runbook pair v1","relay":"wss://…","token":"…","hosts":[…]}`, with `hosts` in the
-hosts list's format. The relay and a 64-character token make a 57 × 57 code (version 10). Each
+`{"format":"md-runbook pair v1","relay":"wss://…","token":"…","hosts":[…],"signers":[…]}`, with
+`hosts` in the hosts list's format and `signers` as
+`[{"library":"https://…/runbooks/","fingerprints":["SHA256:…"]}]` (at most 8 libraries, 32 keys
+each; an app before 0.25.0 ignores it). The relay and a 64-character token make a 57 × 57 code (version 10). Each
 host with its key adds about 300 characters, so with more than one or two hosts the code gets
 large, and the card warns that a phone may not read it. 15 hosts are about the most one code
 holds. For more, leave the hosts out and use Share hosts.
@@ -383,8 +394,9 @@ says the same, checked the same way.
 - **Signers:** if the library publishes an `allowed_signers` file, **Trust these signers** shows
   each name (and what a pattern such as `*@example.net` lets a key sign as) and key fingerprint,
   and asks first. The list comes from the same server as the runbooks, so it is that server
-  vouching for itself: compare the fingerprints with what the signers tell you. Trust counts for
-  that library only. Once trusted, the app checks the signatures itself; **Stop trusting** undoes
+  vouching for itself: compare the fingerprints with what the signers tell you, or, on a device
+  you [paired](#pairing-a-phones-browser) with another that trusts them, with what that device
+  trusts (each key says so). Trust counts for that library only. Once trusted, the app checks the signatures itself; **Stop trusting** undoes
   it, and a key the library no longer publishes stops counting and is offered to forget.
   [Hosts & settings → Trusted signers](#trusted-signers) lists every trusted key with where it counts,
   and **Remove**.

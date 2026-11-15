@@ -19,8 +19,10 @@ import { useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { decodePairing, encodePairing, pairingLink } from '../pairing/payload';
 import { capturePairingFragment, clearPendingPairing, pairingFragmentInRoute, pendingPairing } from '../pairing/pending';
+import { hintsFrom, rememberSignerHints } from '../pairing/signerHints';
 import { publicBaseOf, toPublicRelayUrl } from '../settings/publicAddress';
 import { useRuntimeConfig } from '../settings/runtimeConfig';
+import { loadTrustedSigners, useTrustedSigners } from '../signing/trust';
 import { appPublicKeyLine } from '../ssh/appKey';
 import { RelaySettings, getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { mono, themedStyles } from '../theme';
@@ -55,6 +57,13 @@ export function PairDeviceCard({ onClose }: { onClose(): void }) {
     };
   }, []);
   const [withHosts, setWithHosts] = useState(false);
+  // What this device trusts per library, for the other one to compare with (never to trust).
+  const trusted = useTrustedSigners();
+  useEffect(() => {
+    void loadTrustedSigners();
+  }, []);
+  const signerHints = useMemo(() => hintsFrom(trusted), [trusted]);
+  const [withSigners, setWithSigners] = useState(true);
   const [hidden, setHidden] = useState(false);
   /** Bumped by Show again: the minute starts over. */
   const [shown, setShown] = useState(0);
@@ -72,9 +81,10 @@ export function PairDeviceCard({ onClose }: { onClose(): void }) {
             relay: toPublicRelayUrl(relay.url),
             token: relay.token,
             ...(withHosts ? { hosts: sharedHosts(hosts, true) } : {}),
+            ...(withSigners && signerHints.length > 0 ? { signers: signerHints } : {}),
           })
         : undefined,
-    [relay, withHosts, hosts],
+    [relay, withHosts, hosts, withSigners, signerHints],
   );
   const matrix = useMemo(() => (payload && !hidden ? qrMatrix(payload) : undefined), [payload, hidden]);
   const copyLink = async (): Promise<void> => {
@@ -105,6 +115,20 @@ export function PairDeviceCard({ onClose }: { onClose(): void }) {
             <View style={styles.switchRow}>
               <Text style={[styles.label, styles.grow]}>{t.pairWithHosts}</Text>
               <Toggle testID="pair-with-hosts" accessibilityLabel={t.pairWithHosts} value={withHosts} onValueChange={setWithHosts} />
+            </View>
+          ) : null}
+          {signerHints.length > 0 ? (
+            <View style={styles.switchRow}>
+              <View style={styles.grow}>
+                <Text style={styles.label}>{t.pairWithSigners(signerHints.length)}</Text>
+                <Text style={styles.help}>{t.pairWithSignersHelp}</Text>
+              </View>
+              <Toggle
+                testID="pair-with-signers"
+                accessibilityLabel={t.pairWithSigners(signerHints.length)}
+                value={withSigners}
+                onValueChange={setWithSigners}
+              />
             </View>
           ) : null}
           {hidden ? (
@@ -265,6 +289,8 @@ export function PairScreen() {
   const apply = async (): Promise<void> => {
     if (!pairing) return;
     await setRelaySettings({ url: pairing.relay, token: pairing.token });
+    // Kept to compare with, never trusted (pairing/signerHints.ts).
+    if (pairing.signers && pairing.signers.length > 0) rememberSignerHints(pairing.signers);
     const imported = addHosts && hosts.length > 0 ? importHosts(hosts, trustKeys) : { added: [], skipped: [] };
     clearPendingPairing();
     setAnswer({ kind: 'done', added: imported.added.length, skipped: imported.skipped.length });
@@ -285,6 +311,11 @@ export function PairScreen() {
           <Text style={styles.title}>{pending.source === 'link' ? t.pairAskLink : t.pairAskCode}</Text>
           <Text style={styles.help}>{t.pairBody(pairing.relay)}</Text>
           {current && current !== pairing.relay ? <Text style={styles.warning}>{t.pairReplaces(current)}</Text> : null}
+          {pairing.signers && pairing.signers.length > 0 ? (
+            <Text testID="pair-signers" style={styles.help}>
+              {t.pairSigners(pairing.signers.length)}
+            </Text>
+          ) : null}
           {hosts.length > 0 ? (
             <>
               <View testID="pair-hosts" style={styles.list}>

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Pairing compares the library's signers with your other device.** A pairing code or link now
+  also carries, for each team library the sending device trusts signers from, the library's
+  address and those keys' fingerprints (**With the signers this device trusts for N libraries, to
+  compare**). The other device keeps them as a hint only: its **Trust these signers** prompt marks
+  each key **Your other device trusts this key** or not, and says **The same keys your other
+  device trusts for this library** or that they differ. A link never trusts a key and can't add
+  one; you still decide. Older apps ignore the new field.
+
 ## 0.24.2
 
 A privacy fix for pairing links in the web app.

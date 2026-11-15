@@ -47,6 +47,7 @@ import {
 } from '../signing/trust';
 import { mono, themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
+import { compareWithHint, signerHintFor, useSignerHints } from '../pairing/signerHints';
 
 const signerNames = (checks: readonly SignerCheck[]): string[] =>
   checks.map((c) => t.sigSigner(c.name, c.wildcard ? c.fingerprint : undefined));
@@ -186,6 +187,10 @@ function SignersCard({ library }: { library: Library }) {
   const untrusted = list.filter((s) => !isTrustedSigner(s, library.base));
   const withdrawn = withdrawnKeys(library);
   const host = libraryHost(library.base);
+  // What the other device trusts for this library (a pairing link brought it): compared, never trusted.
+  useSignerHints();
+  const hint = signerHintFor(library.base);
+  const other = hint && list.length > 0 ? compareWithHint(list, hint) : undefined;
   return (
     <View testID="library-signers" style={styles.card}>
       {list.length > 0 ? (
@@ -212,12 +217,25 @@ function SignersCard({ library }: { library: Library }) {
       {list.length === 0 ? null : asking ? (
         <View testID="library-trust-prompt">
           <Text style={[styles.body, styles.warn]}>{t.trustSignersPrompt(host)}</Text>
+          {other ? (
+            <Text testID="library-signers-other" style={other.same ? styles.body : [styles.body, styles.warn]}>
+              {other.same ? t.signersSameAsOther : t.signersDifferFromOther(other.notThere, other.missingHere)}
+            </Text>
+          ) : null}
           {untrusted.map((s) => (
             <View key={s.keyType + s.key + s.principals.join(',')} style={styles.signer}>
               <Text style={styles.body}>{s.principals.map((p) => t.signerPrincipal(shownPrincipal(p))).join(', ')}</Text>
               <Text style={styles.mono} selectable>
                 {`${s.keyType} ${s.fingerprint}`}
               </Text>
+              {other ? (
+                <Text
+                  testID={other.trustedThere.has(s.fingerprint) ? 'library-signer-other-yes' : 'library-signer-other-no'}
+                  style={other.trustedThere.has(s.fingerprint) ? styles.meta : [styles.meta, styles.warn]}
+                >
+                  {other.trustedThere.has(s.fingerprint) ? t.signerTrustedOther : t.signerNotTrustedOther}
+                </Text>
+              ) : null}
             </View>
           ))}
           <View style={styles.buttons}>

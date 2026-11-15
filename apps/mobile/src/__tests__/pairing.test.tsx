@@ -24,7 +24,8 @@ import { PAIR_SHOW_MS, PairDeviceCard, PairScreen } from '../screens/Pairing';
 import { fromPublicUrl, openLinkBase, publicBaseOf, toPublicRelayUrl, toPublicUrl } from '../settings/publicAddress';
 import { loadRuntimeConfig, parseRuntimeConfig, resetRuntimeConfig, runtimeConfig } from '../settings/runtimeConfig';
 import { resetSettings, setLibraryUrl, setOutputSetting, setPublicUrl } from '../settings/store';
-import { resetTrustedSigners } from '../signing/trust';
+import { resetTrustedSigners, trustedSigners } from '../signing/trust';
+import { compareWithHint, hintsFrom, resetSignerHints, signerHintFor } from '../pairing/signerHints';
 import {
   getRelaySettings,
   getRelayUrlSetting,
@@ -47,6 +48,9 @@ jest.mock('../ssh/appKey', () => ({
 
 const TOKEN = 'b04d6752122db1e60570b22f6eb68c93f9fb013f4466962cc33ea0c125920c43';
 const PUBLIC = 'https://ops-tunnel.trycloudflare.com';
+/** Key fingerprints as ssh-keygen -l shows them. */
+const FP_A = 'SHA256:' + 'A'.repeat(43);
+const FP_B = 'SHA256:' + 'B'.repeat(43);
 const RUNBOOK = '# Restart the API\n\n```bash\nsystemctl restart ${param:SERVICE}\n```\n';
 
 /** A fetch that answers from a table of URLs (anything else: 404). */
@@ -76,6 +80,7 @@ beforeEach(async () => {
   resetHosts();
   resetLibrary();
   resetTrustedSigners();
+  resetSignerHints();
   resetParamValues();
   resetRuntimeConfig({});
   resetSameOriginRelay();
@@ -177,6 +182,64 @@ describe('the pairing payload', () => {
     expect(decodePairing(encodePairing({ relay: 'http://ops.example.net', token: TOKEN }))).toEqual({ problem: 'damaged' });
     const bad = encodePairing({ relay: 'wss://ops.example.net', token: TOKEN, hosts: [{ ...hosts[0]!, hostname: 'web 1' }] });
     expect(decodePairing(bad)).toEqual({ error: expect.stringMatching(/web-1/) });
+  });
+
+  it('may carry the signers the device trusts per library, to compare with; checked strictly', () => {
+    const signers = [{ library: 'https://Runbooks.example.net/team', fingerprints: [FP_A, FP_B, FP_A] }];
+    const read = decodePairing(encodePairing({ relay: 'wss://ops.example.net', token: TOKEN, signers }));
+    // The address as compared (lower-case host, ending in /), each key once.
+    expect(read).toEqual({
+      pairing: {
+        relay: 'wss://ops.example.net',
+        token: TOKEN,
+        signers: [{ library: 'https://runbooks.example.net/team/', fingerprints: [FP_A, FP_B] }],
+      },
+    });
+    const pack = (s: unknown): string => encodePairing({ relay: 'wss://ops.example.net', token: TOKEN, signers: s as never });
+    for (const bad of [
+      [{ library: 'https://x.example.net/', fingerprints: ['MD5:00'] }],
+      [{ library: 'ftp://x.example.net/', fingerprints: [FP_A] }],
+      [{ library: 'https://user@x.example.net/', fingerprints: [FP_A] }],
+      [{ library: 'https://x.example.net/', fingerprints: [] }],
+      [
+        { library: 'https://x.example.net/', fingerprints: [FP_A] },
+        { library: 'https://X.example.net', fingerprints: [FP_B] },
+      ],
+      Array.from({ length: 9 }, (_, i) => ({ library: `https://x${i}.example.net/`, fingerprints: [FP_A] })),
+      [{ library: 'https://x.example.net/', fingerprints: Array.from({ length: 33 }, () => FP_A) }],
+      'nope',
+    ])
+      expect(decodePairing(pack(bad))).toEqual({ problem: 'damaged' });
+  });
+
+  it('the signers to send: per library at its public address, still published, never the keys added by you', () => {
+    onTheWeb('http://localhost:8080');
+    setPublicUrl(PUBLIC);
+    const key = (fingerprint: string, from: string, withdrawn?: boolean) => ({
+      principals: ['a@example.net'],
+      keyType: 'ssh-ed25519',
+      key: 'AAAA',
+      fingerprint,
+      from,
+      ...(withdrawn ? { withdrawn } : {}),
+    });
+    expect(
+      hintsFrom([
+        key(FP_A, 'http://localhost:8080/runbooks/'),
+        key(FP_B, 'http://localhost:8080/runbooks/', true),
+        key(FP_B, 'https://lib.example.net/x/'),
+        key(FP_A, 'you'),
+      ]),
+    ).toEqual([
+      { library: PUBLIC + '/runbooks/', fingerprints: [FP_A] },
+      { library: 'https://lib.example.net/x/', fingerprints: [FP_B] },
+    ]);
+    expect(compareWithHint([{ fingerprint: FP_A }], { library: 'x', fingerprints: [FP_A] }).same).toBe(true);
+    expect(compareWithHint([{ fingerprint: FP_A }, { fingerprint: FP_B }], { library: 'x', fingerprints: [FP_A] })).toMatchObject({
+      same: false,
+      notThere: 1,
+      missingHere: 0,
+    });
   });
 });
 
@@ -523,6 +586,31 @@ describe('the screens', () => {
       fireEvent.press(screen.getByTestId('device-key-qr'));
     });
     expect(screen.getByTestId('device-key-code')).toBeTruthy();
+  });
+
+  it('the phone: the other device’s signers are shown, and Not now keeps nothing', async () => {
+    const signers = [{ library: 'https://lib.example.net/team/', fingerprints: [FP_A] }];
+    setPendingPairing(encodePairing({ relay: 'wss://ops.example.net', token: TOKEN, signers }), 'link');
+    await render(<PairScreen />);
+    expect(screen.getByTestId('pair-signers')).toHaveTextContent(
+      /signers your other device trusts for 1 library.*never trusted by themselves/,
+    );
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('pair-not-now'));
+    });
+    expect(signerHintFor('https://lib.example.net/team/')).toBeUndefined();
+  });
+
+  it('the phone: on Set up the other device’s signers are kept, and trust nothing', async () => {
+    const signers = [{ library: 'https://lib.example.net/team/', fingerprints: [FP_A] }];
+    setPendingPairing(encodePairing({ relay: 'wss://ops.example.net', token: TOKEN, signers }), 'link');
+    await render(<PairScreen />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('pair-go'));
+    });
+    await waitFor(() => expect(screen.getByTestId('pair-done')).toBeTruthy());
+    expect(signerHintFor('https://lib.example.net/team/')).toMatchObject({ fingerprints: [FP_A] });
+    expect(trustedSigners()).toEqual([]);
   });
 
   it('the phone, from a link: Not now sets up nothing; a damaged link says so', async () => {

@@ -26,6 +26,7 @@ import { LibrarySection } from '../screens/LibrarySection';
 import { LibrarySettings } from '../screens/LibrarySettings';
 import { RunbookView } from '../screens/RunbookView';
 import { TrustedSignersSection } from '../screens/TrustedSigners';
+import { rememberSignerHints, resetSignerHints } from '../pairing/signerHints';
 
 jest.mock('expo-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
@@ -77,6 +78,7 @@ beforeEach(async () => {
   resetRunbooks();
   resetSettings();
   resetTrustedSigners();
+  resetSignerHints();
   resetLibrary();
   jest.mocked(router.push).mockClear();
   jest.mocked(router.replace).mockClear();
@@ -414,6 +416,60 @@ describe('a copy the library refuses (signedOnly): the recheck of 2026-11-14', (
     await press('library-replace-restart.md');
     await waitFor(() => expect(getRunbook(id)?.text).toBe(resigned.text));
     await waitFor(() => expect(screen.queryByTestId('library-copy-why-restart.md')).toBeNull());
+  });
+});
+
+describe('Trust these signers, compared with what your other device trusts (a pairing link)', () => {
+  it('marks each key, says when the two differ, and trusts nothing by itself', async () => {
+    const alice = await generateKey();
+    const bob = await generateKey();
+    const carol = await generateKey();
+    const aliceLine = await allowedSignersLine(alice, 'alice@example.net');
+    const bobLine = await allowedSignersLine(bob, 'bob@example.net');
+    const fp = (line: string): string => parseAllowedSigners(line, SIGNATURE_NAMESPACE).signers[0]!.fingerprint;
+    // The other device trusts alice and carol here; the library publishes alice and bob.
+    rememberSignerHints([{ library: LIB, fingerprints: [fp(aliceLine), fp(await allowedSignersLine(carol, 'carol@example.net'))] }]);
+    setLibraryUrl(LIB);
+    await refreshLibrary({ fetcher: server({ [LIB + 'index.json']: '[]', [LIB + 'allowed_signers']: aliceLine + '\n' + bobLine + '\n' }) });
+    await render(<Copies />);
+    await press('library-trust');
+    expect(screen.getByTestId('library-signers-other')).toHaveTextContent(
+      'These differ from what your other device trusts for this library: 1 key here it doesn’t trust; 1 key it trusts is not published here. Check with the signers before you trust them.',
+    );
+    expect(screen.getAllByTestId('library-signer-other-yes')).toHaveLength(1);
+    expect(screen.getAllByTestId('library-signer-other-no')).toHaveLength(1);
+    expect(trustedSigners()).toHaveLength(0);
+    await press('library-trust-cancel');
+    expect(trustedSigners()).toHaveLength(0);
+  });
+
+  it('the same keys on both sides: said so; trusting is still the user’s press', async () => {
+    const aliceLine = await allowedSignersLine(await generateKey(), 'alice@example.net');
+    const bobLine = await allowedSignersLine(await generateKey(), 'bob@example.net');
+    const fp = (line: string): string => parseAllowedSigners(line, SIGNATURE_NAMESPACE).signers[0]!.fingerprint;
+    rememberSignerHints([{ library: LIB, fingerprints: [fp(aliceLine), fp(bobLine)] }]);
+    setLibraryUrl(LIB);
+    await refreshLibrary({ fetcher: server({ [LIB + 'index.json']: '[]', [LIB + 'allowed_signers']: aliceLine + '\n' + bobLine + '\n' }) });
+    await render(<Copies />);
+    await press('library-trust');
+    expect(screen.getByTestId('library-signers-other')).toHaveTextContent('The same keys your other device trusts for this library.');
+    expect(screen.getAllByTestId('library-signer-other-yes')).toHaveLength(2);
+    expect(trustedSigners()).toHaveLength(0);
+    await press('library-trust-go');
+    expect(trustedSigners()).toHaveLength(2);
+  });
+
+  it('no hint for this library: the prompt is as before', async () => {
+    const alice = await generateKey();
+    const aliceLine = await allowedSignersLine(alice, 'alice@example.net');
+    const fp = parseAllowedSigners(aliceLine, SIGNATURE_NAMESPACE).signers[0]!.fingerprint;
+    rememberSignerHints([{ library: 'https://other.example.net/lib/', fingerprints: [fp] }]);
+    setLibraryUrl(LIB);
+    await refreshLibrary({ fetcher: server({ [LIB + 'index.json']: '[]', [LIB + 'allowed_signers']: aliceLine + '\n' }) });
+    await render(<Copies />);
+    await press('library-trust');
+    expect(screen.queryByTestId('library-signers-other')).toBeNull();
+    expect(screen.queryByTestId('library-signer-other-yes')).toBeNull();
   });
 });
 

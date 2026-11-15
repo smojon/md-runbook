@@ -10,12 +10,16 @@
  *
  *   {"format":"md-runbook pair v1","relay":"wss://ops.example.net","token":"…","hosts":[…]}
  *
- * `hosts` is the hosts list's format (hosts/share.ts), optional. The marker tells a pairing code
+ * `hosts` is the hosts list's format (hosts/share.ts), optional. `signers` (optional): for each team
+ * library the sending device trusts signers from, `{"library": "https://…/runbooks/", "fingerprints":
+ * ["SHA256:…"]}`, to compare with what the library publishes, never trusted by itself
+ * (signerHints.ts); an older app ignores it. The marker tells a pairing code
  * from a runbook link, a hosts link or a library link when a code is scanned. The token is a
  * secret: it goes in a QR code or a fragment, never in a URL's query.
  */
 import { packText, unpackText } from '@md-runbook/core/runbookLink';
 import { readHostList, SharedHost } from '../hosts/share';
+import { readSignerHints, SignerHint } from './signerHints';
 import { badTokenCharacter, relayUrlProblem } from '../ssh/relaySettings';
 
 export const PAIR_MARKER = 'mdrb-pair.';
@@ -29,11 +33,19 @@ export interface Pairing {
   relay: string;
   token: string;
   hosts?: SharedHost[];
+  /** What the sending device trusts per library, to compare with (signerHints.ts). */
+  signers?: SignerHint[];
 }
 
 /** The pairing as a code's text (QR code) or a link's fragment. */
 export function encodePairing(p: Pairing): string {
-  const json = { format: FORMAT, relay: p.relay, token: p.token, ...(p.hosts && p.hosts.length > 0 ? { hosts: p.hosts } : {}) };
+  const json = {
+    format: FORMAT,
+    relay: p.relay,
+    token: p.token,
+    ...(p.hosts && p.hosts.length > 0 ? { hosts: p.hosts } : {}),
+    ...(p.signers && p.signers.length > 0 ? { signers: p.signers } : {}),
+  };
   return PAIR_PREFIX + packText(JSON.stringify(json));
 }
 
@@ -84,7 +96,7 @@ export function decodePairing(text: string): { pairing: Pairing } | { problem: P
     return { problem: 'damaged' };
   }
   if (typeof data !== 'object' || data === null || data.format !== FORMAT) return { problem: 'damaged' };
-  const { relay, token, hosts } = data;
+  const { relay, token, hosts, signers } = data;
   if (typeof relay !== 'string' || relayUrlProblem(relay) !== undefined) return { problem: 'damaged' };
   if (typeof token !== 'string' || token === '' || badTokenCharacter(token) !== undefined) return { problem: 'damaged' };
   const pairing: Pairing = { relay: relay.trim(), token };
@@ -93,6 +105,11 @@ export function decodePairing(text: string): { pairing: Pairing } | { problem: P
     const read = readHostList(hosts);
     if ('error' in read) return { error: read.error };
     pairing.hosts = read.hosts;
+  }
+  if (signers !== undefined) {
+    const hints = readSignerHints(signers);
+    if (!hints) return { problem: 'damaged' };
+    pairing.signers = hints;
   }
   return { pairing };
 }

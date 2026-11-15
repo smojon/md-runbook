@@ -874,6 +874,21 @@ const en = {
             ? `any name matching ${p}`
             : p,
   trustSignersGo: 'Trust them',
+  /** The other device's hint (a pairing link), against what the library publishes now. */
+  signersSameAsOther: 'The same keys your other device trusts for this library.',
+  signersDifferFromOther: (notThere: number, missingHere: number) => {
+    const details = [
+      notThere > 0 ? (notThere === 1 ? '1 key here it doesn’t trust' : `${notThere} keys here it doesn’t trust`) : '',
+      missingHere > 0
+        ? missingHere === 1
+          ? '1 key it trusts is not published here'
+          : `${missingHere} keys it trusts are not published here`
+        : '',
+    ].filter(Boolean);
+    return `These differ from what your other device trusts for this library: ${details.join('; ')}. Check with the signers before you trust them.`;
+  },
+  signerTrustedOther: 'Your other device trusts this key',
+  signerNotTrustedOther: 'Your other device doesn’t trust this key',
   trustedSigners: (n: number) =>
     n === 1 ? 'You trust this library’s signer, for this library only.' : `You trust this library’s ${n} signers, for this library only.`,
   untrustSigners: 'Stop trusting',
@@ -967,6 +982,12 @@ const en = {
   pairDeviceHelp:
     'Set up another device’s web app with this relay (your phone’s browser, at this web app’s public address): on that device, open Hosts & settings → Relay → Pair with another device and scan this code.',
   pairWithHosts: 'With the hosts and their trusted host keys',
+  pairWithSigners: (n: number) =>
+    n === 1
+      ? 'With the signers this device trusts for 1 library, to compare'
+      : `With the signers this device trusts for ${n} libraries, to compare`,
+  pairWithSignersHelp:
+    'The other device shows which keys of each library this one trusts when you trust its signers there. It never trusts them by itself.',
   pairSecretWarning:
     'This code holds the relay’s token, a secret: anyone who scans or copies it can use your relay. Show it only to your own device, never on a shared screen or in a call.',
   pairHidden: 'Hidden after a minute: the code holds a secret.',
@@ -992,6 +1013,9 @@ const en = {
   pairAskCode: 'Set up the relay from this code?',
   pairBody: (relay: string) => `The relay at ${relay} and its token are saved in this browser; cells then run through it.`,
   pairReplaces: (url: string) => `This replaces the relay set up here (${url}).`,
+  pairSigners: (n: number) =>
+    (n === 1 ? 'Also the signers your other device trusts for 1 library' : `Also the signers your other device trusts for ${n} libraries`) +
+    ': kept to compare when you trust a library’s signers here, never trusted by themselves.',
   pairAddHosts: (n: number) => (n === 1 ? 'Add this host' : `Add these ${n} hosts`),
   pairGo: 'Set up',
   pairNotNow: 'Not now',
