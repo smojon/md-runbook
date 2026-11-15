@@ -28,7 +28,7 @@ declare const MD_RUNBOOK_VERSION: string | undefined;
 const USAGE = `Usage: md-runbook run <file.md> [options]
        md-runbook lint <file.md>... [--strict] [--prose-only] [--exclude GLOB]
        md-runbook lint --prose-baseline FILE [--update-baseline] [file.md...]
-       md-runbook lint --prose-show GLOB
+       md-runbook lint --prose-show GLOB [GLOB…]
        md-runbook estimate <file.md>...                (how long each section takes, by estimate=)
        md-runbook sign <file.md> --key KEY [options]   (see md-runbook sign --help)
        md-runbook verify <file.md> [--allowed-signers FILE]
@@ -108,7 +108,7 @@ shorter is listed as info and never fails (prose: strict in the front matter mak
                        given: exit 1 when a file reads harder than FILE records, or a file not
                        in FILE has a finding. Run it from the repository root
   --update-baseline    With --prose-baseline: record the numbers in FILE, never raising one
-  --prose-show GLOB    Every prose finding of the tracked .md files matching GLOB ('docs/*')
+  --prose-show GLOB    Every prose finding of the tracked .md files matching GLOB ('docs/*'); more GLOBs may follow
   --exclude GLOB       Leave these files out (repeatable); also "exclude" in .md-runbook-prose.json
 
 A run report that can't be sent is tried 3 times, then a warning; the exit code is 3 only when
@@ -292,7 +292,8 @@ export function lint(argv: readonly string[], out: (line: string) => void = (l) 
     out(`error: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
-  if (show !== undefined) return proseShow(show, config, out);
+  // --prose-show 'docs/*' README.md: the further arguments are patterns too.
+  if (show !== undefined) return proseShow([show, ...files], config, out);
   if (baseline !== undefined) {
     const summary = process.env.GITHUB_STEP_SUMMARY;
     return proseRatchet({ baseline, update, files, config, out, ...(summary ? { summary } : {}) });

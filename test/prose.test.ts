@@ -690,6 +690,31 @@ describe('prose: counting traps, labels, quotations, a box that says the box abo
     assert.deepEqual(proseSentences('Guide one · Guide two · Guide three'), ['Guide one', 'Guide two', 'Guide three']);
   });
 
+  it('a citation wrapped over quoted lines, with one or more links, is no part of the sentence before it', () => {
+    const twoLinks = [
+      '> 💡 **Did you know?** · The alerts fired and nobody acted on them. An alert is only as good as a reader who',
+      '> knows what to do next. ([NBC News on the Senate report,',
+      '> 2014](https://www.nbcnews.com/business/x),',
+      "> [Target's own statement,",
+      '> 2013](https://corporate.target.com/press/y))',
+      '',
+    ].join('\n');
+    assert.deepEqual(
+      measureProse(twoLinks).findings.filter((f) => /words, at most/.test(f.message)),
+      [],
+    );
+    const wrapped = [
+      "> 💡 **Did you know?** · The ops team signs the SOP's *source* after reading it, with the team's key, not the server's. ([Wikipedia: 2020",
+      '> United States federal government data',
+      '> breach](https://en.wikipedia.org/wiki/2020_breach))',
+      '',
+    ].join('\n');
+    assert.deepEqual(
+      measureProse(wrapped).findings.filter((f) => /words, at most/.test(f.message)),
+      [],
+    );
+  });
+
   it('a citation after a sentence, on the same line, is no part of it', () => {
     assert.deepEqual(proseSentences('Read what to do next. ([NBC News on the Senate report, 2014](https://example.net/a))'), ['Read what to do next.']);
     assert.deepEqual(proseSentences("The key is the client's, not the server's. ([Wikipedia: TLS](https://example.net/b)) Then go."), [

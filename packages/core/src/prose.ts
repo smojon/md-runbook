@@ -423,7 +423,9 @@ export function countWords(text: string): number {
 const ABBREVIATION_RE = /\b(?:e\.g|i\.e|etc|vs|cf)\.$/i;
 // A sentence ends at . ! ? before a space and a letter or digit: names may start lowercase
 // (kubectl), so a capital is not required; the abbreviations above don't end one.
-const SENTENCE_END_RE = /(?<=[.!?])["')\]*_]*\s+(?=["'(\[*_`]*[A-Za-z0-9])/g;
+// A link or code span that wrapped keeps its newlines in front of its placeholder, so a "(" may be
+// followed by newlines before the link: "next. (\n[NBC News…](…))".
+const SENTENCE_END_RE = /(?<=[.!?])["')\]*_]*\s+(?=["'(\[*_`]*\n*[A-Za-z0-9])/g;
 
 interface Sentence {
   text: string;

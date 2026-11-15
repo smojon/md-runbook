@@ -325,15 +325,16 @@ export function proseRatchet(o: RatchetOptions): number {
 }
 
 /**
- * `md-runbook lint --prose-show GLOB`: every prose finding of the tracked Markdown files matching
- * GLOB; text said in 3 files or more counts every tracked file, as the ratchet does.
+ * `md-runbook lint --prose-show GLOB [GLOB…]`: every prose finding of the tracked Markdown files
+ * matching any GLOB; text said in 3 files or more counts every tracked file, as the ratchet does.
  */
-export function proseShow(glob: string, config: ProseConfig, out: (line: string) => void): number {
-  const match = globToRegExp(glob);
+export function proseShow(globs: readonly string[], config: ProseConfig, out: (line: string) => void): number {
+  const patterns = globs.map(globToRegExp);
+  const match = { test: (n: string): boolean => patterns.some((p) => p.test(n)) };
   const tracked = trackedMarkdown(config.exclude).filter((n) => fs.existsSync(n));
   const names = tracked.filter((n) => match.test(n));
   if (names.length === 0) {
-    out(`no tracked Markdown file matches ${glob}`);
+    out(`no tracked Markdown file matches ${globs.join(' ')}`);
     return 1;
   }
   const read = new Map<string, { text: string; measured: Measured }>();
