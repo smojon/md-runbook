@@ -18,12 +18,14 @@ These need your accounts, and some cost money. Nothing here has been done yet.
    Google requires the first upload by hand. Download the first `.aab` from EAS and upload it to
    the internal testing track. Later uploads can go through `eas submit` with a service account
    key.
+
 4. **Encryption export compliance.** The app encrypts its SSH connections with OpenSSL (through
    react-native-quick-crypto). App Store Connect asks about this on every upload unless
    `ios.config.usesNonExemptEncryption` is set in `app.json`.
 
    Which answer is right is a legal question for you. SSH is standard encryption, but it is not
    only Apple's own.
+
 5. **Store listing.** You need:
    - a description;
    - screenshots (the device flows in CI save some);
