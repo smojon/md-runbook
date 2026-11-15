@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- **Web app: QR codes work again.** In the browser, **Pair a device** blanked the page with
+## 0.24.1
+
+A fix for the web app's QR codes.
+
+- **Web app: QR codes work.** In the browser, **Pair a device** blanked the page with
   "n is not a function", and the other QR codes (a runbook's QR card, Share hosts, the library's
   code) failed the same way: the web bundle loads the QR library's ES module, where core took
   the CommonJS one. The phone apps, VS Code and the command line were not affected.
