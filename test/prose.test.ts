@@ -683,6 +683,13 @@ describe('prose: counting traps, labels, quotations, a box that says the box abo
     assert.deepEqual(proseSentences('L. Peter Deutsch wrote Ghostscript.'), ['L. Peter Deutsch wrote Ghostscript.']);
   });
 
+  it('a " · " inside emphasis joins one label; outside, it ends a sentence', () => {
+    assert.deepEqual(proseSentences('The Steps view shows **Before you run: 1 confirmation · 1 secret to set · 1 step by hand**.'), [
+      'The Steps view shows Before you run: 1 confirmation · 1 secret to set · 1 step by hand.',
+    ]);
+    assert.deepEqual(proseSentences('Guide one · Guide two · Guide three'), ['Guide one', 'Guide two', 'Guide three']);
+  });
+
   it('a citation after a sentence, on the same line, is no part of it', () => {
     assert.deepEqual(proseSentences('Read what to do next. ([NBC News on the Senate report, 2014](https://example.net/a))'), ['Read what to do next.']);
     assert.deepEqual(proseSentences("The key is the client's, not the server's. ([Wikipedia: TLS](https://example.net/b)) Then go."), [

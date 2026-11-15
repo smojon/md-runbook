@@ -386,10 +386,13 @@ function plain(text: string): Plain {
     // turns red"), nor a . inside it ("*see fig. one*"); before a capital, or a . at its end, they do.
     .replace(EMPHASIS_RE, (m: string, at: number, all: string) => {
       const after = (i: number): string => (m.slice(i + 1) + all.slice(at + m.length)).replace(/^[*_"')\]\s]+/, '');
-      return m.replace(/[.?!]/g, (c, i: number) => {
-        const inside = /[^*_\s]/.test(m.slice(i + 1).replace(/[*_]+$/, ''));
-        return /^[a-z]/.test(after(i)) && (c !== '.' || inside) ? MASK[c]! : c;
-      });
+      return m
+        .replace(/[.?!]/g, (c, i: number) => {
+          const inside = /[^*_\s]/.test(m.slice(i + 1).replace(/[*_]+$/, ''));
+          return /^[a-z]/.test(after(i)) && (c !== '.' || inside) ? MASK[c]! : c;
+        })
+        // A " · " inside emphasis joins the parts of one label ("**1 secret · 1 value**").
+        .replace(/·/g, '');
     });
   return { text: t.replace(/\*\*|__/g, ''), spans };
 }
@@ -398,7 +401,8 @@ function plain(text: string): Plain {
 const EMPHASIS_RE = /\*\*[^*]+?\*\*|__[^_]+?__|(?<![*A-Za-z0-9_])\*(?![\s*])[^*]+?(?<![\s*])\*(?![*A-Za-z0-9])|(?<![A-Za-z0-9_])_(?![\s_])[^_]+?(?<![\s_])_(?![A-Za-z0-9_])/g;
 const MASK: Record<string, string> = { '.': '\uE004', '?': '\uE002', '!': '\uE003' };
 /** The text with an emphasis span's marks as they were. */
-const unmask = (t: string): string => t.replace(/[\uE002-\uE004]/g, (c) => ({ '\uE004': '.', '\uE002': '?', '\uE003': '!' })[c]!);
+const unmask = (t: string): string =>
+  t.replace(/[\uE002-\uE005]/g, (c) => ({ '\uE004': '.', '\uE002': '?', '\uE003': '!', '\uE005': '\u00B7' })[c]!);
 
 /** The text with its placeholders put back. */
 function restore(text: string, spans: readonly string[]): string {
