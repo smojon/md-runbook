@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.26.3
+
+Prose checks count more cases right, and six docs pages follow the prose rules.
+
 - **Prose checks count two more cases right:**
   - A capital after a lowercase word ends a sentence: "design B. The renewal…". Initials still don't: "J. R. R. Tolkien", "by L. Peter Deutsch".
   - A citation after a sentence, on the same line, is no part of the next sentence.
