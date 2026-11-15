@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Pair a device:** changing **Public address of this web app** while the card is open now
+  updates the libraries' addresses in the code and link too (it kept the old ones until the card
+  was opened again).
+
 ## 0.25.1
 
 A fix for team libraries that open verified runbooks only.
