@@ -185,8 +185,8 @@ Every default is the safer choice:
 - Pseudonymization is **on**; turning it off sends real host names, IPs and emails.
 - The leak check before sharing is **on**. When it finds something, the default answer is
   **not** to copy or export.
-- Outputs are always scanned for leaks, wrapped as untrusted data and shortened (80 lines,
-  60 000 characters in total). There is no setting to send them unwrapped.
+- Outputs are always scanned for leaks and wrapped as untrusted data. There is no setting to send
+  them unwrapped. By default they are shortened too: 80 lines each, 60 000 characters in total.
 - Pasted proposals are always inserted as proposed cells that need approval; there is no setting
   to insert runnable cells.
 - Copy for AI only runs when you invoke it, and the pseudonym map never leaves your machine.
