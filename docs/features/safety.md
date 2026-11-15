@@ -34,7 +34,7 @@ renders normally elsewhere:
 
 ## Blocks for one OS
 
-One runbook can serve Windows, Linux and macOS users: write the step once per OS and mark each
+One runbook can serve Windows, Linux and macOS users. Write the step once per OS and mark each
 block with `os=`:
 
 ````markdown
@@ -51,17 +51,22 @@ rm -rf ~/.cache/app
 
 - Names: `windows`, `linux`, `macos` (also `win`, `mac`, `darwin`), comma-separated. Other
   Unix-like systems count as `linux`.
-- A block for another OS is **not run and not recorded**: Run All, Resume Run and Run Below
-  pass over it, and it keeps whatever output it had (the output from the last time someone ran
-  it on that OS). Its status line says so (`⊘ For macOS · not run on Windows`); VS Code shows
-  ▶ on every code cell and cannot hide it for one, so clicking it only repeats which OS the
-  block is for.
+- A block for another OS is **not run and not recorded**. Run All, Resume Run and Run Below
+  pass over it.
+
+  It keeps whatever output it had (the output from the last time someone ran it on that OS). Its
+  status line says so (`⊘ For macOS · not run on Windows`).
+
+  VS Code shows ▶ on every code cell and cannot hide it for one. So clicking it only repeats
+  which OS the block is for.
 - Blocks with `os=` that follow each other (with only text between them) are **alternatives of
-  one step**: progress and the HTML report count one step, judged by the block for this OS (in
-  the report: the block that has output). A group with no block for this OS counts as skipped.
-  Repeating an OS starts the next step, so two steps in a row each written for both systems
-  work as expected.
-- On GitHub or any Markdown viewer, readers simply see each block in turn.
+  one step**:
+  - progress counts one step, judged by the block for this OS;
+  - the HTML report counts one step, judged by the block that has output;
+  - a group with no block for this OS counts as skipped;
+  - repeating an OS starts the next step. So two steps in a row, each written for both systems,
+    work as expected.
+- On GitHub or any Markdown viewer, readers see each block in turn.
 
 ## Runbook defaults in the front matter
 
@@ -80,41 +85,58 @@ timeout: 300
 | `cwd: ../infra` | The folder cells run in (and session mode starts in), relative to the `.md` file's folder. A cell's own `cwd=` is still relative to the `.md` file's folder. |
 | `timeout: 300` | Default timeout in seconds (`300s` works too) instead of `mdRunbook.execution.timeoutSeconds`. `0` = none. A cell's `timeout=` wins. |
 
-These apply in the runbook view and to the text editor's ▶ Run CodeLens, but not to cells
-written by an assistant (they run in the `.md` file's folder with the usual timeouts), and not
-when `mdRunbook.cellOptions.enabled` is off. Shell paths can't be
-set in the front matter on purpose: a file from a repository must not choose which program runs
-your cells (that would get around the command policy for approved assistant cells). Set them in
-your user settings (`mdRunbook.shell.bashPath`, `mdRunbook.shell.pwshPath`). The front matter can
-only name an installed shell (`shell: zsh`, `sh`, `pwsh`, `windows-powershell`; see
-[the syntax](../syntax.md#front-matter)). In a `shell: zsh` runbook the command policy never
-approves a proposal on its own, and approvals given before the switch to zsh no longer count.
+These apply in the runbook view and to the text editor's ▶ Run CodeLens. They don't apply:
+
+- to cells written by an assistant (they run in the `.md` file's folder with the usual
+  timeouts);
+- when `mdRunbook.cellOptions.enabled` is off.
+
+Shell paths can't be set in the front matter on purpose. A file from a repository must not
+choose which program runs your cells. That would get around the command policy for approved
+assistant cells.
+
+Set them in your user settings (`mdRunbook.shell.bashPath`, `mdRunbook.shell.pwshPath`). The
+front matter can only name an installed shell (`shell: zsh`, `sh`, `pwsh`, `windows-powershell`;
+see [the syntax](../syntax.md#front-matter)).
+
+In a `shell: zsh` runbook the command policy never approves a proposal on its own. Approvals
+given before the switch to zsh no longer count.
 
 ## Confirming risky commands
 
 Before a cell whose text matches one of `mdRunbook.execution.confirmPatterns` runs, a modal
-dialog names the matching text and the context the cell will run in (see below). Choosing
-anything other than **Run** does not run the cell and records it as `exit=declined`; progress
-keeps such a step pending and **Resume Run** offers it again. In **Run All**, declining also
-stops the run, since later steps usually depend on the declined one. (A cell with the `skip`
-option is recorded as `exit=skipped`, counts as complete and does not stop Run All.)
+dialog opens. It names the matching text and the context the cell will run in (see below).
+
+Choosing anything other than **Run** does not run the cell, and records it as `exit=declined`.
+Progress keeps such a step pending, and **Resume Run** offers it again. In **Run All**,
+declining also stops the run, since later steps usually depend on the declined one.
+
+(A cell with the `skip` option is recorded as `exit=skipped`, counts as complete and does not
+stop Run All.)
 
 When the confirmation is asked:
 
-- Without `mdRunbook.output.recordContext`, right away, before any secret, input or parameter
-  is asked for, so a declined cell never prompts for anything.
-- With `mdRunbook.output.recordContext`, after the cell's environment is final (`.env` file,
-  secrets, inputs, the read-only credentials of assistant cells), so the context shown, and
+- Without `mdRunbook.output.recordContext`: right away, before any secret, input or parameter is
+  asked for. So a declined cell never prompts for anything.
+- With `mdRunbook.output.recordContext`: after the cell's environment is final (`.env` file,
+  secrets, inputs, the read-only credentials of assistant cells). So the context shown, and
   recorded, is the cluster or server the cell will really use. Prompts for that cell's secrets,
   inputs or parameters therefore come before the confirmation.
 
-The default patterns cover `delete`, `drain`, `cordon`, `scale … --replicas=0`, `rm -rf`,
-`--force`, `Remove-Item … -Recurse`, `drop table` / `drop database`, `rollout restart|undo`,
-`patch`, `apply`, `replace` (not PowerShell's `-replace` / `.Replace()`), `adm policy
-add…|remove…`, `set env|image|resources`, `helm upgrade|rollback|uninstall`, `curl -X` /
-`--request PUT|POST|PATCH|DELETE` and `Invoke-RestMethod|Invoke-WebRequest -Method
-Put|Post|Patch|Delete`. They are case-insensitive JavaScript regular expressions matched
-against the whole cell text, comments included.
+The default patterns cover:
+
+- `delete`, `drain`, `cordon`, `scale … --replicas=0`;
+- `rm -rf`, `--force`, `Remove-Item … -Recurse`;
+- `drop table` / `drop database`;
+- `rollout restart|undo`, `patch`, `apply`, `replace` (not PowerShell's `-replace` /
+  `.Replace()`);
+- `adm policy add…|remove…`, `set env|image|resources`;
+- `helm upgrade|rollback|uninstall`;
+- `curl -X` / `--request PUT|POST|PATCH|DELETE` and
+  `Invoke-RestMethod|Invoke-WebRequest -Method Put|Post|Patch|Delete`.
+
+They are case-insensitive JavaScript regular expressions matched against the whole cell text,
+comments included.
 
 ```json
 "mdRunbook.execution.confirmPatterns": [
@@ -123,18 +145,26 @@ against the whole cell text, comments included.
 ]
 ```
 
-**In the app**, the same rules with the default patterns: a cell with a risky command, or with
-`confirm`, shows a card under it (the risky match, the account it runs as, how often `retry=` may
-run it) and runs only after **Run**; **Cancel** leaves it unrun and stops Run All there. Run on a
-Group asks once for the whole group. A cell's `no-confirm` counts only after **Hosts & settings →
-Asking before a cell runs** allows it (off by default).
+**In the app**, the same rules apply, with the default patterns. A cell with a risky command, or
+with `confirm`, shows a card under it:
+
+- the risky match;
+- the account it runs as;
+- how often `retry=` may run it.
+
+The cell runs only after **Run**. **Cancel** leaves it unrun and stops Run All there.
+
+Run on a Group asks once for the whole group. A cell's `no-confirm` counts only after
+**Hosts & settings → Asking before a cell runs** allows it (off by default).
 
 ## Recording the context
 
 `mdRunbook.output.recordContext` maps attribute names to commands. Before a cell runs, each
-command's first output line is added to the output marker, so the saved runbook shows where
-it was run. The commands run with the cell's final environment (after the `.env` file,
-secrets and read-only credentials), so a `KUBECONFIG` set by any of them is the one recorded:
+command's first output line is added to the output marker. So the saved runbook shows where it
+was run.
+
+The commands run with the cell's final environment, after the `.env` file, secrets and
+read-only credentials. So a `KUBECONFIG` set by any of them is the one recorded:
 
 ```json
 "mdRunbook.output.recordContext": {
@@ -147,9 +177,11 @@ secrets and read-only credentials), so a `KUBECONFIG` set by any of them is the 
 <!-- md-runbook:output start exit=0 ran=… ended=… duration=0.412s context=prod-eu server=https://api.prod-eu:6443 -->
 ```
 
-- Commands run through the platform shell (`cmd.exe` on Windows, `/bin/sh` elsewhere) in the
-  folder of the `.md` file, with the cell's environment (`mdRunbook.execution.env`, `env.*`
-  options, `.env`, secrets, read-only credentials) set, and a 5 second timeout. A failing or silent command records `unknown`.
+- Commands run through the platform shell (`cmd.exe` on Windows, `/bin/sh` elsewhere), in the
+  cell's working folder. That is the runbook's folder, unless `cwd:` or `cwd=` set another.
+- Each command runs with the cell's environment set (`mdRunbook.execution.env`, `env.*` options, `.env`,
+  secrets, read-only credentials), and a 5 second timeout. A failing or silent command records
+  `unknown`.
 - Values are cached per runbook for `mdRunbook.output.recordContextCacheSeconds`.
 - Values pass through secret redaction like output does. Don't record commands that print
   secrets.

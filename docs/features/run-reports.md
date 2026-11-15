@@ -1,11 +1,12 @@
 # Run reports
 
-A runbook can name an address that hears about every run of it: who ran which version, when, and
-how each step ended. VS Code, the [md-runbook app](../app.md) and the
-[command line](cli.md) send the same short **run summary** at the end of a run. A summary can
-be **signed with the runner's own SSH key**, so the server can reject fakes. A
-[signed runbook](signed-runbooks.md) can make the report, and its signature, a condition of
-running at all.
+A runbook can name an address that hears about every run of it. The address learns who ran which
+version, when, and how each step ended.
+
+VS Code, the [md-runbook app](../app.md) and the [command line](cli.md) send the same short
+**run summary** at the end of a run. A summary can be **signed with the runner's own SSH key**,
+so the server can reject fakes. A [signed runbook](signed-runbooks.md) can make the report, and
+its signature, a condition of running at all.
 
 ```yaml
 ---
@@ -20,29 +21,36 @@ report-runs-token: ${secret:REPORTS_TOKEN}      # optional bearer token, from yo
 
 A summary holds names, states and times only:
 
-- the runbook: its file name (no folder), title, the SHA-256 of its text without outputs, and for
-  a signed runbook its signed name, version, the manifest's SHA-256 and the signer;
-- who ran it (the user name on the machine, or the name set in the app) and where: `vscode`,
-  `app-ios`, `app-android`, `app-web` or `cli` (`gate`: md-runbook-gate's own report, below);
+- the runbook: its file name (no folder), title and the SHA-256 of its text without outputs. For
+  a signed runbook, also its signed name, version, the manifest's SHA-256 and the signer;
+- who ran it: the user name on the machine, or the name set in the app;
+- where: `vscode`, `app-ios`, `app-android`, `app-web` or `cli` (`gate`: md-runbook-gate's own
+  report, below);
 - when the run started and ended;
-- each step, in order: its number, its label (the heading or `name=`, else the first line of
-  its code as written, at most 120 characters), its state (`passed`, `failed`, `skipped`,
-  `not-run`, `by-hand`) and, for the steps this run ran, how long they took;
+- each step, in order:
+  - its number;
+  - its label (the heading or `name=`, else the first line of its code as written), at most 120
+    characters;
+  - its state (`passed`, `failed`, `skipped`, `not-run`, `by-hand`);
+  - for the steps this run ran, how long they took;
 - the totals, and whether the runbook ended green (nothing failed, nothing left to do);
 - which alert the run answered, when it had one (below).
 
 **Never** an output, a parameter or input value, a captured value or a secret. A step's label is
 the runbook's own text, never what a placeholder was filled with: `deploy --to ${param:TARGET}`
-stays that. The report token is sent as an `Authorization: Bearer` header only, never in the
-summary, and is never kept with a queued report (only its secret's name is).
+stays that.
+
+The report token is sent as an `Authorization: Bearer` header only, never in the summary. It is
+never kept with a queued report: only its secret's name is.
 
 ### Which alert a run answered
 
 Alert links open a runbook with the alert's details as parameters, for example
 `…&p.ALERT={{ $labels.alertname }}&p.ALERT_FINGERPRINT={{ .Fingerprint }}&p.ALERT_STARTS_AT={{ .StartsAt }}`.
-The summary then carries `alert`, built from those parameter values only. It doesn't matter
-whether any block uses them: a runbook may declare them with empty defaults (`- ALERT: ""`), and
-a declared parameter that no block uses is never asked for.
+The summary then carries `alert`, built from those parameter values only.
+
+Whether any block uses them doesn't matter. A runbook may declare them with empty defaults
+(`- ALERT: ""`). A declared parameter that no block uses is never asked for.
 
 | Parameter | In `alert` |
 | --- | --- |
@@ -53,9 +61,9 @@ a declared parameter that no block uses is never asked for.
 
 Empty values are left out. No other parameter's value is ever read for the summary.
 
-On a server with md-runbook-gate (protocol 3), the app also gives the gate the alert's name,
-fingerprint and start time with the runbook, so the gate's own log and `md-runbook audit` say
-which alert the run answered ([the log](signed-runbooks.md#the-log)).
+On a server with md-runbook-gate (protocol 3), the app also gives the gate the alert's details
+with the runbook. These are its name, fingerprint and start time. So the gate's own log and
+`md-runbook audit` say which alert the run answered ([the log](signed-runbooks.md#the-log)).
 
 ## The format (version 1)
 
@@ -91,15 +99,18 @@ which alert the run answered ([the log](signed-runbooks.md#the-log)).
 - `stopped: true` when the run was stopped or timed out.
 - Times are ISO 8601 in UTC; `ms` is whole milliseconds.
 - **Client `gate`**, [md-runbook-gate's own report](signed-runbooks.md#run-reports-from-the-gate)
-  of a session on a server: `runbook.signed` is always there, `runbook.file` and `runbook.sha256`
-  are not (the gate sees only the signed manifest), and `gate` says where it ran:
-  `{ "host": "web-1", "account": "support", "from": "192.0.2.7" }`. Only a gate's summary may
-  carry `gate`, or leave out the file and hash. The format version stays 1: these are additions.
+  of a session on a server:
+  - `runbook.signed` is always there;
+  - `runbook.file` and `runbook.sha256` are not (the gate sees only the signed manifest);
+  - `gate` says where it ran: `{ "host": "web-1", "account": "support", "from": "192.0.2.7" }`.
+
+  Only a gate's summary may carry `gate`, or leave out the file and hash. The format version
+  stays 1: these are additions.
 
 A server should refuse a `v` it doesn't know and any field not listed here. Core's
 `runSummaryProblems` (`packages/core/src/runReport.ts`) does this check.
 
-**The canonical form** is what is signed and sent: JSON with every object's keys sorted (by
+**The canonical form** is what is signed and sent. It is JSON with every object's keys sorted (by
 UTF-16 code units), no whitespace, and absent fields left out. For the strings, whole numbers and
 booleans of a summary this is the same text as RFC 8785 (JCS).
 
@@ -135,22 +146,31 @@ days, or when 100 newer ones are waiting.
 
 A runbook can't send anything you didn't agree to.
 
-- **Not required.** The first time a runbook reports to an address, you are asked (VS Code: a
-  notification at the end of the run; the app: a card at the end of the run):
+- **Not required.** The first time a runbook reports to an address, you are asked:
+  - VS Code: a notification at the end of the run;
+  - the app: a card at the end of the run.
+
   "This runbook reports its runs to *host*: *what is sent*." **Allow**, **Not now** (this run
-  only) or **Never**. The answer is remembered per address and report token: a runbook that
-  sends another secret to the same address is asked about again. On the command line, which asks
-  nothing, the address must be allowed (`--report-to-allowed`), otherwise nothing is sent and
-  the run says so.
-- **Pre-approved addresses** need no question: VS Code `mdRunbook.reports.allowedAddresses`
-  (user settings only), the app's **Hosts & settings → Run reports**, and on the command line
-  `--report-to-allowed ADDRESS` or `MD_RUNBOOK_REPORT_ALLOWED` (comma-separated). An entry is
-  a host (`reports.example.net`), an origin (`https://reports.example.net:8443`) or an address
-  prefix (`https://reports.example.net/runs/`).
+  only) or **Never**.
+
+  The answer is remembered per address and report token. A runbook that sends another secret to
+  the same address is asked about again.
+
+  The command line asks nothing: there the address must be allowed (`--report-to-allowed`).
+  Otherwise nothing is sent, and the run says so.
+- **Pre-approved addresses** need no question:
+  - VS Code: `mdRunbook.reports.allowedAddresses` (user settings only);
+  - the app: **Hosts & settings → Run reports**;
+  - the command line: `--report-to-allowed ADDRESS` or `MD_RUNBOOK_REPORT_ALLOWED`
+    (comma-separated).
+
+  An entry is a host (`reports.example.net`), an origin (`https://reports.example.net:8443`) or
+  an address prefix (`https://reports.example.net/runs/`).
 - **Required.** A notice before the run, with what is sent: **Run** or **Don't run**. There is
-  no "Never": declining means the run doesn't start. Once you choose Run, the other steps of the
-  same runbook don't ask again for the session. On the command line the address must be allowed,
-  else nothing runs (exit `2`).
+  no "Never": declining means the run doesn't start.
+
+  Once you choose Run, the other steps of the same runbook don't ask again for the session. On
+  the command line the address must be allowed, else nothing runs (exit `2`).
 
 ## Required and signed reports
 
@@ -160,10 +180,13 @@ hold:
 1. The runbook carries a signature that verifies against **signers this client trusts**:
    - VS Code: an `allowed_signers` file named in `mdRunbook.signing.allowedSigners`, checked with
      `ssh-keygen -Y verify`;
-   - the app: the keys under [Hosts & settings → Trusted signers](../app.md#trusted-signers) that count
-     for the runbook (for a team library copy, those trusted from its library and those added by
-     you; for any other runbook, those added by you), checked in the app itself, the same check
-     as the team library's "whole runbook verified";
+   - the app: the keys under [Hosts & settings → Trusted signers](../app.md#trusted-signers) that
+     count for the runbook:
+     - for a team library copy, those trusted from its library and those added by you;
+     - for any other runbook, those added by you.
+
+     They are checked in the app itself, the same check as the team library's "whole runbook
+     verified";
    - the command line: `md-runbook run --allowed-signers FILE`.
 2. The signature covers **the whole runbook**: [manifest version 2](signed-runbooks.md#what-is-signed),
    which signs the text, front matter included. A runbook signed before that version only had
@@ -181,8 +204,8 @@ start, and the message says how to set one up:
 
 - VS Code: `mdRunbook.signing.key`, the same key as **Sign Runbook**;
 - the app: its own key (Secure Enclave, Android Keystore), as for Sign Runbook. When it can't
-  be used, make a new one under Hosts & settings → This app's SSH key (on the web: turn **Use a
-  passkey** off, or off and on again for a new passkey);
+  be used, make a new one under Hosts & settings → This app's SSH key. On the web, turn **Use a
+  passkey** off, or off and on again for a new passkey;
 - the command line: `--key KEY`.
 
 Without `report-runs-signed`, a summary is signed whenever a key is set, and sent unsigned
@@ -205,13 +228,17 @@ md-runbook verify-run envelope.json --allowed-runners /etc/md-runbook/allowed_ru
 ```
 
 It exits `0` when the signature is good, printing the runner and the summary, and `1` when it
-is not. `-` reads standard input. A library server can do the same with core:
-`verifyRunEnvelope(json, allowedRunnersFile)` in `@md-runbook/core/node`, which uses ssh-keygen
-(`parseRunEnvelope` checks the envelope's form without it).
+is not. `-` reads standard input.
+
+A library server can do the same with core: `verifyRunEnvelope(json, allowedRunnersFile)` in
+`@md-runbook/core/node`, which uses ssh-keygen. `parseRunEnvelope` checks the envelope's form
+without it.
 
 **Namespaces keep the two kinds of signature apart.** A runbook signature (`md-runbook`) never
-verifies as a run summary, and a run summary's signature (`md-runbook-run`) never verifies as a
-runbook. Keep runner keys out of the servers' `allowed_signers`, or give them only
+verifies as a run summary. A run summary's signature (`md-runbook-run`) never verifies as a
+runbook.
+
+Keep runner keys out of the servers' `allowed_signers`, or give them only
 `namespaces="md-runbook-run"`.
 
 ## Receiving them: the library server
@@ -222,24 +249,31 @@ the team library it publishes to:
 
 - It checks each one strictly with `runSummaryProblems`, and that its totals and `green` agree
   with its steps.
-- It checks a signed one against its allowed runners (`RUNS_ALLOWED_RUNNERS`) with ssh-keygen.
-- It keeps every summary as one JSON line, append-only, with when it arrived and how far it can
-  be believed: `runner-signed`, `gate` (sent by md-runbook-gate with a gate token) or
-  `unverified`. `RUNS_REQUIRE_SIGNED=true` refuses the unverified ones.
+- A signed one is checked against its allowed runners (`RUNS_ALLOWED_RUNNERS`) with ssh-keygen.
+- Every summary is kept as one JSON line, append-only, with when it arrived and how far it can
+  be believed:
+  - `runner-signed`;
+  - `gate` (sent by md-runbook-gate with a gate token);
+  - `unverified`.
+
+  `RUNS_REQUIRE_SIGNED=true` refuses the unverified ones.
 - `report-runs-token: ${secret:NAME}` is its `RUNS_TOKENS`: the client sends it as
   `Authorization: Bearer`, which the server checks.
-- `GET /v1/runs?runbook=…` lists the team's recent runs, and `GET /v1/runs/last-green?runbook=…`
-  answers "last ran green by X at T", verified or not (a read token).
+- `GET /v1/runs?runbook=…` lists the team's recent runs. `GET /v1/runs/last-green?runbook=…`
+  answers "last ran green by X at T", verified or not. Both need a read token.
 
 ## Limits
 
 - **A client can't be forced.** Someone with a modified client, or `curl`, can run a runbook's
-  commands without reporting, or send a summary that says what they like. A signature proves
-  only which key sent the summary, not that the steps really ran as it says. Real enforcement is
-  on the server: the [gate](signed-runbooks.md#setting-up-a-server) logs every signed block it
-  runs, and with `report_to` it [sends its own summary](signed-runbooks.md#run-reports-from-the-gate)
-  of every session, whatever the client did.
+  commands without reporting. They can also send a summary that says what they like.
+
+  A signature proves only which key sent the summary, not that the steps really ran as it says.
+
+  Real enforcement is on the server. The [gate](signed-runbooks.md#setting-up-a-server) logs
+  every signed block it runs. With `report_to`, it
+  [sends its own summary](signed-runbooks.md#run-reports-from-the-gate) of every session,
+  whatever the client did.
 - A report goes out after the run. A client that crashes or is killed first sends nothing.
 - The app checks signatures itself (Ed25519, ECDSA, RSA, security keys and passkeys). A line
-  for a certificate authority (`cert-authority`) is not used there, so a runbook signed with a
+  for a certificate authority (`cert-authority`) is not used there. So a runbook signed with a
   certificate is asked about instead.

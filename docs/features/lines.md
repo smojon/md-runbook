@@ -2,16 +2,18 @@
 
 A cell normally runs as one script. You can also run its lines separately:
 
-- **Hover a command** (in cells with two or more) for its buttons and what you should know
-  before running it (see [below](#the-line-hover)); a plain click on a button does it. Checked
-  lines get a ☑ in the margin, and **Run 2 checked lines** appears on the cell's status line,
-  under the cell.
-- **The dropdown next to the cell's run button:** **Run Lines One by One**, **Step Through
-  Lines**; **Run Checked Lines** and **Uncheck All Lines** when lines are checked; **Run
-  Selection** and **Step Through from Selection** when text is selected in the cell.
-- **Right-click in the cell's code:** **Run This Line** and **Step Through from This Line** (the
-  line you clicked), or **Run Selection** and **Step Through from Selection** when text is
-  selected.
+- **Hover a command** (in cells with two or more) for its buttons and what to know before
+  running it ([below](#the-line-hover)). A plain click on a button does it.
+
+  Checked lines get a ☑ in the margin. **Run 2 checked lines** appears on the cell's status
+  line, under the cell.
+- **The dropdown next to the cell's run button:**
+  - **Run Lines One by One**, **Step Through Lines**;
+  - **Run Checked Lines** and **Uncheck All Lines** when lines are checked;
+  - **Run Selection** and **Step Through from Selection** when text is selected in the cell.
+- **Right-click in the cell's code:**
+  - **Run This Line** and **Step Through from This Line** (the line you clicked);
+  - or **Run Selection** and **Step Through from Selection** when text is selected.
 - **`Ctrl+Alt+Enter`** (`Cmd+Alt+Enter` on macOS): the selection, or else the line the cursor is
   on.
 - **Breakpoints:** a cell with breakpoints runs line by line and pauses at them (see
@@ -26,10 +28,11 @@ A cell normally runs as one script. You can also run its lines separately:
 | **Step Through from This Line** / **from Selection** | The same, starting at that line (or the next command after it). |
 
 When not every line of the cell ran, the output is saved with `lines=` and the cell lines that
-ran: `lines=3`, `lines=2-4`, or `lines=1,3` for checked lines that aren't next to each other.
+ran. For example: `lines=3`, `lines=2-4`, or `lines=1,3` for checked lines that aren't next to
+each other.
 
-The output shows each line before its own output (`$ ls -la` in bash, `PS> Get-Date` in PowerShell,
-`> dir` in cmd), so the saved output is a readable record of what ran:
+The output shows each line before its own output: `$ ls -la` in bash, `PS> Get-Date` in
+PowerShell, `> dir` in cmd. So the saved output is a readable record of what ran:
 
 ````markdown
 ```bash
@@ -79,13 +82,19 @@ ${out:POD} = no value yet: run the cell with capture=POD first
 
 The hover only reads what md-runbook already knows: it never asks for a value or runs anything.
 
-The run buttons of the line the cursor is on are also on the cell's status line, under the cell:
+The run buttons of the cursor's line are also on the cell's status line, under the cell:
 `▷ Run line 2 · Run lines 1-2 · Run lines 2-3 · Step from here`. They stay while the cell is
-selected, so a click in the line and then one on the status line runs it. The hover is harder to
-reach on a cell's first lines: VS Code draws it above the cell there, and closes it as soon as the
-mouse leaves the cell's text (`editor.hover.hidingDelay` only applies inside it). By keyboard,
-`Ctrl+K Ctrl+I` opens the hover at the cursor, the same keys again move into it, and `Tab` and
-`Enter` choose a button.
+selected. So a click in the line and then one on the status line runs it.
+
+The hover is harder to reach on a cell's first lines. VS Code draws it above the cell there, and
+closes it as soon as the mouse leaves the cell's text. `editor.hover.hidingDelay` only applies
+inside it.
+
+By keyboard:
+
+- `Ctrl+K Ctrl+I` opens the hover at the cursor;
+- the same keys again move into it;
+- `Tab` and `Enter` choose a button.
 
 `mdRunbook.lines.buttons` chooses where the buttons are:
 
@@ -96,12 +105,16 @@ mouse leaves the cell's text (`editor.hover.hidingDelay` only applies inside it)
 | `off` | None. The dropdown, the right-click menu and `Ctrl+Alt+Enter` still run lines. |
 
 VS Code doesn't let an extension put clickable buttons in the margin or next to the cell's run
-button, so the hover and the cell's status line are the closest a plain-click button can get to the line.
+button. So the hover and the cell's status line are the closest a plain-click button can get to
+the line.
 
 ## Step Through
 
-While a cell waits for its next line, that line is highlighted in the cell, the status bar shows
-`line 3 next (3/5)`, and the cell toolbar has three buttons:
+While a cell waits for its next line:
+
+- that line is highlighted in the cell;
+- the status bar shows `line 3 next (3/5)`;
+- the cell toolbar has three buttons:
 
 | Key | Button | |
 |---|---|---|
@@ -115,18 +128,21 @@ because they would share its shell.
 
 ## Breakpoints
 
-Click in the margin to the left of a line in a `bash`, `pwsh` or `cmd` cell to set a breakpoint
-(the red dot, as in any VS Code editor). A run of that cell (its run button, Run All, Run Lines
-One by One, …) then goes line by line in one shell and **pauses before each line with a
-breakpoint**, highlighted as in Step Through: `F10` runs the next line, `F5` continues to the next
-breakpoint, `Shift+F5` stops. Cells without breakpoints run as usual.
+In a `bash`, `pwsh` or `cmd` cell, click in the margin left of a line to set a breakpoint. It is
+the red dot, as in any VS Code editor.
 
-- Every enabled breakpoint in a runbook cell is used: one on a blank line, a comment or inside a
+A run of that cell (its run button, Run All, Run Lines One by One, …) goes line by line. It runs
+in one shell and **pauses before each line with a breakpoint**, highlighted as in Step Through.
+`F10` runs the next line, `F5` continues to the next breakpoint, `Shift+F5` stops.
+
+Cells without breakpoints run as usual.
+
+- Every enabled breakpoint in a runbook cell is used. One on a blank line, a comment or inside a
   multi-line block pauses before the command at or after it. Disable or remove them in the
   **Breakpoints** view of the Run and Debug side bar, like any breakpoint.
 - `mdRunbook.lines.breakpoints` turns breakpoints off: `bash` and `cmd` cells then have no
   breakpoint margin, and breakpoints are ignored. If the PowerShell extension is installed, it
-  still shows its own margin in `pwsh` cells; md-runbook ignores those breakpoints too then.
+  still shows its own margin in `pwsh` cells. md-runbook ignores those breakpoints too then.
 - md-runbook is not a debugger: it pauses *between* commands, it can't stop inside a running
   command or show variables.
 
@@ -134,12 +150,16 @@ breakpoint, `Shift+F5` stops. Cells without breakpoints run as usual.
 
 A line is a command. Lines that belong together stay together:
 
-- continuation lines: a trailing `\` (bash), backtick (PowerShell) or `^` (cmd), and a line
-  ending in `|`, `&&` or `||` (PowerShell also: `,`, `=`, `-and`, `-or`, and a next line that
-  starts with `|`);
-- blocks: `if … fi`, `for/while … done`, `case … esac`, `{ … }` and `( … )` in bash; `{ … }`,
-  `( … )`, `[ … ]`, and `else`/`elseif`/`catch`/`finally` on the next line in PowerShell;
-  `( … )` in cmd;
+- continuation lines:
+  - a trailing `\` (bash), backtick (PowerShell) or `^` (cmd);
+  - a line ending in `|`, `&&` or `||`;
+  - in PowerShell also a line ending in `,`, `=`, `-and` or `-or`, and a next line that starts
+    with `|`;
+- blocks:
+  - in bash: `if … fi`, `for/while … done`, `case … esac`, `{ … }` and `( … )`;
+  - in PowerShell: `{ … }`, `( … )`, `[ … ]`, and `else`/`elseif`/`catch`/`finally` on the next
+    line;
+  - in cmd: `( … )`;
 - multi-line strings, bash here-docs (`<<EOF`) and PowerShell here-strings (`@' … '@`).
 
 Blank lines and comment-only lines (`#`, `<# … #>`, `rem`, `::`, and cmd `:labels`) are not run.
@@ -152,11 +172,11 @@ inside a block, select it.
 
 - in [session mode](session.md), the lines run in the runbook's session, like any cell;
 - cells with the [`terminal` option](terminal.md) get a terminal of their own for the run,
-  named `md-runbook: <file> (<shell>, lines)`, and every line runs in that terminal's shell. It
-  is closed when the run ends, so the runbook's usual terminal is never changed;
+  named `md-runbook: <file> (<shell>, lines)`. Every line runs in that terminal's shell. It is
+  closed when the run ends, so the runbook's usual terminal is never changed;
 - otherwise, they share a shell that is started for this run and stopped when it ends.
 
-The exception is **cmd cells**: each line runs in its own process, so `cd` or a variable set on
+The exception is **cmd cells**: each line runs in its own process. So `cd` or a variable set on
 one line is gone on the next.
 
 The cell's timeout (`timeout=` or `mdRunbook.execution.timeoutSeconds`) applies to each line on
@@ -164,23 +184,32 @@ its own. Time spent paused doesn't count.
 
 ## Saved output and progress
 
-The output of a line run replaces the cell's output, like a normal run. When not every line of
-the cell ran (one line, a selection, a run stopped early or at a failure), the output marker gets
-`lines=` with the cell's line numbers (1-based), and the status line shows `lines 2-3`:
+The output of a line run replaces the cell's output, like a normal run.
+
+When not every line of the cell ran, the output marker gets `lines=` with the cell's line
+numbers (1-based). That is the case for one line, a selection, or a run stopped early or at a
+failure. The status line then shows `lines 2-3`:
 
 - with `exit=0`, the step counts as **not done yet** in progress, Resume Run and the HTML report
   (`– lines 2-3 ran`);
 - a failed line makes it **failed**, like a failed cell.
 
-A run that covers every line (Run Lines One by One or Step Through to the end, or a selection of
-the whole cell) is a normal run with no `lines=`.
+A run that covers every line is a normal run with no `lines=`. Such runs: Run Lines One by One or
+Step Through to the end, or a selection of the whole cell.
 
 ## Safety
 
 A line run goes through the same checks as a full run, once, before its first line:
-approval of proposed cells, the command policy, cell options such as `skip`, and the risky-command
-confirmation. For **Run Line or Selection** these apply to the text that runs, so a risky command
-on a line you don't run doesn't ask. `${secret:…}`, `${input:…}` and `${param:…}` references are
-asked for once and work in every line. Output is redacted like any other run.
+
+- approval of proposed cells;
+- the command policy;
+- cell options such as `skip`;
+- the risky-command confirmation.
+
+For **Run Line or Selection** these apply to the text that runs. So a risky command on a line you
+don't run doesn't ask.
+
+`${secret:…}`, `${input:…}` and `${param:…}` references are asked for once and work in every
+line. Output is redacted like any other run.
 
 Line runs work in the runbook (notebook) view only, not from the plain text editor's CodeLens.
