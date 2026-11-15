@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Prose checks:**
+  - A citation whose link wraps over lines is no part of the sentence before it.
+  - `md-runbook lint --prose-show` takes several patterns: `--prose-show 'docs/*' README.md`.
+- **Six more docs pages follow the prose rules:** Kubernetes, the library server, approval, AI
+  context, history, and the CodeLens and report page.
+
 ## 0.26.3
 
 Prose checks count more cases right, and six docs pages follow the prose rules.

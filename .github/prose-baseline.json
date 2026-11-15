@@ -16,11 +16,6 @@
   "sentences": 12,
   "units": 2
  },
- "apps/library-server/README.md": {
-  "average": 16.1,
-  "sentences": 30,
-  "units": 5
- },
  "apps/mobile/STORE.md": {
   "average": 10.4,
   "sentences": 2,
@@ -63,20 +58,15 @@
   "sentences": 4,
   "units": 1
  },
- "docs/features/ai-context.md": {
-  "average": 17.9,
-  "sentences": 27,
-  "units": 4
- },
  "docs/features/ai.md": {
   "average": 16.0,
   "sentences": 20,
   "units": 4
  },
  "docs/features/approval.md": {
-  "average": 21.0,
-  "sentences": 29,
-  "units": 7
+  "average": 11.6,
+  "sentences": 1,
+  "units": 0
  },
  "docs/features/calls.md": {
   "average": 18.1,
@@ -88,11 +78,6 @@
   "average": 15.4,
   "sentences": 10,
   "units": 1
- },
- "docs/features/codelens-report.md": {
-  "average": 20.3,
-  "sentences": 23,
-  "units": 5
  },
  "docs/features/devcontainer.md": {
   "average": 11.8,
@@ -108,16 +93,6 @@
   "average": 17.8,
   "sentences": 15,
   "units": 4
- },
- "docs/features/history.md": {
-  "average": 17.4,
-  "sentences": 25,
-  "units": 5
- },
- "docs/features/kubernetes.md": {
-  "average": 16.1,
-  "sentences": 34,
-  "units": 9
  },
  "docs/features/lines.md": {
   "average": 19.5,
