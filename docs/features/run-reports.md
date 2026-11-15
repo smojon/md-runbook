@@ -53,6 +53,10 @@ a declared parameter that no block uses is never asked for.
 
 Empty values are left out. No other parameter's value is ever read for the summary.
 
+On a server with md-runbook-gate (protocol 3), the app also gives the gate the alert's name,
+fingerprint and start time with the runbook, so the gate's own log and `md-runbook audit` say
+which alert the run answered ([the log](signed-runbooks.md#the-log)).
+
 ## The format (version 1)
 
 ```json

@@ -212,7 +212,8 @@ there), `1` refused (the reason is printed), `2` a usage error or no usable answ
 
 `md-runbook audit gate.log… [--record incident.md] [--out audit.pdf]` reports what servers with
 md-runbook-gate ran, from their logs: every run with the key, account and client, the runbook,
-version and signer, the parameters, exit code and duration, and the findings (refused requests,
+version and signer (and, for a run an alert link started, the alert: `· for alert ApiDown
+(fingerprint 5f3c9e, started …)`), the parameters, exit code and duration, and the findings (refused requests,
 unsigned code, stopped runs). With `--record`, a saved run record is matched against the log.
 Exit code 1 when there are findings or recorded runs the log doesn't show. See [For
 auditors](for-auditors.md).

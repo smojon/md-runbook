@@ -78,7 +78,56 @@ export const gateLoadCommand = (id: string, manifest: string, signatures: string
 export const gateParamCommand = (id: string, name: string, value: string): string => `param ${id} ${name} ${b64(value)}\n`;
 /** (Gate protocol 2) The next load is called by call `call` of the runbook whose manifest has sha256 `hash`: logged with it. */
 export const gateCalledCommand = (id: string, hash: string, call: number): string => `called ${id} ${hash} ${Math.trunc(call)}\n`;
-export const gateRunCommand = (id: string, cell: number, step?: number): string =>
+
+/** The alert a run answers (from its alert link's ALERT, ALERT_FINGERPRINT and ALERT_STARTS_AT), for a gate's `note`. */
+export interface GateAlertNote {
+  name: string;
+  fingerprint?: string;
+  startsAt?: string;
+}
+
+/** The gate protocol that has the `note` request; older gates are sent none. */
+export const GATE_NOTE_PROTOCOL = 3;
+const NOTE_NAME_MAX_BYTES = 400;
+const NOTE_FINGERPRINT_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+const NOTE_STARTS_AT_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,9})?)?([Zz]|[+-][0-9]{2}:?[0-9]{2})?$/;
+const CONTROL_RE = /[\x00-\x1f\x7f]+/g;
+
+/**
+ * The note as the gate checks it (apps/gate/md-runbook-gate, do_note): the name on one line, no
+ * control characters, at most 400 bytes (cut at a character); a fingerprint or start time the gate
+ * would refuse is left out. Undefined without a name.
+ */
+export function gateAlertNote(alert: { name: string; fingerprint?: string; startsAt?: string } | undefined): GateAlertNote | undefined {
+  if (!alert) return undefined;
+  let name = alert.name.replace(CONTROL_RE, ' ').replace(/\s+/g, ' ').trim();
+  if (Buffer.byteLength(name, 'utf8') > NOTE_NAME_MAX_BYTES) {
+    let cut = '';
+    let bytes = 0;
+    for (const ch of name) {
+      bytes += Buffer.byteLength(ch, 'utf8');
+      if (bytes > NOTE_NAME_MAX_BYTES) break;
+      cut += ch;
+    }
+    name = cut.trim();
+  }
+  if (name === '') return undefined;
+  const fp = alert.fingerprint?.trim();
+  const at = alert.startsAt?.trim();
+  return {
+    name,
+    ...(fp && NOTE_FINGERPRINT_RE.test(fp) ? { fingerprint: fp } : {}),
+    ...(at && NOTE_STARTS_AT_RE.test(at) ? { startsAt: at } : {}),
+  };
+}
+
+/** (Gate protocol 3) The next load answers this alert: logged with it. `note` as gateAlertNote returns it. */
+export const gateNoteCommand = (id: string, note: GateAlertNote): string =>
+  `note ${id} ALERT ${b64(note.name)}` +
+  (note.fingerprint ? ` ALERT_FINGERPRINT ${b64(note.fingerprint)}` : '') +
+  (note.startsAt ? ` ALERT_STARTS_AT ${b64(note.startsAt)}` : '') +
+  '\n';
+export const gateRunCommand =(id: string, cell: number, step?: number): string =>
   step === undefined ? `run ${id} ${Math.trunc(cell)}\n` : `step ${id} ${Math.trunc(cell)} ${Math.trunc(step)}\n`;
 /** An unsigned cell, for a gate that allows them: the text a plain shell would get. */
 export const gateRawCommand = (id: string, text: string): string => `raw ${id} ${b64(text)}\n`;

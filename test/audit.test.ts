@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
-import { buildAudit, filterAudit, matchRecord, parseGateLog, renderAuditReport } from '@md-runbook/core/audit';
+import { alertLabel, buildAudit, filterAudit, matchRecord, parseGateLog, renderAuditReport } from '@md-runbook/core/audit';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { auditCommand, parseAuditArgs } from '../src/cli/audit';
 
@@ -71,6 +71,37 @@ describe('gate audit (core)', () => {
     assert.match(renderAuditReport(a, [], { generatedAt: new Date(), sources: ['gate.log'] }), /ops\/release v9 · called by ops\/upgrade v4 \(call 1\)/);
   });
 
+  it('an alert link: the runs of a load with a note say which alert they answered, until the next load', () => {
+    const run = (time: string, id: string) =>
+      ev({ time, event: 'run', id, runbook: 'ops/restart', version: '3', hash: 'h3', signer: 'ops@example.net', cell: '1', step: '' });
+    const load = (time: string, more: Record<string, unknown> = {}) =>
+      ev({ time, event: 'load', id: '0', runbook: 'ops/restart', version: '3', hash: 'h3', signer: 'ops@example.net', ...more });
+    const log = [
+      ev({ time: '2026-11-14T09:00:00Z', event: 'session' }),
+      load('2026-11-14T09:00:01Z', { alert: 'ApiDown <b>', 'alert-fingerprint': '5f3c9e', 'alert-starts-at': '2026-11-14T08:58:00Z' }),
+      run('2026-11-14T09:00:02Z', '1'),
+      run('2026-11-14T09:00:03Z', '2'),
+      load('2026-11-14T09:01:00Z', { alert: 'DiskFull' }),
+      run('2026-11-14T09:01:01Z', '3'),
+      load('2026-11-14T09:02:00Z'),
+      run('2026-11-14T09:02:01Z', '4'),
+    ].join('\n');
+    const a = buildAudit(parseGateLog(log).events);
+    assert.deepEqual(
+      a.runs.map((r) => r.alert),
+      [
+        { name: 'ApiDown <b>', fingerprint: '5f3c9e', startsAt: '2026-11-14T08:58:00Z' },
+        { name: 'ApiDown <b>', fingerprint: '5f3c9e', startsAt: '2026-11-14T08:58:00Z' },
+        { name: 'DiskFull' },
+        undefined,
+      ],
+    );
+    assert.equal(alertLabel(a.runs[2]!), ' · for alert DiskFull');
+    const html = renderAuditReport(a, [], { generatedAt: new Date(), sources: ['gate.log'] });
+    assert.match(html, /ops\/restart v3 · for alert ApiDown &lt;b&gt; \(fingerprint 5f3c9e, started 2026-11-14T08:58:00Z\)/);
+    assert.doesNotMatch(html, /ApiDown <b>/);
+  });
+
   it('matches a run record: the log confirms step 1 (local time vs UTC), not step 2', () => {
     const a = buildAudit(parseGateLog(LOG).events);
     const m = matchRecord(a, 'restart.2026-10-26.md', record());
@@ -106,6 +137,12 @@ describe('cli: md-runbook audit', () => {
       lines.length = 0;
       assert.equal(await auditCommand(['-', '--until', '2026-10-26T21:02:30Z', '--out', path.join(dir, 'a.html')], (l) => lines.push(l), () => LOG), 0);
       assert.ok(fs.readFileSync(path.join(dir, 'a.html'), 'utf8').includes('Gate audit'));
+      // Runs an alert link started: named on the terminal (without control characters), and in the JSON.
+      const noted = LOG.replace('"signer":"ops@example.net"}', '"signer":"ops@example.net","alert":"ApiDown\\u001b[2J","alert-fingerprint":"5f3c9e"}');
+      lines.length = 0;
+      await auditCommand(['-', '--out', json], (l) => lines.push(l), () => noted);
+      assert.ok(lines.includes('  for alerts: ApiDown[2J (2 runs)'), lines.join('\n'));
+      assert.deepEqual(JSON.parse(fs.readFileSync(json, 'utf8')).runs[0].alert, { name: 'ApiDown\x1b[2J', fingerprint: '5f3c9e' });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

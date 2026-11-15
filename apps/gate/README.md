@@ -53,7 +53,7 @@ From a machine with the support key:
 printf ': mdrb-gate-hello 0123abcd; x\n' | ssh -i support_key support@server
 ```
 
-prints `__MDRB_GATE__ 2 unsigned=refuse` (after a control character) and the shell's pid. The
+prints `__MDRB_GATE__ 3 unsigned=refuse` (after a control character) and the shell's pid. The
 log (`journalctl -t md-runbook-gate`, or the `log =` file) shows a `session` event. Then open a
 signed runbook in the md-runbook app and run a block; `md-runbook verify --allowed-signers
 /etc/md-runbook/allowed_signers file.md` checks a runbook's signature on the server itself.
@@ -63,10 +63,14 @@ signed runbook in the md-runbook app and run a block; `md-runbook verify --allow
 The app's first line is `: mdrb-gate-hello ID; …`, which a plain shell runs as it is, so the
 app needs no setting. The gate answers with its banner. Then one request per line, base64 for
 anything that could hold spaces; replies end with the marker a plain session uses
-(`\036__MDRB_<id>__ <exit>` on stdout and stderr; refusals exit 126 with the reason on stderr):
+(`\036__MDRB_<id>__ <exit>` on stdout and stderr; refusals exit 126 with the reason on stderr).
+The banner's number is the protocol (3); the app sends a request only to gates whose protocol
+has it:
 
 | Request | |
 | --- | --- |
+| `called ID SHA256 N` | (Protocol 2) The next load is the runbook that call N of the runbook with this manifest hash runs: logged with that load. Grants nothing. |
+| `note ID KEY VALUE …` | (Protocol 3) The next load answers this alert (an alert link's values, base64): `ALERT` (required, at most 400 bytes), `ALERT_FINGERPRINT` (letters, digits and `. _ : -`, at most 128), `ALERT_STARTS_AT` (an RFC 3339 time); none with a control character, each key once. Logged with that load as `alert`, `alert-fingerprint`, `alert-starts-at`; a note that doesn't match is refused whole. Grants nothing, runs nothing. |
 | `load ID MANIFEST SIGNATURE` | Check and keep a signed manifest; answers `\036__MDRB_SIGNED__ PRINCIPAL SHA256`. |
 | `param ID NAME VALUE` | A parameter's value, checked against the manifest's pattern. |
 | `run ID N`, `step ID N K` | Run signed block N, or its command K (0-based). |

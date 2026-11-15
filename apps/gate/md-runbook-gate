@@ -15,6 +15,10 @@
 #   called ID HASH N                  -> (protocol 2) the next load is the runbook called by call N of the
 #                                        runbook with manifest sha256 HASH: logged with that load (what the
 #                                        app says, for the audit; it grants nothing)
+#   note ID KEY VALUE [KEY VALUE ...] -> (protocol 3) base64 values; KEY is ALERT (required), ALERT_FINGERPRINT
+#                                        or ALERT_STARTS_AT: the next load answers that alert (the run's alert
+#                                        link): logged with that load (what the app says, for the audit; it
+#                                        grants nothing and runs nothing)
 #   load ID MANIFEST SIGNATURE        -> base64; checks the signature and policy; \036__MDRB_SIGNED__ PRINCIPAL HASH
 #   param ID NAME VALUE               -> base64 value, checked against the manifest's pattern
 #   run ID CELL | step ID CELL K      -> runs a signed cell, or its K-th command (0-based)
@@ -34,7 +38,7 @@ session_lc_all=${LC_ALL-}
 LC_ALL=C
 export LC_ALL
 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}
-GATE_PROTOCOL=2
+GATE_PROTOCOL=3
 REFUSED=126
 
 say() { printf 'md-runbook-gate: %s\n' "$*" >&2; }
@@ -395,11 +399,17 @@ mfield() { awk -v key="$1" -v cell="$2" -v f="$3" '$1 == "cell" { c = $2 } $1 ==
 do_load() {
   rid=$1
   shift
-  # A `called` note is for this load only, whether it succeeds or not.
+  # A `called` or `note` request is for this load only, whether it succeeds or not.
   cb=$called_by
   cc=$called_call
   called_by=
   called_call=
+  na=$note_alert
+  nf=$note_fingerprint
+  ns=$note_starts_at
+  note_alert=
+  note_fingerprint=
+  note_starts_at=
   ok=
   [ $# -ge 2 ] && [ $# -le 6 ] && ok=1
   for a in "$@"; do is_b64 "$a" || ok=; done
@@ -526,11 +536,7 @@ do_load() {
     cp "$work/manifest" "$work/rb-$mhash" 2>/dev/null
     printf '%s\n%s\n%s\n' "$mname" "$mversion" "$principal" >"$work/rb-$mhash.meta" 2>/dev/null
   fi
-  if [ -n "$cb" ]; then
-    log_event event load id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal" called-by "$cb" call "$cc"
-  else
-    log_event event load id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal"
-  fi
+  log_load
   printf '\036__MDRB_SIGNED__ %s %s\n' "$principal" "$mhash"
   marker "$rid" 0
 }
@@ -547,6 +553,84 @@ do_called() {
   else
     refuse "$rid" "bad called request"
   fi
+}
+
+# The load event, with what a `called` or `note` request said about it.
+log_load() {
+  set -- event load id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal"
+  [ -n "$cb" ] && set -- "$@" called-by "$cb" call "$cc"
+  [ -n "$na" ] && set -- "$@" alert "$na"
+  [ -n "$nf" ] && set -- "$@" alert-fingerprint "$nf"
+  [ -n "$ns" ] && set -- "$@" alert-starts-at "$ns"
+  log_event "$@"
+}
+
+# note ID KEY VALUE ...: (protocol 3) the next load answers this alert, as the client says. Only
+# for the log: it grants nothing and runs nothing. Each value is base64 and checked strictly:
+# ALERT (required) 1 to 400 bytes, ALERT_FINGERPRINT letters, digits and . _ : - (at most 128),
+# ALERT_STARTS_AT an RFC 3339 time; none with a control character; each key once. A bad note is
+# refused whole (and kept from no load).
+note_alert=
+note_fingerprint=
+note_starts_at=
+do_note() {
+  rid=$1
+  shift
+  n_alert=
+  n_fp=
+  n_start=
+  n_seen=
+  ok=
+  [ $# -ge 2 ] && [ $# -le 6 ] && [ $(($# % 2)) -eq 0 ] && ok=1
+  while [ -n "$ok" ] && [ $# -ge 2 ]; do
+    n_key=$1
+    n_b64=$2
+    shift 2
+    case " $n_seen " in
+      *" $n_key "*)
+        ok=
+        break
+        ;;
+    esac
+    n_seen="$n_seen $n_key"
+    # The base64 of 400 bytes is 536 characters: nothing longer is decoded.
+    is_b64 "$n_b64" && [ ${#n_b64} -le 600 ] && printf '%s' "$n_b64" | b64d >"$work/note" 2>/dev/null || {
+      ok=
+      break
+    }
+    n_len=$(wc -c <"$work/note" | tr -d ' ')
+    # One line of text: no newline, NUL or other control character.
+    [ "$(tr -d '\000-\037\177' <"$work/note" | wc -c | tr -d ' ')" = "$n_len" ] && [ "$n_len" -gt 0 ] || {
+      ok=
+      break
+    }
+    n_val=$(cat "$work/note")
+    case $n_key in
+      ALERT)
+        [ "$n_len" -le 400 ] || ok=
+        n_alert=$n_val
+        ;;
+      ALERT_FINGERPRINT)
+        case $n_val in *[!A-Za-z0-9._:-]*) ok= ;; esac
+        [ "$n_len" -le 128 ] || ok=
+        n_fp=$n_val
+        ;;
+      ALERT_STARTS_AT)
+        printf '%s\n' "$n_val" | grep -Eqx '[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,9})?)?([Zz]|[+-][0-9]{2}:?[0-9]{2})?' || ok=
+        n_start=$n_val
+        ;;
+      *) ok= ;;
+    esac
+  done
+  rm -f "$work/note"
+  [ -n "$ok" ] && [ -n "$n_alert" ] || {
+    refuse "$rid" "bad note request"
+    return
+  }
+  note_alert=$n_alert
+  note_fingerprint=$n_fp
+  note_starts_at=$n_start
+  marker "$rid" 0
 }
 
 do_param() {
@@ -758,6 +842,7 @@ serve() {
     case $verb in
       load) do_load "$@" ;;
       called) do_called "$@" ;;
+      note) do_note "$@" ;;
       param) do_param "$@" ;;
       run) if [ $# -eq 2 ] && is_num "$2"; then do_run "$1" "$2"; else refuse "$rid" "bad run request"; fi ;;
       step) if [ $# -eq 3 ] && is_num "$2" && is_num "$3"; then do_run "$1" "$2" "$3"; else refuse "$rid" "bad step request"; fi ;;

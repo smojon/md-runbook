@@ -5,6 +5,8 @@
  */
 export {
   CellCommandOptions,
+  GATE_NOTE_PROTOCOL,
+  GateAlertNote,
   GateInfo,
   PROBED_SHELLS,
   PWSH_SHELL_COMMAND,
@@ -12,9 +14,11 @@ export {
   SHELL_COMMAND,
   WINDOWS_SHELL_COMMAND,
   cellCommand,
+  gateAlertNote,
   gateBanner,
   gateCalledCommand,
   gateLoadCommand,
+  gateNoteCommand,
   gateParamCommand,
   gateRawCommand,
   gateRunCommand,

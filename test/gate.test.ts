@@ -14,6 +14,7 @@ import { after, before, describe, it } from 'node:test';
 import { Manifest, ManifestMeta, buildManifest, formatManifest, toBase64 } from '@md-runbook/core/signing';
 import { manifestHash, sshSign } from '@md-runbook/core/node';
 import { runSummaryProblems } from '@md-runbook/core/runReport';
+import { gateAlertNote, gateNoteCommand } from '@md-runbook/ssh';
 
 const GATE = path.resolve(__dirname, '..', '..', 'apps', 'gate', 'md-runbook-gate');
 const SH = process.env.MD_RUNBOOK_GATE_SH ?? (process.platform === 'win32' ? '' : '/bin/sh');
@@ -83,6 +84,13 @@ class Gate {
     return this.reply(id);
   }
 
+  /** Send the line a client's own command makes, with a fresh id. */
+  send(text: (id: string) => string): Promise<Reply> {
+    const id = (++this.n).toString(16).padStart(8, '0');
+    this.child.stdin!.write(text(id));
+    return this.reply(id);
+  }
+
   hello(): Promise<Reply> {
     const id = 'feed' + (++this.n).toString(16).padStart(4, '0');
     this.child.stdin!.write(`: mdrb-gate-hello ${id}; printf '\\036%s %s\\n' __MDRB_${id}__ "$$" >&2; printf '\\036%s %s\\n' __MDRB_${id}__ "$$"\n`);
@@ -147,7 +155,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
   it('answers the hello with its banner and the pid of the shell the cells run in', async () => {
     const g = start();
     const r = await g.hello();
-    assert.match(r.out, /\x1e__MDRB_GATE__ 2 unsigned=refuse\n/);
+    assert.match(r.out, /\x1e__MDRB_GATE__ 3 unsigned=refuse\n/);
     assert.ok(r.code > 1, `pid ${r.code}`);
     assert.equal(await g.close(), 0);
   });
@@ -225,6 +233,96 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.equal(loads.length, 2);
     assert.match(loads[0]!, new RegExp(`"called-by":"${caller}","call":"3"`));
     assert.doesNotMatch(loads[1]!, /called-by/);
+  });
+
+  it('note: the next load is logged with the alert it answers; nothing runs, and only for one load', async () => {
+    const g = start();
+    await g.hello();
+    const [m, s] = await signed(RUNBOOK, { patterns: PATTERNS, name: 'ops/noted' });
+    const b = (v: string): string => toBase64(v);
+    // What a hostile link could put in the name: logged as text, never run.
+    const name = 'ApiDown "x" $(touch pwned-1) `touch pwned-2`; touch pwned-3 \\ é';
+    const note = await g.request('note', 'ALERT', b(name), 'ALERT_FINGERPRINT', b('5f3c9e:a.b_c-d'), 'ALERT_STARTS_AT', b('2026-11-14T08:58:00.123Z'));
+    assert.deepEqual([note.code, note.out, note.err], [0, '', '']);
+    assert.equal((await g.request('load', m, s)).code, 0);
+    const one = await g.request('run', '1');
+    assert.deepEqual([one.code, one.out], [0, 'one kept\n']);
+    // The next load has no alert unless a note comes again; a note after a load is for the next one.
+    assert.equal((await g.request('load', m, s)).code, 0);
+    assert.equal((await g.request('note', 'ALERT', b('DiskFull'), 'ALERT_STARTS_AT', b('2026-11-14 08:58+01:00'))).code, 0);
+    assert.equal((await g.request('run', '1')).code, 0);
+    assert.equal((await g.request('load', m, s)).code, 0);
+    await g.close();
+    for (const f of ['pwned-1', 'pwned-2', 'pwned-3']) assert.equal(fs.existsSync(path.join(dir, f)) || fs.existsSync(f), false, f);
+    const loads = fs
+      .readFileSync(path.join(dir, 'gate.log'), 'utf8')
+      .split('\n')
+      .filter((l) => /"event":"load".*"runbook":"ops\/noted"/.test(l))
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    assert.equal(loads.length, 3);
+    assert.deepEqual([loads[0]!.alert, loads[0]!['alert-fingerprint'], loads[0]!['alert-starts-at']], [name, '5f3c9e:a.b_c-d', '2026-11-14T08:58:00.123Z']);
+    assert.equal(loads[1]!.alert, undefined);
+    assert.deepEqual([loads[2]!.alert, loads[2]!['alert-fingerprint'], loads[2]!['alert-starts-at']], ['DiskFull', undefined, '2026-11-14 08:58+01:00']);
+  });
+
+  it('note: a malformed or oversize note is refused whole, and the session goes on', async () => {
+    const g = start();
+    await g.hello();
+    const [m, s] = await signed(RUNBOOK, { patterns: PATTERNS, name: 'ops/badnote' });
+    const b = (v: string): string => toBase64(v);
+    const bad: string[][] = [
+      [],
+      ['ALERT'],
+      ['ALERT_FINGERPRINT', b('abc')], // no ALERT
+      ['ALERT', b('A'), 'ALERT', b('B')], // a key twice
+      ['ALERT', b('A'), 'ALERT_LABELS', b('a=b')], // not one of the keys
+      ['ALERT', 'not base64!'],
+      ['ALERT', b('two\nlines')],
+      ['ALERT', b('bell\x07')],
+      ['ALERT', b('x'.repeat(401))],
+      ['ALERT', 'QUFB'.repeat(151)], // 604 base64 characters: not decoded
+      ['ALERT', b('A'), 'ALERT_FINGERPRINT', b('has space')],
+      ['ALERT', b('A'), 'ALERT_FINGERPRINT', b('f'.repeat(129))],
+      ['ALERT', b('A'), 'ALERT_STARTS_AT', b('yesterday')],
+      ['ALERT', b('A'), 'ALERT_STARTS_AT', b('2026-11-14T08:58:00Z; rm -rf /')],
+      ['ALERT', b('A'), 'ALERT_FINGERPRINT', b('a'), 'ALERT_STARTS_AT', b('2026-11-14T08:58Z'), 'ALERT', b('B')],
+    ];
+    // A good one first: a refused note leaves it as it was.
+    assert.equal((await g.request('note', 'ALERT', b('x'.repeat(400)))).code, 0);
+    for (const args of bad) {
+      const r = await g.request('note', ...args);
+      assert.equal(r.code, 126, JSON.stringify(args));
+      assert.match(r.err, /bad note request/);
+      assert.equal(r.out, '');
+    }
+    assert.equal((await g.request('load', m, s)).code, 0);
+    const one = await g.request('run', '1');
+    assert.deepEqual([one.code, one.out], [0, 'one kept\n']);
+    await g.close();
+    const log = fs.readFileSync(path.join(dir, 'gate.log'), 'utf8').split('\n');
+    const load = log.find((l) => /"event":"load".*"runbook":"ops\/badnote"/.test(l));
+    assert.equal((JSON.parse(load!) as { alert?: string }).alert, 'x'.repeat(400));
+    // The refusals are logged without the values.
+    assert.ok(log.filter((l) => /"reason":"bad note request"/.test(l)).length >= bad.length);
+    assert.ok(!log.some((l) => l.includes('has space') || l.includes('rm -rf')));
+  });
+
+  it("note: what the app sends (gateAlertNote, gateNoteCommand) is what the gate takes", async () => {
+    const g = start();
+    await g.hello();
+    const [m, s] = await signed(RUNBOOK, { patterns: PATTERNS, name: 'ops/appnote' });
+    // 300 two-byte characters, a control character and a fingerprint the gate wouldn't take.
+    const note = gateAlertNote({ name: 'é'.repeat(300) + '\x07', fingerprint: 'not one', startsAt: '2026-11-14T08:58:00+01:00' })!;
+    const r = await g.send((id) => gateNoteCommand(id, note));
+    assert.equal(r.code, 0, r.err);
+    assert.equal((await g.request('load', m, s)).code, 0);
+    await g.close();
+    const load = fs
+      .readFileSync(path.join(dir, 'gate.log'), 'utf8')
+      .split('\n')
+      .find((l) => /"event":"load".*"runbook":"ops\/appnote"/.test(l));
+    const e = JSON.parse(load!) as Record<string, unknown>;
+    assert.deepEqual([e.alert, e['alert-fingerprint'], e['alert-starts-at']], ['é'.repeat(200), undefined, '2026-11-14T08:58:00+01:00']);
   });
 
   it('answers a context request with kubectl config current-context, also where only signed cells run', async () => {

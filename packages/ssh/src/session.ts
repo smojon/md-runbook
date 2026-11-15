@@ -12,6 +12,7 @@
 import type { Stream } from '@microsoft/dev-tunnels-ssh';
 import type { GateInfo } from './command';
 import type { RemotePlatform } from './command';
+import { GATE_NOTE_PROTOCOL, gateAlertNote } from './command';
 import { ConnectOptions, RemoteRunOptions, RemoteRunResult, RemoteShell } from './remoteShell';
 
 export interface SessionRunResult extends RemoteRunResult {
@@ -35,6 +36,11 @@ export interface SignedRun {
   params?: Record<string, string>;
   /** A runbook call's copy: the caller's manifest sha256 and the call's number, for the gate's log. */
   calledBy?: { hash: string; call: number };
+  /**
+   * The alert this run answers (its alert link's ALERT, ALERT_FINGERPRINT, ALERT_STARTS_AT), for
+   * the gate's log: sent with each load to gates of protocol 3 and later, never to older ones.
+   */
+  alert?: { name: string; fingerprint?: string; startsAt?: string };
 }
 
 /** The gate refused: exit 126 with its reason, as the gate reports refused cells itself. */
@@ -45,7 +51,9 @@ export class RemoteSession {
   private connecting: Promise<RemoteShell> | undefined;
   private hadShell = false;
   /** The manifest loaded into the current shell's gate, and the parameters set there. */
-  private loaded: { shell: RemoteShell; manifest: string; signature: string; principal: string; params: Map<string, string> } | undefined;
+  private loaded:
+    | { shell: RemoteShell; manifest: string; signature: string; principal: string; params: Map<string, string>; alert: string }
+    | undefined;
 
   /** `open` makes a new transport for each connection (a TCP socket, a WebSocket to the relay). */
   constructor(
@@ -110,11 +118,17 @@ export class RemoteSession {
     try {
       const signatures = [s.signature, ...(s.cosignatures ?? [])];
       const signature = signatures.join(' ');
-      if (this.loaded?.shell !== shell || this.loaded.manifest !== s.manifest || this.loaded.signature !== signature) {
+      // Another alert (the link's values changed on the Parameters card) loads the runbook again, so the log says it.
+      const note = (shell.gate?.protocol ?? 0) >= GATE_NOTE_PROTOCOL ? gateAlertNote(s.alert) : undefined;
+      const alert = note ? JSON.stringify(note) : '';
+      if (this.loaded?.shell !== shell || this.loaded.manifest !== s.manifest || this.loaded.signature !== signature || this.loaded.alert !== alert) {
         this.loaded = undefined;
         if (s.calledBy) await shell.noteCalled(s.calledBy.hash, s.calledBy.call);
+        // Only for the log: a gate that refuses the note (it shouldn't, gateAlertNote checks as it
+        // does) logs the refusal, and the run goes on.
+        if (note) await shell.noteAlert(note).catch(() => false);
         const { principal } = await shell.loadSigned(s.manifest, signatures);
-        this.loaded = { shell, manifest: s.manifest, signature, principal, params: new Map() };
+        this.loaded = { shell, manifest: s.manifest, signature, principal, params: new Map(), alert };
       }
       for (const [name, value] of Object.entries(s.params ?? {})) {
         if (this.loaded.params.get(name) === value) continue;

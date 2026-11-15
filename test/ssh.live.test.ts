@@ -231,7 +231,7 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
   it('finds the gate; an unsigned cell is refused with the reason', async () => {
     const s = await RemoteShell.connect(await open(), opts(strict));
     try {
-      assert.deepEqual(s.gate, { protocol: 2, unsigned: 'refuse' });
+      assert.deepEqual(s.gate, { protocol: 3, unsigned: 'refuse' });
       let err = '';
       const r = await s.run('echo should-not-run', { onStderr: (t) => (err += t) });
       assert.equal(r.exitCode, 126);
@@ -268,6 +268,24 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
       await session.run('', { onStdout }, { ...signed, cell: 3, step: 1 });
       assert.equal(out, 'a\nb\n');
       assert.equal((await session.run('', {}, { ...signed, cell: 3, step: 1 })).exitCode, 126, 'not in order');
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('a run with an alert: the gate logs the alert with the load (protocol 3), and it changes nothing else', async () => {
+    const session = new RemoteSession(open, opts(strict));
+    try {
+      let out = '';
+      const alert = { name: 'LiveAlert', fingerprint: 'f00d:1', startsAt: '2026-11-14T08:58:00Z' };
+      const one = await session.run('', { onStdout: (t) => (out += t) }, { manifest, signature, cell: 1, alert });
+      assert.deepEqual([one.exitCode, out], [0, 'one kept\n']);
+      const loads = fs
+        .readFileSync(path.join(dir, 'gate.log'), 'utf8')
+        .split('\n')
+        .filter((l) => /"event":"load"/.test(l) && l.includes('LiveAlert'));
+      assert.equal(loads.length, 1);
+      assert.match(loads[0]!, /"alert":"LiveAlert","alert-fingerprint":"f00d:1","alert-starts-at":"2026-11-14T08:58:00Z"/);
     } finally {
       await session.close();
     }

@@ -283,7 +283,8 @@ patterns in the C locale, whatever locale the client's SSH session sends.
 
 One JSON line per event, to syslog (tag `md-runbook-gate`) or a file: `session`, `load`
 (runbook, version, manifest hash, signer; for the runbook a [call](calls.md) runs, also
-`called-by`, the caller's manifest hash, and `call`, the call's number), `param` (name and
+`called-by`, the caller's manifest hash, and `call`, the call's number; for a run an alert link
+started, also `alert`, `alert-fingerprint` and `alert-starts-at`), `param` (name and
 value), `run` (block and command),
 `end` (exit code), `unsigned` (hash of the code), `refused` (the reason), `stop`, `report` (a
 run report sent or not, below). Each carries
@@ -300,6 +301,16 @@ ran says so: `ops/release v9 · called by ops/upgrade v4 (call 1)`. That link is
 said when it loaded the runbook called (the `called` request, gate protocol 2): it lets you follow
 a call in the log, and it grants nothing, since each runbook's own signature is what the gate
 checks.
+
+A run started from an [alert link](run-reports.md#which-alert-a-run-answered) says which alert
+it answered: `ops/restart-api v7 · for alert ApiDown (fingerprint 5f3c9e, started
+2026-11-14T08:58:00Z)`. The app sends the link's `ALERT`, `ALERT_FINGERPRINT` and
+`ALERT_STARTS_AT` values with each load (the `note` request, gate protocol 3), whether or not a
+block uses them. Like `called`, it is only what the app says, for the audit: it grants nothing
+and runs nothing, and the gate checks the values strictly (a name of at most 400 bytes on one
+line, a fingerprint of letters, digits and `. _ : -`, an RFC 3339 time) and refuses a note that
+doesn't match. Gates older than protocol 3 are sent no note and log no alert; update the gate
+to have it.
 
 ## Run reports from the gate
 

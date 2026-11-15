@@ -128,6 +128,13 @@ export async function auditCommand(argv: readonly string[], out: Out = stdout, r
   const missing = matches.reduce((n, m) => n + m.missing.length, 0);
   out(`${audit.runs.length} run${audit.runs.length === 1 ? '' : 's'} in ${audit.sessions} session${audit.sessions === 1 ? '' : 's'}, ${failed} failed, ${audit.findings.length} finding${audit.findings.length === 1 ? '' : 's'}`);
   for (const f of audit.findings) out(`  ${f.time} ${f.kind}: ${f.who} (${f.account} from ${f.client}): ${f.detail}`);
+  const forAlerts = new Map<string, number>();
+  for (const r of audit.runs) {
+    // The log is text anyone with the account could add to: no control characters on the terminal.
+    const name = r.alert?.name.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+    if (name) forAlerts.set(name, (forAlerts.get(name) ?? 0) + 1);
+  }
+  if (forAlerts.size) out(`  for alerts: ${[...forAlerts].map(([name, n]) => `${name} (${n} run${n === 1 ? '' : 's'})`).join(', ')}`);
   if (audit.probes.length) {
     const down = audit.probes.filter((p) => !p.ok);
     out(`${audit.probes.length} endpoint check${audit.probes.length === 1 ? '' : 's'} (md-runbook-probe), ${down.length} failed`);

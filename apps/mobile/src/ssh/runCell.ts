@@ -26,6 +26,7 @@ import {
 import { Captured, CheckOutcome, evaluateChecks, resolveChecks } from '@md-runbook/core/checks';
 import { checkKubeContext, kubeContextParam, resolveKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
 import { approvalScope } from '@md-runbook/core/policy';
+import { alertFromParams } from '@md-runbook/core/runReport';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { signedStatus, signedStepIndex } from '@md-runbook/core/signing';
@@ -267,6 +268,9 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   const callerStatus = call ? signedStatus(getRunbook(call.parentId)?.text ?? '') : undefined;
   const callN = call ? callerStatus?.calls.get(call.cellIndex)?.n : undefined;
   const calledBy = callerStatus && callN !== undefined ? { hash: sha256Hex(callerStatus.block.manifest), call: callN } : undefined;
+  // An alert link's p.ALERT and the like (typed or from the link, whether or not a cell uses
+  // them): the gate logs which alert the run answered (gate protocol 3; it grants nothing).
+  const alert = alertFromParams(p.params ?? {});
   const signed = (step?: LineStep): SignedRun | undefined => {
     if (!status || !signedCell) return undefined;
     // Every value the signed cell uses: ${param:}, ${input:} and ${out:} (the gate checks each against its signed pattern).
@@ -279,6 +283,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
       cell: signedCell.n,
       params,
       ...(calledBy ? { calledBy } : {}),
+      ...(alert ? { alert: { name: alert.name, fingerprint: alert.fingerprint, startsAt: alert.startsAt } } : {}),
     };
     if (step === undefined) return base;
     const k = signedStepIndex(

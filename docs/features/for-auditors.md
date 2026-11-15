@@ -40,7 +40,9 @@ own framework and your auditors to decide.
 - **Server side (independent of the operator).** The gate logs one JSON line per event to syslog
   (tag `md-runbook-gate`) or a file: the session (account, key fingerprint, client address),
   which runbook and version was loaded and which signer the gate accepted, every parameter value,
-  every block run, refusals with their reason, unsigned code where allowed (by hash), stops.
+  every block run, refusals with their reason, unsigned code where allowed (by hash), stops. For
+  a run an alert link started, the load also names the alert (as the app said: it grants
+  nothing).
   The exit code is written by the account's own shell; for a log the account can't touch, use
   syslog and forward it off the server.
 - **`md-runbook audit`** turns those logs into a report (HTML, PDF or JSON): every run with when,

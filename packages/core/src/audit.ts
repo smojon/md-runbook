@@ -7,7 +7,9 @@
  * listed as findings. A saved run record (the runbook with its outputs) can be matched against it:
  * each recorded step the log confirms, and the ones it doesn't.
  *
- * The gate writes these events (apps/gate/md-runbook-gate): session, load, param, run, end (by the
+ * The gate writes these events (apps/gate/md-runbook-gate): session, load (with called-by and
+ * call for a runbook call's copy, and alert, alert-fingerprint, alert-starts-at for a run an alert
+ * link started: what the app said, gate protocols 2 and 3), param, run, end (by the
  * account's shell: time, id, exit), unsigned, refused, stop, context, end-session. On the ops host
  * (apps/ops), md-runbook-probe adds a `probe` event per endpoint it checked, with the id of the
  * signed run that started it.
@@ -56,6 +58,11 @@ export interface AuditRun {
    * one (by its manifest sha256; name and version when the log has its load) and the call's number.
    */
   calledBy?: { hash: string; call: string; runbook?: string; version?: string };
+  /**
+   * The alert the run answered (gate protocol 3, as the app said with the load: the run's alert
+   * link's ALERT, ALERT_FINGERPRINT and ALERT_STARTS_AT).
+   */
+  alert?: { name: string; fingerprint?: string; startsAt?: string };
 }
 
 export interface AuditFinding {
@@ -137,6 +144,8 @@ export function buildAudit(events: readonly GateEvent[], skipped = 0): Audit {
   /** Runbooks by manifest sha256 (from their loads), and the call that loaded each, per session. */
   const names = new Map<string, { runbook: string; version: string }>();
   const calledBy = new Map<string, { hash: string; call: string }>();
+  /** The alert each load answered (its `note`), per session and runbook. */
+  const alerts = new Map<string, NonNullable<AuditRun['alert']>>();
   for (const e of sorted) {
     const s = sessionOf(e);
     switch (e.event) {
@@ -150,6 +159,13 @@ export function buildAudit(events: readonly GateEvent[], skipped = 0): Audit {
         names.set(str(e.hash), { runbook: str(e.runbook), version: str(e.version) });
         if (typeof e['called-by'] === 'string') calledBy.set(`${s}\n${str(e.runbook)}`, { hash: e['called-by'], call: str(e.call) });
         else calledBy.delete(`${s}\n${str(e.runbook)}`);
+        if (typeof e.alert === 'string' && e.alert !== '')
+          alerts.set(`${s}\n${str(e.runbook)}`, {
+            name: e.alert,
+            ...(typeof e['alert-fingerprint'] === 'string' && e['alert-fingerprint'] ? { fingerprint: e['alert-fingerprint'] } : {}),
+            ...(typeof e['alert-starts-at'] === 'string' && e['alert-starts-at'] ? { startsAt: e['alert-starts-at'] } : {}),
+          });
+        else alerts.delete(`${s}\n${str(e.runbook)}`);
         break;
       case 'param': {
         const byRunbook = params.get(s) ?? new Map<string, Record<string, string>>();
@@ -175,6 +191,8 @@ export function buildAudit(events: readonly GateEvent[], skipped = 0): Audit {
         };
         const via = calledBy.get(`${s}\n${str(e.runbook)}`);
         if (via) run.calledBy = { ...via };
+        const alert = alerts.get(`${s}\n${str(e.runbook)}`);
+        if (alert) run.alert = { ...alert };
         runs.push(run);
         open.set(str(e.id), run);
         byId.set(str(e.id), run);
@@ -305,7 +323,7 @@ export function renderAuditReport(a: Audit, matches: readonly RecordMatch[], opt
   const runRows = runs
     .map(
       (r) =>
-        `<tr>${td(when(r.time))}${td(r.who)}${td(`${r.account} from ${r.client}`)}${td(`${r.runbook} v${r.version}${calledLabel(r)}`)}${td(`${r.cell}${r.step ? `.${r.step}` : ''}`)}` +
+        `<tr>${td(when(r.time))}${td(r.who)}${td(`${r.account} from ${r.client}`)}${td(`${r.runbook} v${r.version}${calledLabel(r)}${alertLabel(r)}`)}${td(`${r.cell}${r.step ? `.${r.step}` : ''}`)}` +
         `${td(Object.entries(r.params).map(([k, v]) => `${k}=${v}`).join(' '))}<td>${exitBadge(r)}</td>${td(r.durationSeconds === undefined ? '' : `${r.durationSeconds} s`)}` +
         `${td(r.matched ? `${r.matched.file}, step ${r.matched.step}` : '')}</tr>\n`,
     )
@@ -368,4 +386,12 @@ function calledLabel(r: AuditRun): string {
   const c = r.calledBy;
   if (!c) return '';
   return ` · called by ${c.runbook ? `${c.runbook} v${c.version}` : `sha256 ${c.hash.slice(0, 12)}…`} (call ${c.call})`;
+}
+
+/** ` · for alert NAME (fingerprint F, started T)` for a run that answered an alert, else ''. */
+export function alertLabel(r: Pick<AuditRun, 'alert'>): string {
+  const a = r.alert;
+  if (!a) return '';
+  const more = [a.fingerprint ? `fingerprint ${a.fingerprint}` : '', a.startsAt ? `started ${a.startsAt}` : ''].filter((x) => x !== '');
+  return ` · for alert ${a.name}${more.length ? ` (${more.join(', ')})` : ''}`;
 }

@@ -288,6 +288,22 @@ describe('runCell: signed runbooks', () => {
     expect(conn.calls[0]).toMatchObject({ source: 'echo other', signed: { manifest, signature: 'U1NIU0lH', cell: 2 } });
   });
 
+  it("an alert link's ALERT values go with the signed run, for the gate's log", async () => {
+    const conn = fakeConnection([{}, {}]);
+    const params = {
+      ALERT: 'ApiDown',
+      ALERT_FINGERPRINT: '5f3c9e',
+      ALERT_STARTS_AT: '2026-11-14T08:58:00Z',
+      ALERT_LABELS: 'team=web',
+      OTHER: 'x',
+    };
+    await runCell({ host, text: signed, cellIndex: 1, connection: conn, params });
+    expect(conn.calls[0]?.signed?.alert).toEqual({ name: 'ApiDown', fingerprint: '5f3c9e', startsAt: '2026-11-14T08:58:00Z' });
+    // Without ALERT, no alert.
+    await runCell({ host, text: signed, cellIndex: 1, connection: conn, params: { ALERT_FINGERPRINT: '5f3c9e' } });
+    expect(conn.calls[1]?.signed).not.toHaveProperty('alert');
+  });
+
   it('a line run sends each command as its signed step', async () => {
     const conn = fakeConnection([{}, {}]);
     await runCell({ host, text: signed, cellIndex: 0, connection: conn, lines: planLines('echo one\necho two', 'from', 1) });

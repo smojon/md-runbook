@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **The gate's log says which alert a run answered.** A run started from an alert link now
+  carries the link's `ALERT`, `ALERT_FINGERPRINT` and `ALERT_STARTS_AT` to md-runbook-gate (the
+  new `note` request, gate protocol 3), which logs them with the runbook's load; `md-runbook
+  audit` shows them next to the runs: `ops/restart-api v7 · for alert ApiDown (fingerprint
+  5f3c9e, started 2026-11-14T08:58:00Z)`. Like a call's `called by`, it is only what the app
+  says: it grants nothing and runs nothing, and the gate checks the values strictly. Update the
+  gate on your servers to log alerts; older gates are sent no note and work as before.
+
 ## 0.25.1
 
 A fix for team libraries that open verified runbooks only.

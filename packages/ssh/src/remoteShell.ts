@@ -25,16 +25,19 @@ import { exportPublicKey } from '@microsoft/dev-tunnels-ssh-keys';
 import { Buffer } from 'buffer';
 import {
   CellCommandOptions,
+  GATE_NOTE_PROTOCOL,
   GateInfo,
   PROBED_SHELLS,
   PWSH_SHELL_COMMAND,
   RemotePlatform,
   WINDOWS_SHELL_COMMAND,
   cellCommand,
+  gateAlertNote,
   gateBanner,
   gateContextCommand,
   gateCalledCommand,
   gateLoadCommand,
+  gateNoteCommand,
   gateParamCommand,
   gateRawCommand,
   gateRunCommand,
@@ -294,6 +297,19 @@ export class RemoteShell {
     if (!this.gateInfo || this.gateInfo.protocol < 2) return;
     const err = await this.request((id) => gateCalledCommand(id, hash, call));
     if (err !== undefined) throw new Error(err);
+  }
+
+  /**
+   * md-runbook-gate: the next load answers this alert (the run's alert link), for the gate's log;
+   * it grants nothing. Resolves false when nothing was sent: a gate before protocol 3 doesn't
+   * know the request, or the alert has nothing a gate takes (no name). Rejects with the gate's reason.
+   */
+  async noteAlert(alert: { name: string; fingerprint?: string; startsAt?: string }): Promise<boolean> {
+    const note = gateAlertNote(alert);
+    if (!note || !this.gateInfo || this.gateInfo.protocol < GATE_NOTE_PROTOCOL) return false;
+    const err = await this.request((id) => gateNoteCommand(id, note));
+    if (err !== undefined) throw new Error(err);
+    return true;
   }
 
   /** md-runbook-gate: a parameter's value for the loaded manifest; rejects with the gate's reason. */
