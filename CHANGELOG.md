@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.25.1
+
+A fix for team libraries that open verified runbooks only.
+
 - **Team library (verified runbooks only): no Update for a version the library wouldn't open.**
   A row offered **Update** and **Keep mine** for a library version that was changed since
   signing, or older than one seen before, although Update then refused it. Now such a version is
