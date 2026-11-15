@@ -1,16 +1,21 @@
 # Secrets, inputs, parameters and `.env`
 
 Runbooks often need tokens, passwords or values that differ per run. md-runbook passes all of
-them to cells as **environment variables**. Values are never written into the script text, and
-secret values are redacted from the live view and from everything saved to the `.md` file.
+them to cells as **environment variables**.
+
+Values are never written into the script text. Secret values are redacted from the live view and
+from everything saved to the `.md` file.
 
 ## Using a stored secret in a workspace
 
 Stored secrets live in the OS keychain for all of VS Code. The first time a runbook in a workspace
-references `${secret:NAME}`, md-runbook asks whether runbooks in that workspace may use it (the
-answer is remembered per workspace). Secrets you enter or store from that workspace are allowed
-there automatically. Redaction of secret values works by **exact match**: a script that prints a
-secret encoded or in parts is not caught, so only use secrets in runbooks you trust.
+references `${secret:NAME}`, md-runbook asks whether runbooks in that workspace may use it. The
+answer is remembered per workspace.
+
+Secrets you enter or store from that workspace are allowed there automatically.
+
+Redaction of secret values works by **exact match**. A script that prints a secret encoded or in
+parts is not caught. So only use secrets in runbooks you trust.
 
 ## References in cells
 
@@ -23,9 +28,10 @@ Write a reference anywhere in a cell's source:
 | `${input:NAME:secret}` | asked once, masked, and redacted |
 | `${param:NAME}` | a runbook parameter (front matter), asked once per session |
 
-`NAME` is letters, digits and `_`, not starting with a digit. Before the cell runs, each
-reference is replaced with the shell's own syntax for an environment variable `NAME`, and the
-value is put into that variable:
+`NAME` is letters, digits and `_`, not starting with a digit.
+
+Before the cell runs, each reference is replaced with the shell's own syntax for an environment
+variable `NAME`. The value is put into that variable:
 
 | Shell | `${secret:TOKEN}` becomes |
 | --- | --- |
@@ -49,9 +55,10 @@ psql "postgresql://app:${input:DB_PASSWORD}@db/app"
 ```
 
 - **cmd:** references become `!NAME!` (delayed expansion), which cmd expands *after* parsing the
-  line, so a value containing `&`, `|`, `<`, `>`, `^` or `%` is never run as cmd syntax. A cmd
-  cell with references therefore runs with `@setlocal EnableDelayedExpansion` prepended; in such
-  a cell a literal `!` must be written `^^!`. Cells without references are not changed.
+  line. So a value containing `&`, `|`, `<`, `>`, `^` or `%` is never run as cmd syntax.
+
+  A cmd cell with references therefore runs with `@setlocal EnableDelayedExpansion` prepended. In
+  such a cell, a literal `!` must be written `^^!`. Cells without references are not changed.
 - One name can only be used with one kind in a cell (`${secret:X}` and `${input:X}` together is
   an error).
 - The source saved in the file keeps the `${secret:…}` reference; only the copy that runs is
@@ -71,47 +78,62 @@ Manager, macOS Keychain, libsecret on Linux). They are available to every runboo
 references a secret that isn't stored yet, you're asked for its value once and it is stored.
 
 To pass stored secrets to **every** cell without writing a reference, list them in
-`mdRunbook.secrets.inject`; read them as normal environment variables (`$API_TOKEN`,
+`mdRunbook.secrets.inject`. Read them as normal environment variables (`$API_TOKEN`,
 `$env:API_TOKEN`, `%API_TOKEN%`):
 
 ```json
 "mdRunbook.secrets.inject": ["API_TOKEN", "OC_TOKEN"]
 ```
 
-Secret values (stored secrets and secret inputs) are always redacted from the live view and
-from saved output as exact matches, even when `mdRunbook.redaction.enabled` is off. Values
-shorter than 4 characters are not redacted.
+Secret values (stored secrets and secret inputs) are always redacted, even when
+`mdRunbook.redaction.enabled` is off. They are redacted from the live view and from saved output,
+as exact matches. Values shorter than 4 characters are not redacted.
 
 ## Inputs
 
-`${input:NAME}` asks for a value with an input box (its title shows the runbook's file name) the
-first time a cell needs it; later cells of the same runbook reuse the value until the runbook is
-closed. Inputs are masked and redacted when written as `${input:NAME:secret}` or when the name
-ends in `_PASSWORD`, `_TOKEN` or `_SECRET`.
+`${input:NAME}` asks for a value with an input box the first time a cell needs it. Its title shows
+the runbook's file name. Later cells of the same runbook reuse the value until the runbook is
+closed.
+
+Inputs are masked and redacted when written as `${input:NAME:secret}` or when the name ends in
+`_PASSWORD`, `_TOKEN` or `_SECRET`.
 
 Cancelling the input box fails the cell with `input NAME cancelled`; nothing is run. Run All
 stops there as with any failure.
 
-**When you're asked.** The input box is VS Code's own and opens at the top of the window, so
-md-runbook asks before the cell starts (it shows as queued, its timer not running) and, while
-the box is open, says so on the cell's status line and in the status bar (yellow, **Waiting for
-you: input NAME**; click it to show the cell); the box's title names the cell. **Run All** (and
-any run of several cells) asks for the inputs and parameters of all its cells at the click,
-before anything runs; Escape there cancels the run. With `mdRunbook.execution.launchForm` on (the
-default), Run All first opens the launch form in the Steps view instead, where you fill them all in
-at once ([progress](progress.md#steps-view)). Not asked up front: the setup, ready check
-and teardown, skipped cells and cells for another OS or host. (To have the box in the middle of
-the window instead, pick *Quick Input Position: Center* in VS Code's Customize Layout.)
+**When you're asked.** The input box is VS Code's own and opens at the top of the window. So
+md-runbook asks before the cell starts (it shows as queued, its timer not running).
+
+While the box is open, md-runbook says so:
+
+- on the cell's status line;
+- in the status bar, in yellow: **Waiting for you: input NAME**. Click it to show the cell.
+
+The box's title names the cell.
+
+At the click, before anything runs, **Run All** asks for the inputs and parameters of all its
+cells. So does any run of several cells. Escape there cancels the run.
+
+With `mdRunbook.execution.launchForm` on (the default), Run All first opens the launch form in
+the Steps view instead. There you fill them all in at once ([progress](progress.md#steps-view)).
+Not asked up front: the setup, ready check and teardown, skipped cells and cells for another OS
+or host.
+
+(For the box in the middle of the window, pick *Quick Input Position: Center* in VS Code's
+Customize Layout.)
 
 **The value you used last time is filled in.** For a parameter or an input that isn't secret,
-the box opens with the value last given for that runbook (kept in the workspace, never for a
-secret or masked input), and says when: `Value for REGION (last used yesterday; Enter keeps
-it)`. Enter takes it again; typing replaces it. A parameter never given before shows its
-default. The app does the same in the card that asks for values.
+the box opens with the value last given for that runbook. It says when:
+`Value for REGION (last used yesterday; Enter keeps it)`.
+
+That last value is kept in the workspace, never for a secret or masked input.
+
+Enter takes it again; typing replaces it. A parameter never given before shows its default. The
+app does the same in the card that asks for values.
 
 **md-runbook: Set Inputs** asks for every input the runbook uses, with the current value filled
-in, to set or change them before running (a secret input is masked and never shown; leaving it
-empty keeps the current value).
+in. Use it to set or change them before running. A secret input is masked and never shown;
+leaving it empty keeps the current value.
 
 **md-runbook: Reset Inputs** forgets the inputs and parameter values of the active runbook, so
 they are asked again.
@@ -135,16 +157,20 @@ params:
 
 Each item is `- NAME` or `- NAME: default`; other keys are ignored. The first time a cell uses
 `${param:NAME}`, you're asked for it with the default filled in. **md-runbook: Set Parameters**
-asks for all of them at once (the declared ones and any other the cells use). Values last until
-the runbook is closed or **Reset Inputs** is run. With `mdRunbook.params.useDefaults` on, parameters that have a default
-are not asked for. Parameters are not secret and not redacted.
+asks for all of them at once (the declared ones and any other the cells use).
+
+Values last until the runbook is closed or **Reset Inputs** is run. With
+`mdRunbook.params.useDefaults` on, parameters that have a default are not asked for. Parameters
+are not secret and not redacted.
 
 **Descriptions and choices.** A comment after the item (`# …`) describes the parameter. A
-trailing `One of: a, b, c` in it lists the values allowed. The launch form
-([progress](progress.md#steps-view)) shows the description under the field, and a list to pick
-from when there are choices; **Start** takes only one of them. The input boxes show the
-description too, and take only one of the choices. The linter warns when the default is not one
-of the choices.
+trailing `One of: a, b, c` in it lists the values allowed.
+
+The launch form ([progress](progress.md#steps-view)) shows the description under the field.
+When there are choices, it shows a list to pick from, and **Start** takes only one of them.
+
+The input boxes show the description too, and take only one of the choices. The linter warns
+when the default is not one of the choices.
 
 Front matter is plain Markdown to md-runbook; it is saved byte for byte like everything else.
 
@@ -168,29 +194,39 @@ LABEL='literal $text'
 - `#` comments, an `export ` prefix, and single or double quotes are supported. Variable
   expansion and multi-line values are not.
 - With `mdRunbook.redaction.redactKnownSecrets` (on by default), values that look like secrets
-  are redacted as exact matches: values of keys named like credentials (`*_TOKEN`, `*_SECRET`,
-  `*PASSWORD*`, `*PASSWD*`, `*_KEY`, `*_KEY_*`, `*APIKEY*`, `*CREDENTIAL*`, `*PRIVATE*`,
-  `*_AUTH`, `*COOKIE*`, `*SESSION*`, `*_DSN`, connection strings), URLs with a password
-  (`scheme://user:pass@host`), and long random-looking values (16+ characters, letters and
-  digits, high entropy) whatever their key. Plain settings such as `REGION=eu-west-1` are not
-  redacted, so they don't mangle unrelated output for the rest of the session. Trivial values
-  (`true`, `false`, `yes`, `no`, `on`, `off`, numbers up to 5 digits) are never redacted. Name
-  secret keys accordingly, or store them with **Set Secret** instead.
+  are redacted as exact matches:
+  - values of credential-like keys (`*_TOKEN`, `*_SECRET`, `*PASSWORD*`, `*PASSWD*`, `*_KEY`,
+    `*_KEY_*`, `*APIKEY*`, `*CREDENTIAL*`, `*PRIVATE*`, `*_AUTH`, `*COOKIE*`, `*SESSION*`,
+    `*_DSN`, connection strings);
+  - URLs with a password (`scheme://user:pass@host`);
+  - long random-looking values (16+ characters, letters and digits, high entropy), whatever
+    their key.
+
+  Plain settings such as `REGION=eu-west-1` are not redacted, so they don't mangle unrelated
+  output for the rest of the session. Trivial values (`true`, `false`, `yes`, `no`, `on`, `off`,
+  numbers up to 5 digits) are never redacted. Name secret keys accordingly, or store them with
+  **Set Secret** instead.
 
 Environment variables are applied in this order (later wins): `mdRunbook.execution.env`, the
 `.env` file, `mdRunbook.secrets.inject`, references in the cell.
 
 **Tools installed by the runbook.** Cells inherit VS Code's `PATH`, read once when VS Code
-started. On Windows, each cell also gets the `PATH` folders added to the registry since then
-(appended, so the inherited order wins; `mdRunbook.execution.refreshPath` turns it off), so a
-step can install Git or uv with `winget` and the next step can use it. On macOS and Linux most
-installers write into a folder that is already on the `PATH`; when one adds a new folder
-through your shell profile (uv, cargo, nvm), restart VS Code or start the cell with
-`export PATH="$HOME/.local/bin:$PATH"`.
+started.
 
-**Cells written by an assistant** (`by=` in the fence) get none of this: no `.env` file, no
-`mdRunbook.secrets.inject`, and a `${secret:…}` or secret `${input:…}` reference fails the cell
-with a message. Their environment is rebuilt from `mdRunbook.execution.env`, their own `env.*`
+- On Windows, each cell also gets the `PATH` folders added to the registry since then. So a step
+  can install Git or uv with `winget`, and the next step can use it. The folders are appended, so
+  the inherited order wins; `mdRunbook.execution.refreshPath` turns it off.
+- On macOS and Linux, most installers write into a folder that is already on the `PATH`. When one
+  adds a new folder through your shell profile (uv, cargo, nvm), restart VS Code. Or start the
+  cell with `export PATH="$HOME/.local/bin:$PATH"`.
+
+**Cells written by an assistant** (`by=` in the fence) get none of this:
+
+- no `.env` file;
+- no `mdRunbook.secrets.inject`;
+- a `${secret:…}` or secret `${input:…}` reference fails the cell with a message.
+
+Their environment is rebuilt from `mdRunbook.execution.env`, their own `env.*`
 options and `${param:}` / non-secret `${input:}` values, plus `mdRunbook.approval.readOnlyEnv`
 (see [approval](approval.md#read-only-credentials)).
 
