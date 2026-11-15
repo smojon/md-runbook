@@ -580,8 +580,9 @@ what runs.
   gate's account.
 - Only keys forced to use the gate are covered. Admin accounts with full shells are not, by
   design.
-- The prose is not signed: an altered instruction such as "now run X by hand" is not stopped.
-  But the gate would still refuse X.
+- The gate doesn't check the prose: it sees the manifest, not the text. An altered instruction
+  such as "now run X by hand" isn't stopped there, but the gate still refuses that command.
+  With a version 2 signature, VS Code, the app and `md-runbook verify` show the change.
 - "In order" means the gate runs a block's commands in their order. It doesn't see their exit
   codes, so a client could go on after a failed command. The app stops at a failure.
 - A key with `--unsigned=allow` runs code as the same account as everyone else's keys. Keep
