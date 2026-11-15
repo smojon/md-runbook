@@ -52,6 +52,29 @@ describe('cli: sign and verify', () => {
     assert.equal(fs.readFileSync(f, 'utf8').match(/md-runbook:signature/g)?.length, 1);
   });
 
+  it('signing an unsigned source into a signed copy (--out) counts on from the copy, when it is the same runbook', async () => {
+    const src = file('deploy.md', '# Deploy\n\n' + fence('bash', 'systemctl restart api'));
+    const copy = path.join(dir, 'signed-deploy.md');
+    const version = (f: string): number => parseManifest(readSignature(fs.readFileSync(f, 'utf8'))!.manifest).version;
+    lines.length = 0;
+    assert.equal(await signCommand([src, '--key', key, '--name', 'sop/deploy', '--out', copy], out), 0, lines.join('\n'));
+    assert.equal(version(copy), 1);
+    assert.match(lines.find((l) => l.startsWith('✓'))!, /^✓ sop\/deploy version 1 signed by/);
+    // The source stays unsigned; signed again into the copy: version 2, and the line says where 1 came from.
+    lines.length = 0;
+    assert.equal(await signCommand([src, '--key', key, '--name', 'sop/deploy', '--out', copy], out), 0, lines.join('\n'));
+    assert.equal(version(copy), 2);
+    assert.match(lines.find((l) => l.startsWith('✓'))!, /^✓ sop\/deploy version 2 \(previous: 1 in .*signed-deploy\.md\) signed by/);
+    // An explicit version not above the copy's: signed as asked, with a note.
+    lines.length = 0;
+    assert.equal(await signCommand([src, '--key', key, '--name', 'sop/deploy', '--version', '2', '--out', copy], out), 0, lines.join('\n'));
+    assert.match(lines.join('\n'), /note: .*signed-deploy\.md already has sop\/deploy version 2: .*refuse version 2/);
+    // Another runbook's signed file as --out: its version doesn't count.
+    lines.length = 0;
+    assert.equal(await signCommand([src, '--key', key, '--name', 'sop/other', '--out', copy], out), 0, lines.join('\n'));
+    assert.equal(version(copy), 1);
+  });
+
   it('verify reports blocks changed since signing (with their line) and a foreign signature', async () => {
     const f = file('check.md', fence('bash', 'echo one') + fence('bash', 'echo two'));
     assert.equal(await signCommand([f, '--key', key, '--name', 'ops/check'], out), 0);

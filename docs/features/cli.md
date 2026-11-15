@@ -190,7 +190,7 @@ the runner and the summary, and exits 0 when the signature is good.
 | `--key KEY` | Private key, or a `.pub` whose key is in the SSH agent (`ssh-keygen -Y sign`) |
 | `--signer NAME` | Name shown as the signer (default: the key's comment) |
 | `--name NAME` | Runbook name, e.g. `ops/restart-api` (default: the file name) |
-| `--version N` | Version (default: the previous one + 1, else 1) |
+| `--version N` | Version (default: one more than the file's signed version, or than the `--out` file's when it is the same runbook signed already, else 1) |
 | `--expires DATE`, `--expires-in DAYS` | Last day it may run (UTC) |
 | `--scope NAME` | Where it may run (repeatable) |
 | `--pattern NAME=RE` | What `${param:NAME}` may be: a POSIX extended regex for the whole value |

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`md-runbook sign` counts on from a signed `--out` copy.** Signing an unsigned source into an
+  existing signed copy of the same runbook made it version 1 again, which servers and team
+  libraries that saw a higher version refuse. The default version is now one more than the
+  higher of the source's and the copy's, and the result line says where the previous one came
+  from. A `--version` not above the copy's is signed as asked, with a note.
+
 - **Pair a device:** changing **Public address of this web app** while the card is open now
   updates the libraries' addresses in the code and link too (it kept the old ones until the card
   was opened again).

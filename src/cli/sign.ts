@@ -35,7 +35,8 @@ patterns and counts the version up.
   --key KEY            Private key, or a .pub whose key is in the SSH agent (ssh-keygen -Y sign)
   --signer NAME        Name shown as the signer (default: the key's comment)
   --name NAME          Runbook name, e.g. ops/restart-api (default: the file name)
-  --version N          Version (default: the previous one + 1, else 1)
+  --version N          Version (default: one more than the file's signed version, or than the
+                       --out file's when it is the same runbook signed already, else 1)
   --expires DATE       Last day it may run, YYYY-MM-DD (UTC)
   --expires-in DAYS    The same, counted from today
   --scope NAME         Where it may run (repeatable; servers and keys accept scopes)
@@ -127,6 +128,16 @@ export function parseSignArgs(argv: readonly string[]): SignArgs {
   return a as SignArgs;
 }
 
+/** A runbook's signature block and its manifest, if it has a readable one. */
+function previousSignature(text: string): { block: SignatureBlock; manifest: ReturnType<typeof parseManifest> } | undefined {
+  const b = readSignature(text);
+  try {
+    return b ? { block: b, manifest: parseManifest(b.manifest) } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 type Out = (line: string) => void;
 const stdout: Out = (l) => void process.stdout.write(l + '\n');
 
@@ -147,19 +158,25 @@ export async function signCommand(argv: readonly string[], out: Out = stdout, ss
   }
   const text = fs.readFileSync(a.file, 'utf8');
   // Signing again: the previous signature's metadata, unless given now.
-  const prev = (() => {
-    const b = readSignature(text);
-    try {
-      return b ? { block: b, manifest: parseManifest(b.manifest) } : undefined;
-    } catch {
-      return undefined;
-    }
-  })();
+  const prev = previousSignature(text);
   if (a.record) return signRecordCommand(a, text, out, sshKeygen);
   if (a.cosign) return cosignCommand(a, text, prev?.block, out, sshKeygen);
+  const name = a.name ?? prev?.manifest.name ?? defaultName(a.file);
+  // Signed again into an existing signed copy (--out): its version counts too, when it is the same
+  // runbook, so an unsigned source doesn't start over at version 1 below a version already seen.
+  const outPrev =
+    a.out && path.resolve(a.out) !== path.resolve(a.file) && fs.existsSync(a.out)
+      ? previousSignature(fs.readFileSync(a.out, 'utf8'))
+      : undefined;
+  const outVersion = outPrev && outPrev.manifest.name === name ? outPrev.manifest.version : undefined;
+  const previous = Math.max(prev?.manifest.version ?? 0, outVersion ?? 0);
+  if (a.version !== undefined && outVersion !== undefined && a.version <= outVersion)
+    out(
+      `  note: ${a.out} already has ${name} version ${outVersion}: servers and team libraries that saw it refuse version ${a.version}`,
+    );
   const meta: ManifestMeta = {
-    name: a.name ?? prev?.manifest.name ?? defaultName(a.file),
-    version: a.version ?? (prev ? prev.manifest.version + 1 : 1),
+    name,
+    version: a.version ?? previous + 1,
     ...(a.expires ? { expires: a.expires } : {}),
     scopes: a.scopes ?? prev?.manifest.scopes ?? [],
     patterns: { ...(prev?.manifest.patterns ?? {}), ...a.patterns },
@@ -190,8 +207,11 @@ export async function signCommand(argv: readonly string[], out: Out = stdout, ss
   const target = a.out ?? a.file;
   fs.writeFileSync(target, withSignature(text, { signer, signed: today(), manifest, signature }), 'utf8');
   const m = built.manifest;
+  // Where a counted-up version comes from, so a surprise shows (none when --version is given).
+  const fromOut = outVersion !== undefined && outVersion > (prev?.manifest.version ?? 0);
+  const from = a.version !== undefined || previous === 0 ? '' : fromOut ? ` (previous: ${previous} in ${a.out})` : ` (previous: ${previous})`;
   out(
-    `✓ ${m.name} version ${m.version} signed by ${signer}: ${m.cells.length} block${m.cells.length === 1 ? '' : 's'}` +
+    `✓ ${m.name} version ${m.version}${from} signed by ${signer}: ${m.cells.length} block${m.cells.length === 1 ? '' : 's'}` +
       `${m.scopes.length ? `, scopes ${m.scopes.join(' ')}` : ''}${m.expires ? `, until ${m.expires}` : ''} · written to ${target}`,
   );
   out(`  manifest sha256 ${manifestHash(manifest)} (list it in a server's revoked file to withdraw this version)`);
