@@ -116,12 +116,14 @@ stop Run All.)
 
 When the confirmation is asked:
 
-- Without `mdRunbook.output.recordContext`: right away, before any secret, input or parameter is
-  asked for. So a declined cell never prompts for anything.
+- Without `mdRunbook.output.recordContext`: right away, before the cell's own secrets, inputs or
+  parameters are asked for. So a declined cell prompts for nothing of its own.
 - With `mdRunbook.output.recordContext`: after the cell's environment is final (`.env` file,
   secrets, inputs, the read-only credentials of assistant cells). So the context shown, and
   recorded, is the cluster or server the cell will really use. Prompts for that cell's secrets,
   inputs or parameters therefore come before the confirmation.
+- A run of several cells (Run All, Run Below) asks for all their parameters and inputs first,
+  before any confirmation. Secrets are still asked cell by cell.
 
 The default patterns cover:
 

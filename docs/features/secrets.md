@@ -208,8 +208,16 @@ LABEL='literal $text'
   numbers up to 5 digits) are never redacted. Name secret keys accordingly, or store them with
   **Set Secret** instead.
 
-Environment variables are applied in this order (later wins): `mdRunbook.execution.env`, the
-`.env` file, `mdRunbook.secrets.inject`, references in the cell.
+Environment variables are applied in this order (later wins):
+
+1. the front matter's `env:`;
+2. `mdRunbook.execution.env`;
+3. the cell's own `env.NAME=` options;
+4. the `.env` file;
+5. `mdRunbook.secrets.inject`;
+6. references in the cell.
+
+A `kube-context-mode: pin` runbook's `KUBECONFIG` and `git-bash-path-conversion: off` go on top.
 
 **Tools installed by the runbook.** Cells inherit VS Code's `PATH`, read once when VS Code
 started.
@@ -227,9 +235,14 @@ started.
 - no `mdRunbook.secrets.inject`;
 - a `${secret:…}` or secret `${input:…}` reference fails the cell with a message.
 
-Their environment is rebuilt from `mdRunbook.execution.env`, their own `env.*`
-options and `${param:}` / non-secret `${input:}` values, plus `mdRunbook.approval.readOnlyEnv`
-(see [approval](approval.md#read-only-credentials)).
+Their environment is rebuilt from:
+
+- `mdRunbook.execution.env`;
+- their own `env.*` options;
+- the values of their `${param:}`, non-secret `${input:}` and `${out:}` references;
+- `mdRunbook.approval.readOnlyEnv` on top (see [approval](approval.md#read-only-credentials)).
+
+The front matter's `env:` is then added under it, as for any cell.
 
 ## Settings
 
