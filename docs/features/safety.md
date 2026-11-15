@@ -177,10 +177,11 @@ read-only credentials. So a `KUBECONFIG` set by any of them is the one recorded:
 <!-- md-runbook:output start exit=0 ran=… ended=… duration=0.412s context=prod-eu server=https://api.prod-eu:6443 -->
 ```
 
-- Commands run through the platform shell (`cmd.exe` on Windows, `/bin/sh` elsewhere) in the
-  folder of the `.md` file. They run with the cell's environment set (`mdRunbook.execution.env`,
-  `env.*` options, `.env`, secrets, read-only credentials), and a 5 second timeout. A failing
-  or silent command records `unknown`.
+- Commands run through the platform shell (`cmd.exe` on Windows, `/bin/sh` elsewhere), in the
+  cell's working folder. That is the runbook's folder, unless `cwd:` or `cwd=` set another.
+- Each command runs with the cell's environment set (`mdRunbook.execution.env`, `env.*` options, `.env`,
+  secrets, read-only credentials), and a 5 second timeout. A failing or silent command records
+  `unknown`.
 - Values are cached per runbook for `mdRunbook.output.recordContextCacheSeconds`.
 - Values pass through secret redaction like output does. Don't record commands that print
   secrets.

@@ -98,8 +98,8 @@ closed.
 Inputs are masked and redacted when written as `${input:NAME:secret}` or when the name ends in
 `_PASSWORD`, `_TOKEN` or `_SECRET`.
 
-Cancelling the input box fails the cell with `input NAME cancelled`; nothing is run. Run All
-stops there as with any failure.
+Cancelling the input box leaves the cell unanswered: nothing is run, and the run stops there.
+**Resume Run** asks again.
 
 **When you're asked.** The input box is VS Code's own and opens at the top of the window. So
 md-runbook asks before the cell starts (it shows as queued, its timer not running).
@@ -189,8 +189,9 @@ DB_PASSWORD="p@ss w0rd"   # double quotes allow \n, \t, \" escapes
 LABEL='literal $text'
 ```
 
-- Relative paths are relative to the runbook's folder; `${workspaceFolder}` is expanded (to
-  the runbook's folder if no folder is open). A missing file is ignored.
+- Relative paths are relative to the cell's working folder: the runbook's folder, unless `cwd:`
+  or `cwd=` set another. `${workspaceFolder}` is expanded (to that folder if no folder is open).
+  A missing file is ignored.
 - `#` comments, an `export ` prefix, and single or double quotes are supported. Variable
   expansion and multi-line values are not.
 - With `mdRunbook.redaction.redactKnownSecrets` (on by default), values that look like secrets
