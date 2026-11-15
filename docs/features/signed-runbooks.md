@@ -1,12 +1,14 @@
 # Signed runbooks
 
 An ops team signs runbooks; a support team runs them from the [md-runbook app](../app.md). A
-server set up for this runs **only signed runbooks, unchanged**, for the support team's SSH
-keys, and logs every run. Other servers and other keys are not affected: unsigned runbooks run
-there as before, and a server's owner can allow them on the gated keys too.
+server set up for this runs **only signed runbooks, unchanged**, for the support team's SSH keys.
+It logs every run.
+
+Other servers and other keys are not affected: unsigned runbooks run there as before. A server's
+owner can allow them on the gated keys too.
 
 The check is on the server because it has to be: a support engineer's key also works with plain
-`ssh server 'anything'`, so a check in the app alone would only prevent accidents. A key may be
+`ssh server 'anything'`. So a check in the app alone would only prevent accidents. A key may be
 restricted to one program, **md-runbook-gate**, and the gate decides what runs.
 
 ```
@@ -18,19 +20,24 @@ md-runbook sign  ──.md file───▶ md-runbook app ──SSH────
 ```
 
 A signed runbook holds no secrets and any change breaks its signature, so it can be shipped by
-any channel. Two keys do different jobs: the **publisher's signing key** says the runbook is
-approved and grants no access by itself; the **engineer's SSH key** gets into the server, and
-only into a gated account.
+any channel. Two keys do different jobs:
+
+- the **publisher's signing key** says the runbook is approved, and grants no access by itself;
+- the **engineer's SSH key** gets into the server, and only into a gated account.
 
 ## What exists elsewhere
 
-Azure Automation can run only signed runbooks on its hybrid workers (tied to Azure and its
-agent). Rundeck, AWX and StackStorm let support teams run predefined jobs, from a central server
-that holds the jobs and the credentials. PowerShell's `AllSigned` is a client setting, which
-Microsoft says is not a security boundary. Forced-command wrappers are an old SSH technique,
-with a fixed list of commands per wrapper. Here the runbook stays a Markdown file, the server
-needs one script and a list of signers, and a new release reaches every server without being
-deployed to them, because the signature carries the trust.
+- **Azure Automation** can run only signed runbooks on its hybrid workers (tied to Azure and its
+  agent).
+- **Rundeck, AWX and StackStorm** let support teams run predefined jobs, from a central server.
+  That server holds the jobs and the credentials.
+- **PowerShell's `AllSigned`** is a client setting, which Microsoft says is not a security
+  boundary.
+- **Forced-command wrappers** are an old SSH technique, with a fixed list of commands per wrapper.
+
+Here the runbook stays a Markdown file, and the server needs one script and a list of signers. A
+new release reaches every server without being deployed to them, because the signature carries
+the trust.
 
 ## Signing
 
@@ -40,36 +47,48 @@ md-runbook sign restart-api.runbook.md --key ~/.ssh/id_ed25519 \
 md-runbook verify restart-api.runbook.md --allowed-signers /etc/md-runbook/allowed_signers
 ```
 
-or **md-runbook: Sign Runbook** in VS Code (it asks for the name, scopes, days of validity and
-missing patterns; the key comes from `mdRunbook.signing.key`, or it asks).
+Or use **md-runbook: Sign Runbook** in VS Code. It asks for the name, scopes, days of validity and
+missing patterns. The key comes from `mdRunbook.signing.key`, or it asks.
 
-**From the app.** In a runbook's ⋯ More, **Sign Runbook** asks the same in a card at the top and
-signs with the app's own key (in the Secure Enclave or Android Keystore on a phone, so the
-private key never leaves the hardware); **Co-sign Runbook** shows the blocks being signed and
-adds your signature. The signature is the same OpenSSH format (`ssh-keygen -Y sign`, ECDSA
-P-256), checked the same way. Once, add the app's line to the servers' `allowed_signers`: under
-**Hosts & settings → Signing runbooks**, set your name for signatures and copy the line, which
-looks like `you@example.net namespaces="md-runbook" ecdsa-sha2-nistp256 AAAA…`. The app can't
-run `bash -n`, so it doesn't check a cell's commands one by one as VS Code and the command line
-do (a gate refuses a step bash can't read on its own at run time); sign there for that check.
+**From the app.** In a runbook's ⋯ More:
 
-- Signing uses `ssh-keygen -Y sign` (OpenSSH 8.2 or newer) with any key it can use: a key file,
-  a FIDO `sk-` key, or a `.pub` whose key is in the SSH agent. Keys with a passphrase sign on
-  the command line (it asks), or through the agent in VS Code.
+- **Sign Runbook** asks the same in a card at the top, and signs with the app's own key. On a
+  phone the private key is in the Secure Enclave or Android Keystore, so it never leaves the
+  hardware.
+- **Co-sign Runbook** shows the blocks being signed and adds your signature.
+
+The signature is the same OpenSSH format (`ssh-keygen -Y sign`, ECDSA P-256), checked the same
+way.
+
+Once, add the app's line to the servers' `allowed_signers`. Under **Hosts & settings → Signing
+runbooks**, set your name for signatures and copy the line. It looks like
+`you@example.net namespaces="md-runbook" ecdsa-sha2-nistp256 AAAA…`.
+
+The app can't run `bash -n`. So it doesn't check a cell's commands one by one, as VS Code and the
+command line do. At run time, a gate refuses a step bash can't read on its own.
+
+Sign in VS Code or on the command line for that check.
+
+- Signing uses `ssh-keygen -Y sign` (OpenSSH 8.2 or newer) with any key it can use. That can be
+  a key file, a FIDO `sk-` key, or a `.pub` whose key is in the SSH agent. Keys with a passphrase
+  sign on the command line (it asks), or through the agent in VS Code.
 - **Signing again** keeps the name, scopes and patterns and counts the version up. Options given
-  now win. `--expires` is not carried over. Signing an unsigned source into a signed copy
-  (`--out signed/deploy.md`) counts on from that copy's version when it is the same runbook (the
-  same signed name), and the result line says so (`version 3 (previous: 2 in signed/deploy.md)`).
-  A `--version` that isn't above the copy's is signed as asked, with a note: servers and team
-  libraries that saw the copy's version refuse a lower or equal one.
+  now win. `--expires` is not carried over.
+- Signing an unsigned source into a signed copy (`--out signed/deploy.md`) counts on from that
+  copy's version. It does so when it is the same runbook (the same signed name), and the result
+  line says so: `version 3 (previous: 2 in signed/deploy.md)`.
+  - A `--version` that isn't above the copy's is signed as asked, with a note. Servers and team
+    libraries that saw the copy's version refuse a lower or equal one.
 - `verify` prints what the signature covers, the manifest's sha256, and any block changed since
-  signing (with its line). Only with `--allowed-signers` does it check the signature as the gate
-  would: without it, the signer's name is just what the file says (anyone can write a name next
-  to a signature), and it says so. Exit code 0 when everything is signed.
-- Signing refuses what a server would read differently: parameter or `env.*` names such as
-  `PATH`, `IFS`, `BASH_ENV`, `LD_*` or `LC_*`; patterns with JavaScript-only syntax (`\d`,
-  `(?…)`, lazy `*?`); and, where bash is installed, a block whose commands don't each read as a
-  whole command on their own (`bash -n`), since a server may run them one by one.
+  signing (with its line). Exit code 0 when everything is signed.
+- Only with `--allowed-signers` does `verify` check the signature as the gate would. Without it,
+  the signer's name is just what the file says, and `verify` says so. Anyone can write a name
+  next to a signature.
+- Signing refuses what a server would read differently:
+  - parameter or `env.*` names such as `PATH`, `IFS`, `BASH_ENV`, `LD_*` or `LC_*`;
+  - patterns with JavaScript-only syntax (`\d`, `(?…)`, lazy `*?`);
+  - a block whose commands don't each read alone as a whole command (`bash -n`, where bash is
+    installed). This matters since a server may run them one by one.
 - The editor and `md-runbook lint` warn about blocks changed since signing.
 
 ### From a repository
@@ -89,8 +108,8 @@ review becomes the release (the [command line](cli.md#getting-it) on the runner)
 
 ## What is signed
 
-The signature covers the whole runbook as reviewed, and what the gate runs, but not what changes
-when someone runs the runbook:
+The signature covers the whole runbook as reviewed, and what the gate runs. But it doesn't cover
+what changes when someone runs the runbook:
 
 | Covered | Not covered |
 | --- | --- |
@@ -99,22 +118,26 @@ when someone runs the runbook:
 | the name, version, expiry date, scopes, parameter patterns | a run record's signature |
 | the whole text (manifest version 2): prose, headings, checklists, front matter, PowerShell and cmd blocks | |
 
-**Manifest version 2.** In signatures made by releases after 0.22.0, the manifest also holds `text`: the SHA-256 of
-the runbook without what a run adds to it. That lets clients tell **signed as a whole** from
-**partly signed**.
+**Manifest version 2.** In signatures made by releases after 0.22.0, the manifest also holds
+`text`.
 
-- **Signed with 0.22.0 or earlier.** Only the bash/sh blocks and calls are signed. The signature still
-  verifies and the bash blocks still count as signed, but the editor and lint say "partly
-  signed", and the app "these steps verified" (or **Partly signed** when PowerShell or cmd blocks
-  are outside the signature). A PowerShell or cmd block in such a runbook is never signed, and a
-  change to a paragraph or the front matter goes unnoticed. Sign it again to cover the whole
-  runbook.
+`text` is the SHA-256 of the runbook without what a run adds to it. It lets clients tell **signed
+as a whole** from **partly signed**.
+
+- **Signed with 0.22.0 or earlier.** Only the bash/sh blocks and calls are signed.
+  - The signature still verifies and the bash blocks still count as signed. But the editor and
+    lint say "partly signed", and the app "these steps verified".
+  - The app says **Partly signed** instead when PowerShell or cmd blocks are outside the
+    signature.
+  - A PowerShell or cmd block in such a runbook is never signed.
+  - A change to a paragraph or the front matter goes unnoticed.
+  - Sign it again to cover the whole runbook.
 - **Text changed since signing.** A changed sentence, a new `- [ ]` item, a changed
   `manual-steps:`, an added PowerShell block: the runbook is "changed since signing".
   - Its unchanged bash blocks still run through a gate.
   - Clients no longer show the runbook as signed as a whole.
-  - Its [run report settings](run-reports.md#required-and-signed-reports) lapse until it is
-    signed again.
+  - The runbook's [run report settings](run-reports.md#required-and-signed-reports) lapse until
+    it is signed again.
 - **Gates.** The header line stays `md-runbook-manifest 1`, and the gate ignores `text`: it
   reads items by key and never sees the text. Gates already installed run version 2 signatures
   unchanged, and new gates still run version 1 ones.
@@ -122,17 +145,19 @@ the runbook without what a run adds to it. That lets clients tell **signed as a 
   was signed.
 
 **Signer names** in the block (`signer=`, `cosign signer=`) must be names allowed_signers can
-hold as a principal: ASCII letters, digits and `@ . _ + -`, with no patterns or lists. A block
-with another name is not read as a signature.
+hold as a principal. That means ASCII letters, digits and `@ . _ + -`, with no patterns or lists.
+A block with another name is not read as a signature.
 
 **Run summaries are signed in another namespace.** A [run report](run-reports.md) is signed with
 the runner's key as `ssh-keygen -Y sign -n md-runbook-run`. A runbook signature never verifies
-as a run summary, nor the reverse, even with a key allowed for both. Keep runners' keys out of
-the servers' `allowed_signers`, or limit them to `namespaces="md-runbook-run"`.
+as a run summary, nor the reverse, even with a key allowed for both.
+
+Keep runners' keys out of the servers' `allowed_signers`, or limit them to
+`namespaces="md-runbook-run"`.
 
 The signer signs a **manifest**: one item per line, values in base64, so the gate never parses
-Markdown. It travels in the file, in an HTML comment at the end (invisible on screen, like the
-output markers), next to the signature:
+Markdown. It travels in the file, in an HTML comment at the end, next to the signature. The
+comment is invisible on screen, like the output markers:
 
 ```
 <!-- md-runbook:signature v1 signer=ops@example.net signed=2026-10-22
@@ -144,58 +169,81 @@ U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg…
 ```
 
 Because the manifest holds the code as signed, a later app version can't change what an old
-signature covers. Clients compare the file's blocks with it: a block whose code or options
-changed is **unsigned**, and a strict server refuses it. Adding prose keeps blocks signed. A
-block that was moved stays signed, but the editor, `md-runbook lint`, `verify` and the app warn
-that the order differs from the one reviewed, and they name signed blocks that are missing from
-the file (a deleted backup step, say), since the shell carries folders and variables from block
-to block.
+signature covers. Clients compare the file's blocks with it:
 
-Signing refuses a bash block inside an HTML comment, and code fences indented 4 spaces or more:
-GitHub's rendered view doesn't show those as code that runs, so a reviewer reading a pull
-request there could miss them.
+- A block whose code or options changed is **unsigned**, and a strict server refuses it.
+- Adding prose keeps blocks signed.
+- A block that was moved stays signed.
+
+But the shell carries folders and variables from block to block. So the editor,
+`md-runbook lint`, `verify` and the app:
+
+- warn that the order differs from the one reviewed;
+- name signed blocks that are missing from the file (a deleted backup step, say).
+
+Signing refuses a bash block inside an HTML comment, and code fences indented 4 spaces or more.
+GitHub's rendered view doesn't show those as code that runs. So a reviewer reading a pull request
+there could miss them.
 
 **Parameters.** `${param:NAME}` reaches the shell as an environment variable, never as text in
-the code. Each needs a pattern (`--pattern NAME=REGEX`, a POSIX extended regular expression the
-whole value must match); the gate checks the value and refuses newlines. The gate never sees
-the front matter (and a version 1 signature doesn't cover it), so the app doesn't take a signed
-block's parameter values from its defaults: they are typed on the runbook.
+the code.
+
+- Each parameter needs a pattern (`--pattern NAME=REGEX`): a POSIX extended regular expression
+  the whole value must match.
+- The gate checks the value and refuses newlines.
+- The gate never sees the front matter (and a version 1 signature doesn't cover it). So the app
+  doesn't take a signed block's parameter values from its defaults: they are typed on the
+  runbook.
 
 **Inputs and captured values.** `${input:NAME}` (asked when the cell runs) and `${out:NAME}` (a
-value an earlier block captured with `capture=`) are signed like parameters: each needs a
-pattern under the same name (`--pattern SINCE='[0-9]+[smh]'`), the client sends the value to the
-gate with the run, and the gate checks it against the signed pattern. That way a later block can
-use what an earlier one printed (a pod name, a ticket) without the value being part of the code.
+value an earlier block captured with `capture=`) are signed like parameters:
+
+- each needs a pattern under the same name (`--pattern SINCE='[0-9]+[smh]'`);
+- the client sends the value to the gate with the run;
+- the gate checks it against the signed pattern.
+
+That way a later block can use what an earlier one printed (a pod name, a ticket). The value is
+not part of the code.
+
 Secrets can't be signed: `${secret:}`, `${input:NAME:secret}` and values from `capture-secret=`,
 because the gate logs every value it is given.
 
 **Line runs.** A signed block runs whole, or its commands in order (Step through, Run lines 1-N).
+
 Single lines and ranges (Run line, Run lines N-end, checked lines) need `lines=any` on the block
-when it is signed, because skipping a line can skip a safety check.
+when it is signed. This is because skipping a line can skip a safety check.
 
 ## Runbook calls
 
 A [runbook call](calls.md) is signed as written: its options (`src=`, `section=`, …) and the
-values it passes. Every `${param:}`, `${input:}` and `${out:}` in it needs a pattern
-(`--pattern TO='[0-9]{5}\.[0-9]{4}'`), a secret can't be passed, and `src=` must be relative.
-The runbook it calls is not part of this signature: it is signed on its own, with its own
+values it passes.
+
+- Every `${param:}`, `${input:}` and `${out:}` in the call needs a pattern
+  (`--pattern TO='[0-9]{5}\.[0-9]{4}'`).
+- A secret can't be passed.
+- `src=` must be relative.
+
+The runbook it calls is not part of this signature. It is signed on its own, with its own
 patterns, and checked with the values passed.
 
-The gate never runs a call itself: the md-runbook app runs the steps of the runbook called, each
-checked against that runbook's own signature, and tells the gate which call loaded it, for the
-log (see [The log](#the-log)). On a machine, `md-runbook run
---allowed-signers FILE` runs a signed runbook only as signed, as the gate would; before anything
-runs, it refuses (exit `2`) when:
+The gate never runs a call itself. The md-runbook app runs the steps of the runbook called, each
+checked against that runbook's own signature. It tells the gate which call loaded it, for the log
+(see [The log](#the-log)).
+
+On a machine, `md-runbook run --allowed-signers FILE` runs a signed runbook only as signed, as
+the gate would. Before anything runs, it refuses (exit `2`) when:
 
 - the signature is not good by a key in `FILE`, or has expired;
-- a block or a call changed, moved or was removed since signing, or a block that would run is not
-  signed (only bash/sh blocks are);
+- a block or a call changed, moved or was removed since signing;
+- a block that would run is not signed (only bash/sh blocks are);
 - a parameter doesn't match its signed pattern;
-- a call's runbook is outside the repository (the folder with `.git`), doesn't exist, is not
-  signed, or fails these same checks with the values the call passes.
+- a call's runbook is outside the repository (the folder with `.git`), doesn't exist, or is not
+  signed;
+- a call's runbook fails these same checks with the values the call passes.
 
-A call whose `src=` uses `${out:}` or `${input:}` is checked when it runs. `md-runbook verify
---allowed-signers FILE` checks a runbook's calls with fixed `src=` too, and lists the others.
+A call whose `src=` uses `${out:}` or `${input:}` is checked when it runs.
+`md-runbook verify --allowed-signers FILE` checks a runbook's calls with fixed `src=` too, and
+lists the others.
 
 ## Setting up a server
 
@@ -236,91 +284,130 @@ With SSH certificates the CA puts the restriction into each certificate, and ser
 | Gate, `unsigned = refuse` | refused | Only runbooks signed by `allowed_signers`. |
 | `--unsigned=allow` / `--unsigned=refuse` on a key's line | per key | Overrides `gate.conf` for that key. |
 
-**Scopes** keep a runbook for staging off production: the manifest names its scopes, `gate.conf`
-lists the ones the server accepts, and `--scopes=a,b` on a key's line narrows them. A runbook
-runs only if it shares a scope with both; a runbook without scopes runs only where `scopes = *`.
+**Scopes** keep a runbook for staging off production:
+
+- the manifest names its scopes;
+- `gate.conf` lists the ones the server accepts;
+- `--scopes=a,b` on a key's line narrows them.
+
+A runbook runs only if it shares a scope with both; a runbook without scopes runs only where
+`scopes = *`.
 
 **Withdrawing a release:** add its manifest hash (`md-runbook verify` shows it) to `revoked`,
 let it expire, or remove the signer from `allowed_signers`. To withdraw all older releases of a
-runbook at once, give it a **version floor**: the `floors` file has lines like
+runbook at once, give it a **version floor**. The `floors` file has lines like
 `ops/restart-api 7`, and the gate then refuses versions 1 to 6 of `ops/restart-api`.
 
-**Two signers (four eyes).** With `signers = 2` in `gate.conf` (or `--signers=2` on a key's line)
-a runbook needs signatures from two distinct signers in `allowed_signers`, say its author and a
-reviewer. The author signs (`md-runbook sign`, Sign Runbook); the reviewer then adds a signature
-to the same manifest with `md-runbook sign FILE --key KEY --cosign` or **Co-sign Runbook** (Share
-▾ in VS Code, ⋯ More in the app: a reviewer can co-sign from a phone). Co-signing changes nothing that was signed and is refused if the blocks changed since. Two
-signatures of one key, or a signature from a key the server doesn't trust, count once or not at
-all. `md-runbook verify --allowed-signers FILE` checks every signature; the gate logs all
-signers, and the app shows them.
+**Two signers (four eyes).** With `signers = 2` in `gate.conf` (or `--signers=2` on a key's
+line), a runbook needs two signatures. They must come from two distinct signers in
+`allowed_signers`, say its author and a reviewer.
+
+1. The author signs (`md-runbook sign`, Sign Runbook).
+2. The reviewer then adds a signature to the same manifest, with:
+   - `md-runbook sign FILE --key KEY --cosign`;
+   - or **Co-sign Runbook** (Share ▾ in VS Code, ⋯ More in the app: a reviewer can co-sign from
+     a phone).
+
+Co-signing changes nothing that was signed and is refused if the blocks changed since. Two
+signatures of one key count once. A signature from a key the server doesn't trust doesn't count
+at all.
+
+`md-runbook verify --allowed-signers FILE` checks every signature; the gate logs all signers,
+and the app shows them.
 
 **Kubernetes and cloud APIs.** For runbooks that call `kubectl`, `oc` or a cloud CLI, the gate
-runs on a bastion host that holds the credentials (a kubeconfig for a service account, say):
-support engineers run the signed runbooks against the cluster without ever holding its
+runs on a bastion host. That host holds the credentials (a kubeconfig for a service account,
+say).
+
+Support engineers run the signed runbooks against the cluster without ever holding its
 credentials.
 
-**A team library** of signed runbooks: the [library server](../../apps/library-server/README.md)
-publishes a runbook into the folder the web app serves only when it is signed as a whole by
-the library's `allowed_signers`, unchanged and unexpired, named as its file, and of a higher
-version than the one published: `md-runbook publish FILE --library URL`.
+**A team library** of signed runbooks: `md-runbook publish FILE --library URL`. The
+[library server](../../apps/library-server/README.md) publishes a runbook into the folder the web
+app serves only when it is:
+
+- signed as a whole by the library's `allowed_signers`;
+- unchanged and unexpired;
+- named as its file;
+- of a higher version than the one published.
 
 ## Running
 
 The app needs no setting: it finds the gate when it connects (its answer to the app's first
 line). A signed runbook shows **Signed runbook NAME, version N** and any blocks changed since
-signing. The signer's name is shown as what the file says until a gate has checked the signature;
-after the first block that ran through a gate, the banner shows the signer that gate accepted.
-Parameter values are typed under **Parameters** on the runbook; the app
-checks them against the signed patterns as you type, and the gate checks them again. Through
-the gate a signed block runs as "block N of this manifest"; on
-a server without the gate the same block runs as usual. A refused block ends with exit 126 and
-the gate's reason in its output, for example
+signing.
+
+The signer's name is shown as what the file says until a gate has checked the signature. After
+the first block that ran through a gate, the banner shows the signer that gate accepted.
+
+Parameter values are typed under **Parameters** on the runbook. The app checks them against the
+signed patterns as you type, and the gate checks them again.
+
+Through the gate a signed block runs as "block N of this manifest". On a server without the gate
+the same block runs as usual. A refused block ends with exit 126 and the gate's reason in its
+output, for example
 `md-runbook-gate: this server runs signed runbooks only (this cell is not signed, or changed since signing)`.
 
 The gate keeps one shell per connection, as the app does elsewhere, so folders and variables
-carry over between blocks; loading another runbook unsets the previous one's parameters and
-`env.*` values. Cancelling works: the app's stop request on a second channel reaches the gate,
-which stops the running block of that connection's shell only. The gate checks parameter
-patterns in the C locale, whatever locale the client's SSH session sends.
+carry over between blocks. Loading another runbook unsets the previous one's parameters and
+`env.*` values.
+
+Cancelling works: the app's stop request on a second channel reaches the gate. It stops the
+running block of that connection's shell only. The gate checks parameter patterns in the C
+locale, whatever locale the client's SSH session sends.
 
 ## The log
 
-One JSON line per event, to syslog (tag `md-runbook-gate`) or a file: `session`, `load`
-(runbook, version, manifest hash, signer; for the runbook a [call](calls.md) runs, also
-`called-by`, the caller's manifest hash, and `call`, the call's number; for a run an alert link
-started, also `alert`, `alert-fingerprint` and `alert-starts-at`), `param` (name and
-value), `run` (block and command),
-`end` (exit code), `unsigned` (hash of the code), `refused` (the reason), `stop`, `report` (a
-run report sent or not, below). Each carries
-the time, the account, the client address and the key: its fingerprint with
-`ExposeAuthInfo yes` in `sshd_config`, or the name given with `--who=NAME`.
+One JSON line per event goes to syslog (tag `md-runbook-gate`) or a file. The events:
+
+- `session`;
+- `load`: runbook, version, manifest hash, signer.
+  - For the runbook a [call](calls.md) runs, also `called-by`, the caller's manifest hash, and
+    `call`, the call's number.
+  - For a run an alert link started, also `alert`, `alert-fingerprint` and `alert-starts-at`.
+- `param`: name and value;
+- `run`: block and command;
+- `end`: exit code;
+- `unsigned`: hash of the code;
+- `refused`: the reason;
+- `stop`;
+- `report`: a run report sent or not (below).
+
+Each event carries the time, the account, the client address and the key. The key is its
+fingerprint with `ExposeAuthInfo yes` in `sshd_config`, or the name given with `--who=NAME`.
 
 The `end` events are written by the account's own shell, and a log file must be writable by the
-account, so a block (or unsigned text where it is allowed) could add lines of its own. For a log
+account. So a block (or unsigned text where it is allowed) could add lines of its own. For a log
 the account can't touch, use syslog and forward it off the server.
 
 `md-runbook audit` turns these logs into a report, and matches saved run records against them
 ([command line](cli.md#gate-audit), [for auditors](for-auditors.md)). A run of a runbook a call
-ran says so: `ops/release v9 · called by ops/upgrade v4 (call 1)`. That link is what the app
-said when it loaded the runbook called (the `called` request, gate protocol 2): it lets you follow
-a call in the log, and it grants nothing, since each runbook's own signature is what the gate
-checks.
+ran says so: `ops/release v9 · called by ops/upgrade v4 (call 1)`.
+
+That link is what the app said when it loaded the runbook called (the `called` request, gate
+protocol 2). It lets you follow a call in the log. It grants nothing, since each runbook's own
+signature is what the gate checks.
 
 A run started from an [alert link](run-reports.md#which-alert-a-run-answered) says which alert
-it answered: `ops/restart-api v7 · for alert ApiDown (fingerprint 5f3c9e, started
-2026-11-14T08:58:00Z)`. The app sends the link's `ALERT`, `ALERT_FINGERPRINT` and
-`ALERT_STARTS_AT` values with each load (the `note` request, gate protocol 3), whether or not a
-block uses them. Like `called`, it is only what the app says, for the audit: it grants nothing
-and runs nothing, and the gate checks the values strictly (a name of at most 400 bytes on one
-line, a fingerprint of letters, digits and `. _ : -`, an RFC 3339 time) and refuses a note that
-doesn't match. Gates older than protocol 3 are sent no note and log no alert; update the gate
-to have it.
+it answered:
+`ops/restart-api v7 · for alert ApiDown (fingerprint 5f3c9e, started 2026-11-14T08:58:00Z)`. The
+app sends the link's `ALERT`, `ALERT_FINGERPRINT` and `ALERT_STARTS_AT` values with each load
+(the `note` request, gate protocol 3). It sends them whether or not a block uses them.
+
+Like `called`, the note is only what the app says, for the audit: it grants nothing and runs
+nothing. The gate checks the values strictly and refuses a note that doesn't match:
+
+- a name of at most 400 bytes on one line;
+- a fingerprint of letters, digits and `. _ : -`;
+- an RFC 3339 time.
+
+Gates older than protocol 3 are sent no note and log no alert; update the gate to have it.
 
 ## Run reports from the gate
 
 A client can be changed not to [report its runs](run-reports.md); the gate can't be skipped on a
 gated server. With `report_to` in `gate.conf`, the gate sends a run summary itself when a session
-ends: one per signed runbook the session ran, whatever client ran it.
+ends. It sends one per signed runbook the session ran, whatever client ran it.
 
 ```
 # /etc/md-runbook/gate.conf
@@ -336,110 +423,169 @@ The summary has the [run report format](run-reports.md#the-format-version-1) wit
   only its signed manifest.
 - `who`: the key's fingerprint (with `ExposeAuthInfo yes`), or `--who=NAME`, else the account.
 - `gate`: the server's name (`uname -n`), the account, and the SSH client's address (`from`).
-- `steps`: the signed bash blocks, in order, each labelled by the first line of its code (as
-  the gate runs it, with placeholders rewritten as signed): `passed` (ran whole, or its last command
-  ran, exit 0), `failed` (a non-zero exit), or `not-run`. `ran` lists the blocks the session ran;
-  `stopped: true` when one of them never ended (the session was cut, or a block ran `exit`).
+- `steps`: the signed bash blocks, in order. Each is labelled by the first line of its code (as
+  the gate runs it, with placeholders rewritten as signed). Its state is one of:
+  - `passed`: ran whole, or its last command ran, exit 0;
+  - `failed`: a non-zero exit;
+  - `not-run`.
+- `ran` lists the blocks the session ran.
+- `stopped: true` when one of them never ended (the session was cut, or a block ran `exit`).
 
-Never an output or a parameter value. The gate sends it with `curl`, in the background once the
-session is over, so it never holds up or fails a run; it tries 3 times (not again after a `4xx`
-other than 408 and 429) and logs a `report` event with `sent` or `failed` and the HTTP status. The
-token is read from its file at the end of the session and passed to curl in a header file,
-never on its command line. An address that isn't https (http only for localhost) is logged as
-`report` `off` at the start of each session, and nothing is sent.
+Never an output or a parameter value.
+
+The gate sends it with `curl`, in the background once the session is over. So it never holds up
+or fails a run.
+
+The gate tries 3 times (not again after a `4xx` other than 408 and 429). It logs a `report` event
+with `sent` or `failed` and the HTTP status.
+
+The token is read from its file at the end of the session. It is passed to curl in a header file,
+never on its command line.
+
+To an address that isn't https (http only for localhost), nothing is sent. The gate logs it as
+`report` `off` at the start of each session.
 
 The [library server](../../apps/library-server/README.md) keeps a gate's summary as verified
-(`trust: gate`) when it comes with one of its `RUNS_GATE_TOKENS`, and refuses `client: "gate"`
-from anyone else. The token file must be readable by the gate's account, so a block, or someone
-who can run commands as that account, could send a summary with it too: give each server its
-own token. The gate's log stays the record to audit; the summaries are the team's view of it.
+(`trust: gate`) when it comes with one of its `RUNS_GATE_TOKENS`. It refuses `client: "gate"`
+from anyone else.
 
-The address comes from `gate.conf` only. A signed runbook's own `report-runs:` is not read here:
-the gate gets the manifest, which signs a hash of the runbook's text but not the text itself, so
+The token file must be readable by the gate's account. So a block, or someone who can run
+commands as that account, could send a summary with it too. Give each server its own token.
+
+The gate's log stays the record to audit; the summaries are the team's view of it.
+
+The address comes from `gate.conf` only: a signed runbook's own `report-runs:` is not read here.
+The gate gets the manifest, which signs a hash of the runbook's text but not the text itself. So
 it can't see the front matter.
 
 ## In a hosted library
 
 A team library ([the app](../app.md#team-runbooks), [hosting it](../../apps/web/README.md#a-team-library))
-shows each runbook's signature in the list, with the signed name and version; the opened copy's
-banner says the same. The app checks the signatures itself, against its one list of
-[trusted signers](../app.md#trusted-signers) (the same list decides run reports' required and signed
-settings): the keys the user trusted from that library, and the keys the user added, which
-count for every runbook. Every check of the app (the list, the banner, signedOnly, run reports)
-reads one answer for what the signature covers:
+shows each runbook's signature in the list, with the signed name and version. The opened copy's
+banner says the same.
 
-- **Signed by alice@example.net: whole runbook verified:** manifest version 2 and the text as
-  signed (prose, front matter, checklists, PowerShell and cmd blocks; outputs, notes and ticked
-  boxes aside), and the signature checks out with a key that counts for this runbook, for the
-  name in the signature block (OpenSSH's rules: principals and patterns, `namespaces=`,
-  `valid-after` / `valid-before`). When a key may sign under any name its pattern matches (`*`,
-  `*@example.net`), the label adds the key's fingerprint.
+The app checks the signatures itself, against its one list of
+[trusted signers](../app.md#trusted-signers). That list holds:
+
+- the keys the user trusted from that library;
+- the keys the user added, which count for every runbook.
+
+The same list decides run reports' required and signed settings. Every check of the app (the
+list, the banner, signedOnly, run reports) reads one answer for what the signature covers:
+
+- **Signed by alice@example.net: whole runbook verified:** both of these hold.
+  - Manifest version 2, and the text as signed: prose, front matter, checklists, PowerShell and
+    cmd blocks. Outputs, notes and ticked boxes are left aside.
+  - The signature checks out with a key that counts for this runbook, for the name in the
+    signature block. OpenSSH's rules apply: principals and patterns, `namespaces=`,
+    `valid-after` / `valid-before`.
+
+  When a key may sign under any name its pattern matches (`*`, `*@example.net`), the label adds
+  the key's fingerprint.
 - **Signed by alice@example.net: these steps verified:** the same check of a manifest version 1
-  signature: the bash blocks and runbook calls are unchanged since signing and every block the
-  app could run is among them. That is all it proves: the prose, checklists, title, front matter
-  and outputs are not in a version 1 manifest (see [What is signed](#what-is-signed)), and the
-  banner says so.
-- **Partly signed:** a version 1 signature whose blocks check out, but the runbook has blocks
-  that can run outside it (PowerShell, cmd: version 1 never signs them). Not verified. With
-  version 2 such a block is part of the text: adding one makes the runbook **changed since
-  signing**, never partly signed.
+  signature:
+  - the bash blocks and runbook calls are unchanged since signing;
+  - every block the app could run is among them.
+
+  That is all it proves. The prose, checklists, title, front matter and outputs are not in a
+  version 1 manifest (see [What is signed](#what-is-signed)). The banner says so.
+- **Partly signed:** a version 1 signature whose blocks check out. But the runbook has blocks
+  that can run outside it (PowerShell, cmd: version 1 never signs them). Not verified.
+  - With version 2 such a block is part of the text. Adding one makes the runbook **changed
+    since signing**, never partly signed.
 - **Signed by alice@example.net, expired on 2026-12-31:** checked, but past the manifest's
   `expires` day (UTC, as the gate). Not verified.
 - **Signed, unknown signer:** unchanged, but signed by no one the user trusts for this library
   (or not checkable on this device).
-- **Signature does not check out for alice@example.net:** a trusted name but another key, a
-  signature that doesn't verify, a signature that is not one (malformed, truncated, for another
-  namespace), or a signer name an `allowed_signers` principal couldn't spell the same way.
+- **Signature does not check out for alice@example.net:** one of these.
+  - A trusted name but another key.
+  - A signature that doesn't verify.
+  - A signature that is not one (malformed, truncated, for another namespace).
+  - A signer name an `allowed_signers` principal couldn't spell the same way.
 - **Changed since signing** (a block changed, or with version 2 any of the text) and **Not
   signed**, as everywhere else.
 
-Next to it the row shows the signed **name and version**, and flags a name that is not the end of
-the file's path (`db/drop-staging` served as `restart-web.md`, `staging/restart` as
-`prod/restart.md`) and a **version older** than one of this file this library showed before with
-a signature that checked out: the app remembers the highest version per library, path and signed
-name, as the gate's version floors do on a server (**Hosts & settings → Team library → Forget
-the versions seen** clears them).
+Next to it the row shows the signed **name and version**, and flags:
+
+- a name that is not the end of the file's path (`db/drop-staging` served as `restart-web.md`,
+  `staging/restart` as `prod/restart.md`);
+- a **version older** than one of this file this library showed before with a signature that
+  checked out.
+
+The app remembers the highest version per library, path and signed name. It works like the
+gate's version floors on a server. **Hosts & settings → Team library → Forget the versions
+seen** clears them.
 
 The library may publish its `allowed_signers` (the gate's file). The app offers it under **Trust
-these signers**, with the names, what a pattern lets a key sign as, and the key fingerprints, and
-asks first: the list comes from the server that serves the runbooks, so the server is vouching
-for itself. Trusted keys count for that library only, with the options the library publishes
-their lines with now (a `valid-before=` added to retire a key is followed); a key the library
-stops publishing stops counting, and is remembered so while the file can't be read;
-**Hosts & settings → Trusted signers** lists them all with where each counts, and **Remove**.
+these signers**, with:
+
+- the names;
+- what a pattern lets a key sign as;
+- the key fingerprints.
+
+It asks first: the list comes from the server that serves the runbooks, so the server is vouching
+for itself.
+
+Trusted keys count for that library only, with the options the library publishes their lines
+with now. A `valid-before=` added to retire a key is followed.
+
+A key the library stops publishing stops counting, and is remembered so while the file can't be
+read. **Hosts & settings → Trusted signers** lists them all with where each counts, and
+**Remove**.
+
 Lines with an option OpenSSH doesn't know are skipped, as OpenSSH skips them.
 
-An index.json with `"signedOnly": true` makes the app open **verified** runbooks only: unsigned,
-changed, partly signed, expired, unknown-signer, other-name and older-version runbooks are
-listed as not openable, with the reason, and a copy the user already has is checked again when
-opened from the list, and before any of its blocks runs, wherever it was opened from (by the
-policy the app remembers when the library isn't read). A refused copy is offered **Replace with
-the library's version**. Once a library asked for it, the app keeps it on when index.json stops
-asking, until the user agrees. An update whose new version drops the signature, comes from another signer or key,
-changed since signing, is partly signed, expired or older says so before it replaces the user's
-copy; its signature is checked again for the update, never taken from an earlier read.
+An index.json with `"signedOnly": true` makes the app open **verified** runbooks only.
 
-The app checks `ssh-ed25519`, ECDSA (`nistp256`, `nistp384`, `nistp521`), RSA (`rsa-sha2-256`,
-`rsa-sha2-512`), and security-key and passkey signatures (`sk-ssh-ed25519`, `sk-ecdsa-sha2-nistp256`,
-`webauthn-sk-ecdsa-sha2-nistp256`, what the app's passkey makes), with OpenSSH's checks: no bytes
-after the signature's fields, RSA keys of 2048 bits or more, for passkeys no attested data, an
-extensions field present exactly when flagged and no quote in the origin. Certificate authorities
-(`cert-authority` lines) are not used. Key validity (`valid-after` / `valid-before`) and expiry
-are judged by the device's clock. This check tells the user what they are opening; the gate on
-the server is still what decides what runs.
+- Unsigned, changed, partly signed, expired, unknown-signer, other-name and older-version
+  runbooks are listed as not openable, with the reason.
+- A copy the user already has is checked again when opened from the list. It is checked again
+  before any of its blocks runs too, wherever it was opened from. When the library isn't read,
+  the app checks by the policy it remembers.
+- A refused copy is offered **Replace with the library's version**.
+- Once a library asked for it, the app keeps it on when index.json stops asking, until the user
+  agrees.
+- An update's signature is checked again for the update, never taken from an earlier read.
+  Before an update replaces the user's copy, it says so when its new version:
+  - drops the signature, or comes from another signer or key;
+  - changed since signing;
+  - is partly signed, expired or older.
+
+The app checks these signatures:
+
+- `ssh-ed25519`;
+- ECDSA (`nistp256`, `nistp384`, `nistp521`);
+- RSA (`rsa-sha2-256`, `rsa-sha2-512`);
+- security-key and passkey signatures (`sk-ssh-ed25519`, `sk-ecdsa-sha2-nistp256`,
+  `webauthn-sk-ecdsa-sha2-nistp256`, what the app's passkey makes).
+
+It applies OpenSSH's checks:
+
+- no bytes after the signature's fields;
+- RSA keys of 2048 bits or more;
+- for passkeys, no attested data;
+- an extensions field present exactly when flagged;
+- no quote in the origin.
+
+Certificate authorities (`cert-authority` lines) are not used. Key validity (`valid-after` /
+`valid-before`) and expiry are judged by the device's clock.
+
+This check tells the user what they are opening; the gate on the server is still what decides
+what runs.
 
 ## Limits
 
-- The gate controls what the account can start, not what a signed block does once it runs: the
+- The gate controls what the account can start, not what a signed block does once it runs. The
   review before signing is the real control. Root access goes through `sudo` rules for the
   gate's account.
 - Only keys forced to use the gate are covered. Admin accounts with full shells are not, by
   design.
-- The prose is not signed: an altered instruction such as "now run X by hand" is not stopped,
-  but the gate would still refuse X.
-- "In order" means the gate runs a block's commands in their order; it doesn't see their exit
+- The gate doesn't check the prose: it sees the manifest, not the text. An altered instruction
+  such as "now run X by hand" isn't stopped there, but the gate still refuses that command.
+  With a version 2 signature, VS Code, the app and `md-runbook verify` show the change.
+- "In order" means the gate runs a block's commands in their order. It doesn't see their exit
   codes, so a client could go on after a failed command. The app stops at a failure.
-- A key with `--unsigned=allow` runs code as the same account as everyone else's keys: keep
+- A key with `--unsigned=allow` runs code as the same account as everyone else's keys. Keep
   stricter keys on another account (one account per policy).
 - The gate runs on Linux and macOS servers (POSIX `sh`, OpenSSH 8.2+, `awk`, `base64`,
   `mkfifo`, `pkill`).
