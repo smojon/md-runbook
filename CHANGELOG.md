@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.26.0
+
+Shorter texts in the app, and the gate's log says which alert a run answered.
+
+- **Update the gate on your servers** to log alerts: older gates are sent no note and work as before.
+
 - **Trust these signers is easier to read:** a question (**Trust these keys for the team library
   at …?**) and five short points, instead of one long paragraph (about 14 lines on a phone).
 
