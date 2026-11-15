@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.25.0
+
+Pairing helps you check a team library's signers on your second device.
+
 - **Pairing compares the library's signers with your other device.** A pairing code or link now
   also carries, for each team library the sending device trusts signers from, the library's
   address and those keys' fingerprints (**With the signers this device trusts for N libraries, to
