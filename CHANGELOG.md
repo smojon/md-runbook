@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.24.2
+
+A privacy fix for pairing links in the web app.
+
 - **Web app: a pairing link's token leaves the address bar.** Opening a **Copy pairing link**
   link kept `/pair#mdrb-pair.v1.…` (with the relay's token) in the address bar and that history
   entry, where a synced browser history or a screenshot would show it: the app removed the
