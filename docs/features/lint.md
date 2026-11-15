@@ -1,8 +1,8 @@
 # Checking runbooks before they run
 
 Some mistakes only show when a runbook runs: a misspelled option is ignored, a `${out:POD}`
-has nothing to read. md-runbook checks for them while you edit, and `md-runbook lint` checks
-files on the command line, for example on every pull request.
+has nothing to read. md-runbook checks for them while you edit. `md-runbook lint` checks files
+on the command line, for example on every pull request.
 
 Section 17 of [`examples/sample.runbook.md`](../../examples/sample.runbook.md) has a misspelled
 option on purpose, to show a marker.
@@ -22,9 +22,9 @@ option on purpose, to show a marker.
 
 ## In the editor
 
-Problems are underlined in the runbook view (on the cell that has them; problems with a block's
-fence options are marked on the cell's first line) and in the plain Markdown editor, and they are
-listed in the **Problems** panel. Turn this off with `"mdRunbook.lint.enabled": false`.
+Problems are underlined in the runbook view and in the plain Markdown editor, and listed in the
+**Problems** panel. The runbook view marks the cell that has them, or its first line for a block's
+fence options. Turn this off with `"mdRunbook.lint.enabled": false`.
 
 Prose notes show as information: a blue squiggle, under **Infos** in the Problems panel. The
 setting `mdRunbook.lint.prose` changes that for you:
@@ -37,28 +37,35 @@ setting `mdRunbook.lint.prose` changes that for you:
 
 A runbook with `prose: strict` shows them as warnings, unless the setting is `off`.
 
-A misspelled option with a suggestion has a **Quick Fix**: click the light bulb on the cell, or
-press Ctrl+. (Cmd+. on macOS), then choose **Change "retires" to "retry"**. It renames the option
-on the block's fence and keeps its value as written. This works in the runbook view and in the
-Markdown editor.
+A misspelled option with a suggestion has a **Quick Fix**, in the runbook view and in the
+Markdown editor:
 
-Once a runbook has a run recorded ([run history](history.md#run-history)), the runbook view also
-gives a hint (information, not a warning) on a code step that never ran in any recorded run and
-has no output now: "This step has never run here." The command line and the app don't have it:
-the records are kept by VS Code on this machine.
+1. Click the light bulb on the cell, or press Ctrl+. (on macOS, Cmd+.).
+2. Choose **Change "retires" to "retry"**.
+
+The Quick Fix renames the option on the block's fence and keeps its value as written.
+
+Once a runbook has a run recorded ([run history](history.md#run-history)), the runbook view gives
+a hint: "This step has never run here." It shows on a code step that never ran in any recorded
+run and has no output now. The hint is information, not a warning.
+
+The command line and the app don't have it: the records are kept by VS Code on this machine.
 
 ## In the app
 
 The md-runbook app (iPhone, Android, browser) runs the same checks when a runbook opens and after
-each change. Each code cell lists its problems under it, with a mark beside the line concerned.
-The top of the runbook counts them ("1 error, 2 warnings"): tap the count to list every problem,
-front matter included, and tap one to go to its cell. **⋯ More → Go to Next Problem** goes
-through them in turn. A misspelled option with a suggestion has a **Change "retires" to "retry"**
-button under the problem, which renames the option as the Quick Fix does.
+each change.
 
-Prose notes are not problems: a muted line under their Markdown cell says how many there are
-("2 prose notes"); tap it to list them. They are not counted at the top. With `prose: strict`
-they are warnings, counted and listed like the others.
+- Each code cell lists its problems under it, with a mark beside the line concerned.
+- The top of the runbook counts them ("1 error, 2 warnings"). Tap the count to list every
+  problem, front matter included; tap one to go to its cell.
+- **⋯ More → Go to Next Problem** goes through them in turn.
+- A misspelled option with a suggestion has a **Change "retires" to "retry"** button under the
+  problem. It renames the option as the Quick Fix does.
+
+Prose notes are not problems, and are not counted at the top. A muted line under their Markdown
+cell says how many there are ("2 prose notes"); tap it to list them. With `prose: strict` they
+are warnings, counted and listed like the others.
 
 ## On the command line
 
@@ -68,9 +75,11 @@ md-runbook lint --strict runbooks/*.md   # also exit 1 on warnings
 ```
 
 Each problem is printed as `file:line: severity: message`. Prose notes are printed too, as
-`info`, and never change the exit code, not even with `--strict` (`prose: strict` makes them
-warnings). On GitHub Actions they are also annotations (prose notes as notices), so they show on
-the changed lines of a pull request:
+`info`. They never change the exit code, not even with `--strict` (`prose: strict` makes them
+warnings).
+
+On GitHub Actions problems are also annotations (prose notes as notices), so they show on a pull
+request's changed lines:
 
 ```yaml
 - uses: actions/setup-node@v7
@@ -128,7 +137,7 @@ How text is read:
 
 - Prose is the text outside the front matter, code blocks, HTML comments, tables, headings,
   images and HTML lines. md-runbook's own blocks (outputs, signatures, notes) are not prose.
-- A paragraph, a list item and a quote are each a unit; a nested item is a unit of its own.
+- A paragraph, a list item and a quote are each a unit. A nested item is a unit of its own.
 - A code span, a link or a URL counts as one word.
 - A sentence ends at `.`, `!` or `?` before a space and a letter or digit; ` · ` ends one too.
 - No sentence ends at `e.g.`, `i.e.`, `etc.`, `vs.` or a version number (`0.25.1`).
@@ -139,8 +148,8 @@ How text is read:
 - A sentence that is mostly a direct quotation has no length limit: a verbatim quote can't be
   shortened. The quote is in `"…"`, `“…”` or `«…»`, of 6 words or more, and 60 % of the sentence.
 
-The counting is the same as a sister project's `prose_ratchet.py`, and the baseline file has
-its shape, except for fences: md-runbook reads them as CommonMark does (a ```` fence can hold
+The counting is the same as a sister project's `prose_ratchet.py`, except for fences, and the
+baseline file has its shape. md-runbook reads fences as CommonMark does (a ```` fence can hold
 ``` blocks).
 
 Levels, in the front matter:
@@ -157,15 +166,16 @@ its lines, or alone on the line before it.
 
 Why these limits:
 
-- Under 20 words a sentence read best, with the least effort (Kadayat and Eika, 2020:
-  *Impact of Sentence Length on the Readability of Web for Screen Reader Users*, HCI International
-  2020). Plain-language guides ask for an average of 15 to 20 (Martin Cutts, *Oxford Guide to
-  Plain English*; the Australian Government's Style Manual: an average of 15, at most 25).
-- 79 % of users scan a page; 16 % read word by word (Nielsen Norman Group, *How Users Read on
-  the Web*, 1997). Concise text tested 58 % better.
-- Readers skip an idea that the first words of a paragraph don't announce: one idea per
-  paragraph, more becomes a list (Nielsen Norman Group, *F-Shaped Pattern of Reading on the Web*,
-  2006 and 2017).
+- Under 20 words a sentence read best, with the least effort. Source: Kadayat and Eika, HCI
+  International 2020, *Impact of Sentence Length on the Readability of Web for Screen Reader
+  Users*.
+- Plain-language guides ask for an average of 15 to 20: Martin Cutts, *Oxford Guide to Plain
+  English*. The Australian Government's Style Manual asks for an average of 15, at most 25.
+- 79 % of users scan a page; 16 % read word by word. Source: Nielsen Norman Group, *How Users
+  Read on the Web*, 1997. Concise text tested 58 % better.
+- Readers skip an idea the first words of a paragraph don't announce: one idea per paragraph,
+  more becomes a list. Source: Nielsen Norman Group, *F-Shaped Pattern of Reading on the Web*,
+  2006 and 2017.
 
 Writing rules, not checked: a person has to judge them.
 
@@ -195,7 +205,7 @@ With `"boxes": false` a labelled paragraph keeps 3 and 60, and the box hints are
 
 ## A whole repository
 
-Any Markdown file can be checked for prose: `--prose-only` leaves out the runbook checks, so
+Any Markdown file can be checked for prose. `--prose-only` leaves out the runbook checks, so
 code examples in a README aren't read as cells.
 
 ```sh

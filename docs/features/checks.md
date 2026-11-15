@@ -1,7 +1,10 @@
 # Checks, retries and captured values
 
-Three groups of [cell options](safety.md#cell-options) make a runbook check its own results,
-wait for things to become ready, and pass values from one step to the next.
+Three groups of [cell options](safety.md#cell-options) make a runbook:
+
+- check its own results;
+- wait for things to become ready;
+- pass values from one step to the next.
 
 To try them, open [`examples/sample.runbook.md`](../../examples/sample.runbook.md) (sections 14 and
 15) or run **md-runbook: Open Feature Tour**.
@@ -36,8 +39,8 @@ grep -q old-setting config.yaml || echo "not found"; exit 1
 - Quote values that contain spaces: `expect="pod Running"`, `expect="/a b/"`. Use single quotes
   around a value that contains `"`.
 - `${out:NAME}`, `${param:NAME}` and `${input:NAME}` in `expect=` and `expect-not=` are the values
-  the cell's code would get (asked before the cell runs if needed), so a step can check against
-  what an earlier step read or what the operator chose:
+  the cell's code would get. If needed, they are asked before the cell runs. So a step can check
+  against what an earlier step read or what the operator chose:
 
   ````markdown
   ```bash capture=BEFORE
@@ -50,14 +53,14 @@ grep -q old-setting config.yaml || echo "not found"; exit 1
   ````
 
   In a regular expression the value is literal text (`expect=/^max=${param:N}$/m` with `N=1.5*`
-  matches `max=1.5*` only). A secret can't be used: `${secret:NAME}` (or a secret input) in a
-  check is an error, and so is a value captured with `capture-secret=`, since the check's text is
-  shown when it fails.
+  matches `max=1.5*` only). A secret can't be used, since the check's text is shown when it fails.
+  `${secret:NAME}` (or a secret input) in a check is an error, and so is a value captured with
+  `capture-secret=`.
 - A failed check fails the cell even with exit code 0. The output ends with the reason, e.g.
   `[md-runbook] check failed: the output does not contain "Running"`, and the marker gets
-  `check=failed` (`check=ok` when every check passed). Progress, Resume Run, Run All
-  (stop on failure) and the report follow `check=` rather than the exit code, so
-  `expect-exit=1` with exit code 1 counts as done.
+  `check=failed` (`check=ok` when every check passed).
+- Progress, Resume Run, Run All (stop on failure) and the report follow `check=` rather than the
+  exit code. So `expect-exit=1` with exit code 1 counts as done.
 
 ## Retries: `retry=`
 
@@ -75,8 +78,8 @@ kubectl rollout status deploy/web --timeout=10s
   marker gets `attempts=4`.
 - A timed-out attempt is tried again; cancelling stops at once. The timeout applies to each
   attempt.
-- The app retries the same way: the running cell says `attempt 2/10`, or which attempt failed
-  and when the next starts, and Stop ends the wait. A signed cell goes to md-runbook-gate again
+- The app retries the same way. The running cell says `attempt 2/10`, or which attempt failed and
+  when the next starts; Stop ends the wait. A signed cell goes to md-runbook-gate again
   for each attempt, as the same signed cell.
 
 ## Captured values: `capture=` and `${out:NAME}`
@@ -103,28 +106,29 @@ kubectl logs "${out:POD}" --tail=20
   fails with `capture NAME: nothing in the output matches …`, so `retry=` can wait for a value
   to appear.
 - `${out:NAME}` works like the [other placeholders](secrets.md): the value is passed as an
-  environment variable, never pasted into the script, and the file keeps the placeholder.
-  Values are kept until the runbook is closed or **Reset Inputs** is run. A cell that uses
+  environment variable, never pasted into the script. The file keeps the placeholder.
+- Values are kept until the runbook is closed or **Reset Inputs** is run. A cell that uses
   `${out:NAME}` before any cell captured it fails with
   `${out:NAME} has no value yet; run the cell with capture=NAME first`.
-- **`capture-secret=`** values are redacted: from the capturing cell's own output (it is redrawn
-  once the value is known), from every later output, and from the saved file. They are never
-  written to disk. Like other secrets, values shorter than 4 characters are not redacted. Cells
+- **`capture-secret=`** values are redacted from the capturing cell's own output, every later
+  output and the saved file. The capturing cell's output is redrawn once the value is known. The
+  values are never written to disk.
+- Like other secrets, `capture-secret=` values shorter than 4 characters are not redacted. Cells
   written by an assistant can't use them.
 
 ## Limits
 
 - Checks, retries and captures apply when the whole cell runs in the runbook view, including
-  cells with the `terminal` option. [Line runs](lines.md) (Run Line or Selection, Run Lines One
-  by One, Step Through) and the plain text editor's ▶ Run CodeLens ignore them.
+  cells with the `terminal` option. [Line runs](lines.md) ignore them: Run Line or Selection, Run
+  Lines One by One, Step Through. So does the plain text editor's ▶ Run CodeLens.
 - `retry=` allows at most 100 attempts and `every=` at most 1 hour. A risky command's
   confirmation says how many times the cell may run.
 - Regular expressions from the runbook (`expect=`, `expect-not=`, `capture=NAME:/…/`) use
-  [RE2 syntax](https://github.com/google/re2/wiki/Syntax), which runs in linear time: no
-  pattern can freeze VS Code. Look-around (`(?=…)`, `(?<=…)`) and back-references (`\1`) are
-  not available; the cell shows an option error instead. Flags: `i`, `m`, `s` (`u` is accepted
-  and changes nothing).
-- In bash, a placeholder becomes an unquoted `${NAME}`: quote it (`"${out:POD}"`) when the
-  value could contain spaces or `*`, as for any shell variable.
+  [RE2 syntax](https://github.com/google/re2/wiki/Syntax). RE2 runs in linear time: no pattern
+  can freeze VS Code.
+- Look-around (`(?=…)`, `(?<=…)`) and back-references (`\1`) are not available; the cell shows an
+  option error instead. Flags: `i`, `m`, `s` (`u` is accepted and changes nothing).
+- In bash, a placeholder becomes an unquoted `${NAME}`. Quote it (`"${out:POD}"`) when the value
+  could contain spaces or `*`, as for any shell variable.
 - `${out:NAME}` values captured by a cell written by an assistant are not used by your own
   cells (see [approval](approval.md)).

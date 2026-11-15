@@ -3,15 +3,16 @@
 Every action, where to find it, and when it matters to you. **App** says whether the md-runbook
 app (iPhone, Android, browser) has it too.
 
-In VS Code everything starts from the **toolbar at the top of a runbook**: a few buttons, then
-the **Run**, **Values**, **Assistant**, **Share** and **Help** buttons; each opens a list of its
-actions to click or type in (the same menus are in the toolbar's **⋯**). A cell's own actions
-are in its **⋯** menu, and each line of a code cell shows its actions when you hover it. If you
-know what you want, Ctrl+Shift+P (⌘⇧P) and type part of its name.
+In VS Code everything starts from the **toolbar at the top of a runbook**. It has a few buttons,
+then the **Run**, **Values**, **Assistant**, **Share** and **Help** buttons. Each opens a list of
+its actions to click or type in (the same menus are in the toolbar's **⋯**).
 
-In the app, the top of a runbook has one button that does the obvious thing (**▶ Run all**, then
-**▶ Resume** after a stop, **↻ Run again** when all is done), and **⋯ More** lists every other
-action by the same groups, with a search field (Ctrl/⌘+K in a browser).
+A cell's own actions are in its **⋯** menu. Each line of a code cell shows its actions when you
+hover it. If you know what you want, Ctrl+Shift+P (⌘⇧P) and type part of its name.
+
+In the app, the top of a runbook has one button that does the obvious thing. It reads **▶ Run
+all**, then **▶ Resume** after a stop, **↻ Run again** when all is done. Every other action is
+listed in **⋯ More** by the same groups, with a search field (Ctrl/⌘+K in a browser).
 
 ## Opening a runbook
 
@@ -89,8 +90,8 @@ action by the same groups, with a search field (Ctrl/⌘+K in a browser).
 | **List Secrets** | Values ▾ | See which secrets are stored (never their values) and copy a `${secret:NAME}` reference to write into a cell. | Hosts & settings → Secrets |
 | **Delete Secret** | Values ▾ | A token was rotated or should no longer be used on this machine. | Hosts & settings → Secrets → **Forget** |
 
-Values never become part of the script: they reach the shell as environment variables, and
-secret values are redacted from the output.
+Values never become part of the script: they reach the shell as environment variables. Secret
+values are redacted from the output.
 
 ## Assistant (AI)
 

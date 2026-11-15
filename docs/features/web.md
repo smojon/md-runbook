@@ -24,9 +24,9 @@ for:
 - whether risky commands may run (`--yes`),
 - whether to publish the report to GitHub Pages.
 
-It runs the runbook with the [command line](cli.md) through the md-runbook GitHub Action and
-keeps the filled-in runbook, the HTML and PDF report and a JUnit report as the workflow
-artifact **runbook-result**. The job summary shows a table of the steps.
+The workflow runs the runbook with the [command line](cli.md) through the md-runbook GitHub
+Action. It keeps the filled-in runbook, the HTML and PDF report and a JUnit report as the
+workflow artifact **runbook-result**. The job summary shows a table of the steps.
 
 ### Before you use it
 
@@ -35,26 +35,30 @@ artifact **runbook-result**. The job summary shows a table of the steps.
   output and reports.
 - **Who can run it:** only people with write access can run a workflow by hand. For runbooks
   that change things, set an `environment:` with required reviewers on the job, so every run
-  waits for an approval.
+  waits for approval.
 - **GitHub Pages is public**, also for private repositories (except on GitHub Enterprise).
   Reports are redacted, but they still show host names, versions and other details of your
   systems. Publishing is therefore off by default; the artifact is visible only to people who
-  can read the repository. To publish, set **Settings → Pages → Source** to **GitHub Actions**
-  and tick the box when you run it.
-- The runner is a fresh machine with no access to your network unless you give it access (a
-  self-hosted runner, a VPN step, cloud credentials). Runbooks that need internal systems
-  usually run on a [self-hosted runner](https://docs.github.com/actions/hosting-your-own-runners).
+  can read the repository.
+- To publish, set **Settings → Pages → Source** to **GitHub Actions** and tick the box when you
+  run it.
+- The runner is a fresh machine with no access to your network unless you give it access.
+  For example: a self-hosted runner, a VPN step, cloud credentials. Runbooks that need
+  internal systems usually run on a
+  [self-hosted runner](https://docs.github.com/actions/hosting-your-own-runners).
 
 ## On a schedule
 
 [`examples/github/scheduled-check.yml`](../../examples/github/scheduled-check.yml) runs a runbook
-every weekday morning (and from a Run workflow button), keeps the results as an artifact, and
-posts to Slack, Teams, Discord or Google Chat when it fails
-([notifications](cli.md#notifications)). For a check on a machine of your own, run the command
-line from cron or Task Scheduler with `MD_RUNBOOK_NOTIFY_URL` set.
+every weekday morning, and from a Run workflow button. It keeps the results as an artifact. When
+the runbook fails, it posts to Slack, Teams, Discord or Google Chat
+([notifications](cli.md#notifications)).
+
+For a check on your own machine, run the command line from cron or Task Scheduler with
+`MD_RUNBOOK_NOTIFY_URL` set.
 
 ## Why there is no hosted "run" page
 
-A web page whose buttons run commands needs a server that executes them for remote users:
-authentication, per-user secrets, approvals, an audit trail and isolation between runs. CI
-systems already provide all of that, which is why the Run button above is a workflow.
+A web page whose buttons run commands needs a server that executes them for remote users. Such
+a server needs authentication, per-user secrets, approvals, an audit trail and isolation between
+runs. CI systems already provide all of that, which is why the Run button above is a workflow.
