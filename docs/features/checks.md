@@ -38,9 +38,9 @@ grep -q old-setting config.yaml || echo "not found"; exit 1
   with `\n` line endings.
 - Quote values that contain spaces: `expect="pod Running"`, `expect="/a b/"`. Use single quotes
   around a value that contains `"`.
-- `${out:NAME}`, `${param:NAME}` and `${input:NAME}` in `expect=` and `expect-not=` are the values
-  the cell's code would get. If needed, they are asked before the cell runs. So a step can check
-  against what an earlier step read or what the operator chose:
+- In `expect=` and `expect-not=`, `${out:NAME}`, `${param:NAME}` and `${input:NAME}` are the values
+  its code gets, asked first if needed. So a step can check against what an earlier step read or
+  what the operator chose:
 
   ````markdown
   ```bash capture=BEFORE
