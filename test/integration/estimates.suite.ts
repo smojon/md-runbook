@@ -55,6 +55,23 @@ test('estimate=: a runbook without estimates shows nothing of them', async () =>
   await closeAll();
 });
 
+test('a re-run counts the steps it has not reached yet as still to do', async () => {
+  const uri = writeFile('estimates-rerun.md', `# Steps\n\n${fence('estimate=3', sleep(2))}\n${fence('estimate=10m', 'echo two')}`);
+  const editor = await openRunbook(uri);
+  await runCells(editor, 1, 3);
+  assert.equal(await waitForRun(editor.notebook.cellAt(2)), true);
+  assert.equal((await estimates()).runbook.leftSeconds, 0, 'both done');
+  // Again: the second block's output is the last run's, but this run hasn't reached it.
+  const again = runCells(editor, 1, 3);
+  let left = 0;
+  for (const end = Date.now() + 10_000; left < 600 && Date.now() < end; await new Promise((r) => setTimeout(r, 100))) {
+    left = (await estimates()).runbook.leftSeconds;
+  }
+  assert.ok(left >= 600, `the 10 min block counts as left (left: ${left}s)`);
+  await again;
+  await closeAll();
+});
+
 test('a block without estimate= learns its usual time from its runs that passed', async () => {
   const uri = writeFile('estimates-learned.md', `# Steps\n\n${fence('', 'echo learned')}`);
   const editor = await openRunbook(uri);

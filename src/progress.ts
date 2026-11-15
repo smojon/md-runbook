@@ -21,6 +21,7 @@ import { lastGreenLine } from './runs';
 import { NOTEBOOK_TYPE } from './serializer';
 import { setTaskBox } from './taskLists';
 import { onDidChangeWaiting, waitingIn, waitingText } from './waiting';
+import { onDidChangeQueue } from './runQueue';
 
 /** Marker attributes of a code cell's current output, or undefined if it has none (or is running). */
 export function cellAttrs(cell: vscode.NotebookCell): Record<string, string> | undefined {
@@ -297,6 +298,7 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
     vscode.window.onDidChangeActiveNotebookEditor(refresh),
     vscode.window.onDidChangeActiveTextEditor(refresh),
     onDidChangeWaiting(refresh),
+    onDidChangeQueue(refresh),
     onDidChangeCurrentRunbook(refresh),
     // The status bar item while a cell waits for the reader (waiting.ts).
     vscode.commands.registerCommand('mdRunbook._revealCell', async (arg?: unknown) => {

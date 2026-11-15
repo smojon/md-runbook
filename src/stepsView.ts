@@ -34,6 +34,7 @@ import { stepsPage } from './stepsPage';
 import { setTaskBox } from './taskLists';
 import { NOTEBOOK_TYPE } from './serializer';
 import { onDidChangeWaiting, waitingAnswers, waitingIn } from './waiting';
+import { onDidChangeQueue } from './runQueue';
 
 export const STEPS_VIEW = 'mdRunbook.steps';
 const REVEALED_KEY = 'mdRunbook.stepsViewShown';
@@ -686,6 +687,7 @@ export function registerStepsView(context: vscode.ExtensionContext, pipeline?: R
       if (e.notebook.notebookType === NOTEBOOK_TYPE) view.refresh();
     }),
     onDidChangeWaiting(() => view.refresh()),
+    onDidChangeQueue(() => view.refresh()),
     // Run ▾ shows the runbook-call items only while a call is selected (they act on it).
     vscode.window.onDidChangeNotebookEditorSelection((e) => {
       const cell = e.notebookEditor.notebook.notebookType === NOTEBOOK_TYPE ? e.notebookEditor.notebook.cellAt(e.selections[0]?.start ?? 0) : undefined;

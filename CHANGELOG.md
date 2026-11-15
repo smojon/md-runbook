@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Progress, re-runs:** a run counts the steps it hasn't reached yet as still to do, even when
+  they have a green output from the last run. Before, re-running a finished runbook showed 98 %,
+  `0s left` and an end time already past. VS Code and the app.
 - **Estimates:** a run under 10 s rounds up to whole seconds, not to 5 s. A 5.1 s block now
   learns `~6s`, not `~10s`; clicking its time writes `estimate=6s`. VS Code and the app.
 - **Docs:** the Getting Started pages, the example runbooks, the contributor handoff and the

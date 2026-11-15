@@ -18,6 +18,7 @@ import { SECTION } from './config';
 import { copyOrigin } from './copyOrigins';
 import { META_KEY, outputMeta } from './outputs';
 import type { RunPipeline, RunRecord } from './pipeline';
+import { isQueued } from './runQueue';
 import { originalName } from './runHistory';
 import { NOTEBOOK_TYPE } from './serializer';
 
@@ -170,6 +171,8 @@ export function notebookEstimateSteps(
       ...(o?.part === 'setup' || o?.part === 'teardown' ? { part: o.part } : {}),
     };
     if (since !== undefined) return void steps.push({ ...e, state: 'running', elapsedSeconds: (now - since) / 1000 });
+    // Queued by the run but not reached yet: its output is the previous run's, still to do.
+    if (isQueued(c)) return void steps.push({ ...e, state: 'pending' });
     const a = attrsOf(c);
     const state = stepState(a?.exit, a?.lines !== undefined, a?.check);
     steps.push({ ...e, state: state === 'done' || state === 'skipped' ? 'done' : 'pending' });

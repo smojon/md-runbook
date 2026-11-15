@@ -364,12 +364,40 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const stepsShown = !wide && viewMode === 'steps';
   // The clock moves the bars against estimates, and the running step's time in the list.
   const now = useNow(running !== undefined && (estimateSteps.some((s) => s.estimateSeconds !== undefined) || stepsShown || wide));
+  /** Run all / Continue: the cells still to run, the host, and the proposals left out. */
+  /** Run all / Continue: the cells left, the host, proposals passed over, and the runbook call it stops before. */
+  const queue = useRef<
+    | {
+        cells: number[];
+        on: Host | undefined;
+        proposed: number;
+        call?: number;
+        /** A setup call's copy: the ready check guards every other cell. */
+        readyFirst?: boolean;
+        /** The ready check's answer, once it ran. */
+        readyUp?: boolean;
+        /** The teardown offer's answer; a called runbook runs whole (`run`). */
+        takeDown?: boolean | 'run';
+        /** Continue with only the teardown left: offer it even after Leave it up. */
+        askAgain?: boolean;
+        /** Wait at unticked checklist items (steps done by hand); off with `manual-steps: continue`. */
+        manual: boolean;
+        /** Checklist items answered Skip in this run (`cell:item`). */
+        skipped: Set<string>;
+        /** The last cell Run all took from `cells` (ran, skipped as already up, or left with the teardown). */
+        last?: number;
+      }
+    | undefined
+  >(undefined);
   const partStates = useMemo(() => (runbook ? textPartStates(runbook.text) : undefined), [runbook]);
   const estimate = runbookEstimate(
     estimateSteps.map((s) =>
       running && s.cell === running.cellIndex
         ? { ...s, state: 'running' as const, elapsedSeconds: Math.max(0, (now - running.startedAt) / 1000) }
-        : s,
+        : // Still to run in this Run all: its output is the previous run's, so it isn't done yet.
+          queue.current?.cells.includes(s.cell)
+          ? { ...s, state: 'pending' as const }
+          : s,
     ),
     partStates,
   );
@@ -445,31 +473,6 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const captures = useRef<Record<string, Captured>>({});
   /** A cell is running (a ref: Run all starts the next one before React re-renders). */
   const busy = useRef(false);
-  /** Run all / Continue: the cells still to run, the host, and the proposals left out. */
-  /** Run all / Continue: the cells left, the host, proposals passed over, and the runbook call it stops before. */
-  const queue = useRef<
-    | {
-        cells: number[];
-        on: Host | undefined;
-        proposed: number;
-        call?: number;
-        /** A setup call's copy: the ready check guards every other cell. */
-        readyFirst?: boolean;
-        /** The ready check's answer, once it ran. */
-        readyUp?: boolean;
-        /** The teardown offer's answer; a called runbook runs whole (`run`). */
-        takeDown?: boolean | 'run';
-        /** Continue with only the teardown left: offer it even after Leave it up. */
-        askAgain?: boolean;
-        /** Wait at unticked checklist items (steps done by hand); off with `manual-steps: continue`. */
-        manual: boolean;
-        /** Checklist items answered Skip in this run (`cell:item`). */
-        skipped: Set<string>;
-        /** The last cell Run all took from `cells` (ran, skipped as already up, or left with the teardown). */
-        last?: number;
-      }
-    | undefined
-  >(undefined);
   /** A step done by hand Run all waits at, with its card under its Markdown cell. */
   const [manualAsk, setManualAsk] = useState<ManualItem | undefined>();
   // The teardown offer (core/parts.ts), under the first teardown step.

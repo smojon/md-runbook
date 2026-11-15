@@ -39,6 +39,7 @@ import { CellTranscript, startCellTranscript } from './transcript';
 import { setTaskBox } from './taskLists';
 import { pauseBefore, stepStarting } from './stepMarks';
 import { askOnCell } from './waiting';
+import { markQueued, unmarkQueued } from './runQueue';
 
 const FLUSH_MS = 100;
 /** `kubectl config current-context` only reads the kubeconfig. */
@@ -375,6 +376,8 @@ export class RunbookController implements vscode.Disposable {
         // Already queued or running.
       }
     }
+    // Still to do in this run, whatever their previous outputs say (the time left counts them).
+    if (executions.length > 1) markQueued(executions.map((e) => e.cell));
     const key = notebook.uri.toString();
     const next = (this.queues.get(key) ?? Promise.resolve())
       .then(() => this.runSequence(executions, notebook, lineRun, options))
@@ -427,6 +430,8 @@ export class RunbookController implements vscode.Disposable {
       }
       for (let next = 0; next < executions.length; next++) {
         const exec = executions[next]!;
+        // The one before has had its turn: its own output counts again.
+        if (next > 0) unmarkQueued([executions[next - 1]!.cell]);
         handled = next;
         const why = stopped ? undefined : exclusion(exec.cell);
         if (why !== undefined) {
@@ -484,6 +489,7 @@ export class RunbookController implements vscode.Disposable {
       const lastCode = notebook.getCells().filter((c) => c.kind === vscode.NotebookCellKind.Code).pop();
       if (manual && !stopped && lastCode && executions.some((e) => e.cell === lastCode)) await this.manualStepsBefore(notebook, notebook.cellCount);
     } finally {
+      unmarkQueued(cells);
       this.cancelled.delete(notebook.uri.toString());
       // Something threw: don't leave the remaining cells pending forever. (runCell ends its own.)
       for (let i = handled + 1; i < executions.length; i++) {
