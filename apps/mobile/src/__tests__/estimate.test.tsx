@@ -51,7 +51,7 @@ describe('estimate= (how long a cell takes)', () => {
     await act(async () => {
       fireEvent.press(screen.getByTestId('run-primary'));
     });
-    await waitFor(() => expect(screen.getByTestId('cell-1-estimate')).toHaveTextContent(/est\. ~5s$/));
+    await waitFor(() => expect(screen.getByTestId('cell-1-estimate')).toHaveTextContent(/est\. ~[1-9]s$/));
     expect(screen.queryByTestId('estimate-more')).toBeNull();
     // The output line doesn't compare the run with an estimate it was learned from.
     expect(screen.queryByTestId('cell-1-took')).toBeNull();

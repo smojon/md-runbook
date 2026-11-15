@@ -370,6 +370,11 @@ describe('status line helpers', () => {
   });
 
   it('suggests a round estimate from a run', () => {
+    assert.equal(suggestedEstimate(5.1), 6, 'whole seconds under 10 s, not 10 s');
+    assert.equal(suggestedEstimate(0.2), 1);
+    assert.equal(suggestedEstimate(9.5), 10);
+    assert.equal(suggestedEstimate(10), 10);
+    assert.equal(suggestedEstimate(10.2), 15);
     assert.equal(suggestedEstimate(47), 50);
     assert.equal(suggestedEstimate(190), 195);
     assert.equal(suggestedEstimate(16.5), 20);
@@ -425,7 +430,8 @@ describe('status line helpers', () => {
 describe('learned estimates (a block without estimate=)', () => {
   it('the median of the last 5 runs, rounded up as estimate= would be', () => {
     assert.equal(learnedEstimate([]), undefined);
-    assert.equal(learnedEstimate([0.4]), 5);
+    assert.equal(learnedEstimate([0.4]), 1);
+    assert.equal(learnedEstimate([5.1, 5.2, 5.0]), 6, 'a 5 s loop learns 6s, not 10s');
     assert.equal(learnedEstimate([62, 58, 300, 61, 60]), 75, 'one slow run does not move it: median 61 → 1m15s');
     assert.equal(learnedEstimate([1000, 1000, 10, 10, 10, 10, 10]), 10, 'only the last 5 count');
     assert.equal(learnedEstimate([20, 40]), 30);

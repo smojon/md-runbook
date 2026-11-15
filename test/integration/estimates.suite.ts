@@ -67,8 +67,9 @@ test('a block without estimate= learns its usual time from its runs that passed'
     const e = await estimates();
     if (e.cells[1] !== undefined) learned = e;
   }
-  assert.equal(learned?.cells[1], '$(watch) est. ~5s');
+  // Whole seconds under 10 s: how many depends on the machine's speed.
+  assert.match(learned?.cells[1] ?? '', /^\$\(watch\) est\. ~[1-9]s$/);
   assert.equal(learned?.runbook.unestimated, 0);
-  assert.equal(learned?.runbook.totalSeconds, 5);
+  assert.ok((learned?.runbook.totalSeconds ?? 0) >= 1 && (learned?.runbook.totalSeconds ?? 0) <= 9);
   await closeAll();
 });

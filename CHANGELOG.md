@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Estimates:** a run under 10 s rounds up to whole seconds, not to 5 s. A 5.1 s block now
+  learns `~6s`, not `~10s`; clicking its time writes `estimate=6s`. VS Code and the app.
 - **Docs:** the Getting Started pages, the example runbooks, the contributor handoff and the
   remaining READMEs follow the prose rules. The handoff's release and VS Code issue notes are
   current again.

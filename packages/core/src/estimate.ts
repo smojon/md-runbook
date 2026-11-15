@@ -134,12 +134,13 @@ export function overEstimate(actualSeconds: number, estimateSeconds: number): nu
 }
 
 /**
- * The estimate a run suggests: what it took, rounded up to a round figure (`3m10s` → `3m15s`,
- * `47s` → `50s`), as `estimate=` would be written.
+ * The estimate a run suggests: what it took, rounded up to a round figure (`5.1s` → `6s`,
+ * `47s` → `50s`, `3m10s` → `3m15s`), as `estimate=` would be written. Whole seconds under 10 s:
+ * 5 s steps there would nearly double a short block (5.1 s → 10 s).
  */
 export function suggestedEstimate(actualSeconds: number): number {
   const s = Math.max(1, actualSeconds);
-  const step = s < 60 ? 5 : s < 600 ? 15 : s < 3600 ? 60 : 300;
+  const step = s < 10 ? 1 : s < 60 ? 5 : s < 600 ? 15 : s < 3600 ? 60 : 300;
   return Math.ceil(s / step) * step;
 }
 

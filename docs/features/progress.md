@@ -269,7 +269,11 @@ After a run that took noticeably longer, the line says by how much:
 - Noticeably longer: more than a quarter and at least 10 s over.
 - A warning icon: past twice the estimate and a minute over.
 
-Click the line to set `estimate=` to what the run took, rounded up.
+Click the line to set `estimate=` to what the run took, rounded up:
+
+- to whole seconds under 10 s (5.1 s → `6s`);
+- to 5 s under a minute, 15 s under 10 minutes;
+- to a minute under an hour, then to 5 minutes.
 
 **Learned estimates.** A block without `estimate=` learns its usual time from its runs that
 passed. It is the median of the last 5, rounded up as `estimate=` would be, and shown with a
