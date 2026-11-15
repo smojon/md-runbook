@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.26.2
+
+Prose checks you can tune, with boxes and fewer false alarms.
+
 - **Prose checks: limits of your own, boxes, and new hints.** See [Prose](docs/features/lint.md#prose).
   - `.md-runbook-prose.json` can set the limits (`"limits"`) and the box limits (`"boxes"`).
   - A box's labelled paragraph may have 5 sentences and 100 words.
