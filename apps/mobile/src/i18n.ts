@@ -413,6 +413,7 @@ const en = {
   problemCell: (cell: number) => `Cell ${cell}`,
   problemError: 'Error',
   problemWarning: 'Warning',
+  problemInfo: 'Note',
   fixOption: (from: string, to: string) => `Change “${from}” to “${to}”`,
   problemsSummary: (errors: number, warnings: number) =>
     [errors > 0 ? `${errors} error${errors === 1 ? '' : 's'}` : '', warnings > 0 ? `${warnings} warning${warnings === 1 ? '' : 's'}` : '']
@@ -421,6 +422,8 @@ const en = {
   problemsShow: 'Show',
   problemsHide: 'Hide',
   noProblems: 'No problems found.',
+  proseNotes: (n: number) => `${n} prose note${n === 1 ? '' : 's'}`,
+  proseNotesHint: 'Ways to make this text shorter. Not problems.',
   diffTitle: (label: string, before: string, after: string) => `${label}: ${before} → ${after}`,
   diffSame: 'The output is the same as in the previous run.',
   noEarlierRun: 'No earlier run is kept: turn on Hosts & settings → Output history, then run the cell again.',

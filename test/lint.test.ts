@@ -110,6 +110,13 @@ describe('lintRunbook', () => {
 
   it('formats problems as file:line: severity: message', () => {
     assert.equal(formatProblem('r.md', { severity: 'error', message: 'boom', line: 4 }), 'r.md:5: error: boom');
+    assert.equal(formatProblem('r.md', { severity: 'info', message: 'Delete "just"', line: 0 }), 'r.md:1: info: Delete "just"');
+  });
+
+  it('front matter prose: on, strict or off (prose.test.ts has the checks)', () => {
+    assert.equal(parseFrontMatter('---\nprose: Strict\n---\n')?.prose, 'strict');
+    assert.equal(parseFrontMatter('---\nprose: off # not for this one\n---\n')?.prose, 'off');
+    assert.equal(parseFrontMatter('---\nprose: loud\n---\n')?.prose, undefined);
   });
 });
 
@@ -128,5 +135,10 @@ describe('md-runbook lint', () => {
     assert.equal(lint([warn], () => undefined), 0);
     assert.equal(lint([warn, '--strict'], () => undefined), 1);
     assert.equal(lint([file(fence('bash', 'echo ok'))], () => undefined), 0);
+    // Prose notes are info: listed, never failing.
+    const long = file(Array(30).fill('word').join(' ') + '.\n');
+    lines.length = 0;
+    assert.equal(lint([long, '--strict'], (l) => lines.push(l)), 0);
+    assert.match(lines.join('\n'), /r\.md:1: info: 30 words, at most 20/);
   });
 });

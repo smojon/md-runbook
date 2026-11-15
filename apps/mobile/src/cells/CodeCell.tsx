@@ -227,7 +227,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                       <Codicon name="pass-filled" size={12} color={c.accent} />
                     ) : problemHere ? (
                       <View testID={`cell-${index}-line-${n}-problem`}>
-                        <Codicon name={problemHere} size={12} color={problemHere === 'error' ? c.error : c.warning} />
+                        <Codicon name={SEVERITY_ICON[problemHere]} size={12} color={severityColor(problemHere, c)} />
                       </View>
                     ) : null}
                   </View>
@@ -396,6 +396,11 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
 
 const NO_PROBLEMS: readonly LintProblem[] = [];
 
+/** A problem's mark: error and warning in their colour; info (a prose note, never on a code cell today) muted. */
+const SEVERITY_ICON = { error: 'error', warning: 'warning', info: 'lightbulb' } as const;
+const severityColor = (severity: LintProblem['severity'], c: Palette): string =>
+  severity === 'error' ? c.error : severity === 'warning' ? c.warning : c.muted;
+
 /**
  * One lint problem: its icon, where it is (a line of the cell, or the cell's options) and the
  * message, with the "did you mean" fix as a button when there is one. Also the runbook's
@@ -427,8 +432,13 @@ export function ProblemRow({
   );
   return (
     <View testID={id} style={styles.problem}>
-      <View accessibilityLabel={problem.severity === 'error' ? t.problemError : t.problemWarning} style={styles.problemIcon}>
-        <Codicon name={problem.severity} size={13} color={problem.severity === 'error' ? c.error : c.warning} />
+      <View
+        accessibilityLabel={
+          problem.severity === 'error' ? t.problemError : problem.severity === 'warning' ? t.problemWarning : t.problemInfo
+        }
+        style={styles.problemIcon}
+      >
+        <Codicon name={SEVERITY_ICON[problem.severity]} size={13} color={severityColor(problem.severity, c)} />
       </View>
       <View style={styles.problemBody}>
         {onPress ? (

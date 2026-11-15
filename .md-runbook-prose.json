@@ -1,0 +1,7 @@
+{
+  "exclude": [
+    "test/fixtures/**",
+    "apps/mobile/AGENTS.md",
+    "apps/mobile/THIRD_PARTY_NOTICES.md"
+  ]
+}

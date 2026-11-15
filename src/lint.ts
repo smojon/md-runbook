@@ -1,6 +1,7 @@
 /**
  * Problem markers for runbooks (`mdRunbook.lint.enabled`): the checks of `md-runbook lint`,
- * shown while you edit, in the runbook view and in the plain Markdown editor.
+ * shown while you edit, in the runbook view and in the plain Markdown editor. Prose findings
+ * show as `mdRunbook.lint.prose` says (lintLevel.ts).
  */
 
 import * as vscode from 'vscode';
@@ -15,6 +16,7 @@ import { META_KEY } from './outputs';
 import { neverRanCells, onDidChangeRuns, runsKeyOf } from './runs';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
 import { timed } from './timings';
+import { MarkerLevel, markerLevel, proseSetting } from './lintLevel';
 
 const DELAY_MS = 300;
 /** The diagnostic code of an unknown option that looks like a typo (a Quick Fix renames it). */
@@ -26,10 +28,18 @@ const FENCE_LINE_RE = /^(\s*(?:`{3,}|~{3,}))(.*)$/;
 const NEVER_RAN = 'This step has never run here.';
 const NEVER_RAN_CODE = 'never-ran';
 
-function toDiagnostic(p: LintProblem, range: vscode.Range, prefix = ''): vscode.Diagnostic {
-  const d = new vscode.Diagnostic(range, prefix + p.message, p.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning);
+const SEVERITY: Record<MarkerLevel, vscode.DiagnosticSeverity> = {
+  error: vscode.DiagnosticSeverity.Error,
+  warning: vscode.DiagnosticSeverity.Warning,
+  information: vscode.DiagnosticSeverity.Information,
+  hint: vscode.DiagnosticSeverity.Hint,
+};
+
+function toDiagnostic(p: LintProblem, level: MarkerLevel, range: vscode.Range, prefix = ''): vscode.Diagnostic {
+  const d = new vscode.Diagnostic(range, prefix + p.message, SEVERITY[level]);
   d.source = 'md-runbook';
   if (p.fix) d.code = TYPO_CODE;
+  else if (p.code) d.code = p.code;
   return d;
 }
 
@@ -104,6 +114,14 @@ function callLintOptions(uri: vscode.Uri): LintOptions {
 export function registerLint(context: vscode.ExtensionContext): void {
   const collection = vscode.languages.createDiagnosticCollection('md-runbook');
   const enabled = (): boolean => vscode.workspace.getConfiguration(SECTION).get<boolean>('lint.enabled', true);
+  /** Each problem with how it shows (prose findings as mdRunbook.lint.prose says), the hidden ones left out. */
+  const shown = (problems: readonly LintProblem[]): Array<[LintProblem, MarkerLevel]> => {
+    const prose = proseSetting(vscode.workspace.getConfiguration(SECTION).get('lint.prose'));
+    return problems.flatMap((p) => {
+      const level = markerLevel(p, prose);
+      return level ? [[p, level] as [LintProblem, MarkerLevel]] : [];
+    });
+  };
   /** Cell documents that got markers, per notebook, so they can be cleared. */
   const notebookUris = new Map<string, vscode.Uri[]>();
   const timers = new Map<string, NodeJS.Timeout>();
@@ -117,18 +135,18 @@ export function registerLint(context: vscode.ExtensionContext): void {
     clearNotebook(nb);
     if (!enabled() || nb.isClosed) return;
     const byCell = new Map<number, vscode.Diagnostic[]>();
-    for (const p of lintRunbook(notebookTextWithOutputs(nb), callLintOptions(nb.uri))) {
-      // Problems in a code block go on its cell; front matter problems on the first cell.
+    for (const [p, level] of shown(lintRunbook(notebookTextWithOutputs(nb), callLintOptions(nb.uri)))) {
+      // Problems in a cell go on it (prose on its Markdown cell); front matter problems on the first cell.
       const index = p.cell?.index ?? 0;
       if (index >= nb.cellCount) continue;
       const doc = nb.cellAt(index).document;
       // Fence options are not part of the cell's text: mark its first line.
       const d =
         p.cell === undefined
-          ? toDiagnostic(p, lineRange(doc, p.line))
+          ? toDiagnostic(p, level, lineRange(doc, p.line))
           : p.cell.sourceLine === undefined
-            ? toDiagnostic(p, lineRange(doc, 0), 'cell options: ')
-            : toDiagnostic(p, lineRange(doc, p.cell.sourceLine));
+            ? toDiagnostic(p, level, lineRange(doc, 0), 'cell options: ')
+            : toDiagnostic(p, level, lineRange(doc, p.cell.sourceLine));
       byCell.set(index, [...(byCell.get(index) ?? []), d]);
     }
     // Steps that never ran in any recorded run (runs.ts): a hint, once the runbook has a run.
@@ -150,7 +168,7 @@ export function registerLint(context: vscode.ExtensionContext): void {
   const lintText = (doc: vscode.TextDocument): void => {
     if (doc.languageId !== 'markdown' || doc.uri.scheme === 'vscode-notebook-cell') return;
     if (!enabled()) return void collection.delete(doc.uri);
-    collection.set(doc.uri, lintRunbook(doc.getText(), callLintOptions(doc.uri)).map((p) => toDiagnostic(p, lineRange(doc, p.line))));
+    collection.set(doc.uri, shown(lintRunbook(doc.getText(), callLintOptions(doc.uri))).map(([p, level]) => toDiagnostic(p, level, lineRange(doc, p.line))));
   };
 
   const later = (key: string, fn: () => void): void => {
@@ -187,7 +205,7 @@ export function registerLint(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'markdown' && later(e.document.uri.toString(), () => lintText(e.document))),
     vscode.workspace.onDidCloseTextDocument((doc) => doc.uri.scheme !== 'vscode-notebook-cell' && collection.delete(doc.uri)),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration(`${SECTION}.lint.enabled`)) all();
+      if (e.affectsConfiguration(`${SECTION}.lint.enabled`) || e.affectsConfiguration(`${SECTION}.lint.prose`)) all();
     }),
     // For tests: the markers of a document.
     vscode.commands.registerCommand('mdRunbook._diagnostics', (uri: vscode.Uri) => collection.get(uri)?.map((d) => d.message) ?? []),

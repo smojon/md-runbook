@@ -1,7 +1,9 @@
 /**
  * The checks of `md-runbook lint` and the extension's problem markers, for the app: problems by
  * code cell, the rest (front matter, signature) for the runbook, and the "did you mean" fix of a
- * misspelled cell option, as the extension's Quick Fix makes it.
+ * misspelled cell option, as the extension's Quick Fix makes it. Prose notes (info: a long
+ * sentence, a padding word) are kept apart: a subtle mark under their Markdown cell, not counted
+ * as problems.
  */
 import { DEFAULT_WRITE_OPTIONS, isCodeMeta, parse, serialize, toCellInputs } from '@md-runbook/core';
 import { renameInfoOption } from '@md-runbook/core/cellOptions';
@@ -17,17 +19,24 @@ export interface RunbookProblems {
   byCell: ReadonlyMap<number, readonly LintProblem[]>;
   /** Problems outside the code blocks: the front matter, the signature. */
   runbook: readonly LintProblem[];
+  /** Prose notes (severity info), by their Markdown cell's index. Not in `all`. */
+  notes: ReadonlyMap<number, readonly LintProblem[]>;
 }
 
 export function runbookProblems(text: string, options: LintOptions = {}): RunbookProblems {
-  const all = lintRunbook(text, options);
+  const found = lintRunbook(text, options);
+  const all = found.filter((p) => p.severity !== 'info');
   const byCell = new Map<number, LintProblem[]>();
   const runbook: LintProblem[] = [];
+  const notes = new Map<number, LintProblem[]>();
   for (const p of all) {
     if (p.cell === undefined) runbook.push(p);
     else byCell.set(p.cell.index, [...(byCell.get(p.cell.index) ?? []), p]);
   }
-  return { all, byCell, runbook };
+  for (const p of found) {
+    if (p.severity === 'info' && p.cell) notes.set(p.cell.index, [...(notes.get(p.cell.index) ?? []), p]);
+  }
+  return { all, byCell, runbook, notes };
 }
 
 /**

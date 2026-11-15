@@ -1,0 +1,297 @@
+{
+ "CHANGELOG.md": {
+  "average": 20.5,
+  "repeats": 2,
+  "sentences": 304,
+  "units": 105
+ },
+ "PUBLISHING.md": {
+  "average": 15.3,
+  "sentences": 6,
+  "units": 1
+ },
+ "README.md": {
+  "average": 17.3,
+  "sentences": 53,
+  "units": 11
+ },
+ "apps/gate/README.md": {
+  "average": 17.6,
+  "sentences": 12,
+  "units": 2
+ },
+ "apps/library-server/README.md": {
+  "average": 16.2,
+  "phrases": 1,
+  "sentences": 31,
+  "units": 5
+ },
+ "apps/mobile/STORE.md": {
+  "average": 10.4,
+  "sentences": 2,
+  "units": 3
+ },
+ "apps/ops/README.md": {
+  "average": 12.3,
+  "sentences": 8,
+  "units": 5
+ },
+ "apps/probe/README.md": {
+  "average": 15.8,
+  "phrases": 1,
+  "sentences": 9,
+  "units": 1
+ },
+ "apps/relay/README.md": {
+  "average": 10.3,
+  "phrases": 1,
+  "sentences": 2,
+  "units": 2
+ },
+ "apps/web/README.md": {
+  "average": 17.8,
+  "sentences": 15,
+  "units": 8
+ },
+ "cli/README.md": {
+  "average": 17.2,
+  "sentences": 6,
+  "units": 0
+ },
+ "docs/HANDOFF.md": {
+  "average": 19.4,
+  "sentences": 35,
+  "units": 9
+ },
+ "docs/app.md": {
+  "average": 20.9,
+  "sentences": 102,
+  "units": 37
+ },
+ "docs/cheatsheet.md": {
+  "average": 21.7,
+  "sentences": 4,
+  "units": 1
+ },
+ "docs/features/ai-context.md": {
+  "average": 17.9,
+  "sentences": 27,
+  "units": 4
+ },
+ "docs/features/ai.md": {
+  "average": 16.0,
+  "phrases": 1,
+  "sentences": 20,
+  "units": 4
+ },
+ "docs/features/approval.md": {
+  "average": 21.0,
+  "sentences": 29,
+  "units": 7
+ },
+ "docs/features/calls.md": {
+  "average": 18.2,
+  "phrases": 1,
+  "sentences": 22,
+  "units": 5
+ },
+ "docs/features/checks.md": {
+  "average": 15.4,
+  "sentences": 10,
+  "units": 1
+ },
+ "docs/features/cli.md": {
+  "average": 18.8,
+  "sentences": 38,
+  "units": 11
+ },
+ "docs/features/codelens-report.md": {
+  "average": 20.3,
+  "phrases": 1,
+  "sentences": 23,
+  "units": 5
+ },
+ "docs/features/devcontainer.md": {
+  "average": 11.8,
+  "sentences": 2,
+  "units": 0
+ },
+ "docs/features/drills.md": {
+  "average": 14.6,
+  "sentences": 4,
+  "units": 1
+ },
+ "docs/features/for-auditors.md": {
+  "average": 17.8,
+  "sentences": 15,
+  "units": 4
+ },
+ "docs/features/history.md": {
+  "average": 17.6,
+  "sentences": 26,
+  "units": 5
+ },
+ "docs/features/kubernetes.md": {
+  "average": 16.1,
+  "phrases": 1,
+  "sentences": 34,
+  "units": 9
+ },
+ "docs/features/lines.md": {
+  "average": 19.7,
+  "sentences": 24,
+  "units": 3
+ },
+ "docs/features/lint.md": {
+  "average": 15.5,
+  "sentences": 16,
+  "units": 2
+ },
+ "docs/features/on-call.md": {
+  "average": 18.0,
+  "sentences": 14,
+  "units": 3
+ },
+ "docs/features/progress.md": {
+  "average": 23.0,
+  "phrases": 1,
+  "sentences": 48,
+  "units": 14
+ },
+ "docs/features/run-reports.md": {
+  "average": 15.4,
+  "phrases": 1,
+  "sentences": 22,
+  "units": 4
+ },
+ "docs/features/safety.md": {
+  "average": 18.0,
+  "phrases": 2,
+  "sentences": 17,
+  "units": 5
+ },
+ "docs/features/secrets.md": {
+  "average": 17.9,
+  "phrases": 1,
+  "sentences": 20,
+  "units": 7
+ },
+ "docs/features/session.md": {
+  "average": 17.0,
+  "phrases": 2,
+  "sentences": 14,
+  "units": 4
+ },
+ "docs/features/setup-teardown.md": {
+  "average": 19.3,
+  "sentences": 10,
+  "units": 1
+ },
+ "docs/features/signed-runbooks.md": {
+  "average": 22.1,
+  "phrases": 1,
+  "sentences": 82,
+  "units": 26
+ },
+ "docs/features/terminal.md": {
+  "average": 19.2,
+  "sentences": 12,
+  "units": 4
+ },
+ "docs/features/web.md": {
+  "average": 15.2,
+  "sentences": 6,
+  "units": 1
+ },
+ "docs/investigations/notebook-open-slow.md": {
+  "average": 20.1,
+  "sentences": 59,
+  "units": 6
+ },
+ "docs/screenshots.md": {
+  "average": 15.3,
+  "sentences": 2,
+  "units": 1
+ },
+ "docs/switching.md": {
+  "average": 22.2,
+  "sentences": 22,
+  "units": 6
+ },
+ "docs/syntax.md": {
+  "average": 17.3,
+  "phrases": 1,
+  "sentences": 63,
+  "units": 22
+ },
+ "docs/troubleshooting.md": {
+  "average": 19.7,
+  "sentences": 6,
+  "units": 0
+ },
+ "examples/ci.runbook.md": {
+  "average": 14.5,
+  "sentences": 1,
+  "units": 0
+ },
+ "examples/quickstart.runbook.md": {
+  "average": 15.4,
+  "sentences": 2,
+  "units": 0
+ },
+ "examples/sample.runbook.md": {
+  "average": 14.2,
+  "sentences": 23,
+  "units": 3
+ },
+ "packages/ssh/README.md": {
+  "average": 17.5,
+  "sentences": 5,
+  "units": 0
+ },
+ "scripts/open-probe/README.md": {
+  "average": 14.1,
+  "sentences": 2,
+  "units": 0
+ },
+ "spikes/ssh/README.md": {
+  "average": 20.9,
+  "sentences": 18,
+  "units": 2
+ },
+ "walkthrough/cli.md": {
+  "average": 16.2,
+  "sentences": 2,
+  "units": 0
+ },
+ "walkthrough/inputs.md": {
+  "average": 11.2,
+  "sentences": 1,
+  "units": 0
+ },
+ "walkthrough/lines.md": {
+  "average": 22.7,
+  "sentences": 2,
+  "units": 0
+ },
+ "walkthrough/open.md": {
+  "average": 15.8,
+  "sentences": 2,
+  "units": 0
+ },
+ "walkthrough/run.md": {
+  "average": 16.7,
+  "sentences": 3,
+  "units": 0
+ },
+ "walkthrough/session.md": {
+  "average": 23.0,
+  "sentences": 1,
+  "units": 0
+ },
+ "walkthrough/watch.md": {
+  "average": 14.0,
+  "sentences": 3,
+  "units": 0
+ }
+}

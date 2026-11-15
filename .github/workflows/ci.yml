@@ -5,6 +5,19 @@ on:
   pull_request:
   workflow_dispatch: # the Expo updates workflow starts it on its branch (its push starts nothing)
 jobs:
+  # docs/features/lint.md, A whole repository: no tracked Markdown file gets harder to read than
+  # .github/prose-baseline.json records, and a new one meets the rules (excludes: .md-runbook-prose.json).
+  prose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/build.js
+      - name: 'Prose: no Markdown file gets harder to read'
+        run: node out/dist/cli.js lint --prose-baseline .github/prose-baseline.json
   test:
     strategy:
       fail-fast: false

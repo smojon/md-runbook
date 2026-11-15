@@ -123,6 +123,30 @@ describe('problems in the runbook view', () => {
     expect(screen.getByText('No problems found.')).toBeTruthy();
   });
 
+  it('prose notes: a muted line under their Markdown cell, not counted as problems; tap to list them', async () => {
+    const long = Array(24).fill('word').join(' ') + ' very much.'; // too long, and a padding word
+    const text = `# Notes\n\nJust run it.\n\n\`\`\`bash\necho ok\n\`\`\`\n\n${long}\n`;
+    const p = runbookProblems(text);
+    expect(p.all).toEqual([]);
+    expect([...p.notes.keys()]).toEqual([0, 2]);
+    const r = addRunbook('notes.md', text);
+    await render(<RunbookView id={r.id} />);
+    expect(screen.queryByTestId('problems-card')).toBeNull();
+    expect(screen.getByTestId('prose-notes-0-toggle')).toHaveTextContent(/1 prose note$/);
+    expect(screen.getByTestId('prose-notes-2-toggle')).toHaveTextContent(/2 prose notes$/);
+    expect(screen.queryByTestId('prose-notes-0-0')).toBeNull();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('prose-notes-0-toggle'));
+    });
+    expect(screen.getByTestId('prose-notes-0-0')).toHaveTextContent('Line 3 · Delete "Just"');
+  });
+
+  it('with prose: strict, prose findings are warnings: counted at the top', async () => {
+    const text = `---\nprose: strict\n---\n# Notes\n\nJust run it.\n`;
+    expect(runbookProblems(text).all.map((x) => x.message)).toEqual(['Delete "Just"']);
+    expect(runbookProblems(text).notes.size).toBe(0);
+  });
+
   it('Go to Next Problem opens the card for the front matter, then goes to each cell', async () => {
     const r = addRunbook('deploy.md', TYPOS);
     await render(<RunbookView id={r.id} />);

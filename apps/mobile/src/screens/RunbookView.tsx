@@ -100,7 +100,7 @@ import { ConfirmCard } from '../cells/ConfirmCard';
 import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell, ProblemRow } from '../cells/CodeCell';
-import { RunbookProblems, fixCellOption, runbookProblems } from '../runbooks/lint';
+import { LintProblem, RunbookProblems, fixCellOption, runbookProblems } from '../runbooks/lint';
 import { Codicon } from '../ui/Codicon';
 import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, hostLabel, pinHostKey, useHosts } from '../hosts/store';
@@ -2210,6 +2210,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                   firstTask={tasks.first[index]}
                   onToggleTask={tasks.aligned ? toggleTask : undefined}
                 />
+                {problems.notes.has(index) ? <ProseNotes index={index} notes={problems.notes.get(index)!} /> : null}
                 {manualAsk?.cellIndex === index ? (
                   // Under the checklist Run all waits at, as the other cards under their cell.
                   <ManualCard
@@ -2389,7 +2390,40 @@ const EMPTY: ReadonlySet<string> = new Set();
 /** A cell counts as on screen once half of it shows (the rail's pale box). */
 const VIEWABILITY = { itemVisiblePercentThreshold: 50 };
 const NO_BREAKS: ReadonlySet<number> = new Set();
-const NO_LINT: RunbookProblems = { all: [], byCell: new Map(), runbook: [] };
+const NO_LINT: RunbookProblems = { all: [], byCell: new Map(), runbook: [], notes: new Map() };
+
+/**
+ * Prose notes under a Markdown cell (lint's info: a long sentence, a padding word): one muted line,
+ * opened to list them. Not problems: no colour, not counted at the top.
+ */
+function ProseNotes({ index, notes }: { index: number; notes: readonly LintProblem[] }) {
+  const styles = useStyles();
+  const colors = usePalette();
+  const [open, setOpen] = useState(false);
+  return (
+    <View testID={`prose-notes-${index}`}>
+      <Pressable
+        testID={`prose-notes-${index}-toggle`}
+        accessibilityRole="button"
+        accessibilityHint={t.proseNotesHint}
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen(!open)}
+        style={styles.proseNotesHeader}
+      >
+        <Codicon name="lightbulb" size={12} color={colors.muted} />
+        <Text style={styles.proseNotesText}>{t.proseNotes(notes.length)}</Text>
+      </Pressable>
+      {open
+        ? notes.map((p, i) => (
+            <Text key={i} testID={`prose-notes-${index}-${i}`} style={styles.proseNotesText}>
+              {p.cell?.sourceLine !== undefined ? `${t.problemLine(p.cell.sourceLine + 1)} · ` : ''}
+              {p.message}
+            </Text>
+          ))
+        : null}
+    </View>
+  );
+}
 
 /**
  * What lint found, at the top of the runbook: one line with the count (folded, so a runbook with
@@ -3425,6 +3459,8 @@ const useStyles = themedStyles((c) => ({
   linkNotes: { borderLeftWidth: 3, paddingLeft: 10, paddingVertical: 4, marginVertical: 6 },
   problemsHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 32 },
   problemsList: { gap: 8, paddingTop: 4, paddingBottom: 4 },
+  proseNotesHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 28, alignSelf: 'flex-start' },
+  proseNotesText: { fontSize: 12, color: c.muted },
   qrCard: { borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 14, marginVertical: 8, backgroundColor: c.surface },
   qrBox: { alignItems: 'center', marginVertical: 10 },
   qrSwitch: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },

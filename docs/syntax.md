@@ -207,6 +207,7 @@ kube-context: prod-eu # every cell runs only while kubectl's current context is 
 kube-context-mode: pin # check (default) | pin: cells run on their kube-context without changing your default context
 git-bash-path-conversion: off # on (default) | off: Git Bash on Windows leaves /opt/x-style arguments alone
 manual-steps: continue # pause (default) | continue: Run All waits at an unticked checklist item, or runs on
+prose: strict        # on (default: prose notes are info) | strict: they are warnings | off: no prose checks
 report-runs: https://reports.example.net/runs # a summary of every run goes here (asked once per address)
 report-runs-required: true # the run starts only once reporting is agreed to (signed runbooks only, see below)
 report-runs-signed: true   # the summary must be signed with your SSH key (signed runbooks only)
@@ -397,6 +398,15 @@ quote. Anywhere in the Markdown; Export Report puts notes in the timeline by the
 ```markdown
 <!-- md-runbook:note at=2026-10-26T22:08:00+01:00 by=ana milestone=mitigated -->
 > **22:08 · mitigated · ana:** Failover done; errors back to 0
+```
+
+### Prose ignore marker
+
+`<!-- md-runbook:prose-ignore -->` at the end of a line, or alone on the line before, turns off
+the [prose checks](features/lint.md#prose) for that paragraph or list item.
+
+```markdown
+This sentence is long on purpose, because the vendor's wording must stay exactly as written. <!-- md-runbook:prose-ignore -->
 ```
 
 ## Steps and progress

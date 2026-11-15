@@ -170,6 +170,8 @@ export interface FrontMatter {
   reportRunsSigned?: boolean;
   /** `report-runs-token: ${secret:NAME}`: the secret's NAME, sent as a bearer token. A literal token is ignored (lint error). */
   reportRunsToken?: string;
+  /** `prose:` the prose checks of lint (prose.ts): `on` (the default: info), `strict` (warnings) or `off`. */
+  prose?: 'on' | 'strict' | 'off';
 }
 
 /**
@@ -252,6 +254,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
   let reportRunsRequired: boolean | undefined;
   let reportRunsSigned: boolean | undefined;
   let reportRunsToken: string | undefined;
+  let prose: 'on' | 'strict' | 'off' | undefined;
   // No prototype: a variable named constructor or __proto__ is a plain entry.
   const env: Record<string, string> = Object.create(null) as Record<string, string>;
   let inParams = false;
@@ -280,6 +283,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
         ...(reportRunsRequired ? { reportRunsRequired } : {}),
         ...(reportRunsSigned ? { reportRunsSigned } : {}),
         ...(reportRunsToken ? { reportRunsToken } : {}),
+        ...(prose ? { prose } : {}),
       };
     }
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
@@ -322,6 +326,8 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       if (pc === 'on' || pc === 'off') gitBashPathConversion = pc;
       const ms = value('manual-steps')?.toLowerCase();
       if (ms === 'pause' || ms === 'continue') manualSteps = ms;
+      const pr = value('prose')?.toLowerCase();
+      if (pr === 'on' || pr === 'strict' || pr === 'off') prose = pr;
       // The first one counts (a second could otherwise send the summary elsewhere unnoticed).
       const rr = value('report-runs');
       if (rr !== undefined && reportRuns === undefined && reportAddressProblem(rr) === undefined) reportRuns = rr;

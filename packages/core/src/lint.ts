@@ -2,8 +2,8 @@
  * Static checks on a runbook, before anything runs: invalid or unknown cell options, `every=`
  * without `retry=`, `${out:NAME}` with no earlier `capture=NAME`, `${param:NAME}` not declared
  * in the front matter, a name used as two kinds of placeholder, front matter values that are
- * ignored, blocks changed since the runbook was signed. Used by `md-runbook lint` and by the
- * editor's problem markers.
+ * ignored, blocks changed since the runbook was signed, and prose that could be shorter
+ * (prose.ts, as info). Used by `md-runbook lint` and by the editor's problem markers.
  */
 
 import { cellRefs, parseCellOptions, tokenizeInfo } from './cellOptions';
@@ -16,8 +16,10 @@ import { POWERSHELLS, UNIX_SHELLS, parseShells, shellKindForLanguage } from './s
 import { readSignature, signedStatus } from './signing';
 import { CALL_OPTIONS, NOT_ON_A_CALL, callRefs, checkCall, isCallLanguage, isDynamicSrc, parseCall, srcGlob } from './call';
 import { partProblems } from './parts';
+import { ProseOptions, markupCellAt, measureProse } from './prose';
 
-export type LintSeverity = 'error' | 'warning';
+/** `info`: a prose finding (prose.ts), shown but never failing a check. `prose: strict` makes them warnings. */
+export type LintSeverity = 'error' | 'warning' | 'info';
 
 export interface LintProblem {
   severity: LintSeverity;
@@ -28,6 +30,8 @@ export interface LintProblem {
   cell?: { index: number; sourceLine?: number };
   /** An unknown option that looks like a typo: rename `option` to `to` on the fence line (renameInfoOption). */
   fix?: { option: string; to: string };
+  /** What kind of finding, for the prose checks (prose.ts): `prose-sentence`, `prose-repeat`, … */
+  code?: string;
 }
 
 const KNOWN_OPTIONS = new Set([
@@ -198,6 +202,8 @@ export interface LintOptions {
   readRunbook?(src: string): string | null | undefined;
   /** For a src= with placeholders: the files its glob matches today (releases/*.md). */
   matchRunbooks?(glob: string): string[];
+  /** How this repository writes what isn't prose (.md-runbook-prose.json: skipLines, labels). */
+  prose?: ProseOptions;
 }
 
 export function lintRunbook(text: string, options: LintOptions = {}): LintProblem[] {
@@ -211,7 +217,7 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
     const lines = text.replace(/^﻿/, '').split(/\r?\n/);
     const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));
     for (let i = 1; i < end; i++) {
-      const m = /^(mode|timeout|cwd|kube-context|kube-context-mode|git-bash-path-conversion|manual-steps)\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
+      const m = /^(mode|timeout|cwd|kube-context|kube-context-mode|git-bash-path-conversion|manual-steps|prose)\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
       if (!m) continue;
       const key = m[1]!.toLowerCase();
       const ignored =
@@ -221,7 +227,8 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
         (key === 'kube-context' && fm.kubeContext === undefined) ||
         (key === 'kube-context-mode' && fm.kubeContextMode === undefined) ||
         (key === 'git-bash-path-conversion' && fm.gitBashPathConversion === undefined) ||
-        (key === 'manual-steps' && fm.manualSteps === undefined);
+        (key === 'manual-steps' && fm.manualSteps === undefined) ||
+        (key === 'prose' && fm.prose === undefined);
       if (ignored) {
         const expected: Record<string, string> = {
           mode: 'session or isolated',
@@ -231,6 +238,7 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
           'kube-context-mode': 'check or pin',
           'git-bash-path-conversion': 'on or off',
           'manual-steps': 'pause or continue',
+          prose: 'on, strict or off',
         };
         problems.push({ severity: 'warning', line: i, message: `front matter ${key}: "${m[2]}" is ignored (expected ${expected[key]})` });
       }
@@ -420,6 +428,15 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
   } else {
     const at = signatureLine(text);
     if (at >= 0) problems.push({ severity: 'error', line: at, message: 'the signature block is damaged (sign the runbook again)' });
+  }
+
+  // Prose (prose.ts): info, warnings with `prose: strict`, none with `prose: off`.
+  if (fm?.prose !== 'off') {
+    const severity: LintSeverity = fm?.prose === 'strict' ? 'warning' : 'info';
+    for (const f of measureProse(text, options.prose).findings) {
+      const cell = markupCellAt(doc, f.line);
+      problems.push({ severity, line: f.line, message: f.message, code: f.rule, ...(cell ? { cell } : {}) });
+    }
   }
   return problems.sort((a, b) => a.line - b.line);
 }

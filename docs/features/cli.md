@@ -153,7 +153,10 @@ down; `--setup-always` and `--no-setup` override the check.
 ## Checking without running
 
 `md-runbook lint file.md…` checks runbooks without running anything; see
-[Checking runbooks](lint.md).
+[Checking runbooks](lint.md). It also lists prose that could be shorter, as `info`: these never
+change the exit code, not even with `--strict`. `--prose-only` checks only the prose, for any
+Markdown file; `--prose-baseline FILE` checks a whole repository as a ratchet
+([A whole repository](lint.md#a-whole-repository)).
 
 ## How long it takes
 

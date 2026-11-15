@@ -8,7 +8,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { estimateRunbook, formatEstimate, renderReport, withoutEstimate } from '@md-runbook/core';
-import { formatProblem, lintRunbook } from '@md-runbook/core/lint';
+import { LintProblem, formatProblem, lintRunbook } from '@md-runbook/core/lint';
 import { callEstimateSeconds, matchRunbooks, runbookReader } from '@md-runbook/core/node';
 import { buildTimeline } from '@md-runbook/core/incident';
 import { CliOptions, junitReport, markdownSummary, runRunbook } from './run';
@@ -18,6 +18,7 @@ import { findBrowser, htmlToPdf } from './pdf';
 import { signCommand, verifyCommand } from './sign';
 import { qrCommand } from './qr';
 import { auditCommand } from './audit';
+import { ProseConfig, globToRegExp, proseConfig, proseRatchet, proseShow } from './prose';
 import { allowedAddresses, prepareReport, sendCliReport, verifyRunCommand } from './report';
 import { publishCommand } from './publish';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
@@ -25,7 +26,9 @@ import { parseFrontMatter } from '@md-runbook/core/secrets';
 declare const MD_RUNBOOK_VERSION: string | undefined;
 
 const USAGE = `Usage: md-runbook run <file.md> [options]
-       md-runbook lint <file.md>... [--strict]
+       md-runbook lint <file.md>... [--strict] [--prose-only] [--exclude GLOB]
+       md-runbook lint --prose-baseline FILE [--update-baseline] [file.md...]
+       md-runbook lint --prose-show GLOB
        md-runbook estimate <file.md>...                (how long each section takes, by estimate=)
        md-runbook sign <file.md> --key KEY [options]   (see md-runbook sign --help)
        md-runbook verify <file.md> [--allowed-signers FILE]
@@ -97,7 +100,16 @@ Options:
 
 lint checks runbooks without running them (invalid or unknown cell options, \${out:NAME}
 without an earlier capture=NAME, undeclared \${param:NAME}, ignored front matter values) and
-exits with 1 when it finds an error (with --strict: also a warning).
+exits with 1 when it finds an error (with --strict: also a warning). Prose that could be
+shorter is listed as info and never fails (prose: strict in the front matter makes it warnings).
+  --prose-only         Only the prose checks: for any Markdown file (README.md, docs)
+  --prose-baseline FILE
+                       Prose only, as a ratchet over the files git tracks (*.md), or the files
+                       given: exit 1 when a file reads harder than FILE records, or a file not
+                       in FILE has a finding. Run it from the repository root
+  --update-baseline    With --prose-baseline: record the numbers in FILE, never raising one
+  --prose-show GLOB    Every prose finding of the tracked .md files matching GLOB ('docs/*')
+  --exclude GLOB       Leave these files out (repeatable); also "exclude" in .md-runbook-prose.json
 
 A run report that can't be sent is tried 3 times, then a warning; the exit code is 3 only when
 the runbook required it (signed as a whole by a signer of --allowed-signers) and the run passed.
@@ -235,33 +247,85 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   return { options: o, reportAllowed, ...(key ? { key } : {}), ...(pdf ? { pdf } : {}), ...(browser ? { browser } : {}), ...(notify ? { notify } : {}), ...(notifyOn ? { notifyOn } : {}), quiet };
 }
 
-/** `md-runbook lint`: print the problems of each file; 1 if any is an error (or, strict, a warning). */
+const isProse = (p: LintProblem): boolean => p.code?.startsWith('prose-') === true;
+
+/**
+ * `md-runbook lint`: print the problems of each file; 1 if any is an error (or, strict, a warning).
+ * Prose findings are info: listed, counted apart, never failing (a runbook's `prose: strict` makes
+ * them warnings). --prose-only: only the prose findings (for any Markdown file, not only
+ * runbooks). --prose-baseline FILE: the prose ratchet; --prose-show GLOB: every prose finding
+ * (cli/prose.ts).
+ */
 export function lint(argv: readonly string[], out: (line: string) => void = (l) => void process.stdout.write(l + '\n')): number {
-  const strict = argv.includes('--strict');
-  const files = argv.filter((a) => a !== '--strict');
-  const unknown = files.find((f) => f.startsWith('-'));
-  if (unknown || files.length === 0) {
-    process.stderr.write(`md-runbook: ${unknown ? `unknown option ${unknown}` : 'missing the runbook file(s)'}\n\n${USAGE}`);
+  const files: string[] = [];
+  const excludeFlags: string[] = [];
+  let baseline: string | undefined;
+  let show: string | undefined;
+  let problem: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    const value = (): string | undefined => {
+      const v = argv[++i];
+      if (v === undefined) problem ??= `${a} needs a value`;
+      return v;
+    };
+    if (a === '--prose-baseline') baseline = value();
+    else if (a === '--prose-show') show = value();
+    else if (a === '--exclude') {
+      const v = value();
+      if (v !== undefined) excludeFlags.push(v);
+    } else if (['--strict', '--prose-only', '--update-baseline'].includes(a)) continue;
+    else if (a.startsWith('-')) problem ??= `unknown option ${a}`;
+    else files.push(a);
+  }
+  const update = argv.includes('--update-baseline');
+  if (update && baseline === undefined) problem ??= '--update-baseline needs --prose-baseline FILE';
+  if (!problem && files.length === 0 && baseline === undefined && show === undefined) problem = 'missing the runbook file(s)';
+  if (problem) {
+    process.stderr.write(`md-runbook: ${problem}\n\n${USAGE}`);
     return 2;
   }
+  let config: ProseConfig;
+  try {
+    config = proseConfig(excludeFlags);
+  } catch (e) {
+    out(`error: ${e instanceof Error ? e.message : String(e)}`);
+    return 2;
+  }
+  if (show !== undefined) return proseShow(show, config, out);
+  if (baseline !== undefined) {
+    const summary = process.env.GITHUB_STEP_SUMMARY;
+    return proseRatchet({ baseline, update, files, config, out, ...(summary ? { summary } : {}) });
+  }
+  const strict = argv.includes('--strict');
+  const proseOnly = argv.includes('--prose-only');
   // On GitHub Actions, also annotations: they show on the file in pull requests.
   const annotate = process.env.GITHUB_ACTIONS === 'true';
+  const skip = config.exclude.map(globToRegExp);
+  const checked = files.filter((f) => !skip.some((r) => r.test(f.split(path.sep).join('/'))));
   let failed = false;
   let count = 0;
-  for (const file of files) {
+  let notes = 0;
+  for (const file of checked) {
     if (!fs.existsSync(file)) {
       out(`${file}: error: no such file`);
       failed = true;
       continue;
     }
-    for (const p of lintRunbook(fs.readFileSync(file, 'utf8'), { readRunbook: runbookReader(file), matchRunbooks: (glob) => matchRunbooks(file, glob) })) {
-      count++;
+    for (const p of lintRunbook(fs.readFileSync(file, 'utf8'), { readRunbook: runbookReader(file), matchRunbooks: (glob) => matchRunbooks(file, glob), prose: config.options })) {
+      if (proseOnly && !isProse(p)) continue;
       out(formatProblem(file, p));
-      if (annotate) out(`::${p.severity} file=${file},line=${p.line + 1}::${p.message.replace(/\r?\n/g, ' ')}`);
+      if (annotate) out(`::${p.severity === 'info' ? 'notice' : p.severity} file=${file},line=${p.line + 1}::${p.message.replace(/\r?\n/g, ' ')}`);
+      if (p.severity === 'info') {
+        notes++;
+        continue;
+      }
+      count++;
       if (p.severity === 'error' || strict) failed = true;
     }
   }
-  out(`${failed ? '✗' : '✓'} ${files.length} runbook${files.length === 1 ? '' : 's'} checked, ${count} problem${count === 1 ? '' : 's'}`);
+  const prose = notes > 0 ? `, ${notes} prose note${notes === 1 ? '' : 's'}` : '';
+  out(`${failed ? '✗' : '✓'} ${checked.length} file${checked.length === 1 ? '' : 's'} checked, ${count} problem${count === 1 ? '' : 's'}${prose}`);
   return failed ? 1 : 0;
 }
 
