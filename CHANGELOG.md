@@ -2,17 +2,22 @@
 
 ## Unreleased
 
-- **Prose checks: keep runbooks short and simple.** Lint now points at prose that could be
-  shorter: a sentence over 20 words, a file averaging over 15, a paragraph of more than 3
-  sentences or 60 words, openers such as "Please note that", sentences that only announce,
-  padding words ("just", "in order to"), a first sentence that says its heading again, and a
-  sentence said twice. They are info, not problems: VS Code lists them under Infos
-  (`mdRunbook.lint.prose`: `information`, `hint` or `off`), the app marks them under their cell,
-  and `md-runbook lint` prints them without failing. `prose: strict` in the front matter makes
-  them warnings, `prose: off` turns them off, and `<!-- md-runbook:prose-ignore -->` skips a
-  paragraph. For a whole repository, `md-runbook lint --prose-baseline FILE` is a ratchet: no
-  Markdown file gets harder to read, and `--prose-show GLOB` lists the findings. See
-  [Prose](docs/features/lint.md#prose).
+- **Prose checks: keep runbooks short and simple.** See [Prose](docs/features/lint.md#prose).
+  - They flag:
+    - a sentence over 20 words;
+    - a file averaging over 15 words a sentence;
+    - a paragraph of over 3 sentences or 60 words;
+    - filler: openers, sentences that only announce, padding words;
+    - a sentence that says its heading again, or one said twice.
+  - They are info: VS Code lists them under Infos, and lint never fails on them.
+  - `prose: strict` in the front matter makes them warnings. `prose: off` turns them off.
+  - `md-runbook lint --prose-baseline FILE` checks a whole repository: no file may get worse.
+
+## 0.26.0
+
+Shorter texts in the app, and the gate's log says which alert a run answered.
+
+- **Update the gate on your servers** to log alerts: older gates are sent no note and work as before.
 
 - **Trust these signers is easier to read:** a question (**Trust these keys for the team library
   at …?**) and five short points, instead of one long paragraph (about 14 lines on a phone).
