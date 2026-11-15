@@ -1,9 +1,13 @@
 # Command line: run runbooks in CI, on servers, on a schedule
 
-`md-runbook run` runs a runbook without VS Code. It uses the same parser, shells, cell options,
-checks, retries, redaction and output format as the extension, and writes the outputs into the
-file the same way. So a runbook you step through in VS Code also runs unchanged in GitHub
-Actions, GitLab, Azure DevOps, Jenkins, cron or Task Scheduler.
+`md-runbook run` runs a runbook without VS Code. It uses the extension's parser, shells, cell
+options, checks, retries, redaction and output format. It writes the outputs into the file the
+same way.
+
+So a runbook you step through in VS Code also runs unchanged in:
+
+- GitHub Actions, GitLab, Azure DevOps or Jenkins;
+- cron or Task Scheduler.
 
 ```sh
 md-runbook run deploy.md --param TARGET=staging --report report.html --junit junit.xml
@@ -79,20 +83,24 @@ md-runbook run upgrade.md --section Rollback
 ```
 
 - **Steps** are numbered as the run prints them (`▶ Step 6 · upgrade.md:120 · bash`), and as
-  Export Report numbers them: every code block is a step, and the `os=` alternatives of one step
-  share a number. The numbers are the same whether or not you give a range, so you can resume at
-  the number a failed run showed.
-- **`--section TEXT`** selects the steps under each heading whose text, after the `#`s and
-  spaces, starts with `TEXT` (case-sensitive: `"3."` matches `## 3. Deploy` but not
-  `## 30. Clean up`). A section includes its sub-headings and ends at the next heading of the
-  same or a higher level. Only `#` headings count, not underlined ones. With `--from`/`--to`
-  too, a step must be in both.
-- The steps left out are **skipped**, not failed (`not selected (--from 6)` in the JSON, JUnit and
-  job summary), and keep the outputs they have in the file.
-- **Before anything runs**, the run stops with exit code `2` if `--from`/`--to` is outside the
-  runbook or backwards, a `--section` matches no heading, nothing is selected, or a selected
-  step uses `${out:NAME}` and only steps left out capture `NAME` (a run starts without
-  captured values: select the capturing step too).
+  Export Report numbers them. Every code block is a step, and the `os=` alternatives of one step
+  share a number. A range doesn't change the numbers, so you can resume at the number a failed
+  run showed.
+- **`--section TEXT`** selects the steps under each heading whose text starts with `TEXT`, after
+  the `#`s and spaces. It is case-sensitive: `"3."` matches `## 3. Deploy` but not
+  `## 30. Clean up`.
+  - A section includes its sub-headings and ends at the next heading of the same or a higher
+    level.
+  - Only `#` headings count, not underlined ones.
+  - With `--from`/`--to` too, a step must be in both.
+- The steps left out are **skipped**, not failed, and keep the outputs they have in the file.
+  The JSON, JUnit and job summary show them as `not selected (--from 6)`.
+- **Before anything runs**, the run stops with exit code `2` if:
+  - `--from`/`--to` is outside the runbook or backwards;
+  - a `--section` matches no heading;
+  - nothing is selected;
+  - a selected step uses `${out:NAME}` and only steps left out capture `NAME`. A run starts
+    without captured values: select the capturing step too.
 
 ## Runbook calls
 
@@ -116,26 +124,31 @@ TENANT=${param:TENANT}
 ✓ Step 5 · releases/72512.2611.runbook.md: 6 done, 1 skipped
 ```
 
-- The runbook called runs as a copy next to it (`--copy-folder DIR` puts it elsewhere), with
-  only the parameters the block passes; its file is not changed. The copy holds its outputs, and
-  the call's output block records `runbook=`, `copy=`, `steps=` and `sha256=`.
+- The runbook called runs as a copy next to it, with only the parameters the block passes.
+  `--copy-folder DIR` puts the copy elsewhere; the called runbook's file is not changed. The copy
+  holds its outputs, and the call's output block records `runbook=`, `copy=`, `steps=` and
+  `sha256=`.
 - The call fails when a step of the runbook called fails, and the run stops there (unless
   `continue-on-error` or `--keep-going`). Run it again and the call continues in the same copy,
-  keeping the steps done there; `--fresh-copy` starts a new copy.
+  keeping the steps done there. `--fresh-copy` starts a new copy.
 - Values come from the command line as for any block: `--param`, `--input`, the environment for
-  `${secret:}`, and earlier captures for `${out:}`. A parameter of the runbook called with no
-  default that the block doesn't pass stops the call before it starts.
+  `${secret:}`, earlier captures for `${out:}`. A parameter of the runbook called with no default that the
+  block doesn't pass stops the call before it starts.
 - `--from`/`--to` count the call as one step; `section=` on the block selects part of the runbook
   called. `--yes` and `--keep-going` apply to its steps too.
-- `--json` lists the call's steps under `call.steps`; the JUnit report and the GitHub job summary
-  list them after the call, numbered `5.1`, `5.2`, … (in JUnit with the copy as their class).
-- Refused before anything runs in it: a file that doesn't exist, a cycle (A calls B calls A),
-  calls nested more than 3 deep, a parameter name the runbook called doesn't have, a `section=`
-  that matches no heading, and a `kube-context:` other than the caller's.
+- `--json` lists the call's steps under `call.steps`. The JUnit report and the GitHub job summary
+  list them after the call, numbered `5.1`, `5.2`, …. In JUnit, their class is the copy.
+- Refused before anything runs in it:
+  - a file that doesn't exist;
+  - a cycle (A calls B calls A);
+  - calls nested more than 3 deep;
+  - a parameter name the runbook called doesn't have;
+  - a `section=` that matches no heading;
+  - a `kube-context:` other than the caller's.
 
 ## Setup and teardown
 
-A runbook's `setup` steps are skipped when its ready check (`ready`) says up, and its `teardown`
+A runbook's `setup` steps are skipped when its ready check (`ready`) says up. Its `teardown`
 steps are listed, not run ([Setup and teardown](setup-teardown.md)):
 
 ```text
@@ -160,9 +173,9 @@ Markdown file; `--prose-baseline FILE` checks a whole repository as a ratchet
 
 ## How long it takes
 
-With `estimate=` on the blocks (the time a real run took, e.g. `estimate=2m30s`),
-`md-runbook estimate file.md…` adds them up per `#` and `##` section and in all, and names the
-blocks without one:
+`estimate=` on a block is the time a real run took, e.g. `estimate=2m30s`.
+`md-runbook estimate file.md…` adds them up per `#` and `##` section and in all. It also names
+the blocks without one:
 
 ```text
 guide.md
@@ -172,18 +185,22 @@ guide.md
   Total: 3m30s (1 block without an estimate) for 3 blocks
 ```
 
-`md-runbook run` puts a step's estimate on its `▶ Step N` line, prints a warning (not a failure)
-when the step took more than twice its estimate and over a minute more, and in a terminal shows
-after each step how far the run is by the estimates and how long is left
-(`[########............] 40% · 6 min left`, the bar as wide as the terminal leaves room for, in
-plain ASCII so any console shows it); a CI log keeps plain lines. `--json` has
-`estimateSeconds` per step, the JUnit report an `estimate` property per test case.
+In `md-runbook run`:
+
+- a step's `▶ Step N` line shows its estimate;
+- a step that took more than twice its estimate and over a minute more gets a warning, not a
+  failure;
+- in a terminal, each step is followed by the progress and time left, by the estimates:
+  `[########............] 40% · 6 min left`. The bar is as wide as the terminal leaves room
+  for, in plain ASCII so any console shows it. A CI log keeps plain lines.
+- `--json` has `estimateSeconds` per step, the JUnit report an `estimate` property per test case.
 
 ## Signing runbooks
 
-`md-runbook sign file.md --key KEY` signs a runbook for servers that run md-runbook-gate, and
+`md-runbook sign file.md --key KEY` signs a runbook for servers that run md-runbook-gate.
 `md-runbook verify file.md [--allowed-signers FILE]` shows what a signature covers and which
 blocks changed since; see [Signed runbooks](signed-runbooks.md).
+
 `md-runbook verify-run envelope.json --allowed-runners FILE` checks a signed
 [run summary](run-reports.md#checking-a-signed-summary-on-a-server) as a server would. It prints
 the runner and the summary, and exits 0 when the signature is good.
@@ -205,21 +222,39 @@ the runner and the summary, and exits 0 when the signature is good.
 
 `md-runbook publish file.md --library https://runbooks.example.net [--path ops/file.md]` sends a
 signed runbook to the [library server](../../apps/library-server/README.md), which puts it into
-the folder the web app serves. The server takes it only when the whole runbook is signed by one
-of the library's signers, unchanged since signing, not expired, named as its file, and of a
-higher version than the one published there. The upload token comes from
-`MD_RUNBOOK_LIBRARY_TOKEN`, never from the command line. Exit code `0` published (or already
-there), `1` refused (the reason is printed), `2` a usage error or no usable answer.
+the folder the web app serves. The upload token comes from `MD_RUNBOOK_LIBRARY_TOKEN`, never
+from the command line.
+
+The server takes it only when the whole runbook is:
+
+- signed by one of the library's signers;
+- unchanged since signing;
+- not expired;
+- named as its file;
+- of a higher version than the one published there.
+
+Exit code:
+
+- `0` published (or already there);
+- `1` refused (the reason is printed);
+- `2` a usage error or no usable answer.
 
 ## Gate audit
 
 `md-runbook audit gate.log… [--record incident.md] [--out audit.pdf]` reports what servers with
-md-runbook-gate ran, from their logs: every run with the key, account and client, the runbook,
-version and signer (and, for a run an alert link started, the alert: `· for alert ApiDown
-(fingerprint 5f3c9e, started …)`), the parameters, exit code and duration, and the findings (refused requests,
-unsigned code, stopped runs). With `--record`, a saved run record is matched against the log.
-Exit code 1 when there are findings or recorded runs the log doesn't show. See [For
-auditors](for-auditors.md).
+md-runbook-gate ran, from their logs. For every run it shows:
+
+- the key, account and client;
+- the runbook, version and signer;
+- for a run an alert link started, the alert:
+  `· for alert ApiDown (fingerprint 5f3c9e, started …)`;
+- the parameters, exit code and duration.
+
+It also reports the findings: refused requests, unsigned code, stopped runs. With `--record`, a
+saved run record is matched against the log.
+
+Exit code 1 when there are findings or recorded runs the log doesn't show. See
+[For auditors](for-auditors.md).
 
 ```sh
 journalctl -t md-runbook-gate -o cat --since yesterday | md-runbook audit - --out audit.html
@@ -236,9 +271,10 @@ md-runbook audit /var/log/md-runbook-gate.log --record runbooks/failover.2026102
 
 ## QR codes and labels
 
-`md-runbook qr file.md` writes `file.qr.svg`, a QR code that opens the runbook in the app (**Scan
-a code**); `md-runbook qr file.md --labels hosts.csv --out labels.pdf` prints a sheet with one
-code per machine. See [Runbook links](../switching.md#runbook-links) for what a code carries.
+`md-runbook qr file.md` writes `file.qr.svg`, a QR code that opens the runbook in the app
+(**Scan a code**). `md-runbook qr file.md --labels hosts.csv --out labels.pdf` prints a sheet
+with one code per machine. See [Runbook links](../switching.md#runbook-links) for what a code
+carries.
 
 | Option of `qr` | Meaning |
 | --- | --- |
@@ -262,21 +298,28 @@ web-2,Rack 4 right,shop
 
 ## What runs, what doesn't
 
-- **Placeholders** never prompt. `${secret:NAME}` and `${input:NAME}` come from the environment
-  variable `NAME` (`--input` wins for inputs). Every secret value the runbook references is
-  known before the first step, so it is redacted even from a step that prints the environment
-  before the step that uses it. A block with `capture-secret=` prints its output only when it
-  has finished, redacted (a CI log can't be corrected afterwards). `${param:NAME}` comes from `--param` or the front
-  matter's default. `${out:NAME}` comes from an earlier block's [capture=](checks.md). A missing
-  value makes the step fail with a message that says what to pass. Secret values are redacted
-  from everything printed and written, as are the default redaction patterns.
+- **Placeholders** never prompt.
+  - `${secret:NAME}` and `${input:NAME}` come from the environment variable `NAME` (`--input`
+    wins for inputs).
+  - Every secret value the runbook references is known before the first step. So it is redacted
+    even from a step that prints the environment before the step that uses it.
+  - A block with `capture-secret=` prints its output only when it has finished, redacted (a CI
+    log can't be corrected afterwards).
+  - `${param:NAME}` comes from `--param` or the front matter's default.
+  - `${out:NAME}` comes from an earlier block's [capture=](checks.md).
+  - A missing value makes the step fail with a message that says what to pass.
+  - Secret values are redacted from everything printed and written, as are the default
+    redaction patterns.
 - **Risky commands** (the default confirmation patterns: `rm -rf`, `delete`, `--force`, …) and
-  blocks with `confirm` are **not run without `--yes`**. The run checks for them before the first
-  step: if a step that would run (for this OS, not `skip`, not `host=`, in `--from`/`--to`/
-  `--section`) is one, nothing runs and it exits with `2`, listing each such step and why, so you
-  learn it before a long run, not halfway. With `--keep-going` the run starts anyway and such a
-  step is recorded as `exit=declined` where it is, like any other failure. `no-confirm` can't
-  switch this off.
+  blocks with `confirm` are **not run without `--yes`**.
+  - The run checks for them before the first step. If a step that would run is one, nothing
+    runs and it exits with `2`. It lists each such step and why, so you learn it before a long
+    run, not halfway.
+  - Steps that would run are those for this OS, not `skip`, not `host=`, and in
+    `--from`/`--to`/`--section`.
+  - With `--keep-going` the run starts anyway. Such a step is recorded as `exit=declined` where
+    it is, like any other failure.
+  - `no-confirm` can't switch this off.
 
   ```text
   md-runbook: 2 steps ask for confirmation in VS Code and need --yes here; nothing ran:
@@ -284,11 +327,11 @@ web-2,Rack 4 right,shop
     Step 9 · upgrade.md:140 · promote: confirm option
   pass --yes to run them
   ```
-- **Proposed or assistant-written cells** never run from the command line: they need approval
+- **Proposed or assistant-written cells** never run from the command line. They need approval
   and read-only credentials, which only the extension provides.
 - **Cell options** work as in the extension: `skip`, `cwd=`, `timeout=`, `env.X=`,
-  `continue-on-error`, `name=`, `expect=`, `retry=`, `capture=`, and `os=` (a block for another
-  OS is passed over and keeps its output). `terminal` cells run normally (there is no terminal to
+  `continue-on-error`, `name=`, `expect=`, `retry=`, `capture=`, and `os=`. A block for another
+  OS is passed over and keeps its output. `terminal` cells run normally (there is no terminal to
   answer prompts in).
 - Interactive prompts get end-of-input, as in VS Code without terminal mode.
 
@@ -297,25 +340,30 @@ web-2,Rack 4 right,shop
 Task-list items (`- [ ] Check the canary in Grafana`) are steps a person does. The command line
 can't do them, and it doesn't pass over them in silence either:
 
-- Each unticked item in the part of the runbook that runs (the whole runbook, or the steps
-  `--from`/`--to`/`--section` select: an item belongs to the step of the block before it, an
-  item before the first block to step 1, and each to the section it is in; so `--from 3` leaves
-  out a *Before you start* list at the top) is listed where it is: `☐ manual, not ticked · upgrade.md:42 · Check
-  the canary in Grafana`. Ticked ones (`- [x]`) are done.
-- They are in `--json` (`manual`: line, text, ticked), in the JUnit report (a skipped test case
-  "Manual: …") and in the GitHub job summary. They get no step number: `--from`/`--to` and the
-  `▶ Step N` lines count blocks only.
+- Each unticked item in the part of the runbook that runs is listed where it is:
+  `☐ manual, not ticked · upgrade.md:42 · Check the canary in Grafana`. Ticked ones (`- [x]`)
+  are done.
+  - The part that runs is the whole runbook, or the steps `--from`/`--to`/`--section` select.
+  - An item belongs to the step of the block before it, and to the section it is in.
+  - Items above the first block belong to step 1, so `--from 3` leaves out a *Before you start*
+    list there.
+- Manual items appear in `--json` (`manual`: line, text, ticked) and in the GitHub job summary.
+  In the JUnit report, each is a skipped test case "Manual: …". They get no step number:
+  `--from`/`--to` and the `▶ Step N` lines count blocks only.
 - A section that has only manual steps is not an error: the run lists them.
 - **A runbook that keeps evidence** (`evidence: true` or `incident:` in its front matter) **fails**
-  (exit `1`) when one of them is not ticked: the record must not pass over a check nobody did.
-  Tick it in the file (or in VS Code or the app) and run again; with a [runbook call](calls.md),
-  the call continues in its copy. In other runbooks they are listed and the exit code doesn't
-  change.
+  (exit `1`) when one is not ticked. The record must not pass over a check nobody did.
+- In such a runbook, tick the item in the file (or in VS Code or the app) and run again. With a
+  [runbook call](calls.md), the call continues in its copy.
+- In other runbooks, manual items are listed and the exit code doesn't change.
 
 ## In CI
 
-Any CI system: run `npx md-runbook run …` (or `node …/cli.js run …`) as a step, pass secrets
-as environment variables, and keep the runbook and reports as artifacts.
+Any CI system:
+
+- run `npx md-runbook run …` (or `node …/cli.js run …`) as a step;
+- pass secrets as environment variables;
+- keep the runbook and reports as artifacts.
 
 ### GitHub Action
 
@@ -358,22 +406,24 @@ jobs:
 | `session` | `true` / `false` for `--session` / `--isolated` (default: the front matter). |
 
 The action builds the runner from its own source at the ref you pin (`@v0.3.0`, or a commit
-SHA), so nothing is downloaded from a package registry. Inputs reach it through environment
-variables, never through a shell command line. On GitHub Actions the runner also adds a table of
-the steps to the job summary. This repository's CI runs
-[`examples/ci.runbook.md`](../../examples/ci.runbook.md) with it on all three systems.
+SHA). So nothing is downloaded from a package registry. Inputs reach it through environment
+variables, never through a shell command line.
+
+On GitHub Actions the runner also adds a table of the steps to the job summary. This
+repository's CI runs [`examples/ci.runbook.md`](../../examples/ci.runbook.md) with it on all
+three systems.
 
 Use `os=` blocks for the steps that differ per system.
 
 To run a runbook from the GitHub web UI with a button, see [Runbooks on the web](web.md).
 
-The CI system still provides triggers, runners, secrets and artifacts; the runbook provides
-the steps, their checks, and a readable record of the run.
+The CI system still provides triggers, runners, secrets and artifacts. The runbook provides the
+steps, their checks, and a readable record of the run.
 
 ## Notifications
 
 With `MD_RUNBOOK_NOTIFY_URL` set (or `--notify URL`), a failed run posts a short message to that
-webhook: which steps failed and why, and on GitHub Actions a link to the run. With
+webhook. It says which steps failed and why, and on GitHub Actions links to the run. With
 `MD_RUNBOOK_NOTIFY_ON=always` (or `--notify-on always`) it also posts when everything passed.
 
 ```text
@@ -382,18 +432,24 @@ webhook: which steps failed and why, and on GitHub Actions a link to the run. Wi
 https://github.com/acme/ops/actions/runs/123456
 ```
 
-The message format follows the webhook: **Slack** (`hooks.slack.com`), **Microsoft Teams**
-(a Workflows "post to a channel when a webhook request is received" flow: `*.logic.azure.com`,
-`*.powerplatform.com`), **Discord** and **Google Chat**. Any other URL gets `{"text": "…"}` as
-JSON (Mattermost, Rocket.Chat and most others take that).
+The message format follows the webhook:
 
-- The URL is a secret (whoever has it can post to your channel): keep it in a CI secret and pass
+- **Slack** (`hooks.slack.com`);
+- **Microsoft Teams**: a Workflows "post to a channel when a webhook request is received" flow
+  (`*.logic.azure.com`, `*.powerplatform.com`);
+- **Discord**;
+- **Google Chat**.
+
+Any other URL gets `{"text": "…"}` as JSON (Mattermost, Rocket.Chat and most others take that).
+
+- The URL is a secret: whoever has it can post to your channel. Keep it in a CI secret and pass
   it through the environment. A command-line option can show up in process lists and logs.
-  md-runbook never prints it, also not in error messages, removes `MD_RUNBOOK_NOTIFY_URL` from
-  the environment the cells get, and redacts the URL from outputs and reports. This protects
-  against accidents (`env`, `set -x`), not against a hostile runbook, which runs as your user
-  and could find it elsewhere: only notify from runbooks you trust.
-- It must be `https` (`http` only for `localhost`).
+- md-runbook never prints it, also not in error messages. It removes `MD_RUNBOOK_NOTIFY_URL`
+  from the environment the cells get, and redacts the URL from outputs and reports.
+- Hiding the URL protects against accidents (`env`, `set -x`), not against a hostile runbook. A
+  hostile runbook runs as your user and could find it elsewhere: only notify from runbooks you
+  trust.
+- The URL must be `https` (`http` only for `localhost`).
 - Step outputs are not sent, only the step numbers, lines and the reason they failed.
 - If the message can't be sent, the run says so; its exit code doesn't change.
 
@@ -403,8 +459,12 @@ For a ready-made scheduled check (a morning health check that posts on failure),
 ## PDF
 
 `--pdf report.pdf` prints the HTML report with a Chromium-based browser that is already
-installed: Google Chrome, Microsoft Edge (on every Windows machine) or Chromium. Chrome is
-preinstalled on GitHub's runners. It runs headless with a throwaway profile, so a browser you
-have open is not touched. Point to a browser with `--browser PATH` or the `CHROME_PATH`
-environment variable. If none is found, the run says so and exits with `1`; the other reports
-are still written.
+installed:
+
+- Google Chrome (preinstalled on GitHub's runners);
+- Microsoft Edge (on every Windows machine);
+- Chromium.
+
+It runs headless with a throwaway profile, so a browser you have open is not touched. Point to a
+browser with `--browser PATH` or the `CHROME_PATH` environment variable. If none is found, the
+run says so and exits with `1`; the other reports are still written.

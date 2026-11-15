@@ -1,13 +1,13 @@
 # Runbook syntax reference
 
 Everything md-runbook reads from or writes into a `.md` file, on one page. It is written from the
-parser, so it says what the code accepts; the feature pages linked from the
+parser, so it says what the code accepts. The feature pages linked from the
 [README](../README.md#more-features) explain how each part behaves and how to turn it on.
 
 A runbook is an ordinary Markdown file. md-runbook only cares about three things in it:
 
-1. **fenced code blocks** whose language is a shell (`sh`, `bash`, `pwsh`, `powershell`, `cmd`):
-   these are the **cells** that run; options go on the fence line;
+1. **fenced code blocks** whose language is a shell (`sh`, `bash`, `pwsh`, `powershell`, `cmd`).
+   These are the **cells** that run; options go on the fence line;
 2. **output blocks** it writes after a cell when the cell has run;
 3. an optional **front matter** at the top with runbook-wide defaults and parameters.
 
@@ -54,11 +54,11 @@ A cell is a fenced code block as in CommonMark, with these rules:
 
 - The fence is three or more backticks or tildes. The closing fence uses the same character and
   is at least as long. Any indentation is allowed, so blocks inside lists work.
-- The **info string** is everything after the opening fence. Its first word is the language;
-  the cell runs only when that word is exactly `sh`, `bash`, `pwsh`, `powershell` or `cmd`
-  (lower case), or `runbook`, which runs another runbook as one step (see
-  [Runbook calls](#runbook-calls)). Any other language (`yaml`, `text`, `python`, …) is plain
-  Markdown.
+- The **info string** is everything after the opening fence. Its first word is the language.
+  - The cell runs only when that word is exactly `sh`, `bash`, `pwsh`, `powershell`, `cmd`
+    (lower case) or `runbook`.
+  - `runbook` runs another runbook as one step (see [Runbook calls](#runbook-calls)).
+  - Any other language (`yaml`, `text`, `python`, …) is plain Markdown.
 - A backtick fence whose info string contains a backtick is not a fence (CommonMark).
 - Blocks inside a blockquote (`> ```bash`) are not cells. Fences nested inside another fence
   (for example inside a ```` ````markdown ```` example) are not cells. An unclosed fence makes
@@ -85,11 +85,12 @@ Tokens are separated by spaces or tabs. There are three forms:
 - Keys are case-insensitive. The variable name in `env.NAME=` keeps its case.
 - Backslashes are literal: `cwd="C:\Program Files\x"` works as written.
 - A pandoc attribute block `{…}` is skipped. Anything else that is not a known option is
-  ignored; the linter reports it as a warning. It also suggests the option a typo was probably
-  meant to be (`unknown cell option "retires" (ignored): did you mean "retry"?`), and in VS Code
-  a Quick Fix renames it.
-- A known option with an invalid value (`timeout=abc`, `os=dos`, `expect=/(/`) is an error:
-  the linter reports it and the cell does not run (`invalid cell option timeout=abc: …`).
+  ignored; the linter reports it as a warning.
+  - For a typo, the linter suggests the option probably meant:
+    `unknown cell option "retires" (ignored): did you mean "retry"?`. In VS Code, a Quick Fix
+    renames it.
+- A known option with an invalid value (`timeout=abc`, `os=dos`, `expect=/(/`) is an error.
+  The linter reports it and the cell does not run (`invalid cell option timeout=abc: …`).
 - The same key written twice: the last one wins (`capture=` may be repeated and all are kept).
 
 ### Options
@@ -126,18 +127,22 @@ Tokens are separated by spaces or tabs. There are three forms:
 | `reason="…"` | any | Why it was proposed. |
 | `approved-by=NAME`, `approved-at=ISO-TIME` | word, timestamp | Written by md-runbook when the user approves; replaces `proposed`. Stamps that come with a file are not trusted unless the user enabled that. |
 
-**Matchers.** A value that starts and ends with `/` is a regular expression: `/source/flags`,
-flags `i`, `m`, `s` (`u` is accepted and changes nothing). Anything else is plain text matched
-as an exact, case-sensitive substring. Regular expressions use
-[RE2 syntax](https://github.com/google/re2/wiki/Syntax): no look-around, no back-references.
-Checks read everything the cell printed (stdout and stderr) without colour codes and with `\n`
-line endings; captures read only stdout. Quote a matcher that contains spaces:
-`expect="pod Running"`, `capture="POD:/name: (\S+)/"`.
+**Matchers.** A value that starts and ends with `/` is a regular expression: `/source/flags`.
 
-`${out:NAME}`, `${param:NAME}` and `${input:NAME}` in `expect=` and `expect-not=` are replaced by
-their values before the check, as in the cell's code (and asked for when needed); in a regular
-expression each value is one literal atom (`/^max=${param:N}$/`, `/(?:${out:POD}\s+){2}/`). A
-secret is refused there: `${secret:NAME}` or a secret input is an invalid option, and a value
+- Flags are `i`, `m`, `s`; `u` is accepted and changes nothing.
+- Anything else is plain text, matched as an exact, case-sensitive substring.
+- Regular expressions use [RE2 syntax](https://github.com/google/re2/wiki/Syntax): no
+  look-around, no back-references.
+- Checks read everything the cell printed (stdout and stderr), without colour codes and with
+  `\n` line endings. Captures read only stdout.
+- Quote a matcher that contains spaces: `expect="pod Running"`, `capture="POD:/name: (\S+)/"`.
+
+`${out:NAME}`, `${param:NAME}` and `${input:NAME}` in `expect=` and `expect-not=` are filled in
+before the check, as in the cell's code. They are asked for when needed. In a
+regular expression, each value is one literal atom (`/^max=${param:N}$/`,
+`/(?:${out:POD}\s+){2}/`).
+
+A secret is refused there. `${secret:NAME}` or a secret input is an invalid option. A value
 captured with `capture-secret=` stops the cell before it runs.
 
 **Passing.** A cell passes when its exit code is 0 (or `expect-exit=N`) **and** every check
@@ -158,11 +163,12 @@ NAME=value
 | `section=TEXT` | the start of a heading, case-sensitive; repeatable | Run only the steps under it (as `md-runbook run --section`). |
 | a body line `NAME=value` | `NAME` a parameter of the runbook called; the value may use `${param:}`, `${out:}`, `${input:}`, `${secret:}`, and may be quoted | Passed as `${param:NAME}`. Blank lines and `#` comments are allowed. |
 
-The runbook called runs as a copy (`<file>.<yyyyMMdd-HHmmss>.md`, next to it), in a session of
-its own, with only the parameters passed. Its output block records `runbook=`, `copy=`,
-`steps=` and `sha256=` (see [Marker attributes](#marker-attributes)). Shell options (`cwd=`,
-`env.NAME=`, `expect=`, `capture=`, `retry=`, …) have no effect on a call. See
-[running another runbook](features/calls.md).
+The runbook called runs as a copy next to it (`<file>.<yyyyMMdd-HHmmss>.md`). It runs in a
+session of its own, with only the parameters passed. Its output block records `runbook=`,
+`copy=`, `steps=` and `sha256=` (see [Marker attributes](#marker-attributes)).
+
+Shell options (`cwd=`, `env.NAME=`, `expect=`, `capture=`, `retry=`, …) have no effect on a call.
+See [running another runbook](features/calls.md).
 
 ## Placeholders in cell source
 
@@ -178,10 +184,10 @@ Inside the code of a cell, these are replaced before it runs:
 
 - `NAME` is `[A-Za-z_][A-Za-z0-9_]*`. One name is one kind: `${secret:X}` and `${input:X}` in
   the same cell is an error.
-- The value never enters the script text. The placeholder becomes the shell's own variable
-  syntax (`${NAME}` in bash, `${env:NAME}` in PowerShell, `!NAME!` in cmd) and the value is put
-  in the environment. So write it where a variable expands: inside double quotes, not single
-  quotes. In a cmd cell with placeholders a literal `!` must be written `^^!`.
+- The value never enters the script text: it is put in the environment. The placeholder becomes
+  the shell's own variable syntax: `${NAME}` in bash, `${env:NAME}` in PowerShell, `!NAME!` in
+  cmd. So write it where a variable expands: inside double quotes, not single quotes.
+- In a cmd cell with placeholders, a literal `!` must be written `^^!`.
 - The file keeps the placeholder. `${env:NAME}` is PowerShell syntax, not a placeholder.
 - Placeholders work only in cell source and in `expect=` / `expect-not=` (see Matchers above),
   not in other option values or Markdown.
@@ -223,78 +229,112 @@ params:
 ---
 ```
 
-`env:` sets variables for every cell that runs on this machine - in VS Code and from the command
-line, isolated or session - one `NAME: value` per indented line: the value bare or quoted (`"a # b"`),
-`NAME:` alone the empty string. A cell's own `env.NAME=` wins over it. Good uses: `NO_PROXY` for the
-addresses a runbook reaches on this machine, `PAGER: cat`, `GIT_TERMINAL_PROMPT: "0"`. The md-runbook
-app never uses it, on any host: the front matter isn't signed, and a signed cell must not run with
-variables someone could add beside it (`PATH`, `BASH_ENV`, `LD_PRELOAD` change what every command
-runs). Put what a cell on a host needs on the cell itself (`env.NAME=`). The linter warns about such
-names, about lines it ignores, about a `host=` cell in a runbook with `env:`, and about `env:` in a
-signed runbook.
+`env:` sets variables for every cell run on this machine: in VS Code and the command line,
+isolated or session. A cell's own `env.NAME=` wins over it. Good uses: `NO_PROXY` for the
+addresses a runbook reaches on this machine, `PAGER: cat`, `GIT_TERMINAL_PROMPT: "0"`.
 
-`#` starts a comment, after a space, on any line, `params:` items included: `- NAMESPACE  # asked`
-declares NAMESPACE without a default, and `- REGION: eu-west-1  # the default` gives REGION the
-default `eu-west-1`, without the comment. To put `#` in a value, quote it (`- TAG: "v1 #2"`).
+- One `NAME: value` per indented line: the value bare or quoted (`"a # b"`), `NAME:` alone the
+  empty string.
+- The md-runbook app never uses it, on any host:
+  - the front matter isn't signed;
+  - a signed cell must not run with variables someone could add beside it. `PATH`, `BASH_ENV`,
+    `LD_PRELOAD` change what every command runs.
+- Put what a cell on a host needs on the cell itself (`env.NAME=`).
+
+The linter warns about:
+
+- such names;
+- lines it ignores;
+- a `host=` cell in a runbook with `env:`;
+- `env:` in a signed runbook.
+
+`#` starts a comment, after a space, on any line, `params:` items included:
+
+- `- NAMESPACE  # asked` declares NAMESPACE without a default.
+- `- REGION: eu-west-1  # the default` gives REGION the default `eu-west-1`, without the comment.
+- To put `#` in a value, quote it (`- TAG: "v1 #2"`).
+
 `- BACKUP: ""` is an empty default (the parameter is never asked for); `- BACKUP:` alone is no
-default. A
-value that is not understood (`mode: sometimes`) is ignored with a lint warning.
+default. A value that is not understood (`mode: sometimes`) is ignored with a lint warning.
 
 A `params:` item's comment is its description: the launch form in VS Code shows it beside the
-field. A trailing `One of: a, b, c` in the comment (any case) lists the values allowed:
-`- TARGET: staging  # Where to deploy. One of: staging, prod.` gives the description
-`Where to deploy.` and the choices `staging` and `prod`, and the form shows a list to pick from.
-The list ends at the end of the comment or at a period followed by a space, so `1.2` can be a
-choice; `, or` and ` or ` separate too, and quotes around a choice are removed. The linter warns
-when a default is not one of its choices.
+field. A trailing `One of: a, b, c` in the comment (any case) lists the values allowed.
 
-`report-runs:` names where VS Code, the app and the command line send a [run summary](features/run-reports.md)
-at the end of each run: which runbook, who, when, and each step's label, result and duration,
-never an output, a value or a secret. The address is `https://`, or `http://` for `localhost`,
-`127.0.0.1` and `[::1]` only, without a user name or password in it. You are asked once per
-address (Allow / Not now / Never) unless your settings allow it already; the command line sends
-only to addresses given with `--report-to-allowed`. `report-runs-token:` takes only
-`${secret:NAME}`, sent as `Authorization: Bearer`; a token written in the file is a lint error
-and is never sent. `report-runs-required: true` (a notice before the run: Run / Don't run) and
-`report-runs-signed: true` (signed with your key, else the run doesn't start) count only in a
-runbook signed as a whole (manifest version 2) by a signer your client trusts, and unchanged since
-signing. Otherwise they are ignored, and lint says why. The first `report-runs:` line counts.
+`- TARGET: staging  # Where to deploy. One of: staging, prod.` gives the description
+`Where to deploy.` and the choices `staging` and `prod`. The form shows a list to pick from.
+
+- The list ends with the comment, or at a period followed by a space, so `1.2` can be a choice.
+- `, or` and ` or ` separate too, and quotes around a choice are removed.
+- The linter warns when a default is not one of its choices.
+
+`report-runs:` names where VS Code, the app and the command line send a
+[run summary](features/run-reports.md) at the end of each run. The summary has which runbook,
+who, when, and each step's label, result and duration. It never has an output, a value or a
+secret.
+
+- The address is `https://`, or `http://` for `localhost`, `127.0.0.1` and `[::1]` only, without
+  a user name or password in it.
+- You are asked once per address (Allow / Not now / Never) unless your settings allow it
+  already. The command line sends only to addresses given with `--report-to-allowed`.
+- `report-runs-token:` takes only `${secret:NAME}`, sent as `Authorization: Bearer`. A token
+  written in the file is a lint error and is never sent.
+- `report-runs-required: true` shows a notice before the run: Run / Don't run.
+- `report-runs-signed: true` needs the summary signed with your key, else the run doesn't start.
+- Both count only in a runbook signed as a whole (manifest version 2) and unchanged since
+  signing. The signer must be one your client trusts. Otherwise they are ignored, and lint says
+  why.
+- The first `report-runs:` line counts.
 
 `kube-context:` is a guard against the wrong cluster. Before each cell, `kubectl config
-current-context` runs where the cell would run: the session shell, or the app's SSH host,
-through md-runbook-gate if the host has one. The cell runs only if that prints the name.
-Otherwise nothing runs and the cell fails with both names: VS Code and the command line record
-it as `exit=error`, and the app shows the reason on the cell. A `kubectl config use-context` in
-an earlier cell is therefore caught too. The front matter isn't signed, so in
-a signed runbook put `kube-context=` on the cells themselves.
+current-context` runs where the cell would run. That is the session shell, or the app's SSH host
+(through md-runbook-gate if the host has one).
 
-`kube-context-mode: pin` makes the runbook's and its cells' `kube-context` the context the
-cells run against instead of only checking it: each cell run on this machine (VS Code and the
-command line) gets a `KUBECONFIG` whose first file only says `current-context: NAME`, followed by
-your own kubeconfig list (`$KUBECONFIG`, else `~/.kube/config`). kubectl, helm, k9s and other
-client-go tools then use NAME, your default context is never changed, and no credential is
-copied. Before each cell md-runbook checks that your kubeconfig has NAME. A cell with no
-`kube-context` gets your own list. Cells on an SSH host (`host=`, the app) are only checked; lint
-warns. The user setting `mdRunbook.execution.kubeContextPin` (on by default) turns pinning off,
-and such runbooks are then only checked. See [Kubernetes](features/kubernetes.md#check-or-pin).
+The cell runs only if that prints the name. Otherwise nothing runs and the cell fails with both
+names. A `kubectl config use-context` in an earlier cell is therefore caught too.
+
+VS Code and the command line record such a failure as `exit=error`; the app shows the reason on
+the cell. The front matter isn't signed, so in a signed runbook put `kube-context=` on the cells
+themselves.
+
+`kube-context-mode: pin` makes the cells run against their `kube-context` (the runbook's or their
+own), instead of only checking it. It applies to each cell run on this machine (VS Code and the
+command line).
+
+- The cell gets a `KUBECONFIG` whose first file only says `current-context: NAME`. Your own
+  kubeconfig list (`$KUBECONFIG`, else `~/.kube/config`) follows it.
+- kubectl, helm, k9s and other client-go tools then use NAME. Your default context is never
+  changed, and no credential is copied.
+- Before each cell md-runbook checks that your kubeconfig has NAME.
+- A cell with no `kube-context` gets your own list.
+- Cells on an SSH host (`host=`, the app) are only checked; lint warns.
+- The user setting `mdRunbook.execution.kubeContextPin` (on by default) turns pinning off, and
+  such runbooks are then only checked. See [Kubernetes](features/kubernetes.md#check-or-pin).
 
 `kube-context: ${param:NAME}` (and `kube-context=${param:NAME}` on a cell) takes the context
-from a runbook parameter, asked or given like any other (`--param NAME=prod-eu`), so one runbook
-runs on a lab by default and on another cluster when asked. The value must be a context name, or
-nothing runs. `pin` and the check work as for a name written out, and each run records the value
-as `kube-context=` in its output marker. Signing a runbook whose cell has
-`kube-context=${param:NAME}` needs a `--pattern` for NAME, and the app checks the value against it.
+from a runbook parameter. It is asked or given like any other (`--param NAME=prod-eu`). So one
+runbook runs on a lab by default and on another cluster when asked.
+
+- The value must be a context name, or nothing runs.
+- `pin` and the check work as for a name written out.
+- Each run records the value as `kube-context=` in its output marker.
+- Signing a runbook whose cell has `kube-context=${param:NAME}` needs a `--pattern` for NAME.
+  The app checks the value against it.
 
 `git-bash-path-conversion: off` stops Git Bash on Windows from rewriting arguments that look like
-POSIX paths when a bash cell starts a Windows program (`kubectl exec pod -- cat /opt/x/probe.sh`
-would otherwise get `C:/Program Files/Git/opt/x/probe.sh`). It sets `MSYS_NO_PATHCONV=1` and
-`MSYS2_ARG_CONV_EXCL=*` for the runbook's `sh`/`bash` cells on Windows; it changes nothing for
-PowerShell and cmd cells or on other systems. The default stays `on` because some commands rely
-on the conversion (a Windows program given `/c/Users/me/file` needs `C:/Users/me/file`).
+POSIX paths. Git Bash rewrites them when a bash cell starts a Windows program:
+`kubectl exec pod -- cat /opt/x/probe.sh` would otherwise get
+`C:/Program Files/Git/opt/x/probe.sh`.
 
-The runbook view (VS Code and the app) doesn't draw the front matter, as VS Code's
-Markdown preview doesn't; editing the first cell shows it. In session mode one bash and one PowerShell process live for the whole runbook, so
-`cd`, exported variables and `oc login` carry over between cells; `cmd` cells always run alone.
+It sets `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*` for the runbook's `sh`/`bash` cells on
+Windows. It changes nothing for PowerShell and cmd cells or on other systems. The default stays
+`on` because some commands rely on the conversion (a Windows program given `/c/Users/me/file`
+needs `C:/Users/me/file`).
+
+The runbook view (VS Code and the app) doesn't draw the front matter, as VS Code's Markdown
+preview doesn't. Editing the first cell shows it.
+
+In session mode one bash and one PowerShell process live for the whole runbook. So `cd`,
+exported variables and `oc login` carry over between cells. `cmd` cells always run alone.
 
 `shell:` names, separated by commas or spaces, at most one of each kind:
 
@@ -306,19 +346,23 @@ Markdown preview doesn't; editing the first cell shows it. In session mode one b
 | `pwsh` | `pwsh` and `powershell` cells | PowerShell 7, with no fallback to Windows PowerShell |
 | `windows-powershell` | `pwsh` and `powershell` cells | Windows PowerShell 5.1 even when PowerShell 7 is installed (Windows only) |
 
-Without `shell:`, `sh`/`bash` cells run in bash (Git Bash on Windows, sh if there is no bash) and
-PowerShell cells in PowerShell 7, else Windows PowerShell. A missing shell is an error on the
-cell, never a silent switch to another one. Only names are read, never a path: a runbook can't
-choose a program to run (paths are your settings, `mdRunbook.shell.bashPath` and
-`mdRunbook.shell.pwshPath`, which apply to the default shells). Lint warns about names it
-ignores.
+Without `shell:`, `sh`/`bash` cells run in bash (Git Bash on Windows, sh if there is no bash).
+PowerShell cells run in PowerShell 7, else Windows PowerShell. A missing shell is an error on
+the cell, never a silent switch to another one.
 
-`shell:` applies to every cell, including an assistant's proposals. With `shell: zsh` a proposal
-is never approved by the allowlist alone (zsh reads some text differently from bash: its glob
-qualifiers can run commands), and an approval given before the runbook switched to zsh no longer
-counts. Signed runbooks run in bash on the server, so Sign Runbook refuses another Unix shell.
-The app starts the named shell on the server (`zsh -l`, `sh -l`, or `pwsh` on Windows servers)
-and says so on the cell when the server doesn't have it.
+Only names are read, never a path: a runbook can't choose a program to run. Paths are your
+settings, `mdRunbook.shell.bashPath` and `mdRunbook.shell.pwshPath`, which apply to the default
+shells. Lint warns about names it ignores.
+
+`shell:` applies to every cell, including an assistant's proposals. With `shell: zsh`:
+
+- a proposal is never approved by the allowlist alone. zsh reads some text differently from
+  bash: its glob qualifiers can run commands.
+- an approval given before the runbook switched to zsh no longer counts.
+
+Signed runbooks run in bash on the server, so Sign Runbook refuses another Unix shell. The app
+starts the named shell on the server (`zsh -l`, `sh -l`, or `pwsh` on Windows servers). It says
+so on the cell when the server doesn't have it.
 
 ## Output blocks
 
@@ -337,15 +381,19 @@ system:admin
 ````
 
 - The start marker must follow the cell's closing fence (blank lines between them are allowed).
-  Attributes are `key=value` or `key="value"`; keys are `[\w-]+`. Attributes not listed below
-  are read and shown too. Running the cell again replaces the whole block, attributes included.
-- The output fence is a backtick fence with `text`, longer than any backtick run inside the
-  output, so output can never break the document. Its indentation matches the code block's.
-- stdout and stderr are merged in arrival order; `stderr=` lists the lines that came from stderr,
-  so both clients show them in red again when the file is opened. Before writing, output becomes what a terminal
-  would show (carriage returns, backspaces, erased lines and cursor movements applied, other
-  control characters dropped), ANSI codes are stripped, secrets are redacted, and long output is
-  cut in the middle with `… [md-runbook: N lines truncated] …`.
+  Running the cell again replaces the whole block, attributes included.
+- Attributes are `key=value` or `key="value"`; keys are `[\w-]+`. Attributes not listed below
+  are read and shown too.
+- The output fence is a backtick fence with `text`. It is longer than any backtick run inside
+  the output, so output can never break the document. Its indentation matches the code block's.
+- stdout and stderr are merged in arrival order. `stderr=` lists the stderr lines, so both
+  clients show them in red again when the file is opened.
+- Before writing:
+  - output becomes what a terminal would show. Carriage returns, backspaces, erased lines and
+    cursor movements are applied; other control characters are dropped.
+  - ANSI codes are stripped;
+  - secrets are redacted;
+  - long output is cut in the middle with `… [md-runbook: N lines truncated] …`.
 - Re-running a cell replaces its block. Blocks of cells that did not run are kept byte for byte.
 - The status line shown in the editor (`exit code 0 · 1.2s · bash`) is not in the file.
 
@@ -386,14 +434,15 @@ error: You must be logged in to the server (Unauthorized)
 </details>
 ````
 
-A runbook that keeps evidence (`incident:` or `evidence: true`) keeps every attempt (up to 100 per
-step) whatever the history setting, in VS Code, the app and the command line.
+A runbook that keeps evidence (`incident:` or `evidence: true`) keeps every attempt, up to 100
+per step. This holds whatever the history setting, in VS Code, the app and the command line.
 
 ### Notes
 
-**Add Note** (and **Start Incident**, for when the incident was detected) writes a note: a marker
-with the time, the author and an optional milestone (`detected`, `mitigated`, `resolved`), then a
-quote. Anywhere in the Markdown; Export Report puts notes in the timeline by their time.
+**Add Note** (and **Start Incident**, for when the incident was detected) writes a note. A note
+is a marker with the time, the author and an optional milestone (`detected`, `mitigated`,
+`resolved`), then a quote. Notes go anywhere in the Markdown; Export Report puts them in the
+timeline by their time.
 
 ```markdown
 <!-- md-runbook:note at=2026-10-26T22:08:00+01:00 by=ana milestone=mitigated -->
@@ -419,45 +468,66 @@ A runbook's **steps** are its cells plus GitHub task-list items in Markdown (`- 
 - **pending** with no output, `exit=declined`, `exit=unanswered`, `exit=proposed`, or a partial `lines=` run;
 - **failed** with `check=failed` or any other exit.
 
-A group of adjacent `os=` blocks is one step, judged by the block for the current OS. A
-`host=` block is skipped in the extension and the CLI. Run All
-runs cells in order and stops at the first failure unless the cell has `continue-on-error`.
-Cells of one runbook never run concurrently.
+A group of adjacent `os=` blocks is one step, judged by the block for the current OS. A `host=`
+block is skipped in the extension and the CLI.
 
-A task-list item is a **manual step**: done when it is ticked (`- [x]`), by a person in VS Code
-or the app, or by editing the file. Nothing runs it. **Run All waits at one that isn't ticked**
-(in VS Code and the app): **Done** ticks it, **Skip** goes on without ticking it, **Stop** ends
-the run there; Resume Run (the app: Resume) asks again. `manual-steps: continue` in the front
-matter makes Run All run past them, as reminders. `md-runbook run` lists the unticked ones of
-the steps it runs (see [the command line](features/cli.md#manual-steps)), and a run that keeps
-evidence (`evidence: true` or `incident:`) fails when one is not ticked, so a check nobody did
-never passes unrecorded.
+Run All runs cells in order and stops at the first failure unless the cell has
+`continue-on-error`. Cells of one runbook never run concurrently.
+
+A task-list item is a **manual step**: done when it is ticked (`- [x]`). A person ticks it in
+VS Code or the app, or by editing the file. Nothing runs it.
+
+**Run All waits at one that isn't ticked** (in VS Code and the app):
+
+- **Done** ticks it;
+- **Skip** goes on without ticking it;
+- **Stop** ends the run there.
+
+Resume Run (the app: Resume) asks again. `manual-steps: continue` in the front matter makes Run
+All run past them, as reminders.
+
+`md-runbook run` lists the unticked items of the steps it runs (see
+[the command line](features/cli.md#manual-steps)). A run that keeps evidence (`evidence: true`
+or `incident:`) fails when one is not ticked. So a check nobody did never passes unrecorded.
 
 **Estimates.** With `estimate=` on its blocks, a runbook's progress is also counted in time:
-the estimates of the blocks done over the sum of all, how long is left (the blocks still to
-run; the running block counts its estimate minus the time it has run, never below zero; in
-seconds under two minutes) and when the run ends at that pace (`≈ 14:32`). A block without `estimate=` uses its learned estimate once it has run (the median of its last
-5 runs that passed, shown `~1m15s`, kept on the machine, never in the file); before that it is
-counted as a block without an estimate ("2 blocks without an estimate"). `skip` blocks and the ready check don't count; a group of `os=` alternatives counts
-once. Shown in the extension's status bar item, at the top of the app's runbook, and by
-`md-runbook run` after each step when its output is a terminal.
 
-The ready check is not a step in the steps count either, and a teardown that hasn't run is
-*offered*, not a step still to do. A running block's bar fills against its `estimate=`; after
-a run noticeably over it (more than a quarter and 10 s), the block says by how much.
+- the estimates of the blocks done, over the sum of all;
+- how long is left: the blocks still to run. The running block counts its estimate minus the
+  time it has run, never below zero. Under two minutes, it is shown in seconds.
+- when the run ends at that pace (`≈ 14:32`).
 
-**Setup and teardown.** In a runbook with `setup` or `teardown` steps, the setup counts once it
-runs (0 when the ready check said already up; before the check, as "+19m if the setup runs"),
-and the teardown only once chosen ("teardown 2m, offered"). See
-[setup and teardown](features/setup-teardown.md).
+A block without `estimate=` uses its learned estimate once it has run. It is the median of its
+last 5 passed runs, shown `~1m15s`, kept on the machine, never in the file. Before that, it
+is counted as a block without an estimate ("2 blocks without an estimate").
 
-`md-runbook estimate file.md` prints one line per `#` and `##` section (a `###` section stays in
-its `##`) with the sum of its blocks' estimates and the blocks without one, then the total.
+`skip` blocks and the ready check don't count; a group of `os=` alternatives counts once.
+Progress in time is shown in the extension's status bar item and at the top of the app's
+runbook. `md-runbook run` shows it after each step when its output is a terminal.
+
+The ready check is not a step in the steps count either. A teardown that hasn't run is
+*offered*, not a step still to do.
+
+A running block's bar fills against its `estimate=`. After a run noticeably over it (more than
+a quarter and 10 s), the block says by how much.
+
+**Setup and teardown.** In a runbook with `setup` or `teardown` steps:
+
+- the setup counts once it runs:
+  - 0 when the ready check said already up;
+  - before the check, as "+19m if the setup runs";
+- the teardown counts only once chosen ("teardown 2m, offered").
+
+See [setup and teardown](features/setup-teardown.md).
+
+`md-runbook estimate file.md` prints one line per `#` and `##` section, then the total. A `###`
+section stays in its `##`. Each line has the sum of its blocks' estimates and the blocks without
+one.
 
 ## Proposed cells and approval
 
 Anything an assistant writes must be a proposal. The user approves it in the editor, which
-rewrites the fence line; md-runbook then records the audit trail in the output marker:
+rewrites the fence line. md-runbook then records the audit trail in the output marker:
 
 ````markdown
 ```bash proposed by=ai reason="list pods in the namespace"
@@ -466,15 +536,18 @@ kubectl get pods -n checkout
 ````
 
 After approval the fence reads ```` ```bash approved-by=smojon approved-at=2026-10-18T17:20:00+02:00 by=ai reason="…" ````.
-An approval is bound to the code, the fence options and the file; editing any of them needs a
+
+An approval is bound to the code, the fence options and the file. Editing any of them needs a
 new approval. A command policy (`.md-runbook-policy.json` next to the runbook) can block or flag
-commands before they are approved. Approved assistant cells never run in a terminal or a shared
-session, and values they capture are not used by the user's own cells.
+commands before they are approved.
+
+Approved assistant cells never run in a terminal or a shared session. Values they capture are
+not used by the user's own cells.
 
 ## Signature block
 
 `md-runbook sign` (or **Sign Runbook** in VS Code) writes one HTML comment at the end of the
-file; it is invisible on screen and kept byte for byte like the rest of the Markdown:
+file. It is invisible on screen and kept byte for byte like the rest of the Markdown:
 
 ```
 <!-- md-runbook:signature v1 signer=NAME signed=YYYY-MM-DD
@@ -485,34 +558,51 @@ BASE64 (wrapped at 76 columns)
 -->
 ```
 
-The manifest is the signed text: `md-runbook-manifest 1`, then one item per line (`name`,
-`version`, `expires`, `scope`, `text SHA256`, `param NAME PATTERN`, and per bash/sh block `cell N all|any`,
-`info`, `code`, `needs NAME`, `cwd`, `env NAME VALUE`, `step`), values that can hold anything in
-base64, then `end`. `code` and `step` are the block's code and its commands with
-`${param:NAME}` written as `${NAME}`. The signature is OpenSSH's SSHSIG over the manifest with
-namespace `md-runbook`, without its armor lines. A block is signed while its fence info string
-and code equal a manifest cell's and it uses the same placeholder names (`needs`); signing again
-replaces the block. Never write or edit it by hand: change the runbook and sign it again.
+The manifest is the signed text: `md-runbook-manifest 1`, then one item per line, then `end`.
+Values that can hold anything are in base64. The items are:
+
+- `name`, `version`, `expires`, `scope`, `text SHA256`, `param NAME PATTERN`;
+- per bash/sh block: `cell N all|any`, `info`, `code`, `needs NAME`, `cwd`, `env NAME VALUE`,
+  `step`.
+
+`code` and `step` are the block's code and its commands, with `${param:NAME}` written as
+`${NAME}`. The signature is OpenSSH's SSHSIG over the manifest with namespace `md-runbook`,
+without its armor lines.
+
+A block is signed while its fence info string, code and placeholder names (`needs`) equal a
+manifest cell's. Signing again replaces the block. Never write or edit it by hand: change the
+runbook and sign it again.
 
 `text` (manifest version 2, signatures made by releases after 0.22.0) is the SHA-256 of the
-whole runbook as signed: the file with LF line endings, without a BOM, its signature block, a run
-record's signature, output blocks (with their history), notes, and the ticks of checklist items,
-trailing blank lines dropped. The runbook is then "signed as a whole": prose, front matter,
-checklists and PowerShell or cmd blocks too. A manifest without `text` (signed before) signs only
-the bash/sh blocks and runbook calls ("partly signed"). It still verifies, and the header stays
-`md-runbook-manifest 1`, so gates installed before run both. `NAME` in `signer=` is one word of
-ASCII letters, digits and `@ . _ + -`, as in allowed_signers; a block with any other name is not
-read as a signature.
+whole runbook as signed. It covers the file with LF line endings and trailing blank lines
+dropped, without:
+
+- a BOM;
+- its signature block, or a run record's signature;
+- output blocks (with their history);
+- notes;
+- the ticks of checklist items.
+
+The runbook is then "signed as a whole": prose, front matter, checklists and PowerShell or cmd
+blocks too. A manifest without `text` (signed before) signs only the bash/sh blocks and runbook
+calls ("partly signed"). It still verifies, and the header stays `md-runbook-manifest 1`, so
+gates installed before run both.
+
+`NAME` in `signer=` is one word of ASCII letters, digits and `@ . _ + -`, as in allowed_signers.
+A block with any other name is not read as a signature.
 
 ### Run record signature
 
-**Sign Run Record** (VS Code, the app, `md-runbook sign --record`) vouches for a run record, the
-file with its outputs, notes and history, as it is. It covers every byte of the file except its
-own block (a runbook signature block included), and what is signed is the statement
-`md-runbook run record v1\nsha256 HEX\n` with the SHA-256 of those bytes, in the same SSHSIG
-namespace, so one allowed_signers file checks both (`md-runbook verify --allowed-signers`); a
-statement is never a manifest, so a record signature can't pass for a runbook's. `signed=` is
-local time with its offset. Co-signers (`--cosign`) sign the same statement.
+**Sign Run Record** (VS Code, the app, `md-runbook sign --record`) vouches for a run record as it
+is. A run record is the file with its outputs, notes and history. The signature covers every
+byte of the file except its own block (a runbook signature block included).
+
+What is signed is the statement `md-runbook run record v1\nsha256 HEX\n`, with the SHA-256 of
+those bytes. It uses the same SSHSIG namespace, so one allowed_signers file checks both
+(`md-runbook verify --allowed-signers`). A statement is never a manifest, so a record signature
+can't pass for a runbook's.
+
+`signed=` is local time with its offset. Co-signers (`--cosign`) sign the same statement.
 
 ```markdown
 <!-- md-runbook:record-signature v1 signer=ana@example.net signed=2026-10-26T22:40:00+01:00 sha256=3f0c…
@@ -530,14 +620,17 @@ U1NIU0lH…
 - When adding steps to someone else's runbook, write them as proposals:
   `<lang> proposed by=ai reason="…"`. Never remove the `proposed` flag or write `approved-by=`.
 - Never write output blocks yourself: they record what actually ran. Never claim a step ran.
-- Never write or change a signature block. Editing a block of a signed runbook makes it unsigned
-  (servers that only run signed runbooks refuse it until a publisher signs it again): say so.
+- Never write or change a signature block. Editing a block of a signed runbook makes it
+  unsigned: say so. Servers that only run signed runbooks refuse it until a publisher signs it
+  again.
 - Never put a credential in the code. Reference it as `${secret:NAME}` or `${input:NAME:secret}`
   and let the user supply it.
 - Prefer read-only diagnostics. Risky commands (`delete`, `drain`, `rm -rf`, `--force`, …) ask
-  the user for confirmation before they run; say in the prose why such a step is needed.
-- Make steps self-checking where it helps: `expect=` for the condition that proves the step
-  worked, `retry=` and `every=` to wait for a state, `capture=` to hand a value to the next step.
+  the user for confirmation before they run. Say in the prose why such a step is needed.
+- Make steps self-checking where it helps:
+  - `expect=` for the condition that proves the step worked;
+  - `retry=` and `every=` to wait for a state;
+  - `capture=` to hand a value to the next step.
 - Use `os=` alternatives for a step that differs between Windows and Unix shells.
 - Run `md-runbook lint file.md` (or trust the editor's underlines) to catch unknown options and
   `${out:NAME}` without a capture.
