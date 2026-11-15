@@ -1644,7 +1644,7 @@
               "No prose findings in the editor, not even for a runbook with `prose: strict` (the command line still reports them)."
             ],
             "default": "information",
-            "markdownDescription": "How prose that could be shorter shows: a sentence over 20 words, a long paragraph, padding words, a sentence said twice. A runbook with `prose: strict` in its front matter makes them warnings, unless this is `off`. See [Prose](https://github.com/smojon/md-runbook/blob/main/docs/features/lint.md#prose).",
+            "markdownDescription": "How prose that could be shorter shows: a sentence over 20 words, a long paragraph, padding words, a sentence said twice. A runbook with `prose: strict` in its front matter makes them warnings (a sentence only past 25 words), unless this is `off`. See [Prose](https://github.com/smojon/md-runbook/blob/main/docs/features/lint.md#prose).",
             "order": 3
           },
           "mdRunbook.lines.buttons": {

@@ -5,14 +5,15 @@
  *
  *   { "docs/app.md": { "average": 16.2, "sentences": 3, "units": 1 } }
  *
- * plus `phrases` and `repeats` for the rules only md-runbook has (absent: 0). Only files with a
- * finding are recorded; any other file is held to 0, 0 and an average of 15.
+ * plus `phrases`, `repeats` and `duplicates` for the rules only md-runbook has (absent: 0). Only
+ * files with a finding are recorded; any other file is held to 0, 0 and an average of 15 (or the
+ * limits of .md-runbook-prose.json).
  */
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
-import { PROSE_LIMITS, ProseFinding, ProseOptions, ProseRule, measureProse, roundAverage } from '@md-runbook/core/prose';
+import { PROSE_LIMITS, PROSE_LIMIT_KEYS, ProseFinding, ProseLimits, ProseOptions, ProseRule, measureProse, proseDuplicates, proseLimits, roundAverage } from '@md-runbook/core/prose';
 
 /** A file's numbers, as recorded. */
 export interface ProseNumbers {
@@ -21,20 +22,27 @@ export interface ProseNumbers {
   average: number;
   phrases?: number;
   repeats?: number;
+  duplicates?: number;
 }
 
-type Key = 'sentences' | 'units' | 'phrases' | 'repeats';
-const KEY_OF: Record<ProseRule, Key | undefined> = {
+type Key = 'sentences' | 'units' | 'phrases' | 'repeats' | 'duplicates';
+const KEY_OF: Record<ProseRule, Key> = {
   'prose-sentence': 'sentences',
   'prose-paragraph': 'units',
-  'prose-average': undefined,
   'prose-opener': 'phrases',
   'prose-announcing': 'phrases',
   'prose-padding': 'phrases',
   'prose-heading': 'phrases',
+  'prose-lead-in': 'phrases',
+  'prose-duration': 'phrases',
+  'prose-box': 'phrases',
+  'prose-box-repeat': 'phrases',
+  'prose-choppy': 'phrases',
+  'prose-list-lean': 'phrases',
   'prose-repeat': 'repeats',
+  'prose-duplicate': 'duplicates',
 };
-const KEYS: readonly Key[] = ['sentences', 'units', 'phrases', 'repeats'];
+const KEYS: readonly Key[] = ['sentences', 'units', 'phrases', 'repeats', 'duplicates'];
 
 /** The config file at the repository root: {"exclude": ["CLAUDE.md", "tests/fixtures/**"]}. */
 export const PROSE_CONFIG = '.md-runbook-prose.json';
@@ -62,13 +70,43 @@ export function globToRegExp(glob: string): RegExp {
 export interface ProseConfig {
   /** Files left out: --exclude GLOB and the config file's "exclude". */
   exclude: string[];
-  /** The config file's "skipLines" and "labels" (regexes): how this repository writes what isn't prose. */
+  /** The config file's "skipLines", "labels" (regexes), "limits" and "boxes": how this repository writes. */
   options: ProseOptions;
+}
+
+/** A positive whole number, or an error that names the key. */
+function whole(where: string, v: unknown): number {
+  if (typeof v !== 'number' || !Number.isInteger(v) || v <= 0) throw new Error(`${PROSE_CONFIG}: ${where} must be a positive whole number (got ${JSON.stringify(v)})`);
+  return v;
+}
+
+/** "limits": {"sentenceWords": 20, …}: any of PROSE_LIMIT_KEYS, positive whole numbers. */
+function readLimits(v: unknown): Partial<ProseLimits> | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error(`${PROSE_CONFIG}: "limits" must be an object such as {"sentenceWords": 20}`);
+  const out: Partial<ProseLimits> = {};
+  for (const [k, n] of Object.entries(v)) {
+    if (!(PROSE_LIMIT_KEYS as readonly string[]).includes(k)) throw new Error(`${PROSE_CONFIG}: unknown limit "${k}" (expected ${PROSE_LIMIT_KEYS.join(', ')})`);
+    out[k as keyof ProseLimits] = whole(`"limits.${k}"`, n);
+  }
+  return out;
+}
+
+/** "boxes": {"sentences": 5, "words": 100}, or false (no boxes). */
+function readBoxes(v: unknown): ProseOptions['boxes'] {
+  if (v === undefined || v === false) return v;
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error(`${PROSE_CONFIG}: "boxes" must be false or an object such as {"sentences": 5, "words": 100}`);
+  const out: { sentences?: number; words?: number } = {};
+  for (const [k, n] of Object.entries(v)) {
+    if (k !== 'sentences' && k !== 'words') throw new Error(`${PROSE_CONFIG}: unknown "boxes" key "${k}" (expected sentences, words)`);
+    out[k] = whole(`"boxes.${k}"`, n);
+  }
+  return out;
 }
 
 /**
  * The config: the flags and .md-runbook-prose.json in `cwd` (a bad config file is an error, not ignored):
- * {"exclude": [globs], "skipLines": [regexes], "labels": [regexes]}.
+ * {"exclude": [globs], "skipLines": [regexes], "labels": [regexes], "limits": {...}, "boxes": {...} | false}.
  */
 export function proseConfig(excludeFlags: readonly string[], cwd = process.cwd()): ProseConfig {
   const file = path.join(cwd, PROSE_CONFIG);
@@ -89,7 +127,12 @@ export function proseConfig(excludeFlags: readonly string[], cwd = process.cwd()
     });
   const skipLines = regexes('skipLines');
   const labels = regexes('labels');
-  return { exclude: [...excludeFlags, ...(list('exclude') ?? [])], options: { ...(skipLines ? { skipLines } : {}), ...(labels ? { labels } : {}) } };
+  const limits = readLimits(data?.limits);
+  const boxes = readBoxes(data?.boxes);
+  return {
+    exclude: [...excludeFlags, ...(list('exclude') ?? [])],
+    options: { ...(skipLines ? { skipLines } : {}), ...(labels ? { labels } : {}), ...(limits ? { limits } : {}), ...(boxes !== undefined ? { boxes } : {}) },
+  };
 }
 
 /** The Markdown files git tracks here (`git ls-files '*.md'`), but the excluded ones. */
@@ -111,41 +154,56 @@ export function measureFile(text: string, options: ProseOptions = {}): { finding
   return { findings: m.findings, numbers, count: m.count };
 }
 
-const isRecorded = (n: ProseNumbers): boolean => KEYS.some((k) => (n[k] ?? 0) > 0) || n.average > PROSE_LIMITS.averageWords;
-const NEW_FILE: ProseNumbers = { sentences: 0, units: 0, average: PROSE_LIMITS.averageWords };
+type Measured = ReturnType<typeof measureFile>;
+
+/**
+ * Adds the text said in 3 files or more (proseDuplicates) to each file's findings and numbers.
+ * Only over many files: a file with `prose: off` takes no part.
+ */
+export function addDuplicates(files: ReadonlyMap<string, { text: string; measured: Measured }>, options: ProseOptions = {}): void {
+  const on = [...files].filter(([, f]) => parseFrontMatter(f.text)?.prose !== 'off').map(([name, f]) => ({ name, text: f.text }));
+  for (const [name, found] of proseDuplicates(on, options)) {
+    const m = files.get(name)!.measured;
+    m.findings.push(...found);
+    m.findings.sort((a, b) => a.line - b.line);
+    m.numbers.duplicates = found.length;
+  }
+}
+
+const isRecorded = (n: ProseNumbers, l: ProseLimits): boolean => KEYS.some((k) => (n[k] ?? 0) > 0) || n.average > l.averageWords;
+const newFile = (l: ProseLimits): ProseNumbers => ({ sentences: 0, units: 0, average: l.averageWords });
 
 /** What got worse in a file against its baseline (undefined: a new file, held to the rules). */
-export function proseWorse(now: ProseNumbers, before: ProseNumbers | undefined): string[] {
-  const limits = before ?? NEW_FILE;
+export function proseWorse(now: ProseNumbers, before: ProseNumbers | undefined, l: ProseLimits = proseLimits()): string[] {
+  const limits = before ?? newFile(l);
   const was = (k: Key): number => limits[k] ?? 0;
   const problems: string[] = [];
-  if (now.sentences > was('sentences')) problems.push(`${now.sentences} sentences over ${PROSE_LIMITS.sentenceWords} words (was ${was('sentences')})`);
+  if (now.sentences > was('sentences')) problems.push(`${now.sentences} sentences over ${l.sentenceWords} words (was ${was('sentences')})`);
   if (now.units > was('units')) {
-    problems.push(`${now.units} paragraphs over ${PROSE_LIMITS.unitSentences} sentences or ${PROSE_LIMITS.unitWords} words (was ${was('units')})`);
+    problems.push(`${now.units} paragraphs over ${l.unitSentences} sentences or ${l.unitWords} words (was ${was('units')})`);
   }
-  if (now.average > Math.max(limits.average, PROSE_LIMITS.averageWords)) problems.push(`${now.average.toFixed(1)} words a sentence on average (was ${limits.average.toFixed(1)})`);
+  if (now.average > Math.max(limits.average, l.averageWords)) problems.push(`${now.average.toFixed(1)} words a sentence on average (was ${limits.average.toFixed(1)})`);
   if ((now.phrases ?? 0) > was('phrases')) problems.push(`${now.phrases} phrases to cut (was ${was('phrases')})`);
   if ((now.repeats ?? 0) > was('repeats')) problems.push(`${now.repeats} sentences said twice (was ${was('repeats')})`);
+  if ((now.duplicates ?? 0) > was('duplicates')) problems.push(`${now.duplicates} passages said in ${PROSE_LIMITS.duplicateFiles} files or more (was ${was('duplicates')})`);
   return problems;
 }
 
 /** Which findings a problem of proseWorse is about (to list them). */
-function worseRules(now: ProseNumbers, before: ProseNumbers | undefined): Set<Key | 'average'> {
-  const limits = before ?? NEW_FILE;
-  const keys = new Set<Key | 'average'>(KEYS.filter((k) => (now[k] ?? 0) > (limits[k] ?? 0)));
-  if (now.average > Math.max(limits.average, PROSE_LIMITS.averageWords)) keys.add('average');
-  return keys;
+function worseRules(now: ProseNumbers, before: ProseNumbers | undefined, l: ProseLimits): Set<Key> {
+  const limits = before ?? newFile(l);
+  return new Set<Key>(KEYS.filter((k) => (now[k] ?? 0) > (limits[k] ?? 0)));
 }
 
 /** The numbers recorded: never higher than before (a new file isn't recorded: it's held to the rules). */
-function lowered(now: ProseNumbers, before: ProseNumbers | undefined): ProseNumbers {
-  const limits = before ?? NEW_FILE;
+function lowered(now: ProseNumbers, before: ProseNumbers | undefined, l: ProseLimits): ProseNumbers {
+  const limits = before ?? newFile(l);
   const n: ProseNumbers = {
     sentences: Math.min(now.sentences, limits.sentences),
     units: Math.min(now.units, limits.units),
-    average: Math.min(now.average, Math.max(limits.average, PROSE_LIMITS.averageWords)),
+    average: Math.min(now.average, Math.max(limits.average, l.averageWords)),
   };
-  for (const k of ['phrases', 'repeats'] as const) {
+  for (const k of ['phrases', 'repeats', 'duplicates'] as const) {
     const v = Math.min(now[k] ?? 0, limits[k] ?? 0);
     if (v > 0) n[k] = v;
   }
@@ -204,7 +262,8 @@ export function proseRatchet(o: RatchetOptions): number {
   }
   const out = o.config.exclude.map(globToRegExp);
   const names = (o.files.length > 0 ? o.files.map(relative) : trackedMarkdown([])).filter((n) => !out.some((r) => r.test(n)));
-  const current = new Map<string, ReturnType<typeof measureFile>>();
+  const l = proseLimits(o.config.options);
+  const read = new Map<string, { text: string; measured: Measured }>();
   let missing = false;
   for (const name of names) {
     if (!fs.existsSync(name)) {
@@ -212,14 +271,17 @@ export function proseRatchet(o: RatchetOptions): number {
       missing = true;
       continue;
     }
-    current.set(name, measureFile(fs.readFileSync(name, 'utf8'), o.config.options));
+    const text = fs.readFileSync(name, 'utf8');
+    read.set(name, { text, measured: measureFile(text, o.config.options) });
   }
+  addDuplicates(read, o.config.options);
+  const current = new Map<string, Measured>([...read].map(([name, f]) => [name, f.measured]));
   let limits: Record<string, ProseNumbers> = before ?? {};
   if (o.update) {
     const next: Record<string, ProseNumbers> = {};
     for (const [name, m] of current) {
-      const n = before === undefined ? m.numbers : lowered(m.numbers, before[name]);
-      if (isRecorded(n)) next[name] = n;
+      const n = before === undefined ? m.numbers : lowered(m.numbers, before[name], l);
+      if (isRecorded(n, l)) next[name] = n;
     }
     // Files not checked this time keep their numbers while they exist.
     for (const [name, n] of Object.entries(before ?? {})) if (!current.has(name) && fs.existsSync(name)) next[name] = n;
@@ -229,23 +291,23 @@ export function proseRatchet(o: RatchetOptions): number {
   }
   const failed: Array<[string, string[]]> = [];
   for (const [name, m] of current) {
-    const problems = proseWorse(m.numbers, limits[name]);
+    const problems = proseWorse(m.numbers, limits[name], l);
     if (problems.length === 0) continue;
     failed.push([name, problems]);
-    const rules = worseRules(m.numbers, limits[name]);
+    const rules = worseRules(m.numbers, limits[name], l);
     for (const f of m.findings) {
-      const key = KEY_OF[f.rule] ?? 'average';
+      const key = KEY_OF[f.rule];
       if (rules.has(key)) o.out(`${name}:${f.line + 1}: ${f.message}`);
     }
   }
-  const recorded = [...current].filter(([, m]) => isRecorded(m.numbers));
+  const recorded = [...current].filter(([, m]) => isRecorded(m.numbers, l));
   const better = o.update
     ? []
     : Object.keys(before ?? {}).filter((name) => {
         const m = current.get(name);
         if (!m) return !fs.existsSync(name); // deleted: its entry can go
         const b = before![name]!;
-        return KEYS.some((k) => (m.numbers[k] ?? 0) < (b[k] ?? 0)) || m.numbers.average < b.average || !isRecorded(m.numbers);
+        return KEYS.some((k) => (m.numbers[k] ?? 0) < (b[k] ?? 0)) || m.numbers.average < b.average || !isRecorded(m.numbers, l);
       });
   const lines: string[] = [];
   if (failed.length > 0) {
@@ -262,16 +324,26 @@ export function proseRatchet(o: RatchetOptions): number {
   return failed.length > 0 || missing ? 1 : 0;
 }
 
-/** `md-runbook lint --prose-show GLOB`: every prose finding of the tracked Markdown files matching GLOB. */
+/**
+ * `md-runbook lint --prose-show GLOB`: every prose finding of the tracked Markdown files matching
+ * GLOB; text said in 3 files or more counts every tracked file, as the ratchet does.
+ */
 export function proseShow(glob: string, config: ProseConfig, out: (line: string) => void): number {
   const match = globToRegExp(glob);
-  const names = trackedMarkdown(config.exclude).filter((n) => match.test(n));
+  const tracked = trackedMarkdown(config.exclude).filter((n) => fs.existsSync(n));
+  const names = tracked.filter((n) => match.test(n));
   if (names.length === 0) {
     out(`no tracked Markdown file matches ${glob}`);
     return 1;
   }
+  const read = new Map<string, { text: string; measured: Measured }>();
+  for (const name of tracked) {
+    const text = fs.readFileSync(name, 'utf8');
+    read.set(name, { text, measured: match.test(name) ? measureFile(text, config.options) : { findings: [], numbers: { sentences: 0, units: 0, average: 0 }, count: 0 } });
+  }
+  addDuplicates(read, config.options);
   for (const name of names) {
-    const m = measureFile(fs.readFileSync(name, 'utf8'), config.options);
+    const m = read.get(name)!.measured;
     out(`${name}: ${plural(m.count, 'sentence')}, ${roundAverage(m.numbers.average).toFixed(1)} words on average`);
     for (const f of m.findings) {
       const at = `  ${name}:${f.line + 1}:`;

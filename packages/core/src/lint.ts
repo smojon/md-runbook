@@ -16,7 +16,7 @@ import { POWERSHELLS, UNIX_SHELLS, parseShells, shellKindForLanguage } from './s
 import { readSignature, signedStatus } from './signing';
 import { CALL_OPTIONS, NOT_ON_A_CALL, callRefs, checkCall, isCallLanguage, isDynamicSrc, parseCall, srcGlob } from './call';
 import { partProblems } from './parts';
-import { ProseOptions, markupCellAt, measureProse } from './prose';
+import { ProseOptions, markupCellAt, measureProse, proseLimits, sentenceMessage } from './prose';
 
 /** `info`: a prose finding (prose.ts), shown but never failing a check. `prose: strict` makes them warnings. */
 export type LintSeverity = 'error' | 'warning' | 'info';
@@ -430,12 +430,20 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
     if (at >= 0) problems.push({ severity: 'error', line: at, message: 'the signature block is damaged (sign the runbook again)' });
   }
 
-  // Prose (prose.ts): info, warnings with `prose: strict`, none with `prose: off`.
+  // Prose (prose.ts): info, warnings with `prose: strict`, none with `prose: off`. Under strict a
+  // sentence is a warning only past strictSentenceWords (25); a shorter long one stays info.
   if (fm?.prose !== 'off') {
-    const severity: LintSeverity = fm?.prose === 'strict' ? 'warning' : 'info';
+    const strict = fm?.prose === 'strict';
+    const limits = proseLimits(options.prose);
     for (const f of measureProse(text, options.prose).findings) {
       const cell = markupCellAt(doc, f.line);
-      problems.push({ severity, line: f.line, message: f.message, code: f.rule, ...(cell ? { cell } : {}) });
+      let severity: LintSeverity = strict ? 'warning' : 'info';
+      let message = f.message;
+      if (strict && f.rule === 'prose-sentence') {
+        if ((f.words ?? 0) > limits.strictSentenceWords) message = sentenceMessage(f.words ?? 0, limits.strictSentenceWords, f.sentence ?? '');
+        else severity = 'info';
+      }
+      problems.push({ severity, line: f.line, message, code: f.rule, ...(cell ? { cell } : {}) });
     }
   }
   return problems.sort((a, b) => a.line - b.line);

@@ -85,18 +85,39 @@ simple, stupid. It doesn't judge whether a sentence is useful; you do.
 
 | Rule | Limit | Message |
 |---|---|---|
-| Sentence length | at most 20 words | `27 words, at most 20: "…"` |
-| File average | at most 15 words a sentence | `16.2 words a sentence on average, at most 15` (once, at the first prose line) |
-| Paragraph or list item | at most 3 sentences and 60 words | `Several ideas (4 sentences, 72 words): make it a list` |
+| Sentence length | at most 20 words (`prose: strict`: a warning only past 25) | `27 words, at most 20: "…"` |
+| Paragraph or list item | at most 3 sentences and 60 words; a box's labelled paragraph 5 and 100 (see [Boxes](#boxes)) | `Several ideas (4 sentences, 72 words): make it a list` |
 | Throat-clearing opener | `Please note that`, `Note that`, `It is important to`, `It should be noted that`, `As mentioned above` (or `earlier`, `before`) | `Delete the opener "Note that"` |
+| Padding | `basically`, `simply`, `of course`, `obviously`; `in order to` | `Delete "simply"`, `Use "to", not "in order to"` |
 | Announcing | `This section describes…`, `The following steps show…`, `In this section…` | `Delete this sentence, it only announces: "…"` |
-| Padding | `basically`, `simply`, `just`, `actually`, `really`, `very`; `in order to` | `Delete "just"`, `Use "to", not "in order to"` |
 | Says the heading again | the first sentence under a heading has 70 % of its words and adds at most 4 | `Says the heading again: cut it, or add what's new` |
 | Repeat | the same sentence twice in a file (6 words or more, case and emphasis ignored) | `Already said on line 12: "…"` |
+| Empty lead-in | a paragraph of at most 6 words, ending in `:`, starting with `Now`, `Then`, `Next`, `First`, `Again`, `Back to`, `Here` or `On the lab`, right before a code block | `Empty lead-in: start with what the block does, or cut it` |
+| Duration | in a runbook with `estimate=`: a duration of the whole (`This guide takes about 40 minutes`, `about 40 minutes in all`, `About 40 minutes.`), or one with `takes` or `allow` in the first paragraph of the runbook or of a section, but not one right before a block | `Duration in prose: it goes stale; the estimates show it` |
+| Choppy | 3 sentences or more in a row under 8 words each, in one paragraph or box | `Choppy: join these sentences with their link word` |
+| Leaning bullet | a bullet right after a sibling bullet, starting with `It`, `Its`, `This`, `That`, `These`, `Those`, `They`, `There`, `Then`, `So`, `But` or `And` (not in a numbered list) | `Leans on the item before: join them into a sentence, or make it stand alone` |
+| Box in paragraphs | a box with a blank `>` line between two paragraphs (not around a list) | `Box in 2 paragraphs: make it one` |
+| Box repeats | a box's first sentence says a sentence of the paragraph right above it again (60 % of its content words, or 4 in a row) | `Box repeats this sentence: cut it here, keep the box` (on that sentence) |
+| Box repeats a box | the same, against the box before it in the section | `Says what the box above says: cut one` (on the later box) |
+| Said in several files | only on the command line, over many files: see [A whole repository](#a-whole-repository) | `Said in 3 files: say it once and link it` |
+
+A file's average (at most 15 words a sentence) is no note any more; the ratchet still records
+it. On a sister project it never flagged a file without a long sentence, and it pushed towards
+choppy text.
 
 The phrase lists and the limits are in one place: `PROSE_PHRASES` and `PROSE_LIMITS` in
 [`packages/core/src/prose.ts`](../../packages/core/src/prose.ts). They are kept small, to avoid
 false alarms.
+
+The guard keeps the sentence rules off a sentence that states a fact, a reason, a condition or a
+warning:
+
+- a sentence with a digit, a code span or a link;
+- or one of these words: `because`, `so that`, `never`, `must`, `only`, `not`, `unless`, `until`, `except`.
+
+The sentence rules are the announcing, heading, repeat, lead-in, duration, choppy and box-repeat
+rules; a duration keeps its digit. Openers and padding cut words, not the sentence: they always
+apply (`Please note that it never retries` still loses `Please note that`).
 
 How text is read:
 
@@ -104,8 +125,13 @@ How text is read:
   images and HTML lines. md-runbook's own blocks (outputs, signatures, notes) are not prose.
 - A paragraph, a list item and a quote are each a unit; a nested item is a unit of its own.
 - A code span, a link or a URL counts as one word.
-- A sentence ends at `.`, `!` or `?` before a space and a letter or digit; `e.g.`, `i.e.`, `etc.`,
-  `vs.` and version numbers (`0.25.1`) don't end one. ` · ` does.
+- A sentence ends at `.`, `!` or `?` before a space and a letter or digit; ` · ` ends one too.
+- No sentence ends at `e.g.`, `i.e.`, `etc.`, `vs.` or a version number (`0.25.1`).
+- Nor at initials (`L. Peter Deutsch`), `no.` before a number, or a label's `?` in running
+  text (`a Did you know? box`).
+- Links in parentheses alone (`([source](…), [paper](…))`) are a citation, not a sentence.
+- A sentence that is mostly a direct quotation has no length limit: a verbatim quote can't be
+  shortened. The quote is in `"…"`, `“…”` or `«…»`, of 6 words or more, and 60 % of the sentence.
 
 The counting is the same as a sister project's `prose_ratchet.py`, and the baseline file has
 its shape, except for fences: md-runbook reads them as CommonMark does (a ```` fence can hold
@@ -116,6 +142,9 @@ Levels, in the front matter:
 ```yaml
 prose: strict   # on (default: info) | strict: warnings, so lint --strict fails on them | off: no prose checks
 ```
+
+Under `prose: strict`, a sentence of 21 to 25 words stays a note; past 25 it is a warning
+(`27 words, at most 25: "…"`).
 
 To skip one paragraph or list item, put `<!-- md-runbook:prose-ignore -->` at the end of one of
 its lines, or alone on the line before it.
@@ -131,6 +160,32 @@ Why these limits:
 - Readers skip an idea that the first words of a paragraph don't announce: one idea per
   paragraph, more becomes a list (Nielsen Norman Group, *F-Shaped Pattern of Reading on the Web*,
   2006 and 2017).
+
+Writing rules, not checked: a person has to judge them.
+
+- Keep the link word (`because`, `so`, `when`, `while`) when you split a sentence. Without it the
+  reader loses why one thing follows the other. Don't invent one either: a `so` claims a cause.
+
+### Boxes
+
+A box is a quote whose first paragraph carries a label: `> 💡 **Did you know?** · …`. The label
+is an optional emoji, a bold label, then ` · `, ` — `, ` – ` or `:` (`> 🔑 **Key point:** …`).
+A configured `labels` entry makes a box too, and so does a GitHub alert (`> [!TIP]`).
+
+That labelled paragraph may have 5 sentences and 100 words. Any other paragraph in the box, and
+every paragraph outside one, keeps 3 and 60.
+
+Why: a story box is read through, while steps are scanned. On nevis-rest-api, a blind test ranked
+split or 3/60 boxes last in 9 of 10 cases. In that repository 125 of 316 boxes fit 5/100,
+against 49 at 3/60.
+
+Set other box limits, or turn boxes off, in `.md-runbook-prose.json`:
+
+```json
+{ "boxes": { "sentences": 5, "words": 100 } }
+```
+
+With `"boxes": false` a labelled paragraph keeps 3 and 60, and the box hints are off.
 
 ## A whole repository
 
@@ -150,23 +205,35 @@ md-runbook lint --prose-baseline .github/prose-baseline.json --update-baseline  
 ```
 
 - It reads the `.md` files git tracks (or the files you name), from the repository root.
-- The baseline records, per file, the long sentences, the long paragraphs, the average, and the
-  phrases and repeats. Only files with a finding are in it; any other file must have none.
-- It fails when a number goes up, or the average passes both its record and 15. It lists those
-  findings as `file:line: message`.
+- The baseline records, per file, the long sentences, the long paragraphs, the average, the
+  phrases, the repeats and the duplicates. Only files with a finding are in it; any other file
+  must have none.
+- The check fails when a number goes up, or the average passes both its record and 15. It lists
+  those findings as `file:line: message`.
 - `--update-baseline` only ever lowers a number: a file can get better, never worse.
 - Leave files out with `--exclude GLOB`, or in `.md-runbook-prose.json` at the root (see
   below). `*` matches across folders.
 - On GitHub Actions the summary also goes to the job summary.
 
-`.md-runbook-prose.json` holds a repository's conventions. This one has a sister project's
-(generated time lines, callout labels):
+Over many files it also finds text said in several places:
+
+- A sentence or paragraph of 8 words or more, in 3 files or more, is noted at each place.
+- Text is compared in lower case, without links or digits.
+- Paragraphs that share 60 % of their 5-word runs count as the same. A paragraph said as a whole
+  is one note, not one a sentence.
+- `--prose-show` compares with every tracked file, as the ratchet does.
+- The baseline key is `duplicates`.
+
+`.md-runbook-prose.json` holds a repository's conventions. This one has nevis-rest-api's
+(generated time lines, mail subjects, callout labels):
 
 ```json
 {
   "exclude": ["CLAUDE.md", "tests/fixtures/**"],
-  "skipLines": ["^\\*⏱"],
-  "labels": ["^(?:\\p{Extended_Pictographic}\\uFE0F?\\s*)?\\*\\*[^*]+\\*\\*\\s+·\\s+"]
+  "skipLines": ["^\\*⏱", "^Subject:", "^=== Part \\d+ of \\d+"],
+  "labels": ["^(?:\\p{Extended_Pictographic}\\uFE0F?\\s*)?\\*\\*[^*]+\\*\\*\\s+·\\s+"],
+  "limits": { "sentenceWords": 20, "strictSentenceWords": 25, "averageWords": 15, "unitSentences": 3, "unitWords": 60 },
+  "boxes": { "sentences": 5, "words": 100 }
 }
 ```
 
@@ -174,7 +241,19 @@ md-runbook lint --prose-baseline .github/prose-baseline.json --update-baseline  
 |---|---|---|
 | `exclude` | Files left out (globs) | none |
 | `skipLines` | Lines that are not prose (regexes), e.g. generated time lines `*⏱ …*` | none |
-| `labels` | Dropped at the start of a paragraph or item before counting (regexes): callout labels such as `🔑 **Key point** · ` | an optional emoji, a bold label, then ` · `; `[]` turns it off |
+| `labels` | Dropped at the start of a paragraph or item before counting (regexes): callout labels such as `🔑 **Key point** · ` | an optional emoji, a bold label, then ` · `, ` — `, ` – ` or `:`; `[]` turns it off |
+| `limits` | The limits below; any may be left out | the defaults below |
+| `boxes` | A box's labelled paragraph: `{"sentences": n, "words": n}`, or `false` for no boxes | 5 sentences, 100 words |
+
+Limits, each a positive whole number (anything else is an error):
+
+| Limit | Default | What |
+|---|---|---|
+| `sentenceWords` | 20 | Words a sentence, at most |
+| `strictSentenceWords` | 25 | With `prose: strict`: past this, a long sentence is a warning |
+| `averageWords` | 15 | Words a sentence on average in a file (the ratchet only) |
+| `unitSentences` | 3 | Sentences a paragraph or list item, at most |
+| `unitWords` | 60 | Words a paragraph or list item, at most |
 
 Regexes are JavaScript's, with the `u` flag. `md-runbook lint` reads the file from the folder it
 runs in; the editor and the app use the defaults. A GitHub alert's marker line

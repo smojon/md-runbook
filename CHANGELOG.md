@@ -13,6 +13,22 @@
   - `prose: strict` in the front matter makes them warnings. `prose: off` turns them off.
   - `md-runbook lint --prose-baseline FILE` checks a whole repository: no file may get worse.
 
+- **Prose checks: limits of your own, boxes, and new hints.** See [Prose](docs/features/lint.md#prose).
+  - `.md-runbook-prose.json` can set the limits (`"limits"`) and the box limits (`"boxes"`).
+  - A box's labelled paragraph may have 5 sentences and 100 words.
+  - `prose: strict` warns only past 25 words a sentence.
+  - New hints:
+    - an empty lead-in before a code block (`Now run:`);
+    - a total duration, in a runbook with estimates;
+    - choppy sentences, and a bullet that leans on the one before;
+    - a box split in paragraphs, or one that repeats the text above it.
+  - Over many files: text said in 3 files or more.
+  - Fewer false alarms:
+    - a guard skips sentences with a digit, code, a link, or words such as "only" and "never";
+    - fewer padding words;
+    - no note for a file's average;
+    - citations, initials, quotes and labels such as "Did you know?" count right.
+
 ## 0.26.0
 
 Shorter texts in the app, and the gate's log says which alert a run answered.

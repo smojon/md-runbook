@@ -11,17 +11,18 @@ import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { lintRunbook } from '@md-runbook/core/lint';
 import { parse } from '@md-runbook/core';
-import { ProseOptions, checkProse, markupCellAt, measureProse, proseSentences, proseUnits, proseWords, roundAverage } from '@md-runbook/core/prose';
+import { ProseOptions, checkProse, markupCellAt, measureProse, proseDuplicates, proseSentences, proseUnits, proseWords, roundAverage } from '@md-runbook/core/prose';
 import { markerLevel, proseSetting } from '../src/lintLevel';
 import { lint } from '../src/cli/main';
-import { formatBaseline, globToRegExp, measureFile, proseWorse } from '../src/cli/prose';
+import { formatBaseline, globToRegExp, measureFile, proseConfig, proseWorse } from '../src/cli/prose';
 
 // On GitHub Actions the ratchet writes to the job summary: not from these tests.
 delete process.env.GITHUB_STEP_SUMMARY;
 
 /** n words, the last one ending the sentence (prose_ratchet's test helper). */
 const sentence = (n: number): string => Array(n - 1).fill('word').join(' ') + ' end.';
-const rules = (md: string, rule: string): Array<[number, string]> => checkProse(md).filter((f) => f.rule === rule).map((f) => [f.line, f.message]);
+const rules = (md: string, rule: string, options: ProseOptions = {}): Array<[number, string]> =>
+  checkProse(md, options).filter((f) => f.rule === rule).map((f) => [f.line, f.message]);
 const units = (md: string, options: ProseOptions = {}): Array<[number, string]> => proseUnits(md, options).map((u) => [u.line, u.text.replace(/\n/g, ' ')]);
 const lines = (md: string, rule: string): number[] => checkProse(md).filter((f) => f.rule === rule).map((f) => f.line);
 
@@ -209,9 +210,10 @@ describe('prose: messages', () => {
     assert.deepEqual(rules('- ' + four + '\n', 'prose-paragraph'), [[0, 'Several ideas (4 sentences, 12 words): split this item']]);
   });
 
-  it('a file average over 15: one finding, at the first prose line', () => {
-    assert.deepEqual(rules('# T\n\n' + sentence(16) + '\n\n' + sentence(17) + '\n', 'prose-average'), [[2, '16.5 words a sentence on average, at most 15']]);
-    assert.deepEqual(rules(sentence(15) + '\n\n' + sentence(15) + ' ' + sentence(14) + '\n', 'prose-average'), []);
+  it('a file average over 15 is no finding: only the ratchet records it', () => {
+    const m = measureProse('# T\n\n' + sentence(16) + '\n\n' + sentence(17) + '\n');
+    assert.equal(m.average, 16.5);
+    assert.deepEqual(m.findings, []);
   });
 });
 
@@ -232,16 +234,19 @@ describe('prose: phrases, repeats, the heading', () => {
   });
 
   it('padding words and "in order to", on the line they are on; not in code or inside a word', () => {
-    assert.deepEqual(rules('Just run it.\nIt is very\nfast, in order\nto win. Run `simply` and adjust just-in-time.\n', 'prose-padding'), [
-      [0, 'Delete "Just"'],
-      [1, 'Delete "very"'],
+    assert.deepEqual(rules('Basically run it.\nIt is obviously\nfast, in order\nto win. Run `simply` and adjust simply-typed. Of course it waits.\n', 'prose-padding'), [
+      [0, 'Delete "Basically"'],
+      [1, 'Delete "obviously"'],
       [2, 'Use "to", not "in order to"'],
+      [3, 'Delete "Of course"'],
     ]);
+    // Words that nearly always carry meaning are not padding.
+    assert.deepEqual(rules('It needs just enough memory. The very login they watch. It really works. It actually ran.\n', 'prose-padding'), []);
   });
 
   it('the same sentence twice: already said, normalised; short ones may repeat; code spans tell them apart', () => {
-    const md = 'Wait until all the pods show Running.\n\n- Check the logs.\n- **Wait** until all the pods show  Running\n- Check the logs.\n';
-    assert.deepEqual(rules(md, 'prose-repeat'), [[3, 'Already said on line 1: "Wait until all the pods show Running"']]);
+    const md = 'Wait for all the pods to show Running.\n\n- Check the logs.\n- **Wait** for all the pods to show  Running\n- Check the logs.\n';
+    assert.deepEqual(rules(md, 'prose-repeat'), [[3, 'Already said on line 1: "Wait for all the pods to show Running"']]);
     assert.deepEqual(rules('Run `a` on the first host now.\n\nRun `b` on the first host now.\n', 'prose-repeat'), []);
   });
 
@@ -260,14 +265,25 @@ describe('prose: phrases, repeats, the heading', () => {
 });
 
 describe('prose: levels and the ignore marker', () => {
-  const long = sentence(25) + '\n';
+  const long = sentence(27) + '\n';
   const levels = (md: string): string[] => lintRunbook(md).map((p) => `${p.line + 1} ${p.severity} ${p.code ?? ''}`);
 
   it('info by default, warnings with prose: strict, none with prose: off', () => {
-    assert.deepEqual(levels(long), ['1 info prose-sentence', '1 info prose-average']);
-    assert.deepEqual(levels('---\nprose: strict\n---\n' + long), ['4 warning prose-sentence', '4 warning prose-average']);
+    assert.deepEqual(levels(long), ['1 info prose-sentence']);
+    assert.deepEqual(levels('---\nprose: strict\n---\n' + long), ['4 warning prose-sentence']);
     assert.deepEqual(levels('---\nprose: off\n---\n' + long), []);
     assert.deepEqual(levels('---\nprose: on\n---\nShort.\n'), []);
+    assert.deepEqual(levels('---\nprose: strict\n---\nPlease note that it waits.\n'), ['4 warning prose-opener']);
+  });
+
+  it('prose: strict: a sentence of 23 words stays info (at most 20), one of 27 is a warning (at most 25)', () => {
+    const at = (md: string): string[] => lintRunbook(md).map((p) => `${p.severity} ${p.message.slice(0, 22)}`);
+    assert.deepEqual(at('---\nprose: strict\n---\n' + sentence(23) + '\n'), ['info 23 words, at most 20: ']);
+    assert.deepEqual(at('---\nprose: strict\n---\n' + sentence(27) + '\n'), ['warning 27 words, at most 25: ']);
+    assert.deepEqual(at(sentence(27) + '\n'), ['info 27 words, at most 20: ']);
+    // The strict limit is a repository's limit too.
+    const strict = lintRunbook('---\nprose: strict\n---\n' + sentence(27) + '\n', { prose: { limits: { strictSentenceWords: 30 } } });
+    assert.deepEqual(strict.map((p) => p.severity), ['info']);
   });
 
   it('an unknown prose: value is ignored, with a warning', () => {
@@ -282,7 +298,7 @@ describe('prose: levels and the ignore marker', () => {
     assert.deepEqual(checkProse('<!-- md-runbook:prose-ignore -->\n' + sentence(25) + '\n'), []);
     assert.deepEqual(checkProse('- ' + sentence(25) + ' <!-- md-runbook:prose-ignore -->\n- Short.\n'), []);
     // Only the line right after: a blank line in between ends it.
-    assert.equal(checkProse('<!-- md-runbook:prose-ignore -->\n\n' + sentence(25) + '\n').length, 2);
+    assert.equal(checkProse('<!-- md-runbook:prose-ignore -->\n\n' + sentence(25) + '\n').length, 1);
   });
 
   it('a finding in a Markdown cell is placed on that cell, as the runbook view shows it', () => {
@@ -338,8 +354,9 @@ describe('md-runbook lint: prose', () => {
     const r = run([f, '--strict']);
     assert.equal(r.code, 0);
     assert.match(r.out, /r\.md:1: info: 25 words, at most 20: "word/);
-    assert.match(r.out, /✓ 1 file checked, 0 problems, 2 prose notes/);
-    assert.equal(run([write(dir(), 'r.md', '---\nprose: strict\n---\n' + sentence(25) + '\n'), '--strict']).code, 1);
+    assert.match(r.out, /✓ 1 file checked, 0 problems, 1 prose note$/);
+    assert.equal(run([write(dir(), 'r.md', '---\nprose: strict\n---\n' + sentence(25) + '\n'), '--strict']).code, 0);
+    assert.equal(run([write(dir(), 'r.md', '---\nprose: strict\n---\n' + sentence(27) + '\n'), '--strict']).code, 1);
   });
 
   it('--prose-only: a plain document, its code examples not checked', () => {
@@ -390,7 +407,7 @@ describe('md-runbook lint: prose', () => {
     const labels = ['^(?:\\p{Extended_Pictographic}\\uFE0F?\\s*)?\\*\\*[^*]+\\*\\*\\s+·\\s+'];
     write(d, '.md-runbook-prose.json', JSON.stringify({ exclude: ['tests/fixtures/**'], skipLines: ['^\\*⏱'], labels }));
     // Three sentences after the label; the label read as one more would make a long paragraph.
-    write(d, 'b.md', '🔑 **Key point** · ' + [3, 3, 3].map(sentence).join(' ') + '\n');
+    write(d, 'b.md', '🔑 **Key point** · ' + [8, 9, 10].map(sentence).join(' ') + '\n');
     git(d, 'add', 'b.md');
     inDir(d, () => {
       write(d, 'base.json', '{}\n');
@@ -423,7 +440,304 @@ describe('md-runbook lint: prose', () => {
   });
 
   it('measureFile counts phrases and repeats apart from sentences and units', () => {
-    const m = measureFile('Just do it now.\n\nRun all the checks on each host.\n\nRun all the checks on each host.\n');
+    const m = measureFile('Basically do it now.\n\nRun all the checks on each host.\n\nRun all the checks on each host.\n');
     assert.deepEqual(m.numbers, { sentences: 0, units: 0, average: 6, phrases: 1, repeats: 1 });
+  });
+});
+
+describe('prose: the guard, lead-ins, durations, choppy sentences, citations, labels', () => {
+  it('the sentence rules skip a sentence with a digit, a code span, a link or a guard word; the word rules never do', () => {
+    // Heading restated, but it holds a condition: kept.
+    assert.deepEqual(rules('## Restart the API\n\nThis restarts the API only.\n', 'prose-heading'), []);
+    assert.deepEqual(rules('## Restart the API\n\nThis restarts the API.\n', 'prose-heading').length, 1);
+    for (const s of ['This section describes the 3 restarts.', 'This section describes `restart`.', 'This section describes [it](x.md).', 'This section describes why it must restart.']) {
+      assert.deepEqual(rules(s + '\n', 'prose-announcing'), [], s);
+    }
+    for (const w of ['because', 'so that', 'never', 'must', 'only', 'not', 'unless', 'until', 'except']) {
+      assert.deepEqual(rules(`This section describes the restart ${w} it hangs.\n`, 'prose-announcing'), [], w);
+    }
+    // Openers and padding cut words, not the sentence.
+    assert.deepEqual(rules('Please note that it never retries.\n', 'prose-opener'), [[0, 'Delete the opener "Please note that"']]);
+    assert.deepEqual(rules('It basically runs 3 times.\n', 'prose-padding'), [[0, 'Delete "basically"']]);
+  });
+
+  it('an empty lead-in right before a code block', () => {
+    const msg = 'Empty lead-in: start with what the block does, or cut it';
+    const block = '\n\n```bash\necho\n```\n';
+    assert.deepEqual(rules('Now run:' + block, 'prose-lead-in'), [[0, msg]]);
+    assert.deepEqual(rules('Intro.\n\nOn the lab:\n```bash\necho\n```\n', 'prose-lead-in'), [[2, msg]]);
+    assert.deepEqual(rules('**Back to the terminal:**' + block, 'prose-lead-in'), [[0, msg]]);
+    for (const md of [
+      'Now run `kubectl`:' + block, // a code span: it says something
+      'Now run it 3 times:' + block, // a digit
+      'Now check the pods in the namespace again:' + block, // 8 words
+      'Run this:' + block, // no lead-in word
+      'Now run it.' + block, // no colon
+      '- Now run:' + block, // a list item
+      'Now run:\n\nThe pods restart.' + block, // not right before the block
+      'Now run only this:' + block, // guarded
+    ]) {
+      assert.deepEqual(rules(md, 'prose-lead-in'), [], md);
+    }
+  });
+
+  it('a duration of the whole guide or step, in a runbook with estimates; never a wait tied to one block', () => {
+    const msg = 'Duration in prose: it goes stale; the estimates show it';
+    const block = '```bash estimate=2m\necho\n```\n';
+    const md = (prose: string): string => '# Restart\n\nIntro.\n\n' + block + '\n' + prose + '\n';
+    assert.deepEqual(rules(md('This guide takes about 40 minutes.'), 'prose-duration'), [[8, msg]]);
+    assert.deepEqual(rules(md('The steps take about 40 minutes in all.'), 'prose-duration'), [[8, msg]]);
+    assert.deepEqual(rules(md('About 40 minutes.'), 'prose-duration'), [[8, msg]]);
+    // In an opening paragraph (the runbook's or a section's): the whole thing's.
+    assert.deepEqual(rules('# Restart\n\nAllow about five minutes for it.\n\n' + block, 'prose-duration'), []); // right before the block: its own wait
+    assert.deepEqual(rules('# Restart\n\nAllow about five minutes for it.\n\nCheck first.\n\n' + block, 'prose-duration'), [[2, msg]]);
+    // One block's wait, not the first paragraph: kept.
+    assert.deepEqual(rules(md("Keycloak's first start takes about five minutes."), 'prose-duration'), []);
+    // A reference to another guide, a certificate's life, a window: no total, even in an opening paragraph.
+    assert.deepEqual(rules(md('It passes when its check (guide 12) stayed up the last 15 minutes.'), 'prose-duration'), []);
+    assert.deepEqual(rules('# Renew\n\nThe Secret holds the certificate for 24 hours.\n\nCheck.\n\n' + block, 'prose-duration'), []);
+    assert.deepEqual(rules('# Sign\n\nIt passes when the login stayed up the last 15 minutes.\n\nCheck.\n\n' + block, 'prose-duration'), []);
+    assert.deepEqual(rules('# Load\n\nA new pod needs four to five minutes to start.\n\nCheck.\n\n' + block, 'prose-duration'), []);
+    // No estimates: nothing shows the time, so the prose may.
+    assert.deepEqual(rules('# Restart\n\nThis guide takes about 40 minutes.\n\n```bash\necho\n```\n', 'prose-duration'), []);
+    // The guard (but its digit): a condition or a link keeps it.
+    assert.deepEqual(rules(md('This guide takes about 40 minutes unless the cluster is cold.'), 'prose-duration'), []);
+    assert.deepEqual(rules(md('This guide takes about 40 minutes ([measured](x.md)).'), 'prose-duration'), []);
+  });
+
+  it('choppy: three short sentences in a row in one paragraph', () => {
+    const msg = 'Choppy: join these sentences with their link word';
+    assert.deepEqual(rules('It starts. It waits. It ends.\n', 'prose-choppy'), [[0, msg]]);
+    assert.deepEqual(rules('It starts. It waits for the queue to drain first. It ends.\n', 'prose-choppy'), []);
+    assert.deepEqual(rules('It starts. It waits.\n\nIt ends.\n', 'prose-choppy'), []); // two paragraphs
+    assert.deepEqual(rules('- It starts. It waits. It ends.\n', 'prose-choppy'), []); // a list item
+    assert.deepEqual(rules('It starts. It waits only once. It ends.\n', 'prose-choppy'), []); // guarded: breaks the run
+    assert.deepEqual(rules('> 💡 **Did you know?** · It starts. It waits. It ends.\n', 'prose-choppy'), [[0, msg]]); // a box
+  });
+
+  it('a citation of links in parentheses is no sentence', () => {
+    assert.equal(measureProse('A fact here. ([Wikipedia](https://en.wikipedia.org/wiki/X))\n').count, 1);
+    assert.equal(measureProse('([source](https://a.org), [paper](https://b.org))\n').count, 0);
+    assert.equal(measureProse('A fact here. (See [the paper](https://b.org).)\n').count, 2);
+  });
+
+  it('a known label\'s "?" in running text ends no sentence', () => {
+    assert.deepEqual(proseSentences('A Did you know? is one quoted paragraph. Next.'), ['A Did you know? is one quoted paragraph.', 'Next.']);
+    // The file's own labels count too.
+    assert.equal(measureProse('> 💡 **Ready yet?** · Box.\n\nA Ready yet? box is short.\n').count, 2);
+    assert.equal(measureProse('Ready yet? Go.\n').count, 2);
+  });
+});
+
+describe('prose: boxes', () => {
+  const four = [8, 8, 8, 8].map(sentence).join(' ');
+  const paragraphs = (md: string, options: ProseOptions = {}): number[] => checkProse(md, options).filter((f) => f.rule === 'prose-paragraph').map((f) => f.line);
+
+  it("a box's labelled paragraph has 5 sentences and 100 words; elsewhere 3 and 60", () => {
+    assert.deepEqual(paragraphs('> 💡 **Did you know?** · ' + four + '\n'), []);
+    assert.deepEqual(paragraphs('> 🔑 **Key point** · ' + [8, 8, 8, 8, 8, 8].map(sentence).join(' ') + '\n'), [0]); // 6 sentences
+    assert.deepEqual(paragraphs(four + '\n'), [0]);
+    assert.deepEqual(paragraphs('> ' + four + '\n'), [0]); // a quote without a label is no box
+    assert.deepEqual(paragraphs('- 💡 **Did you know?** · ' + four + '\n'), [0]); // nor a list item
+    // A second paragraph in the same box: 3 and 60.
+    assert.deepEqual(paragraphs('> 💡 **Did you know?** · ' + four + '\n>\n> ' + four + '\n'), [2]);
+    // A configured label marks a box too.
+    assert.deepEqual(paragraphs('> NOTE: ' + four + '\n', { labels: [/^NOTE: /] }), []);
+  });
+
+  it('a GitHub alert is a box: its first paragraph after the marker line', () => {
+    assert.deepEqual(paragraphs('> [!TIP]\n> ' + four + '\n'), []);
+    assert.deepEqual(paragraphs('> [!TIP]\n> ' + four + '\n>\n> ' + four + '\n'), [3]);
+  });
+
+  it('"boxes" sets the limits, or false turns boxes off', () => {
+    assert.deepEqual(paragraphs('> 💡 **Did you know?** · ' + four + '\n', { boxes: { sentences: 3 } }), [0]);
+    assert.deepEqual(paragraphs('> 💡 **Did you know?** · ' + four + '\n', { boxes: false }), [0]);
+    assert.deepEqual(paragraphs('> 💡 **Did you know?** · ' + [8, 8, 8, 8, 8, 8].map(sentence).join(' ') + '\n', { boxes: { sentences: 6, words: 100 } }), []);
+  });
+
+  it('a box in several paragraphs: make it one; not around a list, not without boxes', () => {
+    const box = '> 💡 **Did you know?** · ' + sentence(8) + '\n>\n> ' + sentence(9) + '\n';
+    assert.deepEqual(rules(box, 'prose-box'), [[0, 'Box in 2 paragraphs: make it one']]);
+    assert.deepEqual(rules('> [!NOTE]\n> ' + sentence(8) + '\n>\n> ' + sentence(9) + '\n>\n> ' + sentence(10) + '\n', 'prose-box'), [[1, 'Box in 3 paragraphs: make it one']]);
+    assert.deepEqual(rules('> 💡 **Did you know?** · ' + sentence(8) + '\n>\n> - one item\n> - two items\n', 'prose-box'), []);
+    assert.deepEqual(rules('> 💡 **Did you know?** · ' + sentence(8) + '\n>\n> - one item\n>\n> ' + sentence(9) + '\n', 'prose-box'), []);
+    assert.deepEqual(rules(box, 'prose-box', { boxes: false }), []);
+    assert.deepEqual(rules('> ' + sentence(8) + '\n>\n> ' + sentence(9) + '\n', 'prose-box'), []); // no label: no box
+  });
+
+  it('a box that repeats a sentence of the paragraph above: flagged there', () => {
+    const msg = 'Box repeats this sentence: cut it here, keep the box';
+    const above = 'Run the check first. The gateway checks every token against the issuer.\n\n';
+    assert.deepEqual(rules(above + '> 🔑 **Key point** · The gateway checks every token against its issuer before forwarding.\n', 'prose-box-repeat'), [[0, msg]]);
+    // A run of 4 content words is enough.
+    assert.deepEqual(
+      rules('Logs go to Loki and the gateway checks every token against the issuer here.\n\n> 🔑 **Key point** · Gateway checks every token, then a separate audit trail records rejections later on.\n', 'prose-box-repeat'),
+      [[0, msg]],
+    );
+    // The sentence above carries a condition the box lacks: kept.
+    assert.deepEqual(rules('The gateway checks every token only against the issuer.\n\n> 🔑 **Key point** · The gateway checks every token against the issuer.\n', 'prose-box-repeat'), []);
+    // The box adds a new fact.
+    assert.deepEqual(rules('The gateway checks every token.\n\n> 🔑 **Key point** · Rotated signing keys reach the proxy within a minute.\n', 'prose-box-repeat'), []);
+  });
+});
+
+describe('prose: limits in .md-runbook-prose.json', () => {
+  const config = (json: unknown): ReturnType<typeof proseConfig> => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-prose-config-'));
+    fs.writeFileSync(path.join(d, '.md-runbook-prose.json'), JSON.stringify(json));
+    return proseConfig([], d);
+  };
+
+  it('any limit may be set; the others keep their defaults', () => {
+    const c = config({ limits: { sentenceWords: 25, unitSentences: 4 }, boxes: { sentences: 6, words: 120 } });
+    assert.deepEqual(c.options.limits, { sentenceWords: 25, unitSentences: 4 });
+    assert.deepEqual(c.options.boxes, { sentences: 6, words: 120 });
+    assert.deepEqual(rules(sentence(23) + '\n', 'prose-sentence', c.options), []);
+    assert.equal(rules(sentence(26) + '\n', 'prose-sentence', c.options)[0]![1].slice(0, 22), '26 words, at most 25: ');
+    assert.deepEqual(rules(Array(4).fill(sentence(8)).join(' ') + '\n', 'prose-paragraph', c.options), []);
+    assert.equal(config({ boxes: false }).options.boxes, false);
+  });
+
+  it('a bad value is an error that says what is expected', () => {
+    assert.throws(() => config({ limits: { sentenceWords: 0 } }), /"limits\.sentenceWords" must be a positive whole number \(got 0\)/);
+    assert.throws(() => config({ limits: { unitWords: 2.5 } }), /"limits\.unitWords" must be a positive whole number \(got 2\.5\)/);
+    assert.throws(() => config({ limits: { averageWords: '15' } }), /"limits\.averageWords" must be a positive whole number \(got "15"\)/);
+    assert.throws(() => config({ limits: { sentences: 20 } }), /unknown limit "sentences" \(expected sentenceWords, strictSentenceWords, averageWords, unitSentences, unitWords\)/);
+    assert.throws(() => config({ limits: [20] }), /"limits" must be an object/);
+    assert.throws(() => config({ boxes: { lines: 3 } }), /unknown "boxes" key "lines"/);
+    assert.throws(() => config({ boxes: true }), /"boxes" must be false or an object/);
+  });
+
+  it('the ratchet holds a new file to the configured limits', () => {
+    const l = { sentenceWords: 25, strictSentenceWords: 25, averageWords: 18, unitSentences: 3, unitWords: 60 };
+    assert.deepEqual(proseWorse({ sentences: 0, units: 0, average: 17.5 }, undefined, l), []);
+    assert.deepEqual(proseWorse({ sentences: 1, units: 0, average: 12 }, undefined, l), ['1 sentences over 25 words (was 0)']);
+  });
+});
+
+describe('prose: the same text in several files (repository-wide)', () => {
+  const said = 'Open the lab terminal and check that every pod of the gateway shows Running.';
+  const files = (n: number, text: (i: number) => string): Array<{ name: string; text: string }> =>
+    Array.from({ length: n }, (_, i) => ({ name: `r${i}.md`, text: text(i) }));
+
+  it('a sentence of 8 words or more in 3 files: at each place; not in 2', () => {
+    const found = proseDuplicates(files(3, (i) => `# Guide ${i}\n\nIntro ${i}.\n\n${said}\n`));
+    assert.deepEqual([...found.keys()], ['r0.md', 'r1.md', 'r2.md']);
+    assert.deepEqual(found.get('r1.md')!.map((f) => [f.line, f.message]), [[4, 'Said in 3 files: say it once and link it']]);
+    assert.equal(proseDuplicates(files(2, () => said + '\n')).size, 0);
+    // Normalised: case, links and digits don't tell them apart.
+    const variants = [said, said.toUpperCase(), said.replace('lab terminal', 'lab terminal [here](lab.md) 2')];
+    assert.equal(proseDuplicates(files(3, (i) => variants[i]! + '\n')).size, 3);
+    // Short sentences may come back anywhere.
+    assert.equal(proseDuplicates(files(3, () => 'Check the logs of the pod.\n')).size, 0);
+  });
+
+  it('near copies: paragraphs of 3 files sharing most of their 5-word runs', () => {
+    const para = 'Going straight on to the next guide? Keep the lab running, the next guide starts from the same cluster and the same keys, so nothing needs to be set up again before you start';
+    const ends = ['before you start', 'before you begin', 'before it starts'];
+    const found = proseDuplicates(files(3, (i) => para.replace('before you start', ends[i]!) + '.\n'));
+    assert.equal(found.size, 3);
+    assert.match(found.get('r0.md')![0]!.message, /^Said in 3 files/);
+    assert.equal(proseDuplicates(files(3, (i) => (i === 2 ? 'Something else entirely, said in words of its own, with no run of five shared at all here.' : para) + '\n')).size, 0);
+  });
+
+  it('the ratchet counts them as "duplicates"', () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-prose-dup-'));
+    for (const n of ['a', 'b', 'c']) fs.writeFileSync(path.join(d, `${n}.md`), said + '\n');
+    const before = process.cwd();
+    process.chdir(d);
+    try {
+      const out: string[] = [];
+      fs.writeFileSync('base.json', '{}\n');
+      assert.equal(lint(['--prose-baseline', 'base.json', 'a.md', 'b.md', 'c.md'], (l) => out.push(l)), 1);
+      assert.match(out.join('\n'), /^a\.md:1: Said in 3 files: say it once and link it$/m);
+      assert.match(out.join('\n'), /- a\.md: 1 passages said in 3 files or more \(was 0\)/);
+      fs.writeFileSync('base.json', '{\n "a.md": {"sentences": 0, "units": 0, "average": 14.0, "duplicates": 1},\n "b.md": {"sentences": 0, "units": 0, "average": 14.0, "duplicates": 1},\n "c.md": {"sentences": 0, "units": 0, "average": 14.0, "duplicates": 1}\n}\n');
+      assert.equal(lint(['--prose-baseline', 'base.json', 'a.md', 'b.md', 'c.md'], () => undefined), 0);
+      // Two files left: no duplicate, and the update lowers them.
+      lint(['--prose-baseline', 'base.json', '--update-baseline', 'a.md', 'b.md'], () => undefined);
+      assert.doesNotMatch(fs.readFileSync('base.json', 'utf8'), /"a\.md"/);
+    } finally {
+      process.chdir(before);
+    }
+  });
+});
+
+describe('prose: counting traps, labels, quotations, a box that says the box above', () => {
+  it('initials and "no." before a number end no sentence', () => {
+    assert.deepEqual(proseSentences('Ghostscript is by L. Peter Deutsch. J. R. R. Tolkien wrote it.'), ['Ghostscript is by L. Peter Deutsch.', 'J. R. R. Tolkien wrote it.']);
+    assert.deepEqual(proseSentences('See section no. 6 of it. The answer is no. Then go.'), ['See section no. 6 of it.', 'The answer is no.', 'Then go.']);
+    // A capital at a sentence's end before a lowercase name still ends it.
+    assert.deepEqual(proseSentences('Pick plan B. kubectl reads it.'), ['Pick plan B.', 'kubectl reads it.']);
+    // A key, not an initial.
+    assert.deepEqual(proseSentences('Cancel sends Ctrl+C. If it hangs, wait.'), ['Cancel sends Ctrl+C.', 'If it hangs, wait.']);
+  });
+
+  it('the default label: an optional emoji, a bold label, then " · ", " — ", " – " or ":"', () => {
+    assert.deepEqual(units('> 💡 **Did you know?** — It counts.\n\n> 🔑 **Key point:** Kept.\n\n> **Note**: Short.\n\n> 💡 **Tip** – Fine.\n'), [
+      [0, 'It counts.'],
+      [2, 'Kept.'],
+      [4, 'Short.'],
+      [6, 'Fine.'],
+    ]);
+    assert.deepEqual(units('**Bold** words, no dot.\n\n**Bold**—no space.\n'), [[0, '**Bold** words, no dot.'], [2, '**Bold**—no space.']]);
+    const four = [8, 9, 10, 11].map(sentence).join(' ');
+    assert.equal(checkProse('> 💡 **Did you know?** — ' + four + '\n').filter((f) => f.rule === 'prose-paragraph').length, 0); // a box
+  });
+
+  it('a sentence that is mostly a direct quotation is not too long; other rules still apply', () => {
+    const quote = 'the processing of personal data shall be lawful only if and to the extent that at least one of the following applies';
+    assert.deepEqual(rules(`Article 6 says: “${quote}”.\n`, 'prose-sentence'), []);
+    assert.deepEqual(rules(`Article 6 says: "${quote}".\n`, 'prose-sentence'), []);
+    assert.deepEqual(rules(`Article 6 says «${quote}».\n`, 'prose-sentence'), []);
+    // The quote is under 60 % of the sentence: too long.
+    assert.equal(rules(`The team wrote this down in its notes for the review next week, with the checks we planned: "lawful only if one applies here".\n`, 'prose-sentence').length, 1);
+    // A quote that runs on into the next sentence counts to the end.
+    assert.deepEqual(rules(`It says: “${quote}. The controller shall be responsible for and be able to demonstrate compliance with paragraph one of this article in every single case”.\n`, 'prose-sentence'), []);
+    // Still a paragraph of its words, still padding.
+    assert.equal(rules(`Basically it says: “${quote}”.\n`, 'prose-padding').length, 1);
+  });
+
+  it('a box that says what the box above it in the same section says: flagged on the later box', () => {
+    const msg = 'Says what the box above says: cut one';
+    const first = '> 🔑 **Key point** · The gateway checks every token against the issuer.\n\n';
+    assert.deepEqual(rules(first + 'Other text.\n\n> 💡 **Did you know?** · The gateway checks every token against its issuer before forwarding.\n', 'prose-box-repeat'), [[4, msg]]);
+    // Another section: kept.
+    assert.deepEqual(rules(first + '## Next\n\n> 💡 **Did you know?** · The gateway checks every token against its issuer.\n', 'prose-box-repeat'), []);
+    // A condition in the later box: kept.
+    assert.deepEqual(rules(first + '> 💡 **Did you know?** · The gateway checks every token only against the issuer.\n', 'prose-box-repeat'), []);
+    // A new lesson: kept.
+    assert.deepEqual(rules(first + '> 💡 **Did you know?** · Rotated signing keys reach the proxy within a minute.\n', 'prose-box-repeat'), []);
+  });
+});
+
+describe('prose: a bullet that leans on the one before', () => {
+  const msg = 'Leans on the item before: join them into a sentence, or make it stand alone';
+  it('flags a bullet after a sibling that starts with It, This, They, Then, But, …', () => {
+    assert.deepEqual(rules('- The gate checks it.\n- It refuses an unsigned block.\n', 'prose-list-lean'), [[1, msg]]);
+    assert.deepEqual(rules('- [ ] The gate checks it.\n- [x] **They** refuse it.\n', 'prose-list-lean'), [[1, msg]]);
+    assert.deepEqual(rules('- The gate checks it.\n  - It is nested.\n- But the sibling is flagged.\n', 'prose-list-lean'), [[2, msg]]);
+    assert.deepEqual(rules('- The gate checks it.\n- 🔑 **Key point** · Then it refuses.\n', 'prose-list-lean'), [[1, msg]]);
+  });
+
+  it('not in a numbered list, not a first item, not under another parent, a whole word only', () => {
+    assert.deepEqual(rules('1. Open the lab.\n2. Then run the check.\n', 'prose-list-lean'), []);
+    assert.deepEqual(rules('- It starts the list.\n', 'prose-list-lean'), []);
+    assert.deepEqual(rules('Intro.\n\n- It starts the list.\n', 'prose-list-lean'), []);
+    assert.deepEqual(rules('- The gate checks it.\n  - It is a first nested item.\n', 'prose-list-lean'), []);
+    assert.deepEqual(rules('- The gate checks it.\n\n## Next\n\n- It starts another list.\n', 'prose-list-lean'), []);
+    assert.deepEqual(rules('- The gate checks it.\n- Itself a check.\n- Thereafter it runs.\n- them lowercase.\n', 'prose-list-lean'), []);
+  });
+});
+
+describe('prose: a paragraph said in several files is one finding', () => {
+  it('one at the paragraph, not one a sentence', () => {
+    const para = 'Leave the lab running for the next guide, its ready check finds it up.\nStopping for today: take it down, everything in the lab is kept as it is.\n';
+    const found = proseDuplicates(['a', 'b', 'c'].map((n) => ({ name: `${n}.md`, text: para })));
+    assert.deepEqual(found.get('b.md')!.map((f) => f.line), [0]);
+    // One sentence copied, the other not: that sentence alone.
+    const one = proseDuplicates(['a', 'b', 'c'].map((n) => ({ name: `${n}.md`, text: `Intro ${n} here.\n` + para.split('\n')[1] + ` More of ${n}, written for this file alone.\n` })));
+    assert.deepEqual(one.get('a.md')!.map((f) => f.line), [1]);
   });
 });
