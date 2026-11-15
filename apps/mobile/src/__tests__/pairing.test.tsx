@@ -13,7 +13,7 @@ import { Platform } from 'react-native';
 import { hostsJson, hostsLink, readHosts } from '../hosts/share';
 import { addHost, getHosts, pinHostKey, resetHosts } from '../hosts/store';
 import { PAIR_PREFIX, decodePairing, encodePairing, looksLikePairing, pairingLink } from '../pairing/payload';
-import { capturePairingFragment, clearPendingPairing, pendingPairing, setPendingPairing } from '../pairing/pending';
+import { capturePairingFragment, clearPendingPairing, pairingFragmentInRoute, pendingPairing, setPendingPairing } from '../pairing/pending';
 import { qrLink, runbookAddress } from '../runbooks/address';
 import { defaultLibraryBase, libraryState, libraryTarget, openLibraryRunbook, refreshLibrary, resetLibrary } from '../runbooks/library';
 import { linkContext } from '../runbooks/linkContext';
@@ -38,6 +38,7 @@ jest.mock('expo-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
   Stack: { Screen: () => null },
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: jest.fn(() => false) },
+  useLocalSearchParams: () => ({}),
 }));
 jest.mock('../ssh/appKey', () => ({
   appPublicKeyLine: async () => 'ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAI md-runbook-app',
@@ -537,5 +538,19 @@ describe('the screens', () => {
     setPendingPairing(PAIR_PREFIX + 'AAAA', 'link');
     await render(<PairScreen />);
     expect(screen.getByTestId('pair-problem')).toHaveTextContent(/damaged/);
+  });
+});
+
+describe('the pairing token leaves the route too', () => {
+  // Expo Router keeps a URL's fragment as the `#` param and writes it back into the address bar:
+  // the pair screen replaces the route when it still carries one (the web smoke test checks the
+  // address bar in a real browser).
+  it('a pairing fragment, in the route or the address bar, is one to drop; any other is not', () => {
+    const payload = encodePairing({ relay: 'wss://ops.example.net', token: TOKEN });
+    expect(pairingFragmentInRoute(payload)).toBe(true);
+    expect(pairingFragmentInRoute(undefined, '#' + payload)).toBe(true);
+    expect(pairingFragmentInRoute('section-2', '#section-2')).toBe(false);
+    expect(pairingFragmentInRoute(undefined, '')).toBe(false);
+    expect(pairingFragmentInRoute(['x'])).toBe(false);
   });
 });

@@ -34,6 +34,15 @@ interface PageLike {
  * the history nor in a bookmark or a shared address afterwards. Read once, when the app loads;
  * true when there was one. `page`: tests (by default the browser's window).
  */
+/**
+ * Whether the route still carries a pairing link's fragment: Expo Router keeps a URL's fragment
+ * as the route's `#` param and writes it back into the address bar whenever it updates the URL,
+ * so history.replaceState alone leaves the token there. `hash`: the address bar's, if any.
+ */
+export function pairingFragmentInRoute(fragment: unknown, hash?: string): boolean {
+  return (typeof fragment === 'string' && fragment.startsWith(PAIR_MARKER)) || (hash?.startsWith('#' + PAIR_MARKER) ?? false);
+}
+
 export function capturePairingFragment(page?: PageLike): boolean {
   const w = page ?? (globalThis as { window?: PageLike }).window;
   if (!w?.location || !w.history) return false;

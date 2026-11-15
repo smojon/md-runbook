@@ -11,14 +11,14 @@
  */
 import { qrMatrix } from '@md-runbook/core/qr';
 import * as Clipboard from 'expo-clipboard';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { importHosts, sharedHosts } from '../hosts/share';
 import { useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { decodePairing, encodePairing, pairingLink } from '../pairing/payload';
-import { capturePairingFragment, clearPendingPairing, pendingPairing } from '../pairing/pending';
+import { capturePairingFragment, clearPendingPairing, pairingFragmentInRoute, pendingPairing } from '../pairing/pending';
 import { publicBaseOf, toPublicRelayUrl } from '../settings/publicAddress';
 import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { appPublicKeyLine } from '../ssh/appKey';
@@ -239,6 +239,12 @@ export function PairScreen() {
     capturePairingFragment();
     return pendingPairing();
   });
+  // The token must leave the route as well as the address bar (pairingFragmentInRoute; seen on a
+  // lab with 0.24.1): replace the route with one that has no fragment.
+  const fragment = useLocalSearchParams<{ '#'?: string }>()['#'];
+  useEffect(() => {
+    if (Platform.OS === 'web' && pairingFragmentInRoute(fragment, globalThis.window?.location?.hash)) router.replace('/pair');
+  }, [fragment]);
   const read = useMemo(() => (pending ? decodePairing(pending.payload) : undefined), [pending]);
   const pairing = read && 'pairing' in read ? read.pairing : undefined;
   const [current, setCurrent] = useState<string | undefined>();

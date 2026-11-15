@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Web app: a pairing link's token leaves the address bar.** Opening a **Copy pairing link**
+  link kept `/pair#mdrb-pair.v1.…` (with the relay's token) in the address bar and that history
+  entry, where a synced browser history or a screenshot would show it: the app removed the
+  fragment, then the router wrote it back. The pair screen now replaces its route, and the web
+  smoke test checks the address in a real browser (and that a QR code is drawn there). If you
+  opened a pairing link with 0.24.0 or 0.24.1, delete that entry from the browser's history,
+  or give the relay a new token.
+
 ## 0.24.1
 
 A fix for the web app's QR codes.
