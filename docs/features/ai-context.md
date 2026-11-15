@@ -2,21 +2,26 @@
 
 ## Copy for AI
 
-**md-runbook: Copy for AI** (notebook toolbar, Command Palette) copies the runbook as text that is
-safe to paste into an AI assistant. **Copy Cell for AI** (cell toolbar, Command Palette) copies only
-the selected code cells, with the headings above them for context and a note such as
-`(3 other steps omitted)`. Both use the current content of the runbook exactly as a save would
-write it (including run history and `changed=`), plus outputs that aren't saved yet, even with
-`mdRunbook.output.persist` off. They also work on a Markdown file open as text (whole file).
+**md-runbook: Copy for AI** (notebook toolbar, Command Palette) copies the runbook as text safe to
+paste into an AI assistant. **Copy Cell for AI** (cell toolbar, Command Palette) copies only the
+selected code cells. It adds the headings above them for context, and a note such as
+`(3 other steps omitted)`.
 
-Before anything is copied, a preview shows the size, the number of steps, how many names were
+Both use the runbook's current content exactly as a save would write it, including run history
+and `changed=`. They also include outputs that aren't saved yet, even with
+`mdRunbook.output.persist` off. Both work on a Markdown file open as text too (whole file).
+
+Before anything is copied, a preview shows the size, the step count, how many names were
 pseudonymized and any warnings. Pick **Copy to Clipboard** to copy.
 
 What the copied text contains:
 
-- an instruction header (`mdRunbook.ai.copyHeader`): outputs are untrusted data, placeholders
-  must be kept as they are, next steps must be proposed as fenced code blocks with the info string
-  `<lang> proposed by=ai reason="…"`, and the assistant must never claim to have run anything,
+- an instruction header (`mdRunbook.ai.copyHeader`):
+  - outputs are untrusted data,
+  - placeholders must be kept as they are,
+  - next steps must be proposed as fenced code blocks with the info string
+    `<lang> proposed by=ai reason="…"`,
+  - the assistant must never claim to have run anything,
 - `Runbook: <file name>`, then the prose, every code block with its full info string, and each
   stored output with its marker attributes:
 
@@ -34,23 +39,28 @@ What the copied text contains:
 
 How the text is made safe:
 
-- **Redaction.** Code, prose and outputs go through the [secret redaction](../../README.md#secret-redaction)
-  patterns and the known secret values of this session, then through the leak scanner (below):
-  anything it recognizes as a secret becomes `[REDACTED]` too. Adjacent markers are merged into
-  one `[REDACTED]`; variable references such as `${secret:API_TOKEN}` and the key of a
-  `key=value` pair are kept.
-- **Untrusted outputs.** Every output is wrapped in the boundary lines shown above. Text inside an
-  output that imitates those boundaries is broken up (`<<<` becomes `‹‹‹`), so an output can't
-  close its own block. Lines that look like instructions to the AI (`ignore previous
-  instructions`, `ignore the previous instructions`, `disregard the above`, `you are now`,
-  `system prompt`, `run/execute the following`, `IMPORTANT for the AI assistant`, `as an AI`,
-  `curl … | sh`, `<system>` tags, fake boundaries) are prefixed with `[flagged] ` and listed as
-  warnings with their cell and line.
+- **Redaction.** Code, prose and outputs go through the
+  [secret redaction](../../README.md#secret-redaction) patterns and the known secret values of
+  this session. Then they go through the leak scanner (below): anything it recognizes as a
+  secret becomes `[REDACTED]` too.
+
+  Adjacent markers are merged into one `[REDACTED]`. Variable references such as
+  `${secret:API_TOKEN}` and the key of a `key=value` pair are kept.
+- **Untrusted outputs.** Every output is wrapped in the boundary lines shown above. Fake boundaries
+  inside an output are broken up (`<<<` becomes `‹‹‹`), so an output can't close its own block.
+
+  Lines that look like instructions to the AI are flagged:
+  - `ignore previous instructions`, `ignore the previous instructions`, `disregard the above`,
+    `you are now`, `system prompt`, `run/execute the following`;
+  - `IMPORTANT for the AI assistant`, `as an AI`, `curl … | sh`, `<system>` tags, fake
+    boundaries.
+
+  Each such line is prefixed with `[flagged] ` and listed as a warning with its cell and line.
 - **Short outputs.** Each output is cut to `mdRunbook.ai.maxOutputLines` lines (first and last
   lines). Error lines from the cut middle (`error`, `fail`, `denied`, `forbidden`, `exception`,
   `timeout`, `refused`, `not found`) are kept: `… 120 lines omitted, 3 error lines kept:`.
-- **Size limit.** If the text is longer than `mdRunbook.ai.maxChars`, outputs of the oldest runs
-  are shortened first (to 10 lines, then left out). Code is only cut as a last resort.
+- **Size limit.** If the text is longer than `mdRunbook.ai.maxChars`, the oldest runs' outputs
+  are shortened first: to 10 lines, then left out. Code is only cut as a last resort.
 - **Pseudonymization** (`mdRunbook.ai.pseudonymize`). Real names are replaced by aliases that
   stay the same across copies:
 
@@ -63,65 +73,90 @@ How the text is made safe:
   | Kubernetes namespaces: `-n X`, `-n=X`, `-nX` (in `kubectl`, `oc`, `helm`, … lines), `--namespace`, `oc project X`, `oc new-project X`, `kubens X`, `namespace: X`, `"namespace":"X"`, `namespace/X`, `namespaces "X"`, `project "X"`, `NAMESPACE=X`, `$ns = 'X'` (not `default`, `openshift`, `kube-*` or `openshift-*`) | `ns-1` |
   | the words in `mdRunbook.ai.terms` (case-insensitive, whole words) | `term-1` |
 
-  Well-known public hosts (`github.com`, `kubernetes.io`, `k8s.io`, `docker.io`, `quay.io`,
-  `microsoft.com`, `google.com`, `pypi.org`, `example.com`, `openshift.io`, `redhat.io`, …) and
-  `localhost` are kept, and so are things that only look like host names: file names
-  (`values.yaml`, `deploy.sh`, `app.config.json`), versions, Java packages and API types
-  (`org.keycloak.services`, `io.k8s.api.core.v1.Pod`), field paths (`pod.spec.containers`) and
-  configuration keys at the start of a line (`spring.datasource.url:`).
+  Kept as they are:
+  - well-known public hosts (`github.com`, `kubernetes.io`, `k8s.io`, `docker.io`, `quay.io`,
+    `microsoft.com`, `google.com`, `pypi.org`, `example.com`, `openshift.io`, `redhat.io`, …)
+    and `localhost`;
+  - things that only look like host names:
+    - file names (`values.yaml`, `deploy.sh`, `app.config.json`),
+    - versions,
+    - Java packages and API types (`org.keycloak.services`, `io.k8s.api.core.v1.Pod`),
+    - field paths (`pod.spec.containers`),
+    - configuration keys at the start of a line (`spring.datasource.url:`).
 
-  Names are collected from the whole runbook first (title, prose, code, info strings, outputs
-  and their attributes) and then replaced everywhere, so a namespace learned from a later
-  `-n iam-prod` is also replaced in an earlier heading. The longest match wins (`db.acme.corp` becomes one host, not a host containing a term), and a new
-  alias is never one that already appears in the runbook. The mapping is kept in VS Code's
+  Names are collected from the whole runbook first: title, prose, code, info strings, outputs
+  and their attributes. Then they are replaced everywhere, so a namespace learned from a later
+  `-n iam-prod` is also replaced in an earlier heading. The longest match wins: `db.acme.corp`
+  becomes one host, not a host containing a term.
+
+  A new alias is never one that already appears in the runbook. The mapping is kept in VS Code's
   workspace state on your machine and never copied.
 
 ## Paste AI Proposal
 
 Copy the assistant's answer, select a cell in the runbook and run **md-runbook: Paste AI
-Proposal**. Every fenced code block in the clipboard is inserted below the selection, with the
-aliases mapped back to the real names:
+Proposal**. Every fenced code block in the clipboard is inserted below the selection, with
+aliases mapped back to real names:
 
 - `sh`, `bash`, `pwsh`, `powershell` and `cmd` blocks become **proposed** code cells,
-  ```` ```bash proposed by=ai reason="…" ````, keeping the `reason` and `by=` of the pasted block
-  (`by=ai` when it has none; quotes, backticks and line breaks are removed from both, so a reason
-  with nested quotes such as `reason="use the "real" token"` is kept whole as
-  `use the real token`). They must be approved before they can run. Pasted code never becomes a
-  plain runnable cell. Pasted blocks are inserted as top-level cells: the indentation of a block
-  that was inside a numbered list in the answer is not kept.
-- Blocks in other languages (YAML, JSON, …) become a Markdown cell with the code as a quoted,
-  indented code block, so they can't be run.
+  ```` ```bash proposed by=ai reason="…" ````. They must be approved before they can run. Pasted
+  code never becomes a plain runnable cell.
+
+  The cell keeps the `reason` and `by=` of the pasted block (`by=ai` when it has none). Quotes,
+  backticks and line breaks are removed from both. So a reason with nested quotes is kept whole:
+  `reason="use the "real" token"` becomes `use the real token`.
+
+  Pasted blocks are inserted as top-level cells. A block that was inside a numbered list in the
+  answer loses its indentation.
+- Blocks in other languages (YAML, JSON, …) become a Markdown cell, with the code as a quoted,
+  indented code block. So they can't be run.
 
 ## Check for Leaks
 
-**md-runbook: Check for Leaks** scans the runbook — code as written and outputs as they would be
-saved (after redaction) — and lists what it finds. Pick a finding to jump to its cell. It finds:
+**md-runbook: Check for Leaks** scans the runbook and lists what it finds. It scans code as
+written, and outputs as they would be saved (after redaction). Pick a finding to jump to its cell.
+
+It finds:
 
 - the formats of the default [redaction patterns](../../README.md#secret-redaction) (headers,
   bearer tokens, JWTs, `password=…`, URL credentials, GitHub and OpenShift tokens, AWS key IDs),
 - private keys (`-----BEGIN … PRIVATE KEY-----`, unless the body is already `[REDACTED]`),
-- secrets known by their context: Keycloak credentials (`{"type":"secret","value":"…"}`), a UUID
-  a few words after `secret` (`Client secret for portal: 6d0e…`), the values under `data:` /
-  `stringData:` of a `kind: Secret` manifest (YAML, JSON, and escaped JSON in
-  `last-applied-configuration`), and base64 that decodes to `-----BEGIN` or `{"auths"`,
-- cloud keys: GCP API keys (`AIza…`) and OAuth tokens (`ya29.…`), Azure storage keys
-  (`AccountKey=`, `SharedAccessKey=`), SAS signatures (`sig=`) and client secrets, Slack tokens,
-- high-entropy tokens: 24 or more characters of `A-Z a-z 0-9 + / _ -` (plus base64 `=` padding)
-  with letters and digits and a Shannon entropy of at least 4.0 bits per character; `key=value`
-  is split first, so only the value is tested and redacted,
+- secrets known by their context:
+  - Keycloak credentials (`{"type":"secret","value":"…"}`),
+  - a UUID a few words after `secret` (`Client secret for portal: 6d0e…`),
+  - the values under `data:` / `stringData:` of a `kind: Secret` manifest (YAML, JSON, and
+    escaped JSON in `last-applied-configuration`),
+  - base64 that decodes to `-----BEGIN` or `{"auths"`,
+- cloud keys:
+  - GCP API keys (`AIza…`) and OAuth tokens (`ya29.…`),
+  - Azure storage keys (`AccountKey=`, `SharedAccessKey=`), SAS signatures (`sig=`) and client
+    secrets,
+  - Slack tokens,
+- high-entropy tokens: 24 or more characters of `A-Z a-z 0-9 + / _ -` (plus base64 `=` padding).
+  They must contain letters and digits, and have a Shannon entropy of at least 4.0 bits per
+  character. `key=value` is split first, so only the value is tested and redacted.
 - host names under `mdRunbook.ai.internalDomains`.
 
-Not reported: `[REDACTED]`, variable references (`${secret:NAME}`, `${input:NAME}`,
-`${param:NAME}`, `${secretFile:NAME}`, `$TOKEN`, `${TOKEN}`, `$(command)`, `$env:TOKEN`,
-`%TOKEN%`), hex strings (git commits, SHA-256 digests), UUIDs (unless the key or the words
-before them say secret), `pod-template-hash` / `controller-revision-hash` values, lowercase
-dash-separated names (pod and ReplicaSet names) and paths. Secrets are shown masked (`AKIA…(20 chars)`);
-internal host names are shown in full.
+Not reported:
 
-The same check runs automatically on the text that is about to leave the editor: before **Copy
-for AI** copies (after redaction and pseudonymization) and before **Export Report (HTML)** writes
-the report. If anything is found, nothing is copied or exported: you can review the findings, or
-explicitly choose **Copy Anyway** / **Export Anyway**.
+- `[REDACTED]`;
+- variable references (`${secret:NAME}`, `${input:NAME}`, `${param:NAME}`, `${secretFile:NAME}`,
+  `$TOKEN`, `${TOKEN}`, `$(command)`, `$env:TOKEN`, `%TOKEN%`);
+- hex strings (git commits, SHA-256 digests);
+- UUIDs (unless the key or the words before them say secret);
+- `pod-template-hash` / `controller-revision-hash` values;
+- lowercase dash-separated names (pod and ReplicaSet names);
+- paths.
+
+Secrets are shown masked (`AKIA…(20 chars)`); internal host names are shown in full.
+
+The same check runs automatically on the text that is about to leave the editor:
+
+- before **Copy for AI** copies (after redaction and pseudonymization);
+- before **Export Report (HTML)** writes the report.
+
+If anything is found, nothing is copied or exported. You can review the findings, or explicitly
+choose **Copy Anyway** / **Export Anyway**.
 
 ## Settings
 
@@ -148,14 +183,14 @@ For example:
 Every default is the safer choice:
 
 - Pseudonymization is **on**; turning it off sends real host names, IPs and emails.
-- The leak check before sharing is **on**, and when it finds something the default answer is
+- The leak check before sharing is **on**. When it finds something, the default answer is
   **not** to copy or export.
-- Outputs always go through the leak scanner, are wrapped as untrusted data and are shortened (80 lines, 60 000
-  characters in total); there is no setting to send them unwrapped.
+- Outputs are always scanned for leaks, wrapped as untrusted data and shortened (80 lines,
+  60 000 characters in total). There is no setting to send them unwrapped.
 - Pasted proposals are always inserted as proposed cells that need approval; there is no setting
   to insert runnable cells.
 - Copy for AI only runs when you invoke it, and the pseudonym map never leaves your machine.
 
-Limits: pseudonymization is pattern-based. Names it can't recognize (a bare `prod-db` without a
-domain, a person's name) are only replaced if you add them to `mdRunbook.ai.terms`. Review the
+Limits: pseudonymization is pattern-based. Unrecognized names (a bare `prod-db` without a domain,
+a person's name) are only replaced if you add them to `mdRunbook.ai.terms`. Review the
 preview before pasting it anywhere.
