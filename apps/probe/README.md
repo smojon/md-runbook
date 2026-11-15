@@ -1,9 +1,11 @@
 # md-runbook-probe image
 
 md-runbook-probe on its own, as a small container image: the endpoint and certificate checks of
-the [ops host](../ops/README.md#md-runbook-probe), without sshd, md-runbook-gate or kubectl.
-Run it as a Pod next to the services it watches, to see them as they see each other: a loop that
-publishes the checks as Prometheus metrics, and `kubectl exec` for a check by hand.
+the [ops host](../ops/README.md#md-runbook-probe). It has no sshd, md-runbook-gate or kubectl.
+
+Run it as a Pod next to the services it watches, to see them as they see each other:
+- a loop that publishes the checks as Prometheus metrics;
+- `kubectl exec` for a check by hand.
 
 - **The probe is the entrypoint**: `docker run --rm ghcr.io/smojon/md-runbook-probe:latest
   api.example.net db.internal:5432`.
@@ -24,8 +26,9 @@ For a Pod, these matter most:
   `md_runbook_probe_last_run_timestamp_seconds`, each with `target="host:port"`.
   `--format json` prints one JSON object per target and line.
 - `--label NAME=VALUE` adds a label to every metric and JSON object, e.g. `--label
-  cluster=prod`. `NAME=VALUE` after a target labels that target only (on stdin: the targets
-  on its line), e.g. `tls://idm-web:8989 component=proxy`, and wins over a `--label`.
+  cluster=prod`. `NAME=VALUE` after a target labels that target only, and wins over a
+  `--label`, e.g. `tls://idm-web:8989 component=proxy`. On stdin, it labels the targets on its
+  line.
 - `tls://host:port` checks TLS on any port, `tcp://host:port` only opens a TCP connection.
 - `--ca FILE` trusts that CA in addition to the system's CAs, `--ca-only FILE` trusts it alone.
 
@@ -34,9 +37,11 @@ For a Pod, these matter most:
 [kubernetes/md-runbook-probe.yaml](kubernetes/md-runbook-probe.yaml) sets up:
 - the namespace `md-runbook-probe`, with Pod Security `restricted` enforced;
 - a ConfigMap with the targets, one per line, each with its own labels (`component=...`);
-- a Deployment: the probe in a loop every 60 s with `--format prometheus`, writing to a shared
-  in-memory folder, and a busybox sidecar that serves it on port 9100 as `/metrics.prom`. No
-  service account token, a read-only root filesystem, no capabilities;
+- a Deployment:
+  - the probe in a loop every 60 s with `--format prometheus`, writing to a shared in-memory
+    folder;
+  - a busybox sidecar that serves it on port 9100 as `/metrics.prom`;
+  - no service account token, a read-only root filesystem, no capabilities;
 - a Service on port 9100 for Prometheus.
 
 ```sh
@@ -55,8 +60,8 @@ An alert on certificates that expire within 14 days:
   expr: md_runbook_probe_certificate_expiry_timestamp_seconds - time() < 14 * 86400
 ```
 
-One scrape has every component: the labels after each target in the ConfigMap end up on its
-series, and the same endpoint listed for two components is two series.
+One scrape has every component. The labels after each target in the ConfigMap end up on its
+series. The same endpoint listed for two components is two series.
 
 ```text
 # targets
@@ -71,8 +76,8 @@ md_runbook_probe_ok{target="mariadb.mariadb.svc:3306",cluster="my-cluster",compo
 md_runbook_probe_ok{target="mariadb.mariadb.svc:3306",cluster="my-cluster",component="admin4"} 1
 ```
 
-Run the probe once, with all targets: two runs' outputs can't simply be concatenated (a
-metric's lines must be together, with one `# HELP` and `# TYPE`).
+Run the probe once, with all targets: two runs' outputs can't be concatenated. A metric's lines
+must be together, with one `# HELP` and `# TYPE`.
 
 ## Checks by hand, and the audit trail
 
@@ -82,14 +87,16 @@ kubectl -n md-runbook-probe logs deploy/md-runbook-probe -c probe       # the pr
 ```
 
 The manifest sets `MD_RUNBOOK_PROBE_LOG=/proc/1/fd/1`: in a container, that is the output of
-its first process, so each check made with `kubectl exec` is a `probe` event in the container's
-log, which `md-runbook audit` reads like the gate's log (`kubectl logs … > probe.log`, then
-`md-runbook audit probe.log`). Outside the gate, `MD_RUNBOOK_PROBE_LOG` takes a file, `stderr`
-or `syslog`; without it nothing is logged. When the destination can't be written (a read-only
-filesystem, no syslog), the probe says so once on stderr. On the ops host, the gate runs the
-probe and `gate.conf` alone decides where its events go.
+its first process. So each check made with `kubectl exec` is a `probe` event in the container's
+log. `md-runbook audit` reads that log like the gate's log: `kubectl logs … > probe.log`, then
+`md-runbook audit probe.log`.
 
-These events say less than the ops host's: without the gate there is no signed run and no SSH
+Outside the gate, `MD_RUNBOOK_PROBE_LOG` takes a file, `stderr` or `syslog`; without it nothing
+is logged. When the destination can't be written (a read-only filesystem, no syslog), the probe
+says so once on stderr. On the ops host, the gate runs the probe and `gate.conf` alone decides
+where its events go.
+
+These events say less than the ops host's. Without the gate there is no signed run and no SSH
 key, only the account and the time. Who may `kubectl exec` into the Pod is up to your RBAC.
 
 ## Build it
