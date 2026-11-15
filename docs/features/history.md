@@ -189,8 +189,8 @@ transcript was off, or the file was rotated away), the runbook opens instead.
   do, is a green run. The status bar tooltip says `Last ran green: 3 days ago (by smojon)`, or
   `Never ran green`. Runbooks rot: this tells you whether this one still worked lately.
 - **Steps that never ran:** a code step that never ran in any recorded run, and has no output
-  now, gets a hint. It shows in the Problems panel once the runbook has a run recorded: "This
-  step has never run here."
+  now, gets a hint. It shows in the Problems panel once the runbook has a run recorded: `This
+  step has never run here.`
   - Blocks that don't run here (`skip`, `host=`, another OS's block, a proposal) get none.
   - The hint shows in the runbook view only.
   - A step is known by its `name=`, else by its text, so editing an unnamed step makes it new.

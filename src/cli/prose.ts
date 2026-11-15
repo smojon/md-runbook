@@ -39,6 +39,7 @@ const KEY_OF: Record<ProseRule, Key> = {
   'prose-box-repeat': 'phrases',
   'prose-choppy': 'phrases',
   'prose-list-lean': 'phrases',
+  'prose-quote-source': 'phrases',
   'prose-repeat': 'repeats',
   'prose-duplicate': 'duplicates',
 };

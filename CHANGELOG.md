@@ -9,6 +9,11 @@
   and `timeout:` no longer apply, as in the runbook view.
 - **Docs:** the environment order, the environment of assistant cells, and when a run of several
   cells asks for its values.
+- **Prose checks: quotations.** See [Quotations](docs/features/lint.md#quotations).
+  - A quotation (`“…”`, `«…»`, `"…"`) counts as one word. This replaces the 60 % rule.
+  - No rule reads a quotation's words, and the same quote in 3 files is no duplicate.
+  - New hint: a quotation of 6 words or more needs a link in its paragraph.
+  - A block quote that ends in its source line (a link, or `— Name`) isn't checked.
 
 ## 0.26.4
 
@@ -212,7 +217,7 @@ No Android APK is attached yet.
   - **Run summaries:** `POST /v1/runs` is an address for `report-runs:`. It checks summaries
     strictly, checks runner signatures against `RUNS_ALLOWED_RUNNERS`, and keeps them
     append-only, marked `runner-signed`, `gate` or `unverified`. `RUNS_REQUIRE_SIGNED=true` refuses
-    the unverified ones. `GET /v1/runs` and `/v1/runs/last-green` ("last ran green by X at T")
+    the unverified ones. `GET /v1/runs` and `/v1/runs/last-green` (`last ran green by X at T`)
     need a read token.
   - **Alertmanager:** `POST /v1/alerts` maps each alert (alertname and label matchers, in a JSON
     alert map) to a library runbook. It records the alert with the link that opens that runbook,
@@ -349,8 +354,8 @@ No Android APK is attached yet.
 - **Run history and "last ran green":** VS Code keeps a short record of each run (when, who, how
   far, which step failed), on this machine and never in the file. **Show Runs…** (Run ▾) lists
   them, newest first; pick one to open the transcript at that run. The status bar tooltip says
-  `Last ran green: 3 days ago (by smojon)` or `Never ran green`. Once a runbook has a run, a step
-  that never ran in one gets a hint: "This step has never run here." From the VS Code review.
+  `Last ran green: 3 days ago (by smojon)` or `Never ran green`. From the VS Code review: a step that
+  never ran in a recorded run gets a hint, `This step has never run here.`
 - **Tools for VS Code's agent mode** (VS Code 1.95 or later; agent mode needs 1.99):
   `#runbookState` gives the agent each step's state and time, what the run waits for, the
   "Before you run" line, and a failed step's code and last 20 output lines, redacted (secret
@@ -1057,8 +1062,8 @@ Security fixes from a review of the assistant, signed runbooks and md-runbook-ga
   example from a prompt injection in a server's output) became an ordinary cell that ran without
   approval. Code in AI text is now kept as a `text` block. (Extension and app.)
 - **The signer's name is no longer presented as checked.** It is written in the file next to the
-  signature, and nothing checked it outside a gate: `md-runbook verify` now says "signed by X (as
-  the file says)" and "signature: NOT checked" without `--allowed-signers`, and the app shows the
+  signature, and nothing checked it outside a gate: `md-runbook verify` now says `signed by X (as
+  the file says)` and `signature: NOT checked` without `--allowed-signers`, and the app shows the
   signer a gate accepted once a block ran through it. A signer name can't end the HTML comment.
 - **Line runs of signed blocks split like bash.** A here-doc whose delimiter has quotes
   (`<<E"O"F`) or a function whose body starts on the next line was split into wrong commands, so
@@ -1140,7 +1145,7 @@ Security fixes from a review of the assistant, signed runbooks and md-runbook-ga
 - **`host=NAME` blocks** are for the md-runbook app, which runs them on that host over SSH. The
   extension and the CLI run cells on this machine, so they never run one, even with cell
   options turned off: Run All passes over it, ▶ does nothing, the cell's status line says
-  "Runs on NAME · not run here", and progress counts it as skipped. Before, the option was
+  `Runs on NAME · not run here`, and progress counts it as skipped. Before, the option was
   unknown and such a block would have run locally.
 - **Syntax reference** (`docs/syntax.md`): the whole file format on one page, written from the
   parser: fence info-string grammar, every cell option with its value type, placeholders, front

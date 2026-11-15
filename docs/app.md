@@ -31,12 +31,12 @@ The top of a runbook has one button that does the obvious thing:
 
 Next to it is how far the runbook is:
 
-- "Step 4 of 7 · Push image" while it runs;
-- "Step 4 of 7 failed";
-- "Done · 7 of 7".
+- `Step 4 of 7 · Push image` while it runs;
+- `Step 4 of 7 failed`;
+- `Done · 7 of 7`.
 
 By the blocks' estimates, it also shows the share done, the time left and when it ends
-("41% · 4 min left · ≈ 14:32").
+(`41% · 4 min left · ≈ 14:32`).
 
 Run all:
 
@@ -283,7 +283,7 @@ Notifications come while the app is in the background, or, in a browser, while t
 The system asks for the permission only after **Notify me**. **Not now** isn't asked again, and
 **Hosts & settings → Notifications** turns them on or off.
 
-They say what the run bar says ("Deploy checkout" · "Step 4 of 6 failed — Push image"), and a
+They say what the run bar says (`Deploy checkout` · `Step 4 of 6 failed — Push image`), and a
 tap opens the runbook at that step. Nothing leaves the device: they are local notifications, not
 push.
 
@@ -610,7 +610,7 @@ the folder its server names (`MD_RUNBOOK_LIBRARY=/sop/`: [apps/web](../apps/web/
   - **Forget the versions seen** clears the versions the app remembers for this library. Use it
     after a runbook was renumbered, or signed with too high a version by mistake.
 - **A link:** `mdrunbook://library?url=https%3A%2F%2Frunbooks.example.net%2Frunbooks%2F` (or the
-  web app's `/library?url=…`) asks "Add the team library at runbooks.example.net?" before adding it.
+  web app's `/library?url=…`) asks `Add the team library at runbooks.example.net?` before adding it.
 - **A QR code:** **Share library** in that section shows the link as a QR code. On another phone,
   **Scan a code** (or the camera) adds the library after the same question.
 

@@ -15,8 +15,12 @@
  *
  * Prose is the text outside front matter, code blocks, HTML comments (md-runbook's own blocks:
  * output, signature, notes), tables, headings, images and raw HTML lines. A paragraph, a list
- * item and a quoted line are units; nested items are units of their own. A code span, a link or
- * a URL counts as one word. Whether a sentence is useful is not checked.
+ * item and a quoted line are units; nested items are units of their own. A code span, a link, a
+ * URL or a quotation counts as one word. Whether a sentence is useful is not checked.
+ *
+ * A quotation (“…”, «…», "…") is the source's text: no rule reads its words, and its marks end no
+ * sentence. One of 6 words or more needs a link in its paragraph. A block quote whose last line
+ * is its source (a link, or "— Name") is a quotation as a whole: not checked.
  *
  * Unlike prose_ratchet.py, fences are read as CommonMark reads them (a ```` fence holds ```
  * blocks; a ```` code span at a line start opens none), inline HTML comments are dropped, and
@@ -42,9 +46,8 @@ export const PROSE_LIMITS = {
   /** …or a run of this many of them; the box's sentence has at least boxRepeatMinWords. */
   boxRepeatRun: 4,
   boxRepeatMinWords: 3,
-  /** A direct quotation of this many words or more, this share of a sentence: its length is the quote's. */
+  /** A quotation of this many words or more needs its source: a link in its paragraph, item or box. */
   quotationWords: 6,
-  quotationShare: 0.6,
   /** An empty lead-in before a code block has at most this many words. */
   leadInWords: 6,
   /** Choppy: this many sentences in a row, each under choppyWords words. */
@@ -155,6 +158,7 @@ export type ProseRule =
   | 'prose-box-repeat'
   | 'prose-choppy'
   | 'prose-list-lean'
+  | 'prose-quote-source'
   | 'prose-repeat'
   | 'prose-duplicate';
 
@@ -188,6 +192,8 @@ export interface ProseUnit {
   joined?: boolean;
   /** A bullet (not a numbered item) right after a sibling item: same list, same indent. */
   sibling?: boolean;
+  /** In a block quote (no label, no alert) whose last line is its source: a quotation, not checked. */
+  cited?: boolean;
 }
 
 const ITEM_RE = /^(\s*)(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/;
@@ -256,6 +262,9 @@ function readProse(text: string, options: ProseOptions): { units: ProseUnit[]; e
   let quoteBlank = false;
   let quoteOther = false;
   let quoteItem = false;
+  /** Each quote's last line with text, and whether it opens with a label or an alert (a box, not a quotation). */
+  const quoteEnd = new Map<number, number>();
+  const quoteLabelled = new Map<number, boolean>();
   /** The open list: for each indent, whether its items are numbered. */
   const list = new Map<number, boolean>();
   const close = (): void => {
@@ -308,6 +317,7 @@ function readProse(text: string, options: ProseOptions): { units: ProseUnit[]; e
     note = false;
     const line = raw.replace(QUOTE_RE, '');
     const stripped = line.trim();
+    if (quoted && stripped) quoteEnd.set(quoteId, n);
     const h = /^#{1,6}\s+(.*?)(?:\s+#+)?$/.exec(stripped);
     if (h) {
       close();
@@ -346,6 +356,7 @@ function readProse(text: string, options: ProseOptions): { units: ProseUnit[]; e
       }
       if (quoted) {
         current.quote = quoteId;
+        if (quoteUnits === 0) quoteLabelled.set(quoteId, alert || current.text !== text);
         if (boxes && quoteUnits === 0 && !item && (alert || current.text !== text)) current.box = true;
         if (!item && quoteUnits > 0 && quoteBlank && !quoteOther && !quoteItem) current.joined = true;
         quoteUnits++;
@@ -360,16 +371,45 @@ function readProse(text: string, options: ProseOptions): { units: ProseUnit[]; e
     end = n;
   }
   close();
+  // A block quote that ends in its source line ("— Name", or a link alone) is a quotation.
+  const lastUnit = new Map<number, ProseUnit>();
+  for (const u of found) if (u.quote !== undefined) lastUnit.set(u.quote, u);
+  for (const [id, u] of lastUnit) {
+    const lastLine = u.line + newlines(u.text);
+    if (quoteLabelled.get(id) !== false || quoteEnd.get(id) !== lastLine) continue;
+    const source = plain(u.text).text.split('\n').pop()!.trim().replace(/^[*_]+/, '');
+    if (SOURCE_NAME_RE.test(source) || SOURCE_LINK_RE.test(source)) for (const v of found) if (v.quote === id) v.cited = true;
+  }
   return { units: found, estimates, labelTexts };
 }
 
-/** Text as it is read: a code span, a link or a URL one placeholder word (kept in `spans`), bold marks dropped. */
+/** A source line: "— Name", "-- Name", or a link alone ("[RFC 9110](…)", "(Source: [paper](…))"). */
+const SOURCE_NAME_RE = /^(?:[—–―]|--)\s*\S/;
+const SOURCE_LINK_RE = /^\(?\s*(?:(?:source|from|via)\s*:?\s*)?[LU]\uE000\d+\uE001(?:\s*(?:[,;]|and)\s*[LU]\uE000\d+\uE001)*\s*\)?[.,;:]*$/i;
+
+/**
+ * Text as it is read: a code span, a link, a URL or a quotation one placeholder word (kept in
+ * `spans`), bold marks dropped. Placeholders: C code, L link, U URL, Q a quotation, S a quotation
+ * whose own last mark ends its sentence (“Stop.”).
+ */
 interface Plain {
   text: string;
   spans: string[];
 }
 
-const SPAN_RE = /([CLU])\uE000(\d+)\uE001/g;
+const SPAN_RE = /([CLUQS])\uE000(\d+)\uE001/g;
+/** A quotation's placeholder. */
+const QUOTED_RE = /[QS]\uE000\d+\uE001/g;
+/** Any placeholder. */
+const ANY_SPAN_RE = /[CLUQS]\uE000\d+\uE001/g;
+
+/** “…” and «…», over lines too. */
+const CURLY_QUOTE_RE = /\u201C[^\u201D]*\u201D|\u00AB[^\u00BB]*\u00BB/g;
+/**
+ * "…": the opening mark after the start, a space, an opening bracket or emphasis; the closing one
+ * before the end, a space, punctuation or emphasis. Not an inch mark (`a 3" pipe`) nor `x="y"`.
+ */
+const STRAIGHT_QUOTE_RE = /(?<=^|[\s([{*_])"(?=[^\s"])[^"]*?(?<=[^\s"])"(?=$|[\s.,;:!?)\]}*_\u2026\u2014\u2013-])/g;
 
 function plain(text: string): Plain {
   const spans: string[] = [];
@@ -378,10 +418,14 @@ function plain(text: string): Plain {
     spans.push(m);
     return '\n'.repeat(m.match(/\n/g)?.length ?? 0) + `${letter}\uE000${spans.length - 1}\uE001`;
   };
+  // A quotation whose words end in . ? or ! ends its sentence there (“Stop.” Then…).
+  const quotation = (m: string): string => keep(/[.?!][)\]*_]*\s*$/.test(m.slice(1, -1)) ? 'S' : 'Q')(m);
   const t = text
     .replace(/`[^`]*`/g, keep('C'))
     .replace(/!?\[[^\]]*\]\([^)]*\)/g, keep('L'))
     .replace(/https?:\/\/\S+/g, keep('U'))
+    .replace(CURLY_QUOTE_RE, quotation)
+    .replace(STRAIGHT_QUOTE_RE, quotation)
     // In an emphasis span, a ? or ! before lowercase text ends no sentence ("*Can they read it?*
     // turns red"), nor a . inside it ("*see fig. one*"); before a capital, or a . at its end, they do.
     .replace(EMPHASIS_RE, (m: string, at: number, all: string) => {
@@ -408,9 +452,12 @@ const unmask = (t: string): string =>
 function restore(text: string, spans: readonly string[]): string {
   let t = text;
   // A link can hold a code span: put back until none is left.
-  for (let i = 0; i < 5 && /[CLU]\uE000\d+\uE001/.test(t); i++) t = t.replace(SPAN_RE, (_m, _l: string, n: string) => spans[Number(n)] ?? '');
+  for (let i = 0; i < 5 && /[CLUQS]\uE000\d+\uE001/.test(t); i++) t = t.replace(SPAN_RE, (_m, _l: string, n: string) => spans[Number(n)] ?? '');
   return unmask(t);
 }
+
+/** The text with its placeholders put back but its quotations left out: the writer's own words. */
+const ownWords = (text: string, spans: readonly string[]): string => restore(text.replace(QUOTED_RE, ' '), spans);
 
 // Letters and digits, Latin to CJK (no \p{L}: Hermes, the app's engine, may lack it).
 const LETTERS = 'A-Za-z0-9_\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u1FFF\u2C00-\uD7FF';
@@ -424,8 +471,11 @@ const ABBREVIATION_RE = /\b(?:e\.g|i\.e|etc|vs|cf)\.$/i;
 // A sentence ends at . ! ? before a space and a letter or digit: names may start lowercase
 // (kubectl), so a capital is not required; the abbreviations above don't end one.
 // A link or code span that wrapped keeps its newlines in front of its placeholder, so a "(" may be
-// followed by newlines before the link: "next. (\n[NBC News…](…))".
-const SENTENCE_END_RE = /(?<=[.!?])["')\]*_]*\s+(?=["'(\[*_`]*\n*[A-Za-z0-9])/g;
+// followed by newlines before the link: "next. (\n[NBC News…](…))". A quotation's own last mark
+// ends a sentence too (S, “Stop.” Then…), but not before lowercase (“Stop!” he said).
+// (After any placeholder here; splitSentences keeps the S ones. A fixed-length lookbehind, for Hermes.)
+const SENTENCE_END_RE = /(?<=[.!?\uE001])["')\]*_]*\s+(?=["'(\[*_`]*\n*[A-Za-z0-9])/g;
+const ENDS_IN_QUOTE_RE = /S\uE000\d+\uE001$/;
 
 interface Sentence {
   text: string;
@@ -460,6 +510,7 @@ function splitSentences(t: string, labels: readonly string[] = DEFAULT_LABEL_TEX
       const so = piece.slice(start, end.index).trim();
       const next = piece.slice(end.index + end[0].length).replace(/^["'(\[*_`]+/, '');
       if (ABBREVIATION_RE.test(so) || (so.endsWith('?') && isLabel(so))) continue;
+      if (so.endsWith('\uE001') && (!ENDS_IN_QUOTE_RE.test(so) || /^[a-z]/.test(next.replace(/^[\s"'(\[*_`]+/, '')))) continue;
       // Initials ("L. Peter Deutsch", "J. R. R. Tolkien") and "no. 6" end no sentence.
       if (isInitial(so, next) || (NUMBER_RE.test(so) && /^\d/.test(next))) continue;
       at(a + start, piece.slice(start, end.index));
@@ -563,7 +614,8 @@ const GUARD_RES = PROSE_PHRASES.guard.map(wholeWord);
  */
 function guarded(plainText: string): 'span' | 'word' | 'digit' | undefined {
   if (PLACEHOLDER_RE.test(plainText)) return 'span';
-  const bare = plainText.replace(new RegExp(PLACEHOLDER_RE.source, 'g'), ' ');
+  // A quotation's words are the source's: they guard nothing.
+  const bare = plainText.replace(ANY_SPAN_RE, ' ');
   if (GUARD_RES.some((r) => r.test(bare))) return 'word';
   return /\d/.test(bare) ? 'digit' : undefined;
 }
@@ -574,6 +626,8 @@ interface ReadSentence {
   line: number;
   words: number;
   sentence: string;
+  /** The sentence without its quotations: what the phrase rules compare. */
+  own: string;
 }
 
 function readSentences(unit: ProseUnit, p: Plain, labels?: readonly string[]): ReadSentence[] {
@@ -582,7 +636,26 @@ function readSentences(unit: ProseUnit, p: Plain, labels?: readonly string[]): R
     line: unit.line + newlines(p.text.slice(0, s.start)),
     words: countWords(s.text),
     sentence: restore(s.text, p.spans).replace(/\s+/g, ' '),
+    own: ownWords(s.text, p.spans).replace(/\s+/g, ' ').trim(),
   }));
+}
+
+/** A link or a URL in a text (not in a code span): a quotation's source. */
+const hasLink = (text: string): boolean => /!?\[[^\]]*\]\([^)]*\)|\[[^\]]+\]\[[^\]]*\]|https?:\/\//.test(text.replace(/`[^`]*`/g, ' '));
+
+/**
+ * The first quotation of PROSE_LIMITS.quotationWords or more in a unit without a link: its line
+ * and text. `linked`: the unit's box (or other `>` quote) has a link, often its last line.
+ */
+function unsourcedQuote(unit: ProseUnit, p: Plain, linked: boolean): { line: number; quote: string } | undefined {
+  if (linked || hasLink(unit.text)) return undefined;
+  for (const m of p.text.matchAll(/[QS]\uE000(\d+)\uE001/g)) {
+    const span = p.spans[Number(m[1])]!;
+    if (countWords(span) < PROSE_LIMITS.quotationWords) continue;
+    // The newlines a quotation swallows are in front of its placeholder: it starts that many lines up.
+    return { line: unit.line + newlines(p.text.slice(0, m.index)) - newlines(span), quote: restore(span, p.spans).replace(/\s+/g, ' ') };
+  }
+  return undefined;
 }
 
 /**
@@ -599,7 +672,11 @@ export function measureProse(text: string, options: ProseOptions = {}): ProseMea
   let total = 0;
   let count = 0;
   const { units, estimates, labelTexts } = readProse(text, options);
+  // A box, or another `>` quote, is one block: a link anywhere in it is its quotations' source.
+  const linkedQuotes = new Set(units.filter((u) => u.quote !== undefined && hasLink(u.text)).map((u) => u.quote));
   units.forEach((unit, index) => {
+    // A block quote with its source line is the source's text, not the file's.
+    if (unit.cited) return;
     const p = plain(unit.text);
     const sentences = readSentences(unit, p, labelTexts);
     // The runbook's first paragraph, or a section's: what it says of time is the whole thing's.
@@ -618,7 +695,7 @@ export function measureProse(text: string, options: ProseOptions = {}): ProseMea
       size += words;
       total += words;
       count++;
-      if (words > limits.sentenceWords && !isQuotation(s.text, words)) {
+      if (words > limits.sentenceWords) {
         found.push({ rule: 'prose-sentence', line, words, sentence, message: sentenceMessage(words, limits.sentenceWords, sentence) });
       }
       const head = unmask(s.text).replace(/^["'(*_]+/, '').toLowerCase().replace(/\s+/g, ' ');
@@ -640,9 +717,10 @@ export function measureProse(text: string, options: ProseOptions = {}): ProseMea
         if (!opener && PROSE_PHRASES.announcing.some((r) => r.test(head))) {
           found.push({ rule: 'prose-announcing', line, sentence, message: `Delete this sentence, it only announces: ${quote(excerpt(sentence))}` });
         }
-        if (s === sentences[0] && unit.heading !== undefined && saysHeading(unit.heading, sentence)) {
+        if (s === sentences[0] && unit.heading !== undefined && saysHeading(unit.heading, s.own)) {
           found.push({ rule: 'prose-heading', line, sentence, message: "Says the heading again: cut it, or add what's new" });
         }
+        // A quotation counts as one word: a sentence said twice needs 5 words of the writer's own.
         if (words >= PROSE_LIMITS.repeatWords) {
           const key = sentence
             .toLowerCase()
@@ -653,10 +731,15 @@ export function measureProse(text: string, options: ProseOptions = {}): ProseMea
           else found.push({ rule: 'prose-repeat', line, sentence, message: `Already said on line ${before + 1}: ${quote(excerpt(sentence))}` });
         }
       }
-      if (!unit.item && guard === undefined && words < PROSE_LIMITS.choppyWords) choppy.push(s);
+      // A sentence with a quotation has the source's rhythm: it ends a choppy run.
+      if (!unit.item && guard === undefined && words < PROSE_LIMITS.choppyWords && !/[QS]\uE000/.test(s.text)) choppy.push(s);
       else endChoppy();
     }
     endChoppy();
+    const unsourced = unsourcedQuote(unit, p, unit.quote !== undefined && linkedQuotes.has(unit.quote));
+    if (unsourced) {
+      found.push({ rule: 'prose-quote-source', line: unsourced.line, sentence: unsourced.quote, message: 'Quote without a source: link it in the same paragraph' });
+    }
     if (unit.sibling && PROSE_PHRASES.leaning.test(p.text.replace(/^["'(*_]+/, ''))) {
       found.push({ rule: 'prose-list-lean', line: unit.line, sentence: sentences[0]?.sentence ?? unit.text, message: 'Leans on the item before: join them into a sentence, or make it stand alone' });
     }
@@ -691,7 +774,7 @@ export function measureProse(text: string, options: ProseOptions = {}): ProseMea
     const first = readSentences(unit, plain(unit.text), labelTexts)[0];
     if (!first) return;
     for (const s of readSentences(above, plain(above.text), labelTexts)) {
-      if (guarded(s.text) === undefined && repeats(first.sentence, s.sentence)) {
+      if (guarded(s.text) === undefined && repeats(first.own, s.own)) {
         found.push({ rule: 'prose-box-repeat', line: s.line, sentence: s.sentence, message: 'Box repeats this sentence: cut it here, keep the box' });
       }
     }
@@ -704,7 +787,7 @@ export function measureProse(text: string, options: ProseOptions = {}): ProseMea
     const first = readSentences(unit, plain(unit.text), labelTexts)[0];
     if (previous && first && guarded(first.text) === undefined) {
       const before = readSentences(previous, plain(previous.text), labelTexts);
-      if (before.some((s) => guarded(s.text) === undefined && repeats(first.sentence, s.sentence))) {
+      if (before.some((s) => guarded(s.text) === undefined && repeats(first.own, s.own))) {
         found.push({ rule: 'prose-box-repeat', line: first.line, sentence: first.sentence, message: 'Says what the box above says: cut one' });
       }
     }
@@ -728,23 +811,6 @@ function isTotalDuration(head: string, opening: boolean): boolean {
   // "Next to": within a few words of the duration, before or after it.
   const near = head.slice(Math.max(0, m.index - 40), m.index + m[0].length + 25);
   return PROSE_PHRASES.durationTotal.test(near);
-}
-
-/**
- * Mostly a direct quotation ("…", “…”, «…» of 6 words or more, at least 60 % of the sentence's
- * words): a verbatim quote can't be shortened without changing it. A quote that runs on into the
- * next sentence counts in both, to the sentence's end and from its start.
- */
-function isQuotation(plainText: string, words: number): boolean {
-  let quoted = 0;
-  // The end of a quote that began in the sentence before.
-  const tail = /^([^“"«]*)[”»]/.exec(plainText);
-  if (tail && countWords(tail[1]!) >= PROSE_LIMITS.quotationWords) quoted += countWords(tail[1]!);
-  for (const m of plainText.slice(tail ? tail[0].length : 0).matchAll(/[“"«]([^”"»]*)(?:[”"»]|$)/g)) {
-    const n = countWords(m[1]!);
-    if (n >= PROSE_LIMITS.quotationWords) quoted += n;
-  }
-  return quoted >= PROSE_LIMITS.quotationShare * words;
 }
 
 /** A box's sentence says this sentence again: most of its content words are in it, or a run of them. */
@@ -813,6 +879,8 @@ export function proseDuplicates(files: readonly ProseFile[], options: ProseOptio
   files.forEach((f, file) => {
     const read = readProse(f.text, options);
     for (const unit of read.units) {
+      // A quotation is the source's text: the same one in many files is no duplicate.
+      if (unit.cited) continue;
       const p = plain(unit.text);
       const sentences = readSentences(unit, p, read.labelTexts);
       const add = (words: string[], place: Place): void => {
@@ -826,10 +894,10 @@ export function proseDuplicates(files: readonly ProseFile[], options: ProseOptio
       // A short sentence with a link points to where it is said: the fix for a duplicate, not one.
       const pointer = (text: string, words: number): boolean => words <= PROSE_LIMITS.pointerWords && /[LU]\uE000/.test(text);
       for (const s of sentences) {
-        if (!pointer(s.text, s.words)) add(normalised(s.sentence), { file, line: s.line, sentence: s.sentence, unit: id, whole: sentences.length === 1 });
+        if (!pointer(s.text, s.words)) add(normalised(s.own), { file, line: s.line, sentence: s.sentence, unit: id, whole: sentences.length === 1 });
       }
       const whole = sentences.map((s) => s.sentence).join(' ');
-      const words = normalised(whole);
+      const words = normalised(sentences.map((s) => s.own).join(' '));
       const place = { file, line: unit.line, sentence: whole, unit: id, whole: true };
       if (pointer(p.text, countWords(p.text))) continue;
       if (sentences.length > 1) add(words, place);

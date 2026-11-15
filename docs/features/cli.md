@@ -435,7 +435,7 @@ https://github.com/acme/ops/actions/runs/123456
 The message format follows the webhook:
 
 - **Slack** (`hooks.slack.com`);
-- **Microsoft Teams**: a Workflows "post to a channel when a webhook request is received" flow
+- **Microsoft Teams**: a Workflows **post to a channel when a webhook request is received** flow
   (`*.logic.azure.com`, `*.powerplatform.com`);
 - **Discord**;
 - **Google Chat**.
