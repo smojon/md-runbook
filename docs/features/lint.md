@@ -73,10 +73,15 @@ warnings). On GitHub Actions they are also annotations (prose notes as notices),
 the changed lines of a pull request:
 
 ```yaml
-- uses: actions/setup-node@v4
-  with: { node-version: 20 }
-- run: npx md-runbook lint --strict runbooks/*.md
+- uses: actions/setup-node@v7
+  with: { node-version: 22 }
+- run: |
+    npm install --no-save --ignore-scripts --no-audit --no-fund --prefix "$RUNNER_TEMP/md-runbook" md-runbook@0.26.3
+    "$RUNNER_TEMP/md-runbook/node_modules/.bin/md-runbook" lint --strict runbooks/*.md
 ```
+
+Pin the version, and install with `--ignore-scripts`: md-runbook needs no install scripts. Code
+scanners such as SonarCloud flag `npx` in CI, because it can install a package and run its scripts.
 
 ## Prose
 
@@ -268,9 +273,11 @@ In CI:
 prose:
   runs-on: ubuntu-latest
   steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
       with: { node-version: 22 }
     - name: "Prose: no Markdown file gets harder to read"
-      run: npx md-runbook lint --prose-baseline .github/prose-baseline.json
+      run: |
+        npm install --no-save --ignore-scripts --no-audit --no-fund --prefix "$RUNNER_TEMP/md-runbook" md-runbook@0.26.3
+        "$RUNNER_TEMP/md-runbook/node_modules/.bin/md-runbook" lint --prose-baseline .github/prose-baseline.json
 ```
