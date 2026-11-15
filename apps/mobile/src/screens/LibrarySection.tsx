@@ -216,7 +216,17 @@ function SignersCard({ library }: { library: Library }) {
       ) : null}
       {list.length === 0 ? null : asking ? (
         <View testID="library-trust-prompt">
-          <Text style={[styles.body, styles.warn]}>{t.trustSignersPrompt(host)}</Text>
+          <Text style={[styles.body, styles.trustTitle]} role="heading">
+            {t.trustSignersTitle(host)}
+          </Text>
+          <View testID="library-trust-points" style={styles.points}>
+            {t.trustSignersPoints.map((p) => (
+              <View key={p} style={styles.point}>
+                <Text style={styles.body}>{'•'}</Text>
+                <Text style={[styles.body, styles.pointText]}>{p}</Text>
+              </View>
+            ))}
+          </View>
           {other ? (
             <Text testID="library-signers-other" style={other.same ? styles.body : [styles.body, styles.warn]}>
               {other.same ? t.signersSameAsOther : t.signersDifferFromOther(other.notThere, other.missingHere)}
@@ -513,6 +523,10 @@ const useStyles = themedStyles((colors) => ({
     gap: 6,
   },
   signer: { paddingVertical: 4 },
+  trustTitle: { fontWeight: '600', marginBottom: 4 },
+  points: { gap: 4, marginBottom: 8 },
+  point: { flexDirection: 'row', gap: 8 },
+  pointText: { flex: 1 },
   body: { fontSize: 14, color: colors.text, lineHeight: 20 },
   mono: { fontSize: 12, color: colors.muted, fontFamily: mono },
   warn: { color: colors.warningText },

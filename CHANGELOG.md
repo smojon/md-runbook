@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Trust these signers is easier to read:** a question (**Trust these keys for the team library
+  at …?**) and five short points, instead of one long paragraph (about 14 lines on a phone).
+
 - **The gate's log says which alert a run answered.** A run started from an alert link now
   carries the link's `ALERT`, `ALERT_FINGERPRINT` and `ALERT_STARTS_AT` to md-runbook-gate (the
   new `note` request, gate protocol 3), which logs them with the runbook's load; `md-runbook

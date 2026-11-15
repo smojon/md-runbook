@@ -222,10 +222,15 @@ describe('Team runbooks on the list', () => {
     expect(screen.getByTestId('library-notes.md')).toBeDisabled();
     expect(screen.getByTestId('library-why-ops/restart.md')).toHaveTextContent(/trust its signers first/);
 
-    // The library's signers: shown with fingerprints, the server vouching for itself said, for this library only, trusted on yes only.
+    // The library's signers: shown with fingerprints, the server vouching for itself said (as a list), for this library only, trusted on yes only.
     await press('library-trust');
-    expect(screen.getByTestId('library-trust-prompt')).toHaveTextContent(/vouching for itself/);
-    expect(screen.getByTestId('library-trust-prompt')).toHaveTextContent(/for the team library at runbooks.example.net only/);
+    expect(screen.getByTestId('library-trust-prompt')).toHaveTextContent(
+      /Trust these keys for the team library at runbooks\.example\.net\?/,
+    );
+    // One point per line (a phone shows them as a list, not a paragraph of 14 lines).
+    expect(screen.getByTestId('library-trust-points').children).toHaveLength(5);
+    expect(screen.getByTestId('library-trust-points')).toHaveTextContent(/It vouches for itself/);
+    expect(screen.getByTestId('library-trust-points')).toHaveTextContent(/For this library only/);
     expect(screen.getByTestId('library-trust-prompt')).toHaveTextContent(/SHA256:/);
     expect(trustedSigners()).toHaveLength(0);
     await press('library-trust-go');

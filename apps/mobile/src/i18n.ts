@@ -862,8 +862,15 @@ const en = {
       ? '1 line of its allowed_signers is not used here (a certificate authority, another namespace, an unknown option or a damaged line).'
       : `${n} lines of its allowed_signers are not used here (certificate authorities, other namespaces, unknown options or damaged lines).`,
   trustSigners: 'Trust these signers',
-  trustSignersPrompt: (host: string) =>
-    `Trust these keys for the team library at ${host} only: its runbooks signed with them then show "Signed by" and the name, and a library that opens verified runbooks only opens them. Other libraries and runbooks from links don't use them. The keys come from the same server as the runbooks: it is vouching for itself, and whoever can change the runbooks there can change this list too. Trust them only if you trust that server, and better, compare the fingerprints with what the signers tell you.`,
+  trustSignersTitle: (host: string) => `Trust these keys for the team library at ${host}?`,
+  /** The Trust these signers prompt, one point per line. */
+  trustSignersPoints: [
+    'Its runbooks signed with them then show “Signed by” and the name.',
+    'If the library opens verified runbooks only, it then opens them.',
+    'For this library only: other libraries and runbooks from links don’t use them.',
+    'The keys come from the same server as the runbooks. It vouches for itself: whoever can change the runbooks there can change this list too.',
+    'Trust them only if you trust that server. Better: compare the fingerprints with what the signers tell you.',
+  ],
   /** What a principal of an allowed_signers line lets the key sign as. */
   signerPrincipal: (p: string) =>
     p.startsWith('!')

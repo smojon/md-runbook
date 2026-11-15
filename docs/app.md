@@ -391,9 +391,10 @@ says the same, checked the same way.
   than the version it has now, or no longer signed by a key you trust) is never a dead end: its
   row offers **Replace with the library's version**, and **Keep mine** is not offered when keeping
   would leave a copy the library refuses.
-- **Signers:** if the library publishes an `allowed_signers` file, **Trust these signers** shows
-  each name (and what a pattern such as `*@example.net` lets a key sign as) and key fingerprint,
-  and asks first. The list comes from the same server as the runbooks, so it is that server
+- **Signers:** if the library publishes an `allowed_signers` file, **Trust these signers** asks
+  **Trust these keys for the team library at …?**, says in a few points what trusting them does,
+  and shows each name (and what a pattern such as `*@example.net` lets a key sign as) and key
+  fingerprint. The list comes from the same server as the runbooks, so it is that server
   vouching for itself: compare the fingerprints with what the signers tell you, or, on a device
   you [paired](#pairing-a-phones-browser) with another that trusts them, with what that device
   trusts (each key says so). Trust counts for that library only. Once trusted, the app checks the signatures itself; **Stop trusting** undoes
