@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.26.4
+
+Six more docs pages follow the prose rules, and two prose check fixes.
+
 - **Prose checks:**
   - A citation whose link wraps over lines is no part of the sentence before it.
   - `md-runbook lint --prose-show` takes several patterns: `--prose-show 'docs/*' README.md`.
