@@ -213,6 +213,8 @@ A quotation is in `“…”`, `«…»` or `"…"`. A straight `"` opens after 
   - A `.`, `?` or `!` inside it ends no sentence; its own last one does (`He wrote “Stop.” Then…`).
 - Quote word for word, from the source you link. Shorten the words around a quote, never the quote.
 - A quotation of 6 words or more needs a link in its paragraph, list item or box.
+  - Not checked for a source: shorter quotes, and quotes in table cells (tables aren't read).
+    Link those yourself.
 - Write a program's messages and output as code, between backticks, not in quotation marks. The
   source hint then fires on people's words only.
 - A block quote whose last line is its source (a link, or `— Name`) is a quotation as a whole. It
