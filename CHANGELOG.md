@@ -2,9 +2,14 @@
 
 ## Unreleased
 
+## 0.26.6
+
+A cell's own `env.NAME=` now wins over the `.env` file. The sample runbook follows the prose rules.
+
 - **Behaviour change, VS Code:** a cell's own `env.NAME=` option now wins over the same name in
   the `.env` file (`mdRunbook.execution.envFile`). Before, the file won.
-- **Docs:** the sample runbook (**Open Sample Runbook**) follows the prose rules.
+- **Docs:** the sample runbook (**Open Sample Runbook**) follows the prose rules. The lint docs say which
+  quotes the source hint skips (under 6 words, in table cells).
 
 ## 0.26.5
 
