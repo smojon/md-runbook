@@ -672,6 +672,23 @@ describe('prose: counting traps, labels, quotations, a box that says the box abo
     assert.deepEqual(proseSentences('Pick plan B. kubectl reads it.'), ['Pick plan B.', 'kubectl reads it.']);
     // A key, not an initial.
     assert.deepEqual(proseSentences('Cancel sends Ctrl+C. If it hangs, wait.'), ['Cancel sends Ctrl+C.', 'If it hangs, wait.']);
+    // A capital after a lowercase word, then a sentence: a name (design A), not an initial.
+    assert.deepEqual(proseSentences('It reads the files of classic corpus A. In 15, the classic file is gone.'), [
+      'It reads the files of classic corpus A.',
+      'In 15, the classic file is gone.',
+    ]);
+    assert.deepEqual(proseSentences('Guide 23 uses design B. The renewal happens later.'), ['Guide 23 uses design B.', 'The renewal happens later.']);
+    assert.deepEqual(proseSentences('It falls back to design A. That takes about 4 days.'), ['It falls back to design A.', 'That takes about 4 days.']);
+    // Initials at the start, or before a name of two capitalised words.
+    assert.deepEqual(proseSentences('L. Peter Deutsch wrote Ghostscript.'), ['L. Peter Deutsch wrote Ghostscript.']);
+  });
+
+  it('a citation after a sentence, on the same line, is no part of it', () => {
+    assert.deepEqual(proseSentences('Read what to do next. ([NBC News on the Senate report, 2014](https://example.net/a))'), ['Read what to do next.']);
+    assert.deepEqual(proseSentences("The key is the client's, not the server's. ([Wikipedia: TLS](https://example.net/b)) Then go."), [
+      "The key is the client's, not the server's.",
+      'Then go.',
+    ]);
   });
 
   it('the default label: an optional emoji, a bold label, then " · ", " — ", " – " or ":"', () => {

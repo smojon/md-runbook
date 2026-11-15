@@ -434,7 +434,12 @@ function splitSentences(t: string, labels: readonly string[] = DEFAULT_LABEL_TEX
     const l = s.toLowerCase();
     return labels.some((x) => l.endsWith(x) && !WORD_RE.test(l[l.length - x.length - 1] ?? ''));
   };
-  const at = (offset: number, s: string): void => void parts.push({ text: s.trim(), start: offset + (s.length - s.trimStart().length) });
+  const at = (offset: number, s: string): void => {
+    // A citation left at the front (the sentence before it ended inside the same line) is no part of it.
+    const lead = s.length - s.trimStart().length;
+    const cited = CITATION_PREFIX_RE.exec(s.slice(lead))?.[0].length ?? 0;
+    parts.push({ text: s.slice(lead + cited).trim(), start: offset + lead + cited });
+  };
   const pieces: Array<[number, number]> = [];
   let pieceStart = 0;
   for (const m of t.matchAll(/\s·\s/g)) {
@@ -450,7 +455,7 @@ function splitSentences(t: string, labels: readonly string[] = DEFAULT_LABEL_TEX
       const next = piece.slice(end.index + end[0].length).replace(/^["'(\[*_`]+/, '');
       if (ABBREVIATION_RE.test(so) || (so.endsWith('?') && isLabel(so))) continue;
       // Initials ("L. Peter Deutsch", "J. R. R. Tolkien") and "no. 6" end no sentence.
-      if ((INITIAL_RE.test(so) && /^[A-Z]/.test(next)) || (NUMBER_RE.test(so) && /^\d/.test(next))) continue;
+      if (isInitial(so, next) || (NUMBER_RE.test(so) && /^\d/.test(next))) continue;
       at(a + start, piece.slice(start, end.index));
       start = end.index + end[0].length;
     }
@@ -459,14 +464,33 @@ function splitSentences(t: string, labels: readonly string[] = DEFAULT_LABEL_TEX
   return parts.filter((p) => countWords(p.text) > 0 && !CITATION_RE.test(p.text));
 }
 
-/** An initial: a capital alone after a space or an opening mark (not Ctrl+C.). */
+/** A capital alone after a space or an opening mark (not Ctrl+C.). */
 const INITIAL_RE = /(?:^|[\s("'\[])[A-Z]\.$/;
 const NUMBER_RE = /\bno\.$/i;
+const CAPITALISED = /^["'(\[]*[A-Z]/;
+const AN_INITIAL = /^["'(\[]*[A-Z]\.$/;
+
+/**
+ * Whether `so` (the text up to a sentence end) ends in an initial, so the text goes on: "L. Peter
+ * Deutsch", "J. R. R. Tolkien". The capital must follow a capitalised word, another initial or
+ * nothing; or the next two words must both be capitalised (a name: "by L. Peter Deutsch"). After a
+ * lowercase word it is a name ending a sentence: "design B. The renewal…", "corpus A. In 15…".
+ */
+function isInitial(so: string, next: string): boolean {
+  if (!INITIAL_RE.test(so) || !/^[A-Z]/.test(next)) return false;
+  const before = so.slice(0, -2).trimEnd().split(/\s+/).filter(Boolean);
+  const prev = before[before.length - 1];
+  if (prev === undefined || CAPITALISED.test(prev) || AN_INITIAL.test(prev)) return true;
+  const [, second] = next.split(/\s+/);
+  return second !== undefined && (CAPITALISED.test(second) || AN_INITIAL.test(second));
+}
 
 const DEFAULT_LABEL_TEXTS: readonly string[] = PROSE_PHRASES.labelTexts.map((l) => l.toLowerCase());
 
 /** Only links in parentheses, a citation (`([source](…), [paper](…))`): not a sentence. */
 const CITATION_RE = /^\(\s*[LU]\uE000\d+\uE001(?:\s*(?:[,;]|and)\s*[LU]\uE000\d+\uE001)*\s*\)[.,;:]*$/;
+/** The same at the front of a sentence, followed by more text. */
+const CITATION_PREFIX_RE = /^\(\s*[LU]\uE000\d+\uE001(?:\s*(?:[,;]|and)\s*[LU]\uE000\d+\uE001)*\s*\)[.,;:]*\s+(?=\S)/;
 
 /** The sentences of a text as they are read (code spans, links and URLs put back). */
 export function proseSentences(text: string): string[] {
