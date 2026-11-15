@@ -124,8 +124,8 @@ describe('problems in the runbook view', () => {
   });
 
   it('prose notes: a muted line under their Markdown cell, not counted as problems; tap to list them', async () => {
-    const long = Array(24).fill('word').join(' ') + ' very much.'; // too long, and a padding word
-    const text = `# Notes\n\nJust run it.\n\n\`\`\`bash\necho ok\n\`\`\`\n\n${long}\n`;
+    const long = Array(24).fill('word').join(' ') + ' simply done.'; // too long, and a padding word
+    const text = `# Notes\n\nBasically run it.\n\n\`\`\`bash\necho ok\n\`\`\`\n\n${long}\n`;
     const p = runbookProblems(text);
     expect(p.all).toEqual([]);
     expect([...p.notes.keys()]).toEqual([0, 2]);
@@ -138,12 +138,12 @@ describe('problems in the runbook view', () => {
     await act(async () => {
       fireEvent.press(screen.getByTestId('prose-notes-0-toggle'));
     });
-    expect(screen.getByTestId('prose-notes-0-0')).toHaveTextContent('Line 3 · Delete "Just"');
+    expect(screen.getByTestId('prose-notes-0-0')).toHaveTextContent('Line 3 · Delete "Basically"');
   });
 
   it('with prose: strict, prose findings are warnings: counted at the top', async () => {
-    const text = `---\nprose: strict\n---\n# Notes\n\nJust run it.\n`;
-    expect(runbookProblems(text).all.map((x) => x.message)).toEqual(['Delete "Just"']);
+    const text = `---\nprose: strict\n---\n# Notes\n\nBasically run it.\n`;
+    expect(runbookProblems(text).all.map((x) => x.message)).toEqual(['Delete "Basically"']);
     expect(runbookProblems(text).notes.size).toBe(0);
   });
 
