@@ -150,8 +150,8 @@ A runbook can't send anything you didn't agree to.
   - VS Code: a notification at the end of the run;
   - the app: a card at the end of the run.
 
-  "This runbook reports its runs to *host*: *what is sent*." **Allow**, **Not now** (this run
-  only) or **Never**.
+  The question is `This runbook reports its runs to HOST: WHAT IS SENT`. The answers are
+  **Allow**, **Not now** (this run only) or **Never**.
 
   The answer is remembered per address and report token. A runbook that sends another secret to
   the same address is asked about again.
@@ -260,7 +260,7 @@ the team library it publishes to:
 - `report-runs-token: ${secret:NAME}` is its `RUNS_TOKENS`: the client sends it as
   `Authorization: Bearer`, which the server checks.
 - `GET /v1/runs?runbook=…` lists the team's recent runs. `GET /v1/runs/last-green?runbook=…`
-  answers "last ran green by X at T", verified or not. Both need a read token.
+  answers `last ran green by X at T`, verified or not. Both need a read token.
 
 ## Limits
 
