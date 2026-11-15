@@ -11,11 +11,6 @@
   "sentences": 6,
   "units": 1
  },
- "README.md": {
-  "average": 17.0,
-  "sentences": 52,
-  "units": 11
- },
  "apps/gate/README.md": {
   "average": 17.6,
   "sentences": 12,
@@ -63,11 +58,6 @@
   "sentences": 34,
   "units": 8
  },
- "docs/app.md": {
-  "average": 20.8,
-  "sentences": 101,
-  "units": 37
- },
  "docs/cheatsheet.md": {
   "average": 21.7,
   "sentences": 4,
@@ -98,12 +88,6 @@
   "average": 15.4,
   "sentences": 10,
   "units": 1
- },
- "docs/features/cli.md": {
-  "average": 18.8,
-  "phrases": 2,
-  "sentences": 38,
-  "units": 11
  },
  "docs/features/codelens-report.md": {
   "average": 20.3,
@@ -150,11 +134,6 @@
   "sentences": 14,
   "units": 3
  },
- "docs/features/progress.md": {
-  "average": 23.2,
-  "sentences": 48,
-  "units": 14
- },
  "docs/features/run-reports.md": {
   "average": 15.4,
   "phrases": 2,
@@ -182,12 +161,6 @@
   "sentences": 11,
   "units": 1
  },
- "docs/features/signed-runbooks.md": {
-  "average": 21.9,
-  "phrases": 1,
-  "sentences": 80,
-  "units": 25
- },
  "docs/features/terminal.md": {
   "average": 19.2,
   "phrases": 1,
@@ -213,11 +186,6 @@
   "average": 22.0,
   "sentences": 21,
   "units": 6
- },
- "docs/syntax.md": {
-  "average": 17.3,
-  "sentences": 63,
-  "units": 22
  },
  "docs/troubleshooting.md": {
   "average": 18.9,
