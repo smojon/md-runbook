@@ -3,6 +3,7 @@
 // console error.
 //
 //   node e2e/web-smoke.mjs [dist-dir]
+import { deflateRawSync } from 'node:zlib';
 import { chromium } from 'playwright';
 import { serveDist } from './serve-dist.mjs';
 
@@ -79,6 +80,33 @@ try {
   await page.locator('[data-testid="task-0"][aria-checked="true"]').waitFor({ timeout: 5_000 });
   await page.screenshot({ path: 'web-04-saved.png' });
   console.log('web: a runbook file opens, saves back to the file, and is remembered after a reload');
+
+  // QR codes in the browser bundle (0.24.0: the bundle took qrcode-generator's ES module and
+  // every code threw "n is not a function").
+  await page.goto(url);
+  await page.getByTestId('runbook-sample').click();
+  await page.getByTestId('more-actions').filter({ visible: true }).first().click();
+  await page.getByTestId('action-showQrCode').click();
+  await page.getByTestId('qr-code').waitFor({ timeout: 10_000 });
+  console.log('web: a runbook QR code is drawn');
+
+  // A pairing link carries the relay token in its fragment: the pair screen asks first, and the
+  // fragment leaves the address bar (and so the history) as the page loads, and stays gone.
+  const pairing = JSON.stringify({ format: 'md-runbook pair v1', relay: 'wss://relay.example.net', token: 't'.repeat(32) });
+  const payload = 'mdrb-pair.v1.' + deflateRawSync(Buffer.from(pairing), { level: 9 }).toString('base64url');
+  await page.goto(new URL('/pair#' + payload, url).href);
+  await page.getByTestId('pair-ask').waitFor({ timeout: 30_000 });
+  const leftover = async (when) => {
+    const href = await page.evaluate(() => window.location.href);
+    if (href.includes('mdrb-pair')) throw new Error(`pairing fragment still in the address bar ${when}: ${href}`);
+  };
+  await leftover('after load');
+  await page.waitForTimeout(2_000);
+  await leftover('2 s after load');
+  await page.getByTestId('pair-not-now').click();
+  await page.waitForTimeout(500);
+  await leftover('after Not now');
+  console.log('web: a pairing link asks first, and its token leaves the address bar');
 } catch (e) {
   failed = true;
   console.error(e);
