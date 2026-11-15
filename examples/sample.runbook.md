@@ -8,13 +8,24 @@ params:
 
 # md-runbook test drive
 
-A safe runbook for trying the extension by hand. Nothing here changes your machine: every cell
-only prints text, sleeps, lists files or uses a file in the temp folder. Sections 13 to 17 show
-line runs, checks and retries, captured values, blocks for one OS, reports and the command line.
+A safe runbook for trying the extension by hand. Nothing here changes your machine. Every cell
+only prints text, sleeps, lists files or uses a file in the temp folder.
 
-Open it with right-click → **Open as Runbook** (or the notebook icon in the editor title bar),
-then run cells one by one or use **Run All**. Outputs are written into this file when you save;
-use **md-runbook: Clear All Outputs** to reset it, or **Run All as Copy** to keep this file clean.
+Sections 13 to 17 show:
+
+- line runs;
+- checks and retries;
+- captured values;
+- blocks for one OS;
+- reports and the command line.
+
+Open it with right-click → **Open as Runbook** (or the notebook icon in the editor title bar).
+Then run cells one by one or use **Run All**.
+
+Outputs are written into this file when you save:
+
+- **md-runbook: Clear All Outputs** resets it;
+- **Run All as Copy** keeps this file clean.
 
 ## 1. Shells
 
@@ -57,8 +68,8 @@ Lines should appear one per second, not all at the end:
 for i in 1 2 3 4 5; do echo "tick $i"; sleep 1; done
 ```
 
-Colours show in the editor but are stripped from the saved file, and the progress line is
-saved only in its final state:
+Colours show in the editor but are stripped from the saved file. The progress line is saved
+only in its final state:
 
 ```bash
 printf '\033[32mgreen\033[0m and \033[31mred\033[0m\n'
@@ -116,7 +127,7 @@ for i in $(seq 1 30); do echo "waiting $i/30"; sleep 1; done
 
 ## 4. Cell options
 
-Runs in the repository root (`cwd=..`), with an extra environment variable and a name that is
+Runs in the repository root (`cwd=..`) with an extra environment variable. The cell's name is
 recorded in the output marker:
 
 ```bash cwd=.. env.GREETING=hello name="Options demo"
@@ -137,7 +148,7 @@ A cell's own `env.` option wins over the setting:
 echo "MDRB_DEMO=${MDRB_DEMO:-not set}"
 ```
 
-The front matter's `timeout: 600` is the default timeout for every cell of this runbook; a
+The front matter's `timeout: 600` is the default timeout for every cell of this runbook. A
 cell's own `timeout=` (section 3) wins. `cwd:` there would set the folder cells run in.
 
 ## 5. Parameters and inputs
@@ -187,9 +198,11 @@ echo "kubectl delete pod demo  # dry run: only printed, nothing is deleted"
 ## 8. Proposed cell
 
 Written as an assistant's proposal: it doesn't run until you approve it (**Approve Proposed
-Cell** in the cell's `⋯` menu). Even then, assistant cells only run with read-only credentials,
-so with the default settings the approved cell fails with a message explaining how to set them up
-(`mdRunbook.approval.readOnlyEnv`) or turn the requirement off (`mdRunbook.approval.readOnlyOnly`):
+Cell** in the cell's `⋯` menu). Even then, assistant cells only run with read-only credentials.
+So with the default settings, the approved cell fails with a message explaining how to:
+
+- set them up (`mdRunbook.approval.readOnlyEnv`);
+- or turn the requirement off (`mdRunbook.approval.readOnlyOnly`).
 
 ```bash proposed by=ai reason="Show the current date for the incident log"
 date
@@ -221,8 +234,8 @@ echo "DEMO_VAR=${DEMO_VAR:-unset}, now in $(pwd)"
 ## 11. Interactive prompts (terminal mode)
 
 Normal runs have no input attached, so a prompt gets nothing and moves on at once. If you run
-the next cell with terminal mode off, md-runbook offers to turn it on and run the cell again
-(**Turn On and Run Again**). Or turn it on yourself in your **user** settings:
+the next cell with terminal mode off, md-runbook offers **Turn On and Run Again**. Or turn it on
+yourself in your **user** settings:
 
 ```json
 "mdRunbook.terminal.mode": "perCell"
@@ -262,20 +275,27 @@ echo "owner: alice@example.com"
 
 1. Click **Copy for AI** in the notebook toolbar. The preview shows how many names were replaced;
    choose **Copy to Clipboard**.
-2. Paste it into the assistant. The host, IP and email appear as placeholders such as `host-1`,
-   `ip-1` and `user-1@example.invalid` (the numbers carry on across copies in a session), and
-   outputs are marked as untrusted data. Names the detector doesn't recognize, such as short
-   two-part hostnames, can be added with `mdRunbook.ai.internalDomains`; project or customer
-   names go in `mdRunbook.ai.terms`.
-3. Ask it for the next step. Copy its whole answer and run **md-runbook: Paste AI Proposal**: its
-   commands are inserted as proposed cells with the real names restored, and they don't run until
+2. Paste it into the assistant. In the pasted text:
+   - the host, IP and email appear as placeholders such as `host-1`, `ip-1` and
+     `user-1@example.invalid`;
+   - placeholder numbers carry on across copies in a session;
+   - outputs are marked as untrusted data.
+
+   Names the detector doesn't recognize, such as short two-part hostnames, can be added with
+   `mdRunbook.ai.internalDomains`. Project or customer names go in `mdRunbook.ai.terms`.
+3. Ask it for the next step and copy its whole answer. Run **md-runbook: Paste AI Proposal**: its
+   commands are inserted as proposed cells, with the real names restored. They don't run until
    you approve them (section 8).
 
 **md-runbook: Check for Leaks** (Command Palette) scans the runbook for secrets and internal names
 before you share it.
 
-**Built-in AI:** set `mdRunbook.ai.provider` in your user settings to `vscode` (GitHub Copilot or
-another VS Code model) or `anthropic` (the Claude API with your own key). Then **Explain Output**
+**Built-in AI:** set `mdRunbook.ai.provider` in your user settings to:
+
+- `vscode`: GitHub Copilot or another VS Code model;
+- or `anthropic`: the Claude API with your own key.
+
+Then **Explain Output**
 and **Suggest Next Steps** appear in a cell's `⋯` menu, and **Summarize Incident** in the Command
 Palette. Every send asks first and can show exactly what will be sent.
 
@@ -292,28 +312,36 @@ ls package.json
 
 - **Hover line 3** and click **Run line 3**: only that line runs. The output is saved with
   `lines=3`, and the step stays pending in the progress until the whole cell has run.
-- **Hover lines 1 and 3** and click **Check** on each: they get a ☑ in the margin, and
+- **Hover lines 1 and 3** and click **Check** on each: they get a ☑ in the margin.
   **Run 2 checked lines** appears under the cell. Click it: only those two run, in order, saved
-  as `lines=1,3`. **Uncheck All Lines** (the dropdown next to the cell's ▶) clears them.
-- **The hover has more:** on line 3, **Run lines 1-3** runs lines 1 to 3; on line 2,
-  **Run lines 2-4** runs lines 2 to 4; **Step from here** pauses before each, **Breakpoint** sets one,
-  **Copy** copies the line (with `${param:…}` and `${out:…}` values filled in), and **Explain**
-  asks the AI about it when `mdRunbook.ai.provider` is set. Below the buttons, the hover says if
-  the line will ask before running and what its `${…}` references stand for right now.
+  as `lines=1,3`.
+- **Uncheck All Lines** (the dropdown next to the cell's ▶) clears the checks.
+- **The hover has more:**
+  - on line 3, **Run lines 1-3** runs lines 1 to 3;
+  - on line 2, **Run lines 2-4** runs lines 2 to 4;
+  - **Step from here** pauses before each line;
+  - **Breakpoint** sets one;
+  - **Copy** copies the line, with `${param:…}` and `${out:…}` values filled in;
+  - **Explain** asks the AI about it when `mdRunbook.ai.provider` is set;
+  - below the buttons: if the line will ask before running, and what its `${…}` references stand
+    for right now.
 - **Right-click a line:** **Run This Line**, or **Step Through from This Line**. Select `pwd`
   first and the menu offers **Run Selection** instead: only the selection runs.
   `Ctrl+Alt+Enter` (`Cmd+Alt+Enter` on macOS) does the same from the keyboard.
-- **Run Lines One by One** (dropdown): each line shows as `$ command` before its output, and the
+- **Run Lines One by One** (dropdown): each line shows as `$ command` before its output. The
   `cd` on line 2 carries over to line 3.
 - **Step Through Lines** (dropdown): the next line is highlighted and the cell waits. `F10` runs
-  it, `F5` runs on to the next breakpoint (or the end), `Shift+F5` stops (the lines that ran are
-  recorded).
-- **Breakpoint:** click in the margin left of line 3 (a red dot), then run the whole cell with ▶:
-  it stops before line 3. `F5` goes on. A breakpoint on a blank line or a comment stops at the
+  it; `F5` runs on to the next breakpoint (or the end). `Shift+F5` stops, and the lines that ran
+  are recorded.
+- **Breakpoint:** click in the margin left of line 3 (a red dot), then run the whole cell with ▶.
+  It stops before line 3; `F5` goes on. A breakpoint on a blank line or a comment stops at the
   next command.
 
-`mdRunbook.lines.buttons` set to `inline` shows `▶ ☐` in front of each line instead
-(`Ctrl+click`), and `off` hides them; `mdRunbook.lines.breakpoints` turns breakpoints off.
+Settings:
+
+- `mdRunbook.lines.buttons`: `inline` shows `▶ ☐` in front of each line instead (`Ctrl+click`);
+  `off` hides them.
+- `mdRunbook.lines.breakpoints` turns breakpoints off.
 
 A block, a continuation line or a here-doc counts as one line, so the `foreach` here is one step:
 
@@ -371,8 +399,11 @@ echo "web-7c9d5b-x2kqp  1/1     Running"
 echo "logs of ${out:POD}"
 ```
 
-A value captured with `capture-secret=` is redacted everywhere: in its own output (once the cell
-has finished), in later outputs and in the saved file.
+A value captured with `capture-secret=` is redacted everywhere:
+
+- in its own output, once the cell has finished;
+- in later outputs;
+- in the saved file.
 
 ```bash capture-secret=SESSION_TOKEN
 echo "tok-$RANDOM$RANDOM-demo"
@@ -402,10 +433,13 @@ echo "Temp folder: ${TMPDIR:-/tmp}"
 **Export Report (PDF)** prints the same report with the Chrome or Edge installed on your
 machine.
 
-**Problems:** the next block has a misspelled option on purpose (`retires=3`). It is underlined
-on the cell and listed in the **Problems** panel, with a suggestion (`did you mean "retry"?`).
-When it runs, the option is ignored. To fix it, click the light bulb on the cell (or press
-Ctrl+.) and choose **Change "retires" to "retry"**.
+**Problems:** the next block has a misspelled option on purpose (`retires=3`):
+
+- it is underlined on the cell and listed in the **Problems** panel, with a suggestion
+  (`did you mean "retry"?`);
+- when it runs, the option is ignored;
+- to fix it, click the light bulb on the cell (or press Ctrl+.) and choose
+  **Change "retires" to "retry"**.
 
 ```bash retires=3
 echo "the misspelled option is ignored"
@@ -420,7 +454,11 @@ node out/dist/cli.js run examples/sample.runbook.md --check --keep-going --repor
 ```
 
 `lint` reports the misspelled option. `run --check` runs every cell without changing this file.
-Expect a few steps that don't run there: the risky command in section 7 needs `--yes`, the
-proposed cell in section 8 never runs from the command line, and section 5's inputs have no
-value unless you pass `--input`. The cells that fail on purpose (sections 3, 11 and 14) fail
-there too, so the run ends with exit code 1.
+
+Expect a few steps that don't run there:
+
+- the risky command in section 7 needs `--yes`;
+- the proposed cell in section 8 never runs from the command line;
+- section 5's inputs have no value unless you pass `--input`.
+
+Cells that fail on purpose (sections 3, 11, 14) fail there too, so the run ends with exit code 1.
