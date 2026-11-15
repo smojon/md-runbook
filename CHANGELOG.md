@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.26.5
+
+VS Code now refuses unsigned reports when a runbook requires signed ones.
+Quotations no longer trip the prose check.
+
 - **Behaviour change, VS Code:** a runbook that requires signed run reports doesn't run without
   a signing key, as in the CLI and the app. Set one in `mdRunbook.signing.key`. Before,
   it ran when the report wasn't also required, and its summary went unsigned.
