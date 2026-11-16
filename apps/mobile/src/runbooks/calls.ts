@@ -45,7 +45,7 @@ import {
   recordValues,
   srcValueProblem,
 } from '@md-runbook/core/call';
-import { copyTextProblem, isCopyNameOf } from '@md-runbook/core/callCopy';
+import { COPY_NOT_RECORDED, copyDigest, copyFrontMatterProblem, copyTextProblem, isCopyNameOf } from '@md-runbook/core/callCopy';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { withFrontMatterValues } from '@md-runbook/core/incident';
 import { osGroups } from '@md-runbook/core/os';
@@ -55,6 +55,7 @@ import { sha256Hex } from '@md-runbook/core/sha256';
 import { useSyncExternalStore } from 'react';
 import type { CallReader } from '@md-runbook/core/estimate';
 import { t } from '../i18n';
+import { getJson, setJson } from '../storage/kv';
 import { askAutorun } from './autorun';
 import { pickRunbookFile } from './files';
 import { checkParam, setParamValue } from './params';
@@ -222,15 +223,65 @@ async function calledText(parent: Runbook, src: string, fetcher: typeof fetch): 
 }
 
 /**
- * Why `copy` can't be continued as the run copy of `src`, whose text is now `target` (core's
- * checks, as VS Code's resumeProblem): the output block naming it is never signed. Its name must
- * be a run copy's of that file, its blocks those of the runbook called and, in a signed runbook,
- * signed as the same name and version. Undefined: it can.
+ * The call copies this app wrote (core copyDigest), by the copy's id in the app, kept in the
+ * app's own storage where no runbook can change them: written when a call makes its copy, after
+ * each run in it and when the call ends. A copy is continued only as kept here.
  */
-export function continueProblem(copy: Runbook, src: string, target: string, signed: boolean): string | undefined {
+const COPIES_KEY = 'callCopies.v1';
+const MAX_COPIES = 500;
+const isDigests = (v: unknown): v is Record<string, string> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v) && Object.values(v).every((d) => typeof d === 'string');
+let copies: Record<string, string> = {};
+let copiesLoaded: Promise<void> | undefined;
+
+function loadCopies(): Promise<void> {
+  copiesLoaded ??= getJson(COPIES_KEY, isDigests).then((saved) => {
+    // What was written before the load is newer.
+    copies = { ...(saved ?? {}), ...copies };
+  });
+  return copiesLoaded;
+}
+
+/** The copy `copyId` is as this app wrote it: `text` (after a run in it, or the call's end). */
+export function recordCallCopy(copyId: string, text: string): void {
+  const next = { ...copies };
+  delete next[copyId];
+  next[copyId] = copyDigest(text);
+  copies = Object.fromEntries(Object.entries(next).slice(-MAX_COPIES));
+  void loadCopies()
+    .then(() => setJson(COPIES_KEY, copies))
+    .catch((e: unknown) => console.warn('call copy record not saved', e));
+}
+
+/** Whether `copy` is as this app last wrote it. */
+async function recordedHere(copy: Runbook): Promise<boolean> {
+  await loadCopies();
+  return copies[copy.id] === copyDigest(copy.text);
+}
+
+/**
+ * Why `copy` can't be continued as the run copy of `src`, whose text is now `target` (core's
+ * checks, as VS Code's resumeProblem and resumeRecordProblem): the output block naming it is never
+ * signed. Its name must be a run copy's of that file, its blocks those of the runbook called and,
+ * in a signed runbook, signed as the same name and version; its front matter the one a copy gets
+ * now (`added`: the values the call writes into it); and its text the one a run in this app last
+ * wrote (`recorded`). Undefined: it can.
+ */
+export function continueProblem(
+  copy: Runbook,
+  src: string,
+  target: string,
+  signed: boolean,
+  added: Record<string, string>,
+  recorded: boolean,
+): string | undefined {
   const name = copy.fileName ?? copy.title;
   if (!isCopyNameOf(name, baseName(src), true)) return t.callCopyNotNamed(baseName(src));
-  return copyTextProblem(copy.text, target, signed);
+  return (
+    copyTextProblem(copy.text, target, signed) ??
+    copyFrontMatterProblem(copy.text, target, added) ??
+    (recorded ? undefined : COPY_NOT_RECORDED)
+  );
 }
 
 /** The copy of an earlier run of the call, if it failed and the app still has it. */
@@ -300,14 +351,6 @@ export async function startCall(
   // The runbook called as it is now: its checks, and the one a copy to continue must still be.
   const got = await calledText(parent, src, fetcher);
   if (got.kind !== 'got') return got;
-  const earlier = opts.fresh ? undefined : earlierCopy(parent, cellIndex, src);
-  let note: string | undefined;
-  let again: Runbook | undefined;
-  if (earlier) {
-    const why = continueProblem(earlier, src, got.text, readSignature(parent.text) !== undefined);
-    if (why === undefined) again = earlier;
-    else note = t.callNotContinued(earlier.fileName ?? earlier.title, why);
-  }
   const check = checkCall(call, got.text);
   const refusal = [...check.unknown.map((a) => t.callNoParam(src, a.name)), ...check.sections];
   if (refusal.length > 0) return { kind: 'error', message: refusal.join('; ') };
@@ -339,6 +382,16 @@ export async function startCall(
       ? { 'kube-context': mine, ...(parentFm?.kubeContextMode ? { 'kube-context-mode': parentFm.kubeContextMode } : {}) }
       : {}),
   };
+  // A failed run's copy, continued only if it is still a copy of the runbook called, with the
+  // front matter a copy gets now and the text this app last wrote into it.
+  const earlier = opts.fresh ? undefined : earlierCopy(parent, cellIndex, src);
+  let note: string | undefined;
+  let again: Runbook | undefined;
+  if (earlier) {
+    const why = continueProblem(earlier, src, got.text, readSignature(parent.text) !== undefined, record, await recordedHere(earlier));
+    if (why === undefined) again = earlier;
+    else note = t.callNotContinued(earlier.fileName ?? earlier.title, why);
+  }
   const text = clearOutputBlocks(got.text);
   const copy =
     again ??
@@ -349,6 +402,7 @@ export async function startCall(
       // Its own calls are next to it, as for the caller.
       got.source ? linkKey(got.source, got.text) : undefined,
     );
+  recordCallCopy(copy.id, copy.text);
   for (const a of call.args) setParamValue(copy.id, a.name, fill(a.value));
   active.set(copy.id, {
     parentId: parent.id,
@@ -423,6 +477,8 @@ export function finishCall(copyId: string, now = new Date()): { parentId: string
   const copy = getRunbook(copyId);
   if (!c || !copy) return undefined;
   active.delete(copyId);
+  // As this run left it: the next run of the call may continue it, as long as it stays so.
+  recordCallCopy(copyId, copy.text);
   const parent = getRunbook(c.parentId);
   if (!parent) return undefined;
   const { result, ok, evidence } = callResult(copy, c);
@@ -461,4 +517,6 @@ export function resetCalls(): void {
   picked.clear();
   texts.clear();
   fetching.clear();
+  copies = {};
+  copiesLoaded = undefined;
 }

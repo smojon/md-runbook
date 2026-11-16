@@ -1,5 +1,5 @@
 import { callFromAttrs, isCallLanguage, isDynamicSrc, parseCall } from '@md-runbook/core/call';
-import { activeCall, callCells, callReader, finishCall, prefetchCalls, startCall, useCalledTexts } from '../runbooks/calls';
+import { activeCall, callCells, callReader, finishCall, prefetchCalls, recordCallCopy, startCall, useCalledTexts } from '../runbooks/calls';
 import * as Clipboard from 'expo-clipboard';
 import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -912,6 +912,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setRunning(undefined);
     if (outcome.kind === 'done') {
       updateRunbookText(runbook.id, outcome.text);
+      // A call's copy: as this app wrote it, so the call may continue it (runbooks/calls.ts).
+      if (activeCall(runbook.id)) recordCallCopy(runbook.id, outcome.text);
       if (outcome.result.signedBy && signed)
         setGateChecked({ manifest: signed.block.manifest, host: target.name, principal: outcome.result.signedBy });
       for (const c of outcome.captured) captures.current = { ...captures.current, [c.name]: c };

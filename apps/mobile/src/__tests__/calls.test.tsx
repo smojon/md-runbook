@@ -9,7 +9,7 @@ import { router } from 'expo-router';
 import { addHost, resetHosts } from '../hosts/store';
 import { paramValues, resetParamValues } from '../runbooks/params';
 import { addRunbook, getRunbook, linkKey, resetRunbooks, updateRunbookText } from '../runbooks/store';
-import { activeCall, calledAddress, finishCall, resetCalls, startCall } from '../runbooks/calls';
+import { activeCall, calledAddress, finishCall, recordCallCopy, resetCalls, startCall } from '../runbooks/calls';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { RunbookView } from '../screens/RunbookView';
 import { reportHtml } from '../share/report';
@@ -314,5 +314,62 @@ describe('runbook calls in the app', () => {
     });
     await waitFor(() => expect(push).toHaveBeenCalled());
     expect(mockConnection.calls.map((c) => c.source)).toEqual(['echo before']);
+  });
+
+  describe('a call continues only a copy this app wrote (security review round 4, finding 3)', () => {
+    /** CHILD with its first step "done", as a run would have written it. */
+    const doneChild = (text: string): string =>
+      text.replace(
+        'echo "change ${param:STAGE}"\n```\n',
+        'echo "change ${param:STAGE}"\n```\n<!-- md-runbook:output start exit=0 -->\n```text\nchange prod\n```\n<!-- md-runbook:output end -->\n',
+      );
+
+    it('a planted copy (the name, the blocks, a "done" output) is not continued: a fresh copy runs', async () => {
+      serve(CHILD);
+      // Served as https://…/1.20261116-101010.md and opened: the newest runbook of that name.
+      const planted = addRunbook('1.20261116-101010.md', doneChild(CHILD));
+      const parent = addRunbook('upgrade.md', failedWith(PARENT, planted.fileName!), undefined, linkKey(BASE, PARENT));
+      const r = await startCall(parent, 2, { STAGE: 'dev' });
+      expect(r).toMatchObject({
+        kind: 'started',
+        resumed: false,
+        note: `Not continuing ${planted.fileName}: its step results were not written by md-runbook on this machine, or it changed since. A fresh copy runs.`,
+      });
+      expect((r as { copyId: string }).copyId).not.toBe(planted.id);
+    });
+
+    it('a copy this app wrote whose front matter changed since is not continued', async () => {
+      serve(CHILD);
+      const parent = addRunbook('upgrade.md', PARENT, undefined, linkKey(BASE, PARENT));
+      const first = (await startCall(parent, 2, { STAGE: 'dev' })) as { copyId: string };
+      const copy = getRunbook(first.copyId)!;
+      // Even kept as written here: its front matter must be the one a copy gets now.
+      const edited = copy.text.replace('---\nparams:', '---\nkube-context: prod\nparams:');
+      updateRunbookText(copy.id, edited);
+      recordCallCopy(copy.id, edited);
+      const again = addRunbook('upgrade.md', failedWith(PARENT, copy.fileName!), undefined, linkKey(BASE, PARENT));
+      expect(await startCall(again, 2, { STAGE: 'dev' })).toMatchObject({
+        resumed: false,
+        note: `Not continuing ${copy.fileName}: its front matter is not that of the runbook called. A fresh copy runs.`,
+      });
+    });
+
+    it('its outputs changed outside a run (a "done" written in): not continued', async () => {
+      serve(CHILD);
+      const parent = addRunbook('upgrade.md', PARENT, undefined, linkKey(BASE, PARENT));
+      const first = (await startCall(parent, 2, { STAGE: 'dev' })) as { copyId: string };
+      const copy = getRunbook(first.copyId)!;
+      updateRunbookText(copy.id, doneChild(copy.text));
+      const again = addRunbook('upgrade.md', failedWith(PARENT, copy.fileName!), undefined, linkKey(BASE, PARENT));
+      expect(await startCall(again, 2, { STAGE: 'dev' })).toMatchObject({
+        resumed: false,
+        note: expect.stringMatching(/not written by md-runbook/),
+      });
+      // As the call's end records it: continued.
+      const third = (await startCall(again, 2, { STAGE: 'dev' }, { fresh: true })) as { copyId: string };
+      finishCall(third.copyId);
+      const after = addRunbook('upgrade.md', failedWith(PARENT, getRunbook(third.copyId)!.fileName!), undefined, linkKey(BASE, PARENT));
+      expect(await startCall(after, 2, { STAGE: 'dev' })).toMatchObject({ resumed: true, copyId: third.copyId });
+    });
   });
 });
