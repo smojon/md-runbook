@@ -1,7 +1,7 @@
 /**
  * Hosts & settings: the extension's safety settings for runs. The risky-command patterns (shown in
- * Asking before a cell runs), Running cells (a cell's timeout when it has none, and whether Run all
- * stops at a failed step) and Hiding secrets in output (patterns added to the built-in ones). A
+ * Asking before a cell runs), Running cells (a cell's timeout when it has none, whether Run all
+ * stops at a failed step, and whether each run records where it ran) and Hiding secrets in output (patterns added to the built-in ones). A
  * list of patterns is edited row by row: Add checks the pattern compiles, × removes one.
  */
 import { useState } from 'react';
@@ -172,6 +172,19 @@ export function RunningSection() {
           accessibilityLabel={t.stopOnFailure}
           value={s.stopOnFailure}
           onValueChange={(on) => setOutputSetting('stopOnFailure', on)}
+        />
+      </View>
+      {/* The extension's mdRunbook.output.recordContext, for a host: its Kubernetes context and the account. */}
+      <View style={styles.switchRow}>
+        <View style={styles.switchText}>
+          <Text style={styles.switchLabel}>{t.recordContext}</Text>
+          <Points items={t.recordContextPoints} textStyle={styles.help} />
+        </View>
+        <Toggle
+          testID="setting-recordContext"
+          accessibilityLabel={t.recordContext}
+          value={s.recordContext}
+          onValueChange={(on) => setOutputSetting('recordContext', on)}
         />
       </View>
     </View>

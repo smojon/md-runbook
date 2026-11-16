@@ -58,6 +58,7 @@ import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { SignatureState, coverage, shownName, unsignedRunnable } from '../signing/trust';
 import { factsLabel, sigLabel } from './LibrarySection';
 import { CHEAT_SHEET_URL } from '../helpLinks';
+import { lastRunContext, runContextText } from '../runbooks/runContext';
 import { textProgress } from '@md-runbook/core/textProgress';
 import { headingsOf } from '@md-runbook/core/title';
 import type { Progress, RunbookEstimate } from '@md-runbook/core';
@@ -1175,6 +1176,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       secretNames,
       confirmation: (source, info) => confirmationOf(source, info, outputSettings().allowNoConfirm),
       estimateSteps,
+      recordContext: outputSettings().recordContext,
     });
   };
   /**
@@ -2073,6 +2075,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             : pauseAsk !== undefined
               ? t.pausedBeforeStep(stepName(pauseAsk))
               : undefined;
+  // Where the last run was, as recorded in the output markers (Record where each step ran, or VS Code's).
+  const lastContext = useMemo(() => (runbook ? lastRunContext(runbook.text) : undefined), [runbook]);
   const stepsHeader: StepsHeader = {
     headline: waiting ? t.stepsWaiting : progress ? runHeadline(progress, runningStep) : '',
     ...(waiting ? { tone: 'waiting' as const } : failedCell !== undefined ? { tone: 'failed' as const } : {}),
@@ -2084,6 +2088,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : {}),
     actions: headActions,
     ...(notice && !wide ? { notice } : {}),
+    ...(lastContext ? { context: runContextText(lastContext) } : {}),
     onShowRuns: () => setShowRuns(true),
   };
   // Before a run only: once it runs, the run bar and the cards say what it waits for.

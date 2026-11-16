@@ -65,6 +65,13 @@ const en = {
   timeoutLabel: 'Stop a cell after',
   timeoutPoints: ['For a cell without timeout=.', 'Never: an assistant’s cell still stops after 2 min.'],
   timeoutChip: (s: number) => (s === 0 ? 'Never' : s % 3600 === 0 ? `${s / 3600} h` : s % 60 === 0 ? `${s / 60} min` : `${s} s`),
+  recordContext: 'Record where each step ran',
+  recordContextPoints: [
+    'Each output records the host’s Kubernetes context and the account, as in VS Code.',
+    'The launch form and Steps show where the last run was.',
+  ],
+  lastRunIn: (where: string) => `Last run in: ${where}`,
+  contextLater: 'Recorded when the first step runs.',
   stopOnFailure: 'Stop Run all at a failed step',
   stopOnFailurePoints: ['On: the steps after a failed one don’t run.', 'Off: Run all goes on to the next step.'],
   redactionTitle: 'Hiding secrets in output',

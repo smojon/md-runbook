@@ -43,7 +43,12 @@ export function LaunchSheet(p: {
     return e.kind === 'choice' ? t.launchChoose(e.name, m.params.find((x) => x.name === e.name)?.choices ?? []) : t.launchMissing(e.name);
   };
   const missing = m.secrets.filter((s) => !s.stored).map((s) => s.name);
-  const where = [...(p.runsOn ? [t.launchRunsOn(p.runsOn)] : []), ...(m.kubeContext ? [t.launchKube(m.kubeContext)] : [])];
+  const where = [
+    ...(p.runsOn ? [t.launchRunsOn(p.runsOn)] : []),
+    ...(m.kubeContext ? [t.launchKube(m.kubeContext)] : []),
+    // As VS Code's form: what the last run recorded about where it ran.
+    ...(m.lastContext ? [t.lastRunIn(m.lastContext)] : m.contextLater ? [t.contextLater] : []),
+  ];
   const stepLink = (x: { index: number; step?: number; label: string }, testID: string): ReactNode => (
     <Pressable testID={testID} accessibilityRole="link" accessibilityHint={t.launchGoHint} onPress={() => p.onGo(x.index)} hitSlop={4}>
       {({ pressed }) => <Text style={[styles.link, pressed && styles.pressed]}>{t.launchStep(x.step, x.label)}</Text>}

@@ -60,6 +60,23 @@ export interface NeededValue {
   masked: boolean;
 }
 
+/** `unknown`: the host has no Kubernetes context to tell (as VS Code records a context command that fails). */
+export const CONTEXT_UNKNOWN = 'unknown';
+/** A host's recorded context is asked again after this long (mdRunbook.output.recordContextCacheSeconds). */
+export const RECORD_CONTEXT_TTL_MS = 30_000;
+const contextCache = new Map<string, { at: number; value: string }>();
+
+/** Tests: forget the recorded contexts. */
+export function resetRecordedContexts(): void {
+  contextCache.clear();
+}
+
+const firstLine = (text: string): string =>
+  text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l !== '') ?? '';
+
 export interface RunCellParams {
   host: Host;
   /** The whole runbook. */
@@ -297,6 +314,8 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     return k < 0 ? undefined : { ...base, step: k };
   };
   let result: SessionRunResult;
+  /** The context recorded for this run (Record where each step ran), if on. */
+  let recorded: string | undefined;
   /** Steps of a line run that ran (indexes into p.lines.steps). */
   const ran: number[] = [];
   // retry=N: up to N attempts of the whole cell until it passes, `every` apart, as in the extension
@@ -326,7 +345,9 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     }
     // kube-context: the host's current Kubernetes context must be the one the runbook is for.
     let probedNewShell = false;
-    const wrongCluster = await checkKubeContext(kubeContext, async () => {
+    /** What `kubectl config current-context` printed there (its first line), once asked. */
+    let seenContext: string | undefined;
+    const probeContext = async (): Promise<{ exitCode: number | null; stdout: string; stderr: string }> => {
       let out = '';
       let err = '';
       const r = await conn.session.kubeContext({
@@ -336,10 +357,22 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
         onStdout: (t) => (out += t),
         onStderr: (t) => (err += t),
       });
-      probedNewShell = r.newShell ?? false;
+      probedNewShell ||= r.newShell ?? false;
+      if (r.exitCode === 0) seenContext = firstLine(out);
       return { exitCode: r.exitCode, stdout: out, stderr: r.error ?? (r.timedOut ? 'timed out' : err) };
-    });
+    };
+    const wrongCluster = await checkKubeContext(kubeContext, probeContext);
     if (wrongCluster !== undefined) return { kind: 'error', message: wrongCluster };
+    // Record where it runs (Hosts & settings, as VS Code's mdRunbook.output.recordContext): the
+    // host's Kubernetes context, asked again after RECORD_CONTEXT_TTL_MS, as seen before it runs.
+    if (outputSettings().recordContext) {
+      const key = `${p.host.id}\n${p.runbookId ?? ''}`;
+      const cached = contextCache.get(key);
+      if (seenContext === undefined && cached && Date.now() - cached.at < RECORD_CONTEXT_TTL_MS) seenContext = cached.value;
+      else if (seenContext === undefined) await probeContext();
+      recorded = outputRedactor().redact(hideKnown(seenContext || CONTEXT_UNKNOWN));
+      contextCache.set(key, { at: Date.now(), value: seenContext ?? CONTEXT_UNKNOWN });
+    }
     p.onStart?.();
     if (!p.lines) {
       for (;;) {
@@ -406,6 +439,8 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     ended: formatLocalIso(ended),
     duration: formatDurationAttr(ended.getTime() - started.getTime()),
     ...(attempts > 1 && attempt > 0 ? { attempts: String(attempt) } : {}),
+    // Where it ran, when recorded: the host's Kubernetes context and the account.
+    ...(recorded !== undefined ? { context: recorded, on: hostLabel(p.host) } : {}),
     // The parameter's value isn't in the file: the run records it.
     ...(kubeContext !== undefined && kubeContextParam(wantedContext) !== undefined ? { 'kube-context': kubeContext } : {}),
     // Who and where, when the runbook keeps evidence (incident:, evidence: true): the name this app

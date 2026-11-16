@@ -150,6 +150,11 @@ Security fixes from a review of the parts that face the network.
   - Another copy is not continued: a fresh one runs, and the call's output and the copy's screen
     say why.
   - A value in `src=` with a slash, a backslash or a colon is refused before anything runs.
+- **App: Record where each step ran** (Hosts & settings → Running cells), off by default.
+  - Each output marker gets the host's Kubernetes context as `context=`, and the account as `on=`.
+  - The context comes from a step's own `kube-context` check when it has one.
+  - The launch form and the Steps header show the newest run's context, also one VS Code
+    recorded.
 
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.

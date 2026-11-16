@@ -89,6 +89,11 @@ export interface Settings {
   stopOnFailure: boolean;
   /** A line of a cell was tapped once: the hint that lines have actions is no longer shown. */
   lineHintSeen: boolean;
+  /**
+   * Each run records where it ran in its output marker: the host's Kubernetes context
+   * (`context=`) and the account (`on=`), as VS Code's mdRunbook.output.recordContext. Off by default.
+   */
+  recordContext: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -110,6 +115,7 @@ const DEFAULTS: Settings = {
   timeoutSeconds: 0,
   stopOnFailure: true,
   lineHintSeen: false,
+  recordContext: false,
 };
 
 /** The timeouts offered (seconds; 0: none, the extension's default). */
@@ -129,7 +135,8 @@ type OutputFlag =
   | 'allowNoConfirm'
   | 'launchForm'
   | 'stopOnFailure'
-  | 'lineHintSeen';
+  | 'lineHintSeen'
+  | 'recordContext';
 
 /** The strings of a saved list, or undefined when it isn't one. */
 const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : undefined);
@@ -171,6 +178,7 @@ async function readSettings(): Promise<void> {
         typeof saved.timeoutSeconds === 'number' && saved.timeoutSeconds >= 0 ? Math.floor(saved.timeoutSeconds) : DEFAULTS.timeoutSeconds,
       stopOnFailure: flag('stopOnFailure'),
       lineHintSeen: flag('lineHintSeen'),
+      recordContext: flag('recordContext'),
       // `trustedSigners` (allowed_signers text, before the one list) is moved by signing/trust.ts
       // migrateTrustedSigners and left out here: the next save drops it.
     };

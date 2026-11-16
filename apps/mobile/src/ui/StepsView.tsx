@@ -34,6 +34,8 @@ export interface StepsHeader {
   actions?: readonly StepsHeadAction[];
   /** What the last run said (stopped at a failed step, a host missing): as under the run bar. */
   notice?: string;
+  /** Where the last run was (its recorded context): `prod-eu · deploy@web-1`. */
+  context?: string;
   /** Show Runs…: the runbook's earlier runs (a link under the head). */
   onShowRuns?(): void;
 }
@@ -51,6 +53,11 @@ export function StepsHead({ header, onPreflight }: { header: StepsHeader; onPref
       >
         {header.headline}
       </Text>
+      {header.context ? (
+        <Text testID="steps-context" style={styles.sub} numberOfLines={1}>
+          {t.lastRunIn(header.context)}
+        </Text>
+      ) : null}
       {header.actions?.length ? (
         <View style={styles.actions}>
           {header.actions.map((a) => (
