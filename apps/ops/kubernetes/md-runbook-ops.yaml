@@ -1,7 +1,9 @@
-# The md-runbook ops host inside your cluster. kubectl uses the Pod's own service account, so
-# there is no kubeconfig to copy and no cloud key anywhere; the roles below are all a runbook
-# can do: read in every namespace, change only in the namespaces you bind. Before `kubectl apply -f` this file, see apps/ops/README.md: your keys, your
-# signers, and the cluster's name for kube-context:.
+# The md-runbook ops host inside your cluster. Each SSH session's blocks run in a Kubernetes Job
+# of their own (cells_runner = kubernetes-job), as the service account md-runbook-cells: the
+# roles below are all a runbook can do: read in every namespace, change only in the namespaces
+# you bind. The ops pod's own account may only run those Jobs. There is no kubeconfig to copy
+# and no cloud key anywhere. Before `kubectl apply -f` this file, see apps/ops/README.md: your
+# keys, your signers, and the cluster's name for kube-context:.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -9,20 +11,63 @@ metadata:
   labels:
     pod-security.kubernetes.io/enforce: restricted
 ---
+# The ops pod (sshd and md-runbook-gate). It holds none of the cells' rights.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: md-runbook-ops
   namespace: md-runbook-ops
 ---
-# What runbooks may read, in every namespace: most things, not Secrets.
+# What the gate needs for each session's Job, in this namespace only: create, watch and delete
+# Jobs, find their pods, exec into them. The gate checks at each session that it has these
+# rights and none of the cells' (else the session doesn't start).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: md-runbook-ops-jobs
+  namespace: md-runbook-ops
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, list, watch, delete]
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [get, list, watch]
+  # get too: kubectl exec over WebSockets asks for it on older clusters.
+  - apiGroups: ['']
+    resources: [pods/exec]
+    verbs: [create, get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: md-runbook-ops-jobs
+  namespace: md-runbook-ops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: md-runbook-ops-jobs
+subjects:
+  - kind: ServiceAccount
+    name: md-runbook-ops
+    namespace: md-runbook-ops
+---
+# The sessions' Jobs: what their blocks may do in the cluster is this account's.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: md-runbook-cells
+  namespace: md-runbook-ops
+---
+# What runbooks may read, in every namespace: most things, not Secrets, not pod logs (logs come
+# with md-runbook-ops-operate, per namespace: the ops pod's log is the gate's).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: md-runbook-ops
 rules:
   - apiGroups: ['']
-    resources: [pods, pods/log, services, endpoints, events, configmaps, namespaces, nodes, persistentvolumeclaims, persistentvolumes, resourcequotas, limitranges]
+    resources: [pods, services, endpoints, events, configmaps, namespaces, nodes, persistentvolumeclaims, persistentvolumes, resourcequotas, limitranges]
     verbs: [get, list, watch]
   - apiGroups: [apps]
     resources: [deployments, statefulsets, daemonsets, replicasets]
@@ -57,14 +102,14 @@ roleRef:
   name: md-runbook-ops
 subjects:
   - kind: ServiceAccount
-    name: md-runbook-ops
+    name: md-runbook-cells
     namespace: md-runbook-ops
 ---
 # What runbooks may change: restart, roll back and scale Deployments and StatefulSets, rerun a
-# CronJob as a Job. Only in the namespaces you bind it in (below), never cluster-wide: whoever may
-# change a namespace's workloads can read its Secrets and act as its service accounts (Kubernetes
-# RBAC good practices, "Workload creation"). No DaemonSets: they run on every node, often
-# privileged. Add rules for more (pods/exec, delete) once you need them.
+# CronJob as a Job, read pod logs. Only in the namespaces you bind it in, never cluster-wide:
+# whoever may change a namespace's workloads can read its Secrets and act as its service
+# accounts (Kubernetes RBAC good practices, "Workload creation"). No DaemonSets: they run on
+# every node, often privileged. Add rules for more (pods/exec, delete) once you need them.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -81,24 +126,14 @@ rules:
   - apiGroups: [batch]
     resources: [jobs]
     verbs: [create]
----
-# One RoleBinding per namespace runbooks may change. This one: the ops namespace itself. For each
-# of yours:
-#   kubectl -n NAMESPACE create rolebinding md-runbook-ops-operate \
-#     --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-ops
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: md-runbook-ops-operate
-  namespace: md-runbook-ops
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: md-runbook-ops-operate
-subjects:
-  - kind: ServiceAccount
-    name: md-runbook-ops
-    namespace: md-runbook-ops
+  # kubectl logs
+  - apiGroups: ['']
+    resources: [pods/log]
+    verbs: [get]
+# One RoleBinding per namespace runbooks may change, for the cells' account:
+#   kubectl -n NAMESPACE create rolebinding md-runbook-ops-operate #     --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-cells
+# Never in md-runbook-ops itself: blocks could then start a pod as the gate's account, or read
+# its log. The gate refuses to start a session if they can.
 ---
 # The gate's policy and the publishers' keys. unsigned = refuse runs signed runbooks only; set
 # allow while you try it out (every cell is still logged).
@@ -116,6 +151,8 @@ data:
     log = /var/log/md-runbook/gate.log
     sshd_force_command = yes
     kill_leftovers = yes
+    cells_runner = kubernetes-job
+    job_service_account = md-runbook-cells
   # One line per publisher: `you@example.net namespaces="md-runbook" ssh-ed25519 AAAA…`
   # (VS Code: Sign Runbook shows it; the app: Hosts & settings → Signing runbooks).
   allowed_signers: ''
@@ -151,7 +188,8 @@ spec:
           image: ghcr.io/smojon/md-runbook-ops:latest
           imagePullPolicy: IfNotPresent
           env:
-            # The context name kubectl reports here: what runbooks write as kube-context:.
+            # The context name kubectl reports here and in each session's Job: what runbooks
+            # write as kube-context:.
             - name: CLUSTER_NAME
               value: my-cluster
           ports:

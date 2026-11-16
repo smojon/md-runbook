@@ -14,6 +14,8 @@ The guide is [docs/features/kubernetes.md](../../docs/features/kubernetes.md).
   output.
 - **kubectl** logs in with the Pod's service account inside a cluster, or with a kubeconfig you
   mount outside one. The kubeconfig's context name is what runbooks write as `kube-context:`.
+- **In a cluster, each session's blocks run in a Job of their own** (below). They never run in
+  the pod that holds the gate.
 - **md-runbook-probe** checks endpoints from where the host runs (below).
 - Also installed for runbooks: `curl`, `jq`, `openssl`, `dig`, `ping` and `nc`.
 
@@ -33,7 +35,9 @@ app's public key into `authorized_keys` yourself.
 
 ## Trust
 
-Every block runs as the account `ops`, which can read the host key and the kubeconfig:
+In a cluster, blocks run in a Job of their own: see [A Job per session](#a-job-per-session).
+Outside a cluster, every block runs as the account `ops`, which can read the host key and the
+kubeconfig:
 - **Keep `unsigned = refuse` in `gate.conf`.** An unsigned block can do anything `ops` can.
 - **After any time with `unsigned = allow`, make a new host key** and put it in the Secret. A
   block could have copied the old one, and a copy can pose as this host.
@@ -59,10 +63,12 @@ Every block runs as the account `ops`, which can read the host key and the kubec
 
 [kubernetes/md-runbook-ops.yaml](kubernetes/md-runbook-ops.yaml) sets up:
 - the namespace `md-runbook-ops`, with Pod Security `restricted` enforced;
-- a service account and what runbooks may do:
-  - read everything except Secrets, in every namespace, cert-manager certificates included;
-  - `rollout restart`, `rollout undo`, scale Deployments and StatefulSets, and create Jobs
-    from CronJobs, only in the namespaces you bind (see below);
+- the service account `md-runbook-ops` of the ops pod: it may only run the sessions' Jobs;
+- the service account `md-runbook-cells` of those Jobs, and what runbooks may do:
+  - read everything except Secrets and pod logs, in every namespace, cert-manager certificates
+    included;
+  - `rollout restart`, `rollout undo`, scale Deployments and StatefulSets, create Jobs from
+    CronJobs and read pod logs, only in the namespaces you bind (see below);
   - nothing else: no deleting, no exec into pods, no DaemonSets;
 - the gate's ConfigMap, the Deployment and a ClusterIP Service on port 22.
 
@@ -96,14 +102,58 @@ your runbooks may change:
 
 ```sh
 kubectl -n NAMESPACE create rolebinding md-runbook-ops-operate \
-  --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-ops
+  --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-cells
 ```
 
 - Bind only the namespaces you need. Whoever may change a namespace's workloads can read its
   Secrets ([Kubernetes RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation)).
-- Never bind `kube-system`.
+- Never bind `kube-system`, and never `md-runbook-ops` itself. The gate refuses to start a
+  session there.
 - **More rights:** add rules to `md-runbook-ops-operate`. Whatever it allows, every runbook on
   this host can do.
+
+**Coming from 0.28 or before:** the bindings named the ops pod's account. Move each one to the
+cells' account, and remove the one in `md-runbook-ops`:
+
+```sh
+kubectl -n NAMESPACE delete rolebinding md-runbook-ops-operate
+kubectl -n NAMESPACE create rolebinding md-runbook-ops-operate \
+  --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-cells
+kubectl -n md-runbook-ops delete rolebinding md-runbook-ops-operate
+```
+
+Update the image before the ConfigMap: an older gate refuses the new `gate.conf` lines.
+
+### A Job per session
+
+`gate.conf` in the cluster has `cells_runner = kubernetes-job`. For each SSH session, the gate:
+1. checks its own service account: it may run Jobs here, and has none of the cells' rights;
+2. starts a Job of the same image, as `job_service_account` (`md-runbook-cells`);
+3. checks in the new pod that the cells' account can't exec into pods, read pod logs or
+   Secrets, change ConfigMaps or start workloads in `md-runbook-ops`;
+4. runs the session's blocks there with `kubectl exec`;
+5. deletes the Job when the session ends.
+
+What this keeps apart:
+- Blocks can't read the gate's report token, its log or its state, nor the ops pod's token.
+- Two sessions never share a pod.
+- Run reports say `gate_mode` `separated`.
+
+What you see:
+- The first block of a session waits for the pod: 2 to 5 seconds when the node has the image.
+  It prints one line saying so.
+- If the pod can't start, the session ends with the reason, such as a wrong image.
+- The log has `job` events: `created`, `ready` (with the seconds it took), `deleted`.
+
+Cleanup, if the gate can't delete a Job itself:
+- the Job belongs to the ops pod, so it goes when that pod does;
+- the next session deletes Jobs whose gate is gone;
+- no Job lasts longer than a day.
+
+Settings in `gate.conf`:
+- `job_service_account = NAME`: required.
+- `job_image = IMAGE`: optional. The default is the ops pod's own image.
+- Outside a cluster, remove `cells_runner` and `job_service_account`.
 
 ## Next to the relay
 
