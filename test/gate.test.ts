@@ -1,8 +1,9 @@
 /**
- * apps/gate/md-runbook-gate, the forced command of restricted keys, driven the way sshd starts
- * it: its line protocol on stdin, SSH_ORIGINAL_COMMAND for the stop request. Real ssh-keygen
- * signatures. Runs with /bin/sh (dash on Linux, bash's sh on macOS); on Windows only when
- * MD_RUNBOOK_GATE_SH names a POSIX sh (e.g. Git for Windows' dash.exe).
+ * md-runbook-gate (the Go program in apps/gate), the forced command of restricted keys, driven the
+ * way sshd starts it: its line protocol on stdin, SSH_ORIGINAL_COMMAND for the stop request. Real
+ * ssh-keygen signatures. MD_RUNBOOK_GATE_BIN names the binary (default: apps/gate/dist/
+ * md-runbook-gate, built by `go build` as in apps/gate/README.md). Linux and macOS; on Windows only
+ * when MD_RUNBOOK_GATE_BIN is set.
  */
 import { strict as assert } from 'node:assert';
 import { ChildProcess, execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -16,20 +17,18 @@ import { manifestHash, sshSign } from '@md-runbook/core/node';
 import { runSummaryProblems } from '@md-runbook/core/runReport';
 import { gateAlertNote, gateNoteCommand } from '@md-runbook/ssh';
 
-const GATE = path.resolve(__dirname, '..', '..', 'apps', 'gate', 'md-runbook-gate');
-const SH = process.env.MD_RUNBOOK_GATE_SH ?? (process.platform === 'win32' ? '' : '/bin/sh');
+const GATE = process.env.MD_RUNBOOK_GATE_BIN ?? path.resolve(__dirname, '..', '..', 'apps', 'gate', 'dist', 'md-runbook-gate');
+/** The gate is a Linux and macOS program: elsewhere, only a binary named on purpose runs. */
+const RUNS = process.platform !== 'win32' || !!process.env.MD_RUNBOOK_GATE_BIN;
+/** A POSIX sh for the tests' own commands (not the gate's). */
+const SH = '/bin/sh';
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';
-/** A path as the gate's sh writes it (Git for Windows: /c/Users/...). */
-const shPath = (p: string): string => p.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_m, d: string) => `/${d.toLowerCase()}`);
+/** A path with forward slashes, as a key line or gate.conf names it. */
+const shPath = (p: string): string => p.replace(/\\/g, '/');
 /** An authorized_keys line whose forced command is this gate. */
 const KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGdhdGUtdGVzdC1rZXktbm90LXVzZWQtdG8tbG9nLWlu test@gate';
 const keyLine = (options = '', prefix = 'restrict,'): string => `${prefix}command="${shPath(GATE)}${options}" ${KEY}`;
-
-/** pgrep is on every Linux and macOS server, not in Git for Windows. */
-const hasPgrep = (): boolean => !!SH && /^\//.test(spawnSync(SH, ['-c', 'command -v pgrep'], { encoding: 'utf8' }).stdout ?? '');
-/** The gate sends run reports with curl. */
-const hasCurl = (): boolean => !!SH && /\S/.test(spawnSync(SH, ['-c', 'command -v curl'], { encoding: 'utf8' }).stdout ?? '');
 
 interface Reply {
   code: number;
@@ -47,12 +46,12 @@ class Gate {
   private n = 0;
 
   constructor(args: string[], env: Record<string, string>, command = 'bash -l') {
-    // As sshd starts it: $0 is the path the key line names. Not under sshd unless a test says so
-    // (the gate checks the login shell then).
+    // As sshd starts it: argv[0] is the path the key line names. Not under sshd unless a test says
+    // so (the gate checks the login shell then).
     const base: Record<string, string | undefined> = { ...process.env };
     delete base.SSH_CLIENT;
     delete base.SSH_CONNECTION;
-    this.child = spawn(SH, [shPath(GATE), ...args], { env: { ...base, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
+    this.child = spawn(GATE, args, { env: { ...base, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
     this.child.stdout!.on('data', (d: Buffer) => this.got('out', d.toString('utf8')));
     this.child.stderr!.on('data', (d: Buffer) => this.got('err', d.toString('utf8')));
     this.exited = new Promise((r) => this.child.on('close', (code) => r(code)));
@@ -66,7 +65,7 @@ class Gate {
   /** Text and exit code of request `id`, once its marker arrived on both streams. */
   async reply(id: string): Promise<Reply> {
     const re = new RegExp(`\\x1e__MDRB_${id}__ (\\S+)\\n`);
-    // Git for Windows forks slowly: a session takes seconds to start there.
+    // A gate run from Windows through a wrapper (MD_RUNBOOK_GATE_BIN) starts slowly.
     const deadline = Date.now() + (process.platform === 'win32' ? 60_000 : 20_000);
     for (;;) {
       const o = re.exec(this.out);
@@ -115,19 +114,19 @@ class Gate {
 }
 
 describe('md-runbook-gate: reserved names', () => {
-  it("is_reserved refuses exactly core's isReservedVar list (security review, 2026-11-16)", () => {
-    const script = fs.readFileSync(GATE, 'utf8');
-    const block = /\nis_reserved\(\) \{\n  case \$1 in\n([\s\S]*?)\) return 0 ;;/.exec(script)?.[1];
-    assert.ok(block, 'is_reserved in the gate');
-    const patterns = block.replace(/\\\n/g, ' ').split('|').map((p) => p.trim());
-    const exact = patterns.filter((p) => !p.endsWith('*')).sort();
-    const prefixes = patterns.filter((p) => p.endsWith('*')).map((p) => p.slice(0, -1)).sort();
-    assert.deepEqual(exact, [...RESERVED_VARS].sort());
-    assert.deepEqual(prefixes, [...RESERVED_VAR_PREFIXES].sort());
+  it("the gate's reserved names are exactly core's isReservedVar list (security review, 2026-11-16)", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, '..', '..', 'apps', 'gate', 'internal', 'names', 'names.go'), 'utf8');
+    const list = (name: string): string[] => {
+      const block = new RegExp(`\\nvar ${name} = \\[\\]string\\{([\\s\\S]*?)\\n\\}`).exec(source)?.[1];
+      assert.ok(block, `${name} in the gate`);
+      return [...block.matchAll(/"([^"]*)"/g)].map((m) => m[1]!).sort();
+    };
+    assert.deepEqual(list('ReservedExact'), [...RESERVED_VARS].sort());
+    assert.deepEqual(list('ReservedPrefixes'), [...RESERVED_VAR_PREFIXES].sort());
   });
 });
 
-describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)' }, () => {
+describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (set MD_RUNBOOK_GATE_BIN)' }, () => {
   let dir: string;
   let conf: string;
   let key: string;
@@ -179,6 +178,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
   const PATTERNS = { TARGET: '[a-z][a-z0-9-]{0,30}' };
 
   before(() => {
+    assert.ok(fs.existsSync(GATE), `no gate at ${GATE}: build it (cd apps/gate && go build -o dist/md-runbook-gate ./cmd/md-runbook-gate) or set MD_RUNBOOK_GATE_BIN`);
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-gate-'));
     conf = path.join(dir, 'gate.conf');
     key = path.join(dir, 'signer');
@@ -564,7 +564,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     }
   });
 
-  it('a stop request stops every program of the running cell of its own session only', { skip: !hasPgrep() && 'no pgrep (Git for Windows)' }, async () => {
+  it('a stop request stops every program of the running cell of its own session only', async () => {
     const g = start();
     const session = (await g.hello()).code;
     // A program the cell's program started: a stop of the shell's children only left it running.
@@ -589,7 +589,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
         return false;
       }
     };
-    // (Git for Windows, with a pgrep stand-in: its pids are not Windows' own.)
+    // (A gate run from Windows through a wrapper: its pids are not Windows' own.)
     if (process.platform !== 'win32') {
       for (let i = 0; i < 30 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
       assert.equal(alive(), false, 'the program the cell started was stopped too');
@@ -709,7 +709,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.equal(await g.exited, 0);
   });
 
-  it('report_to: at the end of a session it posts a run summary (client gate) per signed runbook it ran', { skip: !hasCurl() && 'no curl' }, async () => {
+  it('report_to: at the end of a session it posts a run summary (client gate) per signed runbook it ran', async () => {
     const got: { auth: string | undefined; planted: string | undefined; body: string }[] = [];
     let answer = 202;
     const server = http.createServer((req, res) => {
@@ -809,6 +809,9 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
       ['the five no-* options instead of restrict', [keyLine('', 'no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,no-user-rc,')], /line 1: add restrict/],
       ['environment=', [keyLine('', 'restrict,environment="LD_PRELOAD=/tmp/evil.so",')], /line 1: remove environment=/],
       ["a --config= the account can change", [keyLine(` --config=${shPath(conf)}`)], /line 1: its config .* is a file this account can change/],
+      // The gate is a program: sh can't run it (the shell gate took `sh md-runbook-gate`).
+      ['the gate through sh', [`restrict,command="sh ${shPath(GATE)}" ${KEY}`], /line 1: command=.* runs the gate with a shell/],
+      ['the gate through exec bash', [`restrict,command="exec /bin/bash ${shPath(GATE)} --who=x" ${KEY}`], /line 1: command=.* runs the gate with a shell/],
     ];
     for (const [what, lines, re] of bad) {
       const c = confAt('mixed.conf', [`authorized_keys = ${keysAt('mixed.keys', lines)}`]);
@@ -830,9 +833,9 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
       '# the support team',
       '',
       `restrict,from="10.0.0.0/8,192.168.0.0/16",no-pty,command="${shPath(GATE)} --who=alice --scopes=web,staging" ${KEY}\r`,
-      `cert-authority,restrict,principals="ops",command="sh ${shPath(GATE)}" ${KEY}`,
+      `cert-authority,restrict,principals="ops",command="${shPath(GATE)}" ${KEY}`,
       `restrict,command="exec ${shPath(GATE)} --who='Alice Smith'" ${KEY}`,
-      `restrict,command="exec sh ${shPath(GATE)} --who=\\"Bob B\\" --signers=1" ${KEY}`,
+      `restrict,command="exec ${shPath(GATE)} --who=\\"Bob B\\" --signers=1" ${KEY}`,
     ];
     const ok = new Gate([`--config=${confAt('good.conf', [`authorized_keys = ${keysAt('good.keys', good)}`])}`], env());
     gates.push(ok);
@@ -844,7 +847,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.equal(await odd.exited, 2);
   });
 
-  it('all signed or none: an unsigned-trial account runs, but sends no run report', { skip: !hasCurl() && 'no curl' }, async () => {
+  it('all signed or none: an unsigned-trial account runs, but sends no run report', async () => {
     let posted = 0;
     const server = http.createServer((req, res) => {
       posted++;
@@ -967,7 +970,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     await g.close();
   });
 
-  it("a block's background programs end with its shell, at the latest with the session", { skip: process.platform === 'win32' && "Git for Windows' pids are not Windows' own" }, async () => {
+  it("a block's background programs end with its shell, at the latest with the session", { skip: process.platform === 'win32' && "a gate run through a wrapper: its pids are not Windows' own" }, async () => {
     const pidFile = path.join(dir, 'background.pid');
     fs.rmSync(pidFile, { force: true });
     const [m, s] = await signed(fence('bash', `sleep 300 >/dev/null 2>&1 </dev/null & echo $! >${shPath(pidFile)}; echo started`), { name: 'ops/background' });
@@ -1113,7 +1116,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.equal(await g.close(), 0);
   });
 
-  it("report_to: a block can't write the exit of another run", { skip: !hasCurl() && 'no curl' }, async () => {
+  it("report_to: a block can't write the exit of another run", async () => {
     const got: string[] = [];
     const server = http.createServer((req, res) => {
       let body = '';
@@ -1156,7 +1159,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
 
   // ---- security review round 4 (2026-11-16) ----
 
-  it("a block's program that ignores TERM ends with the session all the same (KILL a second later)", { skip: process.platform === 'win32' && "Git for Windows' pids are not Windows' own" }, async () => {
+  it("a block's program that ignores TERM ends with the session all the same (KILL a second later)", { skip: process.platform === 'win32' && "a gate run through a wrapper: its pids are not Windows' own" }, async () => {
     const pidFile = path.join(dir, 'ignores-term.pid');
     fs.rmSync(pidFile, { force: true });
     const [m, s] = await signed(fence('bash', `(trap '' TERM; exec sleep 300) >/dev/null 2>&1 </dev/null & echo $! >${shPath(pidFile)}; echo started`), { name: 'ops/ignores-term' });
@@ -1185,21 +1188,22 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     const [m2, s2] = await signed(fence('bash', 'sleep 1.5; echo second'), { name: 'ops/later' });
     fs.writeFileSync(path.join(d, 'req2'), `: mdrb-gate-hello feed0002; x\nload 00000003 ${m2} ${s2}\nrun 00000004 1\n`);
     // The reviewer's leftover.sh: a program of the account writes into every cells' shell it finds
-    // through /proc. Started between the sessions, its parent gone (PID 1 adopts it).
+    // through /proc. Started between the sessions, its parent gone (PID 1 adopts it). (The shells
+    // read an anonymous pipe, pipe:[N]: here, every process whose stdin is a pipe.)
     fs.writeFileSync(
       path.join(d, 'injector.sh'),
       "trap '' TERM HUP; i=0; while [ $i -lt 100 ]; do for f in /proc/[0-9]*/fd/0; do t=$(readlink \"$f\" 2>/dev/null) || continue; " +
-        `case $t in */md-runbook-gate.*/pipe.*/in*) printf 'echo INJECTED >>%s\\n' '${d}/injected' >"$f" 2>/dev/null ;; esac; done; sleep 0.05; i=$((i + 1)); done\n`,
+        `case $t in pipe:*) printf 'echo INJECTED >>%s\\n' '${d}/injected' >"$f" 2>/dev/null ;; esac; done; sleep 0.05; i=$((i + 1)); done\n`,
     );
     fs.writeFileSync(
       path.join(d, 'driver.sh'),
       [
-        `sh ${GATE} --config=${lconf} <${d}/req1 >${d}/out1 2>&1`,
+        `${GATE} --config=${lconf} <${d}/req1 >${d}/out1 2>&1`,
         'sleep 1',
         `ps -e -o args= >${d}/ps1`,
         `( setsid sh ${d}/injector.sh >/dev/null 2>&1 </dev/null & )`,
         'sleep 0.5',
-        `sh ${GATE} --config=${lconf} <${d}/req2 >${d}/out2 2>&1`,
+        `${GATE} --config=${lconf} <${d}/req2 >${d}/out2 2>&1`,
         'sleep 0.5',
         `ps -e -o args= >${d}/ps2`,
       ].join('\n') + '\n',
@@ -1233,7 +1237,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
         '  my $p = fork; exit 0 if !defined $p || $p;',
         "  for my $fd (glob '/proc/[0-9]*/fd/0') {",
         '    my $t = readlink $fd or next;',
-        '    next unless $t =~ m{/md-runbook-gate\\.[^/]+/pipe\\.[^/]+/in};',
+        '    next unless $t =~ m{^pipe:};',
         "    if (open my $w, '>', $fd) { print $w \"echo INJECTED >>$out\\n\"; close $w }",
         '  }',
         '  select undef, undef, undef, 0.003;',
@@ -1245,7 +1249,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
       [
         `( setsid perl ${d}/hop.pl ${d}/injected >/dev/null 2>&1 </dev/null & )`,
         'sleep 0.5',
-        `sh ${GATE} --config=${lconf} <${d}/req >${d}/out 2>&1`,
+        `${GATE} --config=${lconf} <${d}/req >${d}/out 2>&1`,
         'sleep 0.3',
         `ps -e -o args= >${d}/ps`,
       ].join('\n') + '\n',
@@ -1269,7 +1273,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     fs.writeFileSync(path.join(d, 'req'), `: mdrb-gate-hello feed0004; x\nload 00000007 ${m} ${s}\nrun 00000008 1\n`);
     fs.writeFileSync(
       path.join(d, 'conn.sh'),
-      `sh ${GATE} --config=${lconf} <${d}/req >${d}/out 2>&1 &\n` +
+      `${GATE} --config=${lconf} <${d}/req >${d}/out 2>&1 &\n` +
         `i=0; while [ $i -lt 200 ] && ! grep -q SIGNED ${d}/out; do sleep 0.05; i=$((i + 1)); done\n`,
     );
     fs.writeFileSync(path.join(d, 'listener.sh'), `echo $$ >${d}/listener.pid\nsh ${d}/conn.sh\nexec sleep 30\n`);
@@ -1289,7 +1293,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.equal(fs.existsSync(path.join(d, 'listener')), true, 'the listener outlived the gate');
   });
 
-  it('a request longer than 4000000 bytes ends the session; the gate never reads more of it', { skip: process.platform === 'win32' && 'Git for Windows reads a 4 MB line slowly' }, async () => {
+  it('a request longer than 4000000 bytes ends the session; the gate never reads more of it', { skip: process.platform === 'win32' && 'a gate run through a wrapper reads a 4 MB line slowly' }, async () => {
     const g = start();
     let err = '';
     let out = '';
@@ -1310,7 +1314,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     await ok.close();
   });
 
-  it("report_to: the signer comes from the gate's memory, not a file a block can change", { skip: !hasCurl() && 'no curl' }, async () => {
+  it("report_to: the signer comes from the gate's memory, not a file a block can change", async () => {
     const got: string[] = [];
     const server = http.createServer((req, res) => {
       let body = '';
@@ -1363,9 +1367,10 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     const r = await startup([`--config=${conf}`], { HOME: home });
     assert.equal(r.code, 2);
     assert.match(r.err, /\.ssh\/environment can set the gate's environment/);
-    // glibc says so for each program a missing LD_PRELOAD library was meant for: before, for every
-    // program the gate ran (ssh-keygen, awk, ...), now only for sh itself. (Cygwin's loader stops
-    // the program instead: not on Windows.)
+    // glibc says so for each program a missing LD_PRELOAD library was meant for: the shell gate
+    // let it reach every program it ran (ssh-keygen, awk, ...) before round 4, and sh itself after.
+    // The gate is a static program now (no loader reads LD_PRELOAD), and removes it before it
+    // starts any program: never.
     if (process.platform === 'win32') return;
     const g = new Gate([`--config=${conf}`], { ...env(), LD_PRELOAD: '/nonexistent/md-runbook-test.so' });
     gates.push(g);
@@ -1376,7 +1381,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.equal((await g.request('load', m, s)).code, 0);
     assert.equal((await g.request('run', '1')).out, '[]\n');
     await g.close();
-    assert.ok((err.match(/md-runbook-test\.so/g) ?? []).length <= 1, err);
+    assert.doesNotMatch(err, /md-runbook-test\.so/);
   });
 
   it('fails closed on a bad kill_leftovers, allow_no_group_kill or memory_limit', async () => {
@@ -1384,5 +1389,49 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
       const r = await startup([`--config=${confAt('bad-r4.conf', [bad])}`]);
       assert.equal(r.code, 2, bad);
     }
+  });
+
+  // ---- the Go gate (0.28.0) ----
+
+  it('allow_no_group_kill is obsolete: an old gate.conf with it starts, and the log says it is ignored', async () => {
+    const old = confAt('old.conf', ['allow_no_group_kill = yes']);
+    const g = new Gate([`--config=${old}`], env());
+    gates.push(g);
+    await g.hello();
+    const [m, s] = await signed(fence('bash', 'echo old-conf'), { name: 'ops/old-conf' });
+    assert.equal((await g.request('load', m, s)).code, 0);
+    assert.equal((await g.request('run', '1')).out, 'old-conf\n');
+    assert.equal(await g.close(), 0);
+    assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"event":"notice","reason":"allow_no_group_kill in .*old\.conf is obsolete and ignored/);
+  });
+
+  it('memory_limit: a session that makes the gate hold more ends', async () => {
+    const small = confAt('small.conf', ['memory_limit = 2']);
+    const g = new Gate([`--config=${small}`], env());
+    gates.push(g);
+    let err = '';
+    let out = '';
+    g.child.stderr!.on('data', (d: Buffer) => (err += d.toString('utf8')));
+    g.child.stdout!.on('data', (d: Buffer) => (out += d.toString('utf8')));
+    g.child.stdin!.on('error', () => undefined);
+    g.child.stdin!.write('x'.repeat(3_000_000) + '\n: mdrb-gate-hello feed0001; x\n');
+    assert.equal(await g.exited, 0);
+    assert.match(err, /over memory_limit: the session ends/);
+    assert.doesNotMatch(out, /__MDRB_GATE__/);
+    assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"event":"refused","reason":"memory_limit reached"/);
+  });
+
+  it('each shell leads a process group and session of its own (no setsid or perl needed)', { skip: process.platform !== 'linux' && 'reads /proc' }, async () => {
+    // The gate starts its shells with setsid(2) itself. (Before, the shell gate needed setsid or
+    // perl on the server, else the shells shared the gate's group; security review round 3.)
+    const g = start();
+    await g.hello();
+    const [m, s] = await signed(fence('bash', 'read -r _ _ _ _ pgid sid _ </proc/self/stat; [ "$pgid" = "$$" ] && [ "$sid" = "$$" ] && echo own-group; echo "$$"'), { name: 'ops/group' });
+    assert.equal((await g.request('load', m, s)).code, 0);
+    const r = await g.request('run', '1');
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /^own-group\n\d+\n$/);
+    assert.notEqual(Number(r.out.split('\n')[1]), g.child.pid);
+    await g.close();
   });
 });
