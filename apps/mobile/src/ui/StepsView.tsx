@@ -34,6 +34,8 @@ export interface StepsHeader {
   actions?: readonly StepsHeadAction[];
   /** What the last run said (stopped at a failed step, a host missing): as under the run bar. */
   notice?: string;
+  /** Show Runs…: the runbook's earlier runs (a link under the head). */
+  onShowRuns?(): void;
 }
 
 export function StepsHead({ header, onPreflight }: { header: StepsHeader; onPreflight?(part: PreflightPart): void }) {
@@ -106,6 +108,18 @@ export function StepsHead({ header, onPreflight }: { header: StepsHeader; onPref
           {header.notice}
         </Text>
       ) : null}
+      {header.onShowRuns ? (
+        <Pressable
+          testID="steps-show-runs"
+          accessibilityRole="button"
+          accessibilityHint={t.actions.showRuns[1]}
+          onPress={header.onShowRuns}
+          hitSlop={8}
+          style={styles.runsLink}
+        >
+          {({ pressed }) => <Text style={[styles.preflightLink, pressed && styles.pressed]}>{t.stepsShowRuns}</Text>}
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -171,4 +185,5 @@ const useStyles = themedStyles((c) => ({
   preflightText: { fontSize: 13, color: c.warningText },
   preflightLink: { fontSize: 13, color: c.link, textDecorationLine: 'underline', paddingVertical: 4 },
   notice: { fontSize: 13, color: c.error, marginTop: 6 },
+  runsLink: { alignSelf: 'flex-start', marginTop: 4, minHeight: 32, justifyContent: 'center' },
 }));

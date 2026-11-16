@@ -2,11 +2,12 @@
  * The runbook screen's run reports: when a run is over (nothing runs or waits any more, and its
  * last output is in the runbook), the summary of what it ran goes to the runbook's `report-runs:`
  * address, once allowed. Sending never holds up the run: it starts after the run is over and is
- * not waited for.
+ * not waited for. The run also goes on this device's run history (Show Runs…, runbooks/runLog.ts).
  */
 import { useEffect, useRef, useState } from 'react';
 import type { ReportPlan, RunSummaryReport } from '@md-runbook/core/runReport';
 import { reportConsentText } from '@md-runbook/core/runReport';
+import { recordRun, runEntry } from '../runbooks/runLog';
 import { getRunbook } from '../runbooks/store';
 import { signerName } from '../settings/store';
 import { t } from '../i18n';
@@ -61,6 +62,9 @@ export function useRunReports(
     if (!r) return;
     const text = getRunbook(r.id)?.text;
     if (text === undefined) return;
+    // Show Runs…: the run on this device's record (steps, states and times only).
+    const entry = runEntry(text, at, Date.now(), signerName() || undefined);
+    if (entry) void recordRun(r, entry).catch(() => undefined);
     void (async () => {
       const report = await planOf(text, r.id);
       const summary =

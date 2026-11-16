@@ -9,6 +9,7 @@
 - **App: Pause Before This Step, Notify Me When It Starts.** A step's ⋯ (cell or Steps row) sets either, for this session. Run all asks Continue or Stop there.
 - **App: the launch form.** Run all first shows one sheet: parameters, inputs, secrets to set, risky steps, steps by hand, time and host. Start asks for no value again; risky steps still ask. Hosts & Settings turns it off; ⋯ More → **Run All…** always opens it.
 - **App: Edit Note, Delete Note.** A note's ⋯ edits its words in place, or deletes it after a confirmation. Its time, author and milestone stay as VS Code wrote them.
+- **App: Show Runs…** ⋯ More → Run and the Steps header list this runbook's runs, newest first. Each says when, who, how long, and which steps passed or failed. The device keeps the last 30, never outputs.
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.
   An unsigned runbook gets a **Sign Runbook** button first.

@@ -146,6 +146,8 @@ import { loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import { transportReady } from '../ssh/transport';
 import { mono, themedStyles, usePalette } from '../theme';
 import { ActionGroup, ActionsSheet, AppAction } from '../ui/ActionsSheet';
+import { RunsSheet } from '../ui/RunsSheet';
+import { runLogKey } from '../runbooks/runLog';
 import { NotifyOfferCard } from '../notifications/OfferCard';
 import { useOpenRequest } from '../notifications/open';
 import { declineNotifications, notificationsSupported, notifyStepStarted, shouldOffer, turnOnNotifications } from '../notifications/runs';
@@ -1200,6 +1202,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     runSequence('start');
   };
   const [showActions, setShowActions] = useState(false);
+  /** Show Runs…: the sheet with this runbook's earlier runs. */
+  const [showRuns, setShowRuns] = useState(false);
   // Set Inputs: the inputs card lists every input the runbook uses, set or not.
   const [showInputs, setShowInputs] = useState(false);
   const usedInputs = useMemo((): [string, boolean][] => {
@@ -1356,6 +1360,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           },
         },
         { ...meta('showSteps', 'steps', progress?.total ? undefined : t.noStepsYet), run: () => openSteps() },
+        { ...meta('showRuns', 'run'), run: () => setShowRuns(true) },
         { ...meta('nextProblem', 'steps', problems.all.length > 0 ? undefined : t.noProblems), run: () => goToNextProblem() },
         {
           ...meta('restartSession', 'run', hosts.some((h) => isConnected(h.id, runbook.id)) ? undefined : t.noSessionOpen),
@@ -2038,6 +2043,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : {}),
     actions: headActions,
     ...(notice && !wide ? { notice } : {}),
+    onShowRuns: () => setShowRuns(true),
   };
   // Before a run only: once it runs, the run bar and the cards say what it waits for.
   const preflight = !queued && !running && askedAt === undefined ? preflightParts(stepRows) : [];
@@ -2588,6 +2594,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       </View>
       {/* The sheets at the screen's root: they open from the Steps tab too, while the runbook is hidden. */}
       <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
+      <RunsSheet runsKey={runLogKey(runbook)} title={runbook.title} visible={showRuns} onClose={() => setShowRuns(false)} />
       {launch && launchShown ? (
         <LaunchSheet
           model={launchShown}
