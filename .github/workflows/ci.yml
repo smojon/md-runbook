@@ -75,12 +75,18 @@ jobs:
           sudo visudo -cf "$RUNNER_TEMP/md-runbook-gate.sudoers"
           sudo install -m 440 "$RUNNER_TEMP/md-runbook-gate.sudoers" /etc/sudoers.d/md-runbook-gate
           sudo -n -u mdrb-gate sudo -n -l
+          # (/run/user/UID is that account's alone, mode 0700: root looks for the socket.)
           for a in "$(id -un)" mdrb-gate mdrb-wide; do
             sudo loginctl enable-linger "$a"
             sock="/run/user/$(id -u "$a")/systemd/private"
             i=0
-            while [ ! -S "$sock" ] && [ "$i" -lt 60 ]; do sleep 0.5; i=$((i + 1)); done
-            test -S "$sock"
+            while ! sudo test -S "$sock" && [ "$i" -lt 60 ]; do sleep 0.5; i=$((i + 1)); done
+            if ! sudo test -S "$sock"; then
+              echo "::error::user manager of $a: no socket $sock after 30 seconds"
+              sudo loginctl user-status "$a" --no-pager || true
+              exit 1
+            fi
+            echo "user manager of $a: $sock"
           done
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends bubblewrap

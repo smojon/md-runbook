@@ -54,7 +54,8 @@ class Gate {
     delete base.SSH_CONNECTION;
     if (as) {
       const pairs = Object.entries({ ...env, SSH_ORIGINAL_COMMAND: command }).map(([k, v]) => `${k}=${v}`);
-      this.child = spawn('sudo', ['-n', '-u', as, '--', '/usr/bin/env', ...pairs, GATE, ...args], { stdio: 'pipe' });
+      // From /: the test's own folder (a CI runner's home) may be closed to that account.
+      this.child = spawn('sudo', ['-n', '-u', as, '--', '/usr/bin/env', ...pairs, GATE, ...args], { stdio: 'pipe', cwd: '/' });
     } else {
       this.child = spawn(GATE, args, { env: { ...base, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
     }
@@ -1562,7 +1563,7 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
   describe('separated mode (cells_account)', { skip: !(CELLS && GATE_ACCOUNT && process.platform === 'linux') && 'needs MD_RUNBOOK_GATE_CELLS_ACCOUNT and MD_RUNBOOK_GATE_ACCOUNT (Linux; set up as in the CI gate job)' }, () => {
     /** `sh -c cmd` as an account, with input; its stdout. */
     const as = (account: string, cmd: string, input = ''): string => {
-      const r = spawnSync('sudo', ['-n', '-u', account, '--', '/bin/sh', '-c', cmd], { input, encoding: 'utf8' });
+      const r = spawnSync('sudo', ['-n', '-u', account, '--', '/bin/sh', '-c', cmd], { input, encoding: 'utf8', cwd: '/' });
       assert.equal(r.status, 0, `${account}: ${cmd}: ${r.stderr}`);
       return r.stdout;
     };
