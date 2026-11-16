@@ -5,42 +5,74 @@ name: App APK
 # over an older one. Play gets the same key as its app signing key, so an APK install and a Play
 # install update each other.
 # - A tag vX.Y.Z attaches md-runbook-X.Y.Z.apk to that GitHub release.
-# - From the Actions tab (or `gh workflow run app-apk.yml`): the run's "md-runbook-android" artifact.
+# - From the Actions tab (or `gh workflow run app-apk.yml --ref main`): the run's
+#   "md-runbook-android" artifact. Only tags and main are signed; another branch gets the
+#   unsigned build only.
+#
+# Three jobs, so the signing key never shares a runner with the build (security review,
+# 2026-11-16). The build runs npm, Expo and Gradle, thousands of packages: any of them could
+# replace apksigner or read the key. The sign job checks out nothing and installs nothing: it
+# signs the build's APK with the runner's own Android SDK. The attach job has the write token,
+# and no key.
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
 
 permissions:
-  contents: write # attach the APK to the tag's release
-
-defaults:
-  run:
-    working-directory: apps/mobile
+  contents: read
 
 env:
   # The signing certificate's SHA-256: a wrong or missing key fails the run instead of shipping.
   CERT_SHA256: ccee870539e64ec11e08eda891d9eac9362e0e294a5def89c8aeb53427aece30
 
 jobs:
-  apk:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: apps/mobile
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
         with:
           distribution: temurin
           java-version: 17
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
-      - uses: gradle/actions/setup-gradle@v6
+      # A release builds without the Gradle cache that other runs write.
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
+        with:
+          cache-disabled: ${{ github.ref_type == 'tag' }}
       - run: npm ci --no-audit --no-fund
       - name: Build the release APK (arm64-v8a)
         run: ABIS=arm64-v8a bash e2e/build-android.sh "$RUNNER_TEMP/apk"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: apk-unsigned
+          path: ${{ runner.temp }}/apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 1
+
+  sign:
+    needs: build
+    if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Settings → Environments → android-signing can hold the two secrets and allow only v* tags
+    # and main.
+    environment: android-signing
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: apk-unsigned
+          path: ${{ runner.temp }}/apk
       - name: Sign it with the app signing key
         working-directory: ${{ runner.temp }}/apk
         env:
@@ -52,6 +84,7 @@ jobs:
             exit 1
           fi
           ks="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$ks"' EXIT
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$ks"
           bt=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           # apksigner replaces the template's debug signature.
@@ -64,20 +97,28 @@ jobs:
             echo "::error::the APK is not signed by the app signing key alone (SHA-256 $CERT_SHA256)"
             exit 1
           fi
-          mv app-signed.apk app-release.apk
-      - name: Name the APK
-        working-directory: ${{ runner.temp }}/apk
-        run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then name="md-runbook-${GITHUB_REF_NAME#v}.apk"; else name="md-runbook-${GITHUB_SHA::7}.apk"; fi
-          mv app-release.apk "$name"
-          rm -f certs.txt
-      - uses: actions/upload-artifact@v7
+          mv app-signed.apk "$name"
+          rm -f certs.txt app-release.apk
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: md-runbook-android
           path: ${{ runner.temp }}/apk/*.apk
           if-no-files-found: error
+
+  attach:
+    needs: sign
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write # attach the APK to the tag's release
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: md-runbook-android
+          path: ${{ runner.temp }}/apk
       - name: Attach it to the release
-        if: github.ref_type == 'tag'
         working-directory: ${{ runner.temp }}/apk
         env:
           GH_TOKEN: ${{ github.token }}
