@@ -1,10 +1,14 @@
 /**
- * Trusted Signers… (Share ▾, the Library view's ⋯): the signers in the allowed_signers file that
- * `mdRunbook.signing.allowedSigners` names, as the app's Hosts & settings → Trusted signers. List
- * them with their fingerprints, add one (an allowed_signers line or a public key, pasted or from a
- * file, or the team library's own), remove one. With no file set, it offers to make one in the
- * extension's storage (after a yes) or to choose one. The Library view and run reports check
- * signatures against this file (ssh-keygen -Y verify, namespace md-runbook).
+ * Trusted Signers… (Share ▾, the Library view's ⋯): the signers you trust, as the app's Hosts &
+ * settings → Trusted signers, in two groups:
+ * - yours, in the allowed_signers file `mdRunbook.signing.allowedSigners` names: they count for
+ *   every runbook. Added as an allowed_signers line or a public key, pasted or from a file. With
+ *   no file set, adding one offers to make it in the extension's storage (after a yes) or to
+ *   choose one;
+ * - each team library's, trusted from its own allowed_signers (src/libraryTrust.ts): they count
+ *   for that library's runbooks only. A key it no longer publishes is shown withdrawn.
+ * List them with their fingerprints, remove one from the file it is in. Keys an earlier version
+ * added to your file from the library are marked as also published by it.
  */
 
 import * as fs from 'node:fs';
@@ -12,7 +16,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { SECTION } from './config';
-import { PublicKeyLine, SignerLine, hasSigner, lineForKey, parsePublicKey, parseSignerLine, readSigners, signerLineToAdd, signerNameOk, withLine, withoutSigner } from './allowedSigners';
+import { PublicKeyLine, SignerLine, lineForKey, parsePublicKey, parseSignerLine, readSigners, signerLineToAdd, signerNameOk, withoutSigner } from './allowedSigners';
+import { alsoPublished, hostOfOrigin, librarySignerFiles, originOf, readLibrarySigners, trustLibraryLines, withTrustedLines, type LibrarySigner } from './libraryTrust';
 import type { LibraryTree } from './libraryView';
 
 const home = (p: string): string => p.replace(/^~(?=$|[\\/])/, os.homedir());
@@ -27,11 +32,17 @@ const hostOf = (base: string): string => {
   }
 };
 
-/** The allowed_signers file of the settings; with none set, made or chosen after asking. */
+/** Your allowed_signers file as the settings name it, or undefined. */
+function ownSetting(): string | undefined {
+  const set = vscode.workspace.getConfiguration(SECTION).get<string>('signing.allowedSigners', '').trim();
+  return set ? home(set) : undefined;
+}
+
+/** Your allowed_signers file; with none set, made or chosen after asking. */
 async function signersFile(context: vscode.ExtensionContext): Promise<string | undefined> {
+  const set = ownSetting();
+  if (set) return set;
   const cfg = vscode.workspace.getConfiguration(SECTION);
-  const set = cfg.get<string>('signing.allowedSigners', '').trim();
-  if (set) return home(set);
   const create = 'Create the File';
   const choose = 'Choose a File…';
   const answer = await vscode.window.showInformationMessage(
@@ -75,8 +86,10 @@ async function nameFor(k: PublicKeyLine): Promise<string | undefined> {
   return name?.trim() || undefined;
 }
 
+type Lines = { lines: { line: string; label: string; fingerprint: string }[]; problems: string[] };
+
 /** The lines to add for some text (pasted, or a file): allowed_signers lines as they are, public keys with a name. */
-async function linesFrom(text: string): Promise<{ lines: { line: string; label: string; fingerprint: string }[]; problems: string[] } | undefined> {
+async function linesFrom(text: string): Promise<Lines | undefined> {
   const found: ({ kind: 'signer'; s: SignerLine } | { kind: 'key'; k: PublicKeyLine })[] = [];
   const problems: string[] = [];
   text.split(/\r?\n/).forEach((raw, n) => {
@@ -99,7 +112,7 @@ async function linesFrom(text: string): Promise<{ lines: { line: string; label: 
     if (!picked) return undefined;
     chosen = picked.map((p) => p.f);
   }
-  const lines: { line: string; label: string; fingerprint: string }[] = [];
+  const lines: Lines['lines'] = [];
   for (const f of chosen) {
     if (f.kind === 'signer') lines.push({ line: signerLineToAdd(f.s), label: f.s.principals.join(', '), fingerprint: f.s.fingerprint });
     else {
@@ -111,28 +124,12 @@ async function linesFrom(text: string): Promise<{ lines: { line: string; label: 
   return { lines, problems };
 }
 
-/** Add the lines to the file (not those it has already), say what changed, and check the library again. */
-async function addLines(file: string, got: { lines: { line: string; label: string; fingerprint: string }[]; problems: string[] }): Promise<void> {
-  let text = readText(file);
-  const added: string[] = [];
-  let already = 0;
-  for (const l of got.lines) {
-    const s = parseSignerLine(l.line);
-    if (!s || 'problem' in s) continue;
-    if (hasSigner(text, s)) {
-      already++;
-      continue;
-    }
-    text = withLine(text || HEADER, l.line);
-    added.push(`${l.label} (${l.fingerprint})`);
-  }
-  if (added.length > 0) {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, text, 'utf8');
-    void vscode.commands.executeCommand('mdRunbook.library.refresh').then(undefined, () => undefined);
-  }
+/** Say what was added, and check the library again when something was. */
+function tellAdded(got: Lines, added: readonly number[], already: number): void {
+  if (added.length > 0) void vscode.commands.executeCommand('mdRunbook.library.refresh').then(undefined, () => undefined);
+  const one = added.length === 1 ? got.lines[added[0]!] : undefined;
   const parts = [
-    added.length === 0 ? 'No signer added.' : added.length === 1 ? `Trusted: ${added[0]}.` : `${added.length} signers trusted.`,
+    added.length === 0 ? 'No signer added.' : one ? `Trusted: ${one.label} (${one.fingerprint}).` : `${added.length} signers trusted.`,
     ...(already > 0 ? [already === 1 ? '1 was there already.' : `${already} were there already.`] : []),
     ...got.problems.slice(0, 3),
   ];
@@ -141,7 +138,17 @@ async function addLines(file: string, got: { lines: { line: string; label: strin
   else void vscode.window.showInformationMessage(message);
 }
 
-async function addPasted(file: string): Promise<void> {
+/** Add the lines to your file (not those it has already). */
+function addLines(file: string, got: Lines): void {
+  const r = withTrustedLines(readText(file), HEADER, got.lines.map((l) => l.line));
+  if (r.added.length > 0) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, r.text, 'utf8');
+  }
+  tellAdded(got, r.added, r.already);
+}
+
+async function addPasted(context: vscode.ExtensionContext): Promise<void> {
   const typed = await vscode.window.showInputBox({
     title: 'md-runbook: add a trusted signer',
     prompt: 'An allowed_signers line (as on the servers), or a public key (.pub)',
@@ -155,10 +162,12 @@ async function addPasted(file: string): Promise<void> {
   });
   if (!typed?.trim()) return;
   const got = await linesFrom(typed);
-  if (got) await addLines(file, got);
+  if (!got) return;
+  const file = await signersFile(context);
+  if (file) addLines(file, got);
 }
 
-async function addFromFile(file: string): Promise<void> {
+async function addFromFile(context: vscode.ExtensionContext): Promise<void> {
   const picked = await vscode.window.showOpenDialog({
     title: 'md-runbook: an allowed_signers file or a public key (.pub)',
     canSelectMany: false,
@@ -174,13 +183,16 @@ async function addFromFile(file: string): Promise<void> {
     return void vscode.window.showErrorMessage(`md-runbook: ${e instanceof Error ? e.message : String(e)}`);
   }
   const got = await linesFrom(text);
-  if (got) await addLines(file, got);
+  if (!got) return;
+  const file = await signersFile(context);
+  if (file) addLines(file, got);
 }
 
-/** The team library's own allowed_signers, after its fingerprints and what trusting them means. */
-async function addFromLibrary(file: string, tree: LibraryTree): Promise<void> {
+/** The team library's own allowed_signers, after its fingerprints and what trusting them means: into the library's file. */
+async function addFromLibrary(context: vscode.ExtensionContext, tree: LibraryTree): Promise<void> {
   const lib = tree.library();
-  if (!lib?.allowedSigners) return void vscode.window.showInformationMessage('md-runbook: the team library publishes no allowed_signers file.');
+  const origin = lib ? originOf(lib.base) : undefined;
+  if (!lib?.allowedSigners || origin === undefined) return void vscode.window.showInformationMessage('md-runbook: the team library publishes no allowed_signers file.');
   const { signers, skipped } = readSigners(lib.allowedSigners, { adding: true });
   if (signers.length === 0) return void vscode.window.showInformationMessage(`md-runbook: the team library's allowed_signers has no key md-runbook can use${skipped.length ? ` (${skipped.length} line${skipped.length === 1 ? '' : 's'} skipped)` : ''}.`);
   const picked = await vscode.window.showQuickPick(
@@ -196,22 +208,21 @@ async function addFromLibrary(file: string, tree: LibraryTree): Promise<void> {
       detail: bullets([
         'The keys come from the same server as the runbooks: it vouches for itself.',
         'Trust them only if you trust that server. Better: compare the fingerprints with the signers.',
-        'Here they count for every runbook, not only the library’s.',
+        `They count only for this library’s runbooks (${hostOf(lib.base)}).`,
       ]),
     },
     go,
   );
   if (sure !== go) return;
-  await addLines(file, { lines: picked.map((p) => ({ line: signerLineToAdd(p.s), label: p.s.principals.join(', '), fingerprint: p.s.fingerprint })), problems: [] });
+  const got: Lines = { lines: picked.map((p) => ({ line: signerLineToAdd(p.s), label: p.s.principals.join(', '), fingerprint: p.s.fingerprint })), problems: [] };
+  const r = trustLibraryLines(context.globalStorageUri.fsPath, origin, got.lines.map((l) => l.line));
+  tellAdded(got, r.added, r.already);
 }
 
-async function removeSigner(file: string, s: SignerLine): Promise<void> {
+/** Take the signer's line out of the file it is in. */
+async function removeSigner(file: string, s: SignerLine, points: readonly string[]): Promise<void> {
   const go = 'Remove';
-  const sure = await vscode.window.showWarningMessage(
-    `md-runbook: stop trusting ${s.principals.join(', ')}?`,
-    { modal: true, detail: bullets([`Key ${s.fingerprint}.`, 'Its runbooks no longer show as verified.']) },
-    go,
-  );
+  const sure = await vscode.window.showWarningMessage(`md-runbook: stop trusting ${s.principals.join(', ')}?`, { modal: true, detail: bullets([`Key ${s.fingerprint}.`, ...points]) }, go);
   if (sure !== go) return;
   const next = withoutSigner(readText(file), s);
   if (next === undefined) return void vscode.window.showWarningMessage('md-runbook: that line is no longer in the file (it changed meanwhile).');
@@ -222,25 +233,74 @@ async function removeSigner(file: string, s: SignerLine): Promise<void> {
 
 type Item = vscode.QuickPickItem & { run?: () => Promise<void> };
 
-async function trustedSigners(context: vscode.ExtensionContext, tree: LibraryTree | undefined): Promise<void> {
-  const file = await signersFile(context);
-  if (!file) return;
+const keyDetail = (s: SignerLine, extra: readonly string[] = []): string =>
+  [s.keyType, s.namespaces ? `namespaces ${s.namespaces.join(',')}` : 'any namespace', s.validBefore ? `valid before ${s.validBefore}` : '', ...extra].filter(Boolean).join(' · ');
+
+/** Your signers: they count for every runbook. */
+function ownItems(file: string | undefined, libHost: string | undefined, published: string | undefined): Item[] {
+  if (file === undefined) return [{ label: 'Yours: no file set yet (Add a Signer… makes one)', kind: vscode.QuickPickItemKind.Separator }];
   const { signers, skipped } = readSigners(readText(file));
-  const items: Item[] = [
-    { label: '$(add) Add a Signer…', detail: 'Paste an allowed_signers line or a public key', run: () => addPasted(file) },
-    { label: '$(file) Add from a File…', detail: 'An allowed_signers file or a .pub file', run: () => addFromFile(file) },
-    ...(tree?.library()?.allowedSigners ? [{ label: '$(library) Add the Team Library’s Signers…', detail: `Its allowed_signers, at ${hostOf(tree.library()!.base)}`, run: () => addFromLibrary(file, tree) }] : []),
-    { label: '$(go-to-file) Open the File', detail: file, run: async () => void (await vscode.window.showTextDocument(vscode.Uri.file(file))) },
-    { label: signers.length === 0 ? 'No signers yet: signatures show, but none is verified.' : 'Trusted signers (choose one to remove it)', kind: vscode.QuickPickItemKind.Separator },
-    ...signers.map((s): Item => ({
-      label: `$(key) ${s.principals.join(', ')}`,
-      description: s.fingerprint,
-      detail: [s.keyType, s.namespaces ? `namespaces ${s.namespaces.join(',')}` : 'any namespace', s.validBefore ? `valid before ${s.validBefore}` : ''].filter(Boolean).join(' · '),
-      run: () => removeSigner(file, s),
-    })),
+  const also = alsoPublished(signers, published);
+  return [
+    { label: signers.length === 0 ? 'Yours: none yet' : 'Yours: count for every runbook (choose one to remove it)', kind: vscode.QuickPickItemKind.Separator },
+    ...signers.map((s): Item => {
+      const shared = also.has(s.line) && libHost !== undefined;
+      return {
+        label: `$(key) ${s.principals.join(', ')}`,
+        description: s.fingerprint,
+        detail: keyDetail(s, shared ? [`also published by ${libHost}`] : []),
+        run: () =>
+          removeSigner(file, s, [
+            'Its runbooks no longer show as verified.',
+            ...(shared ? [`${libHost} publishes it too: Add the Team Library’s Signers… trusts it for that library’s runbooks only.`] : []),
+          ]),
+      };
+    }),
     ...(skipped.length > 0 ? [{ label: `${skipped.length} line${skipped.length === 1 ? '' : 's'} not used`, kind: vscode.QuickPickItemKind.Separator }, ...skipped.map((k): Item => ({ label: `$(circle-slash) Line ${k.line + 1}`, detail: k.problem }))] : []),
   ];
-  const picked = await vscode.window.showQuickPick(items, { title: `md-runbook: trusted signers (${path.basename(file)})`, matchOnDescription: true, matchOnDetail: true });
+}
+
+/** Each library's signers, under its host: they count for its runbooks only. */
+function libraryItems(storage: string): Item[] {
+  const out: Item[] = [];
+  for (const { origin, file } of librarySignerFiles(storage)) {
+    const { signers } = readLibrarySigners(readText(file));
+    if (signers.length === 0) continue;
+    const host = hostOfOrigin(origin);
+    out.push({ label: `${host}: its runbooks only`, kind: vscode.QuickPickItemKind.Separator });
+    out.push(
+      ...signers.map((s: LibrarySigner): Item => ({
+        label: `${s.withdrawn ? '$(circle-slash)' : '$(key)'} ${s.principals.join(', ')}`,
+        description: s.fingerprint,
+        detail: keyDetail(s, s.withdrawn ? ['withdrawn: the library no longer publishes it'] : []),
+        run: () =>
+          removeSigner(file, s, s.withdrawn ? ['Withdrawn: it would count again if the library published it again.'] : [`Its runbooks from ${host} no longer show as verified.`]),
+      })),
+    );
+  }
+  return out;
+}
+
+async function trustedSigners(context: vscode.ExtensionContext, tree: LibraryTree | undefined): Promise<void> {
+  const file = ownSetting();
+  const lib = tree?.library();
+  const libHost = lib ? hostOf(lib.base) : undefined;
+  const items: Item[] = [
+    { label: '$(add) Add a Signer…', detail: 'Paste an allowed_signers line or a public key: counts for every runbook', run: () => addPasted(context) },
+    { label: '$(file) Add from a File…', detail: 'An allowed_signers file or a .pub file: counts for every runbook', run: () => addFromFile(context) },
+    ...(tree && lib?.allowedSigners ? [{ label: '$(library) Add the Team Library’s Signers…', detail: `Its allowed_signers, at ${libHost}: for its runbooks only`, run: () => addFromLibrary(context, tree) }] : []),
+    {
+      label: '$(go-to-file) Open Your File',
+      detail: file ?? 'None set yet',
+      run: async () => {
+        const f = await signersFile(context);
+        if (f) await vscode.window.showTextDocument(vscode.Uri.file(f));
+      },
+    },
+    ...ownItems(file, libHost, lib?.allowedSigners),
+    ...libraryItems(context.globalStorageUri.fsPath),
+  ];
+  const picked = await vscode.window.showQuickPick(items, { title: 'md-runbook: trusted signers', matchOnDescription: true, matchOnDetail: true });
   await picked?.run?.();
 }
 
