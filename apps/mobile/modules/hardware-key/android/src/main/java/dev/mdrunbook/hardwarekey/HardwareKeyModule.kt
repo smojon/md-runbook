@@ -39,8 +39,9 @@ class HardwareKeyModule : Module() {
       encodePoint(cert.publicKey as ECPublicKey)
     }
 
-    // userPresence: the key is usable for a few seconds after the user confirms with a fingerprint
-    // (or the screen lock); Keystore enforces it, the app only shows the system's prompt.
+    // userPresence: each signature asks for a fingerprint or the screen lock (Android 11 and later;
+    // before, the key is usable for a few seconds after the prompt); Keystore enforces it, the
+    // app only shows the system's prompt.
     AsyncFunction("generate") { alias: String, userPresence: Boolean ->
       val store = keyStore()
       if (store.containsAlias(alias)) store.deleteEntry(alias)
@@ -56,11 +57,23 @@ class HardwareKeyModule : Module() {
 
     AsyncFunction("sign") { alias: String, data: String, promise: Promise ->
       val bytes = Base64.decode(data, Base64.NO_WRAP)
+      val key = keyStore().getKey(alias, null) as? PrivateKey ?: return@AsyncFunction promise.reject(NoKeyException(alias))
+      if (authPerUse(key)) {
+        // Each use asks: the prompt unlocks this one signature (a CryptoObject), nothing else.
+        val s = Signature.getInstance("SHA256withECDSA")
+        s.initSign(key)
+        confirmUser(promise, BiometricPrompt.CryptoObject(s)) { result ->
+          val unlocked = result.cryptoObject?.signature ?: throw IllegalStateException("no signature from the prompt")
+          unlocked.update(bytes)
+          promise.resolve(Base64.encodeToString(unlocked.sign(), Base64.NO_WRAP))
+        }
+        return@AsyncFunction
+      }
       try {
         promise.resolve(sign(alias, bytes))
       } catch (e: UserNotAuthenticatedException) {
-        // The key wants the user: the system's prompt, then sign within its few seconds.
-        confirmUser(promise) { promise.resolve(sign(alias, bytes)) }
+        // A key made before (usable a few seconds after the prompt): the prompt, then sign.
+        confirmUser(promise, null) { promise.resolve(sign(alias, bytes)) }
       }
     }
 
@@ -85,8 +98,20 @@ class HardwareKeyModule : Module() {
     return Base64.encodeToString(s.sign(), Base64.NO_WRAP)
   }
 
-  /** The system's fingerprint (or screen lock) prompt; `then` runs once the user confirmed. */
-  private fun confirmUser(promise: Promise, then: () -> Unit) {
+  /** A key that asks for the user at each use (no time after a prompt): it signs only through a CryptoObject. */
+  private fun authPerUse(key: PrivateKey): Boolean {
+    val info = KeyFactory.getInstance(key.algorithm, "AndroidKeyStore").getKeySpec(key, KeyInfo::class.java)
+    // 0 or -1: no time after a prompt.
+    @Suppress("DEPRECATION")
+    val seconds = info.userAuthenticationValidityDurationSeconds
+    return info.isUserAuthenticationRequired && seconds <= 0
+  }
+
+  /**
+   * The system's fingerprint (or screen lock) prompt; `then` runs once the user confirmed. With
+   * `crypto`, the prompt unlocks that operation only (a key that asks at each use).
+   */
+  private fun confirmUser(promise: Promise, crypto: BiometricPrompt.CryptoObject?, then: (BiometricPrompt.AuthenticationResult) -> Unit) {
     val activity = appContext.currentActivity as? FragmentActivity
       ?: return promise.reject(CodedException("The key needs your fingerprint, and the app is not in front"))
     activity.runOnUiThread {
@@ -96,7 +121,7 @@ class HardwareKeyModule : Module() {
         object : BiometricPrompt.AuthenticationCallback() {
           override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
             try {
-              then()
+              then(result)
             } catch (e: Exception) {
               promise.reject(CodedException("Signing failed: ${e.message}"))
             }
@@ -108,14 +133,19 @@ class HardwareKeyModule : Module() {
         },
       )
       // Strong biometrics or the screen lock (that pair needs Android 11; before, any biometric).
+      // (Keys that ask at each use are made on Android 11 and later only, where a CryptoObject may
+      // be unlocked by the screen lock too.)
       val allowed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) BIOMETRIC_STRONG or DEVICE_CREDENTIAL else BIOMETRIC_WEAK or DEVICE_CREDENTIAL
-      prompt.authenticate(
-        BiometricPrompt.PromptInfo.Builder()
-          .setTitle("md-runbook")
-          .setSubtitle("Use this app's SSH key")
-          .setAllowedAuthenticators(allowed)
-          .build(),
-      )
+      val info = BiometricPrompt.PromptInfo.Builder()
+        .setTitle("md-runbook")
+        .setSubtitle("Use this app's SSH key")
+        .setAllowedAuthenticators(allowed)
+        .build()
+      try {
+        if (crypto != null) prompt.authenticate(info, crypto) else prompt.authenticate(info)
+      } catch (e: Exception) {
+        promise.reject(CodedException("The prompt could not be shown: ${e.message}"))
+      }
     }
   }
 
@@ -126,10 +156,12 @@ class HardwareKeyModule : Module() {
     if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) spec.setIsStrongBoxBacked(true)
     if (userPresence) {
       spec.setUserAuthenticationRequired(true)
-      // A few seconds after the prompt: one SSH login or one signature.
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        spec.setUserAuthenticationParameters(10, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
+        // 0: each signature asks (the prompt unlocks that one operation, a CryptoObject).
+        spec.setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
       } else {
+        // Before Android 11 a key that asks at each use takes biometrics only, not the screen
+        // lock: a few seconds after the prompt instead (one SSH login or one signature).
         @Suppress("DEPRECATION")
         spec.setUserAuthenticationValidityDurationSeconds(10)
       }

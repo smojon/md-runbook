@@ -9,6 +9,9 @@ import { openRunbookLink } from '../runbooks/openLink';
 import { HostsButton } from '../ui/HomeHeader';
 import { RunbookView } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
+import { allowedSignersLine, generateKey } from '@md-runbook/ssh';
+import { addSigners, resetTrustedSigners } from '../signing/trust';
+import { signPlan, signRunbook } from '../signing/sign';
 
 jest.mock('expo-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
@@ -310,12 +313,92 @@ describe('practice on a host (drills)', () => {
     connectionFor.mockClear();
     await render(<RunbookView id={r.id} />);
     expect(screen.getByTestId('practice-banner')).toBeTruthy();
+    expect(screen.getByTestId('practice-from-runbook')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    // The runbook picked the practice host: asked once first, as host= is.
+    expect(screen.getByTestId('practice-ask')).toBeTruthy();
+    expect(connectionFor).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('other-host-accept'));
+    });
+    await waitFor(() => expect(connectionFor).toHaveBeenCalled());
+    expect(connectionFor.mock.calls[0]![0].id).toBe(train.id);
+    expect(screen.queryByText(/This cell runs on prod/)).toBeNull();
+    // Once allowed, the next run doesn't ask again.
+    await waitFor(() => expect(screen.getByTestId('cell-1-run')).toBeTruthy());
+    connectionFor.mockClear();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(connectionFor).toHaveBeenCalled());
+    expect(screen.queryByTestId('practice-ask')).toBeNull();
+  });
+
+  it('a practice: host from the front matter runs nothing when declined', async () => {
+    addHost({ name: 'staging', hostname: 'staging.example.net', port: 22, username: 'ops' });
+    addHost({ name: 'prod-db', hostname: 'db.example.net', port: 22, username: 'ops' });
+    const r = addRunbook('evil.md', '---\npractice: prod-db\n---\n\n# Hello\n\n```bash host=staging\nuptime\n```\n');
+    connectionFor.mockClear();
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    expect(screen.getByTestId('practice-ask')).toHaveTextContent(/practice: prod-db/);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('other-host-decline'));
+    });
+    expect(screen.queryByTestId('other-host')).toBeNull();
+    expect(connectionFor).not.toHaveBeenCalled();
+  });
+
+  it('a practice host you picked yourself (⋯ Practice on a Host) runs without asking', async () => {
+    addHost({ name: 'prod', hostname: 'prod.example.net', port: 22, username: 'ops' });
+    const train = addHost({ name: 'train', hostname: 'train.example.net', port: 22, username: 'ops' });
+    const r = addRunbook('drill.md', '# Drill\n\n```bash host=prod\nuptime\n```\n');
+    connectionFor.mockClear();
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('more-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-practiceOnHost'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(`practice-host-${train.id}`));
+    });
+    expect(screen.getByTestId('practice-banner')).toBeTruthy();
+    expect(screen.queryByTestId('practice-from-runbook')).toBeNull();
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-1-run'));
     });
     await waitFor(() => expect(connectionFor).toHaveBeenCalled());
     expect(connectionFor.mock.calls[0]![0].id).toBe(train.id);
-    expect(screen.queryByText(/This cell runs on prod/)).toBeNull();
+    expect(screen.queryByTestId('practice-ask')).toBeNull();
+  });
+
+  it('a whole runbook verified-signed by a key added by you keeps its practice: without asking', async () => {
+    const key = await generateKey();
+    addSigners((await allowedSignersLine(key, 'me@example.net')) + '\n');
+    addHost({ name: 'prod', hostname: 'prod.example.net', port: 22, username: 'ops' });
+    const train = addHost({ name: 'train', hostname: 'train.example.net', port: 22, username: 'ops' });
+    const text = '---\npractice: train\n---\n\n# Drill\n\n```bash host=prod\nuptime\n```\n';
+    const input = { name: 'drill', scopes: '', days: '', patterns: {} };
+    const signed = await signRunbook(text, signPlan(text, 'drill.md'), input, 'me@example.net', key);
+    if (!signed.ok) throw new Error(signed.errors.join('; '));
+    const r = addRunbook('drill.md', signed.text);
+    connectionFor.mockClear();
+    await render(<RunbookView id={r.id} />);
+    await waitFor(() => expect(screen.getByTestId('signed-coverage')).toBeTruthy());
+    expect(screen.queryByTestId('practice-from-runbook')).toBeNull();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(connectionFor).toHaveBeenCalled());
+    expect(connectionFor.mock.calls[0]![0].id).toBe(train.id);
+    expect(screen.queryByTestId('practice-ask')).toBeNull();
+    resetTrustedSigners();
   });
 
   it('a practice host the app does not have stops the run instead of using the selected host', async () => {

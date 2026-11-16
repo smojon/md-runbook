@@ -111,6 +111,12 @@ Security fixes from a review of the parts that face the network.
 - **App: Copy Line with Values.** A line's actions copy its command with parameters, inputs and captured values filled in. Secrets stay references.
 - **App: Pause Before This Step, Notify Me When It Starts.** A step's ⋯ (cell or Steps row) sets either, for this session. Run all asks Continue or Stop there.
 - **App: the launch form.** Run all first shows one sheet: parameters, inputs, secrets to set, risky steps, steps by hand, time and host. Start asks for no value again; risky steps still ask. Hosts & Settings turns it off; ⋯ More → **Run All…** always opens it.
+- **App: a runbook's practice: host asks first.** Front matter `practice:` asks once before every cell runs on that host, as `host=` does. A whole runbook verified-signed, or a host you picked, doesn't ask.
+- **App: imported hosts that join your groups are marked.** Import hosts marks each new host that joins a group you already have, as Run on a Group would include it.
+- **App: a hardware key that fails is no longer replaced silently.** A software key is made only when the phone's keystore can't make such keys, and never with Face ID or a fingerprint on. Other failures show under Hosts & settings, with Try again.
+- **Android: "ask before each use" asks at each use.** On Android 11 and later, a key made with the switch on asks for every signature, not once per 10 seconds. Turn the switch off and on to make such a key.
+- **App: copies of a library runbook keep its rules.** Run All as Copy and Start Incident are off while the library refuses the runbook, and say why. Their copies run only while the library would open them.
+- **Web: a key the browser can't export, and a Content Security Policy.** New web keys are WebCrypto keys the browser won't export. An earlier key stays; Hosts & settings offers to replace it. The page runs only its own scripts, never inside another site's frame.
 
 
 ## 0.26.8

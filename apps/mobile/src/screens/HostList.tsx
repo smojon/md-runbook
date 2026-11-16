@@ -5,9 +5,19 @@ import { FlatList, Linking, Platform, Pressable, StyleSheet, Text, TextInput, Vi
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
-import { KeyStorage, appAllowedRunnersLine, appAllowedSignersLine, appKeyInfo, appPublicKeyLine, setKeyNeedsUser } from '../ssh/appKey';
+import {
+  KeyStorage,
+  appAllowedRunnersLine,
+  appAllowedSignersLine,
+  appKeyInfo,
+  appPublicKeyLine,
+  replaceWithUnexportableKey,
+  setKeyNeedsUser,
+} from '../ssh/appKey';
 import { forgetConsent, loadConsents, useConsents } from '../reports/send';
 import { passkeysAvailable } from '../ssh/passkey';
+import { HardwareKey } from '../../modules/hardware-key';
+import { webKeysAvailable } from '../ssh/webKey';
 import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import {
   HISTORY_SIZES,
@@ -168,6 +178,8 @@ function AppKeySection() {
   const [error, setError] = useState<string | undefined>();
   const [copied, setCopied] = useState(false);
   const [storage, setStorage] = useState<KeyStorage | undefined>();
+  /** Try again after an error (a hardware key that failed is not replaced by a software one). */
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
     appPublicKeyLine().then(
@@ -181,7 +193,7 @@ function AppKeySection() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [attempt]);
   const copy = async (): Promise<void> => {
     if (!line) return;
     await Clipboard.setStringAsync(line);
@@ -190,6 +202,9 @@ function AppKeySection() {
   const settings = useOutputSettings();
   /** The web app where the browser offers passkeys: the switch makes one. */
   const web = passkeysAvailable();
+  /** The phone has a hardware keystore and the switch is on: each use should ask for the user. */
+  const hardwareGated = !web && HardwareKey !== null && settings.keyNeedsUser;
+  const gatedButSoftware = hardwareGated && storage === 'secure-store';
   /** The switch was flipped: the new value, until the user confirms making a new key. */
   const [changing, setChanging] = useState<boolean | undefined>();
   const [newKey, setNewKey] = useState(false);
@@ -206,14 +221,41 @@ function AppKeySection() {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  const [replacing, setReplacing] = useState(false);
+  const replaceKey = async (): Promise<void> => {
+    setReplacing(false);
+    try {
+      const k = await replaceWithUnexportableKey();
+      setStorage(k.storage);
+      setLine(await appPublicKeyLine());
+      setError(undefined);
+      setCopied(false);
+      setNewKey(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{t.appKeyTitle}</Text>
       <Text style={styles.help}>{t.appKeyHelp}</Text>
       {error ? (
-        <Text testID="app-key-error" role="alert" style={styles.error}>
-          {t.appKeyFailed(error)}
-        </Text>
+        <>
+          <Text testID="app-key-error" role="alert" style={styles.error}>
+            {t.appKeyFailed(error)}
+          </Text>
+          <Pressable
+            testID="app-key-retry"
+            accessibilityRole="button"
+            onPress={() => {
+              setError(undefined);
+              setAttempt((n) => n + 1);
+            }}
+            style={styles.button}
+          >
+            <Text style={styles.buttonText}>{t.appKeyRetry}</Text>
+          </Pressable>
+        </>
       ) : (
         <Text testID="app-public-key" style={styles.key} selectable>
           {line ?? t.appKeyLoading}
@@ -224,9 +266,16 @@ function AppKeySection() {
           {t.appKeyStorage[storage]}
         </Text>
       ) : null}
+      {/* A software key made by an earlier version when the hardware failed: the switch is on, but
+          nothing asks. Off and on again makes a hardware key. */}
+      {gatedButSoftware ? (
+        <Text testID="key-not-enforced" role="alert" style={styles.error}>
+          {t.keyNotEnforced}
+        </Text>
+      ) : null}
       {/* Only a key in the phone's keystore can require the user (the hardware enforces it); on
-          the web, a passkey does. */}
-      {storage === 'hardware' || storage === 'keystore' || web ? (
+          the web, a passkey does. A failed hardware key with the switch on keeps the switch, to turn it off. */}
+      {storage === 'hardware' || storage === 'keystore' || web || gatedButSoftware || (error && hardwareGated) ? (
         <View style={styles.switchRow}>
           <View style={styles.switchText}>
             <Text style={styles.switchLabel}>{web ? t.usePasskey : t.keyNeedsUser}</Text>
@@ -251,6 +300,31 @@ function AppKeySection() {
               <Text style={styles.buttonText}>{t.keyChangeGo}</Text>
             </Pressable>
             <Pressable testID="key-change-cancel" accessibilityRole="button" onPress={() => setChanging(undefined)} style={styles.button}>
+              <Text style={styles.buttonText}>{t.cancel}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+      {/* Web, a key from an earlier version (readable in the browser's storage): replaced only when the user says so. */}
+      {storage === 'browser' && webKeysAvailable() && !replacing ? (
+        <View testID="key-replace-offer">
+          <Points items={t.browserKeyPoints} textStyle={styles.help} />
+          <Pressable testID="key-replace" accessibilityRole="button" onPress={() => setReplacing(true)} style={styles.button}>
+            <Text style={styles.buttonText}>{t.browserKeyReplace}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {replacing ? (
+        <View testID="key-replace-confirm">
+          <Text style={[styles.error, styles.strong]} role="heading">
+            {t.keyChangeTitle}
+          </Text>
+          <Points items={t.browserKeyChangePoints} textStyle={[styles.error, styles.point]} />
+          <View style={styles.chips}>
+            <Pressable testID="key-replace-go" accessibilityRole="button" onPress={() => void replaceKey()} style={styles.button}>
+              <Text style={styles.buttonText}>{t.keyChangeGo}</Text>
+            </Pressable>
+            <Pressable testID="key-replace-cancel" accessibilityRole="button" onPress={() => setReplacing(false)} style={styles.button}>
               <Text style={styles.buttonText}>{t.cancel}</Text>
             </Pressable>
           </View>

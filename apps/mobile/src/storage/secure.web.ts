@@ -1,7 +1,8 @@
 /**
- * Web: the browser has no keychain, so the app's key sits in localStorage of the app's origin
- * (a passkey-wrapped key is the planned upgrade). Other origins can't read it, but the browser
- * profile holds it in clear.
+ * Web: the browser has no keychain, so secrets sit in localStorage of the app's origin: the relay
+ * token, the assistant's API key, and an earlier version's app key (new ones are WebCrypto keys
+ * the browser won't export, ssh/webKey.ts). Other origins can't read them, but the browser
+ * profile holds them in clear, and so can script on the page (the page's CSP, public/index.html).
  */
 const prefix = 'mdrb.secure.';
 

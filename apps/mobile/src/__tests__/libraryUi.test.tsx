@@ -7,6 +7,9 @@ import { allowedSignersLine, generateKey, signSshsig } from '@md-runbook/ssh';
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
 import {
   defaultLibraryBase,
+  derivedRefFor,
+  derivedText,
+  headOf,
   libraryBase,
   libraryLink,
   libraryLinkUrl,
@@ -17,7 +20,7 @@ import {
 } from '../runbooks/library';
 import { addHost, resetHosts } from '../hosts/store';
 import { openTransport } from '../ssh/transport';
-import { getRunbook, resetRunbooks, updateRunbookText, useRunbooks } from '../runbooks/store';
+import { addRunbook, flushRunbooks, getRunbook, resetRunbooks, updateRunbookText, useRunbooks } from '../runbooks/store';
 import { libraryUrlSetting, resetSettings, setLibraryUrl } from '../settings/store';
 import { addSigners, parseAllowedSigners, resetTrustedSigners, trustSigners, trustedSigners } from '../signing/trust';
 import { signPlan, signRunbook } from '../signing/sign';
@@ -357,31 +360,31 @@ describe('Team runbooks on the list', () => {
   });
 });
 
-describe('a copy the library refuses (signedOnly): the recheck of 2026-11-14', () => {
-  async function libraryWithCopy(): Promise<{ id: string; files: Record<string, string>; alice: KeyPair; text: string }> {
-    const alice = await generateKey();
-    const signedR = await signRunbook(
-      RUNBOOK,
-      signPlan(RUNBOOK, 'restart.md'),
-      { name: 'restart', scopes: '', days: '', patterns: {} },
-      'alice@example.net',
-      alice,
-    );
-    if (!signedR.ok) throw new Error('not signed');
-    const files: Record<string, string> = {
-      [LIB + 'index.json']: JSON.stringify({ signedOnly: true, runbooks: ['restart.md'] }),
-      [LIB + 'restart.md']: signedR.text,
-      [LIB + 'allowed_signers']: (await allowedSignersLine(alice, 'alice@example.net')) + '\n',
-    };
-    setLibraryUrl(LIB);
-    await refreshLibrary({ fetcher: server(files) });
-    trustSigners(libraryState().library!.signers!.list, LIB);
-    await refreshLibrary({ fetcher: server(files), force: true });
-    const opened = await openLibraryRunbook(libraryState().library!, libraryState().library!.entries[0]!);
-    if (opened.kind !== 'opened') throw new Error(opened.message);
-    return { id: opened.runbook.id, files, alice, text: signedR.text };
-  }
+async function libraryWithCopy(): Promise<{ id: string; files: Record<string, string>; alice: KeyPair; text: string }> {
+  const alice = await generateKey();
+  const signedR = await signRunbook(
+    RUNBOOK,
+    signPlan(RUNBOOK, 'restart.md'),
+    { name: 'restart', scopes: '', days: '', patterns: {} },
+    'alice@example.net',
+    alice,
+  );
+  if (!signedR.ok) throw new Error('not signed');
+  const files: Record<string, string> = {
+    [LIB + 'index.json']: JSON.stringify({ signedOnly: true, runbooks: ['restart.md'] }),
+    [LIB + 'restart.md']: signedR.text,
+    [LIB + 'allowed_signers']: (await allowedSignersLine(alice, 'alice@example.net')) + '\n',
+  };
+  setLibraryUrl(LIB);
+  await refreshLibrary({ fetcher: server(files) });
+  trustSigners(libraryState().library!.signers!.list, LIB);
+  await refreshLibrary({ fetcher: server(files), force: true });
+  const opened = await openLibraryRunbook(libraryState().library!, libraryState().library!.entries[0]!);
+  if (opened.kind !== 'opened') throw new Error(opened.message);
+  return { id: opened.runbook.id, files, alice, text: signedR.text };
+}
 
+describe('a copy the library refuses (signedOnly): the recheck of 2026-11-14', () => {
   it('D: an edited copy runs nothing from the runbook screen and says why, also before the library is read', async () => {
     resetHosts();
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
@@ -395,6 +398,39 @@ describe('a copy the library refuses (signedOnly): the recheck of 2026-11-14', (
     await press('cell-1-run');
     expect(screen.getByTestId('run-notice')).toHaveTextContent(/doesn’t run until verified again/);
     expect(openTransport).not.toHaveBeenCalled();
+  });
+
+  it('a Start Incident copy is checked with its original front matter back (derivedText)', () => {
+    const note = '<!-- md-runbook:note at=2026-11-16T10:00:00+01:00 milestone=detected -->\n> **10:00 · detected:** Started\n';
+    for (const original of [RUNBOOK, '---\nshell: bash\n---\n\n' + RUNBOOK, '﻿---\r\nshell: bash\r\n---\r\n\r\n# T\r\n']) {
+      const eol = original.includes('\r\n') ? '\r\n' : '\n';
+      const body = original.replace(/^﻿?(---[\s\S]*?---\r?\n)?(\r?\n)*/, '');
+      const fm = /^﻿?---\r?\n([\s\S]*?)---\r?\n/.exec(original)?.[1] ?? '';
+      const copy = `---${eol}${fm}incident: INC-1${eol}---${eol}${eol}${note.replace(/\n/g, eol)}${eol}${body}`;
+      expect(derivedText(copy, headOf(original))).toBe(original);
+      // Twice (a copy of the copy): both notes at the top go.
+      expect(
+        derivedText(
+          `---${eol}incident: INC-2${eol}---${eol}${eol}${note.replace(/\n/g, eol)}${eol}${copy.replace(/^---[\s\S]*?---\r?\n(\r?\n)*/, '')}`,
+          headOf(original),
+        ),
+      ).toBe(original);
+    }
+    expect(derivedText('# changed', undefined)).toBe('# changed');
+  });
+
+  it('a refused copy offers no Run All as Copy nor Start Incident, and says why', async () => {
+    resetHosts();
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const { id } = await libraryWithCopy();
+    updateRunbookText(id, getRunbook(id)!.text.replace('systemctl restart api', 'systemctl restart api --now'));
+    await render(<RunbookView id={id} />);
+    await waitFor(() => expect(screen.getByTestId('signed-library-refused')).toBeTruthy());
+    await press('more-actions');
+    for (const action of ['runAllAsCopy', 'startIncident']) {
+      expect(screen.getByTestId(`action-${action}`).props.accessibilityState).toEqual({ disabled: true });
+      expect(screen.getByTestId(`action-${action}`)).toHaveTextContent(/doesn’t run until verified again/);
+    }
   });
 
   it('D: an unsigned copy gets a banner too', async () => {
@@ -587,5 +623,55 @@ describe('Hosts & settings → Team library', () => {
     await press('library-forget-versions');
     expect(screen.getByTestId('library-versions')).toHaveTextContent(/Forgotten/);
     expect(screen.queryByTestId('library-forget-versions')).toBeNull();
+  });
+});
+
+// Last in the file: the Start Incident flow leaves state that later screens in this file trip over.
+describe('copies made from a library copy', () => {
+  it('an edited copy of a library copy runs nothing, as the library copy would', async () => {
+    resetHosts();
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const { id } = await libraryWithCopy();
+    const lib = getRunbook(id)!;
+    const edited = lib.text.replace('systemctl restart api', 'systemctl restart api --now');
+    const copy = addRunbook('restart.20261116-100000.md', edited, undefined, undefined, derivedRefFor(lib, false));
+    await render(<RunbookView id={copy.id} />);
+    await waitFor(() => expect(screen.getByTestId('signed-library-refused')).toHaveTextContent(/changed since signing/));
+    await press('cell-1-run');
+    expect(screen.getByTestId('run-notice')).toHaveTextContent(/doesn’t run until verified again/);
+    expect(openTransport).not.toHaveBeenCalled();
+  });
+
+  it('a copy made from a library copy (Run All as Copy, Start Incident) keeps the library’s rules', async () => {
+    resetHosts();
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const { id } = await libraryWithCopy();
+    jest.mocked(router.push).mockClear();
+    const view = await render(<RunbookView id={id} />);
+    await waitFor(() => expect(screen.getByTestId('signed-library-state')).toHaveTextContent(/verified/));
+    await press('more-actions');
+    await press('action-startIncident');
+    await type('incident-id', 'INC-7');
+    await press('incident-start');
+    const incidentId = jest.mocked(router.push).mock.calls[0]![0] as unknown as { params: { id: string } };
+    const incident = getRunbook(incidentId.params.id)!;
+    expect(incident.source).toBe('file');
+    expect(incident.derivedFrom).toMatchObject({ base: LIB, path: 'restart.md' });
+    expect(incident.text).toMatch(/^---\nincident: INC-7\n---\n/);
+    view.unmount();
+    // Unchanged but for its incident front matter and note: still verified, so it runs.
+    const shown = await render(<RunbookView id={incident.id} />);
+    await waitFor(() => expect(screen.getByTestId('signed-library-state')).toHaveTextContent(/verified/));
+    expect(screen.queryByTestId('signed-library-refused')).toBeNull();
+    shown.unmount();
+    // A copy of the copy keeps it too, with the original's front matter (Run All as Copy, Start Incident again).
+    expect(derivedRefFor(incident, false)).toEqual(incident.derivedFrom);
+    expect(derivedRefFor(incident, true)).toEqual(incident.derivedFrom);
+    expect(derivedRefFor({ ...incident, derivedFrom: undefined }, true)).toBeUndefined();
+    // The copies' writes land before the next test clears the storage.
+    await act(async () => {
+      await flushRunbooks();
+      await new Promise((r) => setTimeout(r, 50));
+    });
   });
 });

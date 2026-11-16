@@ -6,6 +6,8 @@ const mockKeys = new Map<string, { publicKey: KeyObject; privateKey: KeyObject }
 const mockHardware = {
   available: true,
   failGenerate: false,
+  /** The error generate() throws when failGenerate is on. */
+  failMessage: 'keystore unavailable',
   signed: 0,
   /** The userPresence each generate() was asked for. */
   presence: [] as boolean[],
@@ -22,7 +24,7 @@ jest.mock('../../modules/hardware-key', () => {
       return {
         publicKey: async (alias: string) => (mockKeys.has(alias) ? point(alias) : null),
         generate: async (alias: string, userPresence: boolean) => {
-          if (mockHardware.failGenerate) throw new Error('keystore unavailable');
+          if (mockHardware.failGenerate) throw new Error(mockHardware.failMessage);
           mockHardware.presence.push(userPresence);
           mockKeys.set(alias, c.generateKeyPairSync('ec', { namedCurve: 'prime256v1' }));
           return { publicKey: point(alias), hardware: true };
@@ -47,11 +49,16 @@ jest.mock('../storage/secure', () => ({
 
 type AppKeyModule = typeof import('../ssh/appKey');
 type SshModule = typeof import('@md-runbook/ssh');
-/** A fresh app key module (an app start), with the SSH package of the same module registry. */
-const fresh = (): AppKeyModule & { ssh: SshModule } => {
-  let m: (AppKeyModule & { ssh: SshModule }) | undefined;
+type SettingsModule = typeof import('../settings/store');
+/** A fresh app key module (an app start), with the SSH package and settings of the same module registry. */
+const fresh = (): AppKeyModule & { ssh: SshModule; settings: SettingsModule } => {
+  let m: (AppKeyModule & { ssh: SshModule; settings: SettingsModule }) | undefined;
   jest.isolateModules(() => {
-    m = { ...jest.requireActual<AppKeyModule>('../ssh/appKey'), ssh: jest.requireActual<SshModule>('@md-runbook/ssh') };
+    m = {
+      ...jest.requireActual<AppKeyModule>('../ssh/appKey'),
+      ssh: jest.requireActual<SshModule>('@md-runbook/ssh'),
+      settings: jest.requireActual<SettingsModule>('../settings/store'),
+    };
   });
   return m!;
 };
@@ -59,7 +66,7 @@ const fresh = (): AppKeyModule & { ssh: SshModule } => {
 beforeEach(() => {
   mockKeys.clear();
   mockSecrets.clear();
-  Object.assign(mockHardware, { available: true, failGenerate: false, signed: 0, presence: [] });
+  Object.assign(mockHardware, { available: true, failGenerate: false, failMessage: 'keystore unavailable', signed: 0, presence: [] });
 });
 
 describe("the app's key in the phone's hardware", () => {
@@ -94,11 +101,38 @@ describe("the app's key in the phone's hardware", () => {
     expect(mockKeys.size).toBe(0);
   });
 
-  it('falls back to secure storage when the hardware refuses', async () => {
+  it('falls back to secure storage only when the keystore says it can’t make such keys', async () => {
     mockHardware.failGenerate = true;
+    mockHardware.failMessage = 'java.security.NoSuchAlgorithmException: EC not supported';
     const m = fresh();
     expect((await m.appKeyInfo()).storage).toBe('secure-store');
     expect(mockSecrets.get('app-key.pkcs8')).toMatch(/^-----BEGIN PRIVATE KEY-----/);
+  });
+
+  it('any other failure is an error, not a software key for good: the next start tries the hardware again', async () => {
+    mockHardware.failGenerate = true;
+    const m = fresh();
+    await expect(m.appKeyInfo()).rejects.toThrow('keystore unavailable');
+    expect(mockSecrets.size).toBe(0);
+    // Asked again (Try again, or the next start): the hardware, once it works.
+    mockHardware.failGenerate = false;
+    expect((await m.appKeyInfo()).storage).toBe('hardware');
+    expect((await fresh().appKeyInfo()).storage).toBe('hardware');
+    expect(mockSecrets.size).toBe(0);
+  });
+
+  it('with "ask for Face ID or a fingerprint" on, even an unsupported keystore is an error', async () => {
+    const m = fresh();
+    await m.settings.loadSettings();
+    m.settings.setOutputSetting('keyNeedsUser', true);
+    mockHardware.failGenerate = true;
+    mockHardware.failMessage = 'EC keys not supported';
+    try {
+      await expect(m.appKeyInfo()).rejects.toThrow('not supported');
+      expect(mockSecrets.size).toBe(0);
+    } finally {
+      m.settings.setOutputSetting('keyNeedsUser', false);
+    }
   });
 });
 

@@ -30,7 +30,30 @@ export interface Runbook {
   link?: string;
   /** A copy of a team library runbook: which one, and the version it was made from. */
   library?: LibraryRef;
+  /**
+   * Made from a library copy (Run All as Copy, Start Incident): its library's rules (signedOnly)
+   * still hold for it (runbooks/library.ts copyRefusal).
+   */
+  derivedFrom?: DerivedRef;
 }
+
+/**
+ * The library runbook a copy was made from (`base`, `path`). `head`: the original's front matter
+ * and the blank lines after it, when the copy's own front matter differs (Start Incident adds
+ * incident:); its signature is checked with that head put back (library.ts derivedText).
+ */
+export interface DerivedRef {
+  base: string;
+  path: string;
+  head?: string;
+}
+
+const isDerivedRef = (v: unknown): v is DerivedRef =>
+  typeof v === 'object' &&
+  v !== null &&
+  typeof (v as DerivedRef).base === 'string' &&
+  typeof (v as DerivedRef).path === 'string' &&
+  ((v as DerivedRef).head === undefined || typeof (v as DerivedRef).head === 'string');
 
 /**
  * Where a library copy came from: the library's address and the file's path in it, the text's
@@ -62,6 +85,7 @@ interface IndexEntry {
   savedHash?: string;
   link?: string;
   library?: LibraryRef;
+  derivedFrom?: DerivedRef;
 }
 const INDEX_KEY = 'runbooks.v1';
 const isIndex = (v: unknown): v is IndexEntry[] =>
@@ -74,7 +98,8 @@ const isIndex = (v: unknown): v is IndexEntry[] =>
       typeof (e as IndexEntry).fileName === 'string' &&
       ((e as IndexEntry).origin === undefined || isOrigin((e as IndexEntry).origin)) &&
       ((e as IndexEntry).link === undefined || typeof (e as IndexEntry).link === 'string') &&
-      ((e as IndexEntry).library === undefined || isLibraryRef((e as IndexEntry).library)),
+      ((e as IndexEntry).library === undefined || isLibraryRef((e as IndexEntry).library)) &&
+      ((e as IndexEntry).derivedFrom === undefined || isDerivedRef((e as IndexEntry).derivedFrom)),
   );
 
 const bundled = (): Runbook[] => BUNDLED.map((r) => ({ ...r, source: 'bundled' as const }));
@@ -109,6 +134,7 @@ function persistIndex(): void {
       ...(r.savedHash ? { savedHash: r.savedHash } : {}),
       ...(r.link ? { link: r.link } : {}),
       ...(r.library ? { library: r.library } : {}),
+      ...(r.derivedFrom ? { derivedFrom: r.derivedFrom } : {}),
     }));
   void setJson(INDEX_KEY, index).catch((e: unknown) => console.warn('runbook list not saved', e));
 }
@@ -137,6 +163,7 @@ export function loadRunbooks(): Promise<void> {
         savedHash: e.savedHash,
         ...(e.link ? { link: e.link } : {}),
         ...(e.library ? { library: e.library } : {}),
+        ...(e.derivedFrom && !e.library ? { derivedFrom: e.derivedFrom } : {}),
       });
     }
     const samples = await Promise.all(
@@ -167,7 +194,7 @@ export function linkedRunbook(link: string): Runbook | undefined {
   return all.find((r) => r.source === 'file' && r.link === link);
 }
 
-export function addRunbook(fileName: string, text: string, origin?: Origin, link?: string): Runbook {
+export function addRunbook(fileName: string, text: string, origin?: Origin, link?: string, derivedFrom?: DerivedRef): Runbook {
   const id = `file-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const r: Runbook = {
     id,
@@ -177,6 +204,7 @@ export function addRunbook(fileName: string, text: string, origin?: Origin, link
     fileName,
     ...(origin ? { origin, savedHash: textHash(text) } : {}),
     ...(link ? { link } : {}),
+    ...(derivedFrom ? { derivedFrom } : {}),
   };
   all = [...all, r];
   persistText(id, text);

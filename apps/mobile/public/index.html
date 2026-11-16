@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <!--
+      Content Security Policy (GitHub Pages sends no headers, so it is a meta tag; frame-ancestors
+      can't be set here: the app itself refuses to run in a frame, src/app/_layout.tsx).
+      script-src: the app's own bundles only, no inline script; wasm-unsafe-eval for the QR
+      scanner's polyfill (barcode-detector, browsers without BarcodeDetector).
+      style-src: react-native-web writes its styles at run time.
+      connect-src: https and wss anywhere, as the relay, the team library and the assistant
+      (api.anthropic.com) are addresses set in the app, not at build time; ws and http only on
+      this machine (a relay on localhost, as the app allows).
+      The web container (apps/web/nginx.conf) also sends frame-ancestors 'none' as a header.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https: wss: ws://localhost:* ws://127.0.0.1:* ws://[::1]:* http://localhost:* http://127.0.0.1:* http://[::1]:*; media-src 'self' blob: mediastream:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>%WEB_TITLE%</title>
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* These styles make the body full-height */
+      html,
+      body {
+        height: 100%;
+      }
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+  </head>
+
+  <body>
+    <noscript> You need to enable JavaScript to run this app. </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+  </body>
+</html>
