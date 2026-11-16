@@ -127,7 +127,8 @@ Both are built and **off** until the owner's accounts exist. Nothing breaks with
 - **The build's archive is checked, not trusted:**
   - The sign job unpacks it with Python's `tarfile` and `filter='data'`.
   - No paths or links out of the folder, no device files, no control characters in names.
-  - One app, with a plain name (`[A-Za-z0-9._-]+.app`).
+  - One app, with a plain name (`[A-Za-z0-9._-]+.app`), and no extensions.
+  - Names compare with case ignored, as on the Mac. Each comes once, none through a link.
   - The app's path never goes to `GITHUB_ENV`. Each step finds the app again.
 - **Entitlements:** an unsigned archive has none, and an export alone ships without the push
   entitlement. The sign job signs the archived app with them, then exports.

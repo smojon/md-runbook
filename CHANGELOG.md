@@ -62,6 +62,9 @@ Security fixes from a review of the parts that face the network.
 - **Expo updates workflow:** a changed lock entry may have only the keys npm writes. Its engines,
   os, cpu and bin must be the registry's, and its version at least 7 days old.
   - A new shrinkwrap is refused, and `npm ls` checks the tree from the lock.
+- **TestFlight workflow:** the build's archive is checked with case ignored, as on the Mac. A name
+  twice, or a path through a symbolic link, is refused.
+  - Before, `plugins/` passed the check for app extensions, and a later file could replace one.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each

@@ -174,8 +174,9 @@ jobs:
           path: ${{ runner.temp }}/in
       # The build ran npm, CocoaPods and Xcode's script phases, so its tar is checked, not trusted:
       # Python's tarfile with filter='data' (no absolute or .. paths, no device files, no links out
-      # of the folder), no control character in a name, one app with a plain name. Nothing from
-      # the tar goes to GITHUB_ENV: each step finds the app again.
+      # of the folder), no control character in a name, one app with a plain name. Names compare
+      # as the Mac's file system does (case ignored); each comes once, and none goes through a
+      # symbolic link. Nothing from the tar goes to GITHUB_ENV: each step finds the app again.
       - name: Unpack the archive
         working-directory: ${{ runner.temp }}/in
         run: |
@@ -186,13 +187,15 @@ jobs:
           fi
           mkdir "$RUNNER_TEMP/archive"
           python3 -I - md-runbook.xcarchive.tar "$RUNNER_TEMP/archive" <<'PY'
-          import re, sys, tarfile
+          import re, sys, tarfile, unicodedata
           tar_file, dest = sys.argv[1:]
           if not hasattr(tarfile, 'data_filter'):
               sys.exit('::error::this python3 has no tarfile filters (Python 3.12 or newer)')
           control = re.compile(r'[\x00-\x1f\x7f]')
           plain_app = re.compile(r'^[A-Za-z0-9._-]+\.app$')
           apps = 'md-runbook.xcarchive/Products/Applications'
+          # The Mac's file system ignores case and Unicode normalization: names compare folded.
+          fold = lambda name: unicodedata.normalize('NFD', name.rstrip('/')).casefold()
           with tarfile.open(tar_file) as t:
               members = t.getmembers()
               for m in members:
@@ -203,14 +206,25 @@ jobs:
                       sys.exit(f'::error::the tar holds a path outside md-runbook.xcarchive: {m.name!r}')
                   if not (m.isdir() or m.isfile() or m.issym() or m.islnk()):
                       sys.exit(f'::error::the tar holds a special file: {m.name!r}')
-              found = {m.name.rstrip('/').split('/')[3] for m in members if m.name.startswith(apps + '/')}
+              # Each name once: a later member would replace one checked here.
+              names = [fold(m.name) for m in members]
+              if len(set(names)) != len(names):
+                  sys.exit('::error::the tar holds a name twice (case ignored)')
+              # Nothing through a symbolic link: it could put files where the names don't say.
+              links = {fold(m.name) for m in members if m.issym()}
+              for m, n in zip(members, names):
+                  parts = n.split('/')
+                  if any('/'.join(parts[:i]) in links for i in range(1, len(parts))):
+                      sys.exit(f'::error::the tar holds a path through a symbolic link: {m.name!r}')
+              found = {m.name.rstrip('/').split('/')[3] for m, n in zip(members, names) if n.startswith(fold(apps) + '/')}
               if len(found) != 1 or not plain_app.match(next(iter(found))):
                   sys.exit(f'::error::the archive does not hold one app with a plain name: {sorted(found)!r}')
               app = f'{apps}/{found.pop()}'
               if not any(m.name.rstrip('/') == app and m.isdir() for m in members):
                   sys.exit(f'::error::{app!r} is not a folder')
               for extra in ('PlugIns', 'Watch', 'Extensions'):
-                  if any(m.name.startswith(f'{app}/{extra}/') or m.name.rstrip('/') == f'{app}/{extra}' for m in members):
+                  inside = fold(f'{app}/{extra}')
+                  if any(n == inside or n.startswith(inside + '/') for n in names):
                       sys.exit("::error::the app has extensions: each needs its own profile, which this workflow doesn't sign")
               t.extractall(dest, filter='data')
           PY
