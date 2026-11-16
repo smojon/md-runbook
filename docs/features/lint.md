@@ -85,7 +85,7 @@ request's changed lines:
 - uses: actions/setup-node@v7
   with: { node-version: 22 }
 - run: |
-    npm install --no-save --ignore-scripts --no-audit --no-fund --prefix "$RUNNER_TEMP/md-runbook" md-runbook@0.26.6
+    npm install --no-save --ignore-scripts --no-audit --no-fund --prefix "$RUNNER_TEMP/md-runbook" md-runbook@0.26.7
     "$RUNNER_TEMP/md-runbook/node_modules/.bin/md-runbook" lint --strict runbooks/*.md
 ```
 
@@ -310,6 +310,6 @@ prose:
       with: { node-version: 22 }
     - name: "Prose: no Markdown file gets harder to read"
       run: |
-        npm install --no-save --ignore-scripts --no-audit --no-fund --prefix "$RUNNER_TEMP/md-runbook" md-runbook@0.26.6
+        npm install --no-save --ignore-scripts --no-audit --no-fund --prefix "$RUNNER_TEMP/md-runbook" md-runbook@0.26.7
         "$RUNNER_TEMP/md-runbook/node_modules/.bin/md-runbook" lint --prose-baseline .github/prose-baseline.json
 ```

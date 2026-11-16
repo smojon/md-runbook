@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.26.7
+
+The Getting Started pages, the example runbooks and the last READMEs follow the prose rules.
+
 - **Docs:** the Getting Started pages, the example runbooks, the contributor handoff and the
   remaining READMEs follow the prose rules. The handoff's release and VS Code issue notes are
   current again.
