@@ -55,6 +55,27 @@ test('hosts: a host= cell runs on its host; the shell carries over; an unknown h
   }
 });
 
+test('hosts: an injected secret under a cell env= name stays on this machine', async () => {
+  await setUp();
+  await vscode.commands.executeCommand('mdRunbook._test.setSecret', 'MDRB_REMOTE_TOKEN', 'stored-secret-r3');
+  await setConfig('secrets.inject', ['MDRB_REMOTE_TOKEN']);
+  try {
+    const uri = writeFile('hosts-env.md', '```bash host=ci env.MDRB_REMOTE_TOKEN=as-written\necho "token=$MDRB_REMOTE_TOKEN"\n```\n');
+    const editor = await openRunbook(uri);
+    await hook('allow', editor.notebook.uri.toString(), 'ci');
+    await selectKernel(editor);
+    await runCells(editor, 0, 1);
+    const cell = editor.notebook.cellAt(0);
+    assert.equal(await waitForRun(cell, 60_000), true, outputText(cell));
+    assert.match(outputText(cell), /token=as-written/);
+    assert.doesNotMatch(outputText(cell), /stored-secret-r3/);
+  } finally {
+    await setConfig('secrets.inject', undefined);
+    await vscode.commands.executeCommand('mdRunbook._test.deleteSecret', 'MDRB_REMOTE_TOKEN');
+    await closeAll();
+  }
+});
+
 test('hosts: Practice on a Host sends every cell there, whatever host= says', async () => {
   await setUp();
   try {

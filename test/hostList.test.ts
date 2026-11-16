@@ -150,7 +150,20 @@ describe('hosts: where a cell runs', () => {
   });
 
   it("a remote cell gets its own env= and its placeholders' values, nothing else", () => {
-    assert.deepEqual(remoteEnv({ A: '1', TOKEN: 's', PATH: '/x', HOME: '/h' }, ['A', 'TOKEN', 'MISSING']), { A: '1', TOKEN: 's' });
+    assert.deepEqual(remoteEnv({ A: '1' }, { TOKEN: 's' }, ['A', 'TOKEN', 'MISSING']), { A: '1', TOKEN: 's' });
+    // A placeholder's value wins over env= of the same name, as on this machine.
+    assert.deepEqual(remoteEnv({ TOKEN: 'cell' }, { TOKEN: 'asked' }, ['TOKEN']), { TOKEN: 'asked' });
+  });
+
+  it('an injected secret or a .env value under an env= name never reaches the host', () => {
+    // plan.env after secrets.inject / .env: API_TOKEN overwritten with the stored secret. Only the
+    // cell's env= as written goes, whatever the plan's env holds.
+    const cellEnv = { API_TOKEN: 'placeholder', REGION: 'eu' };
+    assert.deepEqual(remoteEnv(cellEnv, {}, ['API_TOKEN', 'REGION']), { API_TOKEN: 'placeholder', REGION: 'eu' });
+    // Cell options off: the names are still read, but no env= value is sent.
+    assert.deepEqual(remoteEnv({}, {}, ['API_TOKEN', 'REGION']), {});
+    // Names such as __proto__ or toString are not looked up through the prototype.
+    assert.deepEqual(remoteEnv({}, {}, ['toString', '__proto__']), {});
   });
 });
 

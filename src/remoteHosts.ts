@@ -329,9 +329,11 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     const { cell, notebook } = ctx;
     const info = infoOf(cell);
     const o = parseCellOptions(info);
+    const optionsOn = cfg().get<boolean>('cellOptions.enabled', true);
     const base = (): Omit<RemotePlan, 'hosts' | 'by'> => ({
       envNames: [...new Set([...Object.keys(o.env ?? {}), ...safeRefNames(cell.document.getText())])],
-      ...(o.cwd !== undefined && cfg().get<boolean>('cellOptions.enabled', true) ? { cwd: o.cwd } : {}),
+      cellEnv: optionsOn ? { ...(o.env ?? {}) } : {},
+      ...(o.cwd !== undefined && optionsOn ? { cwd: o.cwd } : {}),
     });
     const group = this.pendingGroup.get(cell);
     this.pendingGroup.delete(cell);
@@ -414,7 +416,7 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
       shell: kind,
       // An approved proposal was checked as bash, or as zsh with `shell: zsh` (as in the app).
       ...(byAssistant && kind === 'bash' ? { checkedAs: fm?.unix === 'zsh' ? ('zsh' as const) : ('bash' as const) } : {}),
-      env: remoteEnv(plan.env, r.envNames),
+      env: remoteEnv(r.cellEnv, plan.refValues ?? {}, r.envNames),
       ...(r.cwd !== undefined ? { cwd: r.cwd } : {}),
       ...(plan.timeoutMs > 0 ? { timeoutMs: plan.timeoutMs } : {}),
       signal: io.signal,

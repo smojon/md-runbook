@@ -226,10 +226,21 @@ export function groupResult(group: string, parts: readonly GroupPart[]): { exitC
   };
 }
 
-/** Environment variables a remote cell gets: its own env= and the values of its placeholders, nothing of this machine's. */
-export function remoteEnv(env: Readonly<Record<string, string>>, names: Iterable<string>): Record<string, string> {
+/**
+ * Environment variables a remote cell gets: its own env= values as written and the values of its
+ * placeholders (they win, as on this machine), nothing of this machine's. Never built from the
+ * plan's env: later preparers put injected secrets and .env values there under the same names.
+ */
+export function remoteEnv(
+  cellEnv: Readonly<Record<string, string>>,
+  refValues: Readonly<Record<string, string>>,
+  names: Iterable<string>,
+): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const n of names) if (env[n] !== undefined) out[n] = env[n]!;
+  for (const n of names) {
+    const v = Object.prototype.hasOwnProperty.call(refValues, n) ? refValues[n] : Object.prototype.hasOwnProperty.call(cellEnv, n) ? cellEnv[n] : undefined;
+    if (v !== undefined) out[n] = v;
+  }
   return out;
 }
 
@@ -241,6 +252,8 @@ export interface RemotePlan {
   group?: string;
   /** The environment variables sent: the cell's env= and its placeholders' names. */
   envNames: string[];
+  /** The cell's env= values as written (none when cell options are off): what is sent for them. */
+  cellEnv: Record<string, string>;
   /** The cell's cwd= as written (a folder on the host), not this machine's folder. */
   cwd?: string;
   /** A group run: its checks and retry=, judged on each host (moved off the plan). */

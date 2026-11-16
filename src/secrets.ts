@@ -382,6 +382,7 @@ class SecretsFeature {
         secrets.add(ref.name);
       }
     }
+    plan.refValues = values;
     if (plan.checks && checkText !== '') plan.checks = resolveChecks(plan.checks, values, (n) => secrets.has(n));
     plan.kubeContext = resolveKubeContext(wantedContext, (n) => values[n]);
     // The parameter's value isn't in the file: the run records it.

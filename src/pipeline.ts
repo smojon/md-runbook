@@ -66,6 +66,11 @@ export interface CellPlan {
   kubeContext?: string;
   /** Set by runbookEnv.ts: `env.KUBECONFIG` pins the cell's kube-context (kube-context-mode: pin). */
   kubeContextPinned?: boolean;
+  /**
+   * Set by secrets.ts: the values of the cell's placeholders, by name. A remote cell sends these
+   * and its env= as written, never plan.env (injected secrets and .env values land there too).
+   */
+  refValues?: Record<string, string>;
   /** Set by secrets.ts for a runbook call: the values of the placeholders in its src= and body. */
   callValues?: Record<string, string>;
   /** Set by remoteHosts.ts: the cell runs on these hosts over SSH, not on this machine. */
