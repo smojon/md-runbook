@@ -154,6 +154,8 @@ export const manifestVersion = (m: Pick<Manifest, 'text'>): 1 | 2 => (m.text !==
  * - A note's marker (incident.ts formatNote): one comment alone on its line, without `>` or `--`
  *   inside; then its quote lines.
  * - An output block's markers likewise; when one is not, no output block is set aside.
+ * - An output block, and each of its history, in the form formatOutputBlock writes it
+ *   (outputsAsWritten); when one is not, no output block is set aside.
  */
 const FIELD = '(?:[A-Za-z0-9_@.+:]|-(?!-))+';
 const B64_LINES = '(?:[A-Za-z0-9+/=]+\\n)+';
@@ -167,6 +169,49 @@ const STRICT_OUTPUT_MARK_RE = /^[ \t]*<!--[ \t]*md-runbook:output (?:start|end)\
 /** The summary of earlier runs (history.ts historySummary), which a Markdown view shows. */
 const STRICT_HISTORY_OPEN_RE = /^[ \t]*<details>[ \t]*<summary>[ \t]*md-runbook: \d+ previous runs?<\/summary>[ \t]*$/;
 const TASK_BOX_RE = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[)[xX](\](?=[ \t]|$))/;
+
+/**
+ * Whether the output block `raw` (LF, start marker through end marker) is as formatOutputBlock
+ * writes it at `indent`: each marker at the indent, the open fence `indent` + backticks + `text`,
+ * the close fence exactly the same backticks at the indent, every other line empty or at the
+ * indent. Before, any fence the parser took was set aside: a fence indented 4 spaces or a tab is
+ * no fence on GitHub, and its "output" showed as prose (bold, headings) in a runbook still signed
+ * as a whole; a close fence indented 4 spaces ended the block for the parser only, and turned the
+ * signed prose after it into code there (security review, round 5).
+ */
+function blockAsWritten(raw: string, indent: string): boolean {
+  const lines = raw.replace(/\n$/, '').split('\n');
+  if (lines.length < 4) return false;
+  const [start, open] = lines as [string, string];
+  const close = lines[lines.length - 2]!;
+  const end = lines[lines.length - 1]!;
+  const fence = /^`{3,}(?=text$)/.exec(open.slice(indent.length))?.[0];
+  const atIndent = (l: string): boolean => l.startsWith(indent) && !/^[ \t]/.test(l.slice(indent.length));
+  return (
+    fence !== undefined &&
+    open === `${indent}${fence}text` &&
+    close === indent + fence &&
+    atIndent(start) &&
+    STRICT_OUTPUT_MARK_RE.test(start) &&
+    end === `${indent}<!-- md-runbook:output end -->` &&
+    lines.slice(2, -2).every((l) => l === '' || l.startsWith(indent))
+  );
+}
+
+/** Whether every output block of LF text `t`, and its history, is as md-runbook writes it (blockAsWritten). */
+function outputsAsWritten(t: string): boolean {
+  for (const c of parse(t).cells) {
+    const m = c.meta;
+    if (m.kind !== 'code') continue;
+    if (m.output && !blockAsWritten(m.output.raw.slice(m.output.gap.length), m.indent)) return false;
+    if (!m.history) continue;
+    const lines = m.history.raw.slice(m.history.gap.length).replace(/\n$/, '').split('\n');
+    const [first] = lines as [string];
+    if (!first.startsWith(m.indent) || /^[ \t]/.test(first.slice(m.indent.length)) || lines[lines.length - 1] !== `${m.indent}</details>`) return false;
+    if (!m.history.entries.every((e) => e.raw !== undefined && blockAsWritten(e.raw, m.indent))) return false;
+  }
+  return true;
+}
 
 /**
  * Offsets of the lines of LF text that are prose: in no code cell the parser finds, in no other
@@ -244,7 +289,7 @@ export function signedText(text: string): string {
   // A run record's signature and notes only outside code: a note-shaped line in a block is code.
   t = removeInProse(t, RECORD_BLOCK_RE);
   const written = (l: string): boolean => (!OUTPUT_MARK_RE.test(l) || STRICT_OUTPUT_MARK_RE.test(l)) && (!HISTORY_OPEN_RE.test(l) || STRICT_HISTORY_OPEN_RE.test(l));
-  if (t.split('\n').every(written)) t = clearOutputBlocks(t);
+  if (t.split('\n').every(written) && outputsAsWritten(t)) t = clearOutputBlocks(t);
   t = removeInProse(t, NOTE_BLOCK_RE);
   // Ticks, outside code blocks.
   let open: FenceOpen | null = null;
