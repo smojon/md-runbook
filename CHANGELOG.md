@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+Security fixes from a review of the parts that face the network.
+
+- **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
+  through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each
+  address, and also refuses multicast, reserved and NAT64 addresses.
+- **Links (app and VS Code):** a runbook from a link shows as signed, and passes **Open only
+  signed runbooks from links**, only when its signature verifies against a key you trust.
+  - Before, any well-formed signature block was enough.
+  - For a whole-runbook signature, changed text around the blocks also counts as unsigned now.
+  - VS Code checks against `mdRunbook.signing.allowedSigners`.
+- **Library server:** `ALERT_MAP` needs `ALERTS_TOKENS`, so nobody else can post alerts.
+  `ALERTS_ALLOW_ANYONE=true` keeps the old behaviour, for a private network only.
+- **Web container:** no other site can show the app in a frame (`frame-ancestors 'none'`,
+  `X-Frame-Options: DENY`).
+
 ## 0.26.8
 
 The Android APK is signed with the app's own key and attached to each release. Progress and notes are fixed.

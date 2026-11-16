@@ -720,7 +720,11 @@ export function libraryKeys(lib: Pick<Library, 'base' | 'signers'>): TrustedSign
  * now when that library is the one read); for any other runbook, the keys added by you.
  */
 export function runbookKeys(r: Pick<Runbook, 'source' | 'library'> | undefined): TrustedSigner[] {
-  const base = r?.source === 'library' ? r.library?.base : undefined;
+  return keysForLibrary(r?.source === 'library' ? r.library?.base : undefined);
+}
+
+/** The keys a runbook of the library at `base` is checked against (undefined: not a library runbook). */
+export function keysForLibrary(base: string | undefined): TrustedSigner[] {
   if (base === undefined) return keysFor(undefined);
   return libraryKeys(state.library?.base === base ? state.library : { base });
 }
