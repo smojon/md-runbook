@@ -144,7 +144,8 @@ jobs:
           fi
           cat "$RUNNER_TEMP/out/app.entitlements"
           # A tar keeps the bundle's symlinks and executable bits, which an artifact's zip drops.
-          tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/out/md-runbook.xcarchive.tar" md-runbook.xcarchive
+          # COPYFILE_DISABLE: no ._ files for extended attributes (the sign job unpacks with Python).
+          COPYFILE_DISABLE=1 tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/out/md-runbook.xcarchive.tar" md-runbook.xcarchive
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
@@ -171,31 +172,49 @@ jobs:
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: ${{ runner.temp }}/in
+      # The build ran npm, CocoaPods and Xcode's script phases, so its tar is checked, not trusted:
+      # Python's tarfile with filter='data' (no absolute or .. paths, no device files, no links out
+      # of the folder), no control character in a name, one app with a plain name. Nothing from
+      # the tar goes to GITHUB_ENV: each step finds the app again.
       - name: Unpack the archive
         working-directory: ${{ runner.temp }}/in
         run: |
           got=$(find . -mindepth 1 ! -type d | LC_ALL=C sort)
           if [ "$got" != "$(printf '%s\n' ./app.entitlements ./md-runbook.xcarchive.tar)" ]; then
-            echo "::error::ios-archive-unsigned is not app.entitlements and md-runbook.xcarchive.tar alone: $got"
+            echo "::error::ios-archive-unsigned is not app.entitlements and md-runbook.xcarchive.tar alone"
             exit 1
           fi
-          if tar -tf md-runbook.xcarchive.tar | grep -vE '^md-runbook\.xcarchive(/|$)' | grep -q . \
-            || tar -tf md-runbook.xcarchive.tar | grep -qE '(^|/)\.\.(/|$)'; then
-            echo "::error::the tar holds paths outside md-runbook.xcarchive"
-            exit 1
-          fi
-          tar -C "$RUNNER_TEMP" -xf md-runbook.xcarchive.tar
+          mkdir "$RUNNER_TEMP/archive"
+          python3 -I - md-runbook.xcarchive.tar "$RUNNER_TEMP/archive" <<'PY'
+          import re, sys, tarfile
+          tar_file, dest = sys.argv[1:]
+          if not hasattr(tarfile, 'data_filter'):
+              sys.exit('::error::this python3 has no tarfile filters (Python 3.12 or newer)')
+          control = re.compile(r'[\x00-\x1f\x7f]')
+          plain_app = re.compile(r'^[A-Za-z0-9._-]+\.app$')
+          apps = 'md-runbook.xcarchive/Products/Applications'
+          with tarfile.open(tar_file) as t:
+              members = t.getmembers()
+              for m in members:
+                  if control.search(m.name) or control.search(m.linkname):
+                      sys.exit(f'::error::a name in the tar has a control character: {m.name!r}')
+                  parts = m.name.rstrip('/').split('/')
+                  if parts[0] != 'md-runbook.xcarchive' or any(p in ('', '.', '..') for p in parts):
+                      sys.exit(f'::error::the tar holds a path outside md-runbook.xcarchive: {m.name!r}')
+                  if not (m.isdir() or m.isfile() or m.issym() or m.islnk()):
+                      sys.exit(f'::error::the tar holds a special file: {m.name!r}')
+              found = {m.name.rstrip('/').split('/')[3] for m in members if m.name.startswith(apps + '/')}
+              if len(found) != 1 or not plain_app.match(next(iter(found))):
+                  sys.exit(f'::error::the archive does not hold one app with a plain name: {sorted(found)!r}')
+              app = f'{apps}/{found.pop()}'
+              if not any(m.name.rstrip('/') == app and m.isdir() for m in members):
+                  sys.exit(f'::error::{app!r} is not a folder')
+              for extra in ('PlugIns', 'Watch', 'Extensions'):
+                  if any(m.name.startswith(f'{app}/{extra}/') or m.name.rstrip('/') == f'{app}/{extra}' for m in members):
+                      sys.exit("::error::the app has extensions: each needs its own profile, which this workflow doesn't sign")
+              t.extractall(dest, filter='data')
+          PY
           rm md-runbook.xcarchive.tar
-          apps=("$RUNNER_TEMP"/md-runbook.xcarchive/Products/Applications/*.app)
-          if [ "${#apps[@]}" != 1 ] || [ ! -d "${apps[0]}" ]; then
-            echo "::error::the archive does not hold one app"
-            exit 1
-          fi
-          if [ -e "${apps[0]}/PlugIns" ] || [ -e "${apps[0]}/Watch" ] || [ -e "${apps[0]}/Extensions" ]; then
-            echo "::error::the app has extensions: each needs its own profile, which this workflow doesn't sign"
-            exit 1
-          fi
-          echo "APP=${apps[0]}" >> "$GITHUB_ENV"
       - name: Install the provisioning profile
         env:
           PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE }}
@@ -216,6 +235,11 @@ jobs:
           fi
           if pb ProvisionedDevices >/dev/null 2>&1; then
             echo "::error::the profile lists devices: it is not an App Store profile"
+            exit 1
+          fi
+          # Lines for GITHUB_ENV: no value may hold a line break.
+          if ! [[ "$uuid" =~ ^[0-9A-Fa-f-]{36}$ && "$team" =~ ^[A-Z0-9]{10}$ ]] || [[ "$name" =~ [[:cntrl:]] ]]; then
+            echo "::error::the profile's UUID, team or name is not what Apple writes"
             exit 1
           fi
           for d in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
@@ -280,7 +304,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" > /dev/null
           security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
           id=$(security find-identity -v -p codesigning "$kc" | awk '/"Apple Distribution/ {print $2; exit}')
-          if [ -z "$id" ]; then
+          if ! [[ "$id" =~ ^[0-9A-F]{40}$ ]]; then
             echo "::error::the .p12 holds no Apple Distribution certificate"
             exit 1
           fi
@@ -290,6 +314,14 @@ jobs:
       # The export then signs again and keeps these entitlements.
       - name: Sign the archived app with its entitlements
         run: |
+          # Found again here, not passed in GITHUB_ENV: the name came from the build's tar.
+          apps=("$RUNNER_TEMP"/archive/md-runbook.xcarchive/Products/Applications/*.app)
+          APP="${apps[0]}"
+          if [ "${#apps[@]}" != 1 ] || [ -L "$APP" ] || [ ! -d "$APP" ] || ! [[ "$(basename "$APP")" =~ ^[A-Za-z0-9._-]+\.app$ ]]; then
+            echo "::error::the archive does not hold one app with a plain name"
+            exit 1
+          fi
+          rm -f "$APP/embedded.mobileprovision"
           cp "$RUNNER_TEMP/appstore.mobileprovision" "$APP/embedded.mobileprovision"
           if [ -d "$APP/Frameworks" ]; then
             find "$APP/Frameworks" -mindepth 1 -maxdepth 1 \( -name '*.framework' -o -name '*.dylib' \) -print0 |
@@ -314,7 +346,7 @@ jobs:
             -c "Add :provisioningProfiles:$BUNDLE_ID string $PROFILE_NAME" \
             -c 'Add :uploadSymbols bool true' \
             -c 'Add :manageAppVersionAndBuildNumber bool false' "$plist"
-          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/md-runbook.xcarchive" \
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/archive/md-runbook.xcarchive" \
             -exportPath "$RUNNER_TEMP/export" -exportOptionsPlist "$plist"
           mkdir -p "$RUNNER_TEMP/ipa"
           mv "$RUNNER_TEMP"/export/*.ipa "$RUNNER_TEMP/ipa/md-runbook.ipa"
@@ -364,6 +396,11 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
           BUILD: ${{ needs.build.outputs.build }}
         run: |
+          # The version came from the build job, which ran npm: only a plain version and number.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$BUILD" =~ ^[0-9]+$ ]]; then
+            echo "::error::the build job's version or build number is not plain"
+            exit 1
+          fi
           # altool reads AuthKey_<key id>.p8 from API_PRIVATE_KEYS_DIR.
           export API_PRIVATE_KEYS_DIR="$RUNNER_TEMP/private_keys"
           mkdir -p "$API_PRIVATE_KEYS_DIR"
