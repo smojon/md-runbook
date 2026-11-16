@@ -1,0 +1,76 @@
+//go:build unix
+
+// Package logx writes the gate's events: one JSON line each, to syslog (tag md-runbook-gate,
+// facility user, priority notice, as logger(1) sent them) or appended to a file. A failure to log
+// never stops a request.
+package logx
+
+import (
+	"log/syslog"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/smojon/md-runbook/apps/gate/internal/textutil"
+)
+
+// Tag is the syslog tag (journalctl -t md-runbook-gate).
+const Tag = "md-runbook-gate"
+
+// Logger writes events with the session's account, key (who) and client address.
+type Logger struct {
+	// Dest is "syslog" or a file.
+	Dest                 string
+	Account, Who, Client string
+
+	mu sync.Mutex
+	sl *syslog.Writer
+}
+
+// Now is the time as the gate logs it (UTC, seconds).
+func Now() string { return time.Now().UTC().Format("2006-01-02T15:04:05Z") }
+
+// Line is an event as one JSON line: time, account, who, client, then the pairs (KEY, VALUE, ...).
+func (l *Logger) Line(kv ...string) string {
+	var b strings.Builder
+	b.WriteString(`{"time":"` + Now() + `"`)
+	b.WriteString(`,"account":` + textutil.JSON(l.Account))
+	b.WriteString(`,"who":` + textutil.JSON(l.Who))
+	b.WriteString(`,"client":` + textutil.JSON(l.Client))
+	for i := 0; i+1 < len(kv); i += 2 {
+		b.WriteString(`,"` + kv[i] + `":` + textutil.JSON(kv[i+1]))
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+// Event logs one event.
+func (l *Logger) Event(kv ...string) { l.Write(l.Line(kv...)) }
+
+// Write logs a line as it is.
+func (l *Logger) Write(entry string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.Dest == "syslog" {
+		if l.sl == nil {
+			w, err := syslog.New(syslog.LOG_USER|syslog.LOG_NOTICE, Tag)
+			if err != nil {
+				return
+			}
+			l.sl = w
+		}
+		if l.sl.Notice(entry) != nil {
+			// Reconnects on the next event.
+			l.sl.Close()
+			l.sl = nil
+		}
+		return
+	}
+	f, err := os.OpenFile(l.Dest, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
+	if err != nil {
+		return
+	}
+	f.WriteString(entry + "\n")
+	f.Close()
+}
