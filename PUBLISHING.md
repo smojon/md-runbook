@@ -59,6 +59,20 @@ Store it as the repository secret `NPM_TOKEN`, and give it to the publish step a
 To check the package without publishing:
 `npm run compile && node scripts/pack-cli.js && (cd out/npm && npm pack --dry-run)`.
 
+### Android app signing key
+
+The App APK workflow (`.github/workflows/app-apk.yml`) signs the Android app with one key, and
+attaches `md-runbook-X.Y.Z.apk` to each version's release.
+
+- Secrets: `ANDROID_KEYSTORE_BASE64` (the PKCS12 keystore, base64) and
+  `ANDROID_KEYSTORE_PASSWORD`. The alias is `md-runbook`.
+- Certificate SHA-256 (pinned in the workflow):
+  `CC:EE:87:05:39:E6:4E:C1:1E:08:ED:A8:91:D9:EA:C9:36:2E:0E:29:4A:5D:EF:89:C8:AE:B5:34:27:AE:CE:30`.
+- Keep an offline copy of the keystore and its password. A lost key means installed apps can
+  never be updated.
+- On Google Play, give this key as the app signing key ("provide a copy of your app signing
+  key"), and make a separate upload key. Play takes an `.aab`, not this APK.
+
 ### Repository
 
 - The Marketplace page shows the README. Its screenshots use relative paths, which `vsce`

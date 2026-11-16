@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Android app:** the APK is signed with the app's own key, not the template's public debug key,
+  and each release has it attached (`md-runbook-X.Y.Z.apk`). Uninstall a debug-signed copy once
+  first: Android won't update an app across keys.
+
 ## 0.26.6
 
 A cell's own `env.NAME=` now wins over the `.env` file. The sample runbook follows the prose rules.
