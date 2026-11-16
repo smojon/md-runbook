@@ -13,7 +13,7 @@ import { isCodeMeta, locateCodeCells, parse, shellKindForLanguage } from '@md-ru
 import { callRefs, fillRefs, parseCall } from '@md-runbook/core/call';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { callTarget, samePath, sshVerify } from '@md-runbook/core/node';
-import { runFrontMatterKeys } from '@md-runbook/core/frontMatterRun';
+import { v1FrontMatterProblems } from '@md-runbook/core/frontMatterRun';
 import { currentOs } from '@md-runbook/core/os';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { allSignatures, signedStatus } from '@md-runbook/core/signing';
@@ -97,13 +97,12 @@ export async function checkSignedRun(
   // The front matter changes how every cell runs (env: BASH_ENV, cwd:, shell:, …): only a
   // whole-runbook signature (manifest version 2) covers it, and only while the text is as signed
   // (security review, 2026-11-16).
-  const runFm = parseFrontMatter(text);
   if (status.version === 2 && status.textChanged) {
     say('changed since signing outside its blocks (front matter or text): sign it again');
   } else if (status.version !== 2) {
-    // The same list as links (core/runbookLink.ts linkTrust).
-    const set = runFrontMatterKeys(runFm);
-    if (set.length) say(`its front matter sets ${set.join(', ')}, which its signature (manifest version 1) doesn't cover: sign it again`);
+    // The same allow-list as links (core/runbookLink.ts linkTrust).
+    const set = v1FrontMatterProblems(text);
+    if (set.length) say(`its front matter has ${set.join(', ')}, which its signature (manifest version 1) doesn't cover: sign it again`);
   }
   const doc = parse(text);
   doc.cells.forEach((c, i) => {

