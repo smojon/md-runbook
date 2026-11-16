@@ -22,6 +22,18 @@ import type { CellInput } from '@md-runbook/core';
 import { SIGNATURE_NAMESPACE, readSignature, signedStatus } from '@md-runbook/core/signing';
 import { sha256Hex } from '@md-runbook/core/sha256';
 import { runbookTitle } from '@md-runbook/core/title';
+import type { LibraryIndex } from '@md-runbook/core/library';
+import {
+  MAX_LIBRARY_FILES,
+  isMarkdownPath,
+  libraryFileUrl,
+  libraryPathOk,
+  libraryUrlProblemKind,
+  nameFitsPath,
+  normalizeLibraryUrl,
+  parseAutoindex,
+  parseIndexJson,
+} from '@md-runbook/core/library';
 import { t } from '../i18n';
 import { loadSettings, libraryUrlSetting } from '../settings/store';
 import { DEFAULT_LIBRARY_PATH, loadRuntimeConfig, pageOrigin, runtimeConfig } from '../settings/runtimeConfig';
@@ -59,8 +71,10 @@ import {
   updateRunbookText,
 } from './store';
 
-/** At most this many runbooks (and folder levels) are read from a library. */
-export const MAX_LIBRARY_FILES = 200;
+export type { LibraryFile, LibraryIndex } from '@md-runbook/core/library';
+export { MAX_LIBRARY_FILES, libraryFileUrl, nameFitsPath, normalizeLibraryUrl, parseAutoindex, parseIndexJson };
+
+/** At most this many folder levels are read from a library (and MAX_LIBRARY_FILES runbooks). */
 const MAX_DEPTH = 3;
 /** A library fetched less than this long ago is not fetched again on start (pull to refresh does). */
 export const LIBRARY_CACHE_MS = 60_000;
@@ -77,51 +91,19 @@ export const libraryHash = (text: string): string => sha256Hex(text);
 
 // ---- the address ----
 
-/** Control characters (C0, DEL) and bidi controls: refused anywhere in an address. */
-const hasControl = (s: string): boolean =>
-  [...s].some((c) => {
-    const n = c.codePointAt(0)!;
-    return n < 0x20 || n === 0x7f || (n >= 0x200e && n <= 0x200f) || (n >= 0x202a && n <= 0x202e) || (n >= 0x2066 && n <= 0x2069);
-  });
-
 /**
  * Why this can't be a library address, or undefined: https only (http for this machine), no
- * user name or password, no query or fragment. Backslashes, blanks and control characters are
- * refused before parsing: URL parsers disagree on them (a backslash is a slash to the web's
- * parser, not to every phone's), so the host shown could differ from the host fetched.
+ * user name or password, no query or fragment (core's libraryUrlProblemKind, in the app's words).
  */
 export function libraryUrlProblem(url: string): string | undefined {
-  const s = url.trim();
-  if (/[\s\\]/.test(s) || hasControl(s)) return t.libraryUrlInvalid;
-  // user:password@ before the host, whatever a parser would make of it.
-  if (/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i.test(s)) return t.libraryUrlUserinfo;
-  let u: URL;
-  try {
-    u = new URL(s);
-  } catch {
-    return t.libraryUrlInvalid;
-  }
-  if (u.username || u.password) return t.libraryUrlUserinfo;
-  if (u.protocol === 'https:') return u.search || u.hash ? t.libraryUrlInvalid : undefined;
-  if (u.protocol === 'http:' && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname))
-    return u.search || u.hash ? t.libraryUrlInvalid : undefined;
-  return t.libraryUrlHttps;
-}
-
-/**
- * The address as the app stores, fetches and shows it: the parsed URL's own form (`href`: host in
- * lower case and punycode, the path normalised), as a folder (ends with /). Check it with
- * libraryUrlProblem first.
- */
-export function normalizeLibraryUrl(url: string): string {
-  const s = url.trim();
-  let href: string;
-  try {
-    href = new URL(s).href;
-  } catch {
-    href = s;
-  }
-  return href.endsWith('/') ? href : href + '/';
+  const kind = libraryUrlProblemKind(url);
+  return kind === 'invalid'
+    ? t.libraryUrlInvalid
+    : kind === 'userinfo'
+      ? t.libraryUrlUserinfo
+      : kind === 'https'
+        ? t.libraryUrlHttps
+        : undefined;
 }
 
 /**
@@ -175,77 +157,7 @@ export function libraryHost(base: string): string {
 
 // ---- reading a library ----
 
-export interface LibraryFile {
-  /** Relative to the library's folder: `deploy.md`, `db/restore.md`. */
-  path: string;
-  title?: string;
-  /** The group it is listed under ('' for none); by default its subfolder. */
-  folder?: string;
-}
-
-export interface LibraryIndex {
-  files: LibraryFile[];
-  signedOnly: boolean;
-}
-
-/** A path inside the library: relative, no `..`, no backslashes or addresses. */
-const safePath = (p: string): boolean =>
-  p !== '' &&
-  !p.startsWith('/') &&
-  !p.includes('\\') &&
-  !p.includes('://') &&
-  p.split('/').every((s) => s !== '' && s !== '.' && s !== '..');
-const isMarkdown = (p: string): boolean => /\.(md|markdown)$/i.test(p);
 const dirOf = (p: string): string => p.split('/').slice(0, -1).join('/');
-
-/**
- * index.json: `{ "signedOnly": true, "runbooks": [ "deploy.md", { "path": "db/restore.md",
- * "title": "Restore", "folder": "Databases" } ] }`, or the list alone. Undefined when it's not one.
- */
-export function parseIndexJson(v: unknown): LibraryIndex | undefined {
-  const obj = typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
-  const list = Array.isArray(v) ? v : obj?.runbooks;
-  if (!Array.isArray(list)) return undefined;
-  const files: LibraryFile[] = [];
-  for (const e of list) {
-    const f: LibraryFile | undefined =
-      typeof e === 'string'
-        ? { path: e }
-        : typeof e === 'object' && e !== null && typeof (e as LibraryFile).path === 'string'
-          ? {
-              path: (e as LibraryFile).path,
-              ...(typeof (e as LibraryFile).title === 'string' && (e as LibraryFile).title!.trim()
-                ? { title: (e as LibraryFile).title!.trim() }
-                : {}),
-              ...(typeof (e as LibraryFile).folder === 'string' ? { folder: (e as LibraryFile).folder!.trim() } : {}),
-            }
-          : undefined;
-    const path = f?.path.replace(/^\.\//, '');
-    if (f && path && safePath(path) && isMarkdown(path) && !files.some((x) => x.path === path)) files.push({ ...f, path });
-  }
-  return { files: files.slice(0, MAX_LIBRARY_FILES), signedOnly: obj?.signedOnly === true };
-}
-
-/**
- * nginx's JSON listing of a folder (`[{ "name": "a.md", "type": "file", … }, { "name": "db",
- * "type": "directory", … }]`): its runbooks, subfolders, and whether allowed_signers is there.
- */
-export function parseAutoindex(v: unknown): { files: string[]; dirs: string[]; allowedSigners: boolean } | undefined {
-  if (!Array.isArray(v)) return undefined;
-  const files: string[] = [];
-  const dirs: string[] = [];
-  let allowedSigners = false;
-  for (const e of v) {
-    if (typeof e !== 'object' || e === null) continue;
-    const { name, type } = e as { name?: unknown; type?: unknown };
-    if (typeof name !== 'string' || !safePath(name) || name.includes('/') || name.startsWith('.')) continue;
-    if (type === 'directory') dirs.push(name);
-    else if (type === 'file' && isMarkdown(name)) files.push(name);
-    else if (type === 'file' && name === 'allowed_signers') allowedSigners = true;
-  }
-  const byName = (a: string, b: string): number => a.localeCompare(b);
-  return { files: files.sort(byName), dirs: dirs.sort(byName), allowedSigners };
-}
 
 export interface LibraryEntry {
   path: string;
@@ -271,10 +183,8 @@ export interface Library {
 
 export type LibraryFetch = { kind: 'none' } | { kind: 'error'; message: string } | { kind: 'ok'; library: Library };
 
-const urlOf = (base: string, path: string): string => base + path.split('/').map(encodeURIComponent).join('/');
-
 /** The address of the library file at `path` (as fetched: a runbook link to it names this). */
-export const libraryFileUrl = urlOf;
+const urlOf = libraryFileUrl;
 
 /**
  * The library runbook an address names, or undefined: an address under the library the app reads
@@ -299,7 +209,7 @@ export function libraryTarget(url: string): { base: string; path: string } | und
   } catch {
     return undefined;
   }
-  return safePath(path) && isMarkdown(path) && urlOf(base, path) === href ? { base, path } : undefined;
+  return libraryPathOk(path) && isMarkdownPath(path) && urlOf(base, path) === href ? { base, path } : undefined;
 }
 
 /**
@@ -817,26 +727,6 @@ export function resetLibrary(): void {
 }
 
 // ---- what a library runbook's signature says, for the list and the opened copy ----
-
-/** The path as a signed name is written: without `.md`, each part as signPlan makes a name of a file name, lower case. */
-const nameOfPath = (path: string): string =>
-  path
-    .replace(/(\.runbook)?\.(md|markdown)$/i, '')
-    .split('/')
-    .map((part) => part.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[^A-Za-z0-9]+/, ''))
-    .join('/')
-    .toLowerCase();
-
-/**
- * Whether the signed name fits the file it is served as: the whole name is the end of the path,
- * part by part. `restart` fits `restart.md` and `ops/restart.md`; `ops/restart` fits
- * `ops/restart.md` and `x/ops/restart.md`, not `restart.md` or `staging/restart.md`.
- */
-export function nameFitsPath(name: string, path: string): boolean {
-  const n = name.toLowerCase();
-  const p = nameOfPath(path);
-  return n !== '' && (p === n || p.endsWith('/' + n));
-}
 
 export interface SignedFacts {
   name: string;

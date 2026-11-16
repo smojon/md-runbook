@@ -84,6 +84,16 @@ Security fixes from a review of the parts that face the network.
   - Values in the table stay text: a resource name can't make a link, an image or HTML.
 - **VS Code, Set Parameters and Set Inputs:** only the extension test runner can pass them
   values. The commands themselves always ask.
+- **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
+  the team library server, or take one out. The upload token stays in VS Code's secret storage.
+  An unsigned runbook gets a **Sign Runbook** button first.
+- **VS Code: the Library view** (Runbook activity bar) lists your team library by folder, as the
+  app's Team runbooks do. Each row says whether its signature is verified against your trusted
+  signers. Opening one makes your own copy.
+- **VS Code: Trusted Signers…** (Share ▾) lists, adds and removes the signers in your
+  allowed_signers file. It adds a pasted line, a public key, or the team library's signers.
+- **Command line: `md-runbook unpublish PATH --library URL`** removes a runbook from a team
+  library, where its server allows deleting.
 
 
 ## 0.26.8

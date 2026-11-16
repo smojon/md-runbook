@@ -239,6 +239,13 @@ Exit code:
 - `1` refused (the reason is printed);
 - `2` a usage error or no usable answer.
 
+`md-runbook unpublish ops/file.md --library https://runbooks.example.net` removes one, with the
+same token. Only where the server allows it (`LIBRARY_ALLOW_DELETE=true`). Exit code `1` when
+it isn't there, removing is off, or the token is refused.
+
+In VS Code: **Publish to Library…** and **Remove from Library…** (Share ▾). They keep the token
+in VS Code's secret storage.
+
 ## Gate audit
 
 `md-runbook audit gate.log… [--record incident.md] [--out audit.pdf]` reports what servers with
