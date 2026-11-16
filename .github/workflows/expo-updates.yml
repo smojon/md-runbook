@@ -37,6 +37,7 @@ jobs:
       npm_config_ignore_scripts: 'true'
     outputs:
       changed: ${{ steps.update.outputs.changed }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -75,6 +76,7 @@ jobs:
             cp package.json package-lock.json "$RUNNER_TEMP/summary.md" "$RUNNER_TEMP/update/"
           fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: upload
         if: steps.update.outputs.changed == 'true'
         with:
           name: expo-update
@@ -98,15 +100,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: main
+      # By the ID the update job uploaded: no other job of the run can swap it.
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: expo-update
+          artifact-ids: ${{ needs.update.outputs.artifact_id }}
           path: ${{ runner.temp }}/update
-      - name: Push the branch and open or update the pull request
+      # The update job ran npm, so its files are checked: only the versions the summary names
+      # changed in package.json, and every package in the lock file is from registry.npmjs.org.
+      - name: The update changes only what its summary says
         run: |
           # Only the two files: anything else the update job left is not taken.
           cp "$RUNNER_TEMP/update/package.json" "$RUNNER_TEMP/update/package-lock.json" .
           cp "$RUNNER_TEMP/update/summary.md" "$RUNNER_TEMP/summary.md"
+          node ../../.github/scripts/check-expo-update.mjs "$RUNNER_TEMP/summary.md"
+      - name: Push the branch and open or update the pull request
+        run: |
           # "- `expo` 58.0.19 → **58.0.21** (published …)" -> "expo 58.0.21"
           list=$(sed -nE 's/^- `([^`]+)` [^ ]+ → \*\*([^*]+)\*\*.*/\1 \2/p' "$RUNNER_TEMP/summary.md")
           first=$(echo "$list" | head -3 | paste -sd, - | sed 's/,/, /g')
