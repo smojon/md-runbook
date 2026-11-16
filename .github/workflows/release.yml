@@ -281,8 +281,10 @@ jobs:
   marketplace:
     needs: package
     runs-on: ubuntu-latest
-    # The Marketplace's trusted publisher policy names this environment too (PUBLISHING.md).
-    environment: release
+    # Its own environment, which the Marketplace's policy names (PUBLISHING.md): npm's trusted
+    # publisher checks the environment, not the job, so in `release` this job's OIDC token could
+    # be traded for an npm publish token, and the npm job's for a Marketplace one (review 2026-11-16).
+    environment: release-marketplace
     permissions:
       contents: read
       id-token: write # Marketplace trusted publishing: no VSCE_PAT; the token lives 15 minutes

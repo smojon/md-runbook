@@ -23,7 +23,8 @@ The publishing secrets live in the GitHub environment `release`, not in the repo
    that field if you pick another ID.
 2. On the publisher's page, open **Trusted Publishing** and create a policy:
    - repository owner `smojon`, repository `md-runbook`;
-   - workflow `release.yml`, environment `release`.
+   - workflow `release.yml`, environment `release-marketplace` (not `release`: see
+     [Release environments](#release-environments)).
 3. Set the repository variable `MARKETPLACE_TRUSTED_PUBLISHING` to `true`.
    - No token: `vsce publish --oidc` trades the job's OIDC token for one that lives 15 minutes.
    - In a private repository the policy lapses unless it is used within 48 hours (this one is
@@ -102,8 +103,12 @@ its APK is in each version's release (the Release workflow calls it).
 
 - Set up environments as in
   [Managing environments for deployment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
-- The npm, Open VSX and Marketplace jobs run in the environment `release`. It holds `OVSX_PAT`
-  and allows only `v*` tags. npm and the Marketplace need no secret: both use trusted publishing.
+- The npm and Open VSX jobs run in the environment `release`. It holds `OVSX_PAT` and allows
+  only `v*` tags.
+- The Marketplace job runs in its own environment, `release-marketplace`, also `v*` tags only.
+  - npm and the Marketplace need no secret: both use trusted publishing (OIDC).
+  - A trusted publisher checks the workflow and the environment, not the job. Two OIDC jobs in one
+    environment could each get the other registry's publish token.
 - A repository secret is readable by every workflow on every branch. Delete `OVSX_PAT` there
   once it is in `release`.
 - Each publishing job holds one credential and runs none of the repository's dependencies.
