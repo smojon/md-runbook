@@ -12,6 +12,7 @@ its signature, a condition of running at all.
 ---
 report-runs: https://reports.example.net/runs   # https; http only for localhost
 report-runs-required: true                      # only honoured in a runbook signed by a signer you trust
+                                                # (separated: also a gate in separated mode must report it)
 report-runs-signed: true                        # the same; the summary must be signed with your key
 report-runs-token: ${secret:REPORTS_TOKEN}      # optional bearer token, from your secret store
 ---
@@ -102,7 +103,10 @@ with the runbook. These are its name, fingerprint and start time. So the gate's 
   of a session on a server:
   - `runbook.signed` is always there;
   - `runbook.file` and `runbook.sha256` are not (the gate sees only the signed manifest);
-  - `gate` says where it ran: `{ "host": "web-1", "account": "support", "from": "192.0.2.7" }`.
+  - `gate` says where it ran:
+    `{ "host": "web-1", "account": "support", "from": "192.0.2.7", "gate_mode": "separated" }`;
+  - `gate.gate_mode` is the gate's mode, `shared` or `separated`
+    ([below](#a-gate-in-separated-mode)). Any other value is refused.
 
   Only a gate's summary may carry `gate`, or leave out the file and hash. The format version
   stays 1: these are additions.
@@ -174,8 +178,8 @@ A runbook can't send anything you didn't agree to.
 
 ## Required and signed reports
 
-`report-runs-required: true` and `report-runs-signed: true` are honoured only when all of these
-hold:
+`report-runs-required: true` (or `separated`) and `report-runs-signed: true` are honoured only
+when all of these hold:
 
 1. The runbook carries a signature that verifies against **signers this client trusts**:
    - VS Code: an `allowed_signers` file named in `mdRunbook.signing.allowedSigners`, checked with
@@ -253,7 +257,7 @@ the team library it publishes to:
 - Every summary is kept as one JSON line, append-only, with when it arrived and how far it can
   be believed:
   - `runner-signed`;
-  - `gate` (sent by md-runbook-gate with a gate token);
+  - `gate` (sent by md-runbook-gate with a gate token), with the gate's mode in `gateMode`;
   - `unverified`.
 
   `RUNS_REQUIRE_SIGNED=true` refuses the unverified ones.
@@ -261,6 +265,37 @@ the team library it publishes to:
   `Authorization: Bearer`, which the server checks.
 - `GET /v1/runs?runbook=…` lists the team's recent runs. `GET /v1/runs/last-green?runbook=…`
   answers `last ran green by X at T`, verified or not. Both need a read token.
+
+## A gate in separated mode
+
+A gate runs the blocks in one of two modes:
+
+- **shared:** as the gate's own account. A block can read the gate's report token, so it could
+  send a report of its own.
+- **separated:** as a second, unprivileged account. A block can't reach the gate's report token,
+  logs or pipes.
+
+The gate says which in its summary: `gate.gate_mode`.
+
+- It counts only in a summary verified as sent by a gate (a gate token). An unverified
+  summary's `gate_mode` is ignored.
+- Without it, the summary counts as `shared`.
+- Any other value is refused (`400`), so a gate that sends one finds out from its log.
+
+The library server shows it: `verified: sent by a gate (separated)` or
+`verified: sent by a gate (shared account)`.
+
+**`report-runs-required: separated`** asks for more than `true`:
+
+- Clients act as for `true`. Their notice adds that the run counts only when a gate in
+  separated mode reports it.
+- On the library server, `last-green` reads the requirement from the library's copy of the
+  runbook. Only a green run that a gate sent in separated mode then counts as verified
+  (`lastVerified`). The answer has `"required": "separated"`.
+- A run from a gate in shared mode doesn't count, nor does a runner-signed one. That is the same
+  as a run without a gate's report.
+- A server without the library (no `LIBRARY_DIR`) can't see the requirement: there, any verified
+  run counts.
 
 ## Limits
 

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Run reports: the gate's mode.** A gate's summary can say how its blocks ran:
+  `gate.gate_mode` is `shared` or `separated`. See
+  [run reports](docs/features/run-reports.md#a-gate-in-separated-mode).
+  - It counts only in a summary sent with a gate token. Without it, the summary counts as
+    `shared`; any other value is refused.
+  - The library server shows `verified: sent by a gate (separated)` or `(shared account)`, and
+    keeps `gateMode` with each gate's run.
+- **`report-runs-required: separated`:** required as `true` is, and only a report from a gate in
+  separated mode counts as the run's.
+  - VS Code, the app and the command line say so in the notice.
+  - The library server's last green run counts only such a run when its library copy asks for it.
+  - Any other value of `report-runs-required` is now a lint error.
+
 ## 0.27.0
 
 Security fixes from five review rounds, a team runbook library in VS Code and the app, and a
