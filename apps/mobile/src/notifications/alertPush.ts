@@ -15,6 +15,7 @@ import { router } from 'expo-router';
 import { useEffect, useSyncExternalStore } from 'react';
 import { Alert, Platform } from 'react-native';
 import { t } from '../i18n';
+import { NO_REDIRECT, redirectedTo } from '../net/noRedirect';
 import { openRunbookLink } from '../runbooks/openLink';
 import { getJson, setJson } from '../storage/kv';
 import { deleteSecret, getSecret, setSecret } from '../storage/secure';
@@ -35,7 +36,26 @@ export interface AlertRegistration {
 }
 
 const KEY = 'alertPush.v1';
-const SECRET = 'alertPush.devicesToken';
+/** Before tokens were kept per server: the token of the one registration then. */
+const LEGACY_SECRET = 'alertPush.devicesToken';
+
+/** The secure-storage key of a server's devices token (keys allow only [A-Za-z0-9._-]). */
+export function devicesTokenKey(server: string): string {
+  const hex = [...new TextEncoder().encode(server)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${LEGACY_SECRET}.${hex}`;
+}
+
+/** The devices token `server` accepted, or null: never another server's. */
+async function tokenOf(server: string): Promise<string | null> {
+  const own = await getSecret(devicesTokenKey(server)).catch(() => null);
+  if (own) return own;
+  // Kept before tokens were per server: it belongs to the registration of then.
+  return current?.server === server ? getSecret(LEGACY_SECRET).catch(() => null) : null;
+}
+
+async function forgetToken(server: string): Promise<void> {
+  await deleteSecret(devicesTokenKey(server)).catch(() => undefined);
+}
 
 const isRegistration = (x: unknown): x is AlertRegistration => {
   if (typeof x !== 'object' || x === null) return false;
@@ -113,24 +133,32 @@ async function register(
   p: PushPlatform,
   fetcher: typeof fetch,
 ): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+  const url = `${server}/v1/devices`;
   let r: Response;
   try {
-    r = await fetcher(`${server}/v1/devices`, {
+    r = await fetcher(url, {
       method: 'POST',
       headers: { authorization: `Bearer ${devicesToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ platform: p, token: pushToken }),
+      ...NO_REDIRECT,
     });
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : String(e) };
   }
+  // Never followed, never sent again (net/noRedirect.ts).
+  const away = redirectedTo(url, r);
+  if (away !== undefined) return { ok: false, message: t.alertPushRedirected(away) };
   if (!r.ok) return { ok: false, message: await refusal(r) };
   const j = (await r.json().catch(() => undefined)) as { id?: unknown } | undefined;
   return typeof j?.id === 'string' && /^[0-9a-f]{32}$/.test(j.id) ? { ok: true, id: j.id } : { ok: false, message: t.alertPushBadAnswer };
 }
 
 async function unregister(server: string, id: string, devicesToken: string, fetcher: typeof fetch): Promise<Outcome> {
+  const url = `${server}/v1/devices/${id}`;
   try {
-    const r = await fetcher(`${server}/v1/devices/${id}`, { method: 'DELETE', headers: { authorization: `Bearer ${devicesToken}` } });
+    const r = await fetcher(url, { method: 'DELETE', headers: { authorization: `Bearer ${devicesToken}` }, ...NO_REDIRECT });
+    const away = redirectedTo(url, r);
+    if (away !== undefined) return { ok: false, message: t.alertPushRedirected(away) };
     return r.ok || r.status === 404 ? { ok: true } : { ok: false, message: await refusal(r) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : String(e) };
@@ -159,11 +187,18 @@ export async function turnOnAlertPush(
   const p: PushPlatform = Platform.OS === 'ios' ? 'ios' : 'android';
   const r = await register(server, token, pushToken, p, fetcher);
   if (!r.ok) return { ok: false, message: t.alertPushFailed(r.message) };
-  // Another server before (the library moved): that one stops too.
+  // Another registration before (the library moved): that one stops too, with its own server's
+  // token only. This server's token never goes to another one.
   const before = current;
-  await setSecret(SECRET, token);
+  const beforeToken = before ? await tokenOf(before.server) : null;
+  await setSecret(devicesTokenKey(server), token);
+  await deleteSecret(LEGACY_SECRET).catch(() => undefined);
   await save({ server, id: r.id, platform: p, pushToken });
-  if (before && (before.server !== server || before.id !== r.id)) void unregister(before.server, before.id, token, fetcher);
+  if (before && before.server === server && before.id !== r.id) void unregister(server, before.id, beforeToken ?? token, fetcher);
+  else if (before && before.server !== server) {
+    const gone = beforeToken ? unregister(before.server, before.id, beforeToken, fetcher) : Promise.resolve();
+    void gone.then(() => forgetToken(before.server));
+  }
   return { ok: true };
 }
 
@@ -172,9 +207,10 @@ export async function turnOffAlertPush(fetcher: typeof fetch = fetch): Promise<O
   await loadAlertPush();
   const reg = current;
   if (!reg) return { ok: true };
-  const token = await getSecret(SECRET).catch(() => null);
+  const token = await tokenOf(reg.server);
   await save(undefined);
-  await deleteSecret(SECRET).catch(() => undefined);
+  await forgetToken(reg.server);
+  await deleteSecret(LEGACY_SECRET).catch(() => undefined);
   if (!token) return { ok: true };
   const r = await unregister(reg.server, reg.id, token, fetcher);
   return r.ok ? r : { ok: false, message: t.alertPushOffFailed(r.message) };
@@ -214,7 +250,7 @@ export async function refreshAlertPush(newToken?: string, fetcher: typeof fetch 
   if (!reg) return;
   const pushToken = newToken ?? (await devicePushToken().catch(() => undefined));
   if (!pushToken || pushToken === reg.pushToken) return;
-  const token = await getSecret(SECRET).catch(() => null);
+  const token = await tokenOf(reg.server);
   if (!token) return;
   const r = await register(reg.server, token, pushToken, reg.platform, fetcher);
   if (!r.ok) return;

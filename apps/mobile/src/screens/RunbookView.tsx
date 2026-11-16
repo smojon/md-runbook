@@ -2,7 +2,7 @@ import { callFromAttrs, isCallLanguage, isDynamicSrc, parseCall } from '@md-runb
 import { activeCall, callCells, callReader, finishCall, prefetchCalls, startCall, useCalledTexts } from '../runbooks/calls';
 import * as Clipboard from 'expo-clipboard';
 import { Link, Stack, router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
 import { LinkContext, forgetLinkContext, linkContext } from '../runbooks/linkContext';
 import { Alert, FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
@@ -48,7 +48,7 @@ import { isManualMark, stepState } from '@md-runbook/core/progress';
 import type { Captured } from '@md-runbook/core/checks';
 import { DEFAULT_POLICY, PolicyResult, approvalScope, evaluatePolicy } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
-import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
+import { fillShown, findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
@@ -105,7 +105,7 @@ import { ConfirmCard } from '../cells/ConfirmCard';
 import { PauseCard } from '../cells/PauseCard';
 import { LaunchError, launchModel, startValues } from '../runbooks/launch';
 import { LaunchSheet, LaunchTyped } from '../ui/LaunchSheet';
-import { MarksByCell, NO_MARKS, StepMarks, toggleMark } from '../runbooks/stepMarks';
+import { MarksByCell, NO_MARKS, StepMarks, cellIdentities, cellMover, remapByCell, toggleMark } from '../runbooks/stepMarks';
 import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell, ProblemRow } from '../cells/CodeCell';
@@ -568,6 +568,54 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [checks, setChecks] = useState<ReadonlyMap<number, ReadonlySet<string>>>(new Map());
   /** Breakpoints per cell index (the first line of each command), for this screen's life as in the extension's session. */
   const [breakpoints, setBreakpoints] = useState<ReadonlyMap<number, ReadonlySet<number>>>(new Map());
+  // Marks, breakpoints, checked lines and Run all's queue follow their cells when the text changes
+  // (a proposal, a note, an edit): never onto another step. A changed cell loses its marks, a
+  // changed cell still to run ends Run all before it; the notice says so. A layout effect: done
+  // before any run's callback reads them.
+  const cellIds = useMemo(() => cellIdentities(cells), [cells]);
+  const idsBefore = useRef(cellIds);
+  useLayoutEffect(() => {
+    const before = idsBefore.current;
+    if (before === cellIds) return;
+    idsBefore.current = cellIds;
+    const move = cellMover(before, cellIds);
+    let dropped = 0;
+    if (marksRef.current.size > 0) {
+      const marks = remapByCell(marksRef.current, before, cellIds);
+      dropped += marks.dropped;
+      setStepMarks(marks.map);
+    }
+    if (breakpoints.size > 0) {
+      const breaks = remapByCell(breakpoints, before, cellIds);
+      dropped += breaks.dropped;
+      setBreakpoints(breaks.map);
+    }
+    if (checks.size > 0) setChecks(remapByCell(checks, before, cellIds).map);
+    const q = queue.current;
+    let stopped = false;
+    if (q) {
+      const queued = q.cells.map(move);
+      const call = q.call === undefined ? undefined : move(q.call);
+      stopped = queued.includes(undefined) || (q.call !== undefined && call === undefined);
+      q.cells = stopped ? [] : (queued as number[]);
+      if (stopped || call === undefined) delete q.call;
+      else q.call = call;
+      if (q.last !== undefined) q.last = move(q.last);
+      q.passed = new Set([...q.passed].map(move).filter((i): i is number => i !== undefined));
+      setQueuedCells([...q.cells]);
+    }
+    if (pauseAsk !== undefined) {
+      const at = move(pauseAsk);
+      if (at === undefined || stopped) {
+        clearQueue();
+        setPauseAsk(undefined);
+      } else setPauseAsk(at);
+    }
+    if (stopped) setNotice(t.runChangedStopped);
+    else if (dropped > 0) setNotice(t.marksDropped);
+    // Only a text change moves them; the marks, breakpoints and checks read are the newest then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cellIds]);
   /**
    * session: one shell per host for the whole runbook (cd and variables carry over); isolated:
    * each cell in a fresh shell. The front matter's `mode:` decides, as in the extension; without
@@ -639,6 +687,30 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setNotice(t.copyNotRunnable(libraryRefused));
     return true;
   };
+  /**
+   * What a confirmation's risky patterns see, as in VS Code and the command line: `source` with
+   * the values known now filled in (`kubectl ${param:VERB}` with VERB=delete asks). Secrets, and
+   * values not known yet, stay placeholders.
+   */
+  const shownForConfirm = (source: string, cellIndex: number): string => {
+    const text = (runbook && getRunbook(runbook.id)?.text) ?? runbook?.text ?? '';
+    // A signed cell doesn't take the front matter's defaults (runCell).
+    const signedCell = signedStatus(text)?.cells.has(cellIndex) ?? false;
+    const defaults = new Map((parseFrontMatter(text)?.params ?? []).map((p) => [p.name, p.default]));
+    return fillShown(source, (ref) => {
+      if (ref.kind === 'param') {
+        const typed = paramValues[ref.name];
+        const value = typed !== undefined && typed !== '' ? typed : signedCell ? undefined : defaults.get(ref.name);
+        return value === undefined ? undefined : { value, secret: false };
+      }
+      if (ref.kind === 'input') {
+        const typed = inputs.current[ref.name];
+        return typed ? { value: typed.value, secret: typed.masked || ref.secret } : undefined;
+      }
+      const c = ref.kind === 'out' ? captures.current[ref.name] : undefined;
+      return c ? { value: c.value, secret: c.secret } : undefined;
+    });
+  };
   const run = async (request: RunRequest, on: Host | undefined): Promise<void> => {
     if (!runbook || busy.current || refusedHere()) return;
     busy.current = true;
@@ -702,7 +774,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     // A risky command, or the cell's `confirm`: ask before it runs (and before Run all goes on).
     if (!request.confirmed && cell && isCodeMeta(cell.meta)) {
       const source = lines ? lines.steps.map((s) => s.text).join('\n') : cell.value;
-      const match = confirmationOf(source, cell.meta.info, outputSettings().allowNoConfirm);
+      const match = confirmationOf(shownForConfirm(source, cellIndex), cell.meta.info, outputSettings().allowNoConfirm);
       if (match !== undefined) {
         // Line runs and runs at breakpoints run once (no retry=), as in the extension.
         const retry = lines ? undefined : parseCellOptions(cell.meta.info).retry;
@@ -839,13 +911,18 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const runOnGroup = async (cellIndex: number, group: string, confirmed = false): Promise<void> => {
     setGroupPick(undefined);
     if (!runbook || busy.current || refusedHere()) return;
+    // In practice every cell runs on the practice host only; one the app doesn't have runs nothing.
+    if (practiceHost) return setNotice(t.groupNotInPractice);
+    if (practiceName) return setNotice(t.practiceMissing(practiceName));
     const members = hosts.filter((h) => h.group === group);
     if (members.length === 0) return;
     if ((await reportAllows(() => void runOnGroup(cellIndex, group, confirmed))) !== 'go') return;
     // A risky cell asks once, before the round, naming every account it runs as.
     const cell = parse(runbook.text).cells[cellIndex];
     const match =
-      !confirmed && cell && isCodeMeta(cell.meta) ? confirmationOf(cell.value, cell.meta.info, outputSettings().allowNoConfirm) : undefined;
+      !confirmed && cell && isCodeMeta(cell.meta)
+        ? confirmationOf(shownForConfirm(cell.value, cellIndex), cell.meta.info, outputSettings().allowNoConfirm)
+        : undefined;
     if (match !== undefined && cell && isCodeMeta(cell.meta)) {
       const retry = parseCellOptions(cell.meta.info).retry;
       setConfirming({
@@ -1351,10 +1428,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     sayOk(t.noteAdded);
   };
   /** A note's ⋯: Edit Note (new words) or Delete Note (undefined), in the text as it is now. */
-  const changeNote = (marker: string, words: string | undefined): void => {
+  const changeNote = (cellIndex: number, marker: string, words: string | undefined): void => {
     if (!runbook) return;
     const latest = getRunbook(runbook.id)?.text ?? runbook.text;
-    const next = words === undefined ? withoutNote(latest, marker) : withNoteText(latest, marker, words);
+    const next = words === undefined ? withoutNote(latest, cellIndex, marker) : withNoteText(latest, cellIndex, marker, words);
     if (next === undefined) return setNotice(t.noteGone);
     updateRunbookText(runbook.id, next);
     sayOk(words === undefined ? t.noteDeleted : t.noteSaved);
@@ -1736,11 +1813,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           'run',
           practiceHost
             ? t.groupNotInPractice
-            : hostGroups.length === 0
-              ? t.noHostGroups
-              : can.ok
-                ? undefined
-                : t.notRunnable[can.why](can.detail),
+            : practiceName
+              ? t.practiceMissing(practiceName)
+              : hostGroups.length === 0
+                ? t.noHostGroups
+                : can.ok
+                  ? undefined
+                  : t.notRunnable[can.why](can.detail),
         ),
         run: () => {
           setGroupPick(index);
@@ -1915,7 +1994,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const defaults: Record<string, string> = {};
     if (!signedStatus(text)?.cells.has(cellIndex))
       for (const p of parseFrontMatter(text)?.params ?? []) if (p.default !== undefined) defaults[p.name] = p.default;
-    const r = withValues(step.text, { params: paramValues, defaults, inputs: inputs.current, captures: captures.current });
+    // Each value quoted for the cell's shell: pasted, it is one piece of text, as in a run.
+    const cell = parse(text).cells[cellIndex];
+    const shell = (cell && shellKindForLanguage(cell.languageId)) ?? 'bash';
+    const r = withValues(step.text, { params: paramValues, defaults, inputs: inputs.current, captures: captures.current }, shell);
     void Clipboard.setStringAsync(r.text).then(
       () => sayOk(t.copiedLine(lineLabel(step), r.left)),
       (e: unknown) => setNotice(e instanceof Error ? e.message : String(e)),
@@ -2539,7 +2621,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                   markdown={index === 0 ? withoutFrontMatter(item.value) : item.value}
                   firstTask={tasks.first[index]}
                   onToggleTask={tasks.aligned ? toggleTask : undefined}
-                  onChangeNote={changeNote}
+                  onChangeNote={(marker, words) => changeNote(index, marker, words)}
                 />
                 {problems.notes.has(index) ? <ProseNotes index={index} notes={problems.notes.get(index)!} /> : null}
                 {manualAsk?.cellIndex === index ? (
@@ -3559,6 +3641,11 @@ function LinkNotes({ context }: { context: LinkContext }) {
       {context.ignoredParams.length > 0 ? (
         <Text testID="link-ignored-params" style={styles.signedBody}>
           {t.linkIgnoredParams(context.ignoredParams)}
+        </Text>
+      ) : null}
+      {context.refusedParams ? (
+        <Text testID="link-refused-params" style={styles.warning}>
+          {t.linkRefusedParams(context.refusedParams)}
         </Text>
       ) : null}
     </View>

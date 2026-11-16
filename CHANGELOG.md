@@ -146,6 +146,31 @@ Security fixes from a review of the parts that face the network.
 - **Links (VS Code and app):** a version 1 signature no longer counts when the front matter sets
   `env:`, `cwd:`, `shell:`, `mode:`, `kube-context:`, `kube-context-mode:` or `timeout:`.
   - Such a signature covers the blocks only. The command line's signed runs refuse the same keys.
+- **Whole-runbook signatures:** a note or a run record's signature inside a code block now counts
+  as code. Before, adding one to a cmd or PowerShell block left the runbook signed as a whole.
+  - A signed runbook with note-shaped lines in its code blocks needs signing again.
+- **App, alerts on this phone:** each server gets only its own devices token. Before, moving the
+  team library sent the new server's token to the old one, to remove the phone there.
+- **App, tokens and redirects:** alert registration and the assistant's Anthropic key never follow
+  a redirect, like library uploads. Before, a redirect took the devices token along.
+  - An answer that shows a redirect anyway is refused, and the request isn't sent again.
+- **App, Edit Note and Delete Note:** they change only a note outside code, in the cell of its ⋯.
+  Before, a note-shaped line in a code block could change instead.
+  - Any line break in the words stays inside the note. Before, a lone carriage return could start
+    a code block.
+- **App, Run on a Group:** a runbook with a `practice:` host the app doesn't have can't run on a
+  group. Before, the group run went ahead on the real hosts, while a plain run stopped.
+- **App, Start Incident copies:** a copy whose front matter was edited, such as `practice:` or
+  `kube-context:`, no longer counts as signed as a whole. Before, a changed `practice:` host ran
+  without asking first.
+- **App, parameters with choices (`One of: a, b`):** a block run on its own refuses a value that
+  isn't one of them, as Run all does. A link's value outside them is not taken, and the banner
+  says so.
+- **App, confirmations:** risky patterns see the command with its values filled in, as in VS Code.
+  Before, `kubectl ${param:VERB}` with `VERB=delete` ran without asking.
+- **App, a link opened again:** it reopens its earlier copy only while that copy is the runbook the
+  link gives, apart from outputs and notes. Before, an edited copy opened as signed.
+
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or
@@ -154,10 +179,16 @@ Security fixes from a review of the parts that face the network.
   cell's ⋯, as in VS Code.
 - **App: Copy Line with Values.** A line's actions copy its command with parameters, inputs and
   captured values filled in. Secrets stay references.
+  - Each value is quoted for the block's shell, so a pasted value stays one piece of text.
+  - In a cmd block, a value with `&`, `|`, `%` or another cmd metacharacter stays a reference.
 - **App: Pause Before This Step, Notify Me When It Starts.** A step's ⋯ (cell or Steps row) sets
   either, for this session. Run all asks Continue or Stop there.
+  - Marks and breakpoints stay on their step when cells are added above, as by a proposal or a
+    note. A step whose code changes loses them, and the app says so.
+  - Run all stops before a step it still had to run once that step's code changes.
 - **App: the launch form.** Run all first shows one sheet with what the run needs and does.
   - It lists parameters, inputs, secrets to set, risky steps, steps by hand, time and host.
+  - Risky steps include a risky setup, ready check or teardown.
   - Start asks for no value again; risky steps still ask.
   - Hosts & Settings turns it off; ⋯ More → **Run All…** always opens it.
 - **App: Edit Note, Delete Note.** A note's ⋯ edits its words in place, or deletes it after a

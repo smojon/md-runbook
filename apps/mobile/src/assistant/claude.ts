@@ -34,6 +34,8 @@ export async function askClaude(system: string, user: string, signal?: AbortSign
     method: 'POST',
     headers,
     body: JSON.stringify({ ...req.body, stream: false }),
+    // The key never follows a redirect (net/noRedirect.ts).
+    redirect: 'error',
     ...(signal ? { signal } : {}),
   });
   const body: unknown = await res.json().catch(() => undefined);

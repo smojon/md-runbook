@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { parse } from '@md-runbook/core';
 import { addHost, getHost, pinHostKey, resetHosts } from '../hosts/store';
+import { setParamValue } from '../runbooks/params';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { resetSettings, setOutputSetting, signerName } from '../settings/store';
 import { HostList } from '../screens/HostList';
@@ -140,6 +141,18 @@ describe('asking before a risky cell, as VS Code does', () => {
   beforeEach(() => {
     resetSettings();
     setOutputSetting('launchForm', false);
+  });
+
+  it('risky patterns see the values: kubectl ${param:VERB} with VERB=delete asks first (security review round 3)', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const rb = addRunbook('verb.md', '---\nparams:\n  - VERB: get\n---\n\n# Pods\n\n```bash\nkubectl ${param:VERB} pod web-1\n```\n');
+    setParamValue(rb.id, 'VERB', 'delete');
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    expect(screen.getByTestId('confirm-title')).toHaveTextContent('Cell 2 contains a risky command: “delete”');
+    expect(mockConnection.calls).toHaveLength(0);
   });
 
   it('a risky cell waits for Run under it; nothing is sent before', async () => {
@@ -412,6 +425,22 @@ describe('practice on a host (drills)', () => {
     });
     expect(connectionFor).not.toHaveBeenCalled();
     expect(screen.getByTestId('run-notice').props.children).toMatch(/No host named train to practise on/);
+  });
+
+  it('a practice host the app does not have: Run on a Group is off too (security review round 3)', async () => {
+    const a = addHost({ name: 'prod-1', hostname: 'prod1.example.net', port: 22, username: 'ops', group: 'prod' });
+    pinHostKey(a.id, 'ecdsa-sha2-nistp256 AAAA1=');
+    const r = addRunbook('drill.md', '---\npractice: train\n---\n\n# Drill\n\n```bash\nuptime\n```\n');
+    connectionFor.mockClear();
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-runOnGroup'));
+    });
+    expect(screen.queryByTestId('group-prod')).toBeNull();
+    expect(connectionFor).not.toHaveBeenCalled();
   });
 });
 

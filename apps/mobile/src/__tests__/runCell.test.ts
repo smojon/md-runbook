@@ -100,6 +100,18 @@ describe('runCell', () => {
     expect([bad.contextChecks, bad.calls.length]).toEqual([0, 0]);
   });
 
+  it('a value not among its choices (One of:) runs nothing, from a link or the default (security review round 3)', async () => {
+    const text = '---\nparams:\n  - VERB: delete  # One of: get, describe\n---\n\n```bash\nkubectl ${param:VERB} pods\n```\n';
+    const conn = fakeConnection([{ stdout: 'ok\n' }]);
+    expect(await runCell({ host, text, cellIndex: 1, connection: conn, params: { VERB: 'delete' } })).toEqual({
+      kind: 'error',
+      message: 'Not run: ${param:VERB} is "delete", not one of its choices: get, describe',
+    });
+    expect(await runCell({ host, text, cellIndex: 1, connection: conn })).toMatchObject({ kind: 'error' });
+    expect(conn.calls).toHaveLength(0);
+    expect(await runCell({ host, text, cellIndex: 1, connection: conn, params: { VERB: 'get' } })).toMatchObject({ kind: 'done' });
+  });
+
   it('a failed check and a non-zero exit are written as such', async () => {
     const r = await runCell({ host, text: runbook, cellIndex: 1, connection: fakeConnection([{ stdout: 'nope\n', exitCode: 2 }]) });
     expect(r.kind === 'done' && r.attrs).toMatchObject({ exit: '2', check: 'failed' });

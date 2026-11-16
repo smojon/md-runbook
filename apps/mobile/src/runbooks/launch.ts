@@ -8,7 +8,7 @@
  */
 import { isCodeMeta, parse, shellKindForLanguage } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { EstimateStep, formatEstimate, formatLeft, runbookEstimate, withoutEstimate } from '@md-runbook/core/estimate';
+import { EstimateStep, formatEstimate, formatLeft, runbookEstimate, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { signedStatus } from '@md-runbook/core/signing';
@@ -144,20 +144,23 @@ export function launchModel(s: LaunchSources): LaunchModel {
 
   const risky: LaunchModel['risky'] = [];
   const byHand: LaunchModel['byHand'] = [];
-  const runs = new Set(s.cells);
+  const rowOf = new Map<number, { step?: number; label: string }>();
   for (const r of s.rows) {
     if (r.kind !== 'step') continue;
     const step = r.step !== undefined ? { step: r.step } : {};
     if (r.item !== undefined) {
       if (r.state !== 'done') byHand.push({ index: r.index, ...step, label: r.detail ?? r.label });
-      continue;
-    }
-    const c = cells[r.index];
-    if (!runs.has(r.index) || !c || c.kind !== 'code' || !isCodeMeta(c.meta)) continue;
+    } else if (!rowOf.has(r.index)) rowOf.set(r.index, { ...step, label: r.label });
+  }
+  // Every cell Run all runs, a row in Steps or not (the setup, the ready check, the teardown).
+  for (const i of s.cells) {
+    const c = cells[i];
+    if (!c || c.kind !== 'code' || !isCodeMeta(c.meta)) continue;
     // A runbook call's lines are values passed, not commands: only its `confirm` asks.
     const match = s.confirmation(shellKindForLanguage(c.languageId) ? c.value : '', c.meta.info);
     if (match === undefined) continue;
-    risky.push({ index: r.index, ...step, label: r.label, match: match.trim(), ...preview(c.value) });
+    const row = rowOf.get(i) ?? { label: stepLabel(c.meta.info, c.value, c.languageId) };
+    risky.push({ index: i, ...row, match: match.trim(), ...preview(c.value) });
   }
   const time = runTime(s.estimateSteps);
   const last = lastRunContext(s.text);

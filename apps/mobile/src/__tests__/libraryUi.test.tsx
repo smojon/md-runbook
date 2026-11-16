@@ -411,12 +411,25 @@ describe('a copy the library refuses (signedOnly): the recheck of 2026-11-14', (
       // Twice (a copy of the copy): both notes at the top go.
       expect(
         derivedText(
-          `---${eol}incident: INC-2${eol}---${eol}${eol}${note.replace(/\n/g, eol)}${eol}${copy.replace(/^---[\s\S]*?---\r?\n(\r?\n)*/, '')}`,
+          `---${eol}${fm}incident: INC-2${eol}---${eol}${eol}${note.replace(/\n/g, eol)}${eol}${copy.replace(/^---[\s\S]*?---\r?\n(\r?\n)*/, '')}`,
           headOf(original),
         ),
       ).toBe(original);
     }
     expect(derivedText('# changed', undefined)).toBe('# changed');
+  });
+
+  it('a Start Incident copy whose front matter was edited is checked as it is (security review round 3)', () => {
+    const original = '---\npractice: train\n---\n\n' + RUNBOOK;
+    const copy = (fm: string): string => `---\n${fm}---\n\n${RUNBOOK}`;
+    expect(derivedText(copy('practice: train\nincident: INC-1\nseverity: SEV2\ndrill: true\n'), headOf(original))).toBe(original);
+    for (const fm of [
+      'practice: prod-db\nincident: INC-1\n',
+      'practice: train\nkube-context: prod\nincident: INC-1\n',
+      'incident: INC-1\n',
+    ]) {
+      expect(derivedText(copy(fm), headOf(original))).toBe(copy(fm));
+    }
   });
 
   it('a refused copy offers no Run All as Copy nor Start Incident, and says why', async () => {

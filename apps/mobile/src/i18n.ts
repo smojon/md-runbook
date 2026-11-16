@@ -39,6 +39,7 @@ const en = {
   linkOpenedSigned: 'Opened from a link: the runbook is signed and its blocks are unchanged.',
   linkMissingHost: (name: string) => `The link asks for the host ${name}, which you don’t have: add it under Hosts & settings.`,
   linkIgnoredParams: (names: string[]) => `The link sets ${names.join(', ')}, which this runbook doesn’t use: ignored.`,
+  linkRefusedParams: (names: string[]) => `The link’s ${names.join(', ')} isn’t one of the choices: not taken. Enter it under Parameters.`,
   linksTitle: 'Links',
   signedLinksOnly: 'Open only signed runbooks from links',
   signedLinksOnlyPoints: [
@@ -922,6 +923,8 @@ const en = {
   pauseStop: 'Stop',
   pauseStopHint: 'Stops the run here. Resume goes on from here.',
   pauseStopped: 'Run all stopped before a step marked to pause: Resume goes on from it.',
+  marksDropped: 'A step changed: its pause, notify and breakpoint marks are gone.',
+  runChangedStopped: 'A step still to run changed: Run all stops before it.',
   pausesHere: 'Pauses here',
   pausesHereHint: 'Run all pauses before this step. Tap to remove the pause.',
   notifiesHere: 'Notifies',
@@ -1005,6 +1008,7 @@ const en = {
     `Type a value for ${name} under Parameters: a signed runbook ignores the file’s unsigned default (${value}).`,
   paramNewline: (name: string) => `The value of ${name} must be one line`,
   paramMismatch: (name: string, pattern: string) => `The value of ${name} doesn't match its pattern ${pattern}`,
+  paramNotAChoice: (problem: string) => `Not run: ${problem}`,
   refUnsupported: (kind: string, name: string) =>
     `\${${kind}:${name}} is not supported in the app yet: this cell runs in VS Code or the command line`,
 
@@ -1493,6 +1497,7 @@ const en = {
     `Off here, but the server wasn’t told (${why}). Its alerts may still show: ask its admin to remove this phone.`,
   alertPushNoToken: 'the phone has no push token',
   alertPushBadAnswer: 'the server’s answer has no device id',
+  alertPushRedirected: (host: string) => `the server sent the request on to ${host}: not followed`,
   alertPushChannel: 'Alerts',
   alertPushChannelHelp: 'A firing alert from the team library server',
   alertPushOpenFailedTitle: 'The alert’s runbook didn’t open',

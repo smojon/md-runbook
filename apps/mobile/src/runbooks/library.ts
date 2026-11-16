@@ -774,12 +774,32 @@ export function headOf(text: string): string {
   return fm + (BLANK_LINES_RE.exec(text.slice(fm.length))?.[0] ?? '');
 }
 
+/** The front-matter keys Start Incident writes (core withFrontMatterValues): a copy's own. */
+const INCIDENT_KEY_RE = /^(?:incident|severity|drill)[ \t]*:/;
+
+/** The lines of a text's front matter but Start Incident's keys (no front matter: none). */
+function frontMatterLines(text: string): string[] {
+  const fm = FRONT_MATTER_RE.exec(text)?.[0];
+  if (!fm) return [];
+  // Between the first line (---) and the closing one (--- or ...), which ends the match.
+  const lines = fm.replace(/(?:\r?\n)?$/, '').split(/\r?\n/);
+  return lines
+    .slice(1, -1)
+    .map((l) => l.trimEnd())
+    .filter((l) => l !== '' && !INCIDENT_KEY_RE.test(l));
+}
+
 /**
  * A derived copy's text as its signature is checked: with `head` (the original's front matter),
  * that head back in place of the copy's own front matter and the note Start Incident put after it.
+ * Only while the copy's front matter is the original's but for Start Incident's keys: one edited
+ * since (practice:, kube-context:, shell:) is checked as it is, so it isn't signed as a whole.
  */
 export function derivedText(text: string, head: string | undefined): string {
   if (head === undefined) return text;
+  const own = frontMatterLines(text);
+  const original = frontMatterLines(head);
+  if (own.length !== original.length || own.some((l, i) => l !== original[i])) return text;
   // Notes don't count for a signature: those at the top (Start Incident's, again on a copy of a copy) go with their blank lines.
   let body = withoutFrontMatter(text).replace(BLANK_LINES_RE, '');
   for (let next = body.replace(NOTE_RE, ''); next !== body; next = body.replace(NOTE_RE, '')) body = next.replace(BLANK_LINES_RE, '');

@@ -12,6 +12,7 @@ import { Alert } from 'react-native';
 import {
   alertLinkOf,
   alertRegistration,
+  devicesTokenKey,
   openAlertTap,
   refreshAlertPush,
   resetAlertPush,
@@ -22,7 +23,7 @@ import '../notifications/platform';
 import { openRunbookLink } from '../runbooks/openLink';
 import { AlertPushSettings } from '../screens/AlertPushSettings';
 import { resetSettings, setLibraryUrl } from '../settings/store';
-import { getSecret } from '../storage/secure';
+import { deleteSecret, getSecret, setSecret } from '../storage/secure';
 
 const mockPush = { ios: true, android: true };
 jest.mock('expo-constants', () => ({
@@ -66,7 +67,23 @@ describe('alerts on this phone', () => {
     expect((init!.headers as Record<string, string>).authorization).toBe(`Bearer ${DEVICES}`);
     expect(JSON.parse(init!.body as string)).toEqual({ platform: 'ios', token: 'a'.repeat(64) });
     expect(alertRegistration()).toEqual({ server: SERVER, id: ID, platform: 'ios', pushToken: 'a'.repeat(64) });
-    expect(await getSecret('alertPush.devicesToken')).toBe(DEVICES);
+    expect(await getSecret(devicesTokenKey(SERVER))).toBe(DEVICES);
+  });
+
+  it('never follows a redirect with the devices token, and never sends it again (security review round 3)', async () => {
+    const f = fetcherOf({ ...answer(201, { id: ID }), url: 'https://elsewhere.example.org/v1/devices', redirected: true } as Response);
+    expect(await turnOnAlertPush(LIBRARY, DEVICES, f)).toEqual({
+      ok: false,
+      message: 'Not turned on: the server sent the request on to elsewhere.example.org: not followed',
+    });
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(f.mock.calls[0]![1]!.redirect).toBe('error');
+    expect(alertRegistration()).toBeUndefined();
+    // Turning off: the DELETE doesn't follow one either.
+    await turnOnAlertPush(LIBRARY, DEVICES, fetcherOf(answer(201, { id: ID })));
+    const g = fetcherOf(answer(307, {}));
+    expect(await turnOffAlertPush(g)).toMatchObject({ ok: false });
+    expect(g.mock.calls[0]![1]!.redirect).toBe('error');
   });
 
   it('says why it is not on: the server refused, notifications blocked, no library, no token', async () => {
@@ -95,6 +112,38 @@ describe('alerts on this phone', () => {
     expect(f.mock.calls[0]![0]).toBe(`${SERVER}/v1/devices/${ID}`);
     expect(f.mock.calls[0]![1]!.method).toBe('DELETE');
     expect(alertRegistration()).toBeUndefined();
+    expect(await getSecret(devicesTokenKey(SERVER))).toBeNull();
+  });
+
+  it('a library that moved: the old server is told with its own token, never the new one', async () => {
+    const OTHER = 'https://new-runbooks.example.org';
+    const NEW_DEVICES = 'devices-token-of-the-new-server-xyz';
+    await turnOnAlertPush(LIBRARY, DEVICES, fetcherOf(answer(201, { id: ID })));
+    const NEW_ID = 'e'.repeat(32);
+    const f = fetcherOf(answer(201, { id: NEW_ID }), answer(200, { deleted: ID }));
+    expect(await turnOnAlertPush(`${OTHER}/runbooks/`, NEW_DEVICES, f)).toEqual({ ok: true });
+    await waitFor(() => expect(f).toHaveBeenCalledTimes(2));
+    expect(f.mock.calls[0]![0]).toBe(`${OTHER}/v1/devices`);
+    expect(f.mock.calls[1]![0]).toBe(`${SERVER}/v1/devices/${ID}`);
+    expect((f.mock.calls[1]![1]!.headers as Record<string, string>).authorization).toBe(`Bearer ${DEVICES}`);
+    await waitFor(async () => expect(await getSecret(devicesTokenKey(SERVER))).toBeNull());
+    expect(await getSecret(devicesTokenKey(OTHER))).toBe(NEW_DEVICES);
+    // The old server's token gone: its device isn't removed, and nothing else gets sent there.
+    await deleteSecret(devicesTokenKey(OTHER));
+    const g = fetcherOf(answer(201, { id: ID }));
+    expect(await turnOnAlertPush(LIBRARY, DEVICES, g)).toEqual({ ok: true });
+    await act(async () => undefined);
+    expect(g).toHaveBeenCalledTimes(1);
+    expect(g.mock.calls[0]![0]).toBe(`${SERVER}/v1/devices`);
+  });
+
+  it('a token kept before tokens were per server still turns its own registration off', async () => {
+    await turnOnAlertPush(LIBRARY, DEVICES, fetcherOf(answer(201, { id: ID })));
+    await deleteSecret(devicesTokenKey(SERVER));
+    await setSecret('alertPush.devicesToken', DEVICES);
+    const f = fetcherOf(answer(200, { deleted: ID }));
+    expect(await turnOffAlertPush(f)).toEqual({ ok: true });
+    expect((f.mock.calls[0]![1]!.headers as Record<string, string>).authorization).toBe(`Bearer ${DEVICES}`);
     expect(await getSecret('alertPush.devicesToken')).toBeNull();
   });
 

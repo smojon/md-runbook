@@ -146,15 +146,58 @@ const NOTE_BLOCK_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b.*?-->[ \t]*\n(?:[ \t]*
 const TASK_BOX_RE = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[)[xX](\](?=[ \t]|$))/;
 
 /**
+ * Offsets of the lines of LF text that are prose: in no code cell the parser finds, in no other
+ * fenced block, and no fence line themselves. An unclosed fence makes the rest code.
+ */
+function proseLineOffsets(t: string): Set<number> {
+  const code: [number, number][] = [];
+  let at = 0;
+  for (const { meta: m } of parse(t).cells) {
+    const raw =
+      m.kind === 'code' ? m.lead + m.open + m.body + m.close + (m.output?.raw ?? '') + (m.history?.raw ?? '') + m.trail : m.lead + m.content + m.trail;
+    if (m.kind === 'code') code.push([at, at + raw.length]);
+    at += raw.length;
+  }
+  const prose = new Set<number>();
+  let open: FenceOpen | null = null;
+  let offset = 0;
+  for (const line of t.split('\n')) {
+    if (open) {
+      if (isFenceClose(line, open)) open = null;
+    } else {
+      open = matchFenceOpen(line);
+      if (!open && !code.some(([a, b]) => offset >= a && offset < b)) prose.add(offset);
+    }
+    offset += line.length + 1;
+  }
+  return prose;
+}
+
+/** `t` without the matches of `re` (global) whose every line is prose (proseLineOffsets). */
+function removeInProse(t: string, re: RegExp): string {
+  const prose = proseLineOffsets(t);
+  return t.replace(re, (match: string, ...rest: unknown[]) => {
+    let line = rest[rest.length - 2] as number;
+    for (const l of match.replace(/\n$/, '').split('\n')) {
+      if (!prose.has(line)) return match;
+      line += l.length + 1;
+    }
+    return '';
+  });
+}
+
+/**
  * The text a version 2 signature covers: line endings as LF, no BOM, and without what running the
  * runbook adds: its signature block, a run record's signature, stored outputs (with their
- * history), notes (Add Note) and ticks in checklists. Trailing blank lines don't count.
+ * history), notes (Add Note) and ticks in checklists, each only outside code blocks (inside one,
+ * the same lines are code and signed). Trailing blank lines don't count.
  */
 export function signedText(text: string): string {
   let t = withoutSignature(text.replace(/^\uFEFF/, '')).replace(/\r\n?/g, '\n');
-  t = t.replace(RECORD_BLOCK_RE, '');
+  // A run record's signature and notes only outside code: a note-shaped line in a block is code.
+  t = removeInProse(t, RECORD_BLOCK_RE);
   t = clearOutputBlocks(t);
-  t = t.replace(NOTE_BLOCK_RE, '');
+  t = removeInProse(t, NOTE_BLOCK_RE);
   // Ticks, outside code blocks.
   let open: FenceOpen | null = null;
   t = t

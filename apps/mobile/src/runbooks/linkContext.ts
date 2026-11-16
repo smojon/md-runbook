@@ -13,6 +13,8 @@ export interface LinkContext {
   missingHost?: string;
   /** p.NAME values the runbook has no parameter for (not filled in). */
   ignoredParams: string[];
+  /** p.NAME values not among the parameter's choices (not filled in: typed when it runs). */
+  refusedParams?: string[];
   cosign: boolean;
 }
 

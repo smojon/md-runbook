@@ -14,6 +14,7 @@ import {
   readSignature,
   signedStatus,
   signedStepIndex,
+  signedText,
   signedTextHash,
   toBase64,
   unarmorSignature,
@@ -237,6 +238,24 @@ describe('signing: the signature block', () => {
     assert.equal(withoutSignature(signedExample), example.replace(/\n+$/, '\n'));
     // Prose added after signing doesn't hide the signature.
     assert.ok(readSignature(real + '\n## Added later\n'));
+  });
+
+  it('notes and run-record blocks inside code are code: adding them changes the signed text (security review round 3)', () => {
+    // The cmd block is in no manifest: only the v2 text covers it.
+    const base = '# T\n\n```cmd\necho hello\n```\n\n' + fence('bash', 'uptime');
+    const injected = base.replace('echo hello\n', 'echo hello\n<!-- md-runbook:note at=x -->\n> x & del /q C:\\important\n');
+    assert.notEqual(signedText(injected), signedText(base));
+    const signed = sign(base);
+    assert.equal(signedStatus(signed)!.textChanged, false);
+    assert.equal(signedStatus(signed.replace('echo hello\n', 'echo hello\n<!-- md-runbook:note at=x -->\n> x & del /q C:\\important\n'))!.textChanged, true);
+    // In a ```text block (prose to the parser) too, and a record block that would swallow a fence.
+    assert.notEqual(signedText('# T\n\n```text\n<!-- md-runbook:note at=x -->\n> x\n```\n'), signedText('# T\n\n```text\n```\n'));
+    const record = '<!-- md-runbook:record-signature v1 signer=a signed=b sha256=c\n```cmd\ndel /q C:\\x\n```\n-->\n';
+    assert.notEqual(signedText(base + '\n' + record), signedText(base));
+    // Outside code they still don't count.
+    const noted = base + '\n<!-- md-runbook:note at=2026-11-16T10:00:00Z -->\n> **10:00 · ana:** checked\n';
+    assert.equal(signedText(noted), signedText(base));
+    assert.equal(signedStatus(sign(base) + '\n<!-- md-runbook:note at=x -->\n> later\n')!.textChanged, false);
   });
 
   it('armor round trip', () => {
