@@ -154,19 +154,28 @@ visudo -cf /etc/sudoers.d/md-runbook-gate
 Here `support` is the gate's account. The line must be exactly this, with the gate's real path.
 The gate's account may have no other sudo rule.
 
-The gate and every folder above it must be root's and writable by root alone. Some images leave
-`/usr/local/bin` open: then install the gate elsewhere, such as `/opt/md-runbook-gate/bin`.
-
 At the start of each session the gate checks. It refuses to start, and logs a `self-check`
 event, when:
 - the account doesn't exist, is root, or is the gate's own;
 - `sudo -n -l` lists anything but that one line;
+- a folder above the gate's files is not safe (see below);
 - the blocks' account can read `report_token_file` or the `log =` file;
 - it can change the gate's program, `gate.conf`, `allowed_signers`, the account's keys or the
   gate's state;
 - it can't enter `/tmp`.
 
 The message names the problem and the line to write.
+
+**Safe folders,** as OpenSSH's `StrictModes` asks for its files. The gate checks every folder
+from each of its files up to `/`:
+- the files: the gate's program, `gate.conf`, `allowed_signers`, `revoked`, `floors`, the
+  account's keys, `report_token_file` and the `log =` file;
+- each folder must be root's or the gate account's;
+- the blocks' account must not be able to write it, as anyone or through one of its groups;
+- a sticky folder such as `/tmp` is fine if the entry below it is root's or the gate account's.
+
+Some images leave `/usr/local/bin` open. Then install the gate elsewhere, such as
+`/opt/md-runbook-gate/bin`. The message names the folder to fix.
 
 **Where blocks run:**
 - **Folder:** a shell starts in the blocks' account's home folder (else `/`). A block's `cwd=`

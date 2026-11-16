@@ -39,6 +39,8 @@ for your server's platform when you update.
     The message says what to fix.
   - The check refuses a `sudo` rule wider than the one line, and a token or log the blocks can
     read.
+  - The check refuses a folder above the gate's files that the blocks' account can change, as
+    OpenSSH's `StrictModes` does.
   - Blocks start in that account's home folder. A block's `cwd=` must be a folder it can enter.
   - Not for the ops host: it stays shared.
   - See [Separated mode](apps/gate/README.md#separated-mode).
