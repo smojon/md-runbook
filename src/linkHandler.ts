@@ -10,11 +10,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { trustedRunbookSigner } from '@md-runbook/core/node';
 import { parseManifest, readSignature } from '@md-runbook/core/signing';
 import { LinkProblem, LinkTrust, RunbookLink, checkedLinkTrust, linkTrust, linkableParams, parseVsCodeLinkQuery, rawRunbookUrl, repoPathCandidates, runbookDigest } from '@md-runbook/core/runbookLink';
 import { runbookTitle } from '@md-runbook/core/title';
 import type { SecretsInfo } from './secrets';
+import { checkSigner } from './signerCheck';
 import { NOTEBOOK_TYPE } from './serializer';
 
 /** A runbook larger than this is refused (the app's limit). */
@@ -96,12 +96,13 @@ type OpenedTrust = Exclude<LinkTrust, 'mismatch'>;
  * `mdRunbook.signing.allowedSigners` made it (ssh-keygen, as run reports and gates check it). A
  * signature block anyone can write isn't enough (security review, 2026-11-16).
  */
-async function checkedTrust(l: RunbookLink, text: string): Promise<LinkTrust> {
+async function checkedTrust(l: RunbookLink, text: string): Promise<{ trust: LinkTrust; cantCheck?: string }> {
   const trust = linkTrust(l, text);
-  if (trust !== 'signed') return trust;
+  if (trust !== 'signed') return { trust };
   const file = vscode.workspace.getConfiguration('mdRunbook').get<string>('signing.allowedSigners', '').trim();
-  const signer = file ? await trustedRunbookSigner(text, file.replace(/^~(?=$|[\\/])/, os.homedir())).catch(() => undefined) : undefined;
-  return checkedLinkTrust(l, trust, signer !== undefined && !signatureExpired(text));
+  // No ssh-keygen: say so, rather than "not signed" (the runbook still counts as unsigned).
+  const { signer, cantCheck } = file ? await checkSigner(text, file.replace(/^~(?=$|[\\/])/, os.homedir())) : {};
+  return { trust: checkedLinkTrust(l, trust, signer !== undefined && !signatureExpired(text)), ...(cantCheck ? { cantCheck } : {}) };
 }
 
 /** The manifest's `expires` date has passed (UTC), as the app and gates count it. */
@@ -115,7 +116,10 @@ function signatureExpired(text: string): boolean {
     return true;
   }
 }
-export type OpenLinkResult = { kind: 'opened'; uri: vscode.Uri; trust: OpenedTrust; filled: string[]; ignored: string[] } | { kind: 'error'; message: string } | { kind: 'cancelled' };
+export type OpenLinkResult =
+  | { kind: 'opened'; uri: vscode.Uri; trust: OpenedTrust; filled: string[]; ignored: string[]; /** Why the signature wasn't checked (no ssh-keygen). */ cantCheck?: string }
+  | { kind: 'error'; message: string }
+  | { kind: 'cancelled' };
 
 /** Open a link's runbook (the query of a vscode:// link, as VS Code gives it). */
 export async function openRunbookLinkQuery(query: string, storage: vscode.Uri, secrets: SecretsInfo): Promise<OpenLinkResult> {
@@ -151,7 +155,7 @@ export async function openRunbookLinkQuery(query: string, storage: vscode.Uri, s
           // Not the pinned version: only its own signature can vouch for it.
           const { sha256: _pin, ...unpinned } = l;
           const own = await checkedTrust(unpinned, localText!);
-          return finish(l, local, localText!, own === 'signed' ? 'signed' : 'unverified', secrets);
+          return finish(l, local, localText!, own.trust === 'signed' ? 'signed' : 'unverified', secrets, own.cantCheck);
         }
       }
       try {
@@ -162,19 +166,19 @@ export async function openRunbookLinkQuery(query: string, storage: vscode.Uri, s
       target = linkCopy(storage, url, text, fileNameOf(url));
     }
   }
-  const trust = await checkedTrust(l, text);
+  const { trust, cantCheck } = await checkedTrust(l, text);
   if (trust === 'mismatch') return { kind: 'error', message: 'md-runbook: the runbook at this address is not the one the link pins (it changed since the link was made): not opened.' };
-  return finish(l, target, text, trust, secrets);
+  return finish(l, target, text, trust, secrets, cantCheck);
 }
 
-async function finish(l: RunbookLink, target: vscode.Uri, text: string, trust: OpenedTrust, secrets: SecretsInfo): Promise<OpenLinkResult> {
+async function finish(l: RunbookLink, target: vscode.Uri, text: string, trust: OpenedTrust, secrets: SecretsInfo, cantCheck?: string): Promise<OpenLinkResult> {
   await vscode.commands.executeCommand('vscode.openWith', target, NOTEBOOK_TYPE);
   const nb = vscode.workspace.notebookDocuments.find((d) => d.uri.toString() === target.toString());
   const known = new Set(linkableParams(text).map((p) => p.name));
   const filled = Object.keys(l.params).filter((n) => known.has(n));
   const ignored = Object.keys(l.params).filter((n) => !known.has(n));
   if (nb && filled.length > 0) secrets.fillParameters(nb, Object.fromEntries(filled.map((n) => [n, l.params[n]!])));
-  return { kind: 'opened', uri: target, trust, filled, ignored };
+  return { kind: 'opened', uri: target, trust, filled, ignored, ...(cantCheck ? { cantCheck } : {}) };
 }
 
 export function registerLinkHandler(context: vscode.ExtensionContext, secrets: SecretsInfo, testMode: boolean): void {
@@ -184,7 +188,7 @@ export function registerLinkHandler(context: vscode.ExtensionContext, secrets: S
     if (r.kind === 'opened') {
       const parsed = parseVsCodeLinkQuery(query);
       const l = parsed.ok ? parsed.link : undefined;
-      const parts = [`md-runbook: opened ${path.basename(r.uri.fsPath)} from a link (${TRUST[r.trust]}).`];
+      const parts = [`md-runbook: opened ${path.basename(r.uri.fsPath)} from a link (${r.cantCheck ?? TRUST[r.trust]}).`];
       if (r.filled.length) parts.push(`Filled in: ${r.filled.map((n) => `${n}=${l?.params[n]}`).join(', ')}.`);
       if (r.ignored.length) parts.push(`Not used by this runbook: ${r.ignored.join(', ')}.`);
       if (l?.host) parts.push(`The link names the app host ${l.host}: here, cells run on this machine or on their own host=.`);
@@ -192,7 +196,7 @@ export function registerLinkHandler(context: vscode.ExtensionContext, secrets: S
       const cosign = l?.action === 'cosign' ? 'Co-sign Runbook' : undefined;
       const message = parts.join(' ');
       const buttons = cosign ? [cosign] : [];
-      const shown = r.trust === 'unverified' ? vscode.window.showWarningMessage(message, ...buttons) : vscode.window.showInformationMessage(message, ...buttons);
+      const shown = r.trust === 'unverified' || r.cantCheck ? vscode.window.showWarningMessage(message, ...buttons) : vscode.window.showInformationMessage(message, ...buttons);
       void shown.then((c) => {
         if (c === cosign) void vscode.commands.executeCommand('mdRunbook.cosignRunbook');
       });
