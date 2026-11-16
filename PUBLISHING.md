@@ -10,6 +10,9 @@ pushed. The workflow:
 
 ## One-time setup
 
+The publishing secrets live in the GitHub environment `release`, not in the repository. See
+[Release environments](#release-environments).
+
 ### Visual Studio Marketplace
 
 1. Sign in at <https://marketplace.visualstudio.com/manage> with a Microsoft account and create a
@@ -20,16 +23,16 @@ pushed. The workflow:
    - Organization: **All accessible organizations**
    - Scopes: **Custom defined → Marketplace → Manage**
    - An expiry that suits you (it can be renewed).
-3. In the GitHub repository open **Settings → Secrets and variables → Actions → New repository
-   secret**, name it `VSCE_PAT` and paste the token.
+3. Add the token as the secret `VSCE_PAT` in the environment `release`.
 
 ### Open VSX (VSCodium, Cursor, Gitpod, openvscode-server)
 
 1. Sign in at <https://open-vsx.org> with GitHub, accept the publisher agreement, and create an
    access token under **Settings → Access Tokens**.
-2. Create the namespace once (it must match the publisher):
-   `npx ovsx create-namespace smojon -p <token>`
-3. Add the token as the repository secret `OVSX_PAT`.
+2. Create the namespace once (it must match the publisher). `ovsx` reads the token from
+   `OVSX_PAT`, so it stays off the command line:
+   `read -rsp 'Open VSX token: ' OVSX_PAT && export OVSX_PAT && npx ovsx create-namespace smojon`
+3. Add the token as the secret `OVSX_PAT` in the environment `release`.
 
 ### npm (the command-line runner)
 
@@ -45,16 +48,24 @@ this repository's `release.yml` because the package says so:
   **Trusted Publisher**, choose **GitHub Actions**. Enter:
   - organization or user `smojon`;
   - repository `md-runbook`;
-  - workflow filename `release.yml` (no environment).
-- Below it, **Publishing access**: **Require two-factor authentication and disallow tokens** is the
+  - workflow filename `release.yml`;
+  - environment name `release`.
+- Set the environment name before the next tag. The npm job runs in the environment `release`.
+  npm's docs don't say a blank field still matches, and one guide reports a rejection.
+- Under **Publishing access**, **Require two-factor authentication and disallow tokens** is the
   safest choice once trusted publishing works. It doesn't affect the workflow.
+- The publish runs with `--ignore-scripts`. The job fails if `out/npm/package.json` has a
+  `scripts` field.
 
 A package must exist before it can have a trusted publisher. So a new package (for example after
-a rename) needs one publish with a token first. Use a granular access token with **Read and
-write** for all packages and **Bypass two-factor authentication**.
+a rename) needs one publish with a token first:
 
-Store it as the repository secret `NPM_TOKEN`, and give it to the publish step as
-`NODE_AUTH_TOKEN`. Delete both once the trusted publisher is set.
+- Use a granular access token with **Read and write** for that package and **Bypass two-factor
+  authentication**.
+- Give the token an expiry of one day: it is needed for one publish only.
+- Store it as the secret `NPM_TOKEN` in the environment `release`. The publish step reads it as
+  `NODE_AUTH_TOKEN`.
+- Delete the secret and the token once the trusted publisher is set.
 
 To check the package without publishing:
 `npm run compile && node scripts/pack-cli.js && (cd out/npm && npm pack --dry-run)`.
@@ -72,15 +83,26 @@ its APK is in each version's release (the Release workflow calls it).
   never be updated.
 - The key never shares a job with the build. The `sign` job installs nothing, and it runs only
   for `v*` tags and `main`, in the environment `android-signing`.
-- Recommended: move both secrets into that environment (Settings → Environments), and allow
-  only `v*` tags and `main` to use it.
+- The Release workflow passes only these two secrets to `app-apk.yml`, by name. It doesn't
+  inherit the others.
+- A secret passed by name works as a repository secret and as an environment secret
+  ([Reuse workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)).
+  So moving them needs no workflow change.
+- Recommended: move both secrets into the environment `android-signing`, and allow only `v*`
+  tags and `main` to use it.
 
 ### Release environments
 
-- The Open VSX and Marketplace jobs run in the environment `release`. Move `OVSX_PAT` (and a
-  `VSCE_PAT`, if one is added) into it, and allow only `v*` tags.
+- Set up environments as in
+  [Managing environments for deployment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+- The npm, Open VSX and Marketplace jobs run in the environment `release`. It holds `OVSX_PAT`
+  and `VSCE_PAT`, and allows only `v*` tags.
+- A repository secret is readable by every workflow on every branch. Delete `OVSX_PAT` and
+  `VSCE_PAT` there once they are in `release`.
 - Each publishing job holds one credential and runs none of the repository's dependencies.
   The tools are locked in `scripts/publish-tools` and installed without install scripts.
+- The publishing jobs take the packaged files by artifact ID, outside the checkout. They check
+  the file list before publishing.
 - On Google Play, give this key as the app signing key ("provide a copy of your app signing
   key", see [Use Play App Signing](https://support.google.com/googleplay/android-developer/answer/9842756)),
   and make a separate upload key. Play takes an `.aab`, not this APK.
@@ -109,9 +131,17 @@ The workflow fails early if the tag does not match `package.json`. While the ver
 
 ## Manual publishing (if needed)
 
+`vsce` reads its token from `VSCE_PAT`, `ovsx` from `OVSX_PAT`. Type them at a hidden prompt,
+so they stay out of the shell history and the process list:
+
 ```sh
 npm ci
 npx vsce package
-npx vsce publish -p <VSCE token>
-npx ovsx publish md-runbook-0.1.0.vsix -p <Open VSX token>
+read -rsp 'Marketplace token: ' VSCE_PAT && export VSCE_PAT
+npx vsce publish
+read -rsp 'Open VSX token: ' OVSX_PAT && export OVSX_PAT
+npx ovsx publish md-runbook-0.1.0.vsix
+unset VSCE_PAT OVSX_PAT
 ```
+
+In PowerShell, set each one with `$env:VSCE_PAT = Read-Host -MaskInput` (PowerShell 7.1 or later) instead.
