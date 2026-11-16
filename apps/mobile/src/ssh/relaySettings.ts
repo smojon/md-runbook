@@ -31,9 +31,11 @@ export function badTokenCharacter(token: string): string | undefined {
 
 /**
  * Why this can't be a relay address, or undefined: wss:// or https:// (ws:// and http:// only for
- * this machine), a host, no user name, query or fragment.
+ * this machine), a host, no user name, query or fragment. ws://[::1] is refused (`loopback6`):
+ * the web app's content security policy allows ws:// to localhost and 127.0.0.1 only
+ * (public/index.html), so the app would take the address and then fail to connect.
  */
-export function relayUrlProblem(url: string): 'invalid' | 'insecure' | undefined {
+export function relayUrlProblem(url: string): 'invalid' | 'insecure' | 'loopback6' | undefined {
   const s = url.trim();
   if (s === '' || /[\s\\]/.test(s) || /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i.test(s)) return 'invalid';
   let u: URL;
@@ -44,7 +46,8 @@ export function relayUrlProblem(url: string): 'invalid' | 'insecure' | undefined
   }
   if (!u.hostname || u.username || u.password || u.search || u.hash || s.includes('#') || s.includes('?')) return 'invalid';
   if (u.protocol === 'wss:' || u.protocol === 'https:') return undefined;
-  if ((u.protocol === 'ws:' || u.protocol === 'http:') && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname)) return undefined;
+  if ((u.protocol === 'ws:' || u.protocol === 'http:') && /^(localhost|127\.0\.0\.1)$/.test(u.hostname)) return undefined;
+  if ((u.protocol === 'ws:' || u.protocol === 'http:') && u.hostname === '[::1]') return 'loopback6';
   return u.protocol === 'ws:' || u.protocol === 'http:' ? 'insecure' : 'invalid';
 }
 

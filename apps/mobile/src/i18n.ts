@@ -1382,6 +1382,7 @@ const en = {
   relayUrlProblem: {
     invalid: 'Not a relay address: wss://relay.example.net',
     insecure: 'The relay’s address must be wss:// (ws:// only on this machine).',
+    loopback6: 'ws://[::1] is blocked by the web app’s security policy: use ws://localhost or ws://127.0.0.1.',
   },
   pairDevice: 'Pair a device',
   pairDevicePoints: [

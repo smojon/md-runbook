@@ -49,6 +49,13 @@ jobs:
       # A team library, optional: runbooks in apps/mobile/public/runbooks are copied into the export
       # (Expo copies public/ to dist/). Pages lists no folders, so the app reads the library's
       # index.json: one is made from the .md files when the folder has none.
+      # Only the library's own files are published (security review round 4): Pages serves an .html
+      # or .js file there as a page or script on the app's own origin, where the SSH key lives.
+      - name: Team library files
+        run: |
+          if [ -d dist/runbooks ]; then
+            find dist/runbooks \( -type l -o \( -type f ! \( -name '*.md' -o -name '*.markdown' -o -name index.json -o -name allowed_signers \) \) \) -print -delete
+          fi
       - name: Team library index
         run: |
           if [ -d dist/runbooks ] && [ ! -f dist/runbooks/index.json ]; then
