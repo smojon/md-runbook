@@ -21,6 +21,7 @@
 import * as vscode from 'vscode';
 import { SUPPORTED_LANGUAGE_IDS, shellKindForLanguage } from '@md-runbook/core';
 import { SECTION } from './config';
+import { lineWithValues } from './copyQuote';
 import { LineStep, formatLineRange, formatLineRanges, splitSteps, stepAtLine } from '@md-runbook/core/steps';
 import { LineRun, RunbookController } from './controller';
 import { isCell, runbookEditor, selectRunbookKernel } from './progress';
@@ -437,22 +438,23 @@ export function registerLineRuns(context: vscode.ExtensionContext, controller: R
     },
   };
 
-  /** The command at a line, with its values filled in (secrets stay `${secret:…}`), on the clipboard. */
+  /**
+   * The command at a line, with its values filled in (secrets stay `${secret:…}`), on the
+   * clipboard. Each value is quoted for the cell's shell where it stands (copyQuote.ts), so a
+   * value such as `x; rm -rf ~` pastes as text; cmd has no such quoting, so it warns instead.
+   */
   const copyLine = async (uri: unknown, line: unknown): Promise<string | undefined> => {
     const cell = cellByUri(uri);
     const step = cell && stepAtLine(buttonSteps(cell.document), Number(line));
     if (!cell || !step) return undefined;
     const values = new Map(info.secrets.values(cell.notebook, step.text).map((v) => [`${v.kind}:${v.name}`, v.value]));
-    const left = new Set<string>();
-    const text = step.text.replace(/\$\{(secret|input|param|out):([A-Za-z_][A-Za-z0-9_]*)(:secret)?\}/g, (whole: string, kind: string, name: string) => {
-      const v = values.get(`${kind}:${name}`);
-      if (v !== undefined) return v;
-      left.add(whole);
-      return whole;
-    });
+    const kind = shellKindForLanguage(cell.document.languageId) ?? 'bash';
+    const { text, left, risky } = lineWithValues(step.text, kind, (k, name) => values.get(`${k}:${name}`));
     await vscode.env.clipboard.writeText(text);
     const n = formatLineRange(step.start, step.end);
-    vscode.window.setStatusBarMessage(`md-runbook: copied line ${n}${left.size > 0 ? `, left as is: ${[...left].join(', ')}` : ''}`, 5000);
+    vscode.window.setStatusBarMessage(`md-runbook: copied line ${n}${left.length > 0 ? `, left as is: ${left.join(', ')}` : ''}`, 5000);
+    if (risky.length > 0)
+      void vscode.window.showWarningMessage(`md-runbook: copied line ${n}. Check it before you paste: the value of ${risky.join(', ')} has characters cmd reads (& | < > ^ % ").`);
     return text;
   };
 

@@ -100,6 +100,9 @@ Security fixes from a review of the parts that face the network.
   another extension is asked about first. Before, practice started, or the cell ran, at once.
 - **VS Code, Trusted Signers:** a line added from a paste, a file or the team library must name
   each signer. A pattern such as `*` or `*@example.net` is refused, with why.
+- **VS Code, Copy Line with Values:** each value is quoted for the cell's shell, inside or outside
+  quotes. Before, a value such as `x; rm -rf ~` was pasted as a command.
+  - In cmd blocks the value is copied as it is, with a warning when it has `& | < > ^ %` or `"`.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or
