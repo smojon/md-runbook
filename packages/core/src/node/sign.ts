@@ -30,7 +30,8 @@ function run(command: string, args: string[], stdin: 'inherit' | string): Promis
     let stderr = '';
     child.stdout!.on('data', (d: Buffer) => (stdout += d.toString('utf8')));
     child.stderr!.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
-    child.on('error', (e) => reject(new Error(`${command}: ${e.message} (OpenSSH's ssh-keygen is needed)`)));
+    // `code` stays on the error (ENOENT: not installed), so a caller can tell "can't check" apart.
+    child.on('error', (e) => reject(Object.assign(new Error(`${command}: ${e.message} (OpenSSH's ssh-keygen is needed)`), { code: (e as NodeJS.ErrnoException).code })));
     child.on('close', (code) => resolve({ code, stdout, stderr }));
     if (stdin !== 'inherit') {
       // A command that doesn't read its input (find-principals) may exit before it is written:

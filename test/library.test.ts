@@ -7,7 +7,7 @@ import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { libraryUrlProblemKind, normalizeLibraryUrl, parseAutoindex, parseIndexJson } from '@md-runbook/core/library';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
-import { ReadFetch, groupEntries, libraryBaseOf, libraryVerdict, readLibrary, verdictLabel } from '../src/libraryRead';
+import { CANT_CHECK, ReadFetch, groupEntries, libraryBaseOf, libraryVerdict, readLibrary, verdictLabel } from '../src/libraryRead';
 
 const BASE = 'https://runbooks.example.net/runbooks/';
 
@@ -134,5 +134,11 @@ describe('libraryVerdict', () => {
     assert.equal(libraryVerdict('ops/restart.md', signed(text, 'restart', 1, '2020-01-01'), 'ops@example.net', undefined).kind, 'expired');
     assert.equal(libraryVerdict('ops/restart.md', text, undefined, undefined).kind, 'unsigned');
     assert.equal(verdictLabel(libraryVerdict('ops/restart.md', doc, 'ops@example.net', undefined)), 'verified · v3 · ops@example.net');
+  });
+
+  it("no ssh-keygen: says it can't check, not that the signer isn't trusted", () => {
+    const v = libraryVerdict('ops/restart.md', signed(text, 'restart', 3), CANT_CHECK, undefined);
+    assert.equal(v.kind, 'cant-check');
+    assert.equal(verdictLabel(v), "signed by ops@example.net · can't check signatures: ssh-keygen not found (install OpenSSH)");
   });
 });

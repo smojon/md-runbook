@@ -30,8 +30,7 @@ import {
   reportPlan,
   reportRequiredText,
 } from '@md-runbook/core/runReport';
-import { sha256Hex } from '@md-runbook/core/sha256';
-import { signRunSummary, trustedRunbookSigner } from '@md-runbook/core/node';
+import { signRunSummary } from '@md-runbook/core/node';
 import { isCallCopy } from './calls';
 import { SECTION } from './config';
 import { META_KEY } from './outputs';
@@ -41,6 +40,7 @@ import type { SecretsInfo } from './secrets';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
 import { SIGNING_KEY_MISSING, SIGNING_KEY_MISSING_CANCEL, reportGate, summarySigning } from './reportGate';
 import { hostSkipped } from './remoteHosts';
+import { CANT_CHECK_SIGNATURES, SignerCache, SignerCheck } from './signerCheck';
 
 const CONSENT_KEY = 'mdRunbook.reports.consent';
 const QUEUE_KEY = 'mdRunbook.reports.queue';
@@ -85,8 +85,10 @@ function steps(nb: vscode.NotebookDocument, runs: readonly RunRecord[]): { label
 class RunReports {
   /** Runbooks whose required report was agreed to this session (Run), by uri and address. */
   private readonly agreed = new Set<string>();
-  /** The trusted signer of a text (by its hash): ssh-keygen runs once per version of a runbook. */
-  private readonly trust = new Map<string, string | undefined>();
+  /** The trusted signer of a text: ssh-keygen runs once per version of a runbook and of the allowed_signers file. */
+  private readonly trust = new SignerCache();
+  /** "Can't check signatures" was said this session. */
+  private toldCantCheck = false;
   private readonly started = new Map<string, number>();
   private sending = false;
 
@@ -99,13 +101,11 @@ class RunReports {
     return vscode.workspace.getConfiguration(SECTION);
   }
 
-  /** The signer of `mdRunbook.signing.allowedSigners` whose key signed this text, or undefined. */
-  private async trustedSigner(text: string): Promise<string | undefined> {
+  /** The signer of `mdRunbook.signing.allowedSigners` whose key signed this text, or none (`cantCheck`: no ssh-keygen). */
+  private async trustedSigner(text: string): Promise<SignerCheck> {
     const file = this.config().get<string>('signing.allowedSigners', '').trim();
-    if (!file || !/md-runbook:signature v1/.test(text)) return undefined;
-    const key = `${file}\n${sha256Hex(text)}`;
-    if (!this.trust.has(key)) this.trust.set(key, await trustedRunbookSigner(text, home(file)).catch(() => undefined));
-    return this.trust.get(key);
+    if (!file || !/md-runbook:signature v1/.test(text)) return {};
+    return this.trust.signer(text, home(file));
   }
 
   private async planOf(nb: vscode.NotebookDocument): Promise<{ plan: ReportPlan; text: string; signer?: string } | undefined> {
@@ -114,8 +114,13 @@ class RunReports {
     const first = nb.cellCount > 0 ? nb.cellAt(0) : undefined;
     if (first?.kind !== vscode.NotebookCellKind.Markup || !/^report-runs\s*:/m.test(first.document.getText())) return undefined;
     const text = notebookTextWithOutputs(nb);
-    const signer = await this.trustedSigner(text);
+    const { signer, cantCheck } = await this.trustedSigner(text);
     const plan = reportPlan(text, signer);
+    // Required or signed reporting counts only once the signature is checked: say why it isn't (once).
+    if (cantCheck && plan?.ignored && !this.toldCantCheck) {
+      this.toldCantCheck = true;
+      void vscode.window.showWarningMessage(`md-runbook: ${CANT_CHECK_SIGNATURES}. Until then, report-runs-required and -signed don't count.`);
+    }
     return plan ? { plan, text, ...(signer ? { signer } : {}) } : undefined;
   }
 

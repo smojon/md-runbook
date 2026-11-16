@@ -77,9 +77,14 @@ Security fixes from a review of the parts that face the network.
 - **Command line: `md-runbook unpublish PATH --library URL`** removes a runbook from a team
   library, where its server allows deleting.
 - **VS Code: Retry Failed Step, Resume from Failed Step and Answer the Waiting Step** are in the
-  Command Palette and at the top of Run ▾. They show only after a failure, or while a step waits.
+  Command Palette and Run ▾. They show only after a failure, or while a step waits.
 - **VS Code: the launch form's Start** needs a value for each parameter without a default, as in
   the app. The form names the parameters still empty.
+- **VS Code, signature checks:** an edit to your allowed_signers file counts at once. Before, the
+  Library view and run reports kept the answer from before the edit.
+- **VS Code without ssh-keygen:** the Library view says it can't check signatures, and to install
+  OpenSSH. Before, it said the signer wasn't trusted.
+  - Run reports and Practice on a Host say so too.
 
 ## 0.26.8
 
