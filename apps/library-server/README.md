@@ -214,6 +214,10 @@ phones. What to set up in Firebase and at Apple:
   - `alertnames`, `runbooks` (paths, or folders ending in `/`): only those alerts. Absent: all.
   - The answer is the device's `id`. `DELETE /v1/devices/<id>` with the same token removes the
     device.
+  - Only that token can register the phone again (another accepted token gets `409`), so no one
+    else can mute or remove it. Once that token is withdrawn, another one may.
+  - Give each person their own `DEVICES_TOKENS` entry. Without `DEVICES_TOKENS`, phones use the
+    read tokens: everyone who shares one of those shares its phones too.
 - **A push says** "ALERTNAME firing" and the runbook's path, and carries the alert's link
   (`/open?url=…&sha256=…`). Nothing else: no other labels, no annotations, no tokens. Google or
   Apple sees what a push carries.

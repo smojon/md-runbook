@@ -25,6 +25,9 @@ Security fixes from a review of the parts that face the network.
   - VS Code checks against `mdRunbook.signing.allowedSigners`.
 - **Library server:** `ALERT_MAP` needs `ALERTS_TOKENS`, so nobody else can post alerts.
   `ALERTS_ALLOW_ANYONE=true` keeps the old behaviour, for a private network only.
+- **Library server:** only the devices token a phone registered with can register it again
+  (`409` for another one). Before, any other devices token could mute the phone or take it off.
+  - Give each person their own `DEVICES_TOKENS` entry: a shared read token is one owner.
 - **Library server:** an older release of a signed name is refused at any path, not only where it
   was published. Before, `old/ops/restart.md` could bring back version 3 of `ops/restart`.
 - **Gate and signing:** a manifest with a second `name`, `version`, `expires` or `scope` line

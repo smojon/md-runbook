@@ -113,6 +113,11 @@ export class Devices {
     readonly maxDevices: number,
     /** Most devices one devices token may register: one token's holder can't fill the list. */
     readonly maxPerToken = 50,
+    /**
+     * Digests of the devices tokens the server accepts now. A phone registered under one of them
+     * can't be taken over by another token. Absent: every digest counts as accepted.
+     */
+    readonly accepted?: ReadonlySet<string>,
   ) {}
 
   private async load(): Promise<Device[]> {
@@ -140,7 +145,11 @@ export class Devices {
     return this.lock.run(async () => [...(await this.load())]);
   }
 
-  /** Adds the device, or updates it (its filters) when its token is registered already. */
+  /**
+   * Adds the device, or updates it (its filters) when its token is registered already. Only the
+   * devices token it registered with may update it (409 for another one), unless that token is
+   * no longer accepted: another token's holder can't mute or take over a phone.
+   */
   async register(r: Registration, by: { label: string; value: string }, now = new Date()): Promise<{ device: Device; created: boolean }> {
     return this.lock.run(async () => {
       const list = await this.load();
@@ -148,6 +157,8 @@ export class Devices {
       const old = list.find((d) => d.id === id);
       if (!old && list.length >= this.maxDevices) throw new HttpError(507, `this server keeps at most ${this.maxDevices} devices (PUSH_MAX_DEVICES)`);
       const digest = tokenDigest(by.value);
+      if (old?.tokenDigest !== undefined && old.tokenDigest !== digest && (this.accepted?.has(old.tokenDigest) ?? true))
+        throw new HttpError(409, 'this phone is registered with another devices token: update or remove it with that token');
       if (old?.tokenDigest !== digest && list.filter((d) => d.tokenDigest === digest).length >= this.maxPerToken)
         throw new HttpError(507, `this devices token has registered ${this.maxPerToken} devices, the most it may (PUSH_MAX_DEVICES_PER_TOKEN)`);
       const at = now.toISOString();

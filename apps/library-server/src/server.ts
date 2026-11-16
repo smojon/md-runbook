@@ -21,7 +21,7 @@
 import { IncomingMessage, Server, ServerResponse, createServer } from 'node:http';
 import { Alerts, Notify } from './alerts';
 import type { ServerConfig, Token } from './config';
-import { DEVICE_ID_RE, Devices, parseRegistration } from './devices';
+import { DEVICE_ID_RE, Devices, parseRegistration, tokenDigest } from './devices';
 import { HttpError, LogEvent, RateLimit, bearer, clientOf, limitOf, readBody, sendJson, tokenSet } from './http';
 import { Library, decodePath } from './library';
 import { ApnsSender, FcmSender, PushService, Senders } from './push';
@@ -57,7 +57,7 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
     config.push && config.alerts
       ? new PushService(
           config.push,
-          new Devices(config.push.file, config.push.maxDevices, config.push.maxDevicesPerToken),
+          new Devices(config.push.file, config.push.maxDevices, config.push.maxDevicesPerToken, new Set(config.push.tokens.map((t) => tokenDigest(t.value)))),
           opts.senders ?? {
             ...(config.push.fcm ? { android: new FcmSender(config.push.fcm) } : {}),
             ...(config.push.apns ? { ios: new ApnsSender(config.push.apns) } : {}),

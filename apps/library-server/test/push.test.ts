@@ -9,7 +9,8 @@ import * as path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import type { Firing } from '../src/alerts';
 import { AlertsConfig, FcmConfig, PushConfig, loadConfig, parseServiceAccount } from '../src/config';
-import { Devices, REFUSED_TO_PRUNE, deviceId, parseRegistration, wants } from '../src/devices';
+import { Devices, REFUSED_TO_PRUNE, deviceId, parseRegistration, tokenDigest, wants } from '../src/devices';
+import { HttpError } from '../src/http';
 import { ApnsSender, FcmSender, MAX_LINK, PushService, SendResult, jwt, pushMessage } from '../src/push';
 import { call, config, start, tok } from './helpers';
 
@@ -161,6 +162,23 @@ describe('push: one token holder', () => {
       assert.equal((await devices.register({ platform: 'ios', token: ios(3) }, tok(OTHER, 'other'))).created, true);
       // Not even under the old label: the count is per token.
       await assert.rejects(devices.register({ platform: 'ios', token: ios(4) }, tok(DEVICES, 'renamed')), /PUSH_MAX_DEVICES_PER_TOKEN/);
+      // Another token can't re-register this token's phone.
+      await assert.rejects(devices.register({ platform: 'ios', token: ios(1) }, tok(OTHER, 'other')), (e: HttpError) => e.status === 409);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("can take over a phone only when the token it registered with isn't accepted any more", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-takeover-'));
+    try {
+      const file = path.join(dir, 'devices.json');
+      await new Devices(file, 100).register({ platform: 'ios', token: ios(1) }, tok(OTHER, 'old'));
+      const now = new Devices(file, 100, 50, new Set([tokenDigest(DEVICES)]));
+      const r = await now.register({ platform: 'ios', token: ios(1) }, tok(DEVICES, 'phones'));
+      assert.deepEqual([r.created, r.device.tokenDigest, r.device.by], [false, tokenDigest(DEVICES), 'phones']);
+      const strict = new Devices(file, 100, 50, new Set([tokenDigest(DEVICES), tokenDigest(OTHER)]));
+      await assert.rejects(strict.register({ platform: 'ios', token: ios(1) }, tok(OTHER, 'old')), (e: HttpError) => e.status === 409);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -328,6 +346,9 @@ describe('push: alerts to phones', () => {
       assert.equal((await reg({ platform: 'android', token: 'fcm-token-' + 'z'.repeat(150), alertnames: ['DiskFull'] }, DEVICES)).status, 201);
       // Registered with another accepted token (withdrawn in the next test).
       assert.equal((await reg({ platform: 'ios', token: 'c'.repeat(64) }, OTHER)).status, 201);
+      // Another accepted token can't re-register (mute, take over) a phone: 409, filters kept.
+      assert.equal((await reg({ platform: 'ios', token: IOS_TOKEN, alertnames: ['Nothing'] }, OTHER)).status, 409);
+      assert.equal((await s.push!.devices.list()).find((d) => d.token === IOS_TOKEN)!.alertnames, undefined);
 
       const posted = await call(`${url}/v1/alerts`, 'POST', webhook('fp-1'), AM);
       assert.deepEqual(posted.json, { recorded: 1, linked: 1 });
@@ -410,6 +431,8 @@ describe('push: alerts to phones', () => {
         [`/3/device/${IOS_TOKEN}`],
       );
       assert.ok((await call(`${url}/v1/server-info`, 'GET')).json.capabilities.includes('push'));
+      // The phone of the withdrawn token: an accepted token may register it again.
+      assert.equal((await call(`${url}/v1/devices`, 'POST', JSON.stringify({ platform: 'ios', token: 'c'.repeat(64) }), DEVICES)).status, 200);
     } finally {
       await s.close();
     }
