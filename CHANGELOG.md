@@ -15,7 +15,8 @@ Security fixes from a review of the parts that face the network.
   verifies against a key you trust. That holds for **Open only signed runbooks from links** too.
   - Before, any well-formed signature block was enough.
   - For a whole-runbook signature, changed text around the blocks also counts as unsigned now.
-  - So does an added PowerShell or cmd block next to an older signature, and an expired one.
+  - An added PowerShell or cmd block next to an older signature counts as unsigned, as does an
+    expired one.
   - VS Code checks against `mdRunbook.signing.allowedSigners`.
 - **Library server:** `ALERT_MAP` needs `ALERTS_TOKENS`, so nobody else can post alerts.
   `ALERTS_ALLOW_ANYONE=true` keeps the old behaviour, for a private network only.
