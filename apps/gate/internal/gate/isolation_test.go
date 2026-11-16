@@ -9,8 +9,11 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/smojon/md-runbook/apps/gate/internal/logx"
 	"github.com/smojon/md-runbook/apps/gate/internal/report"
@@ -88,6 +91,24 @@ func TestIsolationsToTry(t *testing.T) {
 		if got := isolationsToTry(want); !reflect.DeepEqual(got, try) {
 			t.Errorf("isolationsToTry(%q) = %q, want %q", want, got, try)
 		}
+	}
+}
+
+// A helper whose child holds its output and is stopped (as a process of the cells' account can
+// stop the cells' mode under sudo): runFor still returns, at its limit plus waitDelay (review of
+// 0.28.0).
+func TestRunForStoppedChild(t *testing.T) {
+	pidFile := t.TempDir() + "/child.pid"
+	t0 := time.Now()
+	_, err := runFor(time.Second, []string{"/bin/sh", "-c", `/bin/sh -c 'echo $$ >"$0"; kill -STOP $$; echo late' "$0" & wait`, pidFile}, nil, nil)
+	took := time.Since(t0)
+	if b, rerr := os.ReadFile(pidFile); rerr == nil {
+		if pid, perr := strconv.Atoi(strings.TrimSpace(string(b))); perr == nil {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+	if err == nil || took > time.Second+waitDelay+2*time.Second {
+		t.Errorf("runFor: %v after %s", err, took)
 	}
 }
 

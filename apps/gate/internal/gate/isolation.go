@@ -308,7 +308,19 @@ func (p plan) sudoRule(gateAccount string) string {
 // runCmd runs a program to its end (at most 20 seconds) with stdin; its stdout, and an error that
 // names its exit and the first line of its stderr. In a session of its own: no terminal.
 func runCmd(argv, env []string, stdin []byte) ([]byte, error) {
+	return runFor(20*time.Second, argv, env, stdin)
+}
+
+// waitDelay: how long a program's output may stay open after it ended or was killed. sudo's
+// child (the cells' mode) holds the pipes; the cells' account can stop it (SIGSTOP), and the gate
+// can't signal it. Without a bound, Wait would wait for it forever (review of 0.28.0).
+const waitDelay = 2 * time.Second
+
+// runFor is runCmd with a limit: after it, the program is killed, and its output is given up
+// waitDelay later even if a process the gate can't signal still holds it.
+func runFor(limit time.Duration, argv, env []string, stdin []byte) ([]byte, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.WaitDelay = waitDelay
 	cmd.Env = env
 	if env == nil {
 		cmd.Env = []string{"PATH=" + gatePath, "LC_ALL=C"}
@@ -322,7 +334,7 @@ func runCmd(argv, env []string, stdin []byte) ([]byte, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	t := time.AfterFunc(20*time.Second, func() { cmd.Process.Kill() })
+	t := time.AfterFunc(limit, func() { cmd.Process.Kill() })
 	err := cmd.Wait()
 	t.Stop()
 	if err != nil {
@@ -539,7 +551,18 @@ func groupsOf(sh *shell) []int {
 // signalShells sends sig to the shells' groups and scopes. The gate signals what runs as its own
 // account; in separated mode, the cells' account's processes get it through the cells' mode (one
 // sudo for all). KILL ends a scope through its cgroup, whatever account its processes run as.
+//
+// No helper comes first: KILL writes every scope's cgroup.kill, then signals the groups, and only
+// then asks the cells' mode, which a process of the cells' account could stop. TERM leaves the
+// cells' mode running in the background: the wait for the shells to end doesn't depend on it.
 func (g *Gate) signalShells(shs []*shell, sig syscall.Signal) {
+	if sig == syscall.SIGKILL {
+		for _, sh := range shs {
+			if _, _, cg := sh.info(); cg != "" {
+				os.WriteFile(cg+"/cgroup.kill", []byte("1"), 0)
+			}
+		}
+	}
 	var cells []int
 	sep := g.plan.account != ""
 	for _, sh := range shs {
@@ -550,11 +573,7 @@ func (g *Gate) signalShells(shs []*shell, sig syscall.Signal) {
 			}
 		}
 		_, _, cg := sh.info()
-		if cg == "" {
-			continue
-		}
-		if sig == syscall.SIGKILL {
-			os.WriteFile(cg+"/cgroup.kill", []byte("1"), 0)
+		if cg == "" || sig == syscall.SIGKILL {
 			continue
 		}
 		for _, p := range cgroupProcs(cg) {
@@ -563,8 +582,13 @@ func (g *Gate) signalShells(shs []*shell, sig syscall.Signal) {
 			}
 		}
 	}
-	if len(cells) > 0 {
+	if len(cells) == 0 {
+		return
+	}
+	if sig == syscall.SIGKILL {
 		g.cellsKill(sig, cells)
+	} else {
+		go g.cellsKill(sig, cells)
 	}
 }
 
@@ -584,13 +608,14 @@ func (g *Gate) anyAlive(shs []*shell) bool {
 	return false
 }
 
-// cellsKill signals processes of the cells' account (pids, or -groups) as that account.
+// cellsKill signals processes of the cells' account (pids, or -groups) as that account: at most
+// 5 seconds, and waitDelay more for a stopped cells' mode.
 func (g *Gate) cellsKill(sig syscall.Signal, targets []int) {
 	l := g.plan.outer("", true)
 	if g.plan.exe == "" || g.plan.sudo == "" {
 		return
 	}
-	runCmd(l.argv, l.env, cellsReq{Op: "kill", Sig: int(sig), Targets: targets}.encode())
+	runFor(5*time.Second, l.argv, l.env, cellsReq{Op: "kill", Sig: int(sig), Targets: targets}.encode())
 }
 
 // cgroupProcs: the processes in a cgroup and the cgroups under it.

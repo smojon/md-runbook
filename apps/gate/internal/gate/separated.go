@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/smojon/md-runbook/apps/gate/internal/logx"
 	"github.com/smojon/md-runbook/apps/gate/internal/procs"
@@ -478,8 +479,10 @@ func (g *Gate) sweepCells(when string) {
 		g.log.Event("event", "leftovers", "status", "skipped", "reason", "no /proc here", "cells", g.cfg.CellsAccount, "when", when)
 		return
 	}
+	// Bounded (the sweep itself takes at most 5 seconds): a stopped cells' mode doesn't hold up the
+	// end of the session, its run reports included.
 	l := g.plan.outer("", true)
-	out, err := runCmd(l.argv, l.env, cellsReq{Op: "sweep"}.encode())
+	out, err := runFor(10*time.Second, l.argv, l.env, cellsReq{Op: "sweep"}.encode())
 	var res sweepResult
 	if err != nil || json.Unmarshal(out, &res) != nil {
 		g.log.Event("event", "leftovers", "status", "skipped", "reason", "can't run the cells' mode", "cells", g.cfg.CellsAccount, "when", when)
