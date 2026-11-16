@@ -540,6 +540,53 @@ const en = {
   moreActions: '⋯ More',
   searchActions: 'Search actions',
   homeActions: 'More actions',
+  // Get Started (the start screen's tour)
+  tourLabel: 'Get started',
+  tourStep: (n: number, of: number) => `Get started · ${n} of ${of}`,
+  tourSkip: 'Skip',
+  tourBack: 'Back',
+  tourNext: 'Next',
+  tourDone: 'Done',
+  tourCards: [
+    {
+      title: 'Runbooks you can run',
+      points: ['A runbook is a Markdown file: steps in words, commands in code blocks.', 'The sample has a first step with a saved run.'],
+      action: { id: 'sample' as const, label: 'Open the sample' },
+    },
+    {
+      title: 'Run a step',
+      points: [
+        '▶ runs a block on a server over SSH; its output goes under it.',
+        'No host yet: the sample shows its saved output instead.',
+        'Risky commands ask before they run.',
+      ],
+    },
+    {
+      title: 'Add a host',
+      points: [
+        'Hosts & settings → Add a host: its name, address and account.',
+        'Install my key… puts this app’s key on the server.',
+        'The first connection asks you to trust the server’s key.',
+      ],
+      action: { id: 'hosts' as const, label: 'Open Hosts & settings' },
+    },
+    {
+      title: 'Your team’s runbooks',
+      points: [
+        'Team runbooks on this screen lists your team library.',
+        'Set its address under Hosts & settings → Team library.',
+        'Opening one makes your own copy.',
+      ],
+    },
+    {
+      title: 'Where help is',
+      points: [
+        '⋯ here: the sample, the cheat sheet and this tour.',
+        '⋯ More in a runbook: every action, with search.',
+        '⋯ on a step or a cell: its own actions.',
+      ],
+    },
+  ],
   close: 'Close',
   noActions: (q: string) => `No action matches “${q}”.`,
   actionGroups: {
@@ -558,6 +605,7 @@ const en = {
     scanCode: ['Scan a Code', 'A runbook QR code, such as the label on a machine.'],
     openLink: ['Open a Link…', 'A runbook at an https address, such as a GitHub file.'],
     newRunbook: ['New Runbook…', 'Write your own: start blank or from a small template.'],
+    getStarted: ['Get Started', 'A short tour: the sample, a first run, a host, the team library, help.'],
     runAll: ['Run All', 'Run the whole procedure top to bottom; it stops at the first failure.'],
     runAllForm: ['Run All…', 'Check the values, secrets and risky steps on one sheet first, then Start.'],
     resumeRun: ['Resume Run', 'A step failed and you fixed the cause: carry on from it without re-running what worked.'],

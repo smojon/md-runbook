@@ -94,6 +94,8 @@ export interface Settings {
    * (`context=`) and the account (`on=`), as VS Code's mdRunbook.output.recordContext. Off by default.
    */
   recordContext: boolean;
+  /** Get Started was skipped or done: it no longer shows by itself on the start screen. */
+  tourSeen: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -116,6 +118,7 @@ const DEFAULTS: Settings = {
   stopOnFailure: true,
   lineHintSeen: false,
   recordContext: false,
+  tourSeen: false,
 };
 
 /** The timeouts offered (seconds; 0: none, the extension's default). */
@@ -136,7 +139,8 @@ type OutputFlag =
   | 'launchForm'
   | 'stopOnFailure'
   | 'lineHintSeen'
-  | 'recordContext';
+  | 'recordContext'
+  | 'tourSeen';
 
 /** The strings of a saved list, or undefined when it isn't one. */
 const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : undefined);
@@ -179,6 +183,7 @@ async function readSettings(): Promise<void> {
       stopOnFailure: flag('stopOnFailure'),
       lineHintSeen: flag('lineHintSeen'),
       recordContext: flag('recordContext'),
+      tourSeen: flag('tourSeen'),
       // `trustedSigners` (allowed_signers text, before the one list) is moved by signing/trust.ts
       // migrateTrustedSigners and left out here: the next save drops it.
     };

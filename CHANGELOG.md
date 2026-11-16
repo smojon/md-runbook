@@ -155,6 +155,10 @@ Security fixes from a review of the parts that face the network.
   - The context comes from a step's own `kube-context` check when it has one.
   - The launch form and the Steps header show the newest run's context, also one VS Code
     recorded.
+- **App: Get Started.** A short tour on the start screen covers the sample, a first run, a host,
+  the team library and help.
+  - It shows once on the first start, with Skip on every card.
+  - The start screen's ⋯ → **Get Started** shows it again.
 
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.

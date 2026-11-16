@@ -1,5 +1,5 @@
 import { Link, Stack, router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { parse } from '@md-runbook/core';
 import { checkCore } from '../coreCheck';
@@ -9,7 +9,8 @@ import { openRunbookLink } from '../runbooks/openLink';
 import { forgetOrigin } from '../runbooks/files';
 import { refreshLibrary, useLibrary } from '../runbooks/library';
 import { Runbook, hasUnsavedChanges, removeRunbook, useRunbooks } from '../runbooks/store';
-import { useLibraryUrlSetting } from '../settings/store';
+import { loadSettings, outputSettings, setOutputSetting, useLibraryUrlSetting } from '../settings/store';
+import { GetStarted, TourAction } from '../ui/GetStarted';
 import { setPinned, usePins } from '../runbooks/pins';
 import { themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
@@ -83,6 +84,31 @@ export function RunbookList() {
   };
   /** The start screen's ⋯ (header): its actions and the help, each also on the screen or the gear. */
   const [menu, setMenu] = useState(false);
+  /** Get Started: by itself until skipped or done once (the settings say, once read), and from ⋯. */
+  const [tour, setTour] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void loadSettings().then(() => live && !outputSettings().tourSeen && setTour(true));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const list = useRef<FlatList<ListRow>>(null);
+  /** Asked for from ⋯ (a count, so each time): scrolled into sight, after the runbooks. */
+  const [tourAsked, setTourAsked] = useState(0);
+  useEffect(() => {
+    if (tourAsked === 0) return;
+    const timer = setTimeout(() => list.current?.scrollToEnd({ animated: true }), 50);
+    return () => clearTimeout(timer);
+  }, [tourAsked]);
+  const closeTour = (): void => {
+    setTour(false);
+    setOutputSetting('tourSeen', true);
+  };
+  const tourAction = (a: TourAction): void => {
+    if (a === 'sample') router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } });
+    else router.push('/hosts');
+  };
   const action = (id: keyof typeof t.actions, group: AppAction['group'], run: () => void): AppAction => ({
     id,
     title: t.actions[id][0],
@@ -95,6 +121,10 @@ export function RunbookList() {
     action('scanCode', 'open', () => router.push('/scan')),
     action('openLink', 'open', () => setLink('')),
     action('newRunbook', 'edit', () => setCreating(true)),
+    action('getStarted', 'help', () => {
+      setTour(true);
+      setTourAsked((n) => n + 1);
+    }),
     action('sample', 'help', () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } })),
     action('cheatSheet', 'help', () => void Linking.openURL(CHEAT_SHEET_URL)),
     action('hosts', 'help', () => router.push('/hosts')),
@@ -103,6 +133,7 @@ export function RunbookList() {
   // content placed above the list would sit under it (and taps there would hit the header).
   return (
     <FlatList
+      ref={list}
       style={styles.screen}
       contentContainerStyle={styles.content}
       contentInsetAdjustmentBehavior="automatic"
@@ -191,6 +222,7 @@ export function RunbookList() {
       }
       ListFooterComponent={
         <>
+          {tour ? <GetStarted onAction={tourAction} onClose={closeTour} /> : null}
           <LibrarySection />
           {core.ok ? null : (
             <Text testID="core-error" role="alert" style={[styles.status, { color: colors.error }]}>
