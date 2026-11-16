@@ -10,6 +10,9 @@
  * you), and the signature covers the whole runbook, its front matter included (signing/trust.ts
  * reportSigner, the same signatureState and coverage() as the library's states and the banner).
  * Otherwise the run is reported only once you allow it.
+ *
+ * `report-runs-required: separated` is required here as `true` is; the notice adds that only a
+ * report from a gate in separated mode counts (a server checks that, not the app).
  */
 import { useSyncExternalStore } from 'react';
 import {

@@ -296,6 +296,35 @@ describe('a signed runbook that requires reporting', () => {
   });
 });
 
+describe('report-runs-required: separated', () => {
+  it('required as true is; the notice says only a gate in separated mode counts', async () => {
+    const signer = await generateKey();
+    const unsigned = runbookText([`report-runs: ${URL}`, 'report-runs-required: separated']);
+    const built = buildManifest(unsigned, { name: 'ops/check', version: 1, scopes: [], patterns: {} });
+    if ('errors' in built) throw new Error(built.errors.join('; '));
+    const manifest = formatManifest(built.manifest);
+    const text = withSignature(unsigned, { signer: 'ops@example.net', signed: '2026-11-14', manifest, signature: await signSshsig(signer, manifest) });
+    expect(addSigners(await allowedSignersLine(signer, 'ops@example.net'))).toMatchObject({ added: 1 });
+    const rb = addRunbook('check.md', text);
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('report-required')).toBeTruthy());
+    expect(screen.getByText(/The run counts only when a gate in separated mode reports it\./)).toBeTruthy();
+    expect(mockConnection.calls).toHaveLength(0);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('report-required-run'));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // The app's own summary is a client's: no gate, no gate_mode.
+    const summary = JSON.parse(sent()[0]!.body);
+    expect(summary.client).not.toBe('gate');
+    expect(summary.gate).toBeUndefined();
+    expect(runSummaryProblems(summary)).toEqual([]);
+  });
+});
+
 describe('a run opened from an alert link', () => {
   // An SOP as admin4 writes them: the alert parameters declared with empty defaults, used by no cell.
   const SOP = [

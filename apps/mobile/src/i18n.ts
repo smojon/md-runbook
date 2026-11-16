@@ -1374,6 +1374,7 @@ const en = {
   reportsTrustPoints: [
     'Only a runbook verified as a whole can require reports (report-runs-required, report-runs-signed).',
     'Verified: signed (manifest version 2) by a key under Trusted signers.',
+    'report-runs-required: separated: only a report from a gate in separated mode counts.',
     'Other runbooks ask.',
   ],
   trustedSignersPlaceholder: 'ops@example.net namespaces="md-runbook" ssh-ed25519 AAAA…',
