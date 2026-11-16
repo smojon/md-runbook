@@ -230,8 +230,10 @@ Each has its own page with examples and settings:
   extension in GitHub Codespaces.
 - **[Phone and browser app](docs/app.md)** (in development, not in the stores yet): the same
   runbooks on iPhone, Android and the web. They run on your servers over SSH, and the SSH key is
-  kept in the phone's secure hardware. `host=NAME` cells are for the app: the extension and the
-  CLI never run them.
+  kept in the phone's secure hardware.
+- **[Remote hosts in VS Code](docs/features/hosts.md):** `host=NAME` cells, **Run on a Group…** and
+  **Practice on a Host…** run over SSH, with the keys of your SSH agent. The CLI never runs
+  `host=` cells.
   - [Moving between VS Code and the app](docs/switching.md): a synced folder, **Open in the App**
     from VS Code, **Share Runbook** from the app. The run carries on where it stopped.
 - **[On call and incidents](docs/features/on-call.md):** a pager alert's link opens the runbook in

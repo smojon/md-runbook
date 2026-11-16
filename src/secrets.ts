@@ -34,6 +34,7 @@ import { CellPlan, PrepareContext, PromptCancelled, RunPipeline } from './pipeli
 import { SECTION } from './config';
 import { NOTEBOOK_TYPE } from './serializer';
 import { whileWaiting } from './waiting';
+import { hostSkipped } from './remoteHosts';
 
 /** SecretStorage can't enumerate, so the names are kept here. */
 const INDEX_KEY = 'mdRunbook.secretNames';
@@ -110,7 +111,7 @@ function upFrontRefs(nb: vscode.NotebookDocument, cells: readonly vscode.Noteboo
     const meta: unknown = cell.metadata?.[META_KEY];
     const info = isCodeMeta(meta) ? meta.info : '';
     const o = parseCellOptions(info);
-    if (o.skip || o.part !== undefined || o.host !== undefined || (o.os && !o.os.includes(currentOs())) || proposalOf(info).by !== undefined) continue;
+    if (o.skip || o.part !== undefined || hostSkipped(info, nb) || (o.host === undefined && o.os && !o.os.includes(currentOs())) || proposalOf(info).by !== undefined) continue;
     let refs: VarRef[];
     try {
       refs = cellRefs(cell.document.getText(), info, fm);

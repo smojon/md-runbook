@@ -113,7 +113,7 @@ Tokens are separated by spaces or tabs. There are three forms:
 | `capture=NAME` or `capture=NAME:/regex/flags` | variable name | Keep stdout (trimmed), or the first group of the first match (the whole match without a group), as `${out:NAME}` for later cells. Several allowed. |
 | `capture-secret=…` | as `capture=` | The same, redacted everywhere and never written to disk. |
 | `os=LIST` | `windows`, `linux`, `macos`, comma-separated; also `win`, `win32`, `mac`, `osx`, `darwin` | Run only on these systems. Adjacent `os=` blocks with no OS repeated are alternatives of one step. |
-| `host=NAME` | a host's name in the md-runbook app; quote it if it has spaces | The md-runbook app runs the block on that host over SSH, whichever host is selected. The VS Code extension and the CLI run cells on the local machine, so they never run such a block: it counts as skipped. |
+| `host=NAME` | a host's name (the app's hosts, VS Code's `mdRunbook.hosts`); quote it if it has spaces | Runs the block on that host over SSH, whichever host is selected. The app and VS Code ask once per runbook and host before the first one. VS Code passes over the block when NAME is not one of its hosts; the CLI always does. Both count it as skipped. See [remote hosts](features/hosts.md). |
 | `kube-context=NAME` | a Kubernetes context name, or `${param:NAME}` | Run only while `kubectl config current-context` prints NAME, checked where the cell runs just before it runs; otherwise nothing runs and the cell fails. Overrides the front matter's `kube-context:`. With `kube-context-mode: pin` in the front matter, the cell runs against NAME instead (on this machine; checked only on a `host=`). See [Kubernetes](features/kubernetes.md). |
 | `lines=any` | the word `any` | In a signed runbook: servers with md-runbook-gate also run single lines and ranges of this block (otherwise only the whole block, or its commands in order). See [signed runbooks](features/signed-runbooks.md). |
 | `retry=N` | integer 1 to 100 | Run up to N times in all until it passes. |
@@ -208,7 +208,7 @@ severity: SEV2       # the incident's severity, as you name them
 evidence: true       # every run records by= and on=, and every attempt is kept (also implied by incident:)
 rto: 30m             # recovery time objective: 90s, 30m, 1h30m or seconds; the report says met or missed
 drill: true          # the record is a drill or exercise (the report says Drill record)
-practice: training-1 # the app runs every cell on this host, whatever host= says (drills, training)
+practice: training-1 # every cell runs on this host, whatever host= says (drills; the app and VS Code ask first unless signed)
 kube-context: prod-eu # every cell runs only while kubectl's current context is prod-eu; a cell's kube-context= wins
 kube-context-mode: pin # check (default) | pin: cells run on their kube-context without changing your default context
 git-bash-path-conversion: off # on (default) | off: Git Bash on Windows leaves /opt/x-style arguments alone
@@ -469,7 +469,7 @@ A runbook's **steps** are its cells plus GitHub task-list items in Markdown (`- 
 - **failed** with `check=failed` or any other exit.
 
 A group of adjacent `os=` blocks is one step, judged by the block for the current OS. A `host=`
-block is skipped in the extension and the CLI.
+block is skipped in the CLI, and in VS Code when its host is not in `mdRunbook.hosts`.
 
 Run All runs cells in order and stops at the first failure unless the cell has
 `continue-on-error`. Cells of one runbook never run concurrently.

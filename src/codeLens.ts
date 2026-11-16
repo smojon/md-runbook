@@ -153,10 +153,10 @@ class EditorRunner {
       this.channel.appendLine(`[md-runbook] not run: this block is for ${osLabel(os)}`);
       return true;
     }
-    // host=: runs on a remote host from the md-runbook app, never on this machine.
+    // host=: runs on its host from the runbook view (remoteHosts.ts) or the app, never on this machine.
     const host = parseCellOptions(loc.info).host;
     if (host) {
-      this.channel.appendLine(`[md-runbook] not run: this block runs on the host ${host} (from the md-runbook app)`);
+      this.channel.appendLine(`[md-runbook] not run: this block runs on the host ${host} (open the file as a runbook to run it there)`);
       return true;
     }
     const blocked = await textEditorGuard(loc);

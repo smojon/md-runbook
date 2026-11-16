@@ -14,12 +14,12 @@ record. md-runbook keeps it apart from production and gives you the evidence aft
 2. **Set the target.** `rto: 30m` in the runbook's front matter (seconds, `90s`, `30m`, `1h30m`).
    The report says whether the drill met it, from the first run to *resolved* (or the last
    event).
-3. **Practise on a practice server.** In the app, use **⋯ More → Practice on a Host…** (or
-   `practice: training-1` in the front matter). Every cell runs on that host, whatever a cell's
-   `host=` says, so a drill can't reach production.
+3. **Practise on a practice server.** Use **Practice on a Host…** (Run ▾ in VS Code, ⋯ More in
+   the app), or `practice: training-1` in the front matter. Every cell runs on that host, whatever
+   a cell's `host=` says, so a drill can't reach production.
 
-   If the app has no host of that name, nothing runs. In VS Code cells run on your machine: run
-   drills from a practice machine.
+   If there is no host of that name, nothing runs. A front matter `practice:` asks first, unless
+   the whole runbook is signed by a signer you trust. See [remote hosts](hosts.md).
 4. **Mark the milestones.** **Add Note** with *detected*, *mitigated* and *resolved*, plus
    whatever was decided ("failover approved by the DBA").
 5. **Close it.** **Export Report** gives the **Drill record**:

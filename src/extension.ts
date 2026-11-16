@@ -25,6 +25,7 @@ import { registerFailedActions } from './failedActions';
 import { registerStepMarks } from './stepMarks';
 import { registerOpenHint } from './openHint';
 import { registerNotifications } from './notify';
+import { registerRemoteHosts } from './remoteHosts';
 import { registerSafety } from './safety';
 import { isTestMode, registerSecrets } from './secrets';
 import { registerLinkHandler } from './linkHandler';
@@ -92,19 +93,26 @@ export function activate(context: vscode.ExtensionContext): void {
   // then safety (cell options, confirmation when no context is recorded), so skipped or declined
   // cells never prompt for secrets.
   const approval = registerApproval(context, pipeline);
-  const safety = registerSafety(context, pipeline);
+  // Remote hosts (host=, Run on a Group, Practice): where a cell runs is known before it is confirmed.
+  const remote = registerRemoteHosts(context, pipeline, isTestMode(context));
+  const safety = registerSafety(context, pipeline, remote);
   const secrets = registerSecrets(context, pipeline);
   registerHistory(context, pipeline);
   registerSessions(context, pipeline);
   registerTerminal(context, pipeline);
+  // Cells for a host run there, whatever session or terminal mode this machine's cells use.
+  remote.wrapExecutor(pipeline);
   // Read-only credentials of AI-proposed cells win over cell options and secrets.
   pipeline.preparers.push(approval.credentials);
   // kube-context-mode: pin goes in front of the kubeconfig the cell would use (read-only ones too).
   pipeline.preparers.push(registerRunbookEnv(context));
+  // A group run's checks and retry= are judged on each host (after secrets filled them in).
+  pipeline.preparers.push(remote.late);
   // Last, once the environment is final: record the context (cluster, ...) the cell really runs
   // against, and ask for a pending confirmation showing it.
   pipeline.preparers.push(safety.final);
   const controller = new RunbookController(pipeline);
+  remote.attach((cell) => controller.run([cell], cell.notebook));
   registerCalls(context, pipeline, controller);
   // Before progress: a run is recorded before the status bar tooltip (last ran green) redraws.
   registerRuns(context, pipeline);
