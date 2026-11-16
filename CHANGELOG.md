@@ -43,6 +43,25 @@ for your server's platform when you update.
   - VS Code, the app and the command line say so in the notice.
   - The library server's last green run counts only such a run when its library copy asks for it.
   - Any other value of `report-runs-required` is now a lint error.
+- **Gate and clients: one reading of a manifest.** Shared test vectors
+  (`apps/gate/testdata/vectors.json`, `npm run gate-vectors`) check that the gate reads each
+  manifest, fence option, name and request as core does. Where they differed, both now take the
+  stricter reading:
+  - The gate refuses a manifest clients can't read. It no longer runs cells listed after `end`.
+  - Two cells with one number, or two `code` or `param` lines, are refused. Before, the gate
+    took the first and clients the last.
+  - Values must be canonical base64.
+  - An `expires` date must exist (`2026-02-31` doesn't).
+  - A `kube-context=` key written with the Kelvin sign (K) is read by the gate too.
+  - `kube-context=` written twice on a block is an error, and only ASCII blanks are trimmed from
+    its value.
+  - A parameter value with a CR is refused by the gate, as clients already did.
+- **Signing:** refuses a front matter `kube-context:` while a bash block has none of its own. The
+  gate only checks the block's.
+  - Names ending in `_proxy`, in any case, are refused: Python reads `Https_Proxy`.
+  - Manifests over 2.9 MB are refused: the gate's load request would be too long.
+- **`report-runs-required` written twice:** the strictest counts, in clients and lint alike
+  (before, clients took the last and lint said the first). Signing still refuses it twice.
 
 
 ## 0.27.0

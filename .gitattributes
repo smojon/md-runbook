@@ -11,3 +11,5 @@ apps/web/*.sh text eol=lf
 apps/ops/** text eol=lf
 # The probe image: files copied into a Linux container from any checkout.
 apps/probe/** text eol=lf
+# The gate vectors: exact bytes, as scripts/gate-vectors.js writes them (test/gateVectors.test.ts compares).
+apps/gate/testdata/** -text

@@ -2849,6 +2849,7 @@
     "compile": "tsc -b packages/core packages/ssh && tsc -p . && tsc -p tsconfig.renderer.json && node scripts/build.js",
     "watch": "tsc -b packages/core packages/ssh && tsc -watch -p .",
     "watch:bundle": "node scripts/build.js --watch",
+    "gate-vectors": "tsc -b packages/core packages/ssh && node scripts/gate-vectors.js",
     "pretest": "npm run compile",
     "test": "node --test \"out/test/**/*.test.js\"",
     "package": "vsce package --no-dependencies",
