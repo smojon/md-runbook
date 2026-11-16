@@ -6,7 +6,7 @@ pushed. The workflow:
 2. packages the extension;
 3. publishes it to the **Visual Studio Marketplace** and **Open VSX**, each only if its token
    secret is set;
-4. creates a GitHub pre-release with the `.vsix` and the command line's `.tgz` attached.
+4. creates a GitHub pre-release with the `.vsix`, the command line's `.tgz` and the signed `.apk`, all at once (releases are immutable once published).
 
 ## One-time setup
 
@@ -62,7 +62,7 @@ To check the package without publishing:
 ### Android app signing key
 
 The App APK workflow (`.github/workflows/app-apk.yml`) signs the Android app with one key, and
-attaches `md-runbook-X.Y.Z.apk` to each version's release.
+its APK is in each version's release (the Release workflow calls it).
 
 - Secrets: `ANDROID_KEYSTORE_BASE64` (the PKCS12 keystore, base64) and
   `ANDROID_KEYSTORE_PASSWORD`. The alias is `md-runbook`.
@@ -70,6 +70,17 @@ attaches `md-runbook-X.Y.Z.apk` to each version's release.
   `CC:EE:87:05:39:E6:4E:C1:1E:08:ED:A8:91:D9:EA:C9:36:2E:0E:29:4A:5D:EF:89:C8:AE:B5:34:27:AE:CE:30`.
 - Keep an offline copy of the keystore and its password. A lost key means installed apps can
   never be updated.
+- The key never shares a job with the build. The `sign` job installs nothing, and it runs only
+  for `v*` tags and `main`, in the environment `android-signing`.
+- Recommended: move both secrets into that environment (Settings → Environments), and allow
+  only `v*` tags and `main` to use it.
+
+### Release environments
+
+- The Open VSX and Marketplace jobs run in the environment `release`. Move `OVSX_PAT` (and a
+  `VSCE_PAT`, if one is added) into it, and allow only `v*` tags.
+- Each publishing job holds one credential and runs none of the repository's dependencies.
+  The tools are locked in `scripts/publish-tools` and installed without install scripts.
 - On Google Play, give this key as the app signing key ("provide a copy of your app signing
   key", see [Use Play App Signing](https://support.google.com/googleplay/android-developer/answer/9842756)),
   and make a separate upload key. Play takes an `.aab`, not this APK.

@@ -7,15 +7,18 @@ name: Expo updates
 # minimumReleaseAge). It updates them on the branch `expo-updates`, exact pins kept, starts the
 # App and CI workflows on it, and opens one pull request, or updates the one that is open. Merge
 # it when its checks are green. What is held, and until when, is in the run's summary.
+#
+# Two jobs (security review, 2026-11-16): `update` installs the new releases with a read-only
+# token, no token in git's config and no install scripts, so a compromised package can't push or
+# start workflows. `push` has the write token and runs no npm: it commits the two files `update`
+# made.
 on:
   schedule:
     - cron: '23 5 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: write # push the branch
-  pull-requests: write # open the pull request (Settings: Actions may create pull requests)
-  actions: write # start App and CI on it: a push with this token starts no workflow by itself
+  contents: read
 
 concurrency:
   group: expo-updates
@@ -30,13 +33,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      GH_TOKEN: ${{ github.token }}
-      BRANCH: expo-updates
+      # npm ci and expo-updates.mjs's npm install: no package's install script runs here.
+      npm_config_ignore_scripts: 'true'
+    outputs:
+      changed: ${{ steps.update.outputs.changed }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: main
-      - uses: actions/setup-node@v7
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
           cache: npm
@@ -65,11 +71,42 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            mkdir -p "$RUNNER_TEMP/update"
+            cp package.json package-lock.json "$RUNNER_TEMP/summary.md" "$RUNNER_TEMP/update/"
           fi
-
-      - name: Push the branch and open or update the pull request
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: steps.update.outputs.changed == 'true'
+        with:
+          name: expo-update
+          path: ${{ runner.temp }}/update/
+          if-no-files-found: error
+          retention-days: 3
+
+  push:
+    needs: update
+    if: needs.update.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the branch
+      pull-requests: write # open the pull request (Settings: Actions may create pull requests)
+      actions: write # start App and CI on it: a push with this token starts no workflow by itself
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: expo-updates
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: expo-update
+          path: ${{ runner.temp }}/update
+      - name: Push the branch and open or update the pull request
         run: |
+          # Only the two files: anything else the update job left is not taken.
+          cp "$RUNNER_TEMP/update/package.json" "$RUNNER_TEMP/update/package-lock.json" .
+          cp "$RUNNER_TEMP/update/summary.md" "$RUNNER_TEMP/summary.md"
           # "- `expo` 58.0.19 → **58.0.21** (published …)" -> "expo 58.0.21"
           list=$(sed -nE 's/^- `([^`]+)` [^ ]+ → \*\*([^*]+)\*\*.*/\1 \2/p' "$RUNNER_TEMP/summary.md")
           first=$(echo "$list" | head -3 | paste -sd, - | sed 's/,/, /g')

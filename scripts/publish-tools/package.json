@@ -1,0 +1,9 @@
+{
+  "name": "md-runbook-publish-tools",
+  "private": true,
+  "description": "The publishing tools of the Release workflow, locked here so each publish job installs them alone, with npm ci --ignore-scripts, next to one credential.",
+  "dependencies": {
+    "@vscode/vsce": "3.9.2",
+    "ovsx": "0.10.6"
+  }
+}
