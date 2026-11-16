@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-Security fixes from a review of the parts that face the network.
+## 0.27.0
+
+Security fixes from five review rounds, a team runbook library in VS Code and the app, and a
+hardened release pipeline.
+
+**Gate admins:** key lines, login shells and the leftover sweep changed. Read the Gate items
+below before you update.
 
 - **Command line, signed runs (`--allowed-signers`):** a front matter changed after signing is
   refused. Before, its `env:`, `cwd:` or `shell:` applied though the run said "signed, unchanged".

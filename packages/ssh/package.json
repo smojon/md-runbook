@@ -1,6 +1,6 @@
 {
   "name": "@md-runbook/ssh",
-  "version": "0.26.8",
+  "version": "0.27.0",
   "description": "Runs md-runbook cells in a persistent shell on a remote host over SSH, in pure TypeScript (Node, browsers through a relay, React Native).",
   "private": true,
   "license": "MIT",
