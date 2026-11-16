@@ -23,8 +23,9 @@ for your server's platform when you update.
   or `\w` now match nothing, as signing already refuses them.
 - **Gate: each shell in a scope of its own (`isolation =`).** When a shell ends, everything in
   its scope ends too, even a program that left its process group (`setsid`, a double fork).
-  - The default is `auto`: a systemd scope of the account's user manager where it works, else a
-    PID namespace (`bwrap`), else process groups as before.
+  - The default is `auto`: a systemd scope of the account's user manager where it works, else
+    process groups as before.
+  - `isolation = bwrap` gives each shell a PID namespace instead. `auto` never picks it.
   - `scope` and `bwrap` are required when you name them: without them the gate doesn't start.
     `none` keeps the old behaviour.
   - Under `bwrap`, blocks can't use `sudo` or setuid programs. Set `isolation = scope` or `none`

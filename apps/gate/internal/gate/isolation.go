@@ -32,7 +32,9 @@ import (
 //	       the namespace only, and nothing in it can gain privileges (no sudo, no setuid).
 //	none   the shell's process group, as before, and the kill_leftovers sweep.
 //
-// auto (the default) takes scope, else bwrap, else none; scope and bwrap are required when named.
+// auto (the default) takes scope, else none: never bwrap, so that blocks that use sudo or setuid
+// programs keep working after an update on every host. bwrap only when named. scope and bwrap
+// are required when named.
 //
 // Why a user scope: a plain account can't ask the system manager for a scope (that needs root or
 // a polkit rule), and logind doesn't delegate the session's own cgroup. Under sshd with UsePAM
@@ -350,19 +352,24 @@ func (g *Gate) basePlan() plan {
 	return p
 }
 
+// isolationsToTry: what isolation = WANT tries, in order; none after them. auto tries scope only:
+// bwrap takes sudo and setuid programs from the blocks, so only an admin who names it gets it.
+func isolationsToTry(want string) []string {
+	switch want {
+	case "auto":
+		return []string{"scope"}
+	case "scope", "bwrap":
+		return []string{want}
+	}
+	return nil
+}
+
 // resolveIsolation sets g.plan.iso: isolation = scope or bwrap, or what auto finds. A named one
 // that this server lacks stops the gate.
 func (g *Gate) resolveIsolation() {
 	want := g.cfg.Isolation
-	try := []string{want}
-	if want == "auto" {
-		try = []string{"scope", "bwrap"}
-	}
 	g.isoWhy = ""
-	for _, iso := range try {
-		if iso == "none" {
-			break
-		}
+	for _, iso := range isolationsToTry(want) {
 		why := g.probe(iso)
 		if why == "" {
 			g.plan.iso = iso

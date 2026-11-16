@@ -81,6 +81,16 @@ func TestShellLaunch(t *testing.T) {
 	}
 }
 
+// auto never falls back to bwrap (it takes sudo and setuid programs from the blocks): scope, else
+// none. bwrap only when named.
+func TestIsolationsToTry(t *testing.T) {
+	for want, try := range map[string][]string{"auto": {"scope"}, "scope": {"scope"}, "bwrap": {"bwrap"}, "none": nil} {
+		if got := isolationsToTry(want); !reflect.DeepEqual(got, try) {
+			t.Errorf("isolationsToTry(%q) = %q, want %q", want, got, try)
+		}
+	}
+}
+
 func TestSudoRule(t *testing.T) {
 	p := testPlan
 	p.account = "mdrb-cells"
