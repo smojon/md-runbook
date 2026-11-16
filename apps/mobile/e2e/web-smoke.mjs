@@ -91,6 +91,46 @@ try {
   await page.getByTestId('qr-code').waitFor({ timeout: 10_000 });
   console.log('web: a runbook QR code is drawn');
 
+  // Edit as Text: a textarea over the highlighted text. The two must line up: same line breaks
+  // (a long line wraps), same height, same scrolling. Typing, the browser's undo.
+  await page.goto(url);
+  await page.getByTestId('runbook-sample').click();
+  await page.getByTestId('more-actions').filter({ visible: true }).first().click();
+  await page.getByTestId('action-editAsText').click();
+  const area = page.getByTestId('editor-text-input');
+  await area.waitFor({ timeout: 10_000 });
+  const before = await area.inputValue();
+  await area.click();
+  await page.keyboard.press('Control+End');
+  const long = '\n**Bold** and `code` ' + 'a-very-long-word '.repeat(40) + 'x'.repeat(300) + '\n';
+  await page.keyboard.insertText(long);
+  await page.getByTestId('editor-state').filter({ hasText: 'Unsaved changes' }).waitFor({ timeout: 5_000 });
+  const fit = await page.evaluate(() => {
+    const ta = document.querySelector('[data-testid="editor-text-input"]');
+    const pre = ta.parentElement.querySelector('pre');
+    const last = pre.lastElementChild;
+    const padBottom = parseFloat(getComputedStyle(ta).paddingBottom);
+    ta.scrollTop = ta.scrollHeight;
+    ta.dispatchEvent(new Event('scroll'));
+    return {
+      drawn: last.offsetTop + last.offsetHeight + padBottom,
+      field: ta.scrollHeight,
+      lines: pre.children.length,
+      scroll: [ta.scrollTop, pre.scrollTop],
+      color: getComputedStyle(ta).color,
+    };
+  });
+  if (Math.abs(fit.drawn - fit.field) > 1) throw new Error(`editor: the drawing is ${fit.drawn}px high, the textarea ${fit.field}px`);
+  if (fit.scroll[0] !== fit.scroll[1]) throw new Error(`editor: scrolled ${fit.scroll[0]}px, the drawing ${fit.scroll[1]}px`);
+  if (fit.color !== 'rgba(0, 0, 0, 0)') throw new Error(`editor: the textarea's letters show (${fit.color})`);
+  await page.screenshot({ path: 'web-05-editor.png' });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.screenshot({ path: 'web-06-editor-dark.png' });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.keyboard.press('Control+Z');
+  if ((await area.inputValue()) !== before) throw new Error("editor: the browser's undo didn't take the typing back");
+  console.log(`web: Edit as Text highlights ${fit.lines} lines in line with the textarea; undo works`);
+
   // A pairing link carries the relay token in its fragment: the pair screen asks first, and the
   // fragment leaves the address bar (and so the history) as the page loads, and stays gone.
   const pairing = JSON.stringify({ format: 'md-runbook pair v1', relay: 'wss://relay.example.net', token: 't'.repeat(32) });

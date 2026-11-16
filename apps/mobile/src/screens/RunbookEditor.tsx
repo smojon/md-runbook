@@ -1,24 +1,13 @@
 /**
  * A runbook as text, in a screen of its own, as VS Code opens one as text, as a preview or as a
- * runbook. Edit: the Markdown in a monospace field (Save, Undo, Discard; the lint problems under
- * it, a tap goes to the line). Preview: the Markdown drawn, without Run buttons. Runbook: back to
- * the runbook screen. Unsaved text is kept while the app runs. Saving warns when a signature that
+ * runbook. Edit: the Markdown in a monospace field, highlighted on the web (ui/RunbookTextInput;
+ * Save, Undo, Discard; the lint problems under it, a tap goes to the line). Preview: the Markdown
+ * drawn, without Run buttons. Runbook: back to the runbook screen. Unsaved text is kept while the app runs. Saving warns when a signature that
  * matches would no longer match; a runbook's outputs are part of its text and stay.
  */
 import { Stack, router } from 'expo-router';
 import { useDeferredValue, useMemo, useRef, useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TextInputInstance,
-  TextInputKeyPressEvent,
-  View,
-} from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { t } from '../i18n';
 import { MarkdownView } from '../markdown/MarkdownView';
 import { draftOf, hasOutputs, keepDraft, signatureBreaks } from '../runbooks/editing';
@@ -28,13 +17,13 @@ import { mono, themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
 import { confirmThen } from '../ui/confirm';
 import { Points } from '../ui/Points';
+import { RunbookTextInput } from '../ui/RunbookTextInput';
+import type { RunbookTextInputHandle } from '../ui/runbookTextInputProps';
 
 type Mode = 'edit' | 'preview';
 /** Snapshots for Undo: one per pause in typing, at most this many. */
 const UNDO_MAX = 200;
 const UNDO_PAUSE_MS = 800;
-/** Tab on the web: these spaces. */
-const TAB = '  ';
 
 /** The offset where 0-based `line` starts in `text`. */
 export function lineOffset(text: string, line: number): number {
@@ -58,10 +47,9 @@ export function RunbookEditor({ id, from }: { id: string | undefined; from?: str
   const [undo, setUndo] = useState<{ stack: readonly string[]; at: number }>({ stack: [], at: 0 });
   const [said, setSaid] = useState<string | undefined>();
   const [leaving, setLeaving] = useState(false);
-  const [selection, setSelection] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
-  /** A selection the screen sets (after Tab, or a problem's line); the field's own after that. */
+  /** A selection the screen sets (a problem's line); the field's own after that. */
   const [forced, setForced] = useState<{ start: number; end: number } | undefined>();
-  const input = useRef<TextInputInstance>(null);
+  const input = useRef<RunbookTextInputHandle>(null);
   const dirty = draft !== base;
   // Not editing: the editor follows the runbook (a run wrote its outputs meanwhile).
   if (runbook && !dirty && runbook.text !== base) {
@@ -131,15 +119,6 @@ export function RunbookEditor({ id, from }: { id: string | undefined; from?: str
     setMode('edit');
     setForced({ start: at, end: at });
     input.current?.focus();
-  };
-  const onKeyPress = (e: TextInputKeyPressEvent): void => {
-    // The web: Tab puts spaces in the text (Shift+Tab still leaves the field).
-    const key = e.nativeEvent as { key: string; shiftKey?: boolean };
-    if (Platform.OS !== 'web' || key.key !== 'Tab' || key.shiftKey) return;
-    e.preventDefault();
-    const { start, end } = selection;
-    setDraft(draft.slice(0, start) + TAB + draft.slice(end));
-    setForced({ start: start + TAB.length, end: start + TAB.length });
   };
 
   const copyNote = runbook.source === 'library' ? t.editorLibraryCopy : runbook.link ? t.editorLinkCopy : undefined;
@@ -225,24 +204,14 @@ export function RunbookEditor({ id, from }: { id: string | undefined; from?: str
       ) : null}
       {mode === 'edit' ? (
         <>
-          <TextInput
+          <RunbookTextInput
             ref={input}
             testID="editor-text"
             accessibilityLabel={t.editorText}
             value={draft}
             onChangeText={(v) => setDraft(v)}
-            onSelectionChange={(e) => {
-              setSelection(e.nativeEvent.selection);
-              setForced(undefined);
-            }}
-            {...(forced ? { selection: forced } : {})}
-            onKeyPress={onKeyPress}
-            multiline
-            autoCapitalize="none"
-            autoCorrect={false}
-            spellCheck={false}
-            textAlignVertical="top"
-            scrollEnabled
+            onSelectionChange={() => setForced(undefined)}
+            selection={forced}
             style={styles.text}
           />
           <View testID="editor-problems" style={styles.problems}>

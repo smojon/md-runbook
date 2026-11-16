@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **App (web): highlighting in the web app's editor.** Edit as Text colours the runbook, with
+  line numbers.
+  - Markdown, code block fences with their cell options, and md-runbook's outputs, notes and
+    signatures.
+  - Still the browser's text field: its undo, find and screen reader work as before.
+  - Esc then Tab now leaves the field too, besides Shift+Tab.
+  - iOS and Android are unchanged.
+
 ## 0.27.0
 
 Security fixes from five review rounds, a team runbook library in VS Code and the app, and a
