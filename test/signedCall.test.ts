@@ -17,6 +17,9 @@ import { lintRunbook } from '@md-runbook/core/lint';
 import { runRunbook } from '../src/cli/run';
 import { signCommand, verifyCommand } from '../src/cli/sign';
 
+// The command line's record of the call copies it wrote: in a folder of these tests, not yours.
+process.env.MD_RUNBOOK_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-state-'));
+
 const settings: ShellSettings = { bashPath: process.env.MD_RUNBOOK_BASH };
 const hasBash = resolveShell('bash', settings, nodeShellEnv()).ok;
 const hasKeygen = (() => {

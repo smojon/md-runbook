@@ -10,7 +10,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ExecuteResult, isCodeMeta, locateCodeCells, parse, stepState, taskItems } from '@md-runbook/core';
-import { CallResult, callAttrs, callChainProblem, callFromAttrs, callOutputText, checkCall, fillRefs, formatCallSteps, isCallLanguage, isDynamicSrc, parseCall, srcValueProblem } from '@md-runbook/core/call';
+import { CallResult, callAttrs, callChainProblem, callFromAttrs, callOutputText, checkCall, fillRefs, formatCallSteps, isCallLanguage, isDynamicSrc, parseCall, recordValues, srcValueProblem } from '@md-runbook/core/call';
+import { copyDigest } from '@md-runbook/core/callCopy';
+import { resumeRecordProblem } from '@md-runbook/core/node/callCopyRecord';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { withFrontMatterValues } from '@md-runbook/core/incident';
 import { resolveKubeContext } from '@md-runbook/core/kubeContext';
@@ -51,6 +53,36 @@ export interface CallHost {
   cancel(uri: vscode.Uri): void;
 }
 
+/**
+ * The call copies this extension wrote (core/callCopy.ts copyDigest), in global state where a
+ * runbook folder can't change them: a run again continues a copy only as kept here.
+ */
+export interface CopyRecords {
+  recorded(copy: string, text: string): boolean;
+  record(copy: string, text: string): Thenable<void>;
+}
+
+const COPIES_KEY = 'mdRunbook.callCopies';
+const MAX_COPIES = 500;
+const copyKey = (copy: string): string => (process.platform === 'linux' ? path.resolve(copy) : path.resolve(copy).toLowerCase());
+
+/**
+ * Kept after each call run, as saved (and when this window saves a copy a call opened). A copy
+ * changed otherwise is not continued: the next run starts a fresh copy and says why.
+ */
+function copyRecords(state: vscode.Memento): CopyRecords {
+  const all = (): Record<string, string> => state.get<Record<string, string>>(COPIES_KEY, {});
+  return {
+    recorded: (copy, text) => all()[copyKey(copy)] === copyDigest(text),
+    record: (copy, text) => {
+      const copies = { ...all() };
+      delete copies[copyKey(copy)];
+      copies[copyKey(copy)] = copyDigest(text);
+      return state.update(COPIES_KEY, Object.fromEntries(Object.entries(copies).slice(-MAX_COPIES)));
+    },
+  };
+}
+
 /** Cells to run with a fresh copy on their next run (Run with a Fresh Copy). */
 const fresh = new Set<string>();
 const cellKey = (cell: vscode.NotebookCell): string => `${cell.notebook.uri.toString()}#${cell.index}`;
@@ -83,7 +115,17 @@ async function waitForEditor(uri: vscode.Uri): Promise<vscode.NotebookEditor> {
 }
 
 export class CallExecutor implements CellExecutor {
-  constructor(private readonly host: CallHost) {}
+  constructor(
+    private readonly host: CallHost,
+    private readonly copies?: CopyRecords,
+  ) {}
+
+  /** The caller's cluster, written into the copy when the runbook called names none. */
+  private inherited(mine: string | undefined, childFm: ReturnType<typeof parseFrontMatter>, parentText: string): Record<string, string> {
+    if (mine === undefined || childFm?.kubeContext) return {};
+    const mode = parseFrontMatter(parentText)?.kubeContextMode;
+    return { 'kube-context': mine, ...(mode ? { 'kube-context-mode': mode } : {}) };
+  }
 
   async execute(plan: CellPlan, io: ExecuteIO, ctx: PrepareContext): Promise<ExecuteResult> {
     const started = Date.now();
@@ -142,8 +184,12 @@ export class CallExecutor implements CellExecutor {
       const old = path.resolve(path.dirname(parentFile), previous.copy);
       if (fs.existsSync(old) && samePath(callTarget(parentFile, previous.runbook), target)) {
         // The output block is never signed: the copy it names must be one of this runbook (and,
-        // in a signed runbook, signed as the same name and version).
-        const why = resumeProblem(old, target, { folder: folder || undefined, signed: readSignature(fs.readFileSync(parentFile, 'utf8')) !== undefined });
+        // in a signed runbook, signed as the same name and version), with the front matter a copy
+        // gets now, and outputs this extension wrote (not planted ones).
+        const parentText = fs.readFileSync(parentFile, 'utf8');
+        const why =
+          resumeProblem(old, target, { folder: folder || undefined, signed: readSignature(parentText) !== undefined }) ??
+          resumeRecordProblem(old, target, { ...recordValues(parentText), ...this.inherited(mine, childFm, parentText) }, (c, t) => this.copies?.recorded(c, t) ?? false);
         if (why === undefined) copy = old;
         else io.onStdout(`[md-runbook] not continuing ${relativeToCaller(parentFile, old)}: ${why}; a fresh copy runs\n`);
       }
@@ -151,12 +197,9 @@ export class CallExecutor implements CellExecutor {
     const resumed = copy !== undefined;
     if (!copy) {
       copy = writeCallCopy(target, fs.readFileSync(parentFile, 'utf8'), folder || undefined);
-      if (mine !== undefined && !childFm?.kubeContext) {
-        // The caller's cluster, in the copy's own record.
-        const fm = parseFrontMatter(fs.readFileSync(parentFile, 'utf8'));
-        const values: Record<string, string> = { 'kube-context': mine, ...(fm?.kubeContextMode ? { 'kube-context-mode': fm.kubeContextMode } : {}) };
-        fs.writeFileSync(copy, withFrontMatterValues(fs.readFileSync(copy, 'utf8'), values), 'utf8');
-      }
+      const values = this.inherited(mine, childFm, fs.readFileSync(parentFile, 'utf8'));
+      // The caller's cluster, in the copy's own record.
+      if (Object.keys(values).length > 0) fs.writeFileSync(copy, withFrontMatterValues(fs.readFileSync(copy, 'utf8'), values), 'utf8');
     }
     const copyUri = vscode.Uri.file(copy);
     const copyShown = relativeToCaller(parentFile, copy);
@@ -217,8 +260,9 @@ export class CallExecutor implements CellExecutor {
       progress.dispose();
     }
 
-    // The result, from the copy as saved.
+    // The result, from the copy as saved; kept, so a run again can tell this copy is as written here.
     const saved = fs.readFileSync(copy, 'utf8');
+    await this.copies?.record(copy, saved);
     const savedPart = call.sections.length ? inSections(sectionHeadings(saved), call.sections) : () => true;
     // Blocks for another OS (when one is for this one) are alternatives, not steps; host= blocks
     // run from the app only: both are passed over here, as Run All does.
@@ -283,10 +327,21 @@ function targetCell(arg: unknown): vscode.NotebookCell | undefined {
 }
 
 export function registerCalls(context: vscode.ExtensionContext, pipeline: RunPipeline, host: CallHost): void {
-  pipeline.callExecutor = new CallExecutor(host);
+  const copies = copyRecords(context.globalState);
+  pipeline.callExecutor = new CallExecutor(host, copies);
   const changed = new vscode.EventEmitter<void>();
   context.subscriptions.push(
     changed,
+    // A copy a call opened in this window, saved again here (its last outputs, a step run by hand
+    // in it): still as this extension wrote it. A copy opened any other way is never recorded.
+    vscode.workspace.onDidSaveNotebookDocument((nb) => {
+      if (nb.notebookType !== NOTEBOOK_TYPE || nb.uri.scheme !== 'file' || !isCallCopy(nb.uri)) return;
+      try {
+        void copies.record(nb.uri.fsPath, fs.readFileSync(nb.uri.fsPath, 'utf8'));
+      } catch {
+        // gone: the next run starts a fresh copy
+      }
+    }),
     vscode.notebooks.registerNotebookCellStatusBarItemProvider(NOTEBOOK_TYPE, { onDidChangeCellStatusBarItems: changed.event, provideCellStatusBarItems: callItems }),
     vscode.commands.registerCommand('mdRunbook.openCallCopy', async (arg?: unknown) => {
       const cell = targetCell(arg);

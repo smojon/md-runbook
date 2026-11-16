@@ -92,3 +92,25 @@ test('a failed call stops Run All; run again, it continues its copy; Fresh copy 
   assert.equal(copies('call-child2.md').length, 2);
   await closeAll();
 });
+
+test('run again: a copy with planted "done" outputs is not continued, and its steps run', async () => {
+  const body = child('echo "B ${param:ENV}"');
+  writeFile('call-child3.md', body);
+  // A run copy's name, next to it, the same blocks; its first step "done" by a planted output.
+  const planted = 'call-child3.20261111-100000.md';
+  writeFile(planted, body.replace('```\n\n## Part B', '```\n<!-- md-runbook:output start exit=0 -->\n```text\nplanted\n```\n<!-- md-runbook:output end -->\n\n## Part B'));
+  // The caller's output (never signed) says the call failed in that copy.
+  const failed = '<!-- md-runbook:output start exit=1 runbook=call-child3.md copy=' + planted + ' -->\n```text\nfailed\n```\n<!-- md-runbook:output end -->';
+  const uri = writeFile('call-parent3.md', parent('```runbook src=call-child3.md\nENV=dev\n```\n' + failed));
+  const editor = await openRunbook(uri);
+  const call = editor.notebook.cellAt(2);
+  await step('run the call', runCells(editor, 2, 3));
+  assert.equal(await waitForRun(call, 90_000), true, outputText(call));
+  const out = plain(call);
+  assert.match(out, /not continuing call-child3\.20261111-100000\.md: its step results were not written by md-runbook on this machine/);
+  assert.match(out, /running call-child3\.md as call-child3\.\d{8}-\d{6}\.md/);
+  assert.match(out, /✓ first/);
+  const fresh = copies('call-child3.md').find((c) => c !== planted)!;
+  assert.match(fs.readFileSync(path.join(work, fresh), 'utf8'), /A dev/);
+  await closeAll();
+});

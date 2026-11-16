@@ -65,6 +65,10 @@ Security fixes from a review of the parts that face the network.
   the runbook called. Before, an edited `copy=` in its output could name any file.
   - The copy must be next to it or in the copy folder, named after it, with the same blocks.
   - For a signed runbook, the copy must have the same signed name and version.
+  - The copy's front matter must be the one a new copy gets. Before, a planted copy could bring
+    its own `env:`, `kube-context:` or choices.
+  - A copy's steps count as done only when md-runbook on this machine wrote it. Before, planted
+    outputs could skip a guard or a backup.
   - Otherwise a fresh copy runs, and the call's output says why.
 - **Runbook calls:** a value in `src=` fills part of one file or folder name. Before, a link's
   `TO=../../elsewhere/evil` could make `src="releases/${param:TO}.md"` run any runbook.
