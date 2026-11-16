@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { parseManifest, readSignature, signedStatus } from '@md-runbook/core/signing';
+import { buildManifest, formatManifest, parseManifest, readSignature, signedStatus, signedTextHash, withSignature } from '@md-runbook/core/signing';
+import { t } from '../i18n';
 import { recordSigners, recordStatus } from '@md-runbook/core/record';
 import { parseRunbookLink } from '@md-runbook/core/runbookLink';
 import { cosignRequestMessage } from '../share/report';
@@ -95,6 +96,20 @@ describe('signing in the app (the logic)', () => {
     expect(cosignCheck(signed.text.replace('restart api', 'stop api'))).toEqual({ why: 'changed' });
     // The reviewer saw another manifest (signed again since the card opened): refused, not signed unseen.
     expect(await cosignRunbook(co.text, 'reviewer@example.net', reviewer, 'another manifest')).toEqual({ ok: false, errors: ['other'] });
+  });
+
+  it("co-signing a runbook signed under earlier rules says why it can't (review, 2026-11-16)", async () => {
+    // Signed before signing refused a front matter kube-context: with no kube-context= on the block.
+    const body = '# Pods\n\n' + fence('bash', 'kubectl get pods');
+    const text = '---\nkube-context: prod-eu\n---\n\n' + body;
+    const built = buildManifest(body, { name: 'pods', version: 1, scopes: [], patterns: {} });
+    if ('errors' in built) throw new Error(built.errors.join('; '));
+    const old = withSignature(text, { signer: 'author', signed: '2026-10-22', manifest: formatManifest({ ...built.manifest, text: signedTextHash(text) }), signature: 'AAAA' });
+    const check = cosignCheck(old);
+    expect('why' in check && check.why).toBe('rules');
+    expect('errors' in check && check.errors.join('\n')).toMatch(/front matter's kube-context: prod-eu is not checked by servers/);
+    expect(await cosignRunbook(old, 'reviewer@example.net', await generateKey())).toEqual({ ok: false, errors: ['rules'] });
+    expect(t.cosignRules('x')).toMatch(/^It can't be signed as it is now: x\. .*sign it again \(a new version\), then co-sign that\.$/);
   });
 
   it('the signature goes into the latest text (a run wrote its output meanwhile), never over changed blocks', async () => {

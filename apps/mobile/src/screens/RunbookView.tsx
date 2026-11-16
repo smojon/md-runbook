@@ -137,7 +137,7 @@ import { addRunbook, getRunbook, Runbook, runbookNamed, updateRunbookText, useRu
 import { historySize, notifyRuns, outputSettings, signerName } from '../settings/store';
 import { LiveOutput, NO_LIVE_OUTPUT, liveWindow } from '../settings/safety';
 import { SignCard, SignRequest } from '../signing/SignCard';
-import { SignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
+import { CosignCheck, SignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
 import { appKey } from '../ssh/appKey';
 import { fingerprint } from '../ssh/fingerprint';
 import { LineMode, isStepping, lineLabel, planLines } from '../ssh/lineRuns';
@@ -308,6 +308,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const libraryRefused = copyRefusal(runbook, libraryCopyState);
   /** Whether it can be co-signed now (Co-sign Runbook), or why not. */
   const cosign = useMemo(() => (runbook ? cosignCheck(runbook.text) : undefined), [runbook]);
+  /** Why it can't be co-signed, in words (undefined when it can). */
+  const cosignWhy = (c: CosignCheck | undefined, signer: string | undefined): string | undefined =>
+    !c || !('why' in c)
+      ? undefined
+      : c.why === 'changed'
+        ? t.changedSinceSigned(signer ?? '?')
+        : c.why === 'rules'
+          ? t.cosignRules(c.errors.join('; '))
+          : t.notSignedYet;
   const params = useMemo(() => (runbook ? runbookParams(runbook.text) : []), [runbook]);
   /** What `md-runbook lint` finds, as the extension's problem markers: on the cells, and counted at the top. */
   // Runbook calls: lint and estimates read the runbooks they name, once the app has them.
@@ -594,11 +603,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   // A notice is a problem (red) unless it is the text sayOk last gave (green: something went well).
   const [okNotice, setOkNotice] = useState<string | undefined>(undefined);
   const [notice, setNotice] = useState<string | undefined>(() =>
-    fromLink?.cosign && cosign && 'why' in cosign
-      ? cosign.why === 'changed'
-        ? t.changedSinceSigned(signed?.block.signer ?? '?')
-        : t.notSignedYet
-      : undefined,
+    fromLink?.cosign ? cosignWhy(cosign, signed?.block.signer) : undefined,
   );
   const sayOk = (text: string): void => {
     setOkNotice(text);
@@ -1792,11 +1797,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ...meta(
             'cosignRunbook',
             'share',
-            !cosign || !('why' in cosign)
-              ? undefined
-              : cosign.why === 'changed'
-                ? t.changedSinceSigned(signed?.block.signer ?? '?')
-                : t.notSignedYet,
+            cosignWhy(cosign, signed?.block.signer),
           ),
           run: () => openSign('cosign'),
         },
@@ -1805,11 +1806,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ...meta(
             'requestCosign',
             'share',
-            !cosign || !('why' in cosign)
-              ? undefined
-              : cosign.why === 'changed'
-                ? t.changedSinceSigned(signed?.block.signer ?? '?')
-                : t.notSignedYet,
+            cosignWhy(cosign, signed?.block.signer),
           ),
           run: () =>
             void requestCosign(runbook).catch((e: unknown) => setNotice(t.shareFailed(e instanceof Error ? e.message : String(e)))),
@@ -1856,8 +1853,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         const why = (e: string): string =>
           e === 'unsigned'
             ? t.notSignedYet
-            : e === 'changed'
-              ? t.changedSinceSigned(readSignature(text)?.signer ?? '?')
+            : e === 'changed' || e === 'rules'
+              ? (cosignWhy(cosignCheck(text), readSignature(text)?.signer) ?? t.changedSinceSigned(readSignature(text)?.signer ?? '?'))
               : e === 'other'
                 ? t.cosignOther
                 : e;

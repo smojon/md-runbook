@@ -925,19 +925,39 @@ export function readSignature(text: string): SignatureBlock | undefined {
 }
 
 /**
+ * Why `text` can't be co-signed as `block` signed it. `changed`: its blocks no longer make the
+ * signed manifest. `rules`: it can't be signed as it is (`errors`, as signing says them), so it
+ * can't be co-signed either. A runbook signed with an earlier version can get there unchanged: a
+ * front matter `kube-context:` with no block `kube-context=`, a name ending in `_proxy`,
+ * `kube-context=` twice on a block.
+ */
+export type CosignProblem = { why: 'changed' } | { why: 'rules'; errors: string[] };
+
+/** Why `text` can't be co-signed as `block` signed it, or undefined when it can (cosignable). */
+export function cosignProblem(text: string, block: SignatureBlock): CosignProblem | undefined {
+  let m: Manifest;
+  try {
+    m = parseManifest(block.manifest);
+  } catch (e) {
+    return { why: 'rules', errors: [e instanceof Error ? e.message : String(e)] };
+  }
+  // A version 1 manifest is co-signed as version 1 (co-signing never changes what was signed).
+  const built = buildManifest(text, { name: m.name, version: m.version, ...(m.expires ? { expires: m.expires } : {}), scopes: m.scopes, patterns: m.patterns }, { version: manifestVersion(m) });
+  if ('errors' in built) return { why: 'rules', errors: built.errors };
+  return formatManifest(built.manifest) === block.manifest ? undefined : { why: 'changed' };
+}
+
+/**
  * Whether `text` still makes exactly the manifest `block` signed, so a second signer (a
  * reviewer) can sign that manifest as it is: co-signing never changes what was signed.
  */
 export function cosignable(text: string, block: SignatureBlock): boolean {
-  let m: Manifest;
-  try {
-    m = parseManifest(block.manifest);
-  } catch {
-    return false;
-  }
-  // A version 1 manifest is co-signed as version 1 (co-signing never changes what was signed).
-  const built = buildManifest(text, { name: m.name, version: m.version, ...(m.expires ? { expires: m.expires } : {}), scopes: m.scopes, patterns: m.patterns }, { version: manifestVersion(m) });
-  return !('errors' in built) && formatManifest(built.manifest) === block.manifest;
+  return cosignProblem(text, block) === undefined;
+}
+
+/** Why co-signing is refused when the runbook can't be signed as it is (CosignProblem `rules`), and what to do. */
+export function cosignRulesText(errors: readonly string[]): string {
+  return `it can't be signed as it is now: ${errors.join('; ')}. A runbook signed with an earlier md-runbook may need this. Fix it, sign it again (a new version), then co-sign that`;
 }
 
 /** Every signature of a block, the first signer's first (what a gate gets with the manifest). */

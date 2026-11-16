@@ -15,7 +15,8 @@ import {
   SignatureBlock,
   allSignatures,
   buildManifest,
-  cosignable,
+  cosignProblem,
+  cosignRulesText,
   formatManifest,
   parseManifest,
   readSignature,
@@ -228,8 +229,9 @@ async function cosignCommand(a: SignArgs, text: string, block: SignatureBlock | 
     out('✗ --cosign signs the manifest as it is: --name, --version, --expires, --scope and --pattern belong to signing');
     return 1;
   }
-  if (!cosignable(text, block)) {
-    out(`✗ ${a.file} changed since ${block.signer} signed it: sign it again (a new version), then co-sign that`);
+  const problem = cosignProblem(text, block);
+  if (problem) {
+    out(problem.why === 'rules' ? `✗ ${a.file}: ${cosignRulesText(problem.errors)}` : `✗ ${a.file} changed since ${block.signer} signed it: sign it again (a new version), then co-sign that`);
     return 1;
   }
   let signature: string;
