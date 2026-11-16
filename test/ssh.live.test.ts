@@ -337,3 +337,71 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
     }
   });
 });
+
+// VS Code logs in with the keys of the user's SSH agent (packages/ssh/src/agent.ts): a real
+// ssh-agent with Ed25519 and RSA keys made by ssh-keygen, against the same server.
+describe('ssh: live server, agent keys', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }, () => {
+  let dir: string;
+  let sock: string;
+  let agentProcess: import('node:child_process').ChildProcess | undefined;
+  let pinned: string;
+
+  before(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-agent-'));
+    sock = path.join(dir, 'agent.sock');
+    const { spawn } = await import('node:child_process');
+    agentProcess = spawn('ssh-agent', ['-D', '-a', sock], { stdio: 'ignore' });
+    for (let i = 0; i < 50 && !fs.existsSync(sock); i++) await new Promise((r) => setTimeout(r, 100));
+    for (const type of ['ed25519', 'rsa']) {
+      const file = path.join(dir, `id_${type}`);
+      execFileSync('ssh-keygen', ['-q', '-t', type, '-N', '', '-C', `agent-${type}`, '-f', file]);
+      execFileSync('ssh-add', [file], { env: { ...process.env, SSH_AUTH_SOCK: sock }, stdio: 'ignore' });
+      fs.appendFileSync(process.env.MD_RUNBOOK_SSH_AUTHORIZED_KEYS!, fs.readFileSync(`${file}.pub`, 'utf8'));
+    }
+    pinned = hostKeyId(fs.readFileSync(process.env.MD_RUNBOOK_SSH_HOST_PUB!, 'utf8'));
+  });
+  after(() => agentProcess?.kill());
+
+  it('logs in with each agent key and runs a cell', async () => {
+    const { agentAlgorithms, agentKeys } = await import('@md-runbook/ssh/node');
+    const keys = await agentKeys(sock);
+    assert.deepEqual(
+      keys.map((k) => k.keyAlgorithmName).sort(),
+      ['ssh-ed25519', 'ssh-rsa'],
+    );
+    for (const key of keys) {
+      const session = new RemoteSession(() => connectTcp(host, Number(port)), {
+        username: user,
+        key,
+        configure: agentAlgorithms,
+        verifyHostKey: (k: string) => hostKeyId(k) === pinned,
+      });
+      try {
+        let out = '';
+        const r = await session.run('echo "agent $((2 + 3))"', { onStdout: (t) => (out += t) });
+        assert.deepEqual([r.exitCode, out], [0, 'agent 5\n'], key.keyAlgorithmName);
+      } finally {
+        await session.close();
+      }
+    }
+  });
+
+  it('a key the server does not know, then a known one: the second logs in', async () => {
+    const { agentAlgorithms, agentKeys } = await import('@md-runbook/ssh/node');
+    const [first, ...rest] = await agentKeys(sock);
+    const stranger = await generateKey();
+    const session = new RemoteSession(() => connectTcp(host, Number(port)), {
+      username: user,
+      key: stranger,
+      moreKeys: [first!, ...rest],
+      configure: agentAlgorithms,
+      verifyHostKey: (k: string) => hostKeyId(k) === pinned,
+    });
+    try {
+      const r = await session.run('true');
+      assert.equal(r.exitCode, 0);
+    } finally {
+      await session.close();
+    }
+  });
+});

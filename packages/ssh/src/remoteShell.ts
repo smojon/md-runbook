@@ -69,6 +69,10 @@ export interface ConnectOptions {
   keepAliveSeconds?: number;
   /** The runbook's `shell:`: zsh, sh or bash on Linux and macOS servers; pwsh (7) or Windows PowerShell on Windows ones. */
   shells?: RunbookShells;
+  /** More keys to try after `key`, in order (an agent's keys). */
+  moreKeys?: readonly KeyPair[];
+  /** Adjust the session's algorithms before connecting (`agentAlgorithms` for agent keys). */
+  configure?(config: SshSessionConfiguration): void;
 }
 
 export interface RemoteRunOptions extends CellCommandOptions {
@@ -176,6 +180,7 @@ export class RemoteShell {
     // Passkeys (the web app): last, as the library offers these as host key types too.
     config.publicKeyAlgorithms.push(new PasskeySkEcdsaP256());
     config.keepAliveTimeoutInSeconds = opts.keepAliveSeconds ?? 15;
+    opts.configure?.(config);
     const session = new SshClientSession(config);
     session.onAuthenticating((e: SshAuthenticatingEventArgs) => {
       if (e.authenticationType !== SshAuthenticationType.serverPublicKey || !e.publicKey) return;
@@ -184,7 +189,7 @@ export class RemoteShell {
     });
     const start = async (): Promise<RemoteShell> => {
       await session.connect(stream);
-      const ok = await session.authenticate({ username: opts.username, publicKeys: [opts.key] });
+      const ok = await session.authenticate({ username: opts.username, publicKeys: [opts.key, ...(opts.moreKeys ?? [])] });
       if (!ok) throw new Error('authentication failed (host key refused, or the key was not accepted)');
       // sh/bash first. On a Windows server cmd.exe (or PowerShell) runs the request and fails at
       // once, closing the channel: then Windows PowerShell.
