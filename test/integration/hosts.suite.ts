@@ -124,3 +124,39 @@ test('hosts: Run on a Group runs the cell on each host; an untrusted one is skip
     await closeAll();
   }
 });
+
+// No SSH server needed: nothing connects. Outside the test runner, a host or group named by a
+// command's argument (a keybinding, another extension) is asked first; askArguments answers as
+// someone would.
+tests.push({
+  name: "hosts: Practice on a Host and Run on a Group ask before taking a command's argument",
+  fn: async () => {
+    await setConfig('hosts', [{ name: 'far', hostname: '192.0.2.1', port: 22, user: 'ops', group: 'fleet' }]);
+    try {
+      const uri = writeFile('hosts-args.md', '```bash\necho "args-ran"\n```\n');
+      const editor = await openRunbook(uri);
+      await selectKernel(editor);
+      await hook('askArguments', false);
+      await vscode.commands.executeCommand('mdRunbook.practiceOnHost', 'far');
+      assert.deepEqual(await hook('asked'), ['Practice this runbook on far?']);
+      assert.equal(await hook('practice'), undefined, 'declined: no practice');
+      const cell = editor.notebook.cellAt(0);
+      await vscode.commands.executeCommand('mdRunbook.runOnGroup', cell, 'fleet');
+      assert.deepEqual(await hook('asked'), ['Practice this runbook on far?', 'Run this cell on each host of fleet?']);
+      assert.equal(cell.executionSummary, undefined, 'declined: not run');
+      assert.doesNotMatch(outputText(cell), /args-ran/);
+      // Agreed: practice is on; '' stops it without a question.
+      await hook('askArguments', true);
+      await vscode.commands.executeCommand('mdRunbook.practiceOnHost', 'far');
+      assert.equal(await hook('practice'), 'far');
+      await vscode.commands.executeCommand('mdRunbook.practiceOnHost', '');
+      assert.deepEqual(await hook('asked'), ['Practice this runbook on far?']);
+      assert.equal(await hook('practice'), undefined);
+    } finally {
+      await hook('askArguments', undefined);
+      await vscode.commands.executeCommand('mdRunbook.practiceOnHost', '');
+      await setConfig('hosts', undefined);
+      await closeAll();
+    }
+  },
+});
