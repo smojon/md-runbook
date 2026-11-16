@@ -123,6 +123,9 @@ values are redacted from the output.
 | **Publish to Library…** | Share ▾ | Hand a signed runbook to your team: it goes to the library server, and everyone sees it in their team library. Offers **Sign Runbook** first when it isn't signed as a whole. | — (the app reads the library: Team runbooks) |
 | **Remove from Library…** | Share ▾ | Take a runbook out of the team library, after a confirm. Only where the server allows it (`LIBRARY_ALLOW_DELETE`). | — |
 | **Library Upload Token…** | Share ▾ | Set, replace or forget the library server's upload token. It stays in VS Code's secret storage, never in settings. | — |
+| **Set Library Address…** | the **Library** view (Runbook activity bar) | Show your team's signed runbooks: the https address of the library folder. | Hosts & settings → Team library |
+| **Open from Library…** | click a runbook in the **Library** view | Run a team runbook: it opens as your own copy, with its signature checked. The shared file never changes. | Team runbooks on the start screen |
+| **Refresh Library** | the **Library** view's title | Read the library again, after a publish or a new signer. | the refresh button next to Team runbooks |
 | Save | Ctrl+S | Outputs are written into the `.md` file: commit it, and the run is in Git. | **Save to the File** (or **Download** in browsers that can't write files) |
 
 ## Only in the app

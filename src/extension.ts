@@ -32,6 +32,7 @@ import { NOTEBOOK_TYPE, RunbookSerializer } from './serializer';
 import { registerSessions } from './session';
 import { registerSigning } from './signing';
 import { registerLibraryPublish } from './libraryPublish';
+import { registerLibraryView } from './libraryView';
 import { registerOpenInApp } from './openInApp';
 import { registerMakeQr } from './makeQr';
 import { registerIncidentCommands } from './incidentCommands';
@@ -147,6 +148,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerLint(context);
   registerSigning(context);
   registerLibraryPublish(context);
+  registerLibraryView(context, isTestMode(context));
   registerOpenInApp(context);
   registerLinkHandler(context, secrets, isTestMode(context));
   registerMakeQr(context);

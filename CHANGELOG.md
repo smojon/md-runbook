@@ -5,6 +5,9 @@
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.
   An unsigned runbook gets a **Sign Runbook** button first.
+- **VS Code: the Library view** (Runbook activity bar) lists your team library by folder, as the
+  app's Team runbooks do. Each row says whether its signature is verified against your trusted
+  signers. Opening one makes your own copy.
 - **Command line: `md-runbook unpublish PATH --library URL`** removes a runbook from a team
   library, where its server allows deleting.
 
