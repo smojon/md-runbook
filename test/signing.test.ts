@@ -7,6 +7,9 @@ import {
   SignatureBlock,
   armorSignature,
   buildManifest,
+  cosignProblem,
+  cosignRulesText,
+  cosignable,
   formatManifest,
   fromBase64,
   isReservedVar,
@@ -271,6 +274,24 @@ describe('signing: the manifest', () => {
     assert.deepEqual(errorsOf(fm + fence('bash kube-context=prod-eu', 'kubectl get pods')), []);
     // Twice on a block: neither counts, and it can't be signed.
     assert.match(errorsOf(fence('bash kube-context=prod-eu kube-context=lab-1', 'x')).join('\n'), /kube-context= written twice/);
+  });
+
+  it("co-signing says why a runbook signed under earlier rules can't be co-signed, and what to do (review, 2026-11-16)", () => {
+    const body = '# Pods\n\n' + fence('bash', 'kubectl get pods');
+    const text = '---\nkube-context: prod-eu\n---\n\n' + body;
+    // Signed before signing refused a front matter kube-context: (its manifest, as signing made it then).
+    const built = buildManifest(body, meta());
+    assert.ok(!('errors' in built));
+    const old = withSignature(text, { signer: 'ops@example.net', signed: '2026-10-22', manifest: formatManifest({ ...built.manifest, text: signedTextHash(text) }), signature: SIG });
+    const problem = cosignProblem(old, readSignature(old)!);
+    assert.equal(problem?.why, 'rules');
+    assert.match(problem?.why === 'rules' ? problem.errors.join('\n') : '', /front matter's kube-context: prod-eu is not checked by servers: write kube-context=prod-eu on the block/);
+    assert.equal(cosignable(old, readSignature(old)!), false);
+    assert.match(cosignRulesText(problem?.why === 'rules' ? problem.errors : []), /^it can't be signed as it is now: .*kube-context=prod-eu on the block\. A runbook signed with an earlier md-runbook may need this\. Fix it, sign it again \(a new version\), then co-sign that$/);
+    // Signed as the rules are: co-signable; changed since: `changed`.
+    const fine = sign(RUNBOOK, { patterns: { TARGET: '.+' } });
+    assert.equal(cosignProblem(fine, readSignature(fine)!), undefined);
+    assert.deepEqual(cosignProblem(fine.replace('systemctl', 'systemct1'), readSignature(fine)!), { why: 'changed' });
   });
 });
 

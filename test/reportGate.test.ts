@@ -1,7 +1,8 @@
 /** Run reports in VS Code (src/reportGate.ts): when a run starts, and when its summary goes signed. */
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { SIGNING_KEY_MISSING, reportGate, summarySigning } from '../src/reportGate';
+import { parseFrontMatter } from '@md-runbook/core/secrets';
+import { SIGNING_KEY_MISSING, namesReportAddress, reportGate, summarySigning } from '../src/reportGate';
 
 describe('VS Code run report gate', () => {
   const none = { required: false, signed: false };
@@ -34,6 +35,17 @@ describe('VS Code run report gate', () => {
     assert.equal(summarySigning(signed, true), 'sign');
     assert.equal(summarySigning(none, true), 'sign');
     assert.equal(summarySigning(none, false), 'unsigned');
+  });
+
+  it('finds report-runs: in the first cell as core does, in any case, as the command line and the app (review, 2026-11-16)', () => {
+    const fm = (line: string): string => `---\n${line}\n---\n\n# Restart\n`;
+    for (const line of ['report-runs: https://r.example.net/v1/runs', 'Report-Runs: https://r.example.net/v1/runs', 'REPORT-RUNS : https://r.example.net/v1/runs']) {
+      assert.equal(namesReportAddress(fm(line)), true, line);
+      assert.equal(namesReportAddress(fm(line).replace(/\n/g, '\r\n')), true, `${line} (CRLF)`);
+      assert.equal(parseFrontMatter(fm(line))?.reportRuns !== undefined, true, line);
+    }
+    for (const text of [fm('title: x'), '# report-runs: https://r.example.net/v1/runs\n', 'report-runs: https://r.example.net/v1/runs\n', fm('report-runs: http://r.example.net/v1/runs')])
+      assert.equal(namesReportAddress(text), false, text);
   });
 
   it('says how to set a key up, as the command line does', () => {

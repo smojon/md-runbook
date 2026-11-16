@@ -315,6 +315,8 @@ const en = {
   saveUnavailable: 'This runbook was opened as a copy and cannot be saved back to its file.',
   notSignedYet: 'Not signed yet: sign it first (Sign Runbook); a second signer then co-signs it.',
   changedSinceSigned: (who: string) => `It changed since ${who} signed it: sign it again (a new version), then co-sign that.`,
+  cosignRules: (why: string) =>
+    `It can't be signed as it is now: ${why}. A runbook signed with an earlier md-runbook may need this. Fix it, sign it again (a new version), then co-sign that.`,
   signTitle: 'Sign this runbook',
   signAgainTitle: (name: string, version: number) => `Sign ${name}, version ${version}`,
   signBody: 'Servers behind md-runbook-gate run its blocks only as signed here. Your signature goes into the file.',

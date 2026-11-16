@@ -16,6 +16,7 @@ import {
   SCOPE_RE,
   SignatureBlock,
   buildManifest,
+  cosignProblem,
   cosignable,
   formatManifest,
   parseManifest,
@@ -141,11 +142,14 @@ export async function signRunbook(
   return { ok: true, text: withSignature(text, block), manifest: built.manifest, block };
 }
 
-/** Why the runbook can't be co-signed now, or undefined (with its block). */
-export function cosignCheck(text: string): { why: 'unsigned' | 'changed' } | { block: SignatureBlock; manifest: Manifest } {
+/** Why the runbook can't be co-signed now (`rules`: it can't be signed as it is, `errors` say why), or its block. */
+export type CosignCheck = { why: 'unsigned' | 'changed' } | { why: 'rules'; errors: string[] } | { block: SignatureBlock; manifest: Manifest };
+
+export function cosignCheck(text: string): CosignCheck {
   const block = readSignature(text);
   if (!block) return { why: 'unsigned' };
-  if (!cosignable(text, block)) return { why: 'changed' };
+  const problem = cosignProblem(text, block);
+  if (problem) return problem;
   return { block, manifest: parseManifest(block.manifest) };
 }
 

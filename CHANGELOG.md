@@ -94,6 +94,26 @@ for your server's platform when you update.
   - Manifests over 2.9 MB are refused: the gate's load request would be too long.
 - **`report-runs-required` written twice:** the strictest counts, in clients and lint alike
   (before, clients took the last and lint said the first). Signing still refuses it twice.
+  - Lint checks each line's value too: a misspelt `separated` on the second line is an error.
+- **Sign these again.** Runbooks signed before this release stop verifying, and the gate refuses
+  them, if they have:
+  - a parameter or `env.` name ending in `_proxy` (rename it);
+  - `kube-context=` written twice on a block (keep one).
+- **Co-signing:** a runbook signed with a front matter `kube-context:` and a block without its
+  own `kube-context=` still verifies, but can't be co-signed. Write `kube-context=` on each bash
+  block, sign it again, then co-sign. Co-sign Runbook now says why it refuses.
+- **Library server: separated gates get their own tokens.** Only a token in the new
+  `RUNS_SEPARATED_GATE_TOKENS` may send `gate_mode: "separated"`. A shared gate's blocks can read
+  its token, so the server no longer takes the mode from the summary alone.
+  - `separated` with a token of `RUNS_GATE_TOKENS` is refused (`400`).
+  - A token in both lists stops the server at start. Give every gate its own token.
+- **Library server: `report-runs-required: separated` for every spelling of a runbook.**
+  `last-green` applies it to `deploy`, `x/deploy.md` or `prod/Deploy.markdown` when they match
+  the runs of `prod/deploy.md`.
+  - A library it can't read counts only a separated gate's run, and says why
+    (`requiredUnknown`).
+- **VS Code:** reports runs of a runbook that writes `Report-Runs:` in another case, as the app
+  and the command line do.
 
 
 ## 0.27.0

@@ -150,6 +150,13 @@ describe('cli: sign and verify', () => {
     lines.length = 0;
     assert.equal(await signCommand([f, '--key', reviewer, '--cosign'], out), 1);
     assert.match(lines.join('\n'), /changed since release@example\.net signed it/);
+    // Signed under earlier rules (a front matter kube-context: was taken then): it says why, and what to do.
+    const signedNow = fs.readFileSync(f, 'utf8').replace('stop api', 'restart api');
+    fs.writeFileSync(f, signedNow.replace(/^/, '---\nkube-context: prod-eu\n---\n\n'));
+    lines.length = 0;
+    assert.equal(await signCommand([f, '--key', reviewer, '--cosign'], out), 1);
+    assert.match(lines.join('\n'), /two\.md: it can't be signed as it is now: .*kube-context: prod-eu is not checked by servers.*\. Fix it, sign it again \(a new version\), then co-sign that/);
+    fs.writeFileSync(f, signedNow.replace('restart api', 'stop api'));
     assert.equal(await signCommand([f, '--key', reviewer, '--cosign', '--version', '9'], out), 1);
     // Signing a new version starts without co-signers.
     assert.equal(await signCommand([f, '--key', key], out), 0);

@@ -73,6 +73,22 @@ export function nameFitsPath(name: string, path: string): boolean {
   return n !== '' && (p === n || p.endsWith('/' + n));
 }
 
+/**
+ * Whether a run of a runbook (the file name a client sends, the signed name) is a run of `q`, a
+ * signed name or a path in the library: `q` is its signed name, or a path (`*.md`,
+ * `*.markdown`) with its file name or that its signed name fits (nameFitsPath). How runs are
+ * matched (runs.ts summaryMatches). `ignoreCase`: names and file names in any case, as
+ * Library.separatedRequired looks for the runbooks a query's runs can be of.
+ */
+export function runOf(run: { file?: string; name?: string }, q: string, ignoreCase = false): boolean {
+  const fold = (s: string): string => (ignoreCase ? s.toLowerCase() : s);
+  const query = q.replace(/^\/+/, '');
+  if (run.name !== undefined && fold(run.name) === fold(query)) return true;
+  if (!/\.(md|markdown)$/i.test(query)) return false;
+  const file = query.split('/').pop()!;
+  return (run.file !== undefined && fold(run.file) === fold(file)) || (run.name !== undefined && nameFitsPath(run.name, query));
+}
+
 const today = (now: Date): string => now.toISOString().slice(0, 10);
 
 export interface Checked {
@@ -282,14 +298,14 @@ export class Library {
     });
   }
 
-  /** The library's runbooks: Markdown files, no hidden ones, no links, MAX_DEPTH folders down. */
-  async files(): Promise<string[]> {
+  /** The library's runbooks: Markdown files, no hidden ones, no links, MAX_DEPTH folders down; `limit` at most. */
+  async files(limit = MAX_FILES): Promise<string[]> {
     const out: string[] = [];
     const walk = async (rel: string, depth: number): Promise<void> => {
       const entries = await fsp.readdir(join(this.config.dir, rel), { withFileTypes: true });
       entries.sort((a, b) => a.name.localeCompare(b.name));
       for (const e of entries) {
-        if (out.length >= MAX_FILES) return;
+        if (out.length >= limit) return;
         const p = rel ? `${rel}/${e.name}` : e.name;
         if (e.name.startsWith('.') || e.isSymbolicLink()) continue;
         if (e.isFile() && pathProblem(p) === undefined) out.push(p);
@@ -328,25 +344,43 @@ export class Library {
   }
 
   /**
-   * Whether the library's copy of runbook `q` (a path in the library, or a signed name) says
-   * `report-runs-required: separated`: then only a run a gate sent in separated mode counts
-   * (runs.ts runCounts). Read from the copy as it is: it can only make fewer runs count.
+   * Whether runs of `q` (a path in the library, or a signed name) must come from a gate in
+   * separated mode: some library runbook whose runs the server counts as `q`'s (runOf, in any
+   * case) says `report-runs-required: separated`. Then only a run a gate sent in separated mode
+   * counts (runs.ts runCounts). Read from the copies as they are: they can only make fewer runs
+   * count. Fails closed: when the library can't be read, or has more than MAX_FILES runbooks,
+   * `unknown` says why and `separated` is true.
    */
-  async separatedRequired(q: string): Promise<boolean> {
-    const query = q.replace(/^\/+/, '');
-    const separated = (text: string | undefined): boolean => text !== undefined && parseFrontMatter(text)?.reportRunsSeparated === true;
-    if (/\.(md|markdown)$/i.test(query)) return separated(await readLibraryFile(this.config.dir, query));
-    const name = query.toLowerCase();
-    for (const path of await this.files().catch(() => [])) {
-      const text = await readLibraryFile(this.config.dir, path);
-      if (text !== undefined && signedRelease(text)?.name === name && separated(text)) return true;
+  async separatedRequired(q: string): Promise<{ separated: boolean; unknown?: string }> {
+    const unknown = (why: string): { separated: boolean; unknown: string } => ({ separated: true, unknown: why });
+    let paths: string[];
+    try {
+      paths = await this.files(MAX_FILES + 1);
+    } catch {
+      return unknown("the library folder can't be read");
     }
-    return false;
+    if (paths.length > MAX_FILES) return unknown(`the library has more than ${MAX_FILES} runbooks`);
+    for (const path of paths) {
+      let text: string | undefined;
+      try {
+        text = await readLibraryFile(this.config.dir, path, { strict: true });
+      } catch {
+        return unknown(`${path} can't be read`);
+      }
+      // A runbook gone (or turned into a link) since the folder was listed has no runs to count.
+      if (text === undefined || parseFrontMatter(text)?.reportRunsSeparated !== true) continue;
+      const name = signedRelease(text)?.name;
+      if (runOf({ file: path.split('/').pop()!, ...(name !== undefined ? { name } : {}) }, q, true)) return { separated: true };
+    }
+    return { separated: false };
   }
 }
 
-/** The text of the runbook at `path` in the library folder `dir`, or undefined (missing, or reached through a link). */
-export async function readLibraryFile(dir: string, path: string): Promise<string | undefined> {
+/**
+ * The text of the runbook at `path` in the library folder `dir`, or undefined (missing, or
+ * reached through a link). `strict`: any other failure to read it is thrown, not undefined.
+ */
+export async function readLibraryFile(dir: string, path: string, o: { strict?: boolean } = {}): Promise<string | undefined> {
   if (pathProblem(path) !== undefined) return undefined;
   try {
     let p = dir;
@@ -356,7 +390,8 @@ export async function readLibraryFile(dir: string, path: string): Promise<string
       if (!st || st.isSymbolicLink()) return undefined;
     }
     return (await fsp.lstat(p)).isFile() ? await fsp.readFile(p, 'utf8') : undefined;
-  } catch {
+  } catch (e) {
+    if (o.strict && (e as NodeJS.ErrnoException)?.code !== 'ENOENT') throw e;
     return undefined;
   }
 }

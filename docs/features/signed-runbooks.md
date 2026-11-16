@@ -480,8 +480,9 @@ To an address that isn't https (http only for localhost), nothing is sent. The g
 `report` `off` at the start of each session.
 
 The [library server](../../apps/library-server/README.md) keeps a gate's summary as verified
-(`trust: gate`) when it comes with one of its `RUNS_GATE_TOKENS`. It refuses `client: "gate"`
-from anyone else.
+(`trust: gate`) when it comes with one of its `RUNS_GATE_TOKENS`, or
+`RUNS_SEPARATED_GATE_TOKENS` for a gate in separated mode. It refuses `client: "gate"` from
+anyone else.
 
 The token file must be readable by the gate's account. So a block, or someone who can run
 commands as that account, could send a summary with it too. Give each server its own token.

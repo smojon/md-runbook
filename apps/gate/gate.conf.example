@@ -87,5 +87,6 @@ locale = auto
 # outputs, no parameter values) to this address, in the background. https (http only for
 # localhost). Never in a run's way: a failure is logged as a `report` event.
 # report_to = https://runbooks.example.net/v1/runs
-# A file holding the bearer token (one of the library server's RUNS_GATE_TOKENS).
+# A file holding the bearer token, this gate's own: one of the library server's
+# RUNS_GATE_TOKENS, or RUNS_SEPARATED_GATE_TOKENS with cells_account (separated mode).
 # report_token_file = /etc/md-runbook/report-token

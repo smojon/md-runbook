@@ -225,6 +225,14 @@ describe('run reports: the front matter and what a client honours', () => {
     assert.equal(fm('separated\nreport-runs-required: true')?.reportRunsSeparated, true);
     assert.equal(fm('true\nreport-runs-required: separated')?.reportRunsSeparated, true);
     assert.ok(lintRunbook('---\nreport-runs: https://x.net/r\nreport-runs-required: false\nreport-runs-required: true\n---\n').some((p) => /report-runs-required: written twice: the strictest counts/.test(p.message)));
+    // A repeated line's value is checked too: a misspelt `separated` after `true` (review, 2026-11-16).
+    const twice = lintRunbook('---\nreport-runs: https://x.net/r\nreport-runs-required: true\nreport-runs-required: separatd\nreport-runs-signed: true\nreport-runs-signed: maybe\nreport-runs-token: ${secret:T}\nreport-runs-token: abc123\n---\n')
+      .filter((p) => /report-runs/.test(p.message))
+      .map((p) => `${p.line} ${p.severity} ${p.message.slice(0, 80)}`);
+    assert.ok(twice.some((p) => p.startsWith('3 warning front matter report-runs-required: written twice: the strictest counts')), twice.join('\n'));
+    assert.ok(twice.some((p) => p.startsWith('3 error front matter report-runs-required: "separatd" is not understood')), twice.join('\n'));
+    assert.ok(twice.some((p) => p.startsWith('5 warning front matter report-runs-signed: "maybe" is ignored')), twice.join('\n'));
+    assert.ok(twice.some((p) => p.startsWith('7 error front matter report-runs-token: never write a token in the file')), twice.join('\n'));
 
     const text = REPORTING.replace('report-runs-required: true', 'report-runs-required: separated # a gate in separated mode') + BODY;
     const signed = signedWith(text, 2, { patterns: { TARGET: '[a-z-]+' } });
