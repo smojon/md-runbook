@@ -962,6 +962,35 @@ describe('the VS Code-like runbook view', () => {
     await waitFor(() => expect(parse(getRunbook('sample')!.text).cells[1]?.output?.attrs.lines).toBe('1'));
   });
 
+  it('Uncheck all (next to Run checked lines, and in the cell’s ⋯) clears the cell’s checks', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    await render(<RunbookView id="sample" />);
+    const press = async (id: string): Promise<void> => {
+      await act(async () => {
+        fireEvent.press(screen.getByTestId(id));
+      });
+    };
+    const checkLine = async (n: number): Promise<void> => {
+      await press(`cell-1-line-${n}`);
+      await press(`cell-1-line-${n}-check`);
+    };
+    expect(screen.queryByTestId('cell-1-uncheck-all')).toBeNull();
+    await checkLine(0);
+    await checkLine(1);
+    expect(screen.getByText('Run 2 checked lines')).toBeTruthy();
+    expect(screen.getByTestId('cell-1-uncheck-all')).toHaveProp('accessibilityLabel', 'Uncheck all');
+    await press('cell-1-uncheck-all');
+    expect(screen.queryByTestId('cell-1-run-checked')).toBeNull();
+    expect(screen.queryByTestId('cell-1-uncheck-all')).toBeNull();
+    // The same from the cell's ⋯ (greyed out with nothing checked).
+    await press('cell-1-actions');
+    expect(screen.getByTestId('action-uncheckAllLines')).toHaveProp('accessibilityState', { disabled: true });
+    await checkLine(0);
+    await press('cell-1-actions');
+    await press('action-uncheckAllLines');
+    expect(screen.queryByTestId('cell-1-run-checked')).toBeNull();
+  });
+
   it('Step through runs the first command, then waits before each of the others', async () => {
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
     script([{ stdout: 'up\n' }, { stdout: 'disk\n' }]);

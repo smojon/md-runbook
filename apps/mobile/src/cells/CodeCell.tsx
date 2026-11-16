@@ -75,6 +75,8 @@ export interface CodeCellProps {
   onRun(mode?: LineMode, line?: number): void;
   onStop(): void;
   onToggleCheck(step: LineStep): void;
+  /** Uncheck All Lines: shown next to Run checked lines. */
+  onUncheckAll?(): void;
   /** The cell's own actions (⋯ on its status line, or a long press). */
   onActions?(): void;
   /** What lint found in the cell (as the extension's problem markers), each under the cell. */
@@ -279,6 +281,19 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                 >
                   <Codicon name="play" size={12} color={c.link} />
                   <Text style={styles.statusLink}>{t.runChecked(checkedSteps.length)}</Text>
+                </Pressable>
+              ) : null}
+              {checkedSteps.length > 0 && p.onUncheckAll ? (
+                <Pressable
+                  testID={`cell-${index}-uncheck-all`}
+                  accessibilityRole="button"
+                  accessibilityLabel={t.uncheckAll}
+                  accessibilityHint={t.uncheckAllHint}
+                  onPress={p.onUncheckAll}
+                  style={styles.statusButton}
+                >
+                  <Codicon name="circle-large-outline" size={12} color={c.link} />
+                  <Text style={styles.statusLink}>{t.uncheckAll}</Text>
                 </Pressable>
               ) : null}
             </View>

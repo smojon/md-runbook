@@ -1516,6 +1516,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       },
       { ...meta('stepThrough', 'run', why), run: () => void run({ cellIndex: index, mode: 'step', line: 0 }, host) },
       {
+        ...meta('uncheckAllLines', 'run', (checks.get(index)?.size ?? 0) > 0 ? undefined : t.noCheckedLines),
+        run: () => uncheckAll(index),
+      },
+      {
         ...meta(
           'runOnGroup',
           'run',
@@ -1689,6 +1693,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       if (next.has(step.text)) next.delete(step.text);
       else next.add(step.text);
       return new Map(m).set(cellIndex, next);
+    });
+  /** Uncheck All Lines, as VS Code's: the cell's checked commands, all at once. */
+  const uncheckAll = (cellIndex: number): void =>
+    setChecks((m) => {
+      if (!m.has(cellIndex)) return m;
+      const next = new Map(m);
+      next.delete(cellIndex);
+      return next;
     });
 
   // Where the run waits for an answer: a card under that cell (a value, a confirmation, the
@@ -2280,6 +2292,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 onRun={(mode, line) => void run({ cellIndex: index, mode, line }, host)}
                 onStop={stopSequence}
                 onToggleCheck={(step) => toggleCheck(index, step)}
+                onUncheckAll={() => uncheckAll(index)}
                 breakpoints={breakpoints.get(index) ?? NO_BREAKS}
                 onToggleBreakpoint={(step) => toggleBreakpoint(index, step)}
                 onExplainLine={(step) => assistant.ask('explainLine', index, lineLabel(step))}

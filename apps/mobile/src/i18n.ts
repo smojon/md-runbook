@@ -388,6 +388,7 @@ const en = {
     runCell: ['Run Cell', 'Run this step on the chosen host.'],
     runFromHere: ['Run from Here', 'Run this step and every one after it, as Run all does.'],
     runUntilHere: ['Run Until Here', 'Run from the first step still to do up to this one, then stop.'],
+    uncheckAllLines: ['Uncheck All Lines', 'Start a new pick of lines to run: clear the checks of this cell.'],
     stepThrough: ['Step Through Lines', 'Risky change: run one command, look at the result, then decide to go on.'],
     runCallFresh: [
       'Run with a Fresh Copy',
@@ -716,6 +717,9 @@ const en = {
   explainLine: 'Explain',
   uncheckLine: 'Uncheck',
   runChecked: (n: number) => (n === 1 ? 'Run 1 checked line' : `Run ${n} checked lines`),
+  uncheckAll: 'Uncheck all',
+  uncheckAllHint: 'Unchecks every checked line of this cell',
+  noCheckedLines: 'No line is checked: tap a line, then Check.',
   lineActions: (lines: string) => `Line ${lines}`,
   closeActions: 'Close',
   ranOk: 'Succeeded',
