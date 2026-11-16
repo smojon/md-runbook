@@ -1109,12 +1109,18 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
       const g = start();
       await g.hello();
       // A line for run 2 after its real one: before, the last line counted, so `false` passed.
-      const forge = `for w in "\${TMPDIR:-/tmp}"/md-runbook-gate.*; do ( sleep 2; printf '2\\t0\\t2026-01-01T00:00:00Z\\t0123abcd\\n' >>"$w/report-exits" ) >/dev/null 2>&1 </dev/null & done; echo armed`;
+      const mark = path.join(dir, 'forged');
+      fs.rmSync(mark, { force: true });
+      const forge =
+        `t=$(printf '\\t'); for w in "\${TMPDIR:-/tmp}"/md-runbook-gate.*; do ( i=0; ` +
+        `while [ $i -lt 200 ] && ! grep -q "^2$t" "$w/report-exits" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done; ` +
+        `printf '2\\t0\\t2026-01-01T00:00:00Z\\t0123abcd\\n' >>"$w/report-exits"; : >${shPath(mark)} ) >/dev/null 2>&1 </dev/null & done; echo armed`;
       const [m, s] = await signed(fence('bash', forge) + fence('bash', 'false'), { name: 'ops/forged' });
       assert.equal((await g.request('load', m, s)).code, 0);
       assert.equal((await g.request('run', '1')).out, 'armed\n');
       assert.equal((await g.request('run', '2')).code, 1);
-      await pause(3000);
+      for (let i = 0; i < 200 && !fs.existsSync(mark); i++) await pause(100);
+      assert.ok(fs.existsSync(mark), 'the forged line was written');
       assert.equal(await g.close(), 0);
       for (let i = 0; i < 100 && got.length === 0; i++) await pause(150);
       const summary = JSON.parse(got[0]!);
