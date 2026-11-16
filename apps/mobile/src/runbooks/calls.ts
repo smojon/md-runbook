@@ -58,13 +58,17 @@ import { t } from '../i18n';
 import { getJson, setJson } from '../storage/kv';
 import { askAutorun } from './autorun';
 import { pickRunbookFile } from './files';
+import { CellRef, cellRef, resolveCell } from './cellRef';
 import { checkParam, setParamValue } from './params';
 import { MAX_RUNBOOK_BYTES, Runbook, addRunbook, getRunbook, linkKey, runbookNamed, updateRunbookText } from './store';
 
 /** A call that is running in its copy: what to write back, and where. */
 export interface ActiveCall {
   parentId: string;
+  /** Where the call's cell was in the caller when the call started (shown; `cell` is what is acted on). */
   cellIndex: number;
+  /** The call's cell by what it is: its result goes to it, wherever it is when the run ends. */
+  cell: CellRef;
   /** src= as resolved (shown, and recorded as runbook=). */
   runbook: string;
   sections: string[];
@@ -310,7 +314,8 @@ export async function startCall(
 ): Promise<StartResult> {
   const fetcher = opts.fetcher ?? fetch;
   const cell = parse(parent.text).cells[cellIndex];
-  if (!cell || cell.kind !== 'code' || !isCodeMeta(cell.meta) || !isCallLanguage(cell.languageId))
+  const ref = cellRef(parent.text, cellIndex);
+  if (!cell || !ref || cell.kind !== 'code' || !isCodeMeta(cell.meta) || !isCallLanguage(cell.languageId))
     return { kind: 'error', message: t.callNotACall };
   const call = parseCall(cell.meta.info, cell.value);
   if (call.problems.length > 0 || call.src === undefined) return { kind: 'error', message: call.problems.map((p) => p.message).join('; ') };
@@ -407,6 +412,7 @@ export async function startCall(
   active.set(copy.id, {
     parentId: parent.id,
     cellIndex,
+    cell: ref,
     runbook: src,
     sections,
     resumed: again !== undefined,
@@ -471,8 +477,12 @@ export function callResult(copy: Runbook, c: ActiveCall): { result: CallResult; 
   return { result, ok: result.failed === 0 && result.notRun === 0 && !(evidence && unticked > 0), evidence };
 }
 
-/** The copy's run ended: write the call's result into the caller's cell. Returns the caller and whether the call is done. */
-export function finishCall(copyId: string, now = new Date()): { parentId: string; ok: boolean } | undefined {
+/**
+ * The copy's run ended: write the call's result into the caller's cell. Returns the caller and
+ * whether the call is done; `gone` when the call's cell changed or went in the caller meanwhile
+ * (nothing is written then: never a result on another cell).
+ */
+export function finishCall(copyId: string, now = new Date()): { parentId: string; ok: boolean; gone?: true } | undefined {
   const c = active.get(copyId);
   const copy = getRunbook(copyId);
   if (!c || !copy) return undefined;
@@ -481,6 +491,8 @@ export function finishCall(copyId: string, now = new Date()): { parentId: string
   recordCallCopy(copyId, copy.text);
   const parent = getRunbook(c.parentId);
   if (!parent) return undefined;
+  const at = resolveCell(parent.text, c.cell);
+  if (at === undefined) return { parentId: parent.id, ok: false, gone: true };
   const { result, ok, evidence } = callResult(copy, c);
   // A setup call whose runbook's ready check said up: already up, and the call is skipped.
   const ready = c.setup ? readyCellOf(copy.text) : undefined;
@@ -503,7 +515,7 @@ export function finishCall(copyId: string, now = new Date()): { parentId: string
   };
   const next = setCellOutput(
     parent.text,
-    c.cellIndex,
+    at,
     { kind: 'new', text: (c.note ? `[md-runbook] ${c.note}\n` : '') + callOutputText(result, c.sections) + note, attrs },
     DEFAULT_WRITE_OPTIONS,
   );

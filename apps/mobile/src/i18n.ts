@@ -997,6 +997,7 @@ const en = {
   callManualLeft: (n: number, copy: string) =>
     `${n === 1 ? '1 manual step' : `${n} manual steps`} not ticked in ${copy}, which keeps evidence: tick ${n === 1 ? 'it' : 'them'} there and run this step again`,
   callRunning: (src: string, copy: string) => `Runs ${src} as ${copy}: when it ends, its result goes to the step that called it.`,
+  callCellGone: (parent: string) => `Not written back: the step that called this copy changed or went in ${parent}.`,
   callNotDone: (parent: string) =>
     `Not done: ${parent} got this run as failed. Fix it here, or run the step there again to continue this copy.`,
   proposedNotRun: (n: number) =>

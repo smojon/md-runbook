@@ -1029,7 +1029,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           inputs: Object.fromEntries(Object.entries(inputs.current).map(([k, v]) => [k, v.value])),
         });
         if (outcome.kind === 'done') {
-          const out = parse(outcome.text).cells[now.at]?.output;
+          const out = parse(outcome.text).cells[outcome.cellIndex]?.output;
           parts.push({
             host: h,
             exit: outcome.attrs.exit ?? '?',
@@ -2079,7 +2079,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   /** A call's copy whose run ended: its result to the caller; back there when it is done. */
   const endCallRun = (id: string): void => {
     const done = finishCall(id);
-    if (done?.ok) router.back();
+    if (done?.gone) setNotice(t.callCellGone(getRunbook(done.parentId)?.title ?? ''));
+    else if (done?.ok) router.back();
     else if (done) setNotice(t.callNotDone(getRunbook(done.parentId)?.title ?? ''));
   };
   // Run All as Copy opened this copy: run it once, as soon as a host is there.

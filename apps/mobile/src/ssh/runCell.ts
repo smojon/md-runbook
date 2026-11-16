@@ -5,6 +5,7 @@
  */
 import { sha256Hex } from '@md-runbook/core/sha256';
 import { activeCall } from '../runbooks/calls';
+import { cellRef, resolveCell } from '../runbooks/cellRef';
 import { getRunbook } from '../runbooks/store';
 import {
   REDACTED,
@@ -44,7 +45,16 @@ import type { LinePlan } from './lineRuns';
 
 export type RunOutcome =
   /** The cell ran (or failed): `text` is the runbook with the new output block. */
-  | { kind: 'done'; text: string; result: SessionRunResult; attrs: Record<string, string>; summary: string; captured: Captured[] }
+  | {
+      kind: 'done';
+      text: string;
+      /** Where the cell is in `text` (it may have moved while it ran). */
+      cellIndex: number;
+      result: SessionRunResult;
+      attrs: Record<string, string>;
+      summary: string;
+      captured: Captured[];
+    }
   /** The server's key is not trusted yet (or changed): nothing was sent; ask, pin, run again. */
   | { kind: 'trust'; hostKey: string; changed: boolean }
   /** Nothing ran: the cell needs secrets or inputs that are not there yet; ask, then run again. */
@@ -146,6 +156,8 @@ export function runCell(p: RunCellParams): Promise<RunOutcome> {
 async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   const cell = parse(p.text).cells[p.cellIndex];
   if (!cell) return { kind: 'error', message: t.cellGone };
+  /** The cell by what it is: its output goes to it, wherever it is when the run ends. */
+  const ranCell = cellRef(p.text, p.cellIndex);
   const fm = parseFrontMatter(p.text);
   const shells = fm?.shell;
   const can = runnability(cell, p.runbookId === undefined ? undefined : approvalScope(p.runbookId, shells), p.host.platform);
@@ -284,7 +296,9 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   // A runbook call's copy: the gate logs which call of which signed runbook loaded it (the audit).
   const call = p.runbookId ? activeCall(p.runbookId) : undefined;
   const callerStatus = call ? signedStatus(getRunbook(call.parentId)?.text ?? '') : undefined;
-  const callN = call ? callerStatus?.calls.get(call.cellIndex)?.n : undefined;
+  // The call's cell in the caller as it is now (it may have moved since the call started).
+  const callAt = call && callerStatus ? resolveCell(getRunbook(call.parentId)?.text ?? '', call.cell) : undefined;
+  const callN = callAt !== undefined ? callerStatus?.calls.get(callAt)?.n : undefined;
   const calledBy = callerStatus && callN !== undefined ? { hash: sha256Hex(callerStatus.block.manifest), call: callN } : undefined;
   // An alert link's p.ALERT and the like (typed or from the link, whether or not a cell uses
   // them): the gate logs which alert the run answered (gate protocol 3; it grants nothing).
@@ -476,14 +490,17 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     attrs.lines = formatLineRanges(picked);
   }
   const base = p.latestText?.() ?? p.text;
-  const meta = parse(base).cells[p.cellIndex]?.meta;
+  // The cell that ran, found again in the text as it is now (runbooks/cellRef.ts): its code and its
+  // fence options, so never a cell with the same code under another host=; nowhere if it changed.
+  const at = ranCell ? resolveCell(base, ranCell) : undefined;
+  if (at === undefined) return { kind: 'error', message: t.cellChanged };
+  const meta = parse(base).cells[at]?.meta;
   const previous = isCodeMeta(meta) ? loadedOutputEntry(meta) : undefined;
   const older = isCodeMeta(meta) ? (meta.history?.entries ?? []) : [];
-  if (parse(base).cells[p.cellIndex]?.value !== cell.value) return { kind: 'error', message: t.cellChanged };
   const text =
     setCellOutput(
       base,
-      p.cellIndex,
+      at,
       // As the extension writes it: changed=yes|no against the output it replaces, and the earlier
       // runs kept after it when history is on.
       {
@@ -495,5 +512,5 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
       },
       { ...DEFAULT_WRITE_OPTIONS, redact: (s) => outputRedactor().redact(hideKnown(s)) },
     ) ?? base;
-  return { kind: 'done', text, result, attrs, summary: outputSummary(attrs, ended), captured };
+  return { kind: 'done', text, cellIndex: at, result, attrs, summary: outputSummary(attrs, ended), captured };
 }
