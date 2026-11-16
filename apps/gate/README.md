@@ -15,6 +15,10 @@ for, and how runbooks are signed:
 - Linux or macOS with OpenSSH 8.2 or newer (`ssh-keygen -Y`).
 - The usual tools: `awk`, `base64`, `env`, `mkfifo`, `mktemp`, `od`, `pgrep` (to cancel),
   `logger` (for syslog), `sha256sum` or `shasum`.
+- `setsid` or `perl`, so a block's background programs end with its shell. Without either, the
+  gate refuses to start (`allow_no_group_kill = yes` starts it anyway).
+- `perl`, or `stdbuf` and `fold`, to cut overlong requests before the gate reads them.
+- `ps`, for `kill_leftovers = yes`.
 - bash if the runbooks need it (else the blocks run in `sh`).
 - `curl` for run reports (`report_to`).
 
@@ -41,11 +45,16 @@ for any key.
 
 `restrict` turns off port, agent and X11 forwarding, the pty and `~/.ssh/rc`. The gate needs it
 on every key: with forwarding, `ssh -L` to `docker.sock` runs code without a signature.
+- `restrict` itself: the five `no-*` options don't turn off tunnels.
+- No `environment=`: with `PermitUserEnvironment yes`, `LD_PRELOAD` there runs code in the gate.
+  Keep `PermitUserEnvironment no` (sshd's default). The gate also refuses to start while
+  `~/.ssh/environment` exists.
 
 Options on the command:
 - `--unsigned=allow|refuse`, `--scopes=a,b` and `--signers=N` override `gate.conf` for that key;
 - `--who=NAME` is the name logged for it;
-- `--config=FILE` reads another config.
+- `--config=FILE` reads another config. Like `gate.conf`, it must be a file the account can't
+  change (root-owned, in a root-owned folder).
 
 The command may start with `exec`, and values may be quoted: `--who='Alice Smith'`. Anything a
 shell would expand (`$`, a backtick, `;`) is refused.
@@ -60,11 +69,18 @@ example: `AuthorizedKeysFile /etc/ssh/authorized_keys/%u` with root-owned files.
 **Give the account the login shell `/bin/sh`:** `sudo usermod -s /bin/sh support`.
 - sshd starts the gate with the login shell. Debian's bash runs `~/.bashrc` first, a file the
   account can write.
-- Under sshd, the gate refuses to start with bash or zsh while the home folder is writable.
+- Under sshd, the gate starts only with `sh`, `dash`, `ash`, `busybox`, `ksh`, `mksh`, `oksh` or
+  `posh`. It refuses any other login shell.
 - `login_shell_check = no` in `gate.conf` turns this off, for test servers only.
 
-**Use the account for the gate alone.** Programs already running as the account are out of the
-gate's reach: they can do what a block can.
+**Use the account for the gate alone,** and set `kill_leftovers = yes` (Linux). Other programs of
+the account can do what a block can: through `/proc`, they can write into a session's shell.
+- With `kill_leftovers = yes`, the gate ends every process of the account outside a live session.
+  It does so at the start and end of each session. Such a leftover is a block's `setsid` program,
+  or a cron job.
+- The gate spares other SSH logins, `docker exec` and `kubectl exec`, the user manager
+  (`systemd --user`) and earlier sessions' run reports. It ends the user manager's services.
+- The gate can't end programs of a session that is still running.
 
 Add `ExposeAuthInfo yes` to `sshd_config` to log each key's fingerprint.
 
@@ -80,16 +96,16 @@ It accepts the account only as one of two kinds:
 
 Anything else stops the session before it starts, naming the lines to change:
 - a key without `command="…/md-runbook-gate …"`, or with more after the gate's options;
-- a key without `restrict` (or all of `no-port-forwarding`, `no-agent-forwarding`,
-  `no-X11-forwarding`, `no-pty`, `no-user-rc`);
+- a key without `restrict`;
 - a key that turns something on again: `port-forwarding`, `permitopen`, `permitlisten`, `pty`,
   `user-rc`, `X11-forwarding`, `agent-forwarding`;
+- a key with `environment=`, or a `--config=` the account can change;
 - a mix of signed and unsigned keys: give the unsigned ones their own account;
 - a file it can't read.
 
-The check reads key lines with their options (`restrict`, `from=`, `environment=`, quoted
-values) and `cert-authority` lines too. In `authorized_keys =`, `%h`, `%u`, `%U` and `%%` work as
-in sshd; any other `%` token is an error.
+The check reads key lines with their options (`restrict`, `from=`, quoted values) and
+`cert-authority` lines too. In `authorized_keys =`, `%h`, `%u`, `%U` and `%%` work as in sshd;
+any other `%` token is an error.
 
 What it can't see, so keep this account for the gate alone and without a password:
 - keys from `AuthorizedKeysCommand`, and the principals of SSH certificates;
@@ -103,8 +119,8 @@ With `ForceCommand` in `sshd_config` (as on the [ops host](../ops/README.md)), s
   refuses to start.
 - `sshd_config` needs `DisableForwarding yes`, `PermitTTY no` and `PermitUserRC no`.
 - The gate refuses to start while `~/.ssh/rc` exists.
-- `--sshd-force-command` on the gate's command line needs `sshd_force_command = yes`. A key line
-  may not have it.
+- `sshd_force_command = yes` and `--sshd-force-command` on the `ForceCommand` line go together:
+  one without the other stops the gate. A key line may not have the option.
 
 ## The blocks' shell
 
@@ -114,10 +130,12 @@ With `ForceCommand` in `sshd_config` (as on the [ops host](../ops/README.md)), s
   carry over.
   - Loading the same runbook again keeps it, also after a call into another runbook.
   - A session keeps up to 6 such shells. A 7th runbook ends the one used least recently.
-- **Unsigned text** (where allowed) never runs in a shell a signed runbook gets later. Loading
-  that runbook again starts a fresh shell.
-- **Background programs** of a block end with its shell, at the latest with the session. Each
-  shell has a process group of its own (`setsid`, else `perl`).
+- **Unsigned text** (where allowed) never runs in a shell a signed runbook gets later. The next
+  signed block, or loading that runbook again, starts a fresh shell.
+- **Background programs** of a block get TERM when its shell ends, and KILL a second later.
+  Each shell has a process group of its own (`setsid`, else `perl`).
+  - A program that leaves the group (`setsid`, a double fork) is out of that reach. Only
+    `kill_leftovers = yes` ends it, when the session ends.
 - **No profile:** not `/etc/profile`, `~/.profile` or `~/.bashrc`. The account can write those,
   so they would run in every signed block.
 - **PATH** is `path =` in `gate.conf` (default `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`).
@@ -136,10 +154,21 @@ With `ForceCommand` in `sshd_config` (as on the [ops host](../ops/README.md)), s
 - **No files in between:** the gate keeps the verified manifest, the parameters and the runs in
   memory. It sends each block's code to the shell through a pipe only the gate holds.
   - The block runs as the body of a function: `return` ends it, and `BASH_SOURCE` is empty.
-  - The shell writes each run's exit to the work folder with a random number. A block can't
-    write one that counts for another run.
+  - The shell writes each run's exit to the work folder with a random number. A line for
+    another run counts only with that run's number.
+- **Limits:** a request longer than 4,000,000 bytes ends the session, and the gate reads no more
+  of it. The gate's own processes get at most `memory_limit =` MiB (default 512; 0: none). The
+  blocks get no limit from the gate.
 
 ## Trust
+
+**A signed block is trusted code.** It runs in the same shell that reads what the gate sends
+next. So it can:
+- read the code, parameter values and random numbers of the later runs in its shell;
+- answer for them: their output, exit and report line, without running them.
+
+A run report is only as good as the blocks of its runbook. Sign only blocks you would run as the
+account yourself.
 
 Signed blocks run as the account. So a gate is only as strong as the account around it:
 - **Use `unsigned = refuse` for every key of the account**, or the gate's checks prove nothing.

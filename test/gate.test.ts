@@ -804,6 +804,11 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
       ['a shell expansion', [keyLine(' --who=$(id)')], /line 1: command=/],
       ['a ; in a value', [keyLine(' --who=a;b')], /line 1: command=/],
       ['an expansion in double quotes', [keyLine(' --who=\\"$HOME\\"')], /line 1: command=/],
+      // Security review round 4: sshd's tunnel check looks for restrict itself, environment= can
+      // set LD_PRELOAD for the gate, and a config the account can change sets the policy.
+      ['the five no-* options instead of restrict', [keyLine('', 'no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,no-user-rc,')], /line 1: add restrict/],
+      ['environment=', [keyLine('', 'restrict,environment="LD_PRELOAD=/tmp/evil.so",')], /line 1: remove environment=/],
+      ["a --config= the account can change", [keyLine(` --config=${shPath(conf)}`)], /line 1: its config .* is a file this account can change/],
     ];
     for (const [what, lines, re] of bad) {
       const c = confAt('mixed.conf', [`authorized_keys = ${keysAt('mixed.keys', lines)}`]);
@@ -819,16 +824,15 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     const none = new Gate([`--config=${confAt('none.conf', [`authorized_keys = ${keysAt('none.keys', ['# nobody yet', ''])}`])}`], env());
     none.child.stdin!.end();
     assert.equal(await none.exited, 2);
-    // Comments, blank lines, CRLF, options with quoted commas and escaped quotes, a CA line, the
-    // five no-* options instead of restrict, exec and quoted values (security review round 3): fine.
+    // Comments, blank lines, CRLF, options with quoted commas and escaped quotes, a CA line, exec
+    // and quoted values (security review round 3): fine.
     const good = [
       '# the support team',
       '',
-      `restrict,environment="NOTE=a,b",from="10.0.0.0/8,192.168.0.0/16",no-pty,command="${shPath(GATE)} --who=alice --scopes=web,staging" ${KEY}\r`,
+      `restrict,from="10.0.0.0/8,192.168.0.0/16",no-pty,command="${shPath(GATE)} --who=alice --scopes=web,staging" ${KEY}\r`,
       `cert-authority,restrict,principals="ops",command="sh ${shPath(GATE)}" ${KEY}`,
-      `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,no-user-rc,command="${shPath(GATE)}" ${KEY}`,
       `restrict,command="exec ${shPath(GATE)} --who='Alice Smith'" ${KEY}`,
-      `restrict,command="exec sh ${shPath(GATE)} --who=\\"Bob B\\" --config=${shPath(conf)}" ${KEY}`,
+      `restrict,command="exec sh ${shPath(GATE)} --who=\\"Bob B\\" --signers=1" ${KEY}`,
     ];
     const ok = new Gate([`--config=${confAt('good.conf', [`authorized_keys = ${keysAt('good.keys', good)}`])}`], env());
     gates.push(ok);
@@ -850,9 +854,9 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
     const port = (server.address() as { port: number }).port;
     try {
-      // Each key line's own --config says unsigned = allow (the check reads it).
-      const opt = ` --config=${shPath(path.join(dir, 'trial.conf'))}`;
-      const keys = keysAt('trial.keys', [keyLine(opt), keyLine(`${opt} --who=bob`)]);
+      // Each key line allows unsigned blocks. (Not through a --config= of the account's: the gate
+      // refuses a key line's config the account can change; security review round 4.)
+      const keys = keysAt('trial.keys', [keyLine(' --unsigned=allow'), keyLine(' --unsigned=allow --who=bob')]);
       const c = confAt('trial.conf', ['unsigned = allow', `report_to = http://127.0.0.1:${port}/v1/runs`, `authorized_keys = ${keys}`]);
       const g = new Gate([`--config=${c}`], env());
       gates.push(g);
@@ -1042,11 +1046,13 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
   it('sshd_force_command counts only from a gate.conf the account can\'t change, never from a key line\'s option', async () => {
     // The test's files are the account's own, as a planted config would be.
     const force = confAt('force.conf', ['sshd_force_command = yes']);
-    for (const args of [[`--config=${force}`], [`--config=${force}`, '--sshd-force-command']]) {
-      const r = await startup(args);
-      assert.equal(r.code, 2, args.join(' '));
-      assert.match(r.err, /a file this account can change/);
-    }
+    const withFlag = await startup([`--config=${force}`, '--sshd-force-command']);
+    assert.equal(withFlag.code, 2);
+    assert.match(withFlag.err, /a file this account can change/);
+    // gate.conf alone: key lines that share it skipped their check (security review round 4).
+    const confAlone = await startup([`--config=${force}`]);
+    assert.equal(confAlone.code, 2);
+    assert.match(confAlone.err, /sshd_force_command = yes in .* needs --sshd-force-command on sshd_config's ForceCommand line/);
     // The option alone switched the check of the key lines off.
     const alone = await startup([`--config=${conf}`, '--sshd-force-command']);
     assert.equal(alone.code, 2);
@@ -1079,13 +1085,27 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     }
     // The login shell the gate finds: getent's, else $SHELL (which the test sets).
     const found = spawnSync(SH, ['-c', 'command -v getent >/dev/null 2>&1 && getent passwd "$(id -un)" | cut -d: -f7'], { encoding: 'utf8' }).stdout.trim() || '/bin/bash';
-    if (/^(sh|dash|ash|ksh|ksh93|mksh|lksh|oksh|posh)$/.test(path.posix.basename(found))) {
+    if (/^(sh|dash|ash|busybox|ksh|ksh93|mksh|lksh|oksh|posh)$/.test(path.posix.basename(found))) {
       t.skip(`this account's login shell is ${found}, which reads nothing first`);
       return;
     }
     const r = await startup([`--config=${conf}`], { ...sshd, SHELL: '/bin/bash' });
     assert.equal(r.code, 2);
-    assert.match(r.err, /login shell is .*: it can run .* before the gate\. Make it \/bin\/sh/);
+    assert.match(r.err, /login shell is .*: it can run files of the account before the gate .*Make it \/bin\/sh/);
+    // An allowlist (security review round 4): before, any other shell passed while the home folder
+    // was read-only and had no ~/.bashrc, though fish or a planted file elsewhere may run first.
+    if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+      const home = fs.mkdtempSync(path.join(dir, 'ro-home-'));
+      fs.mkdirSync(path.join(home, '.md-runbook-gate', 'pids'), { recursive: true });
+      fs.chmodSync(home, 0o555);
+      try {
+        const ro = await startup([`--config=${conf}`], { ...sshd, SHELL: '/usr/bin/fish', HOME: home });
+        assert.equal(ro.code, 2);
+        assert.match(ro.err, /login shell is .*Make it \/bin\/sh/);
+      } finally {
+        fs.chmodSync(home, 0o755);
+      }
+    }
     // login_shell_check = no (for tests on servers whose accounts have bash): it starts.
     const g = new Gate([`--config=${confAt('no-shell-check.conf', ['login_shell_check = no'])}`], { ...env(), ...sshd, SHELL: '/bin/bash' });
     gates.push(g);
@@ -1131,6 +1151,164 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     } finally {
       server.close();
       writeConf([]);
+    }
+  });
+
+  // ---- security review round 4 (2026-11-16) ----
+
+  it("a block's program that ignores TERM ends with the session all the same (KILL a second later)", { skip: process.platform === 'win32' && "Git for Windows' pids are not Windows' own" }, async () => {
+    const pidFile = path.join(dir, 'ignores-term.pid');
+    fs.rmSync(pidFile, { force: true });
+    const [m, s] = await signed(fence('bash', `(trap '' TERM; exec sleep 300) >/dev/null 2>&1 </dev/null & echo $! >${shPath(pidFile)}; echo started`), { name: 'ops/ignores-term' });
+    const g = start();
+    await g.hello();
+    await g.request('load', m, s);
+    assert.equal((await g.request('run', '1')).out, 'started\n');
+    const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+    assert.ok(alive(pid));
+    assert.equal(await g.close(), 0);
+    // Before, only TERM was sent: the program ran on, into later sessions.
+    for (let i = 0; i < 50 && alive(pid); i++) await pause(100);
+    assert.equal(alive(pid), false, 'the program was killed');
+  });
+
+  // In a user and PID namespace of its own, where every process is this test's: kill_leftovers
+  // ends the account's processes outside a live session (elsewhere: the CI runner's own).
+  const unshare = process.platform === 'linux' && spawnSync('unshare', ['-rpf', '--mount-proc', 'true']).status === 0;
+  it('kill_leftovers: no program of an earlier session outlives it or writes into a later session\'s shell', { skip: !unshare && 'needs unshare -rpf (Linux user namespaces)' }, async () => {
+    const d = fs.mkdtempSync(path.join(dir, 'leftovers-'));
+    const lconf = confAt('leftovers.conf', ['kill_leftovers = yes']);
+    // Session 1: a block leaves a program in a session of its own (setsid) and one that ignores TERM.
+    const [m1, s1] = await signed(fence('bash', "setsid sh -c 'exec sleep 41' >/dev/null 2>&1 </dev/null & (trap '' TERM; exec sleep 42) >/dev/null 2>&1 </dev/null & echo started"), { name: 'ops/leaves' });
+    fs.writeFileSync(path.join(d, 'req1'), `: mdrb-gate-hello feed0001; x\nload 00000001 ${m1} ${s1}\nrun 00000002 1\n`);
+    // Session 2: a block that runs a second, long enough for an injector to find its shell.
+    const [m2, s2] = await signed(fence('bash', 'sleep 1.5; echo second'), { name: 'ops/later' });
+    fs.writeFileSync(path.join(d, 'req2'), `: mdrb-gate-hello feed0002; x\nload 00000003 ${m2} ${s2}\nrun 00000004 1\n`);
+    // The reviewer's leftover.sh: a program of the account writes into every cells' shell it finds
+    // through /proc. Started between the sessions, its parent gone (PID 1 adopts it).
+    fs.writeFileSync(
+      path.join(d, 'injector.sh'),
+      "trap '' TERM HUP; i=0; while [ $i -lt 100 ]; do for f in /proc/[0-9]*/fd/0; do t=$(readlink \"$f\" 2>/dev/null) || continue; " +
+        `case $t in */md-runbook-gate.*/pipe.*/in*) printf 'echo INJECTED >>%s\\n' '${d}/injected' >"$f" 2>/dev/null ;; esac; done; sleep 0.05; i=$((i + 1)); done\n`,
+    );
+    fs.writeFileSync(
+      path.join(d, 'driver.sh'),
+      [
+        `sh ${GATE} --config=${lconf} <${d}/req1 >${d}/out1 2>&1`,
+        'sleep 1',
+        `ps -e -o args= >${d}/ps1`,
+        `( setsid sh ${d}/injector.sh >/dev/null 2>&1 </dev/null & )`,
+        'sleep 0.5',
+        `sh ${GATE} --config=${lconf} <${d}/req2 >${d}/out2 2>&1`,
+        'sleep 0.5',
+        `ps -e -o args= >${d}/ps2`,
+      ].join('\n') + '\n',
+    );
+    const r = spawnSync('unshare', ['-rpf', '--mount-proc', 'sh', '-c', `sh ${d}/driver.sh; :`], { env: { ...process.env, HOME: dir, TMPDIR: dir }, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    const read = (f: string): string => fs.readFileSync(path.join(d, f), 'utf8');
+    assert.match(read('out1'), /\x1e__MDRB_00000002__ 0/);
+    assert.match(read('out2'), /second\n/);
+    assert.doesNotMatch(read('ps1'), /sleep 4[12]/, 'the programs of session 1 ended with it');
+    assert.equal(fs.existsSync(path.join(d, 'injected')), false, 'nothing was written into session 2\'s shell');
+    assert.doesNotMatch(read('ps2'), /injector/, 'the leftover was ended when session 2 started');
+    assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"event":"leftovers","status":"killed".*"when":"start"/);
+  });
+
+  it('a request longer than 4000000 bytes ends the session; the gate never reads more of it', { skip: process.platform === 'win32' && 'Git for Windows reads a 4 MB line slowly' }, async () => {
+    const g = start();
+    let err = '';
+    let out = '';
+    g.child.stderr!.on('data', (d: Buffer) => (err += d.toString('utf8')));
+    g.child.stdout!.on('data', (d: Buffer) => (out += d.toString('utf8')));
+    // (What it never read: written into a closed pipe.)
+    g.child.stdin!.on('error', () => undefined);
+    // Before, the gate read the whole line (a 32 MB one: 67 MB and 24 seconds), said so, and went on.
+    g.child.stdin!.write('a'.repeat(4_000_050) + '\n: mdrb-gate-hello feed0001; x\n');
+    const code = await Promise.race([g.exited, pause(60_000).then(() => 'still running')]);
+    assert.equal(code, 0);
+    assert.match(err, /request too long: the session ends/);
+    assert.doesNotMatch(out, /__MDRB_GATE__/, 'nothing after it was read');
+    // A request at the limit is read as one.
+    const ok = start();
+    ok.child.stdin!.write('b'.repeat(3_999_990) + '\n');
+    assert.match((await ok.hello()).out, /__MDRB_GATE__/);
+    await ok.close();
+  });
+
+  it("report_to: the signer comes from the gate's memory, not a file a block can change", { skip: !hasCurl() && 'no curl' }, async () => {
+    const got: string[] = [];
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (d: Buffer) => (body += d.toString('utf8')));
+      req.on('end', () => {
+        got.push(body);
+        res.writeHead(202).end();
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    writeConf([`report_to = http://127.0.0.1:${(server.address() as { port: number }).port}/v1/runs`]);
+    try {
+      const g = start();
+      await g.hello();
+      // The reviewer's c_meta.sh: before, line 3 of rb-HASH.meta was the reported signer.
+      const forge = 'for w in "${TMPDIR:-/tmp}"/md-runbook-gate.*; do for r in "$w"/rb-*; do case $r in *.meta) continue ;; esac; ' +
+        "printf 'x\\n1\\nceo@example.net (forged)\\n' >\"$r.meta\"; done; done; echo forged";
+      const [m, s] = await signed(fence('bash', forge), { name: 'ops/meta' });
+      assert.equal((await g.request('load', m, s)).code, 0);
+      assert.equal((await g.request('run', '1')).out, 'forged\n');
+      assert.equal(await g.close(), 0);
+      for (let i = 0; i < 100 && got.length === 0; i++) await pause(150);
+      assert.equal(JSON.parse(got[0]!).runbook.signed.signer, 'ops@example.net');
+    } finally {
+      server.close();
+      writeConf([]);
+    }
+  });
+
+  it('unsigned text in the loaded runbook\'s shell: its next signed block runs in a fresh one', async () => {
+    const uconf = confAt('dirty-run.conf', ['unsigned = allow', `authorized_keys = ${keysAt('dirty-run.keys', [keyLine(' --unsigned=allow')])}`]);
+    const g = new Gate([`--config=${uconf}`], env());
+    gates.push(g);
+    await g.hello();
+    const [m, s] = await signed(fence('bash', 'X=signed') + fence('bash', 'echo "X=${X-unset}"'), { name: 'ops/raw-then-run' });
+    assert.equal((await g.request('load', m, s)).code, 0);
+    assert.equal((await g.request('run', '1')).code, 0);
+    // The reviewer's req_dirty: before, the next run (no load in between) found X=from-raw.
+    g.child.stdin!.write(rawLine('0000ab01', 'X=from-raw'));
+    assert.equal((await g.reply('0000ab01')).code, 0);
+    const r = await g.request('run', '2');
+    assert.deepEqual([r.code, r.out], [0, 'X=unset\n']);
+    await g.close();
+  });
+
+  it("the gate's own environment: no ~/.ssh/environment, and LD_PRELOAD and the like never reach its programs", async () => {
+    const home = fs.mkdtempSync(path.join(dir, 'ssh-env-'));
+    fs.mkdirSync(path.join(home, '.ssh'));
+    fs.writeFileSync(path.join(home, '.ssh', 'environment'), 'LD_PRELOAD=/tmp/evil.so\n');
+    const r = await startup([`--config=${conf}`], { HOME: home });
+    assert.equal(r.code, 2);
+    assert.match(r.err, /\.ssh\/environment can set the gate's environment/);
+    // glibc says so for each program a missing LD_PRELOAD library was meant for: before, for every
+    // program the gate ran (ssh-keygen, awk, ...), now only for sh itself. (Cygwin's loader stops
+    // the program instead: not on Windows.)
+    if (process.platform === 'win32') return;
+    const g = new Gate([`--config=${conf}`], { ...env(), LD_PRELOAD: '/nonexistent/md-runbook-test.so' });
+    gates.push(g);
+    let err = '';
+    g.child.stderr!.on('data', (d: Buffer) => (err += d.toString('utf8')));
+    await g.hello();
+    const [m, s] = await signed(fence('bash', 'echo "[${LD_PRELOAD-}]"'), { name: 'ops/preload' });
+    assert.equal((await g.request('load', m, s)).code, 0);
+    assert.equal((await g.request('run', '1')).out, '[]\n');
+    await g.close();
+    assert.ok((err.match(/md-runbook-test\.so/g) ?? []).length <= 1, err);
+  });
+
+  it('fails closed on a bad kill_leftovers, allow_no_group_kill or memory_limit', async () => {
+    for (const bad of ['kill_leftovers = maybe', 'allow_no_group_kill = 1', 'memory_limit = lots', 'memory_limit = 0512']) {
+      const r = await startup([`--config=${confAt('bad-r4.conf', [bad])}`]);
+      assert.equal(r.code, 2, bad);
     }
   });
 });

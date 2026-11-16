@@ -115,6 +115,7 @@ data:
     signers = 1
     log = /var/log/md-runbook/gate.log
     sshd_force_command = yes
+    kill_leftovers = yes
   # One line per publisher: `you@example.net namespaces="md-runbook" ssh-ed25519 AAAA…`
   # (VS Code: Sign Runbook shows it; the app: Hosts & settings → Signing runbooks).
   allowed_signers: ''

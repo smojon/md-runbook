@@ -52,6 +52,12 @@ describe('ops host', { skip: !spec && 'set MD_RUNBOOK_OPS_TEST to run' }, () => 
     assert.deepEqual(shell.gate, { protocol: 3, unsigned: 'allow' });
   });
 
+  it('the image has what the gate needs to end leftovers and cut long requests (security review round 4)', async () => {
+    // setsid: a process group per shell; perl: the request reader; ps: kill_leftovers.
+    const r = await sh('for t in setsid perl ps; do command -v "$t" >/dev/null && echo "$t"; done');
+    assert.deepEqual([r.code, r.out], [0, 'setsid\nperl\nps\n'], r.err);
+  });
+
   it("the account's login shell is /bin/sh, which reads no file of the account before the gate (security review round 3)", async () => {
     // With bash, sshd's `bash -c` ran ~/.bashrc, a file the account can write, before every session.
     const r = await sh('getent passwd "$(id -un)" | cut -d: -f7; grep -x "PermitUserRC no" /etc/ssh/md-runbook-ops.conf');

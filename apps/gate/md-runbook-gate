@@ -8,14 +8,16 @@
 # Options (in the authorized_keys command): --config=FILE (default /etc/md-runbook/gate.conf),
 # --unsigned=allow|refuse and --scopes=a,b (override the config for this key), --who=NAME (the
 # name logged for this key; default: the key's fingerprint, with ExposeAuthInfo yes in sshd).
-# --sshd-force-command (sshd_config's ForceCommand only) needs sshd_force_command = yes in a
-# gate.conf the account can't change.
+# --sshd-force-command (sshd_config's ForceCommand only) and sshd_force_command = yes in a
+# gate.conf the account can't change go together: one without the other stops the gate.
 #
 # Each signed runbook runs in a shell of its own (bash --noprofile --norc, else sh) with the PATH
 # and locale of gate.conf: nothing from the account's profile, the client's locale or another
 # runbook. The cells of one runbook share that shell, as in a plain session, also after a call
-# into another runbook. Processes already running as the account are out of scope: the account
-# must be used by the gate alone.
+# into another runbook. A signed block is trusted code: it can read what its shell gets next and
+# answer for later runs (see README.md, Trust). Other processes of the account can reach a
+# session's shells through /proc: the account must be used by the gate alone, and with
+# kill_leftovers = yes the gate ends the account's processes that outlived their session.
 #
 # The client (the md-runbook app) speaks a line protocol on stdin; replies end with the same
 # end-of-cell marker as a plain shell session (\036__MDRB_<id>__ <exit>, on stdout and stderr).
@@ -39,6 +41,32 @@ set -u
 # No filename expansion anywhere (principals such as *@example.net, scopes).
 set -f
 umask 077
+# The gate's own environment: nothing that changes how the programs it starts (ssh-keygen, curl,
+# awk, perl) load code, read files or connect. sshd passes what a key line's environment= and
+# ~/.ssh/environment set (with PermitUserEnvironment yes), and the names AcceptEnv lets the client
+# send (security review round 4). The gate refuses environment= and ~/.ssh/environment below;
+# this is for the rest. (The blocks' shell gets the names in cells_env_names only.)
+_exported=$(export -p)
+while IFS= read -r _l; do
+  case $_l in
+    'export '*) _l=${_l#export } ;;
+    'declare -x '*) _l=${_l#declare -x } ;;
+    *) continue ;;
+  esac
+  _n=${_l%%=*}
+  case $_n in '' | [0-9]* | *[!A-Za-z0-9_]*) continue ;; esac
+  case $_n in
+    LD_* | DYLD_* | BASH_ENV | ENV | CDPATH | GLOBIGNORE | SHELLOPTS | BASHOPTS | PS4 | \
+      *_proxy | *_PROXY | CURL_* | SSL_* | OPENSSL_* | GCONV_PATH | LOCPATH | NLSPATH | GLIBC_TUNABLES | MALLOC_* | \
+      HOSTALIASES | RES_OPTIONS | LOCALDOMAIN | AWKPATH | AWKLIBPATH | PERL5* | PERLLIB | PYTHON* | NODE_OPTIONS | \
+      SSH_SK_PROVIDER | SSH_ASKPASS | SSH_ASKPASS_REQUIRE | SSH_AUTH_SOCK | XDG_CONFIG_HOME | KUBECONFIG | LANG | LANGUAGE | LC_*)
+      unset "$_n" 2>/dev/null || true
+      ;;
+  esac
+done <<EOF
+$_exported
+EOF
+unset _exported _l _n
 # The gate's own checks (grep -E on parameter patterns, sed, awk) in the C locale: sshd may pass
 # the client's LANG and LC_* (AcceptEnv), which would change what a pattern matches. The cells'
 # shell gets gate.conf's locale instead (security review, 2026-11-16).
@@ -63,6 +91,11 @@ trim() {
   tv=$1
   while :; do case $tv in ["$blanks"]*) tv=${tv#?} ;; *) break ;; esac; done
   while :; do case $tv in *["$blanks"]) tv=${tv%?} ;; *) break ;; esac; done
+}
+# A whole number of MiB (0 to 9999999, no leading zeros).
+is_mib() {
+  case $1 in '' | *[!0-9]* | 0?*) return 1 ;; esac
+  [ ${#1} -le 7 ]
 }
 
 # ---- options and configuration ----
@@ -116,6 +149,14 @@ login_shell_check=yes
 # The files sshd reads this account's keys from (AuthorizedKeysFile): %h is the home folder, %u
 # the account, %U its uid, %% a %; a relative path is in the home folder.
 authorized_keys='%h/.ssh/authorized_keys %h/.ssh/authorized_keys2'
+# yes: at the start and end of each session, end the account's processes that belong to no live
+# session (Linux; see sweep_leftovers). For accounts used by the gate alone.
+kill_leftovers=no
+# yes: run without a way to end a shell's process group (no setsid, no perl): background programs
+# of a block may then outlive their session.
+allow_no_group_kill=no
+# The gate's own processes (not the blocks): at most this many MiB of address space; 0 for none.
+memory_limit=512
 # A --config= that isn't there is an error, not the built-in defaults (security review, 2026-11-16).
 [ -z "$config_named" ] || [ -e "$config" ] || fatal "no config $config (--config=)"
 if [ -e "$config" ]; then
@@ -147,6 +188,14 @@ if [ -e "$config" ]; then
         esac
         ;;
       authorized_keys) authorized_keys=$v ;;
+      kill_leftovers | allow_no_group_kill)
+        case $v in yes | no) ;; *) fatal "$k = $v: expected yes or no" ;; esac
+        if [ "$k" = kill_leftovers ]; then kill_leftovers=$v; else allow_no_group_kill=$v; fi
+        ;;
+      memory_limit)
+        is_mib "$v" || fatal "memory_limit = $v: expected a number of MiB (0 for none)"
+        memory_limit=$v
+        ;;
       sshd_force_command)
         case $v in
           yes) sshd_force_command=yes ;;
@@ -204,12 +253,16 @@ can_change() {
   [ -w "$1" ] || [ -w "${_d:-/}" ] || [ "$(ls -ldnL -- "$1" 2>/dev/null | awk '{ print $3 }')" = "$uid" ]
 }
 # sshd_force_command switches off the check of the key lines (below), so it counts only from a
-# gate.conf out of the account's reach. A key line can't say it (security review round 3).
+# gate.conf out of the account's reach. A key line can't say it (security review round 3). And
+# only together with --sshd-force-command, which only sshd_config's ForceCommand line has: a
+# gate.conf shared with key lines doesn't switch their check off (security review round 4).
+[ -z "$cli_force_command" ] || [ -n "$sshd_force_command" ] ||
+  fatal "--sshd-force-command needs sshd_force_command = yes in $config"
+[ -z "$sshd_force_command" ] || [ -n "$cli_force_command" ] ||
+  fatal "sshd_force_command = yes in $config needs --sshd-force-command on sshd_config's ForceCommand line"
 if [ -n "$sshd_force_command" ] && can_change "$config"; then
   fatal "sshd_force_command = yes in $config, a file this account can change: make it and its folder root-owned and not writable by the account"
 fi
-[ -z "$cli_force_command" ] || [ -n "$sshd_force_command" ] ||
-  fatal "--sshd-force-command needs sshd_force_command = yes in $config"
 client=${SSH_CLIENT:-}
 client=${client%% *}
 if [ -z "$who" ] && [ -n "${SSH_USER_AUTH:-}" ] && [ -r "$SSH_USER_AUTH" ]; then
@@ -451,10 +504,11 @@ conf_unsigned() {
   } END { print (u == "" ? "refuse" : u) }' "$1"
 }
 
-# keys_parse FILE: "LINE<TAB>KIND<TAB>OPEN<TAB>COMMAND" per key line (comments and blank lines
-# skipped). KIND: cmd (a command= option), nocmd, bad (an open quote, two command= options).
-# OPEN: - when the line turns off forwarding, the pty and ~/.ssh/rc (restrict, or all five no-*
-# options) and turns none of them on again; else the options to change, comma-separated.
+# keys_parse FILE: "LINE<TAB>KIND<TAB>OPEN<TAB>ENV<TAB>COMMAND" per key line (comments and blank
+# lines skipped). KIND: cmd (a command= option), nocmd, bad (an open quote, two command= options).
+# OPEN: - when the line has restrict and turns nothing on again; else the options to change,
+# comma-separated. (Not the five no-* options instead: sshd's tunnel check looks for restrict
+# itself; security review round 4.) ENV: environment when the line sets one, else -.
 # Options as sshd reads them: comma-separated up to the first blank outside quotes, \" in quotes
 # a quote.
 keys_parse() {
@@ -463,7 +517,7 @@ keys_parse() {
     /^[ \t]*$/ || /^[ \t]*#/ { next }
     {
       s = $0; sub(/^[ \t]+/, "", s)
-      if (s ~ /^(ssh-|ecdsa-|sk-)/) { print NR "\tnocmd\trestrict\t"; next }
+      if (s ~ /^(ssh-|ecdsa-|sk-)/) { print NR "\tnocmd\trestrict\t-\t"; next }
       n = length(s); i = 1; inq = 0; cur = ""; cmd = ""; ncmd = 0
       split("", seen); again = ""
       while (i <= n) {
@@ -489,11 +543,10 @@ keys_parse() {
         cur = cur c
         i++
       }
-      if (inq || ncmd > 1) { print NR "\tbad\t-\t"; next }
+      if (inq || ncmd > 1) { print NR "\tbad\t-\t-\t"; next }
       open = again
-      if (!("restrict" in seen) && !(("no-port-forwarding" in seen) && ("no-agent-forwarding" in seen) && ("no-x11-forwarding" in seen) && ("no-pty" in seen) && ("no-user-rc" in seen)))
-        open = "restrict" (open == "" ? "" : "," open)
-      print NR "\t" (ncmd ? "cmd" : "nocmd") "\t" (open == "" ? "-" : open) "\t" cmd
+      if (!("restrict" in seen)) open = "restrict" (open == "" ? "" : "," open)
+      print NR "\t" (ncmd ? "cmd" : "nocmd") "\t" (open == "" ? "-" : open) "\t" (("environment" in seen) ? "environment" : "-") "\t" cmd
     }' "$1"
 }
 
@@ -559,6 +612,12 @@ EOF
       *) return 1 ;;
     esac
   done
+  # The config a key line runs with decides its policy and signers: never one the account could
+  # change, as for sshd_force_command (security review round 4). Exit 2, with the file.
+  if [ -e "$_c" ] && can_change "$_c"; then
+    printf '%s\n' "$_c"
+    return 2
+  fi
   if [ -z "$_u" ]; then
     if [ -r "$_c" ]; then
       _u=$(conf_unsigned "$_c")
@@ -601,7 +660,7 @@ else
     [ -e "$f" ] || [ -L "$f" ] || continue
     [ -r "$f" ] || account_fatal "can't read $f (authorized_keys in $config): the gate checks every key of this account"
     keys=$(keys_parse "$f") || account_fatal "can't read $f (authorized_keys in $config)"
-    while IFS=$tab read -r ln kind kopen kcmd; do
+    while IFS=$tab read -r ln kind kopen kenv kcmd; do
       [ -n "$ln" ] || continue
       nlines=$((nlines + 1))
       id=$ln
@@ -617,11 +676,16 @@ else
           '' | - | ,) ;;
           *) problems="$problems$nl  $f line $ln: remove $(printf '%s' "${kopen#restrict}" | sed 's/^,//') (it turns on again what restrict turns off)" ;;
         esac
+        # With PermitUserEnvironment, LD_PRELOAD or BASH_ENV there runs code before the gate
+        # (security review round 4).
+        [ "$kenv" = - ] || problems="$problems$nl  $f line $ln: remove environment= (it can load code into the gate and its programs)"
       fi
       case $kind in
         cmd)
           if u=$(line_unsigned "$kcmd"); then
             if [ "$u" = allow ]; then allow_ids="${allow_ids:+$allow_ids }$id"; else refuse_ids="${refuse_ids:+$refuse_ids }$id"; fi
+          elif [ $? -eq 2 ]; then
+            problems="$problems$nl  $f line $ln: its config $u is a file this account can change: make it and its folder root-owned and not writable by the account"
           else
             problems="$problems$nl  $f line $ln: command=\"$kcmd\" must be this gate ($0) with only its own options"
           fi
@@ -647,29 +711,32 @@ fi
 # sshd starts the forced command with the account's login shell (`SHELL -c COMMAND`), and before
 # that ~/.ssh/rc unless the key line or sshd_config turns it off. Debian's bash reads ~/.bashrc
 # for `bash -c` under sshd, zsh ~/.zshenv: a file the account can write would run before every
-# gate session (security review round 3).
+# gate session (security review round 3). Only shells known to read nothing for `-c`: any other
+# (bash, zsh, fish, csh, ...) is refused (security review round 4).
 if [ "$login_shell_check" = yes ] && [ -n "${SSH_CLIENT:-}${SSH_CONNECTION:-}" ]; then
   login_shell=
   command -v getent >/dev/null 2>&1 && login_shell=$(getent passwd "$account" 2>/dev/null | cut -d: -f7)
   [ -n "$login_shell" ] || login_shell=${SHELL:-}
   case ${login_shell##*/} in
-    # These read no file of the account for `-c`.
-    sh | dash | ash | ksh | ksh93 | mksh | lksh | oksh | posh) ;;
-    *)
-      case ${login_shell##*/} in
-        bash) rcs=.bashrc ;;
-        zsh) rcs=.zshenv ;;
-        csh | tcsh) rcs='.cshrc .tcshrc' ;;
-        *) rcs= ;;
-      esac
-      found=
-      for r in $rcs; do [ -e "${HOME:-}/$r" ] && found="${HOME:-}/$r"; done
-      if [ -n "$found" ] || [ -w "${HOME:-/}" ]; then
-        account_fatal "this account's login shell is ${login_shell:-unknown}: it can run ${found:-files in the home folder} before the gate. Make it /bin/sh: usermod -s /bin/sh $account"
-      fi
-      ;;
+    sh | dash | ash | busybox | ksh | ksh93 | mksh | lksh | oksh | posh) ;;
+    *) account_fatal "this account's login shell is ${login_shell:-unknown}: it can run files of the account before the gate (bash's ~/.bashrc, zsh's ~/.zshenv). Make it /bin/sh: usermod -s /bin/sh $account" ;;
   esac
 fi
+# sshd reads ~/.ssh/environment before the gate when sshd_config has PermitUserEnvironment yes:
+# LD_PRELOAD there runs code in the gate itself (security review round 4). Refused either way.
+_homes=${HOME:-}
+# (Under sshd also the account's own home: environment= could have moved HOME.)
+if [ -n "${SSH_CLIENT:-}${SSH_CONNECTION:-}" ] && command -v getent >/dev/null 2>&1; then
+  _homes="$_homes$nl$(getent passwd "$account" 2>/dev/null | cut -d: -f6)"
+fi
+while IFS= read -r _h; do
+  [ -n "$_h" ] || continue
+  if [ -e "$_h/.ssh/environment" ] || [ -L "$_h/.ssh/environment" ]; then
+    account_fatal "$_h/.ssh/environment can set the gate's environment: remove it, and keep PermitUserEnvironment no in sshd_config"
+  fi
+done <<EOF
+$_homes
+EOF
 # With ForceCommand the key lines may lack restrict: sshd_config must say PermitUserRC no, and
 # the gate refuses while there is a ~/.ssh/rc that sshd may have run.
 if [ -n "$sshd_force_command" ] && { [ -e "${HOME:-}/.ssh/rc" ] || [ -L "${HOME:-}/.ssh/rc" ]; }; then
@@ -748,11 +815,14 @@ report_json() {
       printf "\"steps\":[%s],\"ran\":[%s],\"totals\":{\"steps\":%d,\"passed\":%d,\"failed\":%d,\"skipped\":0,\"notRun\":%d,\"byHand\":0},", steps, rl, cells, p, f, nr
       printf "\"green\":%s,\"started\":\"%s\",\"ended\":\"%s\"%s", (cells > 0 && f == 0 && nr == 0) ? "true" : "false", started, ended, stopped ? ",\"stopped\":true" : ""
     }' "$out/labels" "$out/runs" "$work/report-exits")
-  # Name and version from the manifest itself (its hash was checked); the signers from the meta.
+  # Name and version from the manifest itself (its hash was checked); the signers from memory
+  # (a file next to it was a block's to change; security review round 4).
   rname=$(awk '$1 == "name" { print $2; exit }' "$work/rb-$rh")
   rversion=$(awk '$1 == "version" { print $2; exit }' "$work/rb-$rh")
   is_num "$rversion" || rversion=0
-  rsigner=$(sed -n 3p "$work/rb-$rh.meta" | cut -c 1-120)
+  rsigner=
+  eval "rsigner=\${rb_signer_$rh-}"
+  rsigner=$(printf '%s' "$rsigner" | cut -c 1-120)
   rwho=$(printf '%s' "${who:-$account}" | cut -c 1-120)
   rfrom=
   [ -n "$client" ] && rfrom=",\"from\":$(json_str "$(printf '%s' "$client" | cut -c 1-64)")"
@@ -819,6 +889,21 @@ send_reports() {
 
 # ---- a session ----
 
+# How the cells' shells get a process group of their own, so that their blocks' background
+# programs end with them: setsid (Linux), else perl (macOS), else not (security review round 3).
+# Without either, the gate refuses to start unless gate.conf says allow_no_group_kill = yes
+# (security review round 4).
+if group_bin=$(command -v setsid 2>/dev/null) && [ -n "$group_bin" ]; then
+  group=setsid
+elif group_bin=$(command -v perl 2>/dev/null) && [ -n "$group_bin" ]; then
+  group=perl
+else
+  group=
+  log_event event session-problem reason "no setsid or perl: a block's background programs can outlive the session"
+  [ "$allow_no_group_kill" = yes ] ||
+    fatal "no setsid or perl here: the gate can't end a block's background programs with its session. Install either, or set allow_no_group_kill = yes in $config"
+fi
+
 work=$(mktemp -d "${TMPDIR:-/tmp}/md-runbook-gate.XXXXXX") || fatal "can't create a work folder"
 # The session's number: what its hello answers and a stop request names (see above).
 token=$(od -An -N8 -tu8 /dev/urandom 2>/dev/null) || fatal "can't read /dev/urandom"
@@ -831,32 +916,137 @@ while [ ${#token} -lt 14 ]; do token=0$token; done
 token=1${token%"${token#??????????????}"}
 skey=$(printf '%s' "$token" | sha256_in)
 server=
-# How the cells' shells get a process group of their own, so that their blocks' background
-# programs end with them: setsid (Linux), else perl (macOS), else not (security review round 3).
-if group_bin=$(command -v setsid 2>/dev/null) && [ -n "$group_bin" ]; then
-  group=setsid
-elif group_bin=$(command -v perl 2>/dev/null) && [ -n "$group_bin" ]; then
-  group=perl
-else
-  group=
-fi
-# stop_group PID: TERM to the process group PID leads (its shell and what its blocks started).
-stop_group() {
-  is_pid "$1" || return 0
-  [ -n "$group" ] && kill -s TERM -- "-$1" 2>/dev/null
-  kill -s TERM "$1" 2>/dev/null
+reader=
+# A short pause (sleep without fractions: a whole second).
+nap() { sleep 0.2 2>/dev/null || sleep 1; }
+# stop_groups PID...: each process group a PID leads (a shell and what its blocks started) gets
+# TERM; what is left of them a second later, KILL. A block's `trap '' TERM` doesn't keep a
+# program running (security review round 4). Without setsid or perl, the shells themselves.
+stop_groups() {
+  _t=
+  for _p in "$@"; do
+    is_pid "$_p" || continue
+    if [ -n "$group" ]; then _t="$_t -$_p"; else _t="$_t $_p"; fi
+  done
+  [ -n "$_t" ] || return 0
+  for _p in $_t; do kill -s TERM -- "$_p" 2>/dev/null; done
+  _i=0
+  while [ $_i -lt 5 ]; do
+    _left=
+    for _p in $_t; do kill -s 0 -- "$_p" 2>/dev/null && _left="$_left $_p"; done
+    [ -n "$_left" ] || return 0
+    nap
+    _i=$((_i + 1))
+  done
+  for _p in $_left; do kill -s KILL -- "$_p" 2>/dev/null; done
   return 0
+}
+
+# ---- leftovers (kill_leftovers = yes) ----
+# A program can outlive its session: it left its process group (setsid, a double fork), or it
+# runs from cron. Such a leftover could write into a later session's shell through /proc (security
+# review round 4). With kill_leftovers = yes, at the start of a session and at its end, the gate
+# ends every process of this account that belongs to no live session. Linux only (/proc). Spared:
+# - this session: everything under its topmost ancestor of this account (below PID 1);
+# - every other login: anything under a process of another account (sshd's own, cron's);
+# - PID 1, what came in from outside the PID namespace (docker exec, kubectl exec), and the
+#   account's user manager (systemd --user and its sd-pam);
+# - run-report senders of earlier sessions: this gate's interpreter running this script, and
+#   curl, sleep, logger, date or rm under one.
+# Processes of a live session are out of its reach: keep the account for the gate alone.
+sys_bin() { _b=$(command -v "$1" 2>/dev/null) && readlink -f "$_b" 2>/dev/null; }
+# leftover_list PS: "PID PPID" of each leftover, from `ps -e -o pid= -o ppid= -o uid= -o stat=`.
+leftover_list() {
+  printf '%s\n' "$1" | awk -v me="$$" -v uid="$uid" '
+    $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { pp[$1] = $2; u[$1] = $3; z[$1] = ($4 ~ /^Z/); list[++n] = $1 }
+    END {
+      t = me
+      while ((t in pp) && pp[t] > 1 && (pp[t] in u) && u[pp[t]] == uid) t = pp[t]
+      for (i = 1; i <= n; i++) {
+        p = list[i]
+        if (u[p] != uid || p <= 1 || z[p]) continue
+        q = p; spared = 0
+        while (q > 1 && (q in pp)) {
+          # (Parent 0 below PID 1: entered from outside the PID namespace, as docker exec.)
+          if (q == t || u[q] != uid || pp[q] == 0) { spared = 1; break }
+          q = pp[q]
+        }
+        if (!spared) print p, pp[p]
+      }
+    }'
+}
+sweep_leftovers() {
+  [ "$kill_leftovers" = yes ] || return 0
+  [ -r /proc/self/cmdline ] && [ -r "/proc/$$/exe" ] || {
+    log_event event leftovers status skipped reason "no /proc here"
+    return 0
+  }
+  # Never as root: every process of the system would be a leftover. (Root in a user namespace,
+  # as in the tests, is fine.)
+  if [ "$uid" = 0 ] && awk '$1 == 0 && $2 == 0 { found = 1 } END { exit !found }' /proc/self/uid_map 2>/dev/null; then
+    log_event event leftovers status skipped reason "the account is root"
+    return 0
+  fi
+  _me_exe=$(readlink "/proc/$$/exe")
+  _me_args=$(tr '\0' '\n' <"/proc/$$/cmdline" | head -n 2)
+  _helpers=
+  for _b in curl sleep logger date rm; do _helpers="$_helpers $(sys_bin "$_b")"; done
+  _sys=" $(readlink -f /usr/lib/systemd/systemd 2>/dev/null) $(readlink -f /lib/systemd/systemd 2>/dev/null) "
+  _killed=
+  _round=0
+  # Stopped first (STOP can't be caught or ignored), then listed again for what they started
+  # meanwhile, then killed.
+  while [ $_round -lt 4 ]; do
+    _ps=$(ps -e -o pid= -o ppid= -o uid= -o stat= 2>/dev/null) && [ -n "$_ps" ] || {
+      log_event event leftovers status skipped reason "ps can't list the processes"
+      break
+    }
+    _new=
+    while read -r _p _pp; do
+      is_pid "$_p" || continue
+      case " $_killed " in *" $_p "*) continue ;; esac
+      _x=$(readlink "/proc/$_p/exe" 2>/dev/null) || _x=
+      # A report sender: this interpreter, this script, nothing in its environment that loads code.
+      if [ -n "$_x" ] && [ "$_x" = "$_me_exe" ] && [ "$(tr '\0' '\n' <"/proc/$_p/cmdline" 2>/dev/null | head -n 2)" = "$_me_args" ] &&
+        ! tr '\0' '\n' <"/proc/$_p/environ" 2>/dev/null | grep -Eq '^(LD_|BASH_ENV=|ENV=|BASH_FUNC_)'; then
+        continue
+      fi
+      # What a report sender runs.
+      case " $_helpers " in
+        *" $_x "*)
+          _px=$(readlink "/proc/$_pp/exe" 2>/dev/null) || _px=
+          [ "$_px" = "$_me_exe" ] && [ "$(tr '\0' '\n' <"/proc/$_pp/cmdline" 2>/dev/null | head -n 2)" = "$_me_args" ] && continue
+          ;;
+      esac
+      # The user manager (it starts the account's services again; those go).
+      case $_sys in *" $_x "*) [ -n "$_x" ] && continue ;; esac
+      kill -s STOP "$_p" 2>/dev/null && _new="$_new $_p"
+    done <<EOF
+$(leftover_list "$_ps")
+EOF
+    [ -n "$_new" ] || break
+    _killed="$_killed$_new"
+    _round=$((_round + 1))
+  done
+  [ -n "$_killed" ] || return 0
+  # shellcheck disable=SC2086
+  kill -s KILL $_killed 2>/dev/null
+  log_event event leftovers status killed pids "${_killed# }" when "$1"
 }
 cleanup() {
   [ -n "$server" ] && kill "$server" 2>/dev/null
   # Every shell of the session, with what its blocks started. (Their pids, from the watchers.)
   set +f
+  _pids=
   for p in "$work"/shell-*.pid; do
-    [ -f "$p" ] && stop_group "$(head -n 1 "$p")"
+    [ -f "$p" ] && _pids="$_pids $(head -n 1 "$p")"
   done
   set -f
+  # shellcheck disable=SC2086
+  stop_groups $_pids
   # serve sends the run reports before it ends.
   [ -n "$server" ] && wait "$server" 2>/dev/null
+  [ -n "$reader" ] && kill "$reader" 2>/dev/null
   rm -f "$state/pids/$skey"
   rm -rf "$work"
 }
@@ -879,6 +1069,12 @@ log_event event session unsigned "$unsigned" scopes "$scopes" key_scopes "$key_s
 [ -n "$report_problem" ] && log_event event report status off reason "$report_problem"
 [ -n "$report_on" ] && : >"$work/report-exits"
 report_runs=
+# Before the first shell: no leftover of an earlier session finds it.
+sweep_leftovers start
+# memory_limit: the soft limit of the gate's own processes, set in serve (the blocks' shells get
+# this one back).
+# shellcheck disable=SC3045
+vlimit0=$(ulimit -S -v 2>/dev/null) || vlimit0=
 
 # ---- the cells' shells (in serve) ----
 # One for each signed runbook of the session: functions, aliases, traps, options and variables
@@ -888,11 +1084,12 @@ report_runs=
 # a 7th runbook ends the shell least recently used.
 #
 # Each shell reads a pipe only this gate holds: a FIFO in a folder of its own, removed as soon as
-# both ends are open, so no other process can open it by name. (A process already running as
-# the account could still reach it through /proc: out of scope, see the top of this file.)
+# both ends are open, so no other process can open it by name. (A process running as the account
+# at the same time can still reach it through /proc: kill_leftovers ends those that outlived
+# their session, at the start and end of each session; see the top of this file.)
 #
 # A watcher waits for each shell. When it ends by itself (`exit` in a cell), the session ends, as
-# in a plain session; when it ends, its process group goes too.
+# in a plain session; when it ends, its process group goes too (TERM, then KILL).
 shells=0
 uses=0
 slots='4 5 6 7 8 9'
@@ -921,6 +1118,9 @@ start_shell() {
       eval "_v=\${$_e}"
       set -- "$@" "$_e=$_v"
     done
+    # memory_limit is the gate's, not the blocks'.
+    # shellcheck disable=SC3045
+    [ -n "$vlimit0" ] && ulimit -S -v "$vlimit0" 2>/dev/null
     # shellcheck disable=SC2086
     case $group in
       setsid) env -i "$@" "$group_bin" "$cells_bin" $cells_args <"$_pd/in" & ;;
@@ -930,7 +1130,7 @@ start_shell() {
     sh_pid=$!
     printf '%s\n' "$sh_pid" | write_new "$work/shell-$_n.pid"
     wait "$sh_pid"
-    [ -n "$group" ] && kill -s TERM -- "-$sh_pid" 2>/dev/null
+    stop_groups "$sh_pid"
     rm -f "$work/shell-$_n.pid"
     [ -e "$work/retired-$_n" ] || [ -L "$work/retired-$_n" ] || kill -TERM "$serve_pid" 2>/dev/null
   ) </dev/null 3<&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
@@ -1221,10 +1421,14 @@ do_load() {
   loaded=1
   step_cell=
   # For the run report: what this manifest is, kept by its hash for the end of the session.
+  # Its signers stay in memory: the first load's, as the manifest's copy.
   if [ -n "$report_on" ] && [ ! -e "$work/rb-$mhash" ]; then
     t=$(new_name rb) && printf '%s' "$manifest" | write_new "$t" && mv -f "$t" "$work/rb-$mhash"
-    t=$(new_name rb) && printf '%s\n%s\n%s\n' "$mname" "$mversion" "$principal" | write_new "$t" && mv -f "$t" "$work/rb-$mhash.meta"
   fi
+  case $mhash in
+    '' | *[!0-9a-f]*) ;;
+    *) eval "[ -n \"\${rb_signer_$mhash-}\" ]" || eval "rb_signer_$mhash=\$principal" ;;
+  esac
   log_load
   printf '\036__MDRB_SIGNED__ %s %s\n' "$principal" "$mhash"
   marker "$rid" 0
@@ -1551,6 +1755,10 @@ do_run() {
     return
   }
   code=${code%.}
+  # Unsigned text ran in this runbook's shell since its load: a fresh one, as a load would give
+  # (security review round 4).
+  slot dirty "$cur"
+  [ -z "$sv" ] || shell_for "$mhash"
   runs=$((runs + 1))
   log_event event run id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal" cell "$cell" step "$k"
   nonce=
@@ -1577,7 +1785,8 @@ do_raw() {
   }
   # Straight to the shell, never to disk: the text exports the cell's secret values.
   log_event event unsigned id "$rid" hash "$(printf '%s' "$2" | b64d | sha256_in)"
-  # This shell ran unsigned text: no signed runbook gets it again (security review round 3).
+  # This shell ran unsigned text: no signed runbook gets it again (security review round 3), and
+  # the next signed run of the loaded one starts a fresh shell (round 4).
   slot_set dirty "$cur" 1
   show_pid
   # Not a signed run: tools must not log against the last one.
@@ -1610,12 +1819,19 @@ serve() {
   # A TERM (the watcher, or the gate ending) ends the loop below; then the run reports go out.
   serve_term=
   trap 'serve_term=1' HUP INT TERM
+  # A bound on what a client can make the gate hold (security review round 4).
+  if [ "$memory_limit" != 0 ]; then
+    # shellcheck disable=SC3045
+    ulimit -S -v $((memory_limit * 1024)) 2>/dev/null || log_event event session-problem reason "can't set memory_limit here (ulimit -v)"
+  fi
   start_shell 4
   use_slot 4
   while [ -z "$serve_term" ] && IFS= read -r line; do
+    # The reader below cuts lines at 4000001 bytes: a longer request ends the session.
     [ ${#line} -le 4000000 ] || {
-      say "request too long"
-      continue
+      say "request too long: the session ends"
+      log_event event refused reason "request too long"
+      break
     }
     # shellcheck disable=SC2086
     set -- $line
@@ -1651,19 +1867,57 @@ serve() {
     esac
   done
   # The client is done: each shell runs what it was sent, then ends. Cut short (TERM): they end now.
-  for _s in $slots; do
-    if [ -n "$serve_term" ]; then
+  if [ -n "$serve_term" ]; then
+    _pids=
+    for _s in $slots; do
       slot n "$_s"
-      [ -n "$sv" ] && [ -f "$work/shell-$sv.pid" ] && stop_group "$(head -n 1 "$work/shell-$sv.pid")"
-    fi
+      [ -n "$sv" ] && [ -f "$work/shell-$sv.pid" ] && _pids="$_pids $(head -n 1 "$work/shell-$sv.pid")"
+    done
+    # shellcheck disable=SC2086
+    stop_groups $_pids
+  fi
+  for _s in $slots; do
     retire_shell "$_s"
   done
+  # What left the shells' process groups, before the report senders start.
+  sweep_leftovers end
   send_reports
 }
 
+# The requests reach serve cut, as `fold -b -w 4000001` cuts them: a line longer than 4000000
+# bytes arrives in pieces, the first 4000001 bytes long, so `read` never holds more (before, a 32
+# MB line took 67 MB and 24 seconds; security review round 4). perl, else stdbuf and fold (fold
+# alone holds its output back); through a FIFO removed once open, as the shells' pipes.
+cut_lines() {
+  if command -v perl >/dev/null 2>&1; then
+    # shellcheck disable=SC2016
+    exec perl -e '$| = 1; $l = 0; $w = 4000001;
+      while (sysread(STDIN, $b, 65536)) {
+        $o = "";
+        for $p (split /(?<=\n)/, $b) {
+          $e = chomp $p;
+          while ($l + length($p) > $w) { $k = $w - $l; $o .= substr($p, 0, $k, "") . "\n"; $l = 0 }
+          $o .= $p; $l += length($p);
+          if ($e) { $o .= "\n"; $l = 0 }
+        }
+        while (length $o) { $n = syswrite(STDOUT, $o); exit 0 unless defined $n; substr($o, 0, $n, "") }
+      }'
+  elif command -v stdbuf >/dev/null 2>&1; then
+    exec stdbuf -oL fold -b -w 4000001
+  else
+    log_event event session-problem reason "no perl or stdbuf: long requests aren't cut before they are read"
+    exec cat
+  fi
+}
 exec 3<&0
+_rd=$(mktemp -d "$work/pipe.XXXXXX") && mkfifo "$_rd/in" || fatal "can't create a pipe"
+cut_lines <&3 >"$_rd/in" 2>/dev/null 3<&- &
+reader=$!
+exec 3<"$_rd/in"
+rm -rf "$_rd"
 serve <&3 3<&- &
 server=$!
+exec 3<&- 0</dev/null
 wait "$server"
 server=
 log_event event end-session

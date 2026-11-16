@@ -93,21 +93,46 @@ Security fixes from a review of the parts that face the network.
     read.
   - Programs already running as the account are out of the gate's reach. Use the account for
     the gate alone.
-- **Gate: background programs** of a block end with its shell, at the latest with the session.
-  Before, they outlived both.
+- **Gate: background programs** of a block get TERM when its shell ends, and KILL a second
+  later. Before, they outlived both, and a program that ignored TERM ran on.
+  - A program can leave the shell's process group (`setsid`), and could then write into a later
+    session's shell.
+  - With `kill_leftovers = yes`, the gate ends such leftovers at the start and end of each
+    session (Linux). The ops host image sets it.
+  - Without `setsid` and `perl`, the gate refuses to start. `allow_no_group_kill = yes` starts it
+    anyway.
 - **Gate: run reports** count only the exit the shell wrote for that run. Before, a block could
   add a passing exit for a failed run.
+  - The reported signer comes from the gate's memory. Before, a block could change it in a file.
 - **Ops host: the account's login shell is `/bin/sh`.** With bash, sshd ran `~/.bashrc`, a file
   the account can write, before the gate.
-  - Under sshd, the gate now refuses bash or zsh as the login shell while the home folder is
-    writable. Run `usermod -s /bin/sh` for the account.
+  - Under sshd, the gate refuses any login shell but `sh`, `dash`, `ash`, `busybox`, `ksh`,
+    `mksh`, `oksh` and `posh`. Run `usermod -s /bin/sh` for the account.
 - **Gate: every key needs `restrict`.** Without it, port forwarding stays open, and `ssh -L` to
   `docker.sock` runs code without a signature.
   - Key options that turn forwarding, the pty or `~/.ssh/rc` on again are refused too.
+  - The five `no-*` options don't count instead of `restrict` any more: sshd's tunnel check
+    looks for `restrict` itself.
+- **Gate: the gate's own environment.** A key with `environment=` is refused, and so is a
+  session while `~/.ssh/environment` exists. With `PermitUserEnvironment yes`, `LD_PRELOAD`
+  there ran code in the gate.
+  - The gate also clears `LD_*`, `BASH_ENV`, the proxy variables, `CURL_*`, `SSL_*` and the like
+    before it starts a program.
+- **Gate: a key's `--config=`** must name a file the account can't change. Else the account
+  could set its own policy and signers.
 - **Gate: `sshd_force_command = yes`** counts only in a root-owned `gate.conf` the account can't
   write. Before, `--sshd-force-command` on a key line switched off the check of the keys.
+  - It also needs `--sshd-force-command` on the `ForceCommand` line: one without the other stops
+    the gate.
 - **Gate: unsigned blocks** never run in a shell that a signed runbook gets later. Before, unsigned
   text sent before the first load shared that runbook's shell.
+  - After unsigned text, the next signed block starts a fresh shell, as a new load does. Before,
+    it ran in the shell the unsigned text had changed.
+- **Gate: a request longer than 4,000,000 bytes** ends the session. The gate reads no more of it.
+  Before, a 32 MB line took 67 MB and 24 seconds, and the session went on.
+  - The gate's own processes get at most `memory_limit = 512` MiB (the blocks are not limited).
+- **Gate docs: a signed block is trusted code.** It can read what its shell gets next, and
+  answer for later blocks of its runbook. A report is only as good as the runbook's blocks.
 - **Gate: the blocks' environment** comes from a short list, such as `HOME`, `USER` and
   `SSH_CLIENT`. Before, proxies or `NODE_OPTIONS` from sshd's `environment=` reached the blocks.
   - `KUBECONFIG` comes from `kubeconfig =` in `gate.conf`, or from a block's `env.KUBECONFIG`.
