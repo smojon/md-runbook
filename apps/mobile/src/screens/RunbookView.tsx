@@ -112,7 +112,9 @@ import { Codicon } from '../ui/Codicon';
 import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, hostLabel, pinHostKey, useHosts } from '../hosts/store';
 import { t } from '../i18n';
-import { MarkdownView, countTaskBoxes } from '../markdown/MarkdownView';
+import { countTaskBoxes } from '../markdown/MarkdownView';
+import { NotedMarkdown } from '../cells/NotedMarkdown';
+import { withNoteText, withoutNote } from '../runbooks/notes';
 import {
   LastInput,
   ParamSpec,
@@ -1319,6 +1321,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     updateRunbookText(runbook.id, here === undefined ? withBlockAtEnd(latest, block) : withBlockAfterCell(latest, here, block));
     sayOk(t.noteAdded);
   };
+  /** A note's ⋯: Edit Note (new words) or Delete Note (undefined), in the text as it is now. */
+  const changeNote = (marker: string, words: string | undefined): void => {
+    if (!runbook) return;
+    const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+    const next = words === undefined ? withoutNote(latest, marker) : withNoteText(latest, marker, words);
+    if (next === undefined) return setNotice(t.noteGone);
+    updateRunbookText(runbook.id, next);
+    sayOk(words === undefined ? t.noteDeleted : t.noteSaved);
+  };
   const runAsCopy = (): void => {
     if (!runbook) return;
     const base = (runbook.fileName ?? `${runbook.title}.md`).replace(/(\.\d{8}-\d{6})?\.md$/i, '');
@@ -2457,11 +2468,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           renderItem={({ item, index }) =>
             item.kind === 'markup' ? (
               <View style={styles.markup}>
-                <MarkdownView
+                <NotedMarkdown
                   testID={`cell-${index}`}
                   markdown={index === 0 ? withoutFrontMatter(item.value) : item.value}
                   firstTask={tasks.first[index]}
                   onToggleTask={tasks.aligned ? toggleTask : undefined}
+                  onChangeNote={changeNote}
                 />
                 {problems.notes.has(index) ? <ProseNotes index={index} notes={problems.notes.get(index)!} /> : null}
                 {manualAsk?.cellIndex === index ? (
