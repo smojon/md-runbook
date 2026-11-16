@@ -95,8 +95,95 @@ the account can do what a block can: through `/proc`, they can write into a sess
   again, so its pid never holds still. The gate stops whole process groups and lists again.
   - A program that also leaves its process group each time can slip through.
   - When new processes keep coming for 5 seconds, the log says `sweep incomplete`.
+- In separated mode the gate sweeps the blocks' account too.
 
 Add `ExposeAuthInfo yes` to `sshd_config` to log each key's fingerprint.
+
+## Isolation
+
+Each shell of a session runs in a scope of its own. When the shell ends, so does everything in
+its scope, even a program that left its process group (`setsid`, a double fork).
+
+`isolation =` in `gate.conf` picks how:
+- `auto` (the default): `scope` where it works, else `bwrap`, else `none`.
+- `scope`: a systemd scope of the account's user manager (`systemd-run --user --scope`).
+- `bwrap`: a PID namespace of its own (`bwrap --unshare-pid`).
+- `none`: the shell's process group only, as before 0.28.0. `kill_leftovers = yes` ends the rest.
+
+`scope` and `bwrap` are required when you name them: without them the gate doesn't start.
+
+**Why a user scope.** A plain account can't ask the system manager for a scope: that needs root
+or a polkit rule. Its own user manager can.
+- Under sshd with `UsePAM yes`, `pam_systemd` starts it (`user@UID.service`).
+- Without a login, `loginctl enable-linger ACCOUNT` keeps it running.
+- The gate ends a scope through its cgroup (`cgroup.kill`). That needs cgroup v2 and Linux 5.14
+  or newer.
+
+**bwrap** keeps the file tree as it is. But blocks see only their own processes in `/proc`, and
+nothing in it can gain privileges: no `sudo`, no setuid programs. If blocks need `sudo`, use
+`scope` or `none`.
+
+**Limits:**
+- In shared mode a block runs as the account that owns its scope. A block that means to can
+  leave it, for example by asking the user manager for a service.
+- A scope ends what a block leaves behind by accident, not what it hides on purpose.
+- In separated mode blocks can't leave their scope, as long as the blocks' account has no user
+  manager of its own. Don't run `loginctl enable-linger` for it.
+
+The `session` event in the log says which isolation a session got (`isolation`), and why `auto`
+found none (`isolation_off`).
+
+## Separated mode
+
+By default the blocks run as the gate's own account (`shared`). Then a block can read the report
+token and a log file, and reach the gate through `/proc`.
+
+With `cells_account = NAME` in `gate.conf`, the blocks run as that second account instead
+(`separated`). It can't reach the token, the log or the gate's pipes.
+
+Set it up once, as root:
+
+```sh
+useradd -m -s /usr/sbin/nologin mdrb-cells
+echo 'support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells' > /etc/sudoers.d/md-runbook-gate
+chmod 440 /etc/sudoers.d/md-runbook-gate
+visudo -cf /etc/sudoers.d/md-runbook-gate
+```
+
+Here `support` is the gate's account. The line must be exactly this, with the gate's real path.
+The gate's account may have no other sudo rule.
+
+At the start of each session the gate checks. It refuses to start, and logs a `self-check`
+event, when:
+- the account doesn't exist, is root, or is the gate's own;
+- `sudo -n -l` lists anything but that one line;
+- the blocks' account can read `report_token_file` or the `log =` file;
+- it can change the gate's program, `gate.conf`, `allowed_signers`, the account's keys or the
+  gate's state;
+- it can't enter `/tmp`.
+
+The message names the problem and the line to write.
+
+**Where blocks run:**
+- **Folder:** a shell starts in the blocks' account's home folder (else `/`). A block's `cwd=`
+  must be a folder that account can enter. Give it access with a group or an ACL.
+- **Environment:** as in shared mode, but `HOME`, `USER` and `LOGNAME` are the blocks'
+  account's, and there is no `TMPDIR`. Programs use `/tmp`.
+- **Files:** what a block writes belongs to the blocks' account. `kubeconfig =` must be readable
+  by it.
+- **Work folder:** in `/tmp`, which the blocks' account may enter but not list. The shell
+  appends each run's exit to a file there that only the gate can read. The gate writes the
+  `end` events to the log itself.
+- **Stopping:** stop requests and the end of a session reach the blocks through the same
+  `sudo` line.
+
+Run reports say which mode ran the blocks: `gate.gate_mode` is `shared` or `separated`
+([Run reports](#run-reports)).
+
+Not on the [ops host](../ops/README.md): its pod can't change accounts. It stays shared.
+
+**Why not `systemd-run --uid`?** It needs root, or a polkit rule that also lets the account
+start units as root. sudo can name one command and one account.
 
 ## All signed or none
 
@@ -148,8 +235,9 @@ With `ForceCommand` in `sshd_config` (as on the [ops host](../ops/README.md)), s
   signed block, or loading that runbook again, starts a fresh shell.
 - **Background programs** of a block get TERM when its shell ends, and KILL a second later.
   Each shell leads a process group and session of its own.
-  - A program that leaves the group (`setsid`, a double fork) is out of that reach. Only
-    `kill_leftovers = yes` ends it, when the session ends.
+  - A program that leaves the group (`setsid`, a double fork) still ends with the shell's
+    scope ([Isolation](#isolation)). Without one, only `kill_leftovers = yes` ends it, when the
+    session ends.
 - **No profile:** not `/etc/profile`, `~/.profile` or `~/.bashrc`. The account can write those,
   so they would run in every signed block.
 - **PATH** is `path =` in `gate.conf` (default `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`).
@@ -194,6 +282,9 @@ Signed blocks run as the account. So a gate is only as strong as the account aro
   reports of its own.
 - **After any time with `unsigned = allow`**, change the report token. Remove what the account
   may have planted in its home folder and crontab.
+
+[Separated mode](#separated-mode) takes the token and the log out of the blocks' reach. A block
+can still answer for later runs of its own runbook, as above.
 
 ## Check it
 
@@ -255,6 +346,7 @@ Each summary holds:
 - client `gate`;
 - the signed name, version, manifest hash and signers;
 - the key (`who`), the server, account and client address;
+- the gate's mode: `gate.gate_mode` is `shared` or `separated`;
 - each signed block's label (the first line of its code) and state.
 
 It never holds an output or a parameter value.
@@ -288,6 +380,12 @@ go vet ./... && gofmt -l . && go test ./...
 - `test/gate.test.ts` drives the binary as sshd starts it: the protocol on stdin, signatures
   from the real `ssh-keygen`. `MD_RUNBOOK_GATE_BIN` names the binary (default
   `apps/gate/dist/md-runbook-gate`).
+  - Isolation: the tests take what the machine has. `MD_RUNBOOK_GATE_ISOLATIONS=scope,bwrap`
+    makes them fail where one is missing.
+  - Separated mode needs accounts and a sudoers line, so it runs in CI only (the `gate` job).
+    `MD_RUNBOOK_GATE_ACCOUNT` runs the gate, `MD_RUNBOOK_GATE_CELLS_ACCOUNT` the blocks, and
+    `MD_RUNBOOK_GATE_WIDE_ACCOUNT` has a wider rule the self-check must refuse. The tests run
+    them with their own `sudo`.
 - `test/ssh.live.test.ts` runs the app's SSH layer through it on CI's OpenSSH server, cancelling
   and reconnecting included.
 

@@ -48,7 +48,7 @@ func TestSummary(t *testing.T) {
 		t.Fatalf("not JSON: %v\n%s", err, body)
 	}
 	want := `{"v":1,"client":"gate","runbook":{"signed":{"name":"ops/report","version":4,"manifest":"` + h + `","signer":"ops@example.net","trusted":true}},` +
-		`"who":"support","gate":{"host":"web-1","account":"support","from":"192.0.2.1"},` +
+		`"who":"support","gate":{"host":"web-1","account":"support","from":"192.0.2.1","gate_mode":"shared"},` +
 		`"steps":[{"n":1,"label":"echo ok","state":"passed"},{"n":2,"label":"false","state":"failed"},{"n":3,"label":"echo a","state":"not-run"},{"n":4,"label":"Step 4","state":"not-run"}],` +
 		`"ran":[1,2,3],"totals":{"steps":4,"passed":1,"failed":1,"skipped":0,"notRun":2,"byHand":0},"green":false,"started":"2026-11-16T10:00:00Z","ended":"2026-11-16T10:00:05Z"}`
 	if body != want {
@@ -66,6 +66,24 @@ func TestSummary(t *testing.T) {
 	body = Summary(m, h, "x", nil, nil, Session{}, "2026-11-16T10:01:00Z")
 	if !strings.Contains(body, `"ran":[],`) || !strings.Contains(body, `"started":"2026-11-16T10:01:00Z","ended":"2026-11-16T10:01:00Z"}`) {
 		t.Errorf("summary: %s", body)
+	}
+}
+
+// The gate's mode, inside the gate object (the library server's contract): shared or separated,
+// nothing else; never a top-level gate_mode.
+func TestSummaryGateMode(t *testing.T) {
+	for mode, want := range map[string]string{"separated": "separated", "shared": "shared", "": "shared", "Separated": "shared", `x","y":"z`: "shared"} {
+		body := Summary(sample(), h, "x", nil, nil, Session{Account: "support", Host: "web-1", Mode: mode}, "2026-11-16T10:01:00Z")
+		var s struct {
+			Gate     map[string]any `json:"gate"`
+			GateMode *string        `json:"gate_mode"`
+		}
+		if err := json.Unmarshal([]byte(body), &s); err != nil {
+			t.Fatalf("not JSON: %v\n%s", err, body)
+		}
+		if s.GateMode != nil || !reflect.DeepEqual(s.Gate, map[string]any{"host": "web-1", "account": "support", "gate_mode": want}) {
+			t.Errorf("mode %q: %s", mode, body)
+		}
 	}
 }
 

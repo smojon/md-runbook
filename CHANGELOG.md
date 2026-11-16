@@ -21,6 +21,28 @@ for your server's platform when you update.
 - **Gate: `memory_limit`** now bounds what the gate holds: a session that needs more ends.
 - **Gate: parameter patterns** still read as `grep -E` reads them. GNU extensions such as `\d`
   or `\w` now match nothing, as signing already refuses them.
+- **Gate: each shell in a scope of its own (`isolation =`).** When a shell ends, everything in
+  its scope ends too, even a program that left its process group (`setsid`, a double fork).
+  - The default is `auto`: a systemd scope of the account's user manager where it works, else a
+    PID namespace (`bwrap`), else process groups as before.
+  - `scope` and `bwrap` are required when you name them: without them the gate doesn't start.
+    `none` keeps the old behaviour.
+  - Under `bwrap`, blocks can't use `sudo` or setuid programs. Set `isolation = scope` or `none`
+    if your blocks need them.
+  - The `session` log event says which one a session got.
+  - See [Isolation](apps/gate/README.md#isolation).
+- **Gate: separated mode (`cells_account =`).** Blocks run as a second, unprivileged account,
+  through one `sudo` line. It is off by default.
+  - Blocks can't read the report token or the log, nor reach the gate's pipes.
+  - At the start of each session the gate checks the setup, and refuses to start if it is wrong.
+    The message says what to fix.
+  - The check refuses a `sudo` rule wider than the one line, and a token or log the blocks can
+    read.
+  - Blocks start in that account's home folder. A block's `cwd=` must be a folder it can enter.
+  - Not for the ops host: it stays shared.
+  - See [Separated mode](apps/gate/README.md#separated-mode).
+- **Gate: run reports say the mode.** The summary's `gate` object has `gate_mode`: `shared` or
+  `separated`.
 - **Visual Studio Marketplace by trusted publishing:** the release publishes there with
   `vsce publish --oidc`, no token, once the policy and the variable `MARKETPLACE_TRUSTED_PUBLISHING`
   are set ([PUBLISHING.md](PUBLISHING.md)). `vsce` for publishing is 4.1.0.

@@ -151,7 +151,7 @@ func Leftovers(list []Proc, me, top, uid int, inUM InUserManager) []Leftover {
 	return out
 }
 
-// ParsePS reads `ps -A -o pid= -o ppid=` (where there is no /proc).
+// ParsePS reads `ps -A -o pid= -o ppid= [-o uid= -o pgid=]` (where there is no /proc).
 func ParsePS(out string) []Proc {
 	var list []Proc
 	for _, l := range strings.Split(out, "\n") {
@@ -161,11 +161,149 @@ func ParsePS(out string) []Proc {
 		}
 		pid, ok1 := num(f[0])
 		ppid, ok2 := num(f[1])
-		if ok1 && ok2 {
-			list = append(list, Proc{PID: pid, PPID: ppid})
+		if !ok1 || !ok2 {
+			continue
 		}
+		p := Proc{PID: pid, PPID: ppid}
+		if len(f) >= 4 {
+			uid, ok3 := num(f[2])
+			pgid, ok4 := num(f[3])
+			if !ok3 || !ok4 {
+				continue
+			}
+			p.UID, p.PGID = uid, pgid
+		}
+		list = append(list, p)
 	}
 	return list
+}
+
+// ParseNSpid reads the NSpid line of /proc/PID/status: the process's pid in each PID namespace,
+// from the outermost one (this listing's) to its own. nil without one.
+func ParseNSpid(status string) []int {
+	for _, l := range strings.Split(status, "\n") {
+		if rest, ok := strings.CutPrefix(l, "NSpid:"); ok {
+			var out []int
+			for _, f := range strings.Fields(rest) {
+				n, ok := num(f)
+				if !ok {
+					return nil
+				}
+				out = append(out, n)
+			}
+			return out
+		}
+	}
+	return nil
+}
+
+// ParseCgroup2 is the cgroup v2 path in /proc/PID/cgroup (its "0::" line), "" without one.
+func ParseCgroup2(content string) string {
+	for _, l := range strings.Split(content, "\n") {
+		if p, ok := strings.CutPrefix(l, "0::"); ok && strings.HasPrefix(p, "/") {
+			return p
+		}
+	}
+	return ""
+}
+
+// ShellOf finds the cells' shell the gate started as leader (a wrapper: systemd-run, sudo, bwrap
+// or the gate's own cells mode, which all end in the shell): the topmost process of uid at or
+// under leader (leader itself once it runs as uid). With inner (bwrap), the process at or under
+// that one for which inner is true (pid 2 of its PID namespace). 0 while there is none yet.
+func ShellOf(list []Proc, leader, uid int, inner func(pid int) bool) int {
+	byPID := map[int]Proc{}
+	for _, p := range list {
+		byPID[p.PID] = p
+	}
+	l, ok := byPID[leader]
+	if !ok {
+		return 0
+	}
+	top := 0
+	if l.UID == uid {
+		top = leader
+	} else {
+		// sudo (root's, as listed) forks the shell; the first child of uid under it (breadth first).
+		ch := Children(list)
+		queue := []int{leader}
+		seen := map[int]bool{leader: true}
+		for len(queue) > 0 && top == 0 {
+			q := queue[0]
+			queue = queue[1:]
+			for _, c := range ch[q] {
+				if seen[c] {
+					continue
+				}
+				seen[c] = true
+				if byPID[c].UID == uid {
+					top = c
+					break
+				}
+				queue = append(queue, c)
+			}
+		}
+	}
+	if top == 0 || inner == nil {
+		return top
+	}
+	if inner(top) {
+		return top
+	}
+	for _, d := range Descendants(list, top) {
+		if inner(d) {
+			return d
+		}
+	}
+	return 0
+}
+
+// CellsLeftovers is each process of the cells' account (separated mode) that belongs to no live
+// session: one with no process of another account above it, but root's (sudo, cron, sshd). A
+// live session's cells run under its gate, a process of the gate's account; what left it (a
+// double fork, setsid) hangs under PID 1 or a subreaper, and a cron job or a login of the cells'
+// account under root's. Spared: PID 1, what came in from outside the PID namespace (parent 0),
+// and the account's user manager (systemd --user and its sd-pam, as Leftovers spares them).
+func CellsLeftovers(list []Proc, uid int, inUM InUserManager) []int {
+	byPID := map[int]Proc{}
+	for _, p := range list {
+		byPID[p.PID] = p
+	}
+	userman := func(pid int) bool {
+		p, ok := byPID[pid]
+		return ok && p.Comm == "systemd" && p.PPID == 1 && inUM(pid)
+	}
+	var out []int
+	for _, p := range list {
+		if p.UID != uid || p.PID <= 1 || p.Zombie {
+			continue
+		}
+		if userman(p.PID) || (p.Comm == "(sd-pam)" && userman(p.PPID) && inUM(p.PID)) {
+			continue
+		}
+		spared := false
+		for q, n := p.PPID, 0; n < 4096; n++ {
+			if q == 0 {
+				// From outside the PID namespace (docker exec, kubectl exec).
+				spared = true
+				break
+			}
+			qp, ok := byPID[q]
+			if q == 1 || !ok {
+				// Under PID 1, or its parent just went: no session above it.
+				break
+			}
+			if qp.UID != uid && qp.UID != 0 {
+				spared = true
+				break
+			}
+			q = qp.PPID
+		}
+		if !spared {
+			out = append(out, p.PID)
+		}
+	}
+	return out
 }
 
 func num(s string) (int, bool) {

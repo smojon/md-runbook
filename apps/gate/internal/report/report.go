@@ -67,10 +67,17 @@ func ReadExits(r io.Reader, runs []Run) map[string]Exit {
 	return out
 }
 
-// Session is what a summary says about the session.
+// Session is what a summary says about the session. Mode is the gate's: separated (the cells ran
+// as an account of their own), else shared.
 type Session struct {
-	Who, Account, Client, Host string
+	Who, Account, Client, Host, Mode string
 }
+
+// Separated is the mode of a gate whose cells run as an account of their own (cells_account).
+const Separated = "separated"
+
+// Shared is the mode of a gate whose cells run as its own account.
+const Shared = "shared"
 
 // Label is a block's label: the first line of its code with words, its blanks collapsed, at most
 // 120 bytes; "Step N" when there is none.
@@ -195,9 +202,15 @@ func Summary(m *manifest.Manifest, h, signer string, runs []Run, exits map[strin
 	if s.Client != "" {
 		from = `,"from":` + textutil.JSON(textutil.Cut(s.Client, 64))
 	}
-	return fmt.Sprintf(`{"v":1,"client":"gate","runbook":{"signed":{"name":%s,"version":%s,"manifest":"%s","signer":%s,"trusted":true}},"who":%s,"gate":{"host":%s,"account":%s%s},%s}`,
+	// Exactly shared or separated, in the gate object: the library server refuses any other value
+	// (and a top-level gate_mode).
+	mode := Shared
+	if s.Mode == Separated {
+		mode = Separated
+	}
+	return fmt.Sprintf(`{"v":1,"client":"gate","runbook":{"signed":{"name":%s,"version":%s,"manifest":"%s","signer":%s,"trusted":true}},"who":%s,"gate":{"host":%s,"account":%s%s,"gate_mode":"%s"},%s}`,
 		textutil.JSON(m.Field("name", "", 2)), version, h, textutil.JSON(textutil.Cut(signer, 120)), textutil.JSON(textutil.Cut(who, 120)),
-		textutil.JSON(textutil.Cut(s.Host, 255)), textutil.JSON(textutil.Cut(s.Account, 64)), from, tail)
+		textutil.JSON(textutil.Cut(s.Host, 255)), textutil.JSON(textutil.Cut(s.Account, 64)), from, mode, tail)
 }
 
 // atoi reads a field as awk's $x + 0 does (a leading number, else 0), for whole numbers.
