@@ -125,12 +125,12 @@ describe('push: tokens and messages', () => {
     try {
       const file = path.join(dir, 'state', 'devices.json');
       const devices = new Devices(file, 2);
-      const a = await devices.register({ platform: 'ios', token: IOS_TOKEN }, 'team');
+      const a = await devices.register({ platform: 'ios', token: IOS_TOKEN }, tok(DEVICES, 'team'));
       assert.deepEqual([a.created, a.device.id], [true, deviceId('ios', IOS_TOKEN)]);
-      const again = await devices.register({ platform: 'ios', token: IOS_TOKEN, alertnames: ['A'] }, 'team');
+      const again = await devices.register({ platform: 'ios', token: IOS_TOKEN, alertnames: ['A'] }, tok(DEVICES, 'team'));
       assert.deepEqual([again.created, again.device.registered, again.device.alertnames], [false, a.device.registered, ['A']]);
-      await devices.register({ platform: 'android', token: ANDROID_TOKEN }, 'team');
-      await assert.rejects(devices.register({ platform: 'android', token: ANDROID_GONE }, 'team'), /at most 2 devices/);
+      await devices.register({ platform: 'android', token: ANDROID_TOKEN }, tok(DEVICES, 'team'));
+      await assert.rejects(devices.register({ platform: 'android', token: ANDROID_GONE }, tok(DEVICES, 'team')), /at most 2 devices/);
       if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600);
       assert.equal((await new Devices(file, 2).list()).length, 2, 'read back from the file');
       assert.equal(await devices.remove([a.device.id, 'f'.repeat(32)]), 1);
@@ -324,6 +324,8 @@ describe('push: alerts to phones', () => {
       const id = deviceId('android', ANDROID_TOKEN);
       assert.equal((await call(`${url}/v1/devices/${id}`, 'DELETE')).status, 401);
       assert.equal((await call(`${url}/v1/devices/not-an-id`, 'DELETE', undefined, DEVICES)).status, 400);
+      // Another accepted token can't take this phone off: it isn't the one it registered with.
+      assert.equal((await call(`${url}/v1/devices/${id}`, 'DELETE', undefined, OTHER)).status, 404);
       assert.deepEqual((await call(`${url}/v1/devices/${id}`, 'DELETE', undefined, DEVICES)).json, { deleted: id });
       assert.equal((await call(`${url}/v1/devices/${id}`, 'DELETE', undefined, DEVICES)).status, 404);
       assert.ok(!logs.some((e) => JSON.stringify(e).includes(IOS_TOKEN) || JSON.stringify(e).includes(DEVICES)), 'tokens are never logged');
@@ -346,6 +348,21 @@ describe('push: alerts to phones', () => {
         [`/3/device/${IOS_TOKEN}`],
       );
       assert.ok((await call(`${url}/v1/server-info`, 'GET')).json.capabilities.includes('push'));
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('a devices token replaced under the same label: the phones of the old one get no pushes', async () => {
+    const senders = { ios: new ApnsSender(apnsConfig, { origin: apns.url }) };
+    // "phones" is now another token: the iPhone registered with the old one gets nothing.
+    const { s } = await start(config(dir, { alerts: alerts(), push: push({ tokens: [tok('rotated-token-of-at-least-24-chars', 'phones')], fcm: undefined }) }), { senders });
+    try {
+      assert.ok((await s.push!.devices.list()).some((d) => d.token === IOS_TOKEN && d.by === 'phones'));
+      apns.sent.length = 0;
+      await s.push!.notify(firing({ fingerprint: 'fp-rotated' }));
+      await s.push!.idle();
+      assert.deepEqual(apns.sent, []);
     } finally {
       await s.close();
     }

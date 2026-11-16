@@ -212,7 +212,8 @@ phones. What to set up in Firebase and at Apple:
   ```
 
   - `alertnames`, `runbooks` (paths, or folders ending in `/`): only those alerts. Absent: all.
-  - The answer is the device's `id`. `DELETE /v1/devices/<id>` removes the device.
+  - The answer is the device's `id`. `DELETE /v1/devices/<id>` with the same token removes the
+    device.
 - **A push says** "ALERTNAME firing" and the runbook's path, and carries the alert's link
   (`/open?url=…&sha256=…`). Nothing else: no other labels, no annotations, no tokens. Google or
   Apple sees what a push carries.
@@ -221,7 +222,8 @@ phones. What to set up in Firebase and at Apple:
 - **Gone phones:** tokens the provider reports as gone (FCM `UNREGISTERED`, APNs 410) are removed.
 - **Repeats:** the same alert (fingerprint) is pushed again only after `PUSH_REPEAT_SECONDS`.
 - **Withdrawn tokens:** a phone gets pushes only while the token it registered with is still
-  accepted. Take a token out of `DEVICES_TOKENS` and its phones stop.
+  accepted. Take a token out of `DEVICES_TOKENS` and its phones stop, even when a new token gets
+  its label.
 - Pushes go out after the webhook is answered. A failure is logged and never loses the alert.
 - Devices are kept in `STATE_DIR/devices.json` (mode 600).
 

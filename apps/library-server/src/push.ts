@@ -23,7 +23,7 @@ import { KeyObject, createPrivateKey, sign } from 'node:crypto';
 import { ClientHttp2Session, connect, constants as h2 } from 'node:http2';
 import type { Firing } from './alerts';
 import type { ApnsConfig, FcmConfig, PushConfig } from './config';
-import { Device, DevicePlatform, Devices, wants } from './devices';
+import { Device, DevicePlatform, Devices, tokenDigest, wants } from './devices';
 import type { LogEvent } from './http';
 
 export interface PushMessage {
@@ -258,7 +258,8 @@ export class PushService {
   private queue: Promise<void> = Promise.resolve();
   /** When each alert (fingerprint, else link) was last pushed. */
   private readonly pushed = new Map<string, number>();
-  private readonly labels: Set<string>;
+  /** Digests of the devices tokens accepted now: a device gets pushes only under one of them. */
+  private readonly digests: Set<string>;
 
   constructor(
     readonly config: PushConfig,
@@ -267,7 +268,7 @@ export class PushService {
     private readonly log: (e: LogEvent) => void,
     private readonly now: () => number = Date.now,
   ) {
-    this.labels = new Set(config.tokens.map((t) => t.label));
+    this.digests = new Set(config.tokens.map((t) => tokenDigest(t.value)));
   }
 
   /** The platforms this server can push to. */
@@ -294,7 +295,7 @@ export class PushService {
     if (this.pushed.has(key)) return void this.log({ event: 'push-repeat', alertname: f.alertname, fingerprint: f.fingerprint });
     this.pushed.set(key, t);
     const m = pushMessage(f);
-    const list = (await this.devices.list()).filter((d) => this.senders[d.platform] && this.labels.has(d.by) && wants(d, f));
+    const list = (await this.devices.list()).filter((d) => this.senders[d.platform] && d.tokenDigest !== undefined && this.digests.has(d.tokenDigest) && wants(d, f));
     const gone: Device[] = [];
     let sent = 0;
     const failures: string[] = [];

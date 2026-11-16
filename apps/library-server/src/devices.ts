@@ -4,7 +4,8 @@
  * STATE_DIR, mode 600, written atomically; the server is its only writer.
  *
  * A device only gets pushes while the token it registered with is still one the server accepts:
- * taking a token out of DEVICES_TOKENS stops its phones too.
+ * taking a token out of DEVICES_TOKENS stops its phones too. The device keeps a digest of that
+ * token, not its label: a new token under the old label doesn't bring the old phones back.
  */
 import { createHash } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
@@ -25,8 +26,10 @@ export interface Device {
   alertnames?: string[];
   /** Only alerts whose runbook is one of these library paths, or below one ending in "/"; absent: all. */
   runbooks?: string[];
-  /** The label of the device token it registered with. */
+  /** The label of the device token it registered with (for the log). */
   by: string;
+  /** sha256 of the device token it registered with: it gets pushes while that token is accepted. */
+  tokenDigest?: string;
   registered: string;
   updated: string;
 }
@@ -45,6 +48,9 @@ const FCM_TOKEN_RE = /^[A-Za-z0-9_:.-]{32,4096}$/;
 const ALERTNAME_RE = /^[^\x00-\x1f]{1,200}$/;
 export const DEVICE_ID_RE = /^[0-9a-f]{32}$/;
 const MAX_FILTERS = 50;
+
+/** What a device keeps of the devices token it registered with (never the token). */
+export const tokenDigest = (value: string): string => createHash('sha256').update(value).digest('hex');
 
 export const deviceId = (platform: DevicePlatform, token: string): string => createHash('sha256').update(`${platform}:${token}`).digest('hex').slice(0, 32);
 
@@ -129,7 +135,7 @@ export class Devices {
   }
 
   /** Adds the device, or updates it (its filters) when its token is registered already. */
-  async register(r: Registration, by: string, now = new Date()): Promise<{ device: Device; created: boolean }> {
+  async register(r: Registration, by: { label: string; value: string }, now = new Date()): Promise<{ device: Device; created: boolean }> {
     return this.lock.run(async () => {
       const list = await this.load();
       const id = deviceId(r.platform, r.token);
@@ -142,12 +148,28 @@ export class Devices {
         token: r.token,
         ...(r.alertnames ? { alertnames: r.alertnames } : {}),
         ...(r.runbooks ? { runbooks: r.runbooks } : {}),
-        by,
+        by: by.label,
+        tokenDigest: tokenDigest(by.value),
         registered: old?.registered ?? at,
         updated: at,
       };
       await this.save([...list.filter((d) => d.id !== id), device]);
       return { device, created: !old };
+    });
+  }
+
+  /**
+   * DELETE /v1/devices/<id>: removes the device only for the devices token it registered with.
+   * Whether it was removed (false: no such device, or another token's).
+   */
+  async removeOwn(id: string, by: { value: string }): Promise<boolean> {
+    return this.lock.run(async () => {
+      const list = await this.load();
+      const digest = tokenDigest(by.value);
+      const kept = list.filter((d) => !(d.id === id && d.tokenDigest === digest));
+      if (kept.length === list.length) return false;
+      await this.save(kept);
+      return true;
     });
   }
 

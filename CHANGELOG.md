@@ -87,6 +87,9 @@ Security fixes from a review of the parts that face the network.
 - **VS Code, cells on a host:** a cell's `env.NAME=` value goes to the host as written. Before,
   a secret from `mdRunbook.secrets.inject` or a `.env` value of that name went instead.
   - With cell options off, no `env.NAME=` value goes to the host.
+- **Library server, pushes:** a phone keeps a digest of the devices token it registered with.
+  A new token under the old label no longer brings back the phones of the old token.
+  - `DELETE /v1/devices/<id>` needs the token the phone registered with.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or
