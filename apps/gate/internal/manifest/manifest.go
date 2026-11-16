@@ -214,70 +214,15 @@ func (m *Manifest) Names() []string {
 	return out
 }
 
-// KubeWant is the last kube-context= of a fence info string, read as core's tokenizeInfo reads
-// it: after the language word, key=value, key="quoted" or key='quoted', bare flags, {…} skipped,
-// keys in any case. ok is false when there is none; the value is trimmed.
+// KubeWant is the last kube-context= of a fence info string (kubeValues reads them as core's
+// tokenizeInfo does), trimmed of ASCII blanks; ok is false when there is none. Check refuses a
+// manifest whose info has two, or one that is neither a context name nor ${param:NAME}
+// (KubeContext).
 func KubeWant(info string) (want string, ok bool) {
 	// (awk read the text as lines: one newline at its end was not part of it.)
-	s := strings.TrimLeft(strings.TrimSuffix(info, "\n"), " \t\n\r\f\v")
-	// The language word: up to a blank or a {.
-	i := 0
-	for i < len(s) && strings.IndexByte(" \t\n\r\f\v{", s[i]) < 0 {
-		i++
+	values := kubeValues(strings.TrimSuffix(info, "\n"))
+	if len(values) == 0 {
+		return "", false
 	}
-	s = s[i:]
-	n := len(s)
-	i = 0
-	for i < n {
-		for i < n && (s[i] == ' ' || s[i] == '\t') {
-			i++
-		}
-		if i >= n {
-			break
-		}
-		if s[i] == '{' {
-			j := strings.IndexByte(s[i:], '}')
-			if j < 0 {
-				i = n
-			} else {
-				i += j + 1
-			}
-			continue
-		}
-		st := i
-		for i < n && s[i] != ' ' && s[i] != '\t' && s[i] != '=' {
-			i++
-		}
-		key := s[st:i]
-		if i >= n || s[i] != '=' {
-			continue
-		}
-		i++
-		var v string
-		if i < n && (s[i] == '"' || s[i] == '\'') {
-			q := s[i]
-			j := strings.IndexByte(s[i+1:], q)
-			if j < 0 {
-				v = s[i+1:]
-				i = n
-			} else {
-				v = s[i+1 : i+1+j]
-				i += j + 2
-			}
-		} else {
-			vs := i
-			for i < n && s[i] != ' ' && s[i] != '\t' {
-				i++
-			}
-			v = s[vs:i]
-		}
-		if key != "" && textutil.ASCIILower(key) == "kube-context" {
-			want = v
-			ok = true
-		}
-	}
-	if ok {
-		want = strings.Trim(want, " \t\n\r\f\v")
-	}
-	return want, ok
+	return strings.Trim(values[len(values)-1], asciiBlanks), true
 }

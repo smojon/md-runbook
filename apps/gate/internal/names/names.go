@@ -35,7 +35,9 @@ var reserved = func() map[string]bool {
 	return m
 }()
 
-// IsReserved: a name a runbook may not set.
+// IsReserved: a name a runbook may not set. And any name ending in _proxy, in any case: Python's
+// urllib (pip, requests) reads Https_Proxy and FOO_proxy as proxies (as core's isReservedVar;
+// gate vectors, 2026-11-16).
 func IsReserved(name string) bool {
 	if reserved[name] {
 		return true
@@ -45,7 +47,7 @@ func IsReserved(name string) bool {
 			return true
 		}
 	}
-	return false
+	return len(name) >= 6 && strings.EqualFold(name[len(name)-6:], "_proxy")
 }
 
 // Unsafe: names removed from the gate's own environment at its start. Nothing that changes how

@@ -3,12 +3,12 @@ package names
 import "testing"
 
 func TestIsReserved(t *testing.T) {
-	for _, n := range []string{"PATH", "IFS", "NODE_OPTIONS", "https_proxy", "GIT_ASKPASS", "EDITOR", "ftp_proxy", "LC_ALL", "LD_PRELOAD", "BASH_FUNC_x%%", "__mdrb_c", "MD_RUNBOOK_GATE_RUN", "GIT_CONFIG_KEY_0"} {
+	for _, n := range []string{"PATH", "IFS", "NODE_OPTIONS", "https_proxy", "GIT_ASKPASS", "EDITOR", "ftp_proxy", "LC_ALL", "LD_PRELOAD", "BASH_FUNC_x%%", "__mdrb_c", "MD_RUNBOOK_GATE_RUN", "GIT_CONFIG_KEY_0", "Https_Proxy", "FOO_proxy", "socks_PROXY"} {
 		if !IsReserved(n) {
 			t.Errorf("%s is not reserved", n)
 		}
 	}
-	for _, n := range []string{"KUBECONFIG", "TARGET", "GREETING", "path", "LANGUAGES_X"} {
+	for _, n := range []string{"KUBECONFIG", "TARGET", "GREETING", "path", "LANGUAGES_X", "PROXY", "X_PROXYX"} {
 		if IsReserved(n) {
 			t.Errorf("%s is reserved", n)
 		}

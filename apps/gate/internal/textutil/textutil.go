@@ -84,6 +84,9 @@ func IsB64(s string) bool {
 	return allIn(s, func(c byte) bool { return isAlpha(c) || isDigit(c) || c == '+' || c == '/' || c == '=' })
 }
 
+// IsOneLine: a parameter value the gate takes: no CR, LF or NUL (core's isOneLineValue).
+func IsOneLine(s string) bool { return !strings.ContainsAny(s, "\r\n\x00") }
+
 // IsHex64: a sha256 in lower-case hex.
 func IsHex64(s string) bool { return len(s) == 64 && allIn(s, isHexLower) }
 
