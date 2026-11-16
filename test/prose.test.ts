@@ -82,7 +82,7 @@ describe('prose parity with prose_ratchet.py (its tests, the same counts)', () =
   it('a recorded file may get better, not worse', () => {
     const before = { sentences: 10, units: 4, average: 17.0 };
     assert.deepEqual(proseWorse({ sentences: 9, units: 4, average: 16.0 }, before), []);
-    assert.deepEqual(proseWorse({ sentences: 11, units: 4, average: 16.0 }, before), ['11 sentences over 20 words (was 10)']);
+    assert.deepEqual(proseWorse({ sentences: 11, units: 4, average: 16.0 }, before), ['11 sentences over 25 words (was 10)']);
     assert.deepEqual(proseWorse({ sentences: 10, units: 5, average: 16.0 }, before), ['5 paragraphs over 3 sentences or 60 words (was 4)']);
     assert.deepEqual(proseWorse({ sentences: 10, units: 4, average: 17.5 }, before), ['17.5 words a sentence on average (was 17.0)']);
   });
@@ -370,12 +370,12 @@ describe('md-runbook lint: prose', () => {
 
   it('--prose-baseline: per rule; worse or new fails, listing the findings; --update-baseline never raises', () => {
     const d = dir();
-    write(d, 'docs/a.md', sentence(25) + '\n');
+    write(d, 'docs/a.md', sentence(30) + '\n');
     write(d, 'b.md', 'Short.\n');
     inDir(d, () => {
       assert.equal(run(['--prose-baseline', 'base.json', 'docs/a.md']).code, 2); // no baseline yet
       assert.match(run(['--prose-baseline', 'base.json', '--update-baseline', 'docs/a.md', 'b.md']).out, /recorded 1 file in base\.json/);
-      assert.equal(fs.readFileSync('base.json', 'utf8'), '{\n "docs/a.md": {\n  "average": 25.0,\n  "sentences": 1,\n  "units": 0\n }\n}\n');
+      assert.equal(fs.readFileSync('base.json', 'utf8'), '{\n "docs/a.md": {\n  "average": 30.0,\n  "sentences": 1,\n  "units": 0\n }\n}\n');
       assert.match(run(['--prose-baseline', 'base.json', 'docs/a.md', 'b.md']).out, /✅ prose: no file harder to read; 1 long sentences left in 1 file/);
       // A phrase in a file not recorded: listed, and it fails.
       write(d, 'b.md', 'Please note that it is short.\n');
@@ -388,7 +388,7 @@ describe('md-runbook lint: prose', () => {
       assert.doesNotMatch(fs.readFileSync('base.json', 'utf8'), /b\.md/);
       // Better: passes, says so, and the update lowers the numbers.
       write(d, 'b.md', 'Short.\n');
-      write(d, 'docs/a.md', sentence(25) + ' <!-- md-runbook:prose-ignore -->\n');
+      write(d, 'docs/a.md', sentence(30) + ' <!-- md-runbook:prose-ignore -->\n');
       assert.match(run(['--prose-baseline', 'base.json', 'docs/a.md', 'b.md']).out, /1 file got better: record them with --update-baseline/);
       run(['--prose-baseline', 'base.json', '--update-baseline', 'docs/a.md', 'b.md']);
       assert.equal(fs.readFileSync('base.json', 'utf8'), '{}\n');
@@ -414,7 +414,7 @@ describe('md-runbook lint: prose', () => {
       write(d, 'base.json', '{}\n');
       const r = run(['--prose-baseline', 'base.json']);
       assert.equal(r.code, 1);
-      assert.match(r.out, /- notes\/CLAUDE\.md: 1 sentences over 20 words \(was 0\)/);
+      assert.match(r.out, /- notes\/CLAUDE\.md: 1 sentences over 25 words \(was 0\)/);
       assert.doesNotMatch(r.out, /fixtures|untracked/);
       assert.equal(run(['--prose-baseline', 'base.json', '--exclude', 'notes/*']).code, 0);
       const show = run(['--prose-show', 'notes/*']);
@@ -438,6 +438,13 @@ describe('md-runbook lint: prose', () => {
       }
     });
     assert.match(fs.readFileSync(summary, 'utf8'), /^## ✅ prose: no file harder to read/);
+  });
+
+  it('the ratchet counts a long sentence only past 25 words; one of 21 to 25 stays a hint', () => {
+    const hint = measureFile(sentence(23) + '\n');
+    assert.equal(hint.findings.filter((f) => f.rule === 'prose-sentence').length, 1, 'still shown');
+    assert.equal(hint.numbers.sentences, 0, 'not counted');
+    assert.equal(measureFile(sentence(26) + '\n').numbers.sentences, 1);
   });
 
   it('measureFile counts phrases and repeats apart from sentences and units', () => {

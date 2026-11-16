@@ -246,6 +246,8 @@ md-runbook lint --prose-baseline .github/prose-baseline.json --update-baseline  
 - The baseline records, per file, the long sentences, the long paragraphs, the average, the
   phrases, the repeats and the duplicates. Only files with a finding are in it; any other file
   must have none.
+- A long sentence counts here only past 25 words (`strictSentenceWords`), where `prose: strict`
+  warns. One of 21 to 25 words stays a hint in the editor and doesn't fail the check.
 - The check fails when a number goes up, or the average passes both its record and 15. It lists
   those findings as `file:line: message`.
 - `--update-baseline` only ever lowers a number: a file can get better, never worse.

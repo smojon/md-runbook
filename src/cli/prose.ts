@@ -143,14 +143,21 @@ export function trackedMarkdown(excludes: readonly string[], cwd = process.cwd()
   return names.filter((n) => !out.some((r) => r.test(n))).sort();
 }
 
+/**
+ * Whether the ratchet counts a finding: a long sentence only past strictSentenceWords (25), where
+ * `prose: strict` warns. One of 21 to 25 words stays a hint in the editor, and doesn't fail CI.
+ */
+const ratcheted = (f: ProseFinding, l: ProseLimits): boolean => f.rule !== 'prose-sentence' || (f.words ?? 0) > l.strictSentenceWords;
+
 /** A file's findings and numbers; none for `prose: off`. */
 export function measureFile(text: string, options: ProseOptions = {}): { findings: ProseFinding[]; numbers: ProseNumbers; count: number } {
   if (parseFrontMatter(text)?.prose === 'off') return { findings: [], numbers: { sentences: 0, units: 0, average: 0 }, count: 0 };
   const m = measureProse(text, options);
+  const l = proseLimits(options);
   const numbers: ProseNumbers = { sentences: 0, units: 0, average: roundAverage(m.average) };
   for (const f of m.findings) {
     const key = KEY_OF[f.rule];
-    if (key) numbers[key] = (numbers[key] ?? 0) + 1;
+    if (key && ratcheted(f, l)) numbers[key] = (numbers[key] ?? 0) + 1;
   }
   return { findings: m.findings, numbers, count: m.count };
 }
@@ -179,7 +186,7 @@ export function proseWorse(now: ProseNumbers, before: ProseNumbers | undefined, 
   const limits = before ?? newFile(l);
   const was = (k: Key): number => limits[k] ?? 0;
   const problems: string[] = [];
-  if (now.sentences > was('sentences')) problems.push(`${now.sentences} sentences over ${l.sentenceWords} words (was ${was('sentences')})`);
+  if (now.sentences > was('sentences')) problems.push(`${now.sentences} sentences over ${l.strictSentenceWords} words (was ${was('sentences')})`);
   if (now.units > was('units')) {
     problems.push(`${now.units} paragraphs over ${l.unitSentences} sentences or ${l.unitWords} words (was ${was('units')})`);
   }
@@ -298,7 +305,7 @@ export function proseRatchet(o: RatchetOptions): number {
     const rules = worseRules(m.numbers, limits[name], l);
     for (const f of m.findings) {
       const key = KEY_OF[f.rule];
-      if (rules.has(key)) o.out(`${name}:${f.line + 1}: ${f.message}`);
+      if (key && rules.has(key) && ratcheted(f, l)) o.out(`${name}:${f.line + 1}: ${f.message}`);
     }
   }
   const recorded = [...current].filter(([, m]) => isRecorded(m.numbers, l));

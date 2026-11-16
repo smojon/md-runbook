@@ -5,11 +5,13 @@
 - **Android app:** the APK is signed with the app's own key, not the template's public debug key.
   Each release has it attached (`md-runbook-X.Y.Z.apk`). Uninstall a debug-signed copy once first:
   Android won't update an app across keys.
-- **App, Add Note:** a note goes right after the step it is about, as in VS Code. That is the step
-  running, else the one that ran last; before, it went to the end. Its confirmation, **Saved** and
-  the record signed message show in green, not red.
-- **App, sample runbook:** its service check quotes its regular expression. So it shows no warning
-  and checks for `active (running)` as meant.
+- **Prose ratchet:** `--prose-baseline` counts a long sentence only past 25 words, where
+  `prose: strict` warns. One of 21 to 25 words stays a hint and no longer fails CI. Baselines drop.
+- **App, Add Note:** a note goes right after the step it's about, as in VS Code: the step running,
+  else the last one run. Before, it went to the end. Its confirmation, **Saved** and the record
+  signed message show in green, not red.
+- **App, sample runbook:** its service check now quotes its regular expression. The
+  `unknown cell option` warning is gone, and the check looks for `active (running)` as meant.
 - **Progress, re-runs:** a run counts the steps it hasn't reached yet as still to do. Before, their
   green output from the last run counted as done: 98 %, `0s left` and an end time already past.
   VS Code and the app.

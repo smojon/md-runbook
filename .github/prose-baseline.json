@@ -1,19 +1,19 @@
 {
  "CHANGELOG.md": {
-  "average": 19.2,
+  "average": 19.1,
   "phrases": 1,
   "repeats": 2,
-  "sentences": 293,
+  "sentences": 202,
   "units": 103
  },
  "docs/investigations/notebook-open-slow.md": {
   "average": 19.6,
-  "sentences": 58,
+  "sentences": 34,
   "units": 6
  },
  "spikes/ssh/README.md": {
   "average": 20.2,
-  "sentences": 18,
+  "sentences": 12,
   "units": 2
  },
  "walkthrough/session.md": {
