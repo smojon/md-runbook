@@ -45,8 +45,11 @@ class Gate {
   readonly exited: Promise<number | null>;
   private n = 0;
 
-  /** `as`: run it as that account, through the test's own sudo, with only `env` (separated mode). */
-  constructor(args: string[], env: Record<string, string>, command = 'bash -l', as = '') {
+  /**
+   * `as`: run it as that account, through the test's own sudo, with only `env` (separated mode).
+   * `bin`: another copy of the gate (as an account only).
+   */
+  constructor(args: string[], env: Record<string, string>, command = 'bash -l', as = '', bin = GATE) {
     // As sshd starts it: argv[0] is the path the key line names. Not under sshd unless a test says
     // so (the gate checks the login shell then).
     const base: Record<string, string | undefined> = { ...process.env };
@@ -55,7 +58,7 @@ class Gate {
     if (as) {
       const pairs = Object.entries({ ...env, SSH_ORIGINAL_COMMAND: command }).map(([k, v]) => `${k}=${v}`);
       // From /: the test's own folder (a CI runner's home) may be closed to that account.
-      this.child = spawn('sudo', ['-n', '-u', as, '--', '/usr/bin/env', ...pairs, GATE, ...args], { stdio: 'pipe', cwd: '/' });
+      this.child = spawn('sudo', ['-n', '-u', as, '--', '/usr/bin/env', ...pairs, bin, ...args], { stdio: 'pipe', cwd: '/' });
     } else {
       this.child = spawn(GATE, args, { env: { ...base, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
     }
@@ -1555,11 +1558,15 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
   // ---- separated mode: the cells as an account of their own ----
   // CI prepares the accounts (.github/workflows/ci.yml, gate job): MD_RUNBOOK_GATE_ACCOUNT runs
   // the gate and has exactly the one sudoers line for MD_RUNBOOK_GATE_CELLS_ACCOUNT;
-  // MD_RUNBOOK_GATE_WIDE_ACCOUNT (optional) has a wider one. The test runs them through its own
-  // sudo, and keeps their files in folders of theirs.
+  // MD_RUNBOOK_GATE_WIDE_ACCOUNT (optional) has a wider one. MD_RUNBOOK_GATE_OPEN_ACCOUNT
+  // (optional) has the one line for MD_RUNBOOK_GATE_OPEN_BIN, a copy of the gate in a folder
+  // anyone can write. The test runs them through its own sudo, and keeps their files in folders
+  // of theirs.
   const CELLS = process.env.MD_RUNBOOK_GATE_CELLS_ACCOUNT ?? '';
   const GATE_ACCOUNT = process.env.MD_RUNBOOK_GATE_ACCOUNT ?? '';
   const WIDE_ACCOUNT = process.env.MD_RUNBOOK_GATE_WIDE_ACCOUNT ?? '';
+  const OPEN_ACCOUNT = process.env.MD_RUNBOOK_GATE_OPEN_ACCOUNT ?? '';
+  const OPEN_BIN = process.env.MD_RUNBOOK_GATE_OPEN_BIN ?? '';
   describe('separated mode (cells_account)', { skip: !(CELLS && GATE_ACCOUNT && process.platform === 'linux') && 'needs MD_RUNBOOK_GATE_CELLS_ACCOUNT and MD_RUNBOOK_GATE_ACCOUNT (Linux; set up as in the CI gate job)' }, () => {
     /** `sh -c cmd` as an account, with input; its stdout. */
     const as = (account: string, cmd: string, input = ''): string => {
@@ -1569,11 +1576,11 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
     };
     const folders: string[] = [];
     /** A folder of the account's own (0700), with its key lines and the trusted keys. */
-    const prepare = (account: string): string => {
+    const prepare = (account: string, bin = GATE): string => {
       const d = as(account, 'mktemp -d /tmp/mdrb-separated.XXXXXX').trim();
       folders.push(d);
       as(account, `cat >${d}/allowed_signers`, fs.readFileSync(path.join(dir, 'allowed_signers'), 'utf8'));
-      as(account, `cat >${d}/authorized_keys`, keyLine() + '\n');
+      as(account, `cat >${d}/authorized_keys`, `restrict,command="${bin}" ${KEY}\n`);
       return d;
     };
     const confOf = (account: string, d: string, name: string, lines: string[]): string => {
@@ -1581,13 +1588,13 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       as(account, `cat >${f}`, [`allowed_signers = ${d}/allowed_signers`, `log = ${d}/gate.log`, `authorized_keys = ${d}/authorized_keys`, `cells_account = ${CELLS}`, ...lines].join('\n') + '\n');
       return f;
     };
-    const startAs = (account: string, d: string, conf: string, command?: string): Gate => {
-      const g = new Gate([`--config=${conf}`], { HOME: d, TMPDIR: d }, command, account);
+    const startAs = (account: string, d: string, conf: string, command?: string, bin = GATE): Gate => {
+      const g = new Gate([`--config=${conf}`], { HOME: d, TMPDIR: d }, command, account, bin);
       gates.push(g);
       return g;
     };
-    const startupAs = async (account: string, d: string, conf: string): Promise<{ code: number | null; err: string }> => {
-      const g = startAs(account, d, conf);
+    const startupAs = async (account: string, d: string, conf: string, bin = GATE): Promise<{ code: number | null; err: string }> => {
+      const g = startAs(account, d, conf, undefined, bin);
       let err = '';
       g.child.stderr!.on('data', (b: Buffer) => (err += b.toString('utf8')));
       g.child.stdin!.end();
@@ -1690,6 +1697,14 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       } finally {
         server.close();
       }
+    });
+
+    it('the self-check refuses to start: a gate in a folder the cells can write, even with its exact sudo line', { skip: !(OPEN_ACCOUNT && OPEN_BIN) && 'set MD_RUNBOOK_GATE_OPEN_ACCOUNT and MD_RUNBOOK_GATE_OPEN_BIN' }, async () => {
+      const odir = prepare(OPEN_ACCOUNT, OPEN_BIN);
+      const r = await startupAs(OPEN_ACCOUNT, odir, confOf(OPEN_ACCOUNT, odir, 'gate.conf', []), OPEN_BIN);
+      assert.equal(r.code, 2, r.err);
+      assert.match(r.err, new RegExp(`${CELLS} can change [^:]*${path.posix.dirname(OPEN_BIN)}: make it root-owned`));
+      assert.doesNotMatch(r.err, /not exactly the one rule/);
     });
 
     it('the self-check refuses to start: a token the cells can read, root, the gate\'s own account, a wider sudo rule', async (t) => {

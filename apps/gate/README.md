@@ -154,6 +154,9 @@ visudo -cf /etc/sudoers.d/md-runbook-gate
 Here `support` is the gate's account. The line must be exactly this, with the gate's real path.
 The gate's account may have no other sudo rule.
 
+The gate and every folder above it must be root's and writable by root alone. Some images leave
+`/usr/local/bin` open: then install the gate elsewhere, such as `/opt/md-runbook-gate/bin`.
+
 At the start of each session the gate checks. It refuses to start, and logs a `self-check`
 event, when:
 - the account doesn't exist, is root, or is the gate's own;
