@@ -2,7 +2,7 @@ import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import { loadApprovals } from '../approvals/store';
 import { loadSettings } from '../settings/store';
 import { retryReports } from '../reports/send';
@@ -18,10 +18,24 @@ import { usePalette } from '../theme';
 import { CODICON_FONT, codiconFont } from '../ui/Codicon';
 import { HomeTitle, HostsButton } from '../ui/HomeHeader';
 import { useAppShortcuts } from '../ui/useAppShortcuts';
+import { Points } from '../ui/Points';
+
+/**
+ * The web app inside another page's frame (clickjacking: taps on a hidden Run or Trust): it
+ * doesn't run there. GitHub Pages can't send frame-ancestors, so the app checks itself.
+ */
+const framed = ((): boolean => {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
+  try {
+    return window.top !== window.self;
+  } catch {
+    return true; // another origin's top window: framed
+  }
+})();
 
 // A pairing link (/pair#…): its token is read from the fragment and taken out of the address bar
 // as soon as the app loads, before anything else can see or keep it (pairing/pending.ts).
-if (Platform.OS === 'web') capturePairingFragment();
+if (Platform.OS === 'web' && !framed) capturePairingFragment();
 
 /** A runbook or host opened by a link has the list under it, so the back arrow is always there. */
 export const unstable_settings = { initialRouteName: 'index' };
@@ -51,7 +65,24 @@ function NotificationTaps() {
   return null;
 }
 
+/** In a frame: a short note instead of the app (nothing is loaded or run). */
+function FramedNotice() {
+  const c = usePalette();
+  return (
+    <View testID="framed" style={{ flex: 1, padding: 24, gap: 8, backgroundColor: c.background }}>
+      <Text role="heading" style={{ fontSize: 18, fontWeight: '600', color: c.text }}>
+        {t.framedTitle}
+      </Text>
+      <Points items={t.framedPoints} textStyle={{ fontSize: 14, color: c.muted }} />
+    </View>
+  );
+}
+
 export default function RootLayout() {
+  return framed ? <FramedNotice /> : <AppLayout />;
+}
+
+function AppLayout() {
   const c = usePalette();
   useWebFocusStyle(c.accent);
   // Screens render before the font is in: the glyphs appear when it is (no blank start screen).

@@ -268,8 +268,20 @@ const en = {
     keystore: "The private key is in this device's keystore and never handed to the app.",
     'secure-store': "The private key is kept in this device's secure storage.",
     browser: "The private key is kept in this browser's storage for this site.",
+    'browser-key': "The private key is kept by this browser for this site: it can't be read out, not even by the app.",
     passkey: 'A passkey for this site: your authenticator keeps it and asks for you at each use.',
   },
+  /** Web, a key made by an earlier version (readable in the browser's storage): the offer to replace it. */
+  browserKeyPoints: ['This key is stored readable in this browser.', 'A new key can’t be copied out of the browser, not even by the app.'],
+  browserKeyReplace: 'Replace with a key this browser can’t export',
+  browserKeyChangePoints: [
+    'Put its public key on your hosts again (authorized_keys).',
+    'Give servers that check your signatures its new allowed_signers line.',
+    'The old key stops working in this app.',
+  ],
+  // The web app inside another site's frame: it doesn't run there.
+  framedTitle: 'Open md-runbook directly',
+  framedPoints: ['It doesn’t run inside another page.', 'Open its address in a tab of its own.'],
   copy: 'Copy',
   copied: 'Copied',
 

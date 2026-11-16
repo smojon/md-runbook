@@ -6,9 +6,12 @@
  * - phones: made inside the secure hardware (Secure Enclave, Android Keystore) by the native
  *   HardwareKey module; the private key never reaches JavaScript, the hardware signs;
  * - a key made by an earlier version (PKCS#8 in secure storage) is kept: hosts already trust it;
- * - web, or phones whose keystore can't make such keys: made by the SSH library, kept in secure
- *   storage (the browser's storage on the web); a hardware key that fails otherwise is an error
- *   (shown under Hosts & settings), not a silent software key;
+ * - web: a WebCrypto key the browser won't export, kept in IndexedDB (webKey.ts); a key made by
+ *   an earlier version (PKCS#8 in the browser's storage) stays until the user replaces it
+ *   (replaceWithUnexportableKey), as hosts trust it;
+ * - phones whose keystore can't make such keys (or a browser without WebCrypto or IndexedDB):
+ *   made by the SSH library, kept in secure storage (the browser's storage on the web); a hardware
+ *   key that fails otherwise is an error (shown under Hosts & settings), not a silent software key;
  * - web with "Use a passkey" on: a passkey for this site (passkey.ts); the authenticator signs.
  */
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
@@ -19,14 +22,18 @@ import { RUN_SIGNATURE_NAMESPACE } from '@md-runbook/core/runReport';
 import { HardwareKey } from '../../modules/hardware-key';
 import { deleteSecret, getSecret, setSecret } from '../storage/secure';
 import { createPasskey, forgetPasskey, loadPasskey, passkeysAvailable } from './passkey';
+import { loadWebKey, makeWebKey, removeWebKey, webKeysAvailable } from './webKey';
 import { loadSettings, outputSettings, setOutputSetting } from '../settings/store';
 
 const KEY = 'app-key.pkcs8';
 const ALIAS = 'ssh-app-key';
 const COMMENT = 'md-runbook-app';
 
-/** hardware: Secure Enclave / TEE / StrongBox; keystore: the platform keystore without such hardware. */
-export type KeyStorage = 'hardware' | 'keystore' | 'secure-store' | 'browser' | 'passkey';
+/**
+ * hardware: Secure Enclave / TEE / StrongBox; keystore: the platform keystore without such hardware;
+ * browser: PKCS#8 in the browser's storage (readable there); browser-key: a WebCrypto key it won't export.
+ */
+export type KeyStorage = 'hardware' | 'keystore' | 'secure-store' | 'browser' | 'browser-key' | 'passkey';
 
 export interface AppKey {
   pair: KeyPair;
@@ -48,6 +55,11 @@ async function softwareKey(): Promise<AppKey> {
   const pair = await generateKey();
   await setSecret(KEY, await privateKeyPem(pair));
   return { pair, storage };
+}
+
+/** Web: the WebCrypto key made before in this browser, else a new one. */
+async function browserKey(): Promise<AppKey> {
+  return { pair: (await loadWebKey()) ?? (await makeWebKey()), storage: 'browser-key' };
 }
 
 async function hardwareKey(hw: NonNullable<typeof HardwareKey>): Promise<AppKey> {
@@ -87,7 +99,9 @@ export function appKeyInfo(): Promise<AppKey> {
       if (outputSettings().keyNeedsUser) return passkeyKey();
     }
     // A key from an earlier version stays: the hosts have its public key.
-    if ((await getSecret(KEY)) !== null || !HardwareKey) return softwareKey();
+    if ((await getSecret(KEY)) !== null) return softwareKey();
+    if (Platform.OS === 'web') return webKeysAvailable() ? browserKey() : softwareKey();
+    if (!HardwareKey) return softwareKey();
     try {
       return await hardwareKey(HardwareKey);
     } catch (e) {
@@ -124,7 +138,21 @@ export async function resetAppKey(): Promise<void> {
   cached = undefined;
   await deleteSecret(KEY);
   await HardwareKey?.remove(ALIAS);
+  if (webKeysAvailable()) await removeWebKey();
   if (passkeysAvailable()) await forgetPasskey();
+}
+
+/**
+ * Web: a new key the browser won't export in place of the one in its storage (an earlier
+ * version's). Hosts (authorized_keys) and servers' allowed_signers need its public key again.
+ */
+export async function replaceWithUnexportableKey(): Promise<AppKey> {
+  // Made first: if the browser refuses, the current key stays.
+  const pair = await makeWebKey();
+  cached = undefined;
+  await deleteSecret(KEY);
+  cached = Promise.resolve({ pair, storage: 'browser-key' });
+  return cached;
 }
 
 /**
@@ -140,6 +168,7 @@ export async function setKeyNeedsUser(on: boolean): Promise<AppKey> {
     setOutputSetting('keyNeedsUser', true);
     cached = undefined;
     await deleteSecret(KEY);
+    if (webKeysAvailable()) await removeWebKey();
     cached = Promise.resolve({ pair, storage: 'passkey' });
     return cached;
   }

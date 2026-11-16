@@ -5,10 +5,19 @@ import { FlatList, Linking, Platform, Pressable, StyleSheet, Text, TextInput, Vi
 import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
-import { KeyStorage, appAllowedRunnersLine, appAllowedSignersLine, appKeyInfo, appPublicKeyLine, setKeyNeedsUser } from '../ssh/appKey';
+import {
+  KeyStorage,
+  appAllowedRunnersLine,
+  appAllowedSignersLine,
+  appKeyInfo,
+  appPublicKeyLine,
+  replaceWithUnexportableKey,
+  setKeyNeedsUser,
+} from '../ssh/appKey';
 import { forgetConsent, loadConsents, useConsents } from '../reports/send';
 import { passkeysAvailable } from '../ssh/passkey';
 import { HardwareKey } from '../../modules/hardware-key';
+import { webKeysAvailable } from '../ssh/webKey';
 import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import {
   HISTORY_SIZES,
@@ -212,6 +221,20 @@ function AppKeySection() {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  const [replacing, setReplacing] = useState(false);
+  const replaceKey = async (): Promise<void> => {
+    setReplacing(false);
+    try {
+      const k = await replaceWithUnexportableKey();
+      setStorage(k.storage);
+      setLine(await appPublicKeyLine());
+      setError(undefined);
+      setCopied(false);
+      setNewKey(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{t.appKeyTitle}</Text>
@@ -277,6 +300,31 @@ function AppKeySection() {
               <Text style={styles.buttonText}>{t.keyChangeGo}</Text>
             </Pressable>
             <Pressable testID="key-change-cancel" accessibilityRole="button" onPress={() => setChanging(undefined)} style={styles.button}>
+              <Text style={styles.buttonText}>{t.cancel}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+      {/* Web, a key from an earlier version (readable in the browser's storage): replaced only when the user says so. */}
+      {storage === 'browser' && webKeysAvailable() && !replacing ? (
+        <View testID="key-replace-offer">
+          <Points items={t.browserKeyPoints} textStyle={styles.help} />
+          <Pressable testID="key-replace" accessibilityRole="button" onPress={() => setReplacing(true)} style={styles.button}>
+            <Text style={styles.buttonText}>{t.browserKeyReplace}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {replacing ? (
+        <View testID="key-replace-confirm">
+          <Text style={[styles.error, styles.strong]} role="heading">
+            {t.keyChangeTitle}
+          </Text>
+          <Points items={t.browserKeyChangePoints} textStyle={[styles.error, styles.point]} />
+          <View style={styles.chips}>
+            <Pressable testID="key-replace-go" accessibilityRole="button" onPress={() => void replaceKey()} style={styles.button}>
+              <Text style={styles.buttonText}>{t.keyChangeGo}</Text>
+            </Pressable>
+            <Pressable testID="key-replace-cancel" accessibilityRole="button" onPress={() => setReplacing(false)} style={styles.button}>
               <Text style={styles.buttonText}>{t.cancel}</Text>
             </Pressable>
           </View>
