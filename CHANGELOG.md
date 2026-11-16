@@ -14,6 +14,8 @@ Security fixes from a review of the parts that face the network.
   - VS Code checks against `mdRunbook.signing.allowedSigners`.
 - **Library server:** `ALERT_MAP` needs `ALERTS_TOKENS`, so nobody else can post alerts.
   `ALERTS_ALLOW_ANYONE=true` keeps the old behaviour, for a private network only.
+- **Library server:** an older release of a signed name is refused at any path, not only where it
+  was published. Before, `old/ops/restart.md` could bring back version 3 of `ops/restart`.
 - **Web container:** no other site can show the app in a frame (`frame-ancestors 'none'`,
   `X-Frame-Options: DENY`).
 
