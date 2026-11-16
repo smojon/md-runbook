@@ -2,10 +2,11 @@
 import { ParsedCell, ShellKind, isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
 import type { RemotePlatform } from '@md-runbook/ssh';
 import { CellOptions, parseCellOptions } from '@md-runbook/core/cellOptions';
-import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
+import { confirmationFor } from '@md-runbook/core/confirm';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { isCallLanguage } from '@md-runbook/core/call';
 import { approvalOf } from '../approvals/store';
+import { confirmRegexes } from '../settings/safety';
 
 export type Runnability =
   | { ok: true; options: CellOptions; shell: ShellKind }
@@ -52,17 +53,16 @@ export function runnability(cell: ParsedCell, runbookId?: string, platform?: Rem
   return { ok: true, options, shell };
 }
 
-const RISKY = compileConfirmPatterns(DEFAULT_CONFIRM_PATTERNS).regexes;
-
 /**
  * Whether running `source` (the cell, or the lines of a line run) asks first, by the extension's
- * default rules: a risky command (its built-in patterns) or the cell's `confirm` option. undefined
+ * rules: a risky command (Hosts & settings → Asking before a cell runs; VS Code's built-in patterns
+ * by default) or the cell's `confirm` option. undefined
  * when it runs without asking; else the risky match ('' for `confirm`). A cell's `no-confirm`
  * counts only when the user allowed it (Hosts & settings): a runbook can't switch the question off.
  */
 export function confirmationOf(source: string, info: string, allowNoConfirm: boolean): string | undefined {
   const own = parseCellOptions(info).confirm;
-  return confirmationFor(source, 'patterns', RISKY, own === false && !allowNoConfirm ? undefined : own);
+  return confirmationFor(source, 'patterns', confirmRegexes(), own === false && !allowNoConfirm ? undefined : own);
 }
 
 /** `500ms`, `30.0s`, `2m0s`: as the extension writes the wait between attempts. */

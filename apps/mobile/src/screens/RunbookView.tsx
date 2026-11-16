@@ -57,6 +57,8 @@ import { qrLink, runbookAddress } from '../runbooks/address';
 import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { SignatureState, coverage, shownName, unsignedRunnable } from '../signing/trust';
 import { factsLabel, sigLabel } from './LibrarySection';
+import { CHEAT_SHEET_URL } from '../helpLinks';
+import { lastRunContext, runContextText } from '../runbooks/runContext';
 import { textProgress } from '@md-runbook/core/textProgress';
 import { headingsOf } from '@md-runbook/core/title';
 import type { Progress, RunbookEstimate } from '@md-runbook/core';
@@ -183,8 +185,6 @@ function teardownLabel(cell: ParsedCell | undefined): string {
       .slice(0, 60) ?? '?'
   );
 }
-
-const CHEAT_SHEET_URL = 'https://github.com/smojon/md-runbook/blob/main/docs/cheatsheet.md';
 
 /** Output kept on screen while a cell runs; the output block written afterwards has its own limit. */
 const LIVE_CHARS = 20_000;
@@ -791,7 +791,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         setGateChecked({ manifest: signed.block.manifest, host: target.name, principal: outcome.result.signedBy });
       for (const c of outcome.captured) captures.current = { ...captures.current, [c.name]: c };
       if (outcome.result.newShell) setNotice(t.newShell);
-      // Run all stops at the first failure, unless the cell says continue-on-error. Checks decide
+      // Run all stops at the first failure, unless the cell says continue-on-error (or Hosts &
+      // settings → Stop Run all at a failed step is off, as VS Code's stopOnFailure). Checks decide
       // over the exit code (expect-exit=, and the ready check, which always passes).
       const passed = outcome.attrs.check === 'ok' || (outcome.attrs.exit === '0' && outcome.attrs.check !== 'failed');
       // How long it took, for its learned estimate: a whole run that passed (not a line run, not the ready check).
@@ -807,7 +808,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       )
         void recordStepRun(runbook.id, cell.meta.info, cell.value, took / 1000);
       if (queue.current && outcome.attrs.ready !== undefined) queue.current.readyUp = outcome.attrs.ready === 'up';
-      const goOn = cell && isCodeMeta(cell.meta) && parseCellOptions(cell.meta.info).continueOnError;
+      const goOn = !outputSettings().stopOnFailure || (cell && isCodeMeta(cell.meta) && parseCellOptions(cell.meta.info).continueOnError);
       if (queue.current && (outcome.result.cancelled || (!passed && !goOn))) {
         clearQueue();
         if (!outcome.result.cancelled) setNotice(t.runStopped);
@@ -1175,6 +1176,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       secretNames,
       confirmation: (source, info) => confirmationOf(source, info, outputSettings().allowNoConfirm),
       estimateSteps,
+      recordContext: outputSettings().recordContext,
     });
   };
   /**
@@ -1694,7 +1696,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ]
         : []),
       ...(proposal === 'proposed' || proposal === 'unverified'
-        ? [{ ...meta('approveProposal', 'review'), run: () => openApprove(index, false) }]
+        ? [
+            { ...meta('approveProposal', 'review'), run: () => openApprove(index, false) },
+            // As the review card's Reject, and VS Code's Reject Proposed Cell: the cell leaves the runbook.
+            { ...meta('rejectProposal', 'review'), run: () => write(rejectCell(getRunbook(runbook.id)?.text ?? runbook.text, index)) },
+          ]
         : []),
       { ...meta('runCell', 'run', why), run: () => void run({ cellIndex: index }, host) },
       {
@@ -1814,7 +1820,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const call = activeCall(runbook.id);
     if (!call) return runSequence('start');
     const cells = callCells(runbook.text, call);
-    setNotice(t.callRunning(call.runbook, runbook.fileName ?? runbook.title));
+    // Why the failed run's copy wasn't continued, first (the call's output says it too).
+    setNotice([call.note, t.callRunning(call.runbook, runbook.fileName ?? runbook.title)].filter(Boolean).join(' '));
     callRun.current = cells.length > 0 ? 'starting' : 'ended';
     if (cells.length > 0) runSequence('start', cells, { readyFirst: call.setup === true });
   };
@@ -2068,6 +2075,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             : pauseAsk !== undefined
               ? t.pausedBeforeStep(stepName(pauseAsk))
               : undefined;
+  // Where the last run was, as recorded in the output markers (Record where each step ran, or VS Code's).
+  const lastContext = useMemo(() => (runbook ? lastRunContext(runbook.text) : undefined), [runbook]);
   const stepsHeader: StepsHeader = {
     headline: waiting ? t.stepsWaiting : progress ? runHeadline(progress, runningStep) : '',
     ...(waiting ? { tone: 'waiting' as const } : failedCell !== undefined ? { tone: 'failed' as const } : {}),
@@ -2079,6 +2088,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : {}),
     actions: headActions,
     ...(notice && !wide ? { notice } : {}),
+    ...(lastContext ? { context: runContextText(lastContext) } : {}),
     onShowRuns: () => setShowRuns(true),
   };
   // Before a run only: once it runs, the run bar and the cards say what it waits for.

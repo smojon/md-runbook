@@ -14,6 +14,7 @@ import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { signedStatus } from '@md-runbook/core/signing';
 import { refsOf } from './params';
 import type { StepsRow } from './steps';
+import { lastRunContext, runContextText } from './runContext';
 
 export interface LaunchParam {
   name: string;
@@ -46,6 +47,10 @@ export interface LaunchModel {
   time?: string;
   /** The front matter's kube-context: every step checks it. */
   kubeContext?: string;
+  /** Where the last run was (recorded context: `prod-eu · deploy@web-1`), from the output markers. */
+  lastContext?: string;
+  /** Recording is on, but no run recorded a context yet. */
+  contextLater?: boolean;
   /** Something to type, set or look at: a parameter, an input, a secret not stored, a risky step. */
   needed: boolean;
 }
@@ -67,6 +72,8 @@ export interface LaunchSources {
   confirmation(source: string, info: string): string | undefined;
   /** The run's estimate steps (core textEstimateSteps). */
   estimateSteps: readonly EstimateStep[];
+  /** Hosts & settings → Record where each step ran. */
+  recordContext?: boolean;
 }
 
 const PREVIEW_LINES = 3;
@@ -153,6 +160,7 @@ export function launchModel(s: LaunchSources): LaunchModel {
     risky.push({ index: r.index, ...step, label: r.label, match: match.trim(), ...preview(c.value) });
   }
   const time = runTime(s.estimateSteps);
+  const last = lastRunContext(s.text);
   return {
     params,
     inputs,
@@ -162,6 +170,7 @@ export function launchModel(s: LaunchSources): LaunchModel {
     byHandWaits: fm?.manualSteps !== 'continue',
     ...(time ? { time } : {}),
     ...(fm?.kubeContext ? { kubeContext: fm.kubeContext } : {}),
+    ...(last ? { lastContext: runContextText(last) } : s.recordContext ? { contextLater: true } : {}),
     needed: params.length > 0 || inputs.length > 0 || secrets.some((x) => !x.stored) || risky.length > 0,
   };
 }

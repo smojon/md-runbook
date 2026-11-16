@@ -1,16 +1,20 @@
 /** The run report the app shares: the core's HTML report (as the extension and the CLI make it). */
-import { DEFAULT_PATTERNS, clearOutputBlocks, createRedactor, recordJson, renderReport } from '@md-runbook/core';
+import { outputRedactor } from '../settings/safety';
+import { clearOutputBlocks, recordJson, renderReport } from '@md-runbook/core';
 import { formatRunbookLink } from '@md-runbook/core/runbookLink';
 import { parseManifest, readSignature, signerNames } from '@md-runbook/core/signing';
 import { t } from '../i18n';
 import { Runbook, runbookNamed } from '../runbooks/store';
 
-const redactor = createRedactor(DEFAULT_PATTERNS);
-
 export function reportHtml(runbook: Runbook, now = new Date()): string {
   // A runbook call's steps come from its copy, a runbook of its own in the app (by its file name).
   const readCall = (copy: string): string | undefined => runbookNamed(copy.split('/').pop() ?? copy)?.text;
-  return renderReport(runbook.text, { generatedAt: now, fallbackTitle: runbook.title, redact: redactor.redact, readCall });
+  return renderReport(runbook.text, {
+    generatedAt: now,
+    fallbackTitle: runbook.title,
+    redact: (s: string) => outputRedactor().redact(s),
+    readCall,
+  });
 }
 
 /** The runbook's file name without `.md` (for `name.report.html`, `name.pdf`). */
@@ -20,7 +24,11 @@ export function baseName(runbook: Runbook): string {
 
 /** The run record as JSON (timeline, summary, signature), redacted as the report is. */
 export function recordJsonText(runbook: Runbook, now = new Date()): string {
-  return recordJson(runbook.text, { file: runbook.fileName ?? `${baseName(runbook)}.md`, generatedAt: now, redact: redactor.redact });
+  return recordJson(runbook.text, {
+    file: runbook.fileName ?? `${baseName(runbook)}.md`,
+    generatedAt: now,
+    redact: (s: string) => outputRedactor().redact(s),
+  });
 }
 
 /** The co-signature request: what is to be co-signed, and the link that opens it on Co-sign Runbook. */

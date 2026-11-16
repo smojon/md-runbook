@@ -1,6 +1,6 @@
-import { Link, router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Link, Stack, router } from 'expo-router';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { parse } from '@md-runbook/core';
 import { checkCore } from '../coreCheck';
 import { t } from '../i18n';
@@ -9,12 +9,16 @@ import { openRunbookLink } from '../runbooks/openLink';
 import { forgetOrigin } from '../runbooks/files';
 import { refreshLibrary, useLibrary } from '../runbooks/library';
 import { Runbook, hasUnsavedChanges, removeRunbook, useRunbooks } from '../runbooks/store';
-import { useLibraryUrlSetting } from '../settings/store';
+import { loadSettings, outputSettings, setOutputSetting, useLibraryUrlSetting } from '../settings/store';
+import { GetStarted, TourAction } from '../ui/GetStarted';
 import { setPinned, usePins } from '../runbooks/pins';
 import { themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
 import { LibrarySection } from './LibrarySection';
 import { NewRunbookSheet } from '../ui/NewRunbookSheet';
+import { ActionsSheet, AppAction } from '../ui/ActionsSheet';
+import { HomeHeaderButtons } from '../ui/HomeHeader';
+import { CHEAT_SHEET_URL } from '../helpLinks';
 
 export function RunbookList() {
   const styles = useStyles();
@@ -78,10 +82,58 @@ export function RunbookList() {
     if (r.kind === 'error') setError(r.message);
     if (r.kind === 'opened') router.push({ pathname: '/runbook/[id]', params: { id: r.runbook.id } });
   };
+  /** The start screen's ⋯ (header): its actions and the help, each also on the screen or the gear. */
+  const [menu, setMenu] = useState(false);
+  /** Get Started: by itself until skipped or done once (the settings say, once read), and from ⋯. */
+  const [tour, setTour] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void loadSettings().then(() => live && !outputSettings().tourSeen && setTour(true));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const list = useRef<FlatList<ListRow>>(null);
+  /** Asked for from ⋯ (a count, so each time): scrolled into sight, after the runbooks. */
+  const [tourAsked, setTourAsked] = useState(0);
+  useEffect(() => {
+    if (tourAsked === 0) return;
+    const timer = setTimeout(() => list.current?.scrollToEnd({ animated: true }), 50);
+    return () => clearTimeout(timer);
+  }, [tourAsked]);
+  const closeTour = (): void => {
+    setTour(false);
+    setOutputSetting('tourSeen', true);
+  };
+  const tourAction = (a: TourAction): void => {
+    if (a === 'sample') router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } });
+    else router.push('/hosts');
+  };
+  const action = (id: keyof typeof t.actions, group: AppAction['group'], run: () => void): AppAction => ({
+    id,
+    title: t.actions[id][0],
+    hint: t.actions[id][1],
+    group,
+    run,
+  });
+  const homeActions: AppAction[] = [
+    action('openFile', 'open', () => void open()),
+    action('scanCode', 'open', () => router.push('/scan')),
+    action('openLink', 'open', () => setLink('')),
+    action('newRunbook', 'edit', () => setCreating(true)),
+    action('getStarted', 'help', () => {
+      setTour(true);
+      setTourAsked((n) => n + 1);
+    }),
+    action('sample', 'help', () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } })),
+    action('cheatSheet', 'help', () => void Linking.openURL(CHEAT_SHEET_URL)),
+    action('hosts', 'help', () => router.push('/hosts')),
+  ];
   // The list is the screen's root, with automatic insets: on iOS the header is translucent and
   // content placed above the list would sit under it (and taps there would hit the header).
   return (
     <FlatList
+      ref={list}
       style={styles.screen}
       contentContainerStyle={styles.content}
       contentInsetAdjustmentBehavior="automatic"
@@ -91,6 +143,8 @@ export function RunbookList() {
       onRefresh={onRefresh}
       ListHeaderComponent={
         <View style={styles.header}>
+          <Stack.Screen options={{ headerRight: () => <HomeHeaderButtons onMore={() => setMenu(true)} /> }} />
+          <ActionsSheet actions={homeActions} visible={menu} onClose={() => setMenu(false)} />
           <View style={styles.actions}>
             <Pressable testID="open-runbook" accessibilityRole="button" onPress={() => void open()} style={[styles.action, styles.primary]}>
               <Codicon name="folder-opened" size={22} color={colors.onAccent} />
@@ -168,6 +222,7 @@ export function RunbookList() {
       }
       ListFooterComponent={
         <>
+          {tour ? <GetStarted onAction={tourAction} onClose={closeTour} /> : null}
           <LibrarySection />
           {core.ok ? null : (
             <Text testID="core-error" role="alert" style={[styles.status, { color: colors.error }]}>

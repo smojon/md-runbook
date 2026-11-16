@@ -195,6 +195,35 @@ Security fixes from a review of the parts that face the network.
   - New web keys are WebCrypto keys the browser won't export.
   - An earlier key stays; Hosts & settings offers to replace it.
   - The page runs only its own scripts, never inside another site's frame.
+
+- **App: the safety settings of VS Code.** Hosts & settings has them, with VS Code's defaults.
+  - Risky commands lists the patterns that ask before a cell runs. Add or remove them one by one.
+  - Hiding secrets in output adds your patterns to the built-in ones, also for live output.
+  - Stop a cell after sets the timeout of cells without `timeout=`. The default is none, no
+    longer 10 minutes.
+  - Stop Run all at a failed step is on by default. Off, Run all goes on to the next step.
+- **App: every action in sight.**
+  - Each row of the Steps view has a ⋯ button for its actions; a long press still works.
+  - The start screen has a ⋯ sheet with its actions, the sample, the cheat sheet and settings.
+  - A cell with several commands says that a tap on a line shows its actions, until you tap one.
+  - A proposal's ⋯ has **Reject Proposed Cell**, as in VS Code.
+- **App: runbook calls get the checks of VS Code.**
+  - A failed call continues its copy only if that copy is still the runbook called. A signed
+    runbook also needs the same name and version.
+  - Another copy is not continued: a fresh one runs, and the call's output and the copy's screen
+    say why.
+  - A value in `src=` with a slash, a backslash or a colon is refused before anything runs.
+- **App: Record where each step ran** (Hosts & settings → Running cells), off by default.
+  - Each output marker gets the host's Kubernetes context as `context=`, and the account as `on=`.
+  - The context comes from a step's own `kube-context` check when it has one.
+  - The launch form and the Steps header show the newest run's context, also one VS Code
+    recorded.
+- **App: Get Started.** A short tour on the start screen covers the sample, a first run, a host,
+  the team library and help.
+  - It shows once on the first start, with Skip on every card.
+  - The start screen's ⋯ → **Get Started** shows it again.
+
+
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.
   An unsigned runbook gets a **Sign Runbook** button first.

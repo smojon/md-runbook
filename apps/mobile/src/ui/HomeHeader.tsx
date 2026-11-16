@@ -1,6 +1,6 @@
 /**
- * The start screen's header: the app's icon with its name, and Hosts & settings as the gear at
- * the right, where phones keep settings.
+ * The start screen's header: the app's icon with its name; at the right ⋯ (the start screen's
+ * actions and help) and Hosts & settings as the gear, where phones keep settings.
  */
 import { Link } from 'expo-router';
 import { Image, Pressable, Text, View } from 'react-native';
@@ -39,7 +39,38 @@ export function HostsButton() {
   );
 }
 
+/** The start screen's ⋯: every action of the start screen and the help, in one sheet. */
+export function HomeMoreButton({ onPress }: { onPress(): void }) {
+  const styles = useStyles();
+  const colors = usePalette();
+  return (
+    <Pressable
+      testID="home-more"
+      accessibilityRole="button"
+      aria-label={t.homeActions}
+      accessibilityLabel={t.homeActions}
+      hitSlop={8}
+      onPress={onPress}
+      style={styles.button}
+    >
+      <Codicon name="ellipsis" size={20} color={colors.text} />
+    </Pressable>
+  );
+}
+
+/** The start screen's buttons at the right of its header: ⋯ and the gear. */
+export function HomeHeaderButtons({ onMore }: { onMore(): void }) {
+  const styles = useStyles();
+  return (
+    <View style={styles.buttons}>
+      <HomeMoreButton onPress={onMore} />
+      <HostsButton />
+    </View>
+  );
+}
+
 const useStyles = themedStyles((colors) => ({
+  buttons: { flexDirection: 'row', alignItems: 'center' },
   title: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   icon: { width: 28, height: 28, borderRadius: 7 },
   name: { fontSize: 18, fontWeight: '600', color: colors.text },

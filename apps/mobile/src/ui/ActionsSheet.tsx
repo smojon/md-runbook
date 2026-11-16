@@ -21,9 +21,9 @@ export interface AppAction {
   disabled?: string;
 }
 
-export type ActionGroup = 'review' | 'run' | 'steps' | 'edit' | 'values' | 'assistant' | 'share' | 'help';
-// Review first: a proposed cell's gate comes before running it.
-const GROUPS: readonly ActionGroup[] = ['review', 'run', 'steps', 'edit', 'values', 'assistant', 'share', 'help'];
+export type ActionGroup = 'open' | 'review' | 'run' | 'steps' | 'edit' | 'values' | 'assistant' | 'share' | 'help';
+// Open first (the start screen's), then review: a proposed cell's gate comes before running it.
+const GROUPS: readonly ActionGroup[] = ['open', 'review', 'run', 'steps', 'edit', 'values', 'assistant', 'share', 'help'];
 
 /** Actions whose title, hint or group contain every word of `query`, case-insensitively. */
 export function matchActions(actions: readonly AppAction[], query: string): AppAction[] {

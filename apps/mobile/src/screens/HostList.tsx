@@ -58,6 +58,7 @@ import { LibrarySettings } from './LibrarySettings';
 import { LibraryPublishSettings } from './LibraryPublishSettings';
 import { AlertPushSettings } from './AlertPushSettings';
 import { TrustedSignersSection } from './TrustedSigners';
+import { ConfirmPatternsSetting, RedactionSection, RunningSection } from './RunSettings';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
 export function HostList() {
@@ -132,12 +133,14 @@ export function HostList() {
           <ReportsSection />
           <SecretsSection />
           <HistorySection />
+          <RedactionSection />
           <ColorSection />
           <LinksSection />
           <LibrarySettings />
           <LibraryPublishSettings />
           <AlertPushSettings />
           <SafetySection />
+          <RunningSection />
           <NotificationsSection />
           {Platform.OS === 'web' ? <PublicAddressSection /> : null}
           {Platform.OS === 'web' ? <RelaySection /> : null}
@@ -587,8 +590,8 @@ function LinksSection() {
 }
 
 /**
- * Confirmation of risky cells: whether a runbook's `no-confirm` counts (the extension's
- * allowNoConfirmOption); and whether Run all opens the launch form first.
+ * Confirmation of risky cells: which commands are risky (the extension's confirmPatterns), whether
+ * a runbook's `no-confirm` counts (allowNoConfirmOption); and whether Run all opens the launch form first.
  */
 function SafetySection() {
   const styles = useStyles();
@@ -596,6 +599,7 @@ function SafetySection() {
   return (
     <View testID="safety-settings" style={styles.section}>
       <Text style={styles.sectionTitle}>{t.safetyTitle}</Text>
+      <ConfirmPatternsSetting />
       <View style={styles.switchRow}>
         <View style={styles.switchText}>
           <Text style={styles.switchLabel}>{t.allowNoConfirm}</Text>

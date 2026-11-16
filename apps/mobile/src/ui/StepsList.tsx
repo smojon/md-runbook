@@ -3,8 +3,8 @@
  * each step with its state as a symbol and a colour (✓ done, ✕ failed, ▶ running, a pause icon
  * waiting for you, ○ to do), its number, its name, its time, what it will need, and for a failed
  * step the last line of its error; a chapter with one step is that step's row, named by the
- * heading, with the step's own name below. A tap on a row goes to its cell; a long press opens the
- * step's actions (Run, Run from Here, Mark Done…); a checklist item has a tick box. The row the
+ * heading, with the step's own name below. A tap on a row goes to its cell; its ⋯ (or a long
+ * press) opens the step's actions (Run, Run from Here, Mark Done…); a checklist item has a tick box. The row the
  * run waits at shows the question's answers as buttons (Done / Skip / Stop, …). The rows of the
  * cells on screen are shaded; the list keeps the running (or waiting) step in view.
  */
@@ -210,6 +210,19 @@ export function StepsList({
                   </View>
                 ) : null}
               </Pressable>
+              {actions ? (
+                // The step's actions in sight (a long press on the row opens them too).
+                <Pressable
+                  testID={`steps-actions-${r.key}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={t.stepsActionsFor(r.detail ?? r.label)}
+                  onPress={actions}
+                  hitSlop={6}
+                  style={({ pressed }) => [styles.moreTarget, pressed && styles.pressed]}
+                >
+                  <Codicon name="ellipsis" size={16} color={c.link} />
+                </Pressable>
+              ) : null}
               {checklist && onTick ? (
                 <Pressable
                   testID={`steps-tick-${r.key}`}
@@ -296,6 +309,8 @@ const useStyles = themedStyles((c) => ({
   bar: { marginTop: 6, marginLeft: 60 },
   needs: { marginTop: 2, marginLeft: 60, fontSize: 13, color: c.warningText },
   error: { marginTop: 2, marginLeft: 60, fontSize: 13, color: c.error },
+  // A 44 px target around the step's ⋯.
+  moreTarget: { width: 40, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 6 },
   // A 44 px target around a box drawn smaller.
   tickTarget: { width: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   tick: {
