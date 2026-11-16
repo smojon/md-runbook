@@ -1,5 +1,9 @@
 # Spike: runbook cells over SSH on iOS, Android and the web
 
+> The spike's code and CI were removed on 2026-11-16: the app (apps/mobile, packages/ssh) took
+> over, and the old dependencies had advisories. This report stays; the code is in git history
+> (`git show 2dc819e:spikes/ssh/`).
+
 **Question:** can one TypeScript code base run runbook cells on a remote host over SSH from a
 phone app (iOS, Android) and a web app, using a pure-TypeScript SSH client
 ([`@microsoft/dev-tunnels-ssh`](https://github.com/microsoft/dev-tunnels-ssh)) in an Expo
