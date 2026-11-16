@@ -52,6 +52,12 @@ describe('ops host', { skip: !spec && 'set MD_RUNBOOK_OPS_TEST to run' }, () => 
     assert.deepEqual(shell.gate, { protocol: 3, unsigned: 'allow' });
   });
 
+  it("the account's login shell is /bin/sh, which reads no file of the account before the gate (security review round 3)", async () => {
+    // With bash, sshd's `bash -c` ran ~/.bashrc, a file the account can write, before every session.
+    const r = await sh('getent passwd "$(id -un)" | cut -d: -f7; grep -x "PermitUserRC no" /etc/ssh/md-runbook-ops.conf');
+    assert.deepEqual([r.code, r.out], [0, '/bin/sh\nPermitUserRC no\n'], r.err);
+  });
+
   it('kube-context: the gate names the context, and the guard lets only that one through', async () => {
     let out = '';
     const r = await shell.kubeContext({ onStdout: (t) => (out += t) });

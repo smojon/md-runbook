@@ -44,6 +44,10 @@ Every block runs as the account `ops`, which can read the host key and the kubec
   The gate's README says what a gate's word needs: [Trust](../gate/README.md#trust).
 - `gate.conf` here has `sshd_force_command = yes`: sshd runs the gate for every login, so the key
   lines need no `command=`.
+  - The gate takes it only from a `gate.conf` that `ops` can't change. A read-only mount is fine.
+  - `sshd_config` turns off forwarding, the terminal and `~/.ssh/rc` (`PermitUserRC no`).
+- **The login shell of `ops` is `/bin/sh`.** With bash, sshd ran `~/.bashrc`, a file `ops` can
+  write, before the gate. Blocks still run in bash.
 
 ## In a cluster
 

@@ -20,13 +20,15 @@ RUN apt-get update \
 FROM debian:13.1-slim
 # openssh-client: ssh-keygen -Y, which checks signatures in the gate. procps: pkill (cancel).
 # For runbooks: curl, jq, and what md-runbook-probe uses (openssl, ping, dig).
+# The account's login shell is /bin/sh (dash): sshd starts the gate with it, and bash would run
+# ~/.bashrc, a file the account can write, before the gate. Blocks still run in bash.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       openssh-server openssh-client bash procps tini ca-certificates curl jq \
       openssl iputils-ping bind9-dnsutils netcat-openbsd \
  && rm -rf /var/lib/apt/lists/* \
  && rm -f /etc/ssh/ssh_host_* \
- && useradd --uid 10001 --user-group --create-home --shell /bin/bash ops \
+ && useradd --uid 10001 --user-group --create-home --shell /bin/sh ops \
  && install -d -m 755 /etc/md-runbook /etc/md-runbook-ops \
  && install -d -o ops -g ops -m 700 /run/md-runbook-ops /var/lib/md-runbook-ops /var/log/md-runbook
 COPY --from=kubectl /kubectl /usr/local/bin/kubectl

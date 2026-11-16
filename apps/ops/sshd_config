@@ -16,11 +16,14 @@ StrictModes no
 
 # Whatever the client asks for, the gate answers: signed runbooks, and unsigned cells only where
 # /etc/md-runbook/gate.conf allows them. No forwarding, no terminal, no environment from the client.
-# --sshd-force-command: so the gate knows every login runs it, whatever the key lines say.
+# --sshd-force-command: every login runs the gate, whatever the key lines say. The gate takes it
+# only with sshd_force_command = yes in a gate.conf the account can't change.
 ForceCommand /usr/local/bin/md-runbook-gate --sshd-force-command
 DisableForwarding yes
 PermitTTY no
 PermitUserEnvironment no
+# ~/.ssh/rc would run before the gate: the account can write it.
+PermitUserRC no
 # The gate logs each key's fingerprint.
 ExposeAuthInfo yes
 
