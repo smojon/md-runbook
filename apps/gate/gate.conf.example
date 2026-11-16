@@ -53,6 +53,25 @@ locale = auto
 # through. If new ones keep coming for 5 seconds, the log says "sweep incomplete".
 # kill_leftovers = no
 
+# Each shell runs in a scope of its own: when it ends, everything in it ends too, a setsid or
+# double-forked program as well.
+#   auto:  scope where it works, else bwrap, else none.
+#   scope: a systemd scope of the account's user manager (pam_systemd, or loginctl
+#          enable-linger). Needs cgroup v2 and Linux 5.14 or newer.
+#   bwrap: a PID namespace of its own. Blocks can't use sudo or setuid programs there.
+#   none:  the shell's process group only; kill_leftovers ends the rest.
+# scope and bwrap are required when named: without them the gate doesn't start.
+# isolation = auto
+
+# Separated mode: the blocks run as this second, unprivileged account, not the gate's. Then they
+# can't read the report token or the log. It needs exactly this sudoers line, and no other rule
+# for the gate's account (here support):
+#   support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells
+# At the start of each session the gate checks the line, and that the account can't read the
+# token or the log. If a check fails, it refuses to start and says why. Run reports say
+# gate_mode "separated". Leave it out for shared mode (the default).
+# cells_account = mdrb-cells
+
 # allow_no_group_kill (yes or no) is obsolete: the gate gives each shell a process group of its
 # own. A gate.conf with it still works; each session logs a notice.
 
