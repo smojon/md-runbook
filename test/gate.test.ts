@@ -215,6 +215,27 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     await g.close();
   });
 
+  it('refuses a signed manifest it would read otherwise than core does (security review, 2026-11-16)', async () => {
+    const g = start();
+    await g.hello();
+    const manifest = formatManifest(manifestOf(RUNBOOK, { patterns: PATTERNS }));
+    assert.match(manifest, /^version 1$/m);
+    const load = async (m: string) => g.request('load', toBase64(m), await sshSign(m, key));
+    const twice = await load(manifest.replace(/^version 1$/m, 'version 1\nversion 9'));
+    assert.equal(twice.code, 126);
+    assert.match(twice.err, /more than one version line/);
+    const word = await load(manifest.replace(/^version 1$/m, 'version one'));
+    assert.equal(word.code, 126);
+    assert.match(word.err, /version is not a whole number/);
+    const expires = await load(manifest.replace(/^version 1$/m, 'version 1\nexpires soon'));
+    assert.equal(expires.code, 126);
+    assert.match(expires.err, /expires is not a date/);
+    // Each refusal leaves the session usable: the real manifest still loads.
+    const good = await load(manifest);
+    assert.equal(good.code, 0, good.err);
+    await g.close();
+  });
+
   it('called: the next load is logged as loaded by that call of that runbook; a bad request is refused', async () => {
     const g = start();
     await g.hello();

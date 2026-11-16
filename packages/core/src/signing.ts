@@ -417,6 +417,7 @@ export function parseManifest(text: string): Manifest {
     return cell;
   };
   let ended = false;
+  const once = new Set<string>();
   for (const line of lines.slice(1)) {
     if (ended) {
       if (line !== '') throw new Error('manifest: text after end');
@@ -425,6 +426,11 @@ export function parseManifest(text: string): Manifest {
     if (line === '') continue;
     const [key, a, b, ...more] = line.split(' ');
     if (more.length > 0 && key !== 'scope') throw new Error(`manifest: bad line "${line.slice(0, 40)}"`);
+    // Once each: md-runbook-gate reads the first of these, so a second would mean two things.
+    if (key === 'name' || key === 'version' || key === 'expires' || key === 'scope') {
+      if (once.has(key)) throw new Error(`manifest: more than one ${key} line`);
+      once.add(key);
+    }
     switch (key) {
       case 'name':
         m.name = a ?? '';
@@ -433,6 +439,7 @@ export function parseManifest(text: string): Manifest {
         m.version = Number(a);
         break;
       case 'expires':
+        if (!a || !isDate(a)) throw new Error('manifest: bad expires (expected YYYY-MM-DD)');
         m.expires = a;
         break;
       case 'scope':

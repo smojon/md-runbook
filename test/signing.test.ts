@@ -160,6 +160,11 @@ describe('signing: the manifest', () => {
     assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nversion 1\n'), /no end/);
     assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nversion 1\ncode !!\nend\n'), /bad code|outside a cell/);
     assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nversion 1\nwhat 1\nend\n'), /unknown item/);
+    // md-runbook-gate reads the first of these: a second one is refused, not taken (security review, 2026-11-16).
+    assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nversion 1\nversion 9\nend\n'), /more than one version line/);
+    assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nname y\nversion 1\nend\n'), /more than one name line/);
+    assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nversion 1\nexpires soon\nend\n'), /bad expires/);
+    assert.equal(parseManifest('md-runbook-manifest 1\nname x\nversion 1\nexpires 2027-01-31\nend\n').expires, '2027-01-31');
   });
 });
 

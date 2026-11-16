@@ -7,8 +7,8 @@ Security fixes from a review of the parts that face the network.
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each
   address, and also refuses multicast, reserved and NAT64 addresses.
-- **Links (app and VS Code):** a runbook from a link shows as signed, and passes **Open only
-  signed runbooks from links**, only when its signature verifies against a key you trust.
+- **Links (app and VS Code):** a runbook from a link counts as signed only when its signature
+  verifies against a key you trust. That holds for **Open only signed runbooks from links** too.
   - Before, any well-formed signature block was enough.
   - For a whole-runbook signature, changed text around the blocks also counts as unsigned now.
   - VS Code checks against `mdRunbook.signing.allowedSigners`.
@@ -16,6 +16,9 @@ Security fixes from a review of the parts that face the network.
   `ALERTS_ALLOW_ANYONE=true` keeps the old behaviour, for a private network only.
 - **Library server:** an older release of a signed name is refused at any path, not only where it
   was published. Before, `old/ops/restart.md` could bring back version 3 of `ops/restart`.
+- **Gate and signing:** a manifest with a second `name`, `version`, `expires` or `scope` line
+  is refused, and so are a version that isn't a whole number and an `expires` that isn't a date.
+  Before, the gate read the first line and the rest of md-runbook the last.
 - **Web container:** no other site can show the app in a frame (`frame-ancestors 'none'`,
   `X-Frame-Options: DENY`).
 
