@@ -157,13 +157,18 @@ jobs:
             exit 1
           fi
       # npm publish runs the package's prepublishOnly, prepack, prepare, postpack, publish and
-      # postpublish scripts (docs.npmjs.com/cli/v11/using-npm/scripts) next to the id-token.
-      # scripts/pack-cli.js writes no `scripts`, so one there is a change to look at.
-      - name: The package has no scripts
+      # postpublish scripts (docs.npmjs.com/cli/v11/using-npm/scripts) next to the id-token, and
+      # reads publishConfig (another registry, tag or access). So package.json has exactly the keys
+      # scripts/pack-cli.js writes (keep the two in step), with this tag's version and our bin.
+      - name: The package has what scripts/pack-cli.js writes, nothing more
         working-directory: ${{ runner.temp }}/release
         run: |
-          if jq -e 'has("scripts")' out/npm/package.json > /dev/null; then
-            echo "::error::out/npm/package.json has a scripts field: npm publish would run its hooks"
+          want='["author","bin","bugs","description","engines","files","homepage","keywords","license","name","repository","version"]'
+          if ! jq -e --argjson want "$want" --arg version "${GITHUB_REF_NAME#v}" '
+              (keys == $want) and .name == "md-runbook" and .version == $version
+              and .bin == {"md-runbook": "cli.js"} and .files == ["cli.js", "README.md", "LICENSE"]' \
+              out/npm/package.json > /dev/null; then
+            echo "::error::out/npm/package.json is not what scripts/pack-cli.js writes: keys $(jq -c keys out/npm/package.json)"
             exit 1
           fi
       # Trusted publishing (PUBLISHING.md, npm): npm trades this run's GitHub OIDC token for a

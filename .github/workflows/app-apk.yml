@@ -59,8 +59,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
-          # A tag builds from the lock file alone, without the npm cache that other runs write.
-          cache: ${{ github.ref_type != 'tag' && 'npm' || '' }}
+          # Whenever the sign job runs (tags and main), the build uses the lock file alone, without
+          # the npm cache that other runs write.
+          cache: ${{ (github.ref_type != 'tag' && github.ref != 'refs/heads/main') && 'npm' || '' }}
           cache-dependency-path: apps/mobile/package-lock.json
           package-manager-cache: false
       # The Gradle cache is off whenever the sign job runs (tags and main): a signed APK is built
