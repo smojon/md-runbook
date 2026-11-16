@@ -35,13 +35,13 @@ import { NOTEBOOK_TYPE } from './serializer';
 const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
 const encoder = new TextEncoder();
 
-function targetUri(uri: unknown): vscode.Uri | undefined {
+export function targetUri(uri: unknown): vscode.Uri | undefined {
   if (uri instanceof vscode.Uri) return uri;
   return vscode.window.activeNotebookEditor?.notebook.uri ?? vscode.window.activeTextEditor?.document.uri;
 }
 
 /** Save the runbook if it is open with changes: what gets signed is the file. */
-async function saveIfOpen(uri: vscode.Uri): Promise<void> {
+export async function saveIfOpen(uri: vscode.Uri): Promise<void> {
   const nb = vscode.workspace.notebookDocuments.find((d) => d.notebookType === NOTEBOOK_TYPE && d.uri.toString() === uri.toString());
   if (nb?.isDirty) await nb.save();
   const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());

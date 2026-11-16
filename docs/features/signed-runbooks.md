@@ -322,7 +322,8 @@ say).
 Support engineers run the signed runbooks against the cluster without ever holding its
 credentials.
 
-**A team library** of signed runbooks: `md-runbook publish FILE --library URL`. The
+**A team library** of signed runbooks: `md-runbook publish FILE --library URL`, or **Publish to
+Library…** in VS Code (Share ▾). The
 [library server](../../apps/library-server/README.md) publishes a runbook into the folder the web
 app serves only when it is:
 
@@ -572,6 +573,28 @@ Certificate authorities (`cert-authority` lines) are not used. Key validity (`va
 
 This check tells the user what they are opening; the gate on the server is still what decides
 what runs.
+
+### In VS Code
+
+The **Library** view (Runbook activity bar) shows the library at `mdRunbook.library.url`, by
+folder. Each row says what its signature is worth:
+
+- checked with `ssh-keygen -Y verify` against `mdRunbook.signing.allowedSigners`;
+- verified only when signed as a whole, unchanged, not expired, under a name that fits its path;
+- a version older than one seen before is flagged, as in the app.
+
+Opening a row makes your own copy, as a link does. A `signedOnly` library opens verified
+runbooks only.
+
+**Trusted Signers…** (Share ▾, the view's ⋯) edits that allowed_signers file:
+
+- lists each signer with its key fingerprint, and the lines it can't use;
+- adds an allowed_signers line or a public key, pasted or from a file;
+- adds the library's own `allowed_signers`, after its fingerprints and a warning;
+- removes one, after a confirm.
+
+Lines it adds get `namespaces="md-runbook"`. With no file set, it offers to make one. **Publish to Library…** and **Remove from Library…** (Share ▾) talk to the
+library server.
 
 ## Limits
 

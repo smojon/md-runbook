@@ -107,6 +107,11 @@
           "id": "mdRunbook.steps",
           "name": "Steps",
           "icon": "$(checklist)"
+        },
+        {
+          "id": "mdRunbook.library",
+          "name": "Library",
+          "icon": "$(library)"
         }
       ]
     },
@@ -518,6 +523,48 @@
         "icon": "$(verified)"
       },
       {
+        "command": "mdRunbook.trustedSigners",
+        "title": "Trusted Signers…",
+        "category": "md-runbook",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "mdRunbook.library.publish",
+        "title": "Publish to Library…",
+        "category": "md-runbook",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "mdRunbook.library.remove",
+        "title": "Remove from Library…",
+        "category": "md-runbook",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "mdRunbook.library.uploadToken",
+        "title": "Library Upload Token…",
+        "category": "md-runbook",
+        "icon": "$(key)"
+      },
+      {
+        "command": "mdRunbook.library.refresh",
+        "title": "Refresh Library",
+        "category": "md-runbook",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "mdRunbook.library.open",
+        "title": "Open from Library…",
+        "category": "md-runbook",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "mdRunbook.library.setUrl",
+        "title": "Set Library Address…",
+        "category": "md-runbook",
+        "icon": "$(link)"
+      },
+      {
         "command": "mdRunbook.openInApp",
         "title": "Open in the App",
         "category": "md-runbook",
@@ -703,6 +750,41 @@
           "command": "mdRunbook.revealNextStep",
           "when": "view == mdRunbook.steps",
           "group": "2_go@1"
+        },
+        {
+          "command": "mdRunbook.library.refresh",
+          "when": "view == mdRunbook.library && config.mdRunbook.library.url",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mdRunbook.library.open",
+          "when": "view == mdRunbook.library && config.mdRunbook.library.url",
+          "group": "1_open@1"
+        },
+        {
+          "command": "mdRunbook.library.publish",
+          "when": "view == mdRunbook.library",
+          "group": "2_publish@1"
+        },
+        {
+          "command": "mdRunbook.library.remove",
+          "when": "view == mdRunbook.library",
+          "group": "2_publish@2"
+        },
+        {
+          "command": "mdRunbook.library.uploadToken",
+          "when": "view == mdRunbook.library",
+          "group": "2_publish@3"
+        },
+        {
+          "command": "mdRunbook.library.setUrl",
+          "when": "view == mdRunbook.library",
+          "group": "4_setup@1"
+        },
+        {
+          "command": "mdRunbook.trustedSigners",
+          "when": "view == mdRunbook.library",
+          "group": "3_trust@1"
         }
       ],
       "explorer/context": [
@@ -850,6 +932,10 @@
         },
         {
           "command": "mdRunbook.requestCosign",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.library.publish",
           "when": "notebookType == md-runbook || resourceExtname == .md"
         },
         {
@@ -1459,12 +1545,28 @@
           "group": "2_sign@4"
         },
         {
+          "command": "mdRunbook.trustedSigners",
+          "group": "2_sign@5"
+        },
+        {
           "command": "mdRunbook.openInApp",
           "group": "3_app@1"
         },
         {
           "command": "mdRunbook.makeQrCode",
           "group": "3_app@2"
+        },
+        {
+          "command": "mdRunbook.library.publish",
+          "group": "4_library@1"
+        },
+        {
+          "command": "mdRunbook.library.remove",
+          "group": "4_library@2"
+        },
+        {
+          "command": "mdRunbook.library.uploadToken",
+          "group": "4_library@3"
         }
       ],
       "mdRunbook.toolbar.help": [
@@ -1514,6 +1616,23 @@
           "command": "mdRunbook.cancelNotify",
           "when": "webviewId == 'mdRunbook.steps' && webviewSection == 'step' && mdRunbookNotify",
           "group": "2_marks@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "mdRunbook.library.open",
+          "when": "view == mdRunbook.library && viewItem == libraryRunbook",
+          "group": "inline@1"
+        },
+        {
+          "command": "mdRunbook.library.open",
+          "when": "view == mdRunbook.library && viewItem == libraryRunbook",
+          "group": "1_open@1"
+        },
+        {
+          "command": "mdRunbook.library.remove",
+          "when": "view == mdRunbook.library && viewItem == libraryRunbook",
+          "group": "2_remove@1"
         }
       ]
     },
@@ -2278,7 +2397,27 @@
             "type": "string",
             "default": "",
             "scope": "machine",
-            "markdownDescription": "The signers you trust, as an OpenSSH `allowed_signers` file (the one your servers' md-runbook-gate uses). A runbook signed by one of them, and unchanged since signing, can require that its runs are reported (`report-runs-required`, `report-runs-signed`). Empty = no runbook can require it: you are asked instead. Checked with `ssh-keygen -Y verify`. User settings only.",
+            "markdownDescription": "The signers you trust, as an OpenSSH `allowed_signers` file (the one your servers' md-runbook-gate uses). A runbook signed by one of them, and unchanged since signing, can require that its runs are reported (`report-runs-required`, `report-runs-signed`). Empty = no runbook can require it: you are asked instead. The **Library** view shows runbooks signed by them as verified. **md-runbook: Trusted Signers…** lists, adds and removes them (and makes the file when none is set). Checked with `ssh-keygen -Y verify`. User settings only.",
+            "order": 2
+          }
+        }
+      },
+      {
+        "title": "Team library",
+        "order": 12,
+        "properties": {
+          "mdRunbook.library.url": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "markdownDescription": "The team library the **Library** view shows (Runbook activity bar): the https address of its folder, e.g. `https://runbooks.example.net/runbooks/`. Its `index.json`, else the server's JSON listing, names the runbooks. Signatures are checked against `#mdRunbook.signing.allowedSigners#`. User settings only.",
+            "order": 1
+          },
+          "mdRunbook.library.server": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "markdownDescription": "The library server for **Publish to Library…** and **Remove from Library…** (`apps/library-server`), e.g. `https://runbooks.example.net`. https only. Empty = the address of `#mdRunbook.library.url#` without its path (the web container serves both), else asked the first time. Its upload token is kept in VS Code's secret storage (**Library Upload Token…**), never in settings. User settings only.",
             "order": 2
           }
         }
@@ -2562,6 +2701,13 @@
         "id": "mdRunbook.toolbar.help",
         "label": "Help",
         "icon": "$(question)"
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "mdRunbook.library",
+        "contents": "Your team's signed runbooks, from a team library.\n[Set Library Address…](command:mdRunbook.library.setUrl)\nThe https address of its folder, e.g. https://runbooks.example.net/runbooks/. [More](https://github.com/smojon/md-runbook/blob/main/docs/app.md#team-runbooks)",
+        "when": "!config.mdRunbook.library.url"
       }
     ]
   },

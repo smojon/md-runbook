@@ -8,6 +8,16 @@
 - **App: Copy Line with Values.** A line's actions copy its command with parameters, inputs and captured values filled in. Secrets stay references.
 - **App: Pause Before This Step, Notify Me When It Starts.** A step's ⋯ (cell or Steps row) sets either, for this session. Run all asks Continue or Stop there.
 - **App: the launch form.** Run all first shows one sheet: parameters, inputs, secrets to set, risky steps, steps by hand, time and host. Start asks for no value again; risky steps still ask. Hosts & Settings turns it off; ⋯ More → **Run All…** always opens it.
+- **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
+  the team library server, or take one out. The upload token stays in VS Code's secret storage.
+  An unsigned runbook gets a **Sign Runbook** button first.
+- **VS Code: the Library view** (Runbook activity bar) lists your team library by folder, as the
+  app's Team runbooks do. Each row says whether its signature is verified against your trusted
+  signers. Opening one makes your own copy.
+- **VS Code: Trusted Signers…** (Share ▾) lists, adds and removes the signers in your
+  allowed_signers file. It adds a pasted line, a public key, or the team library's signers.
+- **Command line: `md-runbook unpublish PATH --library URL`** removes a runbook from a team
+  library, where its server allows deleting.
 
 ## 0.26.8
 
