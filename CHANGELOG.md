@@ -133,6 +133,12 @@ Security fixes from a review of the parts that face the network.
   - New web keys are WebCrypto keys the browser won't export.
   - An earlier key stays; Hosts & settings offers to replace it.
   - The page runs only its own scripts, never inside another site's frame.
+- **App: the safety settings of VS Code.** Hosts & settings has them, with VS Code's defaults.
+  - Risky commands lists the patterns that ask before a cell runs. Add or remove them one by one.
+  - Hiding secrets in output adds your patterns to the built-in ones, also for live output.
+  - Stop a cell after sets the timeout of cells without `timeout=`. The default is none, no
+    longer 10 minutes.
+  - Stop Run all at a failed step is on by default. Off, Run all goes on to the next step.
 
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.

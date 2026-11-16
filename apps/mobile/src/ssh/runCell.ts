@@ -7,10 +7,8 @@ import { sha256Hex } from '@md-runbook/core/sha256';
 import { activeCall } from '../runbooks/calls';
 import { getRunbook } from '../runbooks/store';
 import {
-  DEFAULT_PATTERNS,
   REDACTED,
   DEFAULT_WRITE_OPTIONS,
-  createRedactor,
   exitLabel,
   formatDurationAttr,
   formatLocalIso,
@@ -37,14 +35,12 @@ import { Host, hostLabel, setHostPlatform } from '../hosts/store';
 import { checkParam, refsOf, runbookParams } from '../runbooks/params';
 import { readSecret } from '../secrets/store';
 import { historySize, outputSettings, signerName } from '../settings/store';
+import { cellTimeoutSeconds, outputRedactor } from '../settings/safety';
 import { historySizeFor, runnerAttrs } from '@md-runbook/core/incident';
 import { t } from '../i18n';
 import { formatWait, runnability } from './cells';
 import { Connection, connectionFor } from './connections';
 import type { LinePlan } from './lineRuns';
-
-/** A cell without `timeout=` is stopped after this long. */
-export const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 export type RunOutcome =
   /** The cell ran (or failed): `text` is the runbook with the new output block. */
@@ -105,8 +101,6 @@ export interface RunCellParams {
   /** Tests: a connection instead of the host's real one. */
   connection?: Connection;
 }
-
-const redactor = createRedactor(DEFAULT_PATTERNS);
 
 /** Resolves true after `ms`, false at once when the signal aborts (Stop between two attempts). */
 function wait(ms: number, signal: AbortSignal | undefined): Promise<boolean> {
@@ -247,6 +241,8 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   };
   // Settings → Force colours: programs colour their output although it isn't a terminal.
   const forced: Record<string, string> = outputSettings().forceColor ? { FORCE_COLOR: '1', CLICOLOR_FORCE: '1' } : {};
+  // timeout=, else Hosts & settings → Stop a cell after (none by default, as in VS Code).
+  const timeout = cellTimeoutSeconds(opts.timeoutSeconds, byAssistant);
   const runOpts: RemoteRunOptions = {
     shell: kind,
     // An approved proposal was checked as bash, or as zsh with `shell: zsh` (the approval's rules).
@@ -255,7 +251,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     // signed, and a signed cell must not run on a host with variables someone added beside it.
     env: { ...forced, ...opts.env, ...paramEnv, ...secretEnv },
     cwd: opts.cwd,
-    timeoutMs: opts.timeoutSeconds === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutSeconds * 1000,
+    timeoutMs: timeout * 1000,
     signal: p.signal,
     onStdout: (text) => {
       stdout += text;
@@ -402,7 +398,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
 
   p.onStep?.(undefined);
   if (result.error !== undefined) write(result.error + '\n', 'stderr');
-  if (result.timedOut) write(t.timedOutNote(opts.timeoutSeconds ?? DEFAULT_TIMEOUT_MS / 1000) + '\n', 'stderr');
+  if (result.timedOut) write(t.timedOutNote(timeout) + '\n', 'stderr');
   const ended = new Date();
   const attrs: Record<string, string> = {
     exit: exitLabel(result),
@@ -459,7 +455,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
         ...(previous ? { previous } : {}),
         history: nextHistory(previous, older, historySizeFor(base, p.historySize ?? historySize())),
       },
-      { ...DEFAULT_WRITE_OPTIONS, redact: (s) => redactor.redact(hideKnown(s)) },
+      { ...DEFAULT_WRITE_OPTIONS, redact: (s) => outputRedactor().redact(hideKnown(s)) },
     ) ?? base;
   return { kind: 'done', text, result, attrs, summary: outputSummary(attrs, ended), captured };
 }

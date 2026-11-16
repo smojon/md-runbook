@@ -9,6 +9,7 @@
  * (signing/trust.ts), for the team library and run reports alike.
  */
 import { useSyncExternalStore } from 'react';
+import { DEFAULT_CONFIRM_PATTERNS } from '@md-runbook/core/confirm';
 import { getJson, setJson } from '../storage/kv';
 
 const KEY = 'settings.v1';
@@ -72,6 +73,20 @@ export interface Settings {
    * address prefix), one per entry.
    */
   reportAddresses: string[];
+  /**
+   * The risky commands that ask before they run: case-insensitive JavaScript regular expressions
+   * (the extension's mdRunbook.execution.confirmPatterns). Undefined: the extension's defaults.
+   */
+  confirmPatterns?: string[];
+  /**
+   * More output to redact (mdRunbook.redaction.patterns): JavaScript regular expressions, each
+   * whole match becomes [REDACTED]. The built-in patterns always apply too.
+   */
+  redactionPatterns: string[];
+  /** A cell without `timeout=` is stopped after this many seconds; 0: never (mdRunbook.execution.timeoutSeconds). */
+  timeoutSeconds: number;
+  /** Run all stops at the first step that fails (mdRunbook.execution.stopOnFailure). */
+  stopOnFailure: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -89,7 +104,13 @@ const DEFAULTS: Settings = {
   libraryServer: '',
   publicUrl: '',
   reportAddresses: [],
+  redactionPatterns: [],
+  timeoutSeconds: 0,
+  stopOnFailure: true,
 };
+
+/** The timeouts offered (seconds; 0: none, the extension's default). */
+export const TIMEOUTS = [0, 60, 300, 600, 1800, 3600] as const;
 
 /** Saved settings, older ones (only historySize) completed with the defaults. */
 const isSaved = (v: unknown): v is Partial<Settings> =>
@@ -103,7 +124,11 @@ type OutputFlag =
   | 'signedLinksOnly'
   | 'keyNeedsUser'
   | 'allowNoConfirm'
-  | 'launchForm';
+  | 'launchForm'
+  | 'stopOnFailure';
+
+/** The strings of a saved list, or undefined when it isn't one. */
+const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : undefined);
 
 let settings: Settings = DEFAULTS;
 const listeners = new Set<() => void>();
@@ -135,7 +160,12 @@ async function readSettings(): Promise<void> {
       libraryServer: typeof saved.libraryServer === 'string' ? saved.libraryServer : '',
       publicUrl: typeof saved.publicUrl === 'string' ? saved.publicUrl : '',
       ...(typeof saved.notifyRuns === 'boolean' ? { notifyRuns: saved.notifyRuns } : {}),
-      reportAddresses: Array.isArray(saved.reportAddresses) ? saved.reportAddresses.filter((a): a is string => typeof a === 'string') : [],
+      reportAddresses: strings(saved.reportAddresses) ?? [],
+      ...(strings(saved.confirmPatterns) ? { confirmPatterns: strings(saved.confirmPatterns)! } : {}),
+      redactionPatterns: strings(saved.redactionPatterns) ?? [],
+      timeoutSeconds:
+        typeof saved.timeoutSeconds === 'number' && saved.timeoutSeconds >= 0 ? Math.floor(saved.timeoutSeconds) : DEFAULTS.timeoutSeconds,
+      stopOnFailure: flag('stopOnFailure'),
       // `trustedSigners` (allowed_signers text, before the one list) is moved by signing/trust.ts
       // migrateTrustedSigners and left out here: the next save drops it.
     };
@@ -215,6 +245,33 @@ export const reportAddresses = (): readonly string[] => settings.reportAddresses
 /** From text: one address per line (or separated by commas or spaces). */
 export function setReportAddresses(text: string): void {
   update({ reportAddresses: [...new Set(text.split(/[\s,]+/).filter((a) => a !== ''))] });
+}
+
+/** The risky-command patterns as set, or the extension's defaults. */
+export const confirmPatterns = (): readonly string[] => settings.confirmPatterns ?? DEFAULT_CONFIRM_PATTERNS;
+
+/** Set the risky-command patterns; undefined: back to the defaults. */
+export function setConfirmPatterns(list: readonly string[] | undefined): void {
+  if (list === undefined) {
+    const { confirmPatterns: _drop, ...rest } = settings;
+    settings = rest;
+    return update({});
+  }
+  update({ confirmPatterns: [...list] });
+}
+
+/** The extra redaction patterns. */
+export const redactionPatterns = (): readonly string[] => settings.redactionPatterns;
+
+export function setRedactionPatterns(list: readonly string[]): void {
+  update({ redactionPatterns: [...list] });
+}
+
+/** A cell's timeout when it has no `timeout=` (seconds; 0: none). */
+export const timeoutSeconds = (): number => settings.timeoutSeconds;
+
+export function setTimeoutSeconds(n: number): void {
+  update({ timeoutSeconds: Math.max(0, Math.floor(n)) });
 }
 
 export function useSignerName(): string {

@@ -4,7 +4,7 @@
  * device, so answers can be mapped back. The leak check runs on the same text before anything
  * leaves the device.
  */
-import { DEFAULT_PATTERNS, createRedactor } from '@md-runbook/core';
+import { outputRedactor } from '../settings/safety';
 import { AiContext, DEFAULT_COPY_HEADER, PseudonymMap, buildAiContext, emptyMap } from '@md-runbook/core/aiContext';
 import { LeakFinding, scanForLeaks } from '@md-runbook/core/leaks';
 import { getJson, setJson } from '../storage/kv';
@@ -22,8 +22,6 @@ async function currentMap(): Promise<PseudonymMap> {
   return map;
 }
 
-const redactor = createRedactor(DEFAULT_PATTERNS);
-
 export interface Prepared extends AiContext {
   /** Possible leaks in the text as it would be sent. */
   leaks: LeakFinding[];
@@ -33,7 +31,14 @@ export interface Prepared extends AiContext {
 export async function prepareContext(text: string, title: string, cells?: number[]): Promise<Prepared> {
   const ctx = buildAiContext(
     text,
-    { redact: redactor.redact, maxOutputLines: 80, maxChars: 60_000, pseudonymize: true, title, ...(cells ? { cells } : {}) },
+    {
+      redact: (s: string) => outputRedactor().redact(s),
+      maxOutputLines: 80,
+      maxChars: 60_000,
+      pseudonymize: true,
+      title,
+      ...(cells ? { cells } : {}),
+    },
     await currentMap(),
   );
   map = ctx.map;

@@ -22,6 +22,7 @@ import { OutputText } from './OutputText';
 import { CloudView } from './CloudView';
 import { cloudView } from '@md-runbook/core/cloudViews';
 import { useOutputSettings } from '../settings/store';
+import { outputRedactor } from '../settings/safety';
 import type { RemotePlatform } from '@md-runbook/ssh';
 import { LineStep, stepAtLine } from '@md-runbook/core/steps';
 import { ReactNode, memo, useMemo, useState } from 'react';
@@ -420,7 +421,8 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
               <TimeBar fraction={timing.fraction} over={timing.overSeconds > 0} />
             </View>
           ) : null}
-          {running.live !== '' ? <OutputText style={styles.outputText} text={running.live} /> : null}
+          {/* Redacted on screen too, as in VS Code (mdRunbook.redaction.applyToLiveOutput). */}
+          {running.live !== '' ? <OutputText style={styles.outputText} text={outputRedactor().redact(running.live)} /> : null}
         </View>
       ) : cell.output ? (
         <View testID={`cell-${index}-output`} style={styles.output}>

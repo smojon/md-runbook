@@ -791,7 +791,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         setGateChecked({ manifest: signed.block.manifest, host: target.name, principal: outcome.result.signedBy });
       for (const c of outcome.captured) captures.current = { ...captures.current, [c.name]: c };
       if (outcome.result.newShell) setNotice(t.newShell);
-      // Run all stops at the first failure, unless the cell says continue-on-error. Checks decide
+      // Run all stops at the first failure, unless the cell says continue-on-error (or Hosts &
+      // settings → Stop Run all at a failed step is off, as VS Code's stopOnFailure). Checks decide
       // over the exit code (expect-exit=, and the ready check, which always passes).
       const passed = outcome.attrs.check === 'ok' || (outcome.attrs.exit === '0' && outcome.attrs.check !== 'failed');
       // How long it took, for its learned estimate: a whole run that passed (not a line run, not the ready check).
@@ -807,7 +808,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       )
         void recordStepRun(runbook.id, cell.meta.info, cell.value, took / 1000);
       if (queue.current && outcome.attrs.ready !== undefined) queue.current.readyUp = outcome.attrs.ready === 'up';
-      const goOn = cell && isCodeMeta(cell.meta) && parseCellOptions(cell.meta.info).continueOnError;
+      const goOn = !outputSettings().stopOnFailure || (cell && isCodeMeta(cell.meta) && parseCellOptions(cell.meta.info).continueOnError);
       if (queue.current && (outcome.result.cancelled || (!passed && !goOn))) {
         clearQueue();
         if (!outcome.result.cancelled) setNotice(t.runStopped);

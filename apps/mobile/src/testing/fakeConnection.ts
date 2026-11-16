@@ -14,7 +14,7 @@ export interface FakeRun {
   unknownHostKey?: string;
   /** Fail the run with this error. */
   error?: string;
-  /** Resolve only when the signal aborts (a long cell). */
+  /** Resolve only when the signal aborts (a long cell), after delivering `stdout`. */
   waitForAbort?: boolean;
 }
 
@@ -47,6 +47,8 @@ export function fakeConnection(
         }
         if (step.error) throw new Error(step.error);
         if (step.waitForAbort) {
+          // Its output so far, then nothing until Stop (a long cell that printed something).
+          if (step.stdout) opts.onStdout?.(step.stdout);
           // As the real shell: a signal that has already fired cancels at once.
           if (!opts.signal?.aborted) await new Promise<void>((r) => opts.signal?.addEventListener('abort', () => r()));
           return { exitCode: null, signal: null, timedOut: false, cancelled: true, durationMs: 5 };
