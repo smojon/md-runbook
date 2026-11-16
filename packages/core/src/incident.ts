@@ -75,14 +75,30 @@ export interface Timeline {
 
 const NOTE_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b(.*?)-->[ \t]*\r?\n((?:[ \t]*>.*(?:\r?\n|$))*)/gm;
 
-/** A note for the record (Add Note): a marker with its time, author and milestone, then a quote. */
+/**
+ * A name in a note's bold head: one line, without what would end the bold or start Markdown or
+ * HTML there (`* _ ` [ ] \ < >`), at most 100 characters.
+ */
+const headPart = (s: string): string =>
+  s
+    .replace(/[\u0000-\u001f\u007f-\u009f\u{2028}\u{2029}*_`[\]\\<>]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100);
+
+/**
+ * A note for the record (Add Note): a marker with its time, author and milestone, then a quote.
+ * Every line of the text is a quote line: lines end at CRLF, a lone CR or LF (LINE_RE), and at
+ * U+0085, U+2028 and U+2029. Before, a lone CR left a line outside the quote, where a fence could
+ * start a block that runs (security review, round 4).
+ */
 export function formatNote(note: { at: Date; by?: string; milestone?: Milestone; text: string }, eol = '\n'): string {
   const attrs: Record<string, string> = { at: formatLocalIso(note.at) };
   if (note.by) attrs.by = note.by;
   if (note.milestone) attrs.milestone = note.milestone;
   const hhmm = formatLocalIso(note.at).slice(11, 16);
-  const head = [hhmm, note.milestone, note.by].filter(Boolean).join(' · ');
-  const lines = note.text.trim().split(/\r?\n/);
+  const head = [hhmm, note.milestone, note.by].map((p) => (p === undefined ? '' : headPart(p))).filter(Boolean).join(' · ');
+  const lines = note.text.replace(/[\u{85}\u{2028}\u{2029}]/gu, '\n').trim().split(LINE_RE);
   return [`<!-- md-runbook:note${formatAttrs(attrs)} -->`, `> **${head}:** ${lines[0] ?? ''}`, ...lines.slice(1).map((l) => `> ${l}`)].join(eol) + eol;
 }
 
