@@ -144,3 +144,33 @@ describe('a stale ⋯ sheet acts on its cell or not at all (finding 1)', () => {
     await waitFor(() => expect(sources()).toEqual(['echo mine']));
   });
 });
+
+describe('the front matter is part of what a run was asked under (finding 5)', () => {
+  const DEPLOY = ['# Deploy', '', fence('bash', 'make image'), fence('bash', 'make push'), fence('bash', 'make check')].join('\n');
+
+  it('Run all paused, then the front matter changed (an editor’s save): the run stops, nothing more runs', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    mockConnection = fakeConnection([{ stdout: '1\n' }, { stdout: '2\n' }, { stdout: '3\n' }]);
+    const rb = addRunbook('deploy.md', DEPLOY);
+    await render(<RunbookView id={rb.id} />);
+    await press('cell-2-actions');
+    await press('action-pauseBefore');
+    await press('run-primary');
+    await waitFor(() => expect(screen.getByTestId('pause-card')).toBeTruthy());
+    await act(async () => updateRunbookText(rb.id, '---\nshell: sh\nmanual-steps: continue\n---\n' + DEPLOY));
+    expect(screen.queryByTestId('pause-card')).toBeNull();
+    expect(screen.getByTestId('run-notice')).toHaveTextContent(/The front matter changed .*: the run stops/);
+    expect(sources()).toEqual(['make image']);
+  });
+
+  it('a confirmation asked under one front matter is not run under another', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const rb = addRunbook('fix.md', WITH_PROPOSAL);
+    await render(<RunbookView id={rb.id} />);
+    await press('cell-2-run');
+    expect(screen.getByTestId('confirm-card')).toBeTruthy();
+    await act(async () => updateRunbookText(rb.id, '---\nmode: isolated\n---\n' + WITH_PROPOSAL));
+    expect(screen.queryByTestId('confirm-card')).toBeNull();
+    expect(sources()).toEqual([]);
+  });
+});

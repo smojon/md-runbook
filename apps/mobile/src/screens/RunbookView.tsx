@@ -106,7 +106,7 @@ import { PauseCard } from '../cells/PauseCard';
 import { LaunchError, launchModel, startValues } from '../runbooks/launch';
 import { LaunchSheet, LaunchTyped } from '../ui/LaunchSheet';
 import { MarksByCell, NO_MARKS, StepMarks, cellIdentities, remapByCell, toggleMark } from '../runbooks/stepMarks';
-import { CellRef, cellRef, cellRefIn, resolveCell, resolveIn, runRules } from '../runbooks/cellRef';
+import { CellRef, cellRef, cellRefIn, resolveCell, resolveIn, runRules, sameRules } from '../runbooks/cellRef';
 import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell, ProblemRow } from '../cells/CodeCell';
@@ -617,10 +617,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     }
     if (checks.size > 0) setChecks(remapByCell(checks, before, cellIds).map);
     const gone = (ref: CellRef | undefined): boolean => ref !== undefined && resolveIn(cellIds, ref) === undefined;
+    // The front matter changed (practice:, kube-context:, shell:, mode: …): nothing asked or
+    // queued under the old one goes on under the new one.
+    const ruled = (ref: CellRef | undefined): boolean => ref !== undefined && ref.rules !== rulesNow;
     const q = queue.current;
     let stopped = false;
+    const rulesChanged = (q !== undefined && q.rules !== rulesNow) || [confirming?.cell, otherHost?.request.cell].some(ruled);
     if (q) {
-      stopped = q.cells.some(gone) || gone(q.call);
+      stopped = rulesChanged || q.cells.some(gone) || gone(q.call);
       // Stopped: the cell running now finishes, nothing after it starts.
       if (stopped) {
         q.cells = [];
@@ -629,20 +633,21 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       setQueuedCells(q.cells.map((r) => resolveIn(cellIds, r)!));
     }
     // A card whose cell changed or went: put away (its answer would act on nothing, or on another cell).
-    const cards: [CellRef | undefined, () => void][] = [
-      [pauseAsk, () => setPauseAsk(undefined)],
-      [confirming?.cell, () => setConfirming(undefined)],
-      [otherHost?.request.cell, () => setOtherHost(undefined)],
-      [trust?.request.cell, () => setTrust(undefined)],
-      [asking?.request.cell, () => setAsking(undefined)],
-      [teardownOffer?.cell, () => setTeardownOffer(undefined)],
-      [manualAsk?.cell, () => setManualAsk(undefined)],
-      [groupPick, () => setGroupPick(undefined)],
-      [approving?.cell, () => setApproving(undefined)],
+    // A run's cards also go when the rules changed; a review card (no run) only with its cell.
+    const cards: [CellRef | undefined, () => void, boolean][] = [
+      [pauseAsk, () => setPauseAsk(undefined), true],
+      [confirming?.cell, () => setConfirming(undefined), true],
+      [otherHost?.request.cell, () => setOtherHost(undefined), true],
+      [trust?.request.cell, () => setTrust(undefined), true],
+      [asking?.request.cell, () => setAsking(undefined), true],
+      [teardownOffer?.cell, () => setTeardownOffer(undefined), true],
+      [manualAsk?.cell, () => setManualAsk(undefined), true],
+      [groupPick, () => setGroupPick(undefined), true],
+      [approving?.cell, () => setApproving(undefined), false],
     ];
     let asked = false;
-    for (const [ref, putAway] of cards)
-      if (gone(ref)) {
+    for (const [ref, putAway, runs] of cards)
+      if (gone(ref) || (runs && ruled(ref))) {
         putAway();
         asked = true;
       }
@@ -653,7 +658,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       setManualAsk(undefined);
       if (q && !running) clearQueue();
       else if (q) q.cells = [];
-      setNotice(stopped ? t.runChangedStopped : t.askedCellChanged);
+      setNotice(rulesChanged ? t.rulesChangedStopped : stopped ? t.runChangedStopped : t.askedCellChanged);
     } else if (dropped > 0) setNotice(t.marksDropped);
     // Only a text change moves them; the marks, breakpoints and checks read are the newest then.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -780,6 +785,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (cellIndex === undefined) {
       clearQueue();
       setNotice(t.askedCellChanged);
+      return;
+    }
+    // Asked (or queued) under another front matter: not run under this one.
+    if (!sameRules(latest, request.cell)) {
+      clearQueue();
+      setNotice(t.rulesChangedStopped);
       return;
     }
     const cell = parse(latest).cells[cellIndex];
@@ -980,6 +991,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     };
     const first = found();
     if (!first) return setNotice(t.askedCellChanged);
+    if (!sameRules(first.text, ref)) return setNotice(t.rulesChangedStopped);
     // A risky cell asks once, before the round, naming every account it runs as.
     const cell = parse(first.text).cells[first.at];
     const match =
@@ -1017,6 +1029,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         const now = found();
         if (!now) {
           setNotice(t.askedCellChanged);
+          break;
+        }
+        // Nor under another front matter than the one the round was asked under.
+        if (!sameRules(now.text, ref)) {
+          setNotice(t.rulesChangedStopped);
           break;
         }
         const outcome = await runCell({
@@ -1104,6 +1121,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (q.cells.some((r) => at(r) < 0) || (q.call !== undefined && at(q.call) < 0)) {
       clearQueue();
       setNotice(t.runChangedStopped);
+      return;
+    }
+    // Paused, then the front matter changed (an editor's save): the run doesn't go on under it.
+    if (!sameRules(latest, q)) {
+      clearQueue();
+      setNotice(t.rulesChangedStopped);
       return;
     }
     const partAt = (r: CellRef): string | undefined => {
