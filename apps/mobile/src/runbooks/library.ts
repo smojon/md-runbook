@@ -21,7 +21,7 @@ import { DEFAULT_WRITE_OPTIONS, clearOutputBlocks, isCodeMeta, parse, serialize,
 import type { CellInput } from '@md-runbook/core';
 import { SIGNATURE_NAMESPACE, readSignature, signedStatus } from '@md-runbook/core/signing';
 import { sha256Hex } from '@md-runbook/core/sha256';
-import { runbookTitle, withoutFrontMatter } from '@md-runbook/core/title';
+import { runbookTitle } from '@md-runbook/core/title';
 import type { LibraryIndex } from '@md-runbook/core/library';
 import {
   MAX_LIBRARY_FILES,
@@ -764,14 +764,57 @@ export const looksVerified = (s: SignatureState | undefined, facts: SignedFacts 
  */
 export const libraryRefOf = (r: Runbook | undefined): DerivedRef | undefined => (r?.source === 'library' ? r.library : r?.derivedFrom);
 
-const FRONT_MATTER_RE = /^﻿?---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/;
-const BLANK_LINES_RE = /^(?:[ \t]*\r?\n)*/;
-const NOTE_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b.*?-->[ \t]*\r?\n(?:[ \t]*>.*(?:\r?\n|$))*/;
+/**
+ * The front matter and the notes at the top, read line by line as core reads them (security
+ * review round 4): a line ends at \r\n, \n or a lone \r. A front matter the app's own regex didn't
+ * see (lone CRs) could otherwise run under keys the signature check never looked at.
+ */
+const BOM = String.fromCharCode(0xfeff);
+/** The text's lines, each with its line break. */
+const linesOf = (text: string): string[] => text.match(/[^\r\n]*(?:\r\n?|\n)|[^\r\n]+$/g) ?? [];
+const bare = (line: string): string => line.replace(/(?:\r\n?|\n)$/, '');
+const isBlank = (line: string): boolean => /^[ \t]*$/.test(bare(line));
+
+/** The front matter at the start of `text` (with a BOM before it): its lines, from `---` to the closing line, or undefined. */
+function frontMatterOf(text: string): { length: number; inner: string[] } | undefined {
+  const bom = text.startsWith(BOM) ? 1 : 0;
+  const lines = linesOf(text.slice(bom));
+  if (lines.length === 0 || !/^---[ \t]*$/.test(bare(lines[0]!))) return undefined;
+  const end = lines.findIndex((l, i) => i > 0 && /^(?:---|\.\.\.)[ \t]*$/.test(bare(l)));
+  if (end < 0) return undefined;
+  return { length: bom + lines.slice(0, end + 1).join('').length, inner: lines.slice(1, end).map(bare) };
+}
+
+/** The length of the blank lines at the start of `text`. */
+const blankLength = (text: string): number => {
+  let n = 0;
+  for (const l of linesOf(text)) {
+    if (!isBlank(l) || !/(?:\r\n?|\n)$/.test(l)) break;
+    n += l.length;
+  }
+  return n;
+};
+
+/**
+ * The length of the note at the start of `text` (its marker line and its quoted lines), or 0. The
+ * marker alone on its line, as core writes it: `<!-- md-runbook:note … -->` with no `--` inside.
+ */
+function noteLength(text: string): number {
+  const lines = linesOf(text);
+  const m = lines[0] ? /^[ \t]*<!--([ \t]*md-runbook:note\b[^>]*)-->[ \t]*$/.exec(bare(lines[0])) : null;
+  if (!m || m[1]!.includes('--') || !/(?:\r\n?|\n)$/.test(lines[0]!)) return 0;
+  let n = lines[0]!.length;
+  for (const l of lines.slice(1)) {
+    if (!/^[ \t]*>/.test(l)) break;
+    n += l.length;
+  }
+  return n;
+}
 
 /** A runbook's front matter and the blank lines after it (DerivedRef.head). */
 export function headOf(text: string): string {
-  const fm = FRONT_MATTER_RE.exec(text)?.[0] ?? '';
-  return fm + (BLANK_LINES_RE.exec(text.slice(fm.length))?.[0] ?? '');
+  const fm = frontMatterOf(text)?.length ?? 0;
+  return text.slice(0, fm + blankLength(text.slice(fm)));
 }
 
 /** The front-matter keys Start Incident writes (core withFrontMatterValues): a copy's own. */
@@ -779,14 +822,7 @@ const INCIDENT_KEY_RE = /^(?:incident|severity|drill)[ \t]*:/;
 
 /** The lines of a text's front matter but Start Incident's keys (no front matter: none). */
 function frontMatterLines(text: string): string[] {
-  const fm = FRONT_MATTER_RE.exec(text)?.[0];
-  if (!fm) return [];
-  // Between the first line (---) and the closing one (--- or ...), which ends the match.
-  const lines = fm.replace(/(?:\r?\n)?$/, '').split(/\r?\n/);
-  return lines
-    .slice(1, -1)
-    .map((l) => l.trimEnd())
-    .filter((l) => l !== '' && !INCIDENT_KEY_RE.test(l));
+  return (frontMatterOf(text)?.inner ?? []).map((l) => l.trimEnd()).filter((l) => l !== '' && !INCIDENT_KEY_RE.test(l));
 }
 
 /**
@@ -794,6 +830,8 @@ function frontMatterLines(text: string): string[] {
  * that head back in place of the copy's own front matter and the note Start Incident put after it.
  * Only while the copy's front matter is the original's but for Start Incident's keys: one edited
  * since (practice:, kube-context:, shell:) is checked as it is, so it isn't signed as a whole.
+ * Nor is a copy whose text, once its notes at the top are set aside, would start with a front
+ * matter (a note placed before one): that isn't the copy's front matter, so it is checked as it is.
  */
 export function derivedText(text: string, head: string | undefined): string {
   if (head === undefined) return text;
@@ -801,8 +839,15 @@ export function derivedText(text: string, head: string | undefined): string {
   const original = frontMatterLines(head);
   if (own.length !== original.length || own.some((l, i) => l !== original[i])) return text;
   // Notes don't count for a signature: those at the top (Start Incident's, again on a copy of a copy) go with their blank lines.
-  let body = withoutFrontMatter(text).replace(BLANK_LINES_RE, '');
-  for (let next = body.replace(NOTE_RE, ''); next !== body; next = body.replace(NOTE_RE, '')) body = next.replace(BLANK_LINES_RE, '');
+  let body = text.slice(frontMatterOf(text)?.length ?? 0);
+  body = body.slice(blankLength(body));
+  let removed = false;
+  for (let n = noteLength(body); n > 0; n = noteLength(body)) {
+    body = body.slice(n);
+    body = body.slice(blankLength(body));
+    removed = true;
+  }
+  if (removed && frontMatterOf(body)) return text;
   return head + body;
 }
 
