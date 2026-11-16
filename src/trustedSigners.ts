@@ -17,7 +17,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { SECTION } from './config';
 import { PublicKeyLine, SignerLine, lineForKey, parsePublicKey, parseSignerLine, readSigners, signerLineToAdd, signerNameOk, withoutSigner } from './allowedSigners';
-import { alsoPublished, hostOfOrigin, librarySignerFiles, originOf, readLibrarySigners, trustLibraryLines, withTrustedLines, type LibrarySigner } from './libraryTrust';
+import { alsoPublished, libraryAddressOf, librarySignerFiles, readLibrarySigners, shownLibrary, trustLibraryLines, withTrustedLines, type LibrarySigner } from './libraryTrust';
 import type { LibraryTree } from './libraryView';
 
 const home = (p: string): string => p.replace(/^~(?=$|[\\/])/, os.homedir());
@@ -191,8 +191,8 @@ async function addFromFile(context: vscode.ExtensionContext): Promise<void> {
 /** The team library's own allowed_signers, after its fingerprints and what trusting them means: into the library's file. */
 async function addFromLibrary(context: vscode.ExtensionContext, tree: LibraryTree): Promise<void> {
   const lib = tree.library();
-  const origin = lib ? originOf(lib.base) : undefined;
-  if (!lib?.allowedSigners || origin === undefined) return void vscode.window.showInformationMessage('md-runbook: the team library publishes no allowed_signers file.');
+  const address = lib ? libraryAddressOf(lib.base) : undefined;
+  if (!lib?.allowedSigners || address === undefined) return void vscode.window.showInformationMessage('md-runbook: the team library publishes no allowed_signers file.');
   const { signers, skipped } = readSigners(lib.allowedSigners, { adding: true });
   if (signers.length === 0) return void vscode.window.showInformationMessage(`md-runbook: the team library's allowed_signers has no key md-runbook can use${skipped.length ? ` (${skipped.length} line${skipped.length === 1 ? '' : 's'} skipped)` : ''}.`);
   const picked = await vscode.window.showQuickPick(
@@ -208,14 +208,14 @@ async function addFromLibrary(context: vscode.ExtensionContext, tree: LibraryTre
       detail: bullets([
         'The keys come from the same server as the runbooks: it vouches for itself.',
         'Trust them only if you trust that server. Better: compare the fingerprints with the signers.',
-        `They count only for this library’s runbooks (${hostOf(lib.base)}).`,
+        `They count only for this library’s runbooks (${shownLibrary(address)}).`,
       ]),
     },
     go,
   );
   if (sure !== go) return;
   const got: Lines = { lines: picked.map((p) => ({ line: signerLineToAdd(p.s), label: p.s.principals.join(', '), fingerprint: p.s.fingerprint })), problems: [] };
-  const r = trustLibraryLines(context.globalStorageUri.fsPath, origin, got.lines.map((l) => l.line));
+  const r = trustLibraryLines(context.globalStorageUri.fsPath, address, got.lines.map((l) => l.line));
   tellAdded(got, r.added, r.already);
 }
 
@@ -260,21 +260,21 @@ function ownItems(file: string | undefined, libHost: string | undefined, publish
   ];
 }
 
-/** Each library's signers, under its host: they count for its runbooks only. */
+/** Each library's signers, under its address: they count for its runbooks only. */
 function libraryItems(storage: string): Item[] {
   const out: Item[] = [];
-  for (const { origin, file } of librarySignerFiles(storage)) {
+  for (const { address, file } of librarySignerFiles(storage)) {
     const { signers } = readLibrarySigners(readText(file));
     if (signers.length === 0) continue;
-    const host = hostOfOrigin(origin);
-    out.push({ label: `${host}: its runbooks only`, kind: vscode.QuickPickItemKind.Separator });
+    const shown = shownLibrary(address);
+    out.push({ label: `${shown}: its runbooks only`, kind: vscode.QuickPickItemKind.Separator });
     out.push(
       ...signers.map((s: LibrarySigner): Item => ({
         label: `${s.withdrawn ? '$(circle-slash)' : '$(key)'} ${s.principals.join(', ')}`,
         description: s.fingerprint,
         detail: keyDetail(s, s.withdrawn ? ['withdrawn: the library no longer publishes it'] : []),
         run: () =>
-          removeSigner(file, s, s.withdrawn ? ['Withdrawn: it would count again if the library published it again.'] : [`Its runbooks from ${host} no longer show as verified.`]),
+          removeSigner(file, s, s.withdrawn ? ['Withdrawn: it would count again if the library published it again.'] : [`Its runbooks from ${shown} no longer show as verified.`]),
       })),
     );
   }

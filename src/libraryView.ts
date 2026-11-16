@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import { readSigners, signerLineToAdd } from './allowedSigners';
 import { SECTION } from './config';
 import { CANT_CHECK, Library, LibraryEntry, LibraryRead, Verdict, entryNamed, groupEntries, libraryBaseOf, libraryUrlProblem, libraryVerdict, readLibrary, verdictLabel } from './libraryRead';
-import { libraryCopyFile, noteWithdrawn, originOf, signerFiles, signerOf, trustLibraryLines } from './libraryTrust';
+import { libraryAddressOf, libraryCopyFile, noteWithdrawn, signerFiles, signerOf, trustLibraryLines } from './libraryTrust';
 import { NOTEBOOK_TYPE } from './serializer';
 import { SignerCache } from './signerCheck';
 
@@ -96,10 +96,10 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
       const read: LibraryRead | undefined = base ? await readLibrary(base) : undefined;
       if (generation !== this.generation) return;
       // Keys trusted from it that it no longer publishes stop counting (and count again once published again).
-      const origin = read?.kind === 'ok' ? originOf(read.library.base) : undefined;
-      if (read?.kind === 'ok' && origin !== undefined && read.library.allowedSigners !== undefined) {
+      const address = read?.kind === 'ok' ? libraryAddressOf(read.library.base) : undefined;
+      if (read?.kind === 'ok' && address !== undefined && read.library.allowedSigners !== undefined) {
         try {
-          noteWithdrawn(this.storage(), origin, read.library.allowedSigners);
+          noteWithdrawn(this.storage(), address, read.library.allowedSigners);
         } catch {
           // Storage not writable: the file stays as it was.
         }
@@ -120,7 +120,7 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
 
   /** Each runbook's verdict, against your allowed_signers file, then the keys trusted from this library (a few ssh-keygen at a time). */
   private async check(lib: Library): Promise<Map<string, Verdict>> {
-    const files = signerFiles(home(this.config().get<string>('signing.allowedSigners', '').trim()), this.storage(), originOf(lib.base));
+    const files = signerFiles(home(this.config().get<string>('signing.allowedSigners', '').trim()), this.storage(), libraryAddressOf(lib.base));
     const floors = this.context.globalState.get<Record<string, Record<string, number>>>(VERSIONS_KEY, {});
     const mine = { ...(floors[lib.base] ?? {}) };
     const verdicts = new Map<string, Verdict>();
@@ -232,7 +232,7 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
 
 const escapeMd = (s: string): string => s.replace(/[\\`*_{}[\]()#+!|<>]/g, '\\$&');
 
-/** Your copy of a library runbook: one per library file and text, so opening it again opens the copy with its runs. Its origin.txt makes it the library's. */
+/** Your copy of a library runbook: one per library file and text, so opening it again opens the copy with its runs. Its address.txt makes it the library's. */
 function libraryCopy(storage: vscode.Uri, base: string, entry: LibraryEntry & { text: string }): vscode.Uri {
   return vscode.Uri.file(libraryCopyFile(storage.fsPath, base, entry));
 }
@@ -329,9 +329,9 @@ export function registerLibraryView(context: vscode.ExtensionContext, testMode =
       vscode.commands.registerCommand('mdRunbook._test.trustLibrarySigners', async () => {
         await tree.load();
         const lib = tree.library();
-        const origin = lib ? originOf(lib.base) : undefined;
-        if (!lib?.allowedSigners || origin === undefined) return undefined;
-        const { file } = trustLibraryLines(tree.storage(), origin, readSigners(lib.allowedSigners, { adding: true }).signers.map(signerLineToAdd));
+        const address = lib ? libraryAddressOf(lib.base) : undefined;
+        if (!lib?.allowedSigners || address === undefined) return undefined;
+        const { file } = trustLibraryLines(tree.storage(), address, readSigners(lib.allowedSigners, { adding: true }).signers.map(signerLineToAdd));
         return file;
       }),
     );

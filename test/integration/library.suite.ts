@@ -86,7 +86,7 @@ test("library: Open from Library takes the library's text, not the text a caller
 });
 
 test("library: a key trusted from library A doesn't verify library B's runbook, and stops counting once A withdraws it", async () => {
-  // One key, published by both libraries (two ports: two origins), and a runbook signed with it in each.
+  // One key, published by both libraries (two addresses), and a runbook signed with it in each.
   const key = path.join(work, 'library-trust-key');
   fs.rmSync(key, { force: true });
   fs.rmSync(key + '.pub', { force: true });

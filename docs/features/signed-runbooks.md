@@ -611,9 +611,9 @@ runbooks only.
 - **Yours**, in `mdRunbook.signing.allowedSigners`: they count for every runbook.
   - Add an allowed_signers line or a public key, pasted or from a file.
   - With no file set, adding one offers to make it.
-- **Each library's**, under its host: they count for that library's runbooks only.
+- **Each library's**, under its address: they count for that library's runbooks only.
   - **Add the Team Library's Signers…** adds them, after their fingerprints and a warning.
-  - VS Code keeps them in its storage, one file per library host.
+  - VS Code keeps them in its storage, one file per library address, as the app keys them.
 
 As in the app:
 
