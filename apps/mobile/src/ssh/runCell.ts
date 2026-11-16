@@ -5,6 +5,7 @@
  */
 import { sha256Hex } from '@md-runbook/core/sha256';
 import { activeCall } from '../runbooks/calls';
+import { cellRef, resolveCell } from '../runbooks/cellRef';
 import { getRunbook } from '../runbooks/store';
 import {
   REDACTED,
@@ -44,7 +45,16 @@ import type { LinePlan } from './lineRuns';
 
 export type RunOutcome =
   /** The cell ran (or failed): `text` is the runbook with the new output block. */
-  | { kind: 'done'; text: string; result: SessionRunResult; attrs: Record<string, string>; summary: string; captured: Captured[] }
+  | {
+      kind: 'done';
+      text: string;
+      /** Where the cell is in `text` (it may have moved while it ran). */
+      cellIndex: number;
+      result: SessionRunResult;
+      attrs: Record<string, string>;
+      summary: string;
+      captured: Captured[];
+    }
   /** The server's key is not trusted yet (or changed): nothing was sent; ask, pin, run again. */
   | { kind: 'trust'; hostKey: string; changed: boolean }
   /** Nothing ran: the cell needs secrets or inputs that are not there yet; ask, then run again. */
@@ -71,11 +81,20 @@ export function resetRecordedContexts(): void {
   contextCache.clear();
 }
 
-const firstLine = (text: string): string =>
-  text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .find((l) => l !== '') ?? '';
+/** The longest context recorded (context=): a Kubernetes context name is far shorter. */
+export const MAX_CONTEXT = 200;
+
+/**
+ * What the host printed for its context, as recorded: its first line, without control characters
+ * (C0, DEL, C1) or line and paragraph separators, at most MAX_CONTEXT characters.
+ */
+export const contextValue = (text: string): string =>
+  (
+    text
+      .split(/[\r\n\u0085\u2028\u2029]+/)
+      .map((l) => l.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim())
+      .find((l) => l !== '') ?? ''
+  ).slice(0, MAX_CONTEXT);
 
 export interface RunCellParams {
   host: Host;
@@ -146,6 +165,8 @@ export function runCell(p: RunCellParams): Promise<RunOutcome> {
 async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   const cell = parse(p.text).cells[p.cellIndex];
   if (!cell) return { kind: 'error', message: t.cellGone };
+  /** The cell by what it is: its output goes to it, wherever it is when the run ends. */
+  const ranCell = cellRef(p.text, p.cellIndex);
   const fm = parseFrontMatter(p.text);
   const shells = fm?.shell;
   const can = runnability(cell, p.runbookId === undefined ? undefined : approvalScope(p.runbookId, shells), p.host.platform);
@@ -253,11 +274,31 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   // The same with stderr lines marked: what the file gets (stderr=) and the screen shows in red.
   let saved = '';
   let stdout = '';
+  /**
+   * The live output's end that may be the start of a known value (a secret split across two
+   * packets): held back until the next packet, or the end of the run, so no part of it shows.
+   */
+  let held = '';
+  const show = (text: string, final = false): void => {
+    if (!p.onOutput) return;
+    const hidden = hideKnown(held + text);
+    let keep = 0;
+    if (!final)
+      for (const v of known)
+        for (let k = Math.min(v.length - 1, hidden.length); k > keep; k--)
+          if (hidden.endsWith(v.slice(0, k))) {
+            keep = k;
+            break;
+          }
+    held = keep > 0 ? hidden.slice(-keep) : '';
+    const out = keep > 0 ? hidden.slice(0, -keep) : hidden;
+    if (out !== '') p.onOutput(out);
+  };
   const write = (text: string, stream: 'stdout' | 'stderr'): void => {
     transcript += text;
     const shown = stream === 'stderr' ? markStderr(text) : text;
     saved += shown;
-    p.onOutput?.(hideKnown(shown));
+    show(shown);
   };
   // Settings → Force colours: programs colour their output although it isn't a terminal.
   const forced: Record<string, string> = outputSettings().forceColor ? { FORCE_COLOR: '1', CLICOLOR_FORCE: '1' } : {};
@@ -284,7 +325,9 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   // A runbook call's copy: the gate logs which call of which signed runbook loaded it (the audit).
   const call = p.runbookId ? activeCall(p.runbookId) : undefined;
   const callerStatus = call ? signedStatus(getRunbook(call.parentId)?.text ?? '') : undefined;
-  const callN = call ? callerStatus?.calls.get(call.cellIndex)?.n : undefined;
+  // The call's cell in the caller as it is now (it may have moved since the call started).
+  const callAt = call && callerStatus ? resolveCell(getRunbook(call.parentId)?.text ?? '', call.cell) : undefined;
+  const callN = callAt !== undefined ? callerStatus?.calls.get(callAt)?.n : undefined;
   const calledBy = callerStatus && callN !== undefined ? { hash: sha256Hex(callerStatus.block.manifest), call: callN } : undefined;
   // An alert link's p.ALERT and the like (typed or from the link, whether or not a cell uses
   // them): the gate logs which alert the run answered (gate protocol 3; it grants nothing).
@@ -361,7 +404,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
         onStderr: (t) => (err += t),
       });
       probedNewShell ||= r.newShell ?? false;
-      if (r.exitCode === 0) seenContext = firstLine(out);
+      if (r.exitCode === 0) seenContext = contextValue(out);
       return { exitCode: r.exitCode, stdout: out, stderr: r.error ?? (r.timedOut ? 'timed out' : err) };
     };
     const wrongCluster = await checkKubeContext(kubeContext, probeContext);
@@ -398,6 +441,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
         transcript = '';
         saved = '';
         stdout = '';
+        held = '';
         outcome = undefined;
       }
     } else {
@@ -428,6 +472,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     if (probedNewShell) result = { ...result, newShell: true };
   } catch (e) {
     p.onStep?.(undefined);
+    show('', true);
     if (conn.unknownHostKey) return { kind: 'trust', hostKey: conn.unknownHostKey, changed: conn.changed ?? false };
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }
@@ -475,15 +520,20 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     const picked = ran.length > 0 ? ran.map((i) => p.lines!.steps[i]!) : p.lines.steps;
     attrs.lines = formatLineRanges(picked);
   }
+  // The live output's held-back end: there is no next packet.
+  show('', true);
   const base = p.latestText?.() ?? p.text;
-  const meta = parse(base).cells[p.cellIndex]?.meta;
+  // The cell that ran, found again in the text as it is now (runbooks/cellRef.ts): its code and its
+  // fence options, so never a cell with the same code under another host=; nowhere if it changed.
+  const at = ranCell ? resolveCell(base, ranCell) : undefined;
+  if (at === undefined) return { kind: 'error', message: t.cellChanged };
+  const meta = parse(base).cells[at]?.meta;
   const previous = isCodeMeta(meta) ? loadedOutputEntry(meta) : undefined;
   const older = isCodeMeta(meta) ? (meta.history?.entries ?? []) : [];
-  if (parse(base).cells[p.cellIndex]?.value !== cell.value) return { kind: 'error', message: t.cellChanged };
   const text =
     setCellOutput(
       base,
-      p.cellIndex,
+      at,
       // As the extension writes it: changed=yes|no against the output it replaces, and the earlier
       // runs kept after it when history is on.
       {
@@ -495,5 +545,5 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
       },
       { ...DEFAULT_WRITE_OPTIONS, redact: (s) => outputRedactor().redact(hideKnown(s)) },
     ) ?? base;
-  return { kind: 'done', text, result, attrs, summary: outputSummary(attrs, ended), captured };
+  return { kind: 'done', text, cellIndex: at, result, attrs, summary: outputSummary(attrs, ended), captured };
 }

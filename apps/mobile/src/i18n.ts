@@ -925,6 +925,10 @@ const en = {
   pauseStopped: 'Run all stopped before a step marked to pause: Resume goes on from it.',
   marksDropped: 'A step changed: its pause, notify and breakpoint marks are gone.',
   runChangedStopped: 'A step still to run changed: Run all stops before it.',
+  askedCellChanged: 'The step a question was about changed or went: nothing ran.',
+  rulesChangedStopped:
+    'The front matter changed (practice:, kube-context:, shell:, mode: …): the run stops. Start it again under the new one.',
+  cellNotActed: 'That step changed or went since: nothing was done. Open its ⋯ again.',
   pausesHere: 'Pauses here',
   pausesHereHint: 'Run all pauses before this step. Tap to remove the pause.',
   notifiesHere: 'Notifies',
@@ -995,6 +999,7 @@ const en = {
   callManualLeft: (n: number, copy: string) =>
     `${n === 1 ? '1 manual step' : `${n} manual steps`} not ticked in ${copy}, which keeps evidence: tick ${n === 1 ? 'it' : 'them'} there and run this step again`,
   callRunning: (src: string, copy: string) => `Runs ${src} as ${copy}: when it ends, its result goes to the step that called it.`,
+  callCellGone: (parent: string) => `Not written back: the step that called this copy changed or went in ${parent}.`,
   callNotDone: (parent: string) =>
     `Not done: ${parent} got this run as failed. Fix it here, or run the step there again to continue this copy.`,
   proposedNotRun: (n: number) =>
@@ -1380,6 +1385,7 @@ const en = {
   relayUrlProblem: {
     invalid: 'Not a relay address: wss://relay.example.net',
     insecure: 'The relay’s address must be wss:// (ws:// only on this machine).',
+    loopback6: 'ws://[::1] is blocked by the web app’s security policy: use ws://localhost or ws://127.0.0.1.',
   },
   pairDevice: 'Pair a device',
   pairDevicePoints: [

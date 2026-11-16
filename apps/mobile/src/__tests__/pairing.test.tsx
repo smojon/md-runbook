@@ -132,6 +132,10 @@ describe('the relay on the web app’s own origin', () => {
     expect(relayUrlProblem('wss://relay.example.net')).toBeUndefined();
     expect(relayUrlProblem('https://relay.example.net/')).toBeUndefined();
     expect(relayUrlProblem('ws://localhost:8022')).toBeUndefined();
+    expect(relayUrlProblem('ws://127.0.0.1:8022')).toBeUndefined();
+    // The web app's security policy blocks it: refused, not taken and then failing (security review round 4).
+    expect(relayUrlProblem('ws://[::1]:8022')).toBe('loopback6');
+    expect(relayUrlProblem('wss://[::1]:8022')).toBeUndefined();
     expect(relayUrlProblem('ws://relay.example.net')).toBe('insecure');
     expect(relayUrlProblem('wss://relay.example.net/?token=x')).toBe('invalid');
     expect(relayUrlProblem('wss://user@relay.example.net')).toBe('invalid');

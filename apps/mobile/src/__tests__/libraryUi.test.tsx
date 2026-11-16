@@ -432,6 +432,24 @@ describe('a copy the library refuses (signedOnly): the recheck of 2026-11-14', (
     }
   });
 
+  it('front matter and notes are read line by line as core reads them (security review round 4)', () => {
+    const note = '<!-- md-runbook:note at=2026-11-16T10:00:00+01:00 -->\n> **10:00:** Started\n';
+    // A front matter with lone CRs is one: its keys are compared, and an added one is seen.
+    const crOriginal = '---\rshell: bash\r---\r\r' + RUNBOOK;
+    expect(headOf(crOriginal)).toBe('---\rshell: bash\r---\r\r');
+    const crCopy = '---\rshell: bash\rpractice: prod-db\rincident: INC-1\r---\r\r' + note + '\n' + RUNBOOK;
+    expect(derivedText(crCopy, headOf(crOriginal))).toBe(crCopy);
+    expect(derivedText(crCopy, headOf(RUNBOOK))).toBe(crCopy);
+    // As written by Start Incident, with lone CRs: the original back.
+    expect(derivedText('---\rshell: bash\rincident: INC-1\r---\r\r' + note + '\n' + RUNBOOK, headOf(crOriginal))).toBe(crOriginal);
+    // A note before a front matter: no front matter for core, so not the copy's to put back.
+    const planted = note + '\n---\npractice: prod-db\n---\n\n' + RUNBOOK;
+    expect(derivedText(planted, headOf(RUNBOOK))).toBe(planted);
+    // Only a marker alone on its line, without "--" inside, is a note.
+    const loose = '<!-- md-runbook:note -- x -->\n> quoted\n\n' + RUNBOOK;
+    expect(derivedText(loose, headOf(RUNBOOK))).toBe(headOf(RUNBOOK) + loose);
+  });
+
   it('a refused copy offers no Run All as Copy nor Start Incident, and says why', async () => {
     resetHosts();
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
