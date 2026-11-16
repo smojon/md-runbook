@@ -178,6 +178,9 @@ For example:
 "mdRunbook.ai.terms": ["acme", "phoenix-cluster"]
 ```
 
+A workspace's terms and domains (`.vscode/settings.json`) are added to your own. A workspace
+can't drop yours.
+
 ### Security defaults
 
 Every default is the safer choice:

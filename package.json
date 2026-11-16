@@ -1967,7 +1967,7 @@
           "mdRunbook.redaction.patterns": {
             "type": "array",
             "default": [],
-            "markdownDescription": "Additional JavaScript regular expressions; each whole match is replaced with `[REDACTED]`. Use lookbehind to keep context, e.g. `(?<=X-Api-Key: )\\\\S+`. Items are strings or `{ \"pattern\": \"...\", \"flags\": \"i\" }`.",
+            "markdownDescription": "Additional JavaScript regular expressions; each whole match is replaced with `[REDACTED]`. Use lookbehind to keep context, e.g. `(?<=X-Api-Key: )\\\\S+`. Items are strings or `{ \"pattern\": \"...\", \"flags\": \"i\" }`. A workspace's patterns are added to yours: a workspace can't drop them.",
             "items": {
               "anyOf": [
                 {
@@ -2128,7 +2128,7 @@
               "type": "string"
             },
             "default": [],
-            "markdownDescription": "Internal DNS suffixes, e.g. `corp.example.com`. Hosts under them are always pseudonymized and reported by **Check for Leaks**.",
+            "markdownDescription": "Internal DNS suffixes, e.g. `corp.example.com`. Hosts under them are always pseudonymized and reported by **Check for Leaks**. A workspace's domains are added to yours: a workspace can't drop them.",
             "order": 10
           },
           "mdRunbook.ai.terms": {
@@ -2137,7 +2137,7 @@
               "type": "string"
             },
             "default": [],
-            "markdownDescription": "Extra words to pseudonymize (case-insensitive, whole words): cluster, customer or project names.",
+            "markdownDescription": "Extra words to pseudonymize (case-insensitive, whole words): cluster, customer or project names. A workspace's terms are added to yours: a workspace can't drop them.",
             "order": 11
           },
           "mdRunbook.leaks.checkBeforeShare": {

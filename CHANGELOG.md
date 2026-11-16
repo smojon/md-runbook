@@ -44,6 +44,8 @@ Security fixes from a review of the parts that face the network.
   values filled in. Before, `kubectl ${param:VERB}` with `VERB=delete` never asked.
   - The dialog shows those values; secret ones stay `${secret:…}`.
   - In VS Code, a cell with placeholders asks once their values are known, not before.
+- **VS Code, redaction and AI settings:** a workspace's `redaction.patterns`, `ai.terms` and
+  `ai.internalDomains` are added to yours. Before, a workspace setting `[]` replaced your list.
 
 ## 0.26.8
 
