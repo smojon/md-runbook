@@ -1215,6 +1215,80 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"event":"leftovers","status":"killed".*"when":"start"/);
   });
 
+  // ---- security review round 5 (2026-11-16) ----
+
+  it('kill_leftovers: a leftover that forks and exits again and again (its pid never holds still) is ended too', { skip: !unshare && 'needs unshare -rpf (Linux user namespaces)' }, async () => {
+    const d = fs.mkdtempSync(path.join(dir, 'hopper-'));
+    const lconf = confAt('hopper.conf', ['kill_leftovers = yes']);
+    const [m, s] = await signed(fence('bash', 'sleep 1.5; echo second'), { name: 'ops/later' });
+    fs.writeFileSync(path.join(d, 'req'), `: mdrb-gate-hello feed0003; x\nload 00000005 ${m} ${s}\nrun 00000006 1\n`);
+    // The reviewer's hop.pl: each generation forks the next and exits, and writes into every
+    // cells' shell it finds through /proc. Before, the sweep stopped a pid already gone, 4 times.
+    fs.writeFileSync(
+      path.join(d, 'hop.pl'),
+      [
+        "$SIG{TERM} = 'IGNORE'; $SIG{HUP} = 'IGNORE';",
+        'my ($out, $end) = ($ARGV[0], time + 8);',
+        'while (time < $end) {',
+        '  my $p = fork; exit 0 if !defined $p || $p;',
+        "  for my $fd (glob '/proc/[0-9]*/fd/0') {",
+        '    my $t = readlink $fd or next;',
+        '    next unless $t =~ m{/md-runbook-gate\\.[^/]+/pipe\\.[^/]+/in};',
+        "    if (open my $w, '>', $fd) { print $w \"echo INJECTED >>$out\\n\"; close $w }",
+        '  }',
+        '  select undef, undef, undef, 0.003;',
+        '}',
+      ].join('\n') + '\n',
+    );
+    fs.writeFileSync(
+      path.join(d, 'driver.sh'),
+      [
+        `( setsid perl ${d}/hop.pl ${d}/injected >/dev/null 2>&1 </dev/null & )`,
+        'sleep 0.5',
+        `sh ${GATE} --config=${lconf} <${d}/req >${d}/out 2>&1`,
+        'sleep 0.3',
+        `ps -e -o args= >${d}/ps`,
+      ].join('\n') + '\n',
+    );
+    const r = spawnSync('unshare', ['-rpf', '--mount-proc', 'sh', '-c', `sh ${d}/driver.sh; :`], { env: { ...process.env, HOME: dir, TMPDIR: dir }, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    const read = (f: string): string => fs.readFileSync(path.join(d, f), 'utf8');
+    assert.match(read('out'), /second\n/);
+    assert.equal(fs.existsSync(path.join(d, 'injected')), false, "nothing was written into the session's shell");
+    assert.doesNotMatch(read('ps'), /hop\.pl/, 'the fork loop was ended when the session started');
+  });
+
+  it("kill_leftovers: when the client goes first, the gate's end leaves sshd and other sessions alone", { skip: !unshare && 'needs unshare -rpf (Linux user namespaces)' }, async () => {
+    // As in the ops image, where sshd runs as the account: a listener (its parent PID 1) starts a
+    // connection, which starts the gate and ends while a block runs (the client went). Before, the
+    // gate's parent was then PID 1, its session the gate alone, and the end sweep killed the
+    // listener: the ops image's container ended (exit 137 in the Ops host workflow).
+    const d = fs.mkdtempSync(path.join(dir, 'orphan-'));
+    const lconf = confAt('orphan.conf', ['kill_leftovers = yes']);
+    const [m, s] = await signed(fence('bash', 'sleep 1.5; echo second'), { name: 'ops/later' });
+    fs.writeFileSync(path.join(d, 'req'), `: mdrb-gate-hello feed0004; x\nload 00000007 ${m} ${s}\nrun 00000008 1\n`);
+    fs.writeFileSync(
+      path.join(d, 'conn.sh'),
+      `sh ${GATE} --config=${lconf} <${d}/req >${d}/out 2>&1 &\n` +
+        `i=0; while [ $i -lt 200 ] && ! grep -q SIGNED ${d}/out; do sleep 0.05; i=$((i + 1)); done\n`,
+    );
+    fs.writeFileSync(path.join(d, 'listener.sh'), `echo $$ >${d}/listener.pid\nsh ${d}/conn.sh\nexec sleep 30\n`);
+    fs.writeFileSync(
+      path.join(d, 'driver.sh'),
+      [
+        `sh ${d}/listener.sh &`,
+        // (Each sleep short: the start sweep may end one; the driver is no session's.)
+        'i=0; while [ $i -lt 20 ]; do sleep 0.2; i=$((i + 1)); done',
+        `kill -0 "$(cat ${d}/listener.pid)" && echo alive >${d}/listener`,
+        `kill "$(cat ${d}/listener.pid)"`,
+      ].join('\n') + '\n',
+    );
+    const r = spawnSync('unshare', ['-rpf', '--mount-proc', 'sh', '-c', `sh ${d}/driver.sh; :`], { env: { ...process.env, HOME: dir, TMPDIR: dir }, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(fs.readFileSync(path.join(d, 'out'), 'utf8'), /second\n/);
+    assert.equal(fs.existsSync(path.join(d, 'listener')), true, 'the listener outlived the gate');
+  });
+
   it('a request longer than 4000000 bytes ends the session; the gate never reads more of it', { skip: process.platform === 'win32' && 'Git for Windows reads a 4 MB line slowly' }, async () => {
     const g = start();
     let err = '';

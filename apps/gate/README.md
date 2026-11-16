@@ -80,7 +80,13 @@ the account can do what a block can: through `/proc`, they can write into a sess
   or a cron job.
 - The gate spares other SSH logins, `docker exec` and `kubectl exec`, the user manager
   (`systemd --user`) and earlier sessions' run reports. It ends the user manager's services.
+- Under another account's process, only `sshd`'s counts as a login. Cron jobs and orphans
+  that a root process adopted are ended.
 - The gate can't end programs of a session that is still running.
+- Against a fork loop the sweep is best-effort. Such a program forks and exits again and
+  again, so its pid never holds still. The gate stops whole process groups and lists again.
+  - A program that also leaves its process group each time can slip through.
+  - When new processes keep coming for 5 seconds, the log says `sweep incomplete`.
 
 Add `ExposeAuthInfo yes` to `sshd_config` to log each key's fingerprint.
 

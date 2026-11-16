@@ -101,6 +101,14 @@ Security fixes from a review of the parts that face the network.
     session (Linux). The ops host image sets it.
   - Without `setsid` and `perl`, the gate refuses to start. `allow_no_group_kill = yes` starts it
     anyway.
+- **Gate: `kill_leftovers` sweep.** A program that forks and exits in a loop is now stopped by its
+  process group. Before, it slipped through and could write into a later session's shell.
+  - Against a loop that also leaves its group each time, the sweep is best-effort.
+  - The user manager (`systemd --user`) is now spared. Before, it was killed at every session.
+  - Only processes under `sshd` count as other logins. Before, orphans adopted by a root
+    process survived.
+  - When the client left first, the end of the session no longer kills `sshd` running as the
+    account. Before, the ops host container restarted.
 - **Gate: run reports** count only the exit the shell wrote for that run. Before, a block could
   add a passing exit for a failed run.
   - The reported signer comes from the gate's memory. Before, a block could change it in a file.

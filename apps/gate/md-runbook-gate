@@ -947,31 +947,82 @@ stop_groups() {
 # runs from cron. Such a leftover could write into a later session's shell through /proc (security
 # review round 4). With kill_leftovers = yes, at the start of a session and at its end, the gate
 # ends every process of this account that belongs to no live session. Linux only (/proc). Spared:
-# - this session: everything under its topmost ancestor of this account (below PID 1);
-# - every other login: anything under a process of another account (sshd's own, cron's);
+# - this session: everything under its topmost ancestor of this account (below PID 1; see
+#   session_top), and under the gate;
+# - every other SSH login: anything under sshd's own process of another account (root's), the
+#   leader of its session. Not under any other account's process: a cron job goes, and so does an
+#   orphan a subreaper of root adopted (security review round 5);
 # - PID 1, what came in from outside the PID namespace (docker exec, kubectl exec), and the
-#   account's user manager (systemd --user and its sd-pam);
+#   account's user manager (systemd --user and its sd-pam: by name, parent and cgroup, as their
+#   exe can't be read);
 # - run-report senders of earlier sessions: this gate's interpreter running this script, and
 #   curl, sleep, logger, date or rm under one.
-# Processes of a live session are out of its reach: keep the account for the gate alone.
+# Processes of a live session are out of its reach: keep the account for the gate alone. Against a
+# fork loop (a program that forks and exits, again and again, so its pid never holds still) the
+# sweep is best-effort: it stops whole process groups, and lists again until 3 passes in a row
+# find nothing new, for at most 50 passes or 5 seconds ("sweep incomplete" in the log).
 sys_bin() { _b=$(command -v "$1" 2>/dev/null) && readlink -f "$_b" 2>/dev/null; }
-# leftover_list PS: "PID PPID" of each leftover, from `ps -e -o pid= -o ppid= -o uid= -o stat=`.
-leftover_list() {
-  printf '%s\n' "$1" | awk -v me="$$" -v uid="$uid" '
-    $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { pp[$1] = $2; u[$1] = $3; z[$1] = ($4 ~ /^Z/); list[++n] = $1 }
+# The session's topmost process of this account (below PID 1), found at the first sweep while
+# the gate still hangs under sshd: sshd's own process when sshd runs as the account (the ops
+# image). Found after the client went and sshd's process for the session ended, the gate's
+# parent would be PID 1: the session would be the gate alone, and sshd a leftover (it was killed,
+# and the ops image's container ended with it). So none is found once the gate's parent changed
+# (or was PID 1 from the start): no sweep then.
+session_top=
+# session_root PS: that process, from the same listing as leftover_list; '' when the gate lost
+# its parent.
+session_root() {
+  printf '%s\n' "$1" | awk -v me="$$" -v ppid0="$PPID" -v uid="$uid" '
+    $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { pp[$1] = $2; u[$1] = $3 }
     END {
+      if (!(me in pp) || pp[me] != ppid0 || ppid0 == 1) exit
       t = me
       while ((t in pp) && pp[t] > 1 && (pp[t] in u) && u[pp[t]] == uid) t = pp[t]
+      print t
+    }'
+}
+# leftover_list PS: "PID PPID PGID OK" of each leftover, from `ps -e -o pid= -o ppid= -o uid=
+# -o pgid= -o sid= -o stat= -o comm=`. OK is 1 when every process of its group is a leftover too.
+leftover_list() {
+  printf '%s\n' "$1" | awk -v me="$$" -v top="$session_top" -v uid="$uid" '
+    function incg(p,   f, line, ok) {
+      f = "/proc/" p "/cgroup"; ok = 0
+      while ((getline line < f) > 0) if (index(line, "/user@" uid ".service/init.scope")) ok = 1
+      close(f)
+      return ok
+    }
+    # The user manager: systemd, started by PID 1, in the init.scope of user@UID.service.
+    function userman(p) { return cm[p] == "systemd" && pp[p] == 1 && incg(p) }
+    $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {
+      pp[$1] = $2; u[$1] = $3; g[$1] = $4; s[$1] = $5; z[$1] = ($6 ~ /^Z/)
+      c = $7; for (i = 8; i <= NF; i++) c = c " " $i
+      cm[$1] = c; list[++n] = $1
+    }
+    END {
+      # This session: everything under its topmost process, and under the gate itself.
+      t = (top in pp) ? top : me
       for (i = 1; i <= n; i++) {
         p = list[i]
         if (u[p] != uid || p <= 1 || z[p]) continue
+        if (userman(p) || (cm[p] == "(sd-pam)" && userman(pp[p]) && incg(p))) continue
         q = p; spared = 0
         while (q > 1 && (q in pp)) {
           # (Parent 0 below PID 1: entered from outside the PID namespace, as docker exec.)
-          if (q == t || u[q] != uid || pp[q] == 0) { spared = 1; break }
+          if (q == t || q == me || pp[q] == 0) { spared = 1; break }
+          if (u[q] != uid) {
+            # Another account: an SSH login only under sshd (the leader of its session).
+            if (s[q] == q && (cm[q] == "sshd" || cm[q] == "sshd-session")) spared = 1
+            break
+          }
           q = pp[q]
         }
-        if (!spared) print p, pp[p]
+        if (!spared) cand[p] = 1
+      }
+      # A group with anything else in it (of any account) is stopped process by process.
+      for (i = 1; i <= n; i++) { p = list[i]; if (!z[p] && !(p in cand)) bad[g[p]] = 1 }
+      for (i = 1; i <= n; i++) {
+        p = list[i]
+        if (p in cand) print p, pp[p], g[p], ((g[p] > 1 && !(g[p] in bad)) ? 1 : 0)
       }
     }'
 }
@@ -991,46 +1042,86 @@ sweep_leftovers() {
   _me_args=$(tr '\0' '\n' <"/proc/$$/cmdline" | head -n 2)
   _helpers=
   for _b in curl sleep logger date rm; do _helpers="$_helpers $(sys_bin "$_b")"; done
-  _sys=" $(readlink -f /usr/lib/systemd/systemd 2>/dev/null) $(readlink -f /lib/systemd/systemd 2>/dev/null) "
-  _killed=
-  _round=0
   # Stopped first (STOP can't be caught or ignored), then listed again for what they started
-  # meanwhile, then killed.
-  while [ $_round -lt 4 ]; do
-    _ps=$(ps -e -o pid= -o ppid= -o uid= -o stat= 2>/dev/null) && [ -n "$_ps" ] || {
+  # meanwhile, then killed. _killed: pids and -groups stopped; _groups: the groups; _failed: pids
+  # that were gone before STOP.
+  _killed=
+  _groups=
+  _failed=
+  _pass=0
+  _quiet=0
+  _t0=$(date +%s)
+  while [ $_quiet -lt 3 ]; do
+    if [ $_pass -ge 50 ] || [ $(($(date +%s) - _t0)) -ge 5 ]; then
+      log_event event leftovers status incomplete reason "sweep incomplete: processes of the account kept appearing (a fork loop?)" when "$1"
+      break
+    fi
+    _pass=$((_pass + 1))
+    _ps=$(ps -e -o pid= -o ppid= -o uid= -o pgid= -o sid= -o stat= -o comm= 2>/dev/null) && [ -n "$_ps" ] || {
       log_event event leftovers status skipped reason "ps can't list the processes"
       break
     }
-    _new=
-    while read -r _p _pp; do
+    if [ -z "$session_top" ]; then
+      session_top=$(session_root "$_ps")
+      [ -n "$session_top" ] || {
+        log_event event leftovers status skipped reason "the gate's parent (sshd) ended first" when "$1"
+        return 0
+      }
+    fi
+    _stop=
+    _spared=
+    while read -r _p _pp _g _ok; do
       is_pid "$_p" || continue
-      case " $_killed " in *" $_p "*) continue ;; esac
+      # (Group 0: its leader is outside the PID namespace.)
+      is_pid "$_g" || { _g=0 && _ok=0; }
+      case " $_killed $_failed " in *" $_p "*) continue ;; esac
+      case " $_groups " in *" $_g "*) continue ;; esac
       _x=$(readlink "/proc/$_p/exe" 2>/dev/null) || _x=
       # A report sender: this interpreter, this script, nothing in its environment that loads code.
       if [ -n "$_x" ] && [ "$_x" = "$_me_exe" ] && [ "$(tr '\0' '\n' <"/proc/$_p/cmdline" 2>/dev/null | head -n 2)" = "$_me_args" ] &&
         ! tr '\0' '\n' <"/proc/$_p/environ" 2>/dev/null | grep -Eq '^(LD_|BASH_ENV=|ENV=|BASH_FUNC_)'; then
+        _spared="$_spared $_g"
         continue
       fi
       # What a report sender runs.
       case " $_helpers " in
         *" $_x "*)
           _px=$(readlink "/proc/$_pp/exe" 2>/dev/null) || _px=
-          [ "$_px" = "$_me_exe" ] && [ "$(tr '\0' '\n' <"/proc/$_pp/cmdline" 2>/dev/null | head -n 2)" = "$_me_args" ] && continue
+          if [ "$_px" = "$_me_exe" ] && [ "$(tr '\0' '\n' <"/proc/$_pp/cmdline" 2>/dev/null | head -n 2)" = "$_me_args" ]; then
+            _spared="$_spared $_g"
+            continue
+          fi
           ;;
       esac
-      # The user manager (it starts the account's services again; those go).
-      case $_sys in *" $_x "*) [ -n "$_x" ] && continue ;; esac
-      kill -s STOP "$_p" 2>/dev/null && _new="$_new $_p"
+      _stop="$_stop $_p:$_g:$_ok"
     done <<EOF
 $(leftover_list "$_ps")
 EOF
-    [ -n "$_new" ] || break
-    _killed="$_killed$_new"
-    _round=$((_round + 1))
+    if [ -z "$_stop" ]; then
+      _quiet=$((_quiet + 1))
+      continue
+    fi
+    _quiet=0
+    for _e in $_stop; do
+      _p=${_e%%:*}
+      _g=${_e#*:}
+      _ok=${_g#*:}
+      _g=${_g%:*}
+      case " $_groups " in *" $_g "*) continue ;; esac
+      # A whole group at once: a fork loop that keeps its group can't slip out between two passes.
+      if [ "$_ok" = 1 ] && is_pid "$_g" && case " $_spared " in *" $_g "*) false ;; *) true ;; esac; then
+        if kill -s STOP -- "-$_g" 2>/dev/null; then _groups="$_groups $_g" _killed="$_killed -$_g"; else _failed="$_failed $_p"; fi
+      elif kill -s STOP "$_p" 2>/dev/null; then
+        _killed="$_killed $_p"
+      else
+        # Gone already (or out of reach): not listed again.
+        _failed="$_failed $_p"
+      fi
+    done
   done
   [ -n "$_killed" ] || return 0
   # shellcheck disable=SC2086
-  kill -s KILL $_killed 2>/dev/null
+  kill -s KILL -- $_killed 2>/dev/null
   log_event event leftovers status killed pids "${_killed# }" when "$1"
 }
 cleanup() {

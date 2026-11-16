@@ -48,7 +48,9 @@ locale = auto
 
 # yes: at the start and end of each session, end every process of the account that belongs to
 # no live session (a block's setsid or double-forked program, a cron job). Linux only. For an
-# account used by the gate alone; recommended.
+# account used by the gate alone; recommended. Best-effort against a fork loop (a program that
+# forks and exits again and again): one that also leaves its process group each time can slip
+# through. If new ones keep coming for 5 seconds, the log says "sweep incomplete".
 # kill_leftovers = no
 
 # Without setsid and perl the gate can't end a block's background programs, and refuses to
