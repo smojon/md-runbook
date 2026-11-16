@@ -147,6 +147,7 @@ import { transportReady } from '../ssh/transport';
 import { mono, themedStyles, usePalette } from '../theme';
 import { ActionGroup, ActionsSheet, AppAction } from '../ui/ActionsSheet';
 import { RunsSheet } from '../ui/RunsSheet';
+import { LibraryPublishSheet, PublishRequest } from '../ui/LibraryPublishSheet';
 import { runLogKey } from '../runbooks/runLog';
 import { NotifyOfferCard } from '../notifications/OfferCard';
 import { useOpenRequest } from '../notifications/open';
@@ -1204,6 +1205,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [showActions, setShowActions] = useState(false);
   /** Show Runs…: the sheet with this runbook's earlier runs. */
   const [showRuns, setShowRuns] = useState(false);
+  /** Publish to Library… / Remove from Library…: their sheet. */
+  const [publishing, setPublishing] = useState<PublishRequest | undefined>();
   // Set Inputs: the inputs card lists every input the runbook uses, set or not.
   const [showInputs, setShowInputs] = useState(false);
   const usedInputs = useMemo((): [string, boolean][] => {
@@ -1497,6 +1500,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           run: () =>
             void requestCosign(runbook).catch((e: unknown) => setNotice(t.shareFailed(e instanceof Error ? e.message : String(e)))),
         },
+        { ...meta('publishToLibrary', 'share'), run: () => setPublishing({ mode: 'publish', runbook }) },
+        { ...meta('removeFromLibrary', 'share'), run: () => setPublishing({ mode: 'remove', runbook }) },
         { ...meta('cheatSheet', 'help'), run: () => void Linking.openURL(CHEAT_SHEET_URL) },
         { ...meta('sample', 'help'), run: () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } }) },
       ]
@@ -2595,6 +2600,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       {/* The sheets at the screen's root: they open from the Steps tab too, while the runbook is hidden. */}
       <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
       <RunsSheet runsKey={runLogKey(runbook)} title={runbook.title} visible={showRuns} onClose={() => setShowRuns(false)} />
+      <LibraryPublishSheet request={publishing} onClose={() => setPublishing(undefined)} onSign={() => openSign('sign')} onDone={sayOk} />
       {launch && launchShown ? (
         <LaunchSheet
           model={launchShown}

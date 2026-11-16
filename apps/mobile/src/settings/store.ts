@@ -56,6 +56,11 @@ export interface Settings {
    */
   libraryUrl: string;
   /**
+   * The team library's server, where Publish to Library… and Remove from Library… send (as VS
+   * Code's mdRunbook.library.server), https only. Empty: the origin of the library the app reads.
+   */
+  libraryServer: string;
+  /**
    * The web app's public address (Hosts & settings → Public address of this web app), e.g. a
    * tunnel's https://…trycloudflare.com: share links, QR codes and pairing links use it instead of
    * the address the page was opened from. Empty: the container's MD_RUNBOOK_PUBLIC_URL
@@ -81,6 +86,7 @@ const DEFAULTS: Settings = {
   launchForm: true,
   signerName: '',
   libraryUrl: '',
+  libraryServer: '',
   publicUrl: '',
   reportAddresses: [],
 };
@@ -126,6 +132,7 @@ async function readSettings(): Promise<void> {
       launchForm: flag('launchForm'),
       signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
       libraryUrl: typeof saved.libraryUrl === 'string' ? saved.libraryUrl : '',
+      libraryServer: typeof saved.libraryServer === 'string' ? saved.libraryServer : '',
       publicUrl: typeof saved.publicUrl === 'string' ? saved.publicUrl : '',
       ...(typeof saved.notifyRuns === 'boolean' ? { notifyRuns: saved.notifyRuns } : {}),
       reportAddresses: Array.isArray(saved.reportAddresses) ? saved.reportAddresses.filter((a): a is string => typeof a === 'string') : [],
@@ -176,6 +183,18 @@ export function setLibraryUrl(url: string): void {
 
 export function useLibraryUrlSetting(): string {
   return useSettings().libraryUrl;
+}
+
+/** The library server as set ('' when not set: see Settings.libraryServer). */
+export const libraryServerSetting = (): string => settings.libraryServer;
+
+/** Set (or with '' remove) the library server's address. */
+export function setLibraryServer(url: string): void {
+  update({ libraryServer: url.trim().replace(/\/+$/, '') });
+}
+
+export function useLibraryServerSetting(): string {
+  return useSettings().libraryServer;
 }
 
 /** The web app's public address as set ('' when not set: see Settings.publicUrl). */

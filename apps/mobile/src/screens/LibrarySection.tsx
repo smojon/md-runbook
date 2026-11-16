@@ -49,6 +49,8 @@ import { mono, themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
 import { Points } from '../ui/Points';
 import { compareWithHint, signerHintFor, useSignerHints } from '../pairing/signerHints';
+import { ActionsSheet, AppAction } from '../ui/ActionsSheet';
+import { LibraryPublishSheet, PublishRequest } from '../ui/LibraryPublishSheet';
 
 const signerNames = (checks: readonly SignerCheck[]): string[] =>
   checks.map((c) => t.sigSigner(c.name, c.wildcard ? c.fingerprint : undefined));
@@ -96,6 +98,9 @@ export function LibrarySection() {
   useEffect(() => {
     void recheckSignatures();
   }, [trusted]);
+  /** A row's ⋯ (Open, Publish to Library…, Remove from Library…), and the publish sheet it opens. */
+  const [rowActions, setRowActions] = useState<AppAction[] | undefined>();
+  const [publishing, setPublishing] = useState<PublishRequest | undefined>();
   if (lib.status === 'idle' || lib.status === 'none') return null;
   // The web app's own /runbooks/ (no address set), never read: a failure there is no library, not an error.
   if (!lib.library && lib.status === 'error' && !setAddress) return null;
@@ -167,11 +172,15 @@ export function LibrarySection() {
                 sig={signatureOf(lib, e)}
                 first={i === 0}
                 last={i === entries.length - 1}
+                onActions={setRowActions}
+                onPublish={setPublishing}
               />
             ))}
           </View>
         );
       })}
+      <ActionsSheet actions={rowActions ?? []} visible={rowActions !== undefined} onClose={() => setRowActions(undefined)} />
+      <LibraryPublishSheet request={publishing} onClose={() => setPublishing(undefined)} />
     </View>
   );
 }
@@ -326,12 +335,17 @@ function LibraryRow({
   sig,
   first,
   last,
+  onActions,
+  onPublish,
 }: {
   library: Library;
   entry: LibraryEntry;
   sig: SignatureState | undefined;
   first: boolean;
   last: boolean;
+  /** The row's ⋯ was tapped: its actions. */
+  onActions(actions: AppAction[]): void;
+  onPublish(request: PublishRequest): void;
 }) {
   const styles = useStyles();
   const colors = usePalette();
@@ -392,50 +406,89 @@ function LibraryRow({
     setConfirm(undefined);
   };
   const factsText = factsLabel(facts, sig);
+  // Built when the ⋯ is tapped (a handler, not during render).
+  const actions = (): AppAction[] => [
+    {
+      id: 'libraryOpen',
+      title: t.libraryOpen[0],
+      hint: t.libraryOpen[1],
+      group: 'run',
+      run: () => void open(),
+      ...(why !== undefined ? { disabled: why } : {}),
+    },
+    {
+      id: 'publishToLibrary',
+      title: t.actions.publishToLibrary[0],
+      hint: t.actions.publishToLibrary[1],
+      group: 'share',
+      run: () => copy && onPublish({ mode: 'publish', runbook: copy }),
+      ...(copy ? {} : { disabled: t.publishNeedsCopy }),
+    },
+    {
+      id: 'removeFromLibrary',
+      title: t.actions.removeFromLibrary[0],
+      hint: t.actions.removeFromLibrary[1],
+      group: 'share',
+      run: () => onPublish({ mode: 'remove', path: entry.path, ...(copy ? { runbook: copy } : {}) }),
+    },
+  ];
   return (
     <View style={[styles.row, first && styles.rowFirst, last && styles.rowLast]}>
-      <Pressable
-        testID={`library-${entry.path}`}
-        accessibilityRole="link"
-        aria-label={entry.title}
-        aria-disabled={why !== undefined}
-        disabled={why !== undefined}
-        onPress={() => void open()}
-        style={styles.rowLink}
-      >
-        <View style={styles.badge}>
-          <Codicon name={green ? 'verified' : 'library'} size={18} color={why ? colors.muted : colors.link} />
-        </View>
-        <View style={styles.rowText}>
-          <Text style={[styles.title, why !== undefined && styles.dim]} numberOfLines={2}>
-            {entry.title}
-          </Text>
-          <Text testID={`library-sig-${entry.path}`} style={[styles.meta, { color: sigColor }]} numberOfLines={3}>
-            {entry.text === undefined ? (entry.error ?? t.libraryUnreadable) : sigLabel(sig)}
-            {copy ? ` · ${t.libraryYourCopy}` : ''}
-            {status === 'kept' ? ` · ${t.updateKept}` : ''}
-          </Text>
-          {factsText ? (
-            <Text
-              testID={`library-facts-${entry.path}`}
-              style={[styles.meta, facts?.otherName || facts?.olderThan !== undefined || facts?.expired ? styles.warn : null]}
-              numberOfLines={2}
-            >
-              {factsText}
+      <View style={styles.rowMain}>
+        <Pressable
+          testID={`library-${entry.path}`}
+          accessibilityRole="link"
+          aria-label={entry.title}
+          aria-disabled={why !== undefined}
+          disabled={why !== undefined}
+          onPress={() => void open()}
+          style={styles.rowLink}
+        >
+          <View style={styles.badge}>
+            <Codicon name={green ? 'verified' : 'library'} size={18} color={why ? colors.muted : colors.link} />
+          </View>
+          <View style={styles.rowText}>
+            <Text style={[styles.title, why !== undefined && styles.dim]} numberOfLines={2}>
+              {entry.title}
             </Text>
-          ) : null}
-          {why && entry.text !== undefined ? (
-            <Text testID={`library-why-${entry.path}`} style={styles.meta}>
-              {why}
+            <Text testID={`library-sig-${entry.path}`} style={[styles.meta, { color: sigColor }]} numberOfLines={3}>
+              {entry.text === undefined ? (entry.error ?? t.libraryUnreadable) : sigLabel(sig)}
+              {copy ? ` · ${t.libraryYourCopy}` : ''}
+              {status === 'kept' ? ` · ${t.updateKept}` : ''}
             </Text>
-          ) : null}
-          {mineWhy ? (
-            <Text testID={`library-copy-why-${entry.path}`} style={[styles.meta, styles.warn]}>
-              {t.libraryCopyRefused(mineWhy)}
-            </Text>
-          ) : null}
-        </View>
-      </Pressable>
+            {factsText ? (
+              <Text
+                testID={`library-facts-${entry.path}`}
+                style={[styles.meta, facts?.otherName || facts?.olderThan !== undefined || facts?.expired ? styles.warn : null]}
+                numberOfLines={2}
+              >
+                {factsText}
+              </Text>
+            ) : null}
+            {why && entry.text !== undefined ? (
+              <Text testID={`library-why-${entry.path}`} style={styles.meta}>
+                {why}
+              </Text>
+            ) : null}
+            {mineWhy ? (
+              <Text testID={`library-copy-why-${entry.path}`} style={[styles.meta, styles.warn]}>
+                {t.libraryCopyRefused(mineWhy)}
+              </Text>
+            ) : null}
+          </View>
+        </Pressable>
+        <Pressable
+          testID={`library-actions-${entry.path}`}
+          accessibilityRole="button"
+          accessibilityLabel={t.libraryRowActions}
+          aria-label={t.libraryRowActions}
+          hitSlop={8}
+          onPress={() => onActions(actions())}
+          style={styles.more}
+        >
+          <Codicon name="ellipsis" size={16} color={colors.link} />
+        </Pressable>
+      </View>
       {status === 'update' && theirsWhy !== undefined ? (
         <Text testID={`library-update-refused-${entry.path}`} style={[styles.meta, styles.warn, styles.update]}>
           {t.libraryVersionRefused(theirsWhy)}
@@ -533,7 +586,9 @@ const useStyles = themedStyles((colors) => ({
   },
   rowFirst: { borderTopWidth: StyleSheet.hairlineWidth, borderTopLeftRadius: 12, borderTopRightRadius: 12 },
   rowLast: { borderBottomLeftRadius: 12, borderBottomRightRadius: 12 },
-  rowLink: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
+  rowMain: { flexDirection: 'row', alignItems: 'center' },
+  rowLink: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
+  more: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   badge: { width: 36, height: 36, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
   rowText: { flex: 1 },
   title: { fontSize: 16, fontWeight: '500', color: colors.text },
