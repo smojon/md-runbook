@@ -6,7 +6,10 @@ pushed. The workflow:
 2. packages the extension;
 3. publishes it to the **Visual Studio Marketplace** and **Open VSX**, each only if its token
    secret is set;
-4. creates a GitHub pre-release with the `.vsix`, the command line's `.tgz` and the signed `.apk`, all at once (releases are immutable once published).
+4. creates a GitHub pre-release with all its files at once (releases are immutable once
+   published):
+   - the `.vsix`, the command line's `.tgz` and the signed `.apk`;
+   - md-runbook-gate for servers: `md-runbook-gate-<os>-<arch>` and `SHA256SUMS`.
 
 ## One-time setup
 

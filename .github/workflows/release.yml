@@ -27,6 +27,17 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - run: npm ci
+      # The Go gate for its protocol tests (test/gate.test.ts, in npm test), on Linux and macOS.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        if: runner.os != 'Windows'
+        with:
+          go-version-file: apps/gate/go.mod
+          cache: false
+      - name: Build the gate
+        if: runner.os != 'Windows'
+        run: |
+          sh scripts/ci/build-gate.sh apps/gate/dist/md-runbook-gate
+          echo "MD_RUNBOOK_GATE_BIN=$GITHUB_WORKSPACE/apps/gate/dist/md-runbook-gate" >> "$GITHUB_ENV"
       - run: npm test
       - name: Integration tests (Linux)
         if: runner.os == 'Linux'
@@ -126,6 +137,53 @@ jobs:
             md-runbook.vsix
             md-runbook-cli.tgz
             out/npm/
+          if-no-files-found: error
+          retention-days: 7
+
+  # md-runbook-gate for servers: md-runbook-gate-<goos>-<goarch> for Linux and macOS on amd64 and
+  # arm64, and their SHA256SUMS. Like `package`: no secret and no write token. Built by
+  # scripts/ci/build-gate.sh (static, -trimpath, no build ID, only go.mod's toolchain), so the
+  # same tag gives the same bytes. github-release attaches them.
+  gate:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      GOTOOLCHAIN: local # the toolchain go.mod names, which setup-go installs; never a download by go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: apps/gate/go.mod
+          cache: false
+      - name: Vet and test
+        working-directory: apps/gate
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Build for Linux and macOS, amd64 and arm64
+        run: |
+          out="$RUNNER_TEMP/gate"
+          mkdir -p "$out"
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os=${target%/*} arch=${target#*/}
+            sh scripts/ci/build-gate.sh "$out/md-runbook-gate-$os-$arch" "$os" "$arch"
+            # Static, from the pinned toolchain: what `go version -m` says the binary was built with.
+            info=$(go version -m "$out/md-runbook-gate-$os-$arch")
+            echo "$info" | grep -qx "[[:space:]]*build[[:space:]]*CGO_ENABLED=0" || { echo "::error::$os/$arch: not CGO_ENABLED=0"; exit 1; }
+            echo "$info" | head -n 1
+          done
+          cd "$out"
+          sha256sum md-runbook-gate-* > SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: upload
+        with:
+          name: gate-binaries
+          path: ${{ runner.temp }}/gate/
           if-no-files-found: error
           retention-days: 7
 
@@ -251,7 +309,7 @@ jobs:
 
   # Made with every file at once: a published release is immutable (Settings → General).
   github-release:
-    needs: [package, apk]
+    needs: [package, apk, gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub release
@@ -267,6 +325,10 @@ jobs:
         with:
           artifact-ids: ${{ needs.apk.outputs.artifact_id }}
           path: ${{ runner.temp }}/apk
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.gate.outputs.artifact_id }}
+          path: ${{ runner.temp }}/gate
       - name: The artifact holds the release files and nothing else
         working-directory: ${{ runner.temp }}/release
         run: *check-release-files
@@ -278,11 +340,24 @@ jobs:
             echo "::error::md-runbook-android is not md-runbook-${GITHUB_REF_NAME#v}.apk alone: $got"
             exit 1
           fi
-      - name: GitHub release with the .vsix and the command line
+      - name: The gate artifact holds the four binaries and their SHA256SUMS, nothing else
+        working-directory: ${{ runner.temp }}/gate
+        run: |
+          got=$(find . -mindepth 1 ! -type d | LC_ALL=C sort)
+          want=$(printf './%s\n' SHA256SUMS md-runbook-gate-darwin-amd64 md-runbook-gate-darwin-arm64 md-runbook-gate-linux-amd64 md-runbook-gate-linux-arm64 | LC_ALL=C sort)
+          if [ "$got" != "$want" ]; then
+            echo "::error::gate-binaries is not the expected files"
+            diff <(echo "$want") <(echo "$got") || true
+            exit 1
+          fi
+          test "$(wc -l < SHA256SUMS)" = 4
+          sha256sum --strict -c SHA256SUMS
+      - name: GitHub release with the .vsix, the command line, the APK and the gate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd "$RUNNER_TEMP/release"
           gh release create "$GITHUB_REF_NAME" md-runbook.vsix md-runbook-cli.tgz "$RUNNER_TEMP/apk/md-runbook-${GITHUB_REF_NAME#v}.apk" \
+            "$RUNNER_TEMP"/gate/md-runbook-gate-* "$RUNNER_TEMP/gate/SHA256SUMS" \
             --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
             --notes-file <(node "$GITHUB_WORKSPACE/scripts/release-notes.js" "$GITHUB_REF_NAME") --prerelease
