@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { parse } from '@md-runbook/core';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { fixCellOption, runbookProblems } from '../runbooks/lint';
+import { BUNDLED } from '../runbooks/sample';
 import { RunbookView } from '../screens/RunbookView';
 
 jest.mock('expo-router', () => ({
@@ -56,6 +57,11 @@ describe('runbookProblems', () => {
 
   it('finds nothing in a clean runbook', () => {
     expect(runbookProblems('# Fine\n\n```bash retry=3 every=5s\necho ok\n```\n').all).toEqual([]);
+  });
+
+  it('finds nothing in the runbooks that come with the app', () => {
+    // An unquoted regex with a space once split into an unknown option (\(running\)/).
+    for (const r of BUNDLED) expect([r.id, runbookProblems(r.text).all]).toEqual([r.id, []]);
   });
 });
 

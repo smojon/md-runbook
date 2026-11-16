@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **App, sample runbook:** its service check quotes its regular expression, so it no longer shows
+  an unknown cell option warning and checks for `active (running)` as meant.
 - **Progress, re-runs:** a run counts the steps it hasn't reached yet as still to do, even when
   they have a green output from the last run. Before, re-running a finished runbook showed 98 %,
   `0s left` and an end time already past. VS Code and the app.

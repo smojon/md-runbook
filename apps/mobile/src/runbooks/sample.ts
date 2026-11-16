@@ -20,7 +20,7 @@ Filesystem      Size  Used Avail Use% Mounted on
 
 ## Service
 
-\`\`\`bash expect=/active \\(running\\)/
+\`\`\`bash expect="/active \\(running\\)/"
 systemctl status nginx --no-pager | head -3
 \`\`\`
 `;
