@@ -52,6 +52,8 @@ Security fixes from a review of the parts that face the network.
 - **Cloud console views (VS Code):** an AWS link takes only a real region. Before, a crafted
   zone or ARN in the output could point **Open** at another host.
   - Values in the table stay text: a resource name can't make a link, an image or HTML.
+- **VS Code, Set Parameters and Set Inputs:** only the extension test runner can pass them
+  values. The commands themselves always ask.
 
 ## 0.26.8
 

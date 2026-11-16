@@ -36,6 +36,7 @@ import { CellPlan, PrepareContext, PromptCancelled, RunPipeline } from './pipeli
 import { SECTION } from './config';
 import { NOTEBOOK_TYPE } from './serializer';
 import { whileWaiting } from './waiting';
+import { testOnlyValues } from './testValues';
 
 /** SecretStorage can't enumerate, so the names are kept here. */
 const INDEX_KEY = 'mdRunbook.secretNames';
@@ -572,15 +573,29 @@ class SecretsFeature {
     if (refused.length > 0) void vscode.window.showWarningMessage(`md-runbook: the link's value is not taken: ${refused.join('; ')}. It is asked when the runbook runs.`);
   }
 
-  /** Ask for every declared parameter (`values` only from the test helper, never from a command link). */
-  async setParameters(values?: unknown): Promise<void> {
+  /** Test mode only (mdRunbook._test.setParameters): parameter values for the active runbook, not asked. */
+  setParameterValues(values: unknown): void {
+    const checked = testOnlyValues(values, isTestMode(this.context));
     const nb = activeRunbook();
     if (!nb) return;
     const cache = this.session(this.params, nb);
-    if (values !== undefined && typeof values === 'object' && values !== null && Object.values(values).every((v) => typeof v === 'string')) {
-      for (const [k, v] of Object.entries(values as Record<string, string>)) if (VAR_NAME_RE.test(k)) cache.set(k, v);
-      return;
-    }
+    for (const [k, v] of Object.entries(checked)) cache.set(k, v);
+  }
+
+  /** Test mode only (mdRunbook._test.setInputs): input values for the active runbook, not asked. */
+  setInputValues(values: unknown): void {
+    const checked = testOnlyValues(values, isTestMode(this.context));
+    const nb = activeRunbook();
+    if (!nb) return;
+    const cache = this.session(this.inputs, nb);
+    for (const [k, v] of Object.entries(checked)) cache.set(k, v);
+  }
+
+  /** Ask for every declared parameter (Set Parameters). Takes no values: a command link can't set any. */
+  async setParameters(): Promise<void> {
+    const nb = activeRunbook();
+    if (!nb) return;
+    const cache = this.session(this.params, nb);
     // Declared ones first (with their defaults), then any other the cells use.
     const params: RunbookParam[] = [...declaredParams(nb)];
     for (const r of usedRefs(nb)) if (r.kind === 'param' && !params.some((p) => p.name === r.name)) params.push({ name: r.name });
@@ -603,14 +618,10 @@ class SecretsFeature {
    * Ask for every `${input:NAME}` the runbook's cells use, the current value filled in (a secret
    * one is masked and never shown: empty keeps it). Escape stops; the values set so far stay.
    */
-  async setInputs(values?: unknown): Promise<void> {
+  async setInputs(): Promise<void> {
     const nb = activeRunbook();
     if (!nb) return;
     const cache = this.session(this.inputs, nb);
-    if (values !== undefined && typeof values === 'object' && values !== null && Object.values(values).every((v) => typeof v === 'string')) {
-      for (const [k, v] of Object.entries(values as Record<string, string>)) if (VAR_NAME_RE.test(k)) cache.set(k, v);
-      return;
-    }
     const inputs = new Map<string, boolean>();
     for (const r of usedRefs(nb)) if (r.kind === 'input') inputs.set(r.name, (inputs.get(r.name) ?? false) || r.secret);
     if (inputs.size === 0) return void vscode.window.showInformationMessage('md-runbook: this runbook has no inputs (${input:NAME}).');
@@ -752,8 +763,8 @@ export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunP
         await f.allow(name);
       }),
       vscode.commands.registerCommand('mdRunbook._test.deleteSecret', (name: string) => f.deleteSecret(name)),
-      vscode.commands.registerCommand('mdRunbook._test.setParameters', (values: Record<string, string>) => f.setParameters(values)),
-      vscode.commands.registerCommand('mdRunbook._test.setInputs', (values: Record<string, string>) => f.setInputs(values)),
+      vscode.commands.registerCommand('mdRunbook._test.setParameters', (values: unknown) => f.setParameterValues(values)),
+      vscode.commands.registerCommand('mdRunbook._test.setInputs', (values: unknown) => f.setInputValues(values)),
     );
   }
   context.subscriptions.push(
