@@ -39,6 +39,13 @@ export interface CellPlan {
   stopSequence?: boolean;
   /** Set by an early preparer: the cell must be confirmed (text names the risky match, '' = always). */
   confirm?: string;
+  /** Set by safety.ts: the source has placeholders, so the final preparer checks it again with `shown`. */
+  recheckConfirm?: boolean;
+  /**
+   * Set by secrets.ts: the source as written with the values of its placeholders filled in, except
+   * secret ones (left as written). What a confirmation shows and its risky patterns see.
+   */
+  shown?: string;
   /** Run after the cell finished (or was not run), e.g. to delete temporary credential files. */
   cleanup?: (() => void | Promise<void>)[];
   /**

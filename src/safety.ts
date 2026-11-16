@@ -9,6 +9,7 @@ import { isCallLanguage } from '@md-runbook/core/call';
 import { isCodeMeta } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
+import { hasShownRefs } from '@md-runbook/core/secrets';
 import { runContextCommand } from '@md-runbook/core/node/context';
 import { OsName, currentOs, osLabel } from '@md-runbook/core/os';
 import { SECTION, executionConfig, redactionConfig } from './config';
@@ -172,9 +173,12 @@ async function askToRun(plan: CellPlan, cell: vscode.NotebookCell, match: string
     .filter((k) => k in plan.attrs)
     .map((k) => `${k}: ${plan.attrs[k]}`);
   const title = stepTitle(cell);
-  const message = match === '' ? `Run ${title}?` : `Risky command in ${title}: “${match.trim()}”`;
+  // The command with its values (secrets stay `${secret:…}`), redacted as output is.
+  const r = redactionConfig();
+  const redact = (s: string): string => knownSecrets.redact(r.enabled ? r.redactor.redact(s) : s);
+  const message = match === '' ? `Run ${title}?` : `Risky command in ${title}: “${redact(match.trim())}”`;
   const retries = plan.retry && plan.retry.attempts > 1 ? `It runs up to ${plan.retry.attempts} times (retry=) until it passes.` : '';
-  const detail = [commandPreview(plan.source), ctxLines.length > 0 ? `It runs in:\n${ctxLines.join('\n')}` : '', retries].filter((s) => s !== '').join('\n\n');
+  const detail = [redact(commandPreview(plan.shown ?? plan.source)), ctxLines.length > 0 ? `It runs in:\n${ctxLines.join('\n')}` : '', retries].filter((s) => s !== '').join('\n\n');
   const what = `confirm ${labelOf(cell)}`;
   const answer = inFront(cell.notebook)
     ? await whileWaiting(cell, what, () => vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run'), 'dialog')
@@ -194,7 +198,8 @@ async function askToRun(plan: CellPlan, cell: vscode.NotebookCell, match: string
 
 /**
  * Decides whether a cell needs confirmation (a risky pattern, or always/never per settings and
- * cell options). Without context recording it asks right away, before any secret or input prompt.
+ * cell options). Without context recording it asks right away, before any secret or input prompt,
+ * unless the cell has placeholders: then it asks once their values are known, showing them.
  * With context recording the question waits for `finalPreparer`, so it can show the context
  * computed with the cell's final environment (.env, secrets, read-only credentials).
  */
@@ -209,7 +214,15 @@ const confirmPreparer: CellPreparer = {
 
     const mode = c.get<ConfirmMode>('execution.confirm', 'patterns');
     // A runbook call's lines are values passed, not commands: only `confirm` asks.
-    const match = confirmationFor(isCallLanguage(plan.language) ? '' : plan.source, mode, regexes, cellConfirmOption(infoOf(cell)));
+    const source = isCallLanguage(plan.language) ? '' : plan.source;
+    const match = confirmationFor(source, mode, regexes, cellConfirmOption(infoOf(cell)));
+    // Placeholders: their values count too (`kubectl ${param:VERB}` with VERB=delete asks), so the
+    // question waits until they are known (the final preparer), and shows them.
+    if (hasShownRefs(source)) {
+      plan.confirm = match;
+      plan.recheckConfirm = true;
+      return;
+    }
     if (match === undefined) return;
     if (Object.keys(recordContextCommands()).length === 0) await askToRun(plan, cell, match);
     else plan.confirm = match;
@@ -277,6 +290,11 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
   const final: CellPreparer = {
     async prepare(plan, ctx) {
       if (plan.skip !== undefined) return;
+      if (plan.recheckConfirm) {
+        // A risky match in the values wins (it says what runs); else the one as written.
+        const filled = plan.shown !== undefined ? confirmationOf(ctx.cell, plan.shown) : undefined;
+        if (filled !== undefined && (filled !== '' || plan.confirm === undefined)) plan.confirm = filled;
+      }
       await recorder.prepare(plan, ctx);
       if (plan.confirm !== undefined) await askToRun(plan, ctx.cell, plan.confirm);
     },

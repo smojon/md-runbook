@@ -172,6 +172,11 @@ When there are choices, it shows a list to pick from, and **Start** takes only o
 The input boxes show the description too, and take only one of the choices. The linter warns
 when the default is not one of the choices.
 
+A value from anywhere else must be one of the choices too, or the step doesn't run:
+
+- a runbook link or alert (VS Code doesn't take it, and asks instead);
+- a runbook call, the default, or `--param` on the command line (an error before anything runs).
+
 Front matter is plain Markdown to md-runbook; it is saved byte for byte like everything else.
 
 ## `.env` files

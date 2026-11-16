@@ -48,6 +48,34 @@ export function replaceRefs(source: string, fn: (kind: RefKind, name: string) =>
   return source.replace(REF_RE, (whole, kind: RefKind, name: string, mod: string | undefined) => (mod && kind !== 'input' ? whole : fn(kind, name)));
 }
 
+/**
+ * `source` as it will run, for a confirmation and its risky patterns: each placeholder whose value
+ * is known and not secret filled in; secret ones, and those without a value, left as written.
+ */
+export function fillShown(source: string, value: (ref: VarRef) => { value: string; secret: boolean } | undefined): string {
+  let refs: Map<string, VarRef>;
+  try {
+    refs = new Map(findRefs(source).map((r) => [r.name, r]));
+  } catch {
+    return source; // a name used as two kinds: the run reports it
+  }
+  return source.replace(REF_RE, (whole, _kind: RefKind, name: string, mod: string | undefined) => {
+    const ref = refs.get(name);
+    if (!ref || ref.secret || (mod && ref.kind !== 'input')) return whole;
+    const v = value(ref);
+    return v && !v.secret ? v.value : whole;
+  });
+}
+
+/** Whether `source` has a placeholder that may be filled in for people to see (not a secret one). */
+export function hasShownRefs(source: string): boolean {
+  try {
+    return findRefs(source).some((r) => !r.secret);
+  } catch {
+    return false;
+  }
+}
+
 /** How a shell reads environment variable `name`. */
 export function envRef(name: string, shell: ShellKind): string {
   switch (shell) {
@@ -113,6 +141,16 @@ export function paramComment(comment: string): { description?: string; choices?:
   if (!m || choices.length === 0) return text !== '' ? { description: text } : {};
   const description = text.slice(0, m.index).replace(/[\s,;:(-]+$/, '');
   return { ...(description !== '' ? { description } : {}), choices };
+}
+
+/**
+ * Why `value` can't be the value of the parameter `p`: not one of its choices ("One of: a, b").
+ * Checked wherever the value comes from (a box, a link, a call, --param, the default).
+ */
+export function choiceProblem(p: Pick<RunbookParam, 'name' | 'choices'> | undefined, value: string): string | undefined {
+  if (!p?.choices || p.choices.includes(value)) return undefined;
+  const shown = value.length > 60 ? `${value.slice(0, 60)}…` : value;
+  return `\${param:${p.name}} is ${JSON.stringify(shown)}, not one of its choices: ${p.choices.join(', ')}`;
 }
 
 function unquote(v: string): string {

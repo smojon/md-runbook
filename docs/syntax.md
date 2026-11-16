@@ -266,6 +266,8 @@ field. A trailing `One of: a, b, c` in the comment (any case) lists the values a
 - The list ends with the comment, or at a period followed by a space, so `1.2` can be a choice.
 - `, or` and ` or ` separate too, and quotes around a choice are removed.
 - The linter warns when a default is not one of its choices.
+- A value that is not one of them is refused wherever it comes from: a link, a call, the
+  default or `--param`.
 
 `report-runs:` names where VS Code, the app and the command line send a
 [run summary](features/run-reports.md) at the end of each run. The summary has which runbook,

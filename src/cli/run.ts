@@ -47,7 +47,7 @@ import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } fro
 import { currentOs, osGroups, osLabel, stepNumbers } from '@md-runbook/core/os';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { REDACTED } from '@md-runbook/core/redact';
-import { VarRef, findRefs, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
+import { VarRef, choiceProblem, fillShown, findRefs, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { inSections, sectionHeadings } from '@md-runbook/core/sections';
 import { historySizeFor, runnerAttrs } from '@md-runbook/core/incident';
 import { SessionPool } from '@md-runbook/core/node/session';
@@ -195,6 +195,9 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     inherit && !parsedFm?.kubeContext
       ? { params: [], ...parsedFm, kubeContext: inherit.context, ...(inherit.mode && !parsedFm?.kubeContextMode ? { kubeContextMode: inherit.mode } : {}) }
       : parsedFm;
+  // A parameter with choices ("One of: a, b") takes only one of them: --param, a call, a link.
+  const offChoice = Object.entries(o.params).flatMap(([k, v]) => choiceProblem(fm?.params.find((p) => p.name === k), v) ?? []);
+  if (offChoice.length > 0) throw new RunUsageError(`${offChoice.join('\n')}\nnothing ran`);
   const baseCwd = fm?.cwd ? path.resolve(mdDir, fm.cwd) : mdDir;
   const session = o.session ?? fm?.mode === 'session';
   const pins = new KubeconfigPins();
@@ -210,6 +213,16 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   const addSecret = (v: string): void => void (v.length >= MIN_SECRET && known.add(v));
   const writeOpts: WriteOptions = { persistOutputs: true, maxOutputLines: 2000, stripAnsi: true, redact };
   const { regexes } = compileConfirmPatterns(DEFAULT_CONFIRM_PATTERNS);
+  /** A value given on the command line (a parameter, its default, an input); never a secret's. */
+  const givenValue = (ref: VarRef): { value: string; secret: boolean } | undefined => {
+    const value = ref.kind === 'param' ? (o.params[ref.name] ?? fm?.params.find((p) => p.name === ref.name)?.default) : ref.kind === 'input' ? (o.inputs[ref.name] ?? o.env[ref.name]) : undefined;
+    return value === undefined ? undefined : { value, secret: ref.secret };
+  };
+  /** What the block asks before it runs: risky words in it as written, or with its values filled in. */
+  const confirmationOf = (source: string, confirm: boolean, value: (ref: VarRef) => { value: string; secret: boolean } | undefined): string | undefined => {
+    const filled = confirmationFor(fillShown(source, value), 'patterns', regexes, confirm ? true : undefined);
+    return filled === undefined || filled === '' ? (confirmationFor(source, 'patterns', regexes, confirm ? true : undefined) ?? filled) : filled;
+  };
   const captures = new Map<string, { value: string; secret: boolean }>();
 
   let text = original;
@@ -315,7 +328,8 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     const declined = blocks.flatMap((b) => {
       if (!b.runs) return [];
       const opts = parseCellOptions(b.loc.info);
-      const match = confirmationFor(isCallLanguage(b.loc.language) ? '' : b.loc.source, 'patterns', regexes, opts.confirm === true ? true : undefined);
+      // With the values given (no capture is known yet): `kubectl ${param:VERB}` with VERB=delete asks.
+      const match = isCallLanguage(b.loc.language) ? confirmationFor('', 'patterns', regexes, opts.confirm === true ? true : undefined) : confirmationOf(b.loc.source, opts.confirm === true, givenValue);
       if (match === undefined) return [];
       const firstLine = b.loc.source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
       return [`  Step ${b.n} · ${fileName}:${b.loc.line + 1} · ${redact(opts.name ?? firstLine)}: ${match === '' ? 'confirm option' : `risky command “${match.trim()}”`}`];
@@ -358,6 +372,9 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       value = c?.value;
       secret = c?.secret ?? false;
     }
+    // The default too: one of the choices, or the step doesn't run.
+    const off = ref.kind === 'param' && value !== undefined ? choiceProblem(fm?.params.find((p) => p.name === ref.name), value) : undefined;
+    if (off) return { missing: off };
     if (value !== undefined) return { value, secret };
     return {
       missing:
@@ -529,9 +546,14 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         continue;
       }
       // `no-confirm` can't switch the safety net off here either.
-      const match = confirmationFor(isCall ? '' : loc.source, 'patterns', regexes, opts.confirm === true ? true : undefined);
+      const match = isCall
+        ? confirmationFor('', 'patterns', regexes, opts.confirm === true ? true : undefined)
+        : confirmationOf(loc.source, opts.confirm === true, (ref) => {
+            const v = lookup(ref);
+            return 'missing' in v ? undefined : v;
+          });
       if (match !== undefined && !o.yes) {
-        const why = match === '' ? 'this block asks for confirmation (confirm option)' : `risky command “${match.trim()}”`;
+        const why = match === '' ? 'this block asks for confirmation (confirm option)' : `risky command “${redact(match.trim())}”`;
         text =
           setCellOutput(text, loc.cellIndex, { kind: 'new', text: `[md-runbook] not confirmed: ${why}; pass --yes to run it\n`, attrs: { exit: 'declined', ran: formatLocalIso(new Date()) } }, writeOpts) ??
           text;

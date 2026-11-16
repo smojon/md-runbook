@@ -124,6 +124,13 @@ When the confirmation is asked:
   inputs or parameters therefore come before the confirmation.
 - A run of several cells (Run All, Run Below) asks for all their parameters and inputs first,
   before any confirmation. Secrets are still asked cell by cell.
+- A cell with `${param:}`, `${input:}` or `${out:}`: once their values are known, so the
+  patterns see the command as it runs.
+  - `kubectl ${param:VERB} pod x` with `VERB=delete` asks, though the text as written has no
+    risky word.
+  - The dialog shows the command with those values. Secret values stay `${secret:…}`.
+
+The command line does the same with the values given (`--param`, `--input`).
 
 The default patterns cover:
 

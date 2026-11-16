@@ -37,6 +37,13 @@ Security fixes from a review of the parts that face the network.
 - **Runbook calls:** a value in `src=` fills part of one file or folder name. Before, a link's
   `TO=../../elsewhere/evil` could make `src="releases/${param:TO}.md"` run any runbook.
   - A value with `/`, `\` or `:` is now an error before anything runs.
+- **Parameters with choices (`One of: a, b`):** a value from a link, a call, the default or
+  `--param` must be one of them too. Before, only the input box checked it.
+  - VS Code doesn't take such a value from a link, and asks for it instead.
+- **Confirmations (VS Code and command line):** risky patterns now see the command with its
+  values filled in. Before, `kubectl ${param:VERB}` with `VERB=delete` never asked.
+  - The dialog shows those values; secret ones stay `${secret:…}`.
+  - In VS Code, a cell with placeholders asks once their values are known, not before.
 
 ## 0.26.8
 
