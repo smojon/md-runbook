@@ -730,6 +730,7 @@ start_shell() {
       case $_n in _) continue ;; esac
       is_env_unsafe "$_n" && continue
       eval "[ \"\${$_n+x}\" = x ]" || continue
+      _v=
       eval "_v=\${$_n}"
       set -- "$@" "$_n=$_v"
     done
