@@ -13,7 +13,7 @@
 
 import { deflateSync, Inflate } from 'fflate';
 import { cellRefs } from './cellOptions';
-import { runFrontMatterKeys } from './frontMatterRun';
+import { v1FrontMatterProblems } from './frontMatterRun';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
 import { VAR_NAME_RE, parseFrontMatter } from './secrets';
@@ -203,15 +203,15 @@ export type LinkTrust = 'mismatch' | 'signed' | 'pinned' | 'unverified';
  * either). Nobody has checked the signature yet: anyone can write a block. Pass the result
  * through checkedLinkTrust with the signature's check before showing or using `signed`.
  *
- * A version 1 signature covers the blocks only: with front matter that changes how every cell runs
- * (env:, cwd:, shell:, … — runFrontMatterKeys, as the command line's signed runs check), the
- * runbook isn't signed as it would run.
+ * A version 1 signature covers the blocks only: with front matter beyond a few labels (env:,
+ * practice:, report-runs:, … — v1FrontMatterProblems, as the command line's signed runs check),
+ * the runbook isn't signed as it would run.
  */
 export function linkTrust(l: RunbookLink, text: string): LinkTrust {
   if (l.sha256 && runbookDigest(text) !== l.sha256) return 'mismatch';
   const s = signedStatus(text);
   const intact = s && s.changed.length + s.missing.length + s.moved.length + s.missingCalls.length + s.unsigned.length === 0 && !(s.version === 2 && s.textChanged);
-  if (intact && s.version !== 2 && runFrontMatterKeys(parseFrontMatter(text)).length > 0) return unsignedTrust(l);
+  if (intact && s.version !== 2 && v1FrontMatterProblems(text).length > 0) return unsignedTrust(l);
   if (intact) return 'signed';
   return unsignedTrust(l);
 }

@@ -15,6 +15,7 @@ import { notebookEstimateSteps } from './estimates';
 import { cellAttrs } from './progress';
 import type { LaunchValues } from './secrets';
 import type { StepsRow } from './stepsView';
+import { LINE_RE } from '@md-runbook/core/lines';
 
 /** What the form needs from safety.ts and secrets.ts (wired in extension.ts). */
 export interface LaunchSources {
@@ -51,7 +52,7 @@ const PREVIEW_LINES = 3;
 
 /** The command as it will run, its first few lines (as the confirmation shows it). */
 function preview(source: string): { lines: string[]; more: number } {
-  const lines = source.split(/\r?\n/).filter((l) => l.trim() !== '');
+  const lines = source.split(LINE_RE).filter((l) => l.trim() !== '');
   return { lines: lines.slice(0, PREVIEW_LINES), more: Math.max(0, lines.length - PREVIEW_LINES) };
 }
 

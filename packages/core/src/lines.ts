@@ -9,6 +9,14 @@ export interface Line {
   eol: Eol;
 }
 
+/**
+ * A line ending as CommonMark reads it: CRLF, a lone CR or LF. Every reader of runbook text
+ * splits lines with it (or splitLines), so all of md-runbook sees the lines the parser and GitHub
+ * see. Before, some readers split on CRLF and LF only, and a lone CR hid the front matter from
+ * them (security review, round 4).
+ */
+export const LINE_RE = /\r\n?|\n/;
+
 export function splitLines(s: string): Line[] {
   const out: Line[] = [];
   const re = /\r\n|\n|\r/g;

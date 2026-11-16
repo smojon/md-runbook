@@ -8,6 +8,7 @@ import type { ToggleMessage } from '../renderer/taskListPlugin';
 import { taskItemAtLine } from '@md-runbook/core';
 import { NOTEBOOK_TYPE } from './serializer';
 import { noteTaskBox } from './transcript';
+import { LINE_RE } from '@md-runbook/core/lines';
 
 export const TASK_RENDERER_ID = 'md-runbook.taskLists';
 
@@ -45,7 +46,7 @@ export function registerTaskLists(context: vscode.ExtensionContext): void {
       if (!item || item.checked === message.checked) return;
       await setTaskBox(cell, item.offset, message.checked);
       // In the transcript too: a manual step done is part of the run (its first line is enough).
-      const line = cell.document.getText().split(/\r?\n/)[message.line] ?? '';
+      const line = cell.document.getText().split(LINE_RE)[message.line] ?? '';
       noteTaskBox(editor.notebook, line.replace(/^\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s*/, '').trim(), message.checked);
     }),
   );

@@ -18,7 +18,7 @@ const RUNBOOK_KEYS = /^(params|mode|shell|timeout|manual-steps|kube-context|kube
 export function looksLikeRunbook(fileName: string, text: string): boolean {
   if (/\.runbook\.md$/i.test(fileName)) return true;
   if (text.includes('<!-- md-runbook:output')) return true;
-  const fm = /^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(text);
+  const fm = /^﻿?---[ \t]*(?:\r\n?|\n)([\s\S]*?)(?:\r\n?|\n)(?:---|\.\.\.)[ \t]*(?:\r\n?|\n|$)/.exec(text);
   return !!fm && RUNBOOK_KEYS.test(fm[1] ?? '');
 }
 

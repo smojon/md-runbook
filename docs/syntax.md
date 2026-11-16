@@ -585,10 +585,20 @@ dropped, without:
 - notes;
 - the ticks of checklist items.
 
+Each of these is left out only in the exact form md-runbook writes it, outside code blocks, and
+never inside the front matter. A line ends at CRLF, LF or a lone CR, as in CommonMark.
+
 The runbook is then "signed as a whole": prose, front matter, checklists and PowerShell or cmd
 blocks too. A manifest without `text` (signed before) signs only the bash/sh blocks and runbook
 calls ("partly signed"). It still verifies, and the header stays `md-runbook-manifest 1`, so
 gates installed before run both.
+
+A partly signed runbook counts as signed (links, `md-runbook run --allowed-signers`) only while its
+front matter holds nothing but these keys:
+
+- `title`, `description`, `tags`, `author`, `owner`;
+- `incident`, `severity`, `evidence`, `drill`, `rto`, `prose`;
+- `params` without defaults or choices.
 
 `NAME` in `signer=` is one word of ASCII letters, digits and `@ . _ + -`, as in allowed_signers.
 A block with any other name is not read as a signature.

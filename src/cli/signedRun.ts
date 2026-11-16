@@ -13,7 +13,7 @@ import { isCodeMeta, locateCodeCells, parse, shellKindForLanguage } from '@md-ru
 import { callRefs, fillRefs, parseCall } from '@md-runbook/core/call';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { callTarget, samePath, sshVerify } from '@md-runbook/core/node';
-import { runFrontMatterKeys } from '@md-runbook/core/frontMatterRun';
+import { v1FrontMatterProblems } from '@md-runbook/core/frontMatterRun';
 import { currentOs } from '@md-runbook/core/os';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { allSignatures, signedStatus } from '@md-runbook/core/signing';
@@ -56,19 +56,19 @@ export interface SignedCheck {
 /**
  * The checks of a signed run of `file` with these parameter values (undefined: not known yet).
  * `shown` names it in messages; `depth` limits how far calls are followed (they are checked again
- * when they run).
+ * when they run). `opts.text`: the file as the run will use it (else it is read here).
  */
 export async function checkSignedRun(
   file: string,
   params: Readonly<Record<string, string | undefined>>,
   allowedSigners: string,
   root: string,
-  opts: { shown?: string; depth?: number; sshKeygen?: string } = {},
+  opts: { shown?: string; depth?: number; sshKeygen?: string; text?: string } = {},
 ): Promise<SignedCheck> {
   const shown = opts.shown ?? path.basename(file);
   const problems: string[] = [];
   const say = (p: string): void => void problems.push(`${shown}: ${p}`);
-  const text = fs.readFileSync(file, 'utf8');
+  const text = opts.text ?? fs.readFileSync(file, 'utf8');
   const status = signedStatus(text);
   if (!status) {
     say(/<!-- md-runbook:signature/.test(text) ? 'the signature block is damaged' : 'not signed (md-runbook sign)');
@@ -97,13 +97,12 @@ export async function checkSignedRun(
   // The front matter changes how every cell runs (env: BASH_ENV, cwd:, shell:, …): only a
   // whole-runbook signature (manifest version 2) covers it, and only while the text is as signed
   // (security review, 2026-11-16).
-  const runFm = parseFrontMatter(text);
   if (status.version === 2 && status.textChanged) {
     say('changed since signing outside its blocks (front matter or text): sign it again');
   } else if (status.version !== 2) {
-    // The same list as links (core/runbookLink.ts linkTrust).
-    const set = runFrontMatterKeys(runFm);
-    if (set.length) say(`its front matter sets ${set.join(', ')}, which its signature (manifest version 1) doesn't cover: sign it again`);
+    // The same allow-list as links (core/runbookLink.ts linkTrust).
+    const set = v1FrontMatterProblems(text);
+    if (set.length) say(`its front matter has ${set.join(', ')}, which its signature (manifest version 1) doesn't cover: sign it again`);
   }
   const doc = parse(text);
   doc.cells.forEach((c, i) => {
@@ -144,7 +143,7 @@ export async function checkSignedRun(
       if (samePath(target, file)) continue; // a cycle: the run refuses it
       const passed: Record<string, string> = {};
       for (const a of c.args) passed[a.name] = fill(a.value);
-      const child = await checkSignedRun(target, passed, allowedSigners, root, { ...opts, shown: path.relative(path.dirname(file), target).split(path.sep).join('/'), depth: (opts.depth ?? 0) + 1 });
+      const child = await checkSignedRun(target, passed, allowedSigners, root, { ...opts, text: undefined, shown: path.relative(path.dirname(file), target).split(path.sep).join('/'), depth: (opts.depth ?? 0) + 1 });
       problems.push(...child.problems);
     }
   }

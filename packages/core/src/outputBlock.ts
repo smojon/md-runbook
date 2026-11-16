@@ -32,11 +32,22 @@ export function parseAttrs(s: string): Record<string, string> {
   return attrs;
 }
 
+/** The longest attribute value written (a host's name, a context, a person: none is longer). */
+export const MAX_ATTR_LENGTH = 200;
+
+/**
+ * A marker's attributes, each value one piece of the comment: no `"`, `<` or `>`, no line break
+ * of any kind (CR, LF, U+0085, U+2028, U+2029) or other control character, no `--` (a run of
+ * dashes becomes one), at most MAX_ATTR_LENGTH characters (line numbers such as `stderr=1-3,5`
+ * excepted). Before, `-->` became `--` once, so `-->>` still ended the comment, and U+2028 broke
+ * the marker for JavaScript's `.` (security review, round 4).
+ */
 export function formatAttrs(attrs: Record<string, string>): string {
   let s = '';
   for (const [k, v] of Object.entries(attrs)) {
     if (!/^[\w-]+$/.test(k)) continue;
-    const clean = v.replace(/["\r\n]/g, '').replace(/-->/g, '--');
+    const bare = v.replace(/["<>\u0000-\u001f\u007f-\u009f\u{2028}\u{2029}]/gu, '').replace(/-{2,}/g, '-');
+    const clean = /^[0-9,-]*$/.test(bare) ? bare : bare.slice(0, MAX_ATTR_LENGTH);
     s += ' ' + k + '=' + (clean === '' || /\s/.test(clean) ? `"${clean}"` : clean);
   }
   return s;

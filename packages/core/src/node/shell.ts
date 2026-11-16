@@ -5,6 +5,7 @@
 
 import * as path from 'node:path';
 import type { ResolvedShell, ShellEnv, ShellKind, ShellResolution, ShellSettings } from '../shellKind';
+import { LINE_RE } from '../lines';
 
 export type { ResolvedShell, ShellEnv, ShellKind, ShellResolution, ShellSettings } from '../shellKind';
 export { shellKindForLanguage } from '../shellKind';
@@ -101,7 +102,7 @@ function resolveCmd(env: ShellEnv): ShellResolution {
       args: (scriptPath) => ['/d', '/s', '/c', `""${scriptPath}""`],
       windowsVerbatimArguments: true,
       // Batch files need CRLF; switch to UTF-8 and hide command echo like an interactive prompt.
-      script: (source) => ['@echo off', '@chcp 65001 >nul', ...source.split(/\r?\n/)].join('\r\n') + '\r\n',
+      script: (source) => ['@echo off', '@chcp 65001 >nul', ...source.split(LINE_RE)].join('\r\n') + '\r\n',
     },
   };
 }

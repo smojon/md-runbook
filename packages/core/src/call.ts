@@ -22,6 +22,7 @@ import { inSections, missingSections, sectionHeadings, sectionOnTitle } from './
 import { locateCodeCells } from './locate';
 import { parse } from './parser';
 import { taskItems } from './progress';
+import { LINE_RE } from './lines';
 
 /** The fence language of a runbook call. */
 export const CALL_LANGUAGE = 'runbook';
@@ -108,7 +109,7 @@ export function parseCall(info: string, source: string): RunbookCall {
       call.problems.push({ message: `src=: ${e instanceof Error ? e.message : String(e)}` });
     }
   }
-  source.split(/\r?\n/).forEach((raw, line) => {
+  source.split(LINE_RE).forEach((raw, line) => {
     const l = raw.trim();
     if (l === '' || l.startsWith('#')) return;
     const eq = l.indexOf('=');

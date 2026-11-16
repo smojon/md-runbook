@@ -24,6 +24,7 @@ import type { RemoteTargets } from './remoteHosts';
 import { inFront } from './currentRunbook';
 import { labelOf, notebookProgress } from './progress';
 import { askOnCell, whileWaiting } from './waiting';
+import { LINE_RE } from '@md-runbook/core/lines';
 
 function cfg(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration(SECTION);
@@ -164,7 +165,7 @@ function stepTitle(cell: vscode.NotebookCell): string {
 
 /** The command as it will run, a few lines of it. */
 function commandPreview(source: string): string {
-  const lines = source.split(/\r?\n/).filter((l) => l.trim() !== '');
+  const lines = source.split(LINE_RE).filter((l) => l.trim() !== '');
   return lines.slice(0, 6).join('\n') + (lines.length > 6 ? `\n… (${lines.length - 6} more lines)` : '');
 }
 

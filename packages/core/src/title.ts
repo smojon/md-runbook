@@ -2,13 +2,14 @@
  * A runbook's title and its headings, read as a Markdown view shows them: not a `#` comment in the
  * YAML front matter, not a `#` line in a fenced code block.
  */
+import { LINE_RE } from './lines';
 
 /**
  * The runbook's text without its YAML front matter (`---` … `---` or `...` at the very top), as
  * VS Code's Markdown preview and the report leave it out.
  */
 export function withoutFrontMatter(value: string): string {
-  const m = /^﻿?---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(value);
+  const m = /^﻿?---[ \t]*(?:\r\n?|\n)(?:[\s\S]*?(?:\r\n?|\n))?(?:---|\.\.\.)[ \t]*(?:\r\n?|\n|$)/.exec(value);
   return m ? value.slice(m[0].length) : value;
 }
 
@@ -24,7 +25,7 @@ export interface Heading {
 export function headingsOf(markdown: string): Heading[] {
   const out: Heading[] = [];
   let fence: string | undefined;
-  markdown.split(/\r?\n/).forEach((line, n) => {
+  markdown.split(LINE_RE).forEach((line, n) => {
     const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
     if (fence !== undefined) {
       if (open && open[0] === fence[0] && open.length >= fence.length && line.trim() === open) fence = undefined;

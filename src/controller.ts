@@ -41,6 +41,7 @@ import { pauseBefore, stepStarting } from './stepMarks';
 import { askOnCell } from './waiting';
 import { markQueued, unmarkQueued } from './runQueue';
 import { RemotePlan, hostLabel, remoteLabel } from './hostList';
+import { LINE_RE } from '@md-runbook/core/lines';
 
 const FLUSH_MS = 100;
 /** `kubectl config current-context` only reads the kubeconfig. */
@@ -187,7 +188,7 @@ function teardownLabel(cell: vscode.NotebookCell): string {
     const call = parseCall(info, cell.document.getText());
     return call.sections[0] ?? call.src ?? 'the runbook call';
   }
-  return cell.document.getText().split(/\r?\n/).find((l) => l.trim() !== '')?.trim().slice(0, 60) ?? `cell ${cell.index + 1}`;
+  return cell.document.getText().split(LINE_RE).find((l) => l.trim() !== '')?.trim().slice(0, 60) ?? `cell ${cell.index + 1}`;
 }
 
 /** The answer to a step done by hand that Run All reached: tick it, go on without, or stop there. */

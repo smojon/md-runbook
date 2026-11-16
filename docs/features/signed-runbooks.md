@@ -127,13 +127,23 @@ as a whole** from **partly signed**.
 Notes and a run record's signature are left aside only outside code blocks. Inside a block, the
 same lines are code, and signed.
 
+- They are left aside only as md-runbook writes them, and never inside the front matter.
+- Anything else in their place is text that counts, such as HTML after a note's marker.
+
+A line ends at CRLF, LF or a lone CR, as in CommonMark. Every part of md-runbook reads lines the
+same way. A runbook with lone CRs that was signed before 0.27 may need signing again.
+
 - **Signed with 0.22.0 or earlier.** Only the bash/sh blocks and calls are signed.
   - The signature still verifies and the bash blocks still count as signed. But the editor and
     lint say "partly signed", and the app "these steps verified".
   - The app says **Partly signed** instead when PowerShell or cmd blocks are outside the
     signature.
   - A PowerShell or cmd block in such a runbook is never signed.
-  - A change to a paragraph or the front matter goes unnoticed.
+  - A change to a paragraph goes unnoticed.
+  - Links and `md-runbook run --allowed-signers` count it as signed only while its front matter
+    holds labels alone. These are `title`, `description`, `tags`, `author`, `owner`, `incident`,
+    `severity`, `evidence`, `drill`, `rto` and `prose`, and `params` without defaults or choices.
+    Any other key, today's or a future one, makes it unsigned.
   - Sign it again to cover the whole runbook.
 - **Text changed since signing.** A changed sentence, a new `- [ ]` item, a changed
   `manual-steps:`, an added PowerShell block: the runbook is "changed since signing".
@@ -184,9 +194,13 @@ But the shell carries folders and variables from block to block. So the editor,
 - warn that the order differs from the one reviewed;
 - name signed blocks that are missing from the file (a deleted backup step, say).
 
-Signing refuses a bash block inside an HTML comment, and code fences indented 4 spaces or more.
-GitHub's rendered view doesn't show those as code that runs. So a reviewer reading a pull request
-there could miss them.
+GitHub's rendered view doesn't show some blocks as code that runs, so a reviewer reading a pull
+request there could miss them. Signing refuses them:
+
+- a bash block inside an HTML comment;
+- a bash block inside another HTML block, such as `<script>`, `<pre>`, or a `<div>` with no
+  blank line after it;
+- code fences indented 4 spaces or more.
 
 **Parameters.** `${param:NAME}` reaches the shell as an environment variable, never as text in
 the code.

@@ -30,6 +30,7 @@
 import { parseCellOptions } from './cellOptions';
 import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
 import { isCodeMeta, type ParsedDocument } from './model';
+import { LINE_RE } from './lines';
 
 export const PROSE_LIMITS = {
   sentenceWords: 20,
@@ -232,7 +233,7 @@ function readProse(text: string, options: ProseOptions): { units: ProseUnit[]; e
   const skipLines = options.skipLines ?? [];
   const labels = options.labels ?? DEFAULT_LABELS;
   const unlabelled = (s: string): string => labels.reduce((t, r) => t.replace(r, ''), s);
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').split(LINE_RE);
   let first = 0;
   if (lines[0]?.trimEnd() === '---') {
     const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));

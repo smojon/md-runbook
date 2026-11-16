@@ -13,6 +13,7 @@ import { formatAttrs, formatLocalIso, parseAttrs } from './outputBlock';
 import { parse } from './parser';
 import { EndpointCheck, parseProbeOutput, usesProbe } from './probe';
 import { parseFrontMatter } from './secrets';
+import { LINE_RE } from './lines';
 
 export const MILESTONES = ['detected', 'mitigated', 'resolved'] as const;
 export type Milestone = (typeof MILESTONES)[number];
@@ -74,14 +75,30 @@ export interface Timeline {
 
 const NOTE_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b(.*?)-->[ \t]*\r?\n((?:[ \t]*>.*(?:\r?\n|$))*)/gm;
 
-/** A note for the record (Add Note): a marker with its time, author and milestone, then a quote. */
+/**
+ * A name in a note's bold head: one line, without what would end the bold or start Markdown or
+ * HTML there (`* _ ` [ ] \ < >`), at most 100 characters.
+ */
+const headPart = (s: string): string =>
+  s
+    .replace(/[\u0000-\u001f\u007f-\u009f\u{2028}\u{2029}*_`[\]\\<>]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100);
+
+/**
+ * A note for the record (Add Note): a marker with its time, author and milestone, then a quote.
+ * Every line of the text is a quote line: lines end at CRLF, a lone CR or LF (LINE_RE), and at
+ * U+0085, U+2028 and U+2029. Before, a lone CR left a line outside the quote, where a fence could
+ * start a block that runs (security review, round 4).
+ */
 export function formatNote(note: { at: Date; by?: string; milestone?: Milestone; text: string }, eol = '\n'): string {
   const attrs: Record<string, string> = { at: formatLocalIso(note.at) };
   if (note.by) attrs.by = note.by;
   if (note.milestone) attrs.milestone = note.milestone;
   const hhmm = formatLocalIso(note.at).slice(11, 16);
-  const head = [hhmm, note.milestone, note.by].filter(Boolean).join(' · ');
-  const lines = note.text.trim().split(/\r?\n/);
+  const head = [hhmm, note.milestone, note.by].map((p) => (p === undefined ? '' : headPart(p))).filter(Boolean).join(' · ');
+  const lines = note.text.replace(/[\u{85}\u{2028}\u{2029}]/gu, '\n').trim().split(LINE_RE);
   return [`<!-- md-runbook:note${formatAttrs(attrs)} -->`, `> **${head}:** ${lines[0] ?? ''}`, ...lines.slice(1).map((l) => `> ${l}`)].join(eol) + eol;
 }
 
@@ -92,7 +109,7 @@ export function parseNotes(text: string): TimelineEvent[] {
     const attrs = parseAttrs(m[1] ?? '');
     if (!attrs.at || Number.isNaN(Date.parse(attrs.at))) continue;
     const quote = (m[2] ?? '')
-      .split(/\r?\n/)
+      .split(LINE_RE)
       .map((l) => l.replace(/^[ \t]*>[ \t]?/, ''))
       .join('\n')
       .trim()
@@ -138,7 +155,7 @@ export function buildTimeline(text: string): Timeline {
   for (const [i, cell] of doc.cells.entries()) {
     const step = steps[i];
     if (step === undefined || !isCodeMeta(cell.meta)) continue;
-    const label = options[i]?.name ?? cell.value.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? `step ${step}`;
+    const label = options[i]?.name ?? cell.value.split(LINE_RE).find((l) => l.trim() !== '')?.trim() ?? `step ${step}`;
     const probe = usesProbe(cell.value);
     if (cell.output) {
       const e = event(cell.output.attrs, step, label, false, probe ? cell.output.text : undefined);
@@ -217,7 +234,7 @@ export function withFrontMatterValues(text: string, values: Record<string, strin
   const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
   const body = bom ? text.slice(1) : text;
   const quote = (v: string): string => (/^[\w.@:/+ -]*$/.test(v) && !/^\s|\s$|: /.test(v) ? v : JSON.stringify(v));
-  const lines = body.split(/\r?\n/);
+  const lines = body.split(LINE_RE);
   const end = lines[0]?.trimEnd() === '---' ? lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l)) : -1;
   if (end < 0) {
     const fm = ['---', ...Object.entries(values).map(([k, v]) => `${k}: ${quote(v)}`), '---', ''];
@@ -235,11 +252,11 @@ export function withFrontMatterValues(text: string, values: Record<string, strin
 /** The text with `block` (a note) right after its front matter, else at the start; blank lines around it. */
 export function withBlockAfterFrontMatter(text: string, block: string): string {
   const eol = /\r\n/.test(text) ? '\r\n' : '\n';
-  const lines = text.split(/\r?\n/);
+  const lines = text.split(LINE_RE);
   const end = lines[0]?.replace(/^\uFEFF/, '').trimEnd() === '---' ? lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l)) : -1;
   const at = end + 1;
-  const piece = block.replace(/\r?\n$/, '').split(/\r?\n/);
-  return [...lines.slice(0, at), ...(at > 0 ? [''] : []), ...piece, '', ...lines.slice(at).join(eol).replace(/^(\r?\n)+/, '').split(/\r?\n/)].join(eol);
+  const piece = block.replace(/\r?\n$/, '').split(LINE_RE);
+  return [...lines.slice(0, at), ...(at > 0 ? [''] : []), ...piece, '', ...lines.slice(at).join(eol).replace(/^(\r?\n)+/, '').split(LINE_RE)].join(eol);
 }
 
 /** A parsed cell's length in the file: its own bytes, and a code cell's output and history. */

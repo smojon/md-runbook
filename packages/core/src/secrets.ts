@@ -8,6 +8,7 @@
 
 import { KUBE_CONTEXT_MODES, KubeContextMode, isKubeContextValue } from './kubeContext';
 import { RunbookShells, ShellKind, parseShells } from './shellKind';
+import { LINE_RE } from './lines';
 
 export type RefKind = 'secret' | 'input' | 'param' | 'out';
 
@@ -262,6 +263,18 @@ export function parseDurationSeconds(s: string): number | undefined {
 }
 
 /**
+ * The lines between the front matter's `---` lines, as written; undefined when the text has none
+ * (no `---` on its first line, or never closed). Lines end at CRLF, a lone CR or LF (LINE_RE), as
+ * parseFrontMatter reads them.
+ */
+export function frontMatterLines(text: string): string[] | undefined {
+  const lines = text.replace(/^﻿/, '').split(LINE_RE);
+  if (lines[0]?.trimEnd() !== '---') return undefined;
+  const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));
+  return end < 0 ? undefined : lines.slice(1, end);
+}
+
+/**
  * `params:`, `mode:`, `timeout:`, `cwd:`, `shell:`, `incident:`, `severity:`, `evidence:`, `rto:`, `kube-context:`,
  * `kube-context-mode:`, `git-bash-path-conversion:` and `env:` (indented `NAME: value` lines) from
  * YAML-style front matter (`---` ... `---`
@@ -271,7 +284,7 @@ export function parseDurationSeconds(s: string): number | undefined {
  * Returns undefined when the text has no front matter.
  */
 export function parseFrontMatter(text: string): FrontMatter | undefined {
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').split(LINE_RE);
   if (lines[0]?.trimEnd() !== '---') return undefined;
   const params: RunbookParam[] = [];
   let mode: 'session' | 'isolated' | undefined;

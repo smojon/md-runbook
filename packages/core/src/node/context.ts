@@ -4,9 +4,9 @@ import { exec } from 'node:child_process';
 
 export const CONTEXT_UNKNOWN = 'unknown';
 
-/** First non-empty line, trimmed; '' if there is none. */
+/** First non-empty line, trimmed; '' if there is none. U+0085, U+2028 and U+2029 end a line too. */
 export function firstLine(text: string): string {
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of text.split(/\r\n?|[\n\u0085\u{2028}\u{2029}]/u)) {
     const t = line.trim();
     if (t !== '') return t;
   }
