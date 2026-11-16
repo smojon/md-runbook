@@ -72,11 +72,29 @@ jobs:
         working-directory: .
         run: |
           set -eu
-          sudo install -m 755 apps/gate/dist/md-runbook-gate /usr/local/bin/md-runbook-gate
-          for a in mdrb-gate mdrb-cells mdrb-wide; do sudo useradd -m -s /bin/sh "$a"; done
+          # The gate in a folder only root can change, as the self-check asks (the runner image
+          # leaves /usr/local/bin open for tool installs). Each folder up to / is checked.
+          sudo install -d -m 755 -o root -g root /opt/md-runbook-gate /opt/md-runbook-gate/bin
+          sudo install -m 755 -o root -g root apps/gate/dist/md-runbook-gate /opt/md-runbook-gate/bin/md-runbook-gate
+          d=/opt/md-runbook-gate/bin
+          while :; do
+            set -- $(stat -c '%u %a' "$d")
+            if [ "$1" != 0 ] || [ $((0$2 & 022)) -ne 0 ]; then
+              echo "::error::$d: owner uid $1, mode $2: the gate's folders must be root's and writable by root alone"
+              exit 1
+            fi
+            [ "$d" = / ] && break
+            d=$(dirname "$d")
+          done
+          # And one in a folder anyone can write, which the self-check must refuse.
+          sudo install -d -m 755 -o root -g root /opt/mdrb-open
+          sudo install -d -m 777 -o root -g root /opt/mdrb-open/bin
+          sudo install -m 755 -o root -g root apps/gate/dist/md-runbook-gate /opt/mdrb-open/bin/md-runbook-gate
+          for a in mdrb-gate mdrb-cells mdrb-wide mdrb-open; do sudo useradd -m -s /bin/sh "$a"; done
           printf '%s\n' \
-            'mdrb-gate ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells' \
-            'mdrb-wide ALL=(mdrb-cells) NOPASSWD: ALL' >"$RUNNER_TEMP/md-runbook-gate.sudoers"
+            'mdrb-gate ALL=(mdrb-cells) NOPASSWD: /opt/md-runbook-gate/bin/md-runbook-gate __cells' \
+            'mdrb-wide ALL=(mdrb-cells) NOPASSWD: ALL' \
+            'mdrb-open ALL=(mdrb-cells) NOPASSWD: /opt/mdrb-open/bin/md-runbook-gate __cells' >"$RUNNER_TEMP/md-runbook-gate.sudoers"
           sudo visudo -cf "$RUNNER_TEMP/md-runbook-gate.sudoers"
           sudo install -m 440 "$RUNNER_TEMP/md-runbook-gate.sudoers" /etc/sudoers.d/md-runbook-gate
           sudo -n -u mdrb-gate sudo -n -l
@@ -103,11 +121,13 @@ jobs:
         working-directory: .
         timeout-minutes: 10
         env:
-          MD_RUNBOOK_GATE_BIN: /usr/local/bin/md-runbook-gate
+          MD_RUNBOOK_GATE_BIN: /opt/md-runbook-gate/bin/md-runbook-gate
           MD_RUNBOOK_GATE_ISOLATIONS: scope,bwrap
           MD_RUNBOOK_GATE_ACCOUNT: mdrb-gate
           MD_RUNBOOK_GATE_CELLS_ACCOUNT: mdrb-cells
           MD_RUNBOOK_GATE_WIDE_ACCOUNT: mdrb-wide
+          MD_RUNBOOK_GATE_OPEN_ACCOUNT: mdrb-open
+          MD_RUNBOOK_GATE_OPEN_BIN: /opt/mdrb-open/bin/md-runbook-gate
         run: |
           npm ci
           npm run compile
