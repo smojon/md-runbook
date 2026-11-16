@@ -53,11 +53,11 @@ locale = auto
 # through. If new ones keep coming for 5 seconds, the log says "sweep incomplete".
 # kill_leftovers = no
 
-# Without setsid and perl the gate can't end a block's background programs, and refuses to
-# start. yes: start anyway.
-# allow_no_group_kill = no
+# allow_no_group_kill (yes or no) is obsolete: the gate gives each shell a process group of its
+# own. A gate.conf with it still works; each session logs a notice.
 
-# The gate's own memory (not the blocks'), in MiB of address space; 0 for no limit.
+# The gate's own memory (not the blocks'), in MiB: a session that needs more ends. 0 for no
+# limit.
 # memory_limit = 512
 
 # Under sshd the gate refuses a login shell other than sh, dash, ash, busybox, ksh, mksh, oksh
@@ -65,8 +65,8 @@ locale = auto
 # login_shell_check = yes
 
 # Run reports: at the end of each session, a summary of every signed runbook it ran (no
-# outputs, no parameter values) to this address, by curl, in the background. https (http only
-# for localhost). Never in a run's way: a failure is logged as a `report` event.
+# outputs, no parameter values) to this address, in the background. https (http only for
+# localhost). Never in a run's way: a failure is logged as a `report` event.
 # report_to = https://runbooks.example.net/v1/runs
 # A file holding the bearer token (one of the library server's RUNS_GATE_TOKENS).
 # report_token_file = /etc/md-runbook/report-token

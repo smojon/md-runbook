@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+**Gate admins:** md-runbook-gate is now a program, no longer a shell script. Install the binary
+for your server's platform when you update.
+
+- **Gate: a binary per platform.** Linux and macOS, amd64 and arm64:
+  `md-runbook-gate-<os>-<arch>` on each release, with `SHA256SUMS`. Check the sum, then install
+  it as `/usr/local/bin/md-runbook-gate` ([apps/gate](apps/gate/README.md#install)).
+  - The protocol, `gate.conf`, the key-line options and the log events are unchanged. The app,
+    VS Code and the command line need nothing new.
+- **Gate: only OpenSSH is needed** (8.2 or newer, for `ssh-keygen -Y`). No more `perl`,
+  `setsid`, `stdbuf`, `fold` or `curl`.
+  - The gate gives each block's shell a process group of its own on every server.
+  - It sends run reports itself, in the background as before.
+- **Gate: `allow_no_group_kill` is ignored.** A `gate.conf` with it still starts, and each
+  session logs a `notice`. Remove it when convenient.
+- **Gate: a key line can't run the gate through a shell.** `command="sh …/md-runbook-gate"` is
+  refused, since `sh` can't run a program. Name the gate alone.
+- **Gate: `memory_limit`** now bounds what the gate holds: a session that needs more ends.
+- **Gate: parameter patterns** still read as `grep -E` reads them. GNU extensions such as `\d`
+  or `\w` now match nothing, as signing already refuses them.
+
 ## 0.27.0
 
 Security fixes from five review rounds, a team runbook library in VS Code and the app, and a

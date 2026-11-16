@@ -1,7 +1,7 @@
 # md-runbook-gate
 
-The forced command of SSH keys that may only run **signed runbooks**: one POSIX `sh` script. It
-checks each runbook against:
+The forced command of SSH keys that may only run **signed runbooks**: one static program (Go,
+no dependencies) for Linux and macOS. It checks each runbook against:
 - `allowed_signers`, for its signature;
 - the server's policy (unsigned blocks, scopes, revoked releases, expiry);
 - the parameters' patterns.
@@ -13,19 +13,26 @@ for, and how runbooks are signed:
 ## Needs
 
 - Linux or macOS with OpenSSH 8.2 or newer (`ssh-keygen -Y`).
-- The usual tools: `awk`, `base64`, `env`, `mkfifo`, `mktemp`, `od`, `pgrep` (to cancel),
-  `logger` (for syslog), `sha256sum` or `shasum`.
-- `setsid` or `perl`, so a block's background programs end with its shell. Without either, the
-  gate refuses to start (`allow_no_group_kill = yes` starts it anyway).
-- `perl`, or `stdbuf` and `fold`, to cut overlong requests before the gate reads them.
-- `ps`, for `kill_leftovers = yes`.
 - bash if the runbooks need it (else the blocks run in `sh`).
-- `curl` for run reports (`report_to`).
+
+Nothing else: no `perl`, `setsid`, `stdbuf`, `fold` or `curl`.
 
 ## Install
 
+Each release has a binary per platform: `md-runbook-gate-linux-amd64`, `-linux-arm64`,
+`-darwin-amd64` and `-darwin-arm64`. Download yours and `SHA256SUMS`, and check the sum:
+
 ```sh
-sudo install -m 755 md-runbook-gate /usr/local/bin/md-runbook-gate
+v=0.28.0 os=linux arch=amd64
+base=https://github.com/smojon/md-runbook/releases/download/v$v
+curl -fL -O "$base/md-runbook-gate-$os-$arch" -O "$base/SHA256SUMS"
+grep " md-runbook-gate-$os-$arch\$" SHA256SUMS | sha256sum -c -   # macOS: shasum -a 256 -c -
+sudo install -m 755 "md-runbook-gate-$os-$arch" /usr/local/bin/md-runbook-gate
+```
+
+Then the configuration:
+
+```sh
 sudo install -d -m 755 /etc/md-runbook
 sudo install -m 644 gate.conf.example /etc/md-runbook/gate.conf
 # The publishers' public keys, in OpenSSH's allowed_signers format:
@@ -57,13 +64,14 @@ Options on the command:
   change (root-owned, in a root-owned folder).
 
 The command may start with `exec`, and values may be quoted: `--who='Alice Smith'`. Anything a
-shell would expand (`$`, a backtick, `;`) is refused.
+shell would expand (`$`, a backtick, `;`) is refused. So is `sh md-runbook-gate`: the gate is a
+program, which `sh` can't run.
 
 With SSH certificates, put the restriction into the certificate instead:
 `ssh-keygen -s ca -I alice -n support -O clear -O force-command=/usr/local/bin/md-runbook-gate alice.pub`.
 
 **Keep the gate's files out of the account's reach.** Signed blocks run as the account, so it
-must not own the script, `/etc/md-runbook/` or (ideally) its own `authorized_keys`. For
+must not own the program, `/etc/md-runbook/` or (ideally) its own `authorized_keys`. For
 example: `AuthorizedKeysFile /etc/ssh/authorized_keys/%u` with root-owned files.
 
 **Give the account the login shell `/bin/sh`:** `sudo usermod -s /bin/sh support`.
@@ -139,7 +147,7 @@ With `ForceCommand` in `sshd_config` (as on the [ops host](../ops/README.md)), s
 - **Unsigned text** (where allowed) never runs in a shell a signed runbook gets later. The next
   signed block, or loading that runbook again, starts a fresh shell.
 - **Background programs** of a block get TERM when its shell ends, and KILL a second later.
-  Each shell has a process group of its own (`setsid`, else `perl`).
+  Each shell leads a process group and session of its own.
   - A program that leaves the group (`setsid`, a double fork) is out of that reach. Only
     `kill_leftovers = yes` ends it, when the session ends.
 - **No profile:** not `/etc/profile`, `~/.profile` or `~/.bashrc`. The account can write those,
@@ -158,13 +166,15 @@ With `ForceCommand` in `sshd_config` (as on the [ops host](../ops/README.md)), s
   itself, after the block's `env.*`, and refuses otherwise (exit 126). The front matter's
   `kube-context:` isn't signed: only the app checks that one.
 - **No files in between:** the gate keeps the verified manifest, the parameters and the runs in
-  memory. It sends each block's code to the shell through a pipe only the gate holds.
+  memory. It sends each block's code to the shell through an unnamed pipe only the gate holds.
   - The block runs as the body of a function: `return` ends it, and `BASH_SOURCE` is empty.
   - The shell writes each run's exit to the work folder with a random number. A line for
     another run counts only with that run's number.
 - **Limits:** a request longer than 4,000,000 bytes ends the session, and the gate reads no more
-  of it. The gate's own processes get at most `memory_limit =` MiB (default 512; 0: none). The
-  blocks get no limit from the gate.
+  of it. The gate holds at most `memory_limit =` MiB (default 512; 0: none): a session that
+  needs more ends. The blocks get no limit from the gate.
+- **Parameter patterns** are POSIX extended regular expressions, read byte by byte as `grep -E`
+  reads them in the C locale. GNU extensions (`\d`, `\w`, `\b`, back-references) match nothing.
 
 ## Trust
 
@@ -249,10 +259,12 @@ Each summary holds:
 
 It never holds an output or a parameter value.
 
-It needs `curl`, and runs in the background after the session. It tries 3 times, and logs a
-`report` event (`sent` or `failed`, with the HTTP status). It never holds up or fails a run.
+The gate sends them itself, in the background after the session. It tries 3 times, 10 seconds
+each, and logs a `report` event (`sent` or `failed`, with the HTTP status). It never holds up or
+fails a run.
 
-- curl reads no `~/.curlrc` (`-q`): a block could have written one.
+- It reads no file of the account and no proxy setting: a block could have written them.
+- It follows no redirect.
 - An unsigned-trial account sends none ([All signed or none](#all-signed-or-none)).
 - A report says "sent by a gate" truthfully only under the conditions of [Trust](#trust).
 
@@ -260,12 +272,24 @@ The [library server](../library-server/README.md) keeps it as verified when the 
 its `RUNS_GATE_TOKENS`. More in
 [signed runbooks](../../docs/features/signed-runbooks.md#run-reports-from-the-gate).
 
-## Tests
+## Build and test
 
-- `test/gate.test.ts` drives the script as sshd starts it: the protocol on stdin, signatures
-  from the real `ssh-keygen`.
+The Go module is this folder: `cmd/md-runbook-gate` and `internal/…`, standard library only.
+
+```sh
+cd apps/gate
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o dist/md-runbook-gate ./cmd/md-runbook-gate
+go vet ./... && gofmt -l . && go test ./...
+```
+
+- `go test` checks the parsers and checks: gate.conf, key lines, requests, manifests,
+  signatures (with the real `ssh-keygen`), patterns and the leftover sweep's choices.
+  `MD_RUNBOOK_GATE_GREP=1` also compares the pattern cases with GNU grep.
+- `test/gate.test.ts` drives the binary as sshd starts it: the protocol on stdin, signatures
+  from the real `ssh-keygen`. `MD_RUNBOOK_GATE_BIN` names the binary (default
+  `apps/gate/dist/md-runbook-gate`).
 - `test/ssh.live.test.ts` runs the app's SSH layer through it on CI's OpenSSH server, cancelling
   and reconnecting included.
 
-Locally on Windows:
-`MD_RUNBOOK_GATE_SH="C:\Program Files\Git\usr\bin\dash.exe" node --test out/test/gate.test.js`.
+From Windows, build with `GOOS=linux` and run the tests in WSL:
+`MD_RUNBOOK_GATE_BIN=$PWD/apps/gate/dist/md-runbook-gate node --test out/test/gate.test.js`.
