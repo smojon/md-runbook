@@ -39,7 +39,7 @@ jobs:
       - name: Check the scripts
         run: |
           shellcheck -S warning apps/ops/md-runbook-probe
-          shellcheck -s sh -S warning apps/ops/start.sh apps/gate/md-runbook-gate
+          shellcheck -s sh -S warning apps/ops/start.sh
 
       - name: Build the image
         # No attestations: kind's containerd can't use an image index that has them.
@@ -49,6 +49,12 @@ jobs:
           test "$(docker inspect -f '{{.Config.User}}' md-runbook-ops:ci)" = 10001:10001
           docker run --rm --entrypoint sh md-runbook-ops:ci -c \
             'grep -qx "ForceCommand /usr/local/bin/md-runbook-gate --sshd-force-command" /etc/ssh/md-runbook-ops.conf && kubectl version --client && ssh -V'
+          # The gate the image's Go stage built from apps/gate: a static binary.
+          id=$(docker create md-runbook-ops:ci)
+          docker cp "$id:/usr/local/bin/md-runbook-gate" "$RUNNER_TEMP/gate-in-image"
+          docker rm "$id"
+          file "$RUNNER_TEMP/gate-in-image" | tee "$RUNNER_TEMP/gate-file.txt"
+          grep -q 'ELF 64-bit .*statically linked' "$RUNNER_TEMP/gate-file.txt"
       - name: The compose file with the ops service is valid
         run: docker compose -f apps/relay/compose.example.yml --profile ops config -q
 

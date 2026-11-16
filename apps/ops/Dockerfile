@@ -4,7 +4,25 @@
 #
 #   docker build -t md-runbook-ops -f apps/ops/Dockerfile apps
 #
-# The build context is apps/ (the gate script is in apps/gate).
+# The build context is apps/ (the gate's Go source is in apps/gate).
+
+# md-runbook-gate from source, as a release builds it (scripts/ci/build-gate.sh): static, without
+# file paths or a build ID, with the Go toolchain go.mod names, which must be this image's (the
+# build stops otherwise). Built on the build machine for the target platform, without emulation.
+FROM --platform=$BUILDPLATFORM golang:1.26.2-trixie@sha256:4a7137ea573f79c86ae451ff05817ed762ef5597fcf732259e97abeb3108d873 AS gate
+ARG TARGETOS
+ARG TARGETARCH
+ENV GOTOOLCHAIN=local CGO_ENABLED=0
+WORKDIR /src
+COPY gate/go.mod gate/go.sum* ./
+RUN want=$(sed -n "s/^toolchain //p" go.mod) \
+ && if [ "$want" != "$(go env GOVERSION)" ]; then \
+      echo "go.mod names toolchain $want, this image has $(go env GOVERSION): update the golang image" >&2; exit 1; \
+    fi \
+ && go mod download
+COPY gate/ ./
+RUN GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH:-amd64}" \
+    go build -trimpath -ldflags="-s -w -buildid=" -o /md-runbook-gate ./cmd/md-runbook-gate
 
 FROM debian:13.1-slim AS kubectl
 ARG KUBECTL_VERSION=v1.34.1
@@ -18,13 +36,14 @@ RUN apt-get update \
  && chmod 755 /kubectl
 
 FROM debian:13.1-slim
-# openssh-client: ssh-keygen -Y, which checks signatures in the gate. procps: pkill (cancel).
+# openssh-client: ssh-keygen (-Y checks signatures in the gate; start.sh makes the host key).
+# The gate is a static binary and needs nothing else. (procps comes with openssh-server.)
 # For runbooks: curl, jq, and what md-runbook-probe uses (openssl, ping, dig).
 # The account's login shell is /bin/sh (dash): sshd starts the gate with it, and bash would run
 # ~/.bashrc, a file the account can write, before the gate. Blocks still run in bash.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      openssh-server openssh-client bash procps tini ca-certificates curl jq \
+      openssh-server openssh-client bash tini ca-certificates curl jq \
       openssl iputils-ping bind9-dnsutils netcat-openbsd \
  && rm -rf /var/lib/apt/lists/* \
  && rm -f /etc/ssh/ssh_host_* \
@@ -32,7 +51,7 @@ RUN apt-get update \
  && install -d -m 755 /etc/md-runbook /etc/md-runbook-ops \
  && install -d -o ops -g ops -m 700 /run/md-runbook-ops /var/lib/md-runbook-ops /var/log/md-runbook
 COPY --from=kubectl /kubectl /usr/local/bin/kubectl
-COPY gate/md-runbook-gate /usr/local/bin/md-runbook-gate
+COPY --from=gate /md-runbook-gate /usr/local/bin/md-runbook-gate
 COPY ops/sshd_config /etc/ssh/md-runbook-ops.conf
 COPY ops/gate.conf /etc/md-runbook/gate.conf
 COPY ops/start.sh /usr/local/bin/md-runbook-ops-start

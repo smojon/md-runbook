@@ -4,9 +4,12 @@ Releases are published by GitHub Actions (`.github/workflows/release.yml`) when 
 pushed. The workflow:
 1. runs the full test matrix (Windows, macOS, Linux);
 2. packages the extension;
-3. publishes it to the **Visual Studio Marketplace** and **Open VSX**, each only if its token
-   secret is set;
-4. creates a GitHub pre-release with the `.vsix`, the command line's `.tgz` and the signed `.apk`, all at once (releases are immutable once published).
+3. publishes it to **npm**, **Open VSX** (if its token secret is set) and the **Visual Studio
+   Marketplace** (if trusted publishing is turned on, see below);
+4. creates a GitHub pre-release with all its files at once (releases are immutable once
+   published):
+   - the `.vsix`, the command line's `.tgz` and the signed `.apk`;
+   - md-runbook-gate for servers: `md-runbook-gate-<os>-<arch>` and `SHA256SUMS`.
 
 ## One-time setup
 
@@ -18,12 +21,14 @@ The publishing secrets live in the GitHub environment `release`, not in the repo
 1. Sign in at <https://marketplace.visualstudio.com/manage> with a Microsoft account and create a
    **publisher** with the ID `smojon`. This ID is the `publisher` field in `package.json`; change
    that field if you pick another ID.
-2. In Azure DevOps (<https://dev.azure.com>, any organization) open **User settings → Personal
-   access tokens → New token**:
-   - Organization: **All accessible organizations**
-   - Scopes: **Custom defined → Marketplace → Manage**
-   - An expiry that suits you (it can be renewed).
-3. Add the token as the secret `VSCE_PAT` in the environment `release`.
+2. On the publisher's page, open **Trusted Publishing** and create a policy:
+   - repository owner `smojon`, repository `md-runbook`;
+   - workflow `release.yml`, environment `release`.
+3. Set the repository variable `MARKETPLACE_TRUSTED_PUBLISHING` to `true`.
+   - No token: `vsce publish --oidc` trades the job's OIDC token for one that lives 15 minutes.
+   - In a private repository the policy lapses unless it is used within 48 hours (this one is
+     public).
+   - Azure DevOps personal access tokens (`VSCE_PAT`) are retired on 1 December 2026.
 
 ### Open VSX (VSCodium, Cursor, Gitpod, openvscode-server)
 
@@ -98,9 +103,9 @@ its APK is in each version's release (the Release workflow calls it).
 - Set up environments as in
   [Managing environments for deployment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
 - The npm, Open VSX and Marketplace jobs run in the environment `release`. It holds `OVSX_PAT`
-  and `VSCE_PAT`, and allows only `v*` tags.
-- A repository secret is readable by every workflow on every branch. Delete `OVSX_PAT` and
-  `VSCE_PAT` there once they are in `release`.
+  and allows only `v*` tags. npm and the Marketplace need no secret: both use trusted publishing.
+- A repository secret is readable by every workflow on every branch. Delete `OVSX_PAT` there
+  once it is in `release`.
 - Each publishing job holds one credential and runs none of the repository's dependencies.
   The tools are locked in `scripts/publish-tools` and installed without install scripts.
 - The publishing jobs take the packaged files by artifact ID, outside the checkout. They check

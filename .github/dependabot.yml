@@ -1,5 +1,6 @@
-# Bumps the actions pinned by commit SHA in .github/workflows and action.yml. A new version waits
-# 7 days, like the Expo updates (expo-updates.yml): a compromised release is usually pulled by then.
+# Bumps the actions pinned by commit SHA in .github/workflows and action.yml, and the Go modules
+# of md-runbook-gate (apps/gate). A new version waits 7 days, like the Expo updates
+# (expo-updates.yml): a compromised release is usually pulled by then.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -10,4 +11,13 @@ updates:
       default-days: 7
     groups:
       actions:
+        patterns: ['*']
+  - package-ecosystem: gomod
+    directory: /apps/gate
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      gate:
         patterns: ['*']

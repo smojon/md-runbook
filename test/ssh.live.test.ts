@@ -186,12 +186,13 @@ describe('ssh: live server', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }
 });
 
 /**
- * Keys whose forced command is md-runbook-gate (MD_RUNBOOK_GATE_BIN, else apps/gate/dist), as a
- * server set up for signed runbooks has them: the session finds the gate, hands it the signed
- * manifest, runs cells by number and cancels through the gate's stop request on a second channel.
+ * Keys whose forced command is md-runbook-gate (the binary MD_RUNBOOK_GATE_BIN names, by default
+ * apps/gate/dist/md-runbook-gate), as a server set up for signed runbooks has them: the session
+ * finds the gate, hands it the signed manifest, runs cells by number and cancels through the
+ * gate's stop request on a second channel.
  */
 describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }, () => {
-  const gate = process.env.MD_RUNBOOK_GATE_BIN ?? path.resolve(__dirname, '..', '..', 'apps', 'gate', 'dist', 'md-runbook-gate');
+  const gate = path.resolve(process.env.MD_RUNBOOK_GATE_BIN || path.join(__dirname, '..', '..', 'apps', 'gate', 'dist', 'md-runbook-gate'));
   let dir: string;
   let strict: KeyPair;
   let lenient: KeyPair;

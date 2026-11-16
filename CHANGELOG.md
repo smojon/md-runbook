@@ -21,6 +21,17 @@ for your server's platform when you update.
 - **Gate: `memory_limit`** now bounds what the gate holds: a session that needs more ends.
 - **Gate: parameter patterns** still read as `grep -E` reads them. GNU extensions such as `\d`
   or `\w` now match nothing, as signing already refuses them.
+- **Visual Studio Marketplace by trusted publishing:** the release publishes there with
+  `vsce publish --oidc`, no token, once the policy and the variable `MARKETPLACE_TRUSTED_PUBLISHING`
+  are set ([PUBLISHING.md](PUBLISHING.md)). `vsce` for publishing is 4.1.0.
+- **Gate binaries on each GitHub release:** `md-runbook-gate-linux-amd64`, `-linux-arm64`,
+  `-darwin-amd64` and `-darwin-arm64`, with `SHA256SUMS`. Built static, with the Go toolchain
+  `apps/gate/go.mod` names, by a job without secrets.
+- **Ops host image:** builds the gate from its Go source in a build stage, from a `golang` image
+  pinned by digest, and installs only the static binary.
+- **Dependabot:** follows the gate's Go modules (`apps/gate`) weekly, with the same 7-day wait as
+  the actions.
+
 
 ## 0.27.0
 
