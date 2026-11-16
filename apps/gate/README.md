@@ -17,6 +17,14 @@ for, and how runbooks are signed:
 
 Nothing else: no `perl`, `setsid`, `stdbuf`, `fold` or `curl`.
 
+**The programs the gate runs** come from `/usr/bin`, `/bin`, `/usr/sbin` and `/sbin` only:
+`ssh-keygen`, `id`, `locale`, `getent`, `sh`, `ps`, `sudo`, `systemd-run` and `bwrap`.
+- Never from `/usr/local`, from `path =` or from the PATH sshd sets. A folder an account can
+  write would let it plant its own `ssh-keygen`, which passes any signature.
+- Each one, and every folder above it, must be root's and writable by root alone. Else the gate
+  refuses to start, in every mode, and names the folder.
+- OpenSSH installed only in `/usr/local` is not used: install your system's package.
+
 ## Install
 
 Each release has a binary per platform: `md-runbook-gate-linux-amd64`, `-linux-arm64`,
@@ -128,8 +136,8 @@ you write `isolation = bwrap`.
 - In shared mode a block runs as the account that owns its scope. A block that means to can
   leave it, for example by asking the user manager for a service.
 - A scope ends what a block leaves behind by accident, not what it hides on purpose.
-- In separated mode blocks can't leave their scope, as long as the blocks' account has no user
-  manager of its own. Don't run `loginctl enable-linger` for it.
+- In separated mode blocks can't leave their scope. The gate refuses to start while the blocks'
+  account has a user manager, or any other process outside its sessions.
 
 The `session` event in the log says which isolation a session got (`isolation`), and why `auto`
 found none (`isolation_off`).
@@ -140,7 +148,15 @@ By default the blocks run as the gate's own account (`shared`). Then a block can
 token and a log file, and reach the gate through `/proc`.
 
 With `cells_account = NAME` in `gate.conf`, the blocks run as that second account instead
-(`separated`). It can't reach the token, the log or the gate's pipes.
+(`separated`). It can't reach the token, the log or the gate's own pipes.
+
+**One cells account per gate account.** Every process of the blocks' account can write into the
+shells of the account's sessions (through `/proc`). So that account runs this gate account's
+blocks and nothing else:
+- no other gate account uses it, not even one for unsigned trials;
+- no cron or at jobs, no logins, no user manager (`loginctl enable-linger`);
+- no privileged group (`sudo`, `wheel`, `adm`, `docker`, `lxd`, `disk`, `systemd-journal`,
+  `shadow`), and no sudo rule of its own.
 
 Give this gate its own report token, in the library server's `RUNS_SEPARATED_GATE_TOKENS`. The
 server counts a summary as separated only with such a token: a shared gate's blocks can read
@@ -153,6 +169,8 @@ useradd -m -s /usr/sbin/nologin mdrb-cells
 echo 'support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells' > /etc/sudoers.d/md-runbook-gate
 chmod 440 /etc/sudoers.d/md-runbook-gate
 visudo -cf /etc/sudoers.d/md-runbook-gate
+echo mdrb-cells >> /etc/cron.deny
+echo mdrb-cells >> /etc/at.deny
 ```
 
 Here `support` is the gate's account. The line must be exactly this, with the gate's real path.
@@ -162,13 +180,19 @@ At the start of each session the gate checks. It refuses to start, and logs a `s
 event, when:
 - the account doesn't exist, is root, or is the gate's own;
 - `sudo -n -l` lists anything but that one line;
+- the account is in a privileged group (listed above);
+- it may use cron or at: `cron.deny` and `at.deny` must list it, or `cron.allow` and
+  `at.allow` exist without it (on macOS in `/usr/lib/cron`);
+- a process of the account runs outside this gate account's sessions. With
+  `kill_leftovers = yes` the gate ends those first, except other gate accounts' sessions;
 - a folder above the gate's files is not safe (see below);
 - the blocks' account can read `report_token_file` or the `log =` file;
 - it can change the gate's program, `gate.conf`, `allowed_signers`, the account's keys or the
   gate's state;
 - it can't enter `/tmp`.
 
-The message names the problem and the line to write.
+The message names the problem and the line to write. The gate can't check whether the account
+has sudo rules of its own (`sudo -l -U` needs root): don't give it any.
 
 **Safe folders,** as OpenSSH's `StrictModes` asks for its files. The gate checks every folder
 from each of its files up to `/`:
@@ -191,8 +215,18 @@ can change, such as `/usr/libexec/md-runbook-gate`. The message names the folder
 - **Work folder:** in `/tmp`, which the blocks' account may enter but not list. The shell
   appends each run's exit to a file there that only the gate can read. The gate writes the
   `end` events to the log itself.
+  - A line in that file the shells didn't write ends the session, and logs an `exits` event.
+    The session's run reports don't go out then.
 - **Stopping:** stop requests and the end of a session reach the blocks through the same
   `sudo` line.
+
+**What separated mode doesn't cover:**
+- **Sessions of the same gate account** run their blocks as the same account. A block can write
+  into another session's shells, and change their exits. The same signers run both, so it is
+  the same trust.
+- **Within a session** a block can still answer for the later runs of its runbook
+  ([Trust](#trust)). It can also change a line of its session's exits file in place, if the
+  line keeps its form: the gate doesn't see that.
 
 Run reports say which mode ran the blocks: `gate.gate_mode` is `shared` or `separated`
 ([Run reports](#run-reports)).
@@ -301,7 +335,8 @@ Signed blocks run as the account. So a gate is only as strong as the account aro
   may have planted in its home folder and crontab.
 
 [Separated mode](#separated-mode) takes the token and the log out of the blocks' reach. A block
-can still answer for later runs of its own runbook, as above.
+can still answer for later runs of its own runbook, as above. It can also reach the blocks of
+other sessions of the same gate account, which run as the same account.
 
 ## Check it
 

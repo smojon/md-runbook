@@ -164,6 +164,10 @@ func (g *Gate) sendReports() {
 	if !g.reportOn || len(g.reportRuns) == 0 {
 		return
 	}
+	if g.exitsBadNow() != "" {
+		g.log.Event("event", "report", "status", "skipped", "reason", "the session's exits file was changed")
+		return
+	}
 	var token []byte
 	if g.cfg.ReportToken != "" {
 		data, err := os.ReadFile(g.cfg.ReportToken)
@@ -204,7 +208,7 @@ func (g *Gate) sendReports() {
 		}
 	}
 	cmd := exec.Command(exe, report.SenderMode)
-	cmd.Env = []string{"PATH=" + gatePath, "LC_ALL=C"}
+	cmd.Env = []string{"PATH=" + sysPath, "LC_ALL=C"}
 	// A session of its own: the end of the SSH session doesn't end it.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	in, err := cmd.StdinPipe()

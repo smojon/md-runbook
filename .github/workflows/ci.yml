@@ -98,6 +98,8 @@ jobs:
           sudo visudo -cf "$RUNNER_TEMP/md-runbook-gate.sudoers"
           sudo install -m 440 "$RUNNER_TEMP/md-runbook-gate.sudoers" /etc/sudoers.d/md-runbook-gate
           sudo -n -u mdrb-gate sudo -n -l
+          # The cells' account may use neither cron nor at, or the self-check refuses.
+          printf 'mdrb-cells\n' | sudo tee -a /etc/cron.deny /etc/at.deny >/dev/null
           # (/run/user/UID is that account's alone, mode 0700: root looks for the socket.)
           for a in "$(id -un)" mdrb-gate mdrb-wide; do
             sudo loginctl enable-linger "$a"

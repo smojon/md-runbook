@@ -139,6 +139,8 @@ func (g *Gate) session() int {
 	}
 	// Before the first shell: no leftover of an earlier session finds it.
 	g.sweep("start")
+	// Separated mode: nothing of the cells' account outside this account's sessions.
+	g.checkCellsStrays()
 	g.serve()
 	g.cleanup()
 	if g.signalled.Load() {

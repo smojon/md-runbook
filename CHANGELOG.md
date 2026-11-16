@@ -14,6 +14,10 @@ for your server's platform when you update.
   `setsid`, `stdbuf`, `fold` or `curl`.
   - The gate gives each block's shell a process group of its own on every server.
   - The gate sends run reports itself, in the background as before.
+  - The gate runs `ssh-keygen` and its other programs only from `/usr/bin`, `/bin`,
+    `/usr/sbin` and `/sbin`, never from `/usr/local` or the PATH. Each one, and every folder
+    above it, must be root's alone, or the gate doesn't start
+    ([Needs](apps/gate/README.md#needs)).
 - **Gate: `allow_no_group_kill` is ignored.** A `gate.conf` with it still starts, and each
   session logs a `notice`. Remove it when convenient.
 - **Gate: a key line can't run the gate through a shell.** `command="sh …/md-runbook-gate"` is
@@ -41,6 +45,9 @@ for your server's platform when you update.
     read.
   - The check refuses a folder above the gate's files that the blocks' account can change, as
     OpenSSH's `StrictModes` does.
+  - One blocks' account per gate account. The check refuses any process of that account outside
+    this gate account's sessions, and an account that may use cron or at.
+  - The check refuses an account in a privileged group, such as `sudo`, `adm` or `docker`.
   - Blocks start in that account's home folder. A block's `cwd=` must be a folder it can enter.
   - Not for the ops host: it stays shared.
   - See [Separated mode](apps/gate/README.md#separated-mode).
