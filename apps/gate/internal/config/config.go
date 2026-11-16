@@ -48,7 +48,23 @@ type Config struct {
 	MemoryLimit string
 	// yes: sshd_config's ForceCommand runs this gate (with --sshd-force-command).
 	SSHDForceCommand bool
+	// How each session's cells are kept together, so that they end with it: auto (the best this
+	// server has), scope (a systemd scope), bwrap (a PID namespace) or none (process groups, and
+	// the kill_leftovers sweep). scope and bwrap are required: without them the gate doesn't start.
+	Isolation string
+	// The account the cells run as (separated mode, through sudo); "" runs them as the gate's own
+	// account (shared mode).
+	CellsAccount string
 }
+
+// Isolations are the values of isolation =.
+var Isolations = []string{"auto", "scope", "bwrap", "none"}
+
+// accountName: an account name as useradd takes it (and macOS's _names).
+var accountName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,31}$`)
+
+// ValidAccount: a name cells_account = may hold.
+func ValidAccount(s string) bool { return accountName.MatchString(s) }
 
 // Defaults are the settings without a gate.conf.
 func Defaults() Config {
@@ -64,6 +80,7 @@ func Defaults() Config {
 		AuthorizedKeys:  "%h/.ssh/authorized_keys %h/.ssh/authorized_keys2",
 		KillLeftovers:   "no",
 		MemoryLimit:     "512",
+		Isolation:       "auto",
 	}
 }
 
@@ -142,6 +159,21 @@ func (c *Config) Read(r io.Reader, name string) error {
 			default:
 				return fmt.Errorf("sshd_force_command = %s: expected yes or no", v)
 			}
+		case "isolation":
+			ok := false
+			for _, i := range Isolations {
+				ok = ok || v == i
+			}
+			if !ok {
+				return fmt.Errorf("isolation = %s: expected auto, scope, bwrap or none", v)
+			}
+			c.Isolation = v
+		case "cells_account":
+			// Empty is not "shared": leave the line out for that (fail closed).
+			if !ValidAccount(v) {
+				return fmt.Errorf("cells_account = %s: expected an account name (leave the line out to run the cells as the gate's account)", v)
+			}
+			c.CellsAccount = v
 		default:
 			return fmt.Errorf("%s: unknown setting %q", name, k)
 		}

@@ -103,6 +103,12 @@ type Gate struct {
 	cellsBin      string
 	cellsArgs     []string
 
+	// How the shells start (isolation, separated mode), and the cells' account (separated mode).
+	plan   plan
+	cells  cellsInfo
+	isoWhy string // why auto found no isolation
+	unitID string // the session's scopes' names
+
 	sess
 }
 
@@ -110,6 +116,9 @@ type Gate struct {
 func Main(args []string) int {
 	if len(args) > 1 && args[1] == report.SenderMode {
 		return report.SenderMain(os.Stdin)
+	}
+	if len(args) == 2 && args[1] == CellsMode {
+		return cellsMain()
 	}
 	g := &Gate{ppid0: os.Getppid()}
 	g.cleanEnv()
@@ -163,7 +172,7 @@ func (g *Gate) signals() {
 				os.Exit(1)
 			}
 			g.signalled.Store(true)
-			stopGroups(g.livePIDs()...)
+			g.stopShells(g.liveShells()...)
 			select {
 			case g.termCh <- struct{}{}:
 			default:
@@ -475,6 +484,16 @@ type sess struct {
 	reportRuns []report.Run
 	rbManifest map[string]*manifest.Manifest
 	rbSigner   map[string]string
+
+	// Separated mode: the file the cells' shells append each run's exit to, what the gate read of
+	// it, and the runs it waits for.
+	exitsPath string
+	exitsMu   sync.Mutex
+	exitsOff  int64
+	exitsRead int64
+	exitsBuf  []byte
+	sepRuns   map[string]sepRun
+	sepExits  map[string]report.Exit
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }

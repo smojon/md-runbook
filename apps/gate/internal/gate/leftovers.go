@@ -36,7 +36,14 @@ import (
 // a fork loop (a program that forks and exits, again and again, so its pid never holds still) the
 // sweep is best-effort: it stops whole process groups, and lists again until 3 passes in a row
 // find nothing new, for at most 50 passes or 5 seconds ("sweep incomplete" in the log).
+//
+// In separated mode the cells' account is swept as well (sweepCells).
 func (g *Gate) sweep(when string) {
+	g.sweepAccount(when)
+	g.sweepCells(when)
+}
+
+func (g *Gate) sweepAccount(when string) {
 	if g.cfg.KillLeftovers != "yes" {
 		return
 	}
@@ -170,7 +177,7 @@ func (g *Gate) sendReports() {
 	now := logx.Now()
 	exits := g.readExits()
 	host, _ := os.Hostname()
-	s := report.Session{Who: g.who, Account: g.account, Client: g.client, Host: host}
+	s := report.Session{Who: g.who, Account: g.account, Client: g.client, Host: host, Mode: g.mode()}
 	b := report.Batch{To: []byte(g.cfg.ReportTo), Token: token, Log: []byte(g.cfg.Log), Account: []byte(g.account), Who: []byte(g.who), Client: []byte(g.client)}
 	seen := map[string]bool{}
 	for _, r := range g.reportRuns {

@@ -51,10 +51,39 @@ func TestReadFailsClosed(t *testing.T) {
 		"memory_limit = 0512\n":     "memory_limit = 0512: expected a number of MiB (0 for none)",
 		"login_shell_check = on\n":  "login_shell_check = on: expected yes or no",
 		"sshd_force_command = 1\n":  "sshd_force_command = 1: expected yes or no",
+		"isolation = systemd\n":     "isolation = systemd: expected auto, scope, bwrap or none",
+		"isolation =\n":             "isolation = : expected auto, scope, bwrap or none",
+		"isolation = Scope\n":       "isolation = Scope: expected auto, scope, bwrap or none",
+		"cells_account =\n":         "cells_account = : expected an account name (leave the line out to run the cells as the gate's account)",
+		"cells_account = a b\n":     "cells_account = a b: expected an account name (leave the line out to run the cells as the gate's account)",
+		"cells_account = $(id)\n":   "cells_account = $(id): expected an account name (leave the line out to run the cells as the gate's account)",
+		"cells_account = -u\n":      "cells_account = -u: expected an account name (leave the line out to run the cells as the gate's account)",
 	} {
 		_, err := read(t, text)
 		if err == nil || err.Error() != want {
 			t.Errorf("%q: %v, want %s", text, err, want)
+		}
+	}
+}
+
+func TestIsolationAndCellsAccount(t *testing.T) {
+	c, err := read(t, "")
+	if err != nil || c.Isolation != "auto" || c.CellsAccount != "" {
+		t.Errorf("defaults: %+v %v", c, err)
+	}
+	for _, v := range Isolations {
+		c, err := read(t, "isolation = "+v+"\n")
+		if err != nil || c.Isolation != v {
+			t.Errorf("isolation = %s: %+v %v", v, c, err)
+		}
+	}
+	c, err = read(t, "cells_account = mdrb-cells\nisolation = none\nisolation = scope # required\n")
+	if err != nil || c.CellsAccount != "mdrb-cells" || c.Isolation != "scope" {
+		t.Errorf("read: %+v %v", c, err)
+	}
+	for s, ok := range map[string]bool{"mdrb-cells": true, "_cells": true, "c.ells_1": true, "": false, "-x": false, "1cells": false, "a:b": false, "a/b": false, "abcdefghijklmnopqrstuvwxyz0123456": false} {
+		if ValidAccount(s) != ok {
+			t.Errorf("ValidAccount(%q) != %v", s, ok)
 		}
 	}
 }

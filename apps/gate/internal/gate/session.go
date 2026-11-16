@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"runtime/metrics"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -36,8 +37,9 @@ import (
 // start and end of each session.
 //
 // A watcher waits for each shell. When it ends by itself (`exit` in a cell), the session ends, as
-// in a plain session; when it ends, its process group goes too (TERM, then KILL). Each shell has
-// a process group (and session) of its own, so that its blocks' background programs end with it.
+// in a plain session; when it ends, its process group goes too (TERM, then KILL), and its scope
+// (isolation.go). Each shell has a process group (and session) of its own, so that its blocks'
+// background programs end with it.
 
 const nSlots = 6
 
@@ -50,17 +52,34 @@ type slot struct {
 	used  int
 }
 
+// shell: leader is what the gate started (the shell itself, or the wrapper it runs under); pid
+// and pgid are the shell's own (0 until found under a wrapper), cg its scope's cgroup folder.
 type shell struct {
 	n       int
-	pid     int
+	leader  int
 	w       *os.File
 	done    chan struct{}
 	retired atomic.Bool
+
+	mu        sync.Mutex
+	pid, pgid int
+	cg        string
+}
+
+func (sh *shell) info() (pid, pgid int, cg string) {
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	return sh.pid, sh.pgid, sh.cg
 }
 
 // session runs a session; the gate's exit code.
 func (g *Gate) session() int {
-	work, err := os.MkdirTemp(tmpDir(), "md-runbook-gate.")
+	// Separated mode: in /tmp, which the cells' account can enter (TMPDIR may be the gate's own).
+	base := tmpDir()
+	if g.separated() {
+		base = "/tmp"
+	}
+	work, err := os.MkdirTemp(base, "md-runbook-gate.")
 	if err != nil {
 		g.fatal("can't create a work folder")
 	}
@@ -92,14 +111,28 @@ func (g *Gate) session() int {
 	} else {
 		g.fatal("no bash or sh in path = " + g.cfg.Path)
 	}
-	g.log.Event("event", "session", "unsigned", g.cfg.Unsigned, "scopes", g.cfg.Scopes, "key_scopes", g.keyScopes)
+	// How the shells start: separated mode (checked before anything runs), then the isolation.
+	g.plan = g.basePlan()
+	g.unitID = randHex(6)
+	if g.separated() {
+		g.setupSeparated()
+	}
+	g.resolveIsolation()
+	kv := []string{"event", "session", "unsigned", g.cfg.Unsigned, "scopes", g.cfg.Scopes, "key_scopes", g.keyScopes, "gate_mode", g.mode(), "isolation", g.plan.iso}
+	if g.plan.iso == "none" && g.isoWhy != "" {
+		kv = append(kv, "isolation_off", strings.TrimSuffix(g.isoWhy, "; "))
+	}
+	if g.separated() {
+		kv = append(kv, "cells", g.cfg.CellsAccount)
+	}
+	g.log.Event(kv...)
 	if g.reportProblem != "" {
 		g.log.Event("event", "report", "status", "off", "reason", g.reportProblem)
 	}
 	if g.cfg.AllowNoGroupKill != "" {
 		g.log.Event("event", "notice", "reason", "allow_no_group_kill in "+g.configPath+" is obsolete and ignored: each shell always has a process group of its own")
 	}
-	if g.reportOn {
+	if g.reportOn && !g.separated() {
 		if f, err := os.OpenFile(g.work+"/report-exits", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
 			f.Close()
 		}
@@ -133,17 +166,42 @@ func inPath(path, name string) string {
 	return ""
 }
 
+// cellsEnv: the shell's environment. In separated mode HOME, USER and LOGNAME are the cells'
+// account's, and TMPDIR is left out (the gate's may be its own): programs use /tmp.
 func (g *Gate) cellsEnv() []string {
 	env := []string{"SHELL=" + g.cellsBin, "PATH=" + g.cfg.Path, "LANG=" + g.cfg.Locale, "MD_RUNBOOK_GATE_WHO=" + g.who}
 	if g.cfg.Kubeconfig != "" {
 		env = append(env, "KUBECONFIG="+g.cfg.Kubeconfig)
 	}
+	sep := g.separated()
+	if sep {
+		home := g.cells.home
+		if home == "" {
+			home = "/"
+		}
+		env = append(env, "HOME="+home, "USER="+g.cfg.CellsAccount, "LOGNAME="+g.cfg.CellsAccount)
+	}
 	for _, n := range names.CellsEnv {
+		if sep && (n == "HOME" || n == "USER" || n == "LOGNAME" || n == "TMPDIR") {
+			continue
+		}
 		if v, ok := os.LookupEnv(n); ok {
 			env = append(env, n+"="+v)
 		}
 	}
 	return env
+}
+
+// cellsDir: where the shell starts. Shared mode: where the gate runs (the account's home). Separated
+// mode: the cells' account's home, else / (the gate's home is out of its reach).
+func (g *Gate) cellsDir() string {
+	if !g.separated() {
+		return ""
+	}
+	if g.cells.home != "" {
+		return g.cells.home
+	}
+	return "/"
 }
 
 func (g *Gate) startShell(i int) {
@@ -153,8 +211,10 @@ func (g *Gate) startShell(i int) {
 		say("can't create a pipe")
 		g.exit(2)
 	}
-	cmd := exec.Command(g.cellsBin, g.cellsArgs...)
-	cmd.Env = g.cellsEnv()
+	unit := "md-runbook-gate-" + g.unitID + "-" + itoa(g.shells) + ".scope"
+	l := g.plan.shell(append([]string{g.cellsBin}, g.cellsArgs...), g.cellsEnv(), g.cellsDir(), unit)
+	cmd := exec.Command(l.argv[0], l.argv[1:]...)
+	cmd.Env = l.env
 	cmd.Stdin = r
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -163,17 +223,24 @@ func (g *Gate) startShell(i int) {
 	if err := cmd.Start(); err != nil {
 		r.Close()
 		w.Close()
-		say("can't start " + g.cellsBin)
+		say("can't start " + l.argv[0])
 		g.exit(2)
 	}
 	r.Close()
-	sh := &shell{n: g.shells, pid: cmd.Process.Pid, w: w, done: make(chan struct{})}
+	pid := cmd.Process.Pid
+	sh := &shell{n: g.shells, leader: pid, pid: pid, pgid: pid, w: w, done: make(chan struct{})}
+	if l.header != nil {
+		// What the cells' mode reads first; then the cells. (A wrapper that already ended: the
+		// write fails, and the watcher ends the session.)
+		sh.pid, sh.pgid = 0, 0
+		w.Write(l.header)
+	}
 	g.liveMu.Lock()
 	g.live[sh] = true
 	g.liveMu.Unlock()
 	go func() {
 		cmd.Wait()
-		stopGroups(sh.pid)
+		g.stopShells(sh)
 		g.liveMu.Lock()
 		delete(g.live, sh)
 		g.liveMu.Unlock()
@@ -186,6 +253,16 @@ func (g *Gate) startShell(i int) {
 		}
 		close(sh.done)
 	}()
+	if l.header != nil {
+		// Shared mode in a scope: the shell is the wrapper's own pid (systemd-run and the cells'
+		// mode exec it).
+		if g.plan.account == "" && g.plan.iso != "bwrap" {
+			sh.mu.Lock()
+			sh.pid, sh.pgid = pid, pid
+			sh.mu.Unlock()
+		}
+		g.locate(sh, unit)
+	}
 	s := &g.slots[i]
 	s.sh, s.hash, s.dirty = sh, "", false
 }
@@ -213,11 +290,15 @@ func (g *Gate) showPID() {
 		return
 	default:
 	}
+	pid, _, _ := sh.info()
+	if pid <= 1 {
+		return
+	}
 	f, err := os.CreateTemp(g.state+"/pids", ".new.")
 	if err != nil {
 		return
 	}
-	_, err = f.WriteString(itoa(sh.pid) + "\n")
+	_, err = f.WriteString(itoa(pid) + "\n")
 	if f.Close() != nil || err != nil || os.Rename(f.Name(), g.pidFile()) != nil {
 		os.Remove(f.Name())
 		return
@@ -245,16 +326,6 @@ func (g *Gate) retire(i int) {
 // waitShell waits for a shell's watcher. (A HUP, INT or TERM meanwhile has stopped every shell:
 // signals.)
 func (g *Gate) waitShell(sh *shell) { <-sh.done }
-
-func (g *Gate) livePIDs() []int {
-	g.liveMu.Lock()
-	defer g.liveMu.Unlock()
-	var pids []int
-	for sh := range g.live {
-		pids = append(pids, sh.pid)
-	}
-	return pids
-}
 
 // shellFor: the slot for the runbook with this manifest hash: its own shell; else the session's
 // first one if it ran nothing yet; else a new one. A shell that ran unsigned text is never one a
@@ -394,10 +465,14 @@ loop:
 	}
 	// The client is done: each shell runs what it was sent, then ends. Cut short: they end now.
 	if term {
-		stopGroups(g.livePIDs()...)
+		g.stopShells(g.liveShells()...)
 	}
 	for i := range g.slots {
 		g.retire(i)
+	}
+	// Separated mode: the last exits the shells wrote (and their end events).
+	if g.separated() {
+		g.readExitsFile()
 	}
 	// What left the shells' process groups, before the report sender starts.
 	g.sweep("end")
@@ -489,44 +564,10 @@ func (g *Gate) handle(text string) {
 // nap is a short pause.
 func nap() { time.Sleep(200 * time.Millisecond) }
 
-// stopGroups: each process group a pid leads (a shell and what its blocks started) gets TERM;
-// what is left of them a second later, KILL. A block's `trap ” TERM` doesn't keep a program
-// running (security review round 4).
-func stopGroups(pids ...int) {
-	var groups []int
-	for _, p := range pids {
-		if p > 1 {
-			groups = append(groups, p)
-		}
-	}
-	if len(groups) == 0 {
-		return
-	}
-	for _, p := range groups {
-		syscall.Kill(-p, syscall.SIGTERM)
-	}
-	var left []int
-	for i := 0; i < 5; i++ {
-		left = left[:0]
-		for _, p := range groups {
-			if syscall.Kill(-p, 0) == nil {
-				left = append(left, p)
-			}
-		}
-		if len(left) == 0 {
-			return
-		}
-		nap()
-	}
-	for _, p := range left {
-		syscall.Kill(-p, syscall.SIGKILL)
-	}
-}
-
 // cleanup: every shell of the session, with what its blocks started; the stop file and the work
 // folder.
 func (g *Gate) cleanup() {
-	stopGroups(g.livePIDs()...)
+	g.stopShells(g.liveShells()...)
 	if g.skey != "" {
 		os.Remove(g.pidFile())
 	}
@@ -586,7 +627,16 @@ func (g *Gate) stopRequest(cmd string) bool {
 	if sig == "KILL" {
 		signal = syscall.SIGKILL
 	}
-	for _, p := range procs.Descendants(list, pid) {
+	targets := procs.Descendants(list, pid)
+	// Separated mode: the cells' programs are the cells' account's, signalled as that account.
+	if g.separated() {
+		if len(targets) > 0 {
+			g.plan = g.basePlan()
+			g.cellsKill(signal, targets)
+		}
+		return true
+	}
+	for _, p := range targets {
 		syscall.Kill(p, signal)
 	}
 	return true

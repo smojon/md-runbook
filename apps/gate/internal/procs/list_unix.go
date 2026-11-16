@@ -17,10 +17,10 @@ func HaveProc() bool {
 	return err == nil
 }
 
-// List lists the processes: from /proc, else from `ps` (macOS: pid and parent only).
+// List lists the processes: from /proc, else from `ps` (macOS: pid, parent, uid and group).
 func List() ([]Proc, error) {
 	if !HaveProc() {
-		out, err := exec.Command("ps", "-A", "-o", "pid=", "-o", "ppid=").Output()
+		out, err := exec.Command("ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "uid=", "-o", "pgid=").Output()
 		if err != nil {
 			return nil, err
 		}
@@ -75,6 +75,25 @@ func Exe(pid int) string {
 		return ""
 	}
 	return x
+}
+
+// NSpid is the process's pid in each PID namespace, outermost first (/proc/PID/status); nil
+// when it can't be read.
+func NSpid(pid int) []int {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status")
+	if err != nil {
+		return nil
+	}
+	return ParseNSpid(string(b))
+}
+
+// Cgroup is the process's cgroup v2 path (/proc/PID/cgroup), "" when there is none.
+func Cgroup(pid int) string {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cgroup")
+	if err != nil {
+		return ""
+	}
+	return ParseCgroup2(string(b))
 }
 
 // Args is a process's command line (/proc/PID/cmdline), nil when it can't be read.
