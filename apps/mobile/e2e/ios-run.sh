@@ -51,13 +51,7 @@ driver_snapshot() {
   { echo "after try $1, $(date -u +%H:%M:%S) UTC"; ps -axo pid,etime,command | grep -E 'xcodebuild|XCTRunner|maestro-driver|xctest' | grep -v grep || echo '(none)'; } \
     >"$out/driver-processes-attempt-$1.txt" 2>&1
 }
-attempt=1
-run_flows "$attempt"
-status=$?
-[ "$status" != 0 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-$attempt.log" && driver_snapshot "$attempt"
-while [ "$status" != 0 ] && [ "$attempt" -lt 3 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-$attempt.log"; do
-  attempt=$((attempt + 1))
-  echo "::warning::Maestro's iOS driver did not start in time; restarting the simulator for try $attempt"
+restart_simulator() {
   kill "$log_pid" >/dev/null 2>&1
   xcrun simctl shutdown "$udid" 2>/dev/null || true
   xcrun simctl boot "$udid" 2>/dev/null || true
@@ -65,10 +59,53 @@ while [ "$status" != 0 ] && [ "$attempt" -lt 3 ] && grep -q 'iOS driver not read
   xcrun simctl spawn "$udid" log stream --level info --predicate 'subsystem CONTAINS "dev.mdrunbook" OR process CONTAINS "mdrunbook"' >>"$out/simulator.log" 2>&1 &
   log_pid=$!
   sleep 10
+}
+attempt=1
+run_flows "$attempt"
+status=$?
+[ "$status" != 0 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-$attempt.log" && driver_snapshot "$attempt"
+while [ "$status" != 0 ] && [ "$attempt" -lt 3 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-$attempt.log"; do
+  attempt=$((attempt + 1))
+  echo "::warning::Maestro's iOS driver did not start in time; restarting the simulator for try $attempt"
+  restart_simulator
   run_flows "$attempt"
   status=$?
   [ "$status" != 0 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-$attempt.log" && driver_snapshot "$attempt"
 done
+
+# A flow that failed gets one more try, alone, on a restarted simulator. On a busy CI simulator
+# the app and the driver were slow in ways a flow can't wait out: the Secure Enclave took over
+# 60 s to make the key or 20 s to sign the SSH login, and the XCTest driver died ("Device became
+# unreachable"): 9 failed jobs in 8 runs, 2026-11-14 to 16. Each flow starts with clearState, so
+# it doesn't depend on the others. The job still fails when a flow fails twice.
+failed_flows() {
+  python3 -c '
+import sys, xml.etree.ElementTree as ET
+for case in ET.parse(sys.argv[1]).iter("testcase"):
+    if case.get("status") != "SUCCESS":
+        print(case.get("id"))
+' "$out/maestro.xml" 2>/dev/null
+}
+if [ "$status" != 0 ] && [ -f "$out/maestro.xml" ]; then
+  flows="$(failed_flows)"
+  if [ -n "$flows" ]; then
+    echo "::warning::Flows failed: $(echo $flows); restarting the simulator to try them once more"
+    restart_simulator
+    status=0
+    for flow in $flows; do
+      maestro --device "$udid" test --format junit --output "$out/maestro-retry-$flow.xml" --test-output-dir "$out/retry-$flow" \
+        -e SSH_HOST=127.0.0.1 -e SSH_PORT=2222 -e SSH_USER="$(id -un)" -e KEY_URL=http://127.0.0.1:8077/authorize \
+        "$here/maestro/$flow.yaml" 2>&1 |
+        tee "$out/maestro-retry-$flow.log"
+      if [ "${PIPESTATUS[0]}" = 0 ]; then
+        echo "::warning::$flow passed on its second try"
+      else
+        echo "::error::$flow failed twice"
+        status=1
+      fi
+    done
+  fi
+fi
 
 kill "$log_pid" >/dev/null 2>&1
 gzip -f "$out/simulator.log"

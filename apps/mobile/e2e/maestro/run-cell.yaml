@@ -15,12 +15,13 @@ name: run-cell
     timeout: 120000
 - tapOn:
     id: hosts
-# Making the key can take a moment on an emulator.
+# Making the key can take a while: on a busy CI simulator the Secure Enclave took over 60 s
+# (4 failures, 2026-11-14 to 16). A pass returns as soon as the key shows.
 - extendedWaitUntil:
     visible:
       id: app-public-key
       text: 'ecdsa-sha2-nistp256 .*'
-    timeout: 60000
+    timeout: 180000
 # Where the key is kept (the Secure Enclave or Android Keystore; the simulator on Apple Silicon has one).
 - assertVisible:
     id: app-key-storage
@@ -45,8 +46,24 @@ name: run-cell
 - hideKeyboard
 - tapOn:
     id: host-save
-- assertVisible:
-    id: add-host
+# On iOS the tap on Save right after hiding the keyboard was lost twice: the form stayed
+# (2026-11-14/15). Tap it again only if the form is still there 10 s later.
+- extendedWaitUntil:
+    notVisible:
+      id: host-save
+    timeout: 10000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: host-save
+    commands:
+      - tapOn:
+          id: host-save
+- extendedWaitUntil:
+    visible:
+      id: add-host
+    timeout: 30000
 - takeScreenshot: 03-hosts
 # Back to the home screen the same way on both platforms: a relaunch (state is kept). Wait for
 # the list as at the start: a tap while it was still loading didn't open the runbook (iOS,
