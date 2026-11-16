@@ -44,6 +44,11 @@ npx eas submit --profile production --platform ios    # to TestFlight
 npx eas submit --profile production --platform android  # to the internal track, as a draft
 ```
 
+- Without EAS: the App TestFlight workflow builds, signs and uploads the iOS app on `v*` tags.
+  [docs/push-and-testflight.md](../../docs/push-and-testflight.md) lists its secrets.
+- The encryption answer above also stops App Store Connect asking at each upload, once it is in
+  `app.json` (`ios.config.usesNonExemptEncryption`).
+
 ## Before each release
 
 - The App workflow is green on main: checks, Android emulator and iOS simulator.

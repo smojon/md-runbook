@@ -1,0 +1,248 @@
+name: App TestFlight
+# The iOS app (apps/mobile) to TestFlight: built from source on macOS, signed for the App Store
+# with the distribution certificate and provisioning profile, uploaded with an App Store Connect
+# API key. docs/push-and-testflight.md says what to set up at Apple and which secrets to add.
+#
+# - A tag vX.Y.Z: built and uploaded once the secrets exist; until then the run says it skipped.
+# - From the Actions tab, on a tag (`gh workflow run app-testflight.yml --ref vX.Y.Z`): the same,
+#   and a missing secret fails the run. Environment `release` takes only v* tags.
+#
+# Three jobs, so no key shares a runner with more than it must (as app-apk.yml):
+# - check: are the secrets there (nothing checked out, nothing installed).
+# - build: npm, Expo and CocoaPods run first, with no secret. Only then is the certificate put
+#   in a keychain of its own, for the archive and the export, and removed after. Signing is
+#   manual (certificate + profile): automatic signing would put the App Store Connect key on
+#   this runner, and cloud signing needs an Admin key.
+# - upload: the App Store Connect key, with Apple's altool only: nothing checked out or installed.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUNDLE_ID: dev.mdrunbook.app
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: release
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - name: Are the TestFlight secrets set?
+        id: check
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_APPSTORE_PROFILE: ${{ secrets.IOS_APPSTORE_PROFILE }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+        run: |
+          missing=""
+          for n in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 IOS_DIST_CERT_P12 IOS_DIST_CERT_PASSWORD IOS_APPSTORE_PROFILE ASC_APP_ID; do
+            [ -n "${!n}" ] || missing="$missing $n"
+          done
+          if [ -z "$missing" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "::error::not set in environment release:$missing (docs/push-and-testflight.md)"
+            exit 1
+          else
+            echo "::notice::TestFlight skipped: not set up yet (missing:$missing)"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.ready == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    environment: release
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.version.outputs.build }}
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # No npm or CocoaPods cache: a release builds from what the lock files name.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Version and build number
+        id: version
+        run: |
+          echo "version=$(node -p "require('./app.json').expo.version")" >> "$GITHUB_OUTPUT"
+          # TestFlight wants a new CFBundleVersion per upload of a version.
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - name: Generate the iOS project (push entitlement on)
+        env:
+          MD_RUNBOOK_IOS_PUSH: ${{ vars.IOS_PUSH != 'false' && '1' || '0' }}
+          MD_RUNBOOK_IOS_BUILD_NUMBER: ${{ steps.version.outputs.build }}
+        run: npx expo prebuild --platform ios --no-install --clean
+      - name: Install the pods
+        working-directory: apps/mobile/ios
+        run: |
+          for attempt in 1 2 3; do
+            pod install && break
+            [ "$attempt" = 3 ] && exit 1
+            echo "pod install failed (attempt $attempt); trying again in 20 s"
+            sleep 20
+          done
+      # From here on nothing new is installed: the profile, then the certificate, then Xcode.
+      - name: Install the provisioning profile
+        env:
+          PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE }}
+          IOS_PUSH: ${{ vars.IOS_PUSH }}
+        run: |
+          p="$RUNNER_TEMP/appstore.mobileprovision"
+          printf '%s' "$PROFILE_BASE64" | base64 --decode > "$p"
+          security cms -D -i "$p" > "$RUNNER_TEMP/profile.plist"
+          pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$RUNNER_TEMP/profile.plist"; }
+          uuid=$(pb UUID); name=$(pb Name); team=$(pb TeamIdentifier:0); app=$(pb Entitlements:application-identifier)
+          if [ "$app" != "$team.$BUNDLE_ID" ]; then
+            echo "::error::the profile is for $app, not $team.$BUNDLE_ID"
+            exit 1
+          fi
+          if [ "$IOS_PUSH" != false ] && ! pb Entitlements:aps-environment >/dev/null 2>&1; then
+            echo "::error::the profile has no Push Notifications: turn it on for the App ID and make the profile again, or set the variable IOS_PUSH=false"
+            exit 1
+          fi
+          if pb ProvisionedDevices >/dev/null 2>&1; then
+            echo "::error::the profile lists devices: it is not an App Store profile"
+            exit 1
+          fi
+          for d in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$d" && cp "$p" "$d/$uuid.mobileprovision"
+          done
+          rm -f "$RUNNER_TEMP/profile.plist"
+          { echo "PROFILE_UUID=$uuid"; echo "PROFILE_NAME=$name"; echo "TEAM_ID=$team"; } >> "$GITHUB_ENV"
+      # Only the app target is signed with the profile (pods' bundles take no profile). Ruby's
+      # xcodeproj comes with the runner's CocoaPods.
+      - name: Sign the app target manually with it
+        run: |
+          ruby -rxcodeproj -e '
+            proj = Xcodeproj::Project.open(Dir["ios/*.xcodeproj"].first)
+            app = proj.targets.find { |t| t.product_type == "com.apple.product-type.application" } or abort("no app target")
+            app.build_configurations.select { |c| c.name == "Release" }.each do |c|
+              s = c.build_settings
+              s["CODE_SIGN_STYLE"] = "Manual"
+              s["DEVELOPMENT_TEAM"] = ENV.fetch("TEAM_ID")
+              s["CODE_SIGN_IDENTITY"] = "Apple Distribution"
+              s["CODE_SIGN_IDENTITY[sdk=iphoneos*]"] = "Apple Distribution"
+              s["PROVISIONING_PROFILE_SPECIFIER"] = ENV.fetch("PROFILE_NAME")
+            end
+            proj.save'
+      - name: Put the distribution certificate in a keychain of its own
+        env:
+          CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+        run: |
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          pw=$(openssl rand -hex 24)
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          cert="$RUNNER_TEMP/dist.p12"
+          trap 'rm -f "$cert"' EXIT
+          printf '%s' "$CERT_P12" | base64 --decode > "$cert"
+          security import "$cert" -k "$kc" -P "$CERT_PASSWORD" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$kc" | grep -q 'Apple Distribution' || {
+            echo "::error::the .p12 holds no Apple Distribution certificate"
+            exit 1
+          }
+          echo "KEYCHAIN=$kc" >> "$GITHUB_ENV"
+      - name: Archive
+        working-directory: apps/mobile/ios
+        run: |
+          ws="$(ls -d ./*.xcworkspace | head -1)"
+          scheme="$(basename "$ws" .xcworkspace)"
+          xcodebuild -workspace "$ws" -scheme "$scheme" -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/md-runbook.xcarchive" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN" COMPILER_INDEX_STORE_ENABLE=NO \
+            archive > "$RUNNER_TEMP/xcodebuild.log" 2>&1 || {
+            echo "::error::xcodebuild archive failed; last errors:"
+            grep -nE 'error:' "$RUNNER_TEMP/xcodebuild.log" | tail -40
+            tail -30 "$RUNNER_TEMP/xcodebuild.log"
+            exit 1
+          }
+      - name: Export the App Store .ipa
+        run: |
+          plist="$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c 'Add :method string app-store-connect' \
+            -c 'Add :destination string export' \
+            -c 'Add :signingStyle string manual' \
+            -c "Add :teamID string $TEAM_ID" \
+            -c 'Add :signingCertificate string Apple Distribution' \
+            -c 'Add :provisioningProfiles dict' \
+            -c "Add :provisioningProfiles:$BUNDLE_ID string $PROFILE_NAME" \
+            -c 'Add :uploadSymbols bool true' \
+            -c 'Add :manageAppVersionAndBuildNumber bool false' "$plist"
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/md-runbook.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" -exportOptionsPlist "$plist"
+          mv "$RUNNER_TEMP"/export/*.ipa "$RUNNER_TEMP/md-runbook.ipa"
+      - name: Remove the keychain and the profile
+        if: always()
+        run: |
+          [ -n "${KEYCHAIN:-}" ] && security delete-keychain "$KEYCHAIN" || true
+          [ -n "${PROFILE_UUID:-}" ] && rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision" \
+            "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$PROFILE_UUID.mobileprovision" || true
+          rm -f "$RUNNER_TEMP/appstore.mobileprovision"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure()
+        with:
+          name: ios-archive-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: md-runbook-ios
+          path: ${{ runner.temp }}/md-runbook.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+  upload:
+    needs: build
+    runs-on: macos-latest
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: md-runbook-ios
+          path: ${{ runner.temp }}/ipa
+      - name: Upload to App Store Connect (TestFlight)
+        working-directory: ${{ runner.temp }}/ipa
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+          VERSION: ${{ needs.build.outputs.version }}
+          BUILD: ${{ needs.build.outputs.build }}
+        run: |
+          # altool reads AuthKey_<key id>.p8 from API_PRIVATE_KEYS_DIR.
+          export API_PRIVATE_KEYS_DIR="$RUNNER_TEMP/private_keys"
+          mkdir -p "$API_PRIVATE_KEYS_DIR"
+          trap 'rm -rf "$API_PRIVATE_KEYS_DIR"' EXIT
+          printf '%s' "$ASC_KEY_P8" | base64 --decode > "$API_PRIVATE_KEYS_DIR/AuthKey_$ASC_KEY_ID.p8"
+          xcrun altool --upload-package md-runbook.ipa -t ios --apple-id "$ASC_APP_ID" --bundle-id "$BUNDLE_ID" \
+            --bundle-short-version-string "$VERSION" --bundle-version "$BUILD" \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          echo "::notice::Uploaded $VERSION ($BUILD): TestFlight shows it once Apple has processed it"

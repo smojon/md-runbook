@@ -1375,6 +1375,32 @@ const en = {
   libraryLinkUnavailable: (host: string) =>
     `The team library at ${host} opens verified runbooks only, and can’t be read now: try again later.`,
   libraryLinkNotListed: (path: string) => `${path} is not listed in the team library, which opens verified runbooks only.`,
+
+  // Alerts on this phone: pushes from the team library server (notifications/alertPush.ts)
+  alertPushTitle: 'Alerts on this phone',
+  alertPushPoints: [
+    'Firing alerts of the team library’s server show here as notifications.',
+    'A tap opens the alert’s runbook with its details filled in. Nothing runs by itself.',
+    'Apple or Google carries them: the alert’s name and its runbook link.',
+  ],
+  alertPushSwitch: 'Get alerts',
+  alertPushNotInBuild: 'Not set up in this build.',
+  alertPushNoLibrary: 'Set the team library’s https address first.',
+  alertPushToken: 'Devices token',
+  alertPushTokenHelp: 'From whoever runs the library server (DEVICES_TOKENS).',
+  alertPushTokenPlaceholder: 'Paste the token',
+  alertPushNeedToken: 'Paste the devices token first.',
+  alertPushOn: (host: string) => `On: alerts from ${host} come to this phone.`,
+  alertPushWorking: 'Registering this phone…',
+  alertPushBlocked: 'Notifications are off for md-runbook in the system settings.',
+  alertPushFailed: (why: string) => `Not turned on: ${why}`,
+  alertPushOffFailed: (why: string) =>
+    `Off here, but the server wasn’t told (${why}). Its alerts may still show: ask its admin to remove this phone.`,
+  alertPushNoToken: 'the phone has no push token',
+  alertPushBadAnswer: 'the server’s answer has no device id',
+  alertPushChannel: 'Alerts',
+  alertPushChannelHelp: 'A firing alert from the team library server',
+  alertPushOpenFailedTitle: 'The alert’s runbook didn’t open',
 } as const;
 
 export type Strings = typeof en;

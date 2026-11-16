@@ -129,6 +129,21 @@ Security fixes from a review of the parts that face the network.
 - **App: copies of a library runbook keep its rules.** Run All as Copy and Start Incident are off while the library refuses the runbook, and say why. Their copies run only while the library would open them.
 - **Web: a key the browser can't export, and a Content Security Policy.** New web keys are WebCrypto keys the browser won't export. An earlier key stays; Hosts & settings offers to replace it. The page runs only its own scripts, never inside another site's frame.
 
+Alerts to phones and TestFlight, both off until set up
+([docs/push-and-testflight.md](docs/push-and-testflight.md)).
+
+- **Library server:** firing alerts are pushed to registered phones, through Firebase on Android
+  and APNs on iPhones.
+  - Phones register with `POST /v1/devices` and a devices token (`DEVICES_TOKENS`).
+  - A push carries the alert's name, its runbook and its link. No other labels or annotations.
+  - Phones the provider reports as gone are removed.
+- **App:** Hosts & settings → Alerts on this phone registers the phone with the team library's
+  server.
+  - A tap opens the alert's runbook through the usual link checks. Nothing runs by itself.
+  - A build without Firebase or the APNs entitlement says "Not set up in this build".
+- **TestFlight:** a workflow builds, signs and uploads the iOS app on `v*` tags. It skips until
+  the Apple secrets exist.
+
 ## 0.26.8
 
 The Android APK is signed with the app's own key and attached to each release. Progress and notes are fixed.

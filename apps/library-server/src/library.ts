@@ -133,9 +133,9 @@ export async function checkRunbook(text: string, path: string, o: { allowedSigne
 }
 
 /** Write `data` to `file` through a temporary file next to it and a rename: readers see the old file or the new one. */
-export async function writeAtomic(file: string, data: string): Promise<void> {
+export async function writeAtomic(file: string, data: string, mode = 0o644): Promise<void> {
   const tmp = join(dirname(file), `.${randomBytes(6).toString('hex')}.tmp`);
-  const h = await fsp.open(tmp, 'wx', 0o644);
+  const h = await fsp.open(tmp, 'wx', mode);
   try {
     await h.writeFile(data, 'utf8');
     await h.sync();

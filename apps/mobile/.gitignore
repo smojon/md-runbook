@@ -42,3 +42,7 @@ yarn-error.*
 
 # Screenshots from npm run ui-tour
 ui-tour/
+
+# Firebase (push to Android): kept out of the repository, put in by the build (docs/push-and-testflight.md)
+google-services.json
+GoogleService-Info.plist

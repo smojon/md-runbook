@@ -56,6 +56,7 @@ import { hostsJson, hostsLink } from '../hosts/share';
 import { shareHostsFile } from '../share/export';
 import { LibrarySettings } from './LibrarySettings';
 import { LibraryPublishSettings } from './LibraryPublishSettings';
+import { AlertPushSettings } from './AlertPushSettings';
 import { TrustedSignersSection } from './TrustedSigners';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
@@ -135,6 +136,7 @@ export function HostList() {
           <LinksSection />
           <LibrarySettings />
           <LibraryPublishSettings />
+          <AlertPushSettings />
           <SafetySection />
           <NotificationsSection />
           {Platform.OS === 'web' ? <PublicAddressSection /> : null}

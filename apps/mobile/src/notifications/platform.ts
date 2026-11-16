@@ -25,9 +25,13 @@ export const supported = true;
 export const canSchedule = true;
 
 // In the foreground the run bar says it all: nothing shown (one scheduled earlier, such as the
-// "paused" one of a run before the app restarted, included). Set as the app starts.
+// "paused" one of a run before the app restarted, included). Set as the app starts. An alert's
+// push (alertPush.ts) shows, sound included: nothing on screen says it otherwise.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({ shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false }),
+  handleNotification: async (n) => {
+    const alert = n.request.content.data?.kind === 'alert';
+    return { shouldShowBanner: alert, shouldShowList: alert, shouldPlaySound: alert, shouldSetBadge: false };
+  },
 });
 
 let prepared: Promise<void> | undefined;

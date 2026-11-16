@@ -1,7 +1,7 @@
 runbooks.example.net {
 	# The library server's paths only. Not /v1/server-info: on the web app's own address that
 	# is the relay's question (the web app asks it to find a relay).
-	@library path /v1/library/* /v1/runs /v1/runs/* /v1/alerts /v1/alerts/*
+	@library path /v1/library/* /v1/runs /v1/runs/* /v1/alerts /v1/alerts/* /v1/devices /v1/devices/*
 	handle @library {
 		reverse_proxy library-server:8090
 	}

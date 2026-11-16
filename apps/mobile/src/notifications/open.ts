@@ -2,9 +2,11 @@
  * A tap on a run's notification opens that runbook at the step it names. The run lives in the
  * runbook's open screen, so when one is open it is brought back (not a second one pushed), and the
  * screen scrolls to the step; otherwise the runbook opens (after a restart, the run is over).
+ * A tap on an alert's push opens the alert's link (alertPush.ts).
  */
 import { router, useRootNavigationState } from 'expo-router';
 import { useEffect, useRef } from 'react';
+import { openAlertTap, useAlertPushUpkeep } from './alertPush';
 import * as platform from './platform';
 import type { RunTarget } from './runs';
 
@@ -71,11 +73,13 @@ export function useOpenRequest(id: string | undefined, go: (cellIndex: number | 
 /** The root layout: taps on notifications open their runbook, once the navigator is up. */
 export function useNotificationTaps(): void {
   const ready = useRootNavigationState()?.key !== undefined;
+  useAlertPushUpkeep();
   useEffect(() => {
     if (!ready) return;
     return platform.onTap((data) => {
       const target = targetOf(data);
       if (target) openRunbookAt(target);
+      else void openAlertTap(data);
     });
   }, [ready]);
 }
