@@ -45,6 +45,10 @@ export type StepsRow =
       needs?: StepNeed[];
       /** A failed step: the last line of its error output (stderr, else its output), cut short. */
       error?: string;
+      /** Pause Before This Step is on (a mark for this session). */
+      paused?: boolean;
+      /** Notify Me When It Starts is on. */
+      notify?: boolean;
     };
 
 /** Something a step will ask of you when it runs, known before the run (as the extension's Steps view). */

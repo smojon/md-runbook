@@ -63,6 +63,15 @@ export async function notifyRun(target: RunTarget, title: string, body: string):
   await platform.show({ title, body, data: dataOf(target) });
 }
 
+/**
+ * Notify Me When It Starts: a step a reader marked starts. A notification while the app is away
+ * (the "paused" one stays: the run still pauses with the app); on screen the run bar says it.
+ */
+export async function notifyStepStarted(target: RunTarget, title: string, body: string): Promise<void> {
+  if (!away() || !(await allowed())) return;
+  await platform.show({ title, body, data: dataOf(target) });
+}
+
 /** The app left the screen during a run: the "paused" notification, unless the run ends or waits first. */
 export async function runWentAway(target: RunTarget, runbookName: string): Promise<void> {
   if (!platform.canSchedule || paused.has(target.runbookId) || !(await allowed()) || !away()) return;

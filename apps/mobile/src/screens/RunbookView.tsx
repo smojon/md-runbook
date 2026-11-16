@@ -100,6 +100,8 @@ import { AssistantSheet } from '../assistant/AssistantSheet';
 import { useAssistant } from '../assistant/useAssistant';
 import { ApproveCard } from '../cells/ApproveCard';
 import { ConfirmCard } from '../cells/ConfirmCard';
+import { PauseCard } from '../cells/PauseCard';
+import { MarksByCell, NO_MARKS, StepMarks, toggleMark } from '../runbooks/stepMarks';
 import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell, ProblemRow } from '../cells/CodeCell';
@@ -124,7 +126,7 @@ import { canDownload } from '../runbooks/files';
 import { saveRunbook } from '../runbooks/save';
 import { exportRecordJson, exportReport, requestCosign, shareRunbook } from '../share/export';
 import { addRunbook, getRunbook, Runbook, runbookNamed, updateRunbookText, useRunbooks, withoutFrontMatter } from '../runbooks/store';
-import { historySize, outputSettings, signerName } from '../settings/store';
+import { historySize, notifyRuns, outputSettings, signerName } from '../settings/store';
 import { SignCard, SignRequest } from '../signing/SignCard';
 import { SignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
 import { appKey } from '../ssh/appKey';
@@ -141,7 +143,7 @@ import { mono, themedStyles, usePalette } from '../theme';
 import { ActionGroup, ActionsSheet, AppAction } from '../ui/ActionsSheet';
 import { NotifyOfferCard } from '../notifications/OfferCard';
 import { useOpenRequest } from '../notifications/open';
-import { declineNotifications, shouldOffer, turnOnNotifications } from '../notifications/runs';
+import { declineNotifications, notificationsSupported, notifyStepStarted, shouldOffer, turnOnNotifications } from '../notifications/runs';
 import { EndedNote, RunPhase, useRunNotifications } from '../notifications/useRunNotifications';
 import { reportRequiredText } from '@md-runbook/core/runReport';
 import { ReportConsentCard, ReportRequiredCard } from '../reports/ReportCards';
@@ -390,6 +392,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         skipped: Set<string>;
         /** The last cell Run all took from `cells` (ran, skipped as already up, or left with the teardown). */
         last?: number;
+        /** A run of several cells: Pause Before This Step pauses it (as VS Code's, not a single cell's run). */
+        several: boolean;
+        /** Steps marked to pause that were answered Continue in this run. */
+        passed: Set<number>;
       }
     | undefined
   >(undefined);
@@ -481,6 +487,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const busy = useRef(false);
   /** A step done by hand Run all waits at, with its card under its Markdown cell. */
   const [manualAsk, setManualAsk] = useState<ManualItem | undefined>();
+  /** Pause Before This Step / Notify Me When It Starts, per cell (a ref too: Run all reads the newest). */
+  const [stepMarks, setStepMarksState] = useState<MarksByCell>(NO_MARKS);
+  const marksRef = useRef(stepMarks);
+  const setStepMarks = (next: MarksByCell): void => {
+    marksRef.current = next;
+    setStepMarksState(next);
+  };
+  /** Run all paused before a step marked to pause: its card under that cell (Continue / Stop). */
+  const [pauseAsk, setPauseAsk] = useState<number | undefined>();
   // The teardown offer (core/parts.ts), under the first teardown step.
   const [teardownOffer, setTeardownOffer] = useState<{ cellIndex: number; labels: string[] } | undefined>();
   const [queued, setQueued] = useState(false);
@@ -731,6 +746,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       captures: captures.current,
       inputs: Object.fromEntries(Object.entries(inputs.current).map(([k, v]) => [k, v.value])),
       latestText: () => getRunbook(runbook.id)?.text ?? runbook.text,
+      onStart: () => stepStarting(cellIndex),
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
       onOutput: (text) => update((r) => ({ ...r, live: (r.live + text).slice(-LIVE_CHARS) })),
       // retry=: a new attempt starts with empty output (only the last one is kept, as in the extension).
@@ -917,6 +933,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         return;
       }
     }
+    // Pause Before This Step: Continue or Stop, asked on the cell (as VS Code, after the steps by hand).
+    if (upcoming !== undefined && q.several && !q.passed.has(upcoming) && marksRef.current.get(upcoming)?.pause) {
+      setPauseAsk(upcoming);
+      setTimeout(() => list.current?.scrollToIndex({ index: upcoming, viewPosition: 0.2 }), 100);
+      return;
+    }
     // The teardown is offered, not run unasked: you may go straight on to the next runbook.
     if (upcoming !== undefined && partAt(upcoming) === 'teardown' && q.takeDown === undefined) {
       if (!teardownDeclined.has(runbook.id) || q.askAgain) {
@@ -961,6 +983,42 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     }
     q.last = next;
     void runRef.current({ cellIndex: next }, q.on);
+  };
+  /** The answer at a step marked to pause: run it and go on, or stop there. */
+  const answerPause = (go: boolean): void => {
+    const at = pauseAsk;
+    setPauseAsk(undefined);
+    const q = queue.current;
+    if (at === undefined || !q) return;
+    if (!go) {
+      clearQueue();
+      setNotice(t.pauseStopped);
+      return;
+    }
+    q.passed.add(at);
+    runNext();
+  };
+  /** A step starts: its Notify Me When It Starts mark says so, once (the mark then goes). */
+  const stepStarting = (cellIndex: number): void => {
+    if (!runbook || !marksRef.current.get(cellIndex)?.notify) return;
+    setStepMarks(toggleMark(marksRef.current, cellIndex, 'notify', false));
+    const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+    const p = textProgress(latest);
+    const step = p.stepOfCell[cellIndex];
+    const c = parse(latest).cells[cellIndex];
+    const label =
+      (c && c.kind === 'code' && stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId, headings[cellIndex])) ||
+      t.cellNumber(cellIndex + 1);
+    const body = t.stepStarted(step, p.total, cellIndex + 1, label);
+    // On screen the notice says it; away, a notification (when they are on).
+    sayOk(body);
+    void notifyStepStarted({ runbookId: runbook.id, cellIndex }, runbook.title, body);
+  };
+  /** Pause Before This Step / Notify Me When It Starts, on or off for cell `index`. */
+  const toggleStepMark = (index: number, which: keyof StepMarks): void => {
+    const on = !marksRef.current.get(index)?.[which];
+    setStepMarks(toggleMark(marksRef.current, index, which, on));
+    if (which === 'notify' && on && notificationsSupported() && notifyRuns() !== true) sayOk(t.notifyOffHint);
   };
   /** The answer at a step done by hand: tick it and go on, go on without ticking it, or stop there. */
   const answerManual = (answer: 'done' | 'skip' | 'stop'): void => {
@@ -1042,6 +1100,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       ...(opts.readyFirst ? { readyFirst: true } : {}),
       manual: parseFrontMatter(runbook.text)?.manualSteps !== 'continue',
       skipped: new Set<string>(),
+      several: verdicts.filter((v) => v.can.ok || v.i === call).length > 1,
+      passed: new Set<number>(),
       // Continue with only the teardown left is a request for it: offer it again.
       ...(from === 'resume' && candidates.length > 0 && candidates.every((i) => isTeardown(parsed[i])) ? { askAgain: true } : {}),
       // What a call runs, runs whole: its teardown isn't offered.
@@ -1516,6 +1576,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         ...meta('runUntilHere', 'run', !host ? t.noRunNow : untilHere(index).length > 0 ? undefined : t.nothingUntilHere),
         run: () => runSequence('start', untilHere(index)),
       },
+      // As VS Code's: marks for this session, off again with the same item.
+      stepMarks.get(index)?.pause
+        ? { ...meta('removePause', 'run'), run: () => toggleStepMark(index, 'pause') }
+        : { ...meta('pauseBefore', 'run'), run: () => toggleStepMark(index, 'pause') },
+      stepMarks.get(index)?.notify
+        ? { ...meta('cancelNotify', 'run'), run: () => toggleStepMark(index, 'notify') }
+        : { ...meta('notifyOnStart', 'run'), run: () => toggleStepMark(index, 'notify') },
       { ...meta('stepThrough', 'run', why), run: () => void run({ cellIndex: index, mode: 'step', line: 0 }, host) },
       {
         ...meta('uncheckAllLines', 'run', (checks.get(index)?.size ?? 0) > 0 ? undefined : t.noCheckedLines),
@@ -1598,6 +1665,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setConfirming(undefined);
     setTeardownOffer(undefined);
     setManualAsk(undefined);
+    setPauseAsk(undefined);
     if (running?.paused) running.paused.stop();
     else running?.abort.abort();
   };
@@ -1721,7 +1789,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
 
   // Where the run waits for an answer: a card under that cell (a value, a confirmation, the
   // teardown offer, a step done by hand). The run bar, the pinned bar and the steps say so.
-  const waitingCell = manualAsk?.cellIndex ?? asking?.request.cellIndex ?? confirming?.cellIndex ?? teardownOffer?.cellIndex;
+  const waitingCell = manualAsk?.cellIndex ?? asking?.request.cellIndex ?? confirming?.cellIndex ?? teardownOffer?.cellIndex ?? pauseAsk;
   const waiting = waitingCell !== undefined;
   const waitingItem = manualAsk?.item;
   // Preflight: what each step still to do will ask of you, known now (nothing asked, nothing run).
@@ -1768,6 +1836,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     // needsOf reads approvalId, secretNames and typedInputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [cells, progress, running, askedAt, waitingItem, callEstimates, learnedEstimates, approvalId, secretNames, typedInputs, now],
+  );
+  // The marks a reader put on a step (Pause Before This Step, Notify Me When It Starts), on its row.
+  const markedRows = useMemo(
+    (): StepsRow[] =>
+      stepMarks.size === 0
+        ? stepRows
+        : stepRows.map((r) => {
+            const m = r.kind === 'step' && r.item === undefined ? stepMarks.get(r.index) : undefined;
+            return m ? { ...r, ...(m.pause ? { paused: true } : {}), ...(m.notify ? { notify: true } : {}) } : r;
+          }),
+    [stepRows, stepMarks],
   );
   const hasSteps = stepRows.some((r) => r.kind === 'step');
   /** A phone shows its Steps tab (the runbook's list stays mounted under it, where it was). */
@@ -1843,7 +1922,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ? t.stepsWaitsConfirm(stepName(confirming.cellIndex))
           : teardownOffer !== undefined
             ? t.notifyWaitsTeardown(teardownOffer.labels.join(', '))
-            : undefined;
+            : pauseAsk !== undefined
+              ? t.pausedBeforeStep(stepName(pauseAsk))
+              : undefined;
   const stepsHeader: StepsHeader = {
     headline: waiting ? t.stepsWaiting : progress ? runHeadline(progress, runningStep) : '',
     ...(waiting ? { tone: 'waiting' as const } : failedCell !== undefined ? { tone: 'failed' as const } : {}),
@@ -1889,11 +1970,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             : t.confirmRiskyTitle(confirming.cellIndex + 1, confirming.match.trim())
           : teardownOffer !== undefined
             ? t.notifyWaitsTeardown(teardownOffer.labels.join(', '))
-            : trust !== undefined
-              ? (trust.changed ? t.trustChangedTitle : t.trustTitle)(trustHost?.name ?? '')
-              : otherHost !== undefined
-                ? t.otherHostTitle(otherHost.target.name)
-                : undefined;
+            : pauseAsk !== undefined
+              ? t.pausedBeforeStep(stepName(pauseAsk))
+              : trust !== undefined
+                ? (trust.changed ? t.trustChangedTitle : t.trustTitle)(trustHost?.name ?? '')
+                : otherHost !== undefined
+                  ? t.otherHostTitle(otherHost.target.name)
+                  : undefined;
   // The waiting step's row has the question's answers, the same as its card (VS Code's Done / Skip
   // / Stop on the row); a question to type into (values, a host's key) has Answer, which goes there.
   // (Object literals with their handlers, never called during render.)
@@ -1913,14 +1996,19 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             { id: 'run', label: t.confirmRun, onPress: () => confirmRun() },
             { id: 'cancel', label: t.trustDecline, onPress: () => confirmCancel() },
           ]
-        : [
-            {
-              id: 'answer',
-              label: t.stepsAnswer,
-              hint: t.stepsAnswerHint,
-              onPress: () => showInRunbook(asking ? asking.request.cellIndex : 'top'),
-            },
-          ];
+        : pauseAsk !== undefined
+          ? [
+              { id: 'continue', label: t.pauseContinue, hint: t.pauseContinueHint, onPress: () => answerPause(true) },
+              { id: 'stop', label: t.pauseStop, hint: t.pauseStopHint, kind: 'stop', onPress: () => answerPause(false) },
+            ]
+          : [
+              {
+                id: 'answer',
+                label: t.stepsAnswer,
+                hint: t.stepsAnswerHint,
+                onPress: () => showInRunbook(asking ? asking.request.cellIndex : 'top'),
+              },
+            ];
   const stepAnswers: StepsAnswers | undefined =
     waitingWhat !== undefined && askedAt !== undefined
       ? { question: waitingWhat + (confirming?.runsAs ? ` ${t.confirmRunsAs(confirming.runsAs)}` : ''), buttons: stepButtons }
@@ -1970,7 +2058,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   // The Steps view: a phone's Steps tab, or the panel beside the runbook on a wide screen.
   const stepsView = {
     header: stepsHeader,
-    rows: stepRows,
+    rows: markedRows,
     ...(visibleCells ? { visible: visibleCells } : {}),
     answers: stepAnswers,
     onGo: (index: number) => goToCell(index),
@@ -2313,6 +2401,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 onToggleBreakpoint={(step) => toggleBreakpoint(index, step)}
                 onExplainLine={(step) => assistant.ask('explainLine', index, lineLabel(step))}
                 onCopyLine={(step) => copyLine(index, step)}
+                {...(stepMarks.has(index) ? { marks: stepMarks.get(index)! } : {})}
+                onClearMark={(which) => toggleStepMark(index, which)}
                 onActions={() => setCellSheet(cellActions(index))}
                 {...(problems.byCell.has(index) ? { problems: problems.byCell.get(index)! } : {})}
                 onFix={(from, to) => fixOption(index, from, to)}
@@ -2346,6 +2436,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                       onRun={confirmRun}
                       onCancel={confirmCancel}
                     />
+                  ) : pauseAsk === index ? (
+                    <PauseCard label={stepName(index)} onContinue={() => answerPause(true)} onStop={() => answerPause(false)} />
                   ) : approving?.index === index && isCodeMeta(item.meta) ? (
                     <ApproveCard
                       code={item.value}

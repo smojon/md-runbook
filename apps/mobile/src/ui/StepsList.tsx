@@ -112,6 +112,8 @@ export function StepsList({
         const checked = r.state === 'done';
         const label =
           t.stepsRowLabel(r.step, r.detail ? t.stepsMerged(r.label, r.detail) : r.label, t.stepsState[r.state], r.time) +
+          (r.paused ? ', ' + t.stepsMarkPaused : '') +
+          (r.notify ? ', ' + t.stepsMarkNotify : '') +
           (needs ? '. ' + t.stepsNeeds(needs) : '') +
           (r.error ? '. ' + t.stepsError(r.error) : '');
         // The row's own buttons (the tick box, the answers) are beside its pressable part, not in
@@ -169,6 +171,17 @@ export function StepsList({
                   >
                     {r.label}
                   </Text>
+                  {/* The marks a reader put on it, as VS Code's row icons. */}
+                  {r.paused ? (
+                    <View testID={`steps-paused-${r.key}`}>
+                      <Codicon name="debug-pause" size={13} color={c.warningText} />
+                    </View>
+                  ) : null}
+                  {r.notify ? (
+                    <View testID={`steps-notify-${r.key}`}>
+                      <Codicon name="bell" size={13} color={c.link} />
+                    </View>
+                  ) : null}
                   {r.time ? (
                     <Text testID={`steps-time-${r.key}`} style={[styles.time, r.over && styles.over]} numberOfLines={1}>
                       {r.time}

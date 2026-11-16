@@ -83,6 +83,8 @@ export interface RunCellParams {
    * attempt's is kept), or, with `waitMs`, failed and the next one starts in that long.
    */
   onAttempt?(attempt: number, attempts: number, waitMs?: number): void;
+  /** The cell starts: nothing more to ask (values, host key), it goes to the host (Notify Me When It Starts). */
+  onStart?(): void;
   /**
    * The runbook as it is when the run ends (other edits, e.g. a ticked task box, happened meanwhile):
    * the output block goes into that text. Default: `text`.
@@ -337,6 +339,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
       return { exitCode: r.exitCode, stdout: out, stderr: r.error ?? (r.timedOut ? 'timed out' : err) };
     });
     if (wrongCluster !== undefined) return { kind: 'error', message: wrongCluster };
+    p.onStart?.();
     if (!p.lines) {
       for (;;) {
         attempt++;

@@ -6,6 +6,7 @@
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or every runbook's, after a confirmation.
 - **App: Uncheck All Lines.** **Uncheck all** sits next to **Run checked lines**, and in the cell's ⋯, as in VS Code.
 - **App: Copy Line with Values.** A line's actions copy its command with parameters, inputs and captured values filled in. Secrets stay references.
+- **App: Pause Before This Step, Notify Me When It Starts.** A step's ⋯ (cell or Steps row) sets either, for this session. Run all asks Continue or Stop there.
 
 ## 0.26.8
 

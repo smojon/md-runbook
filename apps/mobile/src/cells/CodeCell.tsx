@@ -34,6 +34,7 @@ import { Palette, mono, themedStyles, usePalette } from '../theme';
 import { Codicon, CodiconName } from '../ui/Codicon';
 import type { LintProblem } from '../runbooks/lint';
 import { hasRefs } from '../runbooks/copyLine';
+import type { StepMarks } from '../runbooks/stepMarks';
 import { TimeBar, useNow } from '../ui/TimeBar';
 
 export interface CellRun {
@@ -62,6 +63,10 @@ export interface CodeCellProps {
   onExplainLine?(step: LineStep): void;
   /** Copy Line with Values: the command on the clipboard, its values filled in (secrets stay references). */
   onCopyLine?(step: LineStep): void;
+  /** Pause Before This Step / Notify Me When It Starts, set for this session. */
+  marks?: StepMarks;
+  /** A tap on a mark takes it off. */
+  onClearMark?(which: keyof StepMarks): void;
   /** Shown under the cell (the approval card of a proposal). */
   below?: ReactNode;
   /** A host is chosen: runs are possible. */
@@ -303,6 +308,35 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
             </View>
           ) : null}
         </View>
+        {/* The marks a reader put on the step (VS Code's status items): a tap takes one off. */}
+        {p.marks?.pause ? (
+          <Pressable
+            testID={`cell-${index}-pauses`}
+            accessibilityRole="button"
+            accessibilityLabel={t.pausesHere}
+            accessibilityHint={t.pausesHereHint}
+            onPress={() => p.onClearMark?.('pause')}
+            hitSlop={6}
+            style={styles.estimate}
+          >
+            <Codicon name="debug-pause" size={12} color={c.warningText} />
+            <Text style={styles.statusLink}>{t.pausesHere}</Text>
+          </Pressable>
+        ) : null}
+        {p.marks?.notify ? (
+          <Pressable
+            testID={`cell-${index}-notifies`}
+            accessibilityRole="button"
+            accessibilityLabel={t.notifiesHere}
+            accessibilityHint={t.notifiesHereHint}
+            onPress={() => p.onClearMark?.('notify')}
+            hitSlop={6}
+            style={styles.estimate}
+          >
+            <Codicon name="bell" size={12} color={c.link} />
+            <Text style={styles.statusLink}>{t.notifiesHere}</Text>
+          </Pressable>
+        ) : null}
         {estimate !== undefined || p.callEstimate === null ? (
           <View testID={`cell-${index}-estimate`} style={styles.estimate}>
             <Codicon name="watch" size={12} color={c.muted} />
