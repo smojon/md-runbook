@@ -133,7 +133,11 @@ describe('asking before a risky cell, as VS Code does', () => {
     '',
   ].join('\n');
   // Cells: 0 heading, 1 get, 2 rollout restart (risky), 3 get -w, 4 confirm, 5 no-confirm + delete.
-  beforeEach(() => resetSettings());
+  // The question while Run all runs: without the launch form first (launch.test.tsx has it).
+  beforeEach(() => {
+    resetSettings();
+    setOutputSetting('launchForm', false);
+  });
 
   it('a risky cell waits for Run under it; nothing is sent before', async () => {
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });

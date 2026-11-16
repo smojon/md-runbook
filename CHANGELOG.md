@@ -105,6 +105,12 @@ Security fixes from a review of the parts that face the network.
   OpenSSH agent service.
 - **Command line: `md-runbook unpublish PATH --library URL`** removes a runbook from a team
   library, where its server allows deleting.
+- **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix. It lands after the step, as a proposal to approve.
+- **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or every runbook's, after a confirmation.
+- **App: Uncheck All Lines.** **Uncheck all** sits next to **Run checked lines**, and in the cell's ⋯, as in VS Code.
+- **App: Copy Line with Values.** A line's actions copy its command with parameters, inputs and captured values filled in. Secrets stay references.
+- **App: Pause Before This Step, Notify Me When It Starts.** A step's ⋯ (cell or Steps row) sets either, for this session. Run all asks Continue or Stop there.
+- **App: the launch form.** Run all first shows one sheet: parameters, inputs, secrets to set, risky steps, steps by hand, time and host. Start asks for no value again; risky steps still ask. Hosts & Settings turns it off; ⋯ More → **Run All…** always opens it.
 
 
 ## 0.26.8

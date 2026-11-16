@@ -33,6 +33,8 @@ import { LineMode, cellSteps, lineLabel } from '../ssh/lineRuns';
 import { Palette, mono, themedStyles, usePalette } from '../theme';
 import { Codicon, CodiconName } from '../ui/Codicon';
 import type { LintProblem } from '../runbooks/lint';
+import { hasRefs } from '../runbooks/copyLine';
+import type { StepMarks } from '../runbooks/stepMarks';
 import { TimeBar, useNow } from '../ui/TimeBar';
 
 export interface CellRun {
@@ -59,6 +61,12 @@ export interface CodeCellProps {
   onToggleBreakpoint?(step: LineStep): void;
   /** The assistant explains one command (shown when there is an assistant). */
   onExplainLine?(step: LineStep): void;
+  /** Copy Line with Values: the command on the clipboard, its values filled in (secrets stay references). */
+  onCopyLine?(step: LineStep): void;
+  /** Pause Before This Step / Notify Me When It Starts, set for this session. */
+  marks?: StepMarks;
+  /** A tap on a mark takes it off. */
+  onClearMark?(which: keyof StepMarks): void;
   /** Shown under the cell (the approval card of a proposal). */
   below?: ReactNode;
   /** A host is chosen: runs are possible. */
@@ -75,6 +83,8 @@ export interface CodeCellProps {
   onRun(mode?: LineMode, line?: number): void;
   onStop(): void;
   onToggleCheck(step: LineStep): void;
+  /** Uncheck All Lines: shown next to Run checked lines. */
+  onUncheckAll?(): void;
   /** The cell's own actions (⋯ on its status line, or a long press). */
   onActions?(): void;
   /** What lint found in the cell (as the extension's problem markers), each under the cell. */
@@ -245,6 +255,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                     breakpoint={p.breakpoints?.has(sel.start) ?? false}
                     {...(p.onToggleBreakpoint ? { onToggleBreakpoint: () => p.onToggleBreakpoint!(sel) } : {})}
                     {...(p.onExplainLine ? { onExplain: () => p.onExplainLine!(sel) } : {})}
+                    {...(p.onCopyLine ? { onCopy: () => p.onCopyLine!(sel) } : {})}
                     onClose={() => setSelected(undefined)}
                   />
                 ) : null}
@@ -281,9 +292,51 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                   <Text style={styles.statusLink}>{t.runChecked(checkedSteps.length)}</Text>
                 </Pressable>
               ) : null}
+              {checkedSteps.length > 0 && p.onUncheckAll ? (
+                <Pressable
+                  testID={`cell-${index}-uncheck-all`}
+                  accessibilityRole="button"
+                  accessibilityLabel={t.uncheckAll}
+                  accessibilityHint={t.uncheckAllHint}
+                  onPress={p.onUncheckAll}
+                  style={styles.statusButton}
+                >
+                  <Codicon name="circle-large-outline" size={12} color={c.link} />
+                  <Text style={styles.statusLink}>{t.uncheckAll}</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
         </View>
+        {/* The marks a reader put on the step (VS Code's status items): a tap takes one off. */}
+        {p.marks?.pause ? (
+          <Pressable
+            testID={`cell-${index}-pauses`}
+            accessibilityRole="button"
+            accessibilityLabel={t.pausesHere}
+            accessibilityHint={t.pausesHereHint}
+            onPress={() => p.onClearMark?.('pause')}
+            hitSlop={6}
+            style={styles.estimate}
+          >
+            <Codicon name="debug-pause" size={12} color={c.warningText} />
+            <Text style={styles.statusLink}>{t.pausesHere}</Text>
+          </Pressable>
+        ) : null}
+        {p.marks?.notify ? (
+          <Pressable
+            testID={`cell-${index}-notifies`}
+            accessibilityRole="button"
+            accessibilityLabel={t.notifiesHere}
+            accessibilityHint={t.notifiesHereHint}
+            onPress={() => p.onClearMark?.('notify')}
+            hitSlop={6}
+            style={styles.estimate}
+          >
+            <Codicon name="bell" size={12} color={c.link} />
+            <Text style={styles.statusLink}>{t.notifiesHere}</Text>
+          </Pressable>
+        ) : null}
         {estimate !== undefined || p.callEstimate === null ? (
           <View testID={`cell-${index}-estimate`} style={styles.estimate}>
             <Codicon name="watch" size={12} color={c.muted} />
@@ -475,6 +528,7 @@ function LineActions(p: {
   breakpoint: boolean;
   onToggleBreakpoint?(): void;
   onExplain?(): void;
+  onCopy?(): void;
   onClose(): void;
 }) {
   const styles = useStyles();
@@ -512,6 +566,8 @@ function LineActions(p: {
       {p.onToggleBreakpoint
         ? action('breakpoint', 'circle-filled', p.breakpoint ? t.removeBreakpoint : t.addBreakpoint, p.onToggleBreakpoint, true)
         : null}
+      {/* As VS Code's hover: Copy with values when the command has ${…} references, else Copy. */}
+      {p.onCopy ? action('copy', 'copy', hasRefs(p.step.text) ? t.copyWithValues : t.copyLine, p.onCopy, true) : null}
       {p.onExplain ? action('explain', 'sparkle', t.explainLine, p.onExplain, true) : null}
       <Pressable
         testID={`${id}-close`}

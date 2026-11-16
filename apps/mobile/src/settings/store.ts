@@ -34,6 +34,11 @@ export interface Settings {
    */
   allowNoConfirm: boolean;
   /**
+   * Run all opens the launch form first when it has something on it (the extension's
+   * mdRunbook.execution.launchForm, on by default).
+   */
+  launchForm: boolean;
+  /**
    * Who signs runbooks on this device (the signature block's signer=, e.g. an e-mail address),
    * and the principal suggested for the servers' allowed_signers. Empty until set.
    */
@@ -73,6 +78,7 @@ const DEFAULTS: Settings = {
   signedLinksOnly: false,
   keyNeedsUser: false,
   allowNoConfirm: false,
+  launchForm: true,
   signerName: '',
   libraryUrl: '',
   publicUrl: '',
@@ -83,7 +89,15 @@ const DEFAULTS: Settings = {
 const isSaved = (v: unknown): v is Partial<Settings> =>
   typeof v === 'object' && v !== null && typeof (v as Settings).historySize === 'number';
 
-type OutputFlag = 'colorLevels' | 'stderrInRed' | 'forceColor' | 'cloudViews' | 'signedLinksOnly' | 'keyNeedsUser' | 'allowNoConfirm';
+type OutputFlag =
+  | 'colorLevels'
+  | 'stderrInRed'
+  | 'forceColor'
+  | 'cloudViews'
+  | 'signedLinksOnly'
+  | 'keyNeedsUser'
+  | 'allowNoConfirm'
+  | 'launchForm';
 
 let settings: Settings = DEFAULTS;
 const listeners = new Set<() => void>();
@@ -109,6 +123,7 @@ async function readSettings(): Promise<void> {
       signedLinksOnly: flag('signedLinksOnly'),
       keyNeedsUser: flag('keyNeedsUser'),
       allowNoConfirm: flag('allowNoConfirm'),
+      launchForm: flag('launchForm'),
       signerName: typeof saved.signerName === 'string' ? saved.signerName : '',
       libraryUrl: typeof saved.libraryUrl === 'string' ? saved.libraryUrl : '',
       publicUrl: typeof saved.publicUrl === 'string' ? saved.publicUrl : '',

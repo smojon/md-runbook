@@ -73,6 +73,27 @@ export function useStepHistory(runbookId: string | undefined): Readonly<Record<s
   return runbookId === undefined ? undefined : all[runbookId];
 }
 
+/** A runbook's step history now (outside React). */
+export function stepHistoryOf(runbookId: string): Readonly<Record<string, number[]>> | undefined {
+  return history[runbookId];
+}
+
+/**
+ * Forget Learned Times, as VS Code's: one runbook's step times, or every runbook's (no id). Its
+ * blocks without estimate= learn their usual time again from their next runs.
+ */
+export async function forgetStepHistory(runbookId?: string): Promise<void> {
+  await loadStepHistory();
+  if (runbookId === undefined) history = {};
+  else {
+    const next = { ...history };
+    delete next[runbookId];
+    history = next;
+  }
+  emit();
+  await setJson(KEY, history);
+}
+
 /** Tests: forget it all. */
 export function resetStepHistory(): void {
   history = {};

@@ -513,6 +513,55 @@ describe('the assistant (Claude with your key)', () => {
       /> \*\*AI note on cell 2\*\* \(draft by Claude \(Anthropic API\), not verified\)\n\nIt printed \*\*hi\*\*\./,
     );
   });
+
+  describe('Suggest a Fix', () => {
+    // Cells: 0 "# F", 1 a failed block, 2 a block not run yet.
+    const FAILED =
+      '# F\n\n```bash\nsystemctl restart api\n```\n<!-- md-runbook:output start exit=1 -->\n```text\nJob for api.service failed\n```\n<!-- md-runbook:output end -->\n\n```bash\necho after\n```\n';
+    const FIX = '```bash proposed by=ai reason="see why"\njournalctl -u api -n 50\n```\n';
+
+    it('the failed cell’s ⋯: proposals after it, behind approval', async () => {
+      const r = addRunbook('f.md', FAILED);
+      claude.askClaude.mockClear();
+      claude.askClaude.mockResolvedValueOnce(FIX);
+      await jest.requireActual<{ setApiKey(k: string): Promise<void> }>('../assistant/claude').setApiKey('sk-ant-test');
+      await render(<RunbookView id={r.id} />);
+      await press('cell-1-actions');
+      await press('action-suggestFix');
+      await waitFor(() => expect(screen.getByTestId('ai-confirm-title').props.children).toMatch(/for suggesting a fix for cell 2\?$/));
+      await press('ai-send');
+      await waitFor(() => expect(screen.getByTestId('run-notice').props.children).toMatch(/^Inserted 1 proposed cell/));
+      const [, user] = claude.askClaude.mock.calls[0] as [string, string];
+      expect(user).toMatch(/Task: cell 2 failed; its output is in the runbook\. Propose at most 2 command blocks/);
+      // Right after the failed step, proposed: it doesn't run until approved.
+      const code = parse(getRunbook(r.id)!.text).cells.filter((c) => c.kind === 'code');
+      expect(code.map((c) => c.value)).toEqual(['systemctl restart api', 'journalctl -u api -n 50', 'echo after']);
+      expect(screen.getByTestId('cell-2-why').props.children).toMatch(/^Proposed by ai/);
+    });
+
+    it('is greyed out on a step that didn’t fail', async () => {
+      const r = addRunbook('f2.md', FAILED);
+      await render(<RunbookView id={r.id} />);
+      await press('cell-2-actions');
+      expect(screen.getByTestId('action-suggestFix')).toHaveProp('accessibilityState', { disabled: true });
+      expect(screen.getByText('This step didn’t fail: nothing to fix.')).toBeTruthy();
+    });
+
+    it('the Steps header has it next to Retry step', async () => {
+      addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+      const r = addRunbook('f3.md', FAILED);
+      claude.askClaude.mockResolvedValueOnce(FIX);
+      await jest.requireActual<{ setApiKey(k: string): Promise<void> }>('../assistant/claude').setApiKey('sk-ant-test');
+      await render(<RunbookView id={r.id} />);
+      await press('view-steps');
+      expect(screen.getByTestId('steps-retry')).toBeTruthy();
+      expect(screen.getByTestId('steps-fix')).toHaveTextContent('Suggest a fix');
+      await press('steps-fix');
+      await waitFor(() => expect(screen.getByTestId('ai-confirm-title').props.children).toMatch(/for suggesting a fix for cell 2\?$/));
+      await press('ai-send');
+      await waitFor(() => expect(parse(getRunbook(r.id)!.text).cells.filter((c) => c.kind === 'code')).toHaveLength(3));
+    });
+  });
 });
 
 describe('breakpoints and Explain on a line', () => {
@@ -911,6 +960,35 @@ describe('the VS Code-like runbook view', () => {
     await waitFor(() => expect(mockConnection.calls).toHaveLength(1));
     expect(mockConnection.calls[0]?.source).toBe('uptime');
     await waitFor(() => expect(parse(getRunbook('sample')!.text).cells[1]?.output?.attrs.lines).toBe('1'));
+  });
+
+  it('Uncheck all (next to Run checked lines, and in the cell’s ⋯) clears the cell’s checks', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    await render(<RunbookView id="sample" />);
+    const press = async (id: string): Promise<void> => {
+      await act(async () => {
+        fireEvent.press(screen.getByTestId(id));
+      });
+    };
+    const checkLine = async (n: number): Promise<void> => {
+      await press(`cell-1-line-${n}`);
+      await press(`cell-1-line-${n}-check`);
+    };
+    expect(screen.queryByTestId('cell-1-uncheck-all')).toBeNull();
+    await checkLine(0);
+    await checkLine(1);
+    expect(screen.getByText('Run 2 checked lines')).toBeTruthy();
+    expect(screen.getByTestId('cell-1-uncheck-all')).toHaveProp('accessibilityLabel', 'Uncheck all');
+    await press('cell-1-uncheck-all');
+    expect(screen.queryByTestId('cell-1-run-checked')).toBeNull();
+    expect(screen.queryByTestId('cell-1-uncheck-all')).toBeNull();
+    // The same from the cell's ⋯ (greyed out with nothing checked).
+    await press('cell-1-actions');
+    expect(screen.getByTestId('action-uncheckAllLines')).toHaveProp('accessibilityState', { disabled: true });
+    await checkLine(0);
+    await press('cell-1-actions');
+    await press('action-uncheckAllLines');
+    expect(screen.queryByTestId('cell-1-run-checked')).toBeNull();
   });
 
   it('Step through runs the first command, then waits before each of the others', async () => {
