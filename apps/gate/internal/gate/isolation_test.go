@@ -188,13 +188,6 @@ func (fs fakeFS) stat(p string) (pathInfo, error) {
 	return pathInfo{}, errors.New("no such file")
 }
 
-func (fs fakeFS) real(p string) (string, error) {
-	if _, ok := fs[p]; ok {
-		return p, nil
-	}
-	return "", errors.New("no such file")
-}
-
 // A system: root's folders, a sticky /tmp, and the gate's account (1000)'s folder in it.
 func goodFS() fakeFS {
 	root := func(perm os.FileMode) pathInfo { return pathInfo{uid: 0, gid: 0, perm: perm} }
@@ -246,7 +239,7 @@ func check(f *fakeSys) (cellsInfo, error) {
 		noWrite:   []string{"/usr/local/bin/md-runbook-gate", "/etc/md-runbook/gate.conf"},
 		mustWrite: []string{"/tmp/md-runbook-gate.x/exits.y"},
 		safe:      []string{"/usr/local/bin/md-runbook-gate", "/etc/md-runbook/gate.conf", "/tmp/mdrb.x/report-token"},
-		stat:      f.files.stat, real: f.files.real,
+		stat:      f.files.stat,
 	}.do()
 }
 
@@ -336,12 +329,36 @@ func TestSafePathProblem(t *testing.T) {
 		"open but not sticky /tmp":           {func(fs fakeFS) { fs["/tmp"] = pathInfo{perm: 0o777} }, "/tmp/mdrb.x/report-token", "/tmp, a folder above /tmp/mdrb.x/report-token, is writable by mdrb-cells"},
 		"a file not there yet, safe folder":  {nil, "/etc/md-runbook/revoked", ""},
 		"a folder not there":                 {nil, "/etc/nowhere/revoked", "the folder of /etc/nowhere/revoked doesn't exist"},
+		// Links: the path as written and every target (review of 0.28.0).
+		"a link in an open folder to a safe file": {func(fs fakeFS) {
+			fs["/srv"] = pathInfo{perm: 0o777}
+			fs["/srv/allowed_signers"] = pathInfo{perm: 0o777, link: "/etc/md-runbook/gate.conf"}
+		}, "/srv/allowed_signers", "/srv, a folder above /srv/allowed_signers, is writable by mdrb-cells"},
+		"a safe link to a file in an open folder": {func(fs fakeFS) {
+			fs["/srv"] = pathInfo{perm: 0o777}
+			fs["/srv/allowed_signers"] = pathInfo{perm: 0o644}
+			fs["/etc/md-runbook/allowed_signers"] = pathInfo{perm: 0o777, link: "../../srv/allowed_signers"}
+		}, "/etc/md-runbook/allowed_signers", "/srv, a folder above /srv/allowed_signers, is writable by mdrb-cells"},
+		"a linked folder (merged /usr), safe": {func(fs fakeFS) {
+			fs["/bin"] = pathInfo{perm: 0o777, link: "usr/bin"}
+			fs["/usr/bin"] = pathInfo{perm: 0o755}
+			fs["/usr/bin/id"] = pathInfo{perm: 0o755}
+		}, "/bin/id", ""},
+		"a linked folder pointing into an open one": {func(fs fakeFS) {
+			fs["/srv"] = pathInfo{perm: 0o777}
+			fs["/srv/conf"] = pathInfo{perm: 0o755}
+			fs["/etc/md-runbook"] = pathInfo{perm: 0o777, link: "/srv/conf"}
+		}, "/etc/md-runbook/gate.conf", "/srv, a folder above /srv/conf/gate.conf, is writable by mdrb-cells"},
+		"a link loop": {func(fs fakeFS) {
+			fs["/etc/a"] = pathInfo{perm: 0o777, link: "b"}
+			fs["/etc/b"] = pathInfo{perm: 0o777, link: "a"}
+		}, "/etc/a", ""},
 	} {
 		fs := goodFS()
 		if c.change != nil {
 			c.change(fs)
 		}
-		got := safePathProblem(c.path, fs.stat, fs.real, 1000, 1500, groups, "support", "mdrb-cells")
+		got := safePathProblem(c.path, fs.stat, cellsRule(1000, 1500, groups, "support", "mdrb-cells"))
 		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
 			t.Errorf("%s: %q, want %q", name, got, c.want)
 		}
