@@ -7,6 +7,7 @@
  */
 import { clearOutputBlocks } from '@md-runbook/core';
 import { LinkTrust, RunbookLink, checkedLinkTrust, linkTrust, parseRunbookLink, rawRunbookUrl } from '@md-runbook/core/runbookLink';
+import { readSignature, signedText } from '@md-runbook/core/signing';
 import { getHosts, loadHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { loadSettings, outputSettings } from '../settings/store';
@@ -28,6 +29,15 @@ import { MAX_RUNBOOK_BYTES, Runbook, addRunbook, libraryCopy, linkKey, linkedRun
 
 /** The raw file behind a link (in core, shared with VS Code's link handler). */
 export { rawRunbookUrl };
+
+/**
+ * Whether a copy's text is still `fetched` but for what running it adds (core signedText: outputs,
+ * notes and ticks outside code), with the same signature block.
+ */
+function sameBareText(copy: string, fetched: string): boolean {
+  const sig = (s: string): string => JSON.stringify(readSignature(s) ?? null);
+  return signedText(copy) === signedText(fetched) && sig(copy) === sig(fetched);
+}
 
 /** `deploy.md` from `…/runbooks/deploy.md?x=1`; `runbook.md` when the link has no file name. */
 function fileNameOf(url: string): string {
@@ -94,7 +104,9 @@ export async function openRunbookLink(
   if (trust !== 'signed' && outputSettings().signedLinksOnly) return { kind: 'error', message: t.linkUnsignedRefused };
 
   const key = linkKey(source, text);
-  const runbook = linkedRunbook(key) ?? addRunbook(fileName, text, undefined, key);
+  // The copy this link opened before, only while it is still the text whose trust was just checked
+  // (but for what runs add: outputs, notes, ticks). One edited since: a new copy.
+  const runbook = linkedRunbook(key, (r) => sameBareText(r.text, text)) ?? addRunbook(fileName, text, undefined, key);
   applyLink(runbook, l, text, trust);
   return { kind: 'opened', runbook };
 }

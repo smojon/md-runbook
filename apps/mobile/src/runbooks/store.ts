@@ -189,9 +189,9 @@ export function linkKey(source: string, text: string): string {
   return `${source} ${textHash(text)}`;
 }
 
-/** The runbook a link with this key opened before, while the app still has it. */
-export function linkedRunbook(link: string): Runbook | undefined {
-  return all.find((r) => r.source === 'file' && r.link === link);
+/** The runbook a link with this key opened before, while the app still has it (and `fits` it). */
+export function linkedRunbook(link: string, fits: (r: Runbook) => boolean = () => true): Runbook | undefined {
+  return all.find((r) => r.source === 'file' && r.link === link && fits(r));
 }
 
 export function addRunbook(fileName: string, text: string, origin?: Origin, link?: string, derivedFrom?: DerivedRef): Runbook {
