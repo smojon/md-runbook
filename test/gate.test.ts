@@ -45,13 +45,19 @@ class Gate {
   readonly exited: Promise<number | null>;
   private n = 0;
 
-  constructor(args: string[], env: Record<string, string>, command = 'bash -l') {
+  /** `as`: run it as that account, through the test's own sudo, with only `env` (separated mode). */
+  constructor(args: string[], env: Record<string, string>, command = 'bash -l', as = '') {
     // As sshd starts it: argv[0] is the path the key line names. Not under sshd unless a test says
     // so (the gate checks the login shell then).
     const base: Record<string, string | undefined> = { ...process.env };
     delete base.SSH_CLIENT;
     delete base.SSH_CONNECTION;
-    this.child = spawn(GATE, args, { env: { ...base, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
+    if (as) {
+      const pairs = Object.entries({ ...env, SSH_ORIGINAL_COMMAND: command }).map(([k, v]) => `${k}=${v}`);
+      this.child = spawn('sudo', ['-n', '-u', as, '--', '/usr/bin/env', ...pairs, GATE, ...args], { stdio: 'pipe' });
+    } else {
+      this.child = spawn(GATE, args, { env: { ...base, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
+    }
     this.child.stdout!.on('data', (d: Buffer) => this.got('out', d.toString('utf8')));
     this.child.stderr!.on('data', (d: Buffer) => this.got('err', d.toString('utf8')));
     this.exited = new Promise((r) => this.child.on('close', (code) => r(code)));
@@ -765,6 +771,9 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       assert.equal(summary.green, false);
       assert.equal(summary.who, os.userInfo().username);
       assert.equal(summary.gate.account, os.userInfo().username);
+      // The gate's mode, in its gate object only (the library server's contract).
+      assert.equal(summary.gate.gate_mode, 'shared');
+      assert.equal(summary.gate_mode, undefined);
       assert.ok(summary.started <= summary.ended);
       assert.match(reportEvents().at(-1)!, /"status":"sent","http":"202".*"runbook":"ops\/report","version":"4"/);
       assert.doesNotMatch(fs.readFileSync(logFile, 'utf8'), /a-report-token/, 'the token is never logged');
@@ -1180,7 +1189,7 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
   const unshare = process.platform === 'linux' && spawnSync('unshare', ['-rpf', '--mount-proc', 'true']).status === 0;
   it('kill_leftovers: no program of an earlier session outlives it or writes into a later session\'s shell', { skip: !unshare && 'needs unshare -rpf (Linux user namespaces)' }, async () => {
     const d = fs.mkdtempSync(path.join(dir, 'leftovers-'));
-    const lconf = confAt('leftovers.conf', ['kill_leftovers = yes']);
+    const lconf = confAt('leftovers.conf', ['kill_leftovers = yes', 'isolation = none']);
     // Session 1: a block leaves a program in a session of its own (setsid) and one that ignores TERM.
     const [m1, s1] = await signed(fence('bash', "setsid sh -c 'exec sleep 41' >/dev/null 2>&1 </dev/null & (trap '' TERM; exec sleep 42) >/dev/null 2>&1 </dev/null & echo started"), { name: 'ops/leaves' });
     fs.writeFileSync(path.join(d, 'req1'), `: mdrb-gate-hello feed0001; x\nload 00000001 ${m1} ${s1}\nrun 00000002 1\n`);
@@ -1223,7 +1232,7 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
 
   it('kill_leftovers: a leftover that forks and exits again and again (its pid never holds still) is ended too', { skip: !unshare && 'needs unshare -rpf (Linux user namespaces)' }, async () => {
     const d = fs.mkdtempSync(path.join(dir, 'hopper-'));
-    const lconf = confAt('hopper.conf', ['kill_leftovers = yes']);
+    const lconf = confAt('hopper.conf', ['kill_leftovers = yes', 'isolation = none']);
     const [m, s] = await signed(fence('bash', 'sleep 1.5; echo second'), { name: 'ops/later' });
     fs.writeFileSync(path.join(d, 'req'), `: mdrb-gate-hello feed0003; x\nload 00000005 ${m} ${s}\nrun 00000006 1\n`);
     // The reviewer's hop.pl: each generation forks the next and exits, and writes into every
@@ -1268,7 +1277,7 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
     // gate's parent was then PID 1, its session the gate alone, and the end sweep killed the
     // listener: the ops image's container ended (exit 137 in the Ops host workflow).
     const d = fs.mkdtempSync(path.join(dir, 'orphan-'));
-    const lconf = confAt('orphan.conf', ['kill_leftovers = yes']);
+    const lconf = confAt('orphan.conf', ['kill_leftovers = yes', 'isolation = none']);
     const [m, s] = await signed(fence('bash', 'sleep 1.5; echo second'), { name: 'ops/later' });
     fs.writeFileSync(path.join(d, 'req'), `: mdrb-gate-hello feed0004; x\nload 00000007 ${m} ${s}\nrun 00000008 1\n`);
     fs.writeFileSync(
@@ -1447,5 +1456,261 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
     assert.match(r.out, /^own-group\n\d+\n$/);
     assert.notEqual(Number(r.out.split('\n')[1]), g.child.pid);
     await g.close();
+  });
+
+  // ---- isolation (0.28.0): each session's cells in a scope of their own ----
+
+  /** The isolations this server must have, best first (CI says; else the tests take what is there). */
+  const HAVE = (process.env.MD_RUNBOOK_GATE_ISOLATIONS ?? '').split(',').filter(Boolean);
+  /** The newest session event of a log. */
+  const lastSession = (log: string): Record<string, string> => {
+    const lines = log.split('\n').filter((l) => /"event":"session"/.test(l));
+    assert.ok(lines.length, 'a session event');
+    return JSON.parse(lines.at(-1)!) as Record<string, string>;
+  };
+  /** The pids whose command line has `marker` (Linux: /proc; the namespace's pids as the host sees them). */
+  const procsWith = (marker: string): number[] => {
+    const out: number[] = [];
+    for (const d of fs.readdirSync('/proc')) {
+      if (!/^\d+$/.test(d)) continue;
+      try {
+        if (fs.readFileSync(`/proc/${d}/cmdline`, 'utf8').split('\0').join(' ').includes(marker)) out.push(Number(d));
+      } catch {
+        // gone meanwhile
+      }
+    }
+    return out;
+  };
+  const gone = async (marker: string): Promise<boolean> => {
+    for (let i = 0; i < 50 && procsWith(marker).length; i++) await pause(100);
+    return procsWith(marker).length === 0;
+  };
+  /** A block that leaves a program behind: a double fork into a session of its own, out of the shell's group. */
+  const escape = (marker: string): string => `( setsid sh -c '${marker} >/dev/null 2>&1 </dev/null & exit 0' & ); sleep 0.3; echo started`;
+
+  it('isolation = auto: the session logs its mode and isolation; a double-forked program ends with the session where there is a scope or bwrap', { skip: process.platform !== 'linux' && 'reads /proc' }, async (t) => {
+    const marker = 'sleep 3031';
+    const [m, s] = await signed(fence('bash', escape(marker)), { name: 'ops/escape' });
+    const g = start();
+    await g.hello();
+    const ev = lastSession(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'));
+    assert.equal(ev.gate_mode, 'shared');
+    assert.ok(['scope', 'bwrap', 'none'].includes(ev.isolation!), ev.isolation);
+    if (HAVE.length) assert.equal(ev.isolation, HAVE[0], `auto found ${ev.isolation}: ${ev.isolation_off ?? ''}`);
+    assert.equal((await g.request('load', m, s)).code, 0);
+    assert.equal((await g.request('run', '1')).out, 'started\n');
+    assert.ok(procsWith(marker).length > 0, 'the program runs');
+    assert.equal(await g.close(), 0);
+    if (ev.isolation === 'none') {
+      // Only kill_leftovers ends it there (as before).
+      for (const p of procsWith(marker)) process.kill(p, 'SIGKILL');
+      t.skip(`no scope or bwrap here (${ev.isolation_off ?? ''})`);
+      return;
+    }
+    assert.ok(await gone(marker), `the program ended with the session's ${ev.isolation}`);
+  });
+
+  for (const iso of ['scope', 'bwrap'] as const) {
+    it(`isolation = ${iso}: required (no ${iso}: the gate doesn't start); with it, programs left behind end with the session and a stop request still reaches the cell`, { skip: process.platform !== 'linux' && 'Linux only' }, async (t) => {
+      const iconf = confAt(`${iso}.conf`, [`isolation = ${iso}`]);
+      const first = await startup([`--config=${iconf}`]);
+      if (first.code !== 0) {
+        assert.equal(first.code, 2);
+        assert.match(first.err, new RegExp(`isolation = ${iso}: .*Use isolation = auto or none`));
+        assert.ok(!HAVE.includes(iso), `this server should have ${iso}: ${first.err}`);
+        t.skip(`no ${iso} here: ${first.err.trim()}`);
+        return;
+      }
+      const marker = `sleep 304${iso.length}`;
+      const [m, s] = await signed(fence('bash', escape(marker)) + fence('bash', 'sleep 3050 && echo late') + fence('bash', 'echo "still-here $$"'), { name: `ops/${iso}` });
+      const g = new Gate([`--config=${iconf}`], env());
+      gates.push(g);
+      const session = (await g.hello()).code;
+      assert.equal(lastSession(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8')).isolation, iso);
+      assert.equal((await g.request('load', m, s)).code, 0);
+      assert.equal((await g.request('run', '1')).out, 'started\n');
+      assert.ok(procsWith(marker).length > 0);
+      const running = g.request('run', '2');
+      for (let i = 0; i < 100 && !procsWith('sleep 3050').length; i++) await pause(50);
+      const stop = new Gate([`--config=${iconf}`], env(), `pkill -TERM -P ${session} 2>/dev/null; true`);
+      assert.equal(await stop.exited, 0);
+      const r = await running;
+      assert.notEqual(r.code, 0);
+      assert.doesNotMatch(r.out, /late/);
+      // The shell went on: the stop reached its programs only.
+      assert.match((await g.request('run', '3')).out, /^still-here \d+\n$/);
+      assert.equal(await g.close(), 0);
+      assert.ok(await gone(marker), `the program ended with the session's ${iso}`);
+    });
+  }
+
+  // ---- separated mode: the cells as an account of their own ----
+  // CI prepares the accounts (.github/workflows/ci.yml, gate job): MD_RUNBOOK_GATE_ACCOUNT runs
+  // the gate and has exactly the one sudoers line for MD_RUNBOOK_GATE_CELLS_ACCOUNT;
+  // MD_RUNBOOK_GATE_WIDE_ACCOUNT (optional) has a wider one. The test runs them through its own
+  // sudo, and keeps their files in folders of theirs.
+  const CELLS = process.env.MD_RUNBOOK_GATE_CELLS_ACCOUNT ?? '';
+  const GATE_ACCOUNT = process.env.MD_RUNBOOK_GATE_ACCOUNT ?? '';
+  const WIDE_ACCOUNT = process.env.MD_RUNBOOK_GATE_WIDE_ACCOUNT ?? '';
+  describe('separated mode (cells_account)', { skip: !(CELLS && GATE_ACCOUNT && process.platform === 'linux') && 'needs MD_RUNBOOK_GATE_CELLS_ACCOUNT and MD_RUNBOOK_GATE_ACCOUNT (Linux; set up as in the CI gate job)' }, () => {
+    /** `sh -c cmd` as an account, with input; its stdout. */
+    const as = (account: string, cmd: string, input = ''): string => {
+      const r = spawnSync('sudo', ['-n', '-u', account, '--', '/bin/sh', '-c', cmd], { input, encoding: 'utf8' });
+      assert.equal(r.status, 0, `${account}: ${cmd}: ${r.stderr}`);
+      return r.stdout;
+    };
+    const folders: string[] = [];
+    /** A folder of the account's own (0700), with its key lines and the trusted keys. */
+    const prepare = (account: string): string => {
+      const d = as(account, 'mktemp -d /tmp/mdrb-separated.XXXXXX').trim();
+      folders.push(d);
+      as(account, `cat >${d}/allowed_signers`, fs.readFileSync(path.join(dir, 'allowed_signers'), 'utf8'));
+      as(account, `cat >${d}/authorized_keys`, keyLine() + '\n');
+      return d;
+    };
+    const confOf = (account: string, d: string, name: string, lines: string[]): string => {
+      const f = `${d}/${name}`;
+      as(account, `cat >${f}`, [`allowed_signers = ${d}/allowed_signers`, `log = ${d}/gate.log`, `authorized_keys = ${d}/authorized_keys`, `cells_account = ${CELLS}`, ...lines].join('\n') + '\n');
+      return f;
+    };
+    const startAs = (account: string, d: string, conf: string, command?: string): Gate => {
+      const g = new Gate([`--config=${conf}`], { HOME: d, TMPDIR: d }, command, account);
+      gates.push(g);
+      return g;
+    };
+    const startupAs = async (account: string, d: string, conf: string): Promise<{ code: number | null; err: string }> => {
+      const g = startAs(account, d, conf);
+      let err = '';
+      g.child.stderr!.on('data', (b: Buffer) => (err += b.toString('utf8')));
+      g.child.stdin!.end();
+      return { code: await g.exited, err };
+    };
+    const alive = (pid: number): boolean => spawnSync('sudo', ['-n', 'kill', '-0', String(pid)]).status === 0;
+    let gdir = '';
+    let conf = '';
+    let log = '';
+    const readLog = (): string => as(GATE_ACCOUNT, `cat ${log}`);
+    before(() => {
+      gdir = prepare(GATE_ACCOUNT);
+      log = `${gdir}/gate.log`;
+      as(GATE_ACCOUNT, `printf 'a-report-token-of-at-least-24-chars\\n' >${gdir}/report-token`);
+      conf = confOf(GATE_ACCOUNT, gdir, 'gate.conf', [`report_token_file = ${gdir}/report-token`]);
+    });
+    after(() => {
+      for (const d of folders) spawnSync('sudo', ['-n', 'rm', '-rf', d]);
+    });
+
+    it("runs the cells as the cells' account: no report token, no log, no gate folder, its own HOME", async () => {
+      const g = startAs(GATE_ACCOUNT, gdir, conf);
+      await g.hello();
+      const ev = lastSession(readLog());
+      assert.deepEqual([ev.gate_mode, ev.cells], ['separated', CELLS]);
+      const probe =
+        `id -un; cat ${gdir}/report-token 2>/dev/null && echo TOKEN; cat ${log} >/dev/null 2>&1 && echo LOG; ls ${gdir} >/dev/null 2>&1 && echo GATE-FOLDER; ` +
+        `for d in /tmp/md-runbook-gate.*; do ls "$d" >/dev/null 2>&1 && echo WORK-FOLDER; done; echo "home=$HOME user=$USER logname=$LOGNAME tmp=\${TMPDIR-unset} pwd=$PWD"; true`;
+      const [m, s] = await signed(fence('bash', probe), { name: 'ops/separated' });
+      assert.equal((await g.request('load', m, s)).code, 0);
+      const r = await g.request('run', '1');
+      assert.equal(r.code, 0, r.err);
+      assert.match(r.out, new RegExp(`^${CELLS}\\nhome=(/\\S*) user=${CELLS} logname=${CELLS} tmp=unset pwd=\\1\\n$`));
+      assert.equal(await g.close(), 0);
+      // The gate logged the end event itself, from the exit the shell gave it.
+      assert.match(readLog(), /"event":"end","id":"[0-9a-f]{8}","exit":0\}/);
+    });
+
+    it('a double-forked program ends with the session; a stop request reaches the running cell (as the cells\' account)', async (t) => {
+      const marker = 'sleep 3061';
+      const [m, s] = await signed(fence('bash', escape(marker)) + fence('bash', 'sleep 3062 && echo late') + fence('bash', 'echo still-here'), { name: 'ops/separated-stop' });
+      const g = startAs(GATE_ACCOUNT, gdir, conf);
+      const session = (await g.hello()).code;
+      const ev = lastSession(readLog());
+      if (HAVE.length) assert.equal(ev.isolation, HAVE[0], `auto found ${ev.isolation}: ${ev.isolation_off ?? ''}`);
+      assert.equal((await g.request('load', m, s)).code, 0);
+      assert.equal((await g.request('run', '1')).out, 'started\n');
+      const left = procsWith(marker);
+      assert.ok(left.length > 0);
+      const running = g.request('run', '2');
+      for (let i = 0; i < 100 && !procsWith('sleep 3062').length; i++) await pause(50);
+      const stop = startAs(GATE_ACCOUNT, gdir, conf, `pkill -TERM -P ${session} 2>/dev/null; true`);
+      assert.equal(await stop.exited, 0);
+      const r = await running;
+      assert.notEqual(r.code, 0);
+      assert.doesNotMatch(r.out, /late/);
+      assert.equal((await g.request('run', '3')).out, 'still-here\n');
+      assert.equal(await g.close(), 0);
+      if (ev.isolation === 'none') {
+        for (const p of left) spawnSync('sudo', ['-n', 'kill', '-KILL', String(p)]);
+        t.skip(`no scope or bwrap here (${ev.isolation_off ?? ''})`);
+        return;
+      }
+      assert.ok(await gone(marker), `the program ended with the session's ${ev.isolation}`);
+      assert.equal(left.some(alive), false);
+    });
+
+    it('report_to: the summary says gate_mode separated (in its gate object), with each block\'s state from the shell', async () => {
+      const got: string[] = [];
+      const server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (d: Buffer) => (body += d.toString('utf8')));
+        req.on('end', () => {
+          got.push(body);
+          res.writeHead(202).end();
+        });
+      });
+      await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+      try {
+        const port = (server.address() as { port: number }).port;
+        const rconf = confOf(GATE_ACCOUNT, gdir, 'report.conf', [`report_to = http://127.0.0.1:${port}/v1/runs`, `report_token_file = ${gdir}/report-token`]);
+        const g = startAs(GATE_ACCOUNT, gdir, rconf);
+        await g.hello();
+        const [m, s] = await signed(fence('bash', 'echo ok') + fence('bash', 'false') + fence('bash', 'echo never'), { name: 'ops/separated-report' });
+        assert.equal((await g.request('load', m, s)).code, 0);
+        assert.equal((await g.request('run', '1')).code, 0);
+        assert.equal((await g.request('run', '2')).code, 1);
+        assert.equal(await g.close(), 0);
+        for (let i = 0; i < 100 && !got.length; i++) await pause(150);
+        assert.equal(got.length, 1);
+        const summary = JSON.parse(got[0]!);
+        assert.deepEqual(runSummaryProblems(summary), []);
+        assert.equal(summary.gate.gate_mode, 'separated');
+        assert.equal(summary.gate.account, GATE_ACCOUNT);
+        assert.equal(summary.gate_mode, undefined);
+        assert.deepEqual(
+          summary.steps.map((x: { state: string }) => x.state),
+          ['passed', 'failed', 'not-run'],
+        );
+      } finally {
+        server.close();
+      }
+    });
+
+    it('the self-check refuses to start: a token the cells can read, root, the gate\'s own account, a wider sudo rule', async (t) => {
+      // A token in a folder anyone can enter, readable by anyone.
+      const open = as(GATE_ACCOUNT, 'd=$(mktemp -d /tmp/mdrb-open.XXXXXX) && chmod 755 "$d" && printf token >"$d/token" && chmod 644 "$d/token" && echo "$d"').trim();
+      folders.push(open);
+      const readable = await startupAs(GATE_ACCOUNT, gdir, confOf(GATE_ACCOUNT, gdir, 'open-token.conf', [`report_token_file = ${open}/token`]));
+      assert.equal(readable.code, 2);
+      assert.match(readable.err, new RegExp(`${CELLS} can read ${open}/token`));
+      assert.match(readLog(), /"event":"self-check","status":"refused"/);
+      for (const [account, why] of [
+        ['root', /is root/],
+        [GATE_ACCOUNT, /the gate's own account/],
+      ] as const) {
+        const f = `${gdir}/cells-${account}.conf`;
+        as(GATE_ACCOUNT, `sed 's/^cells_account = .*/cells_account = ${account}/' ${conf} >${f}`);
+        const r = await startupAs(GATE_ACCOUNT, gdir, f);
+        assert.equal(r.code, 2, account);
+        assert.match(r.err, why);
+      }
+      if (!WIDE_ACCOUNT) {
+        t.skip('a wider sudo rule: set MD_RUNBOOK_GATE_WIDE_ACCOUNT');
+        return;
+      }
+      const wdir = prepare(WIDE_ACCOUNT);
+      const wide = await startupAs(WIDE_ACCOUNT, wdir, confOf(WIDE_ACCOUNT, wdir, 'gate.conf', []));
+      assert.equal(wide.code, 2);
+      assert.match(wide.err, /not exactly the one rule/);
+      assert.ok(wide.err.includes(`${WIDE_ACCOUNT} ALL=(${CELLS}) NOPASSWD: ${fs.realpathSync(GATE)} __cells`), wide.err);
+    });
   });
 });

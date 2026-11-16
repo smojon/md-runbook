@@ -19,7 +19,8 @@ jobs:
       - name: 'Prose: no Markdown file gets harder to read'
         run: node out/dist/cli.js lint --prose-baseline .github/prose-baseline.json
   # md-runbook-gate (apps/gate, Go) on the two systems it runs on: formatting, vet, its own tests
-  # and a release build. Its protocol tests (test/gate.test.ts) run against the binary in `test`.
+  # and a release build. Its protocol tests (test/gate.test.ts) run against the binary in `test`,
+  # and here on Linux with what `test` lacks: a systemd scope, bwrap and separated mode.
   gate:
     strategy:
       fail-fast: false
@@ -53,6 +54,53 @@ jobs:
       - run: go test ./...
       - name: Build as a release does
         run: sh ../../scripts/ci/build-gate.sh dist/md-runbook-gate
+      # The protocol tests in both modes, on a prepared system (Linux: macOS has neither a scope
+      # nor bwrap). Isolation: a user manager for each account the gate runs as, and bwrap.
+      # Separated mode: the gate's account with exactly the one sudoers line, the blocks'
+      # account, and an account with a wider rule that the self-check must refuse.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        if: runner.os == 'Linux'
+        with:
+          node-version: 22
+      - name: Prepare accounts, the sudoers line, user managers and bwrap
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          set -eu
+          sudo install -m 755 apps/gate/dist/md-runbook-gate /usr/local/bin/md-runbook-gate
+          for a in mdrb-gate mdrb-cells mdrb-wide; do sudo useradd -m -s /bin/sh "$a"; done
+          printf '%s\n' \
+            'mdrb-gate ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells' \
+            'mdrb-wide ALL=(mdrb-cells) NOPASSWD: ALL' >"$RUNNER_TEMP/md-runbook-gate.sudoers"
+          sudo visudo -cf "$RUNNER_TEMP/md-runbook-gate.sudoers"
+          sudo install -m 440 "$RUNNER_TEMP/md-runbook-gate.sudoers" /etc/sudoers.d/md-runbook-gate
+          sudo -n -u mdrb-gate sudo -n -l
+          for a in "$(id -un)" mdrb-gate mdrb-wide; do
+            sudo loginctl enable-linger "$a"
+            sock="/run/user/$(id -u "$a")/systemd/private"
+            i=0
+            while [ ! -S "$sock" ] && [ "$i" -lt 60 ]; do sleep 0.5; i=$((i + 1)); done
+            test -S "$sock"
+          done
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends bubblewrap
+          # Ubuntu 24.04 keeps unprivileged user namespaces to programs with an AppArmor profile.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --die-with-parent --new-session --unshare-pid --bind / / --dev-bind /dev /dev --proc /proc -- true
+      - name: Protocol tests, shared and separated mode
+        if: runner.os == 'Linux'
+        working-directory: .
+        timeout-minutes: 10
+        env:
+          MD_RUNBOOK_GATE_BIN: /usr/local/bin/md-runbook-gate
+          MD_RUNBOOK_GATE_ISOLATIONS: scope,bwrap
+          MD_RUNBOOK_GATE_ACCOUNT: mdrb-gate
+          MD_RUNBOOK_GATE_CELLS_ACCOUNT: mdrb-cells
+          MD_RUNBOOK_GATE_WIDE_ACCOUNT: mdrb-wide
+        run: |
+          npm ci
+          npm run compile
+          node --test --test-reporter=spec out/test/gate.test.js
   test:
     strategy:
       fail-fast: false
