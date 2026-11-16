@@ -49,6 +49,9 @@ Security fixes from a review of the parts that face the network.
 - **VS Code on Windows, recorded context:** focusing a runbook could run a `kubectl.cmd` planted
   next to it. Context commands now look on `PATH` only.
   - The status bar's first look runs them in your home folder.
+- **Cloud console views (VS Code):** an AWS link takes only a real region. Before, a crafted
+  zone or ARN in the output could point **Open** at another host.
+  - Values in the table stay text: a resource name can't make a link, an image or HTML.
 
 ## 0.26.8
 
