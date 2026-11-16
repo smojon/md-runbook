@@ -1,8 +1,15 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import {
+  DEFAULT_PATTERNS,
   DEFAULT_WRITE_OPTIONS,
+  REDACTED,
+  STDERR_MARK,
   colorizeAnsi,
+  createRedactor,
+  processOutput,
+  redactMarked,
+  stderrMarker,
   colorizeSaved,
   formatLineSet,
   levelSpans,
@@ -126,5 +133,49 @@ describe('output colours: which saved lines came from stderr', () => {
     assert.equal(colorizeSaved(saved.text, saved.attrs.stderr, true, true), 'out 1\n\u001b[31merr 2\u001b[0m\nout 3');
     // No stderr: no attribute.
     assert.doesNotMatch(setCellOutput(doc, 0, { kind: 'new', text: 'ok\n', attrs: { exit: '0' } }, DEFAULT_WRITE_OPTIONS)!, /stderr=/);
+  });
+});
+
+describe('output colours: a secret on stderr split across two packets', () => {
+  const secret = 'S3cr3t-Value-0123456789';
+  const known = (s: string): string => s.split(secret).join(REDACTED);
+  const patterns = createRedactor([...DEFAULT_PATTERNS]);
+  const save = (text: string, redact: (s: string) => string): { text: string; stderr: string } =>
+    processOutput(text, { stripAnsi: true, maxOutputLines: 1000, redact });
+
+  it('a packet that continues a line gets no mark of its own', () => {
+    const mark = stderrMarker();
+    assert.equal(mark('+ curl -H "X-Api: S3cr') + mark('3t"\nnext') + mark(' line\n'), `${STDERR_MARK}+ curl -H "X-Api: S3cr3t"\n${STDERR_MARK}next line\n`);
+    // A line rewritten with \r is marked again, as markStderr does.
+    const again = stderrMarker();
+    assert.equal(again('10%\r') + again('100%\n'), `${STDERR_MARK}10%\r${STDERR_MARK}100%\n`);
+  });
+
+  it('a `set -x` trace with a known secret is saved redacted, even with a mark in the middle', () => {
+    // Marked as the writers did before (one mark per packet): the redaction mustn't depend on them.
+    const saved = markStderr('+ curl -H "X-Api: ' + secret.slice(0, 10)) + markStderr(secret.slice(10) + '" https://api\n');
+    const out = save(saved, (s) => patterns.redact(known(s)));
+    assert.equal(out.text, `+ curl -H "X-Api: ${REDACTED}" https://api`);
+    assert.equal(out.stderr, '1');
+    // Marked as they do now.
+    const mark = stderrMarker();
+    const now = save(mark('+ curl -H "X-Api: ' + secret.slice(0, 10)) + mark(secret.slice(10) + '" https://api\n'), known);
+    assert.equal(now.text, `+ curl -H "X-Api: ${REDACTED}" https://api`);
+  });
+
+  it('a GitHub token split the same way is saved redacted by its pattern', () => {
+    const tok = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+    const out = save(markStderr('token ' + tok.slice(0, 20)) + markStderr(tok.slice(20) + '\n'), (s) => patterns.redact(s));
+    assert.doesNotMatch(out.text, /A1b2|Q7r8/);
+    assert.equal(out.stderr, '1');
+  });
+
+  it('a redaction that joins lines keeps the stderr lines around it', () => {
+    const key = '-----BEGIN RSA PRIVATE KEY-----\nMIIabc\ndef\n-----END RSA PRIVATE KEY-----';
+    const text = 'out 1\n' + markStderr(key + '\n') + 'out 2\n' + markStderr('err 3\n');
+    const out = save(text, (s) => patterns.redact(s));
+    assert.equal(out.text, `out 1\n-----BEGIN RSA PRIVATE KEY-----${REDACTED}-----END RSA PRIVATE KEY-----\nout 2\nerr 3`);
+    assert.equal(out.stderr, '2,4');
+    assert.equal(redactMarked(`a\n${STDERR_MARK}b`, (s) => s), `a\n${STDERR_MARK}b`);
   });
 });

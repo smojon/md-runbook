@@ -9,7 +9,7 @@
  */
 
 import { stripAnsi } from './ansi';
-import { STDERR_MARK, formatLineSet, splitStderrMarks } from './outputColors';
+import { STDERR_MARK, formatLineSet, redactMarked, splitStderrMarks } from './outputColors';
 import { applyTerminalControls } from './terminalText';
 import { addIndent } from './fence';
 import { toLf } from './lines';
@@ -104,7 +104,8 @@ export function processOutput(text: string, opts: OutputTextOptions): { text: st
   // escape sequences too, so they are applied before stripAnsi takes the rest away.
   let t = applyTerminalControls(text.replace(/\r\n/g, '\n'), STDERR_MARK);
   if (opts.stripAnsi) t = stripAnsi(t);
-  if (opts.redact) t = opts.redact(t);
+  // Redacted without the stderr marks: a mark inside a secret kept a pattern from matching it.
+  if (opts.redact) t = redactMarked(t, opts.redact);
   t = t.replace(/\n+$/, '');
   const marked = splitStderrMarks(truncateLines(t, opts.maxOutputLines));
   return { text: marked.text, stderr: formatLineSet(marked.stderr) };

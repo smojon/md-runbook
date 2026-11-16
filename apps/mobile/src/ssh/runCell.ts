@@ -20,7 +20,8 @@ import {
   outputSummary,
   parse,
   setCellOutput,
-  markStderr,
+  redactMarked,
+  stderrMarker,
 } from '@md-runbook/core';
 import { Captured, CheckOutcome, evaluateChecks, resolveChecks } from '@md-runbook/core/checks';
 import { checkKubeContext, kubeContextParam, resolveKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
@@ -281,7 +282,8 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   let held = '';
   const show = (text: string, final = false): void => {
     if (!p.onOutput) return;
-    const hidden = hideKnown(held + text);
+    // Without the stderr marks: a mark inside a value kept it from being found.
+    const hidden = redactMarked(held + text, hideKnown);
     let keep = 0;
     if (!final)
       for (const v of known)
@@ -294,9 +296,11 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     const out = keep > 0 ? hidden.slice(0, -keep) : hidden;
     if (out !== '') p.onOutput(out);
   };
+  // A packet that continues a stderr line isn't marked again.
+  const markErr = stderrMarker();
   const write = (text: string, stream: 'stdout' | 'stderr'): void => {
     transcript += text;
-    const shown = stream === 'stderr' ? markStderr(text) : text;
+    const shown = stream === 'stderr' ? markErr(text) : text;
     saved += shown;
     show(shown);
   };

@@ -34,6 +34,10 @@ Security fixes from a review of the parts that face the network.
 - **Command line, call copies:** the record of copies is written through a new file of a random
   name. On Linux and macOS, a record folder or file others can write is not used.
   - A continued copy runs as read for its checks, not read again.
+- **Saved outputs (VS Code and the app):** a secret printed to stderr in two packets is now
+  redacted. Before, a stderr mark between the packets kept it from matching, and the file got it
+  in clear.
+  - The app's live output hides a known secret split this way too.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each

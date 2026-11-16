@@ -16,7 +16,7 @@ import {
   formatDurationAttr,
   formatLocalIso,
   isSuccess,
-  markStderr,
+  stderrMarker,
   shellKindForLanguage,
 } from '@md-runbook/core';
 import { CheckOutcome, evaluateChecks, hasChecks } from '@md-runbook/core/checks';
@@ -832,7 +832,9 @@ export class RunbookController implements vscode.Disposable {
       cellTranscript?.end({ exit, durationMs: elapsed, ...(check ? { check } : {}), ...(tries ? { attempt: tries, attempts } : {}), ...(lines ? { lines } : {}) });
       const earlierOutput = earlierRunsOutput(history);
       // The text to save: what was shown, without colours, its stderr lines marked (stderr=).
-      const saved = shown.map((c) => (c.stream === 'stderr' ? markStderr(c.text) : c.text)).join('');
+      // A chunk that continues a stderr line isn't marked again (a mark inside a secret hid it from redaction).
+      const markErr = stderrMarker();
+      const saved = shown.map((c) => (c.stream === 'stderr' ? markErr(c.text) : c.text)).join('');
       // AWS / Google Cloud JSON: a table of the resources with console links, under the output.
       const cloud = cloudOutput(shown.filter((c) => c.stream === 'stdout').map((c) => c.text).join(''));
       if (cloud) await exec.appendOutput([cloud]);

@@ -5,6 +5,7 @@
  */
 import { MAX_JS_PATTERN, compileUserPattern, confirmRegexes, liveWindow, outputRedactor, patternProblem } from '../settings/safety';
 import { resetSettings, setConfirmPatterns, setRedactionPatterns } from '../settings/store';
+import { STDERR_MARK, parse } from '@md-runbook/core';
 import { confirmationFor } from '@md-runbook/core/confirm';
 import { Host } from '../hosts/store';
 import { runCell } from '../ssh/runCell';
@@ -84,5 +85,32 @@ describe('the live output', () => {
     expect(r.kind).toBe('done');
     expect(live.join('')).toBe('sent [REDACTED] to api\n');
     expect(live.some((t) => t.includes('s3cr3t'))).toBe(false);
+  });
+
+  it('a known secret in a `set -x` trace on stderr, split across two packets: hidden live and in the file', async () => {
+    const host: Host = { id: 'h1', name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' };
+    const conn = fakeConnection([{}]);
+    const secret = 'S3cr3t-Value-0123456789';
+    conn.session.run = async (_source, opts = {}) => {
+      opts.onStderr?.('+ curl -H "X-Api: ' + secret.slice(0, 10));
+      opts.onStderr?.(secret.slice(10) + '" https://api\n');
+      return { exitCode: 0, signal: null, timedOut: false, cancelled: false, durationMs: 1 };
+    };
+    const live: string[] = [];
+    const r = await runCell({
+      host,
+      text: '```bash\nset -x; curl -H "X-Api: ${secret:API_KEY}" https://api\n```\n',
+      cellIndex: 0,
+      connection: conn,
+      readSecret: async () => secret,
+      onOutput: (t) => live.push(t),
+    });
+    expect(r.kind).toBe('done');
+    if (r.kind !== 'done') return;
+    expect(live.join('')).toBe(`${STDERR_MARK}+ curl -H "X-Api: [REDACTED]" https://api\n`);
+    expect(live.join('')).not.toMatch(/S3cr|0123456789/);
+    const out = parse(r.text).cells[0]?.output;
+    expect(out?.text).toBe('+ curl -H "X-Api: [REDACTED]" https://api');
+    expect(out?.attrs.stderr).toBe('1');
   });
 });
