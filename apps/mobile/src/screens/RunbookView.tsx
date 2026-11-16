@@ -135,6 +135,7 @@ import { saveRunbook } from '../runbooks/save';
 import { exportRecordJson, exportReport, requestCosign, shareRunbook } from '../share/export';
 import { addRunbook, getRunbook, Runbook, runbookNamed, updateRunbookText, useRunbooks, withoutFrontMatter } from '../runbooks/store';
 import { historySize, notifyRuns, outputSettings, signerName } from '../settings/store';
+import { liveWindow } from '../settings/safety';
 import { SignCard, SignRequest } from '../signing/SignCard';
 import { SignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
 import { appKey } from '../ssh/appKey';
@@ -911,7 +912,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       latestText: () => getRunbook(runbook.id)?.text ?? runbook.text,
       onStart: () => stepStarting(request.cell),
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
-      onOutput: (text) => update((r) => ({ ...r, live: (r.live + text).slice(-LIVE_CHARS) })),
+      // Redacted as it arrives, before it is cut to its window (settings/safety.ts liveWindow).
+      onOutput: (text) => update((r) => ({ ...r, live: liveWindow(r.live, text, LIVE_CHARS) })),
       // retry=: a new attempt starts with empty output (only the last one is kept, as in the extension).
       onAttempt: (n, of, waitMs) =>
         update((r) => ({

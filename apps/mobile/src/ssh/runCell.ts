@@ -265,11 +265,31 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   // The same with stderr lines marked: what the file gets (stderr=) and the screen shows in red.
   let saved = '';
   let stdout = '';
+  /**
+   * The live output's end that may be the start of a known value (a secret split across two
+   * packets): held back until the next packet, or the end of the run, so no part of it shows.
+   */
+  let held = '';
+  const show = (text: string, final = false): void => {
+    if (!p.onOutput) return;
+    const hidden = hideKnown(held + text);
+    let keep = 0;
+    if (!final)
+      for (const v of known)
+        for (let k = Math.min(v.length - 1, hidden.length); k > keep; k--)
+          if (hidden.endsWith(v.slice(0, k))) {
+            keep = k;
+            break;
+          }
+    held = keep > 0 ? hidden.slice(-keep) : '';
+    const out = keep > 0 ? hidden.slice(0, -keep) : hidden;
+    if (out !== '') p.onOutput(out);
+  };
   const write = (text: string, stream: 'stdout' | 'stderr'): void => {
     transcript += text;
     const shown = stream === 'stderr' ? markStderr(text) : text;
     saved += shown;
-    p.onOutput?.(hideKnown(shown));
+    show(shown);
   };
   // Settings → Force colours: programs colour their output although it isn't a terminal.
   const forced: Record<string, string> = outputSettings().forceColor ? { FORCE_COLOR: '1', CLICOLOR_FORCE: '1' } : {};
@@ -412,6 +432,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
         transcript = '';
         saved = '';
         stdout = '';
+        held = '';
         outcome = undefined;
       }
     } else {
@@ -442,6 +463,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     if (probedNewShell) result = { ...result, newShell: true };
   } catch (e) {
     p.onStep?.(undefined);
+    show('', true);
     if (conn.unknownHostKey) return { kind: 'trust', hostKey: conn.unknownHostKey, changed: conn.changed ?? false };
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }
@@ -489,6 +511,8 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     const picked = ran.length > 0 ? ran.map((i) => p.lines!.steps[i]!) : p.lines.steps;
     attrs.lines = formatLineRanges(picked);
   }
+  // The live output's held-back end: there is no next packet.
+  show('', true);
   const base = p.latestText?.() ?? p.text;
   // The cell that ran, found again in the text as it is now (runbooks/cellRef.ts): its code and its
   // fence options, so never a cell with the same code under another host=; nowhere if it changed.
