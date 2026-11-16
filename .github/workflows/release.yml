@@ -271,7 +271,11 @@ jobs:
   marketplace:
     needs: package
     runs-on: ubuntu-latest
+    # The Marketplace's trusted publisher policy names this environment too (PUBLISHING.md).
     environment: release
+    permissions:
+      contents: read
+      id-token: write # Marketplace trusted publishing: no VSCE_PAT; the token lives 15 minutes
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -290,13 +294,13 @@ jobs:
       - name: The artifact holds the release files and nothing else
         working-directory: ${{ runner.temp }}/release
         run: *check-release-files
-      # Off while VSCE_PAT isn't set: the Marketplace upload is by hand.
+      # Trusted publishing (vsce 4.1+ --oidc): the policy on the publisher page names this repository,
+      # release.yml and the environment `release`. Off until the repository variable
+      # MARKETPLACE_TRUSTED_PUBLISHING is `true` (set once the policy exists). Until then: upload by hand.
       - name: Publish to the Visual Studio Marketplace
         working-directory: ${{ runner.temp }}/release
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        if: env.VSCE_PAT != ''
-        run: '"$GITHUB_WORKSPACE/scripts/publish-tools/node_modules/.bin/vsce" publish --packagePath md-runbook.vsix'
+        if: vars.MARKETPLACE_TRUSTED_PUBLISHING == 'true'
+        run: '"$GITHUB_WORKSPACE/scripts/publish-tools/node_modules/.bin/vsce" publish --oidc --packagePath md-runbook.vsix'
 
   # The Android APK, built and signed by app-apk.yml (its jobs keep the key away from the build).
   # Only the two signing secrets are passed, not `secrets: inherit` (PUBLISHING.md, Android).

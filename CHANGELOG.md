@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Visual Studio Marketplace by trusted publishing:** the release publishes there with
+  `vsce publish --oidc`, no token, once the policy and the variable `MARKETPLACE_TRUSTED_PUBLISHING`
+  are set ([PUBLISHING.md](PUBLISHING.md)). `vsce` for publishing is 4.1.0.
 - **Gate binaries on each GitHub release:** `md-runbook-gate-linux-amd64`, `-linux-arm64`,
   `-darwin-amd64` and `-darwin-arm64`, with `SHA256SUMS`. Built static, with the Go toolchain
   `apps/gate/go.mod` names, by a job without secrets.
