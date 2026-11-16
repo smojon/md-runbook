@@ -1,14 +1,16 @@
 /**
  * `md-runbook publish <file.md> --library URL [--path PATH]`: send a signed runbook to a team
  * library (apps/library-server), which checks it and writes it into the folder the web app serves.
+ * `md-runbook unpublish <PATH> --library URL`: remove one (where the server allows it).
  * The upload token comes from the environment only (MD_RUNBOOK_LIBRARY_TOKEN): on a command line
- * other users of the machine could read it.
+ * other users of the machine could read it. The requests are libraryClient.ts's, as VS Code's.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { reportAddressProblem } from '@md-runbook/core/secrets';
+import { libraryPathProblem } from '@md-runbook/core/library';
 import { readSignature } from '@md-runbook/core/signing';
+import { LIBRARY_TOKEN_ENV, LibraryFetch, cleanLibraryPath, libraryServerAddress, publishedText, refusedStatus, removeRefusal, sendToLibrary } from '../libraryClient';
 
 export const PUBLISH_USAGE = `Usage: md-runbook publish <file.md> --library URL [--path PATH]
 
@@ -27,38 +29,61 @@ Exit code: 0 published (or the same text was there already), 1 refused, 2 a usag
 usable answer from the server (unreachable, not a library server, too many requests).
 `;
 
-type FetchFn = (url: string, init: { method: string; headers: Record<string, string>; body: string; redirect: 'error'; signal: AbortSignal }) => Promise<{ status: number; text(): Promise<string> }>;
+export const UNPUBLISH_USAGE = `Usage: md-runbook unpublish <PATH> --library URL
+
+Removes the runbook at PATH from a team library (the library server, apps/library-server):
+DELETE URL/v1/library/runbooks/PATH. Only where the server allows it (LIBRARY_ALLOW_DELETE).
+The server keeps the highest version published there: an older one can't come back.
+
+Options:
+  --library URL   The library server's address, e.g. https://runbooks.example.net
+
+The upload token is read from MD_RUNBOOK_LIBRARY_TOKEN, never from the command line.
+
+Exit code: 0 removed, 1 refused (not there, removing is off, the token refused), 2 a usage
+error, or no usable answer from the server.
+`;
+
+const write = (l: string): void => void process.stdout.write(l + '\n');
+
+/** The options both commands share: one positional argument, --library, and (publish) --path. */
+function parseLibraryArgs(argv: readonly string[], withPath: boolean): { help: true } | { error: string } | { arg?: string; library?: string; target?: string } {
+  const args = [...argv];
+  let arg: string | undefined;
+  let library: string | undefined;
+  let target: string | undefined;
+  while (args.length > 0) {
+    const a = args.shift()!;
+    if (a === '-h' || a === '--help') return { help: true };
+    if (a === '--library') library = args.shift();
+    else if (withPath && a === '--path') target = args.shift();
+    else if (a.startsWith('-')) return { error: `unknown option ${a}` };
+    else if (arg) return { error: 'one runbook at a time' };
+    else arg = a;
+  }
+  return { ...(arg !== undefined ? { arg } : {}), ...(library !== undefined ? { library } : {}), ...(target !== undefined ? { target } : {}) };
+}
 
 export async function publishCommand(
   argv: readonly string[],
-  out: (line: string) => void = (l) => void process.stdout.write(l + '\n'),
+  out: (line: string) => void = write,
   env: NodeJS.ProcessEnv = process.env,
-  fetchFn: FetchFn = (url, init) => fetch(url, init),
+  fetchFn?: LibraryFetch,
 ): Promise<number> {
-  const args = [...argv];
-  let file: string | undefined;
-  let library: string | undefined;
-  let target: string | undefined;
   const usage = (why: string): number => {
     process.stderr.write(`md-runbook: ${why}\n\n${PUBLISH_USAGE}`);
     return 2;
   };
-  while (args.length > 0) {
-    const a = args.shift()!;
-    if (a === '-h' || a === '--help') return void process.stdout.write(PUBLISH_USAGE), 0;
-    if (a === '--library') library = args.shift();
-    else if (a === '--path') target = args.shift();
-    else if (a.startsWith('-')) return usage(`unknown option ${a}`);
-    else if (file) return usage('one runbook at a time');
-    else file = a;
-  }
+  const parsed = parseLibraryArgs(argv, true);
+  if ('help' in parsed) return void process.stdout.write(PUBLISH_USAGE), 0;
+  if ('error' in parsed) return usage(parsed.error);
+  const { arg: file, library, target } = parsed;
   if (!file) return usage('missing the runbook file');
   if (!library) return usage('--library needs the library server\'s address');
-  const base = library.replace(/\/+$/, '');
-  const why = reportAddressProblem(base);
-  if (why) return usage(`--library ${library}: ${why}`);
-  const token = env.MD_RUNBOOK_LIBRARY_TOKEN;
-  if (!token) return usage('set MD_RUNBOOK_LIBRARY_TOKEN to the library\'s upload token');
+  const server = libraryServerAddress(library);
+  if ('problem' in server) return usage(`--library ${library}: ${server.problem}`);
+  const token = env[LIBRARY_TOKEN_ENV];
+  if (!token) return usage(`set ${LIBRARY_TOKEN_ENV} to the library's upload token`);
   let text: string;
   try {
     text = fs.readFileSync(file, 'utf8');
@@ -71,37 +96,53 @@ export async function publishCommand(
     out(`✗ ${file} is not signed: a library takes signed runbooks only (md-runbook sign ${file} --key KEY)`);
     return 1;
   }
-  const where = (target ?? path.basename(file)).replace(/\\/g, '/').replace(/^\/+/, '');
-  const url = `${base}/v1/library/runbooks/${where.split('/').map(encodeURIComponent).join('/')}`;
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), 30_000);
-  let status: number;
-  let body: string;
-  try {
-    const r = await fetchFn(url, { method: 'POST', headers: { 'content-type': 'text/markdown; charset=utf-8', authorization: `Bearer ${token}` }, body: text, redirect: 'error', signal: abort.signal });
-    status = r.status;
-    body = await r.text();
-  } catch (e) {
-    process.stderr.write(`md-runbook: ${base} did not answer: ${abort.signal.aborted ? 'no answer in 30 s' : e instanceof Error ? e.message : String(e)}\n`);
+  const where = cleanLibraryPath(target ?? path.basename(file));
+  const r = await sendToLibrary({ method: 'POST', server: server.base, path: where, token, text, ...(fetchFn ? { fetchFn } : {}) });
+  if (r.kind === 'unreachable') {
+    process.stderr.write(`md-runbook: ${server.base} did not answer: ${r.why}\n`);
     return 2;
-  } finally {
-    clearTimeout(timer);
   }
-  let answer: { name?: string; version?: number; previous?: number; signer?: string; unchanged?: boolean; error?: string; problems?: string[] } = {};
-  try {
-    answer = JSON.parse(body);
-  } catch {
-    answer = { error: body.slice(0, 200) };
-  }
-  if (status === 200 || status === 201) {
-    out(
-      answer.unchanged
-        ? `✓ ${where}: ${answer.name} version ${answer.version} is published already (the same text)`
-        : `✓ published ${answer.name} version ${answer.version} at ${where}${answer.previous ? ` (was version ${answer.previous})` : ''}, signed by ${answer.signer}`,
-    );
+  if (r.status === 200 || r.status === 201) {
+    out(`✓ ${publishedText(where, r.answer)}`);
     return 0;
   }
-  out(`✗ ${where}: the library refused it (HTTP ${status}): ${answer.error ?? 'no reason given'}`);
-  for (const p of answer.problems ?? []) out(`  ${p}`);
-  return status === 401 || status === 403 || status === 409 || status === 413 || status === 422 || status === 400 ? 1 : 2;
+  out(`✗ ${where}: the library refused it (HTTP ${r.status}): ${r.answer.error ?? 'no reason given'}`);
+  for (const p of r.answer.problems ?? []) out(`  ${p}`);
+  return refusedStatus(r.status) && r.status !== 404 && r.status !== 405 ? 1 : 2;
+}
+
+export async function unpublishCommand(
+  argv: readonly string[],
+  out: (line: string) => void = write,
+  env: NodeJS.ProcessEnv = process.env,
+  fetchFn?: LibraryFetch,
+): Promise<number> {
+  const usage = (why: string): number => {
+    process.stderr.write(`md-runbook: ${why}\n\n${UNPUBLISH_USAGE}`);
+    return 2;
+  };
+  const parsed = parseLibraryArgs(argv, false);
+  if ('help' in parsed) return void process.stdout.write(UNPUBLISH_USAGE), 0;
+  if ('error' in parsed) return usage(parsed.error);
+  const { arg, library } = parsed;
+  if (!arg) return usage('missing the runbook\'s path in the library, e.g. ops/restart-api.md');
+  const where = cleanLibraryPath(arg);
+  const bad = libraryPathProblem(where);
+  if (bad) return usage(`${arg}: ${bad}`);
+  if (!library) return usage('--library needs the library server\'s address');
+  const server = libraryServerAddress(library);
+  if ('problem' in server) return usage(`--library ${library}: ${server.problem}`);
+  const token = env[LIBRARY_TOKEN_ENV];
+  if (!token) return usage(`set ${LIBRARY_TOKEN_ENV} to the library's upload token`);
+  const r = await sendToLibrary({ method: 'DELETE', server: server.base, path: where, token, ...(fetchFn ? { fetchFn } : {}) });
+  if (r.kind === 'unreachable') {
+    process.stderr.write(`md-runbook: ${server.base} did not answer: ${r.why}\n`);
+    return 2;
+  }
+  if (r.status === 200) {
+    out(`✓ removed ${r.answer.deleted ?? where}${r.answer.version ? ` (version ${r.answer.version})` : ''} from the library`);
+    return 0;
+  }
+  out(`✗ ${where}: ${removeRefusal(where, r.status, r.answer)}`);
+  return refusedStatus(r.status) ? 1 : 2;
 }

@@ -101,7 +101,7 @@ opens a list of its actions (type to filter); the toolbar's **⋯** has the same
 | **Run** ▾ | Resume Run, Run All as Copy, Go to Next Step, Session…, Restart / Stop Session, Clear All Outputs |
 | **Values** ▾ | Set Parameters, Set Inputs, Reset Inputs, Set / List / Delete Secret |
 | **Assistant** ▾ | Suggest Next Steps, Summarize Incident, Copy for AI, Paste AI Proposal, Check for Leaks, proposals, the API key |
-| **Share** ▾ | Export Report (HTML, PDF), Sign Runbook |
+| **Share** ▾ | Export Report (HTML, PDF), Sign Runbook, Publish to Library… |
 | **Help** ▾ | Get Started, Cheat Sheet, Open Sample Runbook, Open Feature Tour |
 
 A cell's **⋯** menu has its own actions:

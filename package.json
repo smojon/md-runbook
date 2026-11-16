@@ -518,6 +518,24 @@
         "icon": "$(verified)"
       },
       {
+        "command": "mdRunbook.library.publish",
+        "title": "Publish to Library…",
+        "category": "md-runbook",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "mdRunbook.library.remove",
+        "title": "Remove from Library…",
+        "category": "md-runbook",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "mdRunbook.library.uploadToken",
+        "title": "Library Upload Token…",
+        "category": "md-runbook",
+        "icon": "$(key)"
+      },
+      {
         "command": "mdRunbook.openInApp",
         "title": "Open in the App",
         "category": "md-runbook",
@@ -850,6 +868,10 @@
         },
         {
           "command": "mdRunbook.requestCosign",
+          "when": "notebookType == md-runbook || resourceExtname == .md"
+        },
+        {
+          "command": "mdRunbook.library.publish",
           "when": "notebookType == md-runbook || resourceExtname == .md"
         },
         {
@@ -1465,6 +1487,18 @@
         {
           "command": "mdRunbook.makeQrCode",
           "group": "3_app@2"
+        },
+        {
+          "command": "mdRunbook.library.publish",
+          "group": "4_library@1"
+        },
+        {
+          "command": "mdRunbook.library.remove",
+          "group": "4_library@2"
+        },
+        {
+          "command": "mdRunbook.library.uploadToken",
+          "group": "4_library@3"
         }
       ],
       "mdRunbook.toolbar.help": [
@@ -2280,6 +2314,19 @@
             "scope": "machine",
             "markdownDescription": "The signers you trust, as an OpenSSH `allowed_signers` file (the one your servers' md-runbook-gate uses). A runbook signed by one of them, and unchanged since signing, can require that its runs are reported (`report-runs-required`, `report-runs-signed`). Empty = no runbook can require it: you are asked instead. Checked with `ssh-keygen -Y verify`. User settings only.",
             "order": 2
+          }
+        }
+      },
+      {
+        "title": "Team library",
+        "order": 12,
+        "properties": {
+          "mdRunbook.library.server": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "markdownDescription": "The library server for **Publish to Library…** and **Remove from Library…** (`apps/library-server`), e.g. `https://runbooks.example.net`. https only. Empty = asked the first time. Its upload token is kept in VS Code's secret storage (**Library Upload Token…**), never in settings. User settings only.",
+            "order": 1
           }
         }
       }

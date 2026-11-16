@@ -322,7 +322,8 @@ say).
 Support engineers run the signed runbooks against the cluster without ever holding its
 credentials.
 
-**A team library** of signed runbooks: `md-runbook publish FILE --library URL`. The
+**A team library** of signed runbooks: `md-runbook publish FILE --library URL`, or **Publish to
+Library…** in VS Code (Share ▾). The
 [library server](../../apps/library-server/README.md) publishes a runbook into the folder the web
 app serves only when it is:
 

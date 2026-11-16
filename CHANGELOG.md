@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
+  the team library server, or take one out. The upload token stays in VS Code's secret storage.
+  An unsigned runbook gets a **Sign Runbook** button first.
+- **Command line: `md-runbook unpublish PATH --library URL`** removes a runbook from a team
+  library, where its server allows deleting.
+
 ## 0.26.8
 
 The Android APK is signed with the app's own key and attached to each release. Progress and notes are fixed.
