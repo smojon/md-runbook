@@ -81,11 +81,20 @@ export function resetRecordedContexts(): void {
   contextCache.clear();
 }
 
-const firstLine = (text: string): string =>
-  text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .find((l) => l !== '') ?? '';
+/** The longest context recorded (context=): a Kubernetes context name is far shorter. */
+export const MAX_CONTEXT = 200;
+
+/**
+ * What the host printed for its context, as recorded: its first line, without control characters
+ * (C0, DEL, C1) or line and paragraph separators, at most MAX_CONTEXT characters.
+ */
+export const contextValue = (text: string): string =>
+  (
+    text
+      .split(/[\r\n\u0085\u2028\u2029]+/)
+      .map((l) => l.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim())
+      .find((l) => l !== '') ?? ''
+  ).slice(0, MAX_CONTEXT);
 
 export interface RunCellParams {
   host: Host;
@@ -395,7 +404,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
         onStderr: (t) => (err += t),
       });
       probedNewShell ||= r.newShell ?? false;
-      if (r.exitCode === 0) seenContext = firstLine(out);
+      if (r.exitCode === 0) seenContext = contextValue(out);
       return { exitCode: r.exitCode, stdout: out, stderr: r.error ?? (r.timedOut ? 'timed out' : err) };
     };
     const wrongCluster = await checkKubeContext(kubeContext, probeContext);

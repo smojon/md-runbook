@@ -9,7 +9,7 @@ import type { Host } from '../hosts/store';
 import { launchModel } from '../runbooks/launch';
 import { lastRunContext, runContextText } from '../runbooks/runContext';
 import { resetSettings, setOutputSetting } from '../settings/store';
-import { resetRecordedContexts, runCell } from '../ssh/runCell';
+import { MAX_CONTEXT, contextValue, resetRecordedContexts, runCell } from '../ssh/runCell';
 import { fakeConnection } from '../testing/fakeConnection';
 import { LaunchSheet } from '../ui/LaunchSheet';
 import { StepsHead } from '../ui/StepsView';
@@ -54,6 +54,16 @@ describe('recording where a step ran', () => {
     const conn = fakeConnection([{ stdout: 'a\n' }], 'posix');
     const r = await runCell({ host, text: TEXT, cellIndex: 1, connection: conn, runbookId: 'rb' });
     expect(r.kind === 'done' && r.attrs).toMatchObject({ context: 'unknown', on: 'deploy@web1' });
+  });
+
+  it('a context that isn’t one short line: one line, no control characters, at most 200 characters (security review round 4)', async () => {
+    setOutputSetting('recordContext', true);
+    const odd = `prod\u0007-eu\u001b[2m\u2028--> <a href=x>\n${'a'.repeat(300)}`;
+    const conn = fakeConnection([{ stdout: 'a\n' }], 'posix', odd);
+    const r = await runCell({ host, text: TEXT, cellIndex: 1, connection: conn, runbookId: 'rb' });
+    expect(r.kind === 'done' && r.attrs.context).toBe('prod-eu[2m');
+    expect(contextValue('x'.repeat(500))).toHaveLength(MAX_CONTEXT);
+    expect(contextValue('\u0085\n  eu-1\u009b \r\nrest')).toBe('eu-1');
   });
 });
 
