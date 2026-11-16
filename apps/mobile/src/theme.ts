@@ -5,6 +5,7 @@
  */
 import type { TermColor } from '@md-runbook/core';
 import { ImageStyle, Platform, StyleSheet, TextStyle, ViewStyle, useColorScheme } from 'react-native';
+import type { HighlightKind } from './editor/highlight';
 
 export interface Palette {
   dark: boolean;
@@ -51,6 +52,11 @@ export interface Palette {
     command: string;
     operator: string;
   };
+  /**
+   * Edit as Text's highlighting (editor/highlight.ts), on `codeBackground`: colour only, since a
+   * bolder or slanted letter could move the text off the field above it. At least 4.5:1.
+   */
+  highlight: Record<HighlightKind, string>;
 }
 
 export const light: Palette = {
@@ -98,6 +104,27 @@ export const light: Palette = {
     command: '#795e26',
     operator: '#3b3b3b',
   },
+  highlight: {
+    frontMatter: '#616161',
+    heading: '#800000',
+    bold: '#000080',
+    italic: '#6f42c1',
+    linkText: '#005fb8',
+    linkUrl: '#1d6b80',
+    inlineCode: '#a31515',
+    listMarker: '#0451a5',
+    quote: '#527a00',
+    fence: '#795e26',
+    fenceLang: '#0000ff',
+    option: '#001080',
+    optionValue: '#a31515',
+    code: '#0f4a85',
+    comment: '#008000',
+    marker: '#af00db',
+    output: '#616161',
+    note: '#795e26',
+    signature: '#6e6e6e',
+  },
 };
 
 export const dark: Palette = {
@@ -144,6 +171,27 @@ export const dark: Palette = {
     number: '#b5cea8',
     command: '#dcdcaa',
     operator: '#d4d4d4',
+  },
+  highlight: {
+    frontMatter: '#9d9d9d',
+    heading: '#569cd6',
+    bold: '#4fc1ff',
+    italic: '#d7ba7d',
+    linkText: '#4daafc',
+    linkUrl: '#4ec9b0',
+    inlineCode: '#ce9178',
+    listMarker: '#6796e6',
+    quote: '#b5cea8',
+    fence: '#dcdcaa',
+    fenceLang: '#569cd6',
+    option: '#9cdcfe',
+    optionValue: '#ce9178',
+    code: '#9cdcfe',
+    comment: '#6a9955',
+    marker: '#c586c0',
+    output: '#9d9d9d',
+    note: '#dcdcaa',
+    signature: '#8b8b8b',
   },
 };
 
