@@ -29,6 +29,7 @@ import { VAR_NAME_RE, findRefs, frontMatterLines, parseFrontMatter, reportAddres
 import { sha256Hex } from './sha256';
 import { shellKindForLanguage } from './shellKind';
 import { splitSteps } from './steps';
+import { HISTORY_OPEN_RE } from './outputBlock';
 import { clearOutputBlocks } from './writer';
 import { splitLines } from './lines';
 
@@ -142,8 +143,29 @@ export interface Manifest extends ManifestMeta {
 /** 2 when the manifest signs the whole text, 1 when only its blocks and calls. */
 export const manifestVersion = (m: Pick<Manifest, 'text'>): 1 | 2 => (m.text !== undefined ? 2 : 1);
 
-const RECORD_BLOCK_RE = /^<!-- md-runbook:record-signature v1 [^\n]*\n(?:[^\n]*\n)*?-->[ \t]*(?:\n|$)/gm;
-const NOTE_BLOCK_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b.*?-->[ \t]*\n(?:[ \t]*>.*(?:\n|$))*/gm;
+/**
+ * What signedText sets aside, only in the exact form md-runbook writes it, so that none of it is
+ * text a reader sees (security review, round 4). Before, a record block took any lines up to a
+ * `-->` (a line `x -->` ends the comment for a Markdown view, and what follows shows), and a note
+ * marker could carry HTML after its `-->`.
+ *
+ * - A run record's signature (record.ts): its header, then base64 lines, cosign lines, `-->`.
+ *   Names and times hold no spaces and no `--`.
+ * - A note's marker (incident.ts formatNote): one comment alone on its line, without `>` or `--`
+ *   inside; then its quote lines.
+ * - An output block's markers likewise; when one is not, no output block is set aside.
+ */
+const FIELD = '(?:[A-Za-z0-9_@.+:]|-(?!-))+';
+const B64_LINES = '(?:[A-Za-z0-9+/=]+\\n)+';
+const RECORD_BLOCK_RE = new RegExp(
+  `^<!-- md-runbook:record-signature v1 signer=${FIELD} signed=${FIELD} sha256=[0-9a-f]{64}\\nsignature\\n${B64_LINES}(?:cosign signer=${FIELD} signed=${FIELD}\\n${B64_LINES})*-->[ \\t]*(?:\\n|$)`,
+  'gm',
+);
+const NOTE_BLOCK_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b(?:[^>\n-]|-(?!-))*-->[ \t]*\n(?:[ \t]*>.*(?:\n|$))*/gm;
+const OUTPUT_MARK_RE = /^[ \t]*<!--[ \t]*md-runbook:output (?:start|end)\b/;
+const STRICT_OUTPUT_MARK_RE = /^[ \t]*<!--[ \t]*md-runbook:output (?:start|end)\b(?:[^<>\n-]|-(?!-))*-->[ \t]*$/;
+/** The summary of earlier runs (history.ts historySummary), which a Markdown view shows. */
+const STRICT_HISTORY_OPEN_RE = /^[ \t]*<details>[ \t]*<summary>[ \t]*md-runbook: \d+ previous runs?<\/summary>[ \t]*$/;
 const TASK_BOX_RE = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[)[xX](\](?=[ \t]|$))/;
 
 /**
@@ -221,7 +243,8 @@ export function signedText(text: string): string {
   let t = withoutSignature(text.replace(/^\uFEFF/, '')).replace(/\r\n?/g, '\n');
   // A run record's signature and notes only outside code: a note-shaped line in a block is code.
   t = removeInProse(t, RECORD_BLOCK_RE);
-  t = clearOutputBlocks(t);
+  const written = (l: string): boolean => (!OUTPUT_MARK_RE.test(l) || STRICT_OUTPUT_MARK_RE.test(l)) && (!HISTORY_OPEN_RE.test(l) || STRICT_HISTORY_OPEN_RE.test(l));
+  if (t.split('\n').every(written)) t = clearOutputBlocks(t);
   t = removeInProse(t, NOTE_BLOCK_RE);
   // Ticks, outside code blocks.
   let open: FenceOpen | null = null;
