@@ -1,6 +1,6 @@
 # The md-runbook ops host inside your cluster. kubectl uses the Pod's own service account, so
-# there is no kubeconfig to copy and no cloud key anywhere; the ClusterRole below is all a
-# runbook can do. Before `kubectl apply -f` this file, see apps/ops/README.md: your keys, your
+# there is no kubeconfig to copy and no cloud key anywhere; the roles below are all a runbook
+# can do: read in every namespace, change only in the namespaces you bind. Before `kubectl apply -f` this file, see apps/ops/README.md: your keys, your
 # signers, and the cluster's name for kube-context:.
 apiVersion: v1
 kind: Namespace
@@ -15,8 +15,7 @@ metadata:
   name: md-runbook-ops
   namespace: md-runbook-ops
 ---
-# What runbooks may do: read most things (not Secrets), restart, roll back and scale workloads,
-# rerun a CronJob as a Job. Add rules for more (pods/exec, delete) once you need them.
+# What runbooks may read, in every namespace: most things, not Secrets.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -28,20 +27,9 @@ rules:
   - apiGroups: [apps]
     resources: [deployments, statefulsets, daemonsets, replicasets]
     verbs: [get, list, watch]
-  # kubectl rollout restart / undo, kubectl scale.
-  - apiGroups: [apps]
-    resources: [deployments, statefulsets, daemonsets]
-    verbs: [patch]
-  - apiGroups: [apps]
-    resources: [deployments/scale, statefulsets/scale]
-    verbs: [get, patch, update]
   - apiGroups: [batch]
     resources: [jobs, cronjobs]
     verbs: [get, list, watch]
-  # kubectl create job --from=cronjob/NAME
-  - apiGroups: [batch]
-    resources: [jobs]
-    verbs: [create]
   - apiGroups: [autoscaling]
     resources: [horizontalpodautoscalers]
     verbs: [get, list, watch]
@@ -67,6 +55,46 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: md-runbook-ops
+subjects:
+  - kind: ServiceAccount
+    name: md-runbook-ops
+    namespace: md-runbook-ops
+---
+# What runbooks may change: restart, roll back and scale Deployments and StatefulSets, rerun a
+# CronJob as a Job. Only in the namespaces you bind it in (below), never cluster-wide: whoever may
+# change a namespace's workloads can read its Secrets and act as its service accounts (Kubernetes
+# RBAC good practices, "Workload creation"). No DaemonSets: they run on every node, often
+# privileged. Add rules for more (pods/exec, delete) once you need them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: md-runbook-ops-operate
+rules:
+  # kubectl rollout restart / undo, kubectl scale.
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale, statefulsets/scale]
+    verbs: [get, patch, update]
+  # kubectl create job --from=cronjob/NAME
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create]
+---
+# One RoleBinding per namespace runbooks may change. This one: the ops namespace itself. For each
+# of yours:
+#   kubectl -n NAMESPACE create rolebinding md-runbook-ops-operate \
+#     --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-ops
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: md-runbook-ops-operate
+  namespace: md-runbook-ops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: md-runbook-ops-operate
 subjects:
   - kind: ServiceAccount
     name: md-runbook-ops

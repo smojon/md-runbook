@@ -24,6 +24,9 @@ Security fixes from a review of the parts that face the network.
 - **Gate and signing:** a manifest with a second `name`, `version`, `expires` or `scope` line
   is refused. Before, the gate read the first one and the rest of md-runbook the last. A version
   must be a whole number and `expires` a date.
+- **Ops host in Kubernetes:** runbooks may change workloads only in the namespaces you bind, and
+  never DaemonSets. Before, they could patch any namespace's workloads, close to cluster-admin.
+  - After an upgrade, run one `kubectl create rolebinding` per namespace (apps/ops/README.md).
 - **Web container:** no other site can show the app in a frame (`frame-ancestors 'none'`,
   `X-Frame-Options: DENY`).
 
