@@ -84,6 +84,9 @@ Security fixes from a review of the parts that face the network.
   - Values in the table stay text: a resource name can't make a link, an image or HTML.
 - **VS Code, Set Parameters and Set Inputs:** only the extension test runner can pass them
   values. The commands themselves always ask.
+- **Whole-runbook signatures:** a note or a run record's signature inside a code block now counts
+  as code. Before, adding one to a cmd or PowerShell block left the runbook signed as a whole.
+  - A signed runbook with note-shaped lines in its code blocks needs signing again.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or

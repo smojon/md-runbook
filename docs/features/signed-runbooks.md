@@ -124,6 +124,9 @@ what changes when someone runs the runbook:
 `text` is the SHA-256 of the runbook without what a run adds to it. It lets clients tell **signed
 as a whole** from **partly signed**.
 
+Notes and a run record's signature are left aside only outside code blocks. Inside a block, the
+same lines are code, and signed.
+
 - **Signed with 0.22.0 or earlier.** Only the bash/sh blocks and calls are signed.
   - The signature still verifies and the bash blocks still count as signed. But the editor and
     lint say "partly signed", and the app "these steps verified".
