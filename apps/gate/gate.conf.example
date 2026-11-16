@@ -30,14 +30,24 @@ path = /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 # The blocks' locale (the client's LANG and LC_* never reach them). auto: C.UTF-8, else C.
 locale = auto
 
+# The blocks' KUBECONFIG (absolute files separated by :). Without it, kubectl reads
+# ~/.kube/config. The account's own KUBECONFIG never reaches a block.
+# kubeconfig = /etc/md-runbook/kubeconfig
+
 # The files with the account's key lines, as sshd_config's AuthorizedKeysFile names them
-# (space-separated; %h is the home folder, %u the account). Every line must run this gate, all
-# signed (unsigned = refuse, no --unsigned=allow) or all unsigned. The default is sshd's:
+# (space-separated; %h is the home folder, %u the account, %U its uid, %% a %). Every line must
+# run this gate with restrict, all signed (unsigned = refuse, no --unsigned=allow) or all
+# unsigned. The default is sshd's:
 # authorized_keys = %h/.ssh/authorized_keys %h/.ssh/authorized_keys2
 
 # yes when sshd_config's ForceCommand runs this gate for the account: then the key lines are
-# not read, and unsigned above decides alone.
+# not read, and unsigned above decides alone. Only from a root-owned file the account can't
+# write; sshd_config needs DisableForwarding yes, PermitTTY no and PermitUserRC no.
 # sshd_force_command = yes
+
+# Under sshd the gate refuses an account whose login shell reads the account's files first
+# (bash's ~/.bashrc): make it /bin/sh. no: don't check (test servers only).
+# login_shell_check = yes
 
 # Run reports: at the end of each session, a summary of every signed runbook it ran (no
 # outputs, no parameter values) to this address, by curl, in the background. https (http only

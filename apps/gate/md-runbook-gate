@@ -8,10 +8,14 @@
 # Options (in the authorized_keys command): --config=FILE (default /etc/md-runbook/gate.conf),
 # --unsigned=allow|refuse and --scopes=a,b (override the config for this key), --who=NAME (the
 # name logged for this key; default: the key's fingerprint, with ExposeAuthInfo yes in sshd).
+# --sshd-force-command (sshd_config's ForceCommand only) needs sshd_force_command = yes in a
+# gate.conf the account can't change.
 #
-# Each signed runbook runs in a fresh shell (bash --noprofile --norc, else sh) with the PATH and
-# locale of gate.conf: nothing from the account's profile, the client's locale or an earlier
-# runbook. The cells of one runbook share that shell, as in a plain session.
+# Each signed runbook runs in a shell of its own (bash --noprofile --norc, else sh) with the PATH
+# and locale of gate.conf: nothing from the account's profile, the client's locale or another
+# runbook. The cells of one runbook share that shell, as in a plain session, also after a call
+# into another runbook. Processes already running as the account are out of scope: the account
+# must be used by the gate alone.
 #
 # The client (the md-runbook app) speaks a line protocol on stdin; replies end with the same
 # end-of-cell marker as a plain shell session (\036__MDRB_<id>__ <exit>, on stdout and stderr).
@@ -70,6 +74,7 @@ key_scopes=
 key_signers=
 who=
 sshd_force_command=
+cli_force_command=
 for a in "$@"; do
   case $a in
     --config=*)
@@ -85,7 +90,8 @@ for a in "$@"; do
       ;;
     --signers=*) key_signers=${a#*=} ;;
     --who=*) who=${a#*=} ;;
-    --sshd-force-command) sshd_force_command=yes ;;
+    # Only a statement: gate.conf decides (security review round 3, 2026-11-16).
+    --sshd-force-command) cli_force_command=1 ;;
     *) fatal "unknown option $a" ;;
   esac
 done
@@ -103,8 +109,12 @@ report_token_file=
 # write) and never the client's.
 cells_path=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 cells_locale=auto
+# The cells' KUBECONFIG (else kubectl's default, ~/.kube/config): never the account's environment.
+cells_kubeconfig=
+# no: don't check the account's login shell (tests on a server whose accounts have bash).
+login_shell_check=yes
 # The files sshd reads this account's keys from (AuthorizedKeysFile): %h is the home folder, %u
-# the account, a relative path is in the home folder.
+# the account, %U its uid, %% a %; a relative path is in the home folder.
 authorized_keys='%h/.ssh/authorized_keys %h/.ssh/authorized_keys2'
 # A --config= that isn't there is an error, not the built-in defaults (security review, 2026-11-16).
 [ -z "$config_named" ] || [ -e "$config" ] || fatal "no config $config (--config=)"
@@ -129,6 +139,13 @@ if [ -e "$config" ]; then
       report_token_file) report_token_file=$v ;;
       path) cells_path=$v ;;
       locale) cells_locale=$v ;;
+      kubeconfig) cells_kubeconfig=$v ;;
+      login_shell_check)
+        case $v in
+          yes | no) login_shell_check=$v ;;
+          *) fatal "login_shell_check = $v: expected yes or no" ;;
+        esac
+        ;;
       authorized_keys) authorized_keys=$v ;;
       sshd_force_command)
         case $v in
@@ -160,6 +177,11 @@ case $cells_locale in
     ;;
   '' | *[!A-Za-z0-9._@-]*) fatal "locale = $cells_locale: expected a locale name such as C.UTF-8, or auto" ;;
 esac
+if [ -n "$cells_kubeconfig" ]; then
+  case ":$cells_kubeconfig:" in
+    *::* | *:[!/]*) fatal "kubeconfig = $cells_kubeconfig: expected absolute files separated by :" ;;
+  esac
+fi
 # Run reports (report_to): optional, and never in a run's way. A bad address is logged at the
 # start of each session and nothing is sent; the runs go on.
 report_on=
@@ -173,6 +195,21 @@ if [ -n "$report_to" ]; then
 fi
 
 account=$(id -un 2>/dev/null || echo "?")
+uid=$(id -u 2>/dev/null || echo "?")
+
+# can_change FILE: the account could change FILE: it can write it or its folder, or it owns it
+# (and so could chmod it).
+can_change() {
+  case $1 in */*) _d=${1%/*} ;; *) _d=. ;; esac
+  [ -w "$1" ] || [ -w "${_d:-/}" ] || [ "$(ls -ldnL -- "$1" 2>/dev/null | awk '{ print $3 }')" = "$uid" ]
+}
+# sshd_force_command switches off the check of the key lines (below), so it counts only from a
+# gate.conf out of the account's reach. A key line can't say it (security review round 3).
+if [ -n "$sshd_force_command" ] && can_change "$config"; then
+  fatal "sshd_force_command = yes in $config, a file this account can change: make it and its folder root-owned and not writable by the account"
+fi
+[ -z "$cli_force_command" ] || [ -n "$sshd_force_command" ] ||
+  fatal "--sshd-force-command needs sshd_force_command = yes in $config"
 client=${SSH_CLIENT:-}
 client=${client%% *}
 if [ -z "$who" ] && [ -n "${SSH_USER_AUTH:-}" ] && [ -r "$SSH_USER_AUTH" ]; then
@@ -249,20 +286,17 @@ is_reserved() {
       GIT_SSH_COMMAND | GIT_SSH | GIT_CONFIG | GIT_CONFIG_GLOBAL | GIT_CONFIG_SYSTEM | GIT_CONFIG_COUNT | GIT_CONFIG_PARAMETERS | \
       http_proxy | https_proxy | all_proxy | no_proxy | HTTP_PROXY | HTTPS_PROXY | ALL_PROXY | NO_PROXY | CURL_HOME | CURL_CA_BUNDLE | \
       XDG_CONFIG_HOME | SSL_CERT_FILE | SSL_CERT_DIR | NODE_EXTRA_CA_CERTS | REQUESTS_CA_BUNDLE | \
+      GIT_EXEC_PATH | GIT_PROXY_COMMAND | GIT_ASKPASS | SSH_ASKPASS | GIT_EXTERNAL_DIFF | JDK_JAVA_OPTIONS | OPENSSL_CONF | \
+      LUA_INIT | PERLLIB | PHPRC | AWS_CONFIG_FILE | AWS_SHARED_CREDENTIALS_FILE | HOSTALIASES | PAGER | LESSOPEN | LESSCLOSE | \
+      KUBECTL_EXTERNAL_DIFF | ftp_proxy | FTP_PROXY | EDITOR | VISUAL | BROWSER | \
       LC_* | LD_* | DYLD_* | BASH_FUNC_* | __mdrb_* | MD_RUNBOOK_GATE_* | GIT_CONFIG_KEY_* | GIT_CONFIG_VALUE_*) return 0 ;;
   esac
   return 1
 }
-# Names of the gate's own environment the cells' shell doesn't get: what changes how a shell or
-# the dynamic loader starts (sshd may pass them from the client). PATH and the locale are set.
-is_env_unsafe() {
-  case $1 in
-    PATH | IFS | ENV | BASH_ENV | CDPATH | GLOBIGNORE | SHELLOPTS | BASHOPTS | PS1 | PS2 | PS3 | PS4 | PROMPT_COMMAND | \
-      PWD | OLDPWD | LC_* | LANG | LANGUAGE | LD_* | DYLD_* | BASH_FUNC_* | BASH_COMPAT | BASH_XTRACEFD | HISTFILE | \
-      GCONV_PATH | LOCPATH | GLIBC_TUNABLES | POSIXLY_CORRECT | EXECIGNORE | __mdrb_* | MD_RUNBOOK_GATE_*) return 0 ;;
-  esac
-  return 1
-}
+# The gate's own environment the cells' shell gets: these names only (security review round 3).
+# Not what sshd's environment= or ~/.ssh/environment may add (proxies, NODE_OPTIONS, KUBECONFIG).
+# SHELL, PATH, LANG and KUBECONFIG are the gate's (gate.conf).
+cells_env_names='HOME USER LOGNAME SSH_CLIENT SSH_CONNECTION SSH_TTY TERM TZ TMPDIR'
 
 # The command that prints the sha256 of stdin (hex, then a space): absolute, so the cells' shell
 # runs this one whatever its PATH.
@@ -372,11 +406,28 @@ case $cmd in
 esac
 
 
-# authorized_keys as paths: %h, %u and relative paths, as sshd reads AuthorizedKeysFile.
+# authorized_keys as paths: the tokens sshd expands in AuthorizedKeysFile (%h, %u, %U, %%), and
+# relative paths. Any other token is an error: a file the gate didn't read could let a key in.
 keys_files=
 for f in $authorized_keys; do
-  case $f in %h/* | %h) f=${HOME:-}${f#%h} ;; esac
-  case $f in *%u*) f=$(printf '%s' "$f" | sed "s/%u/$account/g") ;; esac
+  _p=
+  while :; do
+    case $f in
+      *%*) ;;
+      *) break ;;
+    esac
+    _p=$_p${f%%\%*}
+    f=${f#*%}
+    case $f in
+      h*) _p=$_p${HOME:-} ;;
+      u*) _p=$_p$account ;;
+      U*) _p=$_p$uid ;;
+      %*) _p=$_p% ;;
+      *) fatal "authorized_keys = $authorized_keys: unknown token %${f%"${f#?}"} (sshd expands %h, %u, %U and %%)" ;;
+    esac
+    f=${f#?}
+  done
+  f=$_p$f
   case $f in /*) ;; *) f=${HOME:-}/$f ;; esac
   keys_files="${keys_files:+$keys_files }$f"
 done
@@ -400,17 +451,21 @@ conf_unsigned() {
   } END { print (u == "" ? "refuse" : u) }' "$1"
 }
 
-# keys_parse FILE: "LINE<TAB>KIND<TAB>COMMAND" per key line (comments and blank lines skipped).
-# KIND: cmd (a command= option), nocmd, bad (an open quote, two command= options). Options as
-# sshd reads them: comma-separated up to the first blank outside quotes, \" in quotes a quote.
+# keys_parse FILE: "LINE<TAB>KIND<TAB>OPEN<TAB>COMMAND" per key line (comments and blank lines
+# skipped). KIND: cmd (a command= option), nocmd, bad (an open quote, two command= options).
+# OPEN: - when the line turns off forwarding, the pty and ~/.ssh/rc (restrict, or all five no-*
+# options) and turns none of them on again; else the options to change, comma-separated.
+# Options as sshd reads them: comma-separated up to the first blank outside quotes, \" in quotes
+# a quote.
 keys_parse() {
   awk '
     { sub(/\r$/, "") }
     /^[ \t]*$/ || /^[ \t]*#/ { next }
     {
       s = $0; sub(/^[ \t]+/, "", s)
-      if (s ~ /^(ssh-|ecdsa-|sk-)/) { print NR "\tnocmd\t"; next }
+      if (s ~ /^(ssh-|ecdsa-|sk-)/) { print NR "\tnocmd\trestrict\t"; next }
       n = length(s); i = 1; inq = 0; cur = ""; cmd = ""; ncmd = 0
+      split("", seen); again = ""
       while (i <= n) {
         c = substr(s, i, 1)
         if (inq) {
@@ -423,6 +478,9 @@ keys_parse() {
         if (c == "," || c == " " || c == "\t") {
           name = tolower(cur); sub(/=.*/, "", name)
           if (name == "command") { v = cur; sub(/^[^=]*=/, "", v); cmd = v; ncmd++ }
+          seen[name] = 1
+          # What turns on again what restrict turns off.
+          if (name ~ /^(port-forwarding|permitopen|permitlisten|pty|user-rc|x11-forwarding|agent-forwarding)$/) again = again (again == "" ? "" : ",") name
           cur = ""
           if (c != ",") break
           i++
@@ -431,16 +489,51 @@ keys_parse() {
         cur = cur c
         i++
       }
-      if (inq || ncmd > 1) { print NR "\tbad\t"; next }
-      print NR "\t" (ncmd ? "cmd" : "nocmd") "\t" cmd
+      if (inq || ncmd > 1) { print NR "\tbad\t-\t"; next }
+      open = again
+      if (!("restrict" in seen) && !(("no-port-forwarding" in seen) && ("no-agent-forwarding" in seen) && ("no-x11-forwarding" in seen) && ("no-pty" in seen) && ("no-user-rc" in seen)))
+        open = "restrict" (open == "" ? "" : "," open)
+      print NR "\t" (ncmd ? "cmd" : "nocmd") "\t" (open == "" ? "-" : open) "\t" cmd
     }' "$1"
 }
 
 # line_unsigned COMMAND: allow or refuse, what a key line whose command= is COMMAND gets; fails
 # when COMMAND is not this gate with its own options only (nothing a shell would read more in).
+# cmd_words TEXT: TEXT read as a simple sh word list, one word per line: blanks between words,
+# '…' and "…" quotes, nothing a shell would expand or run ($, `, \, ;, |, & and the like): else
+# it fails.
+cmd_words() {
+  printf '%s\n' "$1" | awk '
+    {
+      s = $0; n = length(s); i = 1; w = ""; inw = 0
+      while (i <= n) {
+        c = substr(s, i, 1)
+        if (c == " " || c == "\t") { if (inw) print w; w = ""; inw = 0; i++; continue }
+        if (c == "\047" || c == "\"") {
+          j = index(substr(s, i + 1), c)
+          if (j == 0) exit 1
+          t = substr(s, i + 1, j - 1)
+          if (c == "\"" && t ~ /[$`\\]/) exit 1
+          w = w t; inw = 1; i += j + 1
+          continue
+        }
+        if (c !~ /[A-Za-z0-9._\/@:,+=%-]/) exit 1
+        w = w c; inw = 1; i++
+      }
+      if (inw) print w
+    }'
+}
+
 line_unsigned() {
-  # shellcheck disable=SC2086
-  set -- $1
+  # The command as sh reads it (security review round 3: exec and quoted values are fine).
+  _w=$(cmd_words "$1") || return 1
+  set --
+  while IFS= read -r _x; do
+    set -- "$@" "$_x"
+  done <<EOF
+$_w
+EOF
+  [ "${1:-}" = exec ] && shift
   case ${1:-} in sh | /bin/sh | /usr/bin/sh | dash | /bin/dash | /usr/bin/dash | bash | /bin/bash | /usr/bin/bash) shift ;; esac
   [ $# -ge 1 ] || return 1
   _g=$1
@@ -453,15 +546,16 @@ line_unsigned() {
   _u=
   _c=/etc/md-runbook/gate.conf
   _cset=
+  # --sshd-force-command is for sshd_config's ForceCommand, never a key line.
   for _a in "$@"; do
     case $_a in
-      *[!A-Za-z0-9._/@:,+=-]*) return 1 ;;
       --unsigned=allow | --unsigned=refuse) _u=${_a#*=} ;;
       --config=?*)
         _c=${_a#*=}
         _cset=1
         ;;
-      --scopes=?* | --signers=[1-5] | --who=?* | --sshd-force-command) ;;
+      --scopes=*[!A-Za-z0-9._/@:,+-]*) return 1 ;;
+      --scopes=?* | --signers=[1-5] | --who=?*) ;;
       *) return 1 ;;
     esac
   done
@@ -507,11 +601,23 @@ else
     [ -e "$f" ] || [ -L "$f" ] || continue
     [ -r "$f" ] || account_fatal "can't read $f (authorized_keys in $config): the gate checks every key of this account"
     keys=$(keys_parse "$f") || account_fatal "can't read $f (authorized_keys in $config)"
-    while IFS=$tab read -r ln kind kcmd; do
+    while IFS=$tab read -r ln kind kopen kcmd; do
       [ -n "$ln" ] || continue
       nlines=$((nlines + 1))
       id=$ln
       [ "$nfiles" -gt 1 ] && id="$f:$ln"
+      # Without restrict, forwarding runs code without a signature: -L to docker.sock, say
+      # (security review round 3).
+      if [ "$kind" = cmd ]; then
+        case $kopen in
+          -) ;;
+          restrict*) problems="$problems$nl  $f line $ln: add restrict, (else port forwarding and the like stay open)" ;;
+        esac
+        case ${kopen#restrict} in
+          '' | - | ,) ;;
+          *) problems="$problems$nl  $f line $ln: remove $(printf '%s' "${kopen#restrict}" | sed 's/^,//') (it turns on again what restrict turns off)" ;;
+        esac
+      fi
       case $kind in
         cmd)
           if u=$(line_unsigned "$kcmd"); then
@@ -536,6 +642,39 @@ EOF
   fi
   if [ -n "$allow_ids" ]; then account_kind=allow; else account_kind=refuse; fi
 fi
+
+# ---- what runs before the gate ----
+# sshd starts the forced command with the account's login shell (`SHELL -c COMMAND`), and before
+# that ~/.ssh/rc unless the key line or sshd_config turns it off. Debian's bash reads ~/.bashrc
+# for `bash -c` under sshd, zsh ~/.zshenv: a file the account can write would run before every
+# gate session (security review round 3).
+if [ "$login_shell_check" = yes ] && [ -n "${SSH_CLIENT:-}${SSH_CONNECTION:-}" ]; then
+  login_shell=
+  command -v getent >/dev/null 2>&1 && login_shell=$(getent passwd "$account" 2>/dev/null | cut -d: -f7)
+  [ -n "$login_shell" ] || login_shell=${SHELL:-}
+  case ${login_shell##*/} in
+    # These read no file of the account for `-c`.
+    sh | dash | ash | ksh | ksh93 | mksh | lksh | oksh | posh) ;;
+    *)
+      case ${login_shell##*/} in
+        bash) rcs=.bashrc ;;
+        zsh) rcs=.zshenv ;;
+        csh | tcsh) rcs='.cshrc .tcshrc' ;;
+        *) rcs= ;;
+      esac
+      found=
+      for r in $rcs; do [ -e "${HOME:-}/$r" ] && found="${HOME:-}/$r"; done
+      if [ -n "$found" ] || [ -w "${HOME:-/}" ]; then
+        account_fatal "this account's login shell is ${login_shell:-unknown}: it can run ${found:-files in the home folder} before the gate. Make it /bin/sh: usermod -s /bin/sh $account"
+      fi
+      ;;
+  esac
+fi
+# With ForceCommand the key lines may lack restrict: sshd_config must say PermitUserRC no, and
+# the gate refuses while there is a ~/.ssh/rc that sshd may have run.
+if [ -n "$sshd_force_command" ] && { [ -e "${HOME:-}/.ssh/rc" ] || [ -L "${HOME:-}/.ssh/rc" ]; }; then
+  account_fatal "${HOME:-}/.ssh/rc runs before the gate: remove it, and set PermitUserRC no in sshd_config"
+fi
 # This login's own options must be the account's kind: else its key is not where the gate looked.
 [ "$unsigned" = "$account_kind" ] ||
   account_fatal "this login has unsigned = $unsigned, but the account's keys say $account_kind: is its key in $authorized_keys?"
@@ -552,9 +691,12 @@ fi
 # Never a parameter value or an output. Sent by curl in the background after the session, so it
 # never holds up or fails a run; each try is logged as a `report` event.
 #
-# While the session runs: $work/report-runs gets "N HASH CELL STEP TIME" per run (STEP - for a
-# whole block), and the shell adds "N EXIT TIME" to $work/report-exits when run N ends. A run
-# with no end (the session was cut, or a block ran `exit`) makes the summary `stopped`.
+# While the session runs, the gate keeps "N HASH CELL STEP TIME NONCE" per run in memory (STEP -
+# for a whole block; NONCE random). The shell adds "N EXIT TIME NONCE" to $work/report-exits when
+# run N ends: the nonce is in the text it gets after the block, so no block can write a line
+# that counts for another run; the first line with the right nonce counts (security review
+# round 3). A run with no end (the session was cut, or a block ran `exit`) makes the summary
+# `stopped`.
 
 # report_json HASH NOW: the summary of the runbook with manifest HASH, from the files above.
 report_json() {
@@ -572,21 +714,28 @@ report_json() {
   # A block's state is its last run's: failed on a non-zero exit; passed when it ran whole, or
   # its last command ran; otherwise (only some commands, or no end) not-run.
   # The file names through the environment: awk -v would read backslashes in them as escapes.
-  tail=$(L="$out/labels" E="$work/report-exits" R="$work/report-runs" awk -F '\t' -v h="$rh" -v now="$2" '
+  tail=$(L="$out/labels" E="$work/report-exits" R="$out/runs" awk -F '\t' -v h="$rh" -v now="$2" '
     FILENAME == ENVIRON["L"] { label[$1] = $2; last[$1] = $3; if ($1 + 0 > cells) cells = $1 + 0; next }
-    FILENAME == ENVIRON["E"] { rc[$1] = $2; et[$1] = $3; next }
     FILENAME == ENVIRON["R"] {
       if ($2 != h) next
-      c = $3 + 0
-      if (started == "") started = $5
-      ran[c] = 1
-      if (!($1 in rc)) { state[c] = "not-run"; stopped = 1; next }
-      if (et[$1] > ended) ended = et[$1]
-      if (rc[$1] != 0) state[c] = "failed"
-      else if ($4 == "-" || $4 + 0 == last[c] + 0) state[c] = "passed"
-      else state[c] = "not-run"
+      order[++runs] = $1; cell[$1] = $3 + 0; step[$1] = $4; st[$1] = $5; nonce[$1] = $6
+      next
+    }
+    FILENAME == ENVIRON["E"] {
+      if (($1 in nonce) && !($1 in rc) && nonce[$1] != "" && $4 == nonce[$1]) { rc[$1] = $2; et[$1] = $3 }
+      next
     }
     END {
+      for (i = 1; i <= runs; i++) {
+        r = order[i]; c = cell[r]
+        if (started == "") started = st[r]
+        ran[c] = 1
+        if (!(r in rc)) { state[c] = "not-run"; stopped = 1; continue }
+        if (et[r] > ended) ended = et[r]
+        if (rc[r] != 0) state[c] = "failed"
+        else if (step[r] == "-" || step[r] + 0 == last[c] + 0) state[c] = "passed"
+        else state[c] = "not-run"
+      }
       steps = ""; rl = ""; p = 0; f = 0; nr = 0
       for (n = 1; n <= cells; n++) {
         s = (n in state) ? state[n] : "not-run"
@@ -598,7 +747,7 @@ report_json() {
       if (ended == "" || stopped) ended = now
       printf "\"steps\":[%s],\"ran\":[%s],\"totals\":{\"steps\":%d,\"passed\":%d,\"failed\":%d,\"skipped\":0,\"notRun\":%d,\"byHand\":0},", steps, rl, cells, p, f, nr
       printf "\"green\":%s,\"started\":\"%s\",\"ended\":\"%s\"%s", (cells > 0 && f == 0 && nr == 0) ? "true" : "false", started, ended, stopped ? ",\"stopped\":true" : ""
-    }' "$out/labels" "$work/report-exits" "$work/report-runs")
+    }' "$out/labels" "$out/runs" "$work/report-exits")
   # Name and version from the manifest itself (its hash was checked); the signers from the meta.
   rname=$(awk '$1 == "name" { print $2; exit }' "$work/rb-$rh")
   rversion=$(awk '$1 == "version" { print $2; exit }' "$work/rb-$rh")
@@ -612,8 +761,9 @@ report_json() {
     "$(json_str "$(uname -n 2>/dev/null | cut -c 1-255)")" "$(json_str "$(printf '%s' "$account" | cut -c 1-64)")" "$rfrom" "$tail"
 }
 
+# (In serve, which keeps the runs in memory.)
 send_reports() {
-  [ -n "$report_on" ] && [ -s "$work/report-runs" ] || return 0
+  [ -n "$report_on" ] && [ -n "$report_runs" ] || return 0
   command -v curl >/dev/null 2>&1 || {
     log_event event report status skipped reason "no curl on this server"
     return 0
@@ -635,8 +785,10 @@ send_reports() {
   fi
   printf 'content-type: application/json\n' >>"$out/headers"
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  printf '%s' "$report_runs" >"$out/runs"
+  : >>"$work/report-exits"
   i=0
-  for h in $(cut -f 2 "$work/report-runs" | awk '!seen[$0]++'); do
+  for h in $(cut -f 2 "$out/runs" | awk '!seen[$0]++'); do
     # The copy of the manifest is named by its hash: one a cell changed is not reported.
     printf '%s' "$h" | grep -qx '[0-9a-f]\{64\}' && [ -f "$work/rb-$h" ] && [ "$(sha256 "$work/rb-$h")" = "$h" ] || continue
     i=$((i + 1))
@@ -662,7 +814,7 @@ send_reports() {
       log_event event report status "$status" http "$code" url "$report_to" runbook "$rname" version "$rversion"
     done <"$out/list"
     rm -rf "$out"
-  ) </dev/null >/dev/null 2>&1 3<&- &
+  ) </dev/null >/dev/null 2>&1 3<&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 }
 
 # ---- a session ----
@@ -679,22 +831,41 @@ while [ ${#token} -lt 14 ]; do token=0$token; done
 token=1${token%"${token#??????????????}"}
 skey=$(printf '%s' "$token" | sha256_in)
 server=
+# How the cells' shells get a process group of their own, so that their blocks' background
+# programs end with them: setsid (Linux), else perl (macOS), else not (security review round 3).
+if group_bin=$(command -v setsid 2>/dev/null) && [ -n "$group_bin" ]; then
+  group=setsid
+elif group_bin=$(command -v perl 2>/dev/null) && [ -n "$group_bin" ]; then
+  group=perl
+else
+  group=
+fi
+# stop_group PID: TERM to the process group PID leads (its shell and what its blocks started).
+stop_group() {
+  is_pid "$1" || return 0
+  [ -n "$group" ] && kill -s TERM -- "-$1" 2>/dev/null
+  kill -s TERM "$1" 2>/dev/null
+  return 0
+}
 cleanup() {
   [ -n "$server" ] && kill "$server" 2>/dev/null
-  if [ -f "$state/pids/$skey" ]; then
-    p=$(head -n 1 "$state/pids/$skey")
-    is_pid "$p" && kill "$p" 2>/dev/null
-    rm -f "$state/pids/$skey"
-  fi
-  send_reports
+  # Every shell of the session, with what its blocks started. (Their pids, from the watchers.)
+  set +f
+  for p in "$work"/shell-*.pid; do
+    [ -f "$p" ] && stop_group "$(head -n 1 "$p")"
+  done
+  set -f
+  # serve sends the run reports before it ends.
+  [ -n "$server" ] && wait "$server" 2>/dev/null
+  rm -f "$state/pids/$skey"
   rm -rf "$work"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 # The shell the cells run in: bash --noprofile --norc, else sh, found in gate.conf's path. It
-# reads only what this gate writes; the cells themselves read /dev/null. It gets the gate's own
-# environment (what sshd set) without the names is_env_unsafe lists, PATH and LANG from gate.conf,
+# reads only what this gate writes; the cells themselves read /dev/null. Its environment: the
+# names in cells_env_names from the gate's own, SHELL, PATH, LANG and KUBECONFIG from gate.conf,
 # and MD_RUNBOOK_GATE_WHO (the key). During a signed run MD_RUNBOOK_GATE_RUN (its id) lets tools
 # log against it (md-runbook-probe on the ops host).
 if cells_bin=$(in_cells_path bash); then
@@ -706,55 +877,156 @@ else
 fi
 log_event event session unsigned "$unsigned" scopes "$scopes" key_scopes "$key_scopes"
 [ -n "$report_problem" ] && log_event event report status off reason "$report_problem"
-if [ -n "$report_on" ]; then
-  : >"$work/report-runs"
-  : >"$work/report-exits"
-fi
+[ -n "$report_on" ] && : >"$work/report-exits"
+report_runs=
 
-# ---- the cells' shell (in serve) ----
-# A fresh one for each signed runbook: functions, aliases, traps, options and variables of an
-# earlier runbook don't carry over (security review, 2026-11-16). The cells of one runbook share
-# theirs, as in a plain session. A watcher waits for it: when it ends by itself (`exit` in a
-# cell), the session ends, as in a plain session.
+# ---- the cells' shells (in serve) ----
+# One for each signed runbook of the session: functions, aliases, traps, options and variables
+# of another runbook don't carry over (security review, 2026-11-16). The cells of one runbook
+# share theirs, as in a plain session, also when the session goes back to it after a call into
+# another runbook (security review round 3). Up to 6 at a time, one per file descriptor 4 to 9:
+# a 7th runbook ends the shell least recently used.
+#
+# Each shell reads a pipe only this gate holds: a FIFO in a folder of its own, removed as soon as
+# both ends are open, so no other process can open it by name. (A process already running as
+# the account could still reach it through /proc: out of scope, see the top of this file.)
+#
+# A watcher waits for each shell. When it ends by itself (`exit` in a cell), the session ends, as
+# in a plain session; when it ends, its process group goes too.
 shells=0
-watcher=
+uses=0
+slots='4 5 6 7 8 9'
+# The slot of fd N: sl_n_N (the shell's number), sl_hash_N (its runbook's manifest hash, '' for
+# the session's first shell before a load), sl_dirty_N (it ran unsigned text), sl_used_N,
+# sl_watch_N (the watcher's pid).
+slot() {
+  sv=
+  eval "sv=\${sl_$1_$2-}"
+}
+slot_set() { eval "sl_$1_$2=\$3"; }
 start_shell() {
+  _fd=$1
   shells=$((shells + 1))
-  fifo=$(new_name in) && mkfifo "$fifo" || {
+  _n=$shells
+  _pd=$(mktemp -d "$work/pipe.XXXXXX") && mkfifo "$_pd/in" || {
     say "can't create a pipe"
     exit 2
   }
   (
-    set --
-    for _n in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
-      case $_n in _) continue ;; esac
-      is_env_unsafe "$_n" && continue
-      eval "[ \"\${$_n+x}\" = x ]" || continue
+    set -- SHELL="$cells_bin" PATH="$cells_path" LANG="$cells_locale" MD_RUNBOOK_GATE_WHO="$who"
+    [ -n "$cells_kubeconfig" ] && set -- "$@" KUBECONFIG="$cells_kubeconfig"
+    for _e in $cells_env_names; do
+      eval "[ \"\${$_e+x}\" = x ]" || continue
       _v=
-      eval "_v=\${$_n}"
-      set -- "$@" "$_n=$_v"
+      eval "_v=\${$_e}"
+      set -- "$@" "$_e=$_v"
     done
     # shellcheck disable=SC2086
-    env -i "$@" PATH="$cells_path" LANG="$cells_locale" MD_RUNBOOK_GATE_WHO="$who" "$cells_bin" $cells_args <"$fifo" &
+    case $group in
+      setsid) env -i "$@" "$group_bin" "$cells_bin" $cells_args <"$_pd/in" & ;;
+      perl) env -i "$@" "$group_bin" -e 'setpgrp(0, 0); exec { $ARGV[0] } @ARGV or die "md-runbook-gate: $!\n"' "$cells_bin" $cells_args <"$_pd/in" & ;;
+      *) env -i "$@" "$cells_bin" $cells_args <"$_pd/in" & ;;
+    esac
     sh_pid=$!
-    t=$(mktemp "$state/pids/.new.XXXXXX") && printf '%s\n' "$sh_pid" >"$t" && mv -f "$t" "$state/pids/$skey"
+    printf '%s\n' "$sh_pid" | write_new "$work/shell-$_n.pid"
     wait "$sh_pid"
-    rm -f "$state/pids/$skey"
-    [ -e "$work/retired-$shells" ] || [ -L "$work/retired-$shells" ] || kill -TERM "$serve_pid" 2>/dev/null
-  ) </dev/null 3<&- 4>&- &
-  watcher=$!
-  exec 4>"$fifo"
-  shell_runbook=
-  exported=
+    [ -n "$group" ] && kill -s TERM -- "-$sh_pid" 2>/dev/null
+    rm -f "$work/shell-$_n.pid"
+    [ -e "$work/retired-$_n" ] || [ -L "$work/retired-$_n" ] || kill -TERM "$serve_pid" 2>/dev/null
+  ) </dev/null 3<&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+  slot_set watch "$_fd" $!
+  eval "exec $_fd>\"\$_pd/in\""
+  rm -rf "$_pd"
+  slot_set n "$_fd" "$_n"
+  slot_set hash "$_fd" ''
+  slot_set dirty "$_fd" ''
 }
-# The shell ends once it has run what it was sent: then the next one starts, in order.
+# use_slot FD: the shell the next requests go to.
+use_slot() {
+  cur=$1
+  uses=$((uses + 1))
+  slot_set used "$cur" "$uses"
+  pid_shown=
+}
+# The current shell's pid, for stop requests (a second connection): published once per switch,
+# when the watcher has written it.
+show_pid() {
+  [ -z "$pid_shown" ] || return 0
+  slot n "$cur"
+  [ -f "$work/shell-$sv.pid" ] || return 0
+  _p=$(head -n 1 "$work/shell-$sv.pid")
+  is_pid "$_p" || return 0
+  _t=$(mktemp "$state/pids/.new.XXXXXX") && printf '%s\n' "$_p" >"$_t" && mv -f "$_t" "$state/pids/$skey"
+  pid_shown=1
+}
+# retire_shell FD: the shell ends once it has run what it was sent, then its process group.
 retire_shell() {
-  [ -n "$watcher" ] || return 0
-  (set -C && : >"$work/retired-$shells") 2>/dev/null
-  exec 4>&-
-  wait "$watcher"
-  watcher=
-  rm -f "$fifo" "$work/retired-$shells"
+  slot n "$1"
+  [ -n "$sv" ] || return 0
+  _n=$sv
+  (set -C && : >"$work/retired-$_n") 2>/dev/null
+  eval "exec $1>&-"
+  slot watch "$1"
+  wait "$sv"
+  rm -f "$work/retired-$_n"
+  [ "$1" = "$cur" ] && rm -f "$state/pids/$skey"
+  slot_set n "$1" ''
+  slot_set hash "$1" ''
+  slot_set dirty "$1" ''
+}
+# shell_for HASH: the slot for the runbook with this manifest hash: its own shell; else the
+# session's first one if it ran nothing yet; else a new one. A shell that ran unsigned text is
+# never one a signed runbook gets (security review round 3).
+shell_for() {
+  # The current shell's runbook ('' for the session's first shell, before any load).
+  slot hash "$cur"
+  _h=$sv
+  _to=
+  for _s in $slots; do
+    slot n "$_s"
+    [ -n "$sv" ] || continue
+    slot hash "$_s"
+    [ "$sv" = "$1" ] && _to=$_s
+  done
+  if [ -n "$_to" ]; then
+    slot dirty "$_to"
+    if [ -n "$sv" ]; then
+      retire_shell "$_to"
+      start_shell "$_to"
+    fi
+  else
+    slot dirty "$cur"
+    if [ -z "$_h" ] && [ -z "$sv" ]; then
+      _to=$cur
+    else
+      # A free slot, else the one least recently used.
+      _old=
+      for _s in $slots; do
+        slot n "$_s"
+        if [ -z "$sv" ]; then
+          _to=$_s
+          break
+        fi
+        [ "$_s" = "$cur" ] && continue
+        slot used "$_s"
+        if [ -z "$_old" ] || [ "$sv" -lt "$_oldu" ]; then
+          _old=$_s
+          _oldu=$sv
+        fi
+      done
+      if [ -z "$_to" ]; then
+        _to=$_old
+        retire_shell "$_to"
+      fi
+      start_shell "$_to"
+    fi
+  fi
+  # The session's first shell, left without a runbook, is of no more use.
+  if [ "$cur" != "$_to" ] && [ -z "$_h" ]; then
+    retire_shell "$cur"
+  fi
+  slot_set hash "$_to" "$1"
+  use_slot "$_to"
 }
 
 loaded=
@@ -765,10 +1037,7 @@ mname=
 mversion=
 step_cell=
 step_next=
-# The hash of the runbook the current shell runs ('' before the first one).
-shell_runbook=
-# Run files are numbered by the gate, not named by the client's request id: a reused id would
-# replace code still waiting in the shell's queue (running a later step before an earlier one).
+# Runs are numbered by the gate (for the report), not by the client's request id.
 runs=0
 # The parameters' names (their values in __p_NAME) and the names exported to the shell for the
 # loaded runbook, unset when the next one loads. In memory only: nothing a cell could change.
@@ -815,7 +1084,7 @@ do_load() {
   clear_params
   # The previous runbook's parameters and env.* values don't carry over to this one.
   if [ -n "$exported" ]; then
-    printf 'unset %s\n' "$exported" >&4
+    printf 'unset %s\n' "$exported" >&"$cur"
     exported=
   fi
   # Kept in memory: what was verified is what runs (a trailing . keeps the final newline).
@@ -947,12 +1216,8 @@ do_load() {
       return
     fi
   done
-  # Another runbook than the shell ran: a fresh shell (the same one loaded again keeps its shell).
-  if [ -n "$shell_runbook" ] && [ "$shell_runbook" != "$mhash" ]; then
-    retire_shell
-    start_shell
-  fi
-  shell_runbook=$mhash
+  # This runbook's own shell (the same one loaded again, or after a call, keeps it).
+  shell_for "$mhash"
   loaded=1
   step_cell=
   # For the run report: what this manifest is, kept by its hash for the end of the session.
@@ -1129,14 +1394,17 @@ kube_want() {
     }'
 }
 
-# Write the commands that run the run file $3 (sha256 $4) in the shell, with the cell's cwd= and
-# environment. The shell checks the file's hash again right before it sources it: a file a cell
-# changed in between doesn't run.
+# Write the commands that run the code $3 in the shell, with the cell's cwd= and environment.
+# The code goes through the shell's pipe itself, single-quoted, and runs as the body of a
+# function (`return` ends the block, as `.` did). Never a file: a file can be swapped between a
+# hash check and the read (a FIFO serves the check one text and the shell another; security
+# review round 3). $4: the nonce of this run's line in report-exits.
 emit_run() {
   rid=$1
   cell=$2
-  file=$3
-  fhash=$4
+  code=$3
+  nonce=$4
+  show_pid
   {
     for n in $pnames; do
       is_var "$n" && ! is_reserved "$n" || continue
@@ -1150,7 +1418,11 @@ emit_run() {
       printf 'export %s=%s\n' "$k" "$(sq "$(printf '%s' "${kv#*=}" | b64d)")"
       add_exported "$k"
     done
-    printf '__mdrb_id=%s\n__mdrb_f=%s\n__mdrb_h=%s\n__mdrb_rc=0\n__mdrb_kr=\n' "$rid" "$(sq "$file")" "$fhash"
+    printf '__mdrb_id=%s\n__mdrb_rc=0\n__mdrb_kr=\n' "$rid"
+    # The code, quoted as sq does, with its last newline (a here-document may end the block).
+    printf "__mdrb_c='"
+    printf '%s\n' "$code" | sed "s/'/'\\\\''/g"
+    printf "'\n"
     printf 'export MD_RUNBOOK_GATE_RUN=%s\n' "$rid"
     cwd64=$(mfield cwd "$cell" 2)
     if [ -n "$cwd64" ]; then
@@ -1182,17 +1454,14 @@ EOF
 EOF
       fi
     fi
-    printf 'if [ "$__mdrb_rc" = 0 ]; then __mdrb_x=$(%s %s <"$__mdrb_f" 2>/dev/null); fi\n' "$(sq "$sha_bin")" "$sha_args"
     cat <<'EOF'
-if [ "$__mdrb_rc" = 0 ]; then if [ "${__mdrb_x%% *}" = "$__mdrb_h" ]; then . "$__mdrb_f" </dev/null; __mdrb_rc=$?; else printf '%s\n' "md-runbook-gate: the block changed on disk after the gate wrote it: nothing ran" >&2; __mdrb_rc=126; fi; fi
+if [ "$__mdrb_rc" = 0 ]; then __mdrb_run() { eval "$__mdrb_c"; }; __mdrb_run </dev/null; __mdrb_rc=$?; fi; unset -f __mdrb_run; unset __mdrb_c
 EOF
     [ -n "$cwd64" ] && echo '[ -n "$__mdrb_in" ] && cd -- "$__mdrb_cd" 2>/dev/null'
-    echo 'rm -f "$__mdrb_f"'
     if [ -n "$report_on" ]; then
+      # The nonce only in what the shell reads after the block.
       printf '__mdrb_n=%s\n__mdrb_rx=%s\n' "$runs" "$(sq "$work/report-exits")"
-      cat <<'EOF'
-printf '%s\t%s\t%s\n' "$__mdrb_n" "$__mdrb_rc" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$__mdrb_rx" 2>/dev/null
-EOF
+      printf 'printf '\''%%s\\t%%s\\t%%s\\t%%s\\n'\'' "$__mdrb_n" "$__mdrb_rc" "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)" %s >>"$__mdrb_rx" 2>/dev/null\n' "$nonce"
     fi
     if [ "$log" = syslog ]; then
       cat <<'EOF'
@@ -1207,7 +1476,7 @@ EOF
     cat <<'EOF'
 printf '\036%s %s\n' "__MDRB_${__mdrb_id}__" "$__mdrb_rc" >&2; printf '\036%s %s\n' "__MDRB_${__mdrb_id}__" "$__mdrb_rc"
 EOF
-  } >&4
+  } >&"$cur"
 }
 
 # do_run ID CELL [K]: a whole signed cell, or its K-th command.
@@ -1283,14 +1552,13 @@ do_run() {
   }
   code=${code%.}
   runs=$((runs + 1))
-  # A new file each time (noclobber): never written through a link a cell planted.
-  rf=$(new_name run) && printf '%s' "$code" | write_new "$rf" || {
-    refuse "$rid" "can't write the block for the shell"
-    return
-  }
   log_event event run id "$rid" runbook "$mname" version "$mversion" hash "$mhash" signer "$principal" cell "$cell" step "$k"
-  [ -n "$report_on" ] && printf '%s\t%s\t%s\t%s\t%s\n' "$runs" "$mhash" "$cell" "${k:--}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$work/report-runs"
-  emit_run "$rid" "$cell" "$rf" "$(printf '%s' "$code" | sha256_in)"
+  nonce=
+  if [ -n "$report_on" ]; then
+    nonce=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -cd '0-9a-f')
+    report_runs="$report_runs$runs	$mhash	$cell	${k:--}	$(date -u +%Y-%m-%dT%H:%M:%SZ)	$nonce$nl"
+  fi
+  emit_run "$rid" "$cell" "$code" "$nonce"
 }
 
 do_raw() {
@@ -1309,9 +1577,12 @@ do_raw() {
   }
   # Straight to the shell, never to disk: the text exports the cell's secret values.
   log_event event unsigned id "$rid" hash "$(printf '%s' "$2" | b64d | sha256_in)"
+  # This shell ran unsigned text: no signed runbook gets it again (security review round 3).
+  slot_set dirty "$cur" 1
+  show_pid
   # Not a signed run: tools must not log against the last one.
-  printf 'unset MD_RUNBOOK_GATE_RUN\n' >&4
-  printf '%s' "$2" | b64d >&4
+  printf 'unset MD_RUNBOOK_GATE_RUN\n' >&"$cur"
+  printf '%s' "$2" | b64d >&"$cur"
 }
 
 # do_context ID: `kubectl config current-context` in the shell, for the app's kube-context guard.
@@ -1323,20 +1594,25 @@ do_context() {
     return
   }
   log_event event context id "$rid"
+  show_pid
   {
     printf '__mdrb_id=%s\n' "$rid"
     echo 'kubectl config current-context </dev/null; __mdrb_rc=$?'
     cat <<'EOF'
 printf '\036%s %s\n' "__MDRB_${__mdrb_id}__" "$__mdrb_rc" >&2; printf '\036%s %s\n' "__MDRB_${__mdrb_id}__" "$__mdrb_rc"
 EOF
-  } >&4
+  } >&"$cur"
 }
 
 serve() {
   # This subshell's own pid (a child's parent): the watcher stops it when the shell ends by itself.
   serve_pid=$(exec sh -c 'echo "$PPID"')
-  start_shell
-  while IFS= read -r line; do
+  # A TERM (the watcher, or the gate ending) ends the loop below; then the run reports go out.
+  serve_term=
+  trap 'serve_term=1' HUP INT TERM
+  start_shell 4
+  use_slot 4
+  while [ -z "$serve_term" ] && IFS= read -r line; do
     [ ${#line} -le 4000000 ] || {
       say "request too long"
       continue
@@ -1374,8 +1650,15 @@ serve() {
       *) refuse "$rid" "unknown request $verb" ;;
     esac
   done
-  # The client is done: the shell runs what it was sent, then ends.
-  retire_shell
+  # The client is done: each shell runs what it was sent, then ends. Cut short (TERM): they end now.
+  for _s in $slots; do
+    if [ -n "$serve_term" ]; then
+      slot n "$_s"
+      [ -n "$sv" ] && [ -f "$work/shell-$sv.pid" ] && stop_group "$(head -n 1 "$work/shell-$sv.pid")"
+    fi
+    retire_shell "$_s"
+  done
+  send_reports
 }
 
 exec 3<&0

@@ -222,9 +222,11 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
     const lines = { strict: await line('strict', '', strict), lenient: await line('lenient', ' --unsigned=allow --who=lenient', lenient) };
     for (const [name, l] of Object.entries(lines)) {
       fs.writeFileSync(path.join(dir, `${name}.keys`), l + '\n');
+      // CI's account has bash as its login shell, which the gate refuses under sshd (~/.bashrc
+      // runs first): login_shell_check = no, as for any test server with such accounts.
       fs.writeFileSync(
         path.join(dir, `${name}.conf`),
-        `allowed_signers = ${path.join(dir, 'allowed_signers')}\nlog = ${path.join(dir, 'gate.log')}\nauthorized_keys = ${path.join(dir, `${name}.keys`)}\n`,
+        `allowed_signers = ${path.join(dir, 'allowed_signers')}\nlog = ${path.join(dir, 'gate.log')}\nauthorized_keys = ${path.join(dir, `${name}.keys`)}\nlogin_shell_check = no\n`,
       );
     }
     fs.appendFileSync(process.env.MD_RUNBOOK_SSH_AUTHORIZED_KEYS!, `${lines.strict}\n${lines.lenient}\n`);
