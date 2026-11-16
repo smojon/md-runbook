@@ -7,13 +7,19 @@ name: App TestFlight
 # - From the Actions tab, on a tag (`gh workflow run app-testflight.yml --ref vX.Y.Z`): the same,
 #   and a missing secret fails the run. Environment `release` takes only v* tags.
 #
-# Three jobs, so no key shares a runner with more than it must (as app-apk.yml):
+# Four jobs, so no key shares a runner with more than it must (as app-apk.yml):
 # - check: are the secrets there (nothing checked out, nothing installed).
-# - build: npm, Expo and CocoaPods run first, with no secret. Only then is the certificate put
-#   in a keychain of its own, for the archive and the export, and removed after. Signing is
-#   manual (certificate + profile): automatic signing would put the App Store Connect key on
-#   this runner, and cloud signing needs an Admin key.
+# - build: npm, Expo, CocoaPods and Xcode's script phases, with no secret and no environment.
+#   It archives with CODE_SIGNING_ALLOWED=NO and uploads the .xcarchive and the app's
+#   entitlements file.
+# - sign: the certificate and profile, nothing checked out or installed. It signs the archived
+#   app with the entitlements (an unsigned archive has none, so an export alone loses the push
+#   entitlement), then lets `xcodebuild -exportArchive` sign the .ipa. Signing is manual
+#   (certificate + profile): automatic signing would put the App Store Connect key here, and
+#   cloud signing needs an Admin key.
 # - upload: the App Store Connect key, with Apple's altool only: nothing checked out or installed.
+#
+# Each job takes the previous job's artifact by its ID, so no parallel job can swap it.
 on:
   workflow_dispatch:
   push:
@@ -36,6 +42,8 @@ jobs:
     environment: release
     outputs:
       ready: ${{ steps.check.outputs.ready }}
+      # IOS_PUSH can be an environment variable, which the build (no environment) can't read.
+      push: ${{ vars.IOS_PUSH != 'false' }}
     steps:
       - name: Are the TestFlight secrets set?
         id: check
@@ -67,10 +75,10 @@ jobs:
     if: needs.check.outputs.ready == 'true'
     runs-on: macos-latest
     timeout-minutes: 90
-    environment: release
     outputs:
       version: ${{ steps.version.outputs.version }}
       build: ${{ steps.version.outputs.build }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     defaults:
       run:
         working-directory: apps/mobile
@@ -82,6 +90,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
+          package-manager-cache: false
       - run: npm ci --no-audit --no-fund
       - name: Version and build number
         id: version
@@ -91,7 +100,7 @@ jobs:
           echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
       - name: Generate the iOS project (push entitlement on)
         env:
-          MD_RUNBOOK_IOS_PUSH: ${{ vars.IOS_PUSH != 'false' && '1' || '0' }}
+          MD_RUNBOOK_IOS_PUSH: ${{ needs.check.outputs.push == 'true' && '1' || '0' }}
           MD_RUNBOOK_IOS_BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: npx expo prebuild --platform ios --no-install --clean
       - name: Install the pods
@@ -103,11 +112,94 @@ jobs:
             echo "pod install failed (attempt $attempt); trying again in 20 s"
             sleep 20
           done
-      # From here on nothing new is installed: the profile, then the certificate, then Xcode.
+      # Unsigned: no certificate is on this runner. The sign job adds the signature.
+      - name: Archive (unsigned)
+        working-directory: apps/mobile/ios
+        run: |
+          ws="$(ls -d ./*.xcworkspace | head -1)"
+          scheme="$(basename "$ws" .xcworkspace)"
+          xcodebuild -workspace "$ws" -scheme "$scheme" -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/md-runbook.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            archive > "$RUNNER_TEMP/xcodebuild.log" 2>&1 || {
+            echo "::error::xcodebuild archive failed; last errors:"
+            grep -nE 'error:' "$RUNNER_TEMP/xcodebuild.log" | tail -40
+            tail -30 "$RUNNER_TEMP/xcodebuild.log"
+            exit 1
+          }
+      # The app target's entitlements file (expo prebuild writes it), for the sign job. Ruby's
+      # xcodeproj comes with the runner's CocoaPods.
+      - name: The app's entitlements and the archive, for the sign job
+        working-directory: apps/mobile/ios
+        run: |
+          ent=$(ruby -rxcodeproj -e '
+            proj = Xcodeproj::Project.open(Dir["*.xcodeproj"].first)
+            app = proj.targets.find { |t| t.product_type == "com.apple.product-type.application" } or abort("no app target")
+            puts app.build_configurations.find { |c| c.name == "Release" }.build_settings["CODE_SIGN_ENTITLEMENTS"].to_s')
+          mkdir -p "$RUNNER_TEMP/out"
+          if [ -n "$ent" ]; then
+            plutil -convert xml1 -o "$RUNNER_TEMP/out/app.entitlements" "$ent"
+          else
+            printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><dict/></plist>' > "$RUNNER_TEMP/out/app.entitlements"
+          fi
+          cat "$RUNNER_TEMP/out/app.entitlements"
+          # A tar keeps the bundle's symlinks and executable bits, which an artifact's zip drops.
+          tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/out/md-runbook.xcarchive.tar" md-runbook.xcarchive
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure()
+        with:
+          name: ios-archive-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: upload
+        with:
+          name: ios-archive-unsigned
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          retention-days: 1
+
+  sign:
+    needs: [check, build]
+    runs-on: macos-latest
+    timeout-minutes: 30
+    environment: release
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: ${{ runner.temp }}/in
+      - name: Unpack the archive
+        working-directory: ${{ runner.temp }}/in
+        run: |
+          got=$(find . -mindepth 1 ! -type d | LC_ALL=C sort)
+          if [ "$got" != "$(printf '%s\n' ./app.entitlements ./md-runbook.xcarchive.tar)" ]; then
+            echo "::error::ios-archive-unsigned is not app.entitlements and md-runbook.xcarchive.tar alone: $got"
+            exit 1
+          fi
+          if tar -tf md-runbook.xcarchive.tar | grep -vE '^md-runbook\.xcarchive(/|$)' | grep -q . \
+            || tar -tf md-runbook.xcarchive.tar | grep -qE '(^|/)\.\.(/|$)'; then
+            echo "::error::the tar holds paths outside md-runbook.xcarchive"
+            exit 1
+          fi
+          tar -C "$RUNNER_TEMP" -xf md-runbook.xcarchive.tar
+          rm md-runbook.xcarchive.tar
+          apps=("$RUNNER_TEMP"/md-runbook.xcarchive/Products/Applications/*.app)
+          if [ "${#apps[@]}" != 1 ] || [ ! -d "${apps[0]}" ]; then
+            echo "::error::the archive does not hold one app"
+            exit 1
+          fi
+          if [ -e "${apps[0]}/PlugIns" ] || [ -e "${apps[0]}/Watch" ] || [ -e "${apps[0]}/Extensions" ]; then
+            echo "::error::the app has extensions: each needs its own profile, which this workflow doesn't sign"
+            exit 1
+          fi
+          echo "APP=${apps[0]}" >> "$GITHUB_ENV"
       - name: Install the provisioning profile
         env:
           PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE }}
-          IOS_PUSH: ${{ vars.IOS_PUSH }}
+          PUSH: ${{ needs.check.outputs.push }}
         run: |
           p="$RUNNER_TEMP/appstore.mobileprovision"
           printf '%s' "$PROFILE_BASE64" | base64 --decode > "$p"
@@ -118,7 +210,7 @@ jobs:
             echo "::error::the profile is for $app, not $team.$BUNDLE_ID"
             exit 1
           fi
-          if [ "$IOS_PUSH" != false ] && ! pb Entitlements:aps-environment >/dev/null 2>&1; then
+          if [ "$PUSH" = true ] && ! pb Entitlements:aps-environment >/dev/null 2>&1; then
             echo "::error::the profile has no Push Notifications: turn it on for the App ID and make the profile again, or set the variable IOS_PUSH=false"
             exit 1
           fi
@@ -129,24 +221,47 @@ jobs:
           for d in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
             mkdir -p "$d" && cp "$p" "$d/$uuid.mobileprovision"
           done
-          rm -f "$RUNNER_TEMP/profile.plist"
           { echo "PROFILE_UUID=$uuid"; echo "PROFILE_NAME=$name"; echo "TEAM_ID=$team"; } >> "$GITHUB_ENV"
-      # Only the app target is signed with the profile (pods' bundles take no profile). Ruby's
-      # xcodeproj comes with the runner's CocoaPods.
-      - name: Sign the app target manually with it
+      # What Xcode would sign the app with: the app's entitlements file with this team's values,
+      # plus the profile's identifiers. A key the profile doesn't grant fails here.
+      - name: The entitlements to sign with
+        env:
+          PUSH: ${{ needs.check.outputs.push }}
         run: |
-          ruby -rxcodeproj -e '
-            proj = Xcodeproj::Project.open(Dir["ios/*.xcodeproj"].first)
-            app = proj.targets.find { |t| t.product_type == "com.apple.product-type.application" } or abort("no app target")
-            app.build_configurations.select { |c| c.name == "Release" }.each do |c|
-              s = c.build_settings
-              s["CODE_SIGN_STYLE"] = "Manual"
-              s["DEVELOPMENT_TEAM"] = ENV.fetch("TEAM_ID")
-              s["CODE_SIGN_IDENTITY"] = "Apple Distribution"
-              s["CODE_SIGN_IDENTITY[sdk=iphoneos*]"] = "Apple Distribution"
-              s["PROVISIONING_PROFILE_SPECIFIER"] = ENV.fetch("PROFILE_NAME")
-            end
-            proj.save'
+          python3 -I - "$RUNNER_TEMP/in/app.entitlements" "$RUNNER_TEMP/profile.plist" "$RUNNER_TEMP/sign.entitlements" <<'PY'
+          import os, plistlib, sys
+          app_file, profile_file, out_file = sys.argv[1:]
+          with open(app_file, 'rb') as f:
+              app = plistlib.load(f)
+          with open(profile_file, 'rb') as f:
+              granted = plistlib.load(f)['Entitlements']
+          team, bundle = granted['com.apple.developer.team-identifier'], os.environ['BUNDLE_ID']
+          def expand(v):
+              if isinstance(v, list):
+                  return [expand(x) for x in v]
+              if isinstance(v, str):
+                  v = v.replace('$(AppIdentifierPrefix)', team + '.').replace('$(TeamIdentifierPrefix)', team + '.')
+                  v = v.replace('$(PRODUCT_BUNDLE_IDENTIFIER)', bundle).replace('$(CFBundleIdentifier)', bundle)
+                  if '$(' in v:
+                      sys.exit(f'::error::unresolved build setting in an entitlement: {v}')
+              return v
+          ent = {k: expand(v) for k, v in app.items()}
+          not_granted = sorted(k for k in ent if k not in granted)
+          if not_granted:
+              sys.exit(f'::error::the profile does not grant {not_granted}')
+          if ('aps-environment' in ent) != (os.environ['PUSH'] == 'true'):
+              sys.exit('::error::the app has aps-environment only with push on (IOS_PUSH)')
+          # The App Store values, as the profile has them: aps-environment production, no debugging.
+          for k in ('application-identifier', 'com.apple.developer.team-identifier', 'beta-reports-active'):
+              if k in granted:
+                  ent[k] = granted[k]
+          if 'aps-environment' in ent:
+              ent['aps-environment'] = granted['aps-environment']
+          ent['get-task-allow'] = False
+          with open(out_file, 'wb') as f:
+              plistlib.dump(ent, f)
+          PY
+          cat "$RUNNER_TEMP/sign.entitlements"
       - name: Put the distribution certificate in a keychain of its own
         env:
           CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
@@ -155,34 +270,39 @@ jobs:
           kc="$RUNNER_TEMP/signing.keychain-db"
           pw=$(openssl rand -hex 24)
           security create-keychain -p "$pw" "$kc"
-          security set-keychain-settings -lut 3600 "$kc"
+          security set-keychain-settings -lut 1800 "$kc"
           security unlock-keychain -p "$pw" "$kc"
           cert="$RUNNER_TEMP/dist.p12"
           trap 'rm -f "$cert"' EXIT
           printf '%s' "$CERT_P12" | base64 --decode > "$cert"
-          security import "$cert" -k "$kc" -P "$CERT_PASSWORD" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security
+          # -x: the private key can't be exported again; -T: only codesign may use it.
+          security import "$cert" -k "$kc" -P "$CERT_PASSWORD" -f pkcs12 -x -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" > /dev/null
           security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
-          security find-identity -v -p codesigning "$kc" | grep -q 'Apple Distribution' || {
+          id=$(security find-identity -v -p codesigning "$kc" | awk '/"Apple Distribution/ {print $2; exit}')
+          if [ -z "$id" ]; then
             echo "::error::the .p12 holds no Apple Distribution certificate"
             exit 1
-          }
-          echo "KEYCHAIN=$kc" >> "$GITHUB_ENV"
-      - name: Archive
-        working-directory: apps/mobile/ios
+          fi
+          { echo "KEYCHAIN=$kc"; echo "IDENTITY=$id"; } >> "$GITHUB_ENV"
+      # Inside out: frameworks without entitlements or profile, then the app with both
+      # (developer.apple.com/documentation/xcode/using-the-latest-code-signature-format).
+      # The export then signs again and keeps these entitlements.
+      - name: Sign the archived app with its entitlements
         run: |
-          ws="$(ls -d ./*.xcworkspace | head -1)"
-          scheme="$(basename "$ws" .xcworkspace)"
-          xcodebuild -workspace "$ws" -scheme "$scheme" -configuration Release \
-            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/md-runbook.xcarchive" \
-            OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN" COMPILER_INDEX_STORE_ENABLE=NO \
-            archive > "$RUNNER_TEMP/xcodebuild.log" 2>&1 || {
-            echo "::error::xcodebuild archive failed; last errors:"
-            grep -nE 'error:' "$RUNNER_TEMP/xcodebuild.log" | tail -40
-            tail -30 "$RUNNER_TEMP/xcodebuild.log"
-            exit 1
-          }
+          cp "$RUNNER_TEMP/appstore.mobileprovision" "$APP/embedded.mobileprovision"
+          if [ -d "$APP/Frameworks" ]; then
+            find "$APP/Frameworks" -mindepth 1 -maxdepth 1 \( -name '*.framework' -o -name '*.dylib' \) -print0 |
+              while IFS= read -r -d '' f; do
+                codesign --force --sign "$IDENTITY" --keychain "$KEYCHAIN" --timestamp=none "$f"
+              done
+          fi
+          codesign --force --sign "$IDENTITY" --keychain "$KEYCHAIN" --timestamp=none \
+            --entitlements "$RUNNER_TEMP/sign.entitlements" --generate-entitlement-der "$APP"
+          codesign --verify --deep --strict "$APP"
       - name: Export the App Store .ipa
+        env:
+          PUSH: ${{ needs.check.outputs.push }}
         run: |
           plist="$RUNNER_TEMP/ExportOptions.plist"
           /usr/libexec/PlistBuddy -c 'Add :method string app-store-connect' \
@@ -196,36 +316,43 @@ jobs:
             -c 'Add :manageAppVersionAndBuildNumber bool false' "$plist"
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/md-runbook.xcarchive" \
             -exportPath "$RUNNER_TEMP/export" -exportOptionsPlist "$plist"
-          mv "$RUNNER_TEMP"/export/*.ipa "$RUNNER_TEMP/md-runbook.ipa"
+          mkdir -p "$RUNNER_TEMP/ipa"
+          mv "$RUNNER_TEMP"/export/*.ipa "$RUNNER_TEMP/ipa/md-runbook.ipa"
+          # The exported app must carry the push entitlement: App Store Connect rejects a push app
+          # without it (ITMS-90078).
+          check="$RUNNER_TEMP/ipa-check"
+          mkdir -p "$check" && (cd "$check" && unzip -q "$RUNNER_TEMP/ipa/md-runbook.ipa")
+          codesign -d --entitlements - --xml "$check"/Payload/*.app > "$RUNNER_TEMP/exported.entitlements"
+          plutil -p "$RUNNER_TEMP/exported.entitlements"
+          if [ "$PUSH" = true ] && [ "$(plutil -extract aps-environment raw "$RUNNER_TEMP/exported.entitlements")" != production ]; then
+            echo "::error::the exported app has no aps-environment production entitlement"
+            exit 1
+          fi
+          rm -rf "$check"
       - name: Remove the keychain and the profile
         if: always()
         run: |
           [ -n "${KEYCHAIN:-}" ] && security delete-keychain "$KEYCHAIN" || true
           [ -n "${PROFILE_UUID:-}" ] && rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision" \
             "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$PROFILE_UUID.mobileprovision" || true
-          rm -f "$RUNNER_TEMP/appstore.mobileprovision"
+          rm -f "$RUNNER_TEMP/appstore.mobileprovision" "$RUNNER_TEMP/profile.plist"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: failure()
-        with:
-          name: ios-archive-log
-          path: ${{ runner.temp }}/xcodebuild.log
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: upload
         with:
           name: md-runbook-ios
-          path: ${{ runner.temp }}/md-runbook.ipa
+          path: ${{ runner.temp }}/ipa/md-runbook.ipa
           if-no-files-found: error
           retention-days: 7
 
   upload:
-    needs: build
+    needs: [build, sign]
     runs-on: macos-latest
     timeout-minutes: 30
     environment: release
     steps:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: md-runbook-ios
+          artifact-ids: ${{ needs.sign.outputs.artifact_id }}
           path: ${{ runner.temp }}/ipa
       - name: Upload to App Store Connect (TestFlight)
         working-directory: ${{ runner.temp }}/ipa
