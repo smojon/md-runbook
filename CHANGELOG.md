@@ -5,6 +5,8 @@
 - **Android app:** the APK is signed with the app's own key, not the template's public debug key.
   Each release has it attached (`md-runbook-X.Y.Z.apk`). Uninstall a debug-signed copy once first:
   Android won't update an app across keys.
+- **Release pages:** the notes no longer break mid-sentence. Each paragraph and list item is one
+  line, as GitHub shows every line break.
 - **Prose ratchet:** `--prose-baseline` counts a long sentence only past 25 words, where
   `prose: strict` warns. One of 21 to 25 words stays a hint and no longer fails CI. Baselines drop.
 - **App, Add Note:** a note goes right after the step it's about, as in VS Code: the step running,
