@@ -92,6 +92,10 @@ Security fixes from a review of the parts that face the network.
 - **App, tokens and redirects:** alert registration and the assistant's Anthropic key never follow
   a redirect, like library uploads. Before, a redirect took the devices token along.
   - An answer that shows a redirect anyway is refused, and the request isn't sent again.
+- **App, Edit Note and Delete Note:** they change only a note outside code, in the cell of its ⋯.
+  Before, a note-shaped line in a code block could change instead.
+  - Any line break in the words stays inside the note. Before, a lone carriage return could start
+    a code block.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or

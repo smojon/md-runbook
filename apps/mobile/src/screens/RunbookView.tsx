@@ -1397,10 +1397,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     sayOk(t.noteAdded);
   };
   /** A note's ⋯: Edit Note (new words) or Delete Note (undefined), in the text as it is now. */
-  const changeNote = (marker: string, words: string | undefined): void => {
+  const changeNote = (cellIndex: number, marker: string, words: string | undefined): void => {
     if (!runbook) return;
     const latest = getRunbook(runbook.id)?.text ?? runbook.text;
-    const next = words === undefined ? withoutNote(latest, marker) : withNoteText(latest, marker, words);
+    const next = words === undefined ? withoutNote(latest, cellIndex, marker) : withNoteText(latest, cellIndex, marker, words);
     if (next === undefined) return setNotice(t.noteGone);
     updateRunbookText(runbook.id, next);
     sayOk(words === undefined ? t.noteDeleted : t.noteSaved);
@@ -2577,7 +2577,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                   markdown={index === 0 ? withoutFrontMatter(item.value) : item.value}
                   firstTask={tasks.first[index]}
                   onToggleTask={tasks.aligned ? toggleTask : undefined}
-                  onChangeNote={changeNote}
+                  onChangeNote={(marker, words) => changeNote(index, marker, words)}
                 />
                 {problems.notes.has(index) ? <ProseNotes index={index} notes={problems.notes.get(index)!} /> : null}
                 {manualAsk?.cellIndex === index ? (
