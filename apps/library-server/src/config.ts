@@ -181,6 +181,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       ...(env.LIBRARY_DIR ? { libraryDir: resolve(env.LIBRARY_DIR) } : {}),
       maxBytes: num(env, 'ALERTS_MAX_BYTES', 1024 * 1024),
     };
+    // Without a token, anyone who reaches /v1/alerts could post an alert whose link sends on-call
+    // to another saved host, with parameters of their choosing (security review, 2026-11-16).
+    if (alerts.tokens.length === 0 && !bool(env, 'ALERTS_ALLOW_ANYONE', false)) {
+      throw new Error('ALERT_MAP needs ALERTS_TOKENS (what Alertmanager sends): otherwise anyone could post alerts. ALERTS_ALLOW_ANYONE=true takes them without a token (on a private network only)');
+    }
   }
 
   if (!library && !runs && !alerts) throw new Error('Nothing to serve: set LIBRARY_DIR (publishing), RUNS_DIR (run summaries) and/or ALERT_MAP (alerts)');
