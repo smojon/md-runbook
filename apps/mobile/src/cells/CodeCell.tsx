@@ -33,6 +33,7 @@ import { LineMode, cellSteps, lineLabel } from '../ssh/lineRuns';
 import { Palette, mono, themedStyles, usePalette } from '../theme';
 import { Codicon, CodiconName } from '../ui/Codicon';
 import type { LintProblem } from '../runbooks/lint';
+import { hasRefs } from '../runbooks/copyLine';
 import { TimeBar, useNow } from '../ui/TimeBar';
 
 export interface CellRun {
@@ -59,6 +60,8 @@ export interface CodeCellProps {
   onToggleBreakpoint?(step: LineStep): void;
   /** The assistant explains one command (shown when there is an assistant). */
   onExplainLine?(step: LineStep): void;
+  /** Copy Line with Values: the command on the clipboard, its values filled in (secrets stay references). */
+  onCopyLine?(step: LineStep): void;
   /** Shown under the cell (the approval card of a proposal). */
   below?: ReactNode;
   /** A host is chosen: runs are possible. */
@@ -247,6 +250,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
                     breakpoint={p.breakpoints?.has(sel.start) ?? false}
                     {...(p.onToggleBreakpoint ? { onToggleBreakpoint: () => p.onToggleBreakpoint!(sel) } : {})}
                     {...(p.onExplainLine ? { onExplain: () => p.onExplainLine!(sel) } : {})}
+                    {...(p.onCopyLine ? { onCopy: () => p.onCopyLine!(sel) } : {})}
                     onClose={() => setSelected(undefined)}
                   />
                 ) : null}
@@ -490,6 +494,7 @@ function LineActions(p: {
   breakpoint: boolean;
   onToggleBreakpoint?(): void;
   onExplain?(): void;
+  onCopy?(): void;
   onClose(): void;
 }) {
   const styles = useStyles();
@@ -527,6 +532,8 @@ function LineActions(p: {
       {p.onToggleBreakpoint
         ? action('breakpoint', 'circle-filled', p.breakpoint ? t.removeBreakpoint : t.addBreakpoint, p.onToggleBreakpoint, true)
         : null}
+      {/* As VS Code's hover: Copy with values when the command has ${…} references, else Copy. */}
+      {p.onCopy ? action('copy', 'copy', hasRefs(p.step.text) ? t.copyWithValues : t.copyLine, p.onCopy, true) : null}
       {p.onExplain ? action('explain', 'sparkle', t.explainLine, p.onExplain, true) : null}
       <Pressable
         testID={`${id}-close`}

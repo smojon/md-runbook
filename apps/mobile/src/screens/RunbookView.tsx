@@ -1,5 +1,6 @@
 import { callFromAttrs, isCallLanguage, isDynamicSrc, parseCall } from '@md-runbook/core/call';
 import { activeCall, callCells, callReader, finishCall, prefetchCalls, startCall, useCalledTexts } from '../runbooks/calls';
+import * as Clipboard from 'expo-clipboard';
 import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
@@ -132,6 +133,7 @@ import { LineMode, isStepping, lineLabel, planLines } from '../ssh/lineRuns';
 import { confirmationOf, runnability } from '../ssh/cells';
 import { disconnect, isConnected } from '../ssh/connections';
 import { NeededValue, runCell } from '../ssh/runCell';
+import { withValues } from '../runbooks/copyLine';
 import { forgetStepHistory, learnedFor, loadStepHistory, recordStepRun, useStepHistory } from '../runbooks/history';
 import { loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import { transportReady } from '../ssh/transport';
@@ -1694,6 +1696,20 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       else next.add(step.text);
       return new Map(m).set(cellIndex, next);
     });
+  /** Copy Line with Values, as VS Code's: the values a run would use now; secrets stay references. */
+  const copyLine = (cellIndex: number, step: LineStep): void => {
+    if (!runbook) return;
+    const text = getRunbook(runbook.id)?.text ?? runbook.text;
+    // A signed cell doesn't take the front matter's defaults (runCell): nor does its copy.
+    const defaults: Record<string, string> = {};
+    if (!signedStatus(text)?.cells.has(cellIndex))
+      for (const p of parseFrontMatter(text)?.params ?? []) if (p.default !== undefined) defaults[p.name] = p.default;
+    const r = withValues(step.text, { params: paramValues, defaults, inputs: inputs.current, captures: captures.current });
+    void Clipboard.setStringAsync(r.text).then(
+      () => sayOk(t.copiedLine(lineLabel(step), r.left)),
+      (e: unknown) => setNotice(e instanceof Error ? e.message : String(e)),
+    );
+  };
   /** Uncheck All Lines, as VS Code's: the cell's checked commands, all at once. */
   const uncheckAll = (cellIndex: number): void =>
     setChecks((m) => {
@@ -2296,6 +2312,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 breakpoints={breakpoints.get(index) ?? NO_BREAKS}
                 onToggleBreakpoint={(step) => toggleBreakpoint(index, step)}
                 onExplainLine={(step) => assistant.ask('explainLine', index, lineLabel(step))}
+                onCopyLine={(step) => copyLine(index, step)}
                 onActions={() => setCellSheet(cellActions(index))}
                 {...(problems.byCell.has(index) ? { problems: problems.byCell.get(index)! } : {})}
                 onFix={(from, to) => fixOption(index, from, to)}

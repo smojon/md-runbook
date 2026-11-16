@@ -715,6 +715,10 @@ const en = {
   addBreakpoint: 'Breakpoint',
   removeBreakpoint: 'Remove breakpoint',
   explainLine: 'Explain',
+  copyLine: 'Copy',
+  copyWithValues: 'Copy with values',
+  copiedLine: (lines: string, left: readonly string[]) =>
+    `Copied line ${lines}${left.length > 0 ? `, left as is: ${left.join(', ')}` : ''}`,
   uncheckLine: 'Uncheck',
   runChecked: (n: number) => (n === 1 ? 'Run 1 checked line' : `Run ${n} checked lines`),
   uncheckAll: 'Uncheck all',
