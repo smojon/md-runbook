@@ -194,6 +194,16 @@ describe('relay', () => {
       assert.ok(isInternal(a), a);
     for (const a of ['8.8.8.8', '172.32.0.1', '100.128.0.1', '2a00:1450:4001::1', '::ffff:8.8.8.8', '2606:4700::1111', 'not-an-address']) assert.ok(!isInternal(a), a);
   });
+
+  it('NAT64: judged by the IPv4 address it embeds, so a DNS64-only relay reaches public hosts', () => {
+    // Public IPv4 hosts through the well-known prefix, and the /96 form of the local-use one.
+    for (const a of ['64:ff9b::808:808', '64:ff9b::8.8.8.8', '64:ff9b:0:0:0:0:808:808', '64:FF9B::0808:0808', '64:ff9b:1::808:808', '64:ff9b:1::1.1.1.1'])
+      assert.ok(!isInternal(a), a);
+    // Internal IPv4 addresses behind them; and another layout of 64:ff9b:1::/48, which can't be told.
+    for (const a of ['64:ff9b::a00:1', '64:ff9b::10.0.0.1', '64:ff9b::7f00:1', '64:ff9b::127.0.0.1', '64:ff9b::a9fe:a9fe', '64:ff9b::c0a8:101', '64:ff9b::',
+      '64:ff9b:1::a00:1', '64:ff9b:1::192.168.1.1', '64:ff9b:1:a00:1::808:808', '64:ff9b:1:abcd::808:808'])
+      assert.ok(isInternal(a), a);
+  });
 });
 
 describe('relay settings', () => {

@@ -158,7 +158,28 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     },
   };
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    /** Under the extension test runner: a command's host or group argument is taken without asking. */
+    private readonly testMode = false,
+  ) {}
+
+  /** Test hook askArguments: answers those questions as outside the test runner; `asked` lists them. */
+  private answerHook: boolean | undefined;
+  private readonly asked: string[] = [];
+
+  /**
+   * A host or group named by a command's argument (a keybinding, another extension): asked first,
+   * except under the test runner. Only the menus' own picks need no question.
+   */
+  private async agreed(question: string, points: string[], button: string): Promise<boolean> {
+    if (this.answerHook !== undefined) {
+      this.asked.push(question);
+      return this.answerHook;
+    }
+    if (this.testMode) return true;
+    return (await vscode.window.showWarningMessage(question, { modal: true, detail: points.map((p) => `- ${p}`).join('\n') }, button)) === button;
+  }
 
   target(cell: vscode.NotebookCell): CellTarget {
     return targetOf(cell);
@@ -330,9 +351,11 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     const { cell, notebook } = ctx;
     const info = infoOf(cell);
     const o = parseCellOptions(info);
+    const optionsOn = cfg().get<boolean>('cellOptions.enabled', true);
     const base = (): Omit<RemotePlan, 'hosts' | 'by'> => ({
       envNames: [...new Set([...Object.keys(o.env ?? {}), ...safeRefNames(cell.document.getText())])],
-      ...(o.cwd !== undefined && cfg().get<boolean>('cellOptions.enabled', true) ? { cwd: o.cwd } : {}),
+      cellEnv: optionsOn ? { ...(o.env ?? {}) } : {},
+      ...(o.cwd !== undefined && optionsOn ? { cwd: o.cwd } : {}),
     });
     const group = this.pendingGroup.get(cell);
     this.pendingGroup.delete(cell);
@@ -415,7 +438,7 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
       shell: kind,
       // An approved proposal was checked as bash, or as zsh with `shell: zsh` (as in the app).
       ...(byAssistant && kind === 'bash' ? { checkedAs: fm?.unix === 'zsh' ? ('zsh' as const) : ('bash' as const) } : {}),
-      env: remoteEnv(plan.env, r.envNames),
+      env: remoteEnv(r.cellEnv, plan.refValues ?? {}, r.envNames),
       ...(r.cwd !== undefined ? { cwd: r.cwd } : {}),
       ...(plan.timeoutMs > 0 ? { timeoutMs: plan.timeoutMs } : {}),
       signal: io.signal,
@@ -587,10 +610,14 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     const key = nb.uri.toString();
     const hosts = configuredHosts();
     if (typeof arg === 'string') {
-      // Tests and keybindings: a host's name, or '' to stop.
-      if (arg === '') picked.delete(key);
-      else if (findHost(hosts, arg)) picked.set(key, findHost(hosts, arg)!.name);
-      else return void vscode.window.showErrorMessage(`md-runbook: no host named ${arg}.`);
+      // Tests and keybindings: a host's name (asked first), or '' to stop.
+      const host = arg === '' ? undefined : findHost(hosts, arg);
+      if (arg !== '' && !host) return void vscode.window.showErrorMessage(`md-runbook: no host named ${arg}.`);
+      if (host) {
+        const go = `Practice on ${host.name}`;
+        if (!(await this.agreed(`Practice this runbook on ${host.name}?`, [`Account: ${hostLabel(host)}`, 'Every cell runs there, whatever host= says.'], go))) return;
+        picked.set(key, host.name);
+      } else picked.delete(key);
       this.refreshStatus();
       return void this.changed.fire();
     }
@@ -625,7 +652,12 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
       return;
     }
     let group = typeof groupArg === 'string' ? groups.find((g) => g === groupArg) : undefined;
-    if (group === undefined) {
+    if (group !== undefined) {
+      // Named by the command's argument, not picked: asked first.
+      const members = groupMembers(hosts, group);
+      const go = `Run on ${group}`;
+      if (!(await this.agreed(`Run this cell on each host of ${group}?`, [`Hosts: ${members.map((h) => h.name).join(', ')}`, 'One after another, now.'], go))) return;
+    } else {
       const pick = await vscode.window.showQuickPick(
         groups.map((g) => {
           const members = groupMembers(hosts, g);
@@ -770,6 +802,15 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     if (op === 'allow' && typeof a === 'string' && typeof b === 'string') return void this.allowed.add(`${a}\n${b.toLowerCase()}`);
     if (op === 'publicKey') return (await ssh()).publicKeyLine((await this.ownKey(true))!, 'md-runbook-test');
     if (op === 'agreePractice' && typeof a === 'string' && typeof b === 'string') return void this.practiceAgreed.add(`${a}\n${b.toLowerCase()}`);
+    if (op === 'askArguments') {
+      this.answerHook = typeof a === 'boolean' ? a : undefined;
+      return void (this.asked.length = 0);
+    }
+    if (op === 'asked') return [...this.asked];
+    if (op === 'practice') {
+      const nb = vscode.window.activeNotebookEditor?.notebook;
+      return nb ? practiceOf(nb) : undefined;
+    }
     return undefined;
   }
 
@@ -830,7 +871,7 @@ export interface RemoteHostsInfo extends RemoteTargets {
 }
 
 export function registerRemoteHosts(context: vscode.ExtensionContext, pipeline: RunPipeline, testMode: boolean): RemoteHostsInfo {
-  const f = new RemoteHosts(context);
+  const f = new RemoteHosts(context, testMode);
   let runCell: ((cell: vscode.NotebookCell) => Promise<void>) | undefined;
   pipeline.observers.push({ onWillRunSequence: (nb) => f.willRun(nb) });
   context.subscriptions.push(

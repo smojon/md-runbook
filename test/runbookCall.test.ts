@@ -14,6 +14,11 @@ import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/s
 import { callChainProblem, checkCall, isDynamicSrc, parseCall, srcGlob, srcValueProblem, staysBelow } from '@md-runbook/core/call';
 import { lintRunbook } from '@md-runbook/core/lint';
 import { CliOptions, RunSummary, firstStepNotDone, flattenSteps, junitReport, runRunbook } from '../src/cli/run';
+import { copyDigest, copyFrontMatterProblem } from '@md-runbook/core/callCopy';
+import { callCopyRecorded, recordCallCopy, stateDir } from '@md-runbook/core/node/callCopyRecord';
+
+// The command line's record of the call copies it wrote: in a folder of these tests, not yours.
+process.env.MD_RUNBOOK_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-state-'));
 
 const settings: ShellSettings = { bashPath: process.env.MD_RUNBOOK_BASH };
 const hasBash = resolveShell('bash', settings, nodeShellEnv()).ok;
@@ -317,6 +322,67 @@ describe('runbook call: md-runbook run', { skip: !hasBash && 'no bash' }, () => 
       second.summary.steps[1]!.call!.steps.map((s) => s.status),
       ['passed', 'passed'],
     );
+  });
+
+  it('does not trust "done" outputs planted in a copy, nor a copy whose front matter changed', async () => {
+    const failing = CHILD.replace('echo "B ${param:ENV}"', 'test -f "${param:ENV}" && echo "B ok"');
+    const done = (text: string): string => text.replace(/```\n(?=\n## Part B|$)/g, '```\n<!-- md-runbook:output start exit=0 -->\n```text\nok\n```\n<!-- md-runbook:output end -->\n');
+    // Next to the runbook called, a run copy's name, the same blocks: only its outputs are planted.
+    const planted = 'child.20261111-100000.md';
+    const dir = tmp({ 'child.md': failing, [planted]: done(failing) });
+    const file = path.join(dir, 'parent.md');
+    fs.writeFileSync(file, parent('```runbook src=child.md\nENV=flag\n```'), 'utf8');
+    const first = await run(file);
+    assert.ok(!first.summary.ok);
+    const copy = first.summary.steps[1]!.call!.copy;
+    assert.ok(callCopyRecorded(path.join(dir, copy), fs.readFileSync(path.join(dir, copy), 'utf8')), 'the run kept its copy');
+    fs.writeFileSync(path.join(dir, 'flag'), '', 'utf8');
+
+    // The parent's output names the planted copy: its "done" step A is not trusted, A runs again.
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(`copy=${copy}`, `copy=${planted}`), 'utf8');
+    const second = await run(file);
+    assert.ok(second.log.some((l) => l.includes(`not continuing ${planted}: its step results were not written by md-runbook on this machine`)), second.log.join('\n'));
+    assert.deepEqual(
+      second.summary.steps[1]!.call!.steps.map((s) => s.status),
+      ['passed', 'passed'],
+    );
+
+    // A copy this run wrote, but with front matter of its own since (env: BASH_ENV): not continued.
+    fs.writeFileSync(path.join(dir, 'flag-b'), '', 'utf8');
+    const third = failing.replace('test -f "${param:ENV}"', 'test -f "${param:ENV}-b"');
+    fs.writeFileSync(path.join(dir, 'child.md'), third, 'utf8');
+    fs.rmSync(path.join(dir, 'flag-b'));
+    fs.writeFileSync(file, parent('```runbook src=child.md\nENV=flag\n```'), 'utf8');
+    const failed = await run(file);
+    assert.ok(!failed.summary.ok);
+    const kept = path.join(dir, failed.summary.steps[1]!.call!.copy);
+    const edited = fs.readFileSync(kept, 'utf8').replace('params:', 'env:\n  BASH_ENV: /tmp/evil.sh\nparams:');
+    fs.writeFileSync(kept, edited, 'utf8');
+    recordCallCopy(kept, edited); // as if a run had written it: the front matter check still holds
+    fs.writeFileSync(path.join(dir, 'flag-b'), '', 'utf8');
+    const fourth = await run(file);
+    assert.ok(fourth.log.some((l) => l.includes('its front matter is not that of the runbook called')), fourth.log.join('\n'));
+    assert.deepEqual(
+      fourth.summary.steps[1]!.call!.steps.map((s) => s.status),
+      ['passed', 'passed'],
+    );
+  });
+
+  it('a copy\'s front matter and digest, as a run again compares them', () => {
+    const target = '---\nparams:\n  - ENV\n---\n\n# Child\n';
+    assert.equal(copyFrontMatterProblem(target, target), undefined);
+    // The caller's record values and cluster, as the call writes them, are expected.
+    const added = { severity: 'sev1', 'kube-context': 'prod-eu' };
+    assert.equal(copyFrontMatterProblem('---\nparams:\n  - ENV\nseverity: sev1\nkube-context: prod-eu\n---\n\n# Child\n', target, added), undefined);
+    assert.match(copyFrontMatterProblem('---\nparams:\n  - ENV\nseverity: sev1\nkube-context: other\n---\n\n# Child\n', target, added)!, /front matter/);
+    assert.match(copyFrontMatterProblem('---\nparams:\n  - ENV\nshell: zsh\n---\n\n# Child\n', target)!, /front matter/);
+    assert.match(copyFrontMatterProblem('# Child\n', target)!, /front matter/, 'choices removed with the front matter');
+    // Ticking a manual step or another line end keeps the digest; another output doesn't.
+    const text = '# R\n\n- [ ] Tell the team\n\n```bash\necho a\n```\n';
+    assert.equal(copyDigest(text.replace('[ ]', '[x]')), copyDigest(text));
+    assert.equal(copyDigest(text.replace(/\n/g, '\r\n')), copyDigest(text));
+    assert.notEqual(copyDigest(text + '<!-- md-runbook:output start exit=0 -->\n'), copyDigest(text));
+    assert.ok(stateDir().startsWith(process.env.MD_RUNBOOK_STATE_DIR!));
   });
 
   it('refuses a --param that makes src= name a runbook outside its folder', async () => {

@@ -258,8 +258,7 @@ for (const [net, bits] of [
 for (const [net, bits] of [
   ['::', 96], // unspecified, loopback, IPv4-compatible
   ['::ffff:0:0:0', 96], // IPv4-translated
-  ['64:ff9b::', 96], // NAT64
-  ['64:ff9b:1::', 48], // local NAT64
+  // NAT64 (64:ff9b::/96, 64:ff9b:1::/48): judged by the IPv4 address they embed (nat64Ipv4).
   ['100::', 64], // discard
   ['2001::', 32], // Teredo
   ['2001:db8::', 32], // documentation
@@ -272,10 +271,53 @@ for (const [net, bits] of [
 ] as const)
   INTERNAL.addSubnet(net, bits, 'ipv6');
 
-/** Loopback, private, link-local, multicast, reserved, and IPv6 forms that embed an IPv4 address. */
+/** The 16 bytes of an IPv6 address (`::`, a trailing dotted IPv4 and a `%zone` allowed), or undefined. */
+function ipv6Bytes(address: string): number[] | undefined {
+  let a = address.replace(/%.*$/, '');
+  const v4 = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(a);
+  if (v4) {
+    const [x, y, z, w] = v4.slice(1).map(Number) as [number, number, number, number];
+    a = `${a.slice(0, v4.index)}${((x << 8) | y).toString(16)}:${((z << 8) | w).toString(16)}`;
+  }
+  const halves = a.split('::');
+  if (halves.length > 2) return undefined;
+  const words = (s: string): string[] => (s === '' ? [] : s.split(':'));
+  const head = words(halves[0]!);
+  const tail = halves.length === 2 ? words(halves[1]!) : [];
+  const all = halves.length === 2 ? [...head, ...Array<string>(8 - head.length - tail.length).fill('0'), ...tail] : head;
+  if (all.length !== 8 || all.some((w) => !/^[0-9a-f]{1,4}$/i.test(w))) return undefined;
+  return all.flatMap((w) => [parseInt(w, 16) >> 8, parseInt(w, 16) & 0xff]);
+}
+
+/**
+ * The IPv4 address a NAT64 address stands for, or `'unknown'` when it can't be told: in the
+ * well-known prefix 64:ff9b::/96 it is the last 32 bits (RFC 6052). In the local-use 64:ff9b:1::/48
+ * only the /96 form (64:ff9b:1::a.b.c.d) is read; another layout of the /48 could put the address
+ * elsewhere, so it is refused. Undefined: not a NAT64 address.
+ */
+function nat64Ipv4(address: string): string | 'unknown' | undefined {
+  const b = ipv6Bytes(address);
+  if (!b) return undefined;
+  const v4 = (): string => b.slice(12).join('.');
+  const zero = (from: number, to: number): boolean => b.slice(from, to).every((x) => x === 0);
+  if (b[0] !== 0x00 || b[1] !== 0x64 || b[2] !== 0xff || b[3] !== 0x9b) return undefined;
+  if (zero(4, 12)) return v4(); // 64:ff9b::/96
+  if (b[4] === 0x00 && b[5] === 0x01) return zero(6, 12) ? v4() : 'unknown'; // 64:ff9b:1::/48
+  return undefined;
+}
+
+/**
+ * Loopback, private, link-local, multicast, reserved, and IPv6 forms that embed an IPv4 address.
+ * A NAT64 address counts as the IPv4 address it embeds: a DNS64-only relay reaches public IPv4
+ * hosts through 64:ff9b::/96, never internal ones.
+ */
 export function isInternal(address: string): boolean {
   const family = isIP(address);
-  return family === 4 ? INTERNAL.check(address, 'ipv4') : family === 6 ? INTERNAL.check(address, 'ipv6') : false;
+  if (family === 4) return INTERNAL.check(address, 'ipv4');
+  if (family !== 6) return false;
+  const nat64 = nat64Ipv4(address);
+  if (nat64 !== undefined) return nat64 === 'unknown' || INTERNAL.check(nat64, 'ipv4');
+  return INTERNAL.check(address, 'ipv6');
 }
 
 function defaultLog(e: LogEvent): void {

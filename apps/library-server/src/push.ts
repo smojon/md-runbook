@@ -15,7 +15,8 @@
  * fills in). Nothing else: no labels or annotations beyond those, no token, no secret.
  * The provider sees what a push carries.
  *
- * Tokens the provider says are gone (FCM 404 / UNREGISTERED, APNs 410) are removed. Pushes are
+ * Tokens the provider says are gone (FCM 404 / UNREGISTERED, APNs 410) are removed, and so are
+ * those it refuses 3 pushes in a row (APNs BadDeviceToken) while other phones get them. Pushes are
  * sent after the webhook is answered, one alert at a time, so a slow provider never holds up
  * Alertmanager; a failure is logged.
  */
@@ -23,7 +24,7 @@ import { KeyObject, createPrivateKey, sign } from 'node:crypto';
 import { ClientHttp2Session, connect, constants as h2 } from 'node:http2';
 import type { Firing } from './alerts';
 import type { ApnsConfig, FcmConfig, PushConfig } from './config';
-import { Device, DevicePlatform, Devices, wants } from './devices';
+import { Device, DevicePlatform, Devices, tokenDigest, wants } from './devices';
 import type { LogEvent } from './http';
 
 export interface PushMessage {
@@ -35,7 +36,16 @@ export interface PushMessage {
   fingerprint?: string;
 }
 
-export type SendResult = { ok: true } | { ok: false; why: string; /** The provider says the token is gone: remove the device. */ gone?: boolean };
+export type SendResult =
+  | { ok: true }
+  | {
+      ok: false;
+      why: string;
+      /** The provider says the token is gone: remove the device. */
+      gone?: boolean;
+      /** The provider refused it (APNs BadDeviceToken, FCM INVALID_ARGUMENT): removed after 3 in a row. */
+      refused?: boolean;
+    };
 
 export interface Sender {
   send(token: string, m: PushMessage): Promise<SendResult>;
@@ -144,7 +154,9 @@ export class FcmSender implements Sender {
     // says that too), and INVALID_ARGUMENT only when it is about the token: a setting or payload
     // problem must never remove every device.
     const gone = code === 'UNREGISTERED' || (code === 'INVALID_ARGUMENT' && /registration token/i.test(j.error?.message ?? ''));
-    return { ok: false, why, ...(gone ? { gone } : {}) };
+    // Any other INVALID_ARGUMENT counts towards removal, while other Android phones get the same push.
+    const refused = !gone && code === 'INVALID_ARGUMENT';
+    return { ok: false, why, ...(gone ? { gone } : {}), ...(refused ? { refused } : {}) };
   }
 }
 
@@ -231,9 +243,11 @@ export class ApnsSender implements Sender {
     let r = await this.request(token, body, false, m);
     if (r.status === 403 && r.reason === 'ExpiredProviderToken') r = await this.request(token, body, true, m);
     if (r.status === 200) return { ok: true };
-    // 410: Unregistered, ExpiredToken. Not BadDeviceToken (400): a sandbox token sent to production
-    // (PUSH_APNS_SANDBOX wrong) says that too, and would remove every iPhone.
-    return { ok: false, why: `APNs: HTTP ${r.status}${r.reason ? ` ${r.reason}` : ''}`, ...(r.status === 410 ? { gone: true } : {}) };
+    // 410: Unregistered, ExpiredToken: gone. BadDeviceToken (400) is not gone at once: a sandbox
+    // token sent to production (PUSH_APNS_SANDBOX wrong) says that too. It counts towards removal
+    // only while other iPhones get the same push (push()).
+    const refused = r.status === 400 && r.reason === 'BadDeviceToken';
+    return { ok: false, why: `APNs: HTTP ${r.status}${r.reason ? ` ${r.reason}` : ''}`, ...(r.status === 410 ? { gone: true } : {}), ...(refused ? { refused } : {}) };
   }
 
   close(): void {
@@ -258,7 +272,8 @@ export class PushService {
   private queue: Promise<void> = Promise.resolve();
   /** When each alert (fingerprint, else link) was last pushed. */
   private readonly pushed = new Map<string, number>();
-  private readonly labels: Set<string>;
+  /** Digests of the devices tokens accepted now: a device gets pushes only under one of them. */
+  private readonly digests: Set<string>;
 
   constructor(
     readonly config: PushConfig,
@@ -267,7 +282,7 @@ export class PushService {
     private readonly log: (e: LogEvent) => void,
     private readonly now: () => number = Date.now,
   ) {
-    this.labels = new Set(config.tokens.map((t) => t.label));
+    this.digests = new Set(config.tokens.map((t) => tokenDigest(t.value)));
   }
 
   /** The platforms this server can push to. */
@@ -294,19 +309,29 @@ export class PushService {
     if (this.pushed.has(key)) return void this.log({ event: 'push-repeat', alertname: f.alertname, fingerprint: f.fingerprint });
     this.pushed.set(key, t);
     const m = pushMessage(f);
-    const list = (await this.devices.list()).filter((d) => this.senders[d.platform] && this.labels.has(d.by) && wants(d, f));
+    const list = (await this.devices.list()).filter((d) => this.senders[d.platform] && d.tokenDigest !== undefined && this.digests.has(d.tokenDigest) && wants(d, f));
     const gone: Device[] = [];
-    let sent = 0;
+    const refused: Device[] = [];
+    const ok: Device[] = [];
     const failures: string[] = [];
     await pool(list, 20, async (d) => {
       const r = await this.senders[d.platform]!.send(d.token, m).catch((e: unknown): SendResult => ({ ok: false, why: e instanceof Error ? e.message : String(e) }));
-      if (r.ok) sent++;
+      if (r.ok) ok.push(d);
       else {
         failures.push(r.why);
         if (r.gone) gone.push(d);
+        else if (r.refused) refused.push(d);
       }
     });
-    const pruned = await this.devices.remove(gone.map((d) => d.id));
+    // A refused token counts only when the same push reached another phone of that platform: a
+    // wrong setting (PUSH_APNS_SANDBOX) refuses every token, and must not remove every iPhone.
+    const reached = new Set(ok.map((d) => d.platform));
+    const sent = ok.length;
+    const pruned = await this.devices.settle(
+      gone.map((d) => d.id),
+      refused.filter((d) => reached.has(d.platform)).map((d) => d.id),
+      ok.map((d) => d.id),
+    );
     this.log({ event: 'push', alertname: f.alertname, fingerprint: f.fingerprint, devices: list.length, sent, failed: failures.length, pruned, why: failures[0] });
   }
 

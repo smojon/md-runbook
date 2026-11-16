@@ -212,16 +212,21 @@ phones. What to set up in Firebase and at Apple:
   ```
 
   - `alertnames`, `runbooks` (paths, or folders ending in `/`): only those alerts. Absent: all.
-  - The answer is the device's `id`. `DELETE /v1/devices/<id>` removes the device.
+  - The answer is the device's `id`. `DELETE /v1/devices/<id>` with the same token removes the
+    device.
 - **A push says** "ALERTNAME firing" and the runbook's path, and carries the alert's link
   (`/open?url=…&sha256=…`). Nothing else: no other labels, no annotations, no tokens. Google or
   Apple sees what a push carries.
 - **A tap** opens the link in the app, under the same checks as any link (its hash, the
   library's rules). It never runs anything.
 - **Gone phones:** tokens the provider reports as gone (FCM `UNREGISTERED`, APNs 410) are removed.
+  So are tokens it refuses 3 pushes in a row (APNs `BadDeviceToken`) while other phones get them.
+- **One token, at most `PUSH_MAX_DEVICES_PER_TOKEN` phones:** one token's holder can't fill the
+  list with made-up phones.
 - **Repeats:** the same alert (fingerprint) is pushed again only after `PUSH_REPEAT_SECONDS`.
 - **Withdrawn tokens:** a phone gets pushes only while the token it registered with is still
-  accepted. Take a token out of `DEVICES_TOKENS` and its phones stop.
+  accepted. Take a token out of `DEVICES_TOKENS` and its phones stop, even when a new token gets
+  its label.
 - Pushes go out after the webhook is answered. A failure is logged and never loses the alert.
 - Devices are kept in `STATE_DIR/devices.json` (mode 600).
 
@@ -290,6 +295,7 @@ LIBRARY_DIR=/srv/runbooks LIBRARY_UPLOAD_TOKENS=… npm start
 | `PUSH_APNS_SANDBOX` | `false` | `true` for development builds (Xcode, debug): APNs' sandbox. TestFlight and App Store builds use production. |
 | `DEVICES_TOKENS` | `ALERTS_READ_TOKENS` | Tokens a phone registers with. |
 | `PUSH_MAX_DEVICES` | `1000` | Most phones kept. |
+| `PUSH_MAX_DEVICES_PER_TOKEN` | `50` | Most phones one devices token may register. |
 | `PUSH_REPEAT_SECONDS` | `3600` | The same alert is pushed again only after this long. |
 | `STATE_DIR` | `./data` (`/data` in the image) | The highest version published per path, and alerts. |
 | `SERVER_HOST`, `SERVER_PORT` | `127.0.0.1`, `8090` | Where it listens (the image: `0.0.0.0`). |

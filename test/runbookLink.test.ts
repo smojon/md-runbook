@@ -117,6 +117,22 @@ describe('runbook links', () => {
     assert.equal(linkTrust(link, added), 'unverified');
   });
 
+  it('a version 1 signature with front matter that changes how cells run is not signed', () => {
+    const r = buildManifest(RUNBOOK, { name: 'ops/restart', version: 1, scopes: [], patterns: { SERVICE: '[a-z]+' } }, { version: 1 });
+    if ('errors' in r) throw new Error(r.errors.join('; '));
+    const signed = withSignature(RUNBOOK, { signer: 'ops@example.net', signed: '2026-11-16', manifest: formatManifest(r.manifest), signature: 'U1NIU0lHAAAAAQ' + 'A'.repeat(150) });
+    const link = { url: 'https://a/b.md', params: {} };
+    assert.equal(linkTrust(link, signed), 'signed');
+    // Front matter added after signing: the blocks are as signed, but every cell would run differently.
+    for (const fm of ['env:\n  BASH_ENV: /tmp/evil.sh', 'cwd: /', 'shell: zsh', 'mode: session', 'kube-context: prod', 'kube-context-mode: pin', 'timeout: 5']) {
+      const text = `---\n${fm}\n---\n\n${signed}`;
+      assert.equal(linkTrust(link, text), 'unverified', fm);
+      assert.equal(linkTrust({ ...link, sha256: runbookDigest(text) }, text), 'pinned', fm);
+    }
+    // Front matter that runs nothing differently (a title) is fine.
+    assert.equal(linkTrust(link, `---\ntitle: Restart\n---\n\n${signed}`), 'signed');
+  });
+
   it('a whole-runbook signature (version 2) no longer counts once the text around the blocks changed', () => {
     const r = buildManifest(RUNBOOK, { name: 'ops/restart', version: 1, scopes: [], patterns: { SERVICE: '[a-z]+' } }, { version: 2 });
     if ('errors' in r) throw new Error(r.errors.join('; '));

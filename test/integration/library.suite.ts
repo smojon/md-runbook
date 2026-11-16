@@ -55,3 +55,27 @@ test('library: the view lists a team library by folder, and opening a row opens 
     await srv.close();
   }
 });
+
+test("library: Open from Library takes the library's text, not the text a caller passes", async () => {
+  const srv = await serve({ 'index.json': JSON.stringify({ runbooks: ['check.md'] }), 'check.md': '# Check the API\n\n```bash\necho check\n```\n' });
+  try {
+    await setConfig('library.url', srv.base);
+    await vscode.commands.executeCommand('mdRunbook.library.refresh');
+    const read = await vscode.commands.executeCommand<Read>('mdRunbook._test.library');
+    const row = read!.rows[0]!;
+    // A stale row, or another extension calling the command with its own text under this path.
+    const forged = { ...row.node, entry: { ...row.node.entry, text: '# Forged\n\n```bash\necho forged\n```\n' } };
+    await vscode.commands.executeCommand('mdRunbook.library.open', forged);
+    const editor = await waitFor('the copy', () => vscode.window.visibleNotebookEditors.find((e) => e.notebook.uri.fsPath.endsWith('check.md')), 15_000);
+    assert.equal(editor.notebook.cellAt(0).document.getText().trim(), '# Check the API');
+    assert.doesNotMatch(editor.notebook.getCells().map((c) => c.document.getText()).join('\n'), /forged/);
+    // A path the library doesn't list opens nothing.
+    await closeAll();
+    await vscode.commands.executeCommand('mdRunbook.library.open', { ...forged, entry: { ...forged.entry, path: 'elsewhere.md', fileName: 'elsewhere.md' } });
+    assert.equal(vscode.window.visibleNotebookEditors.length, 0);
+  } finally {
+    await setConfig('library.url', undefined);
+    await closeAll();
+    await srv.close();
+  }
+});

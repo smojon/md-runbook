@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { runbookSignerCheck } from '@md-runbook/core/node';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
-import { SignerCache, SignerCheck } from '../src/signerCheck';
+import { CANT_CHECK_SIGNATURES, SignerCache, SignerCheck, checkSigner } from '../src/signerCheck';
 
 const signedText = (): string => {
   const text = '# Restart\n\n```bash\nsystemctl restart api\n```\n';
@@ -54,6 +54,18 @@ describe('signer checks', () => {
       answer = {};
       assert.deepEqual(await cache.signer('text', file), {});
       assert.equal(calls, 5);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('links: no ssh-keygen says so, instead of "not signed by a trusted signer"', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-signer-'));
+    try {
+      const file = path.join(dir, 'allowed_signers');
+      fs.writeFileSync(file, '');
+      assert.deepEqual(await checkSigner(signedText(), file, path.join(dir, 'no-such-ssh-keygen')), { cantCheck: CANT_CHECK_SIGNATURES });
+      assert.deepEqual(await checkSigner('# not signed\n', file, path.join(dir, 'no-such-ssh-keygen')), {});
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

@@ -52,3 +52,13 @@ export class SignerCache {
     this.answers.clear();
   }
 }
+
+/** The same words, for links (src/linkHandler.ts). */
+export const SSH_KEYGEN_MISSING = CANT_CHECK_SIGNATURES;
+
+/** The trusted signer of the runbook, or, when there is none, why it couldn't be checked (no ssh-keygen). */
+export async function checkSigner(text: string, allowedSigners: string, sshKeygen = 'ssh-keygen'): Promise<{ signer?: string; cantCheck?: string }> {
+  const got = await runbookSignerCheck(text, allowedSigners, sshKeygen).catch((): SignerCheck => ({}));
+  if (got.signer !== undefined) return { signer: got.signer };
+  return got.cantCheck ? { cantCheck: CANT_CHECK_SIGNATURES } : {};
+}

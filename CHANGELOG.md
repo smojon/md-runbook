@@ -10,7 +10,9 @@ Security fixes from a review of the parts that face the network.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each
-  address, and also refuses multicast, reserved and NAT64 addresses.
+  address, and also refuses multicast and reserved addresses.
+  - A NAT64 address counts as the IPv4 address in it. So a relay on an IPv6-only network with
+    DNS64 still reaches public hosts.
 - **Links (app and VS Code):** a runbook from a link counts as signed only when its signature
   verifies against a key you trust. That holds for **Open only signed runbooks from links** too.
   - Before, any well-formed signature block was enough.
@@ -66,6 +68,10 @@ Security fixes from a review of the parts that face the network.
   the runbook called. Before, an edited `copy=` in its output could name any file.
   - The copy must be next to it or in the copy folder, named after it, with the same blocks.
   - For a signed runbook, the copy must have the same signed name and version.
+  - The copy's front matter must be the one a new copy gets. Before, a planted copy could bring
+    its own `env:`, `kube-context:` or choices.
+  - A copy's steps count as done only when md-runbook on this machine wrote it. Before, planted
+    outputs could skip a guard or a backup.
   - Otherwise a fresh copy runs, and the call's output says why.
 - **Runbook calls:** a value in `src=` fills part of one file or folder name. Before, a link's
   `TO=../../elsewhere/evil` could make `src="releases/${param:TO}.md"` run any runbook.
@@ -87,6 +93,30 @@ Security fixes from a review of the parts that face the network.
   - Values in the table stay text: a resource name can't make a link, an image or HTML.
 - **VS Code, Set Parameters and Set Inputs:** only the extension test runner can pass them
   values. The commands themselves always ask.
+- **VS Code, cells on a host:** a cell's `env.NAME=` value goes to the host as written. Before,
+  a secret from `mdRunbook.secrets.inject` or a `.env` value of that name went instead.
+  - With cell options off, no `env.NAME=` value goes to the host.
+- **Library server, pushes:** a phone keeps a digest of the devices token it registered with.
+  A new token under the old label no longer brings back the phones of the old token.
+  - `DELETE /v1/devices/<id>` needs the token the phone registered with.
+- **Library server, pushes:** one devices token registers at most 50 phones
+  (`PUSH_MAX_DEVICES_PER_TOKEN`). Before, one token's holder could fill the whole list.
+  - A phone whose token the provider refuses 3 pushes in a row is removed, while other phones get
+    them. This covers APNs `BadDeviceToken`.
+- **VS Code, Open from Library:** the runbook opened is the text the library read checked. Before,
+  a stale row or another extension could pass other text under a verified runbook's verdict.
+- **VS Code, Practice on a Host and Run on a Group:** a host or group passed by a keybinding or
+  another extension is asked about first. Before, practice started, or the cell ran, at once.
+- **VS Code, Trusted Signers:** a line added from a paste, a file or the team library must name
+  each signer. A pattern such as `*` or `*@example.net` is refused, with why.
+- **VS Code, Copy Line with Values:** each value is quoted for the cell's shell, inside or outside
+  quotes. Before, a value such as `x; rm -rf ~` was pasted as a command.
+  - In cmd blocks the value is copied as it is, with a warning when it has `& | < > ^ %` or `"`.
+- **VS Code links without ssh-keygen:** the message says signatures can't be checked, and to
+  install OpenSSH. Before, it said the runbook was not signed or pinned.
+- **Links (VS Code and app):** a version 1 signature no longer counts when the front matter sets
+  `env:`, `cwd:`, `shell:`, `mode:`, `kube-context:`, `kube-context-mode:` or `timeout:`.
+  - Such a signature covers the blocks only. The command line's signed runs refuse the same keys.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or

@@ -57,7 +57,7 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
     config.push && config.alerts
       ? new PushService(
           config.push,
-          new Devices(config.push.file, config.push.maxDevices),
+          new Devices(config.push.file, config.push.maxDevices, config.push.maxDevicesPerToken),
           opts.senders ?? {
             ...(config.push.fcm ? { android: new FcmSender(config.push.fcm) } : {}),
             ...(config.push.apns ? { ios: new ApnsSender(config.push.apns) } : {}),
@@ -196,7 +196,7 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
               ? "this server has no APNs key: it can't push to iPhones (PUSH_APNS_KEY_FILE)"
               : "this server has no Firebase service account: it can't push to Android (PUSH_FCM_SERVICE_ACCOUNT_FILE)",
           );
-        const { device, created } = await push.devices.register(r, token.label);
+        const { device, created } = await push.devices.register(r, token);
         log({ event: created ? 'device' : 'device-updated', client, token: token.label, device: device.id, platform: device.platform });
         return sendJson(
           res,
@@ -209,7 +209,8 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
       const token = need(req, client, 'unregistering', check.devices);
       const id = path.slice(DEVICES_PREFIX.length);
       if (!DEVICE_ID_RE.test(id)) throw new HttpError(400, 'expected /v1/devices/<id>: the id POST /v1/devices answered');
-      if ((await push.devices.remove([id])) === 0) throw new HttpError(404, 'no such device');
+      // Only the token it registered with: another token's holder can't take a phone off.
+      if (!(await push.devices.removeOwn(id, token))) throw new HttpError(404, 'no such device');
       log({ event: 'device-removed', client, token: token.label, device: id });
       return sendJson(res, 200, { deleted: id }, headers);
     }

@@ -9,8 +9,8 @@ import * as path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import type { Firing } from '../src/alerts';
 import { AlertsConfig, FcmConfig, PushConfig, loadConfig, parseServiceAccount } from '../src/config';
-import { Devices, deviceId, parseRegistration, wants } from '../src/devices';
-import { ApnsSender, FcmSender, MAX_LINK, jwt, pushMessage } from '../src/push';
+import { Devices, REFUSED_TO_PRUNE, deviceId, parseRegistration, wants } from '../src/devices';
+import { ApnsSender, FcmSender, MAX_LINK, PushService, SendResult, jwt, pushMessage } from '../src/push';
 import { call, config, start, tok } from './helpers';
 
 const DEVICES = 'devices-token-of-at-least-24-chars';
@@ -18,6 +18,7 @@ const OTHER = 'another-token-of-at-least-24-chars';
 const AM = 'alertmanager-token-of-at-least-24';
 const IOS_TOKEN = 'a'.repeat(64);
 const IOS_GONE = 'b'.repeat(64);
+const IOS_BAD = 'd'.repeat(64);
 const ANDROID_TOKEN = 'fcm-token-' + 'x'.repeat(150);
 const ANDROID_GONE = 'fcm-token-' + 'y'.repeat(150);
 
@@ -125,12 +126,12 @@ describe('push: tokens and messages', () => {
     try {
       const file = path.join(dir, 'state', 'devices.json');
       const devices = new Devices(file, 2);
-      const a = await devices.register({ platform: 'ios', token: IOS_TOKEN }, 'team');
+      const a = await devices.register({ platform: 'ios', token: IOS_TOKEN }, tok(DEVICES, 'team'));
       assert.deepEqual([a.created, a.device.id], [true, deviceId('ios', IOS_TOKEN)]);
-      const again = await devices.register({ platform: 'ios', token: IOS_TOKEN, alertnames: ['A'] }, 'team');
+      const again = await devices.register({ platform: 'ios', token: IOS_TOKEN, alertnames: ['A'] }, tok(DEVICES, 'team'));
       assert.deepEqual([again.created, again.device.registered, again.device.alertnames], [false, a.device.registered, ['A']]);
-      await devices.register({ platform: 'android', token: ANDROID_TOKEN }, 'team');
-      await assert.rejects(devices.register({ platform: 'android', token: ANDROID_GONE }, 'team'), /at most 2 devices/);
+      await devices.register({ platform: 'android', token: ANDROID_TOKEN }, tok(DEVICES, 'team'));
+      await assert.rejects(devices.register({ platform: 'android', token: ANDROID_GONE }, tok(DEVICES, 'team')), /at most 2 devices/);
       if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600);
       assert.equal((await new Devices(file, 2).list()).length, 2, 'read back from the file');
       assert.equal(await devices.remove([a.device.id, 'f'.repeat(32)]), 1);
@@ -138,6 +139,65 @@ describe('push: tokens and messages', () => {
         (await new Devices(file, 2).list()).map((d) => d.platform),
         ['android'],
       );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('push: one token holder', () => {
+  const ios = (n: number): string => n.toString(16).padStart(64, '0');
+
+  it('may register at most PUSH_MAX_DEVICES_PER_TOKEN devices; updating one of them is fine', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-pertoken-'));
+    try {
+      const devices = new Devices(path.join(dir, 'devices.json'), 100, 2);
+      await devices.register({ platform: 'ios', token: ios(1) }, tok(DEVICES, 'phones'));
+      await devices.register({ platform: 'ios', token: ios(2) }, tok(DEVICES, 'phones'));
+      await assert.rejects(devices.register({ platform: 'ios', token: ios(3) }, tok(DEVICES, 'phones')), /PUSH_MAX_DEVICES_PER_TOKEN/);
+      // The same token's devices again (new filters): not a new device.
+      assert.equal((await devices.register({ platform: 'ios', token: ios(2), alertnames: ['A'] }, tok(DEVICES, 'phones'))).created, false);
+      // Another token has its own allowance.
+      assert.equal((await devices.register({ platform: 'ios', token: ios(3) }, tok(OTHER, 'other'))).created, true);
+      // Not even under the old label: the count is per token.
+      await assert.rejects(devices.register({ platform: 'ios', token: ios(4) }, tok(DEVICES, 'renamed')), /PUSH_MAX_DEVICES_PER_TOKEN/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a token the provider refuses 3 pushes in a row is removed, only while other phones get them', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-refused-'));
+    try {
+      const devices = new Devices(path.join(dir, 'devices.json'), 100);
+      let goodOk = true;
+      const send = async (token: string): Promise<SendResult> => (token === ios(1) && goodOk ? { ok: true } : { ok: false, why: 'APNs: HTTP 400 BadDeviceToken', refused: true });
+      const cfg = { file: devices.file, tokens: [tok(DEVICES, 'phones')], maxDevices: 100, maxDevicesPerToken: 50, repeatMs: 0 };
+      const service = new PushService(cfg, devices, { ios: { send } }, () => {});
+      const ids = async (): Promise<string[]> => (await devices.list()).map((d) => d.token).sort();
+      await devices.register({ platform: 'ios', token: ios(1) }, tok(DEVICES, 'phones'));
+      await devices.register({ platform: 'ios', token: ios(2) }, tok(DEVICES, 'phones'));
+      const round = async (n: number): Promise<void> => {
+        await service.notify(firing({ fingerprint: `fp-refused-${n}` }));
+        await service.idle();
+      };
+      // Every iPhone refused (a wrong PUSH_APNS_SANDBOX looks like this): nobody counts a strike.
+      goodOk = false;
+      for (let n = 0; n < REFUSED_TO_PRUNE + 1; n++) await round(n);
+      assert.deepEqual(await ids(), [ios(1), ios(2)]);
+      assert.deepEqual((await devices.list()).map((d) => d.refused), [undefined, undefined]);
+      // The good one gets them: the refused one is removed after 3 in a row.
+      goodOk = true;
+      for (let n = 10; n < 10 + REFUSED_TO_PRUNE - 1; n++) await round(n);
+      assert.deepEqual(await ids(), [ios(1), ios(2)]);
+      await round(20);
+      assert.deepEqual(await ids(), [ios(1)]);
+      // A push that goes through clears the count.
+      await devices.register({ platform: 'ios', token: ios(2) }, tok(DEVICES, 'phones'));
+      await devices.settle([], [deviceId('ios', ios(2))], []);
+      assert.equal((await devices.list()).find((d) => d.token === ios(2))!.refused, 1);
+      await devices.settle([], [], [deviceId('ios', ios(2))]);
+      assert.equal((await devices.list()).find((d) => d.token === ios(2))!.refused, undefined);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -195,6 +255,7 @@ async function fakeApns(): Promise<{ url: string; sent: any[]; expireNext: () =>
     }
     sent.push({ path: req.url, headers: req.headers, payload: JSON.parse(text) });
     if (req.url === `/3/device/${IOS_GONE}`) return void res.writeHead(410, { 'content-type': 'application/json' }).end('{"reason":"Unregistered","timestamp":1}');
+    if (req.url === `/3/device/${IOS_BAD}`) return void res.writeHead(400, { 'content-type': 'application/json' }).end('{"reason":"BadDeviceToken"}');
     res.writeHead(200, { 'apns-id': 'x' }).end();
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
@@ -235,6 +296,7 @@ describe('push: alerts to phones', () => {
     fcm: fcmConfig(),
     apns: apnsConfig,
     maxDevices: 100,
+    maxDevicesPerToken: 50,
     repeatMs: 3_600_000,
     ...over,
   });
@@ -324,6 +386,8 @@ describe('push: alerts to phones', () => {
       const id = deviceId('android', ANDROID_TOKEN);
       assert.equal((await call(`${url}/v1/devices/${id}`, 'DELETE')).status, 401);
       assert.equal((await call(`${url}/v1/devices/not-an-id`, 'DELETE', undefined, DEVICES)).status, 400);
+      // Another accepted token can't take this phone off: it isn't the one it registered with.
+      assert.equal((await call(`${url}/v1/devices/${id}`, 'DELETE', undefined, OTHER)).status, 404);
       assert.deepEqual((await call(`${url}/v1/devices/${id}`, 'DELETE', undefined, DEVICES)).json, { deleted: id });
       assert.equal((await call(`${url}/v1/devices/${id}`, 'DELETE', undefined, DEVICES)).status, 404);
       assert.ok(!logs.some((e) => JSON.stringify(e).includes(IOS_TOKEN) || JSON.stringify(e).includes(DEVICES)), 'tokens are never logged');
@@ -346,6 +410,39 @@ describe('push: alerts to phones', () => {
         [`/3/device/${IOS_TOKEN}`],
       );
       assert.ok((await call(`${url}/v1/server-info`, 'GET')).json.capabilities.includes('push'));
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("APNs BadDeviceToken: the phone is removed after 3 pushes in a row that reached the others", async () => {
+    const senders = { ios: new ApnsSender(apnsConfig, { origin: apns.url }) };
+    const { s, url } = await start(config(dir, { alerts: alerts(), push: push({ tokens: [tok(DEVICES, 'phones')], fcm: undefined }) }), { senders });
+    try {
+      assert.equal((await call(`${url}/v1/devices`, 'POST', JSON.stringify({ platform: 'ios', token: IOS_BAD }), DEVICES)).status, 201);
+      const tokens = async (): Promise<string[]> => (await s.push!.devices.list()).map((d) => d.token);
+      for (let n = 1; n <= REFUSED_TO_PRUNE; n++) {
+        assert.ok((await tokens()).includes(IOS_BAD), `still there before push ${n}`);
+        await s.push!.notify(firing({ fingerprint: `fp-bad-${n}` }));
+        await s.push!.idle();
+      }
+      assert.ok(!(await tokens()).includes(IOS_BAD));
+      assert.ok((await tokens()).includes(IOS_TOKEN));
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('a devices token replaced under the same label: the phones of the old one get no pushes', async () => {
+    const senders = { ios: new ApnsSender(apnsConfig, { origin: apns.url }) };
+    // "phones" is now another token: the iPhone registered with the old one gets nothing.
+    const { s } = await start(config(dir, { alerts: alerts(), push: push({ tokens: [tok('rotated-token-of-at-least-24-chars', 'phones')], fcm: undefined }) }), { senders });
+    try {
+      assert.ok((await s.push!.devices.list()).some((d) => d.token === IOS_TOKEN && d.by === 'phones'));
+      apns.sent.length = 0;
+      await s.push!.notify(firing({ fingerprint: 'fp-rotated' }));
+      await s.push!.idle();
+      assert.deepEqual(apns.sent, []);
     } finally {
       await s.close();
     }

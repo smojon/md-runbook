@@ -35,7 +35,7 @@ import {
   shellKindForLanguage,
 } from '@md-runbook/core';
 import { callEstimateSeconds, callTarget, executeCell, fileSha256, relativeToCaller, resumeProblem, samePath, writeCallCopy } from '@md-runbook/core/node';
-import { callAttrs, callChainProblem, callFromAttrs, callOutputText, callRefs, checkCall, fillRefs, formatCallSteps, isCallLanguage, isDynamicSrc, parseCall, srcValueProblem } from '@md-runbook/core/call';
+import { callAttrs, callChainProblem, callFromAttrs, callOutputText, callRefs, checkCall, fillRefs, formatCallSteps, isCallLanguage, isDynamicSrc, parseCall, recordValues, srcValueProblem } from '@md-runbook/core/call';
 import { stepState } from '@md-runbook/core/progress';
 import { KubeContextMode } from '@md-runbook/core/kubeContext';
 import type { ShellSettings } from '@md-runbook/core';
@@ -51,6 +51,7 @@ import { VarRef, choiceProblem, fillShown, findRefs, parseFrontMatter, rewriteRe
 import { inSections, sectionHeadings } from '@md-runbook/core/sections';
 import { historySizeFor, runnerAttrs } from '@md-runbook/core/incident';
 import { SessionPool } from '@md-runbook/core/node/session';
+import { recordCallCopy, resumeRecordProblem } from '@md-runbook/core/node/callCopyRecord';
 import { TranscriptFile } from '@md-runbook/core/node/transcript';
 import { TranscriptEntry, transcriptNote } from '@md-runbook/core/transcript';
 import { ManualStep, PlannedBlock, RunUsageError, formatSteps, headingsOf, missingCaptures, selectManual, selectSteps, selectionLabel } from './select';
@@ -657,8 +658,9 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         if (prev && !o.freshCopy && prev.exit !== undefined && prev.exit !== '0' && prev.exit !== 'skipped') {
           const old = path.resolve(path.dirname(path.resolve(o.file)), prev.copy);
           if (fs.existsSync(old) && samePath(callTarget(o.file, prev.runbook), target)) {
-            // The output block is never signed: the copy it names must be one of this runbook.
-            const why = resumeProblem(old, target, { folder: o.copyFolder, signed: signedRoot !== undefined });
+            // The output block is never signed: the copy it names must be one of this runbook, with
+            // the front matter a copy gets now, and the outputs a run here wrote (not planted ones).
+            const why = resumeProblem(old, target, { folder: o.copyFolder, signed: signedRoot !== undefined }) ?? resumeRecordProblem(old, target, recordValues(original));
             if (why === undefined) {
               copy = old;
               resumed = true;
@@ -706,6 +708,8 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
             { out: io.out, log: (l) => io.log(`  ${l}`) },
           );
           fs.writeFileSync(copy, child.text, 'utf8');
+          // What this run wrote: only a copy as kept here is continued by a run again.
+          recordCallCopy(copy, child.text);
           for (const s of child.steps) if (s.status === 'failed' || s.status === 'not run') failure ??= `step ${pre}${n}.${s.step} ${s.status === 'failed' ? 'failed' : 'not run'}: ${s.message ?? s.exit}`;
           const unticked = child.manual.filter((m) => !m.ticked).length;
           if (!child.ok && failure === undefined && unticked > 0) {

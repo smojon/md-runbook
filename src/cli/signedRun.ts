@@ -13,6 +13,7 @@ import { isCodeMeta, locateCodeCells, parse, shellKindForLanguage } from '@md-ru
 import { callRefs, fillRefs, parseCall } from '@md-runbook/core/call';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { callTarget, samePath, sshVerify } from '@md-runbook/core/node';
+import { runFrontMatterKeys } from '@md-runbook/core/frontMatterRun';
 import { currentOs } from '@md-runbook/core/os';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { allSignatures, signedStatus } from '@md-runbook/core/signing';
@@ -99,20 +100,9 @@ export async function checkSignedRun(
   const runFm = parseFrontMatter(text);
   if (status.version === 2 && status.textChanged) {
     say('changed since signing outside its blocks (front matter or text): sign it again');
-  } else if (status.version !== 2 && runFm) {
-    const set = (
-      [
-        ['env', runFm.env && Object.keys(runFm.env).length > 0],
-        ['cwd', runFm.cwd !== undefined],
-        ['shell', runFm.shell !== undefined],
-        ['mode', runFm.mode !== undefined],
-        ['kube-context', runFm.kubeContext !== undefined],
-        ['kube-context-mode', runFm.kubeContextMode !== undefined],
-        ['timeout', runFm.timeoutSeconds !== undefined],
-      ] as const
-    )
-      .filter(([, on]) => on)
-      .map(([k]) => `${k}:`);
+  } else if (status.version !== 2) {
+    // The same list as links (core/runbookLink.ts linkTrust).
+    const set = runFrontMatterKeys(runFm);
     if (set.length) say(`its front matter sets ${set.join(', ')}, which its signature (manifest version 1) doesn't cover: sign it again`);
   }
   const doc = parse(text);

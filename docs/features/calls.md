@@ -75,9 +75,13 @@ BACKUP_DIR=${out:BACKUP_DIR}
 
   It goes on only in a run copy of the runbook called:
   - the copy has the same blocks, is named after it, and is next to it or in the copy folder;
-  - for a signed runbook, the copy carries the same signed name and version.
+  - for a signed runbook, the copy carries the same signed name and version;
+  - its front matter is the one a new copy would get;
+  - it is as md-runbook on this machine last wrote it. VS Code keeps a digest of each copy it ran,
+    and the command line keeps one in its state folder (`MD_RUNBOOK_STATE_DIR`).
 
-  Otherwise a fresh copy runs, and the call's output says why.
+  Otherwise a fresh copy runs, and the call's output says why. A step run by hand in the copy
+  in VS Code still counts as written by md-runbook; an edit made elsewhere doesn't.
 
   `md-runbook run --fresh-copy` starts a new copy instead. A `${out:NAME}` captured by a step
   done in the earlier run has no value in the next one. Put the capture and its use in the same

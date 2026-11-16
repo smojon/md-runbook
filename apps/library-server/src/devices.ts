@@ -4,7 +4,8 @@
  * STATE_DIR, mode 600, written atomically; the server is its only writer.
  *
  * A device only gets pushes while the token it registered with is still one the server accepts:
- * taking a token out of DEVICES_TOKENS stops its phones too.
+ * taking a token out of DEVICES_TOKENS stops its phones too. The device keeps a digest of that
+ * token, not its label: a new token under the old label doesn't bring the old phones back.
  */
 import { createHash } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
@@ -25,8 +26,12 @@ export interface Device {
   alertnames?: string[];
   /** Only alerts whose runbook is one of these library paths, or below one ending in "/"; absent: all. */
   runbooks?: string[];
-  /** The label of the device token it registered with. */
+  /** The label of the device token it registered with (for the log). */
   by: string;
+  /** sha256 of the device token it registered with: it gets pushes while that token is accepted. */
+  tokenDigest?: string;
+  /** Pushes in a row the provider refused this token for (APNs BadDeviceToken): removed at 3. */
+  refused?: number;
   registered: string;
   updated: string;
 }
@@ -44,7 +49,12 @@ const APNS_TOKEN_RE = /^[0-9a-fA-F]{64,512}$/;
 const FCM_TOKEN_RE = /^[A-Za-z0-9_:.-]{32,4096}$/;
 const ALERTNAME_RE = /^[^\x00-\x1f]{1,200}$/;
 export const DEVICE_ID_RE = /^[0-9a-f]{32}$/;
+/** A device whose token the provider refused this many pushes in a row is removed. */
+export const REFUSED_TO_PRUNE = 3;
 const MAX_FILTERS = 50;
+
+/** What a device keeps of the devices token it registered with (never the token). */
+export const tokenDigest = (value: string): string => createHash('sha256').update(value).digest('hex');
 
 export const deviceId = (platform: DevicePlatform, token: string): string => createHash('sha256').update(`${platform}:${token}`).digest('hex').slice(0, 32);
 
@@ -101,6 +111,8 @@ export class Devices {
   constructor(
     readonly file: string,
     readonly maxDevices: number,
+    /** Most devices one devices token may register: one token's holder can't fill the list. */
+    readonly maxPerToken = 50,
   ) {}
 
   private async load(): Promise<Device[]> {
@@ -129,12 +141,15 @@ export class Devices {
   }
 
   /** Adds the device, or updates it (its filters) when its token is registered already. */
-  async register(r: Registration, by: string, now = new Date()): Promise<{ device: Device; created: boolean }> {
+  async register(r: Registration, by: { label: string; value: string }, now = new Date()): Promise<{ device: Device; created: boolean }> {
     return this.lock.run(async () => {
       const list = await this.load();
       const id = deviceId(r.platform, r.token);
       const old = list.find((d) => d.id === id);
       if (!old && list.length >= this.maxDevices) throw new HttpError(507, `this server keeps at most ${this.maxDevices} devices (PUSH_MAX_DEVICES)`);
+      const digest = tokenDigest(by.value);
+      if (old?.tokenDigest !== digest && list.filter((d) => d.tokenDigest === digest).length >= this.maxPerToken)
+        throw new HttpError(507, `this devices token has registered ${this.maxPerToken} devices, the most it may (PUSH_MAX_DEVICES_PER_TOKEN)`);
       const at = now.toISOString();
       const device: Device = {
         id,
@@ -142,12 +157,64 @@ export class Devices {
         token: r.token,
         ...(r.alertnames ? { alertnames: r.alertnames } : {}),
         ...(r.runbooks ? { runbooks: r.runbooks } : {}),
-        by,
+        by: by.label,
+        tokenDigest: digest,
         registered: old?.registered ?? at,
         updated: at,
       };
       await this.save([...list.filter((d) => d.id !== id), device]);
       return { device, created: !old };
+    });
+  }
+
+  /**
+   * DELETE /v1/devices/<id>: removes the device only for the devices token it registered with.
+   * Whether it was removed (false: no such device, or another token's).
+   */
+  async removeOwn(id: string, by: { value: string }): Promise<boolean> {
+    return this.lock.run(async () => {
+      const list = await this.load();
+      const digest = tokenDigest(by.value);
+      const kept = list.filter((d) => !(d.id === id && d.tokenDigest === digest));
+      if (kept.length === list.length) return false;
+      await this.save(kept);
+      return true;
+    });
+  }
+
+  /**
+   * After a push: removes the devices the provider says are gone, counts the pushes in a row it
+   * refused a device's token for (removed at REFUSED_TO_PRUNE), and clears that count on a push
+   * that went through. How many were removed.
+   */
+  async settle(gone: readonly string[], refused: readonly string[], ok: readonly string[]): Promise<number> {
+    if (gone.length + refused.length === 0 && ok.length === 0) return 0;
+    return this.lock.run(async () => {
+      const list = await this.load();
+      let changed = false;
+      const kept: Device[] = [];
+      for (const d of list) {
+        if (gone.includes(d.id)) {
+          changed = true;
+          continue;
+        }
+        if (refused.includes(d.id)) {
+          changed = true;
+          const n = (d.refused ?? 0) + 1;
+          if (n >= REFUSED_TO_PRUNE) continue;
+          kept.push({ ...d, refused: n });
+          continue;
+        }
+        if (ok.includes(d.id) && d.refused !== undefined) {
+          changed = true;
+          const { refused: _, ...rest } = d;
+          kept.push(rest);
+          continue;
+        }
+        kept.push(d);
+      }
+      if (changed) await this.save(kept);
+      return list.length - kept.length;
     });
   }
 
