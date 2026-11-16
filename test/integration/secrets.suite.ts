@@ -65,6 +65,24 @@ test('params: front-matter default, Set Parameters values, Reset Inputs', async 
   }
 });
 
+test('params: a value that is not one of its choices is refused, wherever it comes from', async () => {
+  try {
+    const uri = writeFile('params-choices.md', `---\nparams:\n  - TIER: web # One of: web, db\n---\n\n\`\`\`${LANG}\n${echo('tier=${param:TIER}')}\n\`\`\`\n`);
+    const editor = await openRunbook(uri);
+    const cell = editor.notebook.getCells().find((c) => c.kind === vscode.NotebookCellKind.Code)!;
+    await vscode.commands.executeCommand('mdRunbook._test.setParameters', { TIER: 'web; calc' });
+    await runCells(editor, cell.index, cell.index + 1);
+    assert.equal(await waitForRun(cell), false);
+    assert.match(outputText(cell), /\$\{param:TIER\} is "web; calc", not one of its choices: web, db/);
+    await vscode.commands.executeCommand('mdRunbook._test.setParameters', { TIER: 'db' });
+    await runCells(editor, cell.index, cell.index + 1);
+    assert.equal(await waitForRun(cell), true, outputText(cell));
+    assert.match(outputText(cell), /tier=db/);
+  } finally {
+    await closeAll();
+  }
+});
+
 /** What each cell of the active runbook waits for (waiting.ts). */
 const waitingNow = async (): Promise<(string | undefined)[]> => ((await vscode.commands.executeCommand('mdRunbook._waiting')) as (string | undefined)[] | undefined) ?? [];
 const waitUntil = async (what: string, check: () => Promise<boolean>, ms = 15_000): Promise<void> => {

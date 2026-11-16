@@ -59,6 +59,32 @@ Security fixes from a review of the parts that face the network.
 - **Ops host:** md-runbook-probe ignores a `# comment` after `log =`, as the gate does.
 - **Gate and ops host docs:** a gate's word needs `unsigned = refuse` for every key and
   `log = syslog`. After any time with unsigned blocks, make a new ops host key.
+- **Runbook calls (VS Code and command line):** a call run again continues only a run copy of
+  the runbook called. Before, an edited `copy=` in its output could name any file.
+  - The copy must be next to it or in the copy folder, named after it, with the same blocks.
+  - For a signed runbook, the copy must have the same signed name and version.
+  - Otherwise a fresh copy runs, and the call's output says why.
+- **Runbook calls:** a value in `src=` fills part of one file or folder name. Before, a link's
+  `TO=../../elsewhere/evil` could make `src="releases/${param:TO}.md"` run any runbook.
+  - A value with `/`, `\` or `:` is now an error before anything runs.
+- **Parameters with choices (`One of: a, b`):** a value from a link, a call, the default or
+  `--param` must be one of them too. Before, only the input box checked it.
+  - VS Code doesn't take such a value from a link, and asks for it instead.
+- **Confirmations (VS Code and command line):** risky patterns now see the command with its
+  values filled in. Before, `kubectl ${param:VERB}` with `VERB=delete` never asked.
+  - The dialog shows those values; secret ones stay `${secret:…}`.
+  - In VS Code, a cell with placeholders asks once their values are known, not before.
+- **VS Code, redaction and AI settings:** a workspace's `redaction.patterns`, `ai.terms` and
+  `ai.internalDomains` are added to yours. Before, a workspace setting `[]` replaced your list.
+- **VS Code on Windows, recorded context:** focusing a runbook could run a `kubectl.cmd` planted
+  next to it. Context commands now look on `PATH` only.
+  - The status bar's first look runs them in your home folder.
+- **Cloud console views (VS Code):** an AWS link takes only a real region. Before, a crafted
+  zone or ARN in the output could point **Open** at another host.
+  - Values in the table stay text: a resource name can't make a link, an image or HTML.
+- **VS Code, Set Parameters and Set Inputs:** only the extension test runner can pass them
+  values. The commands themselves always ask.
+
 
 ## 0.26.8
 

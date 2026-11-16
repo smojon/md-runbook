@@ -159,7 +159,7 @@ NAME=value
 
 | Part | Value | Effect |
 | --- | --- | --- |
-| `src=PATH` | relative to the folder of the `.md` file; may use `${param:}` and `${out:}` | The runbook to run. Required. |
+| `src=PATH` | relative to the folder of the `.md` file; may use `${param:}` and `${out:}`, whose values fill part of one file or folder name (no `/`, `\` or `:`) | The runbook to run. Required. |
 | `section=TEXT` | the start of a heading, case-sensitive; repeatable | Run only the steps under it (as `md-runbook run --section`). |
 | a body line `NAME=value` | `NAME` a parameter of the runbook called; the value may use `${param:}`, `${out:}`, `${input:}`, `${secret:}`, and may be quoted | Passed as `${param:NAME}`. Blank lines and `#` comments are allowed. |
 
@@ -266,6 +266,8 @@ field. A trailing `One of: a, b, c` in the comment (any case) lists the values a
 - The list ends with the comment, or at a period followed by a space, so `1.2` can be a choice.
 - `, or` and ` or ` separate too, and quotes around a choice are removed.
 - The linter warns when a default is not one of its choices.
+- A value that is not one of them is refused wherever it comes from: a link, a call, the
+  default or `--param`.
 
 `report-runs:` names where VS Code, the app and the command line send a
 [run summary](features/run-reports.md) at the end of each run. The summary has which runbook,

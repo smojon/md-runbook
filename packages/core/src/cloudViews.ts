@@ -24,6 +24,8 @@ const isObj = (v: unknown): v is Json => typeof v === 'object' && v !== null && 
 const str = (v: unknown): string => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : '');
 const last = (path: string): string => path.split('/').filter(Boolean).pop() ?? '';
 const q = encodeURIComponent;
+/** An AWS region (us-east-1, us-gov-west-1), else '': the console's default, so it can't name another host. */
+const awsRegion = (s: string): string => (/^[a-z]{2}(-[a-z]+)+-\d$/.test(s) ? s : '');
 
 /** The JSON a command printed: the whole output, or from its first `{` or `[` (after a warning line). */
 export function parseJsonOutput(text: string): unknown {
@@ -49,7 +51,7 @@ function ec2(json: unknown): CloudView | undefined {
     rows: instances.map((i) => {
       const id = str(i.InstanceId);
       const zone = isObj(i.Placement) ? str(i.Placement.AvailabilityZone) : '';
-      const region = zone.replace(/[a-z]$/, '');
+      const region = awsRegion(zone.replace(/[a-z]$/, ''));
       const name = Array.isArray(i.Tags) ? str(i.Tags.filter(isObj).find((t) => t.Key === 'Name')?.Value) : '';
       return {
         cells: [name, id, str(i.InstanceType), isObj(i.State) ? str(i.State.Name) : '', zone, str(i.PrivateIpAddress), str(i.PublicIpAddress)],
@@ -68,7 +70,7 @@ function eks(json: unknown): CloudView | undefined {
   // describe-cluster: { cluster: { name, arn: arn:aws:eks:REGION:ACCOUNT:cluster/NAME, … } }
   if (isObj(json.cluster) && /^arn:aws[\w-]*:eks:/.test(str(json.cluster.arn))) {
     const c = json.cluster;
-    const region = str(c.arn).split(':')[3] ?? '';
+    const region = awsRegion(str(c.arn).split(':')[3] ?? '');
     return {
       title: 'EKS cluster',
       columns: ['Name', 'Status', 'Version', 'Region'],
@@ -153,7 +155,8 @@ export function cloudView(stdout: string): CloudView | undefined {
   return undefined;
 }
 
-const cellText = (s: string): string => s.replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ') || ' ';
+/** A table cell as text: Markdown that would make a link, an image, HTML or code is escaped. */
+const cellText = (s: string): string => s.replace(/[\\`*_[\]()!<>|~&]/g, '\\$&').replace(/[\r\n]+/g, ' ') || ' ';
 
 /** The view as a Markdown table, a console link in each row (VS Code shows it under the output). */
 export function cloudViewMarkdown(v: CloudView): string {

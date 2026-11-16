@@ -93,4 +93,20 @@ describe('cloud console views', () => {
     const md = cloudViewMarkdown({ title: 'EC2 instances', columns: ['Name', 'State'], rows: [{ cells: ['a|b', ''], url: 'https://x' }] });
     assert.equal(md, '**EC2 instances** (1)\n\n| Name | State | Console |\n| --- | --- | --- |\n| a\\|b |   | [Open](https://x) |\n');
   });
+
+  it('a region that is no AWS region gives the console\'s default host, not another one', () => {
+    const at = (zone: string): string => cloudView(JSON.stringify({ Reservations: [{ Instances: [{ InstanceId: 'i-1', Placement: { AvailabilityZone: zone } }] }] }))!.rows[0]!.url;
+    assert.equal(at('us-gov-west-1a'), 'https://us-gov-west-1.console.aws.amazon.com/ec2/home?region=us-gov-west-1#InstanceDetails:instanceId=i-1');
+    for (const zone of ['evil.example/x#a', 'evil.example?a', 'attacker.com:443/a', 'us-east-1.evil.coma']) {
+      assert.equal(at(zone), 'https://console.aws.amazon.com/ec2/home#InstanceDetails:instanceId=i-1', zone);
+    }
+    const eks = cloudView(JSON.stringify({ cluster: { name: 'p', arn: 'arn:aws:eks:evil.example/x?:1:cluster/p' } }))!;
+    assert.equal(eks.rows[0]!.url, 'https://console.aws.amazon.com/eks/home#/clusters/p');
+  });
+
+  it('Markdown in values stays text: no link, image or HTML from a resource name', () => {
+    const md = cloudViewMarkdown({ title: 'EC2 instances', columns: ['Name'], rows: [{ cells: ['[Sign in](https://evil.example) ![x](https://evil.example/p.png) <img src=x> `c` a_b'], url: 'https://x' }] });
+    const row = md.trim().split('\n').pop()!;
+    assert.equal(row, '| \\[Sign in\\]\\(https://evil.example\\) \\!\\[x\\]\\(https://evil.example/p.png\\) \\<img src=x\\> \\`c\\` a\\_b | [Open](https://x) |');
+  });
 });

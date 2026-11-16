@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { parseCellOptions, tokenizeInfo } from '@md-runbook/core/cellOptions';
 import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor, findRisky } from '@md-runbook/core/confirm';
-import { CONTEXT_UNKNOWN, firstLine, runContextCommand } from '@md-runbook/core/node/context';
+import { CONTEXT_UNKNOWN, contextEnv, firstLine, runContextCommand } from '@md-runbook/core/node/context';
 
 describe('cell options', () => {
   it('no options', () => {
@@ -145,5 +145,21 @@ describe('context commands', () => {
     assert.equal(await runContextCommand('echo prod-eu', os.tmpdir(), process.env), 'prod-eu');
     assert.equal(await runContextCommand('exit 3', os.tmpdir(), process.env), CONTEXT_UNKNOWN);
     assert.equal(await runContextCommand('md-runbook-no-such-command-xyz', os.tmpdir(), process.env), CONTEXT_UNKNOWN);
+  });
+
+  it('on Windows, searches PATH only: not a program planted in the folder it runs in', () => {
+    assert.equal(contextEnv({ A: '1' }, 'win32').NoDefaultCurrentDirectoryInExePath, '1');
+    assert.deepEqual(contextEnv({ A: '1' }, 'linux'), { A: '1' });
+  });
+
+  it('on Windows, a kubectl.cmd next to the runbook does not run', { skip: process.platform !== 'win32' && 'cmd.exe only' }, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-ctx-'));
+    fs.writeFileSync(path.join(dir, 'mdrbplanted.cmd'), '@echo planted\r\n');
+    // Not inherited from whatever started the tests: cmd.exe searches the folder by default.
+    const env = { ...process.env };
+    delete env.NoDefaultCurrentDirectoryInExePath;
+    assert.equal(await runContextCommand('mdrbplanted', dir, env), CONTEXT_UNKNOWN);
+    // Still found on PATH.
+    assert.equal(await runContextCommand('mdrbplanted', os.tmpdir(), { ...env, PATH: `${dir};${env.PATH ?? ''}` }), 'planted');
   });
 });

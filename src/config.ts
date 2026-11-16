@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { DEFAULT_PATTERNS, RedactionPattern, Redactor, ShellSettings, WriteOptions, createRedactor } from '@md-runbook/core';
 import { knownSecrets } from './knownSecrets';
+import { joinedLevels } from './listSetting';
 
 export const SECTION = 'mdRunbook';
 
@@ -21,7 +22,8 @@ export function redactionConfig(): RedactionConfig {
   const enabled = c.get<boolean>('redaction.enabled', true);
   const patterns: Array<string | RedactionPattern> = [];
   if (c.get<boolean>('redaction.useDefaultPatterns', true)) patterns.push(...DEFAULT_PATTERNS);
-  patterns.push(...c.get<Array<string | RedactionPattern>>('redaction.patterns', []));
+  // Yours and the workspace's: a workspace can add patterns, not drop yours (listSetting.ts).
+  patterns.push(...joinedLevels(c.inspect('redaction.patterns'), (v): v is string | RedactionPattern => typeof v === 'string' || (typeof v === 'object' && v !== null)));
   const redactor = createRedactor(patterns);
   const errors = redactor.errors.join('\n');
   if (errors && errors !== lastReportedErrors) {

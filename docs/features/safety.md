@@ -124,6 +124,13 @@ When the confirmation is asked:
   inputs or parameters therefore come before the confirmation.
 - A run of several cells (Run All, Run Below) asks for all their parameters and inputs first,
   before any confirmation. Secrets are still asked cell by cell.
+- A cell with `${param:}`, `${input:}` or `${out:}`: once their values are known, so the
+  patterns see the command as it runs.
+  - `kubectl ${param:VERB} pod x` with `VERB=delete` asks, though the text as written has no
+    risky word.
+  - The dialog shows the command with those values. Secret values stay `${secret:…}`.
+
+The command line does the same with the values given (`--param`, `--input`).
 
 The default patterns cover:
 
@@ -181,6 +188,8 @@ read-only credentials. So a `KUBECONFIG` set by any of them is the one recorded:
 
 - Commands run through the platform shell (`cmd.exe` on Windows, `/bin/sh` elsewhere), in the
   cell's working folder. That is the runbook's folder, unless `cwd:` or `cwd=` set another.
+  - On Windows, `cmd.exe` looks for the program on `PATH` only, never in that folder. So a
+    `kubectl.cmd` next to a runbook doesn't run.
 - Each command runs with the cell's environment set (`mdRunbook.execution.env`, `.env`, `env.*` options,
   secrets, read-only credentials), and a 5 second timeout. A failing or silent command records
   `unknown`.
@@ -191,7 +200,8 @@ read-only credentials. So a `KUBECONFIG` set by any of them is the one recorded:
 
 The attribute named by `mdRunbook.statusBar.contextAttr` (default `context`) is shown in the
 status bar (`☁ prod-eu`) while a runbook is active. It is refreshed when you switch runbooks
-and after every run.
+and after every run. On Windows, switching runs the commands in your home folder, not the
+runbook's; a run then shows the value from the cell's folder.
 
 ## Settings
 

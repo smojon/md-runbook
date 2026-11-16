@@ -164,6 +164,27 @@ export function staysBelow(src: string): boolean {
   return true;
 }
 
+/**
+ * Why a dynamic src= with its values filled in (`filled`) names a file its glob doesn't match:
+ * a value (from a link, an alert, --param) may only fill part of one file or folder name. So no
+ * `/`, `\` or `:` in it, and no `.` or `..` for a name. Undefined: it is fine.
+ */
+export function srcValueProblem(src: string, filled: string): string | undefined {
+  const glob = srcGlob(src).split(/[\\/]/);
+  const got = filled.split(/[\\/]/);
+  const bad = `src="${src}" names ${filled}: a value in src= fills part of one file or folder name (no / \\ or :, not . or ..)`;
+  if (glob.length !== got.length) return bad;
+  for (let i = 0; i < glob.length; i++) {
+    const seg = glob[i]!;
+    if (!seg.includes('*')) continue;
+    const part = got[i]!;
+    const re = new RegExp(`^${seg.replace(/[.+^${}()|[\]\\?]/g, '\\$&').replace(/\*/g, '.*')}$`);
+    if (part === '.' || part === '..' || part.includes(':') || !re.test(part)) return bad;
+  }
+  if (staysBelow(srcGlob(src)) && !staysBelow(filled)) return bad;
+  return undefined;
+}
+
 /** The parameters of a runbook: declared in its front matter, or used by its blocks. */
 export function runbookParams(text: string): { declared: { name: string; default?: string }[]; used: Set<string> } {
   const declared = parseFrontMatter(text)?.params ?? [];

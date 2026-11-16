@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { cellRefs } from '@md-runbook/core/cellOptions';
-import { dotenvSecrets, envRef, findRefs, isRedactableValue, looksLikeSecretValue, looksSecret, looksSecretKey, paramComment, parseDotenv, parseFrontMatter, rewriteRefs, withDotenv } from '@md-runbook/core/secrets';
+import { choiceProblem, dotenvSecrets, envRef, fillShown, findRefs, hasShownRefs, isRedactableValue, looksLikeSecretValue, looksSecret, looksSecretKey, paramComment, parseDotenv, parseFrontMatter, rewriteRefs, withDotenv } from '@md-runbook/core/secrets';
 
 describe('variable references', () => {
   it('finds unique references in order, with secrecy', () => {
@@ -105,6 +105,31 @@ describe('front matter params', () => {
     assert.deepEqual(paramComment('Version (one of: 1.2, 1.3)'), { description: 'Version', choices: ['1.2', '1.3'] });
     assert.deepEqual(paramComment('Pick: one of: a, b, or c.'), { description: 'Pick', choices: ['a', 'b', 'c'] });
     assert.deepEqual(paramComment('someone of: a'), { description: 'someone of: a' });
+  });
+
+  it('choiceProblem: a value from anywhere must be one of the choices', () => {
+    const p = { name: 'ENV', choices: ['dev', 'prod'] };
+    assert.equal(choiceProblem(p, 'dev'), undefined);
+    assert.equal(choiceProblem({ name: 'ENV' }, 'anything'), undefined);
+    assert.equal(choiceProblem(undefined, 'anything'), undefined);
+    assert.equal(choiceProblem(p, 'prod; rm -rf /'), '${param:ENV} is "prod; rm -rf /", not one of its choices: dev, prod');
+    assert.match(choiceProblem(p, 'x'.repeat(100))!, /"x{60}…"/);
+  });
+
+  it('fillShown: non-secret values filled in, secrets and unknown ones as written', () => {
+    const src = 'kubectl ${param:VERB} ${input:POD} --token ${secret:TOKEN} ${input:pw:secret} ${out:ID} ${param:LATER}';
+    const values: Record<string, { value: string; secret: boolean }> = {
+      VERB: { value: 'delete', secret: false },
+      POD: { value: 'web-1', secret: false },
+      TOKEN: { value: 'tok', secret: true },
+      pw: { value: 'hunter2', secret: true },
+      ID: { value: 'captured-secret', secret: true },
+    };
+    assert.equal(fillShown(src, (r) => values[r.name]), 'kubectl delete web-1 --token ${secret:TOKEN} ${input:pw:secret} ${out:ID} ${param:LATER}');
+    assert.ok(hasShownRefs('echo ${param:X}'));
+    assert.ok(hasShownRefs('echo ${out:X}'));
+    assert.ok(!hasShownRefs('echo ${secret:X} ${input:DB_PASSWORD}'));
+    assert.ok(!hasShownRefs('echo $HOME'));
   });
 
   it('accepts unindented items and ... as terminator', () => {

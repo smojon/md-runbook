@@ -9,8 +9,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { ShellSettings, parse, renderReport } from '@md-runbook/core';
-import { callEstimateSeconds, matchRunbooks, nodeShellEnv, resolveShell, runbookReader, writeCallCopy } from '@md-runbook/core/node';
-import { callChainProblem, checkCall, isDynamicSrc, parseCall, srcGlob, staysBelow } from '@md-runbook/core/call';
+import { callEstimateSeconds, copyTextProblem, matchRunbooks, nodeShellEnv, resolveShell, resumeProblem, runbookReader, writeCallCopy } from '@md-runbook/core/node';
+import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
+import { callChainProblem, checkCall, isDynamicSrc, parseCall, srcGlob, srcValueProblem, staysBelow } from '@md-runbook/core/call';
 import { lintRunbook } from '@md-runbook/core/lint';
 import { CliOptions, RunSummary, firstStepNotDone, flattenSteps, junitReport, runRunbook } from '../src/cli/run';
 
@@ -116,6 +117,19 @@ describe('runbook call: parsing and checks', () => {
     assert.ok(!staysBelow('/etc/x.md'));
     assert.ok(!staysBelow('C:\\x.md'));
   });
+
+  it('refuses a value that makes a dynamic src= name another path', () => {
+    const src = 'releases/${param:TO}.runbook.md';
+    assert.equal(srcValueProblem(src, 'releases/72512.runbook.md'), undefined);
+    assert.equal(srcValueProblem('../shared/${param:TO}.md', '../shared/x.md'), undefined);
+    for (const to of ['../../../../Users/x/Downloads/evil', '..\\evil', 'C:', 'a/b']) {
+      assert.match(srcValueProblem(src, `releases/${to}.runbook.md`) ?? '', /fills part of one file or folder name/, to);
+    }
+    assert.match(srcValueProblem('${param:DIR}/x.md', '../x.md')!, /fills part/);
+    assert.match(srcValueProblem('releases/${param:DIR}/x.md', 'releases/../x.md')!, /fills part/);
+    assert.match(srcValueProblem('${param:DIR}/x.md', 'C:/x.md')!, /fills part/);
+    assert.match(srcValueProblem('${param:A}${param:B}/x.md', '../x.md')!, /fills part/);
+  });
 });
 
 describe('runbook call: lint, estimates and copies', () => {
@@ -160,6 +174,34 @@ describe('runbook call: lint, estimates and copies', () => {
     assert.doesNotMatch(text, /md-runbook:output/);
     const second = writeCallCopy(path.join(dir, 'child.md'), '', 'runs', new Date(2026, 10, 11, 10, 0, 0));
     assert.equal(path.relative(dir, second).split(path.sep).join('/'), 'runs/child.20261111-100000.md');
+  });
+
+  it('continues only a run copy of the runbook called, with its blocks and signed name', () => {
+    const dir = tmp({ 'releases/child.md': CHILD, 'elsewhere/drop.md': withOutput(CHILD.replace('echo "A', 'echo "DROP'), 'x'), 'releases/child.20261111-100000.md': withOutput(CHILD, 'A') });
+    const target = path.join(dir, 'releases/child.md');
+    assert.equal(resumeProblem(path.join(dir, 'releases/child.20261111-100000.md'), target), undefined);
+    // Named anywhere by an output block (never signed): another folder, another name, other blocks.
+    fs.mkdirSync(path.join(dir, 'runs'));
+    fs.copyFileSync(path.join(dir, 'releases/child.20261111-100000.md'), path.join(dir, 'runs/child.20261111-100000.md'));
+    assert.match(resumeProblem(path.join(dir, 'runs/child.20261111-100000.md'), target)!, /not next to the runbook called/);
+    assert.equal(resumeProblem(path.join(dir, 'runs/child.20261111-100000.md'), target, { folder: '../runs' }), undefined);
+    assert.match(resumeProblem(path.join(dir, 'elsewhere/drop.md'), target)!, /not next to/);
+    fs.copyFileSync(path.join(dir, 'elsewhere/drop.md'), path.join(dir, 'releases/drop.md'));
+    assert.match(resumeProblem(path.join(dir, 'releases/drop.md'), target)!, /not that of a run copy of child\.md/);
+    fs.copyFileSync(path.join(dir, 'elsewhere/drop.md'), path.join(dir, 'releases/child.20261111-100001.md'));
+    assert.match(resumeProblem(path.join(dir, 'releases/child.20261111-100001.md'), target)!, /blocks are not those/);
+    // Signed: the same manifest name and version, in a signed run even when neither is signed.
+    const signed = (text: string, version: number): string => {
+      const built = buildManifest(text, { name: 'ops/child', version, scopes: [], patterns: {} });
+      assert.ok('manifest' in built, JSON.stringify(built));
+      return withSignature(text, { signer: 'alice', signed: '2026-11-11', manifest: formatManifest(built.manifest), signature: 'AAAA' });
+    };
+    const S = '# S\n\n```bash\necho hi\n```\n';
+    assert.equal(copyTextProblem(S, S), undefined);
+    assert.match(copyTextProblem(S, S, true)!, /signed as nothing/);
+    assert.equal(copyTextProblem(signed(S, 3), signed(S, 3), true), undefined);
+    assert.match(copyTextProblem(signed(S, 2), signed(S, 3))!, /signed as ops\/child version 2, the runbook called as ops\/child version 3/);
+    assert.match(copyTextProblem(S, signed(S, 3))!, /signed as nothing/);
   });
 
   it('finds the first step not done in a copy', () => {
@@ -255,6 +297,37 @@ describe('runbook call: md-runbook run', { skip: !hasBash && 'no bash' }, () => 
       part.summary.steps[1]!.call!.steps.map((s) => s.status),
       ['skipped', 'passed'],
     );
+  });
+
+  it('does not continue a copy an edited output block names elsewhere', async () => {
+    const failing = CHILD.replace('echo "B ${param:ENV}"', 'test -f "${param:ENV}" && echo "B ok"');
+    const done = (text: string): string => text.replace(/```\n(?=\n## Part B|$)/g, '```\n<!-- md-runbook:output start exit=0 -->\n```text\nok\n```\n<!-- md-runbook:output end -->\n');
+    const dir = tmp({ 'releases/child.md': failing, 'elsewhere/child.20261111-100000.md': done(failing.replace('echo "A', 'echo "DROP')) });
+    const file = path.join(dir, 'parent.md');
+    fs.writeFileSync(file, parent('```runbook src=releases/child.md\nENV=flag\n```'), 'utf8');
+    const first = await run(file);
+    assert.ok(!first.summary.ok);
+    const copy = first.summary.steps[1]!.call!.copy;
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(`copy=${copy}`, 'copy=elsewhere/child.20261111-100000.md'), 'utf8');
+    for (const d of ['', 'releases', 'elsewhere']) fs.writeFileSync(path.join(dir, d, 'flag'), '', 'utf8');
+    const second = await run(file);
+    assert.ok(second.log.some((l) => l.includes('not continuing elsewhere/child.20261111-100000.md: it is not next to the runbook called')), second.log.join('\n'));
+    assert.notEqual(second.summary.steps[1]!.call!.copy, 'elsewhere/child.20261111-100000.md');
+    assert.deepEqual(
+      second.summary.steps[1]!.call!.steps.map((s) => s.status),
+      ['passed', 'passed'],
+    );
+  });
+
+  it('refuses a --param that makes src= name a runbook outside its folder', async () => {
+    const dir = tmp({ 'runbooks/releases/child.md': CHILD, 'elsewhere/evil.md': '# Evil\n\n```bash\necho EVIL\n```\n' });
+    const file = path.join(dir, 'runbooks/parent.md');
+    fs.writeFileSync(file, parent('```runbook src="releases/${param:TO}.md"\nENV=dev\n```'), 'utf8');
+    const { summary, log } = await run(file, { params: { TO: '../../elsewhere/evil' } });
+    assert.equal(summary.steps[1]!.status, 'not run');
+    assert.match(summary.steps[1]!.message!, /a value in src= fills part of one file or folder name/);
+    assert.ok(!log.some((l) => l.includes('EVIL')), log.join('\n'));
+    assert.ok((await run(file, { params: { TO: 'child' } })).summary.ok);
   });
 
   it('refuses a cycle, a parameter not passed, and another cluster, before anything runs in it', async () => {
