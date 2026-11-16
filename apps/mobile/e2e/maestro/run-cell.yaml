@@ -15,8 +15,9 @@ name: run-cell
     timeout: 120000
 - tapOn:
     id: hosts
-# Making the key can take a while: on a busy CI simulator the Secure Enclave took over 60 s
-# (4 failures, 2026-11-14 to 16). A pass returns as soon as the key shows.
+# Making the key waits on the simulator's CryptoTokenKit daemon (ctkd), which sometimes took over
+# 60 s to answer the first Secure Enclave request: 63 s and 75 s in the logs, 0.7 s when it's quick
+# (2026-11-15/16). A pass returns as soon as the key shows.
 - extendedWaitUntil:
     visible:
       id: app-public-key

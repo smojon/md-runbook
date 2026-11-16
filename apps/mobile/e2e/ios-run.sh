@@ -73,11 +73,12 @@ while [ "$status" != 0 ] && [ "$attempt" -lt 3 ] && grep -q 'iOS driver not read
   [ "$status" != 0 ] && grep -q 'iOS driver not ready in time' "$out/maestro-attempt-$attempt.log" && driver_snapshot "$attempt"
 done
 
-# A flow that failed gets one more try, alone, on a restarted simulator. On a busy CI simulator
-# the app and the driver were slow in ways a flow can't wait out: the Secure Enclave took over
-# 60 s to make the key or 20 s to sign the SSH login, and the XCTest driver died ("Device became
-# unreachable"): 9 failed jobs in 8 runs, 2026-11-14 to 16. Each flow starts with clearState, so
-# it doesn't depend on the others. The job still fails when a flow fails twice.
+# A flow that failed gets one more try, alone, on a restarted simulator. 9 jobs failed in 8 runs
+# (2026-11-14 to 16) on the simulator, not the app: its CryptoTokenKit daemon (ctkd) sometimes
+# took over 60 s to answer the Secure Enclave (making the key, or signing the SSH login within its
+# 20 s), a tap was lost, and the XCTest driver died ("Device became unreachable"). Each flow
+# starts with clearState, so it doesn't depend on the others. The job still fails when a flow
+# fails twice.
 failed_flows() {
   python3 -c '
 import sys, xml.etree.ElementTree as ET
