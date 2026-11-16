@@ -5,9 +5,10 @@ import { after, before, describe, it } from 'node:test';
 import { RunSummaryReport, buildRunSummary, reportBody } from '../../../packages/core/src/runReport';
 import { signRunSummary } from '../../../packages/core/src/node/runReport';
 import { armorSignature } from '../../../packages/core/src/signing';
-import type { RunsConfig } from '../src/config';
-import { summaryMatches, summaryMismatches } from '../src/runs';
-import { Keys, RUNBOOK, call, config, makeKeys, signRunbook, start, tok } from './helpers';
+import type { LibraryConfig, RunsConfig } from '../src/config';
+import { Library, MAX_FILES } from '../src/library';
+import { Runs, summaryMatches, summaryMismatches } from '../src/runs';
+import { Keys, RUNBOOK, UPLOAD as UPLOAD_TOKEN, call, config, makeKeys, signRunbook, start, tok } from './helpers';
 
 const READ = 'read-token-of-at-least-24-chars';
 const SEND = 'send-token-of-at-least-24-chars';
@@ -288,6 +289,54 @@ describe('run summaries: the endpoint', () => {
     } finally {
       await s.close();
     }
+  });
+
+  it('report-runs-required: separated applies to every query whose runs include that runbook\'s, in any case (review, 2026-11-16)', async () => {
+    fresh();
+    const libDir = path.join(dir, 'library');
+    fs.mkdirSync(path.join(libDir, 'prod'), { recursive: true });
+    fs.mkdirSync(path.join(libDir, 'staging'), { recursive: true });
+    const front = '---\nreport-runs: https://runbooks.example.net/v1/runs\nreport-runs-required: separated\n---\n\n';
+    fs.writeFileSync(path.join(libDir, 'prod', 'deploy.md'), await signRunbook(front + RUNBOOK, { name: 'deploy' }, keys.signer));
+    fs.writeFileSync(path.join(libDir, 'staging', 'other.md'), await signRunbook(RUNBOOK, { name: 'other' }, keys.signer));
+    const library = { dir: libDir, uploadTokens: [tok(UPLOAD_TOKEN)], allowedSigners: keys.allowedSigners, acceptV1: false, allowDelete: false, signedOnly: true, maxBytes: 256 * 1024 };
+    const { s, url } = await start(config(dir, { library, runs: runsConfig({ gateTokens: [tok(GATE, 'web-1')] }) }));
+    const lastGreen = async (q: string): Promise<any> => (await call(`${url}/v1/runs/last-green?runbook=${encodeURIComponent(q)}`, 'GET', undefined, READ)).json;
+    try {
+      // A shared gate's green run of `deploy`: the runs of every spelling below include it.
+      const run = { ...gateSummary(), runbook: { signed: { name: 'deploy', version: 1, manifest: 'ab'.repeat(32), signer: 'ops@example.net', trusted: true } } };
+      assert.equal((await call(`${url}/v1/runs`, 'POST', JSON.stringify(run), GATE)).status, 202);
+      for (const q of ['prod/deploy.md', 'deploy', 'DEPLOY', 'deploy.md', 'x/deploy.md', 'prod/deploy.runbook.md', 'prod/deploy.markdown', 'prod/Deploy.md', 'Prod/deploy.md', '/prod/deploy.md']) {
+        const g = await lastGreen(q);
+        assert.equal(g.required, 'separated', q);
+        assert.equal(g.lastVerified, undefined, q);
+        assert.equal(g.requiredUnknown, undefined, q);
+      }
+      assert.match((await lastGreen('x/deploy.md')).text, /none sent by a gate in separated mode, as report-runs-required: separated asks$/);
+      // Queries whose runs can't be deploy's: no requirement.
+      for (const q of ['other', 'staging/other.md', 'deploy-old.md', 'prod']) assert.equal((await lastGreen(q)).required, undefined, q);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('report-runs-required: when the library can\'t be read, or has too many runbooks, only a separated gate\'s run counts, and the answer says why', async () => {
+    fresh();
+    const libConfig = (libDir: string): LibraryConfig => ({ dir: libDir, uploadTokens: [], allowedSigners: keys.allowedSigners, acceptV1: false, allowDelete: false, signedOnly: true, maxBytes: 256 * 1024 });
+    const missing = await new Library(libConfig(path.join(dir, 'no-such-folder')), dir).separatedRequired('deploy.md');
+    assert.deepEqual(missing, { separated: true, unknown: "the library folder can't be read" });
+    const big = path.join(dir, 'big');
+    fs.mkdirSync(big);
+    for (let i = 0; i <= MAX_FILES; i++) fs.writeFileSync(path.join(big, `r${i}.md`), '# R\n');
+    assert.deepEqual(await new Library(libConfig(big), dir).separatedRequired('deploy.md'), { separated: true, unknown: `the library has more than ${MAX_FILES} runbooks` });
+    fs.rmSync(path.join(big, 'r0.md'));
+    assert.deepEqual(await new Library(libConfig(big), dir).separatedRequired('deploy.md'), { separated: false });
+
+    const runs = new Runs(runsConfig({ gateTokens: [tok(GATE, 'web-1')] }));
+    await runs.receive(JSON.stringify(gateSummary()), { from: '127.0.0.1', token: { label: 'web-1', gate: true } });
+    const g = await runs.lastGreen('ops/restart-api', missing);
+    assert.deepEqual([g.required, g.requiredUnknown, g.lastVerified], ['separated', "the library folder can't be read", undefined]);
+    assert.match(g.text, /; none sent by a gate in separated mode, as the server asks while it can't tell whether the runbook says report-runs-required: separated \(the library folder can't be read\)$/);
   });
 
   it('lists recent runs and the last green one, with verified and unverified marked (read token)', async () => {

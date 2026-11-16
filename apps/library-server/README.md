@@ -146,6 +146,11 @@ When the library's copy says `report-runs-required: separated`:
 - the answer has `"required": "separated"`;
 - the text says when there is none.
 
+It applies to every `runbook=` whose runs include that copy's, in any case: `prod/deploy.md`,
+`deploy`, `x/deploy.md`, `prod/deploy.markdown`. When the library can't be read, or has more than
+500 runbooks, the server can't tell. Then only a separated gate's run counts, and
+`"requiredUnknown"` says why.
+
 More in [run reports](../../docs/features/run-reports.md#a-gate-in-separated-mode).
 
 Summaries hold no outputs, parameter values or secrets: the format has no place for them.

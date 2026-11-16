@@ -165,9 +165,9 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
       const q = url.searchParams.get('runbook') ?? undefined;
       if (path === '/v1/runs/last-green') {
         if (!q) throw new HttpError(400, 'runbook=: a signed name or a path in the library');
-        // The library's copy may ask for a gate in separated mode (report-runs-required: separated).
-        const separated = library ? await library.separatedRequired(q) : false;
-        return sendJson(res, 200, { runbook: q, ...(await runs.lastGreen(q, { separated })) }, headers);
+        // The library's copies may ask for a gate in separated mode (report-runs-required: separated).
+        const required = library ? await library.separatedRequired(q) : { separated: false };
+        return sendJson(res, 200, { runbook: q, ...(await runs.lastGreen(q, required)) }, headers);
       }
       return sendJson(res, 200, { runbook: q, runs: await runs.list(q, limitOf(url, 50, 500)) }, headers);
     }

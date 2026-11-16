@@ -297,6 +297,9 @@ The library server shows it: `verified: sent by a gate (separated)` or
 - On the library server, `last-green` reads the requirement from the library's copy of the
   runbook. Only a green run that a gate sent in separated mode then counts as verified
   (`lastVerified`). The answer has `"required": "separated"`.
+- The server reads every copy whose runs the query matches, in any case (`deploy`,
+  `x/deploy.md`). A library it can't read counts only a separated gate's run, and
+  `"requiredUnknown"` says why.
 - A run from a gate in shared mode doesn't count, nor does a runner-signed one. That is the same
   as a run without a gate's report.
 - A server without the library (no `LIBRARY_DIR`) can't see the requirement: there, any verified

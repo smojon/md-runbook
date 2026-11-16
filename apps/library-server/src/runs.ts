@@ -8,7 +8,7 @@
 import type { RunsConfig } from './config';
 import { GateMode, ReceivedRunSummary, gateModeOf, gateTrustText, parseRunEnvelope, runSummaryProblems, verifyRunEnvelope } from './core';
 import { HttpError, JsonLog } from './http';
-import { nameFitsPath } from './library';
+import { runOf } from './library';
 
 /**
  * How far a summary can be believed: `runner-signed` (a key in the allowed runners signed it),
@@ -62,12 +62,8 @@ export function summaryMismatches(s: ReceivedRunSummary): string[] {
  * a gate sends (the name is the end of the path, as the library checks when publishing).
  */
 export function summaryMatches(s: ReceivedRunSummary, q: string): boolean {
-  const query = q.replace(/^\/+/, '');
-  const signed = s.runbook.signed;
-  if (signed && signed.name === query) return true;
-  if (!/\.(md|markdown)$/i.test(query)) return false;
-  const file = query.split('/').pop()!;
-  return s.runbook.file === file || (signed !== undefined && nameFitsPath(signed.name, query));
+  const { file, signed } = s.runbook;
+  return runOf({ ...(file !== undefined ? { file } : {}), ...(signed ? { name: signed.name } : {}) }, q);
 }
 
 export interface ReceiveContext {
@@ -174,10 +170,19 @@ export class Runs {
    * "Last ran green by X at T": the newest green run of `q`, and when that one doesn't count (runCounts),
    * the newest green run that does too. `separated`: the runbook says `report-runs-required:
    * separated` (Library.separatedRequired), so only a run a gate sent in separated mode counts.
+   * `unknown`: why the library couldn't tell; then only such a run counts too, and the answer
+   * says why (`requiredUnknown`).
    */
-  async lastGreen(q: string, o: { separated?: boolean } = {}): Promise<{ last?: RunRecord; lastVerified?: RunRecord; required?: 'separated'; text: string }> {
-    const separated = o.separated === true;
-    const required = separated ? { required: 'separated' as const } : {};
+  async lastGreen(
+    q: string,
+    o: { separated?: boolean; unknown?: string } = {},
+  ): Promise<{ last?: RunRecord; lastVerified?: RunRecord; required?: 'separated'; requiredUnknown?: string; text: string }> {
+    const separated = o.separated === true || o.unknown !== undefined;
+    const required = separated ? { required: 'separated' as const, ...(o.unknown !== undefined ? { requiredUnknown: o.unknown } : {}) } : {};
+    const asks =
+      o.unknown !== undefined
+        ? `as the server asks while it can't tell whether the runbook says report-runs-required: separated (${o.unknown})`
+        : 'as report-runs-required: separated asks';
     const green = (r: RunRecord): boolean => !!r?.summary?.runbook && r.summary.green === true && summaryMatches(r.summary, q);
     const [found] = await this.log.recent<RunRecord>(green, 1);
     if (!found) return { ...required, text: `${q}: no green run reported` };
@@ -191,7 +196,8 @@ export class Runs {
       `${r.verified ? (r.runner ?? r.summary.who) : JSON.stringify(r.summary.who)} at ${r.summary.ended}${r.summary.runbook.signed ? ` (version ${r.summary.runbook.signed.version})` : ''}, ${trustText(r)}`;
     let text = `${q}: last ran green by ${say(last)}`;
     if (lastVerified && lastVerified !== last) text += `; last ${separated ? 'green run sent by a gate in separated mode' : 'verified green run'} by ${say(lastVerified)}`;
-    else if (!lastVerified && separated) text += '; none sent by a gate in separated mode, as report-runs-required: separated asks';
+    else if (!lastVerified && separated) text += `; none sent by a gate in separated mode, ${asks}`;
+    else if (o.unknown !== undefined) text += `; only a run a gate sent in separated mode counts, ${asks}`;
     return { last, ...(lastVerified ? { lastVerified } : {}), ...required, text };
   }
 }
