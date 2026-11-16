@@ -32,6 +32,10 @@ jobs:
       - run: npm ci
       # Unit, round-trip, fuzz, redaction and shell smoke tests (pwsh + cmd natively on Windows).
       - run: npm test
+      # The Expo updates workflow's check of what its update job made.
+      - name: Workflow script tests
+        if: runner.os == 'Linux'
+        run: node --test .github/scripts/check-expo-update.test.mjs
       # @md-runbook/ssh against a real OpenSSH server (cancel, timeouts, reconnects, latency).
       - name: SSH tests
         if: runner.os != 'Windows'

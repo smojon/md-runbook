@@ -106,7 +106,8 @@ jobs:
           artifact-ids: ${{ needs.update.outputs.artifact_id }}
           path: ${{ runner.temp }}/update
       # The update job ran npm, so its files are checked: only the versions the summary names
-      # changed in package.json, and every package in the lock file is from registry.npmjs.org.
+      # changed in package.json, and only their dependencies in the lock file, each as
+      # registry.npmjs.org has it (tarball URL, integrity, dependencies, no new install script).
       - name: The update changes only what its summary says
         run: |
           # Only the two files: anything else the update job left is not taken.
