@@ -87,6 +87,8 @@ Security fixes from a review of the parts that face the network.
 - **Whole-runbook signatures:** a note or a run record's signature inside a code block now counts
   as code. Before, adding one to a cmd or PowerShell block left the runbook signed as a whole.
   - A signed runbook with note-shaped lines in its code blocks needs signing again.
+- **App, alerts on this phone:** each server gets only its own devices token. Before, moving the
+  team library sent the new server's token to the old one, to remove the phone there.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or
