@@ -132,7 +132,7 @@ import { LineMode, isStepping, lineLabel, planLines } from '../ssh/lineRuns';
 import { confirmationOf, runnability } from '../ssh/cells';
 import { disconnect, isConnected } from '../ssh/connections';
 import { NeededValue, runCell } from '../ssh/runCell';
-import { learnedFor, loadStepHistory, recordStepRun, useStepHistory } from '../runbooks/history';
+import { forgetStepHistory, learnedFor, loadStepHistory, recordStepRun, useStepHistory } from '../runbooks/history';
 import { loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import { transportReady } from '../ssh/transport';
 import { mono, themedStyles, usePalette } from '../theme';
@@ -1279,6 +1279,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             updateInputs({});
             captures.current = {};
           },
+        },
+        // As VS Code's Forget Learned Times: this runbook's, or every runbook's.
+        {
+          ...meta('forgetLearnedTimes', 'values', stepHistory && Object.keys(stepHistory).length > 0 ? undefined : t.noLearnedTimes),
+          run: () => confirmThen(t.forgetTimesConfirm(runbook.title), t.forgetTimesButton, () => void forgetStepHistory(runbook.id)),
+        },
+        {
+          ...meta('forgetAllLearnedTimes', 'values'),
+          run: () => confirmThen(t.forgetAllTimesConfirm, t.forgetTimesButton, () => void forgetStepHistory()),
         },
         { ...meta('secrets', 'values'), run: () => router.push('/hosts') },
         runbook.origin

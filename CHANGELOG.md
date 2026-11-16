@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix. It lands after the step, as a proposal to approve.
+- **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or every runbook's, after a confirmation.
 
 ## 0.26.8
 
