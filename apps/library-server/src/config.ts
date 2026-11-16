@@ -89,6 +89,8 @@ export interface PushConfig {
   fcm?: FcmConfig;
   apns?: ApnsConfig;
   maxDevices: number;
+  /** Most devices one devices token may register (PUSH_MAX_DEVICES_PER_TOKEN). */
+  maxDevicesPerToken: number;
   /** The same alert (fingerprint) is pushed again only after this long. */
   repeatMs: number;
 }
@@ -226,6 +228,7 @@ function loadPush(env: NodeJS.ProcessEnv, stateDir: string, alerts: AlertsConfig
     ...(fcm ? { fcm } : {}),
     ...(apns ? { apns } : {}),
     maxDevices: num(env, 'PUSH_MAX_DEVICES', 1000),
+    maxDevicesPerToken: num(env, 'PUSH_MAX_DEVICES_PER_TOKEN', 50),
     repeatMs: num(env, 'PUSH_REPEAT_SECONDS', 3600) * 1000,
   };
 }

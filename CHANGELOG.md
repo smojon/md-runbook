@@ -90,6 +90,10 @@ Security fixes from a review of the parts that face the network.
 - **Library server, pushes:** a phone keeps a digest of the devices token it registered with.
   A new token under the old label no longer brings back the phones of the old token.
   - `DELETE /v1/devices/<id>` needs the token the phone registered with.
+- **Library server, pushes:** one devices token registers at most 50 phones
+  (`PUSH_MAX_DEVICES_PER_TOKEN`). Before, one token's holder could fill the whole list.
+  - A phone whose token the provider refuses 3 pushes in a row is removed, while other phones get
+    them. This covers APNs `BadDeviceToken`.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or

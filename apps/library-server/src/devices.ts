@@ -30,6 +30,8 @@ export interface Device {
   by: string;
   /** sha256 of the device token it registered with: it gets pushes while that token is accepted. */
   tokenDigest?: string;
+  /** Pushes in a row the provider refused this token for (APNs BadDeviceToken): removed at 3. */
+  refused?: number;
   registered: string;
   updated: string;
 }
@@ -47,6 +49,8 @@ const APNS_TOKEN_RE = /^[0-9a-fA-F]{64,512}$/;
 const FCM_TOKEN_RE = /^[A-Za-z0-9_:.-]{32,4096}$/;
 const ALERTNAME_RE = /^[^\x00-\x1f]{1,200}$/;
 export const DEVICE_ID_RE = /^[0-9a-f]{32}$/;
+/** A device whose token the provider refused this many pushes in a row is removed. */
+export const REFUSED_TO_PRUNE = 3;
 const MAX_FILTERS = 50;
 
 /** What a device keeps of the devices token it registered with (never the token). */
@@ -107,6 +111,8 @@ export class Devices {
   constructor(
     readonly file: string,
     readonly maxDevices: number,
+    /** Most devices one devices token may register: one token's holder can't fill the list. */
+    readonly maxPerToken = 50,
   ) {}
 
   private async load(): Promise<Device[]> {
@@ -141,6 +147,9 @@ export class Devices {
       const id = deviceId(r.platform, r.token);
       const old = list.find((d) => d.id === id);
       if (!old && list.length >= this.maxDevices) throw new HttpError(507, `this server keeps at most ${this.maxDevices} devices (PUSH_MAX_DEVICES)`);
+      const digest = tokenDigest(by.value);
+      if (old?.tokenDigest !== digest && list.filter((d) => d.tokenDigest === digest).length >= this.maxPerToken)
+        throw new HttpError(507, `this devices token has registered ${this.maxPerToken} devices, the most it may (PUSH_MAX_DEVICES_PER_TOKEN)`);
       const at = now.toISOString();
       const device: Device = {
         id,
@@ -149,7 +158,7 @@ export class Devices {
         ...(r.alertnames ? { alertnames: r.alertnames } : {}),
         ...(r.runbooks ? { runbooks: r.runbooks } : {}),
         by: by.label,
-        tokenDigest: tokenDigest(by.value),
+        tokenDigest: digest,
         registered: old?.registered ?? at,
         updated: at,
       };
@@ -170,6 +179,42 @@ export class Devices {
       if (kept.length === list.length) return false;
       await this.save(kept);
       return true;
+    });
+  }
+
+  /**
+   * After a push: removes the devices the provider says are gone, counts the pushes in a row it
+   * refused a device's token for (removed at REFUSED_TO_PRUNE), and clears that count on a push
+   * that went through. How many were removed.
+   */
+  async settle(gone: readonly string[], refused: readonly string[], ok: readonly string[]): Promise<number> {
+    if (gone.length + refused.length === 0 && ok.length === 0) return 0;
+    return this.lock.run(async () => {
+      const list = await this.load();
+      let changed = false;
+      const kept: Device[] = [];
+      for (const d of list) {
+        if (gone.includes(d.id)) {
+          changed = true;
+          continue;
+        }
+        if (refused.includes(d.id)) {
+          changed = true;
+          const n = (d.refused ?? 0) + 1;
+          if (n >= REFUSED_TO_PRUNE) continue;
+          kept.push({ ...d, refused: n });
+          continue;
+        }
+        if (ok.includes(d.id) && d.refused !== undefined) {
+          changed = true;
+          const { refused: _, ...rest } = d;
+          kept.push(rest);
+          continue;
+        }
+        kept.push(d);
+      }
+      if (changed) await this.save(kept);
+      return list.length - kept.length;
     });
   }
 
