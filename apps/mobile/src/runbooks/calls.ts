@@ -10,7 +10,9 @@
  * As in VS Code, the runbook called runs as a copy (`<file>.<yyyyMMdd-HHmmss>.md`, a runbook of
  * its own in the app's list), with only the parameters the call passes: its screen opens and runs
  * the steps of the call's sections. When that run ends, the call's cell gets the result (runbook=,
- * copy=, steps=, sha256=). A call that failed continues in its copy when run again.
+ * copy=, steps=, sha256=). A call that failed continues in its copy when run again, if that copy
+ * is still a copy of the runbook called (core/callCopy.ts); otherwise a fresh copy runs, saying why.
+ * A value in src= fills part of one file name (core srcValueProblem), checked before anything runs.
  */
 
 import {
@@ -27,7 +29,7 @@ import {
   taskItems,
 } from '@md-runbook/core';
 import { resolveKubeContext, wantedKubeContext } from '@md-runbook/core/kubeContext';
-import { signedStatus } from '@md-runbook/core/signing';
+import { readSignature, signedStatus } from '@md-runbook/core/signing';
 import {
   CallResult,
   callAttrs,
@@ -38,9 +40,12 @@ import {
   checkCall,
   fillRefs,
   isCallLanguage,
+  isDynamicSrc,
   parseCall,
   recordValues,
+  srcValueProblem,
 } from '@md-runbook/core/call';
+import { copyTextProblem, isCopyNameOf } from '@md-runbook/core/callCopy';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { withFrontMatterValues } from '@md-runbook/core/incident';
 import { osGroups } from '@md-runbook/core/os';
@@ -69,6 +74,8 @@ export interface ActiveCall {
   callers: string[];
   /** A setup call (core/parts.ts): the ready check of the runbook called runs first and guards the rest. */
   setup?: boolean;
+  /** Why the copy of the failed run was not continued (a fresh copy runs): said in the call's output. */
+  note?: string;
 }
 
 const active = new Map<string, ActiveCall>();
@@ -214,6 +221,18 @@ async function calledText(parent: Runbook, src: string, fetcher: typeof fetch): 
   return { kind: 'got', text: p.text };
 }
 
+/**
+ * Why `copy` can't be continued as the run copy of `src`, whose text is now `target` (core's
+ * checks, as VS Code's resumeProblem): the output block naming it is never signed. Its name must
+ * be a run copy's of that file, its blocks those of the runbook called and, in a signed runbook,
+ * signed as the same name and version. Undefined: it can.
+ */
+export function continueProblem(copy: Runbook, src: string, target: string, signed: boolean): string | undefined {
+  const name = copy.fileName ?? copy.title;
+  if (!isCopyNameOf(name, baseName(src), true)) return t.callCopyNotNamed(baseName(src));
+  return copyTextProblem(copy.text, target, signed);
+}
+
 /** The copy of an earlier run of the call, if it failed and the app still has it. */
 function earlierCopy(parent: Runbook, cellIndex: number, runbook: string): Runbook | undefined {
   const cell = parse(parent.text).cells[cellIndex];
@@ -223,7 +242,9 @@ function earlierCopy(parent: Runbook, cellIndex: number, runbook: string): Runbo
   return runbookNamed(prev.copy);
 }
 
-export type StartResult = { kind: 'started'; copyId: string; resumed: boolean } | { kind: 'error'; message: string } | { kind: 'canceled' };
+export type StartResult =
+  /** `note`: why the copy of the failed run was not continued. */
+  { kind: 'started'; copyId: string; resumed: boolean; note?: string } | { kind: 'error'; message: string } | { kind: 'canceled' };
 
 /**
  * Start the call in cell `cellIndex` of `parent`: its copy (new, or the one a failed run left) is
@@ -254,6 +275,10 @@ export async function startCall(
     return 'text' in r ? r.text : text;
   };
   const src = fill(call.src);
+  // A value from a link, an alert or a parameter fills part of one file name, never another path
+  // (core's srcValueProblem, as VS Code and the command line): nothing is fetched or picked.
+  const leaves = isDynamicSrc(call.src) ? srcValueProblem(call.src, src) : undefined;
+  if (leaves) return { kind: 'error', message: leaves };
   const sections = call.sections;
   // Signed: the call as signed, its values as the signature allows (the gate never sees a call).
   const signed = signedStatus(parent.text);
@@ -272,52 +297,58 @@ export async function startCall(
   const callers = caller ? [...caller.callers, identity(caller.runbook, base)] : [identity(parent.fileName ?? parent.title, base)];
   const chain = callChainProblem(callers, identity(src, base ? calledAddress(base, src) : undefined));
   if (chain) return { kind: 'error', message: chain };
-  const again = opts.fresh ? undefined : earlierCopy(parent, cellIndex, src);
-  let copy: Runbook;
-  if (again) copy = again;
-  else {
-    const got = await calledText(parent, src, fetcher);
-    if (got.kind !== 'got') return got;
-    const check = checkCall(call, got.text);
-    const refusal = [...check.unknown.map((a) => t.callNoParam(src, a.name)), ...check.sections];
-    if (refusal.length > 0) return { kind: 'error', message: refusal.join('; ') };
-    // A signed runbook calls signed runbooks only, unchanged since signing.
-    if (signed) {
-      const child = signedStatus(got.text);
-      if (!child) return { kind: 'error', message: t.callNotSigned(src) };
-      if (child.changed.length || child.missing.length || child.moved.length || child.missingCalls.length)
-        return { kind: 'error', message: t.callChildChanged(src) };
-    }
-    // The cluster: the runbook called names the caller's, or none (then the caller's is its own).
-    const passed: Record<string, string> = {};
-    for (const a of call.args) passed[a.name] = fill(a.value);
-    const parentFm = parseFrontMatter(parent.text);
-    const childFm = parseFrontMatter(got.text);
-    let mine: string | undefined;
-    let theirs: string | undefined;
-    try {
-      mine = resolveKubeContext(wantedKubeContext(parseCellOptions(cell.meta.info), parentFm), (n) => values[n]);
-      theirs = resolveKubeContext(childFm?.kubeContext, (n) => passed[n] ?? childFm?.params.find((p) => p.name === n)?.default);
-    } catch {
-      theirs = undefined; // a parameter it asks for: its own steps check the cluster
-    }
-    if (mine !== undefined && theirs !== undefined && mine !== theirs)
-      return { kind: 'error', message: t.callOtherCluster(src, theirs, mine) };
-    const record: Record<string, string> = {
-      ...recordValues(parent.text),
-      ...(mine !== undefined && !childFm?.kubeContext
-        ? { 'kube-context': mine, ...(parentFm?.kubeContextMode ? { 'kube-context-mode': parentFm.kubeContextMode } : {}) }
-        : {}),
-    };
-    const text = clearOutputBlocks(got.text);
-    copy = addRunbook(
+  // The runbook called as it is now: its checks, and the one a copy to continue must still be.
+  const got = await calledText(parent, src, fetcher);
+  if (got.kind !== 'got') return got;
+  const earlier = opts.fresh ? undefined : earlierCopy(parent, cellIndex, src);
+  let note: string | undefined;
+  let again: Runbook | undefined;
+  if (earlier) {
+    const why = continueProblem(earlier, src, got.text, readSignature(parent.text) !== undefined);
+    if (why === undefined) again = earlier;
+    else note = t.callNotContinued(earlier.fileName ?? earlier.title, why);
+  }
+  const check = checkCall(call, got.text);
+  const refusal = [...check.unknown.map((a) => t.callNoParam(src, a.name)), ...check.sections];
+  if (refusal.length > 0) return { kind: 'error', message: refusal.join('; ') };
+  // A signed runbook calls signed runbooks only, unchanged since signing.
+  if (signed) {
+    const child = signedStatus(got.text);
+    if (!child) return { kind: 'error', message: t.callNotSigned(src) };
+    if (child.changed.length || child.missing.length || child.moved.length || child.missingCalls.length)
+      return { kind: 'error', message: t.callChildChanged(src) };
+  }
+  // The cluster: the runbook called names the caller's, or none (then the caller's is its own).
+  const passed: Record<string, string> = {};
+  for (const a of call.args) passed[a.name] = fill(a.value);
+  const parentFm = parseFrontMatter(parent.text);
+  const childFm = parseFrontMatter(got.text);
+  let mine: string | undefined;
+  let theirs: string | undefined;
+  try {
+    mine = resolveKubeContext(wantedKubeContext(parseCellOptions(cell.meta.info), parentFm), (n) => values[n]);
+    theirs = resolveKubeContext(childFm?.kubeContext, (n) => passed[n] ?? childFm?.params.find((p) => p.name === n)?.default);
+  } catch {
+    theirs = undefined; // a parameter it asks for: its own steps check the cluster
+  }
+  if (mine !== undefined && theirs !== undefined && mine !== theirs)
+    return { kind: 'error', message: t.callOtherCluster(src, theirs, mine) };
+  const record: Record<string, string> = {
+    ...recordValues(parent.text),
+    ...(mine !== undefined && !childFm?.kubeContext
+      ? { 'kube-context': mine, ...(parentFm?.kubeContextMode ? { 'kube-context-mode': parentFm.kubeContextMode } : {}) }
+      : {}),
+  };
+  const text = clearOutputBlocks(got.text);
+  const copy =
+    again ??
+    addRunbook(
       copyFileName(baseName(src), new Date()),
       Object.keys(record).length ? withFrontMatterValues(text, record) : text,
       undefined,
       // Its own calls are next to it, as for the caller.
       got.source ? linkKey(got.source, got.text) : undefined,
     );
-  }
   for (const a of call.args) setParamValue(copy.id, a.name, fill(a.value));
   active.set(copy.id, {
     parentId: parent.id,
@@ -328,9 +359,10 @@ export async function startCall(
     started: new Date(),
     callers,
     ...(parseCellOptions(cell.meta.info).part === 'setup' ? { setup: true } : {}),
+    ...(note ? { note } : {}),
   });
   askAutorun(copy.id);
-  return { kind: 'started', copyId: copy.id, resumed: again !== undefined };
+  return { kind: 'started', copyId: copy.id, resumed: again !== undefined, ...(note ? { note } : {}) };
 }
 
 /**
@@ -416,7 +448,7 @@ export function finishCall(copyId: string, now = new Date()): { parentId: string
   const next = setCellOutput(
     parent.text,
     c.cellIndex,
-    { kind: 'new', text: callOutputText(result, c.sections) + note, attrs },
+    { kind: 'new', text: (c.note ? `[md-runbook] ${c.note}\n` : '') + callOutputText(result, c.sections) + note, attrs },
     DEFAULT_WRITE_OPTIONS,
   );
   if (next !== undefined) updateRunbookText(parent.id, next);

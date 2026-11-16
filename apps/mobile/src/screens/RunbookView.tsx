@@ -1818,7 +1818,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const call = activeCall(runbook.id);
     if (!call) return runSequence('start');
     const cells = callCells(runbook.text, call);
-    setNotice(t.callRunning(call.runbook, runbook.fileName ?? runbook.title));
+    // Why the failed run's copy wasn't continued, first (the call's output says it too).
+    setNotice([call.note, t.callRunning(call.runbook, runbook.fileName ?? runbook.title)].filter(Boolean).join(' '));
     callRun.current = cells.length > 0 ? 'starting' : 'ended';
     if (cells.length > 0) runSequence('start', cells, { readyFirst: call.setup === true });
   };

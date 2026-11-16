@@ -930,6 +930,8 @@ const en = {
   callOtherCluster: (src: string, theirs: string, mine: string) =>
     `${src} runs against the Kubernetes context ${theirs}, this runbook against ${mine}: nothing ran.`,
   noCallCopy: 'This call has not run yet (or its copy is no longer in the app).',
+  callCopyNotNamed: (file: string) => `its name is not that of a run copy of ${file}`,
+  callNotContinued: (copy: string, why: string) => `Not continuing ${copy}: ${why}. A fresh copy runs.`,
   callNeedsValue: (name: string) => `This step needs a value for ${name} first (Parameters, or the step that captures it).`,
   callNoParam: (src: string, name: string) => `${src} has no parameter ${name}`,
   callManualLeft: (n: number, copy: string) =>
