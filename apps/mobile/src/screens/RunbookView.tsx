@@ -105,7 +105,8 @@ import { ConfirmCard } from '../cells/ConfirmCard';
 import { PauseCard } from '../cells/PauseCard';
 import { LaunchError, launchModel, startValues } from '../runbooks/launch';
 import { LaunchSheet, LaunchTyped } from '../ui/LaunchSheet';
-import { MarksByCell, NO_MARKS, StepMarks, cellIdentities, cellMover, remapByCell, toggleMark } from '../runbooks/stepMarks';
+import { MarksByCell, NO_MARKS, StepMarks, cellIdentities, remapByCell, toggleMark } from '../runbooks/stepMarks';
+import { CellRef, cellRefIn, resolveCell, resolveIn, runRules } from '../runbooks/cellRef';
 import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell, ProblemRow } from '../cells/CodeCell';
@@ -189,9 +190,12 @@ function teardownLabel(cell: ParsedCell | undefined): string {
 /** Output kept on screen while a cell runs; the output block written afterwards has its own limit. */
 const LIVE_CHARS = 20_000;
 
-/** What to run: the whole cell, or some of its commands (`mode` and the line it was asked on). */
+/**
+ * What to run: the whole cell, or some of its commands (`mode` and the line it was asked on). The
+ * cell by what it is (runbooks/cellRef.ts), never by its place: found again right before it runs.
+ */
 interface RunRequest {
-  cellIndex: number;
+  cell: CellRef;
   mode?: LineMode;
   line?: number;
   /** Asked and answered Run (a risky cell, `confirm`): it runs without asking again. */
@@ -269,6 +273,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const palette = usePalette();
   const runbook = useRunbooks().find((r) => r.id === id);
   const cells = useMemo(() => (runbook ? parse(runbook.text).cells : []), [runbook]);
+  // Each cell's identity (runbooks/cellRef.ts): what every deferred action holds instead of a place.
+  const cellIds = useMemo(() => cellIdentities(cells), [cells]);
+  const rulesNow = useMemo(() => (runbook ? runRules(runbook.text) : ''), [runbook]);
+  /** The ref of cell `index` as shown now (a tap on it). */
+  const refAt = (index: number): CellRef | undefined => cellRefIn(cellIds, index, rulesNow);
+  /** Where a deferred action's cell is shown now (its card goes under it), or undefined. */
+  const where = (ref: CellRef | undefined): number | undefined => (ref ? resolveIn(cellIds, ref) : undefined);
+  /** The runbook's text as the store has it now (a handler may run before the next render). */
+  const latestText = (): string => (runbook ? (getRunbook(runbook.id)?.text ?? runbook.text) : '');
   const progress = useMemo(() => (runbook ? textProgress(runbook.text) : undefined), [runbook]);
   const signed = useMemo(() => (runbook ? signedStatus(runbook.text) : undefined), [runbook]);
   /** Blocks that can run outside the signature (PowerShell, cmd: manifest v1 signs bash and runbook calls only). */
@@ -332,9 +345,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const practiceAllowed = useRef(new Set<string>());
   /** Run on a Group: the cell whose group is being picked, and the group run's results so far. */
   const hostGroups = [...new Set(hosts.flatMap((h) => (h.group ? [h.group] : [])))].sort((a, b) => a.localeCompare(b));
-  const [groupPick, setGroupPick] = useState<number | undefined>();
+  const [groupPick, setGroupPick] = useState<CellRef | undefined>();
   const [groupRun, setGroupRun] = useState<{ group: string; results: { host: string; ok: boolean | undefined }[] } | undefined>();
   const [running, setRunning] = useState<Running | undefined>();
+  /** Where the running cell is shown now. */
+  const runningAt = where(running?.cell);
   // By the blocks' estimates (estimate=): done over the total and the time left, the running cell
   // counting what is left of its own estimate.
   // Each runbook call's estimate on its cell: what it runs, or null when src= has placeholders.
@@ -387,14 +402,19 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const stepsShown = !wide && viewMode === 'steps';
   // The clock moves the bars against estimates, and the running step's time in the list.
   const now = useNow(running !== undefined && (estimateSteps.some((s) => s.estimateSeconds !== undefined) || stepsShown || wide));
-  /** Run all / Continue: the cells still to run, the host, and the proposals left out. */
-  /** Run all / Continue: the cells left, the host, proposals passed over, and the runbook call it stops before. */
+  /**
+   * Run all / Continue: the cells left, the host, proposals passed over, and the runbook call it
+   * stops before. Cells by what they are (cellRef.ts): each is found again before it runs, and Run
+   * all stops at one that changed or went, or when the front matter changed (`rules`).
+   */
   const queue = useRef<
     | {
-        cells: number[];
+        cells: CellRef[];
         on: Host | undefined;
         proposed: number;
-        call?: number;
+        call?: CellRef;
+        /** runRules of the text Run all started on. */
+        rules: string;
         /** A setup call's copy: the ready check guards every other cell. */
         readyFirst?: boolean;
         /** The ready check's answer, once it ran. */
@@ -405,14 +425,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         askAgain?: boolean;
         /** Wait at unticked checklist items (steps done by hand); off with `manual-steps: continue`. */
         manual: boolean;
-        /** Checklist items answered Skip in this run (`cell:item`). */
+        /** Checklist items answered Skip in this run (`cell id:item`). */
         skipped: Set<string>;
         /** The last cell Run all took from `cells` (ran, skipped as already up, or left with the teardown). */
-        last?: number;
+        last?: CellRef;
         /** A run of several cells: Pause Before This Step pauses it (as VS Code's, not a single cell's run). */
         several: boolean;
-        /** Steps marked to pause that were answered Continue in this run. */
-        passed: Set<number>;
+        /** Steps marked to pause that were answered Continue in this run (their ids). */
+        passed: Set<string>;
       }
     | undefined
   >(undefined);
@@ -421,7 +441,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const partStates = useMemo(() => (runbook ? textPartStates(runbook.text) : undefined), [runbook]);
   const estimate = runbookEstimate(
     estimateSteps.map((s) =>
-      running && s.cell === running.cellIndex
+      running && s.cell === runningAt
         ? { ...s, state: 'running' as const, elapsedSeconds: Math.max(0, (now - running.startedAt) / 1000) }
         : // Still to run in this Run all: its output is the previous run's, so it isn't done yet.
           s.cell !== undefined && queuedCells.includes(s.cell)
@@ -434,14 +454,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const headings = useMemo(() => cellHeadings(cells), [cells]);
   // The block running now, named for the run bar and the slim bar pinned on top while it runs.
   const runningStep = useMemo((): RunningStep | undefined => {
-    const c = running ? cells[running.cellIndex] : undefined;
-    if (!running || !c) return undefined;
+    const c = runningAt !== undefined ? cells[runningAt] : undefined;
+    if (runningAt === undefined || !c) return undefined;
     const label =
-      stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId, headings[running.cellIndex]) ||
-      t.cellNumber(running.cellIndex + 1);
-    const step = progress?.stepOfCell[running.cellIndex];
-    return { index: running.cellIndex, label, ...(step !== undefined ? { step } : {}) };
-  }, [running, cells, progress, headings]);
+      stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId, headings[runningAt]) || t.cellNumber(runningAt + 1);
+    const step = progress?.stepOfCell[runningAt];
+    return { index: runningAt, label, ...(step !== undefined ? { step } : {}) };
+  }, [runningAt, cells, progress, headings]);
   // The rail on the left: a tick per step where it is in the runbook, filled down to the run.
   const railTicks = useMemo((): RailTick[] => {
     if (!progress) return [];
@@ -451,11 +470,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       const a = c.output?.attrs;
       const s = stepState(a?.exit, a?.lines !== undefined, a?.check);
       const state: RailState =
-        running?.cellIndex === i ? 'running' : s === 'done' || s === 'skipped' ? 'done' : s === 'failed' ? 'failed' : 'pending';
+        runningAt === i ? 'running' : s === 'done' || s === 'skipped' ? 'done' : s === 'failed' ? 'failed' : 'pending';
       const label = stepLabel(isCodeMeta(c.meta) ? c.meta.info : '', c.value, c.languageId, headings[i]);
       return [{ index: i, step, state, ...(label ? { label } : {}) }];
     });
-  }, [cells, progress, running, headings]);
+  }, [cells, progress, runningAt, headings]);
   const railChapters = useMemo(
     (): RailChapter[] =>
       cells.flatMap((c, i) =>
@@ -489,7 +508,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
    * `go` runs it then. Nothing is sent before.
    */
   const [confirming, setConfirming] = useState<
-    { cellIndex: number; match: string; runsAs?: string; attempts?: number; go(): void } | undefined
+    { cell: CellRef; match: string; runsAs?: string; attempts?: number; go(): void } | undefined
   >();
   /** Secrets to store and inputs to type before a cell can run. */
   const [asking, setAsking] = useState<{ request: RunRequest; hostId: string; needs: NeededValue[] } | undefined>();
@@ -506,7 +525,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   /** A cell is running (a ref: Run all starts the next one before React re-renders). */
   const busy = useRef(false);
   /** A step done by hand Run all waits at, with its card under its Markdown cell. */
-  const [manualAsk, setManualAsk] = useState<ManualItem | undefined>();
+  const [manualAsk, setManualAsk] = useState<(Omit<ManualItem, 'cellIndex'> & { cell: CellRef }) | undefined>();
   /** Pause Before This Step / Notify Me When It Starts, per cell (a ref too: Run all reads the newest). */
   const [stepMarks, setStepMarksState] = useState<MarksByCell>(NO_MARKS);
   const marksRef = useRef(stepMarks);
@@ -515,9 +534,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setStepMarksState(next);
   };
   /** Run all paused before a step marked to pause: its card under that cell (Continue / Stop). */
-  const [pauseAsk, setPauseAsk] = useState<number | undefined>();
+  const [pauseAsk, setPauseAsk] = useState<CellRef | undefined>();
   // The teardown offer (core/parts.ts), under the first teardown step.
-  const [teardownOffer, setTeardownOffer] = useState<{ cellIndex: number; labels: string[] } | undefined>();
+  const [teardownOffer, setTeardownOffer] = useState<{ cell: CellRef; labels: string[] } | undefined>();
   const [queued, setQueued] = useState(false);
   /** Run all went on in a runbook call's copy: that run says how it ends, not this one. */
   const handedToCall = useRef(false);
@@ -568,17 +587,16 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [checks, setChecks] = useState<ReadonlyMap<number, ReadonlySet<string>>>(new Map());
   /** Breakpoints per cell index (the first line of each command), for this screen's life as in the extension's session. */
   const [breakpoints, setBreakpoints] = useState<ReadonlyMap<number, ReadonlySet<number>>>(new Map());
-  // Marks, breakpoints, checked lines and Run all's queue follow their cells when the text changes
-  // (a proposal, a note, an edit): never onto another step. A changed cell loses its marks, a
-  // changed cell still to run ends Run all before it; the notice says so. A layout effect: done
-  // before any run's callback reads them.
-  const cellIds = useMemo(() => cellIdentities(cells), [cells]);
+  // Marks, breakpoints and checked lines follow their cells when the text changes (a proposal, a
+  // note, an edit): never onto another step. A changed cell loses its marks. Run all's queue and
+  // the cards waiting for an answer hold their cells by identity (cellRef.ts) and act only on
+  // them: one whose cell changed or went is put away here, and Run all stops; the notice says
+  // so. A layout effect: done before any run's callback reads them.
   const idsBefore = useRef(cellIds);
   useLayoutEffect(() => {
     const before = idsBefore.current;
     if (before === cellIds) return;
     idsBefore.current = cellIds;
-    const move = cellMover(before, cellIds);
     let dropped = 0;
     if (marksRef.current.size > 0) {
       const marks = remapByCell(marksRef.current, before, cellIds);
@@ -591,28 +609,44 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       setBreakpoints(breaks.map);
     }
     if (checks.size > 0) setChecks(remapByCell(checks, before, cellIds).map);
+    const gone = (ref: CellRef | undefined): boolean => ref !== undefined && resolveIn(cellIds, ref) === undefined;
     const q = queue.current;
     let stopped = false;
     if (q) {
-      const queued = q.cells.map(move);
-      const call = q.call === undefined ? undefined : move(q.call);
-      stopped = queued.includes(undefined) || (q.call !== undefined && call === undefined);
-      q.cells = stopped ? [] : (queued as number[]);
-      if (stopped || call === undefined) delete q.call;
-      else q.call = call;
-      if (q.last !== undefined) q.last = move(q.last);
-      q.passed = new Set([...q.passed].map(move).filter((i): i is number => i !== undefined));
-      setQueuedCells([...q.cells]);
+      stopped = q.cells.some(gone) || gone(q.call);
+      // Stopped: the cell running now finishes, nothing after it starts.
+      if (stopped) {
+        q.cells = [];
+        delete q.call;
+      }
+      setQueuedCells(q.cells.map((r) => resolveIn(cellIds, r)!));
     }
-    if (pauseAsk !== undefined) {
-      const at = move(pauseAsk);
-      if (at === undefined || stopped) {
-        clearQueue();
-        setPauseAsk(undefined);
-      } else setPauseAsk(at);
-    }
-    if (stopped) setNotice(t.runChangedStopped);
-    else if (dropped > 0) setNotice(t.marksDropped);
+    // A card whose cell changed or went: put away (its answer would act on nothing, or on another cell).
+    const cards: [CellRef | undefined, () => void][] = [
+      [pauseAsk, () => setPauseAsk(undefined)],
+      [confirming?.cell, () => setConfirming(undefined)],
+      [otherHost?.request.cell, () => setOtherHost(undefined)],
+      [trust?.request.cell, () => setTrust(undefined)],
+      [asking?.request.cell, () => setAsking(undefined)],
+      [teardownOffer?.cell, () => setTeardownOffer(undefined)],
+      [manualAsk?.cell, () => setManualAsk(undefined)],
+      [groupPick, () => setGroupPick(undefined)],
+    ];
+    let asked = false;
+    for (const [ref, putAway] of cards)
+      if (gone(ref)) {
+        putAway();
+        asked = true;
+      }
+    if (stopped || asked) {
+      // Run all's own questions go with it.
+      setPauseAsk(undefined);
+      setTeardownOffer(undefined);
+      setManualAsk(undefined);
+      if (q && !running) clearQueue();
+      else if (q) q.cells = [];
+      setNotice(stopped ? t.runChangedStopped : t.askedCellChanged);
+    } else if (dropped > 0) setNotice(t.marksDropped);
     // Only a text change moves them; the marks, breakpoints and checks read are the newest then.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cellIds]);
@@ -730,8 +764,19 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   /** Runs a cell; true when it waits for an answer on a card (another host, trust, missing values). */
   const runOne = async (request: RunRequest, on: Host | undefined): Promise<boolean | void> => {
     if (!runbook) return;
-    const { cellIndex, mode, line } = request;
-    const cell = cells[cellIndex];
+    const { mode, line } = request;
+    // The cell asked for, found again in the text as it is now: a card's answer, a host's key or
+    // Run all's next step never runs another cell that took its place.
+    const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+    const cellIndex = resolveCell(latest, request.cell);
+    if (cellIndex === undefined) {
+      clearQueue();
+      setNotice(t.askedCellChanged);
+      return;
+    }
+    const cell = parse(latest).cells[cellIndex];
+    // Breakpoints and checked lines are kept by where the cell is shown.
+    const shownAt = resolveIn(idsBefore.current, request.cell);
     if (cell && cell.kind === 'code' && isCallLanguage(cell.languageId)) {
       await runCallAt(cellIndex);
       return;
@@ -765,11 +810,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       return true;
     }
     // A whole cell with breakpoints runs command by command, pausing before each breakpoint.
-    const breaks = !mode && cell ? breakpoints.get(cellIndex) : undefined;
+    const breaks = !mode && cell && shownAt !== undefined ? breakpoints.get(shownAt) : undefined;
     const atBreaks = breaks !== undefined && breaks.size > 0;
     const shell = cell && cell.kind === 'code' ? shellKindForLanguage(cell.languageId) : undefined;
-    const lines =
-      cell && (mode || atBreaks) ? planLines(cell.value, mode ?? 'step', line ?? 0, checks.get(cellIndex), shell ?? 'bash') : undefined;
+    const checked = shownAt !== undefined ? checks.get(shownAt) : undefined;
+    const lines = cell && (mode || atBreaks) ? planLines(cell.value, mode ?? 'step', line ?? 0, checked, shell ?? 'bash') : undefined;
     if (mode && !lines) return;
     // A risky command, or the cell's `confirm`: ask before it runs (and before Run all goes on).
     if (!request.confirmed && cell && isCodeMeta(cell.meta)) {
@@ -779,7 +824,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         // Line runs and runs at breakpoints run once (no retry=), as in the extension.
         const retry = lines ? undefined : parseCellOptions(cell.meta.info).retry;
         setConfirming({
-          cellIndex,
+          cell: request.cell,
           match,
           runsAs: `${target.username}@${target.name}`,
           ...(retry ? { attempts: retry.attempts } : {}),
@@ -794,7 +839,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setNotice(undefined);
     setTrust(undefined);
     setRunning({ ...request, live: '', abort, startedAt: new Date().getTime() });
-    const update = (f: (r: Running) => Running): void => setRunning((r) => (r && r.cellIndex === cellIndex ? f(r) : r));
+    const update = (f: (r: Running) => Running): void => setRunning((r) => (r && r.abort === abort ? f(r) : r));
     // Step through: the first command runs at once, then the run waits before each of the others.
     // At breakpoints: the run waits before each command with one; Run next then waits before the
     // command after it too, Continue goes on to the next breakpoint.
@@ -834,7 +879,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (sessionMode === 'isolated') await disconnect(target.id, runbook.id);
     const outcome = await runCell({
       host: target,
-      text: runbook.text,
+      text: latest,
       cellIndex,
       signal: abort.signal,
       lines,
@@ -845,7 +890,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       captures: captures.current,
       inputs: Object.fromEntries(Object.entries(inputs.current).map(([k, v]) => [k, v.value])),
       latestText: () => getRunbook(runbook.id)?.text ?? runbook.text,
-      onStart: () => stepStarting(cellIndex),
+      onStart: () => stepStarting(request.cell),
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
       onOutput: (text) => update((r) => ({ ...r, live: (r.live + text).slice(-LIVE_CHARS) })),
       // retry=: a new attempt starts with empty output (only the last one is kept, as in the extension).
@@ -896,7 +941,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       return true;
     } else if (outcome.kind === 'needs') {
       setAsking({ request, hostId: target.id, needs: outcome.needs });
-      list.current?.scrollToIndex({ index: request.cellIndex, viewPosition: 0.2 });
+      list.current?.scrollToIndex({ index: cellIndex, viewPosition: 0.2 });
       return true;
     } else {
       clearQueue();
@@ -908,7 +953,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
    * section per host (hosts=, group=, failed=; exit is the first failure's). Hosts whose key isn't
    * trusted yet are skipped with a note: a trust question per host would stop the round halfway.
    */
-  const runOnGroup = async (cellIndex: number, group: string, confirmed = false): Promise<void> => {
+  const runOnGroup = async (ref: CellRef, group: string, confirmed = false): Promise<void> => {
     setGroupPick(undefined);
     if (!runbook || busy.current || refusedHere()) return;
     // In practice every cell runs on the practice host only; one the app doesn't have runs nothing.
@@ -916,21 +961,29 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (practiceName) return setNotice(t.practiceMissing(practiceName));
     const members = hosts.filter((h) => h.group === group);
     if (members.length === 0) return;
-    if ((await reportAllows(() => void runOnGroup(cellIndex, group, confirmed))) !== 'go') return;
+    if ((await reportAllows(() => void runOnGroup(ref, group, confirmed))) !== 'go') return;
+    /** The cell asked for, in the text as it is now (before each host, and for the output), or undefined. */
+    const found = (): { text: string; at: number } | undefined => {
+      const text = getRunbook(runbook.id)?.text ?? runbook.text;
+      const at = resolveCell(text, ref);
+      return at === undefined ? undefined : { text, at };
+    };
+    const first = found();
+    if (!first) return setNotice(t.askedCellChanged);
     // A risky cell asks once, before the round, naming every account it runs as.
-    const cell = parse(runbook.text).cells[cellIndex];
+    const cell = parse(first.text).cells[first.at];
     const match =
       !confirmed && cell && isCodeMeta(cell.meta)
-        ? confirmationOf(shownForConfirm(cell.value, cellIndex), cell.meta.info, outputSettings().allowNoConfirm)
+        ? confirmationOf(shownForConfirm(cell.value, first.at), cell.meta.info, outputSettings().allowNoConfirm)
         : undefined;
     if (match !== undefined && cell && isCodeMeta(cell.meta)) {
       const retry = parseCellOptions(cell.meta.info).retry;
       setConfirming({
-        cellIndex,
+        cell: ref,
         match,
         runsAs: members.map((h) => `${h.username}@${h.name}`).join(', '),
         ...(retry ? { attempts: retry.attempts } : {}),
-        go: () => void runOnGroup(cellIndex, group, true),
+        go: () => void runOnGroup(ref, group, true),
       });
       return;
     }
@@ -950,17 +1003,23 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           show();
           continue;
         }
+        // Each host runs the cell confirmed, found again: never the one that took its place.
+        const now = found();
+        if (!now) {
+          setNotice(t.askedCellChanged);
+          break;
+        }
         const outcome = await runCell({
           host: h,
-          text: getRunbook(runbook.id)?.text ?? runbook.text,
-          cellIndex,
+          text: now.text,
+          cellIndex: now.at,
           params: paramValues,
           runbookId: runbook.id,
           captures: captures.current,
           inputs: Object.fromEntries(Object.entries(inputs.current).map(([k, v]) => [k, v.value])),
         });
         if (outcome.kind === 'done') {
-          const out = parse(outcome.text).cells[cellIndex]?.output;
+          const out = parse(outcome.text).cells[now.at]?.output;
           parts.push({
             host: h,
             exit: outcome.attrs.exit ?? '?',
@@ -998,12 +1057,18 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       ...(parts.some((p) => p.check) ? { check: parts.some((p) => p.check === 'failed') ? 'failed' : 'ok' } : {}),
     };
     if (failed[0]?.exit === '0') attrs.exit = '1';
-    const latest = getRunbook(runbook.id)?.text ?? runbook.text;
-    const meta = parse(latest).cells[cellIndex]?.meta;
+    // The round's output goes to the cell it ran, wherever it is now; nowhere if it changed or went.
+    const end = found();
+    if (!end) {
+      setNotice(t.cellChanged);
+      reportGroup();
+      return;
+    }
+    const meta = parse(end.text).cells[end.at]?.meta;
     const previous = isCodeMeta(meta) ? loadedOutputEntry(meta) : undefined;
     const next = setCellOutput(
-      latest,
-      cellIndex,
+      end.text,
+      end.at,
       {
         kind: 'new',
         text: body,
@@ -1022,50 +1087,84 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (!q || !runbook) return;
     const latest = getRunbook(runbook.id)?.text ?? runbook.text;
     const parsedCells = parse(latest).cells;
-    const partAt = (i: number): string | undefined => {
-      const c = parsedCells[i];
+    const ids = cellIdentities(parsedCells);
+    // Every step still to run, found again in the text as it is now: one that changed or went
+    // stops Run all before it (never a step that took its place).
+    const at = (r: CellRef): number => resolveIn(ids, r) ?? -1;
+    if (q.cells.some((r) => at(r) < 0) || (q.call !== undefined && at(q.call) < 0)) {
+      clearQueue();
+      setNotice(t.runChangedStopped);
+      return;
+    }
+    const partAt = (r: CellRef): string | undefined => {
+      const c = parsedCells[at(r)];
       return c && isCodeMeta(c.meta) ? parseCellOptions(c.meta.info).part : undefined;
     };
     const upcoming = q.cells[0] ?? q.call;
     // A step done by hand (an unticked `- [ ]`) between the block before and the next one waits
     // for Done, Skip or Stop; at the end, the ones after the runbook's last block (as VS Code).
     if (q.manual) {
-      const upTo = upcoming ?? (q.last !== undefined && q.last === lastCodeCell(parsedCells) ? parsedCells.length : undefined);
-      const item = upTo !== undefined ? uncheckedBefore(parsedCells, upTo, q.skipped) : undefined;
-      if (item) {
-        setManualAsk(item);
+      const lastAt = q.last !== undefined ? resolveIn(ids, q.last) : undefined;
+      const upTo =
+        upcoming !== undefined
+          ? at(upcoming)
+          : lastAt !== undefined && lastAt === lastCodeCell(parsedCells)
+            ? parsedCells.length
+            : undefined;
+      // Skipped items by cell identity, as uncheckedBefore counts them (by place in this text).
+      const skipped = new Set(
+        [...q.skipped].flatMap((k) => {
+          const cut = k.lastIndexOf(':');
+          const i = ids.indexOf(k.slice(0, cut));
+          return i < 0 ? [] : [`${i}:${k.slice(cut + 1)}`];
+        }),
+      );
+      const item = upTo !== undefined ? uncheckedBefore(parsedCells, upTo, skipped) : undefined;
+      const ref = item ? cellRefIn(ids, item.cellIndex, q.rules) : undefined;
+      if (item && ref) {
+        setManualAsk({ cell: ref, item: item.item, text: item.text });
         setTimeout(() => list.current?.scrollToIndex({ index: item.cellIndex, viewPosition: 0.2 }), 100);
         return;
       }
     }
     // Pause Before This Step: Continue or Stop, asked on the cell (as VS Code, after the steps by hand).
-    if (upcoming !== undefined && q.several && !q.passed.has(upcoming) && marksRef.current.get(upcoming)?.pause) {
+    // Marks are kept by where the cell is shown.
+    const shownAt = upcoming !== undefined ? resolveIn(idsBefore.current, upcoming) : undefined;
+    if (
+      upcoming !== undefined &&
+      q.several &&
+      !q.passed.has(upcoming.id) &&
+      shownAt !== undefined &&
+      marksRef.current.get(shownAt)?.pause
+    ) {
       setPauseAsk(upcoming);
-      setTimeout(() => list.current?.scrollToIndex({ index: upcoming, viewPosition: 0.2 }), 100);
+      setTimeout(() => list.current?.scrollToIndex({ index: shownAt, viewPosition: 0.2 }), 100);
       return;
     }
     // The teardown is offered, not run unasked: you may go straight on to the next runbook.
     if (upcoming !== undefined && partAt(upcoming) === 'teardown' && q.takeDown === undefined) {
       if (!teardownDeclined.has(runbook.id) || q.askAgain) {
         const labels = [...q.cells, ...(q.call !== undefined ? [q.call] : [])]
-          .filter((i) => partAt(i) === 'teardown')
-          .map((i) => teardownLabel(parsedCells[i]));
-        setTeardownOffer({ cellIndex: upcoming, labels: [...new Set(labels)] });
+          .filter((r) => partAt(r) === 'teardown')
+          .map((r) => teardownLabel(parsedCells[at(r)]));
+        setTeardownOffer({ cell: upcoming, labels: [...new Set(labels)] });
         // Once the card is there: the step and its card in view.
-        setTimeout(() => list.current?.scrollToIndex({ index: upcoming, viewPosition: 0 }), 100);
+        setTimeout(() => list.current?.scrollToIndex({ index: at(upcoming), viewPosition: 0 }), 100);
         return;
       }
       q.takeDown = false;
     }
     if (q.takeDown === false) {
       // Leave it up: the teardown steps stay as they are (passed over, as far as the run goes).
-      const left = q.cells.filter((i) => partAt(i) === 'teardown');
-      if (left.length > 0) q.last = Math.max(q.last ?? -1, ...left);
-      q.cells = q.cells.filter((i) => partAt(i) !== 'teardown');
+      const left = q.cells.filter((r) => partAt(r) === 'teardown');
+      const lastAt = q.last !== undefined ? at(q.last) : -1;
+      const furthest = left.reduce<CellRef | undefined>((m, r) => (at(r) > (m ? at(m) : lastAt) ? r : m), undefined);
+      if (furthest) q.last = furthest;
+      q.cells = q.cells.filter((r) => partAt(r) !== 'teardown');
       if (q.call !== undefined && partAt(q.call) === 'teardown') delete q.call;
     }
     // The ready check said up: the setup steps it guards are skipped.
-    const guarded = (i: number): boolean => q.readyUp === true && (q.readyFirst ? partAt(i) !== 'ready' : partAt(i) === 'setup');
+    const guarded = (r: CellRef): boolean => q.readyUp === true && (q.readyFirst ? partAt(r) !== 'ready' : partAt(r) === 'setup');
     if (q.cells[0] !== undefined && guarded(q.cells[0])) {
       q.last = q.cells.shift()!;
       skipAlreadyUp(q.last);
@@ -1076,18 +1175,18 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       delete q.call;
     }
     const next = q.cells.shift();
-    setQueuedCells([...q.cells]);
+    setQueuedCells(q.cells.map(at));
     if (next === undefined) {
       clearQueue();
       // A runbook call: Run all goes on in its copy (the steps after the call wait for Continue here).
       if (q.call !== undefined) {
         handedToCall.current = true;
-        void runCallAt(q.call);
+        void runCallAt(at(q.call));
       } else if (q.proposed > 0) setNotice(t.proposedNotRun(q.proposed));
       return;
     }
     q.last = next;
-    void runRef.current({ cellIndex: next }, q.on);
+    void runRef.current({ cell: next }, q.on);
   };
   /** The answer at a step marked to pause: run it and go on, or stop there. */
   const answerPause = (go: boolean): void => {
@@ -1100,14 +1199,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       setNotice(t.pauseStopped);
       return;
     }
-    q.passed.add(at);
+    q.passed.add(at.id);
     runNext();
   };
   /** A step starts: its Notify Me When It Starts mark says so, once (the mark then goes). */
-  const stepStarting = (cellIndex: number): void => {
-    if (!runbook || !marksRef.current.get(cellIndex)?.notify) return;
-    setStepMarks(toggleMark(marksRef.current, cellIndex, 'notify', false));
+  const stepStarting = (ref: CellRef): void => {
+    const shownAt = resolveIn(idsBefore.current, ref);
+    if (!runbook || shownAt === undefined || !marksRef.current.get(shownAt)?.notify) return;
+    setStepMarks(toggleMark(marksRef.current, shownAt, 'notify', false));
     const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+    const cellIndex = resolveCell(latest, ref);
+    if (cellIndex === undefined) return;
     const p = textProgress(latest);
     const step = p.stepOfCell[cellIndex];
     const c = parse(latest).cells[cellIndex];
@@ -1137,10 +1239,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       return;
     }
     // Not asked again in this run, whatever the box says now.
-    q.skipped.add(`${ask.cellIndex}:${ask.item}`);
+    q.skipped.add(`${ask.cell.id}:${ask.item}`);
     if (answer === 'done') {
+      // The item of the checklist it asked about, wherever that is now.
       const latest = getRunbook(runbook.id)?.text ?? runbook.text;
-      write(withItemTicked(latest, parse(latest).cells, ask.cellIndex, ask.item));
+      const at = resolveCell(latest, ask.cell);
+      if (at === undefined) {
+        clearQueue();
+        setNotice(t.askedCellChanged);
+        return;
+      }
+      write(withItemTicked(latest, parse(latest).cells, at, ask.item));
     }
     runNext();
   };
@@ -1165,9 +1274,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     router.push({ pathname: '/runbook/[id]', params: { id: r.copyId, autorun: '1' } });
   };
   /** A setup step the ready check said is up already: recorded as skipped (`ready=up`). */
-  const skipAlreadyUp = (cellIndex: number): void => {
+  const skipAlreadyUp = (ref: CellRef): void => {
     if (!runbook) return;
     const latest = getRunbook(runbook.id)?.text ?? runbook.text;
+    const cellIndex = resolveCell(latest, ref);
+    if (cellIndex === undefined) return;
     const next = setCellOutput(
       latest,
       cellIndex,
@@ -1184,36 +1295,45 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     queue.current.takeDown = take;
     runNext();
   };
-  /** Run all (from the top) or Continue (the failed or pending cells from the first such one on); `only`: just these cells. */
+  /**
+   * Run all (from the top) or Continue (the failed or pending cells from the first such one on);
+   * `only`: just these cells (their places in the runbook's text as it is now: latestText).
+   */
   const runSequence = (from: 'start' | 'resume', only?: readonly number[], opts: { readyFirst?: boolean } = {}): void => {
     if (!runbook || busy.current || !host || refusedHere()) return;
-    const parsed = parse(runbook.text).cells;
+    const text = latestText();
+    const parsed = parse(text).cells;
+    const ids = cellIdentities(parsed);
+    const rules = runRules(text);
     const candidates = only
       ? [...only]
       : from === 'start'
         ? parsed.map((c, i) => (c.kind === 'code' ? i : -1)).filter((i) => i >= 0)
-        : textProgress(runbook.text).resume;
-    const verdicts = candidates.map((i) => ({ i, can: runnability(parsed[i]!, approvalId, host.platform) }));
+        : textProgress(text).resume;
+    const verdicts = candidates.flatMap((i) => (parsed[i] ? [{ i, can: runnability(parsed[i], approvalId, host.platform) }] : []));
     // A runbook call is a step the app doesn't run: stop before it, never run the steps after it
     // as if it had (they usually need what it does).
     const call = verdicts.find((v) => !v.can.ok && v.can.why === 'call')?.i;
+    const callRef = call !== undefined ? cellRefIn(ids, call, rules) : undefined;
+    const queuedAt = verdicts.filter((v) => v.can.ok && (call === undefined || v.i < call)).map((v) => v.i);
     queue.current = {
-      cells: verdicts.filter((v) => v.can.ok && (call === undefined || v.i < call)).map((v) => v.i),
+      cells: queuedAt.flatMap((i) => cellRefIn(ids, i, rules) ?? []),
       on: host,
       proposed: verdicts.filter((v) => !v.can.ok && v.can.why === 'proposed' && (call === undefined || v.i < call)).length,
-      ...(call !== undefined ? { call } : {}),
+      ...(callRef ? { call: callRef } : {}),
+      rules,
       ...(opts.readyFirst ? { readyFirst: true } : {}),
-      manual: parseFrontMatter(runbook.text)?.manualSteps !== 'continue',
+      manual: parseFrontMatter(text)?.manualSteps !== 'continue',
       skipped: new Set<string>(),
       several: verdicts.filter((v) => v.can.ok || v.i === call).length > 1,
-      passed: new Set<number>(),
+      passed: new Set<string>(),
       // Continue with only the teardown left is a request for it: offer it again.
       ...(from === 'resume' && candidates.length > 0 && candidates.every((i) => isTeardown(parsed[i])) ? { askAgain: true } : {}),
       // What a call runs, runs whole: its teardown isn't offered.
       ...(activeCall(runbook.id) ? { takeDown: 'run' as const } : {}),
     };
     setQueued(true);
-    setQueuedCells([...queue.current.cells]);
+    setQueuedCells(queuedAt);
     setNotice(undefined);
     handedToCall.current = false;
     reports.begin(true);
@@ -1423,7 +1543,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       text: note,
     });
     // Next to the step it is about, as in VS Code: the one running, else the one that ran last.
-    const here = running?.cellIndex ?? lastRanCell(latest);
+    const here = (running ? resolveCell(latest, running.cell) : undefined) ?? lastRanCell(latest);
     updateRunbookText(runbook.id, here === undefined ? withBlockAtEnd(latest, block) : withBlockAfterCell(latest, here, block));
     sayOk(t.noteAdded);
   };
@@ -1727,12 +1847,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       list.current?.scrollToIndex({ index: next, viewPosition: 0.2 });
     }
   };
-  const mark = (index: number, exit: 'done' | 'skipped'): void => {
+  const mark = (index: number, exit: 'done' | 'skipped', text: string): void => {
     if (!runbook) return;
     // As the extension marks it: a manual output with who marked it (`by=`), counted by progress.
     write(
       setCellOutput(
-        runbook.text,
+        text,
         index,
         { kind: 'new', text: t.markedBy(exit), attrs: { exit, ran: formatLocalIso(new Date()), by: 'app' } },
         DEFAULT_WRITE_OPTIONS,
@@ -1740,7 +1860,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     );
   };
   /** Run Until Here: the steps still to do (Resume's) up to cell `index`. */
-  const untilHere = (index: number): number[] => (runbook ? textProgress(runbook.text).resume.filter((i) => i <= index) : []);
+  const untilHere = (index: number, text: string): number[] => textProgress(text).resume.filter((i) => i <= index);
   /** A step whose last run failed (Suggest a Fix is for it). */
   const failedHere = (cell: (typeof cells)[number]): boolean => {
     const a = cell.output?.attrs;
@@ -1762,10 +1882,29 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     // A runbook call: run it in a new copy, or open the copy its last run made.
     const lastCopy = isCall ? callFromAttrs(cell.output?.attrs)?.copy : undefined;
     const copyOf = lastCopy ? runbookNamed(lastCopy) : undefined;
+    // The sheet stays open while the runbook changes (a proposal, a note, another device): each
+    // action finds its cell again when tapped and does nothing (saying so) if it changed or went.
+    const ref = refAt(index);
+    if (!ref) return [];
+    const found = (at: number | undefined): number | undefined => {
+      if (at === undefined) setNotice(t.cellNotActed);
+      return at;
+    };
+    /** On the cell in the text as it is now. */
+    const act = (f: (i: number, text: string) => void) => (): void => {
+      const text = latestText();
+      const i = found(resolveCell(text, ref));
+      if (i !== undefined) f(i, text);
+    };
+    /** On the cell where it is shown now (marks and checked lines are kept by that). */
+    const actShown = (f: (i: number) => void) => (): void => {
+      const i = found(resolveIn(idsBefore.current, ref));
+      if (i !== undefined) f(i);
+    };
     return [
       ...(isCall
         ? [
-            { ...meta('runCallFresh', 'run', why), run: () => void runCallAt(index, true) },
+            { ...meta('runCallFresh', 'run', why), run: act((i) => void runCallAt(i, true)) },
             {
               ...meta('openCallCopy', 'run', copyOf ? undefined : t.noCallCopy),
               run: () => copyOf && router.push({ pathname: '/runbook/[id]', params: { id: copyOf.id } }),
@@ -1774,38 +1913,39 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : []),
       ...(proposal === 'proposed' || proposal === 'unverified'
         ? [
-            { ...meta('approveProposal', 'review'), run: () => openApprove(index, false) },
+            { ...meta('approveProposal', 'review'), run: act((i, text) => openApprove(i, false, text)) },
             // As the review card's Reject, and VS Code's Reject Proposed Cell: the cell leaves the runbook.
-            { ...meta('rejectProposal', 'review'), run: () => write(rejectCell(getRunbook(runbook.id)?.text ?? runbook.text, index)) },
+            { ...meta('rejectProposal', 'review'), run: act((i, text) => write(rejectCell(text, i))) },
           ]
         : []),
-      { ...meta('runCell', 'run', why), run: () => void run({ cellIndex: index }, host) },
+      { ...meta('runCell', 'run', why), run: () => void run({ cell: ref }, host) },
       {
         ...meta('runFromHere', 'run', host ? undefined : t.noRunNow),
-        run: () =>
+        run: act((i, text) =>
           runSequence(
             'start',
-            parse(runbook.text)
-              .cells.map((c, i) => (c.kind === 'code' && i >= index ? i : -1))
-              .filter((i) => i >= 0),
+            parse(text)
+              .cells.map((c, k) => (c.kind === 'code' && k >= i ? k : -1))
+              .filter((k) => k >= 0),
           ),
+        ),
       },
       {
         // As VS Code's: from the first step still to do (or failed) up to this one.
-        ...meta('runUntilHere', 'run', !host ? t.noRunNow : untilHere(index).length > 0 ? undefined : t.nothingUntilHere),
-        run: () => runSequence('start', untilHere(index)),
+        ...meta('runUntilHere', 'run', !host ? t.noRunNow : untilHere(index, runbook.text).length > 0 ? undefined : t.nothingUntilHere),
+        run: act((i, text) => runSequence('start', untilHere(i, text))),
       },
       // As VS Code's: marks for this session, off again with the same item.
       stepMarks.get(index)?.pause
-        ? { ...meta('removePause', 'run'), run: () => toggleStepMark(index, 'pause') }
-        : { ...meta('pauseBefore', 'run'), run: () => toggleStepMark(index, 'pause') },
+        ? { ...meta('removePause', 'run'), run: actShown((i) => toggleStepMark(i, 'pause')) }
+        : { ...meta('pauseBefore', 'run'), run: actShown((i) => toggleStepMark(i, 'pause')) },
       stepMarks.get(index)?.notify
-        ? { ...meta('cancelNotify', 'run'), run: () => toggleStepMark(index, 'notify') }
-        : { ...meta('notifyOnStart', 'run'), run: () => toggleStepMark(index, 'notify') },
-      { ...meta('stepThrough', 'run', why), run: () => void run({ cellIndex: index, mode: 'step', line: 0 }, host) },
+        ? { ...meta('cancelNotify', 'run'), run: actShown((i) => toggleStepMark(i, 'notify')) }
+        : { ...meta('notifyOnStart', 'run'), run: actShown((i) => toggleStepMark(i, 'notify')) },
+      { ...meta('stepThrough', 'run', why), run: () => void run({ cell: ref, mode: 'step', line: 0 }, host) },
       {
         ...meta('uncheckAllLines', 'run', (checks.get(index)?.size ?? 0) > 0 ? undefined : t.noCheckedLines),
-        run: () => uncheckAll(index),
+        run: actShown((i) => uncheckAll(i)),
       },
       {
         ...meta(
@@ -1822,23 +1962,26 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                   : t.notRunnable[can.why](can.detail),
         ),
         run: () => {
-          setGroupPick(index);
+          setGroupPick(ref);
           list.current?.scrollToOffset({ offset: 0 });
         },
       },
-      { ...meta('explainOutput', 'assistant', cell.output ? undefined : t.noOutputToExplain), run: () => assistant.ask('explain', index) },
+      {
+        ...meta('explainOutput', 'assistant', cell.output ? undefined : t.noOutputToExplain),
+        run: act((i) => void assistant.ask('explain', i)),
+      },
       {
         ...meta('suggestFix', 'assistant', failedHere(cell) ? undefined : t.notFailed),
-        run: () => assistant.ask('fix', index),
+        run: act((i) => void assistant.ask('fix', i)),
       },
-      { ...meta('suggestNextSteps', 'assistant'), run: () => assistant.ask('suggest', index) },
-      { ...meta('copyCellForAi', 'assistant'), run: () => assistant.copyForAi(index) },
-      { ...meta('pasteAiProposal', 'assistant'), run: () => assistant.paste(index) },
-      { ...meta('markDone', 'steps'), run: () => mark(index, 'done') },
-      { ...meta('markSkipped', 'steps'), run: () => mark(index, 'skipped') },
+      { ...meta('suggestNextSteps', 'assistant'), run: act((i) => void assistant.ask('suggest', i)) },
+      { ...meta('copyCellForAi', 'assistant'), run: act((i) => void assistant.copyForAi(i)) },
+      { ...meta('pasteAiProposal', 'assistant'), run: act((i) => void assistant.paste(i)) },
+      { ...meta('markDone', 'steps'), run: act((i, text) => mark(i, 'done', text)) },
+      { ...meta('markSkipped', 'steps'), run: act((i, text) => mark(i, 'skipped', text)) },
       {
         ...meta('unmarkStep', 'steps', isManualMark(cell.output?.attrs) ? undefined : t.notManualMark),
-        run: () => write(clearCellOutputs(runbook.text, (i) => i === index)),
+        run: act((i, text) => write(clearCellOutputs(text, (k) => k === i))),
       },
       {
         ...meta(
@@ -1856,8 +1999,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           });
         },
       },
-      { ...meta('clearAbove', 'run'), run: () => write(clearCellOutputs(runbook.text, (i) => i < index)) },
-      { ...meta('clearBelow', 'run'), run: () => write(clearCellOutputs(runbook.text, (i) => i >= index)) },
+      { ...meta('clearAbove', 'run'), run: act((i, text) => write(clearCellOutputs(text, (k) => k < i))) },
+      { ...meta('clearBelow', 'run'), run: act((i, text) => write(clearCellOutputs(text, (k) => k >= i))) },
     ];
   };
   const saveFromMenu = async (): Promise<void> => {
@@ -1878,7 +2021,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     // As in VS Code: a cell that wasn't confirmed doesn't run, and Run all stops there.
     clearQueue();
     setConfirming(undefined);
-    setNotice(t.confirmDeclined(confirming.cellIndex + 1));
+    setNotice(t.confirmDeclined((where(confirming.cell) ?? -1) + 1));
   };
   const stopSequence = (): void => {
     clearQueue();
@@ -1898,7 +2041,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     if (!runbook) return;
     const call = activeCall(runbook.id);
     if (!call) return runSequence('start');
-    const cells = callCells(runbook.text, call);
+    const cells = callCells(latestText(), call);
     // Why the failed run's copy wasn't continued, first (the call's output says it too).
     setNotice([call.note, t.callRunning(call.runbook, runbook.fileName ?? runbook.title)].filter(Boolean).join(' '));
     callRun.current = cells.length > 0 ? 'starting' : 'ended';
@@ -1987,9 +2130,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       return new Map(m).set(cellIndex, next);
     });
   /** Copy Line with Values, as VS Code's: the values a run would use now; secrets stay references. */
-  const copyLine = (cellIndex: number, step: LineStep): void => {
+  const copyLine = (shownIndex: number, step: LineStep): void => {
     if (!runbook) return;
     const text = getRunbook(runbook.id)?.text ?? runbook.text;
+    // The cell tapped, where it is in that text.
+    const ref = refAt(shownIndex);
+    const cellIndex = ref ? resolveCell(text, ref) : undefined;
+    if (cellIndex === undefined) return setNotice(t.cellNotActed);
     // A signed cell doesn't take the front matter's defaults (runCell): nor does its copy.
     const defaults: Record<string, string> = {};
     if (!signedStatus(text)?.cells.has(cellIndex))
@@ -2014,8 +2161,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
 
   // Where the run waits for an answer: a card under that cell (a value, a confirmation, the
   // teardown offer, a step done by hand). The run bar, the pinned bar and the steps say so.
-  const waitingCell = manualAsk?.cellIndex ?? asking?.request.cellIndex ?? confirming?.cellIndex ?? teardownOffer?.cellIndex ?? pauseAsk;
-  const waiting = waitingCell !== undefined;
+  const waitingRef = manualAsk?.cell ?? asking?.request.cell ?? confirming?.cell ?? teardownOffer?.cell ?? pauseAsk;
+  const waitingCell = where(waitingRef);
+  const waiting = waitingRef !== undefined;
+  // Each card under the cell it asks about, wherever that cell is now.
+  const manualAt = where(manualAsk?.cell);
+  const askingAt = where(asking?.request.cell);
+  const confirmingAt = where(confirming?.cell);
+  const teardownAt = where(teardownOffer?.cell);
+  const pauseAt = where(pauseAsk);
   const waitingItem = manualAsk?.item;
   // Preflight: what each step still to do will ask of you, known now (nothing asked, nothing run).
   const secretNames = useSecretNames();
@@ -2040,7 +2194,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   };
   // The question asked at a cell, the host's key and another host's (cards at the top) included:
   // the step's row in the Steps view waits there.
-  const askedAt = waitingCell ?? trust?.request.cellIndex ?? otherHost?.request.cellIndex;
+  const askedAt = waitingCell ?? where(trust?.request.cell) ?? where(otherHost?.request.cell);
   // The steps by name (a phone's Steps, the wide screen's panel), as VS Code's Runbook Steps view.
   const stepRows = useMemo(
     (): StepsRow[] =>
@@ -2048,7 +2202,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         ? stepsRows({
             cells,
             progress,
-            ...(running ? { running: { cellIndex: running.cellIndex, startedAt: running.startedAt } } : {}),
+            ...(running && runningAt !== undefined ? { running: { cellIndex: runningAt, startedAt: running.startedAt } } : {}),
             ...(askedAt !== undefined
               ? { waiting: { cellIndex: askedAt, ...(waitingItem !== undefined ? { item: waitingItem } : {}) } }
               : {}),
@@ -2060,7 +2214,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : [],
     // needsOf reads approvalId, secretNames and typedInputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cells, progress, running, askedAt, waitingItem, callEstimates, learnedEstimates, approvalId, secretNames, typedInputs, now],
+    [cells, progress, running, runningAt, askedAt, waitingItem, callEstimates, learnedEstimates, approvalId, secretNames, typedInputs, now],
   );
   // The marks a reader put on a step (Pause Before This Step, Notify Me When It Starts), on its row.
   const markedRows: StepsRow[] =
@@ -2102,7 +2256,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             label: t.stepsRetry,
             hint: t.stepsRetryHint,
             kind: 'primary',
-            onPress: () => void run({ cellIndex: failedCell }, host),
+            onPress: () => {
+              const ref = refAt(failedCell);
+              if (ref) void run({ cell: ref }, host);
+            },
           },
           ...(progress?.resume.length
             ? [
@@ -2151,11 +2308,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       : asking !== undefined
         ? t.stepsWaitsValues(asking.needs.map((n) => n.name).join(', '))
         : confirming !== undefined
-          ? t.stepsWaitsConfirm(stepName(confirming.cellIndex))
+          ? t.stepsWaitsConfirm(stepName(confirmingAt ?? -1))
           : teardownOffer !== undefined
             ? t.notifyWaitsTeardown(teardownOffer.labels.join(', '))
             : pauseAsk !== undefined
-              ? t.pausedBeforeStep(stepName(pauseAsk))
+              ? t.pausedBeforeStep(stepName(pauseAt ?? -1))
               : undefined;
   // Where the last run was, as recorded in the output markers (Record where each step ran, or VS Code's).
   const lastContext = useMemo(() => (runbook ? lastRunContext(runbook.text) : undefined), [runbook]);
@@ -2188,7 +2345,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   /** A checklist item's tick box; at the item Run all waits at, ticking it is Done (as in VS Code). */
   const tickItem = (index: number, item: number, checked: boolean): void => {
     if (!runbook) return;
-    if (checked && manualAsk?.cellIndex === index && manualAsk.item === item) return answerManual('done');
+    if (checked && manualAsk && manualAt === index && manualAsk.item === item) return answerManual('done');
     const latest = getRunbook(runbook.id)?.text ?? runbook.text;
     write(withItemSet(latest, parse(latest).cells, index, item, checked));
   };
@@ -2202,12 +2359,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         ? t.notifyWaitsNeeds(asking.needs.map((n) => n.name).join(', '))
         : confirming !== undefined
           ? confirming.match.trim() === ''
-            ? t.confirmTitle(confirming.cellIndex + 1)
-            : t.confirmRiskyTitle(confirming.cellIndex + 1, confirming.match.trim())
+            ? t.confirmTitle((confirmingAt ?? -1) + 1)
+            : t.confirmRiskyTitle((confirmingAt ?? -1) + 1, confirming.match.trim())
           : teardownOffer !== undefined
             ? t.notifyWaitsTeardown(teardownOffer.labels.join(', '))
             : pauseAsk !== undefined
-              ? t.pausedBeforeStep(stepName(pauseAsk))
+              ? t.pausedBeforeStep(stepName(pauseAt ?? -1))
               : trust !== undefined
                 ? (trust.changed ? t.trustChangedTitle : t.trustTitle)(trustHost?.name ?? '')
                 : otherHost !== undefined
@@ -2242,7 +2399,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 id: 'answer',
                 label: t.stepsAnswer,
                 hint: t.stepsAnswerHint,
-                onPress: () => showInRunbook(asking ? asking.request.cellIndex : 'top'),
+                onPress: () => showInRunbook(askingAt ?? 'top'),
               },
             ];
   const stepAnswers: StepsAnswers | undefined =
@@ -2253,7 +2410,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     waitingWhat !== undefined && askedAt !== undefined
       ? { kind: 'waiting', cellIndex: askedAt, what: waitingWhat }
       : queued || running
-        ? { kind: 'running', ...(running ? { cellIndex: running.cellIndex } : {}) }
+        ? { kind: 'running', ...(runningAt !== undefined ? { cellIndex: runningAt } : {}) }
         : { kind: 'idle' };
   const endedNote = (): EndedNote => {
     if (handedToCall.current || !progress) return undefined;
@@ -2624,7 +2781,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                   onChangeNote={(marker, words) => changeNote(index, marker, words)}
                 />
                 {problems.notes.has(index) ? <ProseNotes index={index} notes={problems.notes.get(index)!} /> : null}
-                {manualAsk?.cellIndex === index ? (
+                {manualAsk && manualAt === index ? (
                   // Under the checklist Run all waits at, as the other cards under their cell.
                   <ManualCard
                     text={manualAsk.text}
@@ -2641,10 +2798,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 canRun={host !== undefined}
                 {...(callEstimates.has(index) ? { callEstimate: callEstimates.get(index)! } : {})}
                 {...(learnedEstimates.has(index) ? { learnedEstimate: learnedEstimates.get(index)! } : {})}
-                running={running?.cellIndex === index ? running : undefined}
-                busy={running !== undefined && running.cellIndex !== index}
+                running={running && runningAt === index ? running : undefined}
+                busy={running !== undefined && runningAt !== index}
                 checked={checks.get(index) ?? EMPTY}
-                onRun={(mode, line) => void run({ cellIndex: index, mode, line }, host)}
+                onRun={(mode, line) => {
+                  const ref = refAt(index);
+                  if (ref) void run({ cell: ref, mode, line }, host);
+                }}
                 onStop={stopSequence}
                 onToggleCheck={(step) => toggleCheck(index, step)}
                 onUncheckAll={() => uncheckAll(index)}
@@ -2660,13 +2820,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 runbookId={approvalId}
                 platform={host?.platform}
                 below={
-                  teardownOffer?.cellIndex === index ? (
+                  teardownOffer && teardownAt === index ? (
                     <TeardownCard
                       labels={teardownOffer.labels}
                       onTake={() => answerTeardown(true)}
                       onNotNow={() => answerTeardown(false)}
                     />
-                  ) : asking?.request.cellIndex === index ? (
+                  ) : asking && askingAt === index ? (
                     // Under the cell that needs the values, where the reader looks, not at the top.
                     <NeedsCard
                       runbookId={runbook.id}
@@ -2678,7 +2838,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                         setAsking(undefined);
                       }}
                     />
-                  ) : confirming?.cellIndex === index ? (
+                  ) : confirming && confirmingAt === index ? (
                     <ConfirmCard
                       cell={index + 1}
                       match={confirming.match}
@@ -2687,7 +2847,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                       onRun={confirmRun}
                       onCancel={confirmCancel}
                     />
-                  ) : pauseAsk === index ? (
+                  ) : pauseAsk && pauseAt === index ? (
                     <PauseCard label={stepName(index)} onContinue={() => answerPause(true)} onStop={() => answerPause(false)} />
                   ) : approving?.index === index && isCodeMeta(item.meta) ? (
                     <ApproveCard

@@ -18,6 +18,7 @@ import {
 import { PseudonymMap, depseudonymize } from '@md-runbook/core/aiContext';
 import { scanForLeaks } from '@md-runbook/core/leaks';
 import { t } from '../i18n';
+import { CellRef, cellRef, resolveCell } from '../runbooks/cellRef';
 import { Runbook, getRunbook, updateRunbookText } from '../runbooks/store';
 import { AssistantStep } from './AssistantSheet';
 import { PROVIDER_LABEL, askClaude, clearApiKey, hasApiKey, setApiKey } from './claude';
@@ -43,7 +44,7 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
   /** What Send (or saving the key) goes on with. */
   const next = useRef<(() => void) | undefined>(undefined);
   const abort = useRef<AbortController | undefined>(undefined);
-  const lastExplain = useRef<{ cell: number; label: string; text: string } | undefined>(undefined);
+  const lastExplain = useRef<{ cell?: CellRef; label: string; text: string } | undefined>(undefined);
 
   useEffect(() => {
     void hasApiKey().then(setHasKey);
@@ -57,14 +58,33 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
     setStep(undefined);
   };
 
-  /** `lines`: for explainLine, the command's lines as shown ("3" or "3-5"). */
-  const ask = async (kind: AskKind, cell?: number, lines?: string): Promise<void> => {
+  /**
+   * Where the cell of `ref` is in `text`, or undefined; `false` (said in the notice) when it
+   * changed or went since it was asked about: an answer lands next to that cell or nowhere.
+   */
+  const placeOf = (text: string, ref: CellRef | undefined): number | undefined | false => {
+    if (!ref) return undefined;
+    const at = resolveCell(text, ref);
+    if (at !== undefined) return at;
+    notify(t.cellNotActed);
+    return false;
+  };
+
+  /** `lines`: for explainLine, the command's lines as shown ("3" or "3-5"). `at`: the cell's place in the runbook as it is now. */
+  const ask = (kind: AskKind, at?: number, lines?: string): Promise<void> => {
+    const text = latest();
+    return askAbout(kind, text === undefined || at === undefined ? undefined : cellRef(text, at), lines);
+  };
+
+  const askAbout = async (kind: AskKind, ref: CellRef | undefined, lines?: string): Promise<void> => {
     const text = latest();
     if (!runbook || text === undefined) return;
     if (!(await hasApiKey())) {
-      next.current = () => void ask(kind, cell, lines);
+      next.current = () => void askAbout(kind, ref, lines);
       return setStep({ kind: 'key' });
     }
+    const cell = placeOf(text, ref);
+    if (cell === false) return;
     const label = cell === undefined ? '' : `cell ${cell + 1}`;
     const ctx = await prepareContext(text, runbook.title, cell === undefined ? undefined : cellsUpTo(text, cell));
     const prompt: AiPrompt =
@@ -87,7 +107,7 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
           : kind === 'fix'
             ? t.aiWhatFix(shown)
             : t.aiWhatSummary;
-    next.current = () => void send(kind, cell, shown, prompt, what, ctx.map);
+    next.current = () => void send(kind, ref, shown, prompt, what, ctx.map);
     setStep({
       kind: 'confirm',
       what,
@@ -101,7 +121,7 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
 
   const send = async (
     kind: AskKind,
-    cell: number | undefined,
+    ref: CellRef | undefined,
     label: string,
     prompt: AiPrompt,
     what: string,
@@ -132,12 +152,15 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
     }
     if (kind === 'explain') {
       const text = depseudonymize(answer, map).trim();
-      lastExplain.current = { cell: cell ?? 0, label, text };
+      lastExplain.current = { ...(ref ? { cell: ref } : {}), label, text };
       return setStep({ kind: 'answer', title: t.aiExplanationTitle(label), markdown: text, canInsert: true });
     }
     setStep(undefined);
     if (kind === 'suggest' || kind === 'fix') {
-      // A fix goes right after the failed step, as a proposal to approve (the extension's proposeAfter).
+      // A fix goes right after the failed step, as a proposal to approve (the extension's
+      // proposeAfter): that step wherever it is now, after the answer's wait; nowhere if it went.
+      const cell = placeOf(now, ref);
+      if (cell === false) return;
       const r = insertSuggestions(now, answer, map, kind === 'fix' ? MAX_FIXES : MAX_PROPOSALS, cell);
       if (r.count > 0) updateRunbookText(runbook.id, r.text);
       return notify(t.aiSuggested(r.count));
@@ -171,9 +194,16 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
   };
 
   const paste = async (after?: number): Promise<void> => {
-    const text = latest();
-    if (!runbook || text === undefined) return;
-    const r = insertPasted(text, await Clipboard.getStringAsync(), await pseudonymMap(), after);
+    const before = latest();
+    if (!runbook || before === undefined) return;
+    const ref = after === undefined ? undefined : cellRef(before, after);
+    const clipboard = await Clipboard.getStringAsync();
+    const map = await pseudonymMap();
+    // The text and the cell as they are after the wait: nothing written over, nothing put elsewhere.
+    const text = latest() ?? before;
+    const at = placeOf(text, ref);
+    if (at === false) return;
+    const r = insertPasted(text, clipboard, map, at);
     if (r.count === 0) return notify(t.pastedNone);
     updateRunbookText(runbook.id, r.text);
     notify(t.pasted(r.count));
@@ -206,8 +236,11 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
     onInsert: () => {
       const e = lastExplain.current;
       const text = latest();
-      if (runbook && e && text !== undefined) updateRunbookText(runbook.id, insertNote(text, e.cell, e.label, PROVIDER_LABEL, e.text));
       setStep(undefined);
+      if (!runbook || !e || text === undefined) return;
+      // After the cell explained, wherever it is now; nowhere if it changed or went.
+      const at = placeOf(text, e.cell);
+      if (at !== false) updateRunbookText(runbook.id, insertNote(text, at ?? 0, e.label, PROVIDER_LABEL, e.text));
     },
     onClose: close,
   };

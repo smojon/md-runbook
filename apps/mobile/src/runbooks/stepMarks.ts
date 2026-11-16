@@ -32,12 +32,14 @@ export function toggleMark(marks: MarksByCell, index: number, which: keyof StepM
 
 /**
  * Each cell's identity across edits: its kind, fence options and code (Markdown: its text), and
- * which of the cells alike it is. Outputs are no part of it: running a cell keeps it.
+ * which of the cells alike it is. Outputs are no part of it: running a cell keeps it. Nor are a
+ * Markdown cell's ticks (`- [x]`): ticking a step done by hand keeps it.
  */
 export function cellIdentities(cells: readonly Pick<ParsedCell, 'kind' | 'value' | 'meta'>[]): string[] {
   const seen = new Map<string, number>();
   return cells.map((c) => {
-    const base = `${c.kind}\u0000${c.kind === 'code' && isCodeMeta(c.meta) ? c.meta.info.trim() : ''}\u0000${c.value}`;
+    const value = c.kind === 'code' ? c.value : c.value.replace(/^(\s*(?:>\s*)*[-*+]\s+)\[[ xX]\]/gm, '$1[ ]');
+    const base = `${c.kind}\u0000${c.kind === 'code' && isCodeMeta(c.meta) ? c.meta.info.trim() : ''}\u0000${value}`;
     const n = seen.get(base) ?? 0;
     seen.set(base, n + 1);
     return `${base}\u0000${n}`;

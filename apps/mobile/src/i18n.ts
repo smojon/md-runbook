@@ -925,6 +925,8 @@ const en = {
   pauseStopped: 'Run all stopped before a step marked to pause: Resume goes on from it.',
   marksDropped: 'A step changed: its pause, notify and breakpoint marks are gone.',
   runChangedStopped: 'A step still to run changed: Run all stops before it.',
+  askedCellChanged: 'The step a question was about changed or went: nothing ran.',
+  cellNotActed: 'That step changed or went since: nothing was done. Open its ⋯ again.',
   pausesHere: 'Pauses here',
   pausesHereHint: 'Run all pauses before this step. Tap to remove the pause.',
   notifiesHere: 'Notifies',
