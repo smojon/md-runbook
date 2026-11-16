@@ -10,7 +10,7 @@ import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { stepState } from '@md-runbook/core/progress';
 import { META_KEY } from './outputs';
 import { SECTION } from './config';
-import { showRunbook } from './currentRunbook';
+import { currentRunbook, editorOf, showRunbook } from './currentRunbook';
 import { anyRunning } from './estimates';
 import { cellAttrs, selectRunbookKernel } from './progress';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -37,9 +37,22 @@ export function rollbackOf(cell: vscode.NotebookCell): { name: string; cell: vsc
 }
 
 function cellOf(uri: unknown, index: unknown): vscode.NotebookCell | undefined {
-  if (typeof uri !== 'string' || typeof index !== 'number') return undefined;
+  if (typeof uri !== 'string' || typeof index !== 'number') return failedStep();
   const nb = vscode.workspace.notebookDocuments.find((d) => d.uri.toString() === uri);
   return nb && index >= 0 && index < nb.cellCount ? nb.cellAt(index) : undefined;
+}
+
+/**
+ * From the palette or Run ▾ (no cell given): the selected step of the current runbook if it
+ * failed, else its first failed step. Says so when there is none.
+ */
+function failedStep(): vscode.NotebookCell | undefined {
+  const nb = currentRunbook();
+  const sel = nb && editorOf(nb)?.selection.start;
+  const selected = nb && sel !== undefined && sel < nb.cellCount ? nb.cellAt(sel) : undefined;
+  const cell = selected && hasFailed(selected) ? selected : nb?.getCells().find(hasFailed);
+  if (!cell) void vscode.window.showInformationMessage('md-runbook: no failed step.');
+  return cell;
 }
 
 class FailedActions implements vscode.NotebookCellStatusBarItemProvider {

@@ -107,6 +107,25 @@ test('Resume Run continues from the failed step after it is fixed', async () => 
   await closeAll();
 });
 
+test('Retry Failed Step from the palette (no cell given) runs the failed step again', async () => {
+  const uri = writeFile('progress-retry-palette.md', `${fence('echo first')}\n${fence('echo broken\nexit 3')}\n${fence('echo third')}`);
+  const editor = await openRunbook(uri);
+  const nb = editor.notebook;
+  await selectKernel(editor);
+  await vscode.commands.executeCommand('notebook.execute', nb.uri);
+  const [c0, c1, c2] = nb.getCells();
+  assert.equal(await waitForRun(c0!), true);
+  assert.equal(await waitForRun(c1!), false);
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(c1!.document.uri, new vscode.Range(0, 0, c1!.document.lineCount, 0), 'echo fixed');
+  assert.ok(await vscode.workspace.applyEdit(edit));
+  // The toolbar's Run ▾ passes its own context object, not a cell: the failed step is found.
+  await step('retry', vscode.commands.executeCommand('mdRunbook.retryStep', { notebookEditor: { notebookUri: nb.uri } }));
+  await waitFor('retried', () => /fixed/.test(outputText(c1!)) && c1!.executionSummary?.success === true);
+  assert.equal(c2!.outputs.length, 0, 'Retry runs only the failed step');
+  await closeAll();
+});
+
 test('Clear Outputs Above / Below', async () => {
   const uri = writeFile('progress-clear.md', `${fence('echo a')}\n${fence('echo b')}\n${fence('echo c')}`);
   const editor = await openRunbook(uri);
