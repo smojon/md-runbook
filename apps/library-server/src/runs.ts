@@ -24,8 +24,9 @@ export interface RunRecord {
   verified: boolean;
   /**
    * With trust `gate` only: the mode of the gate that sent it (the summary's `gate.gate_mode`,
-   * `shared` when absent). Never set from an unverified summary. Records from before read as
-   * `shared` (recordGateMode).
+   * `shared` when absent). `separated` only when sent with a token of RUNS_SEPARATED_GATE_TOKENS
+   * (Runs.receive refuses the claim from any other). Never set from an unverified summary.
+   * Records from before read as `shared` (recordGateMode).
    */
   gateMode?: GateMode;
   /** The principal of the allowed runners whose key signed it. */
@@ -71,8 +72,11 @@ export function summaryMatches(s: ReceivedRunSummary, q: string): boolean {
 
 export interface ReceiveContext {
   from: string;
-  /** The token it came with, and whether it is a gate's. */
-  token?: { label: string; gate: boolean };
+  /**
+   * The token it came with, whether it is a gate's, and whether that gate runs in separated mode
+   * (RUNS_SEPARATED_GATE_TOKENS): only then may a summary say `gate_mode: separated`.
+   */
+  token?: { label: string; gate: boolean; separated?: boolean };
 }
 
 export class Runs {
@@ -127,11 +131,21 @@ export class Runs {
       if (ctx.token?.gate) {
         trust = 'gate';
         why = undefined;
-      } else if (this.config.gateTokens.length > 0) throw new HttpError(403, "a gate's summary (client gate) needs a gate token (RUNS_GATE_TOKENS)");
+      } else if (this.config.gateTokens.length > 0 || this.config.separatedGateTokens.length > 0)
+        throw new HttpError(403, "a gate's summary (client gate) needs a gate token (RUNS_GATE_TOKENS or RUNS_SEPARATED_GATE_TOKENS)");
       else why = 'client gate, but this server has no gate tokens to tell a gate (RUNS_GATE_TOKENS)';
     }
     if (this.config.requireSigned && trust === 'unverified') throw new HttpError(403, `this server keeps only summaries signed by a known runner or sent by a gate: ${why ?? 'not verified'}`);
+    // The token decides the mode, not the summary: a shared gate's blocks can read its token and
+    // send a summary that says separated (review, 2026-11-16). Refused rather than kept as shared,
+    // so a gate in separated mode whose token is in the wrong list is noticed.
     const gateMode = gateModeOf(summary, trust === 'gate');
+    if (gateMode === 'separated' && ctx.token?.separated !== true) {
+      throw new HttpError(
+        400,
+        "the summary says gate_mode separated, but its token is not a separated gate's: a gate in separated mode needs its own token in the server's RUNS_SEPARATED_GATE_TOKENS (not in RUNS_GATE_TOKENS)",
+      );
+    }
 
     const record: RunRecord = {
       received: now.toISOString(),

@@ -44,6 +44,7 @@ describe('config', () => {
   it('runs: RUNS_REQUIRE_SIGNED needs runner keys or gate tokens; alerts: PUBLIC_URL is https', () => {
     assert.throws(() => loadConfig({ RUNS_DIR: dir, RUNS_REQUIRE_SIGNED: 'true' }), /RUNS_ALLOWED_RUNNERS/);
     assert.equal(loadConfig({ RUNS_DIR: dir, RUNS_REQUIRE_SIGNED: 'true', RUNS_GATE_TOKENS: T }).runs!.requireSigned, true);
+    assert.equal(loadConfig({ RUNS_DIR: dir, RUNS_REQUIRE_SIGNED: 'true', RUNS_SEPARATED_GATE_TOKENS: T }).runs!.requireSigned, true);
     const map = path.join(dir, 'map.json');
     assert.throws(() => loadConfig({ ALERT_MAP: map }), /PUBLIC_URL/);
     assert.throws(() => loadConfig({ ALERT_MAP: map, PUBLIC_URL: 'http://runbooks.example.net' }), /https/);
@@ -52,5 +53,16 @@ describe('config', () => {
     // No token: refused, unless the operator says anyone may post (security review, 2026-11-16).
     assert.throws(() => loadConfig({ ALERT_MAP: map, PUBLIC_URL: 'https://runbooks.example.net/' }), /ALERTS_TOKENS/);
     assert.equal(loadConfig({ ALERT_MAP: map, PUBLIC_URL: 'https://runbooks.example.net/', ALERTS_ALLOW_ANYONE: 'true' }).alerts!.tokens.length, 0);
+  });
+
+  it("runs: separated gates' tokens in a list of their own (RUNS_SEPARATED_GATE_TOKENS), never also in RUNS_GATE_TOKENS", () => {
+    const r = loadConfig({ RUNS_DIR: dir, RUNS_GATE_TOKENS: `web-1:${T}`, RUNS_SEPARATED_GATE_TOKENS: `web-2:${T}x` }).runs!;
+    assert.deepEqual([r.gateTokens.map((t) => t.label), r.separatedGateTokens.map((t) => t.label)], [['web-1'], ['web-2']]);
+    fs.writeFileSync(path.join(dir, 'separated'), `web-3:${T}y\n`);
+    assert.deepEqual(loadConfig({ RUNS_DIR: dir, RUNS_SEPARATED_GATE_TOKENS_FILE: path.join(dir, 'separated') }).runs!.separatedGateTokens.map((t) => t.label), ['web-3']);
+    assert.deepEqual(loadConfig({ RUNS_DIR: dir }).runs!.separatedGateTokens, []);
+    // The same token in both lists (under any label): a shared gate's token could claim separated.
+    assert.throws(() => loadConfig({ RUNS_DIR: dir, RUNS_GATE_TOKENS: `web-1:${T}`, RUNS_SEPARATED_GATE_TOKENS: `web-1b:${T}` }), /both have the token web-1b: each gate's token goes in one list/);
+    assert.throws(() => loadConfig({ RUNS_DIR: dir, RUNS_SEPARATED_GATE_TOKENS: 'short' }), /RUNS_SEPARATED_GATE_TOKENS: each token must be at least 24/);
   });
 });

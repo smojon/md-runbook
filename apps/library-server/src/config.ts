@@ -35,6 +35,12 @@ export interface RunsConfig {
   tokens: readonly Token[];
   /** Tokens of md-runbook-gate (report_token_file): a summary with client "gate" needs one when set. */
   gateTokens: readonly Token[];
+  /**
+   * Tokens of gates in separated mode (RUNS_SEPARATED_GATE_TOKENS): gate tokens too, and the only
+   * ones whose summaries may say `gate_mode: separated`. A shared gate's blocks can read its token,
+   * so the server, not the summary, decides the mode. A token is in one list or the other.
+   */
+  separatedGateTokens: readonly Token[];
   readTokens: readonly Token[];
   /** OpenSSH allowed_signers of the runners' keys (namespace md-runbook-run). */
   allowedRunners?: string;
@@ -261,13 +267,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       dir: resolve(env.RUNS_DIR),
       tokens: readTokens(env, 'RUNS_TOKENS'),
       gateTokens: readTokens(env, 'RUNS_GATE_TOKENS'),
+      separatedGateTokens: readTokens(env, 'RUNS_SEPARATED_GATE_TOKENS'),
       readTokens: readTokens(env, 'RUNS_READ_TOKENS'),
       ...(env.RUNS_ALLOWED_RUNNERS ? { allowedRunners: existingFile('RUNS_ALLOWED_RUNNERS', resolve(env.RUNS_ALLOWED_RUNNERS)) } : {}),
       requireSigned: bool(env, 'RUNS_REQUIRE_SIGNED', false),
       maxBytes: num(env, 'RUNS_MAX_BYTES', 64 * 1024),
     };
-    if (runs.requireSigned && !runs.allowedRunners && runs.gateTokens.length === 0)
-      throw new Error('RUNS_REQUIRE_SIGNED=true needs RUNS_ALLOWED_RUNNERS (runner keys) or RUNS_GATE_TOKENS (gates): otherwise every summary is refused');
+    // In both lists, a shared gate's token (which its blocks can read) could claim separated mode.
+    const shared = new Set(runs.gateTokens.map((t) => t.value));
+    const both = runs.separatedGateTokens.find((t) => shared.has(t.value));
+    if (both) throw new Error(`RUNS_GATE_TOKENS and RUNS_SEPARATED_GATE_TOKENS both have the token ${both.label}: each gate's token goes in one list (a gate in separated mode: RUNS_SEPARATED_GATE_TOKENS)`);
+    if (runs.requireSigned && !runs.allowedRunners && runs.gateTokens.length === 0 && runs.separatedGateTokens.length === 0)
+      throw new Error('RUNS_REQUIRE_SIGNED=true needs RUNS_ALLOWED_RUNNERS (runner keys), or RUNS_GATE_TOKENS or RUNS_SEPARATED_GATE_TOKENS (gates): otherwise every summary is refused');
   }
 
   let alerts: AlertsConfig | undefined;

@@ -12,6 +12,7 @@ import { Keys, RUNBOOK, call, config, makeKeys, signRunbook, start, tok } from '
 const READ = 'read-token-of-at-least-24-chars';
 const SEND = 'send-token-of-at-least-24-chars';
 const GATE = 'gate-token-of-at-least-24-chars';
+const SEPARATED = 'separated-gate-token-of-24-chars';
 
 const summary = (over: { who?: string; failed?: boolean; text?: string; file?: string; ended?: number } = {}): RunSummaryReport =>
   buildRunSummary({
@@ -65,6 +66,7 @@ describe('run summaries: the endpoint', () => {
     dir: path.join(dir, 'runs'),
     tokens: [],
     gateTokens: [],
+    separatedGateTokens: [],
     readTokens: [tok(READ, 'team')],
     allowedRunners: keys.allowedRunners,
     requireSigned: false,
@@ -188,19 +190,30 @@ describe('run summaries: the endpoint', () => {
 
   it("a gate's mode (gate.gate_mode) is kept only when sent by a gate; any other value is refused", async () => {
     fresh();
-    const { s, url } = await start(config(dir, { runs: runsConfig({ gateTokens: [tok(GATE, 'web-1')] }) }));
-    const withMode = (mode: unknown): string => JSON.stringify({ ...gateSummary(), gate: { host: 'web-1', account: 'support', gate_mode: mode } });
+    const { s, url, logs } = await start(config(dir, { runs: runsConfig({ gateTokens: [tok(GATE, 'web-1')], separatedGateTokens: [tok(SEPARATED, 'web-2')] }) }));
+    const withMode = (mode: unknown): string =>
+      JSON.stringify({ ...gateSummary(), gate: { host: 'web-1', account: 'support', ...(mode === undefined ? {} : { gate_mode: mode }) } });
     try {
-      const separated = await call(`${url}/v1/runs`, 'POST', withMode('separated'), GATE);
+      // A separated gate's token (RUNS_SEPARATED_GATE_TOKENS): its summaries say the mode they ran in.
+      const separated = await call(`${url}/v1/runs`, 'POST', withMode('separated'), SEPARATED);
       assert.deepEqual([separated.status, separated.json.trust, separated.json.gateMode], [202, 'gate', 'separated']);
-      const shared = await call(`${url}/v1/runs`, 'POST', withMode('shared'), GATE);
+      const shared = await call(`${url}/v1/runs`, 'POST', withMode('shared'), SEPARATED);
       assert.deepEqual([shared.status, shared.json.gateMode], [202, 'shared']);
+      const none = await call(`${url}/v1/runs`, 'POST', withMode(undefined), SEPARATED);
+      assert.deepEqual([none.status, none.json.gateMode], [202, 'shared']);
+      // A shared gate's token (RUNS_GATE_TOKENS), which that gate's blocks can read: separated is
+      // refused, so a block can't pass its run off as a separated gate's (review, 2026-11-16).
+      const forged = await call(`${url}/v1/runs`, 'POST', withMode('separated'), GATE);
+      assert.equal(forged.status, 400);
+      assert.match(forged.json.error, /says gate_mode separated, but its token is not a separated gate's: .*RUNS_SEPARATED_GATE_TOKENS/);
+      assert.ok(logs.some((e) => e.event === 'run-refused' && e.token === 'web-1' && e.status === 400));
+      assert.deepEqual([(await call(`${url}/v1/runs`, 'POST', withMode('shared'), GATE)).json.gateMode], ['shared']);
       for (const bad of ['Separated', 'isolated', '', 1]) {
-        const r = await call(`${url}/v1/runs`, 'POST', withMode(bad), GATE);
+        const r = await call(`${url}/v1/runs`, 'POST', withMode(bad), SEPARATED);
         assert.equal(r.status, 400, String(bad));
         assert.match(r.json.problems.join('\n'), /gate\.gate_mode: expected shared or separated/);
       }
-      assert.deepEqual(lines().map((l) => l.gateMode), ['separated', 'shared']);
+      assert.deepEqual(lines().map((l) => [l.token, l.gateMode]), [['web-2', 'separated'], ['web-2', 'shared'], ['web-2', 'shared'], ['web-1', 'shared']]);
     } finally {
       await s.close();
     }
@@ -226,7 +239,7 @@ describe('run summaries: the endpoint', () => {
     fs.writeFileSync(path.join(libDir, 'ops', 'restart-api.md'), await signRunbook(front('separated') + RUNBOOK, {}, keys.signer));
     fs.writeFileSync(path.join(libDir, 'ops', 'stop-api.md'), await signRunbook(front('true') + RUNBOOK, { name: 'ops/stop-api' }, keys.signer));
     const library = { dir: libDir, uploadTokens: [tok('upload-token-of-at-least-24-chars')], allowedSigners: keys.allowedSigners, acceptV1: false, allowDelete: false, signedOnly: true, maxBytes: 256 * 1024 };
-    const { s, url } = await start(config(dir, { library, runs: runsConfig({ gateTokens: [tok(GATE, 'web-1')] }) }));
+    const { s, url } = await start(config(dir, { library, runs: runsConfig({ gateTokens: [tok(GATE, 'web-1')], separatedGateTokens: [tok(SEPARATED, 'web-2')] }) }));
     const gateRun = (name: string, mode: string | undefined, ended: string): string =>
       JSON.stringify({
         ...gateSummary(),
@@ -251,7 +264,7 @@ describe('run summaries: the endpoint', () => {
       // By its signed name too.
       assert.equal((await lastGreen('ops/restart-api')).required, 'separated');
       // A separated gate's run counts; a later shared one doesn't replace it.
-      await call(`${url}/v1/runs`, 'POST', gateRun('ops/restart-api', 'separated', '2026-11-14T11:00:00Z'), GATE);
+      assert.equal((await call(`${url}/v1/runs`, 'POST', gateRun('ops/restart-api', 'separated', '2026-11-14T11:00:00Z'), SEPARATED)).status, 202);
       g = await lastGreen('ops/restart-api.md');
       assert.match(g.text, /at 2026-11-14T11:00:00Z \(version 1\), verified: sent by a gate \(separated\)$/);
       assert.equal(g.lastVerified.gateMode, 'separated');

@@ -6,7 +6,7 @@
  *   GET    /v1/server-info                   {"name":"md-runbook-library-server","protocol":1,"version":…,"capabilities":[…]}
  *   POST   /v1/library/runbooks/<path>       a signed runbook (upload token)
  *   DELETE /v1/library/runbooks/<path>       with LIBRARY_ALLOW_DELETE=true (upload token)
- *   POST   /v1/runs                          a run summary, or its signed envelope (RUNS_TOKENS / RUNS_GATE_TOKENS when set)
+ *   POST   /v1/runs                          a run summary, or its signed envelope (RUNS_TOKENS / RUNS_GATE_TOKENS / RUNS_SEPARATED_GATE_TOKENS when set)
  *   GET    /v1/runs?runbook=…&limit=…        recent runs (read token)
  *   GET    /v1/runs/last-green?runbook=…     the last green run (read token)
  *   POST   /v1/alerts                        Alertmanager's webhook (ALERTS_TOKENS when set)
@@ -73,6 +73,7 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
     upload: tokenSet(config.library?.uploadTokens ?? []),
     runs: tokenSet(config.runs?.tokens ?? []),
     gate: tokenSet(config.runs?.gateTokens ?? []),
+    separatedGate: tokenSet(config.runs?.separatedGateTokens ?? []),
     runsRead: tokenSet(config.runs?.readTokens ?? []),
     alerts: tokenSet(config.alerts?.tokens ?? []),
     alertsRead: tokenSet(config.alerts?.readTokens ?? []),
@@ -134,10 +135,13 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
     if (path === '/v1/runs' || path === '/v1/runs/last-green') {
       if (!runs) throw new HttpError(404, 'this server keeps no run summaries (RUNS_DIR)');
       if (method === 'POST' && path === '/v1/runs') {
-        let token: { label: string; gate: boolean } | undefined;
+        let token: { label: string; gate: boolean; separated?: boolean } | undefined;
         const given = bearer(req);
-        const gate = check.gate(given);
-        if (gate) token = { label: gate.label, gate: true };
+        // A separated gate's token is a gate token too; only it may send gate_mode separated.
+        const separatedGate = check.separatedGate(given);
+        const gate = separatedGate ? undefined : check.gate(given);
+        if (separatedGate) token = { label: separatedGate.label, gate: true, separated: true };
+        else if (gate) token = { label: gate.label, gate: true };
         else if (runs.config.tokens.length > 0) token = { label: need(req, client, 'sending a run summary', check.runs).label, gate: false };
         else if (given !== undefined) {
           // No tokens asked for: a token sent anyway is only a name for the log, if it is one.

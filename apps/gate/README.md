@@ -142,6 +142,10 @@ token and a log file, and reach the gate through `/proc`.
 With `cells_account = NAME` in `gate.conf`, the blocks run as that second account instead
 (`separated`). It can't reach the token, the log or the gate's pipes.
 
+Give this gate its own report token, in the library server's `RUNS_SEPARATED_GATE_TOKENS`. The
+server counts a summary as separated only with such a token: a shared gate's blocks can read
+theirs.
+
 Set it up once, as root:
 
 ```sh
@@ -374,7 +378,11 @@ fails a run.
 - A report says "sent by a gate" truthfully only under the conditions of [Trust](#trust).
 
 The [library server](../library-server/README.md) keeps it as verified when the token is one of
-its `RUNS_GATE_TOKENS`. More in
+its gate tokens. Give each gate its own token:
+- in separated mode, in the server's `RUNS_SEPARATED_GATE_TOKENS`;
+- otherwise in `RUNS_GATE_TOKENS`. The server refuses `gate_mode: "separated"` with one of these.
+
+More in
 [signed runbooks](../../docs/features/signed-runbooks.md#run-reports-from-the-gate).
 
 ## Build and test
