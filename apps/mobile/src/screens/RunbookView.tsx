@@ -101,6 +101,8 @@ import { useAssistant } from '../assistant/useAssistant';
 import { ApproveCard } from '../cells/ApproveCard';
 import { ConfirmCard } from '../cells/ConfirmCard';
 import { PauseCard } from '../cells/PauseCard';
+import { LaunchError, launchModel, startValues } from '../runbooks/launch';
+import { LaunchSheet, LaunchTyped } from '../ui/LaunchSheet';
 import { MarksByCell, NO_MARKS, StepMarks, toggleMark } from '../runbooks/stepMarks';
 import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
@@ -117,6 +119,7 @@ import {
   ago,
   checkParam,
   lastInputs,
+  paramValues as storedParamValues,
   rememberInput,
   runbookParams,
   setParamValue,
@@ -741,7 +744,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       signal: abort.signal,
       lines,
       beforeStep,
-      params: paramValues,
+      // From the store, not this render: the launch form's Start runs right after setting them.
+      params: storedParamValues(runbook.id),
       runbookId: runbook.id,
       captures: captures.current,
       inputs: Object.fromEntries(Object.entries(inputs.current).map(([k, v]) => [k, v.value])),
@@ -1115,6 +1119,84 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     void shouldOffer().then((yes) => yes && setNotifyOffer(true));
     runNext();
   };
+  /**
+   * The launch form before Run all (runbooks/launch.ts, as VS Code's): open, with the last values
+   * typed for the inputs (loaded when it opens) and why Start didn't start.
+   */
+  const [launch, setLaunch] = useState<{ last: Record<string, string>; error?: LaunchError } | undefined>();
+  /** The code cells Run all runs: the runnable ones, up to and with a runbook call (runSequence's). */
+  const runAllCells = (text: string): number[] => {
+    if (!host) return [];
+    const out: number[] = [];
+    for (const [i, c] of parse(text).cells.entries()) {
+      if (c.kind !== 'code') continue;
+      const can = runnability(c, approvalId, host.platform);
+      if (!can.ok && can.why === 'call') {
+        out.push(i);
+        break;
+      }
+      if (can.ok) out.push(i);
+    }
+    return out;
+  };
+  const buildLaunch = (last: Readonly<Record<string, string>>) => {
+    if (!runbook) return undefined;
+    const text = getRunbook(runbook.id)?.text ?? runbook.text;
+    return launchModel({
+      text,
+      cells: runAllCells(text),
+      rows: stepRows,
+      params: paramValues,
+      inputs: typedInputs,
+      lastInputs: last,
+      secretNames,
+      confirmation: (source, info) => confirmationOf(source, info, outputSettings().allowNoConfirm),
+      estimateSteps,
+    });
+  };
+  /**
+   * Run all: the launch form first when it has something on it (the setting on; always with
+   * `force`, Run All…), else the run. Not in a runbook call's copy: the call gave its values.
+   */
+  const runAll = (force = false): void => {
+    if (!runbook || !host || busy.current || queued) return;
+    // A refused library copy runs nothing: runSequence says why.
+    if (libraryRefused) return runSequence('start');
+    if (force || (outputSettings().launchForm && !activeCall(runbook.id) && buildLaunch({})?.needed)) {
+      setLaunch({ last: {} });
+      const id = runbook.id;
+      void lastInputs(id).then((l) => {
+        const last = Object.fromEntries(Object.entries(l).map(([k, v]) => [k, v.value]));
+        setLaunch((now) => (now ? { ...now, last } : now));
+      });
+      return;
+    }
+    runSequence('start');
+  };
+  /** The form's Start: its values kept (parameters for the runbook, inputs for the session), then Run all. */
+  const startLaunch = (typed: LaunchTyped): void => {
+    if (!runbook || !launch) return;
+    const m = buildLaunch(launch.last);
+    if (!m) return;
+    const v = startValues(m, typed);
+    if ('error' in v) return setLaunch({ ...launch, error: v.error });
+    for (const [name, value] of Object.entries(v.params)) {
+      const spec = m.params.find((x) => x.name === name);
+      // The default as it was is left a default (the Parameters card keeps showing it as one).
+      if (paramValues[name] === undefined && (value === '' || value === spec?.default)) continue;
+      if (paramValues[name] !== value) setParamValue(runbook.id, name, value);
+    }
+    let next = inputs.current;
+    for (const [name, value] of Object.entries(v.inputs)) {
+      const secret = m.inputs.find((x) => x.name === name)?.secret ?? false;
+      next = { ...next, [name]: { value, masked: secret } };
+      if (!secret) rememberInput(runbook.id, name, value);
+    }
+    if (next !== inputs.current) updateInputs(next);
+    setLaunch(undefined);
+    // The run reads the parameters from their store and the inputs from their ref: these ones.
+    runSequence('start');
+  };
   const [showActions, setShowActions] = useState(false);
   // Set Inputs: the inputs card lists every input the runbook uses, set or not.
   const [showInputs, setShowInputs] = useState(false);
@@ -1248,7 +1330,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     ? [
         queued || running
           ? { ...meta('stop', 'run'), run: () => stopSequence() }
-          : { ...meta('runAll', 'run', host ? undefined : t.noRunNow), run: () => runSequence('start') },
+          : { ...meta('runAll', 'run', host ? undefined : t.noRunNow), run: () => runAll() },
+        // As VS Code's Run All…: the launch form, whatever the setting says.
+        { ...meta('runAllForm', 'run', !host ? t.noRunNow : queued || running ? t.busy : undefined), run: () => runAll(true) },
         {
           ...meta('resumeRun', 'run', !host ? t.noRunNow : progress?.resume.length ? undefined : t.nothingToResume),
           run: () => runSequence('resume'),
@@ -1838,17 +1922,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     [cells, progress, running, askedAt, waitingItem, callEstimates, learnedEstimates, approvalId, secretNames, typedInputs, now],
   );
   // The marks a reader put on a step (Pause Before This Step, Notify Me When It Starts), on its row.
-  const markedRows = useMemo(
-    (): StepsRow[] =>
-      stepMarks.size === 0
-        ? stepRows
-        : stepRows.map((r) => {
-            const m = r.kind === 'step' && r.item === undefined ? stepMarks.get(r.index) : undefined;
-            return m ? { ...r, ...(m.pause ? { paused: true } : {}), ...(m.notify ? { notify: true } : {}) } : r;
-          }),
-    [stepRows, stepMarks],
-  );
+  const markedRows: StepsRow[] =
+    stepMarks.size === 0
+      ? stepRows
+      : stepRows.map((r) => {
+          const m = r.kind === 'step' && r.item === undefined ? stepMarks.get(r.index) : undefined;
+          return m ? { ...r, ...(m.pause ? { paused: true } : {}), ...(m.notify ? { notify: true } : {}) } : r;
+        });
   const hasSteps = stepRows.some((r) => r.kind === 'step');
+  // The launch form's content while it is open (the secrets just set, the last inputs loaded).
+  const launchShown = launch ? buildLaunch(launch.last) : undefined;
+  const launchHost = practiceHost ?? host;
   /** A phone shows its Steps tab (the runbook's list stays mounted under it, where it was). */
   const showSteps = stepsShown && hasSteps;
   /**
@@ -1905,7 +1989,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ? // A phone's Steps has no run bar above it: Run all and Stop are here.
             [{ id: 'stop', label: t.stopRun, kind: 'stop', onPress: () => stopSequence() }]
           : choice && host
-            ? [{ id: 'run', label: choice.label, kind: 'primary', onPress: () => runSequence(choice.from) }]
+            ? [
+                {
+                  id: 'run',
+                  label: choice.label,
+                  kind: 'primary',
+                  onPress: () => (choice.from === 'start' ? runAll() : runSequence(choice.from)),
+                },
+              ]
             : [];
   // While the run waits, the header's second line says what for, not the share and the time (at
   // the teardown offered, "100% · nothing left": right, the teardown isn't a step, but unclear).
@@ -2123,7 +2214,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                   if (waitingCell !== undefined) list.current?.scrollToIndex({ index: waitingCell, viewPosition: 0.2 });
                 }}
                 {...(hasSteps && !panel ? { onSteps: openSteps } : {})}
-                onRun={runSequence}
+                onRun={(from) => (from === 'start' ? runAll() : runSequence(from))}
                 onStop={stopSequence}
                 onMore={() => setShowActions(true)}
                 onLayout={setBarBottom}
@@ -2485,6 +2576,23 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       </View>
       {/* The sheets at the screen's root: they open from the Steps tab too, while the runbook is hidden. */}
       <ActionsSheet actions={actions} visible={showActions} onClose={() => setShowActions(false)} />
+      {launch && launchShown ? (
+        <LaunchSheet
+          model={launchShown}
+          title={runbook.title}
+          {...(launchHost ? { runsOn: `${launchHost.username}@${launchHost.name}` } : {})}
+          {...(launch.error ? { error: launch.error } : {})}
+          onStart={startLaunch}
+          onBack={() => setLaunch(undefined)}
+          onGo={(index) => {
+            setLaunch(undefined);
+            showInRunbook(index);
+          }}
+          onSetSecret={(name, value) =>
+            void storeSecret(name, value).catch((e: unknown) => setNotice(e instanceof Error ? e.message : String(e)))
+          }
+        />
+      ) : null}
       <AssistantSheet {...assistant.sheet} />
       <DiffSheet diff={diff} onClose={() => setDiff(undefined)} />
       <ActionsSheet actions={cellSheet ?? []} visible={cellSheet !== undefined} onClose={() => setCellSheet(undefined)} />

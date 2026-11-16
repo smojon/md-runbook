@@ -8,6 +8,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { addHost, resetHosts } from '../hosts/store';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
+import { resetSettings, setOutputSetting } from '../settings/store';
 import { errorLine, preflightLine, preflightParts, stepsRows, uncheckedBefore, withItemSet, withItemTicked } from '../runbooks/steps';
 import { RunbookView } from '../screens/RunbookView';
 import { FakeRun, fakeConnection } from '../testing/fakeConnection';
@@ -585,6 +586,9 @@ describe('Run all at a step done by hand', () => {
 });
 
 describe('the waiting row’s other questions', () => {
+  // The questions while Run all runs: without the launch form first (launch.test.tsx has it).
+  beforeEach(() => setOutputSetting('launchForm', false));
+  afterEach(() => resetSettings());
   it('a confirmation: Run runs it, as the card’s Run', async () => {
     script([{ stdout: 'wiped\n' }]);
     const rb = addRunbook('confirm.md', ['# C', '', fence('bash name="Wipe" confirm', 'echo wipe')].join('\n'));

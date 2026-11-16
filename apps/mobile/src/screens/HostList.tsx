@@ -508,7 +508,10 @@ function LinksSection() {
   );
 }
 
-/** Confirmation of risky cells: whether a runbook's `no-confirm` counts (the extension's allowNoConfirmOption). */
+/**
+ * Confirmation of risky cells: whether a runbook's `no-confirm` counts (the extension's
+ * allowNoConfirmOption); and whether Run all opens the launch form first.
+ */
 function SafetySection() {
   const styles = useStyles();
   const s = useOutputSettings();
@@ -525,6 +528,19 @@ function SafetySection() {
           accessibilityLabel={t.allowNoConfirm}
           value={s.allowNoConfirm}
           onValueChange={(on) => setOutputSetting('allowNoConfirm', on)}
+        />
+      </View>
+      {/* The launch form before Run all (the extension's mdRunbook.execution.launchForm). */}
+      <View style={styles.switchRow}>
+        <View style={styles.switchText}>
+          <Text style={styles.switchLabel}>{t.launchForm}</Text>
+          <Points items={t.launchFormPoints} textStyle={styles.help} />
+        </View>
+        <Toggle
+          testID="setting-launchForm"
+          accessibilityLabel={t.launchForm}
+          value={s.launchForm}
+          onValueChange={(on) => setOutputSetting('launchForm', on)}
         />
       </View>
     </View>

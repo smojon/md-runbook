@@ -55,6 +55,7 @@ const GLYPHS = {
   verified: 0xeb77,
   unverified: 0xeb76,
   bell: 0xeaa2,
+  key: 0xeb11,
 } as const;
 
 export type CodiconName = keyof typeof GLYPHS;
