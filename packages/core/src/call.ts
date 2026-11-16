@@ -16,7 +16,7 @@
  * and the call's output; running is in the CLI and the extension.
  */
 
-import { tokenizeInfo } from './cellOptions';
+import { INFO_LANG_RE, tokenizeInfo } from './cellOptions';
 import { RefKind, VAR_NAME_RE, VarRef, findRefs, parseFrontMatter, replaceRefs } from './secrets';
 import { inSections, missingSections, sectionHeadings, sectionOnTitle } from './sections';
 import { locateCodeCells } from './locate';
@@ -85,7 +85,7 @@ function unquote(v: string): string {
 /** A call's options and parameters, from its fence info string and its body. */
 export function parseCall(info: string, source: string): RunbookCall {
   const call: RunbookCall = { sections: [], args: [], problems: [] };
-  for (const t of tokenizeInfo(info.replace(/^\s*[^\s{]*/, ''))) {
+  for (const t of tokenizeInfo(info.replace(INFO_LANG_RE, ''))) {
     const k = t.key.toLowerCase();
     if (k === 'src') {
       if (t.value === undefined || t.value.trim() === '') call.problems.push({ message: 'src= is empty: give the runbook to run, relative to this file' });

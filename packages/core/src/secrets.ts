@@ -314,6 +314,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
   let reportRunsSeparated: boolean | undefined;
   let reportRunsSigned: boolean | undefined;
   let reportRunsToken: string | undefined;
+  let tokenSeen = false;
   let prose: 'on' | 'strict' | 'off' | undefined;
   // No prototype: a variable named constructor or __proto__ is a plain entry.
   const env: Record<string, string> = Object.create(null) as Record<string, string>;
@@ -392,18 +393,25 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       // The first one counts (a second could otherwise send the summary elsewhere unnoticed).
       const rr = value('report-runs');
       if (rr !== undefined && reportRuns === undefined && reportAddressProblem(rr) === undefined) reportRuns = rr;
+      // Written twice (lint warns, signing refuses): the strictest counts, required if any line
+      // says so, separated if any says separated. Before, the last one counted here and the first
+      // in lint (gate vectors, 2026-11-16).
       const rq = value('report-runs-required');
       if (rq !== undefined) {
         // `separated`: required, and only a report a gate sends in separated mode counts. Any
         // other value: not required (lint and signing refuse it).
-        reportRunsRequired = /^(true|yes|on|separated)$/i.test(rq);
-        reportRunsSeparated = /^separated$/i.test(rq);
+        if (/^(true|yes|on|separated)$/i.test(rq)) reportRunsRequired = true;
+        if (/^separated$/i.test(rq)) reportRunsSeparated = true;
       }
       const rs = value('report-runs-signed');
-      if (rs !== undefined) reportRunsSigned = /^(true|yes|on)$/i.test(rs);
-      // Only a reference to a secret: never a literal token in the file (lint errors on one).
+      if (rs !== undefined && /^(true|yes|on)$/i.test(rs)) reportRunsSigned = true;
+      // Only a reference to a secret: never a literal token in the file (lint errors on one). The
+      // first report-runs-token line counts, as for report-runs.
       const rt = /^report-runs-token\s*:\s*["']?\$\{secret:([A-Za-z_][A-Za-z0-9_]*)\}["']?\s*(#.*)?$/i.exec(line);
-      if (rt) reportRunsToken = rt[1];
+      if (/^report-runs-token\s*:/i.test(line) && !tokenSeen) {
+        tokenSeen = true;
+        if (rt) reportRunsToken = rt[1];
+      }
       continue;
     }
     if (inEnv) {

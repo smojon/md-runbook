@@ -20,7 +20,7 @@
  */
 
 import { callRefs, isCallLanguage, parseCall } from './call';
-import { parseCellOptions } from './cellOptions';
+import { gateKubeContext, parseCellOptions } from './cellOptions';
 import { FenceOpen, isFenceClose, langOf, matchFenceOpen } from './fence';
 import { kubeContextParam } from './kubeContext';
 import { isCodeMeta } from './model';
@@ -37,6 +37,14 @@ import { LINE_RE, splitLines } from './lines';
 export const SIGNATURE_NAMESPACE = 'md-runbook';
 
 export const MANIFEST_HEADER = 'md-runbook-manifest 1';
+
+/** The longest request line md-runbook-gate reads (apps/gate/internal/proto, MaxLine): a longer one ends the session. */
+export const GATE_MAX_LINE = 4_000_000;
+/**
+ * The largest manifest a runbook can be signed with: its load request (base64, 4/3 as long, with
+ * the request id and up to five signatures) stays under GATE_MAX_LINE.
+ */
+export const MAX_MANIFEST_BYTES = 2_900_000;
 
 export const RUNBOOK_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 export const SCOPE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -75,11 +83,19 @@ const RESERVED = new Set(RESERVED_VARS);
 /**
  * Names a parameter or env.* value may not have: they change how the shell or the programs it
  * starts read the signed code, or where they connect. md-runbook-gate refuses the same
- * (is_reserved). Not KUBECONFIG: env.KUBECONFIG picks a cluster, and is signed.
+ * (names.IsReserved). Not KUBECONFIG: env.KUBECONFIG picks a cluster, and is signed. And any
+ * name ending in `_proxy`, in any case: Python's urllib (pip, requests) reads `Https_Proxy` and
+ * `FOO_proxy` as proxies (the lists above had the usual spellings only; gate vectors, 2026-11-16).
  */
 export function isReservedVar(name: string): boolean {
-  return RESERVED.has(name) || RESERVED_VAR_PREFIXES.some((p) => name.startsWith(p));
+  return RESERVED.has(name) || RESERVED_VAR_PREFIXES.some((p) => name.startsWith(p)) || /_proxy$/i.test(name);
 }
+
+/**
+ * A parameter value a gate takes: one line, no CR, LF or NUL (md-runbook-gate's IsOneLine; it
+ * took a CR before, which clients refused; gate vectors, 2026-11-16).
+ */
+export const isOneLineValue = (value: string): boolean => !/[\r\n\0]/.test(value);
 
 /** JavaScript-only regex syntax, which the gate's `grep -E` reads differently (or not at all). */
 const NOT_POSIX_ERE = /\\[dDwWsSbB1-9]|\(\?|[*+?}]\?/;
@@ -487,11 +503,17 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
   const cells: ManifestCell[] = [];
   /** kube-context=${param:NAME} parameters: their patterns are signed, so the gate can check the value. */
   const contextParams: string[] = [];
+  const runbookContext = parseFrontMatter(text)?.kubeContext;
   for (const c of bashCells(text)) {
     const n = cells.length + 1;
     const where = `cell ${n} (${c.value.split('\n')[0]?.slice(0, 40) ?? ''})`;
     const opts = parseCellOptions(c.info);
     for (const e of opts.errors) errors.push(`${where}: invalid option ${e}`);
+    // The gate checks a block's own kube-context= only (it never reads the front matter): a
+    // runbook's kube-context: would guard the block in clients and not on the server.
+    if (runbookContext !== undefined && opts.kubeContext === undefined && !opts.errors.some((e) => e.startsWith('kube-context'))) {
+      errors.push(`${where}: the front matter's kube-context: ${runbookContext} is not checked by servers: write kube-context=${runbookContext} on the block`);
+    }
     const needs: string[] = [];
     try {
       // ${param:}, ${input:} and ${out:} values go to the gate, which checks them against the
@@ -563,7 +585,18 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
   const used = new Set([...cells.flatMap((c) => c.needs), ...contextParams, ...calls.flatMap((c) => c.needs)]);
   const patterns = Object.fromEntries(Object.entries(meta.patterns).filter(([k]) => used.has(k)));
   const whole = opts.version === 1 ? {} : { text: signedTextHash(text) };
-  return { manifest: { ...meta, scopes: [...new Set(meta.scopes)], patterns, cells, calls, ...whole } };
+  const manifest: Manifest = { ...meta, scopes: [...new Set(meta.scopes)], patterns, cells, calls, ...whole };
+  // Only what clients and the gate read back as built (a NUL or line break in an info string, a
+  // folder or a value; parseManifest says which), and short enough for the gate's load request.
+  const formatted = formatManifest(manifest);
+  try {
+    parseManifest(formatted);
+  } catch (e) {
+    return { errors: [`can't be signed as written: ${e instanceof Error ? e.message : String(e)}`] };
+  }
+  const bytes = new TextEncoder().encode(formatted).length;
+  if (bytes > MAX_MANIFEST_BYTES) return { errors: [`the manifest is ${bytes} bytes: a gate takes at most ${MAX_MANIFEST_BYTES} (its load request would be too long); split the runbook`] };
+  return { manifest };
 }
 
 /** Run report lines of the front matter (runReport.ts) that can't be signed as written. */
@@ -620,108 +653,185 @@ export function formatManifest(m: Manifest): string {
   return lines.join('\n') + '\n';
 }
 
-/** Read a manifest back (clients use it to match cells); throws on anything malformed. */
+/** The words each manifest item has after its key (scope: one or more). */
+const ITEM_WORDS: Record<string, number> = {
+  name: 1, version: 1, expires: 1, text: 1, param: 2, cell: 2, info: 1, code: 1, needs: 1, cwd: 1, env: 2, step: 1,
+  call: 1, callinfo: 1, callbody: 1, callneeds: 1, end: 0,
+};
+/** Where each item may come: in this order, as formatManifest writes them (a cell's and a call's items after their line). */
+const ITEM_ORDER = ['name', 'version', 'expires', 'scope', 'text', 'param', 'cell', 'call', 'end'];
+const CELL_ORDER = ['info', 'code', 'needs', 'cwd', 'env', 'step'];
+const CALL_ORDER = ['callinfo', 'callbody', 'callneeds'];
+/** A value on one line (info strings, folders, env values, patterns): no line break or NUL. */
+const ONE_LINE_RE = /[\r\n\0]/;
+
+/**
+ * Read a manifest back; throws on anything malformed. Only the form formatManifest writes is read,
+ * and md-runbook-gate reads it the same way (apps/gate/internal/manifest, Check): each item once
+ * where it can only be once, in formatManifest's order, words of printable ASCII one space apart,
+ * canonical base64 of UTF-8 text, names a runbook may set, cells and calls numbered 1, 2, …, a
+ * cell's kube-context= readable (cellOptions.ts), `end` and nothing after it. Before, the gate read
+ * the first of two items and clients the last (two `param X`, `code` lines, cells numbered alike),
+ * and the gate ignored what followed `end` (gate vectors, 2026-11-16).
+ */
 export function parseManifest(text: string): Manifest {
   const lines = text.split('\n');
   if (lines[0] !== MANIFEST_HEADER) throw new Error('not an md-runbook manifest (or a newer version)');
   const m: Manifest = { name: '', version: 0, scopes: [], patterns: {}, cells: [], calls: [] };
   let cell: ManifestCell | undefined;
   let call: ManifestCall | undefined;
-  const needCall = (what: string): ManifestCall => {
-    if (!call) throw new Error(`manifest: ${what} outside a call`);
-    return call;
-  };
-  const b64 = (v: string | undefined, what: string): string => {
-    const s = v === undefined ? undefined : fromBase64(v);
+  /** Where the last item was in ITEM_ORDER, and in CELL_ORDER or CALL_ORDER (1-based, 0 after a cell or call line). */
+  let at = -1;
+  let inner = 0;
+  const b64 = (v: string, what: string, oneLine: boolean): string => {
+    const s = fromBase64(v);
     if (s === undefined) throw new Error(`manifest: bad ${what}`);
+    if (oneLine ? ONE_LINE_RE.test(s) : s.includes('\0')) throw new Error(`manifest: bad ${what} (a line break or NUL in it)`);
     return s;
   };
-  const need = (what: string): ManifestCell => {
-    if (!cell) throw new Error(`manifest: ${what} outside a cell`);
-    return cell;
+  const varName = (v: string, what: string): string => {
+    if (!VAR_NAME_RE.test(v) || isReservedVar(v)) throw new Error(`manifest: ${what} ${v}: a name the gate doesn't let a runbook set`);
+    return v;
+  };
+  const declared = (v: string, what: string): string => {
+    if (!Object.prototype.hasOwnProperty.call(m.patterns, v)) throw new Error(`manifest: ${what} ${v} has no param line`);
+    return v;
+  };
+  /** A cell's or call's items are complete: its info and code (or body) are there. */
+  const close = (): void => {
+    if (cell && inner < 2) throw new Error(`manifest: cell ${cell.n} has no ${inner < 1 ? 'info' : 'code'}`);
+    if (call && inner < 2) throw new Error(`manifest: call ${call.n} has no ${inner < 1 ? 'callinfo' : 'callbody'}`);
   };
   let ended = false;
   const once = new Set<string>();
-  for (const line of lines.slice(1)) {
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i]!;
     if (ended) {
-      if (line !== '') throw new Error('manifest: text after end');
+      if (line !== '' || i !== lines.length - 1) throw new Error('manifest: text after end');
       continue;
     }
-    if (line === '') continue;
-    const [key, a, b, ...more] = line.split(' ');
-    if (more.length > 0 && key !== 'scope') throw new Error(`manifest: bad line "${line.slice(0, 40)}"`);
-    // Once each: md-runbook-gate reads the first of these, so a second would mean two things.
-    if (key === 'name' || key === 'version' || key === 'expires' || key === 'scope') {
+    if (line === '') throw new Error(i === lines.length - 1 ? 'manifest: no end' : 'manifest: an empty line');
+    if (!/^[ -~]+$/.test(line)) throw new Error(`manifest: line ${i + 1} has a character other than printable ASCII`);
+    const [key = '', ...words] = line.split(' ');
+    // Once each: a second would mean two things (the gate reads the first, a client the last).
+    if (key === 'name' || key === 'version' || key === 'expires' || key === 'scope' || key === 'text') {
       if (once.has(key)) throw new Error(`manifest: more than one ${key} line`);
       once.add(key);
     }
+    const want = Object.prototype.hasOwnProperty.call(ITEM_WORDS, key) ? ITEM_WORDS[key] : undefined;
+    if (want === undefined && key !== 'scope') {
+      throw new Error(`manifest: unknown item "${key.slice(0, 40)}"`);
+    }
+    if (key === 'scope' ? words.length === 0 : words.length !== want) throw new Error(`manifest: bad line "${line.slice(0, 40)}"`);
+    const [a = '', b = ''] = words;
+    const top = ITEM_ORDER.indexOf(key);
+    if (top >= 0) {
+      // A cell or call can follow another; anything else only what comes before it.
+      if (top < at || (top === at && key !== 'param' && key !== 'cell' && key !== 'call')) throw new Error(`manifest: ${key} out of order`);
+      close();
+      at = top;
+      inner = 0;
+      cell = undefined;
+      call = undefined;
+    } else {
+      const order = CELL_ORDER.includes(key) ? CELL_ORDER : CALL_ORDER;
+      if (order === CELL_ORDER ? !cell : !call) throw new Error(`manifest: ${key} outside a ${order === CELL_ORDER ? 'cell' : 'call'}`);
+      const k = order.indexOf(key) + 1;
+      if (k > 2 && inner < 2) close();
+      // info and code (callinfo and callbody) first, once each; needs, env, step and callneeds may
+      // repeat (each name once), cwd is once.
+      if (k <= 2 ? k !== inner + 1 : k < inner || (k === inner && key === 'cwd')) throw new Error(`manifest: ${key} out of order`);
+      inner = k;
+    }
     switch (key) {
       case 'name':
-        m.name = a ?? '';
+        if (!RUNBOOK_NAME_RE.test(a)) throw new Error('manifest: bad name');
+        m.name = a;
         break;
       case 'version':
-        // A whole number as md-runbook-gate reads it (is_num): no 0x10, 1e3, 007.
-        if (!a || !/^[1-9][0-9]{0,5}$/.test(a)) throw new Error('manifest: bad version (expected a whole number)');
+        // A whole number as md-runbook-gate reads it (IsNum): no 0x10, 1e3, 007.
+        if (!/^[1-9][0-9]{0,5}$/.test(a)) throw new Error('manifest: bad version (expected a whole number)');
         m.version = Number(a);
         break;
       case 'expires':
-        if (!a || !isDate(a)) throw new Error('manifest: bad expires (expected YYYY-MM-DD)');
+        if (!isDate(a)) throw new Error('manifest: bad expires (expected YYYY-MM-DD)');
         m.expires = a;
         break;
       case 'scope':
-        m.scopes = line.split(' ').slice(1);
+        for (const s of words) if (!SCOPE_RE.test(s) || words.indexOf(s) !== words.lastIndexOf(s)) throw new Error(`manifest: bad scope "${s.slice(0, 40)}"`);
+        m.scopes = words;
         break;
       case 'text':
-        if (!a || !/^[0-9a-f]{64}$/.test(a) || b !== undefined || m.text !== undefined) throw new Error('manifest: bad text');
+        if (!/^[0-9a-f]{64}$/.test(a)) throw new Error('manifest: bad text');
         m.text = a;
         break;
-      case 'param':
-        m.patterns[a ?? ''] = b64(b, 'pattern');
+      case 'param': {
+        const name = varName(a, 'param');
+        if (Object.prototype.hasOwnProperty.call(m.patterns, name)) throw new Error(`manifest: more than one param ${name}`);
+        const re = b64(b, 'pattern', true);
+        if (re === '') throw new Error(`manifest: empty pattern for ${name}`);
+        m.patterns[name] = re;
         break;
+      }
       case 'cell':
-        cell = { n: Number(a), lines: b === 'any' ? 'any' : 'all', info: '', code: '', needs: [], env: {}, steps: [] };
+        if (a !== String(m.cells.length + 1) || (b !== 'all' && b !== 'any')) throw new Error(`manifest: bad line "${line.slice(0, 40)}"`);
+        cell = { n: m.cells.length + 1, lines: b as 'all' | 'any', info: '', code: '', needs: [], env: {}, steps: [] };
         m.cells.push(cell);
         break;
-      case 'info':
-        need('info').info = b64(a, 'info');
+      case 'info': {
+        const info = b64(a, 'info', true);
+        const kube = gateKubeContext(info);
+        if (kube.problem) throw new Error(`manifest: cell ${cell!.n}: ${kube.problem}`);
+        const p = kubeContextParam(kube.want);
+        if (p !== undefined) declared(p, `cell ${cell!.n}'s kube-context parameter`);
+        cell!.info = info;
         break;
+      }
       case 'code':
-        need('code').code = b64(a, 'code');
+        cell!.code = b64(a, 'code', false);
         break;
       case 'needs':
-        need('needs').needs.push(a ?? '');
+        if (cell!.needs.includes(a)) throw new Error(`manifest: cell ${cell!.n} needs ${a} twice`);
+        cell!.needs.push(declared(a, 'needs'));
         break;
-      case 'cwd':
-        need('cwd').cwd = b64(a, 'cwd');
+      case 'cwd': {
+        const cwd = b64(a, 'cwd', true);
+        if (cwd === '') throw new Error('manifest: bad cwd (empty)');
+        cell!.cwd = cwd;
         break;
-      case 'env':
-        need('env').env[a ?? ''] = b64(b, 'env');
+      }
+      case 'env': {
+        const name = varName(a, 'env');
+        if (Object.prototype.hasOwnProperty.call(cell!.env, name)) throw new Error(`manifest: cell ${cell!.n} sets env ${name} twice`);
+        cell!.env[name] = b64(b, 'env', true);
         break;
+      }
       case 'step':
-        need('step').steps.push(b64(a, 'step'));
+        cell!.steps.push(b64(a, 'step', false));
         break;
       case 'call':
-        call = { n: Number(a), info: '', body: '', needs: [] };
+        if (a !== String(m.calls.length + 1)) throw new Error(`manifest: bad line "${line.slice(0, 40)}"`);
+        call = { n: m.calls.length + 1, info: '', body: '', needs: [] };
         m.calls.push(call);
         break;
       case 'callinfo':
-        needCall('callinfo').info = b64(a, 'callinfo');
+        call!.info = b64(a, 'callinfo', true);
         break;
       case 'callbody':
-        needCall('callbody').body = b64(a, 'callbody');
+        call!.body = b64(a, 'callbody', false);
         break;
       case 'callneeds':
-        needCall('callneeds').needs.push(a ?? '');
+        if (call!.needs.includes(a)) throw new Error(`manifest: call ${call!.n} needs ${a} twice`);
+        call!.needs.push(declared(a, 'callneeds'));
         break;
       case 'end':
         ended = true;
         break;
-      default:
-        throw new Error(`manifest: unknown item "${key}"`);
     }
   }
-  if (!ended) throw new Error('manifest: no end');
-  if (!RUNBOOK_NAME_RE.test(m.name) || !Number.isInteger(m.version) || m.version < 1) throw new Error('manifest: bad name or version');
+  // `end` and its newline, as formatManifest writes it.
+  if (!ended || !text.endsWith('\n')) throw new Error('manifest: no end');
+  if (!once.has('name') || !once.has('version')) throw new Error('manifest: bad name or version');
   return m;
 }
 

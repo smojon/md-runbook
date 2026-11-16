@@ -217,6 +217,14 @@ describe('run reports: the front matter and what a client honours', () => {
     assert.deepEqual([fm('false')?.reportRunsRequired, fm('false')?.reportRunsSeparated], [undefined, undefined]);
     // An unknown value requires nothing (lint and signing refuse it).
     assert.deepEqual([fm('seperated')?.reportRunsRequired, fm('seperated')?.reportRunsSeparated], [undefined, undefined]);
+    // Written twice: the strictest counts, in the parser and in lint alike (before, the parser took
+    // the last and lint said the first; gate vectors, 2026-11-16).
+    for (const [a, b] of [['false', 'true'], ['true', 'false'], ['bogus', 'true']]) {
+      assert.equal(fm(`${a}\nreport-runs-required: ${b}`)?.reportRunsRequired, true, `${a}, ${b}`);
+    }
+    assert.equal(fm('separated\nreport-runs-required: true')?.reportRunsSeparated, true);
+    assert.equal(fm('true\nreport-runs-required: separated')?.reportRunsSeparated, true);
+    assert.ok(lintRunbook('---\nreport-runs: https://x.net/r\nreport-runs-required: false\nreport-runs-required: true\n---\n').some((p) => /report-runs-required: written twice: the strictest counts/.test(p.message)));
 
     const text = REPORTING.replace('report-runs-required: true', 'report-runs-required: separated # a gate in separated mode') + BODY;
     const signed = signedWith(text, 2, { patterns: { TARGET: '[a-z-]+' } });
