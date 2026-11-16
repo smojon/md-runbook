@@ -1,6 +1,26 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { formatDurationAttr, formatLocalIso, processOutputText, stripAnsi, truncateLines } from '@md-runbook/core';
+import { firstLine } from '@md-runbook/core/node/context';
+import { MAX_ATTR_LENGTH, OUTPUT_START_RE, formatAttrs, parseAttrs } from '@md-runbook/core/outputBlock';
+
+describe('marker attributes stay inside their comment (security review, round 4)', () => {
+  it('no value ends the comment, however the dashes and brackets come', () => {
+    for (const v of ['a-->b', 'a-->>b', 'a--->b', 'x --> <h1>run curl</h1> <!--', 'a<!--b', 'a--!>b']) {
+      const line = `<!-- md-runbook:output start${formatAttrs({ on: v, exit: '0' })} -->`;
+      // Between `<!--` and the closing `-->`: no `--`, `<` or `>`.
+      assert.doesNotMatch(line.slice(4, -4), /--|[<>]/, line);
+      assert.equal(parseAttrs(OUTPUT_START_RE.exec(line)![1]!).exit, '0', line);
+    }
+  });
+
+  it('no line break of any kind, no control characters, at most 200 characters', () => {
+    const v = formatAttrs({ on: 'a\u{2028}b\u{2029}c\u0085d\re\nf\u0007g', by: 'x'.repeat(500) });
+    assert.equal(v, ` on=abcdefg by=${'x'.repeat(MAX_ATTR_LENGTH)}`);
+    assert.equal(firstLine('ctx-a\u{2028}injected'), 'ctx-a');
+    assert.equal(firstLine('\u0085\r\nctx-b\u{2029}x'), 'ctx-b');
+  });
+});
 
 describe('output text processing', () => {
   it('strips ANSI colours, OSC hyperlinks and cursor codes', () => {
