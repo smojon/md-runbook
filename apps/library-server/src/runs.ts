@@ -6,14 +6,14 @@
  * as one JSON line, append-only, with what the check found and when it arrived.
  */
 import type { RunsConfig } from './config';
-import { ReceivedRunSummary, parseRunEnvelope, runSummaryProblems, verifyRunEnvelope } from './core';
+import { GateMode, ReceivedRunSummary, gateModeOf, gateTrustText, parseRunEnvelope, runSummaryProblems, verifyRunEnvelope } from './core';
 import { HttpError, JsonLog } from './http';
 import { nameFitsPath } from './library';
 
 /**
  * How far a summary can be believed: `runner-signed` (a key in the allowed runners signed it),
- * `gate` (sent with a gate token: md-runbook-gate's own record of what it ran), `unverified`
- * (anything else: what the sender says).
+ * `gate` (sent with a gate token: md-runbook-gate's own record of what it ran, in the mode of
+ * RunRecord.gateMode), `unverified` (anything else: what the sender says).
  */
 export type RunTrust = 'runner-signed' | 'gate' | 'unverified';
 
@@ -22,6 +22,12 @@ export interface RunRecord {
   received: string;
   trust: RunTrust;
   verified: boolean;
+  /**
+   * With trust `gate` only: the mode of the gate that sent it (the summary's `gate.gate_mode`,
+   * `shared` when absent). Never set from an unverified summary. Records from before read as
+   * `shared` (recordGateMode).
+   */
+  gateMode?: GateMode;
   /** The principal of the allowed runners whose key signed it. */
   runner?: string;
   /** Why it isn't verified (a signature that doesn't check, no allowed runners set, …). */
@@ -125,11 +131,13 @@ export class Runs {
       else why = 'client gate, but this server has no gate tokens to tell a gate (RUNS_GATE_TOKENS)';
     }
     if (this.config.requireSigned && trust === 'unverified') throw new HttpError(403, `this server keeps only summaries signed by a known runner or sent by a gate: ${why ?? 'not verified'}`);
+    const gateMode = gateModeOf(summary, trust === 'gate');
 
     const record: RunRecord = {
       received: now.toISOString(),
       trust,
       verified: trust !== 'unverified',
+      ...(gateMode ? { gateMode } : {}),
       ...(runner ? { runner } : {}),
       ...(why ? { why } : {}),
       from: ctx.from,
@@ -142,25 +150,53 @@ export class Runs {
     return record;
   }
 
-  /** The newest runs of runbook `q` (all runbooks without one), newest first. */
-  list(q: string | undefined, limit: number): Promise<RunRecord[]> {
-    return this.log.recent<RunRecord>((r) => !!r?.summary?.runbook && (q === undefined || summaryMatches(r.summary, q)), limit);
+  /** The newest runs of runbook `q` (all runbooks without one), newest first; a gate's with its mode. */
+  async list(q: string | undefined, limit: number): Promise<RunRecord[]> {
+    const runs = await this.log.recent<RunRecord>((r) => !!r?.summary?.runbook && (q === undefined || summaryMatches(r.summary, q)), limit);
+    return runs.map(withGateMode);
   }
 
   /**
-   * "Last ran green by X at T": the newest green run of `q`, and when that one isn't verified, the
-   * newest verified green run too.
+   * "Last ran green by X at T": the newest green run of `q`, and when that one doesn't count (runCounts),
+   * the newest green run that does too. `separated`: the runbook says `report-runs-required:
+   * separated` (Library.separatedRequired), so only a run a gate sent in separated mode counts.
    */
-  async lastGreen(q: string): Promise<{ last?: RunRecord; lastVerified?: RunRecord; text: string }> {
+  async lastGreen(q: string, o: { separated?: boolean } = {}): Promise<{ last?: RunRecord; lastVerified?: RunRecord; required?: 'separated'; text: string }> {
+    const separated = o.separated === true;
+    const required = separated ? { required: 'separated' as const } : {};
     const green = (r: RunRecord): boolean => !!r?.summary?.runbook && r.summary.green === true && summaryMatches(r.summary, q);
-    const [last] = await this.log.recent<RunRecord>(green, 1);
-    if (!last) return { text: `${q}: no green run reported` };
-    const lastVerified = last.verified ? last : (await this.log.recent<RunRecord>((r) => green(r) && r.verified, 1))[0];
+    const [found] = await this.log.recent<RunRecord>(green, 1);
+    if (!found) return { ...required, text: `${q}: no green run reported` };
+    const last = withGateMode(found);
+    const counts = (r: RunRecord): boolean => runCounts(r, separated);
+    const other = counts(last) ? last : (await this.log.recent<RunRecord>((r) => green(r) && counts(r), 1))[0];
+    const lastVerified = other && withGateMode(other);
     // An unverified sender's name is quoted: it is their text, and could read "x (verified: …)"
     // (security review, 2026-11-16).
     const say = (r: RunRecord): string =>
-      `${r.verified ? (r.runner ?? r.summary.who) : JSON.stringify(r.summary.who)} at ${r.summary.ended}${r.summary.runbook.signed ? ` (version ${r.summary.runbook.signed.version})` : ''}, ${r.verified ? (r.trust === 'gate' ? 'verified: sent by a gate' : 'verified: signed by the runner') : 'unverified'}`;
-    const text = `${q}: last ran green by ${say(last)}` + (lastVerified && lastVerified !== last ? `; last verified green run by ${say(lastVerified)}` : '');
-    return { last, ...(lastVerified ? { lastVerified } : {}), text };
+      `${r.verified ? (r.runner ?? r.summary.who) : JSON.stringify(r.summary.who)} at ${r.summary.ended}${r.summary.runbook.signed ? ` (version ${r.summary.runbook.signed.version})` : ''}, ${trustText(r)}`;
+    let text = `${q}: last ran green by ${say(last)}`;
+    if (lastVerified && lastVerified !== last) text += `; last ${separated ? 'green run sent by a gate in separated mode' : 'verified green run'} by ${say(lastVerified)}`;
+    else if (!lastVerified && separated) text += '; none sent by a gate in separated mode, as report-runs-required: separated asks';
+    return { last, ...(lastVerified ? { lastVerified } : {}), ...required, text };
   }
 }
+
+/** The mode of the gate that sent a record: undefined unless its trust is `gate`; `shared` when the record has none (from before). */
+export const recordGateMode = (r: RunRecord): GateMode | undefined => (r.trust === 'gate' ? (r.gateMode === 'separated' ? 'separated' : 'shared') : undefined);
+
+/** A record with its gate's mode filled in (records from before gate_mode have none). */
+const withGateMode = (r: RunRecord): RunRecord => {
+  const mode = recordGateMode(r);
+  return mode && r.gateMode !== mode ? { ...r, gateMode: mode } : r;
+};
+
+/** How far a record can be believed, in words: `verified: sent by a gate (separated)`, `(shared account)`, `verified: signed by the runner` or `unverified`. */
+export const trustText = (r: RunRecord): string => (!r.verified ? 'unverified' : r.trust === 'gate' ? gateTrustText(recordGateMode(r)) : 'verified: signed by the runner');
+
+/**
+ * Whether a run counts as a verified run of its runbook: verified; with `report-runs-required:
+ * separated`, only one a gate sent in separated mode. A run from a gate in shared mode then counts
+ * no more than a run without a gate's report.
+ */
+export const runCounts = (r: RunRecord, separated: boolean): boolean => (separated ? recordGateMode(r) === 'separated' : r.verified);

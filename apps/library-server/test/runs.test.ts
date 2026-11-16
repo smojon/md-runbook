@@ -179,6 +179,99 @@ describe('run summaries: the endpoint', () => {
       const ok = await call(`${url}/v1/runs`, 'POST', body, GATE);
       assert.deepEqual([ok.status, ok.json.trust, ok.json.verified], [202, 'gate', true]);
       assert.equal(lines()[0].token, 'web-1');
+      // No gate_mode: the gate's own account (shared), the strictest reading.
+      assert.deepEqual([ok.json.gateMode, lines()[0].gateMode], ['shared', 'shared']);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("a gate's mode (gate.gate_mode) is kept only when sent by a gate; any other value is refused", async () => {
+    fresh();
+    const { s, url } = await start(config(dir, { runs: runsConfig({ gateTokens: [tok(GATE, 'web-1')] }) }));
+    const withMode = (mode: unknown): string => JSON.stringify({ ...gateSummary(), gate: { host: 'web-1', account: 'support', gate_mode: mode } });
+    try {
+      const separated = await call(`${url}/v1/runs`, 'POST', withMode('separated'), GATE);
+      assert.deepEqual([separated.status, separated.json.trust, separated.json.gateMode], [202, 'gate', 'separated']);
+      const shared = await call(`${url}/v1/runs`, 'POST', withMode('shared'), GATE);
+      assert.deepEqual([shared.status, shared.json.gateMode], [202, 'shared']);
+      for (const bad of ['Separated', 'isolated', '', 1]) {
+        const r = await call(`${url}/v1/runs`, 'POST', withMode(bad), GATE);
+        assert.equal(r.status, 400, String(bad));
+        assert.match(r.json.problems.join('\n'), /gate\.gate_mode: expected shared or separated/);
+      }
+      assert.deepEqual(lines().map((l) => l.gateMode), ['separated', 'shared']);
+    } finally {
+      await s.close();
+    }
+    // Without gate tokens a gate's summary is unverified: its gate_mode is kept in the summary, but counts for nothing.
+    fresh();
+    const open = await start(config(dir, { runs: runsConfig() }));
+    try {
+      const r = await call(`${open.url}/v1/runs`, 'POST', withMode('separated'));
+      assert.deepEqual([r.status, r.json.trust, r.json.gateMode], [202, 'unverified', undefined]);
+      assert.equal(lines()[0].gateMode, undefined);
+      const green = await call(`${open.url}/v1/runs/last-green?runbook=ops/restart-api`, 'GET', undefined, READ);
+      assert.match(green.json.text, /, unverified$/);
+    } finally {
+      await open.s.close();
+    }
+  });
+
+  it('report-runs-required: separated in the library: only a run a gate sent in separated mode counts', async () => {
+    fresh();
+    const libDir = path.join(dir, 'library');
+    fs.mkdirSync(path.join(libDir, 'ops'), { recursive: true });
+    const front = (required: string): string => `---\nreport-runs: https://runbooks.example.net/v1/runs\nreport-runs-required: ${required}\n---\n\n`;
+    fs.writeFileSync(path.join(libDir, 'ops', 'restart-api.md'), await signRunbook(front('separated') + RUNBOOK, {}, keys.signer));
+    fs.writeFileSync(path.join(libDir, 'ops', 'stop-api.md'), await signRunbook(front('true') + RUNBOOK, { name: 'ops/stop-api' }, keys.signer));
+    const library = { dir: libDir, uploadTokens: [tok('upload-token-of-at-least-24-chars')], allowedSigners: keys.allowedSigners, acceptV1: false, allowDelete: false, signedOnly: true, maxBytes: 256 * 1024 };
+    const { s, url } = await start(config(dir, { library, runs: runsConfig({ gateTokens: [tok(GATE, 'web-1')] }) }));
+    const gateRun = (name: string, mode: string | undefined, ended: string): string =>
+      JSON.stringify({
+        ...gateSummary(),
+        runbook: { signed: { name, version: 1, manifest: 'ab'.repeat(32), signer: 'ops@example.net', trusted: true } },
+        gate: { host: 'web-1', account: 'support', ...(mode ? { gate_mode: mode } : {}) },
+        ended,
+      });
+    const lastGreen = async (q: string): Promise<any> => (await call(`${url}/v1/runs/last-green?runbook=${q}`, 'GET', undefined, READ)).json;
+    try {
+      // A runner-signed run and a shared gate's run: verified, but neither counts for separated.
+      const sum = summary({ text: front('separated') + RUNBOOK, ended: Date.UTC(2026, 10, 14, 9, 1, 0) });
+      await call(`${url}/v1/runs`, 'POST', reportBody(sum, { signature: await signRunSummary(sum, keys.runner, { interactive: false }) }));
+      assert.equal((await call(`${url}/v1/runs`, 'POST', gateRun('ops/restart-api', 'shared', '2026-11-14T10:00:00Z'), GATE)).status, 202);
+      let g = await lastGreen('ops/restart-api.md');
+      assert.equal(g.required, 'separated');
+      assert.equal(g.last.gateMode, 'shared');
+      assert.equal(g.lastVerified, undefined);
+      assert.equal(
+        g.text,
+        'ops/restart-api.md: last ran green by SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG at 2026-11-14T10:00:00Z (version 1), verified: sent by a gate (shared account); none sent by a gate in separated mode, as report-runs-required: separated asks',
+      );
+      // By its signed name too.
+      assert.equal((await lastGreen('ops/restart-api')).required, 'separated');
+      // A separated gate's run counts; a later shared one doesn't replace it.
+      await call(`${url}/v1/runs`, 'POST', gateRun('ops/restart-api', 'separated', '2026-11-14T11:00:00Z'), GATE);
+      g = await lastGreen('ops/restart-api.md');
+      assert.match(g.text, /at 2026-11-14T11:00:00Z \(version 1\), verified: sent by a gate \(separated\)$/);
+      assert.equal(g.lastVerified.gateMode, 'separated');
+      await call(`${url}/v1/runs`, 'POST', gateRun('ops/restart-api', undefined, '2026-11-14T12:00:00Z'), GATE);
+      g = await lastGreen('ops/restart-api.md');
+      assert.match(
+        g.text,
+        /at 2026-11-14T12:00:00Z \(version 1\), verified: sent by a gate \(shared account\); last green run sent by a gate in separated mode by SHA256:\S+ at 2026-11-14T11:00:00Z \(version 1\), verified: sent by a gate \(separated\)$/,
+      );
+      assert.deepEqual([g.last.gateMode, g.lastVerified.gateMode], ['shared', 'separated']);
+
+      // report-runs-required: true: any verified run counts, as before.
+      await call(`${url}/v1/runs`, 'POST', gateRun('ops/stop-api', 'shared', '2026-11-14T10:00:00Z'), GATE);
+      const stop = await lastGreen('ops/stop-api.md');
+      assert.equal(stop.required, undefined);
+      assert.match(stop.text, /verified: sent by a gate \(shared account\)$/);
+      assert.equal(stop.lastVerified.gateMode, 'shared');
+      // The list shows each gate's mode.
+      const list = await call(`${url}/v1/runs?runbook=ops/restart-api.md`, 'GET', undefined, READ);
+      assert.deepEqual(list.json.runs.map((r: any) => r.gateMode), ['shared', 'separated', 'shared', undefined]);
     } finally {
       await s.close();
     }
@@ -216,7 +309,15 @@ describe('run summaries: the endpoint', () => {
       // A gate's run is verified (sent with a gate token) and the newest.
       await call(`${url}/v1/runs`, 'POST', JSON.stringify(gateSummary()), GATE);
       const after = await call(`${url}/v1/runs/last-green?runbook=ops/restart-api`, 'GET', undefined, READ);
-      assert.match(after.json.text, /last ran green by SHA256:\S+ at 2026-11-14T10:00:00Z \(version 1\), verified: sent by a gate$/);
+      assert.match(after.json.text, /last ran green by SHA256:\S+ at 2026-11-14T10:00:00Z \(version 1\), verified: sent by a gate \(shared account\)$/);
+      assert.equal(after.json.last.gateMode, 'shared');
+      // Records kept before gate_mode (trust gate, no gateMode) read as shared.
+      const file = fs.readdirSync(path.join(dir, 'runs'))[0]!;
+      const kept = fs.readFileSync(path.join(dir, 'runs', file), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      fs.writeFileSync(path.join(dir, 'runs', file), kept.map((r) => JSON.stringify({ ...r, gateMode: undefined })).join('\n') + '\n');
+      const old = await call(`${url}/v1/runs/last-green?runbook=ops/restart-api`, 'GET', undefined, READ);
+      assert.match(old.json.text, /verified: sent by a gate \(shared account\)$/);
+      assert.equal(old.json.last.gateMode, 'shared');
       assert.equal((await call(`${url}/v1/runs/last-green?runbook=nothing.md`, 'GET', undefined, READ)).json.text, 'nothing.md: no green run reported');
     } finally {
       await s.close();

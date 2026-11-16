@@ -148,8 +148,8 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
         try {
           const r = await runs.receive(body, { from: client, ...(token ? { token } : {}) });
           const s = r.summary;
-          log({ event: 'run', client, token: token?.label, runbook: s.runbook.signed?.name ?? s.runbook.file, version: s.runbook.signed?.version, who: s.who, from: s.client, green: s.green, trust: r.trust, runner: r.runner });
-          return sendJson(res, 202, { received: r.received, trust: r.trust, verified: r.verified, ...(r.runner ? { runner: r.runner } : {}), ...(r.why ? { why: r.why } : {}) }, headers);
+          log({ event: 'run', client, token: token?.label, runbook: s.runbook.signed?.name ?? s.runbook.file, version: s.runbook.signed?.version, who: s.who, from: s.client, green: s.green, trust: r.trust, gateMode: r.gateMode, runner: r.runner });
+          return sendJson(res, 202, { received: r.received, trust: r.trust, verified: r.verified, ...(r.gateMode ? { gateMode: r.gateMode } : {}), ...(r.runner ? { runner: r.runner } : {}), ...(r.why ? { why: r.why } : {}) }, headers);
         } catch (e) {
           if (e instanceof HttpError) log({ event: 'run-refused', client, token: token?.label, status: e.status, why: e.message });
           throw e;
@@ -161,7 +161,9 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
       const q = url.searchParams.get('runbook') ?? undefined;
       if (path === '/v1/runs/last-green') {
         if (!q) throw new HttpError(400, 'runbook=: a signed name or a path in the library');
-        return sendJson(res, 200, { runbook: q, ...(await runs.lastGreen(q)) }, headers);
+        // The library's copy may ask for a gate in separated mode (report-runs-required: separated).
+        const separated = library ? await library.separatedRequired(q) : false;
+        return sendJson(res, 200, { runbook: q, ...(await runs.lastGreen(q, { separated })) }, headers);
       }
       return sendJson(res, 200, { runbook: q, runs: await runs.list(q, limitOf(url, 50, 500)) }, headers);
     }

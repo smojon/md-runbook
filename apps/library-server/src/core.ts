@@ -4,10 +4,10 @@
  * Signatures are checked with ssh-keygen, as md-runbook-gate and the command line check them.
  */
 export { manifestVersion, parseManifest, readSignature, signedStatus, wholeRunbookSigned } from '../../../packages/core/src/signing';
-export type { ReceivedRunSummary } from '../../../packages/core/src/runReport';
-export { canonicalJson, parseRunEnvelope, runSummaryProblems } from '../../../packages/core/src/runReport';
+export type { GateMode, ReceivedRunSummary } from '../../../packages/core/src/runReport';
+export { canonicalJson, gateModeOf, gateTrustText, parseRunEnvelope, runSummaryProblems } from '../../../packages/core/src/runReport';
 export { trustedRunbookSigner, verifyRunEnvelope } from '../../../packages/core/src/node/runReport';
 export { formatRunbookLink } from '../../../packages/core/src/runbookLink';
-export { VAR_NAME_RE } from '../../../packages/core/src/secrets';
+export { VAR_NAME_RE, parseFrontMatter } from '../../../packages/core/src/secrets';
 export { sha256Hex } from '../../../packages/core/src/sha256';
 export { runbookTitle } from '../../../packages/core/src/title';
