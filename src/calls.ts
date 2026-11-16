@@ -18,7 +18,8 @@ import { outputBlockAttrs } from '@md-runbook/core/progress';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { inSections, sectionHeadings } from '@md-runbook/core/sections';
 import { osGroups } from '@md-runbook/core/os';
-import { callTarget, fileSha256, relativeToCaller, samePath, writeCallCopy } from '@md-runbook/core/node';
+import { callTarget, fileSha256, relativeToCaller, resumeProblem, samePath, writeCallCopy } from '@md-runbook/core/node';
+import { readSignature } from '@md-runbook/core/signing';
 import { SECTION } from './config';
 import { META_KEY, outputMeta } from './outputs';
 import { CellExecutor, CellPlan, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
@@ -132,13 +133,19 @@ export class CallExecutor implements CellExecutor {
     const freshCopy = fresh.delete(cellKey(ctx.cell));
     let copy: string | undefined;
     // A setup call skipped as already up is not a failure to continue: it checks again.
+    const folder = vscode.workspace.getConfiguration(SECTION).get<string>('output.copyFolder', '').trim();
     if (previous && !freshCopy && previous.exit !== undefined && previous.exit !== '0' && previous.exit !== 'skipped') {
       const old = path.resolve(path.dirname(parentFile), previous.copy);
-      if (fs.existsSync(old) && samePath(callTarget(parentFile, previous.runbook), target)) copy = old;
+      if (fs.existsSync(old) && samePath(callTarget(parentFile, previous.runbook), target)) {
+        // The output block is never signed: the copy it names must be one of this runbook (and,
+        // in a signed runbook, signed as the same name and version).
+        const why = resumeProblem(old, target, { folder: folder || undefined, signed: readSignature(fs.readFileSync(parentFile, 'utf8')) !== undefined });
+        if (why === undefined) copy = old;
+        else io.onStdout(`[md-runbook] not continuing ${relativeToCaller(parentFile, old)}: ${why}; a fresh copy runs\n`);
+      }
     }
     const resumed = copy !== undefined;
     if (!copy) {
-      const folder = vscode.workspace.getConfiguration(SECTION).get<string>('output.copyFolder', '').trim();
       copy = writeCallCopy(target, fs.readFileSync(parentFile, 'utf8'), folder || undefined);
       if (mine !== undefined && !childFm?.kubeContext) {
         // The caller's cluster, in the copy's own record.

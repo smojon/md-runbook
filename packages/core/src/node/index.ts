@@ -11,4 +11,4 @@ export { KubeconfigPins, NO_PATH_CONVERSION, RunbookEnvOptions, runbookEnv, user
 export { SignOptions, checkSignedSteps, keyComment, manifestHash, sshSign, sshVerify } from './sign';
 export { signRunSummary, trustedRunbookSigner, verifyRunEnvelope } from './runReport';
 export { MAX_TRANSCRIPT_BYTES, TranscriptFile } from './transcript';
-export { callEstimateSeconds, callTarget, fileSha256, matchRunbooks, recordValues, relativeToCaller, runbookReader, samePath, writeCallCopy } from './call';
+export { callEstimateSeconds, callTarget, copyTextProblem, fileSha256, matchRunbooks, recordValues, relativeToCaller, resumeProblem, runbookReader, samePath, writeCallCopy } from './call';

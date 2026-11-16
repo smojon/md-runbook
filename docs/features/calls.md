@@ -71,6 +71,10 @@ BACKUP_DIR=${out:BACKUP_DIR}
   - the others run;
   - manual steps ticked in the copy since count.
 
+  It goes on only in a run copy of the runbook called: named after it, next to it or in the copy
+  folder, with the same blocks. For a signed runbook, the copy must carry the same signed name and
+  version. Otherwise a fresh copy runs, and the call's output says why.
+
   `md-runbook run --fresh-copy` starts a new copy instead. A `${out:NAME}` captured by a step
   done in the earlier run has no value in the next one. Put the capture and its use in the same
   part.

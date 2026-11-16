@@ -13,6 +13,8 @@ import { recordValues } from '../call';
 export { recordValues };
 import { callEstimate } from '../estimate';
 import { currentOs } from '../os';
+import { copyTextProblem, isCopyNameOf } from '../callCopy';
+export { copyTextProblem };
 
 /** The absolute path src= (placeholders filled) names, relative to the calling file's folder. */
 export function callTarget(parentFile: string, src: string): string {
@@ -94,6 +96,28 @@ export function writeCallCopy(child: string, parentText: string, folder?: string
   const text = clearOutputBlocks(fs.readFileSync(child, 'utf8'));
   fs.writeFileSync(target, Object.keys(values).length ? withFrontMatterValues(text, values) : text, 'utf8');
   return target;
+}
+
+/**
+ * Why a call can't continue the copy an earlier run names (its output block, which is never
+ * signed, says where): undefined when it can. The copy must be a run copy of `target` (its name,
+ * next to it or in `folder`), with the same blocks; and when either is signed (or `signed`: a
+ * signed run), both must carry the same manifest name and version.
+ */
+export function resumeProblem(copy: string, target: string, opts: { folder?: string; signed?: boolean } = {}): string | undefined {
+  const dirs = [path.dirname(target), ...(opts.folder ? [path.resolve(path.dirname(target), opts.folder)] : [])];
+  if (!dirs.some((d) => samePath(d, path.dirname(copy)))) return 'it is not next to the runbook called, nor in the copy folder';
+  if (!isCopyNameOf(path.basename(copy), path.basename(target), process.platform !== 'linux')) return `its name is not that of a run copy of ${path.basename(target)}`;
+  let copyText: string;
+  let targetText: string;
+  try {
+    if (!fs.statSync(copy).isFile()) return 'it is not a file';
+    copyText = fs.readFileSync(copy, 'utf8');
+    targetText = fs.readFileSync(target, 'utf8');
+  } catch {
+    return 'it can not be read';
+  }
+  return copyTextProblem(copyText, targetText, opts.signed === true);
 }
 
 /**

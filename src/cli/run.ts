@@ -34,7 +34,7 @@ import {
   setCellOutput,
   shellKindForLanguage,
 } from '@md-runbook/core';
-import { callEstimateSeconds, callTarget, executeCell, fileSha256, relativeToCaller, samePath, writeCallCopy } from '@md-runbook/core/node';
+import { callEstimateSeconds, callTarget, executeCell, fileSha256, relativeToCaller, resumeProblem, samePath, writeCallCopy } from '@md-runbook/core/node';
 import { callAttrs, callChainProblem, callFromAttrs, callOutputText, callRefs, checkCall, fillRefs, formatCallSteps, isCallLanguage, parseCall } from '@md-runbook/core/call';
 import { stepState } from '@md-runbook/core/progress';
 import { KubeContextMode } from '@md-runbook/core/kubeContext';
@@ -629,8 +629,12 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         if (prev && !o.freshCopy && prev.exit !== undefined && prev.exit !== '0' && prev.exit !== 'skipped') {
           const old = path.resolve(path.dirname(path.resolve(o.file)), prev.copy);
           if (fs.existsSync(old) && samePath(callTarget(o.file, prev.runbook), target)) {
-            copy = old;
-            resumed = true;
+            // The output block is never signed: the copy it names must be one of this runbook.
+            const why = resumeProblem(old, target, { folder: o.copyFolder, signed: signedRoot !== undefined });
+            if (why === undefined) {
+              copy = old;
+              resumed = true;
+            } else io.log(`  not continuing ${redact(relativeToCaller(o.file, old))}: ${redact(why)}; a fresh copy runs`);
           }
         }
         copy ??= writeCallCopy(target, original, o.copyFolder);

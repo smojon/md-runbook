@@ -29,6 +29,11 @@ Security fixes from a review of the parts that face the network.
   - After an upgrade, run one `kubectl create rolebinding` per namespace (apps/ops/README.md).
 - **Web container:** no other site can show the app in a frame (`frame-ancestors 'none'`,
   `X-Frame-Options: DENY`).
+- **Runbook calls (VS Code and command line):** a call run again continues only a run copy of
+  the runbook called. Before, an edited `copy=` in its output could name any file.
+  - The copy must be next to it or in the copy folder, named after it, with the same blocks.
+  - For a signed runbook, the copy must have the same signed name and version.
+  - Otherwise a fresh copy runs, and the call's output says why.
 
 ## 0.26.8
 
