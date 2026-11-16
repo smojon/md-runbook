@@ -13,7 +13,7 @@
 
 import * as fs from 'node:fs';
 import * as os from 'node:os';
-import { ReportPlan, RunStepState, addressAllowed, buildRunSummary, postRunReport, reportBody, reportPlan, REPORTED_FIELDS } from '@md-runbook/core/runReport';
+import { ReportPlan, RunStepState, addressAllowed, buildRunSummary, postRunReport, reportBody, reportPlan, REPORTED_FIELDS, SEPARATED_REQUIRED_TEXT } from '@md-runbook/core/runReport';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { signRunSummary, trustedRunbookSigner, verifyRunEnvelope } from '@md-runbook/core/node';
 import type { ManualStep } from './select';
@@ -53,13 +53,14 @@ export async function prepareReport(text: string, o: CliReportOptions, log: (lin
   if (!plan) return undefined;
   const send = addressAllowed(plan.url, o.allowed);
   if (plan.required && !send) {
-    return `this signed runbook runs only if its run is reported to ${plan.host} (${REPORTED_FIELDS}) Allow it with --report-to-allowed ${plan.host}.`;
+    return `this signed runbook runs only if its run is reported to ${plan.host} (${REPORTED_FIELDS}) Allow it with --report-to-allowed ${plan.host}.${plan.separated ? ` ${SEPARATED_REQUIRED_TEXT}` : ''}`;
   }
   if (plan.signed && !o.key) {
     return `this signed runbook runs only if its run summary is signed with your SSH key: add --key KEY (a key file, or a .pub whose key is in the agent), and give your server's allowed runners file its line (namespace md-runbook-run).`;
   }
   if (!send) log(`ℹ the runbook reports its runs to ${plan.host}: not sent (allow it with --report-to-allowed ${plan.host})`);
   else if (plan.ignored && (parseFrontMatter(text)?.reportRunsRequired || parseFrontMatter(text)?.reportRunsSigned)) log(`ℹ report-runs-required/-signed ignored: ${plan.ignored}`);
+  else if (plan.separated) log(`ℹ report-runs-required: separated: ${SEPARATED_REQUIRED_TEXT}`);
   return { plan, ...(signer ? { signer } : {}), send };
 }
 

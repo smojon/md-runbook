@@ -137,8 +137,9 @@ function lintFrontMatterEnv(lines: string[], end: number, signed: boolean): Lint
 
 /**
  * The run report settings (`report-runs:` and the rest, core/runReport.ts): an address that isn't
- * https, a literal token, and `-required`/`-signed` a client won't honour (not signed, or the
- * signature doesn't cover them as written).
+ * https, a literal token, a `-required` other than true, false or `separated`, and
+ * `-required`/`-signed` a client won't honour (not signed, or the signature doesn't cover them as
+ * written).
  */
 function lintReportRuns(text: string, lines: readonly string[], end: number): LintProblem[] {
   const problems: LintProblem[] = [];
@@ -163,6 +164,11 @@ function lintReportRuns(text: string, lines: readonly string[], end: number): Li
         line: i,
         message: 'front matter report-runs-token: never write a token in the file (anyone who reads it can send reports): use ${secret:NAME}, kept in your secret store',
       });
+    } else if (key === 'report-runs-required') {
+      // An error, not a warning: a misspelt `separated` would drop the requirement altogether.
+      if (!/^(true|false|yes|no|on|off|separated)$/i.test(value)) {
+        problems.push({ severity: 'error', line: i, message: `front matter report-runs-required: "${value}" is not understood (expected true, false or separated): the run is not required to be reported` });
+      }
     } else if (!/^(true|false|yes|no|on|off)$/i.test(value)) {
       problems.push({ severity: 'warning', line: i, message: `front matter ${key}: "${value}" is ignored (expected true or false)` });
     }

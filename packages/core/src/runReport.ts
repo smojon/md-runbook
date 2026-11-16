@@ -141,12 +141,38 @@ export interface RunSummaryReport {
   alert?: RunSummaryAlert;
 }
 
+/**
+ * How a gate runs the blocks: `shared`, as the gate's own account; `separated`, as a second,
+ * unprivileged account that can't reach the gate's report token, logs or pipes.
+ */
+export const GATE_MODES = ['shared', 'separated'] as const;
+export type GateMode = (typeof GATE_MODES)[number];
+
 /** Where a gate's summary comes from: the server, the account the key logs in to, the SSH client's address. */
 export interface RunSummaryGate {
   host: string;
   account: string;
   from?: string;
+  /**
+   * The gate's mode. Counts only in a summary verified as sent by a gate (gateModeOf); absent
+   * there, it reads as `shared`. Any other value is refused (runSummaryProblems).
+   */
+  gate_mode?: GateMode;
 }
+
+/**
+ * The mode of the gate that sent a summary: undefined unless it is a gate's (client `gate`) and
+ * verified as sent by a gate (`sentByGate`: the server's gate token check). An unverified
+ * summary's `gate_mode` is ignored. Without `gate_mode`, or with anything but `separated`:
+ * `shared`, the strictest reading.
+ */
+export function gateModeOf(summary: { client: unknown; gate?: unknown }, sentByGate: boolean): GateMode | undefined {
+  if (!sentByGate || summary.client !== 'gate') return undefined;
+  return isObj(summary.gate) && summary.gate.gate_mode === 'separated' ? 'separated' : 'shared';
+}
+
+/** How a summary a gate sent is shown: `verified: sent by a gate (separated)` or `(shared account)`. */
+export const gateTrustText = (mode: GateMode | undefined): string => `verified: sent by a gate (${mode === 'separated' ? 'separated' : 'shared account'})`;
 
 /**
  * md-runbook-gate's summary of what a session ran of one signed runbook (client `gate`, the same
@@ -334,10 +360,12 @@ export function runSummaryProblems(x: unknown): string[] {
     const g = x.gate;
     if (!isObj(g)) out.push('gate: expected an object');
     else {
-      onlyKeys(g, ['host', 'account', 'from'], 'gate', out);
+      onlyKeys(g, ['host', 'account', 'from', 'gate_mode'], 'gate', out);
       str(g.host, 'gate.host', 255);
       str(g.account, 'gate.account', 64);
       if (g.from !== undefined) str(g.from, 'gate.from', 64);
+      // Refused rather than read as shared: a gate that sends something else is told at once (its log shows the 400).
+      if (g.gate_mode !== undefined && !(GATE_MODES as readonly unknown[]).includes(g.gate_mode)) out.push(`gate.gate_mode: expected ${GATE_MODES.join(' or ')}`);
     }
   }
   if (x.alert !== undefined) {
@@ -411,6 +439,12 @@ export interface ReportPlan {
   host: string;
   /** The run starts only once reporting is agreed to (honoured: the runbook is signed by a trusted signer, and the signature covers it). */
   required: boolean;
+  /**
+   * `report-runs-required: separated` (honoured as `required`, and only with it): only a report a
+   * gate sends in separated mode counts as the run's. The client acts as for `required`; a server
+   * counts it (the library server's last green run).
+   */
+  separated: boolean;
   /** The summary must be signed with the runner's key (honoured as `required`). */
   signed: boolean;
   /** The secret whose value is sent as a bearer token. */
@@ -420,10 +454,16 @@ export interface ReportPlan {
 }
 
 /** The front matter's run report settings, or undefined without a valid `report-runs:` address. */
-export function reportSettings(text: string): { url: string; required: boolean; signed: boolean; token?: string } | undefined {
+export function reportSettings(text: string): { url: string; required: boolean; separated: boolean; signed: boolean; token?: string } | undefined {
   const fm = parseFrontMatter(text);
   if (!fm?.reportRuns) return undefined;
-  return { url: fm.reportRuns, required: fm.reportRunsRequired === true, signed: fm.reportRunsSigned === true, ...(fm.reportRunsToken ? { token: fm.reportRunsToken } : {}) };
+  return {
+    url: fm.reportRuns,
+    required: fm.reportRunsRequired === true,
+    separated: fm.reportRunsRequired === true && fm.reportRunsSeparated === true,
+    signed: fm.reportRunsSigned === true,
+    ...(fm.reportRunsToken ? { token: fm.reportRunsToken } : {}),
+  };
 }
 
 /**
@@ -460,6 +500,7 @@ export function reportPlan(text: string, trustedSigner: string | undefined, now 
     origin: reportOrigin(asked.url),
     host: reportHost(asked.url),
     required: honoured && asked.required,
+    separated: honoured && asked.separated,
     signed: honoured && asked.signed,
     ...(asked.token ? { token: asked.token } : {}),
     ...(problem ? { ignored: problem } : {}),
@@ -480,9 +521,13 @@ export function reportConsentText(plan: ReportPlan): string {
 export function reportRequiredText(plan: ReportPlan): string {
   return (
     `This signed runbook runs only if its run is reported to ${plan.host}: ${REPORTED_FIELDS}` +
-    `${plan.token ? ` The secret ${plan.token} is sent as its access token.` : ''}${plan.signed ? ' The summary is signed with your key.' : ''}`
+    `${plan.token ? ` The secret ${plan.token} is sent as its access token.` : ''}${plan.signed ? ' The summary is signed with your key.' : ''}` +
+    `${plan.separated ? ` ${SEPARATED_REQUIRED_TEXT}` : ''}`
   );
 }
+
+/** What `report-runs-required: separated` adds to the notice. */
+export const SEPARATED_REQUIRED_TEXT = 'The run counts only when a gate in separated mode reports it.';
 
 /**
  * What consent is remembered by: the address, and the secret sent with it (a runbook that sends

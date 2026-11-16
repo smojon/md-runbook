@@ -203,8 +203,16 @@ export interface FrontMatter {
    * https address (http only for localhost). Absent when missing or not such an address (lint says so).
    */
   reportRuns?: string;
-  /** `report-runs-required: true`: the run doesn't start unless it may be reported (only honoured when signed and trusted). */
+  /**
+   * `report-runs-required: true` (or `separated`): the run doesn't start unless it may be reported
+   * (only honoured when signed and trusted).
+   */
   reportRunsRequired?: boolean;
+  /**
+   * `report-runs-required: separated`: reportRunsRequired too, and only a report sent by a gate in
+   * separated mode counts as the run's (runReport.ts gateModeOf; the library server's last green run).
+   */
+  reportRunsSeparated?: boolean;
   /** `report-runs-signed: true`: the summary must be signed with the runner's key (only honoured when signed and trusted). */
   reportRunsSigned?: boolean;
   /** `report-runs-token: ${secret:NAME}`: the secret's NAME, sent as a bearer token. A literal token is ignored (lint error). */
@@ -303,6 +311,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
   let manualSteps: 'pause' | 'continue' | undefined;
   let reportRuns: string | undefined;
   let reportRunsRequired: boolean | undefined;
+  let reportRunsSeparated: boolean | undefined;
   let reportRunsSigned: boolean | undefined;
   let reportRunsToken: string | undefined;
   let prose: 'on' | 'strict' | 'off' | undefined;
@@ -332,6 +341,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
         ...(Object.keys(env).length > 0 ? { env } : {}),
         ...(reportRuns ? { reportRuns } : {}),
         ...(reportRunsRequired ? { reportRunsRequired } : {}),
+        ...(reportRunsRequired && reportRunsSeparated ? { reportRunsSeparated } : {}),
         ...(reportRunsSigned ? { reportRunsSigned } : {}),
         ...(reportRunsToken ? { reportRunsToken } : {}),
         ...(prose ? { prose } : {}),
@@ -383,7 +393,12 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       const rr = value('report-runs');
       if (rr !== undefined && reportRuns === undefined && reportAddressProblem(rr) === undefined) reportRuns = rr;
       const rq = value('report-runs-required');
-      if (rq !== undefined) reportRunsRequired = /^(true|yes|on)$/i.test(rq);
+      if (rq !== undefined) {
+        // `separated`: required, and only a report a gate sends in separated mode counts. Any
+        // other value: not required (lint and signing refuse it).
+        reportRunsRequired = /^(true|yes|on|separated)$/i.test(rq);
+        reportRunsSeparated = /^separated$/i.test(rq);
+      }
       const rs = value('report-runs-signed');
       if (rs !== undefined) reportRunsSigned = /^(true|yes|on)$/i.test(rs);
       // Only a reference to a secret: never a literal token in the file (lint errors on one).

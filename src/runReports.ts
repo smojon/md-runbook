@@ -5,8 +5,9 @@
  * value. Asked once per address (Allow / Not now / Never) unless `mdRunbook.reports.allowedAddresses`
  * names it. A runbook signed as a whole by a signer in `mdRunbook.signing.allowedSigners` can
  * require it (a notice before the run: Run / Don't run) and require it signed with your key
- * (`mdRunbook.signing.key`). Sending never holds up a run: a summary that can't be sent waits in
- * global state and is tried again later.
+ * (`mdRunbook.signing.key`). `report-runs-required: separated` is required as `true` is; the notice
+ * adds that only a report from a gate in separated mode counts (a server checks that). Sending
+ * never holds up a run: a summary that can't be sent waits in global state and is tried again later.
  */
 
 import * as os from 'node:os';

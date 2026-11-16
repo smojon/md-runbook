@@ -18,13 +18,17 @@ import {
   canonicalJson,
   consentKey,
   enqueueReport,
+  gateModeOf,
+  gateTrustText,
   parseRunEnvelope,
   postRunReport,
   reportBody,
   reportConsentText,
   reportPlan,
+  reportRequiredText,
   runSummaryProblems,
 } from '@md-runbook/core/runReport';
+import { v1FrontMatterProblems } from '@md-runbook/core/frontMatterRun';
 import { signRunSummary, sshSign, sshVerify, trustedRunbookSigner, verifyRunEnvelope } from '@md-runbook/core/node';
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';
@@ -126,6 +130,42 @@ describe('run reports: the summary', () => {
     assert.match(other, /runbook.sha256/);
     assert.match(other, /unknown field "gate"/);
   });
+
+  it("a gate's mode: gate.gate_mode is shared or separated, counted only when sent by a gate", () => {
+    const signed = { name: 'ops/restart', version: 3, manifest: 'ab'.repeat(32), signer: 'ops@example.net', trusted: true };
+    const g = {
+      v: 1,
+      runbook: { signed },
+      who: 'SHA256:abc',
+      client: 'gate',
+      started: '2026-11-14T09:00:00Z',
+      ended: '2026-11-14T09:00:05Z',
+      steps: [{ n: 1, label: 'systemctl stop api', state: 'passed' }],
+      ran: [1],
+      totals: { steps: 1, passed: 1, failed: 0, skipped: 0, notRun: 0, byHand: 0 },
+      green: true,
+      gate: { host: 'web-1', account: 'support', gate_mode: 'separated' },
+    };
+    const withMode = (gate_mode: unknown) => ({ ...g, gate: { host: 'web-1', account: 'support', gate_mode } });
+    assert.deepEqual(runSummaryProblems(g), []);
+    assert.deepEqual(runSummaryProblems(withMode('shared')), []);
+    // Any other value is refused: the gate's log shows the 400.
+    for (const bad of ['Separated', 'isolated', '', true, 1]) assert.match(runSummaryProblems(withMode(bad)).join('\n'), /gate\.gate_mode: expected shared or separated/, String(bad));
+    // Not at the top level, and not in another client's summary.
+    assert.match(runSummaryProblems({ ...g, gate_mode: 'separated' }).join('\n'), /unknown field "gate_mode"/);
+    assert.match(runSummaryProblems({ ...g, client: 'cli' }).join('\n'), /unknown field "gate"/);
+    // Counted only when verified as sent by a gate; without it, shared.
+    assert.equal(gateModeOf(g, true), 'separated');
+    assert.equal(gateModeOf(g, false), undefined);
+    assert.equal(gateModeOf(withMode('shared'), true), 'shared');
+    assert.equal(gateModeOf({ ...g, gate: { host: 'web-1', account: 'support' } }, true), 'shared');
+    assert.equal(gateModeOf({ ...g, gate: undefined }, true), 'shared');
+    assert.equal(gateModeOf(withMode('weird'), true), 'shared');
+    assert.equal(gateModeOf({ ...g, client: 'cli' }, true), undefined);
+    assert.equal(gateTrustText('separated'), 'verified: sent by a gate (separated)');
+    assert.equal(gateTrustText('shared'), 'verified: sent by a gate (shared account)');
+    assert.equal(gateTrustText(undefined), 'verified: sent by a gate (shared account)');
+  });
 });
 
 describe('run reports: the front matter and what a client honours', () => {
@@ -169,6 +209,40 @@ describe('run reports: the front matter and what a client honours', () => {
     assert.ok(lintRunbook('---\nreport-runs-required: true\n---\n').some((p) => /has no effect without report-runs/.test(p.message)));
   });
 
+  it('report-runs-required: separated is required too, and asks for a gate in separated mode', () => {
+    const fm = (v: string) => parseFrontMatter(`---\nreport-runs: https://x.net/r\nreport-runs-required: ${v}\n---\n`);
+    assert.deepEqual([fm('separated')?.reportRunsRequired, fm('separated')?.reportRunsSeparated], [true, true]);
+    assert.deepEqual([fm('"Separated"')?.reportRunsRequired, fm('"Separated"')?.reportRunsSeparated], [true, true]);
+    assert.deepEqual([fm('true')?.reportRunsRequired, fm('true')?.reportRunsSeparated], [true, undefined]);
+    assert.deepEqual([fm('false')?.reportRunsRequired, fm('false')?.reportRunsSeparated], [undefined, undefined]);
+    // An unknown value requires nothing (lint and signing refuse it).
+    assert.deepEqual([fm('seperated')?.reportRunsRequired, fm('seperated')?.reportRunsSeparated], [undefined, undefined]);
+
+    const text = REPORTING.replace('report-runs-required: true', 'report-runs-required: separated # a gate in separated mode') + BODY;
+    const signed = signedWith(text, 2, { patterns: { TARGET: '[a-z-]+' } });
+    const trusted = reportPlan(signed, 'ops@example.net')!;
+    assert.deepEqual([trusted.required, trusted.separated, trusted.signed, trusted.ignored], [true, true, true, undefined]);
+    assert.match(reportRequiredText(trusted), /The run counts only when a gate in separated mode reports it\./);
+    assert.doesNotMatch(reportRequiredText(reportPlan(signedWith(REPORTING + BODY, 2, { patterns: { TARGET: '[a-z-]+' } }), 'ops@example.net')!), /separated/);
+    // Honoured as required is: not in a runbook that isn't signed as a whole by a trusted signer.
+    const untrusted = reportPlan(signed, undefined)!;
+    assert.deepEqual([untrusted.required, untrusted.separated], [false, false]);
+    assert.deepEqual([reportPlan(text, 'ops@example.net')!.separated, reportPlan(signedWith(text, 1, { patterns: { TARGET: '[a-z-]+' } }), 'ops@example.net')!.separated], [false, false]);
+    // Changed from true to separated (or back) after signing: changed since signing.
+    assert.match(reportPlan(signed.replace('required: separated', 'required: true'), 'ops@example.net')!.ignored!, /changed since signing/);
+    // Next to a version 1 signature, the key is not covered (allow-list of v1FrontMatterProblems).
+    assert.deepEqual(v1FrontMatterProblems('---\nreport-runs-required: separated\n---\n'), ['report-runs-required:']);
+
+    // Lint: accepted as written and signed; an unknown value is an error.
+    assert.ok(!lintRunbook(signed).some((p) => /report-runs/.test(p.message)), JSON.stringify(lintRunbook(signed)));
+    assert.ok(lintRunbook(text).some((p) => /report-runs-required and report-runs-signed: ignored, the runbook is not signed/.test(p.message)));
+    const typo = lintRunbook('---\nreport-runs: https://x.net/r\nreport-runs-required: seperated\n---\n\n' + fence('bash', 'echo'));
+    assert.ok(typo.some((p) => p.severity === 'error' && /report-runs-required: "seperated" is not understood \(expected true, false or separated\)/.test(p.message)), JSON.stringify(typo));
+    // -signed has no such value.
+    const signedSeparated = lintRunbook('---\nreport-runs: https://x.net/r\nreport-runs-signed: separated\n---\n');
+    assert.ok(signedSeparated.some((p) => /report-runs-signed: "separated" is ignored \(expected true or false\)/.test(p.message)), JSON.stringify(signedSeparated));
+  });
+
   it('signing refuses report settings it could not hold as written', () => {
     const errs = (fm: string): string => {
       const r = buildManifest(`---\n${fm}\n---\n\n` + fence('bash', 'echo'), meta());
@@ -178,6 +252,10 @@ describe('run reports: the front matter and what a client honours', () => {
     assert.match(errs('report-runs: https://x.net/r\nreport-runs-token: abc'), /only \$\{secret:NAME\}/);
     assert.match(errs('report-runs-required: true'), /without report-runs/);
     assert.equal(errs('report-runs: https://x.net/r\nreport-runs-required: true'), '');
+    assert.equal(errs('report-runs: https://x.net/r\nreport-runs-required: separated'), '');
+    assert.match(errs('report-runs-required: separated'), /without report-runs/);
+    assert.match(errs('report-runs: https://x.net/r\nreport-runs-required: seperated'), /report-runs-required: expected true, false or separated/);
+    assert.match(errs('report-runs: https://x.net/r\nreport-runs-signed: separated'), /report-runs-signed: expected true or false/);
   });
 
   it('consent: the question names the host and what is sent; pre-approved addresses; remembered per address and secret', () => {
