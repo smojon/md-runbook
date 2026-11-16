@@ -37,9 +37,14 @@ var reserved = func() map[string]bool {
 
 // IsReserved: a name a runbook may not set. And any name ending in _proxy, in any case: Python's
 // urllib (pip, requests) reads Https_Proxy and FOO_proxy as proxies (as core's isReservedVar;
-// gate vectors, 2026-11-16).
+// gate vectors, 2026-11-16). And __proto__, constructor and prototype: JavaScript clients' maps
+// lost or misread them while the gate exported them (review of 0.28.0).
 func IsReserved(name string) bool {
 	if reserved[name] {
+		return true
+	}
+	switch name {
+	case "__proto__", "constructor", "prototype":
 		return true
 	}
 	for _, p := range ReservedPrefixes {

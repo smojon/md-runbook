@@ -268,7 +268,10 @@ export function parseCellOptions(info: string): CellOptions {
       if (every === undefined) opts.errors.push(`every=${value}: expected a duration such as 15s, 500ms or 2m`);
       else if (every > MAX_EVERY_MS) opts.errors.push(`every=${value}: at most 1h`);
     } else if (k.startsWith('env.') && key.length > 4) {
-      opts.env[key.slice(4)] = value; // keep the variable's case
+      const name = key.slice(4); // keep the variable's case
+      // An object's own names: env.__proto__= set the map's prototype and was lost (review of 0.28.0).
+      if (name === '__proto__' || name === 'constructor' || name === 'prototype') opts.errors.push(`env.${name}: not a name a block can set`);
+      else opts.env[name] = value;
     }
   }
   if (opts.retry && every !== undefined) opts.retry.everyMs = every;

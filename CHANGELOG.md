@@ -81,6 +81,13 @@ for your server's platform when you update.
   - `kube-context=` written twice on a block is an error, and only ASCII blanks are trimmed from
     its value.
   - A parameter value with a CR is refused by the gate, as clients already did.
+- **Signed parameter patterns: one reading everywhere.** Signing, the gate and the clients accept
+  only patterns that `grep -E` and they read alike. A value can no longer leave the anchors.
+  - Unbalanced parentheses are refused: `a)|(b` matched any value starting with `a`.
+  - Also refused: a backslash in brackets or before a letter (`[a-z\-]`, `\t`), `[:alpha:]`
+    without its outer brackets, doubled or lazy repetitions.
+  - Runbooks signed with such a pattern must be signed again: the gate refuses them now.
+  - `__proto__`, `constructor` and `prototype` can't be parameter or `env.*` names.
 - **Signing:** refuses a front matter `kube-context:` while a bash block has none of its own. The
   gate only checks the block's.
   - Names ending in `_proxy`, in any case, are refused: Python reads `Https_Proxy`.
