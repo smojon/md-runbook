@@ -98,6 +98,8 @@ Security fixes from a review of the parts that face the network.
   a stale row or another extension could pass other text under a verified runbook's verdict.
 - **VS Code, Practice on a Host and Run on a Group:** a host or group passed by a keybinding or
   another extension is asked about first. Before, practice started, or the cell ran, at once.
+- **VS Code, Trusted Signers:** a line added from a paste, a file or the team library must name
+  each signer. A pattern such as `*` or `*@example.net` is refused, with why.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or

@@ -79,8 +79,17 @@ function matchList(s: string, list: readonly string[]): boolean {
   return ok;
 }
 
-/** One line of an allowed_signers file: a signer, or why it isn't one md-runbook can use (undefined: blank or a comment). */
-export function parseSignerLine(raw: string, line = 0): SignerLine | { problem: string } | undefined {
+/** How a line is read: `adding`, a line to add to your file (pasted, from a file, a library's), takes plain names only. */
+export interface ReadOptions {
+  adding?: boolean;
+}
+
+/**
+ * One line of an allowed_signers file: a signer, or why it isn't one md-runbook can use (undefined:
+ * blank or a comment). A line to add must name each signer: a principal pattern (`*`, `?`, `!`,
+ * `*@example.net`) would let its key sign as any name it matches, so trusting it is refused.
+ */
+export function parseSignerLine(raw: string, line = 0, opts: ReadOptions = {}): SignerLine | { problem: string } | undefined {
   const text = raw.trim();
   if (text === '' || text.startsWith('#')) return undefined;
   const w = words(text, /\s/);
@@ -104,10 +113,14 @@ export function parseSignerLine(raw: string, line = 0): SignerLine | { problem: 
   if (namespaces && !matchList(SIGNATURE_NAMESPACE, namespaces)) return { problem: `for other namespaces (${namespaces.join(',')}), not ${SIGNATURE_NAMESPACE}` };
   const validAfter = opt('valid-after');
   const validBefore = opt('valid-before');
+  const principals = unquote(w[0]).split(',');
+  const pattern = opts.adding ? principals.find((p) => !SIGNER_NAME_RE.test(p)) : undefined;
+  if (pattern !== undefined)
+    return { problem: `"${pattern.slice(0, 60)}" is not a signer's name (a pattern, or other characters): name each signer, with letters, digits and @ . _ + -` };
   return {
     line,
     raw: text,
-    principals: unquote(w[0]).split(','),
+    principals,
     options,
     keyType,
     key,
@@ -129,11 +142,11 @@ export function parsePublicKey(raw: string): PublicKeyLine | undefined {
 }
 
 /** The signers of a file, and how many key lines md-runbook can't use (with why). */
-export function readSigners(text: string): { signers: SignerLine[]; skipped: { line: number; problem: string }[] } {
+export function readSigners(text: string, opts: ReadOptions = {}): { signers: SignerLine[]; skipped: { line: number; problem: string }[] } {
   const signers: SignerLine[] = [];
   const skipped: { line: number; problem: string }[] = [];
   text.split(/\r?\n/).forEach((raw, n) => {
-    const r = parseSignerLine(raw, n);
+    const r = parseSignerLine(raw, n, opts);
     if (!r) return;
     if ('problem' in r) skipped.push({ line: n, problem: r.problem });
     else signers.push(r);

@@ -43,6 +43,22 @@ describe('allowed_signers lines', () => {
     assert.equal(why(`ops@example.net namespaces="*,!git" ssh-ed25519 ${A}`), 'ok');
   });
 
+  it('a line to add (pasted, from a file, a library) must name each signer: no principal patterns', () => {
+    const adding = (l: string): string => {
+      const r = parseSignerLine(l, 0, { adding: true });
+      return r && 'problem' in r ? r.problem : 'ok';
+    };
+    for (const p of ['*', '*@example.net', 'ops@example.net,*', '!mallory,*', 'op?', '"ops team"'])
+      assert.match(adding(`${p} namespaces="md-runbook" ssh-ed25519 ${A}`), /not a signer's name/, p);
+    assert.equal(adding(`alice@example.net,bob@example.net namespaces="md-runbook" ssh-ed25519 ${A}`), 'ok');
+    // A library's allowed_signers: the pattern line is skipped, the named one kept.
+    const lib = `* namespaces="md-runbook" ssh-ed25519 ${A}\nops@example.net namespaces="md-runbook" ssh-ed25519 ${B}\n`;
+    const { signers, skipped } = readSigners(lib, { adding: true });
+    assert.deepEqual([signers.map((s) => s.principals[0]), skipped.map((s) => s.line)], [['ops@example.net'], [0]]);
+    // Your own file is still listed as written (ssh-keygen reads it as it is).
+    assert.equal(readSigners(lib).signers.length, 2);
+  });
+
   it('a line without namespaces gets namespaces="md-runbook"; one with them is kept as written', () => {
     const plain = parseSignerLine(`ops@example.net ssh-ed25519 ${A}`);
     assert.ok(plain && !('problem' in plain));

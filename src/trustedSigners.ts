@@ -82,7 +82,7 @@ async function linesFrom(text: string): Promise<{ lines: { line: string; label: 
   text.split(/\r?\n/).forEach((raw, n) => {
     const k = parsePublicKey(raw);
     if (k) return void found.push({ kind: 'key', k });
-    const s = parseSignerLine(raw, n);
+    const s = parseSignerLine(raw, n, { adding: true });
     if (!s) return;
     if ('problem' in s) problems.push(`Line ${n + 1}: ${s.problem}.`);
     else found.push({ kind: 'signer', s });
@@ -149,7 +149,7 @@ async function addPasted(file: string): Promise<void> {
     ignoreFocusOut: true,
     validateInput: (v) => {
       if (v.trim() === '' || parsePublicKey(v)) return undefined;
-      const s = parseSignerLine(v);
+      const s = parseSignerLine(v, 0, { adding: true });
       return s && 'problem' in s ? s.problem : undefined;
     },
   });
@@ -181,7 +181,7 @@ async function addFromFile(file: string): Promise<void> {
 async function addFromLibrary(file: string, tree: LibraryTree): Promise<void> {
   const lib = tree.library();
   if (!lib?.allowedSigners) return void vscode.window.showInformationMessage('md-runbook: the team library publishes no allowed_signers file.');
-  const { signers, skipped } = readSigners(lib.allowedSigners);
+  const { signers, skipped } = readSigners(lib.allowedSigners, { adding: true });
   if (signers.length === 0) return void vscode.window.showInformationMessage(`md-runbook: the team library's allowed_signers has no key md-runbook can use${skipped.length ? ` (${skipped.length} line${skipped.length === 1 ? '' : 's'} skipped)` : ''}.`);
   const picked = await vscode.window.showQuickPick(
     signers.map((s) => ({ label: s.principals.join(', '), description: s.fingerprint, detail: [s.keyType, s.validBefore ? `valid before ${s.validBefore}` : ''].filter(Boolean).join(' · '), picked: true, s })),
