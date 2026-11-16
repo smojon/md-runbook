@@ -7,6 +7,33 @@ Security fixes from a review of the parts that face the network.
 - **Command line, signed runs (`--allowed-signers`):** a front matter changed after signing is
   refused. Before, its `env:`, `cwd:` or `shell:` applied though the run said "signed, unchanged".
   - A version 1 signature doesn't cover the front matter: such a runbook can't set those.
+- **Signed runbooks: one reading of lines.** A lone CR now ends a line everywhere, as in
+  CommonMark. Before, it hid the front matter from some readers while the runbook still counted
+  as signed as a whole.
+  - A runbook with lone CRs that was signed before may need signing again.
+- **Signed runbooks: the front matter as signed.** A note, run record or signature block above
+  the front matter, or a note inside it, now makes a runbook changed since signing.
+- **Signed runbooks: what a run adds.** Notes, outputs and run record signatures are set aside
+  only in the exact form md-runbook writes. HTML after a note's marker now counts as a change.
+- **Signing:** a bash block inside an HTML block such as `<script>`, `<pre>` or `<div>` is
+  refused, as one inside a comment already was.
+- **Older signatures (version 1):** links and signed runs accept only labels in the front matter,
+  such as `title:` or `incident:`. See [signed runbooks](docs/features/signed-runbooks.md).
+  - Before, `practice:`, `manual-steps:`, `report-runs:` or a parameter's default still counted
+    as signed.
+- **Copy with values (VS Code and the app):** a value after `$(`, a backtick or `@(` stays a
+  reference. Before, a value from a link could end its quotes there and run when pasted.
+  - PowerShell values starting with `-` are quoted, so they are no parameter names.
+  - In VS Code, a cmd value with a metacharacter stays a reference instead of a warning.
+- **VS Code inputs:** an input written `${input:NAME:secret}` in one block is secret in every
+  block. Before, a block using `${input:NAME}` showed and copied the secret value.
+- **Add Note:** a lone CR in a note no longer starts a line outside its quote, where a block
+  could run.
+- **Output markers:** a value can no longer end the marker's comment, and line separators are
+  dropped. Values are capped at 200 characters.
+- **Command line, call copies:** the record of copies is written through a new file of a random
+  name. On Linux and macOS, a record folder or file others can write is not used.
+  - A continued copy runs as read for its checks, not read again.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each
