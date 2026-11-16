@@ -205,7 +205,8 @@ ca_bundle() {
 log=
 log_warned=0
 if [ -r /etc/md-runbook/gate.conf ]; then
-  log=$(sed -n 's/^[[:space:]]*log[[:space:]]*=[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/\1/p' /etc/md-runbook/gate.conf | tail -n 1)
+  # As the gate reads it: a # starts a comment, and the last log = wins.
+  log=$(sed -n -e 's/#.*//' -e 's/^[[:space:]]*log[[:space:]]*=[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/\1/p' /etc/md-runbook/gate.conf | tail -n 1)
   log=${log:-syslog}
 elif [ -n "${MD_RUNBOOK_PROBE_LOG:-}" ]; then
   log=$MD_RUNBOOK_PROBE_LOG

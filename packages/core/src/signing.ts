@@ -46,15 +46,32 @@ const isDate = (s: string): boolean => {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 };
 
+/** The names isReservedVar refuses as a whole (md-runbook-gate's is_reserved has the same list). */
+export const RESERVED_VARS: readonly string[] = [
+  // The shell.
+  'PATH', 'IFS', 'ENV', 'BASH_ENV', 'CDPATH', 'GLOBIGNORE', 'HOME', 'SHELL', 'SHELLOPTS', 'BASHOPTS', 'PS1', 'PS2', 'PS3', 'PS4',
+  'PROMPT_COMMAND', 'PWD', 'OLDPWD', 'TMPDIR', 'BASH_COMPAT', 'BASH_XTRACEFD', 'HISTFILE',
+  // The C library and the locale.
+  'LANG', 'LANGUAGE', 'GCONV_PATH', 'LOCPATH', 'GLIBC_TUNABLES',
+  // Interpreters that load code from the environment.
+  'NODE_OPTIONS', 'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONHOME', 'PERL5OPT', 'PERL5LIB', 'RUBYOPT', 'RUBYLIB', 'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS',
+  // git's commands and config.
+  'GIT_SSH_COMMAND', 'GIT_SSH', 'GIT_CONFIG', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS',
+  // Where programs connect, and which certificates they trust.
+  'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'CURL_HOME', 'CURL_CA_BUNDLE',
+  'XDG_CONFIG_HOME', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE',
+];
+/** The prefixes isReservedVar refuses. */
+export const RESERVED_VAR_PREFIXES: readonly string[] = ['LC_', 'LD_', 'DYLD_', 'BASH_FUNC_', '__mdrb_', 'MD_RUNBOOK_GATE_', 'GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_'];
+const RESERVED = new Set(RESERVED_VARS);
+
 /**
  * Names a parameter or env.* value may not have: they change how the shell or the programs it
- * starts read the signed code. md-runbook-gate refuses the same (is_reserved).
+ * starts read the signed code, or where they connect. md-runbook-gate refuses the same
+ * (is_reserved). Not KUBECONFIG: env.KUBECONFIG picks a cluster, and is signed.
  */
 export function isReservedVar(name: string): boolean {
-  return (
-    /^(PATH|IFS|ENV|BASH_ENV|CDPATH|GLOBIGNORE|HOME|SHELL|SHELLOPTS|BASHOPTS|PS[1-4]|PROMPT_COMMAND|PWD|OLDPWD|TMPDIR|LANG|LANGUAGE)$/.test(name) ||
-    /^(LC_|LD_|DYLD_|BASH_FUNC_|__mdrb_|MD_RUNBOOK_GATE_)/.test(name)
-  );
+  return RESERVED.has(name) || RESERVED_VAR_PREFIXES.some((p) => name.startsWith(p));
 }
 
 /** JavaScript-only regex syntax, which the gate's `grep -E` reads differently (or not at all). */
@@ -77,7 +94,10 @@ export interface ManifestCell {
   n: number;
   /** `any`: single lines and ranges may run (`lines=any`); `all`: the whole cell, or its commands in order. */
   lines: 'all' | 'any';
-  /** The fence's info string as written, for clients to compare (the gate doesn't read it). */
+  /**
+   * The fence's info string as written, for clients to compare. The gate reads its
+   * `kube-context=` and runs the cell only while kubectl's current context is that one.
+   */
   info: string;
   /** The code as the gate runs it. */
   code: string;
@@ -268,6 +288,8 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
   const secretCaptures = new Set<string>();
   for (const c of bashCells(text)) for (const cap of parseCellOptions(c.info).checks?.captures ?? []) if (cap.secret) secretCaptures.add(cap.name);
   const cells: ManifestCell[] = [];
+  /** kube-context=${param:NAME} parameters: their patterns are signed, so the gate can check the value. */
+  const contextParams: string[] = [];
   for (const c of bashCells(text)) {
     const n = cells.length + 1;
     const where = `cell ${n} (${c.value.split('\n')[0]?.slice(0, 40) ?? ''})`;
@@ -298,7 +320,7 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
     const contextParam = kubeContextParam(opts.kubeContext);
     if (contextParam !== undefined && meta.patterns[contextParam] === undefined) {
       errors.push(`${where}: kube-context=\${param:${contextParam}} needs a pattern (--pattern ${contextParam}=REGEX)`);
-    }
+    } else if (contextParam !== undefined) contextParams.push(contextParam);
     for (const [k, v] of Object.entries(opts.env)) {
       if (!VAR_NAME_RE.test(k)) errors.push(`${where}: env.${k} is not a variable name`);
       else if (isReservedVar(k)) errors.push(`${where}: env.${k} can't be set by a signed runbook (it changes how the shell runs the code)`);
@@ -339,8 +361,9 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
   }
   if (cells.length === 0 && calls.length === 0) errors.push('no bash or sh cells to sign');
   if (errors.length > 0) return { errors };
-  // Only the patterns the cells and calls use.
-  const used = new Set([...cells.flatMap((c) => c.needs), ...calls.flatMap((c) => c.needs)]);
+  // Only the patterns the cells, their kube-context= and the calls use. Before, a kube-context
+  // parameter's pattern was left out, so the gate couldn't take its value (security review, 2026-11-16).
+  const used = new Set([...cells.flatMap((c) => c.needs), ...contextParams, ...calls.flatMap((c) => c.needs)]);
   const patterns = Object.fromEntries(Object.entries(meta.patterns).filter(([k]) => used.has(k)));
   const whole = opts.version === 1 ? {} : { text: signedTextHash(text) };
   return { manifest: { ...meta, scopes: [...new Set(meta.scopes)], patterns, cells, calls, ...whole } };

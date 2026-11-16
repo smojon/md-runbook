@@ -213,14 +213,21 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
     execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'ops@example.net', '-f', path.join(dir, 'signer')]);
     const pub = fs.readFileSync(path.join(dir, 'signer.pub'), 'utf8').trim().split(' ').slice(0, 2).join(' ');
     fs.writeFileSync(path.join(dir, 'allowed_signers'), `ops@example.net namespaces="md-runbook" ${pub}\n`);
-    fs.writeFileSync(path.join(dir, 'gate.conf'), `allowed_signers = ${path.join(dir, 'allowed_signers')}\nlog = ${path.join(dir, 'gate.log')}\n`);
     strict = await generateKey();
     lenient = await generateKey();
-    const command = (extra: string) => `restrict,command="sh ${gate} --config=${path.join(dir, 'gate.conf')}${extra}"`;
-    fs.appendFileSync(
-      process.env.MD_RUNBOOK_SSH_AUTHORIZED_KEYS!,
-      `${command('')} ${await publicKeyLine(strict)}\n${command(' --unsigned=allow --who=lenient')} ${await publicKeyLine(lenient)}\n`,
-    );
+    // All signed or none per account: CI's one account has both keys (and its own), so each key's
+    // config names a key file with only its own line, as two accounts would have.
+    const line = async (name: string, extra: string, k: KeyPair): Promise<string> =>
+      `restrict,command="sh ${gate} --config=${path.join(dir, `${name}.conf`)}${extra}" ${await publicKeyLine(k)}`;
+    const lines = { strict: await line('strict', '', strict), lenient: await line('lenient', ' --unsigned=allow --who=lenient', lenient) };
+    for (const [name, l] of Object.entries(lines)) {
+      fs.writeFileSync(path.join(dir, `${name}.keys`), l + '\n');
+      fs.writeFileSync(
+        path.join(dir, `${name}.conf`),
+        `allowed_signers = ${path.join(dir, 'allowed_signers')}\nlog = ${path.join(dir, 'gate.log')}\nauthorized_keys = ${path.join(dir, `${name}.keys`)}\n`,
+      );
+    }
+    fs.appendFileSync(process.env.MD_RUNBOOK_SSH_AUTHORIZED_KEYS!, `${lines.strict}\n${lines.lenient}\n`);
     pinned = hostKeyId(fs.readFileSync(process.env.MD_RUNBOOK_SSH_HOST_PUB!, 'utf8'));
     const built = buildManifest(RUNBOOK, { name: 'ops/live', version: 1, scopes: [], patterns: { TARGET: '[a-z]+' } });
     if ('errors' in built) throw new Error(built.errors.join('; '));

@@ -31,6 +31,20 @@ All of these are read-only mounts:
 **Install my key…** in the app doesn't work here, because there are no passwords. Put the
 app's public key into `authorized_keys` yourself.
 
+## Trust
+
+Every block runs as the account `ops`, which can read the host key and the kubeconfig:
+- **Keep `unsigned = refuse` in `gate.conf`.** An unsigned block can do anything `ops` can.
+- **After any time with `unsigned = allow`, make a new host key** and put it in the Secret. A
+  block could have copied the old one, and a copy can pose as this host.
+  - Change a mounted kubeconfig's credentials and the report token too.
+- **The log is a file `ops` can write**, so a block can change it. The container's output keeps
+  each line as it was written: rely on that copy (`kubectl logs`).
+- **Its run reports are only as good as its signed blocks:** a block can read the report token.
+  The gate's README says what a gate's word needs: [Trust](../gate/README.md#trust).
+- `gate.conf` here has `sshd_force_command = yes`: sshd runs the gate for every login, so the key
+  lines need no `command=`.
+
 ## In a cluster
 
 [kubernetes/md-runbook-ops.yaml](kubernetes/md-runbook-ops.yaml) sets up:

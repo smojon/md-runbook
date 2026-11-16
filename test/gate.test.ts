@@ -11,7 +11,7 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { Manifest, ManifestMeta, buildManifest, formatManifest, toBase64 } from '@md-runbook/core/signing';
+import { Manifest, ManifestMeta, RESERVED_VARS, RESERVED_VAR_PREFIXES, buildManifest, formatManifest, toBase64 } from '@md-runbook/core/signing';
 import { manifestHash, sshSign } from '@md-runbook/core/node';
 import { runSummaryProblems } from '@md-runbook/core/runReport';
 import { gateAlertNote, gateNoteCommand } from '@md-runbook/ssh';
@@ -20,9 +20,14 @@ const GATE = path.resolve(__dirname, '..', '..', 'apps', 'gate', 'md-runbook-gat
 const SH = process.env.MD_RUNBOOK_GATE_SH ?? (process.platform === 'win32' ? '' : '/bin/sh');
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';
+/** A path as the gate's sh writes it (Git for Windows: /c/Users/...). */
+const shPath = (p: string): string => p.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_m, d: string) => `/${d.toLowerCase()}`);
+/** An authorized_keys line whose forced command is this gate. */
+const KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGdhdGUtdGVzdC1rZXktbm90LXVzZWQtdG8tbG9nLWlu test@gate';
+const keyLine = (options = '', prefix = 'restrict,'): string => `${prefix}command="${shPath(GATE)}${options}" ${KEY}`;
 
-/** pkill is on every Linux and macOS server, not in Git for Windows. */
-const hasPkill = (): boolean => !!SH && /^\//.test(spawnSync(SH, ['-c', 'command -v pkill'], { encoding: 'utf8' }).stdout ?? '');
+/** pgrep is on every Linux and macOS server, not in Git for Windows. */
+const hasPgrep = (): boolean => !!SH && /^\//.test(spawnSync(SH, ['-c', 'command -v pgrep'], { encoding: 'utf8' }).stdout ?? '');
 /** The gate sends run reports with curl. */
 const hasCurl = (): boolean => !!SH && /\S/.test(spawnSync(SH, ['-c', 'command -v curl'], { encoding: 'utf8' }).stdout ?? '');
 
@@ -42,7 +47,8 @@ class Gate {
   private n = 0;
 
   constructor(args: string[], env: Record<string, string>, command = 'bash -l') {
-    this.child = spawn(SH, [GATE, ...args], { env: { ...process.env, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
+    // As sshd starts it: $0 is the path the key line names.
+    this.child = spawn(SH, [shPath(GATE), ...args], { env: { ...process.env, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
     this.child.stdout!.on('data', (d: Buffer) => this.got('out', d.toString('utf8')));
     this.child.stderr!.on('data', (d: Buffer) => this.got('err', d.toString('utf8')));
     this.exited = new Promise((r) => this.child.on('close', (code) => r(code)));
@@ -56,7 +62,8 @@ class Gate {
   /** Text and exit code of request `id`, once its marker arrived on both streams. */
   async reply(id: string): Promise<Reply> {
     const re = new RegExp(`\\x1e__MDRB_${id}__ (\\S+)\\n`);
-    const deadline = Date.now() + 20_000;
+    // Git for Windows forks slowly: a session takes seconds to start there.
+    const deadline = Date.now() + (process.platform === 'win32' ? 60_000 : 20_000);
     for (;;) {
       const o = re.exec(this.out);
       const e = re.exec(this.err);
@@ -103,6 +110,19 @@ class Gate {
   }
 }
 
+describe('md-runbook-gate: reserved names', () => {
+  it("is_reserved refuses exactly core's isReservedVar list (security review, 2026-11-16)", () => {
+    const script = fs.readFileSync(GATE, 'utf8');
+    const block = /\nis_reserved\(\) \{\n  case \$1 in\n([\s\S]*?)\) return 0 ;;/.exec(script)?.[1];
+    assert.ok(block, 'is_reserved in the gate');
+    const patterns = block.replace(/\\\n/g, ' ').split('|').map((p) => p.trim());
+    const exact = patterns.filter((p) => !p.endsWith('*')).sort();
+    const prefixes = patterns.filter((p) => p.endsWith('*')).map((p) => p.slice(0, -1)).sort();
+    assert.deepEqual(exact, [...RESERVED_VARS].sort());
+    assert.deepEqual(prefixes, [...RESERVED_VAR_PREFIXES].sort());
+  });
+});
+
 describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)' }, () => {
   let dir: string;
   let conf: string;
@@ -115,8 +135,26 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     gates.push(g);
     return g;
   };
-  const writeConf = (lines: string[]): void =>
-    fs.writeFileSync(conf, [`allowed_signers = ${path.join(dir, 'allowed_signers')}`, `log = ${path.join(dir, 'gate.log')}`, ...lines].join('\n') + '\n');
+  // The account's key lines (all signed or none): every test config names a file of its own.
+  const keysAt = (name: string, lines: string[]): string => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    return shPath(file);
+  };
+  const confText = (lines: string[]): string =>
+    [
+      `allowed_signers = ${path.join(dir, 'allowed_signers')}`,
+      `log = ${path.join(dir, 'gate.log')}`,
+      ...(lines.some((l) => /^(authorized_keys|sshd_force_command)\b/.test(l)) ? [] : [`authorized_keys = ${shPath(path.join(dir, 'authorized_keys'))}`]),
+      ...lines,
+    ].join('\n') + '\n';
+  const writeConf = (lines: string[]): void => fs.writeFileSync(conf, confText(lines));
+  /** A config of its own (for a gate started with `new Gate`). */
+  const confAt = (name: string, lines: string[]): string => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, confText(lines));
+    return file;
+  };
   const meta = (m: Partial<ManifestMeta> = {}): ManifestMeta => ({ name: 'ops/test', version: 1, scopes: [], patterns: {}, ...m });
   const manifestOf = (text: string, m: Partial<ManifestMeta> = {}): Manifest => {
     const r = buildManifest(text, meta(m));
@@ -145,6 +183,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'stranger', '-f', otherKey]);
     const pub = fs.readFileSync(key + '.pub', 'utf8').trim().split(' ').slice(0, 2).join(' ');
     fs.writeFileSync(path.join(dir, 'allowed_signers'), `ops@example.net,release@example.net namespaces="md-runbook" ${pub}\n`);
+    keysAt('authorized_keys', [keyLine()]);
     writeConf([]);
   });
   after(() => {
@@ -152,7 +191,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('answers the hello with its banner and the pid of the shell the cells run in', async () => {
+  it('answers the hello with its banner and the session number (what a stop request names)', async () => {
     const g = start();
     const r = await g.hello();
     assert.match(r.out, /\x1e__MDRB_GATE__ 3 unsigned=refuse\n/);
@@ -357,7 +396,9 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     const bin = path.join(dir, 'bin');
     fs.mkdirSync(bin, { recursive: true });
     fs.writeFileSync(path.join(bin, 'kubectl'), '#!/bin/sh\necho prod-eu\n', { mode: 0o755 });
-    const g = new Gate([`--config=${conf}`], { ...env(), KUBECONFIG: kubeconfig, PATH: `${process.env.PATH ?? ''}${path.delimiter}${bin}` });
+    // The cells' PATH is gate.conf's `path`, not the gate's.
+    const ctxConf = confAt('context.conf', [`path = ${shPath(bin)}:/usr/local/bin:/usr/bin:/bin`]);
+    const g = new Gate([`--config=${ctxConf}`], { ...env(), KUBECONFIG: kubeconfig });
     gates.push(g);
     assert.match((await g.hello()).out, /unsigned=refuse/);
     const r = await g.request('context');
@@ -368,8 +409,47 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"event":"context"/);
   });
 
+  it("enforces a signed block's kube-context= itself, with the block's env.KUBECONFIG (security review, 2026-11-16)", async () => {
+    // kubectl reads the context from $KUBECONFIG: a stand-in that does the same.
+    const bin = path.join(dir, 'kube-bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'kubectl'), '#!/bin/sh\nsed -n "s/^current-context: //p" "$KUBECONFIG"\n', { mode: 0o755 });
+    const unix = (p: string): string => p.replace(/\\/g, '/');
+    const prod = unix(path.join(dir, 'prod.kubeconfig'));
+    const lab = unix(path.join(dir, 'lab.kubeconfig'));
+    fs.writeFileSync(prod, 'current-context: prod-eu\n');
+    fs.writeFileSync(lab, 'current-context: lab-1\n');
+    const kconf = confAt('kube.conf', [`path = ${shPath(bin)}:/usr/bin:/bin`]);
+    const g = new Gate([`--config=${kconf}`], env());
+    gates.push(g);
+    await g.hello();
+    const text =
+      fence(`bash kube-context=prod-eu env.KUBECONFIG=${prod}`, 'echo ran-1') +
+      fence(`bash Kube-Context="prod-eu" env.KUBECONFIG=${lab}`, 'echo ran-2') +
+      fence(`bash kube-context=\${param:CTX} env.KUBECONFIG=${lab}`, 'echo ran-3');
+    const [m, s] = await signed(text, { patterns: { CTX: 'lab-[0-9]+|prod-eu' } });
+    assert.equal((await g.request('load', m, s)).code, 0);
+    // The client never sends `context`: the gate checks all the same.
+    const one = await g.request('run', '1');
+    assert.deepEqual([one.code, one.out], [0, 'ran-1\n']);
+    const two = await g.request('run', '2');
+    assert.deepEqual([two.code, two.out], [126, '']);
+    assert.match(two.err, /for the Kubernetes context prod-eu; the current context here is lab-1: nothing ran/);
+    assert.match((await g.request('run', '3')).err, /needs a value for the parameter CTX \(its kube-context\)/);
+    assert.equal((await g.request('param', 'CTX', toBase64('prod-eu'))).code, 0);
+    assert.equal((await g.request('run', '3')).code, 126);
+    assert.equal((await g.request('param', 'CTX', toBase64('lab-1'))).code, 0);
+    const three = await g.request('run', '3');
+    assert.deepEqual([three.code, three.out], [0, 'ran-3\n']);
+    await g.close();
+    assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"event":"refused","id":"[0-9a-f]+","reason":"kube-context is lab-1, not prod-eu"/);
+  });
+
   it('runs unsigned text where the key allows it', async () => {
-    const g = start('--unsigned=allow');
+    // An unsigned-trial account: every key line allows unsigned blocks.
+    const uconf = confAt('unsigned.conf', [`authorized_keys = ${keysAt('unsigned.keys', [keyLine(' --unsigned=allow --who=trial')])}`]);
+    const g = new Gate([`--config=${uconf}`, '--unsigned=allow'], env());
+    gates.push(g);
     const hello = await g.hello();
     assert.match(hello.out, /unsigned=allow/);
     const id = 'abcdef01';
@@ -480,34 +560,101 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     }
   });
 
-  it('a stop request stops the running cell of its own session only', { skip: !hasPkill() && 'no pkill (Git for Windows)' }, async () => {
+  it('a stop request stops every program of the running cell of its own session only', { skip: !hasPgrep() && 'no pgrep (Git for Windows)' }, async () => {
     const g = start();
-    const pid = (await g.hello()).code;
-    const [m, s] = await signed(fence('bash', 'sleep 30') + fence('bash', 'echo still-here'), {});
+    const session = (await g.hello()).code;
+    // A program the cell's program started: a stop of the shell's children only left it running.
+    const pidFile = path.join(dir, 'grandchild.pid');
+    const [m, s] = await signed(fence('bash', `sh -c 'sleep 31 & echo $! >"$1"; wait' sh ${shPath(pidFile)}`) + fence('bash', 'echo still-here'), {});
     await g.request('load', m, s);
     const running = g.request('run', '1');
-    await new Promise((r) => setTimeout(r, 500));
+    for (let i = 0; i < 300 && !fs.existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 100));
+    const grandchild = Number(fs.readFileSync(pidFile, 'utf8').trim());
+    // Another session's number (or a pid) stops nothing.
     const stranger = new Gate([`--config=${conf}`], env(), 'pkill -TERM -P 1 2>/dev/null; true');
     assert.equal(await stranger.exited, 2);
-    const stop = new Gate([`--config=${conf}`], env(), `pkill -TERM -P ${pid} 2>/dev/null; true`);
+    const stop = new Gate([`--config=${conf}`], env(), `pkill -TERM -P ${session} 2>/dev/null; true`);
     assert.equal(await stop.exited, 0);
     const r = await running;
     assert.notEqual(r.code, 0);
+    const alive = (): boolean => {
+      try {
+        process.kill(grandchild, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    // (Git for Windows, with a pgrep stand-in: its pids are not Windows' own.)
+    if (process.platform !== 'win32') {
+      for (let i = 0; i < 30 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
+      assert.equal(alive(), false, 'the program the cell started was stopped too');
+    }
     // The shell survived: the session goes on.
     assert.equal((await g.request('run', '2')).out, 'still-here\n');
     await g.close();
   });
 
-  it('a signed cell that rewrites the stored manifest does not get its change run', async () => {
+  it("a cell can't plant parameters or a manifest for the next block: the gate keeps them in memory (security review, 2026-11-16)", async () => {
     const g = start();
     await g.hello();
-    // Signed code is trusted, but even so: the gate runs only the bytes it verified.
-    const tamper = 'for d in "${TMPDIR:-/tmp}"/md-runbook-gate.*; do echo "cell 2 all" >> "$d/manifest"; done; echo tampered';
-    const [m, s] = await signed(fence('bash', tamper) + fence('bash', 'echo second'), {});
+    // Signed code is trusted, but even so: the gate runs only the bytes it verified, and exports
+    // only the parameters it checked (before, a file name in params/ went into the shell as is).
+    const plant =
+      'for d in "${TMPDIR:-/tmp}"/md-runbook-gate.*; do mkdir -p "$d/params"; echo pwned >"$d/params/EVIL"; ' +
+      'printf x >"$d/params/x;echo INJECTED;y"; echo "cell 2 all" >>"$d/manifest"; done; echo planted';
+    const [m, s] = await signed(fence('bash', plant) + fence('bash', 'echo "second ${EVIL-unset}"'), {});
     await g.request('load', m, s);
-    assert.equal((await g.request('run', '1')).out, 'tampered\n');
-    assert.match((await g.request('run', '2')).err, /changed on disk since it was checked/);
-    assert.match((await g.request('run', '2')).err, /no signed runbook loaded/);
+    assert.equal((await g.request('run', '1')).out, 'planted\n');
+    const two = await g.request('run', '2');
+    assert.deepEqual([two.code, two.out], [0, 'second unset\n']);
+    assert.doesNotMatch(two.err, /INJECTED/);
+    await g.close();
+  });
+
+  it("cells run without the account's profile, with gate.conf's PATH and locale, not the client's (security review, 2026-11-16)", async () => {
+    // What an `unsigned = allow` period could have planted in the account's home.
+    const home = path.join(dir, 'home-profile');
+    fs.mkdirSync(home, { recursive: true });
+    for (const f of ['.bash_profile', '.bash_login', '.profile', '.bashrc']) fs.writeFileSync(path.join(home, f), 'echo PROFILE-RAN; planted() { echo planted; }\n');
+    const startup = path.join(dir, 'bash-env.sh');
+    fs.writeFileSync(startup, 'echo BASH_ENV-RAN\n');
+    const pconf = confAt('profile.conf', ['path = /usr/bin:/bin', 'locale = C']);
+    // sshd passes the client's LANG and LC_* (AcceptEnv); BASH_ENV and ENV only by mistake.
+    const g = new Gate([`--config=${pconf}`], { HOME: home, TMPDIR: dir, LANG: 'de_DE.UTF-8', LC_ALL: 'de_DE.UTF-8', LC_MESSAGES: 'fr_FR.UTF-8', BASH_ENV: startup, ENV: startup });
+    gates.push(g);
+    await g.hello();
+    const [m, s] = await signed(fence('bash', 'echo "path=$PATH lang=$LANG all=${LC_ALL-unset} msg=${LC_MESSAGES-unset}"; type planted >/dev/null 2>&1 && echo has-planted; echo done'));
+    assert.equal((await g.request('load', m, s)).code, 0);
+    const r = await g.request('run', '1');
+    assert.deepEqual([r.code, r.out], [0, 'path=/usr/bin:/bin lang=C all=unset msg=unset\ndone\n']);
+    await g.close();
+    // A relative or empty folder in `path` is refused at the start.
+    for (const bad of ['path = /usr/bin::/bin', 'path = bin:/usr/bin', 'locale = de DE']) {
+      const b = new Gate([`--config=${confAt('bad-path.conf', [bad])}`], env());
+      b.child.stdin!.end();
+      assert.equal(await b.exited, 2, bad);
+    }
+  });
+
+  it('each runbook gets a fresh shell; cells of one runbook (loaded again too) share theirs (security review, 2026-11-16)', async () => {
+    const g = start();
+    await g.hello();
+    const set = 'A=1; f() { echo func; }; alias ll="echo alias"; trap "echo trapped" USR2; set -e; cd /';
+    const check = 'echo "A=${A-unset}"; type f >/dev/null 2>&1 && echo has-f; alias ll >/dev/null 2>&1 && echo has-alias; case $- in *e*) echo has-e ;; esac; trap -p USR2; true';
+    const [a, as] = await signed(fence('bash', set) + fence('bash', check), { name: 'ops/a' });
+    const [b, bs] = await signed(fence('bash', check), { name: 'ops/b' });
+    assert.equal((await g.request('load', a, as)).code, 0);
+    assert.equal((await g.request('run', '1')).code, 0);
+    // The same runbook again (another alert, a co-signature): its shell stays.
+    assert.equal((await g.request('load', a, as)).code, 0);
+    const same = await g.request('run', '2');
+    assert.equal(same.code, 0, same.err);
+    assert.match(same.out, /^A=1\nhas-f\nhas-alias\nhas-e\ntrap -- 'echo trapped' (SIG)?USR2\n$/);
+    // Another runbook: nothing of the first one.
+    assert.equal((await g.request('load', b, bs)).code, 0);
+    const other = await g.request('run', '1');
+    assert.deepEqual([other.code, other.out], [0, 'A=unset\n']);
     await g.close();
   });
 
@@ -532,6 +679,12 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     assert.match(manifest, /^env PATH /m);
     const bad = await g.request('load', toBase64(manifest), await sshSign(manifest, key));
     assert.match(bad.err, /sets PATH, a name the gate doesn't let a runbook set/);
+    // Names that load code or change where programs connect (security review, 2026-11-16).
+    for (const name of ['NODE_OPTIONS', 'GIT_CONFIG_KEY_0', 'https_proxy']) {
+      const m = formatManifest(manifestOf(RUNBOOK, { patterns: PATTERNS })).replace(/^env GREETING /m, `env ${name} `);
+      const r = await g.request('load', toBase64(m), await sshSign(m, key));
+      assert.match(r.err, new RegExp(`sets ${name}, a name the gate doesn't let a runbook set`));
+    }
     const [m, s] = await signed(RUNBOOK, { patterns: PATTERNS });
     await g.request('load', m, s);
     await g.request('param', 'TARGET', toBase64('web-1'));
@@ -553,13 +706,13 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
   });
 
   it('report_to: at the end of a session it posts a run summary (client gate) per signed runbook it ran', { skip: !hasCurl() && 'no curl' }, async () => {
-    const got: { auth: string | undefined; body: string }[] = [];
+    const got: { auth: string | undefined; planted: string | undefined; body: string }[] = [];
     let answer = 202;
     const server = http.createServer((req, res) => {
       let body = '';
       req.on('data', (d: Buffer) => (body += d.toString('utf8')));
       req.on('end', () => {
-        got.push({ auth: req.headers.authorization, body });
+        got.push({ auth: req.headers.authorization, planted: req.headers['x-planted'] as string | undefined, body });
         res.writeHead(answer).end();
       });
     });
@@ -567,6 +720,8 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     const port = (server.address() as { port: number }).port;
     const tokenFile = path.join(dir, 'report-token');
     fs.writeFileSync(tokenFile, 'a-report-token-of-at-least-24-chars\n');
+    // The account's ~/.curlrc (a block could write it) is never read: curl -q.
+    fs.writeFileSync(path.join(dir, '.curlrc'), 'header = "x-planted: from-curlrc"\n');
     const logFile = path.join(dir, 'gate.log');
     const reportEvents = (): string[] => fs.readFileSync(logFile, 'utf8').split('\n').filter((l) => /"event":"report"/.test(l));
     const waitFor = async (what: () => boolean): Promise<void> => {
@@ -587,6 +742,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
       assert.equal(await g.close(), 0);
       await waitFor(() => got.length === 1 && reportEvents().length > before);
       assert.equal(got[0]!.auth, 'Bearer a-report-token-of-at-least-24-chars');
+      assert.equal(got[0]!.planted, undefined);
       const summary = JSON.parse(got[0]!.body);
       assert.deepEqual(runSummaryProblems(summary), []);
       assert.equal(summary.client, 'gate');
@@ -624,6 +780,77 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     }
   });
 
+  it('all signed or none: a mix of keys, or a key that skips the gate, stops the session before it starts', async () => {
+    const plain = KEY.replace('test@gate', 'admin@laptop');
+    const bad: [string, string[], RegExp][] = [
+      ['a plain key', [keyLine(), plain], /line 2: no command=/],
+      ['signed and unsigned keys', [keyLine(), keyLine(' --unsigned=allow'), keyLine()], /lines? 2 allows? unsigned blocks and lines? 1 3/],
+      ['more than the gate', [keyLine('; sh')], /line 1: command=/],
+      ['another gate', [`command="/tmp/elsewhere/md-runbook-gate" ${KEY}`], /line 1: command=/],
+      ['an open quote', [`restrict,command="${shPath(GATE)} ${KEY}`], /line 1: can't read its options/],
+      ['two commands', [`command="${shPath(GATE)}",command="/bin/sh" ${KEY}`], /line 1: can't read its options/],
+      ['a CA without the gate', [`cert-authority,principals="ops" ${KEY}`], /line 1: no command=/],
+    ];
+    for (const [what, lines, re] of bad) {
+      const c = confAt('mixed.conf', [`authorized_keys = ${keysAt('mixed.keys', lines)}`]);
+      const g = new Gate([`--config=${c}`], env());
+      gates.push(g);
+      let err = '';
+      g.child.stderr!.on('data', (d: Buffer) => (err += d.toString('utf8')));
+      g.child.stdin!.end();
+      assert.equal(await g.exited, 2, what);
+      assert.match(err, re, what);
+    }
+    // No keys, or a file it can't read: the same.
+    const none = new Gate([`--config=${confAt('none.conf', [`authorized_keys = ${keysAt('none.keys', ['# nobody yet', ''])}`])}`], env());
+    none.child.stdin!.end();
+    assert.equal(await none.exited, 2);
+    // Comments, blank lines, CRLF, options with quoted commas and escaped quotes, a CA line: fine.
+    const good = [
+      '# the support team',
+      '',
+      `environment="NOTE=a,b",from="10.0.0.0/8,192.168.0.0/16",no-pty,command="${shPath(GATE)} --who=alice --scopes=web,staging" ${KEY}\r`,
+      `cert-authority,principals="ops",command="sh ${shPath(GATE)}" ${KEY}`,
+    ];
+    const ok = new Gate([`--config=${confAt('good.conf', [`authorized_keys = ${keysAt('good.keys', good)}`])}`], env());
+    gates.push(ok);
+    assert.match((await ok.hello()).out, /unsigned=refuse/);
+    assert.equal(await ok.close(), 0);
+    // A login whose own options don't match the account's kind: its key is not in the file.
+    const odd = new Gate([`--config=${conf}`, '--unsigned=allow'], env());
+    odd.child.stdin!.end();
+    assert.equal(await odd.exited, 2);
+  });
+
+  it('all signed or none: an unsigned-trial account runs, but sends no run report', { skip: !hasCurl() && 'no curl' }, async () => {
+    let posted = 0;
+    const server = http.createServer((req, res) => {
+      posted++;
+      req.resume();
+      res.writeHead(202).end();
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as { port: number }).port;
+    try {
+      // Each key line's own --config says unsigned = allow (the check reads it).
+      const opt = ` --config=${shPath(path.join(dir, 'trial.conf'))}`;
+      const keys = keysAt('trial.keys', [keyLine(opt), keyLine(`${opt} --who=bob`)]);
+      const c = confAt('trial.conf', ['unsigned = allow', `report_to = http://127.0.0.1:${port}/v1/runs`, `authorized_keys = ${keys}`]);
+      const g = new Gate([`--config=${c}`], env());
+      gates.push(g);
+      assert.match((await g.hello()).out, /unsigned=allow/);
+      const [m, s] = await signed(fence('bash', 'echo trial'), { name: 'ops/trial' });
+      assert.equal((await g.request('load', m, s)).code, 0);
+      assert.equal((await g.request('run', '1')).out, 'trial\n');
+      assert.equal(await g.close(), 0);
+      await new Promise((r) => setTimeout(r, 3000));
+      assert.equal(posted, 0);
+      assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"event":"report","status":"off","reason":"this account allows unsigned blocks/);
+    } finally {
+      server.close();
+    }
+  });
+
   it('report_to: a bad address is logged at the start of the session, and the runs go on', async () => {
     const logFile = path.join(dir, 'gate.log');
     writeConf(['report_to = ftp://reports.example.net/runs']);
@@ -651,5 +878,22 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     fs.writeFileSync(path.join(dir, 'bad.conf'), 'unsigned = sometimes\n');
     const badConf = new Gate([`--config=${path.join(dir, 'bad.conf')}`], env());
     assert.equal(await badConf.exited, 2);
+  });
+
+  it('fails closed on an empty scope list and a missing --config (security review, 2026-11-16)', async () => {
+    // Before, an empty list meant every scope, and a missing file the built-in defaults.
+    const cases: [string, string[]][] = [
+      ['--scopes=', [`--config=${conf}`, '--scopes=']],
+      ['--scopes=,', [`--config=${conf}`, '--scopes=,']],
+      ['scopes =', [`--config=${confAt('empty-scopes.conf', ['scopes =  # none'])}`]],
+      ['missing --config', [`--config=${path.join(dir, 'no-such.conf')}`]],
+    ];
+    for (const [what, args] of cases) {
+      const g = new Gate(args, env());
+      gates.push(g);
+      // A gate that started would wait for requests: with none, it ends with 0.
+      g.child.stdin!.end();
+      assert.equal(await g.exited, 2, what);
+    }
   });
 });

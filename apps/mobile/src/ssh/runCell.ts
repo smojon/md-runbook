@@ -274,7 +274,12 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   const signed = (step?: LineStep): SignedRun | undefined => {
     if (!status || !signedCell) return undefined;
     // Every value the signed cell uses: ${param:}, ${input:} and ${out:} (the gate checks each against its signed pattern).
-    const params = Object.fromEntries(signedCell.needs.map((n) => [n, paramEnv[n] ?? secretEnv[n] ?? '']));
+    // And its own kube-context=${param:NAME}, where the manifest signs that pattern: the gate checks the context itself.
+    const contextParam = kubeContextParam(opts.kubeContext);
+    const names = [...signedCell.needs];
+    const signedContext = contextParam !== undefined && status.manifest.patterns[contextParam] !== undefined;
+    if (contextParam !== undefined && signedContext && !names.includes(contextParam)) names.push(contextParam);
+    const params = Object.fromEntries(names.map((n) => [n, paramEnv[n] ?? secretEnv[n] ?? '']));
     const cosignatures = (status.block.cosigners ?? []).map((c) => c.signature);
     const base = {
       manifest: status.block.manifest,

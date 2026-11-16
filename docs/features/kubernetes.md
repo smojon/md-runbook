@@ -35,6 +35,8 @@ meant for staging-eu.
   runbooks: the front matter isn't signed, but a cell's options are.
 - On a server that only runs signed runbooks, the gate still answers the check: it only reads
   the kubeconfig. See the gate's `context` request in its [README](../../apps/gate/README.md).
+- The gate also checks a signed cell's own `kube-context=` itself, before the cell runs. A
+  client that skips the check can't run the cell elsewhere.
 - Lint reports a name kubectl can't have.
 
 ### Check or pin

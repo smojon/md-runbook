@@ -30,6 +30,35 @@ Security fixes from a review of the parts that face the network.
   - After an upgrade, run one `kubectl create rolebinding` per namespace (apps/ops/README.md).
 - **Web container:** no other site can show the app in a frame (`frame-ancestors 'none'`,
   `X-Frame-Options: DENY`).
+- **Gate: a fresh shell for each runbook.** It is `bash --noprofile --norc`, with `path =` and
+  `locale =` from `gate.conf`. Before, `bash -l` ran the account's profile, a file the account
+  can write, in every signed block.
+  - Another runbook's functions, traps, options and variables no longer carry over. The blocks of
+    one runbook still share their shell.
+  - The client's `LANG` and `LC_*` no longer reach the blocks.
+  - Add the folders of your tools to `path =` if they aren't in `/usr/local/bin`, `/usr/bin` or
+    `/bin`.
+- **Gate: `kube-context=` is enforced on the server.** A signed block runs only while kubectl's
+  current context is the one it names. Before, a client could skip the check.
+  - Signing now keeps the pattern of a `kube-context=${param:NAME}`. Sign such runbooks again,
+    and update the app.
+- **Gate: all signed or none.** The gate reads the account's `authorized_keys`. It refuses to
+  start if a key skips the gate, or if signed and unsigned keys share the account.
+  - An account whose keys allow unsigned blocks sends no run reports.
+  - With `ForceCommand`, set `sshd_force_command = yes`. The ops host image does this.
+- **Gate: the work folder.** The gate keeps the verified manifest and the parameters in memory,
+  and checks each block's hash again before it runs. Before, a block could plant a parameter
+  for the next one.
+- **Gate: cancelling** stops every program of the running block, not only the shell's children.
+  The stop request names a random session number, so other sessions can't stop it.
+- **Gate and signing:** more names are refused as parameters and `env.*`. Among them are
+  `NODE_OPTIONS`, `PYTHONPATH`, `GIT_SSH_COMMAND`, the proxy variables and `SSL_CERT_FILE`.
+- **Gate:** an empty scope list and a missing `--config=` file are now errors. Before, they
+  meant every scope and the built-in defaults.
+- **Gate:** run reports no longer read the account's `~/.curlrc`.
+- **Ops host:** md-runbook-probe ignores a `# comment` after `log =`, as the gate does.
+- **Gate and ops host docs:** a gate's word needs `unsigned = refuse` for every key and
+  `log = syslog`. After any time with unsigned blocks, make a new ops host key.
 
 ## 0.26.8
 

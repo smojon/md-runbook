@@ -20,8 +20,24 @@ allowed_signers = /etc/md-runbook/allowed_signers
 # How many distinct signers from allowed_signers a runbook needs (author and reviewer: 2).
 signers = 1
 
-# syslog (tag md-runbook-gate), or a file the account can append to.
+# syslog (tag md-runbook-gate), or a file the account can append to. Only syslog is out of
+# the blocks' reach (they run as the account).
 log = syslog
+
+# The blocks' PATH: absolute, root-owned folders (the account's profile is never read).
+path = /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+# The blocks' locale (the client's LANG and LC_* never reach them). auto: C.UTF-8, else C.
+locale = auto
+
+# The files with the account's key lines, as sshd_config's AuthorizedKeysFile names them
+# (space-separated; %h is the home folder, %u the account). Every line must run this gate, all
+# signed (unsigned = refuse, no --unsigned=allow) or all unsigned. The default is sshd's:
+# authorized_keys = %h/.ssh/authorized_keys %h/.ssh/authorized_keys2
+
+# yes when sshd_config's ForceCommand runs this gate for the account: then the key lines are
+# not read, and unsigned above decides alone.
+# sshd_force_command = yes
 
 # Run reports: at the end of each session, a summary of every signed runbook it ran (no
 # outputs, no parameter values) to this address, by curl, in the background. https (http only

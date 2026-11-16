@@ -48,7 +48,7 @@ jobs:
         run: |
           test "$(docker inspect -f '{{.Config.User}}' md-runbook-ops:ci)" = 10001:10001
           docker run --rm --entrypoint sh md-runbook-ops:ci -c \
-            'grep -qx "ForceCommand /usr/local/bin/md-runbook-gate" /etc/ssh/md-runbook-ops.conf && kubectl version --client && ssh -V'
+            'grep -qx "ForceCommand /usr/local/bin/md-runbook-gate --sshd-force-command" /etc/ssh/md-runbook-ops.conf && kubectl version --client && ssh -V'
       - name: The compose file with the ops service is valid
         run: docker compose -f apps/relay/compose.example.yml --profile ops config -q
 
@@ -62,7 +62,7 @@ jobs:
           ssh-keygen -q -t ecdsa -b 256 -N '' -C md-runbook-ops -f "$KEYS/ssh_host_ecdsa_key"
           cp "$KEYS/client.pub" "$KEYS/authorized_keys"
           echo "ci@example.net namespaces=\"md-runbook\" $(cut -d' ' -f1,2 "$KEYS/signer.pub")" > "$KEYS/allowed_signers"
-          printf '%s\n' 'unsigned = allow' 'allowed_signers = /etc/md-runbook/allowed_signers' 'log = /var/log/md-runbook/gate.log' > "$KEYS/gate.conf"
+          printf '%s\n' 'unsigned = allow' 'allowed_signers = /etc/md-runbook/allowed_signers' 'log = /var/log/md-runbook/gate.log # a comment: the gate and md-runbook-probe both strip it' 'sshd_force_command = yes' > "$KEYS/gate.conf"
 
       - name: Cluster
         run: |
