@@ -108,31 +108,7 @@ export function launchModel(nb: vscode.NotebookDocument, rows: readonly StepsRow
   };
 }
 
-/**
- * The values the form sent at Start, checked against the form: known names only, a choice for a
- * parameter that has choices. An empty secret input is not a value (the run asks, or keeps the
- * one this session has). `error` names the field when one is wrong.
- */
-export function startValues(m: LaunchModel, sent: unknown): { params: Record<string, string>; inputs: Record<string, string> } | { error: string; field: string } {
-  const s = (sent ?? {}) as { params?: unknown; inputs?: unknown };
-  const record = (v: unknown): Record<string, unknown> => (v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : {});
-  const sentParams = record(s.params);
-  const sentInputs = record(s.inputs);
-  const params: Record<string, string> = {};
-  const inputs: Record<string, string> = {};
-  for (const p of m.params) {
-    const v = sentParams[p.name];
-    if (typeof v !== 'string') continue;
-    if (p.choices && !p.choices.includes(v)) return { error: `${p.name} must be one of: ${p.choices.join(', ')}`, field: `param:${p.name}` };
-    params[p.name] = v;
-  }
-  for (const i of m.inputs) {
-    const v = sentInputs[i.name];
-    if (typeof v !== 'string' || (i.secret && v === '')) continue;
-    inputs[i.name] = v;
-  }
-  return { params, inputs };
-}
+export { startValues } from './launchStart';
 
 /** Runs the form started: the Run All they start doesn't open the form again (for 30 s). */
 const started = new Map<string, number>();

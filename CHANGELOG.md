@@ -78,6 +78,8 @@ Security fixes from a review of the parts that face the network.
   library, where its server allows deleting.
 - **VS Code: Retry Failed Step, Resume from Failed Step and Answer the Waiting Step** are in the
   Command Palette and at the top of Run ▾. They show only after a failure, or while a step waits.
+- **VS Code: the launch form's Start** needs a value for each parameter without a default, as in
+  the app. The form names the parameters still empty.
 
 ## 0.26.8
 

@@ -598,10 +598,14 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
     if (!launch) return;
     const params = {}, inputs = {};
     let wrong;
+    // A parameter with neither a value nor a default would stop the run: Start says which (as the app does).
+    const missing = [];
     for (const p of launch.params) {
       const c = launchEl.querySelector('[name="param:' + p.name + '"]');
       if (!c) continue;
-      const bad = p.choices && p.choices.indexOf(c.value) < 0 ? 'Choose one of: ' + p.choices.join(', ') : '';
+      const empty = c.value === '' && p.default === undefined;
+      if (empty) missing.push(p.name);
+      const bad = p.choices && p.choices.indexOf(c.value) < 0 ? 'Choose one of: ' + p.choices.join(', ') : empty ? 'Type a value: it has no default.' : '';
       if (fieldError('param:' + p.name, bad) && !wrong) wrong = c;
       params[p.name] = c.value;
     }
@@ -609,7 +613,11 @@ export function stepsPage(webview: vscode.Webview, codicons: vscode.Uri): string
       const c = launchEl.querySelector('[name="input:' + i.name + '"]');
       if (c) inputs[i.name] = c.value;
     }
-    if (wrong) { put(lError, 'Check the values marked above.'); wrong.focus(); return; }
+    if (wrong) {
+      put(lError, missing.length ? 'Type a value for ' + missing.join(', ') + ': ' + (missing.length === 1 ? 'it has' : 'they have') + ' no default.' : 'Check the values marked above.');
+      wrong.focus();
+      return;
+    }
     put(lError, '');
     post({ launchStart: { params, inputs } });
   });
