@@ -454,6 +454,9 @@ The summary has the [run report format](run-reports.md#the-format-version-1) wit
   only its signed manifest.
 - `who`: the key's fingerprint (with `ExposeAuthInfo yes`), or `--who=NAME`, else the account.
 - `gate`: the server's name (`uname -n`), the account, and the SSH client's address (`from`).
+  `gate_mode` says how the blocks ran: `shared` or `separated`
+  ([a gate in separated mode](run-reports.md#a-gate-in-separated-mode)). Without it, the
+  summary counts as `shared`.
 - `steps`: the signed bash blocks, in order. Each is labelled by the first line of its code (as
   the gate runs it, with placeholders rewritten as signed). Its state is one of:
   - `passed`: ran whole, or its last command ran, exit 0;

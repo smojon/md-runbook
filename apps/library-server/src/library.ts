@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { LibraryConfig } from './config';
-import { manifestVersion, parseManifest, readSignature, runbookTitle, sha256Hex, signedStatus, trustedRunbookSigner, wholeRunbookSigned } from './core';
+import { manifestVersion, parseFrontMatter, parseManifest, readSignature, runbookTitle, sha256Hex, signedStatus, trustedRunbookSigner, wholeRunbookSigned } from './core';
 import { HttpError, Mutex } from './http';
 
 /** Folders below the library at most (the app lists 4 levels). */
@@ -327,6 +327,22 @@ export class Library {
     await writeAtomic(indexFile, JSON.stringify({ signedOnly: this.config.signedOnly, runbooks }, null, 1) + '\n');
   }
 
+  /**
+   * Whether the library's copy of runbook `q` (a path in the library, or a signed name) says
+   * `report-runs-required: separated`: then only a run a gate sent in separated mode counts
+   * (runs.ts runCounts). Read from the copy as it is: it can only make fewer runs count.
+   */
+  async separatedRequired(q: string): Promise<boolean> {
+    const query = q.replace(/^\/+/, '');
+    const separated = (text: string | undefined): boolean => text !== undefined && parseFrontMatter(text)?.reportRunsSeparated === true;
+    if (/\.(md|markdown)$/i.test(query)) return separated(await readLibraryFile(this.config.dir, query));
+    const name = query.toLowerCase();
+    for (const path of await this.files().catch(() => [])) {
+      const text = await readLibraryFile(this.config.dir, path);
+      if (text !== undefined && signedRelease(text)?.name === name && separated(text)) return true;
+    }
+    return false;
+  }
 }
 
 /** The text of the runbook at `path` in the library folder `dir`, or undefined (missing, or reached through a link). */

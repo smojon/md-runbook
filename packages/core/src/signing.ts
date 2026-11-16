@@ -583,6 +583,10 @@ export function reportSigningErrors(text: string): string[] {
       if (why) errors.push(`front matter report-runs: ${why}`);
     } else if (key === 'report-runs-token') {
       if (!/^\$\{secret:[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)) errors.push('front matter report-runs-token: only ${secret:NAME}, never a token in the file');
+    } else if (key === 'report-runs-required') {
+      // `separated`: required, and only a gate in separated mode's report counts (runReport.ts).
+      if (!/^(true|false|yes|no|on|off|separated)$/i.test(value)) errors.push('front matter report-runs-required: expected true, false or separated');
+      if (/^(true|yes|on|separated)$/i.test(value)) wants = true;
     } else {
       if (!/^(true|false|yes|no|on|off)$/i.test(value)) errors.push(`front matter ${key}: expected true or false`);
       if (/^(true|yes|on)$/i.test(value)) wants = true;

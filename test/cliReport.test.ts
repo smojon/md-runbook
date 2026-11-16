@@ -108,6 +108,18 @@ describe('md-runbook run: run reports', () => {
     answer = 200;
   });
 
+  it('report-runs-required: separated: required as true is, and the notice says a gate in separated mode must report it', async () => {
+    const text = await signed(runbook('report-runs-required: separated\n'));
+    assert.match(String(await prepareReport(text, { allowed: [], allowedSigners }, () => undefined)), /runs only if its run is reported to 127\.0\.0\.1.*The run counts only when a gate in separated mode reports it\./s);
+    const logs: string[] = [];
+    const r = await prepareReport(text, { allowed: [url], allowedSigners }, (l) => logs.push(l));
+    assert.ok(r && typeof r === 'object' && r.plan.required && r.plan.separated && !r.plan.signed);
+    assert.match(logs.join('\n'), /report-runs-required: separated: The run counts only when a gate in separated mode reports it/);
+    // Not trusted: ignored, as true is.
+    const untrusted = await prepareReport(text, { allowed: [url] }, () => undefined);
+    assert.ok(untrusted && typeof untrusted === 'object' && !untrusted.plan.required && !untrusted.plan.separated);
+  });
+
   it('steps in the runbook order: blocks and checklist items', () => {
     assert.deepEqual(
       summarySteps([step(1, 3, 'passed', 5), step(2, 10, 'not run')], [{ line: 6, step: 1, text: 'Check', ticked: false }]),

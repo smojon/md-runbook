@@ -215,7 +215,7 @@ git-bash-path-conversion: off # on (default) | off: Git Bash on Windows leaves /
 manual-steps: continue # pause (default) | continue: Run All waits at an unticked checklist item, or runs on
 prose: strict        # on (default: prose notes are info) | strict: they are warnings | off: no prose checks
 report-runs: https://reports.example.net/runs # a summary of every run goes here (asked once per address)
-report-runs-required: true # the run starts only once reporting is agreed to (signed runbooks only, see below)
+report-runs-required: true # the run starts only once reporting is agreed to (signed runbooks only, see below); separated: also a gate in separated mode must report it
 report-runs-signed: true   # the summary must be signed with your SSH key (signed runbooks only)
 report-runs-token: ${secret:REPORTS_TOKEN} # optional bearer token, from your secret store
 env:                 # variables for every cell run in VS Code or the command line; a cell's env.NAME= wins
@@ -281,6 +281,10 @@ secret.
 - `report-runs-token:` takes only `${secret:NAME}`, sent as `Authorization: Bearer`. A token
   written in the file is a lint error and is never sent.
 - `report-runs-required: true` shows a notice before the run: Run / Don't run.
+- `report-runs-required: separated` does the same. On top, only a report from a gate in
+  separated mode counts as the run's. The library server checks that
+  ([run reports](features/run-reports.md#a-gate-in-separated-mode)).
+- Any other value of `report-runs-required` is a lint error, and requires nothing.
 - `report-runs-signed: true` needs the summary signed with your key, else the run doesn't start.
 - Both count only in a runbook signed as a whole (manifest version 2) and unchanged since
   signing. The signer must be one your client trusts. Otherwise they are ignored, and lint says

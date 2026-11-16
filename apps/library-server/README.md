@@ -112,7 +112,7 @@ Clients send the summary of every run to the address in a runbook's `report-runs
   | `trust` | Meaning |
   | --- | --- |
   | `runner-signed` | A key in the allowed runners signed it (`runner` names it). |
-  | `gate` | Client `gate`, sent with a gate token: md-runbook-gate's own record of what it ran. |
+  | `gate` | Client `gate`, sent with a gate token: md-runbook-gate's own record of what it ran. `gateMode` says the gate's mode: `separated`, or `shared` (also when the gate sent none). |
   | `unverified` | Anything else: what the sender says (`why` says why it isn't verified). |
 
 - `RUNS_REQUIRE_SIGNED=true` refuses `unverified` summaries (`403`).
@@ -132,6 +132,15 @@ verified, the newest verified one too:
 { "runbook": "ops/restart-api.md", "last": { … }, "lastVerified": { … },
   "text": "ops/restart-api.md: last ran green by bob at 2026-11-14T09:02:00.000Z (version 7), unverified; last verified green run by ana@example.net at 2026-11-14T09:01:00.000Z (version 7), verified: signed by the runner" }
 ```
+
+A gate's run reads `verified: sent by a gate (separated)` or `(shared account)`.
+
+When the library's copy says `report-runs-required: separated`:
+- only a green run a gate sent in separated mode counts as `lastVerified`;
+- the answer has `"required": "separated"`;
+- the text says when there is none.
+
+More in [run reports](../../docs/features/run-reports.md#a-gate-in-separated-mode).
 
 Summaries hold no outputs, parameter values or secrets: the format has no place for them.
 They are a convenience view. The tamper-resistant record is the gate's log (syslog forwarded off
