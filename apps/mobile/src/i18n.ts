@@ -199,6 +199,12 @@ const en = {
   ],
   hostsImportPlaceholder: 'Paste the hosts.json text or the link',
   hostsAlreadyHave: 'you have one of that name: skipped',
+  hostsJoinsGroup: (group: string) => `joins your group ${group}`,
+  hostsJoiningPoints: [
+    'Some hosts join a group you already have.',
+    'Run on a Group then runs on them too.',
+    'Add them only if you trust who sent the list.',
+  ],
   hostsTrustKeys: 'Trust the host keys in this list',
   hostsTrustKeysPoints: [
     'Their app checked these keys: turn this on only if you trust who sent them.',

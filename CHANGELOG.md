@@ -9,6 +9,7 @@
 - **App: Pause Before This Step, Notify Me When It Starts.** A step's ⋯ (cell or Steps row) sets either, for this session. Run all asks Continue or Stop there.
 - **App: the launch form.** Run all first shows one sheet: parameters, inputs, secrets to set, risky steps, steps by hand, time and host. Start asks for no value again; risky steps still ask. Hosts & Settings turns it off; ⋯ More → **Run All…** always opens it.
 - **App: a runbook's practice: host asks first.** Front matter `practice:` asks once before every cell runs on that host, as `host=` does. A whole runbook verified-signed, or a host you picked, doesn't ask.
+- **App: imported hosts that join your groups are marked.** Import hosts marks each new host that joins a group you already have, as Run on a Group would include it.
 
 ## 0.26.8
 

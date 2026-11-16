@@ -28,6 +28,11 @@ export function HostsImport({ packed }: { packed: string | undefined }) {
   const hosts = read && 'hosts' in read ? read.hosts : [];
   const have = new Set(existing.map((h) => h.name.toLowerCase()));
   const fresh = hosts.filter((h) => !have.has(h.name.toLowerCase()));
+  // A new host in a group you have (prod): Run on a Group then runs on it too, its key trusted if ticked.
+  const groups = new Map(existing.flatMap((h) => (h.group ? [[h.group.toLowerCase(), h.group] as const] : [])));
+  const joins = (h: (typeof hosts)[number]): string | undefined =>
+    !have.has(h.name.toLowerCase()) && h.group ? groups.get(h.group.toLowerCase()) : undefined;
+  const joining = fresh.some((h) => joins(h) !== undefined);
   const withKeys = fresh.some((h) => h.hostKey);
   const relay = Platform.OS === 'web' && read && 'hosts' in read ? read.relay : undefined;
   const go = (): void => {
@@ -64,14 +69,23 @@ export function HostsImport({ packed }: { packed: string | undefined }) {
       ) : null}
       {hosts.length > 0 && !done ? (
         <View testID="hosts-import-list" style={styles.card}>
-          {hosts.map((h) => (
-            <Text key={h.name} style={have.has(h.name.toLowerCase()) ? styles.skip : styles.item}>
-              {`${h.group ? `${h.group} · ` : ''}${h.name}: ${h.username}@${h.hostname}${h.port === 22 ? '' : `:${h.port}`}`}
-              {have.has(h.name.toLowerCase()) ? ` (${t.hostsAlreadyHave})` : ''}
-            </Text>
-          ))}
+          {hosts.map((h) => {
+            const group = joins(h);
+            return (
+              <Text key={h.name} style={have.has(h.name.toLowerCase()) ? styles.skip : styles.item}>
+                {`${h.group ? `${h.group} · ` : ''}${h.name}: ${h.username}@${h.hostname}${h.port === 22 ? '' : `:${h.port}`}`}
+                {have.has(h.name.toLowerCase()) ? ` (${t.hostsAlreadyHave})` : ''}
+                {group !== undefined ? (
+                  <Text testID={`hosts-import-joins-${h.name}`} style={styles.warn}>
+                    {` (${t.hostsJoinsGroup(group)})`}
+                  </Text>
+                ) : null}
+              </Text>
+            );
+          })}
         </View>
       ) : null}
+      {joining && !done ? <Points testID="hosts-import-joining" items={t.hostsJoiningPoints} textStyle={styles.warn} role="alert" /> : null}
       {withKeys && !done ? (
         <View style={styles.row}>
           <View style={styles.rowText}>
@@ -134,6 +148,7 @@ const useStyles = themedStyles((c) => ({
   card: { borderWidth: 1, borderColor: c.border, borderRadius: 12, padding: 12, gap: 6, backgroundColor: c.surface },
   item: { fontSize: 14, color: c.text },
   skip: { fontSize: 14, color: c.muted },
+  warn: { fontSize: 14, color: c.warning },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   rowText: { flex: 1 },
   button: {
