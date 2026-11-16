@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix. It lands after the step, as a proposal to approve.
+
 ## 0.26.8
 
 The Android APK is signed with the app's own key and attached to each release. Progress and notes are fixed.

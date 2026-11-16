@@ -1,6 +1,6 @@
 /**
  * The assistant's actions for one runbook, as the extension has them: Explain Output, Suggest Next
- * Steps, Summarize Incident (Claude, the user's key), Copy for AI / Paste AI Proposal (any chat
+ * Steps, Suggest a Fix (a failed step), Summarize Incident (Claude, the user's key), Copy for AI / Paste AI Proposal (any chat
  * assistant, through the clipboard) and Check for Leaks. Every send is confirmed first; answers
  * are mapped back to the real names; suggestions arrive as proposed cells.
  */
@@ -11,6 +11,7 @@ import {
   AiPrompt,
   explainLinePrompt,
   explainOutputPrompt,
+  suggestFixPrompt,
   suggestNextStepsPrompt,
   summarizeIncidentPrompt,
 } from '@md-runbook/core/aiPrompt';
@@ -23,7 +24,11 @@ import { PROVIDER_LABEL, askClaude, clearApiKey, hasApiKey, setApiKey } from './
 import { copyText, prepareContext, pseudonymMap } from './context';
 import { insertNote, insertPasted, insertSuggestions, withFindings } from './edits';
 
-export type AskKind = 'explain' | 'explainLine' | 'suggest' | 'summarize';
+export type AskKind = 'explain' | 'explainLine' | 'suggest' | 'fix' | 'summarize';
+
+/** How many proposals Suggest Next Steps inserts; Suggest a Fix at most 2 (as the extension's). */
+const MAX_PROPOSALS = 3;
+const MAX_FIXES = Math.min(2, MAX_PROPOSALS);
 
 /** Code cells up to and including `index` (parsed indexes): the context of a cell's question. */
 function cellsUpTo(text: string, index: number): number[] {
@@ -68,12 +73,20 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
         : kind === 'explainLine'
           ? explainLinePrompt(ctx.text, label, lines ?? '1')
           : kind === 'suggest'
-            ? suggestNextStepsPrompt(ctx.text, 3, cell === undefined ? undefined : label)
-            : summarizeIncidentPrompt(ctx.text);
+            ? suggestNextStepsPrompt(ctx.text, MAX_PROPOSALS, cell === undefined ? undefined : label)
+            : kind === 'fix'
+              ? suggestFixPrompt(ctx.text, label || 'the last step that ran', MAX_FIXES)
+              : summarizeIncidentPrompt(ctx.text);
     // What the sheet calls it: "cell 3", or "line 2 of cell 3".
     const shown = kind === 'explainLine' ? t.lineOf(lines ?? '1', label) : label;
     const what =
-      kind === 'explain' || kind === 'explainLine' ? t.aiWhatExplain(shown) : kind === 'suggest' ? t.aiWhatSuggest : t.aiWhatSummary;
+      kind === 'explain' || kind === 'explainLine'
+        ? t.aiWhatExplain(shown)
+        : kind === 'suggest'
+          ? t.aiWhatSuggest
+          : kind === 'fix'
+            ? t.aiWhatFix(shown)
+            : t.aiWhatSummary;
     next.current = () => void send(kind, cell, shown, prompt, what, ctx.map);
     setStep({
       kind: 'confirm',
@@ -123,8 +136,9 @@ export function useAssistant(runbook: Runbook | undefined, notify: (message: str
       return setStep({ kind: 'answer', title: t.aiExplanationTitle(label), markdown: text, canInsert: true });
     }
     setStep(undefined);
-    if (kind === 'suggest') {
-      const r = insertSuggestions(now, answer, map, 3, cell);
+    if (kind === 'suggest' || kind === 'fix') {
+      // A fix goes right after the failed step, as a proposal to approve (the extension's proposeAfter).
+      const r = insertSuggestions(now, answer, map, kind === 'fix' ? MAX_FIXES : MAX_PROPOSALS, cell);
       if (r.count > 0) updateRunbookText(runbook.id, r.text);
       return notify(t.aiSuggested(r.count));
     }

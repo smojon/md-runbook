@@ -1455,6 +1455,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   };
   /** Run Until Here: the steps still to do (Resume's) up to cell `index`. */
   const untilHere = (index: number): number[] => (runbook ? textProgress(runbook.text).resume.filter((i) => i <= index) : []);
+  /** A step whose last run failed (Suggest a Fix is for it). */
+  const failedHere = (cell: (typeof cells)[number]): boolean => {
+    const a = cell.output?.attrs;
+    return a !== undefined && stepState(a.exit, a.lines !== undefined, a.check) === 'failed';
+  };
   const cellActions = (index: number): AppAction[] => {
     const cell = cells[index];
     if (!runbook || !cell || cell.kind !== 'code') return [];
@@ -1519,6 +1524,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         },
       },
       { ...meta('explainOutput', 'assistant', cell.output ? undefined : t.noOutputToExplain), run: () => assistant.ask('explain', index) },
+      {
+        ...meta('suggestFix', 'assistant', failedHere(cell) ? undefined : t.notFailed),
+        run: () => assistant.ask('fix', index),
+      },
       { ...meta('suggestNextSteps', 'assistant'), run: () => assistant.ask('suggest', index) },
       { ...meta('copyCellForAi', 'assistant'), run: () => assistant.copyForAi(index) },
       { ...meta('pasteAiProposal', 'assistant'), run: () => assistant.paste(index) },
@@ -1765,6 +1774,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 },
               ]
             : []),
+          // As VS Code's failure triage: the assistant's fix, as a proposal after the step.
+          {
+            id: 'fix',
+            label: t.stepsFix,
+            hint: t.stepsFixHint,
+            kind: 'secondary',
+            onPress: () => assistant.ask('fix', failedCell),
+          },
         ]
       : wide
         ? []

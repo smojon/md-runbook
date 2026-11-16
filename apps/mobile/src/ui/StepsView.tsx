@@ -14,7 +14,7 @@ import { TimeBar } from './TimeBar';
 
 /** A button of the header: `steps-<id>`. */
 export interface StepsHeadAction {
-  id: 'retry' | 'resume' | 'run' | 'stop';
+  id: 'retry' | 'resume' | 'fix' | 'run' | 'stop';
   label: string;
   hint?: string;
   kind: 'primary' | 'secondary' | 'stop';
