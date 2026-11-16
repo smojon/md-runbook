@@ -60,15 +60,18 @@ test('hosts: an injected secret under a cell env= name stays on this machine', a
   await vscode.commands.executeCommand('mdRunbook._test.setSecret', 'MDRB_REMOTE_TOKEN', 'stored-secret-r3');
   await setConfig('secrets.inject', ['MDRB_REMOTE_TOKEN']);
   try {
-    const uri = writeFile('hosts-env.md', '```bash host=ci env.MDRB_REMOTE_TOKEN=as-written\necho "token=$MDRB_REMOTE_TOKEN"\n```\n');
+    // Output redaction hides any `token=…` (and the injected value, a known secret), so the remote
+    // prints the value's length and first part: 10 / "as" is the cell's own value, 16 / "stored"
+    // would be the injected secret.
+    const uri = writeFile('hosts-env.md', '```bash host=ci env.MDRB_REMOTE_TOKEN=as-written\necho "len ${#MDRB_REMOTE_TOKEN} head ${MDRB_REMOTE_TOKEN%%-*}"\n```\n');
     const editor = await openRunbook(uri);
     await hook('allow', editor.notebook.uri.toString(), 'ci');
     await selectKernel(editor);
     await runCells(editor, 0, 1);
     const cell = editor.notebook.cellAt(0);
     assert.equal(await waitForRun(cell, 60_000), true, outputText(cell));
-    assert.match(outputText(cell), /token=as-written/);
-    assert.doesNotMatch(outputText(cell), /stored-secret-r3/);
+    assert.match(outputText(cell), /len 10 head as\b/);
+    assert.doesNotMatch(outputText(cell), /len 16|head stored|stored-secret-r3/);
   } finally {
     await setConfig('secrets.inject', undefined);
     await vscode.commands.executeCommand('mdRunbook._test.deleteSecret', 'MDRB_REMOTE_TOKEN');
@@ -143,7 +146,14 @@ tests.push({
       const cell = editor.notebook.cellAt(0);
       await vscode.commands.executeCommand('mdRunbook.runOnGroup', cell, 'fleet');
       assert.deepEqual(await hook('asked'), ['Practice this runbook on far?', 'Run this cell on each host of fleet?']);
-      assert.equal(cell.executionSummary, undefined, 'declined: not run');
+      // VS Code gives a never-run cell a summary with every field undefined, not no summary.
+      const summary = cell.executionSummary;
+      assert.deepEqual(
+        { executionOrder: summary?.executionOrder, success: summary?.success, timing: summary?.timing },
+        { executionOrder: undefined, success: undefined, timing: undefined },
+        'declined: not run',
+      );
+      assert.equal(cell.outputs.length, 0, 'declined: no output');
       assert.doesNotMatch(outputText(cell), /args-ran/);
       // Agreed: practice is on; '' stops it without a question.
       await hook('askArguments', true);
