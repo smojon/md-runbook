@@ -13,6 +13,8 @@ Security fixes from a review of the parts that face the network.
   address, and also refuses multicast and reserved addresses.
   - A NAT64 address counts as the IPv4 address in it. So a relay on an IPv6-only network with
     DNS64 still reaches public hosts.
+  - Only the usual NAT64 forms (`64:ff9b::a.b.c.d`, `64:ff9b:1::a.b.c.d`). The rest of
+    `64:ff9b::/32` is refused, such as `64:ff9b::ffff:a00:1`.
 - **Links (app and VS Code):** a runbook from a link counts as signed only when its signature
   verifies against a key you trust. That holds for **Open only signed runbooks from links** too.
   - Before, any well-formed signature block was enough.

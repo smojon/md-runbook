@@ -258,7 +258,7 @@ for (const [net, bits] of [
 for (const [net, bits] of [
   ['::', 96], // unspecified, loopback, IPv4-compatible
   ['::ffff:0:0:0', 96], // IPv4-translated
-  // NAT64 (64:ff9b::/96, 64:ff9b:1::/48): judged by the IPv4 address they embed (nat64Ipv4).
+  // NAT64 (64:ff9b::/32): judged by the IPv4 address in its two known forms (nat64Ipv4).
   ['100::', 64], // discard
   ['2001::', 32], // Teredo
   ['2001:db8::', 32], // documentation
@@ -293,7 +293,8 @@ function ipv6Bytes(address: string): number[] | undefined {
  * The IPv4 address a NAT64 address stands for, or `'unknown'` when it can't be told: in the
  * well-known prefix 64:ff9b::/96 it is the last 32 bits (RFC 6052). In the local-use 64:ff9b:1::/48
  * only the /96 form (64:ff9b:1::a.b.c.d) is read; another layout of the /48 could put the address
- * elsewhere, so it is refused. Undefined: not a NAT64 address.
+ * elsewhere, so it is refused. So is the rest of 64:ff9b::/32 (64:ff9b::ffff:a00:1,
+ * 64:ff9b:a00:1::): a translator may map it too. Undefined: not in 64:ff9b::/32.
  */
 function nat64Ipv4(address: string): string | 'unknown' | undefined {
   const b = ipv6Bytes(address);
@@ -302,8 +303,8 @@ function nat64Ipv4(address: string): string | 'unknown' | undefined {
   const zero = (from: number, to: number): boolean => b.slice(from, to).every((x) => x === 0);
   if (b[0] !== 0x00 || b[1] !== 0x64 || b[2] !== 0xff || b[3] !== 0x9b) return undefined;
   if (zero(4, 12)) return v4(); // 64:ff9b::/96
-  if (b[4] === 0x00 && b[5] === 0x01) return zero(6, 12) ? v4() : 'unknown'; // 64:ff9b:1::/48
-  return undefined;
+  if (b[4] === 0x00 && b[5] === 0x01 && zero(6, 12)) return v4(); // 64:ff9b:1::/96
+  return 'unknown';
 }
 
 /**

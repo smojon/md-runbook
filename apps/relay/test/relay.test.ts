@@ -203,6 +203,10 @@ describe('relay', () => {
     for (const a of ['64:ff9b::a00:1', '64:ff9b::10.0.0.1', '64:ff9b::7f00:1', '64:ff9b::127.0.0.1', '64:ff9b::a9fe:a9fe', '64:ff9b::c0a8:101', '64:ff9b::',
       '64:ff9b:1::a00:1', '64:ff9b:1::192.168.1.1', '64:ff9b:1:a00:1::808:808', '64:ff9b:1:abcd::808:808'])
       assert.ok(isInternal(a), a);
+    // The rest of 64:ff9b::/32, whatever it embeds: refused (security review, round 4).
+    for (const a of ['64:ff9b:a00:1::', '64:ff9b::ffff:a00:1', '64:ff9b::ffff:10.0.0.1', '64:ff9b::1:a00:1', '64:ff9b:0:a00:1::', '64:ff9b:2::a00:1',
+      '64:ff9b::1:808:808', '64:ff9b:808:808::', '64:ff9b:ffff::808:808'])
+      assert.ok(isInternal(a), a);
   });
 });
 
