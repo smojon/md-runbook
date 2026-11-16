@@ -38,6 +38,7 @@ import { NOTEBOOK_TYPE } from './serializer';
 import { whileWaiting } from './waiting';
 import { hostSkipped } from './remoteHosts';
 import { testOnlyValues } from './testValues';
+import { InputValues } from './inputValues';
 
 /** SecretStorage can't enumerate, so the names are kept here. */
 const INDEX_KEY = 'mdRunbook.secretNames';
@@ -140,10 +141,26 @@ function resolveEnvFile(setting: string, cwd: string, uri: vscode.Uri): string {
 
 class SecretsFeature {
   /** Per-notebook session values, cleared when the notebook closes or on Reset Inputs. */
-  private readonly inputs = new Map<string, Map<string, string>>();
+  private readonly inputs = new Map<string, InputValues>();
   private readonly params = new Map<string, Map<string, string>>();
   /** Values captured from cell output (`capture=`), for `${out:NAME}`. */
   private readonly outs = new Map<string, Map<string, Captured>>();
+
+  /** The session's input values of `nb` (made when missing). */
+  private inputsOf(nb: vscode.NotebookDocument): InputValues {
+    const key = nb.uri.toString();
+    let v = this.inputs.get(key);
+    if (!v) this.inputs.set(key, (v = new InputValues()));
+    return v;
+  }
+
+  /**
+   * Whether `${input:NAME}` is a secret input in `nb`: written `${input:NAME:secret}` in any of its
+   * cells, or asked as one this session. Then every use of the name is masked and redacted.
+   */
+  private secretInput(nb: vscode.NotebookDocument, name: string): boolean {
+    return this.inputs.get(nb.uri.toString())?.isSecret(name) === true || usedRefs(nb).some((r) => r.kind === 'input' && r.secret && r.name === name);
+  }
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -233,10 +250,15 @@ class SecretsFeature {
     void this.context.workspaceState.update(LAST_KEY, all);
   }
 
-  private async input(name: string, secret: boolean, ctx: Asking): Promise<string> {
-    const cache = this.session(this.inputs, ctx.notebook);
+  private async input(name: string, asSecret: boolean, ctx: Asking): Promise<string> {
+    const cache = this.inputsOf(ctx.notebook);
+    // `${input:NAME:secret}` anywhere in the runbook makes every use of NAME secret.
+    const secret = asSecret || this.secretInput(ctx.notebook, name);
     const cached = cache.get(name);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      if (secret) cache.markSecret(name);
+      return cached;
+    }
     const last = secret ? undefined : this.last(ctx.notebook, 'input', name);
     const value = await whileWaiting(ctx.cell, `input ${name}`, () =>
       vscode.window.showInputBox(
@@ -251,7 +273,7 @@ class SecretsFeature {
       ),
     );
     if (value === undefined) throw new PromptCancelled(`input ${name} cancelled`);
-    cache.set(name, value);
+    cache.set(name, value, secret);
     if (!secret) this.remember(ctx.notebook, 'input', name, value);
     return value;
   }
@@ -374,6 +396,8 @@ class SecretsFeature {
             : ref.kind === 'input'
               ? await this.input(ref.name, ref.secret, ctx)
               : await this.param(ref.name, ctx);
+        // The same input written `${input:NAME:secret}` elsewhere: secret here too (redacted).
+        if (ref.kind === 'input') secret ||= this.secretInput(ctx.notebook, ref.name);
       }
       plan.env[ref.name] = value;
       values[ref.name] = value;
@@ -417,9 +441,10 @@ class SecretsFeature {
         case 'secret':
           return { ...r, secret: true, shown: this.names().includes(ref.name) ? undefined : 'not set: asked when it runs' };
         case 'input': {
-          const v = known(this.inputs, ref.name);
-          if (v === undefined) return { ...r, secret: ref.secret, shown: 'asked when it runs' };
-          return ref.secret ? { ...r, secret: true } : { ...r, secret: false, value: v };
+          const v = this.inputs.get(nb.uri.toString())?.get(ref.name);
+          const secret = ref.secret || this.secretInput(nb, ref.name);
+          if (v === undefined) return { ...r, secret, shown: 'asked when it runs' };
+          return secret ? { ...r, secret: true } : { ...r, secret: false, value: v };
         }
         case 'param': {
           const v = known(this.params, ref.name);
@@ -490,8 +515,8 @@ class SecretsFeature {
           ...(value !== undefined ? { value, from: now !== undefined ? 'session' : last !== undefined ? 'last' : 'default' } : {}),
         });
       } else if (r.kind === 'input') {
-        const now = session(this.inputs, r.name);
-        if (r.secret) inputs.push({ name: r.name, secret: true, ...(now !== undefined ? { set: true } : {}) });
+        const now = this.inputs.get(nb.uri.toString())?.get(r.name);
+        if (r.secret || this.secretInput(nb, r.name)) inputs.push({ name: r.name, secret: true, ...(now !== undefined ? { set: true } : {}) });
         else {
           const value = now ?? this.last(nb, 'input', r.name)?.value;
           inputs.push({ name: r.name, secret: false, ...(value !== undefined ? { value } : {}) });
@@ -521,11 +546,11 @@ class SecretsFeature {
       params.set(k, v);
       this.remember(nb, 'param', k, v);
     }
-    const inputs = this.session(this.inputs, nb);
+    const inputs = this.inputsOf(nb);
     for (const [k, v] of Object.entries(values.inputs ?? {})) {
       if (!VAR_NAME_RE.test(k)) continue;
-      inputs.set(k, v);
-      if (!secretInputs.has(k) && !looksSecret(k)) this.remember(nb, 'input', k, v);
+      inputs.set(k, v, secretInputs.has(k));
+      if (!inputs.isSecret(k) && !looksSecret(k)) this.remember(nb, 'input', k, v);
     }
   }
 
@@ -589,8 +614,8 @@ class SecretsFeature {
     const checked = testOnlyValues(values, isTestMode(this.context));
     const nb = activeRunbook();
     if (!nb) return;
-    const cache = this.session(this.inputs, nb);
-    for (const [k, v] of Object.entries(checked)) cache.set(k, v);
+    const cache = this.inputsOf(nb);
+    for (const [k, v] of Object.entries(checked)) cache.set(k, v, false);
   }
 
   /** Ask for every declared parameter (Set Parameters). Takes no values: a command link can't set any. */
@@ -623,11 +648,12 @@ class SecretsFeature {
   async setInputs(): Promise<void> {
     const nb = activeRunbook();
     if (!nb) return;
-    const cache = this.session(this.inputs, nb);
+    const cache = this.inputsOf(nb);
     const inputs = new Map<string, boolean>();
     for (const r of usedRefs(nb)) if (r.kind === 'input') inputs.set(r.name, (inputs.get(r.name) ?? false) || r.secret);
     if (inputs.size === 0) return void vscode.window.showInformationMessage('md-runbook: this runbook has no inputs (${input:NAME}).');
-    for (const [name, secret] of inputs) {
+    for (const [name, written] of inputs) {
+      const secret = written || cache.isSecret(name);
       const current = cache.get(name);
       const value = await vscode.window.showInputBox({
         title: `${runbookName(nb)}: input ${name}`,
@@ -638,7 +664,7 @@ class SecretsFeature {
       });
       if (value === undefined) return;
       if (secret && value === '' && current !== undefined) continue;
-      cache.set(name, value);
+      cache.set(name, value, secret);
       if (!secret) this.remember(nb, 'input', name, value);
     }
   }
