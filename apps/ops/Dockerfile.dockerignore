@@ -1,6 +1,9 @@
-# The build context is apps/ (for the gate script): send only what the image needs.
+# The build context is apps/ (for the gate's Go source): send only what the image needs.
 *
-!gate/md-runbook-gate
+!gate
+gate/dist
+gate/**/*_test.go
+gate/**/testdata
 !ops/sshd_config
 !ops/gate.conf
 !ops/start.sh

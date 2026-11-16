@@ -52,10 +52,10 @@ describe('ops host', { skip: !spec && 'set MD_RUNBOOK_OPS_TEST to run' }, () => 
     assert.deepEqual(shell.gate, { protocol: 3, unsigned: 'allow' });
   });
 
-  it('the image has what the gate needs to end leftovers and cut long requests (security review round 4)', async () => {
-    // setsid: a process group per shell; perl: the request reader; ps: kill_leftovers.
-    const r = await sh('for t in setsid perl ps; do command -v "$t" >/dev/null && echo "$t"; done');
-    assert.deepEqual([r.code, r.out], [0, 'setsid\nperl\nps\n'], r.err);
+  it('the gate is the Go binary, and ssh-keygen is there for its signature checks', async () => {
+    // An ELF file, not a script: the image's Go stage built it from apps/gate.
+    const r = await sh('head -c 4 /usr/local/bin/md-runbook-gate | od -An -tx1 | tr -d " \\n"; echo; command -v ssh-keygen');
+    assert.deepEqual([r.code, r.out], [0, '7f454c46\n/usr/bin/ssh-keygen\n'], r.err);
   });
 
   it("the account's login shell is /bin/sh, which reads no file of the account before the gate (security review round 3)", async () => {

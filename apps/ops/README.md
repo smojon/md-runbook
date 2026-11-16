@@ -181,7 +181,11 @@ What keeps it as safe as the rest:
 docker build -t md-runbook-ops -f apps/ops/Dockerfile apps
 ```
 
-The build context is `apps/`, because the image includes the gate from `apps/gate`.
+- **The gate** is built from its Go source in `apps/gate`, so the build context is `apps/`.
+  - A build stage compiles it with the toolchain `apps/gate/go.mod` names, in a `golang` image
+    pinned by digest.
+  - The image gets only the static binary.
+
 `KUBECTL_VERSION` (a build argument) picks kubectl, and the build checks the download against
 its published SHA-256.
 
