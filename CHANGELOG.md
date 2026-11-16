@@ -40,6 +40,11 @@ Security fixes from a review of the parts that face the network.
   - The app's live output hides a known secret split this way too.
 - **App, live output:** a token split across two packets no longer shows its end, such as a JWT's
   signature. The raw output is redacted, never output redacted before.
+- **App, confirmations:** Run on a confirmation card runs only the values it showed. A value
+  changed since, by a link for example, asks again.
+  - A link no longer fills its values into a runbook that is running or waiting for an answer.
+    It opens a new copy and says why.
+  - A link no longer fills its values into a call's copy either.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each

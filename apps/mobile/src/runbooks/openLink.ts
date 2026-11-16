@@ -24,7 +24,8 @@ import {
   refreshLibrary,
   signedOnlyPolicy,
 } from './library';
-import { setLinkContext } from './linkContext';
+import { activeCall } from './calls';
+import { runbookBusy, setLinkContext } from './linkContext';
 import { runbookParams, setParamValue } from './params';
 import { MAX_RUNBOOK_BYTES, Runbook, addRunbook, libraryCopy, linkKey, linkedRunbook, loadRunbooks, titleOf } from './store';
 
@@ -106,10 +107,19 @@ export async function openRunbookLink(
 
   const key = linkKey(source, text);
   // The copy this link opened before, only while it is still the text whose trust was just checked
-  // (but for what runs add: outputs, notes, ticks). One edited since: a new copy.
-  const runbook = linkedRunbook(key, (r) => sameBareText(r.text, text)) ?? addRunbook(fileName, text, undefined, key);
-  applyLink(runbook, l, text, trust);
+  // (but for what runs add: outputs, notes, ticks). One edited since: a new copy. One running or
+  // waiting for an answer, or a call's copy (the same key when the call adds no front matter): a
+  // new copy too, so the link's values don't change what it is about to run.
+  const fits = (r: Runbook): boolean => sameBareText(r.text, text);
+  const before = linkedRunbook(key, fits);
+  const runbook = linkedRunbook(key, (r) => fits(r) && !inUse(r)) ?? addRunbook(fileName, text, undefined, key);
+  applyLink(runbook, l, text, trust, before !== undefined && inUse(before));
   return { kind: 'opened', runbook };
+}
+
+/** A runbook a link must not fill values into: its screen runs it or waits for an answer, or it is a call's copy. */
+function inUse(r: Runbook): boolean {
+  return runbookBusy(r.id) || activeCall(r.id) !== undefined;
 }
 
 /**
@@ -126,7 +136,7 @@ async function checkedTrust(l: RunbookLink, text: string, libraryBase: string | 
 }
 
 /** Fill in the link's parameters and remember its host and action for the runbook screen. */
-function applyLink(runbook: Runbook, l: RunbookLink, text: string, trust: Exclude<LinkTrust, 'mismatch'>): void {
+function applyLink(runbook: Runbook, l: RunbookLink, text: string, trust: Exclude<LinkTrust, 'mismatch'>, freshCopy = false): void {
   const declared = new Map(runbookParams(text).map((p) => [p.name, p]));
   const ignoredParams: string[] = [];
   const refusedParams: string[] = [];
@@ -145,6 +155,7 @@ function applyLink(runbook: Runbook, l: RunbookLink, text: string, trust: Exclud
     ignoredParams,
     ...(refusedParams.length > 0 ? { refusedParams } : {}),
     cosign: l.action === 'cosign',
+    ...(freshCopy ? { freshCopy } : {}),
   });
 }
 
@@ -180,7 +191,13 @@ async function openInLibrary(
     const trust = await checkedTrust(l, text, target.base);
     if (trust === 'mismatch') return { kind: 'error', message: t.linkMismatch };
     if (trust !== 'signed' && outputSettings().signedLinksOnly) return { kind: 'error', message: t.linkUnsignedRefused };
+    // The library copy is the only one: while it runs or waits for an answer, the link is refused
+    // rather than change its values (or its text, through Update).
+    const busyCopy = libraryCopy(target.base, target.path);
+    if (busyCopy && inUse(busyCopy)) return { kind: 'error', message: t.linkRunbookBusy(busyCopy.fileName ?? busyCopy.title) };
     const r = await open();
+    if (r.kind === 'opened' && inUse(r.runbook))
+      return { kind: 'error', message: t.linkRunbookBusy(r.runbook.fileName ?? r.runbook.title) };
     if (r.kind === 'opened') applyLink(r.runbook, l, r.runbook.text, trust);
     return r;
   };

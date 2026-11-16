@@ -155,6 +155,50 @@ describe('asking before a risky cell, as VS Code does', () => {
     expect(mockConnection.calls).toHaveLength(0);
   });
 
+  it('a confirmation holds for the values it showed: one changed since asks again (security review round 5)', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const rb = addRunbook('ns.md', '---\nparams:\n  - NS: staging\n---\n\n# Namespaces\n\n```bash\nkubectl delete ns ${param:NS}\n```\n');
+    setParamValue(rb.id, 'NS', 'staging');
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    expect(screen.getByTestId('confirm-title')).toHaveTextContent('Cell 2 contains a risky command: “delete”');
+    // While the card waits, a pager link sets NS=prod (a link to the same runbook, as the store has it).
+    await act(async () => setParamValue(rb.id, 'NS', 'prod'));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('confirm-run'));
+    });
+    // Nothing ran: the card asks again, for what runs now.
+    expect(mockConnection.calls).toHaveLength(0);
+    await waitFor(() => expect(screen.getByTestId('confirm-card')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('confirm-run'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(1));
+    expect(mockConnection.calls[0]?.opts.env).toMatchObject({ NS: 'prod' });
+  });
+
+  it('a link to a runbook whose card waits opens a new copy; Run on the card runs what it showed (security review round 5)', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const text = '---\nparams:\n  - NS: staging\n---\n\n# Namespaces\n\n```bash\nkubectl delete ns ${param:NS}\n```\n';
+    const opened = await openRunbookLink(formatRunbookLink({ text, params: { NS: 'staging' } }));
+    if (opened.kind !== 'opened') throw new Error(opened.message);
+    await render(<RunbookView id={opened.runbook.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    expect(screen.getByTestId('confirm-card')).toBeTruthy();
+    const pager = await act(async () => openRunbookLink(formatRunbookLink({ text, params: { NS: 'prod' } })));
+    if (pager.kind !== 'opened') throw new Error(pager.message);
+    expect(pager.runbook.id).not.toBe(opened.runbook.id);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('confirm-run'));
+    });
+    await waitFor(() => expect(mockConnection.calls).toHaveLength(1));
+    expect(mockConnection.calls[0]?.opts.env).toMatchObject({ NS: 'staging' });
+  });
+
   it('a risky cell waits for Run under it; nothing is sent before', async () => {
     addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
     const rb = addRunbook('rollout.md', RISKY);

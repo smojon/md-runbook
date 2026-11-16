@@ -1,10 +1,11 @@
 import { formatRunbookLink, runbookDigest } from '@md-runbook/core/runbookLink';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
 import { addHost, getHosts, resetHosts } from '../hosts/store';
-import { linkContext } from '../runbooks/linkContext';
+import { startCall } from '../runbooks/calls';
+import { linkContext, setRunbookBusy } from '../runbooks/linkContext';
 import { openRunbookLink, rawRunbookUrl } from '../runbooks/openLink';
 import { paramValues, resetParamValues } from '../runbooks/params';
-import { getRunbook, removeRunbook, resetRunbooks, updateRunbookText } from '../runbooks/store';
+import { addRunbook, getRunbook, linkKey, removeRunbook, resetRunbooks, updateRunbookText } from '../runbooks/store';
 import { resetSettings, setOutputSetting } from '../settings/store';
 import { allowedSignersLine, generateKey } from '@md-runbook/ssh';
 import { signPlan, signRunbook } from '../signing/sign';
@@ -222,6 +223,43 @@ describe('runbook links: pins, hosts, parameters, co-sign', () => {
     // And that copy is the one opened next time.
     const third = await openRunbookLink(link, serve(RUNBOOK));
     expect(third.kind === 'opened' && third.runbook.id).toBe(edited.runbook.id);
+  });
+
+  it('a copy running or waiting for an answer keeps its values: the link opens a new copy and says why (security review round 5)', async () => {
+    const link = (service: string) => formatRunbookLink({ url: 'https://x.example.net/alerts/restart.md', params: { SERVICE: service } });
+    const first = await openRunbookLink(link('staging'), serve(RUNBOOK));
+    if (first.kind !== 'opened') throw new Error(first.message);
+    // Its confirmation card waits for Run.
+    setRunbookBusy(first.runbook.id, true);
+    const pager = await openRunbookLink(link('prod'), serve(RUNBOOK));
+    if (pager.kind !== 'opened') throw new Error(pager.message);
+    expect(pager.runbook.id).not.toBe(first.runbook.id);
+    expect(paramValues(first.runbook.id)).toEqual({ SERVICE: 'staging' });
+    expect(paramValues(pager.runbook.id)).toEqual({ SERVICE: 'prod' });
+    expect(linkContext(pager.runbook.id)?.freshCopy).toBe(true);
+    // Answered: the copy is opened again.
+    setRunbookBusy(first.runbook.id, false);
+    const later = await openRunbookLink(link('web'), serve(RUNBOOK));
+    if (later.kind !== 'opened') throw new Error(later.message);
+    expect(linkContext(later.runbook.id)?.freshCopy).toBeUndefined();
+    expect([first.runbook.id, pager.runbook.id]).toContain(later.runbook.id);
+  });
+
+  it("a call's copy is never the one a link fills its values into (security review round 5)", async () => {
+    const parentText = '# Upgrade\n\n```runbook src=restart.md\nSERVICE=api\n```\n';
+    const parent = addRunbook('upgrade.md', parentText, undefined, linkKey('https://x.example.net/alerts/upgrade.md', parentText));
+    const started = await startCall(parent, 1, {}, { fetcher: serve(RUNBOOK) });
+    if (started.kind !== 'started') throw new Error(JSON.stringify(started));
+    // The call adds no front matter: its copy has the key a link to restart.md has.
+    expect(getRunbook(started.copyId)?.link).toBe(linkKey('https://x.example.net/alerts/restart.md', RUNBOOK));
+    const r = await openRunbookLink(
+      formatRunbookLink({ url: 'https://x.example.net/alerts/restart.md', params: { SERVICE: 'db' } }),
+      serve(RUNBOOK),
+    );
+    if (r.kind !== 'opened') throw new Error(r.message);
+    expect(r.runbook.id).not.toBe(started.copyId);
+    expect(paramValues(started.copyId)).toEqual({ SERVICE: 'api' });
+    expect(linkContext(r.runbook.id)?.freshCopy).toBe(true);
   });
 
   it('a damaged link says what is wrong with it', async () => {

@@ -40,6 +40,9 @@ const en = {
   linkMissingHost: (name: string) => `The link asks for the host ${name}, which you don’t have: add it under Hosts & settings.`,
   linkIgnoredParams: (names: string[]) => `The link sets ${names.join(', ')}, which this runbook doesn’t use: ignored.`,
   linkRefusedParams: (names: string[]) => `The link’s ${names.join(', ')} isn’t one of the choices: not taken. Enter it under Parameters.`,
+  linkFreshCopy: 'A new copy: the one this link opened before is running or waiting for your answer, so its values stay as they are.',
+  linkRunbookBusy: (name: string) =>
+    `Not opened: ${name} is running or waiting for your answer. Finish or stop it, then open the link again.`,
   linksTitle: 'Links',
   signedLinksOnly: 'Open only signed runbooks from links',
   signedLinksOnlyPoints: [
