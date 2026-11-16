@@ -47,6 +47,7 @@ import {
   readHosts,
   remoteEnv,
 } from './hostList';
+import { runbookSignerFiles, signerOf } from './libraryTrust';
 import { META_KEY } from './outputs';
 import type { CellExecutor, CellPreparer, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
@@ -571,13 +572,18 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     return undefined;
   }
 
-  /** The whole runbook is signed by a signer of mdRunbook.signing.allowedSigners, unchanged, not expired. */
+  /**
+   * The whole runbook is signed by a trusted signer, unchanged, not expired: one of
+   * mdRunbook.signing.allowedSigners, or, for your copy of a library runbook, one trusted from that
+   * library (src/libraryTrust.ts), as run reports check it.
+   */
   private async signedOk(nb: vscode.NotebookDocument): Promise<{ ok: boolean; cantCheck?: true }> {
-    const file = cfg().get<string>('signing.allowedSigners', '').trim().replace(/^~(?=$|[\\/])/, os.homedir());
-    if (!file) return { ok: false };
+    const own = cfg().get<string>('signing.allowedSigners', '').trim().replace(/^~(?=$|[\\/])/, os.homedir());
+    const files = runbookSignerFiles(own, this.context.globalStorageUri.fsPath, nb.uri.scheme === 'file' ? nb.uri.fsPath : undefined);
+    if (files.length === 0) return { ok: false };
     const text = notebookTextWithOutputs(nb);
     if (!/md-runbook:signature v1/.test(text)) return { ok: false };
-    const got = await runbookSignerCheck(text, file).catch(() => ({}) as SignerCheck);
+    const got = await signerOf(text, files, (t, f) => runbookSignerCheck(t, f).catch(() => ({}) as SignerCheck));
     return { ok: reportTrustProblem(text, got.signer) === undefined, ...(got.cantCheck ? { cantCheck: true } : {}) };
   }
 

@@ -58,7 +58,7 @@ export interface Library {
   base: string;
   signedOnly: boolean;
   entries: LibraryEntry[];
-  /** The library's allowed_signers file as served, when it has one. */
+  /** The library's allowed_signers file as served; '' when it publishes none, undefined when it couldn't be read. */
   allowedSigners?: string;
 }
 
@@ -166,10 +166,13 @@ export async function readLibrary(base: string, fetchFn: ReadFetch = (u, i) => f
     }
   };
   await Promise.all(Array.from({ length: Math.min(6, index.files.length) }, worker));
-  let allowedSigners: string | undefined;
+  // The library publishes no signers (none listed, 404): '', so keys trusted from it before are
+  // withdrawn. A failed read (offline, a server error) leaves it unknown, as in the app.
+  let allowedSigners: string | undefined = listed.allowedSigners === false ? '' : undefined;
   if (listed.allowedSigners !== false) {
     const got = await getText(fetchFn, base + 'allowed_signers');
     if (got.text !== undefined && !looksHtml(got.text)) allowedSigners = got.text;
+    else if (!got.error && (got.status === 404 || got.status === 410 || got.text !== undefined)) allowedSigners = '';
   }
   return { kind: 'ok', library: { base, signedOnly: index.signedOnly, entries, ...(allowedSigners !== undefined ? { allowedSigners } : {}) } };
 }
@@ -191,8 +194,9 @@ export type Verdict =
   | { kind: 'older'; name: string; version: number; seen: number };
 
 /**
- * The verdict on a library runbook's text: `trusted` is the signer of your allowed_signers whose
- * key made one of its signatures (trustedRunbookSigner), undefined when none did (or none is set),
+ * The verdict on a library runbook's text: `trusted` is the signer whose key made one of its
+ * signatures (trustedRunbookSigner: your allowed_signers, then the keys trusted from this library,
+ * src/libraryTrust.ts), undefined when none did (or none is set),
  * CANT_CHECK when ssh-keygen could not be started;
  * `seen` the highest version of this path under this name verified before (a lower one now is a
  * downgrade, as the app and the gate's version floors refuse).

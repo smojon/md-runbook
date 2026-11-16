@@ -3,9 +3,10 @@
  * (one cell, a range, Run All) of a runbook whose front matter names `report-runs:`, a summary of
  * it goes to that address: which runbook, who, when, and how each step ended, never an output or a
  * value. Asked once per address (Allow / Not now / Never) unless `mdRunbook.reports.allowedAddresses`
- * names it. A runbook signed as a whole by a signer in `mdRunbook.signing.allowedSigners` can
- * require it (a notice before the run: Run / Don't run) and require it signed with your key
- * (`mdRunbook.signing.key`). Sending never holds up a run: a summary that can't be sent waits in
+ * names it. A runbook signed as a whole by a signer in `mdRunbook.signing.allowedSigners` (or,
+ * for your copy of a library runbook, one trusted from that library) can require it (a notice
+ * before the run: Run / Don't run) and require it signed with your key (`mdRunbook.signing.key`).
+ * Sending never holds up a run: a summary that can't be sent waits in
  * global state and is tried again later.
  */
 
@@ -40,6 +41,7 @@ import type { SecretsInfo } from './secrets';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
 import { SIGNING_KEY_MISSING, SIGNING_KEY_MISSING_CANCEL, reportGate, summarySigning } from './reportGate';
 import { hostSkipped } from './remoteHosts';
+import { runbookSignerFiles, signerOf } from './libraryTrust';
 import { CANT_CHECK_SIGNATURES, SignerCache, SignerCheck } from './signerCheck';
 
 const CONSENT_KEY = 'mdRunbook.reports.consent';
@@ -101,11 +103,16 @@ class RunReports {
     return vscode.workspace.getConfiguration(SECTION);
   }
 
-  /** The signer of `mdRunbook.signing.allowedSigners` whose key signed this text, or none (`cantCheck`: no ssh-keygen). */
-  private async trustedSigner(text: string): Promise<SignerCheck> {
-    const file = this.config().get<string>('signing.allowedSigners', '').trim();
-    if (!file || !/md-runbook:signature v1/.test(text)) return {};
-    return this.trust.signer(text, home(file));
+  /**
+   * The trusted signer whose key signed this text, or none (`cantCheck`: no ssh-keygen): one of
+   * `mdRunbook.signing.allowedSigners`, or, for your copy of a library runbook, one trusted from
+   * that library (src/libraryTrust.ts).
+   */
+  private async trustedSigner(text: string, uri: vscode.Uri): Promise<SignerCheck> {
+    const own = this.config().get<string>('signing.allowedSigners', '').trim();
+    const files = runbookSignerFiles(own ? home(own) : '', this.context.globalStorageUri.fsPath, uri.scheme === 'file' ? uri.fsPath : undefined);
+    if (files.length === 0 || !/md-runbook:signature v1/.test(text)) return {};
+    return signerOf(text, files, (t, f) => this.trust.signer(t, f));
   }
 
   private async planOf(nb: vscode.NotebookDocument): Promise<{ plan: ReportPlan; text: string; signer?: string } | undefined> {
@@ -114,7 +121,7 @@ class RunReports {
     const first = nb.cellCount > 0 ? nb.cellAt(0) : undefined;
     if (first?.kind !== vscode.NotebookCellKind.Markup || !/^report-runs\s*:/m.test(first.document.getText())) return undefined;
     const text = notebookTextWithOutputs(nb);
-    const { signer, cantCheck } = await this.trustedSigner(text);
+    const { signer, cantCheck } = await this.trustedSigner(text, nb.uri);
     const plan = reportPlan(text, signer);
     // Required or signed reporting counts only once the signature is checked: say why it isn't (once).
     if (cantCheck && plan?.ignored && !this.toldCantCheck) {
