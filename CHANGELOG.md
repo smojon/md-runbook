@@ -46,6 +46,9 @@ Security fixes from a review of the parts that face the network.
   - In VS Code, a cell with placeholders asks once their values are known, not before.
 - **VS Code, redaction and AI settings:** a workspace's `redaction.patterns`, `ai.terms` and
   `ai.internalDomains` are added to yours. Before, a workspace setting `[]` replaced your list.
+- **VS Code on Windows, recorded context:** focusing a runbook could run a `kubectl.cmd` planted
+  next to it. Context commands now look on `PATH` only.
+  - The status bar's first look runs them in your home folder.
 
 ## 0.26.8
 

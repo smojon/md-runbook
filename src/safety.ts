@@ -3,6 +3,7 @@
  * (cluster, server, ...) as output marker attributes, with a status bar item for it.
  */
 
+import { homedir } from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isCallLanguage } from '@md-runbook/core/call';
@@ -104,7 +105,9 @@ class ContextRecorder implements CellPreparer, vscode.Disposable {
     const known = this.last.get(nb.uri.toString());
     if (!known) {
       this.item.hide();
-      if (fetch) void this.values(nb, executionConfig().env).then(() => this.refresh(false));
+      // Only focused, not run: on Windows not in the runbook's folder, where cmd.exe would find a
+      // program planted next to it (and PATH only: contextEnv). A run records the real context.
+      if (fetch) void this.values(nb, executionConfig().env, process.platform === 'win32' ? homedir() : undefined).then(() => this.refresh(false));
       return;
     }
     this.item.text = `$(cloud) ${known[attr] ?? 'unknown'}`;
