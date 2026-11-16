@@ -6,7 +6,7 @@
  * (prose.ts, as info). Used by `md-runbook lint` and by the editor's problem markers.
  */
 
-import { cellRefs, parseCellOptions, tokenizeInfo } from './cellOptions';
+import { INFO_LANG_RE, cellRefs, parseCellOptions, tokenizeInfo } from './cellOptions';
 import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
@@ -44,7 +44,7 @@ const KNOWN_OPTIONS = new Set([
   'proposed', 'by', 'reason', 'approved', 'approved-by', 'approved-at',
 ]);
 
-const LANG_RE = /^\s*[^\s{]*/;
+const LANG_RE = INFO_LANG_RE;
 
 /** Edits from `a` to `b`: inserting, deleting or changing a letter, or swapping two neighbours (retires/retries). */
 function editDistance(a: string, b: string): number {
@@ -150,7 +150,15 @@ function lintReportRuns(text: string, lines: readonly string[], end: number): Li
     const key = m[1]!.toLowerCase();
     const value = m[2]!.replace(/\s+#.*$/, '').replace(/^(["'])(.*)\1$/, '$2');
     if (at[key] !== undefined) {
-      problems.push({ severity: 'warning', line: i, message: `front matter ${key}: written twice: the first one counts` });
+      // As parseFrontMatter reads them: the first valid address, the first token line, and for
+      // -required and -signed the strictest (any line that asks for it).
+      const counts =
+        key === 'report-runs-required' || key === 'report-runs-signed'
+          ? 'the strictest counts (any line that asks for it)'
+          : key === 'report-runs'
+            ? 'the first valid address counts'
+            : 'the first one counts';
+      problems.push({ severity: 'warning', line: i, message: `front matter ${key}: written twice: ${counts}` });
       continue;
     }
     at[key] = i;

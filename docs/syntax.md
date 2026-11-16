@@ -92,6 +92,7 @@ Tokens are separated by spaces or tabs. There are three forms:
 - A known option with an invalid value (`timeout=abc`, `os=dos`, `expect=/(/`) is an error.
   The linter reports it and the cell does not run (`invalid cell option timeout=abc: …`).
 - The same key written twice: the last one wins (`capture=` may be repeated and all are kept).
+  `kube-context=` written twice is an error: neither counts.
 
 ### Options
 
@@ -289,7 +290,9 @@ secret.
 - Both count only in a runbook signed as a whole (manifest version 2) and unchanged since
   signing. The signer must be one your client trusts. Otherwise they are ignored, and lint says
   why.
-- The first `report-runs:` line counts.
+- Written twice: the first valid `report-runs:` and the first `report-runs-token:` count.
+  For `report-runs-required` and `report-runs-signed` the strictest counts (any line that asks
+  for it). Signing refuses them written twice.
 
 `kube-context:` is a guard against the wrong cluster. Before each cell, `kubectl config
 current-context` runs where the cell would run. That is the session shell, or the app's SSH host

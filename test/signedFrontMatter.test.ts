@@ -9,7 +9,8 @@ import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { buildManifest, formatManifest, signedStatus, signedText, wholeRunbookSigned, withSignature } from '@md-runbook/core/signing';
 
 const FM = '---\nkube-context: staging\nreport-runs: https://audit.example.com/runs\nreport-runs-required: true\nmode: isolated\nenv:\n  SAFE: 1\nparams:\n  - SVC: api # One of: api, web\n---\n';
-const BODY = '# Restart\n\n```bash\nkubectl rollout restart deploy/${param:SVC}\n```\n';
+// The block's own kube-context= too: the gate never reads the front matter, so signing asks for it.
+const BODY = '# Restart\n\n```bash kube-context=staging\nkubectl rollout restart deploy/${param:SVC}\n```\n';
 
 function signed(): string {
   const orig = FM + BODY;

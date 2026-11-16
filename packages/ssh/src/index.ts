@@ -17,6 +17,7 @@ export {
   gateAlertNote,
   gateBanner,
   gateCalledCommand,
+  gateContextCommand,
   gateLoadCommand,
   gateNoteCommand,
   gateParamCommand,

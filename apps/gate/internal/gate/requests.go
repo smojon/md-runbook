@@ -128,7 +128,7 @@ func (g *Gate) doLoad(rid string, args []string) {
 		return
 	}
 	expires := m.Field("expires", "", 2)
-	if expires != "" && !isDate(expires) {
+	if expires != "" && !manifest.IsDate(expires) {
 		g.refuse(rid, "the manifest's expires is not a date (YYYY-MM-DD)")
 		return
 	}
@@ -197,6 +197,13 @@ func (g *Gate) doLoad(rid string, args []string) {
 			return
 		}
 	}
+	// The rest as core's parseManifest reads it, or not at all: the first-item reads the runs make
+	// then agree with every client's (apps/gate/testdata/vectors.json). Last, so the refusals
+	// above keep their own words.
+	if err := manifest.Check(string(raw)); err != nil {
+		g.refuse(rid, "the manifest can't be read as clients read it ("+err.Error()+")")
+		return
+	}
 	g.man, g.principal, g.mhash, g.mname, g.mversion = m, principal, mhash, mname, mversion
 	// This runbook's own shell (the same one loaded again, or after a call, keeps it).
 	g.shellFor(mhash)
@@ -229,19 +236,6 @@ func (g *Gate) doLoad(rid string, args []string) {
 	g.log.Event(kv...)
 	os.Stdout.WriteString("\x1e__MDRB_SIGNED__ " + principal + " " + mhash + "\n")
 	marker(rid, "0")
-}
-
-// isDate: YYYY-MM-DD as the shell gate's pattern took it ([0-9]{4}-[0-1][0-9]-[0-3][0-9]).
-func isDate(s string) bool {
-	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
-		return false
-	}
-	for _, i := range []int{0, 1, 2, 3, 6, 9} {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return s[5] >= '0' && s[5] <= '1' && s[8] >= '0' && s[8] <= '3'
 }
 
 // revoked: the hash is in the revoked list. One hash per line, as md-runbook verify prints it;
@@ -341,8 +335,9 @@ func (g *Gate) doParam(rid string, args []string) {
 	}
 	value := string(raw)
 	// One line, matching the whole pattern (POSIX ERE, as grep -E read it). (A NUL can't be in a
-	// shell variable: such a value is refused.)
-	if strings.ContainsAny(value, "\n\x00") || !ere.MatchWhole(pat, value) {
+	// shell variable: such a value is refused. A CR neither, as clients refuse it: core's
+	// isOneLineValue.)
+	if !textutil.IsOneLine(value) || !ere.MatchWhole(pat, value) {
 		g.refuse(rid, "the value of "+name+" doesn't match its pattern "+pat)
 		return
 	}
@@ -538,6 +533,10 @@ func (g *Gate) emitRun(rid, cell, code, nonce, kube string, hasKube bool) {
 }
 
 func (g *Gate) doRaw(rid string, args []string) {
+	// An empty cell is an empty base64 field, as clients write it (gateRawCommand; gate vectors).
+	if len(args) == 0 {
+		args = []string{""}
+	}
 	if len(args) != 1 || !textutil.IsB64(args[0]) {
 		g.refuse(rid, "bad raw request")
 		return

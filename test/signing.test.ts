@@ -229,6 +229,32 @@ describe('signing: the manifest', () => {
     for (const v of ['0x10', '1e3', '007', '0', '1234567'])
       assert.throws(() => parseManifest(`md-runbook-manifest 1\nname x\nversion ${v}\nend\n`), /bad version/, v);
   });
+
+  it('parseManifest reads only what formatManifest writes, as the gate does (gate vectors, 2026-11-16)', () => {
+    const base = manifestOf(fence('bash', 'echo a') + fence('bash', 'echo b'), { patterns: {} });
+    assert.equal(parseManifest(base).cells.length, 2);
+    const bad: [string, RegExp][] = [
+      // Where the gate read the first and clients the last, or the gate read on after `end`.
+      [base.replace('cell 2 all', 'cell 1 all'), /bad line/],
+      [base.replace(/(code \S+\n)/, '$1$1'), /out of order/],
+      [base + 'cell 3 all\n', /text after end/],
+      [base.replace('cell 1 all', 'cell 1'), /bad line/],
+      [base.replace('name ', 'name  '), /bad line/],
+      [base.replace('name ', 'name\t'), /printable ASCII/],
+      [base.replace('\nend\n', '\nend'), /no end/],
+      [base.replace(/\n/g, '\r\n'), /newer version|printable ASCII/],
+      [base.replace(/code \S+/, 'code QR=='), /bad code/],
+    ];
+    for (const [m, why] of bad) assert.throws(() => parseManifest(m), why, JSON.stringify(m));
+  });
+
+  it("refuses the front matter's kube-context: for a block without its own: the gate checks only the block's (gate vectors, 2026-11-16)", () => {
+    const fm = '---\nkube-context: prod-eu\n---\n\n';
+    assert.match(errorsOf(fm + fence('bash', 'kubectl get pods')).join('\n'), /front matter's kube-context: prod-eu is not checked by servers/);
+    assert.deepEqual(errorsOf(fm + fence('bash kube-context=prod-eu', 'kubectl get pods')), []);
+    // Twice on a block: neither counts, and it can't be signed.
+    assert.match(errorsOf(fence('bash kube-context=prod-eu kube-context=lab-1', 'x')).join('\n'), /kube-context= written twice/);
+  });
 });
 
 describe('signing: the signature block', () => {

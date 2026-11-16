@@ -106,7 +106,32 @@ export function tokenizeInfo(rest: string): InfoToken[] {
   return tokens;
 }
 
-const LANG_RE = /^\s*[^\s{]*/;
+/**
+ * The language word at the start of an info string: up to an ASCII blank or a `{`. ASCII only, as
+ * md-runbook-gate reads it: a Unicode space (no-break, U+2028) before it no longer hid the options
+ * after it, kube-context= among them, from clients while the gate read them (gate vectors, 2026-11-16).
+ */
+export const INFO_LANG_RE = /^[ \t\n\r\f\v]*[^ \t\n\r\f\v{]*/;
+const LANG_RE = INFO_LANG_RE;
+
+/** Trims ASCII blanks only (as the gate does); String.trim also took Unicode spaces. */
+const asciiTrim = (s: string): string => s.replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, '');
+
+/**
+ * A cell's kube-context= as md-runbook-gate reads it from the signed info string
+ * (apps/gate/internal/manifest, KubeContext): none, a context name or `${param:NAME}`, or a problem
+ * (a value that is neither, or kube-context= written twice: which one counts would be a guess). Keys
+ * in any case, as parseCellOptions reads them (String.toLowerCase).
+ */
+export function gateKubeContext(info: string): { want?: string; problem?: string } {
+  const values = tokenizeInfo(info.replace(LANG_RE, ''))
+    .filter((t) => t.value !== undefined && t.key.toLowerCase() === 'kube-context')
+    .map((t) => t.value!);
+  if (values.length === 0) return {};
+  if (values.length > 1) return { problem: 'kube-context= written twice' };
+  const want = asciiTrim(values[0]!);
+  return isKubeContextValue(want) ? { want } : { problem: `kube-context=${values[0]}: expected a Kubernetes context name or \${param:NAME}` };
+}
 
 /**
  * Rewrite whole tokens of a fence info string (after the language word), leaving everything else
@@ -172,6 +197,7 @@ export function parseCellOptions(info: string): CellOptions {
   const opts: CellOptions = { env: {}, errors: [] };
   const checks = (): CellChecks => (opts.checks ??= { captures: [] });
   let every: number | undefined;
+  let kubeSeen = false;
   for (const { key, value } of tokenizeInfo(info.replace(LANG_RE, ''))) {
     const k = key.toLowerCase();
     if (value === undefined) {
@@ -223,8 +249,13 @@ export function parseCellOptions(info: string): CellOptions {
       if (value.trim() === '') opts.errors.push('host: empty name');
       else opts.host = value.trim();
     } else if (k === 'kube-context') {
-      if (!isKubeContextValue(value.trim())) opts.errors.push(`kube-context=${value}: expected a Kubernetes context name or \${param:NAME}`);
-      else opts.kubeContext = value.trim();
+      // Once (gateKubeContext): a second one is an error, and neither counts.
+      if (kubeSeen) {
+        opts.errors.push('kube-context= written twice (keep one)');
+        delete opts.kubeContext;
+      } else if (!isKubeContextValue(asciiTrim(value))) opts.errors.push(`kube-context=${value}: expected a Kubernetes context name or \${param:NAME}`);
+      else opts.kubeContext = asciiTrim(value);
+      kubeSeen = true;
     } else if (k === 'lines') {
       if (value.toLowerCase() !== 'any') opts.errors.push(`lines=${value}: expected lines=any`);
       else opts.lines = 'any';

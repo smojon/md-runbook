@@ -37,6 +37,8 @@ meant for staging-eu.
   the kubeconfig. See the gate's `context` request in its [README](../../apps/gate/README.md).
 - The gate also checks a signed cell's own `kube-context=` itself, before the cell runs. A
   client that skips the check can't run the cell elsewhere.
+- The gate never reads the front matter. So signing refuses a front matter `kube-context:` while
+  a bash block has no `kube-context=` of its own.
 - Lint reports a name kubectl can't have.
 
 ### Check or pin
