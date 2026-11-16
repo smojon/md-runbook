@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **VS Code, team library: a library's signers count for its runbooks only**, as in the app.
+  - **Add the Team Library's Signers…** keeps them apart from your own allowed_signers file.
+  - The Library view, your copies of its runbooks, run reports and Practice on a Host use them.
+    Links, the command line and the gate are unchanged.
+  - **Trusted Signers…** lists yours first, then each library's under its host.
+  - A key the library no longer publishes is withdrawn: it stops counting until published again.
+  - Keys an earlier version put in your own file stay there, marked as also published by the
+    library. Remove them to trust them for its runbooks only.
+
 ## 0.27.0
 
 Security fixes from five review rounds, a team runbook library in VS Code and the app, and a

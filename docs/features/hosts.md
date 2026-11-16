@@ -79,6 +79,7 @@ They are kept in the user setting `mdRunbook.hosts`:
 - `practice: NAME` in the front matter does the same, after asking.
 - The question is skipped when the whole runbook is signed by a [trusted signer](signed-runbooks.md)
   and unchanged since.
+  - For your copy of a team library runbook, the keys trusted from that library count too.
 - No host of that name: nothing runs. See [drills](drills.md).
 
 ## Not yet

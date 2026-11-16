@@ -4,8 +4,10 @@ Goal: a key trusted from a team library's `allowed_signers` counts for that libr
 only. The app does so already (`keysFor` in `apps/mobile/src/signing/trust.ts`). Keys you add
 yourself count for every runbook.
 
-Status: design only. It touches the run-report and practice checks, and needs more than 200
-lines, so it waits for a decision.
+Status: built for 0.29.0 (src/libraryTrust.ts). Decided 2026-11-16:
+
+1. A library's keys count for reporting on its own runbooks: yes.
+2. Keys already in your file move: no.
 
 ## Today
 
