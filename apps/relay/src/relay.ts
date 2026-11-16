@@ -245,8 +245,12 @@ for (const [net, bits] of [
   ['169.254.0.0', 16], // link-local, cloud metadata
   ['172.16.0.0', 12],
   ['192.0.0.0', 24], // IETF protocol assignments
+  ['192.0.2.0', 24], // documentation
+  ['192.88.99.0', 24], // 6to4 relay anycast
   ['192.168.0.0', 16],
   ['198.18.0.0', 15], // benchmarking
+  ['198.51.100.0', 24], // documentation
+  ['203.0.113.0', 24], // documentation
   ['224.0.0.0', 4], // multicast
   ['240.0.0.0', 4], // reserved, broadcast
 ] as const)
@@ -258,9 +262,12 @@ for (const [net, bits] of [
   ['64:ff9b:1::', 48], // local NAT64
   ['100::', 64], // discard
   ['2001::', 32], // Teredo
+  ['2001:db8::', 32], // documentation
   ['2002::', 16], // 6to4
+  ['3fff::', 20], // documentation
   ['fc00::', 7], // unique local
   ['fe80::', 10], // link-local
+  ['fec0::', 10], // site-local (deprecated, still routed on some networks)
   ['ff00::', 8], // multicast
 ] as const)
   INTERNAL.addSubnet(net, bits, 'ipv6');

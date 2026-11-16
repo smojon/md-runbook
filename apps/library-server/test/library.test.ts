@@ -195,6 +195,20 @@ describe('library: publishing', () => {
     }
   });
 
+  it('a deleted release still counts: an older one is refused at another path', async () => {
+    fresh();
+    fs.mkdirSync(path.join(lib, 'ops'));
+    fs.writeFileSync(path.join(lib, 'ops', 'restart-api.md'), await signRunbook(RUNBOOK, { version: 5 }, keys.signer));
+    const { s, url } = await start(config(dir, { library: libConfig({ allowDelete: true }) }));
+    try {
+      assert.equal((await call(`${url}/v1/library/runbooks/ops/restart-api.md`, 'DELETE', undefined, UPLOAD)).status, 200);
+      const old = await call(`${url}/v1/library/runbooks/old/ops/restart-api.md`, 'POST', await signRunbook(RUNBOOK, { version: 3 }, keys.signer), UPLOAD);
+      assert.equal(old.status, 409, JSON.stringify(old.json));
+    } finally {
+      await s.close();
+    }
+  });
+
   it('deleting is off by default; bodies are capped; links out of the library are refused', async () => {
     fresh();
     const outside = path.join(dir, 'outside');

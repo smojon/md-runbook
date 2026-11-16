@@ -11,6 +11,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { trustedRunbookSigner } from '@md-runbook/core/node';
+import { parseManifest, readSignature } from '@md-runbook/core/signing';
 import { LinkProblem, LinkTrust, RunbookLink, checkedLinkTrust, linkTrust, linkableParams, parseVsCodeLinkQuery, rawRunbookUrl, repoPathCandidates, runbookDigest } from '@md-runbook/core/runbookLink';
 import { runbookTitle } from '@md-runbook/core/title';
 import type { SecretsInfo } from './secrets';
@@ -100,7 +101,19 @@ async function checkedTrust(l: RunbookLink, text: string): Promise<LinkTrust> {
   if (trust !== 'signed') return trust;
   const file = vscode.workspace.getConfiguration('mdRunbook').get<string>('signing.allowedSigners', '').trim();
   const signer = file ? await trustedRunbookSigner(text, file.replace(/^~(?=$|[\\/])/, os.homedir())).catch(() => undefined) : undefined;
-  return checkedLinkTrust(l, trust, signer !== undefined);
+  return checkedLinkTrust(l, trust, signer !== undefined && !signatureExpired(text));
+}
+
+/** The manifest's `expires` date has passed (UTC), as the app and gates count it. */
+function signatureExpired(text: string): boolean {
+  const block = readSignature(text);
+  if (!block) return true;
+  try {
+    const expires = parseManifest(block.manifest).expires;
+    return expires !== undefined && new Date().toISOString().slice(0, 10) > expires;
+  } catch {
+    return true;
+  }
 }
 export type OpenLinkResult = { kind: 'opened'; uri: vscode.Uri; trust: OpenedTrust; filled: string[]; ignored: string[] } | { kind: 'error'; message: string } | { kind: 'cancelled' };
 

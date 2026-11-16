@@ -201,7 +201,8 @@ export class Library {
     }
     const names: Record<string, number> = {};
     for (const p of await this.files()) {
-      const r = signedRelease(await fsp.readFile(join(this.config.dir, p), 'utf8'));
+      // A file that can't be read gives no floor; it doesn't stop publishing.
+      const r = signedRelease(await fsp.readFile(join(this.config.dir, p), 'utf8').catch(() => ''));
       if (r) names[r.name] = Math.max(names[r.name] ?? 0, r.version);
     }
     return names;
@@ -267,7 +268,14 @@ export class Library {
       const st = await lstatOrUndefined(file);
       if (!st) throw new HttpError(404, `${path} is not in the library`);
       if (!st.isFile()) throw new HttpError(409, `${path} is not a plain file on the server`);
-      const version = signedVersion(await fsp.readFile(file, 'utf8'));
+      const release = signedRelease(await fsp.readFile(file, 'utf8'));
+      // Its name keeps its highest version: an older release can't come back at another path.
+      const names = await this.readNames();
+      if (release) {
+        await fsp.mkdir(dirname(this.namesFile), { recursive: true, mode: 0o750 });
+        await writeAtomic(this.namesFile, JSON.stringify({ ...names, [release.name]: Math.max(names[release.name] ?? 0, release.version) }, null, 1) + '\n');
+      }
+      const version = release?.version ?? 0;
       await fsp.rm(file);
       await this.writeIndex();
       return { path, version };

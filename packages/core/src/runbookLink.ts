@@ -205,7 +205,7 @@ export type LinkTrust = 'mismatch' | 'signed' | 'pinned' | 'unverified';
 export function linkTrust(l: RunbookLink, text: string): LinkTrust {
   if (l.sha256 && runbookDigest(text) !== l.sha256) return 'mismatch';
   const s = signedStatus(text);
-  const intact = s && s.changed.length + s.missing.length + s.moved.length + s.missingCalls.length === 0 && !(s.version === 2 && s.textChanged);
+  const intact = s && s.changed.length + s.missing.length + s.moved.length + s.missingCalls.length + s.unsigned.length === 0 && !(s.version === 2 && s.textChanged);
   if (intact) return 'signed';
   return unsignedTrust(l);
 }

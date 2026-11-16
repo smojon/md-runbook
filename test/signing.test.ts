@@ -165,6 +165,9 @@ describe('signing: the manifest', () => {
     assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nname y\nversion 1\nend\n'), /more than one name line/);
     assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nversion 1\nexpires soon\nend\n'), /bad expires/);
     assert.equal(parseManifest('md-runbook-manifest 1\nname x\nversion 1\nexpires 2027-01-31\nend\n').expires, '2027-01-31');
+    assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nversion 1\nexpires 2027-13-45\nend\n'), /bad expires/);
+    for (const v of ['0x10', '1e3', '007', '0', '1234567'])
+      assert.throws(() => parseManifest(`md-runbook-manifest 1\nname x\nversion ${v}\nend\n`), /bad version/, v);
   });
 });
 
