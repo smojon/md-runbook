@@ -182,8 +182,15 @@ jobs:
         if: env.VSCE_PAT != ''
         run: scripts/publish-tools/node_modules/.bin/vsce publish --packagePath md-runbook.vsix
 
+  # The Android APK, built and signed by app-apk.yml (its jobs keep the key away from the build).
+  apk:
+    needs: test
+    uses: ./.github/workflows/app-apk.yml
+    secrets: inherit
+
+  # Made with every file at once: a published release is immutable (Settings → General).
   github-release:
-    needs: package
+    needs: [package, apk]
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub release
@@ -195,10 +202,14 @@ jobs:
         with:
           name: release-files
           path: ${{ runner.temp }}/release
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: md-runbook-android
+          path: ${{ runner.temp }}/release
       - name: GitHub release with the .vsix and the command line
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd "$RUNNER_TEMP/release"
-          gh release create "$GITHUB_REF_NAME" md-runbook.vsix md-runbook-cli.tgz --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+          gh release create "$GITHUB_REF_NAME" md-runbook.vsix md-runbook-cli.tgz md-runbook-*.apk --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
             --notes-file <(node "$GITHUB_WORKSPACE/scripts/release-notes.js" "$GITHUB_REF_NAME") --prerelease

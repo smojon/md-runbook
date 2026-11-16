@@ -6,7 +6,7 @@ pushed. The workflow:
 2. packages the extension;
 3. publishes it to the **Visual Studio Marketplace** and **Open VSX**, each only if its token
    secret is set;
-4. creates a GitHub pre-release with the `.vsix` and the command line's `.tgz` attached.
+4. creates a GitHub pre-release with the `.vsix`, the command line's `.tgz` and the signed `.apk`, all at once (releases are immutable once published).
 
 ## One-time setup
 
@@ -62,7 +62,7 @@ To check the package without publishing:
 ### Android app signing key
 
 The App APK workflow (`.github/workflows/app-apk.yml`) signs the Android app with one key, and
-attaches `md-runbook-X.Y.Z.apk` to each version's release.
+its APK is in each version's release (the Release workflow calls it).
 
 - Secrets: `ANDROID_KEYSTORE_BASE64` (the PKCS12 keystore, base64) and
   `ANDROID_KEYSTORE_PASSWORD`. The alias is `md-runbook`.

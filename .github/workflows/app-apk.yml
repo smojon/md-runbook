@@ -4,20 +4,19 @@ name: App APK
 # ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD, alias md-runbook). A newer APK installs
 # over an older one. Play gets the same key as its app signing key, so an APK install and a Play
 # install update each other.
-# - A tag vX.Y.Z attaches md-runbook-X.Y.Z.apk to that GitHub release.
+# - A tag vX.Y.Z: the Release workflow calls this one, and its release has md-runbook-X.Y.Z.apk
+#   from the start (releases are immutable once published).
 # - From the Actions tab (or `gh workflow run app-apk.yml --ref main`): the run's
 #   "md-runbook-android" artifact. Only tags and main are signed; another branch gets the
 #   unsigned build only.
 #
-# Three jobs, so the signing key never shares a runner with the build (security review,
+# Two jobs, so the signing key never shares a runner with the build (security review,
 # 2026-11-16). The build runs npm, Expo and Gradle, thousands of packages: any of them could
 # replace apksigner or read the key. The sign job checks out nothing and installs nothing: it
-# signs the build's APK with the runner's own Android SDK. The attach job has the write token,
-# and no key.
+# signs the build's APK with the runner's own Android SDK.
 on:
   workflow_dispatch:
-  push:
-    tags: ['v*']
+  workflow_call:
 
 permissions:
   contents: read
@@ -106,26 +105,3 @@ jobs:
           path: ${{ runner.temp }}/apk/*.apk
           if-no-files-found: error
 
-  attach:
-    needs: sign
-    if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    permissions:
-      contents: write # attach the APK to the tag's release
-    steps:
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: md-runbook-android
-          path: ${{ runner.temp }}/apk
-      - name: Attach it to the release
-        working-directory: ${{ runner.temp }}/apk
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # The Release workflow makes the release; wait for it (up to 30 minutes).
-          for _ in $(seq 1 60); do
-            gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 && break
-            sleep 30
-          done
-          gh release upload "$GITHUB_REF_NAME" ./*.apk --repo "$GITHUB_REPOSITORY" --clobber
