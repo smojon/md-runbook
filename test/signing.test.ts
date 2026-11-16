@@ -22,6 +22,7 @@ import {
   withoutSignature,
 } from '@md-runbook/core/signing';
 import { formatAttrs } from '@md-runbook/core/outputBlock';
+import { matchesSignedPattern } from '@md-runbook/core/signedPattern';
 import { roundTrip } from './helpers';
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';
@@ -180,8 +181,8 @@ describe('signing: the manifest', () => {
     for (const re of [
       /expires 2026-02-31: expected a date/,
       /\$\{param:PATH\}: PATH can't be a parameter/,
-      /pattern for ID: \\d\+ uses JavaScript-only syntax/,
-      /pattern for N: \[0-9\]\+\? uses JavaScript-only syntax/,
+      /pattern for ID: \\d\+: \\d: a backslash only before one of/,
+      /pattern for N: \[0-9\]\+\?: \? right after a repetition/,
       /cell 1 .*env\.LD_PRELOAD can't be set by a signed runbook/,
       /cell 1 .*env\.LC_ALL can't be set by a signed runbook/,
       /cell 2 .*\$\{param:ID:secret\} is not a plain \$\{param:NAME\}/,
@@ -228,6 +229,22 @@ describe('signing: the manifest', () => {
     assert.throws(() => parseManifest('md-runbook-manifest 1\nname x\nversion 1\nexpires 2027-13-45\nend\n'), /bad expires/);
     for (const v of ['0x10', '1e3', '007', '0', '1234567'])
       assert.throws(() => parseManifest(`md-runbook-manifest 1\nname x\nversion ${v}\nend\n`), /bad version/, v);
+  });
+
+  it('refuses patterns grep, the gate and clients read differently; a value never leaves the anchors (review of 0.28.0)', () => {
+    for (const p of ['a)|(b', '(a', '[A-Za-z0-9_\\-]+', '\\t', '\\x41', '[:alpha:]', 'a**']) {
+      assert.match(errorsOf(fence('bash', 'echo ${param:T}'), { patterns: { T: p } }).join('\n'), /pattern for T/, p);
+      assert.equal(matchesSignedPattern(p, 'a; echo INJECTED'), false, p);
+    }
+    assert.equal(matchesSignedPattern('[a-z]+(-[0-9]{1,3})?', 'web-12'), true);
+    assert.equal(matchesSignedPattern('[[:alpha:]][[:alnum:]_-]*', 'web_1'), true);
+    // Byte for byte, as the gate: . is one byte of UTF-8 (U+00E9 is two).
+    assert.deepEqual([matchesSignedPattern('.', String.fromCharCode(0xe9)), matchesSignedPattern('..', String.fromCharCode(0xe9))], [false, true]);
+    const signed = manifestOf(fence('bash', 'echo ${param:T}'), { patterns: { T: '[a-z]+' } });
+    assert.throws(() => parseManifest(signed.replace(/^param T \S+$/m, `param T ${toBase64('a)|(b')}`)), /pattern for T/);
+    // Names a JavaScript object reads otherwise.
+    for (const n of ['__proto__', 'constructor', 'prototype']) assert.equal(isReservedVar(n), true, n);
+    assert.match(errorsOf(fence('bash env.__proto__=x', 'echo')).join('\n'), /env\.__proto__: not a name a block can set/);
   });
 
   it('parseManifest reads only what formatManifest writes, as the gate does (gate vectors, 2026-11-16)', () => {

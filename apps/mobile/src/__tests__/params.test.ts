@@ -33,10 +33,13 @@ describe('runbook parameters', () => {
     expect(checkParam(spec, 'Api')).toBe('pattern');
     expect(checkParam(spec, 'a\nb')).toBe('newline');
     expect(checkParam({ name: 'FREE' }, 'anything at all')).toBeUndefined();
-    // POSIX classes as grep -E reads them; ones the app can't translate are left to the gate.
+    // POSIX classes as grep -E reads them; a pattern the gate refuses matches nothing.
     expect(checkParam({ name: 'X', pattern: '[[:alpha:]][[:alnum:]_-]*' }, 'web_1')).toBeUndefined();
     expect(checkParam({ name: 'X', pattern: '[[:alpha:]]+' }, '1')).toBe('pattern');
-    expect(checkParam({ name: 'X', pattern: '[[:punct:]]' }, 'x')).toBeUndefined();
-    expect(checkParam({ name: 'X', pattern: '(' }, 'x')).toBeUndefined();
+    expect(checkParam({ name: 'X', pattern: '[[:punct:]]' }, 'x')).toBe('pattern');
+    expect(checkParam({ name: 'X', pattern: '[[:punct:]]' }, '-')).toBeUndefined();
+    expect(checkParam({ name: 'X', pattern: '(' }, 'x')).toBe('pattern');
+    // An unbalanced group no longer leaves the anchors (review of 0.28.0).
+    expect(checkParam({ name: 'X', pattern: 'a)|(b' }, 'a; rm -rf /')).toBe('pattern');
   });
 });

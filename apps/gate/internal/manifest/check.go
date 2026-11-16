@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/smojon/md-runbook/apps/gate/internal/ere"
 	"github.com/smojon/md-runbook/apps/gate/internal/names"
 	"github.com/smojon/md-runbook/apps/gate/internal/textutil"
 )
@@ -153,6 +154,10 @@ func Check(text string) error {
 			}
 			if re == "" {
 				return errors.New("manifest: empty pattern for " + a)
+			}
+			// Only the subset grep, the gate and clients read alike (core's signedPatternProblem).
+			if _, err := ere.Compile(re); err != nil {
+				return errors.New("manifest: the pattern for " + a + " is not one the gate reads")
 			}
 			patterns[a] = true
 		case "cell":

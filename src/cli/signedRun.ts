@@ -17,6 +17,7 @@ import { v1FrontMatterProblems } from '@md-runbook/core/frontMatterRun';
 import { currentOs } from '@md-runbook/core/os';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { allSignatures, signedStatus } from '@md-runbook/core/signing';
+import { matchesSignedPattern } from '@md-runbook/core/signedPattern';
 
 /** The repository a runbook is in (the nearest folder with .git), else its own folder. */
 export function repositoryRoot(file: string): string {
@@ -35,13 +36,13 @@ export function insideRoot(root: string, file: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-/** Whether a value matches a signed pattern as the gate checks it (the whole value, grep -E). */
+/**
+ * Whether a value matches a signed pattern as the gate checks it (the whole value, byte for byte,
+ * only patterns grep, the gate and clients read alike: core's signedPattern.ts). Before, the
+ * pattern went into a JavaScript RegExp as written: `a)|(b` left the anchors (review of 0.28.0).
+ */
 export function matchesPattern(value: string, pattern: string): boolean {
-  try {
-    return new RegExp(`^(?:${pattern})$`).test(value) && !/[\r\n]/.test(value);
-  } catch {
-    return false;
-  }
+  return matchesSignedPattern(pattern, value);
 }
 
 const today = (): string => new Date().toISOString().slice(0, 10);

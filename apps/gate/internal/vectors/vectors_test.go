@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/smojon/md-runbook/apps/gate/internal/ere"
 	"github.com/smojon/md-runbook/apps/gate/internal/manifest"
 	"github.com/smojon/md-runbook/apps/gate/internal/names"
 	"github.com/smojon/md-runbook/apps/gate/internal/proto"
@@ -161,6 +162,8 @@ func TestVectors(t *testing.T) {
 			same(t, v, readManifest(in), coreManifest(t, v.Core))
 		case "info":
 			checkInfo(t, v, in)
+		case "pattern":
+			checkPattern(t, v, in)
 		case "name":
 			var c struct{ Var, Reserved, Settable bool }
 			json.Unmarshal(v.Core, &c)
@@ -221,6 +224,28 @@ func checkInfo(t *testing.T, v vector, info string) {
 			t.Errorf("info %q: KubeWant reads %q", v.ID, w)
 		}
 	}
+}
+
+// patternValues: the values core matched each pattern against (scripts/gate-vectors.js
+// PATTERN_VALUES; core lists the ones that match).
+var patternValues = []string{"", "a", "b", "c", "ab", "aa", "aaa", "abab", "x", "1", "12", ".", `\`, "]", "[", "-", ":", "\xc3\xa9", "\xc3\xa9\xc3\xa9", "t", "\t", "A", " ", "a;b", "a; echo INJECTED", "zzb", "bc", "xa", "$x", "a\rb", "a\nb", "a\x00b", "()", "web-1", "prod-eu", "lab-12"}
+
+// checkPattern: a parameter pattern compiles for the gate as for core (the manifest's Check too),
+// and the values the gate takes for it (doParam: one line, the whole value matches) are core's.
+func checkPattern(t *testing.T, v vector, pattern string) {
+	got := map[string]any{"ok": false}
+	if p, err := ere.Compile(pattern); err == nil {
+		match := []any{}
+		for _, value := range patternValues {
+			if textutil.IsOneLine(value) && p.MatchWhole(value) {
+				match = append(match, value)
+			}
+		}
+		got = map[string]any{"ok": true, "match": match}
+	}
+	var c map[string]any
+	json.Unmarshal(v.Core, &c)
+	same(t, v, got, c)
 }
 
 // checkRequest reads a request line as the gate's session does (proto.Reader, then words split at

@@ -28,6 +28,7 @@ import { parse } from './parser';
 import { VAR_NAME_RE, findRefs, frontMatterLines, parseFrontMatter, reportAddressProblem, rewriteRefs } from './secrets';
 import { sha256Hex } from './sha256';
 import { shellKindForLanguage } from './shellKind';
+import { signedPatternProblem } from './signedPattern';
 import { splitSteps } from './steps';
 import { HISTORY_OPEN_RE } from './outputBlock';
 import { clearOutputBlocks } from './writer';
@@ -86,19 +87,22 @@ const RESERVED = new Set(RESERVED_VARS);
  * (names.IsReserved). Not KUBECONFIG: env.KUBECONFIG picks a cluster, and is signed. And any
  * name ending in `_proxy`, in any case: Python's urllib (pip, requests) reads `Https_Proxy` and
  * `FOO_proxy` as proxies (the lists above had the usual spellings only; gate vectors, 2026-11-16).
+ * And `__proto__`, `constructor` and `prototype`: a JavaScript map lost or misread them while the
+ * gate exported them (review of 0.28.0).
  */
 export function isReservedVar(name: string): boolean {
-  return RESERVED.has(name) || RESERVED_VAR_PREFIXES.some((p) => name.startsWith(p)) || /_proxy$/i.test(name);
+  return (
+    RESERVED.has(name) ||
+    RESERVED_VAR_PREFIXES.some((p) => name.startsWith(p)) ||
+    /_proxy$/i.test(name) ||
+    name === '__proto__' ||
+    name === 'constructor' ||
+    name === 'prototype'
+  );
 }
 
-/**
- * A parameter value a gate takes: one line, no CR, LF or NUL (md-runbook-gate's IsOneLine; it
- * took a CR before, which clients refused; gate vectors, 2026-11-16).
- */
-export const isOneLineValue = (value: string): boolean => !/[\r\n\0]/.test(value);
-
-/** JavaScript-only regex syntax, which the gate's `grep -E` reads differently (or not at all). */
-const NOT_POSIX_ERE = /\\[dDwWsSbB1-9]|\(\?|[*+?}]\?/;
+/** A parameter value a gate takes (signedPattern.ts). */
+export { isOneLineValue } from './signedPattern';
 
 export interface ManifestMeta {
   name: string;
@@ -486,8 +490,11 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
     if (!VAR_NAME_RE.test(name)) errors.push(`pattern for "${name}": not a parameter name`);
     else if (isReservedVar(name)) errors.push(`\${param:${name}}: ${name} can't be a parameter of a signed runbook (it changes how the shell runs the code)`);
     if (re === '' || /[\r\n]/.test(re)) errors.push(`pattern for ${name}: empty or more than one line`);
-    else if (NOT_POSIX_ERE.test(re)) {
-      errors.push(`pattern for ${name}: ${re} uses JavaScript-only syntax (\\d, \\w, (?…), lazy *?, back-references); servers check it with grep -E: use [0-9], [A-Za-z0-9_], …`);
+    else {
+      // Only what grep -E, the gate and clients read alike (signedPattern.ts): no \d, \w, (?…),
+      // lazy *?, unbalanced ( ), backslashes in brackets.
+      const why = signedPatternProblem(re);
+      if (why) errors.push(`pattern for ${name}: ${re}: ${why}; servers check it with grep -E: use [0-9], [A-Za-z0-9_], …`);
     }
   }
   errors.push(...hiddenFences(withoutSignature(text)));
@@ -523,7 +530,8 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
         if (ref.kind === 'secret') errors.push(`${where}: ${token} can't be signed (servers log the values signed cells get)`);
         else if (ref.secret) errors.push(`${where}: ${token} can't be signed: a secret input would be in the servers' logs`);
         else if (ref.kind === 'out' && secretCaptures.has(ref.name)) errors.push(`${where}: ${token} comes from capture-secret= and can't be signed (servers log the values)`);
-        else if (meta.patterns[ref.name] === undefined) errors.push(`${where}: ${token} needs a pattern (--pattern ${ref.name}=REGEX)`);
+        else if (isReservedVar(ref.name)) errors.push(`${where}: ${token}: ${ref.name} can't be a parameter of a signed runbook`);
+        else if (!Object.prototype.hasOwnProperty.call(meta.patterns, ref.name)) errors.push(`${where}: ${token} needs a pattern (--pattern ${ref.name}=REGEX)`);
         else if (!needs.includes(ref.name)) needs.push(ref.name);
       }
     } catch (e) {
@@ -537,7 +545,7 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
     // kube-context=${param:NAME} is signed in the info string: the value must match a signed pattern,
     // so a signed runbook can't be pointed at a cluster its signer did not allow.
     const contextParam = kubeContextParam(opts.kubeContext);
-    if (contextParam !== undefined && meta.patterns[contextParam] === undefined) {
+    if (contextParam !== undefined && !Object.prototype.hasOwnProperty.call(meta.patterns, contextParam)) {
       errors.push(`${where}: kube-context=\${param:${contextParam}} needs a pattern (--pattern ${contextParam}=REGEX)`);
     } else if (contextParam !== undefined) contextParams.push(contextParam);
     for (const [k, v] of Object.entries(opts.env)) {
@@ -570,7 +578,8 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
       for (const ref of callRefs(call)) {
         const token = `\${${ref.kind}:${ref.name}}`;
         if (ref.kind === 'secret' || ref.secret) errors.push(`${where}: ${token} can't be signed: pass secrets to the runbook called another way`);
-        else if (meta.patterns[ref.name] === undefined) errors.push(`${where}: ${token} needs a pattern (--pattern ${ref.name}=REGEX)`);
+        else if (isReservedVar(ref.name)) errors.push(`${where}: ${token}: ${ref.name} can't be a parameter of a signed runbook`);
+        else if (!Object.prototype.hasOwnProperty.call(meta.patterns, ref.name)) errors.push(`${where}: ${token} needs a pattern (--pattern ${ref.name}=REGEX)`);
         else if (!needs.includes(ref.name)) needs.push(ref.name);
       }
     } catch (e) {
@@ -770,6 +779,7 @@ export function parseManifest(text: string): Manifest {
         if (Object.prototype.hasOwnProperty.call(m.patterns, name)) throw new Error(`manifest: more than one param ${name}`);
         const re = b64(b, 'pattern', true);
         if (re === '') throw new Error(`manifest: empty pattern for ${name}`);
+        if (signedPatternProblem(re) !== undefined) throw new Error(`manifest: the pattern for ${name} is not one the gate reads`);
         m.patterns[name] = re;
         break;
       }

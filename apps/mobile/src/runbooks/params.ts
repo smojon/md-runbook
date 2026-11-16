@@ -10,6 +10,7 @@ import { cellRefs } from '@md-runbook/core/cellOptions';
 import { callRefs, isCallLanguage, parseCall } from '@md-runbook/core/call';
 import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { signedStatus } from '@md-runbook/core/signing';
+import { matchesSignedPattern } from '@md-runbook/core/signedPattern';
 import { getJson, setJson } from '../storage/kv';
 
 export interface ParamSpec {
@@ -70,35 +71,16 @@ export function refsOf(source: string, info = '', frontMatter?: { kubeContext?: 
 }
 
 /**
- * Why `value` is not acceptable, or undefined. The pattern is POSIX ERE (what the gate uses); the
- * app checks it as a JavaScript regular expression, which agrees for the usual patterns, and
- * leaves the final word to the gate when it can't read one.
+ * Why `value` is not acceptable, or undefined. The pattern is POSIX ERE, checked as the gate checks
+ * it (core's signedPattern.ts: the whole value, byte for byte). A pattern outside what grep, the
+ * gate and clients read alike matches nothing, as on the gate. Before, it went into a JavaScript
+ * RegExp as written: `a)|(b` left the anchors (review of 0.28.0).
  */
 export function checkParam(spec: ParamSpec, value: string): 'newline' | 'pattern' | undefined {
   if (/[\r\n]/.test(value)) return 'newline';
   if (spec.pattern === undefined) return undefined;
-  // POSIX classes mean something else in JavaScript ([[:alpha:]] is a class of `[:alph` there).
-  const source = spec.pattern.replace(/\[:([a-z]+):\]/g, (m, n: string) => POSIX_CLASSES[n] ?? m);
-  if (source.includes('[:')) return undefined;
-  let re: RegExp;
-  try {
-    re = new RegExp(`^(?:${source})$`);
-  } catch {
-    return undefined;
-  }
-  return re.test(value) ? undefined : 'pattern';
+  return matchesSignedPattern(spec.pattern, value) ? undefined : 'pattern';
 }
-
-const POSIX_CLASSES: Record<string, string> = {
-  alpha: 'A-Za-z',
-  digit: '0-9',
-  alnum: 'A-Za-z0-9',
-  upper: 'A-Z',
-  lower: 'a-z',
-  xdigit: '0-9A-Fa-f',
-  space: ' \\t\\r\\n\\f\\v',
-  blank: ' \\t',
-};
 
 // ---- the values, per runbook ----
 
