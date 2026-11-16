@@ -104,10 +104,14 @@ type Gate struct {
 	cellsArgs     []string
 
 	// How the shells start (isolation, separated mode), and the cells' account (separated mode).
-	plan   plan
-	cells  cellsInfo
-	isoWhy string // why auto found no isolation
-	unitID string // the session's scopes' names
+	plan  plan
+	cells cellsInfo
+	// The programs the gate runs, by absolute path (helpers.go).
+	helpers map[string]string
+	// This program's name as process listings show it (separated mode: what the cells run under).
+	gateComm string
+	isoWhy   string // why auto found no isolation
+	unitID   string // the session's scopes' names
 
 	sess
 }
@@ -243,6 +247,9 @@ func (g *Gate) main(args []string) int {
 			g.fatal(err.Error())
 		}
 	}
+	// Before anything runs: the programs the gate runs, from root's folders only.
+	g.loadHelpers()
+	g.gateComm = selfComm()
 	g.settle()
 	g.log = &logx.Logger{Dest: g.cfg.Log}
 	g.identify()
@@ -299,12 +306,14 @@ func (g *Gate) settle() {
 	case c.Locale == "auto":
 		// C.UTF-8 where the system has it (glibc lists it as C.utf8), else C.
 		c.Locale = "C"
-		if out, err := exec.Command("locale", "-a").Output(); err == nil {
-			for _, l := range strings.Split(string(out), "\n") {
-				if cUTF8.MatchString(l) {
-					c.Locale = "C.UTF-8"
-					break
-				}
+		var out []byte
+		if loc := g.helper("locale"); loc != "" {
+			out, _ = exec.Command(loc, "-a").Output()
+		}
+		for _, l := range strings.Split(string(out), "\n") {
+			if cUTF8.MatchString(l) {
+				c.Locale = "C.UTF-8"
+				break
 			}
 		}
 	case !config.ValidLocale(c.Locale):
@@ -329,8 +338,10 @@ var cUTF8 = regexp.MustCompile(`^(?i)c\.utf-?8$`)
 // identify: the account, the client, who the key is, and this program's path.
 func (g *Gate) identify() {
 	g.account = "?"
-	if out, err := exec.Command("id", "-un").Output(); err == nil {
-		g.account = strings.TrimRight(string(out), "\n")
+	if id := g.helper("id"); id != "" {
+		if out, err := exec.Command(id, "-un").Output(); err == nil {
+			g.account = strings.TrimRight(string(out), "\n")
+		}
 	}
 	g.uid = os.Geteuid()
 	// sshd_force_command switches off the check of the key lines, so it counts only from a
@@ -349,7 +360,7 @@ func (g *Gate) identify() {
 	}
 	g.client, _, _ = strings.Cut(os.Getenv("SSH_CLIENT"), " ")
 	if auth := os.Getenv("SSH_USER_AUTH"); g.who == "" && auth != "" && readable(auth) {
-		g.who = fingerprint(auth)
+		g.who = fingerprint(g.helper("ssh-keygen"), auth)
 	}
 	g.log.Account, g.log.Who, g.log.Client = g.account, g.who, g.client
 	// This program's path as sh found it: argv[0], or for a bare name its place in the PATH (a
@@ -366,14 +377,14 @@ func (g *Gate) identify() {
 
 // fingerprint: the key that logged in (ExposeAuthInfo's file: its first publickey line), as
 // ssh-keygen -l prints it.
-func fingerprint(auth string) string {
+func fingerprint(keygen, auth string) string {
 	data, err := os.ReadFile(auth)
-	if err != nil {
+	if err != nil || keygen == "" {
 		return ""
 	}
 	for _, l := range strings.Split(string(data), "\n") {
 		if key, ok := strings.CutPrefix(l, "publickey "); ok {
-			cmd := exec.Command("ssh-keygen", "-lf", "-")
+			cmd := exec.Command(keygen, "-lf", "-")
 			cmd.Stdin = strings.NewReader(key + "\n")
 			out, err := cmd.Output()
 			if err != nil {

@@ -47,7 +47,7 @@ func (g *Gate) checkAccount() {
 	// `-c`: any other (bash, zsh, fish, csh, ...) is refused (security review round 4).
 	underSSHD := os.Getenv("SSH_CLIENT")+os.Getenv("SSH_CONNECTION") != ""
 	if g.cfg.LoginShellCheck == "yes" && underSSHD {
-		shell := passwdField(g.account, 7)
+		shell := passwdField(g.helper("getent"), g.account, 7)
 		if shell == "" {
 			shell = os.Getenv("SHELL")
 		}
@@ -67,7 +67,7 @@ func (g *Gate) checkAccount() {
 	// either way. (Under sshd also the account's own home: environment= could have moved HOME.)
 	homes := []string{home}
 	if underSSHD {
-		homes = append(homes, passwdField(g.account, 6))
+		homes = append(homes, passwdField(g.helper("getent"), g.account, 6))
 	}
 	for _, h := range homes {
 		if h == "" {
@@ -208,11 +208,11 @@ func (g *Gate) keyLines(files []string, keysList string) string {
 
 // passwdField: field n (1-based) of the account's passwd entry (getent, so NSS accounts too);
 // "" without getent (macOS) or an entry.
-func passwdField(account string, n int) string {
-	if _, err := exec.LookPath("getent"); err != nil {
+func passwdField(getent, account string, n int) string {
+	if getent == "" {
 		return ""
 	}
-	out, err := exec.Command("getent", "passwd", account).Output()
+	out, err := exec.Command(getent, "passwd", account).Output()
 	if err != nil {
 		return ""
 	}

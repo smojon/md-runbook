@@ -151,7 +151,8 @@ func Leftovers(list []Proc, me, top, uid int, inUM InUserManager) []Leftover {
 	return out
 }
 
-// ParsePS reads `ps -A -o pid= -o ppid= [-o uid= -o pgid=]` (where there is no /proc).
+// ParsePS reads `ps -A -o pid= -o ppid= [-o uid= -o pgid= [-o comm=]]` (where there is no /proc).
+// comm is the rest of the line, as Comm shortens it (macOS prints the program's path).
 func ParsePS(out string) []Proc {
 	var list []Proc
 	for _, l := range strings.Split(out, "\n") {
@@ -172,6 +173,9 @@ func ParsePS(out string) []Proc {
 				continue
 			}
 			p.UID, p.PGID = uid, pgid
+			if len(f) >= 5 {
+				p.Comm = Comm(strings.Join(f[4:], " "))
+			}
 		}
 		list = append(list, p)
 	}
@@ -258,42 +262,30 @@ func ShellOf(list []Proc, leader, uid int, inner func(pid int) bool) int {
 	return 0
 }
 
-// CellsLeftovers is each process of the cells' account (separated mode) that belongs to no live
-// session: one with no process of another account above it, but root's (sudo, cron, sshd). A
-// live session's cells run under its gate, a process of the gate's account; what left it (a
-// double fork, setsid) hangs under PID 1 or a subreaper, and a cron job or a login of the cells'
-// account under root's. Spared: PID 1, what came in from outside the PID namespace (parent 0),
-// and the account's user manager (systemd --user and its sd-pam, as Leftovers spares them).
-func CellsLeftovers(list []Proc, uid int, inUM InUserManager) []int {
+// CellsStrays is each live process of the cells' account (separated mode) with no process above
+// it for which under is true. A session's cells run under its gate (sudo, root's, between them);
+// what left it (a double fork, setsid) hangs under PID 1 or a subreaper, a cron job or a login
+// of the cells' account under root's, and another gate account's blocks under that gate. None of
+// those is spared: not the account's user manager, not what came in from outside the PID
+// namespace (review of 0.28.0, H2: any of them can write into a session's shell through
+// /proc/PID/fd/0, the same account's).
+func CellsStrays(list []Proc, uid int, under func(Proc) bool) []int {
 	byPID := map[int]Proc{}
 	for _, p := range list {
 		byPID[p.PID] = p
-	}
-	userman := func(pid int) bool {
-		p, ok := byPID[pid]
-		return ok && p.Comm == "systemd" && p.PPID == 1 && inUM(pid)
 	}
 	var out []int
 	for _, p := range list {
 		if p.UID != uid || p.PID <= 1 || p.Zombie {
 			continue
 		}
-		if userman(p.PID) || (p.Comm == "(sd-pam)" && userman(p.PPID) && inUM(p.PID)) {
-			continue
-		}
 		spared := false
-		for q, n := p.PPID, 0; n < 4096; n++ {
-			if q == 0 {
-				// From outside the PID namespace (docker exec, kubectl exec).
-				spared = true
-				break
-			}
+		for q, n := p.PPID, 0; q > 1 && n < 4096; n++ {
 			qp, ok := byPID[q]
-			if q == 1 || !ok {
-				// Under PID 1, or its parent just went: no session above it.
+			if !ok {
 				break
 			}
-			if qp.UID != uid && qp.UID != 0 {
+			if under(qp) {
 				spared = true
 				break
 			}
@@ -304,6 +296,28 @@ func CellsLeftovers(list []Proc, uid int, inUM InUserManager) []int {
 		}
 	}
 	return out
+}
+
+// GateOf: a gate process of the account uid (by its name, as /proc/PID/stat or ps shows it; only
+// that account can start a process of its own).
+func GateOf(uid int, comm string) func(Proc) bool {
+	return func(p Proc) bool { return p.UID == uid && p.Comm == comm }
+}
+
+// AnyGate: a gate process of any account but root and the cells' (uid).
+func AnyGate(cellsUID int, comm string) func(Proc) bool {
+	return func(p Proc) bool { return p.UID != cellsUID && p.UID != 0 && p.Comm == comm }
+}
+
+// Comm is a program's name as /proc/PID/stat shows it: its file name, at most 15 bytes.
+func Comm(path string) string {
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		path = path[i+1:]
+	}
+	if len(path) > 15 {
+		path = path[:15]
+	}
+	return path
 }
 
 func num(s string) (int, bool) {

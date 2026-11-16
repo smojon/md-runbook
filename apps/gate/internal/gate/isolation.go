@@ -67,6 +67,8 @@ type cellsReq struct {
 	Targets []int    `json:"targets,omitempty"`
 	Read    []string `json:"read,omitempty"`
 	Write   []string `json:"write,omitempty"`
+	// sweep: the gate's name as processes show it (procs.Comm): what runs under a gate is spared.
+	GateComm string `json:"gate_comm,omitempty"`
 }
 
 const (
@@ -182,7 +184,7 @@ func cellsMain() int {
 		os.Stdout.WriteString(cg + "\n")
 		return 0
 	case "sweep":
-		data, _ := json.Marshal(cellsSweep())
+		data, _ := json.Marshal(cellsSweep(req.GateComm))
 		os.Stdout.Write(append(data, '\n'))
 		return 0
 	}
@@ -193,13 +195,13 @@ func cellsMain() int {
 // cellsSweep ends this account's processes that belong to no live session (procs.CellsLeftovers):
 // stopped first, listed again until 3 passes find nothing new (at most 50 passes or 5 seconds),
 // then killed. Linux only (/proc).
-func cellsSweep() sweepResult {
+func cellsSweep(gateComm string) sweepResult {
 	res := sweepResult{Killed: []int{}}
-	if !procs.HaveProc() {
+	// Without the gate's name every process of the account would be a stray, live sessions' too.
+	if !procs.HaveProc() || gateComm == "" {
 		return res
 	}
 	me, uid := os.Getpid(), os.Getuid()
-	inUM := procs.InUserManagerScope(uid)
 	stopped := map[int]bool{}
 	t0 := time.Now()
 	for pass, quiet := 0, 0; quiet < 3; pass++ {
@@ -212,7 +214,7 @@ func cellsSweep() sweepResult {
 			break
 		}
 		n := 0
-		for _, p := range procs.CellsLeftovers(list, uid, inUM) {
+		for _, p := range procs.CellsStrays(list, uid, procs.AnyGate(uid, gateComm)) {
 			if p == me || stopped[p] {
 				continue
 			}
@@ -269,7 +271,7 @@ func bwrapArgs(bwrap string) []string {
 // as the cells' account when asCells (separated mode).
 func (p plan) outer(unit string, asCells bool) launch {
 	var argv []string
-	env := []string{"PATH=" + gatePath, "LC_ALL=C"}
+	env := []string{"PATH=" + sysPath, "LC_ALL=C"}
 	if unit != "" {
 		argv = append(argv, p.systemdRun, "--user", "--scope", "--quiet", "--collect", "--unit="+unit, "--description=md-runbook-gate cells", "--")
 		env = append(env, "XDG_RUNTIME_DIR="+p.runtimeDir)
@@ -323,7 +325,7 @@ func runFor(limit time.Duration, argv, env []string, stdin []byte) ([]byte, erro
 	cmd.WaitDelay = waitDelay
 	cmd.Env = env
 	if env == nil {
-		cmd.Env = []string{"PATH=" + gatePath, "LC_ALL=C"}
+		cmd.Env = []string{"PATH=" + sysPath, "LC_ALL=C"}
 	}
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
@@ -357,7 +359,7 @@ func randHex(n int) string {
 
 // basePlan: the account and programs, before the isolation is chosen.
 func (g *Gate) basePlan() plan {
-	p := plan{iso: "none", account: g.cfg.CellsAccount, sudo: inPath(gatePath, "sudo"), runtimeDir: "/run/user/" + itoa(g.uid)}
+	p := plan{iso: "none", account: g.cfg.CellsAccount, sudo: g.helper("sudo"), runtimeDir: "/run/user/" + itoa(g.uid)}
 	if exe, err := os.Executable(); err == nil && strings.HasPrefix(exe, "/") {
 		p.exe = exe
 	}
@@ -402,7 +404,7 @@ func (g *Gate) probe(iso string) string {
 	}
 	switch iso {
 	case "scope":
-		sr := inPath(gatePath, "systemd-run")
+		sr := g.helper("systemd-run")
 		if sr == "" {
 			return "no systemd-run"
 		}
@@ -423,7 +425,7 @@ func (g *Gate) probe(iso string) string {
 		g.plan.systemdRun = sr
 		return ""
 	case "bwrap":
-		b := inPath(gatePath, "bwrap")
+		b := g.helper("bwrap")
 		if b == "" {
 			return "no bwrap"
 		}
