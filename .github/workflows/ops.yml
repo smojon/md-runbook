@@ -62,7 +62,7 @@ jobs:
           ssh-keygen -q -t ecdsa -b 256 -N '' -C md-runbook-ops -f "$KEYS/ssh_host_ecdsa_key"
           cp "$KEYS/client.pub" "$KEYS/authorized_keys"
           echo "ci@example.net namespaces=\"md-runbook\" $(cut -d' ' -f1,2 "$KEYS/signer.pub")" > "$KEYS/allowed_signers"
-          printf '%s\n' 'unsigned = allow' 'allowed_signers = /etc/md-runbook/allowed_signers' 'log = /var/log/md-runbook/gate.log # a comment: the gate and md-runbook-probe both strip it' 'sshd_force_command = yes' > "$KEYS/gate.conf"
+          printf '%s\n' 'unsigned = allow' 'allowed_signers = /etc/md-runbook/allowed_signers' 'log = /var/log/md-runbook/gate.log # a comment: the gate and md-runbook-probe both strip it' 'sshd_force_command = yes' 'kill_leftovers = yes' > "$KEYS/gate.conf"
 
       - name: Cluster
         run: |
