@@ -71,7 +71,8 @@ attaches `md-runbook-X.Y.Z.apk` to each version's release.
 - Keep an offline copy of the keystore and its password. A lost key means installed apps can
   never be updated.
 - On Google Play, give this key as the app signing key ("provide a copy of your app signing
-  key"), and make a separate upload key. Play takes an `.aab`, not this APK.
+  key", see [Use Play App Signing](https://support.google.com/googleplay/android-developer/answer/9842756)),
+  and make a separate upload key. Play takes an `.aab`, not this APK.
 
 ### Repository
 
