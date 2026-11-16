@@ -1,6 +1,6 @@
-import { Link, router } from 'expo-router';
+import { Link, Stack, router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { parse } from '@md-runbook/core';
 import { checkCore } from '../coreCheck';
 import { t } from '../i18n';
@@ -15,6 +15,9 @@ import { themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
 import { LibrarySection } from './LibrarySection';
 import { NewRunbookSheet } from '../ui/NewRunbookSheet';
+import { ActionsSheet, AppAction } from '../ui/ActionsSheet';
+import { HomeHeaderButtons } from '../ui/HomeHeader';
+import { CHEAT_SHEET_URL } from '../helpLinks';
 
 export function RunbookList() {
   const styles = useStyles();
@@ -78,6 +81,24 @@ export function RunbookList() {
     if (r.kind === 'error') setError(r.message);
     if (r.kind === 'opened') router.push({ pathname: '/runbook/[id]', params: { id: r.runbook.id } });
   };
+  /** The start screen's ⋯ (header): its actions and the help, each also on the screen or the gear. */
+  const [menu, setMenu] = useState(false);
+  const action = (id: keyof typeof t.actions, group: AppAction['group'], run: () => void): AppAction => ({
+    id,
+    title: t.actions[id][0],
+    hint: t.actions[id][1],
+    group,
+    run,
+  });
+  const homeActions: AppAction[] = [
+    action('openFile', 'open', () => void open()),
+    action('scanCode', 'open', () => router.push('/scan')),
+    action('openLink', 'open', () => setLink('')),
+    action('newRunbook', 'edit', () => setCreating(true)),
+    action('sample', 'help', () => router.push({ pathname: '/runbook/[id]', params: { id: 'sample' } })),
+    action('cheatSheet', 'help', () => void Linking.openURL(CHEAT_SHEET_URL)),
+    action('hosts', 'help', () => router.push('/hosts')),
+  ];
   // The list is the screen's root, with automatic insets: on iOS the header is translucent and
   // content placed above the list would sit under it (and taps there would hit the header).
   return (
@@ -91,6 +112,8 @@ export function RunbookList() {
       onRefresh={onRefresh}
       ListHeaderComponent={
         <View style={styles.header}>
+          <Stack.Screen options={{ headerRight: () => <HomeHeaderButtons onMore={() => setMenu(true)} /> }} />
+          <ActionsSheet actions={homeActions} visible={menu} onClose={() => setMenu(false)} />
           <View style={styles.actions}>
             <Pressable testID="open-runbook" accessibilityRole="button" onPress={() => void open()} style={[styles.action, styles.primary]}>
               <Codicon name="folder-opened" size={22} color={colors.onAccent} />

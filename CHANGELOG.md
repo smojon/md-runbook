@@ -139,6 +139,11 @@ Security fixes from a review of the parts that face the network.
   - Stop a cell after sets the timeout of cells without `timeout=`. The default is none, no
     longer 10 minutes.
   - Stop Run all at a failed step is on by default. Off, Run all goes on to the next step.
+- **App: every action in sight.**
+  - Each row of the Steps view has a ⋯ button for its actions; a long press still works.
+  - The start screen has a ⋯ sheet with its actions, the sample, the cheat sheet and settings.
+  - A cell with several commands says that a tap on a line shows its actions, until you tap one.
+  - A proposal's ⋯ has **Reject Proposed Cell**, as in VS Code.
 
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.

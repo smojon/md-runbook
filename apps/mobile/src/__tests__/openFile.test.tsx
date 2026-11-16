@@ -11,7 +11,11 @@ jest.mock('expo-file-system', () => ({
     this.text = () => mockFileText(mockUri);
   },
 }));
-jest.mock('expo-router', () => ({ Link: ({ children }: { children: unknown }) => children, router: { push: jest.fn() } }));
+jest.mock('expo-router', () => ({
+  Link: ({ children }: { children: unknown }) => children,
+  Stack: { Screen: () => null },
+  router: { push: jest.fn() },
+}));
 
 const pick = getDocumentAsync as jest.MockedFunction<typeof getDocumentAsync>;
 const asset = (over: object = {}) => ({

@@ -87,6 +87,8 @@ export interface Settings {
   timeoutSeconds: number;
   /** Run all stops at the first step that fails (mdRunbook.execution.stopOnFailure). */
   stopOnFailure: boolean;
+  /** A line of a cell was tapped once: the hint that lines have actions is no longer shown. */
+  lineHintSeen: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -107,6 +109,7 @@ const DEFAULTS: Settings = {
   redactionPatterns: [],
   timeoutSeconds: 0,
   stopOnFailure: true,
+  lineHintSeen: false,
 };
 
 /** The timeouts offered (seconds; 0: none, the extension's default). */
@@ -125,7 +128,8 @@ type OutputFlag =
   | 'keyNeedsUser'
   | 'allowNoConfirm'
   | 'launchForm'
-  | 'stopOnFailure';
+  | 'stopOnFailure'
+  | 'lineHintSeen';
 
 /** The strings of a saved list, or undefined when it isn't one. */
 const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : undefined);
@@ -166,6 +170,7 @@ async function readSettings(): Promise<void> {
       timeoutSeconds:
         typeof saved.timeoutSeconds === 'number' && saved.timeoutSeconds >= 0 ? Math.floor(saved.timeoutSeconds) : DEFAULTS.timeoutSeconds,
       stopOnFailure: flag('stopOnFailure'),
+      lineHintSeen: flag('lineHintSeen'),
       // `trustedSigners` (allowed_signers text, before the one list) is moved by signing/trust.ts
       // migrateTrustedSigners and left out here: the next save drops it.
     };
@@ -272,6 +277,11 @@ export const timeoutSeconds = (): number => settings.timeoutSeconds;
 
 export function setTimeoutSeconds(n: number): void {
   update({ timeoutSeconds: Math.max(0, Math.floor(n)) });
+}
+
+/** The hint under a cell's commands has been seen (a line was tapped). */
+export function setLineHintSeen(): void {
+  update({ lineHintSeen: true });
 }
 
 export function useSignerName(): string {

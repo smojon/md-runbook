@@ -57,6 +57,7 @@ import { qrLink, runbookAddress } from '../runbooks/address';
 import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { SignatureState, coverage, shownName, unsignedRunnable } from '../signing/trust';
 import { factsLabel, sigLabel } from './LibrarySection';
+import { CHEAT_SHEET_URL } from '../helpLinks';
 import { textProgress } from '@md-runbook/core/textProgress';
 import { headingsOf } from '@md-runbook/core/title';
 import type { Progress, RunbookEstimate } from '@md-runbook/core';
@@ -183,8 +184,6 @@ function teardownLabel(cell: ParsedCell | undefined): string {
       .slice(0, 60) ?? '?'
   );
 }
-
-const CHEAT_SHEET_URL = 'https://github.com/smojon/md-runbook/blob/main/docs/cheatsheet.md';
 
 /** Output kept on screen while a cell runs; the output block written afterwards has its own limit. */
 const LIVE_CHARS = 20_000;
@@ -1695,7 +1694,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           ]
         : []),
       ...(proposal === 'proposed' || proposal === 'unverified'
-        ? [{ ...meta('approveProposal', 'review'), run: () => openApprove(index, false) }]
+        ? [
+            { ...meta('approveProposal', 'review'), run: () => openApprove(index, false) },
+            // As the review card's Reject, and VS Code's Reject Proposed Cell: the cell leaves the runbook.
+            { ...meta('rejectProposal', 'review'), run: () => write(rejectCell(getRunbook(runbook.id)?.text ?? runbook.text, index)) },
+          ]
         : []),
       { ...meta('runCell', 'run', why), run: () => void run({ cellIndex: index }, host) },
       {

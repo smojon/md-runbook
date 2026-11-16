@@ -21,7 +21,7 @@ import { parseInterval } from '@md-runbook/core/checks';
 import { OutputText } from './OutputText';
 import { CloudView } from './CloudView';
 import { cloudView } from '@md-runbook/core/cloudViews';
-import { useOutputSettings } from '../settings/store';
+import { setLineHintSeen, useOutputSettings } from '../settings/store';
 import { outputRedactor } from '../settings/safety';
 import type { RemotePlatform } from '@md-runbook/ssh';
 import { LineStep, stepAtLine } from '@md-runbook/core/steps';
@@ -101,7 +101,7 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
   const can = runnability(cell, p.runbookId, p.platform);
   const isBash = cell.kind === 'code' && shellKindForLanguage(cell.languageId) === 'bash';
   // AWS / Google Cloud JSON in the saved output (without its stderr lines): a list with console links.
-  const showCloud = useOutputSettings().cloudViews;
+  const { cloudViews: showCloud, lineHintSeen } = useOutputSettings();
   const saved = cell.output;
   const cloud = useMemo(() => {
     if (!showCloud || !saved) return undefined;
@@ -162,6 +162,8 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
 
   const tapLine = (line: number): void => {
     if (!can.ok) return;
+    // Found: the hint under the cells' commands has done its job.
+    if (!lineHintSeen) setLineHintSeen();
     const step = stepAtLine(steps, line);
     setSelected(step && sel?.start !== step.start ? step : undefined);
   };
@@ -225,6 +227,8 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
               <View key={n}>
                 <Pressable
                   testID={`cell-${index}-line-${n}`}
+                  accessibilityRole="button"
+                  accessibilityHint={t.lineTapA11yHint}
                   onPress={() => tapLine(n)}
                   disabled={!can.ok || running !== undefined}
                   style={[styles.line, inSel && styles.lineSelected, inRun && (paused ? styles.linePaused : styles.lineRunning)]}
@@ -265,6 +269,12 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
           })}
         </View>
       </View>
+      {/* Until the first tap on a line: that a line has actions of its own (they are not in sight). */}
+      {!lineHintSeen && can.ok && runnable && !running && steps.length > 1 ? (
+        <Text testID={`cell-${index}-line-hint`} style={styles.lineHint}>
+          {t.lineTapHint}
+        </Text>
+      ) : null}
       <View style={styles.statusLine}>
         <View style={styles.statusLeft}>
           {can.ok && runnable && !running ? (
@@ -641,6 +651,7 @@ const useStyles = themedStyles((c) => ({
   statusLine: { flexDirection: 'row', alignItems: 'center', marginLeft: 34, paddingHorizontal: 4, paddingTop: 4, minHeight: 24, gap: 8 },
   statusLeft: { flex: 1 },
   statusText: { fontSize: 12, color: c.muted, flexShrink: 1 },
+  lineHint: { fontSize: 12, color: c.muted, marginLeft: 38, paddingHorizontal: 4, paddingTop: 2 },
   why: { fontSize: 12, lineHeight: 17, color: c.muted, marginLeft: 38, paddingHorizontal: 4, paddingTop: 2 },
   whyProposed: { color: c.warningText },
   problems: { marginLeft: 38, paddingHorizontal: 4, paddingTop: 4, gap: 6 },
