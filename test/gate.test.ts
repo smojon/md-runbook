@@ -54,7 +54,8 @@ class Gate {
     delete base.SSH_CONNECTION;
     if (as) {
       const pairs = Object.entries({ ...env, SSH_ORIGINAL_COMMAND: command }).map(([k, v]) => `${k}=${v}`);
-      this.child = spawn('sudo', ['-n', '-u', as, '--', '/usr/bin/env', ...pairs, GATE, ...args], { stdio: 'pipe' });
+      // From /: the test's own folder (a CI runner's home) may be closed to that account.
+      this.child = spawn('sudo', ['-n', '-u', as, '--', '/usr/bin/env', ...pairs, GATE, ...args], { stdio: 'pipe', cwd: '/' });
     } else {
       this.child = spawn(GATE, args, { env: { ...base, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
     }
@@ -1460,8 +1461,16 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
 
   // ---- isolation (0.28.0): each session's cells in a scope of their own ----
 
-  /** The isolations this server must have, best first (CI says; else the tests take what is there). */
+  /** The isolations this server must have (CI says; else the tests take what is there). */
   const HAVE = (process.env.MD_RUNBOOK_GATE_ISOLATIONS ?? '').split(',').filter(Boolean);
+  /**
+   * What isolation = auto must find: scope where the server has it, else none. Never bwrap: it
+   * takes sudo and setuid programs from the blocks, so only `isolation = bwrap` gets it.
+   */
+  const checkAuto = (ev: Record<string, string>): void => {
+    assert.ok(['scope', 'none'].includes(ev.isolation!), `auto found ${ev.isolation}`);
+    if (HAVE.length) assert.equal(ev.isolation, HAVE.includes('scope') ? 'scope' : 'none', `auto found ${ev.isolation}: ${ev.isolation_off ?? ''}`);
+  };
   /** The newest session event of a log. */
   const lastSession = (log: string): Record<string, string> => {
     const lines = log.split('\n').filter((l) => /"event":"session"/.test(l));
@@ -1488,15 +1497,14 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
   /** A block that leaves a program behind: a double fork into a session of its own, out of the shell's group. */
   const escape = (marker: string): string => `( setsid sh -c '${marker} >/dev/null 2>&1 </dev/null & exit 0' & ); sleep 0.3; echo started`;
 
-  it('isolation = auto: the session logs its mode and isolation; a double-forked program ends with the session where there is a scope or bwrap', { skip: process.platform !== 'linux' && 'reads /proc' }, async (t) => {
+  it('isolation = auto: scope where it works, else none (never bwrap); a double-forked program ends with the session in a scope', { skip: process.platform !== 'linux' && 'reads /proc' }, async (t) => {
     const marker = 'sleep 3031';
     const [m, s] = await signed(fence('bash', escape(marker)), { name: 'ops/escape' });
     const g = start();
     await g.hello();
     const ev = lastSession(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'));
     assert.equal(ev.gate_mode, 'shared');
-    assert.ok(['scope', 'bwrap', 'none'].includes(ev.isolation!), ev.isolation);
-    if (HAVE.length) assert.equal(ev.isolation, HAVE[0], `auto found ${ev.isolation}: ${ev.isolation_off ?? ''}`);
+    checkAuto(ev);
     assert.equal((await g.request('load', m, s)).code, 0);
     assert.equal((await g.request('run', '1')).out, 'started\n');
     assert.ok(procsWith(marker).length > 0, 'the program runs');
@@ -1504,7 +1512,7 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
     if (ev.isolation === 'none') {
       // Only kill_leftovers ends it there (as before).
       for (const p of procsWith(marker)) process.kill(p, 'SIGKILL');
-      t.skip(`no scope or bwrap here (${ev.isolation_off ?? ''})`);
+      t.skip(`no scope here (${ev.isolation_off ?? ''})`);
       return;
     }
     assert.ok(await gone(marker), `the program ended with the session's ${ev.isolation}`);
@@ -1555,7 +1563,7 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
   describe('separated mode (cells_account)', { skip: !(CELLS && GATE_ACCOUNT && process.platform === 'linux') && 'needs MD_RUNBOOK_GATE_CELLS_ACCOUNT and MD_RUNBOOK_GATE_ACCOUNT (Linux; set up as in the CI gate job)' }, () => {
     /** `sh -c cmd` as an account, with input; its stdout. */
     const as = (account: string, cmd: string, input = ''): string => {
-      const r = spawnSync('sudo', ['-n', '-u', account, '--', '/bin/sh', '-c', cmd], { input, encoding: 'utf8' });
+      const r = spawnSync('sudo', ['-n', '-u', account, '--', '/bin/sh', '-c', cmd], { input, encoding: 'utf8', cwd: '/' });
       assert.equal(r.status, 0, `${account}: ${cmd}: ${r.stderr}`);
       return r.stdout;
     };
@@ -1624,7 +1632,7 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       const g = startAs(GATE_ACCOUNT, gdir, conf);
       const session = (await g.hello()).code;
       const ev = lastSession(readLog());
-      if (HAVE.length) assert.equal(ev.isolation, HAVE[0], `auto found ${ev.isolation}: ${ev.isolation_off ?? ''}`);
+      checkAuto(ev);
       assert.equal((await g.request('load', m, s)).code, 0);
       assert.equal((await g.request('run', '1')).out, 'started\n');
       const left = procsWith(marker);
@@ -1640,7 +1648,7 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       assert.equal(await g.close(), 0);
       if (ev.isolation === 'none') {
         for (const p of left) spawnSync('sudo', ['-n', 'kill', '-KILL', String(p)]);
-        t.skip(`no scope or bwrap here (${ev.isolation_off ?? ''})`);
+        t.skip(`no scope here (${ev.isolation_off ?? ''})`);
         return;
       }
       assert.ok(await gone(marker), `the program ended with the session's ${ev.isolation}`);

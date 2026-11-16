@@ -48,9 +48,10 @@ type Config struct {
 	MemoryLimit string
 	// yes: sshd_config's ForceCommand runs this gate (with --sshd-force-command).
 	SSHDForceCommand bool
-	// How each session's cells are kept together, so that they end with it: auto (the best this
-	// server has), scope (a systemd scope), bwrap (a PID namespace) or none (process groups, and
-	// the kill_leftovers sweep). scope and bwrap are required: without them the gate doesn't start.
+	// How each session's cells are kept together, so that they end with it: auto (scope where it
+	// works, else none; never bwrap), scope (a systemd scope), bwrap (a PID namespace) or none
+	// (process groups, and the kill_leftovers sweep). scope and bwrap are required: without them
+	// the gate doesn't start.
 	Isolation string
 	// The account the cells run as (separated mode, through sudo); "" runs them as the gate's own
 	// account (shared mode).

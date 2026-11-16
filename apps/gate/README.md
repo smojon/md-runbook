@@ -105,7 +105,8 @@ Each shell of a session runs in a scope of its own. When the shell ends, so does
 its scope, even a program that left its process group (`setsid`, a double fork).
 
 `isolation =` in `gate.conf` picks how:
-- `auto` (the default): `scope` where it works, else `bwrap`, else `none`.
+- `auto` (the default): `scope` where it works, else `none`. Never `bwrap`, so blocks that use
+  `sudo` keep working after an update.
 - `scope`: a systemd scope of the account's user manager (`systemd-run --user --scope`).
 - `bwrap`: a PID namespace of its own (`bwrap --unshare-pid`).
 - `none`: the shell's process group only, as before 0.28.0. `kill_leftovers = yes` ends the rest.
@@ -120,8 +121,8 @@ or a polkit rule. Its own user manager can.
   or newer.
 
 **bwrap** keeps the file tree as it is. But blocks see only their own processes in `/proc`, and
-nothing in it can gain privileges: no `sudo`, no setuid programs. If blocks need `sudo`, use
-`scope` or `none`.
+nothing in it can gain privileges: no `sudo`, no setuid programs. So the gate uses it only when
+you write `isolation = bwrap`.
 
 **Limits:**
 - In shared mode a block runs as the account that owns its scope. A block that means to can
