@@ -886,6 +886,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const runOnGroup = async (cellIndex: number, group: string, confirmed = false): Promise<void> => {
     setGroupPick(undefined);
     if (!runbook || busy.current || refusedHere()) return;
+    // In practice every cell runs on the practice host only; one the app doesn't have runs nothing.
+    if (practiceHost) return setNotice(t.groupNotInPractice);
+    if (practiceName) return setNotice(t.practiceMissing(practiceName));
     const members = hosts.filter((h) => h.group === group);
     if (members.length === 0) return;
     if ((await reportAllows(() => void runOnGroup(cellIndex, group, confirmed))) !== 'go') return;
@@ -1778,11 +1781,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           'run',
           practiceHost
             ? t.groupNotInPractice
-            : hostGroups.length === 0
-              ? t.noHostGroups
-              : can.ok
-                ? undefined
-                : t.notRunnable[can.why](can.detail),
+            : practiceName
+              ? t.practiceMissing(practiceName)
+              : hostGroups.length === 0
+                ? t.noHostGroups
+                : can.ok
+                  ? undefined
+                  : t.notRunnable[can.why](can.detail),
         ),
         run: () => {
           setGroupPick(index);

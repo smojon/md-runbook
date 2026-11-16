@@ -413,6 +413,22 @@ describe('practice on a host (drills)', () => {
     expect(connectionFor).not.toHaveBeenCalled();
     expect(screen.getByTestId('run-notice').props.children).toMatch(/No host named train to practise on/);
   });
+
+  it('a practice host the app does not have: Run on a Group is off too (security review round 3)', async () => {
+    const a = addHost({ name: 'prod-1', hostname: 'prod1.example.net', port: 22, username: 'ops', group: 'prod' });
+    pinHostKey(a.id, 'ecdsa-sha2-nistp256 AAAA1=');
+    const r = addRunbook('drill.md', '---\npractice: train\n---\n\n# Drill\n\n```bash\nuptime\n```\n');
+    connectionFor.mockClear();
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-actions'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('action-runOnGroup'));
+    });
+    expect(screen.queryByTestId('group-prod')).toBeNull();
+    expect(connectionFor).not.toHaveBeenCalled();
+  });
 });
 
 describe('run on a group', () => {
