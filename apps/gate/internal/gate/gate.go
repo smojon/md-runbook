@@ -501,8 +501,8 @@ type sess struct {
 	exitsPath string
 	exitsMu   sync.Mutex
 	exitsOff  int64
-	exitsRead int64
 	exitsBuf  []byte
+	exitsBad  string // why the exits file is not what the shells wrote ("" while it is)
 	sepRuns   map[string]sepRun
 	sepExits  map[string]report.Exit
 }

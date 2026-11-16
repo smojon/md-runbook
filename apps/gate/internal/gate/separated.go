@@ -308,12 +308,20 @@ type sepRun struct{ rid, nonce string }
 const exitsMax = 16 << 20
 
 // readExitsFile reads what the cells' shells appended since the last read: each run's exit, as
-// `N EXIT TIME NONCE [KUBE-REASON]` (tab-separated). The first line with a run's number counts, as
-// in report-exits; the gate logs its `end` event then (and the kube-context refusal it names). A
-// shorter file (truncated) is read again from its start: what was read stays read.
+// `N EXIT TIME NONCE [KUBE-REASON]` (tab-separated), one line per signed run; the gate logs its
+// `end` event then (and the kube-context refusal it names).
+//
+// Only the shells write there, but the cells' account can write the file, so a block of this
+// session can change it in place (review of 0.28.0, M1: within a session, as Trust says). What
+// isn't exactly a line the gate waits for ends the session, and no run report goes out: a line
+// that doesn't parse, a wrong number or random number, a second line for a run, a shorter file,
+// one past exitsMax (junkExits).
 func (g *Gate) readExitsFile() {
 	g.exitsMu.Lock()
 	defer g.exitsMu.Unlock()
+	if g.exitsBad != "" {
+		return
+	}
 	f, err := os.Open(g.exitsPath)
 	if err != nil {
 		return
@@ -324,10 +332,15 @@ func (g *Gate) readExitsFile() {
 		return
 	}
 	size := st.Size()
-	if size < g.exitsOff {
-		g.exitsOff, g.exitsBuf = 0, nil
+	switch {
+	case size < g.exitsOff:
+		g.junkExits("it got shorter")
+		return
+	case size > exitsMax:
+		g.junkExits("it is over " + itoa(exitsMax>>20) + " MiB")
+		return
 	}
-	for size > g.exitsOff && g.exitsRead < exitsMax {
+	for size > g.exitsOff && g.exitsBad == "" {
 		n := min(size-g.exitsOff, 1<<16)
 		buf := make([]byte, n)
 		got, _ := f.ReadAt(buf, g.exitsOff)
@@ -335,9 +348,8 @@ func (g *Gate) readExitsFile() {
 			break
 		}
 		g.exitsOff += int64(got)
-		g.exitsRead += int64(got)
 		g.exitsBuf = append(g.exitsBuf, buf[:got]...)
-		for {
+		for g.exitsBad == "" {
 			i := strings.IndexByte(string(g.exitsBuf), '\n')
 			if i < 0 {
 				break
@@ -346,8 +358,24 @@ func (g *Gate) readExitsFile() {
 			g.exitsBuf = g.exitsBuf[i+1:]
 		}
 		if len(g.exitsBuf) > 4096 {
-			g.exitsBuf = nil
+			g.junkExits("a line is over 4096 bytes")
 		}
+	}
+}
+
+// junkExits: the exits file is not what the shells write (exitsMu held). Logged, said, and the
+// session ends; its run reports don't go out.
+func (g *Gate) junkExits(why string) {
+	if g.exitsBad != "" {
+		return
+	}
+	g.exitsBad = why
+	msg := "the session's exits file was changed (" + why + "): the session ends"
+	say(msg)
+	g.log.Event("event", "exits", "status", "refused", "reason", msg)
+	select {
+	case g.endCh <- struct{}{}:
+	default:
 	}
 }
 
@@ -355,15 +383,26 @@ func (g *Gate) readExitsFile() {
 func (g *Gate) exitLine(line string) {
 	f := strings.Split(line, "\t")
 	if len(f) < 4 || len(f) > 5 {
+		g.junkExits("a line that doesn't parse")
 		return
 	}
 	run, ok := g.sepRuns[f[0]]
-	if _, done := g.sepExits[f[0]]; !ok || done || run.nonce == "" || f[3] != run.nonce {
+	_, done := g.sepExits[f[0]]
+	switch {
+	case !ok:
+		g.junkExits("a line for no run of this session")
+		return
+	case done:
+		g.junkExits("a second line for run " + f[0])
+		return
+	case run.nonce == "" || f[3] != run.nonce:
+		g.junkExits("a line for run " + f[0] + " without its random number")
 		return
 	}
 	rc := f[1]
 	if !textutil.IsNum(rc) || len(rc) > 3 {
-		rc = "1"
+		g.junkExits("an exit that is no number")
+		return
 	}
 	at := f[2]
 	if !isUTCTime(at) {
@@ -583,4 +622,11 @@ func hasPID1(list []procs.Proc) bool {
 		}
 	}
 	return false
+}
+
+// exitsBadNow: why the exits file was refused, "" while it is fine.
+func (g *Gate) exitsBadNow() string {
+	g.exitsMu.Lock()
+	defer g.exitsMu.Unlock()
+	return g.exitsBad
 }

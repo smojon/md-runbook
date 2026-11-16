@@ -211,6 +211,8 @@ can change, such as `/usr/libexec/md-runbook-gate`. The message names the folder
 - **Work folder:** in `/tmp`, which the blocks' account may enter but not list. The shell
   appends each run's exit to a file there that only the gate can read. The gate writes the
   `end` events to the log itself.
+  - A line in that file the shells didn't write ends the session, and logs an `exits` event.
+    The session's run reports don't go out then.
 - **Stopping:** stop requests and the end of a session reach the blocks through the same
   `sudo` line.
 
@@ -219,7 +221,8 @@ can change, such as `/usr/libexec/md-runbook-gate`. The message names the folder
   into another session's shells, and change their exits. The same signers run both, so it is
   the same trust.
 - **Within a session** a block can still answer for the later runs of its runbook
-  ([Trust](#trust)), and change the exits file of its own session.
+  ([Trust](#trust)). It can also change a line of its session's exits file in place, if the
+  line keeps its form: the gate doesn't see that.
 
 Run reports say which mode ran the blocks: `gate.gate_mode` is `shared` or `separated`
 ([Run reports](#run-reports)).

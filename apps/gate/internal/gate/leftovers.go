@@ -164,6 +164,10 @@ func (g *Gate) sendReports() {
 	if !g.reportOn || len(g.reportRuns) == 0 {
 		return
 	}
+	if g.exitsBadNow() != "" {
+		g.log.Event("event", "report", "status", "skipped", "reason", "the session's exits file was changed")
+		return
+	}
 	var token []byte
 	if g.cfg.ReportToken != "" {
 		data, err := os.ReadFile(g.cfg.ReportToken)

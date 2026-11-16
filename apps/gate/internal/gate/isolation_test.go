@@ -441,34 +441,36 @@ func TestSafePathProblem(t *testing.T) {
 	}
 }
 
-// Separated mode: the gate reads the exits the cells' shells append, logs the end events, and
-// keeps the first line with each run's random number. A forged, garbled or truncated file
-// changes nothing that was read.
+// Separated mode: the gate reads the exits the cells' shells append and logs the end events.
+// Anything else in the file (review of 0.28.0, M1) ends the session, logged, and no report goes
+// out.
 func TestExitsFile(t *testing.T) {
-	dir := t.TempDir()
-	g := &Gate{log: &logx.Logger{Dest: dir + "/gate.log", Account: "support"}}
-	g.exitsPath = dir + "/exits"
-	g.sepRuns = map[string]sepRun{"1": {"0000aa01", "n1"}, "2": {"0000aa02", "n2"}, "3": {"0000aa03", "n3"}}
-	g.sepExits = map[string]report.Exit{}
-	write := func(s string, flag int) {
-		f, err := os.OpenFile(g.exitsPath, flag, 0o600)
-		if err != nil {
-			t.Fatal(err)
+	newGate := func(t *testing.T) (*Gate, string, func(string, int)) {
+		dir := t.TempDir()
+		g := &Gate{log: &logx.Logger{Dest: dir + "/gate.log", Account: "support"}}
+		g.endCh = make(chan struct{}, 1)
+		g.exitsPath = dir + "/exits"
+		g.sepRuns = map[string]sepRun{"1": {"0000aa01", "n1"}, "2": {"0000aa02", "n2"}, "3": {"0000aa03", "n3"}}
+		g.sepExits = map[string]report.Exit{}
+		write := func(s string, flag int) {
+			f, err := os.OpenFile(g.exitsPath, flag, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.WriteString(s)
+			f.Close()
 		}
-		f.WriteString(s)
-		f.Close()
+		return g, dir, write
 	}
-	write("2\t0\t2026-11-16T10:00:00Z\tforged\t\n1\t0\t2026-11-16T10:00:01Z\tn1\t\n2\t3\tnot a time\tn2\tkube-context is none, not prod\n2\t0\t2026-11-16T10:00:09Z\tn2\t\n3\t7", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+	g, dir, write := newGate(t)
+	write("1\t0\t2026-11-16T10:00:01Z\tn1\t\n2\t3\tnot a time\tn2\tkube-context is none, not prod\n3\t7", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 	g.readExitsFile()
 	// The rest of run 3's line comes later.
 	write("\t2026-11-16T10:00:05Z\tn3\t\n", os.O_WRONLY|os.O_APPEND)
 	g.readExitsFile()
-	// Truncated, and a later line for run 1: what was read stays.
-	write("1\t9\t2026-11-16T10:00:06Z\tn1\t\n", os.O_WRONLY|os.O_TRUNC)
-	g.readExitsFile()
 	ex := g.sepExitsCopy()
-	if ex["1"] != (report.Exit{RC: "0", Time: "2026-11-16T10:00:01Z"}) || ex["2"].RC != "3" || ex["2"].Time == "not a time" || ex["3"] != (report.Exit{RC: "7", Time: "2026-11-16T10:00:05Z"}) || len(ex) != 3 {
-		t.Errorf("exits: %+v", ex)
+	if g.exitsBadNow() != "" || ex["1"] != (report.Exit{RC: "0", Time: "2026-11-16T10:00:01Z"}) || ex["2"].RC != "3" || ex["2"].Time == "not a time" || ex["3"] != (report.Exit{RC: "7", Time: "2026-11-16T10:00:05Z"}) || len(ex) != 3 {
+		t.Errorf("exits: %+v (%s)", ex, g.exitsBadNow())
 	}
 	data, _ := os.ReadFile(dir + "/gate.log")
 	log := string(data)
@@ -478,8 +480,43 @@ func TestExitsFile(t *testing.T) {
 			t.Errorf("log lacks %s:\n%s", want, log)
 		}
 	}
-	if strings.Count(log, `"event":"end"`) != 3 {
-		t.Errorf("log:\n%s", log)
+	select {
+	case <-g.endCh:
+		t.Error("the session ended")
+	default:
+	}
+	for name, c := range map[string]struct {
+		lines string
+		then  func(write func(string, int))
+		want  string
+	}{
+		"a forged random number": {"1\t0\t2026-11-16T10:00:01Z\tforged\t\n", nil, "a line for run 1 without its random number"},
+		"no such run":            {"9\t0\t2026-11-16T10:00:01Z\tn1\t\n", nil, "a line for no run of this session"},
+		"a second line":          {"1\t0\t2026-11-16T10:00:01Z\tn1\t\n1\t1\t2026-11-16T10:00:02Z\tn1\t\n", nil, "a second line for run 1"},
+		"junk":                   {"hello\n", nil, "a line that doesn't parse"},
+		"no number":              {"1\tx\t2026-11-16T10:00:01Z\tn1\t\n", nil, "an exit that is no number"},
+		"a long line":            {strings.Repeat("x", 5000), nil, "a line is over 4096 bytes"},
+		"truncated":              {"1\t0\t2026-11-16T10:00:01Z\tn1\t\n", func(write func(string, int)) { write("", os.O_WRONLY|os.O_TRUNC) }, "it got shorter"},
+	} {
+		g, dir, write := newGate(t)
+		write(c.lines, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+		g.readExitsFile()
+		if c.then != nil {
+			c.then(write)
+			g.readExitsFile()
+		}
+		if !strings.Contains(g.exitsBadNow(), c.want) {
+			t.Errorf("%s: %q, want %q", name, g.exitsBadNow(), c.want)
+		}
+		select {
+		case <-g.endCh:
+		default:
+			t.Errorf("%s: the session goes on", name)
+		}
+		data, _ := os.ReadFile(dir + "/gate.log")
+		if !strings.Contains(string(data), `"event":"exits","status":"refused","reason":"the session's exits file was changed (`+c.want) {
+			t.Errorf("%s: log %s", name, data)
+		}
 	}
 	for s, ok := range map[string]bool{"2026-11-16T10:00:01Z": true, "2026-11-16 10:00:01Z": false, "2026-11-16T10:00:01": false, "2026-1a-16T10:00:01Z": false} {
 		if isUTCTime(s) != ok {
