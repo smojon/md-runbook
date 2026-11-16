@@ -97,7 +97,7 @@ import { BarSegment, TimeBar, useNow } from '../ui/TimeBar';
 import { COVERED, ProgressRail, RAIL_WIDTH, RailChapter, RailState, RailTick } from '../ui/ProgressRail';
 import { LineStep } from '@md-runbook/core/steps';
 import { hostKeyId, signSshsig } from '@md-runbook/ssh';
-import { approvalOf, approveCell, rejectCell } from '../approvals/store';
+import { Reviewed, approvalOf, approveCell, rejectCell } from '../approvals/store';
 import { AssistantSheet } from '../assistant/AssistantSheet';
 import { useAssistant } from '../assistant/useAssistant';
 import { ApproveCard } from '../cells/ApproveCard';
@@ -106,7 +106,7 @@ import { PauseCard } from '../cells/PauseCard';
 import { LaunchError, launchModel, startValues } from '../runbooks/launch';
 import { LaunchSheet, LaunchTyped } from '../ui/LaunchSheet';
 import { MarksByCell, NO_MARKS, StepMarks, cellIdentities, remapByCell, toggleMark } from '../runbooks/stepMarks';
-import { CellRef, cellRefIn, resolveCell, resolveIn, runRules } from '../runbooks/cellRef';
+import { CellRef, cellRef, cellRefIn, resolveCell, resolveIn, runRules } from '../runbooks/cellRef';
 import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell, ProblemRow } from '../cells/CodeCell';
@@ -510,6 +510,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [confirming, setConfirming] = useState<
     { cell: CellRef; match: string; runsAs?: string; attempts?: number; go(): void } | undefined
   >();
+  // The review card of a proposal (the extension's built-in command policy). `scope`: what the
+  // approval is bound to when the card opened; checked again if `shell:` changed meanwhile.
+  // `cell` and `reviewed`: the proposal the card shows, by identity and as read. Approve and Reject
+  // act on that cell with that code only (approvals/store.ts refuses any other).
+  const [approving, setApproving] = useState<
+    { cell: CellRef; reviewed: Reviewed; result: PolicyResult; all: boolean; scope: string } | undefined
+  >();
   /** Secrets to store and inputs to type before a cell can run. */
   const [asking, setAsking] = useState<{ request: RunRequest; hostId: string; needs: NeededValue[] } | undefined>();
   /** ${input:NAME} values for as long as this runbook is open (as in the extension's session). */
@@ -631,6 +638,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       [teardownOffer?.cell, () => setTeardownOffer(undefined)],
       [manualAsk?.cell, () => setManualAsk(undefined)],
       [groupPick, () => setGroupPick(undefined)],
+      [approving?.cell, () => setApproving(undefined)],
     ];
     let asked = false;
     for (const [ref, putAway] of cards)
@@ -1460,9 +1468,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     group,
     ...(disabled ? { disabled } : {}),
   });
-  // Approving proposals: the extension's built-in command policy, one card per cell.
-  // `scope`: what the approval is bound to when the card opened; checked again if `shell:` changed meanwhile.
-  const [approving, setApproving] = useState<{ index: number; result: PolicyResult; all: boolean; scope: string } | undefined>();
+  // Approving proposals: the extension's built-in command policy, one card per cell (`approving`, above).
   const pendingProposals = (text: string): number[] =>
     parse(text)
       .cells.map((c, i) =>
@@ -1477,12 +1483,14 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       .filter((i) => i >= 0);
   const openApprove = (index: number, all: boolean, text = runbook?.text ?? ''): void => {
     const cell = parse(text).cells[index];
-    if (!cell || cell.kind !== 'code') return setApproving(undefined);
+    const ref = cellRef(text, index);
+    if (!cell || cell.kind !== 'code' || !isCodeMeta(cell.meta) || !ref) return setApproving(undefined);
     // The cell's own shell's rules; zsh (the runbook's `shell: zsh`) never passes unread.
     const shells = parseFrontMatter(text)?.shell;
     const kind = shellKindForLanguage(cell.languageId) ?? 'bash';
     setApproving({
-      index,
+      cell: ref,
+      reviewed: { value: cell.value, info: cell.meta.info },
       result: evaluatePolicy(cell.value, DEFAULT_POLICY, kind === 'bash' && shells?.unix === 'zsh' ? 'zsh' : kind),
       all,
       scope: runbook ? approvalScope(runbook.id, shells) : '',
@@ -1491,12 +1499,22 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   };
   const decide = (approve: boolean): void => {
     if (!runbook || !approving) return;
+    // The proposal reviewed, where it is in the text now; it changed or went: nothing is decided.
+    const text = latestText();
+    const at = resolveCell(text, approving.cell);
+    if (at === undefined) {
+      setApproving(undefined);
+      return setNotice(t.cellNotActed);
+    }
     // The runbook's `shell:` changed while the card was open: check the cell again under it.
-    if (approve && approving.scope !== approvalId) return openApprove(approving.index, approving.all);
+    if (approve && approving.scope !== approvalId) return openApprove(at, approving.all, text);
     const next = approve
-      ? approveCell(approvalId, runbook.text, approving.index, 'app', formatLocalIso(new Date()))
-      : rejectCell(runbook.text, approving.index);
-    if (next === undefined) return setApproving(undefined);
+      ? approveCell(approvalId, text, at, 'app', formatLocalIso(new Date()), approving.reviewed)
+      : rejectCell(text, at, approving.reviewed);
+    if (next === undefined) {
+      setApproving(undefined);
+      return setNotice(t.cellNotActed);
+    }
     updateRunbookText(runbook.id, next);
     // Approve All: on to the next proposal, in the text as it is now.
     const more = approving.all ? pendingProposals(next)[0] : undefined;
@@ -1656,8 +1674,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         {
           ...meta('approveAllProposals', 'assistant', pendingProposals(runbook.text).length > 0 ? undefined : t.noProposals),
           run: () => {
-            const at = pendingProposals(runbook.text)[0];
-            if (at !== undefined) openApprove(at, true);
+            const text = latestText();
+            const at = pendingProposals(text)[0];
+            if (at !== undefined) openApprove(at, true, text);
           },
         },
         ...(params.length > 0 ? [{ ...meta('setParameters', 'values'), run: () => list.current?.scrollToOffset({ offset: 0 }) }] : []),
@@ -1915,7 +1934,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         ? [
             { ...meta('approveProposal', 'review'), run: act((i, text) => openApprove(i, false, text)) },
             // As the review card's Reject, and VS Code's Reject Proposed Cell: the cell leaves the runbook.
-            { ...meta('rejectProposal', 'review'), run: act((i, text) => write(rejectCell(text, i))) },
+            {
+              ...meta('rejectProposal', 'review'),
+              // The proposal this sheet showed, unchanged (rejectCell refuses anything else: never a step of yours).
+              run: act((i, text) => {
+                const next = isCodeMeta(cell.meta) ? rejectCell(text, i, { value: cell.value, info: cell.meta.info }) : undefined;
+                if (next === undefined) setNotice(t.cellNotActed);
+                else write(next);
+              }),
+            },
           ]
         : []),
       { ...meta('runCell', 'run', why), run: () => void run({ cell: ref }, host) },
@@ -2849,12 +2876,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                     />
                   ) : pauseAsk && pauseAt === index ? (
                     <PauseCard label={stepName(index)} onContinue={() => answerPause(true)} onStop={() => answerPause(false)} />
-                  ) : approving?.index === index && isCodeMeta(item.meta) ? (
+                  ) : approving && where(approving.cell) === index ? (
+                    // What is shown is what is decided: the code and options as reviewed.
                     <ApproveCard
-                      code={item.value}
-                      info={item.meta.info}
-                      by={proposalOf(item.meta.info).by ?? 'someone'}
-                      reason={proposalOf(item.meta.info).reason}
+                      code={approving.reviewed.value}
+                      info={approving.reviewed.info}
+                      by={proposalOf(approving.reviewed.info).by ?? 'someone'}
+                      reason={proposalOf(approving.reviewed.info).reason}
                       result={approving.result}
                       typed={DEFAULT_POLICY.requireTypedConfirmation}
                       runsAs={((h) => (h ? `${h.username}@${h.name}` : undefined))(hostOfCell(index))}
