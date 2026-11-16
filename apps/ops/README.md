@@ -45,7 +45,13 @@ Every block runs as the account `ops`, which can read the host key and the kubec
 - `gate.conf` here has `sshd_force_command = yes`: sshd runs the gate for every login, so the key
   lines need no `command=`.
   - The gate takes it only from a `gate.conf` that `ops` can't change. A read-only mount is fine.
+  - Only with `--sshd-force-command`, which the image's `ForceCommand` line has.
   - `sshd_config` turns off forwarding, the terminal and `~/.ssh/rc` (`PermitUserRC no`).
+- `gate.conf` here has `kill_leftovers = yes`. At the start and end of each session, the gate
+  ends the programs of `ops` that outlived their session, such as a block's `setsid` program.
+  - Keep it in your own `gate.conf`: else such a program could write into a later session's
+    shell.
+  - `docker exec` and `kubectl exec` shells are spared.
 - **The login shell of `ops` is `/bin/sh`.** With bash, sshd ran `~/.bashrc`, a file `ops` can
   write, before the gate. Blocks still run in bash.
 

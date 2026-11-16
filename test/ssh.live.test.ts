@@ -217,8 +217,12 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
     lenient = await generateKey();
     // All signed or none per account: CI's one account has both keys (and its own), so each key's
     // config names a key file with only its own line, as two accounts would have.
+    // A key line's --config= must be a file the account can't change (security review round 4):
+    // root's, in a folder of root's, as on a server (CI has sudo).
+    const confDir = path.join(dir, 'root');
+    execFileSync('sudo', ['-n', 'install', '-d', '-m', '755', '-o', 'root', confDir]);
     const line = async (name: string, extra: string, k: KeyPair): Promise<string> =>
-      `restrict,command="sh ${gate} --config=${path.join(dir, `${name}.conf`)}${extra}" ${await publicKeyLine(k)}`;
+      `restrict,command="sh ${gate} --config=${path.join(confDir, `${name}.conf`)}${extra}" ${await publicKeyLine(k)}`;
     const lines = { strict: await line('strict', '', strict), lenient: await line('lenient', ' --unsigned=allow --who=lenient', lenient) };
     for (const [name, l] of Object.entries(lines)) {
       fs.writeFileSync(path.join(dir, `${name}.keys`), l + '\n');
@@ -228,6 +232,7 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
         path.join(dir, `${name}.conf`),
         `allowed_signers = ${path.join(dir, 'allowed_signers')}\nlog = ${path.join(dir, 'gate.log')}\nauthorized_keys = ${path.join(dir, `${name}.keys`)}\nlogin_shell_check = no\n`,
       );
+      execFileSync('sudo', ['-n', 'install', '-m', '644', '-o', 'root', path.join(dir, `${name}.conf`), path.join(confDir, `${name}.conf`)]);
     }
     fs.appendFileSync(process.env.MD_RUNBOOK_SSH_AUTHORIZED_KEYS!, `${lines.strict}\n${lines.lenient}\n`);
     pinned = hostKeyId(fs.readFileSync(process.env.MD_RUNBOOK_SSH_HOST_PUB!, 'utf8'));

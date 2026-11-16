@@ -40,13 +40,26 @@ locale = auto
 # unsigned. The default is sshd's:
 # authorized_keys = %h/.ssh/authorized_keys %h/.ssh/authorized_keys2
 
-# yes when sshd_config's ForceCommand runs this gate for the account: then the key lines are
-# not read, and unsigned above decides alone. Only from a root-owned file the account can't
-# write; sshd_config needs DisableForwarding yes, PermitTTY no and PermitUserRC no.
+# yes when sshd_config's ForceCommand runs this gate for the account with --sshd-force-command:
+# then the key lines are not read, and unsigned above decides alone. Only from a root-owned
+# file the account can't write, and only with that option; sshd_config needs DisableForwarding
+# yes, PermitTTY no, PermitUserRC no and PermitUserEnvironment no.
 # sshd_force_command = yes
 
-# Under sshd the gate refuses an account whose login shell reads the account's files first
-# (bash's ~/.bashrc): make it /bin/sh. no: don't check (test servers only).
+# yes: at the start and end of each session, end every process of the account that belongs to
+# no live session (a block's setsid or double-forked program, a cron job). Linux only. For an
+# account used by the gate alone; recommended.
+# kill_leftovers = no
+
+# Without setsid and perl the gate can't end a block's background programs, and refuses to
+# start. yes: start anyway.
+# allow_no_group_kill = no
+
+# The gate's own memory (not the blocks'), in MiB of address space; 0 for no limit.
+# memory_limit = 512
+
+# Under sshd the gate refuses a login shell other than sh, dash, ash, busybox, ksh, mksh, oksh
+# or posh (bash reads ~/.bashrc first): make it /bin/sh. no: don't check (test servers only).
 # login_shell_check = yes
 
 # Run reports: at the end of each session, a summary of every signed runbook it ran (no
