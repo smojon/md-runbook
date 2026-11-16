@@ -85,6 +85,7 @@ export default function RootLayout() {
       >
         <Stack.Screen name="index" options={{ title: t.appTitle, headerTitle: () => <HomeTitle />, headerRight: () => <HostsButton /> }} />
         <Stack.Screen name="runbook/[id]" options={{ title: '' }} />
+        <Stack.Screen name="edit/[id]" options={{ title: t.editorTitle }} />
         <Stack.Screen name="hosts/index" options={{ title: t.hostsTitle }} />
         <Stack.Screen name="open" options={{ title: t.openLinkTitle }} />
         <Stack.Screen name="library" options={{ title: t.libraryAddTitle }} />

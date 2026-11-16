@@ -1364,6 +1364,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         },
         { ...meta('showSteps', 'steps', progress?.total ? undefined : t.noStepsYet), run: () => openSteps() },
         { ...meta('showRuns', 'run'), run: () => setShowRuns(true) },
+        { ...meta('editAsText', 'edit'), run: () => router.push({ pathname: '/edit/[id]', params: { id: runbook.id, from: 'runbook' } }) },
         { ...meta('nextProblem', 'steps', problems.all.length > 0 ? undefined : t.noProblems), run: () => goToNextProblem() },
         {
           ...meta('restartSession', 'run', hosts.some((h) => isConnected(h.id, runbook.id)) ? undefined : t.noSessionOpen),

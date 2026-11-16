@@ -11,6 +11,7 @@
 - **App: Edit Note, Delete Note.** A note's ⋯ edits its words in place, or deletes it after a confirmation. Its time, author and milestone stay as VS Code wrote them.
 - **App: Show Runs…** ⋯ More → Run and the Steps header list this runbook's runs, newest first. Each says when, who, how long, and which steps passed or failed. The device keeps the last 30, never outputs.
 - **App: Publish to Library…, Remove from Library…** (⋯ More → Share, and a Team runbooks row's ⋯) as in VS Code. Only a runbook signed as a whole and unchanged goes in; otherwise **Sign Runbook** comes first. Hosts & Settings sets the server and its upload token, kept in secure storage (on the web, in this browser).
+- **App: Edit as Text, New runbook…** A runbook opens as text in its own screen: Edit, Preview, or back to Runbook. Edit has Save, Undo, Discard and the lint problems. Saving warns before a matching signature breaks. The start screen's **New runbook…** starts blank or from a small template.
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.
   An unsigned runbook gets a **Sign Runbook** button first.
