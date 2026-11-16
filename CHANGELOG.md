@@ -57,6 +57,8 @@ Security fixes from a review of the parts that face the network.
   runbook still counted as signed.
 - **Signing: tags alone on a line.** A bash block after a line such as `<span>` or `<a name="x">`
   is refused. GitHub shows such a block as text, not as code that runs.
+- **Expo updates workflow:** the pull request's title, commit and text come from the checked
+  names and versions only. Before, text from the job that ran npm went in as it was.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each

@@ -9,8 +9,10 @@
 //   - resolved is that package's own tarball URL (`<registry><name>/-/<base>-<version>.tgz`);
 //   - integrity and dependencies are the registry's for that version;
 //   - no new install script, bundled package, link, alias, git or file spec.
+// When all is fine, it writes CLEAN.md, the list the pull request gets: rebuilt from the checked
+// names and versions alone, the old versions from main's package.json. No other summary text.
 //
-//   node .github/scripts/check-expo-update.mjs SUMMARY.md   (in apps/mobile, files copied in)
+//   node .github/scripts/check-expo-update.mjs SUMMARY.md [CLEAN.md]   (in apps/mobile, files copied in)
 //   node --test .github/scripts/check-expo-update.test.mjs  (the tests)
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -28,7 +30,22 @@ const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall'];
 export const parseSummary = (text) =>
   new Map([...text.matchAll(/^- `([^`]+)` \S+ → \*\*([^*]+)\*\*/gm)].map(([, name, version]) => [name, version]));
 
-/** The package name a lock path installs: `node_modules/a/node_modules/@s/b` → `@s/b`. */
+/**
+ * The list the pull request gets, "- `name` from → **to**" lines rebuilt from the checked names
+ * and versions only; `from` is main's package.json (`before`). For after checkUpdate passed.
+ */
+export function cleanSummary(summary, before) {
+  const plain = /^[~^]?\d+\.\d+\.\d+(-[\w.]+)?$/;
+  const lines = [];
+  for (const [name, to] of parseSummary(summary)) {
+    if (!NAME.test(name) || !SUMMARY_VERSION.test(to)) throw new Error(`not a checked name and version: ${JSON.stringify(name)} ${JSON.stringify(to)}`);
+    const from = SECTIONS.map((s) => before?.[s]?.[name]).find((v) => v !== undefined);
+    lines.push(`- \`${name}\` ${typeof from === 'string' && plain.test(from) ? from : '?'} → **${to}**`);
+  }
+  return lines.length > 0 ? `${lines.join('\n')}\n` : '';
+}
+
+/** The package name a lock path installs:`node_modules/a/node_modules/@s/b` → `@s/b`. */
 export const pathName = (where) => where.slice(where.lastIndexOf('node_modules/') + 'node_modules/'.length);
 
 /** The registry's tarball URL of name@version (a scope's name has no scope in the file name). */
@@ -212,17 +229,18 @@ export async function checkUpdate({ summary, before, after, lockBefore, lockAfte
 }
 
 async function main() {
-  const [summaryFile] = process.argv.slice(2);
+  const [summaryFile, cleanFile] = process.argv.slice(2);
   if (!summaryFile) {
-    console.error('usage: node .github/scripts/check-expo-update.mjs SUMMARY.md');
+    console.error('usage: node .github/scripts/check-expo-update.mjs SUMMARY.md [CLEAN.md]');
     process.exit(2);
   }
   const fromMain = (file) => JSON.parse(execFileSync('git', ['show', `HEAD:./${file}`], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }));
   const read = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
   const summary = fs.readFileSync(summaryFile, 'utf8');
+  const before = fromMain('package.json');
   const problems = await checkUpdate({
     summary,
-    before: fromMain('package.json'),
+    before,
     after: read('package.json'),
     lockBefore: fromMain('package-lock.json'),
     lockAfter: read('package-lock.json'),
@@ -232,6 +250,7 @@ async function main() {
     for (const p of problems) console.log(`::error::${p.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}`);
     process.exit(1);
   }
+  if (cleanFile) fs.writeFileSync(cleanFile, cleanSummary(summary, before));
   console.log(`The update changes only ${[...parseSummary(summary)].map(([n, v]) => `${n} ${v}`).join(', ')} and their dependencies, as ${REGISTRY} has them.`);
 }
 

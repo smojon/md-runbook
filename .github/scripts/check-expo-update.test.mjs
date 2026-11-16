@@ -3,7 +3,7 @@
 // stub.
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { checkUpdate, dependencyTree, pathName, tarballUrl } from './check-expo-update.mjs';
+import { checkUpdate, cleanSummary, dependencyTree, pathName, tarballUrl } from './check-expo-update.mjs';
 
 const sha = (s) => `sha512-${Buffer.from(s).toString('base64')}`;
 const entry = (name, version, more = {}) => ({ version, resolved: tarballUrl(name, version), integrity: sha(`${name}@${version}`), ...more });
@@ -182,6 +182,32 @@ describe('check-expo-update', () => {
     const text = p.join('\n');
     assert.match(text, /dependencies\.left-pad 1\.3\.0 -> 1\.0\.0, not in the summary/);
     assert.match(text, /package\.json: "scripts" changed/);
+  });
+
+  it('the clean summary has only the checked names and versions, the old ones from main', async () => {
+    const summary = [
+      'Updated (published at least 7 days ago) [skip ci]:',
+      '',
+      '- `expo` [skip-ci]Fixes#12 → **58.0.21** (published 2026-11-01)\t[skip ci]',
+      '- `expo-router` 6.0.0 → **6.0.9**',
+      '',
+      'Held until they are 7 days old:',
+      '',
+      '- `expo-camera` 17.0.9 (published 2026-11-15): from 2026-11-22',
+      'Closes #1 <img src=x onerror=alert(1)>',
+    ].join('\n');
+    const before = { dependencies: { expo: '58.0.19' }, devDependencies: { 'expo-router': '~6.0.8' } };
+    assert.equal(cleanSummary(summary, before), '- `expo` 58.0.19 → **58.0.21**\n- `expo-router` ~6.0.8 → **6.0.9**\n');
+    // The real run: what checkUpdate passed.
+    const x = base();
+    assert.deepEqual(await checkUpdate(x), []);
+    assert.equal(cleanSummary(x.summary, x.before), '- `expo` 58.0.19 → **58.0.21**\n');
+    // An old version that isn't plain, or none: "?".
+    assert.equal(cleanSummary('- `expo` 1 → **58.0.21**\n', { dependencies: { expo: 'file:../evil [skip ci]' } }), '- `expo` ? → **58.0.21**\n');
+    assert.equal(cleanSummary('- `expo` 1 → **58.0.21**\n', {}), '- `expo` ? → **58.0.21**\n');
+    // Never a name or version that checkUpdate would refuse.
+    assert.throws(() => cleanSummary('- `expo` 1 → **58.0.21 [skip ci]**\n', before), /not a checked name and version/);
+    assert.throws(() => cleanSummary('- `ex po` 1 → **58.0.21**\n', before), /not a checked name and version/);
   });
 
   it('a registry it cannot reach is a problem, not a pass', async () => {
