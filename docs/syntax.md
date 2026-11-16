@@ -159,7 +159,7 @@ NAME=value
 
 | Part | Value | Effect |
 | --- | --- | --- |
-| `src=PATH` | relative to the folder of the `.md` file; may use `${param:}` and `${out:}` | The runbook to run. Required. |
+| `src=PATH` | relative to the folder of the `.md` file; may use `${param:}` and `${out:}`, whose values fill part of one file or folder name (no `/`, `\` or `:`) | The runbook to run. Required. |
 | `section=TEXT` | the start of a heading, case-sensitive; repeatable | Run only the steps under it (as `md-runbook run --section`). |
 | a body line `NAME=value` | `NAME` a parameter of the runbook called; the value may use `${param:}`, `${out:}`, `${input:}`, `${secret:}`, and may be quoted | Passed as `${param:NAME}`. Blank lines and `#` comments are allowed. |
 

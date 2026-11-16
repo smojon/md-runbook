@@ -35,7 +35,7 @@ import {
   shellKindForLanguage,
 } from '@md-runbook/core';
 import { callEstimateSeconds, callTarget, executeCell, fileSha256, relativeToCaller, resumeProblem, samePath, writeCallCopy } from '@md-runbook/core/node';
-import { callAttrs, callChainProblem, callFromAttrs, callOutputText, callRefs, checkCall, fillRefs, formatCallSteps, isCallLanguage, parseCall } from '@md-runbook/core/call';
+import { callAttrs, callChainProblem, callFromAttrs, callOutputText, callRefs, checkCall, fillRefs, formatCallSteps, isCallLanguage, isDynamicSrc, parseCall, srcValueProblem } from '@md-runbook/core/call';
 import { stepState } from '@md-runbook/core/progress';
 import { KubeContextMode } from '@md-runbook/core/kubeContext';
 import type { ShellSettings } from '@md-runbook/core';
@@ -572,6 +572,12 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
           const r = fillRefs(t, (_kind, name) => values.get(name)?.value);
           return 'text' in r ? r.text : t;
         };
+        // A value from a link, an alert or --param names part of a file name, never another path.
+        const leaves = isDynamicSrc(call.src) ? srcValueProblem(call.src, fill(call.src)) : undefined;
+        if (leaves) {
+          notRun(redact(leaves), 'error');
+          continue;
+        }
         const target = callTarget(o.file, fill(call.src));
         const shown = relativeToCaller(o.file, target);
         if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {

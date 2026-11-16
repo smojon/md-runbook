@@ -34,6 +34,9 @@ Security fixes from a review of the parts that face the network.
   - The copy must be next to it or in the copy folder, named after it, with the same blocks.
   - For a signed runbook, the copy must have the same signed name and version.
   - Otherwise a fresh copy runs, and the call's output says why.
+- **Runbook calls:** a value in `src=` fills part of one file or folder name. Before, a link's
+  `TO=../../elsewhere/evil` could make `src="releases/${param:TO}.md"` run any runbook.
+  - A value with `/`, `\` or `:` is now an error before anything runs.
 
 ## 0.26.8
 

@@ -20,7 +20,8 @@ BACKUP_DIR=${out:BACKUP_DIR}
 ````
 
 - `src=` is the runbook to run, relative to this file. It may use `${param:NAME}` and
-  `${out:NAME}`.
+  `${out:NAME}`. Their values fill part of one file or folder name, so a link can't point it
+  elsewhere. A value with `/`, `\` or `:` is an error before anything runs.
 - The block's lines pass the parameters of the runbook called, one `NAME=value` per line. Blank
   lines and `#` comments are allowed.
 - Values may use `${param:}`, `${out:}`, `${input:}` and `${secret:}`. A secret is passed as a
@@ -71,8 +72,8 @@ BACKUP_DIR=${out:BACKUP_DIR}
   - the others run;
   - manual steps ticked in the copy since count.
 
-  It goes on only in a run copy of the runbook called: named after it, next to it or in the copy
-  folder, with the same blocks. For a signed runbook, the copy must carry the same signed name and
+  It goes on only in a run copy of the runbook called, with the same blocks. That copy is named
+  after it, next to it or in the copy folder. For a signed runbook, the copy must carry the same signed name and
   version. Otherwise a fresh copy runs, and the call's output says why.
 
   `md-runbook run --fresh-copy` starts a new copy instead. A `${out:NAME}` captured by a step

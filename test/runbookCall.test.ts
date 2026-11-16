@@ -11,7 +11,7 @@ import { describe, it } from 'node:test';
 import { ShellSettings, parse, renderReport } from '@md-runbook/core';
 import { callEstimateSeconds, copyTextProblem, matchRunbooks, nodeShellEnv, resolveShell, resumeProblem, runbookReader, writeCallCopy } from '@md-runbook/core/node';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
-import { callChainProblem, checkCall, isDynamicSrc, parseCall, srcGlob, staysBelow } from '@md-runbook/core/call';
+import { callChainProblem, checkCall, isDynamicSrc, parseCall, srcGlob, srcValueProblem, staysBelow } from '@md-runbook/core/call';
 import { lintRunbook } from '@md-runbook/core/lint';
 import { CliOptions, RunSummary, firstStepNotDone, flattenSteps, junitReport, runRunbook } from '../src/cli/run';
 
@@ -116,6 +116,19 @@ describe('runbook call: parsing and checks', () => {
     assert.ok(!staysBelow('../x.md'));
     assert.ok(!staysBelow('/etc/x.md'));
     assert.ok(!staysBelow('C:\\x.md'));
+  });
+
+  it('refuses a value that makes a dynamic src= name another path', () => {
+    const src = 'releases/${param:TO}.runbook.md';
+    assert.equal(srcValueProblem(src, 'releases/72512.runbook.md'), undefined);
+    assert.equal(srcValueProblem('../shared/${param:TO}.md', '../shared/x.md'), undefined);
+    for (const to of ['../../../../Users/x/Downloads/evil', '..\\evil', 'C:', 'a/b']) {
+      assert.match(srcValueProblem(src, `releases/${to}.runbook.md`) ?? '', /fills part of one file or folder name/, to);
+    }
+    assert.match(srcValueProblem('${param:DIR}/x.md', '../x.md')!, /fills part/);
+    assert.match(srcValueProblem('releases/${param:DIR}/x.md', 'releases/../x.md')!, /fills part/);
+    assert.match(srcValueProblem('${param:DIR}/x.md', 'C:/x.md')!, /fills part/);
+    assert.match(srcValueProblem('${param:A}${param:B}/x.md', '../x.md')!, /fills part/);
   });
 });
 
@@ -304,6 +317,17 @@ describe('runbook call: md-runbook run', { skip: !hasBash && 'no bash' }, () => 
       second.summary.steps[1]!.call!.steps.map((s) => s.status),
       ['passed', 'passed'],
     );
+  });
+
+  it('refuses a --param that makes src= name a runbook outside its folder', async () => {
+    const dir = tmp({ 'runbooks/releases/child.md': CHILD, 'elsewhere/evil.md': '# Evil\n\n```bash\necho EVIL\n```\n' });
+    const file = path.join(dir, 'runbooks/parent.md');
+    fs.writeFileSync(file, parent('```runbook src="releases/${param:TO}.md"\nENV=dev\n```'), 'utf8');
+    const { summary, log } = await run(file, { params: { TO: '../../elsewhere/evil' } });
+    assert.equal(summary.steps[1]!.status, 'not run');
+    assert.match(summary.steps[1]!.message!, /a value in src= fills part of one file or folder name/);
+    assert.ok(!log.some((l) => l.includes('EVIL')), log.join('\n'));
+    assert.ok((await run(file, { params: { TO: 'child' } })).summary.ok);
   });
 
   it('refuses a cycle, a parameter not passed, and another cluster, before anything runs in it', async () => {

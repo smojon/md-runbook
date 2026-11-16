@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ExecuteResult, isCodeMeta, locateCodeCells, parse, stepState, taskItems } from '@md-runbook/core';
-import { CallResult, callAttrs, callChainProblem, callFromAttrs, callOutputText, checkCall, fillRefs, formatCallSteps, isCallLanguage, parseCall } from '@md-runbook/core/call';
+import { CallResult, callAttrs, callChainProblem, callFromAttrs, callOutputText, checkCall, fillRefs, formatCallSteps, isCallLanguage, isDynamicSrc, parseCall, srcValueProblem } from '@md-runbook/core/call';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { withFrontMatterValues } from '@md-runbook/core/incident';
 import { resolveKubeContext } from '@md-runbook/core/kubeContext';
@@ -97,6 +97,9 @@ export class CallExecutor implements CellExecutor {
       const r = fillRefs(t, (_kind, name) => values[name]);
       return 'text' in r ? r.text : t;
     };
+    // A value from a link, an alert or a parameter names part of a file name, never another path.
+    const leaves = isDynamicSrc(call.src) ? srcValueProblem(call.src, fill(call.src)) : undefined;
+    if (leaves) return fail(`md-runbook: ${leaves}`);
     const target = callTarget(parentFile, fill(call.src));
     const shown = relativeToCaller(parentFile, target);
     if (!fs.existsSync(target) || !fs.statSync(target).isFile()) return fail(`md-runbook: src="${call.src}": no such runbook: ${shown}`);
