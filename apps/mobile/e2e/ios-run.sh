@@ -94,11 +94,21 @@ if [ "$status" != 0 ] && [ -f "$out/maestro.xml" ]; then
     restart_simulator
     status=0
     for flow in $flows; do
-      maestro --device "$udid" test --format junit --output "$out/maestro-retry-$flow.xml" --test-output-dir "$out/retry-$flow" \
-        -e SSH_HOST=127.0.0.1 -e SSH_PORT=2222 -e SSH_USER="$(id -un)" -e KEY_URL=http://127.0.0.1:8077/authorize \
-        "$here/maestro/$flow.yaml" 2>&1 |
-        tee "$out/maestro-retry-$flow.log"
-      if [ "${PIPESTATUS[0]}" = 0 ]; then
+      # The driver not starting isn't the flow failing: restart the simulator and start it again,
+      # as above (a retry ended that way on 2026-11-16).
+      try=1
+      while :; do
+        maestro --device "$udid" test --format junit --output "$out/maestro-retry-$flow.xml" --test-output-dir "$out/retry-$flow" \
+          -e SSH_HOST=127.0.0.1 -e SSH_PORT=2222 -e SSH_USER="$(id -un)" -e KEY_URL=http://127.0.0.1:8077/authorize \
+          "$here/maestro/$flow.yaml" 2>&1 |
+          tee "$out/maestro-retry-$flow-$try.log"
+        result="${PIPESTATUS[0]}"
+        [ "$result" != 0 ] && [ "$try" -lt 3 ] && grep -q 'iOS driver not ready in time' "$out/maestro-retry-$flow-$try.log" || break
+        try=$((try + 1))
+        echo "::warning::Maestro's iOS driver did not start in time; restarting the simulator to try $flow again"
+        restart_simulator
+      done
+      if [ "$result" = 0 ]; then
         echo "::warning::$flow passed on its second try"
       else
         echo "::error::$flow failed twice"
