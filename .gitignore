@@ -4,6 +4,8 @@ out/
 .vscode-test/
 .claude/worktrees/
 packages/*/dist/
+# md-runbook-gate as scripts/ci/build-gate.sh builds it for the tests
+apps/gate/dist/
 
 # md-runbook transcripts (mdRunbook.output.transcript)
 *.transcript.log

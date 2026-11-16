@@ -18,6 +18,41 @@ jobs:
       - run: node scripts/build.js
       - name: 'Prose: no Markdown file gets harder to read'
         run: node out/dist/cli.js lint --prose-baseline .github/prose-baseline.json
+  # md-runbook-gate (apps/gate, Go) on the two systems it runs on: formatting, vet, its own tests
+  # and a release build. Its protocol tests (test/gate.test.ts) run against the binary in `test`.
+  gate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      GOTOOLCHAIN: local # the toolchain go.mod names, which setup-go installs; never a download by go
+    defaults:
+      run:
+        working-directory: apps/gate
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: apps/gate/go.mod
+          cache: false
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::not formatted with gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Build as a release does
+        run: sh ../../scripts/ci/build-gate.sh dist/md-runbook-gate
   test:
     strategy:
       fail-fast: false
@@ -30,6 +65,18 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      # The Go gate for its protocol tests (test/gate.test.ts, in npm test) and the SSH tests
+      # through it, on Linux and macOS.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        if: runner.os != 'Windows'
+        with:
+          go-version-file: apps/gate/go.mod
+          cache: false
+      - name: Build the gate
+        if: runner.os != 'Windows'
+        run: |
+          sh scripts/ci/build-gate.sh apps/gate/dist/md-runbook-gate
+          echo "MD_RUNBOOK_GATE_BIN=$GITHUB_WORKSPACE/apps/gate/dist/md-runbook-gate" >> "$GITHUB_ENV"
       # Unit, round-trip, fuzz, redaction and shell smoke tests (pwsh + cmd natively on Windows).
       - run: npm test
       # The Expo updates workflow's check of what its update job made.
@@ -67,10 +114,9 @@ jobs:
         run: |
           node out/dist/cli.js lint --strict examples/ci.runbook.md examples/screenshots.runbook.md examples/kubernetes.runbook.md
           node out/dist/cli.js lint examples/sample.runbook.md
-      # md-runbook-gate runs under any POSIX sh on the servers (dash, bash, busybox).
-      - name: Check the gate script
+      - name: Check the CI scripts
         if: runner.os == 'Linux'
-        run: shellcheck -s sh -S warning apps/gate/md-runbook-gate
+        run: shellcheck -s sh -S warning scripts/ci/build-gate.sh
       # The command-line runner end to end, through this repository's own GitHub Action.
       - name: Run a runbook with the command line
         uses: ./

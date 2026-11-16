@@ -186,12 +186,13 @@ describe('ssh: live server', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }
 });
 
 /**
- * Keys whose forced command is apps/gate/md-runbook-gate, as a server set up for signed runbooks
- * has them: the session finds the gate, hands it the signed manifest, runs cells by number and
- * cancels through the gate's stop request on a second channel.
+ * Keys whose forced command is md-runbook-gate (the binary MD_RUNBOOK_GATE_BIN names, by default
+ * apps/gate/dist/md-runbook-gate), as a server set up for signed runbooks has them: the session
+ * finds the gate, hands it the signed manifest, runs cells by number and cancels through the
+ * gate's stop request on a second channel.
  */
 describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }, () => {
-  const gate = path.resolve(__dirname, '..', '..', 'apps', 'gate', 'md-runbook-gate');
+  const gate = path.resolve(process.env.MD_RUNBOOK_GATE_BIN || path.join(__dirname, '..', '..', 'apps', 'gate', 'dist', 'md-runbook-gate'));
   let dir: string;
   let strict: KeyPair;
   let lenient: KeyPair;
@@ -222,7 +223,7 @@ describe('ssh: through md-runbook-gate', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
     const confDir = path.join(dir, 'root');
     execFileSync('sudo', ['-n', 'install', '-d', '-m', '755', '-o', 'root', confDir]);
     const line = async (name: string, extra: string, k: KeyPair): Promise<string> =>
-      `restrict,command="sh ${gate} --config=${path.join(confDir, `${name}.conf`)}${extra}" ${await publicKeyLine(k)}`;
+      `restrict,command="${gate} --config=${path.join(confDir, `${name}.conf`)}${extra}" ${await publicKeyLine(k)}`;
     const lines = { strict: await line('strict', '', strict), lenient: await line('lenient', ' --unsigned=allow --who=lenient', lenient) };
     for (const [name, l] of Object.entries(lines)) {
       fs.writeFileSync(path.join(dir, `${name}.keys`), l + '\n');
