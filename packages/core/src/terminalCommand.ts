@@ -1,6 +1,7 @@
 /** Command lines for running a cell's script file in an interactive terminal. */
 
 import type { ShellKind } from './shellKind';
+import { LINE_RE } from './lines';
 
 /** Quote for POSIX shells: single quotes, with embedded single quotes closed and escaped. */
 export function quoteSh(s: string): string {
@@ -147,7 +148,7 @@ export function terminalShownText(source: string, kind: ShellKind, nonce: string
   const prompt = kind === 'bash' ? '$ ' : kind === 'pwsh' ? 'PS> ' : '> ';
   const more = kind === 'pwsh' ? '>> ' : '> ';
   const continues = kind === 'bash' ? '\\' : kind === 'pwsh' ? '`' : '^';
-  const lines = source.split(/\r?\n/).map((l) => l.replace(/[\x00-\x08\x0a-\x1f\x7f-\x9f]/g, ''));
+  const lines = source.split(LINE_RE).map((l) => l.replace(/[\x00-\x08\x0a-\x1f\x7f-\x9f]/g, ''));
   while (lines.length > 0 && lines[lines.length - 1]?.trim() === '') lines.pop();
   let continued = false;
   const shown = lines.map((line) => {

@@ -17,6 +17,7 @@ import { readSignature, signedStatus } from './signing';
 import { CALL_OPTIONS, NOT_ON_A_CALL, callRefs, checkCall, isCallLanguage, isDynamicSrc, parseCall, srcGlob } from './call';
 import { partProblems } from './parts';
 import { ProseOptions, markupCellAt, measureProse, proseLimits, sentenceMessage } from './prose';
+import { LINE_RE } from './lines';
 
 /** `info`: a prose finding (prose.ts), shown but never failing a check. `prose: strict` makes them warnings. */
 export type LintSeverity = 'error' | 'warning' | 'info';
@@ -214,7 +215,7 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
   // Front matter values that were written but not understood.
   const fm = parseFrontMatter(text);
   if (fm) {
-    const lines = text.replace(/^﻿/, '').split(/\r?\n/);
+    const lines = text.replace(/^﻿/, '').split(LINE_RE);
     const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));
     for (let i = 1; i < end; i++) {
       const m = /^(mode|timeout|cwd|kube-context|kube-context-mode|git-bash-path-conversion|manual-steps|prose)\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
@@ -282,7 +283,7 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
   }
   // kube-context-mode: pin sets KUBECONFIG for cells run on this machine; on an SSH host the context is only checked.
   const pin = fm?.kubeContextMode === 'pin';
-  const pinLine = (): number => Math.max(0, text.replace(/^﻿/, '').split(/\r?\n/).findIndex((l) => /^kube-context-mode\s*:/i.test(l)));
+  const pinLine = (): number => Math.max(0, text.replace(/^﻿/, '').split(LINE_RE).findIndex((l) => /^kube-context-mode\s*:/i.test(l)));
   if (pin && !fm?.kubeContext && !locs.some((l) => parseCellOptions(l.info).kubeContext !== undefined)) {
     problems.push({ severity: 'warning', line: pinLine(), message: 'front matter kube-context-mode: pin has no effect: no kube-context: in the front matter and no kube-context= on a block' });
   }
@@ -339,7 +340,7 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
     } catch (e) {
       at('error', e instanceof Error ? e.message : String(e));
     }
-    const lines = loc.source.split(/\r?\n/);
+    const lines = loc.source.split(LINE_RE);
     const lineOf = (needle: string): number | undefined => {
       const i = lines.findIndex((l) => l.includes(needle));
       return i < 0 ? undefined : i;
@@ -368,7 +369,7 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
     // The front matter isn't signed: servers run the signed blocks in bash, elsewhere they'd run in this shell.
     const unix = fm?.shell?.unix;
     if (unix && unix !== 'bash') {
-      const at = text.replace(/^﻿/, '').split(/\r?\n/).findIndex((l) => /^shell\s*:/i.test(l));
+      const at = text.replace(/^﻿/, '').split(LINE_RE).findIndex((l) => /^shell\s*:/i.test(l));
       problems.push({
         severity: 'warning',
         line: Math.max(0, at),
@@ -522,7 +523,7 @@ function lintCall(loc: CodeCellLocation, declared: ReadonlySet<string>, captured
 function signatureLine(text: string): number {
   let open: FenceOpen | null = null;
   let at = -1;
-  text.split(/\r?\n/).forEach((l, i) => {
+  text.split(LINE_RE).forEach((l, i) => {
     if (open) {
       if (isFenceClose(l, open)) open = null;
     } else {

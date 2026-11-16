@@ -5,6 +5,7 @@
 
 import { isFenceClose, matchFenceOpen } from './fence';
 import type { FenceOpen } from './fence';
+import { splitLines } from './lines';
 import { OUTPUT_START_RE, parseAttrs } from './outputBlock';
 import type { OsSlot } from './os';
 
@@ -141,15 +142,15 @@ export function taskItems(text: string): TaskItem[] {
   const items: TaskItem[] = [];
   let fence: FenceOpen | null = null;
   let pos = 0;
-  text.split('\n').forEach((line, n) => {
-    const l = line.endsWith('\r') ? line.slice(0, -1) : line;
+  // Lines as the parser and CommonMark read them: a lone CR ends one too.
+  splitLines(text).forEach(({ text: l, eol }, n) => {
     if (fence) {
       if (isFenceClose(l, fence)) fence = null;
     } else if ((fence = matchFenceOpen(l)) === null) {
       const m = TASK_RE.exec(l);
       if (m) items.push({ line: n, offset: pos + m[0].length - 2, checked: m[1] !== ' ' });
     }
-    pos += line.length + 1;
+    pos += l.length + eol.length;
   });
   return items;
 }

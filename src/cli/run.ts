@@ -59,6 +59,7 @@ import { taskItems } from '@md-runbook/core';
 import { RunbookPart, runbookParts } from '@md-runbook/core/parts';
 import { runbookTitle } from '@md-runbook/core/title';
 import { checkSignedRun, insideRoot, repositoryRoot } from './signedRun';
+import { LINE_RE } from '@md-runbook/core/lines';
 
 export interface CliOptions {
   file: string;
@@ -258,7 +259,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   // Checked before the first step: what is known now must not stop a long run halfway.
   const selection = { ...(o.from !== undefined ? { from: o.from } : {}), ...(o.to !== undefined ? { to: o.to } : {}), ...(o.sections?.length ? { sections: o.sections } : {}) };
   // Manual steps (task-list items): nothing runs them, but the run lists those not ticked.
-  const lines = original.split(/\r?\n/);
+  const lines = original.split(LINE_RE);
   const manualAll: (ManualStep & { after: number })[] = taskItems(original).map((t) => {
     let after = -1;
     locs.forEach((l, k) => void (l.line < t.line && (after = k)));
@@ -332,7 +333,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       // With the values given (no capture is known yet): `kubectl ${param:VERB}` with VERB=delete asks.
       const match = isCallLanguage(b.loc.language) ? confirmationFor('', 'patterns', regexes, opts.confirm === true ? true : undefined) : confirmationOf(b.loc.source, opts.confirm === true, givenValue);
       if (match === undefined) return [];
-      const firstLine = b.loc.source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
+      const firstLine = b.loc.source.split(LINE_RE).find((l) => l.trim() !== '')?.trim() ?? '';
       return [`  Step ${b.n} · ${fileName}:${b.loc.line + 1} · ${redact(opts.name ?? firstLine)}: ${match === '' ? 'confirm option' : `risky command “${match.trim()}”`}`];
     });
     if (declined.length > 0) {
@@ -441,7 +442,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       const opts = parseCellOptions(loc.info);
       const part = partAt(i);
       const isReady = i === readyIdx;
-      const firstLine = loc.source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
+      const firstLine = loc.source.split(LINE_RE).find((l) => l.trim() !== '')?.trim() ?? '';
       const result = (status: StepStatus, exit: string, extra: Partial<StepResult> = {}): StepResult => ({
         step: n,
         line: loc.line + 1,

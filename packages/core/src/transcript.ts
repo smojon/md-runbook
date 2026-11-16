@@ -19,6 +19,7 @@ import { stripAnsi } from './ansi';
 import { LineBuffer } from './lineBuffer';
 import { formatLocalIso } from './outputBlock';
 import { applyTerminalControls } from './terminalText';
+import { LINE_RE } from './lines';
 
 export const DEFAULT_TRANSCRIPT_EXTENSION = '.transcript.log';
 
@@ -174,7 +175,7 @@ const ATX_RE = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
 export function lastHeading(markdown: string): string | undefined {
   let fence: string | undefined;
   let last: string | undefined;
-  for (const line of markdown.split(/\r?\n/)) {
+  for (const line of markdown.split(LINE_RE)) {
     const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
     if (f) {
       if (fence === undefined) fence = f[1]![0]!.repeat(f[1]!.length);

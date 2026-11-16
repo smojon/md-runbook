@@ -11,14 +11,12 @@ import { withFrontMatterValues } from './incident';
 import { locateCodeCells } from './locate';
 import { parse } from './parser';
 import { sha256Hex } from './sha256';
+import { frontMatterLines as linesOfFrontMatter } from './secrets';
 import { parseManifest, readSignature } from './signing';
 
 /** A text's front matter lines (between the `---` lines, trailing spaces trimmed); none: []. */
 function frontMatterLines(text: string): string[] {
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/);
-  if (lines[0]?.trimEnd() !== '---') return [];
-  const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));
-  return end < 0 ? [] : lines.slice(1, end).map((l) => l.trimEnd());
+  return (linesOfFrontMatter(text) ?? []).map((l) => l.trimEnd());
 }
 
 /**

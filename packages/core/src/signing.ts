@@ -25,11 +25,12 @@ import { FenceOpen, isFenceClose, langOf, matchFenceOpen } from './fence';
 import { kubeContextParam } from './kubeContext';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
-import { VAR_NAME_RE, findRefs, parseFrontMatter, reportAddressProblem, rewriteRefs } from './secrets';
+import { VAR_NAME_RE, findRefs, frontMatterLines, parseFrontMatter, reportAddressProblem, rewriteRefs } from './secrets';
 import { sha256Hex } from './sha256';
 import { shellKindForLanguage } from './shellKind';
 import { splitSteps } from './steps';
 import { clearOutputBlocks } from './writer';
+import { splitLines } from './lines';
 
 /** The `-n` namespace of every md-runbook signature: a signature for anything else doesn't verify. */
 export const SIGNATURE_NAMESPACE = 'md-runbook';
@@ -173,11 +174,28 @@ function proseLineOffsets(t: string): Set<number> {
   return prose;
 }
 
-/** `t` without the matches of `re` (global) whose every line is prose (proseLineOffsets). */
+/** Where the front matter of LF text `t` ends (the offset after its closing line), or 0 without one. */
+function frontMatterEnd(t: string): number {
+  const lines = t.split('\n');
+  if (lines[0]?.trimEnd() !== '---') return 0;
+  let at = lines[0].length + 1;
+  for (let i = 1; i < lines.length; i++) {
+    if (/^(---|\.\.\.)\s*$/.test(lines[i]!)) return at + lines[i]!.length;
+    at += lines[i]!.length + 1;
+  }
+  return 0;
+}
+
+/**
+ * `t` without the matches of `re` (global) whose every line is prose (proseLineOffsets). Never
+ * in the front matter: a note line inside `env:` ends the list there.
+ */
 function removeInProse(t: string, re: RegExp): string {
   const prose = proseLineOffsets(t);
+  const head = frontMatterEnd(t);
   return t.replace(re, (match: string, ...rest: unknown[]) => {
     let line = rest[rest.length - 2] as number;
+    if (line < head) return match;
     for (const l of match.replace(/\n$/, '').split('\n')) {
       if (!prose.has(line)) return match;
       line += l.length + 1;
@@ -191,8 +209,15 @@ function removeInProse(t: string, re: RegExp): string {
  * runbook adds: its signature block, a run record's signature, stored outputs (with their
  * history), notes (Add Note) and ticks in checklists, each only outside code blocks (inside one,
  * the same lines are code and signed). Trailing blank lines don't count.
+ *
+ * What is set aside never changes the front matter: when it would (a note or the signature block
+ * above the `---`, which then becomes front matter), the result starts with a CR, which no other
+ * signedText has, so it matches no signature. Before, a note line above the front matter, or
+ * inside it, left a whole-runbook signature valid while every client read the front matter
+ * differently, or not at all (security review, round 4).
  */
 export function signedText(text: string): string {
+  const lf = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   let t = withoutSignature(text.replace(/^\uFEFF/, '')).replace(/\r\n?/g, '\n');
   // A run record's signature and notes only outside code: a note-shaped line in a block is code.
   t = removeInProse(t, RECORD_BLOCK_RE);
@@ -215,7 +240,10 @@ export function signedText(text: string): string {
       return line.replace(TASK_BOX_RE, '$1 $2');
     })
     .join('\n');
-  return t.replace(/\s+$/, '') + '\n';
+  const before = frontMatterLines(lf);
+  const after = frontMatterLines(t);
+  const same = before === undefined ? after === undefined : after !== undefined && before.length === after.length && before.every((l, i) => l === after[i]);
+  return (same ? '' : '\r') + t.replace(/\s+$/, '') + '\n';
 }
 
 /** SHA-256 (hex) of signedText: the `text` item of a version 2 manifest. */
@@ -419,14 +447,10 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
 
 /** Run report lines of the front matter (runReport.ts) that can't be signed as written. */
 export function reportSigningErrors(text: string): string[] {
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
-  if (lines[0]?.trimEnd() !== '---') return [];
-  const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));
-  if (end < 0) return [];
   const errors: string[] = [];
   const seen = new Set<string>();
   let wants = false;
-  for (const line of lines.slice(1, end)) {
+  for (const line of frontMatterLines(text) ?? []) {
     const m = /^(report-runs(?:-required|-signed|-token)?)\s*:\s*(.*?)\s*$/i.exec(line);
     if (!m) continue;
     const key = m[1]!.toLowerCase();
@@ -639,13 +663,12 @@ function findBlock(text: string): RegExpExecArray | undefined {
   const inCode = new Set<number>();
   let open: FenceOpen | null = null;
   let offset = 0;
-  for (const line of text.split('\n')) {
-    const bare = line.replace(/\r$/, '');
+  for (const { text: bare, eol } of splitLines(text)) {
     if (open) {
       inCode.add(offset);
       if (isFenceClose(bare, open)) open = null;
     } else open = matchFenceOpen(bare);
-    offset += line.length + 1;
+    offset += bare.length + eol.length;
   }
   const re = new RegExp(BLOCK_RE.source, 'gm');
   let last: RegExpExecArray | undefined;
@@ -816,7 +839,10 @@ export function signedStatus(text: string): SignedStatus | undefined {
   // Other runnable blocks (PowerShell, cmd): never in a manifest. With the whole text signed
   // (version 2) adding one changes the text; a version 1 signature never covered them.
   const version = manifestVersion(manifest);
-  const textChanged = version === 2 && signedTextHash(text) !== manifest.text;
+  // And the front matter as read must be the one signed (signedText keeps it, but this is what
+  // every client acts on: env:, kube-context:, report-runs:, params:).
+  const textChanged =
+    version === 2 && (signedTextHash(text) !== manifest.text || JSON.stringify(parseFrontMatter(text) ?? null) !== JSON.stringify(parseFrontMatter(signedText(text)) ?? null));
   const unsigned: number[] = [];
   parse(text).cells.forEach((cell, index) => {
     if (cell.kind !== 'code' || !isCodeMeta(cell.meta) || isCallLanguage(cell.languageId)) return;

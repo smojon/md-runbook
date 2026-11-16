@@ -25,6 +25,7 @@ import {
 } from '@md-runbook/core/transcript';
 import { SECTION, writeOptions } from './config';
 import { META_KEY } from './outputs';
+import { LINE_RE } from '@md-runbook/core/lines';
 
 const files = new Map<string, TranscriptFile>();
 let reportedExtension: string | undefined;
@@ -162,7 +163,7 @@ export function startCellTranscript(cell: vscode.NotebookCell, command: string |
     c.kind === vscode.NotebookCellKind.Code ? { kind: 'code' as const, os: parseCellOptions(infoOf(c)).os } : { kind: 'markup' as const },
   );
   const name = parseCellOptions(infoOf(cell)).name;
-  const first = cell.document.getText().split(/\r?\n/).find((l) => l.trim() !== '')?.trim();
+  const first = cell.document.getText().split(LINE_RE).find((l) => l.trim() !== '')?.trim();
   entry.start({
     at: new Date(),
     runbook: path.basename(cell.notebook.uri.fsPath),

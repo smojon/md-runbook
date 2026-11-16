@@ -27,6 +27,7 @@ import { META_KEY, outputMeta } from './outputs';
 import { CellExecutor, CellPlan, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
 import { hostSkipped } from './remoteHosts';
+import { LINE_RE } from '@md-runbook/core/lines';
 
 /** What a call gives the runbook it runs: its parameters, and the files calling it (cycles). */
 interface Passed {
@@ -242,7 +243,7 @@ export class CallExecutor implements CellExecutor {
         const a = attrsOf(c.cell.outputs, c.cell.metadata?.[META_KEY]);
         const s = stepState(a?.exit, a?.lines !== undefined, a?.check);
         const icon = s === 'done' ? '✓' : s === 'skipped' || s === 'pending' ? '–' : '✗';
-        const name = parseCellOptions(infoOf(c.cell)).name ?? c.cell.document.getText().split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '';
+        const name = parseCellOptions(infoOf(c.cell)).name ?? c.cell.document.getText().split(LINE_RE).find((l) => l.trim() !== '')?.trim() ?? '';
         io.onStdout(`  ${icon} ${name.slice(0, 80)}${a?.exit && a.exit !== '0' ? ` (${a.exit})` : ''}\n`);
       }
     });

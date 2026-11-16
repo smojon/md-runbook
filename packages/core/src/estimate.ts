@@ -13,6 +13,7 @@ import { OsName, osGroups } from './os';
 import { parse } from './parser';
 import { stepState } from './progress';
 import { headingsOf, withoutFrontMatter } from './title';
+import { LINE_RE } from './lines';
 
 /** `2m30s`, `45s`, `1h5m`, `0.5s`: the shortest form parseInterval reads back. */
 export function formatEstimate(seconds: number): string {
@@ -87,7 +88,7 @@ export function stepLabel(info: string, source: string, language: string, headin
     if (what) return what;
   }
   if (heading) return cut(heading);
-  return cut(source.split(/\r?\n/).find((l) => l.trim() !== '')?.trim() ?? '');
+  return cut(source.split(LINE_RE).find((l) => l.trim() !== '')?.trim() ?? '');
 }
 
 /**
@@ -175,7 +176,7 @@ export function stepHistoryKey(info: string, source: string): string {
   const name = parseCellOptions(info).name;
   if (name) return `name:${name}`;
   const text = source
-    .split(/\r?\n/)
+    .split(LINE_RE)
     .map((l) => l.trimEnd())
     .filter((l) => l !== '')
     .join('\n');

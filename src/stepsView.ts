@@ -35,6 +35,7 @@ import { setTaskBox } from './taskLists';
 import { NOTEBOOK_TYPE } from './serializer';
 import { onDidChangeWaiting, waitingAnswers, waitingIn } from './waiting';
 import { onDidChangeQueue } from './runQueue';
+import { LINE_RE } from '@md-runbook/core/lines';
 
 export const STEPS_VIEW = 'mdRunbook.steps';
 const REVEALED_KEY = 'mdRunbook.stepsViewShown';
@@ -215,10 +216,10 @@ export function stepsModel(nb: vscode.NotebookDocument, visible?: { first: numbe
     const i = cell.index;
     if (cell.kind === vscode.NotebookCellKind.Markup) {
       const text = cell.document.getText();
-      const lines = text.split(/\r?\n/);
+      const lines = text.split(LINE_RE);
       // Headings and checklist items in line order, so an item stays under its own heading.
       const body = i === 0 ? withoutFrontMatter(text) : text;
-      const above = lines.length - body.split(/\r?\n/).length;
+      const above = lines.length - body.split(LINE_RE).length;
       const marks = [
         ...headingsOf(body)
           .filter((h) => h.level <= 2)
