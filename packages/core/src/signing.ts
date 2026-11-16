@@ -377,12 +377,17 @@ function bashCells(text: string): { index: number; info: string; value: string }
 const HTML_BLOCK_TAGS =
   'address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul';
 
+/** CommonMark's open or closing tag alone on a line: an HTML block of type 7 (any tag name). */
+const HTML_ATTR = `\\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\\s*=\\s*(?:[^\\s"'=<>\`]+|'[^']*'|"[^"]*"))?`;
+const HTML_TYPE7_RE = new RegExp(`^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:${HTML_ATTR})*\\s*/?>|</[A-Za-z][A-Za-z0-9-]*\\s*>)\\s*$`);
+
 /**
- * Where an HTML block of CommonMark types 1 and 3–6 that starts on `line` ends: a test for the line
- * that ends it (type 6: a blank line). Undefined when no such block starts there, or it ends on the
- * same line. Comments (type 2) are tracked on their own, more widely.
+ * Where an HTML block of CommonMark types 1 and 3–7 that starts on `line` ends: a test for the line
+ * that ends it (types 6 and 7: a blank line). Undefined when no such block starts there, or it ends
+ * on the same line. Comments (type 2) are tracked on their own, more widely. Type 7 (`<span>`,
+ * `<a name="x">`, `<x-y hidden>` alone on a line) can't interrupt a paragraph: not when `paragraph`.
  */
-function htmlBlockEnd(line: string): ((l: string) => boolean) | undefined {
+function htmlBlockEnd(line: string, paragraph: boolean): ((l: string) => boolean) | undefined {
   const starts: [RegExp, RegExp][] = [
     [/^ {0,3}<(script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(script|pre|style|textarea)>/i],
     [/^ {0,3}<\?/, /\?>/],
@@ -394,6 +399,7 @@ function htmlBlockEnd(line: string): ((l: string) => boolean) | undefined {
     if (m) return end.test(line.slice(m[0].length)) ? undefined : (l) => end.test(l);
   }
   if (new RegExp(`^ {0,3}</?(?:${HTML_BLOCK_TAGS})(?=[\\s/>]|$)`, 'i').test(line)) return (l) => l.trim() === '';
+  if (!paragraph && HTML_TYPE7_RE.test(line)) return (l) => l.trim() === '';
   return undefined;
 }
 
@@ -410,9 +416,13 @@ function hiddenFences(text: string): string[] {
   let inComment = false;
   /** In an HTML block (not a comment): the test of the line that ends it. */
   let html: ((l: string) => boolean) | undefined;
+  /** The line before was a paragraph's (prose, not blank, no heading): a type 7 HTML block can't start. */
+  let paragraph = false;
   text.split(LINE_RE).forEach((line, i) => {
     // CommonMark sees no fence in an HTML block: its end counts on every line, fenced or not.
     const inHtml = html !== undefined;
+    const after = paragraph;
+    paragraph = false;
     if (html?.(line)) html = undefined;
     if (open) {
       if (isFenceClose(line, open)) {
@@ -432,7 +442,9 @@ function hiddenFences(text: string): string[] {
     }
     // Comment state from the prose between fences: the last <!-- or --> on the line wins.
     for (const m of line.matchAll(/<!--|-->/g)) inComment = m[0] === '<!--';
-    if (!inHtml && !inComment) html = htmlBlockEnd(line);
+    if (!inHtml && !inComment) html = htmlBlockEnd(line, after);
+    // Cautious: a line starting with `<` is never a paragraph's here (a tag after it starts a block).
+    paragraph = !inHtml && html === undefined && !inComment && line.trim() !== '' && !/^ {0,3}(?:<|#{1,6}(?:[ \t]|$)|(?:[-*_][ \t]*){3,}$)/.test(line);
   });
   return problems;
 }

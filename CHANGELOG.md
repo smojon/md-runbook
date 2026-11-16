@@ -52,6 +52,8 @@ Security fixes from a review of the parts that face the network.
 - **Signed runbooks: output fences.** An output block is set aside only with the fences md-runbook
   writes. Before, a fence indented 4 spaces showed its "output" as prose on GitHub, while the
   runbook still counted as signed.
+- **Signing: tags alone on a line.** A bash block after a line such as `<span>` or `<a name="x">`
+  is refused. GitHub shows such a block as text, not as code that runs.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each
