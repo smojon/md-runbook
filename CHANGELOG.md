@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Android app:** the APK is signed with the app's own key, not the template's public debug key,
+  and each release has it attached (`md-runbook-X.Y.Z.apk`). Uninstall a debug-signed copy once
+  first: Android won't update an app across keys.
+
 - **App, Add Note:** a note goes right after the step it is about (the one running, else the one
   that ran last), as in VS Code, not at the end of the runbook. Its confirmation, and **Saved** and
   the record signed message, show in green: the notice line was red for everything.
