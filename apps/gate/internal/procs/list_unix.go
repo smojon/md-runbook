@@ -77,6 +77,15 @@ func Exe(pid int) string {
 	return x
 }
 
+// Args is a process's command line (/proc/PID/cmdline), nil when it can't be read.
+func Args(pid int) []string {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err != nil || len(b) == 0 {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00")
+}
+
 // CleanEnviron: nothing in the process's environment that loads code (LD_*, BASH_ENV, ENV,
 // BASH_FUNC_*). An environment that can't be read counts as clean, as in the shell gate.
 func CleanEnviron(pid int) bool {

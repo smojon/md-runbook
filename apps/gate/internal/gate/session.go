@@ -108,7 +108,7 @@ func (g *Gate) session() int {
 	g.sweep("start")
 	g.serve()
 	g.cleanup()
-	if g.signalled {
+	if g.signalled.Load() {
 		return 1
 	}
 	g.log.Event("event", "end-session")
@@ -242,18 +242,9 @@ func (g *Gate) retire(i int) {
 	s.sh, s.hash, s.dirty = nil, "", false
 }
 
-// waitShell waits for a shell's watcher. A HUP, INT or TERM meanwhile ends every shell now.
-func (g *Gate) waitShell(sh *shell) {
-	for {
-		select {
-		case <-sh.done:
-			return
-		case <-g.termCh:
-			g.signalled = true
-			stopGroups(g.livePIDs()...)
-		}
-	}
-}
+// waitShell waits for a shell's watcher. (A HUP, INT or TERM meanwhile has stopped every shell:
+// signals.)
+func (g *Gate) waitShell(sh *shell) { <-sh.done }
 
 func (g *Gate) livePIDs() []int {
 	g.liveMu.Lock()
@@ -362,13 +353,18 @@ func (g *Gate) serve() {
 	term := false
 loop:
 	for {
-		// A shell that ended by itself, or a signal, comes before the next request.
+		// A shell that ended by itself, or a signal, comes before the next request. (A signal
+		// taken while a shell was retired counts too: signalled.)
+		if g.signalled.Load() {
+			term = true
+			break loop
+		}
 		select {
 		case <-g.endCh:
 			term = true
 			break loop
 		case <-g.termCh:
-			term, g.signalled = true, true
+			term = true
 			break loop
 		default:
 		}
@@ -377,7 +373,7 @@ loop:
 			term = true
 			break loop
 		case <-g.termCh:
-			term, g.signalled = true, true
+			term = true
 			break loop
 		case l := <-lines:
 			if l.err == proto.ErrTooLong {
@@ -565,7 +561,13 @@ func (g *Gate) stopRequest(cmd string) bool {
 	if n == "" || len(n) > 20 || strings.Trim(n, "0123456789") != "" {
 		g.fatal("bad stop request")
 	}
-	data, err := os.ReadFile(g.state + "/pids/" + sha256Hex([]byte(n)))
+	// A regular file only ([ -f ]): a FIFO planted there would hold the stop connection.
+	pf := g.state + "/pids/" + sha256Hex([]byte(n))
+	st, err := os.Stat(pf)
+	if err != nil || !st.Mode().IsRegular() {
+		g.fatal("no md-runbook session " + n)
+	}
+	data, err := os.ReadFile(pf)
 	if err != nil {
 		g.fatal("no md-runbook session " + n)
 	}

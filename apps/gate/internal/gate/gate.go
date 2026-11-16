@@ -49,6 +49,7 @@ package gate
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -114,6 +115,13 @@ func Main(args []string) int {
 	g.cleanEnv()
 	syscall.Umask(0o077)
 	g.signals()
+	// A bug is no reason to leave the shells running (the shell gate's EXIT trap always ran).
+	defer func() {
+		if r := recover(); r != nil {
+			say(fmt.Sprintf("internal error: %v", r))
+			g.exit(2)
+		}
+	}()
 	return g.main(args[1:])
 }
 
@@ -137,7 +145,9 @@ func (g *Gate) cleanEnv() {
 }
 
 // signals: HUP, INT and TERM end the session (its shells, then the run reports go out, exit 1);
-// before the session they end the gate. A write to a client that went (SIGPIPE) fails instead of
+// before the session they end the gate. The shells' process groups are stopped here at once, as
+// the shell gate's EXIT trap did: the request loop may be blocked writing to a busy shell, and
+// that write ends once the shell does. A write to a client that went (SIGPIPE) fails instead of
 // ending the gate, which then still ends the shells. (Caught, not ignored: the shells get the
 // default actions back.)
 func (g *Gate) signals() {
@@ -152,6 +162,8 @@ func (g *Gate) signals() {
 			if !g.started.Load() {
 				os.Exit(1)
 			}
+			g.signalled.Store(true)
+			stopGroups(g.livePIDs()...)
 			select {
 			case g.termCh <- struct{}{}:
 			default:
@@ -331,9 +343,13 @@ func (g *Gate) identify() {
 		g.who = fingerprint(auth)
 	}
 	g.log.Account, g.log.Who, g.log.Client = g.account, g.who, g.client
+	// This program's path as sh found it: argv[0], or for a bare name its place in the PATH (a
+	// script's $0 was that path).
 	g.self = os.Args[0]
 	if !strings.Contains(g.self, "/") {
-		if exe, err := os.Executable(); err == nil {
+		if p, err := exec.LookPath(g.self); err == nil && strings.HasPrefix(p, "/") {
+			g.self = p
+		} else if exe, err := os.Executable(); err == nil {
 			g.self = exe
 		}
 	}
@@ -423,7 +439,7 @@ type sess struct {
 	started atomic.Bool
 	termCh  chan struct{}
 	// signalled: HUP, INT or TERM ended the session (exit 1, no end-session event).
-	signalled bool
+	signalled atomic.Bool
 
 	work       string
 	token      string

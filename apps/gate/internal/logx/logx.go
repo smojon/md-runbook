@@ -45,8 +45,26 @@ func (l *Logger) Line(kv ...string) string {
 	return b.String()
 }
 
+// MaxSyslog is the longest event sent to syslog. One datagram can't hold any size (a parameter
+// value can be megabytes): a longer event is sent with each value cut to MaxValue bytes, so it
+// stays one valid JSON line instead of being lost.
+const (
+	MaxSyslog = 8192
+	MaxValue  = 1024
+)
+
 // Event logs one event.
-func (l *Logger) Event(kv ...string) { l.Write(l.Line(kv...)) }
+func (l *Logger) Event(kv ...string) {
+	line := l.Line(kv...)
+	if l.Dest == "syslog" && len(line) > MaxSyslog {
+		cut := append([]string(nil), kv...)
+		for i := 1; i < len(cut); i += 2 {
+			cut[i] = textutil.Cut(cut[i], MaxValue)
+		}
+		line = l.Line(cut...)
+	}
+	l.Write(line)
+}
 
 // Write logs a line as it is.
 func (l *Logger) Write(entry string) {

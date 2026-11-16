@@ -1421,6 +1421,20 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
     assert.match(fs.readFileSync(path.join(dir, 'gate.log'), 'utf8'), /"event":"refused","reason":"memory_limit reached"/);
   });
 
+  it('a TERM ends the session at once, also while the gate waits to write to a busy shell', async () => {
+    // The second block's text (100 KB) doesn't fit in the shell's pipe while the first one sleeps:
+    // the gate waits in that write. Before the shells ended there, a TERM waited for the block.
+    const [m, s] = await signed(fence('bash', 'sleep 30') + fence('bash', 'echo big # ' + 'x'.repeat(100_000)), { name: 'ops/busy' });
+    const g = start();
+    await g.hello();
+    assert.equal((await g.request('load', m, s)).code, 0);
+    g.child.stdin!.write('run 0000c001 1\nrun 0000c002 2\nrun 0000c003 2\n');
+    await pause(1000);
+    g.child.kill('SIGTERM');
+    const code = await Promise.race([g.exited, pause(15_000).then(() => 'still running')]);
+    assert.equal(code, 1);
+  });
+
   it('each shell leads a process group and session of its own (no setsid or perl needed)', { skip: process.platform !== 'linux' && 'reads /proc' }, async () => {
     // The gate starts its shells with setsid(2) itself. (Before, the shell gate needed setsid or
     // perl on the server, else the shells shared the gate's group; security review round 3.)

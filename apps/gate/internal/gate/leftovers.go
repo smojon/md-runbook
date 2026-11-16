@@ -28,8 +28,9 @@ import (
 //   - PID 1, what came in from outside the PID namespace (docker exec, kubectl exec), and the
 //     account's user manager (systemd --user and its sd-pam: by name, parent and cgroup, as their
 //     exe can't be read);
-//   - this program running elsewhere (another session's gate, a run-report sender of an earlier
-//     session), with nothing in its environment that loads code.
+//   - run-report senders of earlier sessions: this program in its sender mode, with nothing in its
+//     environment that loads code. (A sender ends within report.SenderMax, so one a block started
+//     can't outlive many sweeps. Other sessions' gates are spared as part of their sessions.)
 //
 // Processes of a live session are out of its reach: keep the account for the gate alone. Against
 // a fork loop (a program that forks and exits, again and again, so its pid never holds still) the
@@ -94,9 +95,9 @@ func (g *Gate) sweep(when string) {
 			if stoppedPID[l.PID] || failed[l.PID] || groups[pgid] {
 				continue
 			}
-			// This program (another session's gate, a report sender): nothing in its environment
-			// that loads code.
-			if x := procs.Exe(l.PID); x != "" && x == meExe && procs.CleanEnviron(l.PID) {
+			// A report sender: this program in its sender mode, nothing in its environment that
+			// loads code.
+			if x := procs.Exe(l.PID); x != "" && x == meExe && isSender(procs.Args(l.PID)) && procs.CleanEnviron(l.PID) {
 				spared[pgid] = true
 				continue
 			}
@@ -137,6 +138,8 @@ func (g *Gate) sweep(when string) {
 	}
 	g.log.Event("event", "leftovers", "status", "killed", "pids", strings.Join(killed, " "), "when", when)
 }
+
+func isSender(args []string) bool { return len(args) == 2 && args[1] == report.SenderMode }
 
 func atoiSigned(s string) int {
 	if strings.HasPrefix(s, "-") {

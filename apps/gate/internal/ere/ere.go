@@ -10,8 +10,8 @@
 //     GNU's extensions (\w, \s, \b, \<, \1 and the like) and anything Go reads otherwise: those
 //     are errors, so the value is refused. Signing refuses them too (core's NOT_POSIX_ERE).
 //
-// Where Go and grep still differ (a nested repetition such as a**, a repetition with nothing
-// before it), Go refuses the pattern: the value doesn't match, which fails closed.
+// Where Go and grep still differ ((? groups, {,n}, [:word:], a repetition with nothing before
+// it), the pattern is refused: no value matches, which fails closed.
 package ere
 
 import (
@@ -114,6 +114,11 @@ func translate(src string) (string, error) {
 			}
 			out.WriteString(cls)
 			i += n
+		// Go reads (?i) as flags and {,n} as text; grep reads (? as ( and a stray ?, and {,n} as
+		// {0,n}. Either way a pattern that means one thing to grep and another to Go: refused,
+		// so no value matches more than it would have (signing refuses (? too).
+		case (c == '(' && i+1 < len(src) && src[i+1] == '?') || (c == '{' && i+1 < len(src) && src[i+1] == ','):
+			return "", errPattern
 		case c >= 0x80:
 			out.WriteString(literal(c))
 			i++
@@ -123,6 +128,11 @@ func translate(src string) (string, error) {
 		}
 	}
 	return out.String(), nil
+}
+
+var posixClasses = map[string]bool{
+	"alnum": true, "alpha": true, "blank": true, "cntrl": true, "digit": true, "graph": true,
+	"lower": true, "print": true, "punct": true, "space": true, "upper": true, "xdigit": true,
 }
 
 // An item of a bracket expression: one byte, or a named class ([:alpha:]).
@@ -171,6 +181,10 @@ func bracket(s string) (string, int, error) {
 			name := s[i+2 : i+2+end]
 			i += 2 + end + 2
 			if kind == ':' {
+				// POSIX's classes only (Go also knows [:word:], grep doesn't).
+				if !posixClasses[name] {
+					return "", 0, errPattern
+				}
 				items = append(items, item{class: name})
 				continue
 			}

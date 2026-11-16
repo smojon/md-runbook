@@ -112,7 +112,7 @@ func refusedCases() []matchCase {
 // What grep reads otherwise than Go, or GNU-only syntax: refused, so no value matches.
 func TestRefused(t *testing.T) {
 	// (\d is a digit to the clients (JavaScript) and d to grep: refused, as signing refuses it.)
-	for _, p := range []string{`\d+`, `\w`, `\s`, `\bword\b`, `(a)\1`, `a\`, `[a`, `[z-a]`, `*a`, `(?i)a`, `[[:nope:]]`, `[[.ab.]]`, `\<a\>`} {
+	for _, p := range []string{`\d+`, `\w`, `\s`, `\bword\b`, `(a)\1`, `a\`, `[a`, `[z-a]`, `*a`, `(?i)a`, `(?:a)`, `a{,3}`, `[[:word:]]`, `[[:nope:]]`, `[[.ab.]]`, `\<a\>`} {
 		if _, err := Compile(p); err == nil {
 			t.Errorf("Compile(%q) accepted", p)
 		}

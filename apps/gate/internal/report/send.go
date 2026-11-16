@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -41,10 +42,15 @@ type Item struct {
 // Pauses before each of the 3 tries.
 var pauses = []time.Duration{0, 2 * time.Second, 5 * time.Second}
 
+// SenderMax is the longest a sender lives, reading its batch included. The leftover sweep spares
+// senders (kill_leftovers): one a block started itself must not outlive many sweeps.
+const SenderMax = 5 * time.Minute
+
 // SenderMain sends a batch read from in: up to 3 tries each, a `report` event per summary
 // (sent or failed, with the HTTP status). It never holds up a session: the gate starts it
-// detached, with nothing of the SSH channel.
+// detached, with nothing of the SSH channel. Whatever is left after SenderMax is not sent.
 func SenderMain(in io.Reader) int {
+	time.AfterFunc(SenderMax, func() { os.Exit(1) })
 	signal.Ignore(syscall.SIGHUP)
 	data, err := io.ReadAll(io.LimitReader(in, 64<<20))
 	if err != nil {
