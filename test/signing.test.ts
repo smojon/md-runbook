@@ -9,6 +9,7 @@ import {
   buildManifest,
   formatManifest,
   fromBase64,
+  isReservedVar,
   parseManifest,
   readSignature,
   signedStatus,
@@ -153,6 +154,31 @@ describe('signing: the manifest', () => {
     ])
       assert.match(all, re);
     assert.deepEqual(errorsOf(fence('bash env.MODE=fast', 'echo ${param:ID}'), { patterns: { ID: '[a-z][a-z0-9-]{0,30}|[0-9]{1,6}' }, expires: '2028-02-29' }), []);
+  });
+
+  it('refuses names that load code, or change where programs connect or what they trust (security review, 2026-11-16)', () => {
+    const names = [
+      'GCONV_PATH', 'LOCPATH', 'GLIBC_TUNABLES', 'NODE_OPTIONS', 'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONHOME', 'PERL5OPT', 'PERL5LIB',
+      'RUBYOPT', 'RUBYLIB', 'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'GIT_SSH_COMMAND', 'GIT_SSH', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM',
+      'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_12', 'BASH_COMPAT', 'BASH_XTRACEFD', 'HISTFILE', 'PROMPT_COMMAND',
+      'http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'CURL_HOME', 'XDG_CONFIG_HOME',
+      'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE',
+    ];
+    for (const n of names) assert.ok(isReservedVar(n), n);
+    // env.KUBECONFIG picks the cluster, signed: a documented option.
+    for (const n of ['KUBECONFIG', 'TARGET', 'GIT_BRANCH', 'PYTHON_VERSION', 'NODE_ENV']) assert.ok(!isReservedVar(n), n);
+    const all = errorsOf(fence('bash env.NODE_OPTIONS=--require=/tmp/x.js', 'echo ${param:https_proxy}'), { patterns: { https_proxy: '.+' } }).join('\n');
+    assert.match(all, /env\.NODE_OPTIONS can't be set by a signed runbook/);
+    assert.match(all, /\$\{param:https_proxy\}: https_proxy can't be a parameter/);
+  });
+
+  it("signs the pattern of a block's kube-context=${param:NAME}, so the gate can check its value (security review, 2026-11-16)", () => {
+    const text = fence('bash kube-context=${param:CTX}', 'kubectl get pods') + fence('bash kube-context=prod-eu', 'kubectl get nodes');
+    const m = parseManifest(manifestOf(text, { patterns: { CTX: 'lab-[0-9]+|prod-eu', UNUSED: 'x' } }));
+    assert.deepEqual(m.patterns, { CTX: 'lab-[0-9]+|prod-eu' });
+    // Not a value the code uses: the cell still needs nothing.
+    assert.deepEqual(m.cells[0]!.needs, []);
+    assert.equal(m.cells[1]!.info, 'bash kube-context=prod-eu');
   });
 
   it('parseManifest refuses malformed and newer manifests', () => {
