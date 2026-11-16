@@ -485,7 +485,7 @@ func (g *Gate) sweepCells(when string) {
 
 // privileged: groups whose members can do more than an account of their own (become root, read
 // logs or disks, run containers).
-var privileged = []string{"root", "sudo", "wheel", "admin", "adm", "docker", "lxd", "disk", "systemd-journal", "shadow"}
+var privileged = []string{"root", "sudo", "wheel", "admin", "adm", "docker", "lxd", "incus-admin", "libvirt", "kvm", "disk", "systemd-journal", "shadow"}
 
 // privilegedGroups: the privileged groups among `id -Gn`'s.
 func privilegedGroups(idGn string) []string {

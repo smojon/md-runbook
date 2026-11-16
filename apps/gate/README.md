@@ -155,8 +155,8 @@ shells of the account's sessions (through `/proc`). So that account runs this ga
 blocks and nothing else:
 - no other gate account uses it, not even one for unsigned trials;
 - no cron or at jobs, no logins, no user manager (`loginctl enable-linger`);
-- no privileged group (`sudo`, `wheel`, `adm`, `docker`, `lxd`, `disk`, `systemd-journal`,
-  `shadow`), and no sudo rule of its own.
+- no privileged group (`sudo`, `wheel`, `adm`, `docker`, `lxd`, `incus-admin`, `libvirt`,
+  `kvm`, `disk`, `systemd-journal`, `shadow`), and no sudo rule of its own.
 
 Give this gate its own report token, in the library server's `RUNS_SEPARATED_GATE_TOKENS`. The
 server counts a summary as separated only with such a token: a shared gate's blocks can read
@@ -171,7 +171,12 @@ chmod 440 /etc/sudoers.d/md-runbook-gate
 visudo -cf /etc/sudoers.d/md-runbook-gate
 echo mdrb-cells >> /etc/cron.deny
 echo mdrb-cells >> /etc/at.deny
+crontab -r -u mdrb-cells 2>/dev/null   # cron.deny stops new crontabs, not existing ones
+for j in $(atq -q a 2>/dev/null | awk '$NF == "mdrb-cells" {print $1}'); do atrm "$j"; done
 ```
+
+On Alpine (busybox cron), `cron.deny` blocks nothing: don't install cron there, or don't use
+separated mode.
 
 Here `support` is the gate's account. The line must be exactly this, with the gate's real path.
 The gate's account may have no other sudo rule.
@@ -193,6 +198,12 @@ event, when:
 
 The message names the problem and the line to write. The gate can't check whether the account
 has sudo rules of its own (`sudo -l -U` needs root): don't give it any.
+
+**Limits of the process check.** It looks once, at the start of a session:
+- a process that keeps forking can slip past one look;
+- a cron or at job that starts mid-session isn't seen;
+- so give the blocks' account to one gate account only, never to trials, and remove its old
+  crontab and at jobs as above. Then nothing else runs as it.
 
 **Safe folders,** as OpenSSH's `StrictModes` asks for its files. The gate checks every folder
 from each of its files up to `/`:
