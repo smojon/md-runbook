@@ -6,6 +6,7 @@
  */
 
 import * as vscode from 'vscode';
+import { setContext } from './contextKeys';
 import { NOTEBOOK_TYPE } from './serializer';
 
 /** Where the question is: VS Code's input box (top of the window), a dialog (the middle), or buttons on the cell. */
@@ -134,6 +135,20 @@ export function waitingText(what: string, where: WaitingWhere = 'box'): { cell: 
   };
 }
 
+/** From the palette or Run ▾ (no answer given): the waiting steps' answers in a list. */
+async function pickAnswer(): Promise<boolean> {
+  type Item = vscode.QuickPickItem & { cell: string; id: string };
+  const items: Item[] = [...waiting.values()].flatMap((w) =>
+    (w.answers ?? []).map((a) => ({ label: `${a.icon ? `$(${a.icon}) ` : ''}${a.label}`, description: w.what, cell: keyOf(w.cell), id: a.id })),
+  );
+  if (!items.length) {
+    void vscode.window.showInformationMessage('md-runbook: no step waits for an answer.');
+    return false;
+  }
+  const pick = await vscode.window.showQuickPick(items, { title: 'Answer the waiting step' });
+  return pick ? answerWaiting(pick.cell, pick.id) : false;
+}
+
 class WaitingStatus implements vscode.NotebookCellStatusBarItemProvider {
   readonly onDidChangeCellStatusBarItems = onDidChangeWaiting;
 
@@ -166,8 +181,10 @@ export function registerWaiting(context: vscode.ExtensionContext): void {
     // A button on a waiting cell (its status line, the Steps view, a notification): answers it.
     vscode.commands.registerCommand('mdRunbook.answerWaiting', (cellUri?: unknown, id?: unknown) => {
       if (typeof cellUri === 'string' && typeof id === 'string') return answerWaiting(cellUri, id);
-      return false;
+      return pickAnswer();
     }),
+    // Run ▾ and the palette show Answer the Waiting Step only while a step waits on its buttons.
+    onDidChangeWaiting(() => setContext('mdRunbook.stepWaiting', [...waiting.values()].some((w) => w.answers?.length))),
     // For tests: every question asked on a cell's buttons, in any runbook.
     vscode.commands.registerCommand('mdRunbook._waitingAnswers', () =>
       [...waiting.values()].filter((w) => w.answers).map((w) => ({ cell: w.cell.document.uri.toString(), index: w.cell.index, what: w.what, answers: w.answers!.map((a) => a.id) })),

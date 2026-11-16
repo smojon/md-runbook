@@ -18,7 +18,7 @@ import { ExecuteResult, RunbookShells, isCodeMeta, shellKindForLanguage } from '
 import { isCallLanguage } from '@md-runbook/core/call';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { evaluateChecks } from '@md-runbook/core/checks';
-import { trustedRunbookSigner } from '@md-runbook/core/node';
+import { runbookSignerCheck } from '@md-runbook/core/node';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { reportTrustProblem } from '@md-runbook/core/runReport';
 import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
@@ -50,6 +50,7 @@ import {
 import { META_KEY } from './outputs';
 import type { CellExecutor, CellPreparer, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
+import { CANT_CHECK_SIGNATURES, SignerCheck } from './signerCheck';
 
 const PINS_KEY = 'mdRunbook.hosts.pins';
 const PLATFORMS_KEY = 'mdRunbook.hosts.platforms';
@@ -513,7 +514,8 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     const key = nb.uri.toString();
     inEffect.delete(key);
     const fm = frontMatterOf(nb)?.practice;
-    const choice = practiceChoice(configuredHosts(), picked.get(key), fm, fm !== undefined && !picked.has(key) ? await this.signedOk(nb) : false, fm !== undefined && this.practiceAgreed.has(`${key}\n${fm.toLowerCase()}`));
+    const signed = fm !== undefined && !picked.has(key) ? await this.signedOk(nb) : { ok: false };
+    const choice = practiceChoice(configuredHosts(), picked.get(key), fm, signed.ok, fm !== undefined && this.practiceAgreed.has(`${key}\n${fm.toLowerCase()}`));
     this.refreshStatus();
     if (choice.kind === 'none') return undefined;
     if (choice.kind === 'missing') {
@@ -532,7 +534,7 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
           detail: [
             `- The front matter says practice: ${fm}.`,
             `- Every cell then runs on ${hostLabel(choice.host)}, whatever host= says.`,
-            '- Asked because the runbook is not signed by a signer you trust.',
+            signed.cantCheck ? `- Asked because md-runbook ${CANT_CHECK_SIGNATURES}.` : '- Asked because the runbook is not signed by a signer you trust.',
           ].join('\n'),
         },
         go,
@@ -547,13 +549,13 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
   }
 
   /** The whole runbook is signed by a signer of mdRunbook.signing.allowedSigners, unchanged, not expired. */
-  private async signedOk(nb: vscode.NotebookDocument): Promise<boolean> {
+  private async signedOk(nb: vscode.NotebookDocument): Promise<{ ok: boolean; cantCheck?: true }> {
     const file = cfg().get<string>('signing.allowedSigners', '').trim().replace(/^~(?=$|[\\/])/, os.homedir());
-    if (!file) return false;
+    if (!file) return { ok: false };
     const text = notebookTextWithOutputs(nb);
-    if (!/md-runbook:signature v1/.test(text)) return false;
-    const signer = await trustedRunbookSigner(text, file).catch(() => undefined);
-    return reportTrustProblem(text, signer) === undefined;
+    if (!/md-runbook:signature v1/.test(text)) return { ok: false };
+    const got = await runbookSignerCheck(text, file).catch(() => ({}) as SignerCheck);
+    return { ok: reportTrustProblem(text, got.signer) === undefined, ...(got.cantCheck ? { cantCheck: true } : {}) };
   }
 
   notify(): void {

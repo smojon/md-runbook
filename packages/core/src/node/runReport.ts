@@ -14,16 +14,25 @@ import { SignOptions, sshSign, sshVerify } from './sign';
  * undefined (no signature, none good, or no ssh-keygen). As md-runbook-gate checks it.
  */
 export async function trustedRunbookSigner(text: string, allowedSigners: string, sshKeygen = 'ssh-keygen'): Promise<string | undefined> {
+  return (await runbookSignerCheck(text, allowedSigners, sshKeygen)).signer;
+}
+
+/**
+ * As trustedRunbookSigner, and `cantCheck` when ssh-keygen could not be started (not installed,
+ * not on PATH): then no signature was checked, which is not the same as none trusted.
+ */
+export async function runbookSignerCheck(text: string, allowedSigners: string, sshKeygen = 'ssh-keygen'): Promise<{ signer?: string; cantCheck?: true }> {
   const block = readSignature(text);
-  if (!block) return undefined;
+  if (!block) return {};
   for (const sig of allSignatures(block)) {
     try {
-      return await sshVerify(block.manifest, sig, allowedSigners, sshKeygen);
-    } catch {
+      return { signer: await sshVerify(block.manifest, sig, allowedSigners, sshKeygen) };
+    } catch (e) {
+      if ((e as { code?: unknown }).code === 'ENOENT') return { cantCheck: true };
       // the next signature (a co-signer's)
     }
   }
-  return undefined;
+  return {};
 }
 
 /** The armored signature (namespace md-runbook-run) of a summary's canonical JSON, made with `key`. */

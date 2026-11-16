@@ -9,6 +9,7 @@
 import { MAX_LIBRARY_FILES, LibraryIndex, libraryFileUrl, libraryUrlProblemKind, nameFitsPath, normalizeLibraryUrl, parseAutoindex, parseIndexJson } from '@md-runbook/core/library';
 import { readSignature, signedStatus, signerNames, wholeRunbookSigned } from '@md-runbook/core/signing';
 import { runbookTitle } from '@md-runbook/core/title';
+import { CANT_CHECK_SIGNATURES } from './signerCheck';
 
 /** A runbook larger than this is not read (the app's limit). */
 export const MAX_RUNBOOK_BYTES = 5 * 1024 * 1024;
@@ -173,10 +174,14 @@ export async function readLibrary(base: string, fetchFn: ReadFetch = (u, i) => f
   return { kind: 'ok', library: { base, signedOnly: index.signedOnly, entries, ...(allowedSigners !== undefined ? { allowedSigners } : {}) } };
 }
 
+/** libraryVerdict's `trusted` when ssh-keygen could not be started: nothing was checked. */
+export const CANT_CHECK = Symbol('cant-check');
+
 /** What a library runbook's signature is worth here. */
 export type Verdict =
   | { kind: 'verified'; name: string; version: number; signer: string }
   | { kind: 'untrusted'; name: string; version: number; signers: string[] }
+  | { kind: 'cant-check'; name: string; version: number; signers: string[] }
   | { kind: 'unsigned' }
   | { kind: 'damaged' }
   | { kind: 'partial'; name: string; version: number }
@@ -187,11 +192,12 @@ export type Verdict =
 
 /**
  * The verdict on a library runbook's text: `trusted` is the signer of your allowed_signers whose
- * key made one of its signatures (trustedRunbookSigner), undefined when none did (or none is set);
+ * key made one of its signatures (trustedRunbookSigner), undefined when none did (or none is set),
+ * CANT_CHECK when ssh-keygen could not be started;
  * `seen` the highest version of this path under this name verified before (a lower one now is a
  * downgrade, as the app and the gate's version floors refuse).
  */
-export function libraryVerdict(path: string, text: string, trusted: string | undefined, seen: number | undefined, today = new Date().toISOString().slice(0, 10)): Verdict {
+export function libraryVerdict(path: string, text: string, trusted: string | typeof CANT_CHECK | undefined, seen: number | undefined, today = new Date().toISOString().slice(0, 10)): Verdict {
   const block = readSignature(text);
   if (!block) return /md-runbook:signature v1/.test(text) ? { kind: 'damaged' } : { kind: 'unsigned' };
   const s = signedStatus(text);
@@ -201,6 +207,7 @@ export function libraryVerdict(path: string, text: string, trusted: string | und
   if (!wholeRunbookSigned(s)) return { kind: 'changed', name, version };
   if (s.manifest.expires && s.manifest.expires < today) return { kind: 'expired', name, version, expires: s.manifest.expires };
   if (!nameFitsPath(name, path)) return { kind: 'other-name', name, version };
+  if (trusted === CANT_CHECK) return { kind: 'cant-check', name, version, signers: signerNames(block) };
   if (!trusted) return { kind: 'untrusted', name, version, signers: signerNames(block) };
   if (seen !== undefined && version < seen) return { kind: 'older', name, version, seen };
   return { kind: 'verified', name, version, signer: trusted };
@@ -213,6 +220,8 @@ export function verdictLabel(v: Verdict): string {
       return `verified · v${v.version} · ${v.signer}`;
     case 'untrusted':
       return `signed by ${v.signers.join(', ')} · not a signer you trust`;
+    case 'cant-check':
+      return `signed by ${v.signers.join(', ')} · ${CANT_CHECK_SIGNATURES}`;
     case 'unsigned':
       return 'not signed';
     case 'damaged':

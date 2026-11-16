@@ -210,6 +210,24 @@
         "icon": "$(debug-continue)"
       },
       {
+        "command": "mdRunbook.retryStep",
+        "title": "Retry Failed Step",
+        "category": "md-runbook",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "mdRunbook.resumeFromHere",
+        "title": "Resume from Failed Step",
+        "category": "md-runbook",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "mdRunbook.answerWaiting",
+        "title": "Answer the Waiting Step",
+        "category": "md-runbook",
+        "icon": "$(edit)"
+      },
+      {
         "command": "mdRunbook.clearOutputsAbove",
         "title": "Clear Outputs Above",
         "category": "md-runbook"
@@ -1001,6 +1019,18 @@
           "when": "notebookType == md-runbook"
         },
         {
+          "command": "mdRunbook.retryStep",
+          "when": "mdRunbook.stepFailed"
+        },
+        {
+          "command": "mdRunbook.resumeFromHere",
+          "when": "mdRunbook.stepFailed"
+        },
+        {
+          "command": "mdRunbook.answerWaiting",
+          "when": "mdRunbook.stepWaiting"
+        },
+        {
           "command": "mdRunbook.clearOutputsAbove",
           "when": "notebookType == md-runbook"
         },
@@ -1396,6 +1426,21 @@
         }
       ],
       "mdRunbook.toolbar.run": [
+        {
+          "command": "mdRunbook.answerWaiting",
+          "when": "mdRunbook.stepWaiting",
+          "group": "0_next@1"
+        },
+        {
+          "command": "mdRunbook.retryStep",
+          "when": "mdRunbook.stepFailed",
+          "group": "0_next@2"
+        },
+        {
+          "command": "mdRunbook.resumeFromHere",
+          "when": "mdRunbook.stepFailed",
+          "group": "0_next@3"
+        },
         {
           "command": "mdRunbook.resumeRun",
           "group": "1_run@1"

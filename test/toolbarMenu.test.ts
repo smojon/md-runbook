@@ -59,6 +59,20 @@ describe('toolbar lists', () => {
     assert.equal(again.find((c) => c.command === 'mdRunbook.toggleTranscript')?.on, false);
   });
 
+  it('Run ▾ puts Retry and Resume from Failed Step first after a failure, and Answer while a step waits', () => {
+    const ctx: Record<string, unknown> = { notebookType: 'md-runbook' };
+    const first = (): string[] => menuSections(pkg.contributes, 'mdRunbook.toolbar.run', (k) => ctx[k])[0]!.map((c) => c.command);
+    assert.deepEqual(first(), ['mdRunbook.resumeRun', 'mdRunbook.launch', 'mdRunbook.runAllAsCopy']);
+    ctx['mdRunbook.stepFailed'] = true;
+    assert.deepEqual(first(), ['mdRunbook.retryStep', 'mdRunbook.resumeFromHere']);
+    ctx['mdRunbook.stepFailed'] = false;
+    ctx['mdRunbook.stepWaiting'] = true;
+    assert.deepEqual(first(), ['mdRunbook.answerWaiting']);
+    const palette = (pkg.contributes.menus['commandPalette'] ?? []) as { command?: string; when?: string }[];
+    for (const c of ['mdRunbook.retryStep', 'mdRunbook.resumeFromHere', 'mdRunbook.answerWaiting'])
+      assert.ok(palette.some((e) => e.command === c && e.when && e.when !== 'false'), `${c} in the palette, with a when clause`);
+  });
+
   it('every list has a toolbar button, and every menu is also in the toolbar ⋯', () => {
     const toolbar = pkg.contributes.menus['notebook/toolbar']!;
     for (const n of MENUS) {

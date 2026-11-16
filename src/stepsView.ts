@@ -633,6 +633,8 @@ class StepsView implements vscode.WebviewViewProvider, vscode.Disposable {
     const running = m?.state === 'running' || m?.state === 'waiting';
     setContext('mdRunbook.runbookRunning', running);
     setContext('mdRunbook.canResume', !!m?.canResume);
+    // Run ▾ and the palette show Retry Failed Step and Resume from Failed Step only after a failure.
+    setContext('mdRunbook.stepFailed', m?.failedCell !== undefined);
     if (running && !this.ticker) this.ticker = setInterval(() => this.refresh(), 1000);
     if (!running && this.ticker) {
       clearInterval(this.ticker);

@@ -17,6 +17,9 @@ Security fixes from a review of the parts that face the network.
   - For a whole-runbook signature, changed text around the blocks also counts as unsigned now.
   - An expired signature counts as unsigned, and so does an older signature with an added
     PowerShell or cmd block.
+  - An added PowerShell or cmd block next to an older signature counts as unsigned, as does an
+    expired one.
+
   - VS Code checks against `mdRunbook.signing.allowedSigners`.
 - **Library server:** `ALERT_MAP` needs `ALERTS_TOKENS`, so nobody else can post alerts.
   `ALERTS_ALLOW_ANYONE=true` keeps the old behaviour, for a private network only.
@@ -133,7 +136,6 @@ Security fixes from a review of the parts that face the network.
   - New web keys are WebCrypto keys the browser won't export.
   - An earlier key stays; Hosts & settings offers to replace it.
   - The page runs only its own scripts, never inside another site's frame.
-
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.
   An unsigned runbook gets a **Sign Runbook** button first.
@@ -170,6 +172,16 @@ Alerts to phones and TestFlight, both off until set up
   - A build without Firebase or the APNs entitlement shows the setting as not set up.
 - **TestFlight:** a workflow builds, signs and uploads the iOS app on `v*` tags. It skips until
   the Apple secrets exist.
+- **VS Code: Retry Failed Step, Resume from Failed Step and Answer the Waiting Step** are in the
+  Command Palette and Run ▾. They show only after a failure, or while a step waits.
+- **VS Code: the launch form's Start** needs a value for each parameter without a default, as in
+  the app. The form names the parameters still empty.
+- **VS Code, signature checks:** an edit to your allowed_signers file counts at once. Before, the
+  Library view and run reports kept the answer from before the edit.
+- **VS Code without ssh-keygen:** the Library view says it can't check signatures, and to install
+  OpenSSH. Before, it said the signer wasn't trusted.
+  - Run reports and Practice on a Host say so too.
+
 
 ## 0.26.8
 

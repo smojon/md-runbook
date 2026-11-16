@@ -11,10 +11,10 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { trustedRunbookSigner } from '@md-runbook/core/node';
 import { SECTION } from './config';
-import { Library, LibraryEntry, LibraryRead, Verdict, groupEntries, libraryBaseOf, libraryUrlProblem, libraryVerdict, readLibrary, verdictLabel } from './libraryRead';
+import { CANT_CHECK, Library, LibraryEntry, LibraryRead, Verdict, groupEntries, libraryBaseOf, libraryUrlProblem, libraryVerdict, readLibrary, verdictLabel } from './libraryRead';
 import { NOTEBOOK_TYPE } from './serializer';
+import { SignerCache } from './signerCheck';
 
 /** globalState: per library, the highest version verified of each path under its signed name. */
 const VERSIONS_KEY = 'mdRunbook.library.versions';
@@ -32,12 +32,12 @@ const hostOf = (base: string): string => {
     return base;
   }
 };
-const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
 const bullets = (points: readonly string[]): string => points.map((p) => `• ${p}`).join('\n');
 
 const ICONS: Record<Verdict['kind'], [string, string?]> = {
   verified: ['verified-filled', 'testing.iconPassed'],
   untrusted: ['unverified'],
+  'cant-check': ['warning', 'list.warningForeground'],
   unsigned: ['file'],
   damaged: ['warning', 'list.warningForeground'],
   partial: ['warning', 'list.warningForeground'],
@@ -52,8 +52,8 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
   readonly onDidChangeTreeData = this.changed.event;
   private state: { base?: string; status: 'idle' | 'loading' | 'done'; read?: LibraryRead } = { status: 'idle' };
   private verdicts = new Map<string, Verdict>();
-  /** ssh-keygen's answer per allowed_signers file and text (a refresh with other signers clears it). */
-  private readonly trust = new Map<string, string | undefined>();
+  /** ssh-keygen's answer per allowed_signers file (as it is now) and text. */
+  private readonly trust = new SignerCache();
   private loading: Promise<void> | undefined;
   /** Each read's number: a read overtaken by a newer one (a refresh) is dropped. */
   private generation = 0;
@@ -117,11 +117,10 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
       while (next < todo.length) {
         const e = todo[next++]!;
         const text = e.text!;
-        let trusted: string | undefined;
+        let trusted: string | typeof CANT_CHECK | undefined;
         if (file && /md-runbook:signature v1/.test(text)) {
-          const key = `${file}\n${sha(text)}`;
-          if (!this.trust.has(key)) this.trust.set(key, await trustedRunbookSigner(text, file).catch(() => undefined));
-          trusted = this.trust.get(key);
+          const got = await this.trust.signer(text, file);
+          trusted = got.cantCheck ? CANT_CHECK : got.signer;
         }
         const first = libraryVerdict(e.path, text, trusted, undefined);
         const seen = 'name' in first ? mine[`${e.path}\n${first.name}`] : undefined;
