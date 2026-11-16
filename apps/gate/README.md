@@ -193,7 +193,15 @@ Some images leave `/usr/local/bin` open. Then install the gate elsewhere, such a
 Run reports say which mode ran the blocks: `gate.gate_mode` is `shared` or `separated`
 ([Run reports](#run-reports)).
 
-Not on the [ops host](../ops/README.md): its pod can't change accounts. It stays shared.
+The [ops host](../ops/README.md)'s pod can't change accounts. There, `cells_runner =
+kubernetes-job` runs each session's blocks in a Kubernetes Job of their own instead
+([A Job per session](../ops/README.md#a-job-per-session)). It counts as `separated` too.
+- `job_service_account = NAME` is required: the Job's service account.
+- `job_image = IMAGE` is optional: the default is the gate's own pod's image.
+- The gate needs `kubectl` in `path =` and a pod to run in. The runner doesn't go with
+  `cells_account` or `isolation = scope` or `bwrap`.
+- At the start of each session the gate checks both service accounts, and refuses to start if
+  either has a right it shouldn't.
 
 **Why not `systemd-run --uid`?** It needs root, or a polkit rule that also lets the account
 start units as root. sudo can name one command and one account.

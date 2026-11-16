@@ -72,6 +72,15 @@ locale = auto
 # gate_mode "separated". Leave it out for shared mode (the default).
 # cells_account = mdrb-cells
 
+# Where the blocks run: local (this host, the default) or kubernetes-job (the ops host in a
+# cluster: each session's blocks in a Kubernetes Job of their own, in the gate's namespace,
+# as job_service_account). It counts as separated. job_image: the Job's image, by default the
+# gate's own pod's. At the start of each session the gate checks both service accounts and
+# refuses to start if either has a right it shouldn't (apps/ops/README.md).
+# cells_runner = kubernetes-job
+# job_service_account = md-runbook-cells
+# job_image = ghcr.io/smojon/md-runbook-ops:0.29.0
+
 # allow_no_group_kill (yes or no) is obsolete: the gate gives each shell a process group of its
 # own. A gate.conf with it still works; each session logs a notice.
 

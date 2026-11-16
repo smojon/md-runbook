@@ -425,12 +425,12 @@ func (g *Gate) doRun(rid, cell, k string) {
 	g.runs++
 	g.log.Event("event", "run", "id", rid, "runbook", g.mname, "version", g.mversion, "hash", g.mhash, "signer", g.principal, "cell", cell, "step", k)
 	nonce := ""
-	if g.reportOn || g.separated() {
+	if g.reportOn || g.apart() {
 		var b [8]byte
 		rand.Read(b[:])
 		nonce = hex.EncodeToString(b[:])
 	}
-	if g.separated() {
+	if g.apart() {
 		g.exitsMu.Lock()
 		g.sepRuns[itoa(g.runs)] = sepRun{rid: rid, nonce: nonce}
 		g.exitsMu.Unlock()
@@ -495,11 +495,11 @@ func (g *Gate) emitRun(rid, cell, code, nonce, kube string, hasKube bool) {
 		// kubectl's current context with the cell's environment (env.KUBECONFIG) and folder; the
 		// name as logged keeps only the characters a context name has.
 		b.WriteString(`if [ "$__mdrb_rc" = 0 ]; then __mdrb_kc=$(command kubectl config current-context </dev/null 2>/dev/null) || __mdrb_kc=; if [ "$__mdrb_kc" != "$__mdrb_kw" ]; then __mdrb_kc=$(printf '%s' "$__mdrb_kc" | tr -cd 'A-Za-z0-9._:@/+-' | cut -c 1-253); printf '%s\n' "md-runbook-gate: this block is for the Kubernetes context $__mdrb_kw; the current context here is ${__mdrb_kc:-none}: nothing ran" >&2; __mdrb_rc=126; __mdrb_kr="kube-context is ${__mdrb_kc:-none}, not $__mdrb_kw"; fi; fi` + "\n")
-		// (Separated mode: the refusal goes to the gate with the run's exit, readExitsFile; the log
+		// (Separated mode, a Job: the refusal goes to the gate with the run's exit; the log
 		// is out of the cells' reach.)
-		if !g.separated() && g.cfg.Log == "syslog" {
+		if !g.apart() && g.cfg.Log == "syslog" {
 			b.WriteString(`[ -n "$__mdrb_kr" ] && logger -t md-runbook-gate -- "{\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",$__mdrb_who,\"event\":\"refused\",\"id\":\"$__mdrb_id\",\"reason\":\"$__mdrb_kr\"}" 2>/dev/null` + "\n")
-		} else if !g.separated() {
+		} else if !g.apart() {
 			b.WriteString("__mdrb_log=" + textutil.SQ(g.cfg.Log) + "\n")
 			b.WriteString(`[ -n "$__mdrb_kr" ] && printf '%s\n' "{\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",$__mdrb_who,\"event\":\"refused\",\"id\":\"$__mdrb_id\",\"reason\":\"$__mdrb_kr\"}" >>"$__mdrb_log" 2>/dev/null` + "\n")
 		}
@@ -508,7 +508,7 @@ func (g *Gate) emitRun(rid, cell, code, nonce, kube string, hasKube bool) {
 	if cwd64 != "" {
 		b.WriteString(`[ -n "$__mdrb_in" ] && cd -- "$__mdrb_cd" 2>/dev/null` + "\n")
 	}
-	if g.separated() {
+	if g.apart() {
 		// The run's exit (and a kube-context refusal) to the gate, which logs the end event: the
 		// nonce only in what the shell reads after the block.
 		b.WriteString("__mdrb_n=" + itoa(g.runs) + "\n__mdrb_rx=" + textutil.SQ(g.exitsPath) + "\n")
@@ -574,7 +574,7 @@ func (g *Gate) doContext(rid string, args []string) {
 
 // readExits reads the work folder's report-exits.
 func (g *Gate) readExits() map[string]report.Exit {
-	if g.separated() {
+	if g.apart() {
 		return g.sepExitsCopy()
 	}
 	f, err := os.Open(g.work + "/report-exits")

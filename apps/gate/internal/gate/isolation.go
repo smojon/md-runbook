@@ -57,7 +57,8 @@ const CellsMode = "__cells"
 // cellsReq is a request to the cells' mode. Op: exec (Argv with Env, in Dir), kill (Sig to each
 // of Targets: a pid, or -group), check (which of Read the account can read, which of Write it can
 // write), scope (its cgroup, if the gate can end it there) or sweep (end the account's processes
-// that belong to no live session).
+// that belong to no live session). In a Job's pod also stop (Sig to what runs under shell Shell),
+// end (the Shells, with what they started) and follow (stream Paths to stdout).
 type cellsReq struct {
 	Op      string   `json:"op"`
 	Argv    []string `json:"argv,omitempty"`
@@ -67,6 +68,12 @@ type cellsReq struct {
 	Targets []int    `json:"targets,omitempty"`
 	Read    []string `json:"read,omitempty"`
 	Write   []string `json:"write,omitempty"`
+	// In a Kubernetes Job's pod (job.go): the shell's number (exec, stop), the shells to end
+	// (end), and the files to follow (follow; Events: the pod's own log = file too).
+	Shell  int      `json:"shell,omitempty"`
+	Shells []int    `json:"shells,omitempty"`
+	Paths  []string `json:"paths,omitempty"`
+	Events bool     `json:"events,omitempty"`
 }
 
 const (
@@ -146,6 +153,9 @@ func cellsMain() int {
 		if req.Dir != "" && os.Chdir(req.Dir) != nil {
 			os.Chdir("/")
 		}
+		if req.Shell > 0 {
+			markShell(req.Shell)
+		}
 		err := syscall.Exec(req.Argv[0], req.Argv, req.Env)
 		say("can't start " + req.Argv[0] + ": " + err.Error())
 		return 127
@@ -184,6 +194,14 @@ func cellsMain() int {
 	case "sweep":
 		data, _ := json.Marshal(cellsSweep())
 		os.Stdout.Write(append(data, '\n'))
+		return 0
+	case "stop":
+		return stopShell(req.Shell, syscall.Signal(req.Sig))
+	case "end":
+		endShells(req.Shells)
+		return 0
+	case "follow":
+		followFiles(followPaths(req), os.Stdin, os.Stdout, 100*time.Millisecond)
 		return 0
 	}
 	say("cells mode: bad request")
@@ -512,6 +530,9 @@ func (g *Gate) stopShells(shs ...*shell) {
 	if len(shs) == 0 {
 		return
 	}
+	if g.jobMode() {
+		g.jobStopShells(shs)
+	}
 	g.signalShells(shs, syscall.SIGTERM)
 	for i := 0; i < 5; i++ {
 		if !g.anyAlive(shs) {
@@ -525,12 +546,14 @@ func (g *Gate) stopShells(shs ...*shell) {
 // groupsOf: the process groups of a shell: its wrapper's (the gate started it with setsid) and the
 // shell's own, if another.
 func groupsOf(sh *shell) []int {
-	_, pgid, _ := sh.info()
+	sh.mu.Lock()
+	leader, pgid := sh.leader, sh.pgid
+	sh.mu.Unlock()
 	gs := []int{}
-	if sh.leader > 1 {
-		gs = append(gs, sh.leader)
+	if leader > 1 {
+		gs = append(gs, leader)
 	}
-	if pgid > 1 && pgid != sh.leader {
+	if pgid > 1 && pgid != leader {
 		gs = append(gs, pgid)
 	}
 	return gs

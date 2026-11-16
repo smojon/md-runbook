@@ -281,9 +281,10 @@ func sudoProblem(out, account, exe string) string {
 // separated: the cells run as an account of their own.
 func (g *Gate) separated() bool { return g.cfg.CellsAccount != "" }
 
-// mode is the gate's mode, as run reports say it.
+// mode is the gate's mode, as run reports say it. A Kubernetes Job counts as separated: its
+// cells can't reach the gate's pod (job.go).
 func (g *Gate) mode() string {
-	if g.separated() {
+	if g.apart() {
 		return report.Separated
 	}
 	return report.Shared
