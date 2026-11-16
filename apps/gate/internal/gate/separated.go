@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/smojon/md-runbook/apps/gate/internal/logx"
 	"github.com/smojon/md-runbook/apps/gate/internal/procs"
@@ -26,6 +27,9 @@ import (
 // Before each session the gate checks (selfCheck), and refuses to start when:
 //   - the account doesn't exist, is root, or is the gate's own;
 //   - `sudo -n -l` lists anything but the one rule (sudoRule);
+//   - a folder above the gate's program, gate.conf, the trusted keys, revoked, floors, the
+//     account's keys, the report token or the log is not safe (safePathProblem: the rule of
+//     OpenSSH's StrictModes);
 //   - the cells' account can read the report token or the log, or change the gate's program,
 //     gate.conf, the trusted keys, the account's keys or the gate's state;
 //   - it can't append to the session's exits file (the work folder is in /tmp).
@@ -49,6 +53,85 @@ type selfCheck struct {
 	gateUID     int
 	// The cells' account must not read noRead, nor write noWrite, but must write mustWrite.
 	noRead, noWrite, mustWrite []string
+	// The files whose folders must be safe up to / (safePathProblem), how to stat a path (lstat)
+	// and how to resolve one (its links): tests give their own.
+	safe []string
+	stat statFunc
+	real func(string) (string, error)
+}
+
+// pathInfo is what the safe-path rule needs of a file or folder.
+type pathInfo struct {
+	uid, gid int
+	perm     os.FileMode // the permission bits
+	sticky   bool
+}
+
+// statFunc stats a path without following a link.
+type statFunc func(path string) (pathInfo, error)
+
+// lstat is the real statFunc.
+func lstat(p string) (pathInfo, error) {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return pathInfo{}, err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return pathInfo{}, errors.New("no owner")
+	}
+	return pathInfo{uid: int(st.Uid), gid: int(st.Gid), perm: fi.Mode().Perm(), sticky: fi.Mode()&os.ModeSticky != 0}, nil
+}
+
+// safePathProblem: "" when every folder from p up to / is safe from the cells' account, else
+// why not (the folder named). The rule of OpenSSH's StrictModes: each folder is owned by root or
+// by the gate's account, and the cells' account can't write it (as its owner, through one of its
+// groups, or as anyone). A sticky folder it can write (/tmp) is safe when the entry below it is
+// root's or the gate account's: then others can't rename or replace that entry. p's links are
+// resolved first; a p that doesn't exist yet is checked as where it would be.
+func safePathProblem(p string, st statFunc, real func(string) (string, error), gateUID, cellsUID int, cellsGroups map[int]bool, gateAccount, cells string) string {
+	if !strings.HasPrefix(p, "/") {
+		a, err := filepath.Abs(p)
+		if err != nil {
+			return "can't check " + p
+		}
+		p = a
+	}
+	p = filepath.Clean(p)
+	if r, err := real(p); err == nil && strings.HasPrefix(r, "/") {
+		p = r
+	} else if r, err := real(filepath.Dir(p)); err == nil && strings.HasPrefix(r, "/") {
+		p = filepath.Join(r, filepath.Base(p))
+	} else {
+		return "the folder of " + p + " doesn't exist"
+	}
+	child, d := p, filepath.Dir(p)
+	for {
+		di, err := st(d)
+		if err != nil {
+			return "can't check " + d + ", a folder above " + p
+		}
+		if di.uid != 0 && di.uid != gateUID {
+			return d + ", a folder above " + p + ", is owned by uid " + strconv.Itoa(di.uid) + ": make it root's (or " + gateAccount + "'s)"
+		}
+		writable := di.perm&0o002 != 0 || (cellsGroups[di.gid] && di.perm&0o020 != 0) || (di.uid == cellsUID && di.perm&0o200 != 0)
+		if writable {
+			if !di.sticky {
+				return d + ", a folder above " + p + ", is writable by " + cells + ": make it writable by root (or " + gateAccount + ") alone"
+			}
+			ci, err := st(child)
+			if err != nil {
+				return child + " doesn't exist in " + d + ", which " + cells + " can write: create it as root (or " + gateAccount + ")"
+			}
+			if ci.uid != 0 && ci.uid != gateUID {
+				return child + " is owned by uid " + strconv.Itoa(ci.uid) + " in " + d + ", which " + cells + " can write: make it root's (or " + gateAccount + "'s)"
+			}
+		}
+		if d == "/" {
+			return ""
+		}
+		child, d = d, filepath.Dir(d)
+	}
 }
 
 // do runs the check; the cells' account, or why the gate must not start.
@@ -69,6 +152,17 @@ func (c selfCheck) do() (cellsInfo, error) {
 		return info, errors.New("cells_account needs the gate to run as an account other than root")
 	}
 	info.uid = uid
+	// Its groups: a folder writable by one of them is writable by the cells.
+	groups := map[int]bool{}
+	out, err = c.run([]string{"id", "-G", name}, nil, nil)
+	if err != nil {
+		return info, errors.New("cells_account = " + name + ": can't list its groups (id -G)")
+	}
+	for _, f := range strings.Fields(string(out)) {
+		if g, err := strconv.Atoi(f); err == nil {
+			groups[g] = true
+		}
+	}
 	// Its home folder (getpwnam, as the shell's ~NAME reads it): where the cells start.
 	if out, err := c.run([]string{c.sh, "-c", "printf '%s' ~" + name}, nil, nil); err == nil && strings.HasPrefix(string(out), "/") {
 		info.home = string(out)
@@ -86,6 +180,15 @@ func (c selfCheck) do() (cellsInfo, error) {
 		return info, errors.New("cells_account = " + name + ": " + p + need)
 	} else if err != nil {
 		return info, errors.New("cells_account = " + name + ": sudo -n -l failed (" + err.Error() + ")" + need)
+	}
+	var unsafe []string
+	for _, p := range c.safe {
+		if why := safePathProblem(p, c.stat, c.real, c.gateUID, uid, groups, c.gateAccount, name); why != "" && !has(unsafe, why) {
+			unsafe = append(unsafe, why)
+		}
+	}
+	if len(unsafe) > 0 {
+		return info, errors.New("cells_account = " + name + ": " + strings.Join(unsafe, "; "))
 	}
 	l := c.plan.outer("", true)
 	out, err = c.run(l.argv, l.env, cellsReq{Op: "check", Read: c.noRead, Write: append(append([]string{}, c.noWrite...), c.mustWrite...)}.encode())
@@ -228,7 +331,15 @@ func (g *Gate) setupSeparated() {
 	for _, k := range g.keys {
 		add(&noWrite, k, dirOf(k))
 	}
-	c := selfCheck{run: runCmd, plan: g.plan, sh: "/bin/sh", gateAccount: g.account, gateUID: g.uid, noRead: noRead, noWrite: noWrite, mustWrite: []string{g.exitsPath}}
+	// The files whose folders up to / must be safe from the cells' account.
+	var safe []string
+	add(&safe, g.plan.exe, g.configPath, g.cfg.AllowedSigners, g.cfg.Revoked, g.cfg.Floors, g.cfg.ReportToken)
+	if g.cfg.Log != "syslog" {
+		add(&safe, g.cfg.Log)
+	}
+	add(&safe, g.keys...)
+	c := selfCheck{run: runCmd, plan: g.plan, sh: "/bin/sh", gateAccount: g.account, gateUID: g.uid, noRead: noRead, noWrite: noWrite, mustWrite: []string{g.exitsPath},
+		safe: safe, stat: lstat, real: filepath.EvalSymlinks}
 	info, err := c.do()
 	if err != nil {
 		g.log.Event("event", "self-check", "status", "refused", "reason", strings.ReplaceAll(err.Error(), "\n", " "))

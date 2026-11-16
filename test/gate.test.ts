@@ -1703,7 +1703,8 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       const odir = prepare(OPEN_ACCOUNT, OPEN_BIN);
       const r = await startupAs(OPEN_ACCOUNT, odir, confOf(OPEN_ACCOUNT, odir, 'gate.conf', []), OPEN_BIN);
       assert.equal(r.code, 2, r.err);
-      assert.match(r.err, new RegExp(`${CELLS} can change [^:]*${path.posix.dirname(OPEN_BIN)}: make it root-owned`));
+      // The safe-path rule names the folder.
+      assert.ok(r.err.includes(`${path.posix.dirname(OPEN_BIN)}, a folder above ${OPEN_BIN}, is writable by ${CELLS}`), r.err);
       assert.doesNotMatch(r.err, /not exactly the one rule/);
     });
 

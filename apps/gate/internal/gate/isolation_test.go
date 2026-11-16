@@ -149,16 +149,47 @@ func TestSudoProblem(t *testing.T) {
 
 // A fake system for the self-check: the programs it runs and what they answer.
 type fakeSys struct {
-	idOut, home, sudoL string
-	idErr, sudoErr     error
-	check              checkResult
-	checkErr           error
-	calls              [][]string
+	idOut, groups, home, sudoL string
+	idErr, sudoErr             error
+	check                      checkResult
+	checkErr                   error
+	calls                      [][]string
+	files                      fakeFS
+}
+
+// fakeFS: owners and modes by path (no links).
+type fakeFS map[string]pathInfo
+
+func (fs fakeFS) stat(p string) (pathInfo, error) {
+	if i, ok := fs[p]; ok {
+		return i, nil
+	}
+	return pathInfo{}, errors.New("no such file")
+}
+
+func (fs fakeFS) real(p string) (string, error) {
+	if _, ok := fs[p]; ok {
+		return p, nil
+	}
+	return "", errors.New("no such file")
+}
+
+// A system: root's folders, a sticky /tmp, and the gate's account (1000)'s folder in it.
+func goodFS() fakeFS {
+	root := func(perm os.FileMode) pathInfo { return pathInfo{uid: 0, gid: 0, perm: perm} }
+	return fakeFS{
+		"/": root(0o755), "/usr": root(0o755), "/usr/local": root(0o755), "/usr/local/bin": root(0o755),
+		"/usr/local/bin/md-runbook-gate": root(0o755), "/etc": root(0o755), "/etc/md-runbook": root(0o755),
+		"/etc/md-runbook/gate.conf": root(0o644), "/tmp": {uid: 0, gid: 0, perm: 0o777, sticky: true},
+		"/tmp/mdrb.x": {uid: 1000, gid: 1000, perm: 0o700}, "/tmp/mdrb.x/report-token": {uid: 1000, gid: 1000, perm: 0o600},
+	}
 }
 
 func (f *fakeSys) run(argv, env []string, stdin []byte) ([]byte, error) {
 	f.calls = append(f.calls, argv)
 	switch {
+	case argv[0] == "id" && argv[1] == "-G":
+		return []byte(f.groups), nil
 	case argv[0] == "id":
 		return []byte(f.idOut), f.idErr
 	case argv[0] == "/bin/sh":
@@ -178,9 +209,10 @@ func (f *fakeSys) run(argv, env []string, stdin []byte) ([]byte, error) {
 
 func goodSys() *fakeSys {
 	return &fakeSys{
-		idOut: "1500\n", home: "/home/mdrb-cells",
+		idOut: "1500\n", groups: "1500 27\n", home: "/home/mdrb-cells",
 		sudoL: sudoHead + "    (mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n",
 		check: checkResult{UID: 1500, Read: []string{}, Write: []string{"/tmp/md-runbook-gate.x/exits.y"}},
+		files: goodFS(),
 	}
 }
 
@@ -192,6 +224,8 @@ func check(f *fakeSys) (cellsInfo, error) {
 		noRead:    []string{"/etc/md-runbook/report-token", "/var/log/md-runbook-gate.log"},
 		noWrite:   []string{"/usr/local/bin/md-runbook-gate", "/etc/md-runbook/gate.conf"},
 		mustWrite: []string{"/tmp/md-runbook-gate.x/exits.y"},
+		safe:      []string{"/usr/local/bin/md-runbook-gate", "/etc/md-runbook/gate.conf", "/tmp/mdrb.x/report-token"},
+		stat:      f.files.stat, real: f.files.real,
 	}.do()
 }
 
@@ -201,7 +235,7 @@ func TestSelfCheck(t *testing.T) {
 	if err != nil || info.uid != 1500 || info.home != "/home/mdrb-cells" {
 		t.Fatalf("good: %+v %v", info, err)
 	}
-	if len(f.calls) != 4 {
+	if len(f.calls) != 5 {
 		t.Errorf("calls: %q", f.calls)
 	}
 	rule := "support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells"
@@ -210,6 +244,7 @@ func TestSelfCheck(t *testing.T) {
 		want   []string
 	}{
 		"no account":     {func(f *fakeSys) { f.idOut, f.idErr = "", errors.New("exit status 1") }, []string{"no such account"}},
+		"open folder":    {func(f *fakeSys) { f.files["/etc/md-runbook"] = pathInfo{perm: 0o777} }, []string{"/etc/md-runbook, a folder above /etc/md-runbook/gate.conf, is writable by mdrb-cells"}},
 		"root":           {func(f *fakeSys) { f.idOut = "0\n" }, []string{"is root"}},
 		"the gate's own": {func(f *fakeSys) { f.idOut = "1000\n" }, []string{"the gate's own account"}},
 		"no rule": {func(f *fakeSys) {
@@ -251,6 +286,44 @@ func TestSelfCheck(t *testing.T) {
 	f.home = "~mdrb-cells"
 	if info, err := check(f); err != nil || info.home != "" {
 		t.Errorf("no home: %+v %v", info, err)
+	}
+}
+
+// The safe-path rule (OpenSSH's StrictModes): each folder up to / root's or the gate account's
+// (1000), not writable by the cells' account (1500, in groups 1500 and 27), except a sticky one
+// whose entry below is root's or the gate account's.
+func TestSafePathProblem(t *testing.T) {
+	groups := map[int]bool{1500: true, 27: true}
+	for name, c := range map[string]struct {
+		change func(fs fakeFS)
+		path   string
+		want   string // "" accepted, else a part of the message
+	}{
+		"all root's":                {nil, "/etc/md-runbook/gate.conf", ""},
+		"open parent":               {func(fs fakeFS) { fs["/etc/md-runbook"] = pathInfo{perm: 0o777} }, "/etc/md-runbook/gate.conf", "/etc/md-runbook, a folder above /etc/md-runbook/gate.conf, is writable by mdrb-cells"},
+		"open grandparent":          {func(fs fakeFS) { fs["/etc"] = pathInfo{perm: 0o757} }, "/etc/md-runbook/gate.conf", "/etc, a folder above /etc/md-runbook/gate.conf, is writable by mdrb-cells"},
+		"parent of another account": {func(fs fakeFS) { fs["/etc/md-runbook"] = pathInfo{uid: 1234, perm: 0o755} }, "/etc/md-runbook/gate.conf", "is owned by uid 1234"},
+		"parent of the gate's":      {func(fs fakeFS) { fs["/etc/md-runbook"] = pathInfo{uid: 1000, gid: 1000, perm: 0o755} }, "/etc/md-runbook/gate.conf", ""},
+		"cells' group may write":    {func(fs fakeFS) { fs["/etc/md-runbook"] = pathInfo{gid: 27, perm: 0o775} }, "/etc/md-runbook/gate.conf", "/etc/md-runbook, a folder above /etc/md-runbook/gate.conf, is writable by mdrb-cells"},
+		"another group may write":   {func(fs fakeFS) { fs["/etc/md-runbook"] = pathInfo{gid: 4, perm: 0o775} }, "/etc/md-runbook/gate.conf", ""},
+		"sticky /tmp, gate's child": {nil, "/tmp/mdrb.x/report-token", ""},
+		"sticky /tmp, root's child": {func(fs fakeFS) { fs["/tmp/mdrb.x"] = pathInfo{perm: 0o755} }, "/tmp/mdrb.x/report-token", ""},
+		"sticky /tmp, another's child": {func(fs fakeFS) { fs["/tmp/mdrb.x"] = pathInfo{uid: 1500, gid: 1500, perm: 0o700} }, "/tmp/mdrb.x/report-token",
+			"/tmp/mdrb.x, a folder above /tmp/mdrb.x/report-token, is owned by uid 1500"},
+		"sticky /tmp, file in it of another": {func(fs fakeFS) { fs["/tmp/token"] = pathInfo{uid: 1234, perm: 0o600} }, "/tmp/token", "/tmp/token is owned by uid 1234 in /tmp"},
+		"sticky /tmp, file not there yet":    {nil, "/tmp/token", "/tmp/token doesn't exist in /tmp"},
+		"open but not sticky /tmp":           {func(fs fakeFS) { fs["/tmp"] = pathInfo{perm: 0o777} }, "/tmp/mdrb.x/report-token", "/tmp, a folder above /tmp/mdrb.x/report-token, is writable by mdrb-cells"},
+		"a file not there yet, safe folder":  {nil, "/etc/md-runbook/revoked", ""},
+		"a folder not there":                 {nil, "/etc/nowhere/revoked", "the folder of /etc/nowhere/revoked doesn't exist"},
+	} {
+		fs := goodFS()
+		if c.change != nil {
+			c.change(fs)
+		}
+		got := safePathProblem(c.path, fs.stat, fs.real, 1000, 1500, groups, "support", "mdrb-cells")
+		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
 	}
 }
 
