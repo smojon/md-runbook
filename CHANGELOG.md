@@ -2,18 +2,17 @@
 
 ## Unreleased
 
-- **Android app:** the APK is signed with the app's own key, not the template's public debug key,
-  and each release has it attached (`md-runbook-X.Y.Z.apk`). Uninstall a debug-signed copy once
-  first: Android won't update an app across keys.
-
-- **App, Add Note:** a note goes right after the step it is about (the one running, else the one
-  that ran last), as in VS Code, not at the end of the runbook. Its confirmation, and **Saved** and
-  the record signed message, show in green: the notice line was red for everything.
-- **App, sample runbook:** its service check quotes its regular expression, so it no longer shows
-  an unknown cell option warning and checks for `active (running)` as meant.
-- **Progress, re-runs:** a run counts the steps it hasn't reached yet as still to do, even when
-  they have a green output from the last run. Before, re-running a finished runbook showed 98 %,
-  `0s left` and an end time already past. VS Code and the app.
+- **Android app:** the APK is signed with the app's own key, not the template's public debug key.
+  Each release has it attached (`md-runbook-X.Y.Z.apk`). Uninstall a debug-signed copy once first:
+  Android won't update an app across keys.
+- **App, Add Note:** a note goes right after the step it is about, as in VS Code. That is the step
+  running, else the one that ran last; before, it went to the end. Its confirmation, **Saved** and
+  the record signed message show in green, not red.
+- **App, sample runbook:** its service check quotes its regular expression. So it shows no warning
+  and checks for `active (running)` as meant.
+- **Progress, re-runs:** a run counts the steps it hasn't reached yet as still to do. Before, their
+  green output from the last run counted as done: 98 %, `0s left` and an end time already past.
+  VS Code and the app.
 - **Estimates:** a run under 10 s rounds up to whole seconds, not to 5 s. A 5.1 s block now
   learns `~6s`, not `~10s`; clicking its time writes `estimate=6s`. VS Code and the app.
 
