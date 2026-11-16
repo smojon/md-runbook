@@ -32,6 +32,7 @@ s.server.listen(config.port, config.host, () => {
       runsOpen: config.runs ? config.runs.tokens.length === 0 : undefined,
       requireSigned: config.runs?.requireSigned,
       alerts: config.alerts?.map,
+      push: config.push ? [...(config.push.apns ? [`ios${config.push.apns.sandbox ? ' (sandbox)' : ''}`] : []), ...(config.push.fcm ? ['android'] : [])].join(', ') : undefined,
     }),
   );
 });

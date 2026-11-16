@@ -8,8 +8,8 @@
  * A link only opens the runbook and fills in its parameters; it never runs anything (the app
  * checks the hash, and a signed runbook's patterns; md-runbook-gate checks them again).
  *
- * Nothing is pushed to phones yet: `notify(firing)` is the place for it (README.md says what a
- * push sender needs).
+ * `notify(firing)` gets each firing alert that has a link: the server's pushes to phones
+ * (push.ts), when they are set up.
  */
 import { readFileSync } from 'node:fs';
 import { RE2JS } from 're2js';
@@ -176,7 +176,7 @@ export interface Firing {
   problem?: string;
 }
 
-/** Where a firing goes next: a push to phones, a chat message. Nothing yet (README.md, "Push"). */
+/** Where a firing goes next: the pushes to phones (push.ts), or another sender (ServerOptions.notify). */
 export type Notify = (firing: Firing) => Promise<void>;
 
 const strings = (x: unknown, max: number): Record<string, string> => {

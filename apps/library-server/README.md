@@ -5,7 +5,8 @@ team library, a folder of runbooks, read-only at `/runbooks/`. This server:
 
 - is the only thing that writes to that folder, and only signed runbooks go in;
 - collects **run summaries**;
-- turns **Alertmanager alerts** into links that open the right runbook.
+- turns **Alertmanager alerts** into links that open the right runbook;
+- **pushes** firing alerts to the phones registered for them (off until set up).
 
 It runs behind the same reverse proxy as the web app, on the same name:
 
@@ -18,10 +19,13 @@ It runs behind the same reverse proxy as the web app, on the same name:
 | `GET /v1/runs/last-green?runbook=…` | "Last ran green by X at T", verified or not | read |
 | `POST /v1/alerts` | Alertmanager's webhook | alerts, when set |
 | `GET /v1/alerts/recent` | Recent alerts and their runbook links | read |
+| `POST /v1/devices` | A phone that gets firing alerts as pushes | devices |
+| `DELETE /v1/devices/<id>` | That phone no longer | devices |
 | `GET /v1/server-info`, `GET /healthz` | What it serves (`capabilities`), and whether it is up | none |
 
 Each part is on when its main setting is there: publishing with `LIBRARY_DIR`, run summaries
-with `RUNS_DIR`, alerts with `ALERT_MAP`.
+with `RUNS_DIR`, alerts with `ALERT_MAP`, pushes with `PUSH_FCM_SERVICE_ACCOUNT_FILE` and/or
+`PUSH_APNS_KEY_FILE`.
 
 ## Publishing
 
@@ -188,20 +192,38 @@ https://runbooks.example.net/open?url=https%3A%2F%2Frunbooks.example.net%2Frunbo
 - A link only opens a runbook and fills in its parameters. It never runs anything, and a signed
   runbook's parameter patterns still apply.
 
-### Push to phones: not built yet
+### Push to phones
 
-Nothing is sent to phones. The place for it is `notify(firing)` (`ServerOptions.notify` in
-[src/server.ts](src/server.ts)), called for each firing alert that has a link. A failure there
-is logged and never loses the alert.
+Off until you set a sender. Then each firing alert that has a link goes to the registered
+phones. What to set up in Firebase and at Apple:
+[docs/push-and-testflight.md](../../docs/push-and-testflight.md).
 
-A push sender needs:
+- **Android:** Firebase Cloud Messaging, HTTP v1 (`PUSH_FCM_SERVICE_ACCOUNT_FILE`: the service
+  account key file).
+- **iPhone:** APNs with a `.p8` key (`PUSH_APNS_KEY_FILE`, `PUSH_APNS_KEY_ID`,
+  `PUSH_APNS_TEAM_ID`).
+- **Phones register** in the app: Hosts & settings → Team library → Alerts on this phone, with a
+  devices token. That is `POST /v1/devices`:
 
-- **Android:** a Firebase project and a service account key (FCM HTTP v1 API).
-- **iOS:** an APNs key (`.p8`), its key ID, the team ID and the app's bundle ID, from the Apple
-  developer account.
-- **Devices:** the app registering its push token with this server, which the app doesn't do
-  yet. This takes an endpoint and a list of devices per person or on-call rotation.
-- The app opening the link from the notification (it opens `/open?…` links already).
+  ```sh
+  curl -sS -X POST -H "Authorization: Bearer $DEVICES_TOKEN" \
+    -d '{"platform":"android","token":"<FCM token>","alertnames":["KubePodCrashLooping"]}' \
+    https://runbooks.example.net/v1/devices
+  ```
+
+  - `alertnames`, `runbooks` (paths, or folders ending in `/`): only those alerts. Absent: all.
+  - It answers the device's `id`; `DELETE /v1/devices/<id>` removes it.
+- **A push says** "ALERTNAME firing" and the runbook's path, and carries the alert's link
+  (`/open?url=…&sha256=…`). Nothing else: no other labels, no annotations, no tokens. Google or
+  Apple sees what a push carries.
+- **A tap** opens the link in the app, under the same checks as any link (its hash, the
+  library's rules). It never runs anything.
+- **Gone phones:** tokens the provider reports as gone (FCM `UNREGISTERED`, APNs 410) are removed.
+- **Repeats:** the same alert (fingerprint) is pushed again only after `PUSH_REPEAT_SECONDS`.
+- **Withdrawn tokens:** a phone gets pushes only while the token it registered with is still
+  accepted. Take a token out of `DEVICES_TOKENS` and its phones stop.
+- Pushes go out after the webhook is answered. A failure is logged and never loses the alert.
+- Devices are kept in `STATE_DIR/devices.json` (mode 600).
 
 ## Run it
 
@@ -209,7 +231,7 @@ Behind a reverse proxy that terminates TLS, on the web app's name.
 [compose.example.yml](compose.example.yml) runs the web app, this server and Caddy, with
 [Caddyfile.example](Caddyfile.example). Caddy sends:
 
-- `/v1/library/`, `/v1/runs` and `/v1/alerts` here;
+- `/v1/library/`, `/v1/runs`, `/v1/alerts` and `/v1/devices` here;
 - everything else to the web app.
 
 Caddy doesn't send `/v1/server-info` here: on the web app's own name that path is the relay's.
@@ -261,6 +283,14 @@ LIBRARY_DIR=/srv/runbooks LIBRARY_UPLOAD_TOKENS=… npm start
 | `ALERTS_READ_TOKENS` | `RUNS_READ_TOKENS` | Tokens that may read alerts. |
 | `ALERTS_DIR` | `STATE_DIR/alerts` | Where alerts are kept. |
 | `ALERTS_MAX_BYTES` | `1048576` | Largest webhook. |
+| `PUSH_FCM_SERVICE_ACCOUNT_FILE` | | Firebase service account key (JSON). Turns pushes to Android on. Needs `ALERT_MAP`. |
+| `PUSH_APNS_KEY_FILE` | | APNs key (`AuthKey_XXXXXXXXXX.p8`). Turns pushes to iPhones on. Needs `ALERT_MAP`. |
+| `PUSH_APNS_KEY_ID`, `PUSH_APNS_TEAM_ID` | required with `PUSH_APNS_KEY_FILE` | The key's 10-character ID, and your team's. |
+| `PUSH_APNS_TOPIC` | `dev.mdrunbook.app` | The app's bundle ID. |
+| `PUSH_APNS_SANDBOX` | `false` | `true` for development builds (Xcode, debug): APNs' sandbox. TestFlight and App Store builds use production. |
+| `DEVICES_TOKENS` | `ALERTS_READ_TOKENS` | Tokens a phone registers with. |
+| `PUSH_MAX_DEVICES` | `1000` | Most phones kept. |
+| `PUSH_REPEAT_SECONDS` | `3600` | The same alert is pushed again only after this long. |
 | `STATE_DIR` | `./data` (`/data` in the image) | The highest version published per path, and alerts. |
 | `SERVER_HOST`, `SERVER_PORT` | `127.0.0.1`, `8090` | Where it listens (the image: `0.0.0.0`). |
 | `TRUST_PROXY` | `false` | The client address is the last `X-Forwarded-For` entry. Only behind your own proxy. |
@@ -289,6 +319,9 @@ LIBRARY_DIR=/srv/runbooks LIBRARY_UPLOAD_TOKENS=… npm start
     - One token per server, so it can be withdrawn alone.
   - *Read:* read runs and alerts (names, times, results, alert labels; no outputs).
   - *Alerts:* send alerts, which the server only records and turns into links.
+  - *Devices:* register a phone for firing alerts, and remove one (by its id). That is as much
+    as reading alerts, so it defaults to the read tokens. Give phones their own with
+    `DEVICES_TOKENS`, so a phone's token can't read the alert history.
 - **Tokens** travel only in `Authorization: Bearer`, never in URLs. They are compared in constant
   time against every token, and never logged (only their names). Clients that fail the check too
   often are refused for a while.
@@ -302,7 +335,11 @@ LIBRARY_DIR=/srv/runbooks LIBRARY_UPLOAD_TOKENS=… npm start
   container mounts it read-only.
 - **Limits:** body sizes, requests per client per minute, 30 seconds per request.
 - **The container** runs as `node` (uid 1000), with all capabilities dropped. Its root is
-  read-only, with `/tmp` as tmpfs (for ssh-keygen's temporary files). It needs no outbound network.
+  read-only, with `/tmp` as tmpfs (for ssh-keygen's temporary files). It needs no outbound network,
+  except with pushes: `oauth2.googleapis.com` and `fcm.googleapis.com` (Android),
+  `api.push.apple.com` or `api.sandbox.push.apple.com` (iPhone), all on 443.
+- **Push keys** (the service account and the `.p8` key) can only send pushes to this app. Keep them
+  as Docker secrets; the server never logs them, nor the phones' push tokens.
 - **What it can't do:** prove that the steps of a summary really ran as it says. A runner's
   signature proves which key sent it. The gate's log is the record of what ran on a gated server.
 - **What it stores:** run summaries (who ran what, when, and how it ended) and alert labels. Who
@@ -311,6 +348,8 @@ LIBRARY_DIR=/srv/runbooks LIBRARY_UPLOAD_TOKENS=… npm start
 
 ## Tests
 
-`npm test` builds the server and runs its tests with real ssh-keygen keys and signatures. The
+`npm test` builds the server and runs its tests with real ssh-keygen keys and signatures. The push
+tests send to fake FCM and APNs servers on the machine (HTTP and HTTP/2), never to Google or
+Apple. The
 [Library server workflow](../../.github/workflows/library-server.yml) also builds the image from
 the repository root, starts it read-only and probes it from outside.

@@ -2,9 +2,10 @@
  * The server's settings, from environment variables (see README.md). Invalid settings stop it at
  * start: a library that takes uploads must never run without a token or the signers it checks.
  * Each part is on when its main setting is there: the library with LIBRARY_DIR, run summaries
- * with RUNS_DIR, alerts with ALERT_MAP.
+ * with RUNS_DIR, alerts with ALERT_MAP, and pushes of those alerts with PUSH_FCM_SERVICE_ACCOUNT_FILE
+ * and/or PUSH_APNS_KEY_FILE.
  */
-import { createHash } from 'node:crypto';
+import { KeyObject, createHash, createPrivateKey } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 
@@ -57,6 +58,41 @@ export interface AlertsConfig {
   maxBytes: number;
 }
 
+/** Firebase Cloud Messaging (HTTP v1): a service account of the Firebase project. */
+export interface FcmConfig {
+  projectId: string;
+  clientEmail: string;
+  /** The service account's RSA key (PEM), which signs the OAuth2 assertion (RS256). */
+  privateKey: string;
+  /** Where the assertion is exchanged for an access token (the file's token_uri). */
+  tokenUri: string;
+}
+
+/** Apple Push Notification service, token-based: a .p8 key of the developer account. */
+export interface ApnsConfig {
+  /** The .p8 key (PEM, EC P-256), which signs the provider token (ES256). */
+  key: string;
+  keyId: string;
+  teamId: string;
+  /** The app's bundle ID. */
+  topic: string;
+  /** Development builds (Xcode, a debug build): api.sandbox.push.apple.com. */
+  sandbox: boolean;
+}
+
+/** Firing alerts pushed to the phones that registered for them (POST /v1/devices). */
+export interface PushConfig {
+  /** The registered devices (JSON, written atomically, mode 600). */
+  file: string;
+  /** Tokens a phone registers with (DEVICES_TOKENS; default: the alerts' read tokens). */
+  tokens: readonly Token[];
+  fcm?: FcmConfig;
+  apns?: ApnsConfig;
+  maxDevices: number;
+  /** The same alert (fingerprint) is pushed again only after this long. */
+  repeatMs: number;
+}
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -65,6 +101,7 @@ export interface ServerConfig {
   library?: LibraryConfig;
   runs?: RunsConfig;
   alerts?: AlertsConfig;
+  push?: PushConfig;
   /** Page origins allowed to read answers in a browser (CORS); empty: none (same origin only). */
   origins: readonly string[];
   /** Use the last X-Forwarded-For address as the client (behind your own reverse proxy only). */
@@ -121,6 +158,76 @@ export function readTokens(env: NodeJS.ProcessEnv, name: string): Token[] {
 function existingFile(name: string, path: string): string {
   if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`${name}: no file ${path}`);
   return path;
+}
+
+/** A Firebase service account key file (JSON), as the Firebase console downloads it. */
+export function parseServiceAccount(json: string, where = 'PUSH_FCM_SERVICE_ACCOUNT_FILE'): FcmConfig {
+  let x: unknown;
+  try {
+    x = JSON.parse(json);
+  } catch {
+    throw new Error(`${where}: not JSON (the service account key file from the Firebase console)`);
+  }
+  const o = (typeof x === 'object' && x !== null ? x : {}) as Record<string, unknown>;
+  if (o.type !== 'service_account') throw new Error(`${where}: not a service account key ("type": "service_account")`);
+  for (const k of ['project_id', 'client_email', 'private_key'] as const) if (typeof o[k] !== 'string' || o[k] === '') throw new Error(`${where}: no ${k}`);
+  const tokenUri = typeof o.token_uri === 'string' ? o.token_uri : 'https://oauth2.googleapis.com/token';
+  if (!tokenUri.startsWith('https://')) throw new Error(`${where}: token_uri must be an https address`);
+  let key: KeyObject;
+  try {
+    key = createPrivateKey(o.private_key as string);
+  } catch {
+    throw new Error(`${where}: private_key is not a private key`);
+  }
+  if (key.asymmetricKeyType !== 'rsa') throw new Error(`${where}: private_key is not an RSA key`);
+  if (!/^[a-z][a-z0-9-]{4,61}[a-z0-9]$/.test(o.project_id as string)) throw new Error(`${where}: project_id is not a project ID`);
+  return { projectId: o.project_id as string, clientEmail: o.client_email as string, privateKey: o.private_key as string, tokenUri };
+}
+
+const APPLE_ID_RE = /^[A-Z0-9]{10}$/;
+const BUNDLE_ID_RE = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
+
+/** An APNs .p8 key (PEM, EC P-256) and its key ID, team ID and topic. */
+export function parseApns(env: NodeJS.ProcessEnv, file: string): ApnsConfig {
+  const key = readFileSync(existingFile('PUSH_APNS_KEY_FILE', resolve(file)), 'utf8');
+  let k: KeyObject;
+  try {
+    k = createPrivateKey(key);
+  } catch {
+    throw new Error('PUSH_APNS_KEY_FILE: not a private key (the AuthKey_XXXXXXXXXX.p8 file of your Apple developer account)');
+  }
+  if (k.asymmetricKeyType !== 'ec' || k.asymmetricKeyDetails?.namedCurve !== 'prime256v1') throw new Error('PUSH_APNS_KEY_FILE: not an APNs key (EC P-256)');
+  const keyId = env.PUSH_APNS_KEY_ID ?? '';
+  const teamId = env.PUSH_APNS_TEAM_ID ?? '';
+  const topic = env.PUSH_APNS_TOPIC || 'dev.mdrunbook.app';
+  if (!APPLE_ID_RE.test(keyId)) throw new Error('PUSH_APNS_KEY_ID: the key\'s 10-character Key ID (Certificates, Identifiers & Profiles → Keys)');
+  if (!APPLE_ID_RE.test(teamId)) throw new Error('PUSH_APNS_TEAM_ID: your 10-character Team ID (Membership details)');
+  if (!BUNDLE_ID_RE.test(topic)) throw new Error('PUSH_APNS_TOPIC: the app\'s bundle ID, such as dev.mdrunbook.app');
+  return { key, keyId, teamId, topic, sandbox: bool(env, 'PUSH_APNS_SANDBOX', false) };
+}
+
+/** Pushes: on when a sender is set (FCM, APNs or both), and only with alerts (they are what is pushed). */
+function loadPush(env: NodeJS.ProcessEnv, stateDir: string, alerts: AlertsConfig | undefined): PushConfig | undefined {
+  const fcmFile = env.PUSH_FCM_SERVICE_ACCOUNT_FILE;
+  const apnsFile = env.PUSH_APNS_KEY_FILE;
+  if (!fcmFile && !apnsFile) {
+    const stray = ['DEVICES_TOKENS', 'DEVICES_TOKENS_FILE', 'PUSH_APNS_KEY_ID', 'PUSH_APNS_TEAM_ID'].find((n) => env[n]);
+    if (stray) throw new Error(`${stray} is set but no push sender: set PUSH_FCM_SERVICE_ACCOUNT_FILE (Android) and/or PUSH_APNS_KEY_FILE (iPhone)`);
+    return undefined;
+  }
+  if (!alerts) throw new Error('PUSH_FCM_SERVICE_ACCOUNT_FILE / PUSH_APNS_KEY_FILE need ALERT_MAP: the server pushes firing alerts');
+  const fcm = fcmFile ? parseServiceAccount(readFileSync(existingFile('PUSH_FCM_SERVICE_ACCOUNT_FILE', resolve(fcmFile)), 'utf8')) : undefined;
+  const apns = apnsFile ? parseApns(env, apnsFile) : undefined;
+  const tokens = env.DEVICES_TOKENS || env.DEVICES_TOKENS_FILE ? readTokens(env, 'DEVICES_TOKENS') : alerts.readTokens;
+  if (tokens.length === 0) throw new Error('Pushes need DEVICES_TOKENS (what a phone registers with), or ALERTS_READ_TOKENS / RUNS_READ_TOKENS: otherwise anyone could register for the alerts');
+  return {
+    file: join(stateDir, 'devices.json'),
+    tokens,
+    ...(fcm ? { fcm } : {}),
+    ...(apns ? { apns } : {}),
+    maxDevices: num(env, 'PUSH_MAX_DEVICES', 1000),
+    repeatMs: num(env, 'PUSH_REPEAT_SECONDS', 3600) * 1000,
+  };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -190,6 +297,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
 
   if (!library && !runs && !alerts) throw new Error('Nothing to serve: set LIBRARY_DIR (publishing), RUNS_DIR (run summaries) and/or ALERT_MAP (alerts)');
 
+  const push = loadPush(env, stateDir, alerts);
+
   return {
     host: env.SERVER_HOST ?? '127.0.0.1',
     port: num(env, 'SERVER_PORT', 8090),
@@ -197,6 +306,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     ...(library ? { library } : {}),
     ...(runs ? { runs } : {}),
     ...(alerts ? { alerts } : {}),
+    ...(push ? { push } : {}),
     origins: list(env.CORS_ORIGINS),
     trustProxy: bool(env, 'TRUST_PROXY', false),
     ratePerMinute: num(env, 'RATE_PER_MINUTE', 120),

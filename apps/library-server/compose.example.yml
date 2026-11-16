@@ -1,6 +1,6 @@
 # The web app, its library server and Caddy on one name, runbooks.example.net: Caddy gets and
-# renews the certificate, sends /v1/library/, /v1/runs and /v1/alerts to the library server and
-# everything else to the web app, which serves ./library read-only at /runbooks/. Copy this file
+# renews the certificate, sends /v1/library/, /v1/runs, /v1/alerts and /v1/devices to the library
+# server and everything else to the web app, which serves ./library read-only at /runbooks/. Copy this file
 # and Caddyfile.example, put your own name and settings in, then `docker compose up -d`.
 #
 # Before the first start (README.md, "Run it"):
@@ -43,9 +43,15 @@ services:
       ALERT_MAP: /config/alert-map.json
       ALERTS_TOKENS_FILE: /run/secrets/alerts
       PUBLIC_URL: https://runbooks.example.net
+      # Pushes to phones (docs/push-and-testflight.md): off until a sender is set.
+      # PUSH_FCM_SERVICE_ACCOUNT_FILE: /run/secrets/fcm
+      # PUSH_APNS_KEY_FILE: /run/secrets/apns
+      # PUSH_APNS_KEY_ID: ABC123DEFG
+      # PUSH_APNS_TEAM_ID: DEF123GHIJ
+      # DEVICES_TOKENS_FILE: /run/secrets/devices
       # Caddy is the only client the server sees; the real address comes from its header.
       TRUST_PROXY: 'true'
-    secrets: [upload, runs, gate, read, alerts]
+    secrets: [upload, runs, gate, read, alerts] # with pushes: fcm, apns, devices
     volumes:
       - ./library:/library
       - ./config:/config:ro
@@ -77,6 +83,12 @@ secrets:
     file: ./secrets/read
   alerts:
     file: ./secrets/alerts
+  # fcm:
+  #   file: ./secrets/fcm-service-account.json
+  # apns:
+  #   file: ./secrets/AuthKey_ABC123DEFG.p8
+  # devices:
+  #   file: ./secrets/devices
 
 volumes:
   library-data:

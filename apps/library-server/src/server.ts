@@ -11,6 +11,8 @@
  *   GET    /v1/runs/last-green?runbook=…     the last green run (read token)
  *   POST   /v1/alerts                        Alertmanager's webhook (ALERTS_TOKENS when set)
  *   GET    /v1/alerts/recent?limit=…         recent alerts with their links (read token)
+ *   POST   /v1/devices                       a phone that gets firing alerts as pushes (device token)
+ *   DELETE /v1/devices/<id>                  that phone no longer (device token)
  *
  * Tokens travel as `Authorization: Bearer …` only, never in URLs, and are never logged; each is
  * logged by its name (`label:token`) or a short hash. Bodies are capped, clients rate-limited,
@@ -19,8 +21,10 @@
 import { IncomingMessage, Server, ServerResponse, createServer } from 'node:http';
 import { Alerts, Notify } from './alerts';
 import type { ServerConfig, Token } from './config';
+import { DEVICE_ID_RE, Devices, parseRegistration } from './devices';
 import { HttpError, LogEvent, RateLimit, bearer, clientOf, limitOf, readBody, sendJson, tokenSet } from './http';
 import { Library, decodePath } from './library';
+import { ApnsSender, FcmSender, PushService, Senders } from './push';
 import { Runs } from './runs';
 
 export const PROTOCOL = 1;
@@ -30,23 +34,39 @@ export interface LibraryServer {
   library?: Library;
   runs?: Runs;
   alerts?: Alerts;
+  push?: PushService;
   close(): Promise<void>;
 }
 
 export interface ServerOptions {
   log?: (e: LogEvent) => void;
-  /** What happens with a firing alert that has a link (default: nothing; see README.md, "Push"). */
+  /** What happens with a firing alert that has a link (default: the pushes, when they are set up). */
   notify?: Notify;
+  /** The push senders (default: FCM and APNs from the settings); tests give other addresses. */
+  senders?: Senders;
 }
 
 const LIBRARY_PREFIX = '/v1/library/runbooks/';
+const DEVICES_PREFIX = '/v1/devices/';
 
 export function createLibraryServer(config: ServerConfig, version: string, opts: ServerOptions = {}): LibraryServer {
   const log = opts.log ?? defaultLog;
   const library = config.library ? new Library(config.library, config.stateDir, config.sshKeygen) : undefined;
   const runs = config.runs ? new Runs(config.runs, config.sshKeygen) : undefined;
+  const push =
+    config.push && config.alerts
+      ? new PushService(
+          config.push,
+          new Devices(config.push.file, config.push.maxDevices),
+          opts.senders ?? {
+            ...(config.push.fcm ? { android: new FcmSender(config.push.fcm) } : {}),
+            ...(config.push.apns ? { ios: new ApnsSender(config.push.apns) } : {}),
+          },
+          log,
+        )
+      : undefined;
   const alerts = config.alerts
-    ? new Alerts(config.alerts, opts.notify, (e, f) => log({ event: 'notify-failed', alertname: f.alertname, why: e instanceof Error ? e.message : String(e) }))
+    ? new Alerts(config.alerts, opts.notify ?? push?.notify,(e, f) => log({ event: 'notify-failed', alertname: f.alertname, why: e instanceof Error ? e.message : String(e) }))
     : undefined;
 
   const check = {
@@ -56,10 +76,11 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
     runsRead: tokenSet(config.runs?.readTokens ?? []),
     alerts: tokenSet(config.alerts?.tokens ?? []),
     alertsRead: tokenSet(config.alerts?.readTokens ?? []),
+    devices: tokenSet(config.push?.tokens ?? []),
   };
   const rate = new RateLimit(config.ratePerMinute, 60_000);
   const failures = new RateLimit(0, config.failWindowMs);
-  const capabilities = [...(library ? ['library'] : []), ...(runs ? ['runs'] : []), ...(alerts ? ['alerts'] : [])];
+  const capabilities = [...(library ? ['library'] : []), ...(runs ? ['runs'] : []), ...(alerts ? ['alerts'] : []), ...(push ? ['push'] : [])];
 
   const corsOrigin = (origin: string | undefined): string | undefined => (origin && config.origins.includes(origin) ? origin : undefined);
 
@@ -161,6 +182,38 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
       return sendJson(res, 200, { alerts: await alerts.recent(limitOf(url, 50, 500), url.searchParams.get('alertname') ?? undefined) }, headers);
     }
 
+    // ---- phones that get pushes ----
+    if (path === '/v1/devices' || path.startsWith(DEVICES_PREFIX)) {
+      if (!push) throw new HttpError(404, 'this server sends no pushes (PUSH_FCM_SERVICE_ACCOUNT_FILE, PUSH_APNS_KEY_FILE)');
+      if (path === '/v1/devices') {
+        if (method !== 'POST') throw new HttpError(405, 'POST');
+        const token = need(req, client, 'registering for pushes', check.devices);
+        const r = parseRegistration(await readBody(req, 16 * 1024));
+        if (!push.senders[r.platform])
+          throw new HttpError(
+            400,
+            r.platform === 'ios'
+              ? "this server has no APNs key: it can't push to iPhones (PUSH_APNS_KEY_FILE)"
+              : "this server has no Firebase service account: it can't push to Android (PUSH_FCM_SERVICE_ACCOUNT_FILE)",
+          );
+        const { device, created } = await push.devices.register(r, token.label);
+        log({ event: created ? 'device' : 'device-updated', client, token: token.label, device: device.id, platform: device.platform });
+        return sendJson(
+          res,
+          created ? 201 : 200,
+          { id: device.id, platform: device.platform, ...(device.alertnames ? { alertnames: device.alertnames } : {}), ...(device.runbooks ? { runbooks: device.runbooks } : {}) },
+          headers,
+        );
+      }
+      if (method !== 'DELETE') throw new HttpError(405, 'DELETE');
+      const token = need(req, client, 'unregistering', check.devices);
+      const id = path.slice(DEVICES_PREFIX.length);
+      if (!DEVICE_ID_RE.test(id)) throw new HttpError(400, 'expected /v1/devices/<id>: the id POST /v1/devices answered');
+      if ((await push.devices.remove([id])) === 0) throw new HttpError(404, 'no such device');
+      log({ event: 'device-removed', client, token: token.label, device: id });
+      return sendJson(res, 200, { deleted: id }, headers);
+    }
+
     throw new HttpError(404, 'not found');
   }
 
@@ -190,8 +243,10 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
     ...(library ? { library } : {}),
     ...(runs ? { runs } : {}),
     ...(alerts ? { alerts } : {}),
+    ...(push ? { push } : {}),
     close: () =>
       new Promise<void>((resolve) => {
+        push?.close();
         server.close(() => resolve());
         server.closeAllConnections();
       }),
