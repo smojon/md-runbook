@@ -230,6 +230,17 @@ export function verdictLabel(v: Verdict): string {
   }
 }
 
+/**
+ * The entry a command argument names, as the library read now has it: only its path is taken from
+ * the argument. Its text, and the verdict kept by path, come from the same read, so a stale tree
+ * row or another extension's call can't open other text under a library runbook's verdict.
+ */
+export function entryNamed(lib: Library | undefined, arg: unknown): LibraryEntry | undefined {
+  if (!lib || typeof arg !== 'object' || arg === null) return undefined;
+  const p = (arg as { path?: unknown }).path;
+  return typeof p === 'string' ? lib.entries.find((e) => e.path === p) : undefined;
+}
+
 /** The library groups in list order: no folder first, then by name; runbooks by title. */
 export function groupEntries(entries: readonly LibraryEntry[]): { folder: string; entries: LibraryEntry[] }[] {
   const groups = new Map<string, LibraryEntry[]>();

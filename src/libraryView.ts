@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { trustedRunbookSigner } from '@md-runbook/core/node';
 import { SECTION } from './config';
-import { Library, LibraryEntry, LibraryRead, Verdict, groupEntries, libraryBaseOf, libraryUrlProblem, libraryVerdict, readLibrary, verdictLabel } from './libraryRead';
+import { Library, LibraryEntry, LibraryRead, Verdict, entryNamed, groupEntries, libraryBaseOf, libraryUrlProblem, libraryVerdict, readLibrary, verdictLabel } from './libraryRead';
 import { NOTEBOOK_TYPE } from './serializer';
 
 /** globalState: per library, the highest version verified of each path under its signed name. */
@@ -245,7 +245,14 @@ async function openFromLibrary(tree: LibraryTree, context: vscode.ExtensionConte
     if ((await vscode.window.showInformationMessage('md-runbook: no team library is set.', set)) === set) await vscode.commands.executeCommand('mdRunbook.library.setUrl');
     return;
   }
-  let entry = typeof arg === 'object' && arg !== null && (arg as Node).kind === 'entry' ? (arg as Extract<Node, { kind: 'entry' }>).entry : undefined;
+  // A row (or a caller) names a runbook by its path; its text is the library read's, never the argument's.
+  const named = typeof arg === 'object' && arg !== null && (arg as Node).kind === 'entry' ? (arg as Extract<Node, { kind: 'entry' }>).entry : undefined;
+  let entry = entryNamed(tree.library(), named);
+  if (named && !entry) {
+    await vscode.window.withProgress({ location: { viewId: 'mdRunbook.library' } }, () => tree.load());
+    entry = entryNamed(tree.library(), named);
+    if (!entry) return void vscode.window.showErrorMessage('md-runbook: that runbook is not in the team library any more. Refresh the view.');
+  }
   if (!entry) {
     await vscode.window.withProgress({ location: { viewId: 'mdRunbook.library' } }, () => tree.load());
     const lib = tree.library();

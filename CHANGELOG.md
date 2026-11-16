@@ -94,6 +94,8 @@ Security fixes from a review of the parts that face the network.
   (`PUSH_MAX_DEVICES_PER_TOKEN`). Before, one token's holder could fill the whole list.
   - A phone whose token the provider refuses 3 pushes in a row is removed, while other phones get
     them. This covers APNs `BadDeviceToken`.
+- **VS Code, Open from Library:** the runbook opened is the text the library read checked. Before,
+  a stale row or another extension could pass other text under a verified runbook's verdict.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or
