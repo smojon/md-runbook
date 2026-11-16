@@ -54,8 +54,9 @@ this repository's `release.yml` because the package says so:
   npm's docs don't say a blank field still matches, and one guide reports a rejection.
 - Under **Publishing access**, **Require two-factor authentication and disallow tokens** is the
   safest choice once trusted publishing works. It doesn't affect the workflow.
-- The publish runs with `--ignore-scripts`. The job fails if `out/npm/package.json` has a
-  `scripts` field.
+- The publish runs with `--ignore-scripts`. The job fails unless `out/npm/package.json` has
+  exactly the keys `scripts/pack-cli.js` writes (no `scripts`, no `publishConfig`). Change
+  both together.
 
 A package must exist before it can have a trusted publisher. So a new package (for example after
 a rename) needs one publish with a token first:
@@ -83,6 +84,7 @@ its APK is in each version's release (the Release workflow calls it).
   never be updated.
 - The key never shares a job with the build. The `sign` job installs nothing, and it runs only
   for `v*` tags and `main`, in the environment `android-signing`.
+- On tags and `main` the build restores no npm or Gradle cache.
 - The Release workflow passes only these two secrets to `app-apk.yml`, by name. It doesn't
   inherit the others.
 - A secret passed by name works as a repository secret and as an environment secret

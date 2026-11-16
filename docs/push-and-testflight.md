@@ -53,7 +53,7 @@ Both are built and **off** until the owner's accounts exist. Nothing breaks with
 | `PUSH_APNS_KEY_FILE` | `AuthKey_XXXXXXXXXX.p8` |
 | `PUSH_APNS_KEY_ID`, `PUSH_APNS_TEAM_ID` | The key's ID, your Team ID |
 | `PUSH_APNS_SANDBOX` | `true` only for builds from Xcode. TestFlight and App Store builds: leave it out |
-| `DEVICES_TOKENS` | Tokens phones register with (`openssl rand -hex 32`). Default: the read tokens |
+| `DEVICES_TOKENS` | Tokens phones register with (`openssl rand -hex 32`), one per person. Default: the read tokens |
 
 - Pushes need `ALERT_MAP` (alerts) too.
 - The server then reaches `oauth2.googleapis.com`, `fcm.googleapis.com` and `api.push.apple.com`
@@ -116,12 +116,19 @@ Both are built and **off** until the owner's accounts exist. Nothing breaks with
   directly. No third party in between.
 - **Data-only FCM message:** expo-notifications shows `title` and `message` itself and hands
   `body` to the app. A `notification` block would bypass it.
+- **One devices token per person:** only the token a phone registered with can change or remove
+  it (`409` for another). Everyone who shares a token shares its phones.
 - **Pruning:** only FCM `UNREGISTERED` and APNs 410. Not APNs `BadDeviceToken` or a bare 404,
   which a wrong setting causes for every phone.
 - **Manual signing:** automatic signing needs the App Store Connect key on the build runner, and
   cloud signing needs an Admin key. Manual signing keeps the key in the upload job.
 - **Signing in a job of its own:** the build runs npm, CocoaPods and Xcode script phases. So it
   archives with `CODE_SIGNING_ALLOWED=NO` and never sees the certificate.
+- **The build's archive is checked, not trusted:**
+  - The sign job unpacks it with Python's `tarfile` and `filter='data'`.
+  - No paths or links out of the folder, no device files, no control characters in names.
+  - One app, with a plain name (`[A-Za-z0-9._-]+.app`).
+  - The app's path never goes to `GITHUB_ENV`. Each step finds the app again.
 - **Entitlements:** an unsigned archive has none, and an export alone ships without the push
   entitlement. The sign job signs the archived app with them, then exports.
 - **Which entitlements:** the app's file from `expo prebuild`, with values from the profile. A key
