@@ -38,6 +38,8 @@ Security fixes from a review of the parts that face the network.
   redacted. Before, a stderr mark between the packets kept it from matching, and the file got it
   in clear.
   - The app's live output hides a known secret split this way too.
+- **App, live output:** a token split across two packets no longer shows its end, such as a JWT's
+  signature. The raw output is redacted, never output redacted before.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each

@@ -3,7 +3,15 @@
  * RE2 first; a JavaScript fallback (look-around) only within a length cap and without nested
  * quantifiers, the shapes that backtrack catastrophically over the live output.
  */
-import { MAX_JS_PATTERN, compileUserPattern, confirmRegexes, liveWindow, outputRedactor, patternProblem } from '../settings/safety';
+import {
+  MAX_JS_PATTERN,
+  NO_LIVE_OUTPUT,
+  compileUserPattern,
+  confirmRegexes,
+  liveWindow,
+  outputRedactor,
+  patternProblem,
+} from '../settings/safety';
 import { resetSettings, setConfirmPatterns, setRedactionPatterns } from '../settings/store';
 import { STDERR_MARK, parse } from '@md-runbook/core';
 import { confirmationFor } from '@md-runbook/core/confirm';
@@ -56,12 +64,49 @@ describe('patterns of yours', () => {
 describe('the live output', () => {
   const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghij';
 
+  /** The live output after these packets (each one shown in turn), with a window of `max`. */
+  const feed = (packets: readonly string[], max = 20_000): string => packets.reduce((s, p) => liveWindow(s, p, max), NO_LIVE_OUTPUT).text;
+
   it('is redacted before it is cut to its window: no token’s end shows without its start', () => {
-    const shown = 'x'.repeat(30) + '\ntoken=' + JWT.slice(0, 30);
-    const out = liveWindow(shown, JWT.slice(30) + '\nnext line\n', 40);
+    const out = feed(['x'.repeat(30) + '\ntoken=' + JWT.slice(0, 30), JWT.slice(30) + '\nnext line\n'], 40);
     expect(out).not.toContain('abcdefghij');
     expect(out).not.toContain('IxIn0');
     expect(out).toMatch(/next line\n$/);
+  });
+
+  it('a token split across two packets: no tail shows after its start was redacted (round 5)', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+    expect(feed(['token ' + jwt.slice(0, 30), jwt.slice(30) + '\n'])).toBe('token [REDACTED]\n');
+    const gh = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+    expect(feed(['x ' + gh.slice(0, 36), gh.slice(36) + '\n'])).toBe('x [REDACTED]\n');
+    expect(feed(['Authorization2 Bearer abcd1234', 'efgh5678ijkl\n'])).toBe('Authorization2 Bearer [REDACTED]\n');
+    expect(feed(['curl -H "X: Bearer abcd1234', 'efgh5678ijkl"\n'])).toBe('curl -H "X: Bearer [REDACTED]"\n');
+    expect(feed(['password=hunter', '2xyz\n'])).toBe('password=[REDACTED]\n');
+    const pem = feed(['-----BEGIN RSA PRIVATE KEY-----\nMIIabc', 'defSECRETBODY\n-----END RSA PRIVATE KEY-----\n']);
+    expect(pem).not.toMatch(/MIIabc|SECRETBODY/);
+  });
+
+  it('shows what redacting the whole output and cutting it would, however the packets fall', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghij';
+    const lines = Array.from({ length: 400 }, (_, i) =>
+      i % 37 === 0 ? `token=${jwt}` : i % 53 === 0 ? `Authorization: Bearer abc${i}def456` : `line ${i} ${'.'.repeat(i % 90)}`,
+    );
+    const all = lines.join('\n') + '\n-----BEGIN RSA PRIVATE KEY-----\nMIIsecret\n';
+    const whole = outputRedactor().redact(all);
+    let seed = 7;
+    for (const max of [500, 20_000]) {
+      const packets: string[] = [];
+      for (let at = 0; at < all.length; ) {
+        seed = (seed * 1103515245 + 12345) % 2 ** 31;
+        const n = 1 + (seed % 300);
+        packets.push(all.slice(at, at + n));
+        at += n;
+      }
+      const out = feed(packets, max);
+      expect(whole.endsWith(out)).toBe(true);
+      expect(out.length).toBeGreaterThan(max - 200);
+      expect(out).not.toMatch(/abcdefghij|MIIsecret|def456/);
+    }
   });
 
   it('a known secret split across two packets never shows in part', async () => {

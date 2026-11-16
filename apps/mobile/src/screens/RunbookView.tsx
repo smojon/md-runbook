@@ -135,7 +135,7 @@ import { saveRunbook } from '../runbooks/save';
 import { exportRecordJson, exportReport, requestCosign, shareRunbook } from '../share/export';
 import { addRunbook, getRunbook, Runbook, runbookNamed, updateRunbookText, useRunbooks, withoutFrontMatter } from '../runbooks/store';
 import { historySize, notifyRuns, outputSettings, signerName } from '../settings/store';
-import { liveWindow } from '../settings/safety';
+import { LiveOutput, NO_LIVE_OUTPUT, liveWindow } from '../settings/safety';
 import { SignCard, SignRequest } from '../signing/SignCard';
 import { SignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
 import { appKey } from '../ssh/appKey';
@@ -204,7 +204,9 @@ interface RunRequest {
 }
 
 interface Running extends RunRequest {
+  /** On screen: liveOutput.text. */
   live: string;
+  liveOutput: LiveOutput;
   abort: AbortController;
   step?: { start: number; end: number };
   /** Step through: waiting before this command until Run next, Continue or Stop. */
@@ -858,7 +860,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const abort = new AbortController();
     setNotice(undefined);
     setTrust(undefined);
-    setRunning({ ...request, live: '', abort, startedAt: new Date().getTime() });
+    setRunning({ ...request, live: '', liveOutput: NO_LIVE_OUTPUT, abort, startedAt: new Date().getTime() });
     const update = (f: (r: Running) => Running): void => setRunning((r) => (r && r.abort === abort ? f(r) : r));
     // Step through: the first command runs at once, then the run waits before each of the others.
     // At breakpoints: the run waits before each command with one; Run next then waits before the
@@ -913,12 +915,16 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       onStart: () => stepStarting(request.cell),
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
       // Redacted as it arrives, before it is cut to its window (settings/safety.ts liveWindow).
-      onOutput: (text) => update((r) => ({ ...r, live: liveWindow(r.live, text, LIVE_CHARS) })),
+      onOutput: (text) =>
+        update((r) => {
+          const liveOutput = liveWindow(r.liveOutput, text, LIVE_CHARS);
+          return { ...r, live: liveOutput.text, liveOutput };
+        }),
       // retry=: a new attempt starts with empty output (only the last one is kept, as in the extension).
       onAttempt: (n, of, waitMs) =>
         update((r) => ({
           ...r,
-          ...(waitMs === undefined ? { live: '' } : {}),
+          ...(waitMs === undefined ? { live: '', liveOutput: NO_LIVE_OUTPUT } : {}),
           attempt: { n, of, ...(waitMs !== undefined ? { waitMs } : {}) },
         })),
     });

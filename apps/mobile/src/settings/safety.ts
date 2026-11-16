@@ -11,7 +11,7 @@
  * the ones that can take exponential time. A pattern that is refused is refused when it is added,
  * and left out (as one that doesn't compile) if it was saved before.
  */
-import { DEFAULT_PATTERNS, REDACTED, Redactor, createRedactor } from '@md-runbook/core';
+import { DEFAULT_PATTERNS, REDACTED, Redactor, createRedactor, redactMarked } from '@md-runbook/core';
 import { DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns } from '@md-runbook/core/confirm';
 import { RE2JS } from 're2js';
 import { confirmPatterns, redactionPatterns, timeoutSeconds } from './store';
@@ -141,16 +141,73 @@ export function outputRedactor(): Redactor {
 }
 
 /**
- * The live output on screen once `text` arrived after `shown` (itself redacted): redacted first,
- * then cut to its last `max` characters, at a line's start when one is near. Cutting first could
- * leave the end of a token whose start was cut off, which no pattern then matches.
+ * A running cell's live output: what is on screen, and the raw text it is redacted from as more
+ * arrives. Whole lines are set aside redacted (`head`); the open line, and the whole lines of the
+ * last LIVE_CONTEXT characters before it, stay raw (`raw`) and are redacted again with each packet.
+ * `head` ends with those lines as they were redacted last (`context`), replaced when redacted again.
  */
-export function liveWindow(shown: string, text: string, max: number): string {
-  const all = outputRedactor().redact(shown + text);
+export interface LiveOutput {
+  text: string;
+  head: string;
+  context: string;
+  raw: string;
+}
+
+export const NO_LIVE_OUTPUT: LiveOutput = { text: '', head: '', context: '', raw: '' };
+
+/** Raw text kept before the open line: the context a pattern sees before what arrives next. */
+export const LIVE_CONTEXT = 4096;
+
+/** The last `max` characters of `all`, from a line's start when one is near. */
+function cutWindow(all: string, max: number): string {
   if (all.length <= max) return all;
   const tail = all.slice(-max);
   const nl = tail.indexOf('\n');
   return nl >= 0 && nl < 200 ? tail.slice(nl + 1) : tail;
+}
+
+/**
+ * The live output once `text` arrived: redacted first, then cut to its last `max` characters.
+ * Cutting first could leave the end of a token whose start was cut off, which no pattern then
+ * matches. The raw text is redacted, never text redacted before: in round 4 the window shown was
+ * redacted again with the new packet, and a token whose start was already `[REDACTED]` showed its
+ * end (`[REDACTED]Q7r8`, a JWT's signature: security review, round 5). Each packet redacts the
+ * open line and a few KB before it, not the whole window.
+ */
+export function liveWindow(prev: LiveOutput, text: string, max: number): LiveOutput {
+  const raw = prev.raw + text;
+  const red = redactMarked(raw, outputRedactor().redact);
+  const base = prev.head.length >= prev.context.length ? prev.head.slice(0, prev.head.length - prev.context.length) : '';
+  const rawLines = raw.split('\n');
+  const redLines = red.split('\n');
+  if (rawLines.length !== redLines.length) {
+    // A redaction joined lines (a private key): nothing is set aside while it is in the raw text,
+    // up to a bound (then all of it is, redacted).
+    const shown = cutWindow(base + red, max);
+    if (raw.length <= max + 2 * LIVE_CONTEXT) return { ...prev, text: shown, raw };
+    return { text: shown, head: shown, context: '', raw: '' };
+  }
+  // Whole lines are set aside; the last LIVE_CONTEXT characters of them stay raw too, as context.
+  const whole = raw.lastIndexOf('\n') + 1;
+  const from = whole <= LIVE_CONTEXT ? 0 : raw.lastIndexOf('\n', whole - LIVE_CONTEXT - 1) + 1;
+  // An open line too long to keep raw: set aside as it is (redacted).
+  if (raw.length - from > max + 2 * LIVE_CONTEXT) {
+    const shown = cutWindow(base + red, max);
+    return { text: shown, head: shown, context: '', raw: '' };
+  }
+  const n = rawLines.length - 1;
+  const k = from === 0 ? 0 : raw.slice(0, from).split('\n').length - 1;
+  const lines = (a: number, b: number): string => (b > a ? redLines.slice(a, b).join('\n') + '\n' : '');
+  const head = cutWindow(base + lines(0, n), max);
+  const context = lines(k, n);
+  // Context lines longer than the window: set aside as they are, only the open line stays raw.
+  const fits = head.endsWith(context);
+  return {
+    text: cutWindow(head + redLines[n]!, max),
+    head,
+    context: fits ? context : '',
+    raw: raw.slice(fits ? from : whole),
+  };
 }
 
 /**
