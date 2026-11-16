@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import { ExecuteResult, isCodeMeta, locateCodeCells, parse, stepState, taskItems } from '@md-runbook/core';
 import { CallResult, callAttrs, callChainProblem, callFromAttrs, callOutputText, checkCall, fillRefs, formatCallSteps, isCallLanguage, isDynamicSrc, parseCall, recordValues, srcValueProblem } from '@md-runbook/core/call';
 import { copyDigest } from '@md-runbook/core/callCopy';
-import { resumeRecordProblem } from '@md-runbook/core/node/callCopyRecord';
+import { resumableCopy } from '@md-runbook/core/node/callCopyRecord';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { withFrontMatterValues } from '@md-runbook/core/incident';
 import { resolveKubeContext } from '@md-runbook/core/kubeContext';
@@ -20,7 +20,7 @@ import { outputBlockAttrs } from '@md-runbook/core/progress';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { inSections, sectionHeadings } from '@md-runbook/core/sections';
 import { osGroups } from '@md-runbook/core/os';
-import { callTarget, fileSha256, relativeToCaller, resumeProblem, samePath, writeCallCopy } from '@md-runbook/core/node';
+import { callTarget, fileSha256, relativeToCaller, samePath, writeCallCopy } from '@md-runbook/core/node';
 import { readSignature } from '@md-runbook/core/signing';
 import { SECTION } from './config';
 import { META_KEY, outputMeta } from './outputs';
@@ -179,6 +179,8 @@ export class CallExecutor implements CellExecutor {
     const previous = callFromAttrs(attrsOf(ctx.previousOutputs ?? [], ctx.cell.metadata?.[META_KEY]));
     const freshCopy = fresh.delete(cellKey(ctx.cell));
     let copy: string | undefined;
+    /** A continued copy's text as checked: what decides the steps done, and what must open. */
+    let checkedText: string | undefined;
     // A setup call skipped as already up is not a failure to continue: it checks again.
     const folder = vscode.workspace.getConfiguration(SECTION).get<string>('output.copyFolder', '').trim();
     if (previous && !freshCopy && previous.exit !== undefined && previous.exit !== '0' && previous.exit !== 'skipped') {
@@ -188,11 +190,17 @@ export class CallExecutor implements CellExecutor {
         // in a signed runbook, signed as the same name and version), with the front matter a copy
         // gets now, and outputs this extension wrote (not planted ones).
         const parentText = fs.readFileSync(parentFile, 'utf8');
-        const why =
-          resumeProblem(old, target, { folder: folder || undefined, signed: readSignature(parentText) !== undefined }) ??
-          resumeRecordProblem(old, target, { ...recordValues(parentText), ...this.inherited(mine, childFm, parentText) }, (c, t) => this.copies?.recorded(c, t) ?? false);
-        if (why === undefined) copy = old;
-        else io.onStdout(`[md-runbook] not continuing ${relativeToCaller(parentFile, old)}: ${why}; a fresh copy runs\n`);
+        const checked = resumableCopy(
+          old,
+          target,
+          { folder: folder || undefined, signed: readSignature(parentText) !== undefined },
+          { ...recordValues(parentText), ...this.inherited(mine, childFm, parentText) },
+          (c, t) => this.copies?.recorded(c, t) ?? false,
+        );
+        if ('text' in checked) {
+          copy = old;
+          checkedText = checked.text;
+        } else io.onStdout(`[md-runbook] not continuing ${relativeToCaller(parentFile, old)}: ${checked.problem}; a fresh copy runs\n`);
       }
     }
     const resumed = copy !== undefined;
@@ -210,7 +218,7 @@ export class CallExecutor implements CellExecutor {
 
     // Its cells: in the sections asked for, not done in an earlier run of this copy. A setup
     // call runs the ready check of the runbook called first, whatever section= selects.
-    const copyText = fs.readFileSync(copy, 'utf8');
+    const copyText = checkedText ?? fs.readFileSync(copy, 'utf8');
     const setup = parseCellOptions(info).part === 'setup';
     const copyLocs = locateCodeCells(parse(copyText));
     const readyCell = setup ? copyLocs.find((l) => parseCellOptions(l.info).part === 'ready')?.cellIndex : undefined;
@@ -231,6 +239,14 @@ export class CallExecutor implements CellExecutor {
     const editor = await waitForEditor(copyUri);
     await vscode.commands.executeCommand('notebook.selectKernel', { notebookEditor: editor, id: 'md-runbook-shell', extension: 'smojon.md-runbook' });
     const nb = editor.notebook;
+    // What runs is the copy as read above (and checked, when continued): the file could have
+    // changed since, and VS Code opens it on its own (security review, round 4).
+    const lf = (s: string): string => s.replace(/\r\n?/g, '\n');
+    const opened = nb.getCells().map((c) => (c.kind === vscode.NotebookCellKind.Code ? lf(c.document.getText()) : undefined));
+    const read = parse(copyText).cells.map((c) => (c.kind === 'code' ? lf(c.value) : undefined));
+    if (opened.length !== read.length || opened.some((v, i) => v !== read[i])) {
+      throw new Error(`md-runbook: ${copyShown} as open in VS Code is not the copy read for this run (changed meanwhile, or unsaved edits): save or close it, then run the call again`);
+    }
 
     // Each step of the copy as it finishes, in this cell's output.
     const reported = new Set<number>();

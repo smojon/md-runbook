@@ -102,17 +102,18 @@ export function writeCallCopy(child: string, parentText: string, folder?: string
  * Why a call can't continue the copy an earlier run names (its output block, which is never
  * signed, says where): undefined when it can. The copy must be a run copy of `target` (its name,
  * next to it or in `folder`), with the same blocks; and when either is signed (or `signed`: a
- * signed run), both must carry the same manifest name and version.
+ * signed run), both must carry the same manifest name and version. `text`: the copy as already
+ * read (callCopyRecord.ts resumableCopy), else it is read here. A symbolic link is no copy.
  */
-export function resumeProblem(copy: string, target: string, opts: { folder?: string; signed?: boolean } = {}): string | undefined {
+export function resumeProblem(copy: string, target: string, opts: { folder?: string; signed?: boolean; text?: string } = {}): string | undefined {
   const dirs = [path.dirname(target), ...(opts.folder ? [path.resolve(path.dirname(target), opts.folder)] : [])];
   if (!dirs.some((d) => samePath(d, path.dirname(copy)))) return 'it is not next to the runbook called, nor in the copy folder';
   if (!isCopyNameOf(path.basename(copy), path.basename(target), process.platform !== 'linux')) return `its name is not that of a run copy of ${path.basename(target)}`;
   let copyText: string;
   let targetText: string;
   try {
-    if (!fs.statSync(copy).isFile()) return 'it is not a file';
-    copyText = fs.readFileSync(copy, 'utf8');
+    if (!fs.lstatSync(copy).isFile()) return 'it is not a file';
+    copyText = opts.text ?? fs.readFileSync(copy, 'utf8');
     targetText = fs.readFileSync(target, 'utf8');
   } catch {
     return 'it can not be read';

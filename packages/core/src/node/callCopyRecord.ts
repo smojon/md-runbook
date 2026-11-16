@@ -4,12 +4,17 @@
  * its digest is the one kept here, so "done" outputs planted in a copy are never trusted.
  *
  * The folder: MD_RUNBOOK_STATE_DIR, else %LOCALAPPDATA%\md-runbook on Windows, else
- * $XDG_STATE_HOME/md-runbook (default ~/.local/state/md-runbook).
+ * $XDG_STATE_HOME/md-runbook (default ~/.local/state/md-runbook). On Linux and macOS the folder and
+ * the file must be yours, writable by you only, and no symbolic link; else the record is neither
+ * read nor written, and no copy is continued. The file is replaced through a new temporary file of
+ * a random name, never written through a link (security review, round 4).
  */
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { COPY_NOT_RECORDED, copyDigest, copyFrontMatterProblem } from '../callCopy';
+import { resumeProblem } from './call';
 
 /** At most this many copies are kept (the oldest go first). */
 const MAX_COPIES = 500;
@@ -25,7 +30,24 @@ const stateFile = (): string => path.join(stateDir(), 'call-copies.json');
 /** The key of a copy: its full path (case folded where file names are). */
 const keyOf = (copy: string): string => (process.platform === 'linux' ? path.resolve(copy) : path.resolve(copy).toLowerCase());
 
+/**
+ * Whether `p` is a folder (`dir`) or a file and no symbolic link; on Linux and macOS also owned by
+ * this user and not writable by group or others. Windows: no owner check (its ACLs differ).
+ */
+export function ownedOnly(p: string, dir: boolean): boolean {
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(p);
+  } catch {
+    return false;
+  }
+  if (dir ? !st.isDirectory() : !st.isFile()) return false;
+  if (process.platform === 'win32' || typeof process.getuid !== 'function') return true;
+  return st.uid === process.getuid() && (st.mode & 0o022) === 0;
+}
+
 function read(file: string): Record<string, string> {
+  if (!ownedOnly(path.dirname(file), true) || !ownedOnly(file, false)) return {};
   try {
     const x = JSON.parse(fs.readFileSync(file, 'utf8')) as { copies?: unknown };
     if (typeof x.copies !== 'object' || x.copies === null || Array.isArray(x.copies)) return {};
@@ -43,13 +65,31 @@ export function recordCallCopy(copy: string, text: string, file = stateFile()): 
     copies[keyOf(copy)] = copyDigest(text);
     const kept = Object.entries(copies).slice(-MAX_COPIES);
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ version: 1, copies: Object.fromEntries(kept) }, null, 1) + '\n', { mode: 0o600 });
+    if (!ownedOnly(path.dirname(file), true)) return;
+    if (fs.existsSync(file) || isLink(file)) {
+      if (!ownedOnly(file, false)) return;
+    }
+    // A new file (O_EXCL: not one already there, nor a link), then renamed over the record.
+    const tmp = `${file}.${randomBytes(8).toString('hex')}.tmp`;
+    const fd = fs.openSync(tmp, 'wx', 0o600);
+    try {
+      fs.writeSync(fd, JSON.stringify({ version: 1, copies: Object.fromEntries(kept) }, null, 1) + '\n');
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmp, file);
   } catch {
     // not kept: the copy isn't continued
   }
 }
+
+const isLink = (p: string): boolean => {
+  try {
+    return fs.lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
 
 /** Whether `text` is the copy as a run of the command line on this machine last wrote it. */
 export function callCopyRecorded(copy: string, text: string, file = stateFile()): boolean {
@@ -60,20 +100,44 @@ export function callCopyRecorded(copy: string, text: string, file = stateFile())
  * After resumeProblem: why the copy still can't be continued. Its front matter must be the one a
  * copy of `target` gets now (`added`: the values the call writes into it), and its text the one a
  * run here last wrote (`recorded`: the command line's state file, or VS Code's global state).
+ * `copyText`: the copy as already read (else it is read here).
  */
 export function resumeRecordProblem(
   copy: string,
   target: string,
   added: Record<string, string>,
   recorded: (copy: string, text: string) => boolean = (c, t) => callCopyRecorded(c, t),
+  copyText?: string,
 ): string | undefined {
-  let copyText: string;
   let targetText: string;
   try {
-    copyText = fs.readFileSync(copy, 'utf8');
+    copyText ??= fs.readFileSync(copy, 'utf8');
     targetText = fs.readFileSync(target, 'utf8');
   } catch {
     return 'it can not be read';
   }
   return copyFrontMatterProblem(copyText, targetText, added) ?? (recorded(copy, copyText) ? undefined : COPY_NOT_RECORDED);
+}
+
+/**
+ * resumeProblem and resumeRecordProblem on one read of the copy: the text they checked, which the
+ * run then uses (not the file read again: it could have changed in between), or why the copy
+ * can't be continued.
+ */
+export function resumableCopy(
+  copy: string,
+  target: string,
+  opts: { folder?: string; signed?: boolean },
+  added: Record<string, string>,
+  recorded: (copy: string, text: string) => boolean = (c, t) => callCopyRecorded(c, t),
+): { text: string } | { problem: string } {
+  let text: string;
+  try {
+    if (!fs.lstatSync(copy).isFile()) return { problem: 'it is not a file' };
+    text = fs.readFileSync(copy, 'utf8');
+  } catch {
+    return { problem: 'it can not be read' };
+  }
+  const problem = resumeProblem(copy, target, { ...opts, text }) ?? resumeRecordProblem(copy, target, added, recorded, text);
+  return problem === undefined ? { text } : { problem };
 }
