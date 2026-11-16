@@ -102,6 +102,9 @@ Security fixes from a review of the parts that face the network.
   captured values filled in. Secrets stay references.
 - **App: Pause Before This Step, Notify Me When It Starts.** A step's ⋯ (cell or Steps row) sets
   either, for this session. Run all asks Continue or Stop there.
+  - Marks and breakpoints stay on their step when cells are added above, as by a proposal or a
+    note. A step whose code changes loses them, and the app says so.
+  - Run all stops before a step it still had to run once that step's code changes.
 - **App: the launch form.** Run all first shows one sheet with what the run needs and does.
   - It lists parameters, inputs, secrets to set, risky steps, steps by hand, time and host.
   - Start asks for no value again; risky steps still ask.

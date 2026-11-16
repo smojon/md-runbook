@@ -831,6 +831,8 @@ const en = {
   pauseStop: 'Stop',
   pauseStopHint: 'Stops the run here. Resume goes on from here.',
   pauseStopped: 'Run all stopped before a step marked to pause: Resume goes on from it.',
+  marksDropped: 'A step changed: its pause, notify and breakpoint marks are gone.',
+  runChangedStopped: 'A step still to run changed: Run all stops before it.',
   pausesHere: 'Pauses here',
   pausesHereHint: 'Run all pauses before this step. Tap to remove the pause.',
   notifiesHere: 'Notifies',

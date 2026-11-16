@@ -9,8 +9,9 @@ import * as Notifications from 'expo-notifications';
 import { AppState, AppStateStatus } from 'react-native';
 import { addHost, resetHosts } from '../hosts/store';
 import { resetRunNotifications } from '../notifications/runs';
-import { NO_MARKS, toggleMark } from '../runbooks/stepMarks';
-import { addRunbook, resetRunbooks } from '../runbooks/store';
+import { parse } from '@md-runbook/core';
+import { NO_MARKS, cellIdentities, remapByCell, toggleMark } from '../runbooks/stepMarks';
+import { addRunbook, resetRunbooks, updateRunbookText } from '../runbooks/store';
 import { resetSettings, setNotifyRuns } from '../settings/store';
 import { RunbookView } from '../screens/RunbookView';
 import { fakeConnection } from '../testing/fakeConnection';
@@ -75,6 +76,68 @@ describe('toggleMark', () => {
     expect(toggleMark(toggleMark(b, 2, 'pause'), 2, 'notify', false).has(2)).toBe(false);
     // Unchanged input.
     expect(a.get(2)).toEqual({ pause: true });
+  });
+});
+
+describe('marks follow their cells when the text changes (security review round 3)', () => {
+  const ADDED = DEPLOY.replace(
+    '```bash name="Push image"',
+    fence('bash name="Proposed fix"', 'rm -rf /srv/cache') + '\n```bash name="Push image"',
+  );
+
+  it('remapByCell keys an entry by where its cell is now; a changed cell loses it', () => {
+    const before = cellIdentities(parse(DEPLOY).cells);
+    const after = cellIdentities(parse(ADDED).cells);
+    expect([...remapByCell(new Map([[2, 'p']]), before, after).map]).toEqual([[3, 'p']]);
+    const edited = cellIdentities(parse(DEPLOY.replace('make push', 'make push --force')).cells);
+    expect(remapByCell(new Map([[2, 'p']]), before, edited)).toEqual({ map: new Map(), dropped: 1 });
+    // Running a cell (its output) keeps it.
+    expect(
+      cellIdentities(
+        parse(
+          DEPLOY.replace(
+            'make push\n```\n',
+            'make push\n```\n\n<!-- md-runbook:output start exit=0 -->\n```text\nok\n```\n<!-- md-runbook:output end -->\n',
+          ),
+        ).cells,
+      ),
+    ).toEqual(before);
+  });
+
+  it('a step inserted above (a proposal): the pause stays on its step, not on the new one', async () => {
+    mockConnection = fakeConnection([{ stdout: '1\n' }, { stdout: '2\n' }, { stdout: '3\n' }]);
+    const rb = addRunbook('deploy.md', DEPLOY);
+    await render(<RunbookView id={rb.id} />);
+    await cellAction(2, 'pauseBefore');
+    await act(async () => updateRunbookText(rb.id, ADDED.replace('```bash name="Proposed fix"', '```bash name="Proposed fix" lines=any')));
+    expect(screen.queryByTestId('cell-2-pauses')).toBeNull();
+    expect(screen.getByTestId('cell-3-pauses')).toBeTruthy();
+  });
+
+  it('paused, then a step inserted: Continue runs the steps it would have run', async () => {
+    mockConnection = fakeConnection([{ stdout: '1\n' }, { stdout: '2\n' }, { stdout: '3\n' }]);
+    const rb = addRunbook('deploy.md', DEPLOY);
+    await render(<RunbookView id={rb.id} />);
+    await cellAction(2, 'pauseBefore');
+    await press('run-primary');
+    await waitFor(() => expect(screen.getByTestId('pause-card')).toBeTruthy());
+    await act(async () => updateRunbookText(rb.id, ADDED));
+    expect(screen.getByTestId('pause-title')).toHaveTextContent('Paused before Push image');
+    await press('pause-continue');
+    await waitFor(() => expect(sources()).toEqual(['make image', 'make push', 'make check']));
+  });
+
+  it('a step still to run edited: Run all stops before it', async () => {
+    mockConnection = fakeConnection([{ stdout: '1\n' }]);
+    const rb = addRunbook('deploy.md', DEPLOY);
+    await render(<RunbookView id={rb.id} />);
+    await cellAction(2, 'pauseBefore');
+    await press('run-primary');
+    await waitFor(() => expect(screen.getByTestId('pause-card')).toBeTruthy());
+    await act(async () => updateRunbookText(rb.id, DEPLOY.replace('make check', 'make check --all')));
+    expect(screen.queryByTestId('pause-card')).toBeNull();
+    expect(screen.getByTestId('run-notice')).toHaveTextContent('A step still to run changed: Run all stops before it.');
+    expect(sources()).toEqual(['make image']);
   });
 });
 

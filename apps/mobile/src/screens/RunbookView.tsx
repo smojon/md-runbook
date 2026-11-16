@@ -2,7 +2,7 @@ import { callFromAttrs, isCallLanguage, isDynamicSrc, parseCall } from '@md-runb
 import { activeCall, callCells, callReader, finishCall, prefetchCalls, startCall, useCalledTexts } from '../runbooks/calls';
 import * as Clipboard from 'expo-clipboard';
 import { Link, Stack, router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
 import { LinkContext, forgetLinkContext, linkContext } from '../runbooks/linkContext';
 import { Alert, FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
@@ -103,7 +103,7 @@ import { ConfirmCard } from '../cells/ConfirmCard';
 import { PauseCard } from '../cells/PauseCard';
 import { LaunchError, launchModel, startValues } from '../runbooks/launch';
 import { LaunchSheet, LaunchTyped } from '../ui/LaunchSheet';
-import { MarksByCell, NO_MARKS, StepMarks, toggleMark } from '../runbooks/stepMarks';
+import { MarksByCell, NO_MARKS, StepMarks, cellIdentities, cellMover, remapByCell, toggleMark } from '../runbooks/stepMarks';
 import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell, ProblemRow } from '../cells/CodeCell';
@@ -568,6 +568,54 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [checks, setChecks] = useState<ReadonlyMap<number, ReadonlySet<string>>>(new Map());
   /** Breakpoints per cell index (the first line of each command), for this screen's life as in the extension's session. */
   const [breakpoints, setBreakpoints] = useState<ReadonlyMap<number, ReadonlySet<number>>>(new Map());
+  // Marks, breakpoints, checked lines and Run all's queue follow their cells when the text changes
+  // (a proposal, a note, an edit): never onto another step. A changed cell loses its marks, a
+  // changed cell still to run ends Run all before it; the notice says so. A layout effect: done
+  // before any run's callback reads them.
+  const cellIds = useMemo(() => cellIdentities(cells), [cells]);
+  const idsBefore = useRef(cellIds);
+  useLayoutEffect(() => {
+    const before = idsBefore.current;
+    if (before === cellIds) return;
+    idsBefore.current = cellIds;
+    const move = cellMover(before, cellIds);
+    let dropped = 0;
+    if (marksRef.current.size > 0) {
+      const marks = remapByCell(marksRef.current, before, cellIds);
+      dropped += marks.dropped;
+      setStepMarks(marks.map);
+    }
+    if (breakpoints.size > 0) {
+      const breaks = remapByCell(breakpoints, before, cellIds);
+      dropped += breaks.dropped;
+      setBreakpoints(breaks.map);
+    }
+    if (checks.size > 0) setChecks(remapByCell(checks, before, cellIds).map);
+    const q = queue.current;
+    let stopped = false;
+    if (q) {
+      const queued = q.cells.map(move);
+      const call = q.call === undefined ? undefined : move(q.call);
+      stopped = queued.includes(undefined) || (q.call !== undefined && call === undefined);
+      q.cells = stopped ? [] : (queued as number[]);
+      if (stopped || call === undefined) delete q.call;
+      else q.call = call;
+      if (q.last !== undefined) q.last = move(q.last);
+      q.passed = new Set([...q.passed].map(move).filter((i): i is number => i !== undefined));
+      setQueuedCells([...q.cells]);
+    }
+    if (pauseAsk !== undefined) {
+      const at = move(pauseAsk);
+      if (at === undefined || stopped) {
+        clearQueue();
+        setPauseAsk(undefined);
+      } else setPauseAsk(at);
+    }
+    if (stopped) setNotice(t.runChangedStopped);
+    else if (dropped > 0) setNotice(t.marksDropped);
+    // Only a text change moves them; the marks, breakpoints and checks read are the newest then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cellIds]);
   /**
    * session: one shell per host for the whole runbook (cd and variables carry over); isolated:
    * each cell in a fresh shell. The front matter's `mode:` decides, as in the extension; without
