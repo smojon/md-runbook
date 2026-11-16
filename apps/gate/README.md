@@ -30,7 +30,7 @@ grep " md-runbook-gate-$os-$arch\$" SHA256SUMS | sha256sum -c -   # macOS: shasu
 sudo install -m 755 "md-runbook-gate-$os-$arch" /usr/local/bin/md-runbook-gate
 ```
 
-Then the configuration:
+`gate.conf` and the publishers' keys go in `/etc/md-runbook`:
 
 ```sh
 sudo install -d -m 755 /etc/md-runbook
@@ -264,7 +264,7 @@ each, and logs a `report` event (`sent` or `failed`, with the HTTP status). It n
 fails a run.
 
 - It reads no file of the account and no proxy setting: a block could have written them.
-- It follows no redirect.
+- The sender follows no redirect.
 - An unsigned-trial account sends none ([All signed or none](#all-signed-or-none)).
 - A report says "sent by a gate" truthfully only under the conditions of [Trust](#trust).
 

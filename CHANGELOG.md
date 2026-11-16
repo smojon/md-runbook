@@ -13,7 +13,7 @@ for your server's platform when you update.
 - **Gate: only OpenSSH is needed** (8.2 or newer, for `ssh-keygen -Y`). No more `perl`,
   `setsid`, `stdbuf`, `fold` or `curl`.
   - The gate gives each block's shell a process group of its own on every server.
-  - It sends run reports itself, in the background as before.
+  - The gate sends run reports itself, in the background as before.
 - **Gate: `allow_no_group_kill` is ignored.** A `gate.conf` with it still starts, and each
   session logs a `notice`. Remove it when convenient.
 - **Gate: a key line can't run the gate through a shell.** `command="sh …/md-runbook-gate"` is
