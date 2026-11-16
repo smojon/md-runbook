@@ -151,8 +151,8 @@ export const manifestVersion = (m: Pick<Manifest, 'text'>): 1 | 2 => (m.text !==
  *
  * - A run record's signature (record.ts): its header, then base64 lines, cosign lines, `-->`.
  *   Names and times hold no spaces and no `--`.
- * - A note's marker (incident.ts formatNote): one comment alone on its line, without `>` or `--`
- *   inside; then its quote lines.
+ * - A note's marker (incident.ts formatNote): one comment alone on its line, ending only at the
+ *   line's end (COMMENT_BODY); then its quote lines.
  * - An output block's markers likewise; when one is not, no output block is set aside.
  * - An output block, and each of its history, in the form formatOutputBlock writes it
  *   (outputsAsWritten); when one is not, no output block is set aside.
@@ -163,9 +163,16 @@ const RECORD_BLOCK_RE = new RegExp(
   `^<!-- md-runbook:record-signature v1 signer=${FIELD} signed=${FIELD} sha256=[0-9a-f]{64}\\nsignature\\n${B64_LINES}(?:cosign signer=${FIELD} signed=${FIELD}\\n${B64_LINES})*-->[ \\t]*(?:\\n|$)`,
   'gm',
 );
-const NOTE_BLOCK_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b(?:[^>\n-]|-(?!-))*-->[ \t]*\n(?:[ \t]*>.*(?:\n|$))*/gm;
+/**
+ * The inside of a marker's comment: anything but a comment's end (`-->`, `--!>`), so the comment
+ * ends where the line does. Values with `--`, `<` or `>` that writers before round 5 wrote
+ * (`by=jean--luc`, `by="Alice <a@x.io>"`) stay set aside; round 4 had made a runbook with such a
+ * note or output read as changed since signing.
+ */
+const COMMENT_BODY = '(?:(?!--!?>)[^\\n])*';
+const NOTE_BLOCK_RE = new RegExp(`^[ \\t]*<!--[ \\t]*md-runbook:note\\b${COMMENT_BODY}-->[ \\t]*\\n(?:[ \\t]*>.*(?:\\n|$))*`, 'gm');
 const OUTPUT_MARK_RE = /^[ \t]*<!--[ \t]*md-runbook:output (?:start|end)\b/;
-const STRICT_OUTPUT_MARK_RE = /^[ \t]*<!--[ \t]*md-runbook:output (?:start|end)\b(?:[^<>\n-]|-(?!-))*-->[ \t]*$/;
+const STRICT_OUTPUT_MARK_RE = new RegExp(`^[ \\t]*<!--[ \\t]*md-runbook:output (?:start|end)\\b${COMMENT_BODY}-->[ \\t]*$`);
 /** The summary of earlier runs (history.ts historySummary), which a Markdown view shows. */
 const STRICT_HISTORY_OPEN_RE = /^[ \t]*<details>[ \t]*<summary>[ \t]*md-runbook: \d+ previous runs?<\/summary>[ \t]*$/;
 const TASK_BOX_RE = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[)[xX](\](?=[ \t]|$))/;

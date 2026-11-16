@@ -27,27 +27,43 @@ export function parseAttrs(s: string): Record<string, string> {
   const attrs: Record<string, string> = {};
   for (const m of s.matchAll(ATTR_RE)) {
     const key = m[1];
-    if (key) attrs[key] = m[2] ?? m[3] ?? '';
+    if (key) attrs[key] = decodeAttr(m[2] ?? m[3] ?? '');
   }
   return attrs;
+}
+
+/** A value as formatAttrs wrote it, its %XX escapes decoded (an escape that isn't UTF-8 stays as it is). */
+function decodeAttr(v: string): string {
+  if (!v.includes('%')) return v;
+  return v.replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run;
+    }
+  });
 }
 
 /** The longest attribute value written (a host's name, a context, a person: none is longer). */
 export const MAX_ATTR_LENGTH = 200;
 
+/** Attributes whose value is a path (a call's runbook and copy): never cut. */
+const PATH_ATTRS = new Set(['copy', 'runbook']);
+
 /**
- * A marker's attributes, each value one piece of the comment: no `"`, `<` or `>`, no line break
- * of any kind (CR, LF, U+0085, U+2028, U+2029) or other control character, no `--` (a run of
- * dashes becomes one), at most MAX_ATTR_LENGTH characters (line numbers such as `stderr=1-3,5`
- * excepted). Before, `-->` became `--` once, so `-->>` still ended the comment, and U+2028 broke
- * the marker for JavaScript's `.` (security review, round 4).
+ * A marker's attributes, each value one piece of the comment: `"`, `<`, `>`, `%`, a dash before a
+ * dash, line breaks of any kind (CR, LF, U+0085, U+2028, U+2029) and other control characters are
+ * written as %XX escapes (UTF-8), which parseAttrs decodes. A value is at most MAX_ATTR_LENGTH
+ * characters, but for line numbers such as `stderr=1-3,5` and paths (`copy=`, `runbook=`).
+ * Round 4 dropped these characters and collapsed `--`, so a call's copy `db--restore.md` was
+ * continued as a file that doesn't exist (security review, round 5).
  */
 export function formatAttrs(attrs: Record<string, string>): string {
   let s = '';
   for (const [k, v] of Object.entries(attrs)) {
     if (!/^[\w-]+$/.test(k)) continue;
-    const bare = v.replace(/["<>\u0000-\u001f\u007f-\u009f\u{2028}\u{2029}]/gu, '').replace(/-{2,}/g, '-');
-    const clean = /^[0-9,-]*$/.test(bare) ? bare : bare.slice(0, MAX_ATTR_LENGTH);
+    const capped = /^[0-9,-]*$/.test(v) || PATH_ATTRS.has(k) ? v : v.slice(0, MAX_ATTR_LENGTH);
+    const clean = capped.replace(/["<>%\u0000-\u001f\u007f-\u009f\u{2028}\u{2029}]|-(?=-)/gu, (c) => (c === '-' ? '%2D' : encodeURIComponent(c)));
     s += ' ' + k + '=' + (clean === '' || /\s/.test(clean) ? `"${clean}"` : clean);
   }
   return s;

@@ -29,8 +29,11 @@ Security fixes from a review of the parts that face the network.
   block. Before, a block using `${input:NAME}` showed and copied the secret value.
 - **Add Note:** a lone CR in a note no longer starts a line outside its quote, where a block
   could run.
-- **Output markers:** a value can no longer end the marker's comment, and line separators are
-  dropped. Values are capped at 200 characters.
+- **Output markers:** a value can no longer end the marker's comment. Values are capped at 200
+  characters, but for a call's paths.
+  - Dashes, brackets, quotes and line breaks are escaped as `%XX`, and read back as they were.
+  - Notes and outputs written before, such as `by=jean--luc`, still leave a signed runbook
+    unchanged.
 - **Command line, call copies:** the record of copies is written through a new file of a random
   name. On Linux and macOS, a record folder or file others can write is not used.
   - A continued copy runs as read for its checks, not read again.

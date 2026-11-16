@@ -10,13 +10,23 @@ describe('marker attributes stay inside their comment (security review, round 4)
       const line = `<!-- md-runbook:output start${formatAttrs({ on: v, exit: '0' })} -->`;
       // Between `<!--` and the closing `-->`: no `--`, `<` or `>`.
       assert.doesNotMatch(line.slice(4, -4), /--|[<>]/, line);
-      assert.equal(parseAttrs(OUTPUT_START_RE.exec(line)![1]!).exit, '0', line);
+      // Read back as written (round 5: escaped, not dropped).
+      assert.deepEqual(parseAttrs(OUTPUT_START_RE.exec(line)![1]!), { on: v, exit: '0' }, line);
     }
   });
 
   it('no line break of any kind, no control characters, at most 200 characters', () => {
-    const v = formatAttrs({ on: 'a\u{2028}b\u{2029}c\u0085d\re\nf\u0007g', by: 'x'.repeat(500) });
-    assert.equal(v, ` on=abcdefg by=${'x'.repeat(MAX_ATTR_LENGTH)}`);
+    const odd = 'a\u{2028}b\u{2029}c\u0085d\re\nf\u0007g "100%" <x>';
+    const v = formatAttrs({ on: odd, by: 'x'.repeat(500) });
+    assert.doesNotMatch(v, /[\u0000-\u001f\u007f-\u009f\u{2028}\u{2029}<>]/u);
+    assert.deepEqual(parseAttrs(v), { on: odd, by: 'x'.repeat(MAX_ATTR_LENGTH) });
+    // A call's paths keep their dashes and their length (round 5: round 4 named a file that didn't exist).
+    const copy = 'sub/db--restore/' + 'd'.repeat(300) + '.20261116-100000.md';
+    const paths = formatAttrs({ runbook: 'sub/db--restore.md', copy });
+    assert.doesNotMatch(paths, /--/);
+    assert.deepEqual(parseAttrs(paths), { runbook: 'sub/db--restore.md', copy });
+    // Values written before round 5 read as they were (no escapes in them).
+    assert.deepEqual(parseAttrs('by="Alice <a@x.io>" copy=db--restore.md stderr=1-3,5'), { by: 'Alice <a@x.io>', copy: 'db--restore.md', stderr: '1-3,5' });
     assert.equal(firstLine('ctx-a\u{2028}injected'), 'ctx-a');
     assert.equal(firstLine('\u0085\r\nctx-b\u{2029}x'), 'ctx-b');
   });
