@@ -7,7 +7,7 @@
  */
 
 import { parseCellOptions } from './cellOptions';
-import { isCodeMeta } from './model';
+import { CellMeta, isCodeMeta } from './model';
 import { stepNumbers } from './os';
 import { formatAttrs, formatLocalIso, parseAttrs } from './outputBlock';
 import { parse } from './parser';
@@ -240,6 +240,41 @@ export function withBlockAfterFrontMatter(text: string, block: string): string {
   const at = end + 1;
   const piece = block.replace(/\r?\n$/, '').split(/\r?\n/);
   return [...lines.slice(0, at), ...(at > 0 ? [''] : []), ...piece, '', ...lines.slice(at).join(eol).replace(/^(\r?\n)+/, '').split(/\r?\n/)].join(eol);
+}
+
+/** A parsed cell's length in the file: its own bytes, and a code cell's output and history. */
+function cellLength(m: CellMeta): number {
+  if (m.kind === 'markup') return m.lead.length + m.content.length + m.trail.length;
+  return m.lead.length + m.open.length + m.body.length + m.close.length + (m.output?.raw.length ?? 0) + (m.history?.raw.length ?? 0) + m.trail.length;
+}
+
+/**
+ * The text with `block` (a note) right after cell `index` (after its output and earlier runs), with
+ * blank lines around it: next to the step it is about. At the end for the last cell, or when the
+ * cells don't add up to the text.
+ */
+export function withBlockAfterCell(text: string, index: number, block: string): string {
+  const cells = parse(text).cells;
+  if (!Number.isInteger(index) || index < 0 || index >= cells.length - 1) return withBlockAtEnd(text, block);
+  const lengths = cells.map((c) => cellLength(c.meta));
+  const lead = text.length - lengths.reduce((a, b) => a + b, 0); // a byte-order mark
+  if (lead < 0 || lead > 1) return withBlockAtEnd(text, block);
+  const at = lead + lengths.slice(0, index + 1).reduce((a, b) => a + b, 0);
+  const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+  const before = text.slice(0, at).replace(/(\r?\n)*$/, '');
+  const after = text.slice(at).replace(/^(\r?\n)*/, '');
+  const piece = block.replace(/\r?\n/g, eol).replace(/(\r?\n)*$/, '');
+  return `${before}${eol}${eol}${piece}${eol}${eol}${after}`;
+}
+
+/** The cell whose saved output started last (`ran=`), if any ran: the step a note is about. */
+export function lastRanCell(text: string): number | undefined {
+  let best: { index: number; at: number } | undefined;
+  parse(text).cells.forEach((c, index) => {
+    const at = Date.parse(c.output?.attrs.ran ?? '');
+    if (Number.isFinite(at) && (!best || at >= best.at)) best = { index, at };
+  });
+  return best?.index;
 }
 
 /** The text with `block` (a note) at its end, after a blank line. */

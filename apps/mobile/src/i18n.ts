@@ -100,7 +100,7 @@ const en = {
   addNoteTitle: 'Add Note',
   addNoteGo: 'Add',
   notePlaceholder: 'Called the DBA, failover approved',
-  noteAdded: 'Note added at the end of the runbook; Export Report puts it in the timeline.',
+  noteAdded: 'Note added. Export Report puts it in the timeline.',
   milestone: { detected: 'Detected', mitigated: 'Mitigated', resolved: 'Resolved' },
   qrTooLarge: 'Too large for a QR code: use Share Runbook, or Make QR Code in VS Code.',
   fileTooLarge: (name: string) => `${name} is larger than 2 MB and was not opened`,

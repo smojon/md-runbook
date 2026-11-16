@@ -1,6 +1,33 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { buildTimeline, formatNote, formatSeconds, parseNotes } from '@md-runbook/core/incident';
+import { buildTimeline, formatNote, formatSeconds, lastRanCell, parseNotes, withBlockAfterCell } from '@md-runbook/core/incident';
+import { parse } from '@md-runbook/core';
+
+describe('Add Note: next to the step it is about', () => {
+  const out = (ran: string): string => `<!-- md-runbook:output start exit=0 ran=${ran} -->\n\`\`\`text\nok\n\`\`\`\n<!-- md-runbook:output end -->\n`;
+  const text = `# Deploy\n\n## Build\n\n\`\`\`bash\nmake\n\`\`\`\n\n${out('2026-11-16T01:40:00+01:00')}\n## Roll out\n\n\`\`\`bash\nkubectl apply\n\`\`\`\n${out('2026-11-16T01:41:00+01:00')}\n## Check\n\n\`\`\`bash\ncurl x\n\`\`\`\n`;
+  const note = '<!-- md-runbook:note at=2026-11-16T01:42:00+01:00 -->\n> **01:42:** rollout looks slow\n';
+  const cells = parse(text).cells;
+  const rollout = cells.findIndex((c) => c.kind === 'code' && c.value === 'kubectl apply');
+
+  it('finds the step that ran last', () => {
+    assert.equal(lastRanCell(text), rollout);
+    assert.equal(lastRanCell('# Nothing ran\n\n```bash\necho\n```\n'), undefined);
+  });
+
+  it('goes right after that step and its output, before the next heading', () => {
+    const got = withBlockAfterCell(text, rollout, note);
+    assert.match(got, /kubectl apply\n```\n<!-- md-runbook:output start[\s\S]*?output end -->\n\n<!-- md-runbook:note at=[^\n]*\n> \*\*01:42:\*\* rollout looks slow\n\n## Check\n/);
+    assert.equal(got.replace(/<!-- md-runbook:note[^\n]*\n[^\n]*\n\n/, ''), text, 'nothing else changes');
+    assert.equal(parseNotes(got).length, 1);
+  });
+
+  it('keeps CRLF and goes at the end after the last cell', () => {
+    const crlf = text.replace(/\n/g, '\r\n');
+    assert.doesNotMatch(withBlockAfterCell(crlf, rollout, note).replace(/\r\n/g, ''), /\n/);
+    assert.match(withBlockAfterCell(text, cells.length - 1, note), /curl x\n```\n\n<!-- md-runbook:note[^\n]*\n> [^\n]*\n$/);
+  });
+});
 import { parseDurationSeconds, parseFrontMatter } from '@md-runbook/core/secrets';
 import { renderReport } from '@md-runbook/core';
 

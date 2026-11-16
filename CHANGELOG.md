@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **App, Add Note:** a note goes right after the step it is about (the one running, else the one
+  that ran last), as in VS Code, not at the end of the runbook. Its confirmation, and **Saved** and
+  the record signed message, show in green: the notice line was red for everything.
 - **App, sample runbook:** its service check quotes its regular expression, so it no longer shows
   an unknown cell option warning and checks for `active (running)` as meant.
 - **Progress, re-runs:** a run counts the steps it hasn't reached yet as still to do, even when

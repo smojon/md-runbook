@@ -867,7 +867,7 @@ describe('the VS Code-like runbook view', () => {
   it('shows the last result of a cell and the language with its options', async () => {
     await render(<RunbookView id="sample" />);
     expect(screen.getByTestId('cell-1-status').props.accessibilityLabel).toBe('Succeeded');
-    expect(screen.getByText('bash expect=/active \\(running\\)/')).toBeTruthy();
+    expect(screen.getByText('bash expect="/active \\(running\\)/"')).toBeTruthy();
   });
 
   it('a tap on a line opens its actions; Run line runs that command only', async () => {

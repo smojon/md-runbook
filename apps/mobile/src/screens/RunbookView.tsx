@@ -9,6 +9,8 @@ import {
   MILESTONES,
   Milestone,
   formatNote,
+  lastRanCell,
+  withBlockAfterCell,
   withBlockAfterFrontMatter,
   withBlockAtEnd,
   withFrontMatterValues,
@@ -389,13 +391,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       }
     | undefined
   >(undefined);
+  /** The cells Run all still has to run (queue.current.cells, as state: the estimate reads it). */
+  const [queuedCells, setQueuedCells] = useState<readonly number[]>([]);
   const partStates = useMemo(() => (runbook ? textPartStates(runbook.text) : undefined), [runbook]);
   const estimate = runbookEstimate(
     estimateSteps.map((s) =>
       running && s.cell === running.cellIndex
         ? { ...s, state: 'running' as const, elapsedSeconds: Math.max(0, (now - running.startedAt) / 1000) }
         : // Still to run in this Run all: its output is the previous run's, so it isn't done yet.
-          queue.current?.cells.includes(s.cell)
+          s.cell !== undefined && queuedCells.includes(s.cell)
           ? { ...s, state: 'pending' as const }
           : s,
     ),
@@ -487,6 +491,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const clearQueue = (): void => {
     queue.current = undefined;
     setQueued(false);
+    setQueuedCells([]);
   };
   /** Run reports (report-runs:): the runs' summaries, and the question asked at the end of one. */
   const reports = useRunReports(
@@ -500,6 +505,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       return { ...values, ...paramValues };
     },
   );
+  // A notice is a problem (red) unless it is the text sayOk last gave (green: something went well).
+  const [okNotice, setOkNotice] = useState<string | undefined>(undefined);
   const [notice, setNotice] = useState<string | undefined>(() =>
     fromLink?.cosign && cosign && 'why' in cosign
       ? cosign.why === 'changed'
@@ -507,6 +514,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         : t.notSignedYet
       : undefined,
   );
+  const sayOk = (text: string): void => {
+    setOkNotice(text);
+    setNotice(text);
+  };
+  const noticeOk = notice !== undefined && notice === okNotice;
   /** Show QR Code: the card at the top with this runbook's code. */
   const [showQr, setShowQr] = useState(false);
   /** Start Incident / Add Note: their card at the top. */
@@ -935,6 +947,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       delete q.call;
     }
     const next = q.cells.shift();
+    setQueuedCells([...q.cells]);
     if (next === undefined) {
       clearQueue();
       // A runbook call: Run all goes on in its copy (the steps after the call wait for Continue here).
@@ -1033,6 +1046,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       ...(activeCall(runbook.id) ? { takeDown: 'run' as const } : {}),
     };
     setQueued(true);
+    setQueuedCells([...queue.current.cells]);
     setNotice(undefined);
     handedToCall.current = false;
     reports.begin(true);
@@ -1145,7 +1159,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const copy = addRunbook(`${base}.${copyStamp(now)}.md`, text);
     router.push({ pathname: '/runbook/[id]', params: { id: copy.id } });
   };
-  /** Add Note: a timestamped note (or milestone) at the end of the runbook, for the record. */
+  /** Add Note: a timestamped note (or milestone) after the step it is about, for the record. */
   const addNote = (milestone: Milestone | undefined, note: string): void => {
     if (!runbook) return;
     setIncidentCard(undefined);
@@ -1156,8 +1170,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       ...(milestone ? { milestone } : {}),
       text: note,
     });
-    updateRunbookText(runbook.id, withBlockAtEnd(latest, block));
-    setNotice(t.noteAdded);
+    // Next to the step it is about, as in VS Code: the one running, else the one that ran last.
+    const here = running?.cellIndex ?? lastRanCell(latest);
+    updateRunbookText(runbook.id, here === undefined ? withBlockAtEnd(latest, block) : withBlockAfterCell(latest, here, block));
+    sayOk(t.noteAdded);
   };
   const runAsCopy = (): void => {
     if (!runbook) return;
@@ -1395,7 +1411,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       // A run that wrote its output meanwhile would not be covered: sign again then.
       if ((getRunbook(runbook.id)?.text ?? text) !== text) return setNotice(t.recordChangedWhileSigning);
       updateRunbookText(runbook.id, withRecordSignature(text, block));
-      setNotice(t.recordSigned(recordSigners(block).join(', ')));
+      sayOk(t.recordSigned(recordSigners(block).join(', ')));
     } catch (e) {
       setNotice(t.signFailed(e instanceof Error ? e.message : String(e)));
     }
@@ -1535,7 +1551,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const saveFromMenu = async (): Promise<void> => {
     if (!runbook) return;
     const r = await saveRunbook(runbook.id);
-    setNotice(r.kind === 'conflict' ? t.conflictTitle : r.kind === 'error' ? r.message : r.kind === 'downloaded' ? undefined : t.saved);
+    if (r.kind === 'saved' || r.kind === 'unchanged') sayOk(t.saved);
+    else setNotice(r.kind === 'conflict' ? t.conflictTitle : r.kind === 'error' ? r.message : undefined);
   };
   /** The confirmation's answers (its card under the cell, and the waiting step's row). */
   const confirmRun = (): void => {
@@ -2150,7 +2167,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 </Text>
               ) : null}
               {notice ? (
-                <Text testID="run-notice" role="alert" style={styles.warning}>
+                <Text testID="run-notice" role={noticeOk ? 'status' : 'alert'} style={noticeOk ? styles.noticeOk : styles.warning}>
                   {notice}
                 </Text>
               ) : null}
@@ -3377,6 +3394,7 @@ const useStyles = themedStyles((c) => ({
   chipTextOn: { color: c.onAccent },
   link: { fontSize: 15, color: c.link },
   warning: { fontSize: 13, color: c.error, marginVertical: 6 },
+  noticeOk: { fontSize: 13, color: c.ok, marginVertical: 6 },
   setupNote: { fontSize: 13, color: c.muted, marginVertical: 6 },
   inlineLink: { color: c.link },
   disabled: { opacity: 0.5 },
