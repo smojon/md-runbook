@@ -45,6 +45,7 @@ import { qrMatrix } from '@md-runbook/core/qr';
 import { hostsJson, hostsLink } from '../hosts/share';
 import { shareHostsFile } from '../share/export';
 import { LibrarySettings } from './LibrarySettings';
+import { AlertPushSettings } from './AlertPushSettings';
 import { TrustedSignersSection } from './TrustedSigners';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
@@ -123,6 +124,7 @@ export function HostList() {
           <ColorSection />
           <LinksSection />
           <LibrarySettings />
+          <AlertPushSettings />
           <SafetySection />
           <NotificationsSection />
           {Platform.OS === 'web' ? <PublicAddressSection /> : null}

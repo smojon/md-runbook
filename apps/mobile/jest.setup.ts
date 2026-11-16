@@ -42,6 +42,9 @@ jest.mock('expo-notifications', () => {
     cancelScheduledNotificationAsync: jest.fn(async () => undefined),
     dismissNotificationAsync: jest.fn(async () => undefined),
     addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+    // Pushes (notifications/alertPush.ts): a native token, and no new one.
+    getDevicePushTokenAsync: jest.fn(async () => ({ type: 'ios', data: 'a'.repeat(64) })),
+    addPushTokenListener: jest.fn(() => ({ remove: jest.fn() })),
     getLastNotificationResponse: jest.fn(() => null),
     clearLastNotificationResponse: jest.fn(),
   };
