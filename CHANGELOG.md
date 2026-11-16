@@ -10,7 +10,9 @@ Security fixes from a review of the parts that face the network.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each
-  address, and also refuses multicast, reserved and NAT64 addresses.
+  address, and also refuses multicast and reserved addresses.
+  - A NAT64 address counts as the IPv4 address in it. So a relay on an IPv6-only network with
+    DNS64 still reaches public hosts.
 - **Links (app and VS Code):** a runbook from a link counts as signed only when its signature
   verifies against a key you trust. That holds for **Open only signed runbooks from links** too.
   - Before, any well-formed signature block was enough.
