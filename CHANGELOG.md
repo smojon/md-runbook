@@ -98,6 +98,9 @@ Security fixes from a review of the parts that face the network.
     a code block.
 - **App, Run on a Group:** a runbook with a `practice:` host the app doesn't have can't run on a
   group. Before, the group run went ahead on the real hosts, while a plain run stopped.
+- **App, Start Incident copies:** a copy whose front matter was edited, such as `practice:` or
+  `kube-context:`, no longer counts as signed as a whole. Before, a changed `practice:` host ran
+  without asking first.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or
