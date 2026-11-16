@@ -84,6 +84,17 @@ Security fixes from a review of the parts that face the network.
   - Values in the table stay text: a resource name can't make a link, an image or HTML.
 - **VS Code, Set Parameters and Set Inputs:** only the extension test runner can pass them
   values. The commands themselves always ask.
+- **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix. It lands after the step, as a proposal to approve.
+- **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or every runbook's, after a confirmation.
+- **App: Uncheck All Lines.** **Uncheck all** sits next to **Run checked lines**, and in the cell's ⋯, as in VS Code.
+- **App: Copy Line with Values.** A line's actions copy its command with parameters, inputs and captured values filled in. Secrets stay references.
+- **App: Pause Before This Step, Notify Me When It Starts.** A step's ⋯ (cell or Steps row) sets either, for this session. Run all asks Continue or Stop there.
+- **App: the launch form.** Run all first shows one sheet: parameters, inputs, secrets to set, risky steps, steps by hand, time and host. Start asks for no value again; risky steps still ask. Hosts & Settings turns it off; ⋯ More → **Run All…** always opens it.
+- **App: Edit Note, Delete Note.** A note's ⋯ edits its words in place, or deletes it after a confirmation. Its time, author and milestone stay as VS Code wrote them.
+- **App: Show Runs…** ⋯ More → Run and the Steps header list this runbook's runs, newest first. Each says when, who, how long, and which steps passed or failed. The device keeps the last 30, never outputs.
+- **App: Publish to Library…, Remove from Library…** (⋯ More → Share, and a Team runbooks row's ⋯) as in VS Code. Only a runbook signed as a whole and unchanged goes in; otherwise **Sign Runbook** comes first. Hosts & Settings sets the server and its upload token, kept in secure storage (on the web, in this browser).
+- **App: Edit as Text, New runbook…** A runbook opens as text in its own screen: Edit, Preview, or back to Runbook. Edit has Save, Undo, Discard and the lint problems. Saving warns before a matching signature breaks. The start screen's **New runbook…** starts blank or from a small template.
+
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.
   An unsigned runbook gets a **Sign Runbook** button first.
@@ -117,7 +128,6 @@ Security fixes from a review of the parts that face the network.
 - **Android: "ask before each use" asks at each use.** On Android 11 and later, a key made with the switch on asks for every signature, not once per 10 seconds. Turn the switch off and on to make such a key.
 - **App: copies of a library runbook keep its rules.** Run All as Copy and Start Incident are off while the library refuses the runbook, and say why. Their copies run only while the library would open them.
 - **Web: a key the browser can't export, and a Content Security Policy.** New web keys are WebCrypto keys the browser won't export. An earlier key stays; Hosts & settings offers to replace it. The page runs only its own scripts, never inside another site's frame.
-
 
 ## 0.26.8
 

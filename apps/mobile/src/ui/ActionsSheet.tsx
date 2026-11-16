@@ -1,5 +1,5 @@
 /**
- * Every action of a screen in one place, for both kinds of user: browse it by group (Run, Values,
+ * Every action of a screen in one place, for both kinds of user: browse it by group (Run, Edit, Values,
  * Assistant, Share, Help, as in the extension's toolbar), or type to find one (as Ctrl+Shift+P in
  * VS Code; Ctrl/⌘+K opens it with a keyboard). Each action says when it matters.
  */
@@ -21,9 +21,9 @@ export interface AppAction {
   disabled?: string;
 }
 
-export type ActionGroup = 'review' | 'run' | 'steps' | 'values' | 'assistant' | 'share' | 'help';
+export type ActionGroup = 'review' | 'run' | 'steps' | 'edit' | 'values' | 'assistant' | 'share' | 'help';
 // Review first: a proposed cell's gate comes before running it.
-const GROUPS: readonly ActionGroup[] = ['review', 'run', 'steps', 'values', 'assistant', 'share', 'help'];
+const GROUPS: readonly ActionGroup[] = ['review', 'run', 'steps', 'edit', 'values', 'assistant', 'share', 'help'];
 
 /** Actions whose title, hint or group contain every word of `query`, case-insensitively. */
 export function matchActions(actions: readonly AppAction[], query: string): AppAction[] {

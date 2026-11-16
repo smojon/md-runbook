@@ -14,6 +14,7 @@ import { setPinned, usePins } from '../runbooks/pins';
 import { themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
 import { LibrarySection } from './LibrarySection';
+import { NewRunbookSheet } from '../ui/NewRunbookSheet';
 
 export function RunbookList() {
   const styles = useStyles();
@@ -59,6 +60,8 @@ export function RunbookList() {
     return out;
   }, [items, pins, library]);
   const [error, setError] = useState<string | undefined>();
+  /** New runbook…: its sheet (a file name, blank or from the template). */
+  const [creating, setCreating] = useState(false);
   /** Open a link…: the address being typed (undefined: the field is closed). */
   const [link, setLink] = useState<string | undefined>();
   const openLink = async (): Promise<void> => {
@@ -109,6 +112,15 @@ export function RunbookList() {
               <Codicon name="link" size={22} color={colors.link} />
               <Text style={styles.tintedText}>{t.openLink}</Text>
             </Pressable>
+            <Pressable
+              testID="new-runbook"
+              accessibilityRole="button"
+              onPress={() => setCreating(true)}
+              style={[styles.action, styles.tinted]}
+            >
+              <Codicon name="new-file" size={22} color={colors.link} />
+              <Text style={styles.tintedText}>{t.newRunbook}</Text>
+            </Pressable>
           </View>
           {link !== undefined ? (
             <View style={styles.linkRow}>
@@ -142,6 +154,7 @@ export function RunbookList() {
               {error}
             </Text>
           ) : null}
+          <NewRunbookSheet visible={creating} onClose={() => setCreating(false)} />
         </View>
       }
       renderItem={({ item }) =>

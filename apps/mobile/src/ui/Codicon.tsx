@@ -37,6 +37,8 @@ const GLYPHS = {
   'desktop-download': 0xea78,
   'circle-filled': 0xea71,
   ellipsis: 0xea7c,
+  'new-file': 0xea7f,
+  discard: 0xeae2,
   sparkle: 0xec10,
   'settings-gear': 0xeb51,
   add: 0xea60,
