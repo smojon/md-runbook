@@ -15,6 +15,7 @@ import { router } from 'expo-router';
 import { useEffect, useSyncExternalStore } from 'react';
 import { Alert, Platform } from 'react-native';
 import { t } from '../i18n';
+import { NO_REDIRECT, redirectedTo } from '../net/noRedirect';
 import { openRunbookLink } from '../runbooks/openLink';
 import { getJson, setJson } from '../storage/kv';
 import { deleteSecret, getSecret, setSecret } from '../storage/secure';
@@ -132,24 +133,32 @@ async function register(
   p: PushPlatform,
   fetcher: typeof fetch,
 ): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+  const url = `${server}/v1/devices`;
   let r: Response;
   try {
-    r = await fetcher(`${server}/v1/devices`, {
+    r = await fetcher(url, {
       method: 'POST',
       headers: { authorization: `Bearer ${devicesToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ platform: p, token: pushToken }),
+      ...NO_REDIRECT,
     });
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : String(e) };
   }
+  // Never followed, never sent again (net/noRedirect.ts).
+  const away = redirectedTo(url, r);
+  if (away !== undefined) return { ok: false, message: t.alertPushRedirected(away) };
   if (!r.ok) return { ok: false, message: await refusal(r) };
   const j = (await r.json().catch(() => undefined)) as { id?: unknown } | undefined;
   return typeof j?.id === 'string' && /^[0-9a-f]{32}$/.test(j.id) ? { ok: true, id: j.id } : { ok: false, message: t.alertPushBadAnswer };
 }
 
 async function unregister(server: string, id: string, devicesToken: string, fetcher: typeof fetch): Promise<Outcome> {
+  const url = `${server}/v1/devices/${id}`;
   try {
-    const r = await fetcher(`${server}/v1/devices/${id}`, { method: 'DELETE', headers: { authorization: `Bearer ${devicesToken}` } });
+    const r = await fetcher(url, { method: 'DELETE', headers: { authorization: `Bearer ${devicesToken}` }, ...NO_REDIRECT });
+    const away = redirectedTo(url, r);
+    if (away !== undefined) return { ok: false, message: t.alertPushRedirected(away) };
     return r.ok || r.status === 404 ? { ok: true } : { ok: false, message: await refusal(r) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : String(e) };

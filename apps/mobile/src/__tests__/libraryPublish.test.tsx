@@ -124,6 +124,13 @@ describe('publishing (the logic)', () => {
     // A runtime that followed a redirect anyway: not the server's answer.
     fetchMock.mockResolvedValue({ status: 200, url: 'https://elsewhere.example.org/x', text: async () => '{}' });
     expect(await sendToLibrary({ method: 'DELETE', server: SERVER, path: 'a.md', token: TOKEN })).toMatchObject({ kind: 'unreachable' });
+    // Followed on the same server, or a 3xx handed back: refused too, and not sent again.
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue({ status: 200, redirected: true, text: async () => '{}' });
+    expect(await sendToLibrary({ method: 'DELETE', server: SERVER, path: 'a.md', token: TOKEN })).toMatchObject({ kind: 'unreachable' });
+    fetchMock.mockResolvedValue({ status: 307, text: async () => '' });
+    expect(await sendToLibrary({ method: 'DELETE', server: SERVER, path: 'a.md', token: TOKEN })).toMatchObject({ kind: 'unreachable' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     fetchMock.mockRejectedValue(new Error('offline'));
     expect(await sendToLibrary({ method: 'DELETE', server: SERVER, path: 'a.md', token: TOKEN })).toEqual({
       kind: 'unreachable',

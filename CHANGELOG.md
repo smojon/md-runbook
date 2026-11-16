@@ -89,6 +89,9 @@ Security fixes from a review of the parts that face the network.
   - A signed runbook with note-shaped lines in its code blocks needs signing again.
 - **App, alerts on this phone:** each server gets only its own devices token. Before, moving the
   team library sent the new server's token to the old one, to remove the phone there.
+- **App, tokens and redirects:** alert registration and the assistant's Anthropic key never follow
+  a redirect, like library uploads. Before, a redirect took the devices token along.
+  - An answer that shows a redirect anyway is refused, and the request isn't sent again.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
 - **App: Forget Learned Times.** ⋯ More → Values forgets this runbook's learned step times, or

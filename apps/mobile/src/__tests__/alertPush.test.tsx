@@ -70,6 +70,22 @@ describe('alerts on this phone', () => {
     expect(await getSecret(devicesTokenKey(SERVER))).toBe(DEVICES);
   });
 
+  it('never follows a redirect with the devices token, and never sends it again (security review round 3)', async () => {
+    const f = fetcherOf({ ...answer(201, { id: ID }), url: 'https://elsewhere.example.org/v1/devices', redirected: true } as Response);
+    expect(await turnOnAlertPush(LIBRARY, DEVICES, f)).toEqual({
+      ok: false,
+      message: 'Not turned on: the server sent the request on to elsewhere.example.org: not followed',
+    });
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(f.mock.calls[0]![1]!.redirect).toBe('error');
+    expect(alertRegistration()).toBeUndefined();
+    // Turning off: the DELETE doesn't follow one either.
+    await turnOnAlertPush(LIBRARY, DEVICES, fetcherOf(answer(201, { id: ID })));
+    const g = fetcherOf(answer(307, {}));
+    expect(await turnOffAlertPush(g)).toMatchObject({ ok: false });
+    expect(g.mock.calls[0]![1]!.redirect).toBe('error');
+  });
+
   it('says why it is not on: the server refused, notifications blocked, no library, no token', async () => {
     expect(
       await turnOnAlertPush(

@@ -1398,6 +1398,7 @@ const en = {
     `Off here, but the server wasn’t told (${why}). Its alerts may still show: ask its admin to remove this phone.`,
   alertPushNoToken: 'the phone has no push token',
   alertPushBadAnswer: 'the server’s answer has no device id',
+  alertPushRedirected: (host: string) => `the server sent the request on to ${host}: not followed`,
   alertPushChannel: 'Alerts',
   alertPushChannelHelp: 'A firing alert from the team library server',
   alertPushOpenFailedTitle: 'The alert’s runbook didn’t open',

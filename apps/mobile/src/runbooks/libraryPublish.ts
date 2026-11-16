@@ -10,6 +10,7 @@
 import { libraryApiUrl, libraryPathProblem, nameFitsPath } from '@md-runbook/core/library';
 import { reportAddressProblem } from '@md-runbook/core/secrets';
 import { Manifest, signedStatus, wholeRunbookSigned } from '@md-runbook/core/signing';
+import { redirectedTo } from '../net/noRedirect';
 import { libraryServerSetting } from '../settings/store';
 import { getJson, setJson } from '../storage/kv';
 import { deleteSecret, getSecret, setSecret } from '../storage/secure';
@@ -27,7 +28,7 @@ export const TOKEN_RE = /^[\x21-\x7e]{24,}$/;
 export type PublishFetch = (
   url: string,
   init: { method: string; headers: Record<string, string>; body?: string; redirect: 'error'; signal: AbortSignal },
-) => Promise<{ status: number; url?: string; text(): Promise<string> }>;
+) => Promise<{ status: number; url?: string; redirected?: boolean; text(): Promise<string> }>;
 
 /** The server's JSON answer (publish: name … unchanged; delete: deleted, version; refused: error, problems). */
 export interface LibraryAnswer {
@@ -173,8 +174,9 @@ export async function sendToLibrary(o: {
       redirect: 'error',
       signal: abort.signal,
     });
-    // A runtime that follows redirects anyway (React Native's fetch): its answer is not the server's.
-    if (r.url && r.url !== url) return { kind: 'unreachable', why: t.publishRedirected(serverHost(r.url)) };
+    // A runtime that follows redirects anyway (net/noRedirect.ts): its answer is not the server's.
+    const away = redirectedTo(url, r);
+    if (away !== undefined) return { kind: 'unreachable', why: t.publishRedirected(away) };
     status = r.status;
     body = await r.text();
   } catch (e) {
