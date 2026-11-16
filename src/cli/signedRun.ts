@@ -93,6 +93,28 @@ export async function checkSignedRun(
   if (status.missing.length) say(`signed block${status.missing.length === 1 ? '' : 's'} ${status.missing.join(', ')} not in the file as signed`);
   if (status.missingCalls.length) say(`signed runbook call${status.missingCalls.length === 1 ? '' : 's'} ${status.missingCalls.join(', ')} not in the file as signed`);
   // Only signed blocks run: bash/sh cells and calls are signed, other shells never are.
+  // The front matter changes how every cell runs (env: BASH_ENV, cwd:, shell:, …): only a
+  // whole-runbook signature (manifest version 2) covers it, and only while the text is as signed
+  // (security review, 2026-11-16).
+  const runFm = parseFrontMatter(text);
+  if (status.version === 2 && status.textChanged) {
+    say('changed since signing outside its blocks (front matter or text): sign it again');
+  } else if (status.version !== 2 && runFm) {
+    const set = (
+      [
+        ['env', runFm.env && Object.keys(runFm.env).length > 0],
+        ['cwd', runFm.cwd !== undefined],
+        ['shell', runFm.shell !== undefined],
+        ['mode', runFm.mode !== undefined],
+        ['kube-context', runFm.kubeContext !== undefined],
+        ['kube-context-mode', runFm.kubeContextMode !== undefined],
+        ['timeout', runFm.timeoutSeconds !== undefined],
+      ] as const
+    )
+      .filter(([, on]) => on)
+      .map(([k]) => `${k}:`);
+    if (set.length) say(`its front matter sets ${set.join(', ')}, which its signature (manifest version 1) doesn't cover: sign it again`);
+  }
   const doc = parse(text);
   doc.cells.forEach((c, i) => {
     if (c.kind !== 'code' || !isCodeMeta(c.meta)) return;

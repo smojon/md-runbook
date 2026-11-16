@@ -103,4 +103,13 @@ describe('signed runbook calls: sign, verify, run --allowed-signers', { skip: (!
     assert.ok(lintRunbook(fs.readFileSync(edited, 'utf8')).some((p) => /changed since the runbook was signed/.test(p.message)));
     await assert.rejects(run(edited, { TO: '1', STAGE: 'dev' }), /edited\.md: line \d+: changed since signing/);
   });
+
+  it('refuses a front matter changed after signing: env:, cwd: and shell: change how every cell runs (security review, 2026-11-16)', async () => {
+    const signed = fs.readFileSync(path.join(dir, 'repo/upgrade.md'), 'utf8');
+    assert.ok(signed.startsWith('---\nparams:'));
+    const env = put('repo/env.md', signed.replace('---\nparams:', '---\nenv:\n  BASH_ENV: /tmp/payload\nparams:'));
+    await assert.rejects(run(env, { TO: '1', STAGE: 'dev' }), /env\.md: changed since signing outside its blocks/);
+    const cwd = put('repo/cwd.md', signed.replace('---\nparams:', '---\ncwd: /tmp\nparams:'));
+    await assert.rejects(run(cwd, { TO: '1', STAGE: 'dev' }), /cwd\.md: changed since signing outside its blocks/);
+  });
 });

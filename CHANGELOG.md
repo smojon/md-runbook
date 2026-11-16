@@ -4,6 +4,10 @@
 
 Security fixes from a review of the parts that face the network.
 
+- **Command line, signed runs (`--allowed-signers`):** a front matter changed after signing is
+  refused. Before, its `env:`, `cwd:` or `shell:` applied though the run said "signed, unchanged".
+  - A version 1 signature doesn't cover the front matter: such a runbook can't set those.
+
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each
   address, and also refuses multicast, reserved and NAT64 addresses.
