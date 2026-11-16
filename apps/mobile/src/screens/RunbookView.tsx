@@ -4,7 +4,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Link, Stack, router } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { askAutorun, autorunDone as forgetAutorun } from '../runbooks/autorun';
-import { LinkContext, forgetLinkContext, linkContext } from '../runbooks/linkContext';
+import { LinkContext, forgetLinkContext, linkContext, setRunbookBusy } from '../runbooks/linkContext';
 import { Alert, FlatList, Linking, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import {
   MILESTONES,
@@ -135,7 +135,7 @@ import { saveRunbook } from '../runbooks/save';
 import { exportRecordJson, exportReport, requestCosign, shareRunbook } from '../share/export';
 import { addRunbook, getRunbook, Runbook, runbookNamed, updateRunbookText, useRunbooks, withoutFrontMatter } from '../runbooks/store';
 import { historySize, notifyRuns, outputSettings, signerName } from '../settings/store';
-import { liveWindow } from '../settings/safety';
+import { LiveOutput, NO_LIVE_OUTPUT, liveWindow } from '../settings/safety';
 import { SignCard, SignRequest } from '../signing/SignCard';
 import { SignInput, cosignCheck, cosignRunbook, samePlan, signPlan, signRunbook, withSignedBlock } from '../signing/sign';
 import { appKey } from '../ssh/appKey';
@@ -199,12 +199,22 @@ interface RunRequest {
   cell: CellRef;
   mode?: LineMode;
   line?: number;
-  /** Asked and answered Run (a risky cell, `confirm`): it runs without asking again. */
-  confirmed?: boolean;
+  /**
+   * Asked and answered Run (a risky cell, `confirm`): what the card showed (confirmShown). It runs
+   * without asking again while it reads the same; a value changed since (by a link) asks again.
+   */
+  confirmed?: string;
+}
+
+/** What a confirmation was answered for: the accounts it runs as and the code with its values filled in. */
+function confirmShown(runsAs: string, filled: string): string {
+  return `${runsAs}\n${filled}`;
 }
 
 interface Running extends RunRequest {
+  /** On screen: liveOutput.text. */
   live: string;
+  liveOutput: LiveOutput;
   abort: AbortController;
   step?: { start: number; end: number };
   /** Step through: waiting before this command until Run next, Continue or Stop. */
@@ -509,7 +519,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
    * `go` runs it then. Nothing is sent before.
    */
   const [confirming, setConfirming] = useState<
-    { cell: CellRef; match: string; runsAs?: string; attempts?: number; go(): void } | undefined
+    { cell: CellRef; match: string; runsAs?: string; attempts?: number; shown: string; go(): void } | undefined
   >();
   // The review card of a proposal (the extension's built-in command policy). `scope`: what the
   // approval is bound to when the card opened; checked again if `shell:` changed meanwhile.
@@ -552,6 +562,18 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [notifyOffer, setNotifyOffer] = useState(false);
   /** A signed runbook that runs only when its run is reported: its notice, and the run it holds back. */
   const [reportAsk, setReportAsk] = useState<{ text: string; go(): void } | undefined>();
+  // Running, or a card waiting for an answer: a link opens a new copy rather than fill its values in here.
+  const inUse =
+    running !== undefined ||
+    queued ||
+    groupRun !== undefined ||
+    [confirming, asking, otherHost, approving, manualAsk, pauseAsk, teardownOffer, trust, reportAsk].some((c) => c !== undefined);
+  const busyId = runbook?.id;
+  useEffect(() => {
+    if (!busyId) return;
+    setRunbookBusy(busyId, inUse);
+    return () => setRunbookBusy(busyId, false);
+  }, [busyId, inUse]);
   const clearQueue = (): void => {
     queue.current = undefined;
     setQueued(false);
@@ -738,10 +760,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   /**
    * What a confirmation's risky patterns see, as in VS Code and the command line: `source` with
    * the values known now filled in (`kubectl ${param:VERB}` with VERB=delete asks). Secrets, and
-   * values not known yet, stay placeholders.
+   * values not known yet, stay placeholders. The values as a run reads them: from the store.
    */
-  const shownForConfirm = (source: string, cellIndex: number): string => {
+  const shownForConfirm = (source: string, cellIndex: number, values?: Readonly<Record<string, string>>): string => {
     const text = (runbook && getRunbook(runbook.id)?.text) ?? runbook?.text ?? '';
+    const paramValues = values ?? (runbook ? storedParamValues(runbook.id) : {});
     // A signed cell doesn't take the front matter's defaults (runCell).
     const signedCell = signedStatus(text)?.cells.has(cellIndex) ?? false;
     const defaults = new Map((parseFrontMatter(text)?.params ?? []).map((p) => [p.name, p.default]));
@@ -837,19 +860,24 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const lines = cell && (mode || atBreaks) ? planLines(cell.value, mode ?? 'step', line ?? 0, checked, shell ?? 'bash') : undefined;
     if (mode && !lines) return;
     // A risky command, or the cell's `confirm`: ask before it runs (and before Run all goes on).
-    if (!request.confirmed && cell && isCodeMeta(cell.meta)) {
+    if (cell && isCodeMeta(cell.meta)) {
       const source = lines ? lines.steps.map((s) => s.text).join('\n') : cell.value;
-      const match = confirmationOf(shownForConfirm(source, cellIndex), cell.meta.info, outputSettings().allowNoConfirm);
+      const filled = shownForConfirm(source, cellIndex);
+      const runsAs = `${target.username}@${target.name}`;
+      const shown = confirmShown(runsAs, filled);
+      // Confirmed: it runs while it reads as the card showed it. A value changed since asks again.
+      const match = request.confirmed === shown ? undefined : confirmationOf(filled, cell.meta.info, outputSettings().allowNoConfirm);
       if (match !== undefined) {
         // Line runs and runs at breakpoints run once (no retry=), as in the extension.
         const retry = lines ? undefined : parseCellOptions(cell.meta.info).retry;
         setConfirming({
           cell: request.cell,
           match,
-          runsAs: `${target.username}@${target.name}`,
+          runsAs,
           ...(retry ? { attempts: retry.attempts } : {}),
+          shown,
           // The newest render's run (its runbook text and values), as Run all calls it.
-          go: () => void runRef.current({ ...request, confirmed: true }, on),
+          go: () => void runRef.current({ ...request, confirmed: shown }, on),
         });
         list.current?.scrollToIndex({ index: cellIndex, viewPosition: 0.2 });
         return true;
@@ -858,7 +886,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const abort = new AbortController();
     setNotice(undefined);
     setTrust(undefined);
-    setRunning({ ...request, live: '', abort, startedAt: new Date().getTime() });
+    setRunning({ ...request, live: '', liveOutput: NO_LIVE_OUTPUT, abort, startedAt: new Date().getTime() });
     const update = (f: (r: Running) => Running): void => setRunning((r) => (r && r.abort === abort ? f(r) : r));
     // Step through: the first command runs at once, then the run waits before each of the others.
     // At breakpoints: the run waits before each command with one; Run next then waits before the
@@ -913,12 +941,16 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       onStart: () => stepStarting(request.cell),
       onStep: (i) => update((r) => ({ ...r, step: i === undefined || !lines ? undefined : lines.steps[i] })),
       // Redacted as it arrives, before it is cut to its window (settings/safety.ts liveWindow).
-      onOutput: (text) => update((r) => ({ ...r, live: liveWindow(r.live, text, LIVE_CHARS) })),
+      onOutput: (text) =>
+        update((r) => {
+          const liveOutput = liveWindow(r.liveOutput, text, LIVE_CHARS);
+          return { ...r, live: liveOutput.text, liveOutput };
+        }),
       // retry=: a new attempt starts with empty output (only the last one is kept, as in the extension).
       onAttempt: (n, of, waitMs) =>
         update((r) => ({
           ...r,
-          ...(waitMs === undefined ? { live: '' } : {}),
+          ...(waitMs === undefined ? { live: '', liveOutput: NO_LIVE_OUTPUT } : {}),
           attempt: { n, of, ...(waitMs !== undefined ? { waitMs } : {}) },
         })),
     });
@@ -976,7 +1008,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
    * section per host (hosts=, group=, failed=; exit is the first failure's). Hosts whose key isn't
    * trusted yet are skipped with a note: a trust question per host would stop the round halfway.
    */
-  const runOnGroup = async (ref: CellRef, group: string, confirmed = false): Promise<void> => {
+  const runOnGroup = async (ref: CellRef, group: string, confirmed?: string): Promise<void> => {
     setGroupPick(undefined);
     if (!runbook || busy.current || refusedHere()) return;
     // In practice every cell runs on the practice host only; one the app doesn't have runs nothing.
@@ -994,20 +1026,26 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const first = found();
     if (!first) return setNotice(t.askedCellChanged);
     if (!sameRules(first.text, ref)) return setNotice(t.rulesChangedStopped);
-    // A risky cell asks once, before the round, naming every account it runs as.
+    // A risky cell asks once, before the round, naming every account it runs as. The round runs
+    // with the values read now, those the card showed.
+    const values = storedParamValues(runbook.id);
     const cell = parse(first.text).cells[first.at];
+    const runsAs = members.map((h) => `${h.username}@${h.name}`).join(', ');
+    const filled = cell && isCodeMeta(cell.meta) ? shownForConfirm(cell.value, first.at, values) : '';
+    const shown = confirmShown(runsAs, filled);
     const match =
-      !confirmed && cell && isCodeMeta(cell.meta)
-        ? confirmationOf(shownForConfirm(cell.value, first.at), cell.meta.info, outputSettings().allowNoConfirm)
+      confirmed !== shown && cell && isCodeMeta(cell.meta)
+        ? confirmationOf(filled, cell.meta.info, outputSettings().allowNoConfirm)
         : undefined;
     if (match !== undefined && cell && isCodeMeta(cell.meta)) {
       const retry = parseCellOptions(cell.meta.info).retry;
       setConfirming({
         cell: ref,
         match,
-        runsAs: members.map((h) => `${h.username}@${h.name}`).join(', '),
+        runsAs,
         ...(retry ? { attempts: retry.attempts } : {}),
-        go: () => void runOnGroup(ref, group, true),
+        shown,
+        go: () => void runOnGroup(ref, group, shown),
       });
       return;
     }
@@ -1042,7 +1080,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           host: h,
           text: now.text,
           cellIndex: now.at,
-          params: paramValues,
+          params: values,
           runbookId: runbook.id,
           captures: captures.current,
           inputs: Object.fromEntries(Object.entries(inputs.current).map(([k, v]) => [k, v.value])),
@@ -3862,6 +3900,11 @@ function LinkNotes({ context }: { context: LinkContext }) {
       {context.refusedParams ? (
         <Text testID="link-refused-params" style={styles.warning}>
           {t.linkRefusedParams(context.refusedParams)}
+        </Text>
+      ) : null}
+      {context.freshCopy ? (
+        <Text testID="link-fresh-copy" style={styles.signedBody}>
+          {t.linkFreshCopy}
         </Text>
       ) : null}
     </View>

@@ -797,12 +797,13 @@ const blankLength = (text: string): number => {
 
 /**
  * The length of the note at the start of `text` (its marker line and its quoted lines), or 0. The
- * marker alone on its line, as core writes it: `<!-- md-runbook:note … -->` with no `--` inside.
+ * marker alone on its line, as core writes it: `<!-- md-runbook:note … -->`, the comment ending
+ * only at the line's end, as core's signedText reads it (notes written before may hold `--`).
  */
 function noteLength(text: string): number {
   const lines = linesOf(text);
-  const m = lines[0] ? /^[ \t]*<!--([ \t]*md-runbook:note\b[^>]*)-->[ \t]*$/.exec(bare(lines[0])) : null;
-  if (!m || m[1]!.includes('--') || !/(?:\r\n?|\n)$/.test(lines[0]!)) return 0;
+  const m = lines[0] ? /^[ \t]*<!--[ \t]*md-runbook:note\b(?:(?!--!?>).)*-->[ \t]*$/.exec(bare(lines[0])) : null;
+  if (!m || !/(?:\r\n?|\n)$/.test(lines[0]!)) return 0;
   let n = lines[0]!.length;
   for (const l of lines.slice(1)) {
     if (!/^[ \t]*>/.test(l)) break;

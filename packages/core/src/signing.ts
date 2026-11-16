@@ -151,9 +151,11 @@ export const manifestVersion = (m: Pick<Manifest, 'text'>): 1 | 2 => (m.text !==
  *
  * - A run record's signature (record.ts): its header, then base64 lines, cosign lines, `-->`.
  *   Names and times hold no spaces and no `--`.
- * - A note's marker (incident.ts formatNote): one comment alone on its line, without `>` or `--`
- *   inside; then its quote lines.
+ * - A note's marker (incident.ts formatNote): one comment alone on its line, ending only at the
+ *   line's end (COMMENT_BODY); then its quote lines.
  * - An output block's markers likewise; when one is not, no output block is set aside.
+ * - An output block, and each of its history, in the form formatOutputBlock writes it
+ *   (outputsAsWritten); when one is not, no output block is set aside.
  */
 const FIELD = '(?:[A-Za-z0-9_@.+:]|-(?!-))+';
 const B64_LINES = '(?:[A-Za-z0-9+/=]+\\n)+';
@@ -161,12 +163,62 @@ const RECORD_BLOCK_RE = new RegExp(
   `^<!-- md-runbook:record-signature v1 signer=${FIELD} signed=${FIELD} sha256=[0-9a-f]{64}\\nsignature\\n${B64_LINES}(?:cosign signer=${FIELD} signed=${FIELD}\\n${B64_LINES})*-->[ \\t]*(?:\\n|$)`,
   'gm',
 );
-const NOTE_BLOCK_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b(?:[^>\n-]|-(?!-))*-->[ \t]*\n(?:[ \t]*>.*(?:\n|$))*/gm;
+/**
+ * The inside of a marker's comment: anything but a comment's end (`-->`, `--!>`), so the comment
+ * ends where the line does. Values with `--`, `<` or `>` that writers before round 5 wrote
+ * (`by=jean--luc`, `by="Alice <a@x.io>"`) stay set aside; round 4 had made a runbook with such a
+ * note or output read as changed since signing.
+ */
+const COMMENT_BODY = '(?:(?!--!?>)[^\\n])*';
+const NOTE_BLOCK_RE = new RegExp(`^[ \\t]*<!--[ \\t]*md-runbook:note\\b${COMMENT_BODY}-->[ \\t]*\\n(?:[ \\t]*>.*(?:\\n|$))*`, 'gm');
 const OUTPUT_MARK_RE = /^[ \t]*<!--[ \t]*md-runbook:output (?:start|end)\b/;
-const STRICT_OUTPUT_MARK_RE = /^[ \t]*<!--[ \t]*md-runbook:output (?:start|end)\b(?:[^<>\n-]|-(?!-))*-->[ \t]*$/;
+const STRICT_OUTPUT_MARK_RE = new RegExp(`^[ \\t]*<!--[ \\t]*md-runbook:output (?:start|end)\\b${COMMENT_BODY}-->[ \\t]*$`);
 /** The summary of earlier runs (history.ts historySummary), which a Markdown view shows. */
 const STRICT_HISTORY_OPEN_RE = /^[ \t]*<details>[ \t]*<summary>[ \t]*md-runbook: \d+ previous runs?<\/summary>[ \t]*$/;
 const TASK_BOX_RE = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+\[)[xX](\](?=[ \t]|$))/;
+
+/**
+ * Whether the output block `raw` (LF, start marker through end marker) is as formatOutputBlock
+ * writes it at `indent`: each marker at the indent, the open fence `indent` + backticks + `text`,
+ * the close fence exactly the same backticks at the indent, every other line empty or at the
+ * indent. Before, any fence the parser took was set aside: a fence indented 4 spaces or a tab is
+ * no fence on GitHub, and its "output" showed as prose (bold, headings) in a runbook still signed
+ * as a whole; a close fence indented 4 spaces ended the block for the parser only, and turned the
+ * signed prose after it into code there (security review, round 5).
+ */
+function blockAsWritten(raw: string, indent: string): boolean {
+  const lines = raw.replace(/\n$/, '').split('\n');
+  if (lines.length < 4) return false;
+  const [start, open] = lines as [string, string];
+  const close = lines[lines.length - 2]!;
+  const end = lines[lines.length - 1]!;
+  const fence = /^`{3,}(?=text$)/.exec(open.slice(indent.length))?.[0];
+  const atIndent = (l: string): boolean => l.startsWith(indent) && !/^[ \t]/.test(l.slice(indent.length));
+  return (
+    fence !== undefined &&
+    open === `${indent}${fence}text` &&
+    close === indent + fence &&
+    atIndent(start) &&
+    STRICT_OUTPUT_MARK_RE.test(start) &&
+    end === `${indent}<!-- md-runbook:output end -->` &&
+    lines.slice(2, -2).every((l) => l === '' || l.startsWith(indent))
+  );
+}
+
+/** Whether every output block of LF text `t`, and its history, is as md-runbook writes it (blockAsWritten). */
+function outputsAsWritten(t: string): boolean {
+  for (const c of parse(t).cells) {
+    const m = c.meta;
+    if (m.kind !== 'code') continue;
+    if (m.output && !blockAsWritten(m.output.raw.slice(m.output.gap.length), m.indent)) return false;
+    if (!m.history) continue;
+    const lines = m.history.raw.slice(m.history.gap.length).replace(/\n$/, '').split('\n');
+    const [first] = lines as [string];
+    if (!first.startsWith(m.indent) || /^[ \t]/.test(first.slice(m.indent.length)) || lines[lines.length - 1] !== `${m.indent}</details>`) return false;
+    if (!m.history.entries.every((e) => e.raw !== undefined && blockAsWritten(e.raw, m.indent))) return false;
+  }
+  return true;
+}
 
 /**
  * Offsets of the lines of LF text that are prose: in no code cell the parser finds, in no other
@@ -244,7 +296,7 @@ export function signedText(text: string): string {
   // A run record's signature and notes only outside code: a note-shaped line in a block is code.
   t = removeInProse(t, RECORD_BLOCK_RE);
   const written = (l: string): boolean => (!OUTPUT_MARK_RE.test(l) || STRICT_OUTPUT_MARK_RE.test(l)) && (!HISTORY_OPEN_RE.test(l) || STRICT_HISTORY_OPEN_RE.test(l));
-  if (t.split('\n').every(written)) t = clearOutputBlocks(t);
+  if (t.split('\n').every(written) && outputsAsWritten(t)) t = clearOutputBlocks(t);
   t = removeInProse(t, NOTE_BLOCK_RE);
   // Ticks, outside code blocks.
   let open: FenceOpen | null = null;
@@ -332,12 +384,17 @@ function bashCells(text: string): { index: number; info: string; value: string }
 const HTML_BLOCK_TAGS =
   'address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul';
 
+/** CommonMark's open or closing tag alone on a line: an HTML block of type 7 (any tag name). */
+const HTML_ATTR = `\\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\\s*=\\s*(?:[^\\s"'=<>\`]+|'[^']*'|"[^"]*"))?`;
+const HTML_TYPE7_RE = new RegExp(`^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:${HTML_ATTR})*\\s*/?>|</[A-Za-z][A-Za-z0-9-]*\\s*>)\\s*$`);
+
 /**
- * Where an HTML block of CommonMark types 1 and 3–6 that starts on `line` ends: a test for the line
- * that ends it (type 6: a blank line). Undefined when no such block starts there, or it ends on the
- * same line. Comments (type 2) are tracked on their own, more widely.
+ * Where an HTML block of CommonMark types 1 and 3–7 that starts on `line` ends: a test for the line
+ * that ends it (types 6 and 7: a blank line). Undefined when no such block starts there, or it ends
+ * on the same line. Comments (type 2) are tracked on their own, more widely. Type 7 (`<span>`,
+ * `<a name="x">`, `<x-y hidden>` alone on a line) can't interrupt a paragraph: not when `paragraph`.
  */
-function htmlBlockEnd(line: string): ((l: string) => boolean) | undefined {
+function htmlBlockEnd(line: string, paragraph: boolean): ((l: string) => boolean) | undefined {
   const starts: [RegExp, RegExp][] = [
     [/^ {0,3}<(script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(script|pre|style|textarea)>/i],
     [/^ {0,3}<\?/, /\?>/],
@@ -349,6 +406,7 @@ function htmlBlockEnd(line: string): ((l: string) => boolean) | undefined {
     if (m) return end.test(line.slice(m[0].length)) ? undefined : (l) => end.test(l);
   }
   if (new RegExp(`^ {0,3}</?(?:${HTML_BLOCK_TAGS})(?=[\\s/>]|$)`, 'i').test(line)) return (l) => l.trim() === '';
+  if (!paragraph && HTML_TYPE7_RE.test(line)) return (l) => l.trim() === '';
   return undefined;
 }
 
@@ -365,9 +423,13 @@ function hiddenFences(text: string): string[] {
   let inComment = false;
   /** In an HTML block (not a comment): the test of the line that ends it. */
   let html: ((l: string) => boolean) | undefined;
+  /** The line before was a paragraph's (prose, not blank, no heading): a type 7 HTML block can't start. */
+  let paragraph = false;
   text.split(LINE_RE).forEach((line, i) => {
     // CommonMark sees no fence in an HTML block: its end counts on every line, fenced or not.
     const inHtml = html !== undefined;
+    const after = paragraph;
+    paragraph = false;
     if (html?.(line)) html = undefined;
     if (open) {
       if (isFenceClose(line, open)) {
@@ -387,7 +449,9 @@ function hiddenFences(text: string): string[] {
     }
     // Comment state from the prose between fences: the last <!-- or --> on the line wins.
     for (const m of line.matchAll(/<!--|-->/g)) inComment = m[0] === '<!--';
-    if (!inHtml && !inComment) html = htmlBlockEnd(line);
+    if (!inHtml && !inComment) html = htmlBlockEnd(line, after);
+    // Cautious: a line starting with `<` is never a paragraph's here (a tag after it starts a block).
+    paragraph = !inHtml && html === undefined && !inComment && line.trim() !== '' && !/^ {0,3}(?:<|#{1,6}(?:[ \t]|$)|(?:[-*_][ \t]*){3,}$)/.test(line);
   });
   return problems;
 }

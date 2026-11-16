@@ -25,6 +25,7 @@ export {
   formatDurationAttr,
   formatLocalIso,
   formatOutputBlock,
+  processOutput,
   processOutputText,
   truncateLines,
 } from './outputBlock';
@@ -67,7 +68,9 @@ export {
   levelSpans,
   markStderr,
   parseLineSet,
+  redactMarked,
   splitStderrMarks,
+  stderrMarker,
   styledSpans,
 } from './outputColors';
 export {

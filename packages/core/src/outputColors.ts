@@ -195,9 +195,64 @@ export function colorizeAnsi(text: string, opts: ColorOptions): string {
 /** Marks stderr lines in a transcript until the output is processed (a private-use character). */
 export const STDERR_MARK = '';
 
-/** `text` from stderr, each line (and each `\r` rewrite of it) marked. */
-export function markStderr(text: string): string {
-  return text.replace(/(^|\n|\r(?!\n))(?=[^\n\r])/g, `$1${STDERR_MARK}`);
+/**
+ * `text` from stderr, each line (and each `\r` rewrite of it) marked. `atLineStart`: whether the
+ * text starts a line (false for a packet that continues the stream's line: see stderrMarker).
+ */
+export function markStderr(text: string, atLineStart = true): string {
+  return text.replace(/(^|\n|\r(?!\n))(?=[^\n\r])/g, (all: string, before: string, at: number) =>
+    at === 0 && before === '' && !atLineStart ? all : `${before}${STDERR_MARK}`,
+  );
+}
+
+/**
+ * markStderr for one stream's packets in turn: a packet that continues a line isn't marked again.
+ * Before, every packet got a mark at its start, so a secret split across two packets had a mark in
+ * the middle, and no pattern matched it (security review, round 5).
+ */
+export function stderrMarker(): (text: string) => string {
+  let atLineStart = true;
+  return (text) => {
+    const out = markStderr(text, atLineStart);
+    if (text !== '') atLineStart = /[\r\n]$/.test(text);
+    return out;
+  };
+}
+
+/**
+ * `text` (stderr lines marked) redacted as if it had no marks: the marks are taken out, the text
+ * redacted, and each line that had one marked again at its start. A redaction that joins lines (a
+ * private key) marks the line it left when any of the lines it took was marked.
+ */
+export function redactMarked(text: string, redact: (text: string) => string): string {
+  if (!text.includes(STDERR_MARK)) return redact(text);
+  const { text: plain, stderr } = splitStderrMarks(text);
+  const out = redact(plain);
+  const marked = mapLines(plain.split('\n'), out.split('\n'), new Set(stderr));
+  return out
+    .split('\n')
+    .map((line, i) => (marked.has(i) ? STDERR_MARK + line : line))
+    .join('\n');
+}
+
+/** The lines of `after` (`before` redacted) that hold one of `lines` of `before`. */
+function mapLines(before: readonly string[], after: readonly string[], lines: ReadonlySet<number>): Set<number> {
+  if (before.length === after.length) return new Set(lines);
+  const out = new Set<number>();
+  let i = 0;
+  for (let j = 0; i < before.length && j < after.length; j++) {
+    // A line redaction left alone; else the changed line takes the lines up to the one after it.
+    let k = i + 1;
+    if (before[i] !== after[j]) {
+      if (j + 1 >= after.length) k = before.length;
+      else {
+        while (k < before.length && before[k] !== after[j + 1]) k++;
+        if (k >= before.length) k = i + 1;
+      }
+    }
+    for (; i < k; i++) if (lines.has(i)) out.add(j);
+  }
+  return out;
 }
 
 /** The text without stderr marks, and the 0-based indexes of the lines that had one. */

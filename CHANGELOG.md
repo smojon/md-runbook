@@ -29,11 +29,34 @@ Security fixes from a review of the parts that face the network.
   block. Before, a block using `${input:NAME}` showed and copied the secret value.
 - **Add Note:** a lone CR in a note no longer starts a line outside its quote, where a block
   could run.
-- **Output markers:** a value can no longer end the marker's comment, and line separators are
-  dropped. Values are capped at 200 characters.
+- **Output markers:** a value can no longer end the marker's comment. Values are capped at 200
+  characters, but for a call's paths.
+  - Dashes, brackets, quotes and line breaks are escaped as `%XX`, and read back as they were.
+  - Notes and outputs written before, such as `by=jean--luc`, still leave a signed runbook
+    unchanged.
 - **Command line, call copies:** the record of copies is written through a new file of a random
   name. On Linux and macOS, a record folder or file others can write is not used.
   - A continued copy runs as read for its checks, not read again.
+- **Saved outputs (VS Code and the app):** a secret printed to stderr in two packets is now
+  redacted. Before, a stderr mark between the packets kept it from matching, and the file got it
+  in clear.
+  - The app's live output hides a known secret split this way too.
+- **App, live output:** a token split across two packets no longer shows its end, such as a JWT's
+  signature. The raw output is redacted, never output redacted before.
+- **App, confirmations:** Run on a confirmation card runs only the values it showed. A value
+  changed since, by a link for example, asks again.
+  - A link no longer fills its values into a runbook that is running or waiting for an answer.
+    It opens a new copy and says why.
+  - A link no longer fills its values into a call's copy either.
+- **Copy with values (VS Code and the app):** a command with a comment gets no values. Before,
+  the apostrophe in `# don't` opened a quote, and a value from a link could run when pasted.
+  - The same holds for bash heredocs (`<<EOF`) and PowerShell here-strings (`@"…"@`, `@'…'@`).
+  - A reference after the shell's escape character, such as `\${param:X}`, stays a reference.
+- **Signed runbooks: output fences.** An output block is set aside only with the fences md-runbook
+  writes. Before, a fence indented 4 spaces showed its "output" as prose on GitHub, while the
+  runbook still counted as signed.
+- **Signing: tags alone on a line.** A bash block after a line such as `<span>` or `<a name="x">`
+  is refused. GitHub shows such a block as text, not as code that runs.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each

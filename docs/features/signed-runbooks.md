@@ -200,6 +200,8 @@ request there could miss them. Signing refuses them:
 - a bash block inside an HTML comment;
 - a bash block inside another HTML block, such as `<script>`, `<pre>`, or a `<div>` with no
   blank line after it;
+- a bash block right after a tag alone on its line, such as `<span>`, unless a paragraph comes
+  before the tag;
 - code fences indented 4 spaces or more.
 
 **Parameters.** `${param:NAME}` reaches the shell as an environment variable, never as text in

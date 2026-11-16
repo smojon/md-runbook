@@ -63,6 +63,28 @@ describe('fillQuoted: where the quoting is not followed, nothing is filled in (s
     assert.equal(with_('Write-Output "${param:X}"', 'pwsh', 'a`"$(Write-Output NOPE)“').text, 'Write-Output "a```"`$(Write-Output NOPE)`“"');
   });
 
+  it('a comment, a heredoc, a here-string, or the escape character before it: nothing filled in (round 5)', () => {
+    for (const [line, shell, v] of [
+      // `'` in a comment opened a quote that never was: the value ran.
+      ["if true; then\n  # don't restart the primary\n  echo ${param:X}\nfi", 'bash', 'a; touch /tmp/r5_comment'],
+      ['echo ${param:X} # restart', 'bash', 'a b'],
+      ['cat <<EOF\n{"name": "${param:X}"}\nEOF', 'bash', '$(touch /tmp/r5_heredoc)'],
+      ["cat <<'EOF'\nname: ${param:X}\nEOF", 'bash', 'x\nEOF\ntouch /tmp/r5'],
+      ['cat <<-EOF\n\tname: ${param:X}\n\tEOF', 'bash', 'a b'],
+      ['echo \\${param:X}', 'bash', 'a; touch /tmp/r5_esc #'],
+      ["if ($true) {\n  # don't restart\n  Write-Output ${param:X}\n}", 'pwsh', 'a; Write-Output INJECTED3'],
+      ["<# don't #>\nWrite-Output ${param:X}", 'pwsh', 'a b'],
+      ['$b = @"\n{ "name": "${param:X}" }\n"@\n$b', 'pwsh', '$(Write-Output INJECTED)'],
+      ["$b = @'\n${param:X}\n'@", 'pwsh', "x\n'@\nWrite-Output INJECTED"],
+      ['Write-Output `${param:X}', 'pwsh', 'a; Write-Output INJECTED2 #'],
+      ['echo ^${param:X}', 'cmd', 'a'],
+    ] as const) assert.deepEqual(with_(line, shell, v), { text: line, left: ['${param:X}'] }, line);
+    // A # that starts no comment, and a reference with no escape before it: filled in.
+    assert.equal(with_('echo ${#HOME} $# a#b ${param:X}', 'bash', 'a b').text, "echo ${#HOME} $# a#b 'a b'");
+    assert.equal(with_('Write-Output $a#b ${param:X}', 'pwsh', 'a b').text, "Write-Output $a#b 'a b'");
+    assert.equal(with_('echo \\\\ ${param:X}', 'bash', 'a b').text, "echo \\\\ 'a b'");
+  });
+
   it('cmd: line breaks, ! and ( ) are metacharacters too', () => {
     for (const v of ['x\r\necho INJECTED-CMD', 'x\recho', '!PATH!', '(x)', 'a % b', 'a^b', 'a"b']) assert.deepEqual(with_('echo ${param:X}', 'cmd', v), { text: 'echo ${param:X}', left: ['${param:X}'] }, JSON.stringify(v));
   });

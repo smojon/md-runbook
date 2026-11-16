@@ -14,6 +14,11 @@
  *   `$'…'` or an open `${…}`, or PowerShell's `--%`, the quoting isn't followed here: a reference
  *   there is not filled in, and is listed as left. Before, a value there could end the quotes and
  *   run as code (security review, round 4).
+ * - A command with a comment (bash `#` at a word's start; PowerShell `#`, `<#`), a bash heredoc
+ *   (`<<`) or a PowerShell here-string (`@"`, `@'`) gets no value at all: the apostrophe of
+ *   `# don't` opened a quote that never was, and a heredoc's body isn't quoted (a value with a
+ *   line `EOF` ended it). Nor does a reference after the shell's escape character (`\${…}`,
+ *   `` `${…} ``, `^${…}`): its quote would be escaped. Refused rather than parsed (round 5).
  */
 import type { RefKind } from './secrets';
 import type { ShellKind } from './shellKind';
@@ -72,6 +77,19 @@ function quotingUnknown(before: string, shell: ShellKind): boolean {
   return depth > 0;
 }
 
+/**
+ * Whether `command` has quoting quoteStates doesn't follow anywhere in it: a comment, a bash heredoc
+ * or a PowerShell here-string. Cautious: also inside quotes.
+ */
+function unfollowed(command: string, shell: ShellKind): boolean {
+  if (shell === 'bash') return /(?<![^\s;&|()<>'"`])#/.test(command) || command.includes('<<');
+  if (shell === 'pwsh') return /(?<![\w$])#|@["“”„'‘’‚‛]/.test(command);
+  return false;
+}
+
+/** The shell's escape character. */
+const ESCAPE: Record<ShellKind, string> = { bash: '\\', pwsh: '`', cmd: '^' };
+
 /** `value` as `shell` reads it as one piece of text where the state is `q`; undefined: can't (cmd). */
 export function quoteValue(value: string, shell: ShellKind, q: Quote = 'none'): string | undefined {
   switch (shell) {
@@ -100,9 +118,11 @@ export function fillQuoted(
   value: (kind: RefKind, name: string, secretMod: boolean) => string | undefined,
 ): { text: string; left: string[] } {
   const states = quoteStates(command, shell);
+  const refused = unfollowed(command, shell);
   const left = new Set<string>();
   const text = command.replace(REF_RE, (whole: string, kind: RefKind, name: string, mod: string | undefined, at: number) => {
-    const v = quotingUnknown(command.slice(0, at), shell) ? undefined : value(kind, name, mod !== undefined);
+    const unknown = refused || command[at - 1] === ESCAPE[shell] || quotingUnknown(command.slice(0, at), shell);
+    const v = unknown ? undefined : value(kind, name, mod !== undefined);
     const quoted = v === undefined ? undefined : quoteValue(v, shell, states[at] ?? 'none');
     if (quoted !== undefined) return quoted;
     left.add(whole);
