@@ -96,6 +96,28 @@ describe('launchModel', () => {
     expect(m.needed).toBe(true);
   });
 
+  it('a risky setup, ready check or teardown is listed too, Steps row or not (security review round 3)', () => {
+    const text = [
+      '# Rebuild',
+      '',
+      fence('bash setup name="Wipe"', 'rm -rf /srv/cache'),
+      fence('bash ready', 'test -d /srv/cache'),
+      fence('bash name="Build"', 'make'),
+      fence('bash teardown name="Drop"', 'kubectl delete ns build'),
+    ].join('\n');
+    const all = sourcesOf(text);
+    expect(launchModel(all).risky.map((r) => [r.index, r.label])).toEqual([
+      [1, 'Wipe'],
+      [4, 'Drop (teardown, offered)'],
+    ]);
+    // Without their rows (Steps shows them apart): still there, by their names.
+    const rows = all.rows.filter((r) => r.kind !== 'step' || r.index === 3);
+    expect(launchModel({ ...all, rows }).risky.map((r) => [r.index, r.label, r.step])).toEqual([
+      [1, 'Wipe', undefined],
+      [4, 'Drop', undefined],
+    ]);
+  });
+
   it('values typed before, a masked input, a stored secret; nothing needed without values or risky steps', () => {
     const m = launchModel(
       sourcesOf(DEPLOY, {

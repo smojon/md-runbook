@@ -120,6 +120,7 @@ Security fixes from a review of the parts that face the network.
   - Run all stops before a step it still had to run once that step's code changes.
 - **App: the launch form.** Run all first shows one sheet with what the run needs and does.
   - It lists parameters, inputs, secrets to set, risky steps, steps by hand, time and host.
+  - Risky steps include a risky setup, ready check or teardown.
   - Start asks for no value again; risky steps still ask.
   - Hosts & Settings turns it off; ⋯ More → **Run All…** always opens it.
 - **App: Edit Note, Delete Note.** A note's ⋯ edits its words in place, or deletes it after a
