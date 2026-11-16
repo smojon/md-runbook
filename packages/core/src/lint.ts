@@ -159,9 +159,8 @@ function lintReportRuns(text: string, lines: readonly string[], end: number): Li
             ? 'the first valid address counts'
             : 'the first one counts';
       problems.push({ severity: 'warning', line: i, message: `front matter ${key}: written twice: ${counts}` });
-      continue;
-    }
-    at[key] = i;
+      // Its value is checked too: a misspelt `separated` after `true` would otherwise go unsaid.
+    } else at[key] = i;
     if (key === 'report-runs') {
       const why = reportAddressProblem(value);
       if (why) problems.push({ severity: 'warning', line: i, message: `front matter report-runs: "${value}" is ignored: ${why}` });
