@@ -15,7 +15,7 @@
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { IncomingMessage, Server, createServer } from 'node:http';
-import { LookupFunction, Socket, connect, isIP } from 'node:net';
+import { BlockList, LookupFunction, Socket, connect, isIP } from 'node:net';
 import { lookup as dnsLookup } from 'node:dns';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { RelayConfig } from './config';
@@ -233,15 +233,42 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
   };
 }
 
-/** Loopback, private, link-local, carrier-grade NAT and unspecified addresses (IPv4, IPv6, mapped). */
+// Parsed, not compared as text: `0:0:0:0:0:0:0:1`, `::ffff:7f00:1` and NAT64 `64:ff9b::a00:1` are
+// loopback or private too (security review, 2026-11-16). An IPv4 rule also matches its IPv4-mapped
+// IPv6 address (::ffff:a.b.c.d).
+const INTERNAL = new BlockList();
+for (const [net, bits] of [
+  ['0.0.0.0', 8], // "this network"
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10], // carrier-grade NAT
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16], // link-local, cloud metadata
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24], // IETF protocol assignments
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15], // benchmarking
+  ['224.0.0.0', 4], // multicast
+  ['240.0.0.0', 4], // reserved, broadcast
+] as const)
+  INTERNAL.addSubnet(net, bits, 'ipv4');
+for (const [net, bits] of [
+  ['::', 96], // unspecified, loopback, IPv4-compatible
+  ['::ffff:0:0:0', 96], // IPv4-translated
+  ['64:ff9b::', 96], // NAT64
+  ['64:ff9b:1::', 48], // local NAT64
+  ['100::', 64], // discard
+  ['2001::', 32], // Teredo
+  ['2002::', 16], // 6to4
+  ['fc00::', 7], // unique local
+  ['fe80::', 10], // link-local
+  ['ff00::', 8], // multicast
+] as const)
+  INTERNAL.addSubnet(net, bits, 'ipv6');
+
+/** Loopback, private, link-local, multicast, reserved, and IPv6 forms that embed an IPv4 address. */
 export function isInternal(address: string): boolean {
-  const a = address.toLowerCase().replace(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/, '$1');
-  const v4 = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(a);
-  if (v4) {
-    const [x, y] = [Number(v4[1]), Number(v4[2])];
-    return x === 0 || x === 10 || x === 127 || (x === 169 && y === 254) || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 100 && y >= 64 && y <= 127);
-  }
-  return a === '::' || a === '::1' || /^f[cd]/.test(a) || /^fe[89ab]/.test(a);
+  const family = isIP(address);
+  return family === 4 ? INTERNAL.check(address, 'ipv4') : family === 6 ? INTERNAL.check(address, 'ipv6') : false;
 }
 
 function defaultLog(e: LogEvent): void {
