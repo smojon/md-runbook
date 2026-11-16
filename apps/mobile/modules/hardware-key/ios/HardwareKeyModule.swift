@@ -4,8 +4,8 @@ import Foundation
 import Security
 
 /// The app's SSH key: a P-256 key made in the Secure Enclave, or a Keychain key where there is no
-/// Secure Enclave (the simulator on Apple Silicon Macs has one). The private key is never exported; JavaScript gets the public
-/// key and signatures.
+/// Secure Enclave and on the simulator. The private key is never exported; JavaScript gets the
+/// public key and signatures.
 public final class HardwareKeyModule: Module {
   public func definition() -> ModuleDefinition {
     Name("HardwareKey")
@@ -19,7 +19,7 @@ public final class HardwareKeyModule: Module {
     // own prompt, enforced by the Secure Enclave or the Keychain, not by the app).
     AsyncFunction("generate") { (alias: String, userPresence: Bool) -> [String: Any] in
       try HardwareKeyStore.remove(alias)
-      if SecureEnclave.isAvailable, let key = try? HardwareKeyStore.make(alias, enclave: true, userPresence: userPresence) {
+      if HardwareKeyStore.useSecureEnclave, let key = try? HardwareKeyStore.make(alias, enclave: true, userPresence: userPresence) {
         return ["publicKey": try HardwareKeyStore.publicKeyBase64(key), "hardware": true]
       }
       let key = try HardwareKeyStore.make(alias, enclave: false, userPresence: userPresence)
@@ -57,6 +57,17 @@ struct HardwareKeyError: Error, CustomStringConvertible {
 }
 
 enum HardwareKeyStore {
+  /// Never on the simulator: its Secure Enclave answers through its CryptoTokenKit daemon (ctkd),
+  /// which sometimes took over a minute on CI (2026-11-15/16). Clerk's expo-biometrics and
+  /// EllipticCurveKeyPair skip it there too. Device builds don't contain this branch.
+  static var useSecureEnclave: Bool {
+    #if targetEnvironment(simulator)
+      return false
+    #else
+      return SecureEnclave.isAvailable
+    #endif
+  }
+
   static func tag(_ alias: String) -> Data { Data("dev.mdrunbook.key.\(alias)".utf8) }
 
   static func query(_ alias: String) -> [String: Any] {
