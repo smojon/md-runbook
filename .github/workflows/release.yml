@@ -28,10 +28,15 @@ jobs:
           package-manager-cache: false
       - run: npm ci
       # The Go gate for its protocol tests (test/gate.test.ts, in npm test), on Linux and macOS.
+      # go.mod's toolchain line, exactly: go-version-file reads only its `go` line (1.26 = newest).
+      - id: go
+        run: echo "version=$(sed -n 's/^toolchain go//p' apps/gate/go.mod)" >> "$GITHUB_OUTPUT"
+        working-directory: ${{ github.workspace }}
+        shell: bash
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         if: runner.os != 'Windows'
         with:
-          go-version-file: apps/gate/go.mod
+          go-version: ${{ steps.go.outputs.version }}
           cache: false
       - name: Build the gate
         if: runner.os != 'Windows'
@@ -155,9 +160,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      # go.mod's toolchain line, exactly: go-version-file reads only its `go` line (1.26 = newest).
+      - id: go
+        run: echo "version=$(sed -n 's/^toolchain go//p' apps/gate/go.mod)" >> "$GITHUB_OUTPUT"
+        working-directory: ${{ github.workspace }}
+        shell: bash
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: apps/gate/go.mod
+          go-version: ${{ steps.go.outputs.version }}
           cache: false
       - name: Vet and test
         working-directory: apps/gate
