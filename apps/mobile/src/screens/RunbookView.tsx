@@ -52,7 +52,7 @@ import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
-import { copyRefusal, useLibrary, useLibraryCopyState, useOwnKeysState } from '../runbooks/library';
+import { copyRefusal, derivedRefFor, useLibrary, useLibraryCopyState, useOwnKeysState } from '../runbooks/library';
 import { qrLink, runbookAddress } from '../runbooks/address';
 import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { SignatureState, coverage, shownName, unsignedRunnable } from '../signing/trust';
@@ -1303,6 +1303,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const startIncident = (id: string, severity: string | undefined, drill: boolean): void => {
     if (!runbook) return;
     setIncidentCard(undefined);
+    // A copy the library refuses makes no copy that would run (the copy keeps its library's rules).
+    if (libraryRefused) return setNotice(t.copyNotRunnable(libraryRefused));
     const base = (runbook.fileName ?? `${runbook.title}.md`).replace(/(\.\d{8}-\d{6})?\.md$/i, '');
     const now = new Date();
     const text = withBlockAfterFrontMatter(
@@ -1318,7 +1320,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         text: t.incidentStarted(id, runbook.title),
       }),
     );
-    const copy = addRunbook(`${base}.${copyStamp(now)}.md`, text);
+    const copy = addRunbook(`${base}.${copyStamp(now)}.md`, text, undefined, undefined, derivedRefFor(runbook, true));
     router.push({ pathname: '/runbook/[id]', params: { id: copy.id } });
   };
   /** Add Note: a timestamped note (or milestone) after the step it is about, for the record. */
@@ -1339,8 +1341,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   };
   const runAsCopy = (): void => {
     if (!runbook) return;
+    if (libraryRefused) return setNotice(t.copyNotRunnable(libraryRefused));
     const base = (runbook.fileName ?? `${runbook.title}.md`).replace(/(\.\d{8}-\d{6})?\.md$/i, '');
-    const copy = addRunbook(`${base}.${copyStamp(new Date())}.md`, clearOutputBlocks(runbook.text));
+    const copy = addRunbook(
+      `${base}.${copyStamp(new Date())}.md`,
+      clearOutputBlocks(runbook.text),
+      undefined,
+      undefined,
+      derivedRefFor(runbook, false),
+    );
     askAutorun(copy.id);
     router.push({ pathname: '/runbook/[id]', params: { id: copy.id, autorun: '1' } });
   };
@@ -1373,7 +1382,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
         sessionMode === 'session'
           ? { ...meta('sessionOff', 'run'), run: () => setSessionMode('isolated') }
           : { ...meta('sessionOn', 'run'), run: () => setSessionMode('session') },
-        { ...meta('runAllAsCopy', 'run', host ? undefined : t.noRunNow), run: () => runAsCopy() },
+        {
+          ...meta('runAllAsCopy', 'run', libraryRefused ? t.copyNotRunnable(libraryRefused) : host ? undefined : t.noRunNow),
+          run: () => runAsCopy(),
+        },
         practiceHost && practiceId
           ? { ...meta('stopPractice', 'run'), run: () => setPracticeId(undefined) }
           : {
@@ -1384,7 +1396,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               },
             },
         {
-          ...meta('startIncident', 'run'),
+          ...meta('startIncident', 'run', libraryRefused ? t.copyNotRunnable(libraryRefused) : undefined),
           run: () => {
             setIncidentCard('start');
             list.current?.scrollToOffset({ offset: 0 });

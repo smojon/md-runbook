@@ -21,7 +21,7 @@ import { DEFAULT_WRITE_OPTIONS, clearOutputBlocks, isCodeMeta, parse, serialize,
 import type { CellInput } from '@md-runbook/core';
 import { SIGNATURE_NAMESPACE, readSignature, signedStatus } from '@md-runbook/core/signing';
 import { sha256Hex } from '@md-runbook/core/sha256';
-import { runbookTitle } from '@md-runbook/core/title';
+import { runbookTitle, withoutFrontMatter } from '@md-runbook/core/title';
 import { t } from '../i18n';
 import { loadSettings, libraryUrlSetting } from '../settings/store';
 import { DEFAULT_LIBRARY_PATH, loadRuntimeConfig, pageOrigin, runtimeConfig } from '../settings/runtimeConfig';
@@ -49,6 +49,7 @@ import {
 } from '../signing/trust';
 import { parseSshsig } from '../signing/verify';
 import {
+  DerivedRef,
   MAX_RUNBOOK_BYTES,
   Runbook,
   addLibraryCopy,
@@ -864,6 +865,45 @@ export const looksVerified = (s: SignatureState | undefined, facts: SignedFacts 
   isVerified(s) && !facts?.otherName && facts?.olderThan === undefined;
 
 /**
+ * The library runbook a runbook comes from: a library copy's, or the one a copy made from it
+ * (Run All as Copy, Start Incident) keeps, so the library's rules hold for that copy too.
+ */
+export const libraryRefOf = (r: Runbook | undefined): DerivedRef | undefined => (r?.source === 'library' ? r.library : r?.derivedFrom);
+
+const FRONT_MATTER_RE = /^﻿?---[ \t]*\r?\n(?:[\s\S]*?\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/;
+const BLANK_LINES_RE = /^(?:[ \t]*\r?\n)*/;
+const NOTE_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b.*?-->[ \t]*\r?\n(?:[ \t]*>.*(?:\r?\n|$))*/;
+
+/** A runbook's front matter and the blank lines after it (DerivedRef.head). */
+export function headOf(text: string): string {
+  const fm = FRONT_MATTER_RE.exec(text)?.[0] ?? '';
+  return fm + (BLANK_LINES_RE.exec(text.slice(fm.length))?.[0] ?? '');
+}
+
+/**
+ * A derived copy's text as its signature is checked: with `head` (the original's front matter),
+ * that head back in place of the copy's own front matter and the note Start Incident put after it.
+ */
+export function derivedText(text: string, head: string | undefined): string {
+  if (head === undefined) return text;
+  // Notes don't count for a signature: those at the top (Start Incident's, again on a copy of a copy) go with their blank lines.
+  let body = withoutFrontMatter(text).replace(BLANK_LINES_RE, '');
+  for (let next = body.replace(NOTE_RE, ''); next !== body; next = body.replace(NOTE_RE, '')) body = next.replace(BLANK_LINES_RE, '');
+  return head + body;
+}
+
+/**
+ * The ref a copy made from `r` keeps (Run All as Copy; Start Incident with `frontMatter`, as it
+ * changes the front matter): undefined for a runbook from no library.
+ */
+export function derivedRefFor(r: Runbook, frontMatter: boolean): DerivedRef | undefined {
+  const ref = libraryRefOf(r);
+  if (!ref) return undefined;
+  const head = ref.head ?? (frontMatter ? headOf(r.text) : undefined);
+  return { base: ref.base, path: ref.path, ...(head !== undefined ? { head } : {}) };
+}
+
+/**
  * A library copy's signature state, as the list computes it for the library's file: the opened
  * copy's banner shows the same label (screens/RunbookView.tsx), checked against the keys trusted
  * from the copy's library.
@@ -873,8 +913,9 @@ export function useLibraryCopyState(
 ): { base: string; path: string; state: SignatureState; facts: SignedFacts | undefined; signedOnly: boolean } | undefined {
   const lib = useLibrary();
   const trusted = useTrustedSigners();
-  const ref = copy?.source === 'library' ? copy.library : undefined;
-  const text = ref ? copy?.text : undefined;
+  // A copy made from a library copy is checked as its original: with its original front matter.
+  const ref = libraryRefOf(copy);
+  const text = ref && copy ? derivedText(copy.text, ref.head) : undefined;
   const library = ref && lib.library?.base === ref.base ? lib.library : undefined;
   const [got, setGot] = useState<{ text: string; state: SignatureState } | undefined>();
   useEffect(() => {
@@ -937,7 +978,7 @@ export function useOwnKeysState(r: Runbook | undefined): SignatureState | undefi
  * is held to the same rule as one opened from Team runbooks.
  */
 export function copyRefusal(copy: Runbook | undefined, copyState: ReturnType<typeof useLibraryCopyState>): string | undefined {
-  const ref = copy?.source === 'library' ? copy.library : undefined;
+  const ref = libraryRefOf(copy);
   if (!copy || !ref) return undefined;
   // What the app remembers isn't read yet (the first moments after a start): not run until it is.
   if (!memoryReady) return t.libraryChecking;

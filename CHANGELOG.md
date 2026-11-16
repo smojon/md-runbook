@@ -12,6 +12,7 @@
 - **App: imported hosts that join your groups are marked.** Import hosts marks each new host that joins a group you already have, as Run on a Group would include it.
 - **App: a hardware key that fails is no longer replaced silently.** A software key is made only when the phone's keystore can't make such keys, and never with Face ID or a fingerprint on. Other failures show under Hosts & settings, with Try again.
 - **Android: "ask before each use" asks at each use.** On Android 11 and later, a key made with the switch on asks for every signature, not once per 10 seconds. Turn the switch off and on to make such a key.
+- **App: copies of a library runbook keep its rules.** Run All as Copy and Start Incident are off while the library refuses the runbook, and say why. Their copies run only while the library would open them.
 
 ## 0.26.8
 
