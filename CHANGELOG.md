@@ -10,6 +10,7 @@
 - **App: the launch form.** Run all first shows one sheet: parameters, inputs, secrets to set, risky steps, steps by hand, time and host. Start asks for no value again; risky steps still ask. Hosts & Settings turns it off; ⋯ More → **Run All…** always opens it.
 - **App: a runbook's practice: host asks first.** Front matter `practice:` asks once before every cell runs on that host, as `host=` does. A whole runbook verified-signed, or a host you picked, doesn't ask.
 - **App: imported hosts that join your groups are marked.** Import hosts marks each new host that joins a group you already have, as Run on a Group would include it.
+- **App: a hardware key that fails is no longer replaced silently.** A software key is made only when the phone's keystore can't make such keys, and never with Face ID or a fingerprint on. Other failures show under Hosts & settings, with Try again.
 
 ## 0.26.8
 

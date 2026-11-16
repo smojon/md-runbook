@@ -260,6 +260,9 @@ const en = {
   keyChangeGo: 'Make a new key',
   keyChanged: 'New key made: copy its public key above to your hosts.',
   appKeyFailed: (why: string) => `The key could not be made: ${why}`,
+  appKeyRetry: 'Try again',
+  keyNotEnforced:
+    'This key doesn’t ask for you: it was made outside the secure hardware. Turn the switch off and on to make a hardware key.',
   appKeyStorage: {
     hardware: "The private key is in this device's secure hardware: it can't be read out, not even by the app.",
     keystore: "The private key is in this device's keystore and never handed to the app.",

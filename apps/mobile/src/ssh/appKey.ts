@@ -6,8 +6,9 @@
  * - phones: made inside the secure hardware (Secure Enclave, Android Keystore) by the native
  *   HardwareKey module; the private key never reaches JavaScript, the hardware signs;
  * - a key made by an earlier version (PKCS#8 in secure storage) is kept: hosts already trust it;
- * - web, or phones where the hardware key fails: made by the SSH library, kept in secure storage
- *   (the browser's storage on the web);
+ * - web, or phones whose keystore can't make such keys: made by the SSH library, kept in secure
+ *   storage (the browser's storage on the web); a hardware key that fails otherwise is an error
+ *   (shown under Hosts & settings), not a silent software key;
  * - web with "Use a passkey" on: a passkey for this site (passkey.ts); the authenticator signs.
  */
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
@@ -61,6 +62,13 @@ async function hardwareKey(hw: NonNullable<typeof HardwareKey>): Promise<AppKey>
 }
 
 /**
+ * The keystore says it can't make such a key on this phone (no EC keys, no AndroidKeyStore
+ * provider), rather than failing this once (busy, locked, cancelled).
+ */
+export const hardwareUnsupported = (e: unknown): boolean =>
+  /unsupported|not supported|NoSuchAlgorithm|NoSuchProvider/i.test(e instanceof Error ? `${e.name} ${e.message}` : String(e));
+
+/**
  * The passkey made with "Use a passkey". Never made here: making one asks the person, which only
  * the switch's button may start (Safari refuses WebAuthn without a tap).
  */
@@ -82,8 +90,12 @@ export function appKeyInfo(): Promise<AppKey> {
     if ((await getSecret(KEY)) !== null || !HardwareKey) return softwareKey();
     try {
       return await hardwareKey(HardwareKey);
-    } catch {
-      return softwareKey();
+    } catch (e) {
+      // A software key is kept for good (it is preferred from then on): made only when the phone
+      // can't make hardware keys at all, and never when each use should ask for the user. Any other
+      // failure is shown, and the next start tries the hardware again.
+      if (!outputSettings().keyNeedsUser && hardwareUnsupported(e)) return softwareKey();
+      throw e;
     }
   })().catch((e: unknown) => {
     cached = undefined;
