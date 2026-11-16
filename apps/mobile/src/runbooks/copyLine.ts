@@ -2,9 +2,13 @@
  * Copy Line with Values, as VS Code's (lineRuns.ts copyLine): a command with the values a run
  * would use now filled in. Secrets stay references: `${secret:…}`, a masked or `:secret` input,
  * an input named like a secret (`…_TOKEN`) and a value captured as secret. So does a value not
- * known yet (asked when it runs).
+ * known yet (asked when it runs). Each value is quoted for the cell's shell (core fillQuoted), so
+ * the pasted command reads it as one piece of text, as a run does; in cmd, a value with a
+ * metacharacter stays a reference.
  */
 import type { Captured } from '@md-runbook/core/checks';
+import { fillQuoted } from '@md-runbook/core/fillQuoted';
+import type { ShellKind } from '@md-runbook/core/shellKind';
 import { looksSecret } from '@md-runbook/core/secrets';
 
 /** The values a run of the line would use now. */
@@ -27,16 +31,9 @@ export function hasRefs(command: string): boolean {
   return new RegExp(REF.source).test(command);
 }
 
-/** `command` with its values filled in, and the references left as they are (in order, once each). */
-export function withValues(command: string, v: LineValues): { text: string; left: string[] } {
-  const left = new Set<string>();
-  const text = command.replace(REF, (whole: string, kind: string, name: string, mod: string | undefined) => {
-    const value = valueOf(kind, name, mod !== undefined, v);
-    if (value !== undefined) return value;
-    left.add(whole);
-    return whole;
-  });
-  return { text, left: [...left] };
+/** `command` with its values filled in, quoted for `shell`, and the references left as they are (in order, once each). */
+export function withValues(command: string, v: LineValues, shell: ShellKind = 'bash'): { text: string; left: string[] } {
+  return fillQuoted(command, shell, (kind, name, secretMod) => valueOf(kind, name, secretMod, v));
 }
 
 function valueOf(kind: string, name: string, secretMod: boolean, v: LineValues): string | undefined {

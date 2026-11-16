@@ -1961,7 +1961,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const defaults: Record<string, string> = {};
     if (!signedStatus(text)?.cells.has(cellIndex))
       for (const p of parseFrontMatter(text)?.params ?? []) if (p.default !== undefined) defaults[p.name] = p.default;
-    const r = withValues(step.text, { params: paramValues, defaults, inputs: inputs.current, captures: captures.current });
+    // Each value quoted for the cell's shell: pasted, it is one piece of text, as in a run.
+    const cell = parse(text).cells[cellIndex];
+    const shell = (cell && shellKindForLanguage(cell.languageId)) ?? 'bash';
+    const r = withValues(step.text, { params: paramValues, defaults, inputs: inputs.current, captures: captures.current }, shell);
     void Clipboard.setStringAsync(r.text).then(
       () => sayOk(t.copiedLine(lineLabel(step), r.left)),
       (e: unknown) => setNotice(e instanceof Error ? e.message : String(e)),

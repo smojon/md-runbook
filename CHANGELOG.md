@@ -111,6 +111,8 @@ Security fixes from a review of the parts that face the network.
   cell's ⋯, as in VS Code.
 - **App: Copy Line with Values.** A line's actions copy its command with parameters, inputs and
   captured values filled in. Secrets stay references.
+  - Each value is quoted for the block's shell, so a pasted value stays one piece of text.
+  - In a cmd block, a value with `&`, `|`, `%` or another cmd metacharacter stays a reference.
 - **App: Pause Before This Step, Notify Me When It Starts.** A step's ⋯ (cell or Steps row) sets
   either, for this session. Run all asks Continue or Stop there.
   - Marks and breakpoints stay on their step when cells are added above, as by a proposal or a
