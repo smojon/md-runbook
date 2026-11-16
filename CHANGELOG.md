@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.26.8
+
+The Android APK is signed with the app's own key and attached to each release. Progress and notes are fixed.
+
+- **README:** the comparison with Runme names our web and phone apps; Runme's browser version
+  is VS Code on your own machine.
 - **Android app:** the APK is signed with the app's own key, not the template's public debug key.
   Each release has it attached (`md-runbook-X.Y.Z.apk`). Uninstall a debug-signed copy once first:
   Android won't update an app across keys.

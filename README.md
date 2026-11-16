@@ -57,16 +57,17 @@ and an [issue](https://github.com/smojon/md-runbook/issues) tells us what is mis
 
 ## Compared with Runme
 
-[Runme](https://runme.dev) also opens Markdown as a notebook. It does things md-runbook does not
-(a web interface of its own, a larger community). The differences that matter most:
+[Runme](https://runme.dev) also opens Markdown as a notebook, and has a much larger community. The
+differences that matter most:
 
 | | md-runbook | Runme |
 |---|---|---|
+| In a browser, on a phone | Its own web app (a container or a static site) and iOS and Android apps; they reach your servers over SSH | VS Code itself in the browser, on your machine (`runme open`, through code-server; [docs](https://docs.runme.dev/getting-started/web)) |
 | Where the output goes | Into the runbook itself, under each block, so the file is its own record of what ran (or into a timestamped copy with **Run All as Copy**) | Into a separate Session Outputs file, off by default ([docs](https://docs.runme.dev/usage/auto-save)) |
 | Windows | Native: PowerShell, cmd and Git Bash, no WSL | Needs WSL 2 ([docs](https://docs.runme.dev/installation/windows)); PowerShell support is "rudimentary" ([limitations](https://docs.runme.dev/resources/limitations)) |
 | One runbook for several OSes | `os=windows`, `os=linux,macos` blocks: each OS runs its own | Open request ([runme#960](https://github.com/runmedev/runme/issues/960)) |
 
-As of October 2026, from Runme's documentation and issue tracker.
+As of November 2026, from Runme's documentation and issue tracker.
 
 ## Usage
 
