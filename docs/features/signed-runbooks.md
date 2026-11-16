@@ -584,7 +584,16 @@ folder. Each row says what its signature is worth:
 - a version older than one seen before is flagged, as in the app.
 
 Opening a row makes your own copy, as a link does. A `signedOnly` library opens verified
-runbooks only. **Publish to Library…** and **Remove from Library…** (Share ▾) talk to the
+runbooks only.
+
+**Trusted Signers…** (Share ▾, the view's ⋯) edits that allowed_signers file:
+
+- lists each signer with its key fingerprint, and the lines it can't use;
+- adds an allowed_signers line or a public key, pasted or from a file;
+- adds the library's own `allowed_signers`, after its fingerprints and a warning;
+- removes one, after a confirm.
+
+Lines it adds get `namespaces="md-runbook"`. With no file set, it offers to make one. **Publish to Library…** and **Remove from Library…** (Share ▾) talk to the
 library server.
 
 ## Limits

@@ -8,6 +8,8 @@
 - **VS Code: the Library view** (Runbook activity bar) lists your team library by folder, as the
   app's Team runbooks do. Each row says whether its signature is verified against your trusted
   signers. Opening one makes your own copy.
+- **VS Code: Trusted Signers…** (Share ▾) lists, adds and removes the signers in your
+  allowed_signers file. It adds a pasted line, a public key, or the team library's signers.
 - **Command line: `md-runbook unpublish PATH --library URL`** removes a runbook from a team
   library, where its server allows deleting.
 
