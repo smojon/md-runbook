@@ -55,10 +55,15 @@ export const RESERVED_VARS: readonly string[] = [
   'LANG', 'LANGUAGE', 'GCONV_PATH', 'LOCPATH', 'GLIBC_TUNABLES',
   // Interpreters that load code from the environment.
   'NODE_OPTIONS', 'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONHOME', 'PERL5OPT', 'PERL5LIB', 'RUBYOPT', 'RUBYLIB', 'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS',
+  'JDK_JAVA_OPTIONS', 'LUA_INIT', 'PERLLIB', 'PHPRC', 'OPENSSL_CONF',
   // git's commands and config.
   'GIT_SSH_COMMAND', 'GIT_SSH', 'GIT_CONFIG', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS',
+  'GIT_EXEC_PATH', 'GIT_PROXY_COMMAND', 'GIT_ASKPASS', 'GIT_EXTERNAL_DIFF',
+  // Programs that other programs start.
+  'SSH_ASKPASS', 'PAGER', 'LESSOPEN', 'LESSCLOSE', 'KUBECTL_EXTERNAL_DIFF', 'EDITOR', 'VISUAL', 'BROWSER',
   // Where programs connect, and which certificates they trust.
   'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'CURL_HOME', 'CURL_CA_BUNDLE',
+  'ftp_proxy', 'FTP_PROXY', 'HOSTALIASES', 'AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE',
   'XDG_CONFIG_HOME', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE',
 ];
 /** The prefixes isReservedVar refuses. */

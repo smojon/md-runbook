@@ -39,10 +39,16 @@ The second is the web app's passkey (**Use a passkey**). `verify-required` makes
 signature made without the person's fingerprint, face or PIN. The gate logs its fingerprint as
 for any key.
 
-`restrict` turns off port, agent and X11 forwarding and the pty. Options on the command:
+`restrict` turns off port, agent and X11 forwarding, the pty and `~/.ssh/rc`. The gate needs it
+on every key: with forwarding, `ssh -L` to `docker.sock` runs code without a signature.
+
+Options on the command:
 - `--unsigned=allow|refuse`, `--scopes=a,b` and `--signers=N` override `gate.conf` for that key;
 - `--who=NAME` is the name logged for it;
 - `--config=FILE` reads another config.
+
+The command may start with `exec`, and values may be quoted: `--who='Alice Smith'`. Anything a
+shell would expand (`$`, a backtick, `;`) is refused.
 
 With SSH certificates, put the restriction into the certificate instead:
 `ssh-keygen -s ca -I alice -n support -O clear -O force-command=/usr/local/bin/md-runbook-gate alice.pub`.
@@ -50,6 +56,15 @@ With SSH certificates, put the restriction into the certificate instead:
 **Keep the gate's files out of the account's reach.** Signed blocks run as the account, so it
 must not own the script, `/etc/md-runbook/` or (ideally) its own `authorized_keys`. For
 example: `AuthorizedKeysFile /etc/ssh/authorized_keys/%u` with root-owned files.
+
+**Give the account the login shell `/bin/sh`:** `sudo usermod -s /bin/sh support`.
+- sshd starts the gate with the login shell. Debian's bash runs `~/.bashrc` first, a file the
+  account can write.
+- Under sshd, the gate refuses to start with bash or zsh while the home folder is writable.
+- `login_shell_check = no` in `gate.conf` turns this off, for test servers only.
+
+**Use the account for the gate alone.** Programs already running as the account are out of the
+gate's reach: they can do what a block can.
 
 Add `ExposeAuthInfo yes` to `sshd_config` to log each key's fingerprint.
 
@@ -65,11 +80,16 @@ It accepts the account only as one of two kinds:
 
 Anything else stops the session before it starts, naming the lines to change:
 - a key without `command="…/md-runbook-gate …"`, or with more after the gate's options;
+- a key without `restrict` (or all of `no-port-forwarding`, `no-agent-forwarding`,
+  `no-X11-forwarding`, `no-pty`, `no-user-rc`);
+- a key that turns something on again: `port-forwarding`, `permitopen`, `permitlisten`, `pty`,
+  `user-rc`, `X11-forwarding`, `agent-forwarding`;
 - a mix of signed and unsigned keys: give the unsigned ones their own account;
 - a file it can't read.
 
 The check reads key lines with their options (`restrict`, `from=`, `environment=`, quoted
-values) and `cert-authority` lines too.
+values) and `cert-authority` lines too. In `authorized_keys =`, `%h`, `%u`, `%U` and `%%` work as
+in sshd; any other `%` token is an error.
 
 What it can't see, so keep this account for the gate alone and without a password:
 - keys from `AuthorizedKeysCommand`, and the principals of SSH certificates;
@@ -78,29 +98,46 @@ What it can't see, so keep this account for the gate alone and without a passwor
 
 With `ForceCommand` in `sshd_config` (as on the [ops host](../ops/README.md)), set
 `sshd_force_command = yes`. Then every login runs the gate whatever the key lines say, and
-`unsigned` in `gate.conf` decides the kind alone.
+`unsigned` in `gate.conf` decides the kind alone. Because the key lines go unchecked:
+- `gate.conf` and its folder must be root-owned, not writable by the account. Else the gate
+  refuses to start.
+- `sshd_config` needs `DisableForwarding yes`, `PermitTTY no` and `PermitUserRC no`.
+- The gate refuses to start while `~/.ssh/rc` exists.
+- `--sshd-force-command` on the gate's command line needs `sshd_force_command = yes`. A key line
+  may not have it.
 
 ## The blocks' shell
 
-- **A fresh shell for each runbook:** `bash --noprofile --norc`, else `sh`. Functions, aliases,
+- **A shell for each runbook:** `bash --noprofile --norc`, else `sh`. Functions, aliases,
   traps, options and variables of another runbook don't carry over.
 - **The blocks of one runbook share it,** as in a plain session: `cd`, variables and `set -e`
-  carry over. Loading the same runbook again keeps it.
+  carry over.
+  - Loading the same runbook again keeps it, also after a call into another runbook.
+  - A session keeps up to 6 such shells. A 7th runbook ends the one used least recently.
+- **Unsigned text** (where allowed) never runs in a shell a signed runbook gets later. Loading
+  that runbook again starts a fresh shell.
+- **Background programs** of a block end with its shell, at the latest with the session. Each
+  shell has a process group of its own (`setsid`, else `perl`).
 - **No profile:** not `/etc/profile`, `~/.profile` or `~/.bashrc`. The account can write those,
   so they would run in every signed block.
 - **PATH** is `path =` in `gate.conf` (default `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`).
   Add the folders of tools such as `kubectl` there, root-owned folders only.
 - **Locale:** `locale =` in `gate.conf` (default `auto`: `C.UTF-8` where the system has it, else
   `C`). The client's `LANG` and `LC_*` never reach a block.
-- **Environment:** what sshd set for the gate, minus what changes how a shell or the loader
-  starts (`BASH_ENV`, `LD_*`).
+- **Environment:** only `HOME`, `USER`, `LOGNAME`, `SSH_CLIENT`, `SSH_CONNECTION`, `SSH_TTY`,
+  `TERM`, `TZ` and `TMPDIR` from what sshd set. Proxies, `NODE_OPTIONS` or `KUBECONFIG` from
+  `environment=` never reach a block.
+  - `SHELL` is the blocks' shell.
+  - `KUBECONFIG` is `kubeconfig =` in `gate.conf`, or a block's signed `env.KUBECONFIG`.
 - **kube-context:** a block signed with `kube-context=NAME` (or `kube-context=${param:NAME}`)
   runs only while `kubectl config current-context` says that context. The gate checks it
   itself, after the block's `env.*`, and refuses otherwise (exit 126). The front matter's
   `kube-context:` isn't signed: only the app checks that one.
-- **The work folder:** the gate keeps the verified manifest and the parameters in memory. It
-  writes each block to a new file and checks its hash again just before the shell runs it.
-  - A block can still find that folder: it runs as the account.
+- **No files in between:** the gate keeps the verified manifest, the parameters and the runs in
+  memory. It sends each block's code to the shell through a pipe only the gate holds.
+  - The block runs as the body of a function: `return` ends it, and `BASH_SOURCE` is empty.
+  - The shell writes each run's exit to the work folder with a random number. A block can't
+    write one that counts for another run.
 
 ## Trust
 

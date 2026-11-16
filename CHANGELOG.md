@@ -40,6 +40,7 @@ Security fixes from a review of the parts that face the network.
   can write, in every signed block.
   - Another runbook's functions, traps, options and variables no longer carry over. The blocks of
     one runbook still share their shell.
+  - A runbook keeps its shell after a call into another runbook, which gets a shell of its own.
   - The client's `LANG` and `LC_*` no longer reach the blocks.
   - Add the folders of your tools to `path =` if they aren't in `/usr/local/bin`, `/usr/bin` or
     `/bin`.
@@ -51,13 +52,41 @@ Security fixes from a review of the parts that face the network.
   start if a key skips the gate, or if signed and unsigned keys share the account.
   - An account whose keys allow unsigned blocks sends no run reports.
   - With `ForceCommand`, set `sshd_force_command = yes`. The ops host image does this.
-- **Gate: the work folder.** The gate keeps the verified manifest and the parameters in memory,
-  and checks each block's hash again before it runs. Before, a block could plant a parameter
-  for the next one.
+  - A key's command may start with `exec` and quote its values, such as `--who='Alice Smith'`.
+- **Gate: the work folder.** The gate keeps the verified manifest and the parameters in memory.
+  Before, a block could plant a parameter for the next one.
+- **Gate: no file between the check and the shell.** Each block's code goes to its shell through
+  a pipe only the gate holds. Before, a program could swap the file after the hash check.
+  - Before, a program of the account could write commands into the named pipe a block's shell
+    read.
+  - Programs already running as the account are out of the gate's reach. Use the account for
+    the gate alone.
+- **Gate: background programs** of a block end with its shell, at the latest with the session.
+  Before, they outlived both.
+- **Gate: run reports** count only the exit the shell wrote for that run. Before, a block could
+  add a passing exit for a failed run.
+- **Ops host: the account's login shell is `/bin/sh`.** With bash, sshd ran `~/.bashrc`, a file
+  the account can write, before the gate.
+  - Under sshd, the gate now refuses bash or zsh as the login shell while the home folder is
+    writable. Run `usermod -s /bin/sh` for the account.
+- **Gate: every key needs `restrict`.** Without it, port forwarding stays open, and `ssh -L` to
+  `docker.sock` runs code without a signature.
+  - Key options that turn forwarding, the pty or `~/.ssh/rc` on again are refused too.
+- **Gate: `sshd_force_command = yes`** counts only in a root-owned `gate.conf` the account can't
+  write. Before, `--sshd-force-command` on a key line switched off the check of the keys.
+- **Gate: unsigned blocks** never run in a shell that a signed runbook gets later. Before, unsigned
+  text sent before the first load shared that runbook's shell.
+- **Gate: the blocks' environment** comes from a short list, such as `HOME`, `USER` and
+  `SSH_CLIENT`. Before, proxies or `NODE_OPTIONS` from sshd's `environment=` reached the blocks.
+  - `KUBECONFIG` comes from `kubeconfig =` in `gate.conf`, or from a block's `env.KUBECONFIG`.
+- **Gate: `authorized_keys =`** expands `%U` and `%%` as sshd does, and any other token is an
+  error. Before, the gate didn't read such a file.
 - **Gate: cancelling** stops every program of the running block, not only the shell's children.
   The stop request names a random session number, so other sessions can't stop it.
 - **Gate and signing:** more names are refused as parameters and `env.*`. Among them are
   `NODE_OPTIONS`, `PYTHONPATH`, `GIT_SSH_COMMAND`, the proxy variables and `SSL_CERT_FILE`.
+  - Also `GIT_ASKPASS`, `EDITOR`, `PAGER`, `LESSOPEN`, `OPENSSL_CONF`, `AWS_CONFIG_FILE` and a
+    few more.
 - **Gate:** an empty scope list and a missing `--config=` file are now errors. Before, they
   meant every scope and the built-in defaults.
 - **Gate:** run reports no longer read the account's `~/.curlrc`.

@@ -47,8 +47,12 @@ class Gate {
   private n = 0;
 
   constructor(args: string[], env: Record<string, string>, command = 'bash -l') {
-    // As sshd starts it: $0 is the path the key line names.
-    this.child = spawn(SH, [shPath(GATE), ...args], { env: { ...process.env, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
+    // As sshd starts it: $0 is the path the key line names. Not under sshd unless a test says so
+    // (the gate checks the login shell then).
+    const base: Record<string, string | undefined> = { ...process.env };
+    delete base.SSH_CLIENT;
+    delete base.SSH_CONNECTION;
+    this.child = spawn(SH, [shPath(GATE), ...args], { env: { ...base, ...env, SSH_ORIGINAL_COMMAND: command }, stdio: 'pipe' });
     this.child.stdout!.on('data', (d: Buffer) => this.got('out', d.toString('utf8')));
     this.child.stderr!.on('data', (d: Buffer) => this.got('err', d.toString('utf8')));
     this.exited = new Promise((r) => this.child.on('close', (code) => r(code)));
@@ -680,7 +684,7 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     const bad = await g.request('load', toBase64(manifest), await sshSign(manifest, key));
     assert.match(bad.err, /sets PATH, a name the gate doesn't let a runbook set/);
     // Names that load code or change where programs connect (security review, 2026-11-16).
-    for (const name of ['NODE_OPTIONS', 'GIT_CONFIG_KEY_0', 'https_proxy']) {
+    for (const name of ['NODE_OPTIONS', 'GIT_CONFIG_KEY_0', 'https_proxy', 'GIT_ASKPASS', 'EDITOR', 'ftp_proxy']) {
       const m = formatManifest(manifestOf(RUNBOOK, { patterns: PATTERNS })).replace(/^env GREETING /m, `env ${name} `);
       const r = await g.request('load', toBase64(m), await sshSign(m, key));
       assert.match(r.err, new RegExp(`sets ${name}, a name the gate doesn't let a runbook set`));
@@ -790,6 +794,16 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
       ['an open quote', [`restrict,command="${shPath(GATE)} ${KEY}`], /line 1: can't read its options/],
       ['two commands', [`command="${shPath(GATE)}",command="/bin/sh" ${KEY}`], /line 1: can't read its options/],
       ['a CA without the gate', [`cert-authority,principals="ops" ${KEY}`], /line 1: no command=/],
+      // Without restrict, -L to docker.sock or the user's bus runs code unsigned (security review round 3).
+      ['no restrict', [keyLine('', '')], /line 1: add restrict/],
+      ['some no-* options only', [keyLine('', 'no-pty,no-port-forwarding,')], /line 1: add restrict/],
+      ['restrict, then forwarding again', [keyLine('', 'restrict,port-forwarding,'), keyLine('', 'restrict,user-rc,')], /line 1: remove port-forwarding[\s\S]*line 2: remove user-rc/],
+      ['restrict, then permitopen', [keyLine('', 'restrict,permitopen="localhost:2375",')], /line 1: remove permitopen/],
+      // Only ForceCommand may say it, and gate.conf decides (security review round 3).
+      ['--sshd-force-command on a key line', [keyLine(' --sshd-force-command')], /line 1: command=/],
+      ['a shell expansion', [keyLine(' --who=$(id)')], /line 1: command=/],
+      ['a ; in a value', [keyLine(' --who=a;b')], /line 1: command=/],
+      ['an expansion in double quotes', [keyLine(' --who=\\"$HOME\\"')], /line 1: command=/],
     ];
     for (const [what, lines, re] of bad) {
       const c = confAt('mixed.conf', [`authorized_keys = ${keysAt('mixed.keys', lines)}`]);
@@ -805,12 +819,16 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
     const none = new Gate([`--config=${confAt('none.conf', [`authorized_keys = ${keysAt('none.keys', ['# nobody yet', ''])}`])}`], env());
     none.child.stdin!.end();
     assert.equal(await none.exited, 2);
-    // Comments, blank lines, CRLF, options with quoted commas and escaped quotes, a CA line: fine.
+    // Comments, blank lines, CRLF, options with quoted commas and escaped quotes, a CA line, the
+    // five no-* options instead of restrict, exec and quoted values (security review round 3): fine.
     const good = [
       '# the support team',
       '',
-      `environment="NOTE=a,b",from="10.0.0.0/8,192.168.0.0/16",no-pty,command="${shPath(GATE)} --who=alice --scopes=web,staging" ${KEY}\r`,
-      `cert-authority,principals="ops",command="sh ${shPath(GATE)}" ${KEY}`,
+      `restrict,environment="NOTE=a,b",from="10.0.0.0/8,192.168.0.0/16",no-pty,command="${shPath(GATE)} --who=alice --scopes=web,staging" ${KEY}\r`,
+      `cert-authority,restrict,principals="ops",command="sh ${shPath(GATE)}" ${KEY}`,
+      `no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,no-user-rc,command="${shPath(GATE)}" ${KEY}`,
+      `restrict,command="exec ${shPath(GATE)} --who='Alice Smith'" ${KEY}`,
+      `restrict,command="exec sh ${shPath(GATE)} --who=\\"Bob B\\" --config=${shPath(conf)}" ${KEY}`,
     ];
     const ok = new Gate([`--config=${confAt('good.conf', [`authorized_keys = ${keysAt('good.keys', good)}`])}`], env());
     gates.push(ok);
@@ -894,6 +912,225 @@ describe('md-runbook-gate', { skip: !SH && 'no POSIX sh (set MD_RUNBOOK_GATE_SH)
       // A gate that started would wait for requests: with none, it ends with 0.
       g.child.stdin!.end();
       assert.equal(await g.exited, 2, what);
+    }
+  });
+
+  // ---- security review round 3 (2026-11-16) ----
+
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  /** The exit code and stderr of a gate that stops before its session (stdin closed at once). */
+  const startup = async (args: string[], extra: Record<string, string> = {}): Promise<{ code: number | null; err: string }> => {
+    const g = new Gate(args, { ...env(), ...extra });
+    gates.push(g);
+    let err = '';
+    g.child.stderr!.on('data', (d: Buffer) => (err += d.toString('utf8')));
+    g.child.stdin!.end();
+    return { code: await g.exited, err };
+  };
+  /** A raw request whose text ends with the marker, as the app's cellCommand does. */
+  const rawLine = (id: string, text: string): string =>
+    `raw ${id} ${toBase64(`${text}\nprintf '\\036%s %s\\n' __MDRB_${id}__ 0 >&2; printf '\\036%s %s\\n' __MDRB_${id}__ 0\n`)}\n`;
+
+  it("a block can't swap the next block's code or write into the shell's pipe: no run file, no named pipe", async () => {
+    const g = start();
+    await g.hello();
+    // The reviewer's repro (fifo_toctou.sh), as a background program of the account: it swaps each
+    // run file for a FIFO that serves the hash check the signed text and the shell other code.
+    const attack =
+      '( i=0; while [ $i -lt 40 ]; do for f in "${TMPDIR:-/tmp}"/md-runbook-gate.*/run.*; do ' +
+      '[ -f "$f" ] && rm -f "$f" && mkfifo "$f" && { printf "echo SIGNED\\n" >"$f"; printf "echo INJECTED\\n" >"$f"; } & done; ' +
+      'i=$((i + 1)); sleep 0.1; done ) >/dev/null 2>&1 </dev/null & echo armed';
+    // The named pipe the shell read: anything written there ran in the shell.
+    const pipes =
+      'n=0; for f in "${TMPDIR:-/tmp}"/md-runbook-gate.*/* "${TMPDIR:-/tmp}"/md-runbook-gate.*/*/*; do ' +
+      '[ -p "$f" ] && n=$((n + 1)); case ${f##*/} in run.*) n=$((n + 1)) ;; esac; done; echo "pipes and run files: $n"';
+    const [m, s] = await signed(fence('bash', attack) + fence('bash', 'echo SIGNED') + fence('bash', pipes), { name: 'ops/swap' });
+    assert.equal((await g.request('load', m, s)).code, 0);
+    assert.equal((await g.request('run', '1')).out, 'armed\n');
+    for (let i = 0; i < 5; i++) {
+      const r = await g.request('run', '2');
+      assert.deepEqual([r.code, r.out], [0, 'SIGNED\n']);
+    }
+    assert.equal((await g.request('run', '3')).out, 'pipes and run files: 0\n');
+    await g.close();
+  });
+
+  it("a block's background programs end with its shell, at the latest with the session", { skip: process.platform === 'win32' && "Git for Windows' pids are not Windows' own" }, async () => {
+    const pidFile = path.join(dir, 'background.pid');
+    fs.rmSync(pidFile, { force: true });
+    const [m, s] = await signed(fence('bash', `sleep 300 >/dev/null 2>&1 </dev/null & echo $! >${shPath(pidFile)}; echo started`), { name: 'ops/background' });
+    const g = start();
+    await g.hello();
+    await g.request('load', m, s);
+    assert.equal((await g.request('run', '1')).out, 'started\n');
+    const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+    assert.ok(alive(pid));
+    assert.equal(await g.close(), 0);
+    for (let i = 0; i < 50 && alive(pid); i++) await pause(100);
+    assert.equal(alive(pid), false, 'the background program ended with the session');
+  });
+
+  it('a runbook keeps its shell across a call into another runbook, which has its own', async () => {
+    const g = start();
+    await g.hello();
+    const [a, as, ah] = await signed(
+      fence('bash', 'A=1; cd /; f() { echo func; }; set -e') +
+        fence('bash', 'echo "A=${A-unset} pwd=$PWD"; type f >/dev/null 2>&1 && echo has-f; case $- in *e*) echo has-e ;; esac; true'),
+      { name: 'ops/caller' },
+    );
+    const [b, bs] = await signed(fence('bash', 'echo "callee: A=${A-unset}"; B=2') + fence('bash', 'echo "B=${B-unset}"'), { name: 'ops/callee' });
+    assert.equal((await g.request('load', a, as)).code, 0);
+    assert.equal((await g.request('run', '1')).code, 0);
+    // As the app runs a call: the callee loads, runs, and the caller's next block loads it again.
+    assert.equal((await g.request('called', ah, '1')).code, 0);
+    assert.equal((await g.request('load', b, bs)).code, 0);
+    assert.equal((await g.request('run', '1')).out, 'callee: A=unset\n');
+    assert.equal((await g.request('load', a, as)).code, 0);
+    const back = await g.request('run', '2');
+    assert.deepEqual([back.code, back.out], [0, 'A=1 pwd=/\nhas-f\nhas-e\n']);
+    assert.equal((await g.request('load', b, bs)).code, 0);
+    assert.equal((await g.request('run', '2')).out, 'B=2\n');
+    await g.close();
+  });
+
+  it('unsigned text never shares a shell with a signed runbook loaded after it', async () => {
+    const uconf = confAt('dirty.conf', [`authorized_keys = ${keysAt('dirty.keys', [keyLine(' --unsigned=allow')])}`]);
+    const g = new Gate([`--config=${uconf}`, '--unsigned=allow'], env());
+    gates.push(g);
+    await g.hello();
+    const check = 'echo "A=${A-unset}"; type f >/dev/null 2>&1 && echo has-f; true';
+    const [m, s] = await signed(fence('bash', check) + fence('bash', 'echo "C=${C-unset}"; C=signed'), { name: 'ops/after-raw' });
+    // Before the first load: before, the first signed runbook got this shell.
+    g.child.stdin!.write(rawLine('0000aa01', 'A=planted; f() { echo planted; }'));
+    assert.equal((await g.reply('0000aa01')).code, 0);
+    assert.equal((await g.request('load', m, s)).code, 0);
+    assert.deepEqual((await g.request('run', '1')).out, 'A=unset\n');
+    // After it: the next load of that runbook gets a fresh shell.
+    assert.equal((await g.request('run', '2')).out, 'C=unset\n');
+    g.child.stdin!.write(rawLine('0000aa02', 'A=again; f() { echo planted; }'));
+    assert.equal((await g.reply('0000aa02')).code, 0);
+    assert.equal((await g.request('load', m, s)).code, 0);
+    assert.equal((await g.request('run', '1')).out, 'A=unset\n');
+    assert.equal((await g.request('run', '2')).out, 'C=unset\n');
+    await g.close();
+  });
+
+  it("the blocks' environment: the gate's own names only, not what sshd's environment= adds", async () => {
+    const kconf = confAt('env.conf', ['kubeconfig = /etc/md-runbook/kubeconfig']);
+    // What environment= in a key line or ~/.ssh/environment could pass (PermitUserEnvironment).
+    const g = new Gate([`--config=${kconf}`], { ...env(), https_proxy: 'http://evil:3128', PYTHONPATH: '/tmp/evil', KUBECONFIG: '/tmp/evil', NOTE: 'x', TZ: 'UTC' });
+    gates.push(g);
+    await g.hello();
+    const [m, s] = await signed(fence('bash', 'echo "[${https_proxy-}|${PYTHONPATH-}|${NOTE-}|${KUBECONFIG-}|${TZ-}|${HOME:+home}]"; case $SHELL in */bash | */sh) echo shell ;; esac'), {
+      name: 'ops/env',
+    });
+    assert.equal((await g.request('load', m, s)).code, 0);
+    const r = await g.request('run', '1');
+    assert.deepEqual([r.code, r.out], [0, '[|||/etc/md-runbook/kubeconfig|UTC|home]\nshell\n']);
+    await g.close();
+    assert.equal((await startup([`--config=${confAt('bad-kube.conf', ['kubeconfig = relative/config'])}`])).code, 2);
+  });
+
+  it('sshd_force_command counts only from a gate.conf the account can\'t change, never from a key line\'s option', async () => {
+    // The test's files are the account's own, as a planted config would be.
+    const force = confAt('force.conf', ['sshd_force_command = yes']);
+    for (const args of [[`--config=${force}`], [`--config=${force}`, '--sshd-force-command']]) {
+      const r = await startup(args);
+      assert.equal(r.code, 2, args.join(' '));
+      assert.match(r.err, /a file this account can change/);
+    }
+    // The option alone switched the check of the key lines off.
+    const alone = await startup([`--config=${conf}`, '--sshd-force-command']);
+    assert.equal(alone.code, 2);
+    assert.match(alone.err, /--sshd-force-command needs sshd_force_command = yes/);
+  });
+
+  it('authorized_keys: %h, %U and %% as sshd expands them; any other token stops the session', async () => {
+    const uid = spawnSync(SH, ['-c', 'id -u'], { encoding: 'utf8' }).stdout.trim();
+    keysAt(`keys-${uid}%x`, [keyLine()]);
+    const g = new Gate([`--config=${confAt('tokens.conf', ['authorized_keys = %h/keys-%U%%x'])}`], env());
+    gates.push(g);
+    assert.match((await g.hello()).out, /unsigned=refuse/);
+    assert.equal(await g.close(), 0);
+    // Before, %U (and any token but %h and %u) stayed as it was: a file the gate never read.
+    const bad = await startup([`--config=${confAt('bad-tokens.conf', ['authorized_keys = %h/keys-%z'])}`]);
+    assert.equal(bad.code, 2);
+    assert.match(bad.err, /unknown token %z/);
+  });
+
+  it("under sshd it refuses a login shell that reads the account's files first (bash's ~/.bashrc)", async (t) => {
+    const sshd = { SSH_CLIENT: '192.0.2.1 5555 22', SSH_CONNECTION: '192.0.2.1 5555 192.0.2.2 22' };
+    // The reviewer's repro (bashrc_ssh.sh): Debian's bash runs ~/.bashrc for `bash -c` under sshd.
+    const bash = spawnSync(SH, ['-c', 'command -v bash'], { encoding: 'utf8' }).stdout.trim();
+    if (bash) {
+      const home = fs.mkdtempSync(path.join(dir, 'bashrc-'));
+      fs.writeFileSync(path.join(home, '.bashrc'), 'echo BASHRC-RAN\n');
+      const run = (extra: Record<string, string>): string =>
+        spawnSync(SH, ['-c', 'exec bash -c "echo the-forced-command"'], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: shPath(home), ...extra } }).stdout;
+      t.diagnostic(`bash -c under sshd read ~/.bashrc: ${/BASHRC-RAN/.test(run(sshd))} (control, without SSH_CLIENT: ${/BASHRC-RAN/.test(run({}))})`);
+    }
+    // The login shell the gate finds: getent's, else $SHELL (which the test sets).
+    const found = spawnSync(SH, ['-c', 'command -v getent >/dev/null 2>&1 && getent passwd "$(id -un)" | cut -d: -f7'], { encoding: 'utf8' }).stdout.trim() || '/bin/bash';
+    if (/^(sh|dash|ash|ksh|ksh93|mksh|lksh|oksh|posh)$/.test(path.posix.basename(found))) {
+      t.skip(`this account's login shell is ${found}, which reads nothing first`);
+      return;
+    }
+    const r = await startup([`--config=${conf}`], { ...sshd, SHELL: '/bin/bash' });
+    assert.equal(r.code, 2);
+    assert.match(r.err, /login shell is .*: it can run .* before the gate\. Make it \/bin\/sh/);
+    // login_shell_check = no (for tests on servers whose accounts have bash): it starts.
+    const g = new Gate([`--config=${confAt('no-shell-check.conf', ['login_shell_check = no'])}`], { ...env(), ...sshd, SHELL: '/bin/bash' });
+    gates.push(g);
+    assert.match((await g.hello()).out, /unsigned=refuse/);
+    assert.equal(await g.close(), 0);
+  });
+
+  it("report_to: a block can't write the exit of another run", { skip: !hasCurl() && 'no curl' }, async () => {
+    const got: string[] = [];
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (d: Buffer) => (body += d.toString('utf8')));
+      req.on('end', () => {
+        got.push(body);
+        res.writeHead(202).end();
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    writeConf([`report_to = http://127.0.0.1:${(server.address() as { port: number }).port}/v1/runs`]);
+    try {
+      const g = start();
+      await g.hello();
+      // A line for run 2 after its real one: before, the last line counted, so `false` passed.
+      const mark = path.join(dir, 'forged');
+      fs.rmSync(mark, { force: true });
+      const forge =
+        `t=$(printf '\\t'); for w in "\${TMPDIR:-/tmp}"/md-runbook-gate.*; do ( i=0; ` +
+        `while [ $i -lt 200 ] && ! grep -q "^2$t" "$w/report-exits" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done; ` +
+        `printf '2\\t0\\t2026-01-01T00:00:00Z\\t0123abcd\\n' >>"$w/report-exits"; : >${shPath(mark)} ) >/dev/null 2>&1 </dev/null & done; echo armed`;
+      const [m, s] = await signed(fence('bash', forge) + fence('bash', 'false'), { name: 'ops/forged' });
+      assert.equal((await g.request('load', m, s)).code, 0);
+      assert.equal((await g.request('run', '1')).out, 'armed\n');
+      assert.equal((await g.request('run', '2')).code, 1);
+      for (let i = 0; i < 200 && !fs.existsSync(mark); i++) await pause(100);
+      assert.ok(fs.existsSync(mark), 'the forged line was written');
+      assert.equal(await g.close(), 0);
+      for (let i = 0; i < 100 && got.length === 0; i++) await pause(150);
+      const summary = JSON.parse(got[0]!);
+      assert.deepEqual(
+        summary.steps.map((x: { state: string }) => x.state),
+        ['passed', 'failed'],
+      );
+    } finally {
+      server.close();
+      writeConf([]);
     }
   });
 });
