@@ -21,6 +21,7 @@ import type { RunPipeline, RunRecord } from './pipeline';
 import { isQueued } from './runQueue';
 import { originalName } from './runHistory';
 import { NOTEBOOK_TYPE } from './serializer';
+import { hostOptionSkipped } from './remoteHosts';
 
 /** How often a running block's bar (and the runbook's time left) moves on. */
 const TICK_MS = 1000;
@@ -163,7 +164,7 @@ export function notebookEstimateSteps(
     if (c.kind !== vscode.NotebookCellKind.Code) return;
     const o = opts[i];
     // The ready check is a quick look, not a step that takes time.
-    if (o?.skip || o?.part === 'ready' || o?.host !== undefined || (slots[i] && !slots[i]!.active)) return;
+    if (o?.skip || o?.part === 'ready' || hostOptionSkipped(o?.host, nb) || (slots[i] && !slots[i]!.active)) return;
     const since = runningSince(c);
     const seconds = blockEstimate(c)?.seconds;
     const e = {

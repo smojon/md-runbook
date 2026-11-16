@@ -92,6 +92,17 @@ Security fixes from a review of the parts that face the network.
   signers. Opening one makes your own copy.
 - **VS Code: Trusted Signers…** (Share ▾) lists, adds and removes the signers in your
   allowed_signers file. It adds a pasted line, a public key, or the team library's signers.
+- **VS Code: remote hosts.** A block with `host=NAME` runs on that host over SSH, as in the app.
+  **Hosts…** (Run ▾) keeps them in the user setting `mdRunbook.hosts`, or takes them from `~/.ssh/config`.
+- **VS Code: Run on a Group…** (a cell's ⋯, Run ▾) runs one cell on each host of a group.
+  The output has a section per host. A risky cell asks once, naming every account.
+- **VS Code: Practice on a Host…** (Run ▾) sends every cell of a runbook to one host.
+  The status bar shows Practice on NAME. A front matter `practice:` asks first, unless the runbook
+  is signed by a trusted signer.
+- **VS Code, SSH keys and host keys:** the keys of your SSH agent sign, else md-runbook's own key.
+  A host key is trusted once, after its fingerprint is shown. A changed key is refused.
+- **SSH client:** logs in with SSH agent keys (Ed25519, ECDSA, RSA), on Windows through the
+  OpenSSH agent service.
 - **Command line: `md-runbook unpublish PATH --library URL`** removes a runbook from a team
   library, where its server allows deleting.
 

@@ -25,3 +25,20 @@ export function connectTcp(host: string, port: number, timeoutMs = 20_000): Prom
     });
   });
 }
+
+export {
+  AgentClient,
+  AgentIdentity,
+  AgentKeyPair,
+  ED25519,
+  Ed25519Algorithm,
+  Ed25519PublicKey,
+  WINDOWS_AGENT_PIPE,
+  agentAlgorithms,
+  agentKeys,
+  agentPath,
+  blobType,
+  parseIdentities,
+  parseSignResponse,
+  signRequest,
+} from './agent';

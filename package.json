@@ -529,6 +529,24 @@
         "icon": "$(shield)"
       },
       {
+        "command": "mdRunbook.hosts",
+        "title": "Hosts…",
+        "category": "md-runbook",
+        "icon": "$(server)"
+      },
+      {
+        "command": "mdRunbook.runOnGroup",
+        "title": "Run on a Group…",
+        "category": "md-runbook",
+        "icon": "$(server-environment)"
+      },
+      {
+        "command": "mdRunbook.practiceOnHost",
+        "title": "Practice on a Host…",
+        "category": "md-runbook",
+        "icon": "$(beaker)"
+      },
+      {
         "command": "mdRunbook.library.publish",
         "title": "Publish to Library…",
         "category": "md-runbook",
@@ -1221,6 +1239,14 @@
         {
           "command": "mdRunbook.cancelNotify",
           "when": "false"
+        },
+        {
+          "command": "mdRunbook.runOnGroup",
+          "when": "mdRunbook.runbookActive"
+        },
+        {
+          "command": "mdRunbook.practiceOnHost",
+          "when": "mdRunbook.runbookActive"
         }
       ],
       "notebook/cell/title": [
@@ -1308,6 +1334,11 @@
           "command": "mdRunbook.toggleNotifyOnStart",
           "when": "notebookType == md-runbook && notebookCellType == code",
           "group": "1_progress@6"
+        },
+        {
+          "command": "mdRunbook.runOnGroup",
+          "when": "notebookType == md-runbook && notebookCellType == code",
+          "group": "1_progress@7"
         }
       ],
       "notebook/cell/execute": [
@@ -1406,6 +1437,18 @@
         {
           "command": "mdRunbook.stopSession",
           "group": "2_session@3"
+        },
+        {
+          "command": "mdRunbook.runOnGroup",
+          "group": "2_hosts@1"
+        },
+        {
+          "command": "mdRunbook.practiceOnHost",
+          "group": "2_hosts@2"
+        },
+        {
+          "command": "mdRunbook.hosts",
+          "group": "2_hosts@3"
         },
         {
           "command": "mdRunbook.clearAllOutputs",
@@ -2383,8 +2426,54 @@
         }
       },
       {
-        "title": "Signing",
+        "title": "Remote hosts",
         "order": 11,
+        "properties": {
+          "mdRunbook.hosts": {
+            "type": "array",
+            "default": [],
+            "scope": "machine",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "hostname",
+                "user"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "What host= and practice: call it (case does not matter)."
+                },
+                "hostname": {
+                  "type": "string",
+                  "description": "Host name or address."
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535,
+                  "default": 22
+                },
+                "user": {
+                  "type": "string",
+                  "description": "The account the cells run as."
+                },
+                "group": {
+                  "type": "string",
+                  "description": "For Run on a Group (a customer, a site, a team)."
+                }
+              }
+            },
+            "markdownDescription": "The hosts cells can run on over SSH: a block with `host=NAME`, **Run on a Group…** and **Practice on a Host…**. Keys come from your SSH agent, else from md-runbook’s own key (**Hosts… → Copy md-runbook Public Key**). A host key is trusted once, after you compare its fingerprint. **md-runbook: Hosts…** adds, edits and removes them. User settings only: a workspace can’t add hosts.",
+            "order": 1
+          }
+        }
+      },
+      {
+        "title": "Signing",
+        "order": 12,
         "properties": {
           "mdRunbook.signing.key": {
             "type": "string",
@@ -2404,7 +2493,7 @@
       },
       {
         "title": "Team library",
-        "order": 12,
+        "order": 13,
         "properties": {
           "mdRunbook.library.url": {
             "type": "string",

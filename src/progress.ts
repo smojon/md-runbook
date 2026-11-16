@@ -22,6 +22,7 @@ import { NOTEBOOK_TYPE } from './serializer';
 import { setTaskBox } from './taskLists';
 import { onDidChangeWaiting, waitingIn, waitingText } from './waiting';
 import { onDidChangeQueue } from './runQueue';
+import { hostSkipped } from './remoteHosts';
 
 /** Marker attributes of a code cell's current output, or undefined if it has none (or is running). */
 export function cellAttrs(cell: vscode.NotebookCell): Record<string, string> | undefined {
@@ -57,8 +58,8 @@ export function notebookProgress(nb: vscode.NotebookDocument): Progress {
       const os = slots[i];
       const meta: unknown = c.metadata?.[META_KEY];
       const o = optionsOn && isCodeMeta(meta) ? parseCellOptions(meta.info) : undefined;
-      // host= blocks never run here (see safety.ts): skipped, not pending forever.
-      const elsewhere = isCodeMeta(meta) && parseCellOptions(meta.info).host !== undefined;
+      // host= blocks for a host that isn't yours never run (see safety.ts): skipped, not pending forever.
+      const elsewhere = isCodeMeta(meta) && hostSkipped(meta.info, nb);
       return {
         kind: 'code',
         exit: attrs?.exit,

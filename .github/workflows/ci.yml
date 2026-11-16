@@ -42,6 +42,8 @@ jobs:
           export MD_RUNBOOK_SSH_HOST_PUB="$RUNNER_TEMP/sshd/host_ecdsa.pub"
           export MD_RUNBOOK_SSH_AUTHORIZED_KEYS="$RUNNER_TEMP/sshd/authorized_keys"
           node --test --test-reporter=spec out/test/ssh.live.test.js || { cat "$RUNNER_TEMP/sshd/sshd.log"; exit 1; }
+          # The server keeps running: the integration tests run host= cells on it (hosts.suite.ts).
+          { echo "MD_RUNBOOK_SSH_TEST=$MD_RUNBOOK_SSH_TEST"; echo "MD_RUNBOOK_SSH_HOST_PUB=$MD_RUNBOOK_SSH_HOST_PUB"; echo "MD_RUNBOOK_SSH_AUTHORIZED_KEYS=$MD_RUNBOOK_SSH_AUTHORIZED_KEYS"; } >> "$GITHUB_ENV"
       # The same against Windows OpenSSH (cmd.exe as default shell): the app finds PowerShell there.
       - name: SSH tests (Windows server)
         if: runner.os == 'Windows'

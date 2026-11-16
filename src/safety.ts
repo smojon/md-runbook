@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isCallLanguage } from '@md-runbook/core/call';
-import { isCodeMeta } from '@md-runbook/core';
+import { isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
 import { hasShownRefs } from '@md-runbook/core/secrets';
@@ -19,6 +19,8 @@ import { knownSecrets } from './knownSecrets';
 import { META_KEY } from './outputs';
 import { CellPlan, CellPreparer, PrepareContext, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
+import { hostLabel, osAllows } from './hostList';
+import type { RemoteTargets } from './remoteHosts';
 import { inFront } from './currentRunbook';
 import { labelOf, notebookProgress } from './progress';
 import { askOnCell, whileWaiting } from './waiting';
@@ -179,9 +181,12 @@ async function askToRun(plan: CellPlan, cell: vscode.NotebookCell, match: string
   // The command with its values (secrets stay `${secret:…}`), redacted as output is.
   const r = redactionConfig();
   const redact = (s: string): string => knownSecrets.redact(r.enabled ? r.redactor.redact(s) : s);
-  const message = match === '' ? `Run ${title}?` : `Risky command in ${title}: “${redact(match.trim())}”`;
+  const on = plan.remote ? (plan.remote.group !== undefined ? ` on group ${plan.remote.group}` : ` on ${plan.remote.hosts[0]!.name}`) : '';
+  const message = match === '' ? `Run ${title}${on}?` : `Risky command in ${title}${on}: “${redact(match.trim())}”`;
   const retries = plan.retry && plan.retry.attempts > 1 ? `It runs up to ${plan.retry.attempts} times (retry=) until it passes.` : '';
-  const detail = [redact(commandPreview(plan.shown ?? plan.source)), ctxLines.length > 0 ? `It runs in:\n${ctxLines.join('\n')}` : '', retries].filter((s) => s !== '').join('\n\n');
+  // On a host (or each host of a group): the accounts it runs as, every one of them.
+  const where = plan.remote ? `It runs on:\n${plan.remote.hosts.map((h) => `- ${h.user}@${h.name} (${hostLabel(h)})`).join('\n')}` : '';
+  const detail = [redact(commandPreview(plan.shown ?? plan.source)), where, ctxLines.length > 0 ? `It runs in:\n${ctxLines.join('\n')}` : '', retries].filter((s) => s !== '').join('\n\n');
   const what = `confirm ${labelOf(cell)}`;
   const answer = inFront(cell.notebook)
     ? await whileWaiting(cell, what, () => vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run'), 'dialog')
@@ -247,29 +252,39 @@ export interface SafetyInfo {
   context(notebook: vscode.NotebookDocument): Record<string, string> | undefined;
 }
 
-export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPipeline): SafetyInfo {
+export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPipeline, remote?: RemoteTargets): SafetyInfo {
   const recorder = new ContextRecorder();
   // Order matters: options can skip the cell; the confirmation (when no context is recorded) comes
   // before secrets and inputs are asked for. `final` must be registered after every preparer that
   // changes plan.env (extension.ts: after approval.credentials).
-  pipeline.preparers.push(optionsPreparer, confirmPreparer);
-  // os=: a block for another OS is an alternative, not a step to run here.
+  // Where a cell runs (a host, a group) is known before the confirmation asks, which names it.
+  pipeline.preparers.push(optionsPreparer, ...(remote ? [remote.preparer] : []), confirmPreparer);
+  // os=: a block for another OS is an alternative, not a step to run here. On a host, the host's
+  // OS counts (learnt on the first connection; until then the block's shell says which kind).
   const otherOs = (cell: vscode.NotebookCell): readonly OsName[] | undefined => {
     if (!cfg().get<boolean>('cellOptions.enabled', true)) return undefined;
     const os = parseCellOptions(infoOf(cell)).os;
-    return os && !os.includes(currentOs()) ? os : undefined;
+    if (!os) return undefined;
+    const t = remote?.target(cell);
+    if (t?.kind === 'host') {
+      const kind = shellKindForLanguage(cell.document.languageId);
+      const platform = remote!.platform(t.host) ?? (kind === 'pwsh' || kind === 'cmd' ? 'windows' : 'posix');
+      return osAllows(os, platform) ? undefined : os;
+    }
+    return !os.includes(currentOs()) ? os : undefined;
   };
   pipeline.excluders.push((cell) => {
     const os = otherOs(cell);
     return os ? `this block is for ${osLabel(os)}` : undefined;
   });
-  // host=: the block runs on a remote host (from the md-runbook app). The extension runs cells on
-  // this machine, so it never runs one, whatever cellOptions.enabled says.
+  // host=: the block runs on that host over SSH when it is one of yours (Hosts…), whatever
+  // cellOptions.enabled says. Not one of yours: it never runs on this machine instead.
   const remoteHost = (cell: vscode.NotebookCell): string | undefined =>
     cell.kind === vscode.NotebookCellKind.Code ? parseCellOptions(infoOf(cell)).host : undefined;
   pipeline.excluders.push((cell) => {
     const host = remoteHost(cell);
-    return host ? `this block runs on the host ${host} (from the md-runbook app), not on this machine` : undefined;
+    if (!host) return undefined;
+    return remote?.target(cell).kind === 'host' ? undefined : `this block runs on the host ${host}, which is not in your hosts (Hosts…)`;
   });
   // VS Code shows ▶ on every code cell and cannot hide it for one; the cell says it is not for
   // this system instead, before anyone clicks.
@@ -278,9 +293,23 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
     onDidChangeCellStatusBarItems: osItemsChanged.event,
     provideCellStatusBarItems(cell) {
       const host = remoteHost(cell);
+      const t = remote?.target(cell);
+      if (t?.kind === 'host' && t.by === 'practice') {
+        const item = new vscode.NotebookCellStatusBarItem(`$(beaker) Practice: runs on ${t.host.name}`, vscode.NotebookCellStatusBarAlignment.Left);
+        item.tooltip = `Practice: every cell runs on ${hostLabel(t.host)}, whatever host= says.`;
+        item.command = 'mdRunbook.practiceOnHost';
+        return [item];
+      }
+      if (host && t?.kind === 'host') {
+        const item = new vscode.NotebookCellStatusBarItem(`$(remote) Runs on ${t.host.name}`, vscode.NotebookCellStatusBarAlignment.Left);
+        item.tooltip = `host=${host}: this block runs on ${hostLabel(t.host)} over SSH.`;
+        item.command = 'mdRunbook.hosts';
+        return [item];
+      }
       if (host) {
         const item = new vscode.NotebookCellStatusBarItem(`$(remote) Runs on ${host} · not run here`, vscode.NotebookCellStatusBarAlignment.Left);
-        item.tooltip = `host=${host}: this block runs on that host from the md-runbook app. Run All and Run Below pass over it; ▶ does not run it on this machine.`;
+        item.tooltip = `host=${host}: no host of that name in your hosts. Run All and Run Below pass over it; ▶ does not run it on this machine. Add it with Hosts….`;
+        item.command = 'mdRunbook.hosts';
         return [item];
       }
       const os = otherOs(cell);
@@ -298,7 +327,8 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
         const filled = plan.shown !== undefined ? confirmationOf(ctx.cell, plan.shown) : undefined;
         if (filled !== undefined && (filled !== '' || plan.confirm === undefined)) plan.confirm = filled;
       }
-      await recorder.prepare(plan, ctx);
+      // The context commands run on this machine: they say nothing about a host's.
+      if (!plan.remote) await recorder.prepare(plan, ctx);
       if (plan.confirm !== undefined) await askToRun(plan, ctx.cell, plan.confirm);
     },
   };
@@ -313,6 +343,7 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
       else if (e.affectsConfiguration(`${SECTION}.statusBar.contextAttr`)) recorder.refresh();
       if (e.affectsConfiguration(`${SECTION}.cellOptions.enabled`)) osItemsChanged.fire();
     }),
+    ...(remote ? [remote.onDidChange(() => osItemsChanged.fire())] : []),
   );
   recorder.refresh();
   return { final, confirmation: confirmationOf, context: (nb) => recorder.known(nb) };

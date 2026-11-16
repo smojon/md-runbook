@@ -13,7 +13,6 @@ import * as os from 'node:os';
 import * as vscode from 'vscode';
 import { isCodeMeta, stepState, taskItems } from '@md-runbook/core';
 import { isManualMark } from '@md-runbook/core/progress';
-import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import {
   PostOutcome,
   QueuedReport,
@@ -41,6 +40,7 @@ import { cellAttrs, labelOf, notebookProgress } from './progress';
 import type { SecretsInfo } from './secrets';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
 import { SIGNING_KEY_MISSING, SIGNING_KEY_MISSING_CANCEL, reportGate, summarySigning } from './reportGate';
+import { hostSkipped } from './remoteHosts';
 
 const CONSENT_KEY = 'mdRunbook.reports.consent';
 const QUEUE_KEY = 'mdRunbook.reports.queue';
@@ -74,7 +74,7 @@ function steps(nb: vscode.NotebookDocument, runs: readonly RunRecord[]): { label
     const meta: unknown = cell.metadata?.[META_KEY];
     const attrs = cellAttrs(cell);
     const run = runs.find((r) => r.cell === cell);
-    const elsewhere = isCodeMeta(meta) && parseCellOptions(meta.info).host !== undefined;
+    const elsewhere = isCodeMeta(meta) && hostSkipped(meta.info, nb);
     const s = elsewhere ? 'skipped' : stepState(attrs?.exit, attrs?.lines !== undefined, attrs?.check);
     const state: RunStepState = isManualMark(attrs) && s === 'done' ? 'by-hand' : s === 'done' ? 'passed' : s === 'pending' ? 'not-run' : s;
     out.push({ label: labelOf(cell), state, ...(run && !run.plan.skip ? { ms: run.result.durationMs, ran: true } : {}) });

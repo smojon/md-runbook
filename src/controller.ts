@@ -40,6 +40,7 @@ import { setTaskBox } from './taskLists';
 import { pauseBefore, stepStarting } from './stepMarks';
 import { askOnCell } from './waiting';
 import { markQueued, unmarkQueued } from './runQueue';
+import { RemotePlan, hostLabel, remoteLabel } from './hostList';
 
 const FLUSH_MS = 100;
 /** `kubectl config current-context` only reads the kubeconfig. */
@@ -102,7 +103,7 @@ export function frontMatterOf(nb: vscode.NotebookDocument): FrontMatter | undefi
  * `by=` and `on=` for a run (core/incident.ts): who ran it and on which machine, when the
  * runbook keeps evidence (`incident:`, `evidence: true`) or mdRunbook.output.recordRunner is on.
  */
-export function runnerAttrsOf(nb: vscode.NotebookDocument): Record<string, string> {
+export function runnerAttrsOf(nb: vscode.NotebookDocument, remote?: RemotePlan): Record<string, string> {
   if (!frontMatterOf(nb)?.evidence && !vscode.workspace.getConfiguration(SECTION).get<boolean>('output.recordRunner', false)) return {};
   let user: string;
   try {
@@ -110,7 +111,8 @@ export function runnerAttrsOf(nb: vscode.NotebookDocument): Record<string, strin
   } catch {
     user = process.env.USER ?? process.env.USERNAME ?? 'unknown';
   }
-  return { by: user, on: `${user}@${os.hostname()}` };
+  // On a host: the account it ran as there (each host's, for a group), as the app writes it.
+  return { by: user, on: remote ? remote.hosts.map(hostLabel).join(',') : `${user}@${os.hostname()}` };
 }
 
 /**
@@ -753,8 +755,10 @@ export class RunbookController implements vscode.Disposable {
           const io: ExecuteIO = { signal: abort.signal, onStdout: write(out), onStderr: write(err) };
           // kube-context: the cluster is checked where the cell would run, before it runs.
           // (A runbook call runs no shell: the cells of the runbook it runs check their cluster.)
-          const wrongCluster = !isCall && fs.existsSync(plan.cwd) ? await this.kubeContextRefusal(plan, ctx, abort.signal) : undefined;
-          if (!fs.existsSync(plan.cwd)) result = failed(`Working directory not found: ${plan.cwd}`);
+          // On a host, this machine's folder doesn't matter (the cell's cwd= is a folder there).
+          const here = plan.remote !== undefined || fs.existsSync(plan.cwd);
+          const wrongCluster = !isCall && here ? await this.kubeContextRefusal(plan, ctx, abort.signal) : undefined;
+          if (!here) result = failed(`Working directory not found: ${plan.cwd}`);
           else if (wrongCluster !== undefined) result = failed(wrongCluster);
           else if (lineRun) {
             result = await this.runSteps(lineRun, plan, io, ctx, ranSteps, async () => {
@@ -807,7 +811,7 @@ export class RunbookController implements vscode.Disposable {
         answer !== undefined ? (answer ? 'ready: already up' : 'ready: not up') : check && `check ${check === 'ok' ? 'passed' : 'failed'}`,
         tries && `attempt ${tries}/${attempts}`,
         lines && `lines ${lines}`,
-        shellLabel,
+        plan.remote ? `on ${remoteLabel(plan.remote)}` : shellLabel,
         earlier,
       ]
         .filter(Boolean)
@@ -822,7 +826,7 @@ export class RunbookController implements vscode.Disposable {
         ...(tries ? { attempts: String(tries) } : {}),
         ...(lines ? { lines } : {}),
         ...plan.attrs,
-        ...runnerAttrsOf(notebook),
+        ...runnerAttrsOf(notebook, plan.remote),
       };
       cellTranscript?.end({ exit, durationMs: elapsed, ...(check ? { check } : {}), ...(tries ? { attempt: tries, attempts } : {}), ...(lines ? { lines } : {}) });
       const earlierOutput = earlierRunsOutput(history);
@@ -888,7 +892,7 @@ export class RunbookController implements vscode.Disposable {
       let stdout = '';
       let stderr = '';
       const r = await this.pipeline.executorFor(ctx.notebook).execute(
-        { ...plan, source: command, steps: undefined, timeoutMs: KUBE_CONTEXT_TIMEOUT_MS },
+        { ...plan, source: command, steps: undefined, timeoutMs: KUBE_CONTEXT_TIMEOUT_MS, probe: 'kube-context' },
         { signal, onStdout: (t) => (stdout += t), onStderr: (t) => (stderr += t) },
         ctx,
       );

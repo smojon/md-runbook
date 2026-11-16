@@ -9,6 +9,7 @@ import { executeCell } from '@md-runbook/core/node';
 import type { ShellSettings } from '@md-runbook/core';
 import type { Captured, CellChecks } from '@md-runbook/core/checks';
 import type { SessionPool } from '@md-runbook/core/node/session';
+import type { RemotePlan } from './hostList';
 
 /** Everything needed to run one cell; preparers may change any of it. */
 export interface CellPlan {
@@ -67,6 +68,10 @@ export interface CellPlan {
   kubeContextPinned?: boolean;
   /** Set by secrets.ts for a runbook call: the values of the placeholders in its src= and body. */
   callValues?: Record<string, string>;
+  /** Set by remoteHosts.ts: the cell runs on these hosts over SSH, not on this machine. */
+  remote?: RemotePlan;
+  /** Not the cell: the kube-context guard's `kubectl config current-context`, run where the cell would run. */
+  probe?: 'kube-context';
 }
 
 export interface PrepareContext {

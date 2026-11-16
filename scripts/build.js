@@ -4,9 +4,9 @@
 const esbuild = require('esbuild');
 
 const watch = process.argv.includes('--watch');
-// The shared core is bundled from its sources, so this works without building packages/core first
+// The shared core and the SSH client are bundled from their sources, so this works without building them first
 // (the GitHub Action runs only this script).
-const alias = { '@md-runbook/core': './packages/core/src' };
+const alias = { '@md-runbook/core': './packages/core/src', '@md-runbook/ssh': './packages/ssh/src' };
 
 const builds = [
   {
@@ -16,7 +16,8 @@ const builds = [
     platform: 'node',
     format: 'cjs',
     target: 'node20',
-    external: ['vscode'],
+    // node-rsa: the SSH library's RSA key generation on old Node only (never called: no RSA keys are made).
+    external: ['vscode', 'node-rsa'],
     alias,
     sourcemap: true,
     minify: !watch,

@@ -24,6 +24,7 @@ import { SECTION } from './config';
 import { META_KEY, outputMeta } from './outputs';
 import { CellExecutor, CellPlan, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE } from './serializer';
+import { hostSkipped } from './remoteHosts';
 
 /** What a call gives the runbook it runs: its parameters, and the files calling it (cycles). */
 interface Passed {
@@ -225,7 +226,7 @@ export class CallExecutor implements CellExecutor {
     const slots = osGroups(savedDoc.cells.map((c) => (isCodeMeta(c.meta) ? { kind: 'code' as const, os: parseCellOptions(c.meta.info).os } : { kind: 'markup' as const })));
     const states = locateCodeCells(savedDoc)
       .filter((l) => savedPart(l.line) && !(slots[l.cellIndex] && !slots[l.cellIndex]!.active))
-      .map((l) => (parseCellOptions(l.info).host ? 'skipped' : stepState(l.outputAttrs?.exit, l.outputAttrs?.lines !== undefined, l.outputAttrs?.check)));
+      .map((l) => (hostSkipped(l.info) ? 'skipped' : stepState(l.outputAttrs?.exit, l.outputAttrs?.lines !== undefined, l.outputAttrs?.check)));
     const unticked = taskItems(saved).filter((t) => !t.checked && savedPart(t.line)).length;
     const evidence = parseFrontMatter(saved)?.evidence === true;
     const r: CallResult = {

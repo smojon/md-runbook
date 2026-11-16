@@ -22,6 +22,7 @@ import { labelOf, notebookProgress } from './progress';
 import { RunStore, RunSummary, lastGreenOf, lastGreenText, ranSteps, runItem, transcriptLine, withRun } from './runHistory';
 import { NOTEBOOK_TYPE } from './serializer';
 import { transcriptPathFor } from './transcript';
+import { hostSkipped } from './remoteHosts';
 
 /** Runs per runbook (runHistory.ts RunStore), in workspace state. */
 const RUNS_KEY = 'mdRunbook.runHistory';
@@ -93,7 +94,7 @@ export function neverRanCells(nb: vscode.NotebookDocument): number[] {
     const info = codeInfo(c);
     if (info === undefined || c.outputs.length > 0 || c.document.getText().trim() === '') return;
     const o = opts[i];
-    if (o?.skip || o?.host !== undefined || (slots[i] && !slots[i]!.active) || proposalOf(info).state === 'proposed') return;
+    if (o?.skip || hostSkipped(info, c.notebook) || (slots[i] && !slots[i]!.active) || proposalOf(info).state === 'proposed') return;
     if (!ran!.has(stepKey(c))) hints.push(i);
   });
   return hints;

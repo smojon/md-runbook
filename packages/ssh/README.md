@@ -32,8 +32,12 @@ const r = await session.run('cd /srv && ls', { timeoutMs: 60_000, signal, onStdo
   when the cell is reported done.
 - **Keys:** P-256 keys made by the library (it can't read OpenSSH's private key format, nor the
   PKCS#8 that macOS's ssh-keygen writes).
+- **Agent keys** (Node, `@md-runbook/ssh/node`): `agentKeys(agentPath())` lists an SSH agent's
+  Ed25519, ECDSA and RSA keys; pass one as `key` (more in `moreKeys`) with
+  `configure: agentAlgorithms`. The agent signs. On Windows the OpenSSH agent's pipe is used.
 - Remote shells: bash (login shell, for the user's PATH), else sh. cmd and PowerShell remotes are
   not supported yet.
 
-Tests: `test/sshCommand.test.ts` (the shell commands, in a local bash) and
+Tests: `test/sshCommand.test.ts` (the shell commands, in a local bash), `test/sshAgent.test.ts`
+(a fake agent) and
 `test/ssh.live.test.ts` (against the OpenSSH server CI starts with `scripts/ci/start-sshd.sh`).
