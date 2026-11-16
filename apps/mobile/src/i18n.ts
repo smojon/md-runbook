@@ -87,6 +87,13 @@ const en = {
   practiceOn: (name: string) => `Practice: every cell runs on ${name}, whatever host= says.`,
   practiceMissing: (name: string) => `No host named ${name} to practise on (practice:): add it under Hosts & settings.`,
   practiceFromFrontMatter: 'This runbook names its practice host in its front matter (practice:).',
+  practiceAsksFirst: 'The runbook picked this host (practice:): the app asks before the first cell runs.',
+  practiceAskTitle: (name: string) => `Run every cell on ${name}?`,
+  practiceAskPoints: (name: string) => [
+    `The runbook’s front matter says practice: ${name}.`,
+    'Every cell runs there, whatever host= says.',
+    'Allow it only if the runbook comes from someone you trust.',
+  ],
   drillChip: 'A drill',
   startIncidentTitle: 'Start Incident',
   startIncidentPoints: [

@@ -316,6 +316,15 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     hosts.find((h) => h.id === practiceId) ??
     (practiceName ? hosts.find((h) => h.name.toLowerCase() === practiceName.toLowerCase()) : undefined);
   const [practiceCard, setPracticeCard] = useState(false);
+  /**
+   * A practice host from the front matter (not picked by you) is asked once, as host= is: a
+   * runbook from a link could name your production server. Not asked when the whole runbook is
+   * verified-signed (a version 1 signature doesn't cover the front matter).
+   */
+  const sigChecked = libraryCopyState?.state ?? ownKeysState;
+  const wholeVerified = sigChecked?.kind === 'verified' && sigChecked.coverage === 'whole';
+  const practiceAsks = practiceHost !== undefined && practiceHost.id !== practiceId && !wholeVerified;
+  const practiceAllowed = useRef(new Set<string>());
   /** Run on a Group: the cell whose group is being picked, and the group run's results so far. */
   const hostGroups = [...new Set(hosts.flatMap((h) => (h.group ? [h.group] : [])))].sort((a, b) => a.localeCompare(b));
   const [groupPick, setGroupPick] = useState<number | undefined>();
@@ -465,7 +474,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const [trust, setTrust] = useState<Trust | undefined>();
   // A cell whose host= names a host other than the selected one waits for a yes, once per host
   // while the runbook is open (a shared runbook could otherwise pick your production server).
-  const [otherHost, setOtherHost] = useState<{ request: RunRequest; target: Host; selected: Host | undefined } | undefined>();
+  // The front matter's practice: asks the same way (practice: true), once per host.
+  const [otherHost, setOtherHost] = useState<
+    { request: RunRequest; target: Host; selected: Host | undefined; practice?: boolean } | undefined
+  >();
   const hostsAllowed = useRef(new Set<string>());
   /**
    * A risky cell (or one with `confirm`) waits for Run under it, as VS Code asks before it runs;
@@ -654,7 +666,13 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
       setNotice(t.practiceMissing(practiceName));
       return;
     }
-    if (practiceHost) on = practiceHost;
+    if (practiceHost) {
+      if (practiceAsks && !practiceAllowed.current.has(practiceHost.id)) {
+        setOtherHost({ request, target: practiceHost, selected: on, practice: true });
+        return true;
+      }
+      on = practiceHost;
+    }
     // host=NAME: that host, whichever is selected (as the store has it now: a key may just have been pinned).
     const named = !practiceHost && cell && isCodeMeta(cell.meta) ? parseCellOptions(cell.meta.info).host : undefined;
     const match = named === undefined ? on : hosts.find((h) => h.name.toLowerCase() === named.toLowerCase());
@@ -1823,7 +1841,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const trustHost = trust ? hosts.find((h) => h.id === trust.hostId) : undefined;
   const allowOtherHost = (): void => {
     if (!otherHost) return;
-    hostsAllowed.current.add(otherHost.target.id);
+    (otherHost.practice ? practiceAllowed : hostsAllowed).current.add(otherHost.target.id);
     const { request, selected } = otherHost;
     setOtherHost(undefined);
     void run(request, selected);
@@ -2066,7 +2084,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               : trust !== undefined
                 ? (trust.changed ? t.trustChangedTitle : t.trustTitle)(trustHost?.name ?? '')
                 : otherHost !== undefined
-                  ? t.otherHostTitle(otherHost.target.name)
+                  ? (otherHost.practice ? t.practiceAskTitle : t.otherHostTitle)(otherHost.target.name)
                   : undefined;
   // The waiting step's row has the question's answers, the same as its card (VS Code's Done / Skip
   // / Stop on the row); a question to type into (values, a host's key) has Answer, which goes there.
@@ -2301,6 +2319,11 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               {practiceHost ? (
                 <View testID="practice-banner" style={[styles.linkNotes, { borderLeftColor: palette.warning }]}>
                   <Text style={styles.signedBody}>{t.practiceOn(practiceHost.name)}</Text>
+                  {practiceAsks ? (
+                    <Text testID="practice-from-runbook" style={styles.warning}>
+                      {t.practiceAsksFirst}
+                    </Text>
+                  ) : null}
                 </View>
               ) : practiceName ? (
                 <Text testID="practice-missing" style={styles.warning}>
@@ -2421,8 +2444,17 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
               ) : null}
               {otherHost ? (
                 <View testID="other-host" style={styles.trust}>
-                  <Text style={styles.trustTitle}>{t.otherHostTitle(otherHost.target.name)}</Text>
-                  <Text style={styles.trustBody}>{t.otherHostBody(otherHost.target.name, otherHost.selected?.name)}</Text>
+                  {otherHost.practice ? (
+                    <>
+                      <Text style={styles.trustTitle}>{t.practiceAskTitle(otherHost.target.name)}</Text>
+                      <Points testID="practice-ask" items={t.practiceAskPoints(otherHost.target.name)} textStyle={styles.trustBody} />
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.trustTitle}>{t.otherHostTitle(otherHost.target.name)}</Text>
+                      <Text style={styles.trustBody}>{t.otherHostBody(otherHost.target.name, otherHost.selected?.name)}</Text>
+                    </>
+                  )}
                   <View style={styles.actions}>
                     <Pressable testID="other-host-accept" accessibilityRole="button" onPress={allowOtherHost} style={styles.button}>
                       <Text style={styles.buttonText}>{t.otherHostAccept(otherHost.target.name)}</Text>
