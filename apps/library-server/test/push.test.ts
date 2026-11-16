@@ -174,11 +174,56 @@ describe('push: one token holder', () => {
     try {
       const file = path.join(dir, 'devices.json');
       await new Devices(file, 100).register({ platform: 'ios', token: ios(1) }, tok(OTHER, 'old'));
-      const now = new Devices(file, 100, 50, new Set([tokenDigest(DEVICES)]));
+      const now = new Devices(file, 100, 50, new Map([[tokenDigest(DEVICES), 'phones']]));
       const r = await now.register({ platform: 'ios', token: ios(1) }, tok(DEVICES, 'phones'));
       assert.deepEqual([r.created, r.device.tokenDigest, r.device.by], [false, tokenDigest(DEVICES), 'phones']);
-      const strict = new Devices(file, 100, 50, new Set([tokenDigest(DEVICES), tokenDigest(OTHER)]));
+      const strict = new Devices(file, 100, 50, new Map([[tokenDigest(DEVICES), 'phones'], [tokenDigest(OTHER), 'old']]));
       await assert.rejects(strict.register({ platform: 'ios', token: ios(1) }, tok(OTHER, 'old')), (e: HttpError) => e.status === 409);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a rotation: the owner's new token (same label) updates and removes the phone while the old one is still accepted", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-rotate-'));
+    try {
+      const NEW = 'alice-new-token-of-at-least-24-chars';
+      const accepted = new Map([
+        [tokenDigest(DEVICES), 'alice'],
+        [tokenDigest(NEW), 'alice'],
+        [tokenDigest(OTHER), 'bob'],
+      ]);
+      const devices = new Devices(path.join(dir, 'devices.json'), 100, 50, accepted);
+      const id = deviceId('ios', ios(1));
+      await devices.register({ platform: 'ios', token: ios(1) }, tok(DEVICES, 'alice'));
+      const r = await devices.register({ platform: 'ios', token: ios(1), alertnames: ['A'] }, tok(NEW, 'alice'));
+      assert.deepEqual([r.created, r.device.tokenDigest, r.device.alertnames], [false, tokenDigest(NEW), ['A']]);
+      // Another person's accepted token still can't.
+      await assert.rejects(devices.register({ platform: 'ios', token: ios(1) }, tok(OTHER, 'bob')), (e: HttpError) => e.status === 409);
+      assert.equal(await devices.removeOwn(id, tok(OTHER, 'bob')), false);
+      // The old token, still accepted under alice, may too.
+      assert.equal(await devices.removeOwn(id, tok(DEVICES, 'alice')), true);
+      // Once the old token is withdrawn, only the token it registered with counts.
+      await devices.register({ platform: 'ios', token: ios(2) }, tok(DEVICES, 'alice'));
+      const after = new Devices(devices.file, 100, 50, new Map([[tokenDigest(NEW), 'alice'], [tokenDigest(OTHER), 'bob']]));
+      assert.equal((await after.register({ platform: 'ios', token: ios(2) }, tok(NEW, 'alice'))).device.tokenDigest, tokenDigest(NEW));
+      await assert.rejects(after.register({ platform: 'ios', token: ios(2) }, tok(OTHER, 'bob')), (e: HttpError) => e.status === 409);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a phone registered before digests existed: the first accepted token claims it, then holds it', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-legacy-'));
+    try {
+      const file = path.join(dir, 'devices.json');
+      const at = '2026-01-01T00:00:00.000Z';
+      fs.writeFileSync(file, JSON.stringify({ version: 1, devices: [{ id: deviceId('ios', ios(1)), platform: 'ios', token: ios(1), by: 'phones', registered: at, updated: at }] }));
+      const devices = new Devices(file, 100, 50, new Map([[tokenDigest(DEVICES), 'phones'], [tokenDigest(OTHER), 'other']]));
+      assert.equal(await devices.removeOwn(deviceId('ios', ios(1)), tok(DEVICES, 'phones')), false, 'no digest: no owner to remove it');
+      const r = await devices.register({ platform: 'ios', token: ios(1) }, tok(OTHER, 'other'));
+      assert.deepEqual([r.created, r.device.tokenDigest, r.device.registered], [false, tokenDigest(OTHER), at]);
+      await assert.rejects(devices.register({ platform: 'ios', token: ios(1) }, tok(DEVICES, 'phones')), (e: HttpError) => e.status === 409);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

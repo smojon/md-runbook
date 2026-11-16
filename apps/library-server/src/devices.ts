@@ -114,11 +114,23 @@ export class Devices {
     /** Most devices one devices token may register: one token's holder can't fill the list. */
     readonly maxPerToken = 50,
     /**
-     * Digests of the devices tokens the server accepts now. A phone registered under one of them
-     * can't be taken over by another token. Absent: every digest counts as accepted.
+     * The devices tokens the server accepts now: digest → label. A phone registered under one of
+     * them can't be taken over by a token of another label. Absent: every digest counts as
+     * accepted, under the label the phone registered with.
      */
-    readonly accepted?: ReadonlySet<string>,
+    readonly accepted?: ReadonlyMap<string, string>,
   ) {}
+
+  /**
+   * Whether the holder of `by` owns `d`: `d` registered with that token, or with another token
+   * accepted now under the same label (one person's old and new token while a rotation overlaps).
+   */
+  private owns(d: Device, by: { label: string }, digest: string): boolean {
+    if (d.tokenDigest === undefined) return false;
+    if (d.tokenDigest === digest) return true;
+    const label = this.accepted ? this.accepted.get(d.tokenDigest) : d.by;
+    return label !== undefined && label === by.label;
+  }
 
   private async load(): Promise<Device[]> {
     if (this.devices) return this.devices;
@@ -147,8 +159,10 @@ export class Devices {
 
   /**
    * Adds the device, or updates it (its filters) when its token is registered already. Only the
-   * devices token it registered with may update it (409 for another one), unless that token is
-   * no longer accepted: another token's holder can't mute or take over a phone.
+   * devices token it registered with, or another accepted token of the same label, may update it
+   * (409 for another one), unless that token is no longer accepted: another token's holder can't
+   * mute or take over a phone. A phone registered before digests existed has none: the first
+   * accepted token that registers it again claims it.
    */
   async register(r: Registration, by: { label: string; value: string }, now = new Date()): Promise<{ device: Device; created: boolean }> {
     return this.lock.run(async () => {
@@ -157,7 +171,7 @@ export class Devices {
       const old = list.find((d) => d.id === id);
       if (!old && list.length >= this.maxDevices) throw new HttpError(507, `this server keeps at most ${this.maxDevices} devices (PUSH_MAX_DEVICES)`);
       const digest = tokenDigest(by.value);
-      if (old?.tokenDigest !== undefined && old.tokenDigest !== digest && (this.accepted?.has(old.tokenDigest) ?? true))
+      if (old?.tokenDigest !== undefined && !this.owns(old, by, digest) && (this.accepted?.has(old.tokenDigest) ?? true))
         throw new HttpError(409, 'this phone is registered with another devices token: update or remove it with that token');
       if (old?.tokenDigest !== digest && list.filter((d) => d.tokenDigest === digest).length >= this.maxPerToken)
         throw new HttpError(507, `this devices token has registered ${this.maxPerToken} devices, the most it may (PUSH_MAX_DEVICES_PER_TOKEN)`);
@@ -179,14 +193,15 @@ export class Devices {
   }
 
   /**
-   * DELETE /v1/devices/<id>: removes the device only for the devices token it registered with.
-   * Whether it was removed (false: no such device, or another token's).
+   * DELETE /v1/devices/<id>: removes the device only for the devices token it registered with, or
+   * another accepted token of the same label. Whether it was removed (false: no such device, or
+   * another owner's).
    */
-  async removeOwn(id: string, by: { value: string }): Promise<boolean> {
+  async removeOwn(id: string, by: { label: string; value: string }): Promise<boolean> {
     return this.lock.run(async () => {
       const list = await this.load();
       const digest = tokenDigest(by.value);
-      const kept = list.filter((d) => !(d.id === id && d.tokenDigest === digest));
+      const kept = list.filter((d) => !(d.id === id && this.owns(d, by, digest)));
       if (kept.length === list.length) return false;
       await this.save(kept);
       return true;

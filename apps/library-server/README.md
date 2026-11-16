@@ -218,6 +218,10 @@ phones. What to set up in Firebase and at Apple:
     else can mute or remove it. Once that token is withdrawn, another one may.
   - Give each person their own `DEVICES_TOKENS` entry. Without `DEVICES_TOKENS`, phones use the
     read tokens: everyone who shares one of those shares its phones too.
+  - The same label is the same person. To rotate a token, add the new one under the old label
+    (`alice:NEW`), then withdraw the old one. Meanwhile either may update or remove the phones.
+  - A phone kept without a token digest (by a pre-release of 0.27.0) gets no pushes. The first
+    accepted token that registers it again holds it from then on.
 - **A push says** "ALERTNAME firing" and the runbook's path, and carries the alert's link
   (`/open?url=…&sha256=…`). Nothing else: no other labels, no annotations, no tokens. Google or
   Apple sees what a push carries.

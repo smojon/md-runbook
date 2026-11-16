@@ -118,6 +118,7 @@ Both are built and **off** until the owner's accounts exist. Nothing breaks with
   `body` to the app. A `notification` block would bypass it.
 - **One devices token per person:** only the token a phone registered with can change or remove
   it (`409` for another). Everyone who shares a token shares its phones.
+  - Another token under the same label counts as the same person, so a rotation can overlap.
 - **Pruning:** only FCM `UNREGISTERED` and APNs 410. Not APNs `BadDeviceToken` or a bare 404,
   which a wrong setting causes for every phone.
 - **Manual signing:** automatic signing needs the App Store Connect key on the build runner, and

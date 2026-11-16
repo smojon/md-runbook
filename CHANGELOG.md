@@ -65,6 +65,8 @@ Security fixes from a review of the parts that face the network.
 - **TestFlight workflow:** the build's archive is checked with case ignored, as on the Mac. A name
   twice, or a path through a symbolic link, is refused.
   - Before, `plugins/` passed the check for app extensions, and a later file could replace one.
+- **Library server, devices tokens:** a new token under the same label may update or remove the
+  phones of the old one while both are accepted. Before, a rotation got `409`.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each

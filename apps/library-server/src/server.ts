@@ -57,7 +57,7 @@ export function createLibraryServer(config: ServerConfig, version: string, opts:
     config.push && config.alerts
       ? new PushService(
           config.push,
-          new Devices(config.push.file, config.push.maxDevices, config.push.maxDevicesPerToken, new Set(config.push.tokens.map((t) => tokenDigest(t.value)))),
+          new Devices(config.push.file, config.push.maxDevices, config.push.maxDevicesPerToken, new Map(config.push.tokens.map((t) => [tokenDigest(t.value), t.label]))),
           opts.senders ?? {
             ...(config.push.fcm ? { android: new FcmSender(config.push.fcm) } : {}),
             ...(config.push.apns ? { ios: new ApnsSender(config.push.apns) } : {}),
