@@ -71,7 +71,7 @@ export function signedReply(output: string): { principal: string; hash: string }
 
 const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64');
 
-/** Gate requests (one line each; see apps/gate/md-runbook-gate). `signature` is the SSHSIG blob, base64. */
+/** Gate requests (one line each; see apps/gate/README.md). `signature` is the SSHSIG blob, base64. */
 /** `signatures`: every signature of the manifest (author, co-signers); a server may need several signers. */
 export const gateLoadCommand = (id: string, manifest: string, signatures: string | readonly string[]): string =>
   `load ${id} ${b64(manifest)} ${(typeof signatures === 'string' ? [signatures] : signatures).join(' ')}\n`;
@@ -94,7 +94,7 @@ const NOTE_STARTS_AT_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt ][0-9]{2}:[0-9]{2}(:[0
 const CONTROL_RE = /[\x00-\x1f\x7f]+/g;
 
 /**
- * The note as the gate checks it (apps/gate/md-runbook-gate, do_note): the name on one line, no
+ * The note as the gate checks it (apps/gate/internal/proto, ParseNote): the name on one line, no
  * control characters, at most 400 bytes (cut at a character); a fingerprint or start time the gate
  * would refuse is left out. Undefined without a name.
  */

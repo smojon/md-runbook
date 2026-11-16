@@ -69,11 +69,12 @@ State of the project for whoever picks it up next (person or new Claude session)
   - `packages/core/src/node/sign.ts`: ssh-keygen sign/verify.
   - `src/cli/sign.ts`: `md-runbook sign|verify`.
   - `src/signing.ts`: Sign Runbook.
-  - `apps/gate/md-runbook-gate`: the server side, POSIX sh.
+  - `apps/gate`: the server side, a Go program (`cmd/md-runbook-gate`, `internal/…`), with its
+    own `go test` unit tests.
   - The gate client in `packages/ssh`: `RemoteSession.run(…, signed)`.
-  - Tests: `test/signing.test.ts`, `test/gate.test.ts` (the script under /bin/sh with real
-    signatures), `test/cliSign.test.ts`, and the gate section of `test/ssh.live.test.ts`
-    (through CI's sshd).
+  - Tests: `test/signing.test.ts`, `test/gate.test.ts` (the built binary, MD_RUNBOOK_GATE_BIN,
+    with real signatures), `test/cliSign.test.ts`, and the gate section of
+    `test/ssh.live.test.ts` (through CI's sshd).
   - Design and limits: `docs/features/signed-runbooks.md`.
 - **Web app hosting:** `.github/workflows/pages.yml` deploys the web build to GitHub Pages after
   a green App run on main. It does nothing until the repository variable `WEB_APP_ORIGIN` is set.

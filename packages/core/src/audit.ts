@@ -7,7 +7,7 @@
  * listed as findings. A saved run record (the runbook with its outputs) can be matched against it:
  * each recorded step the log confirms, and the ones it doesn't.
  *
- * The gate writes these events (apps/gate/md-runbook-gate): session, load (with called-by and
+ * The gate writes these events (apps/gate, the Go program): session, load (with called-by and
  * call for a runbook call's copy, and alert, alert-fingerprint, alert-starts-at for a run an alert
  * link started: what the app said, gate protocols 2 and 3), param, run, end (by the
  * account's shell: time, id, exit), unsigned, refused, stop, context, end-session. On the ops host
