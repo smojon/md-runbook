@@ -170,6 +170,33 @@ Security fixes from a review of the parts that face the network.
   Before, `kubectl ${param:VERB}` with `VERB=delete` ran without asking.
 - **App, a link opened again:** it reopens its earlier copy only while that copy is the runbook the
   link gives, apart from outputs and notes. Before, an edited copy opened as signed.
+- **App, questions and runs keep to their step:** confirm cards, group runs, Run all and a step's ⋯
+  act on their own step, wherever it moved. A step that changed or went is not run, and the notice
+  says so.
+  - Before, rejecting a proposal above a waiting confirm card made **Run** run the next step,
+    unconfirmed. During a group run, later hosts could run another step.
+  - Outputs and a call's result go to the step that ran. Before, an output could land on a step
+    with the same code and another `host=`.
+- **App, Approve and Reject:** they act on the proposal you read, and only on a proposal. Before,
+  Approve could approve another step, and a stale ⋯ could delete a step of yours.
+- **App, runbook calls:** a failed call continues its copy only when the app wrote that copy, and
+  its front matter is still right. Before, a copy planted under the right name was continued, with
+  its fake "done" steps.
+- **App, front matter:** a run stops when the front matter changes, such as `practice:`,
+  `kube-context:`, `shell:` or `mode:`. Before, a paused Run all went on under the new values.
+- **App, your patterns:** risky and redaction patterns you add run under RE2, which can't hang.
+  - A pattern with look-around stays JavaScript, up to 200 characters and without nested
+    repeats such as `(a+)+`. Such a pattern is refused.
+  - Live output is redacted before it is cut to its last 20,000 characters.
+  - A secret split across two packets no longer shows in part.
+- **Web app:** a relay at `ws://[::1]` is refused, with why. The page's policy blocks it.
+- **Web app on GitHub Pages:** the team library publishes only `.md`, `.markdown`, `index.json`
+  and `allowed_signers`. Before, an `.html` file there ran as a page next to the app.
+- **App, Record where each step ran:** the context is kept to 200 characters, without control
+  characters or line breaks.
+- **App, copies of a library runbook:** their front matter and notes are read as the rest of
+  md-runbook reads them, lone carriage returns included. Before, a front matter written that way
+  went unseen when the copy's signature was checked.
 
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
   It lands after the step, as a proposal to approve.
