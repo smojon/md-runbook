@@ -9,6 +9,8 @@ on:
 permissions:
   contents: read
 
+# No job here restores a cache: setup-node gets no `cache` and `package-manager-cache: false`
+# (its automatic npm cache), so a release installs only what the lock files name.
 jobs:
   test:
     strategy:
@@ -18,9 +20,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
+          package-manager-cache: false
       - run: npm ci
       - run: npm test
       - name: Integration tests (Linux)
@@ -33,7 +38,7 @@ jobs:
   # The ops host (apps/ops), the probe (apps/probe), the relay (apps/relay), the web app
   # (apps/web) and the library server (apps/library-server) for amd64 and arm64, as ghcr.io/OWNER/md-runbook-ops:VERSION and :latest (the
   # others the same). The first push makes a private package: set it to public once in the
-  # package's settings.
+  # package's settings. Built without a build cache (no cache-from).
   images:
     needs: test
     runs-on: ubuntu-latest
@@ -50,6 +55,8 @@ jobs:
           - {image: md-runbook-web, context: .}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Log in to GitHub's registry
@@ -73,9 +80,15 @@ jobs:
   # credential and runs no dependency of the repository: npm publishes the packed folder, and
   # Open VSX and the Marketplace use their tools locked in scripts/publish-tools, installed
   # without install scripts.
+  #
+  # The publish jobs take the artifact by the ID `package` uploaded (a parallel job can't swap
+  # it), download it under $RUNNER_TEMP (never over the checked-out tools), and check that it
+  # holds the release files and nothing else before using it.
   package:
     needs: test
     runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -83,6 +96,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
+          package-manager-cache: false
       - run: npm ci
       - name: Check the tag matches package.json
         run: |
@@ -105,6 +119,7 @@ jobs:
           cp out/npm/md-runbook-*.tgz md-runbook-cli.tgz
           rm out/npm/md-runbook-*.tgz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: upload
         with:
           name: release-files
           path: |
@@ -117,6 +132,8 @@ jobs:
   npm:
     needs: package
     runs-on: ubuntu-latest
+    # npm's trusted publisher names this environment too (PUBLISHING.md, npm).
+    environment: release
     permissions:
       id-token: write # npm trusted publishing and provenance: no npm token, and the package links back to this run
     steps:
@@ -124,16 +141,40 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: release-files
+          artifact-ids: ${{ needs.package.outputs.artifact_id }}
+          path: ${{ runner.temp }}/release
+      - name: The artifact holds the release files and nothing else
+        working-directory: ${{ runner.temp }}/release
+        run: &check-release-files |
+          got=$(find . -mindepth 1 ! -type d | LC_ALL=C sort)
+          want=$(printf '%s\n' ./md-runbook-cli.tgz ./md-runbook.vsix ./out/npm/LICENSE ./out/npm/README.md ./out/npm/cli.js ./out/npm/package.json | LC_ALL=C sort)
+          if [ "$got" != "$want" ]; then
+            echo "::error::release-files is not the expected files"
+            diff <(echo "$want") <(echo "$got") || true
+            exit 1
+          fi
+      # npm publish runs the package's prepublishOnly, prepack, prepare, postpack, publish and
+      # postpublish scripts (docs.npmjs.com/cli/v11/using-npm/scripts) next to the id-token.
+      # scripts/pack-cli.js writes no `scripts`, so one there is a change to look at.
+      - name: The package has no scripts
+        working-directory: ${{ runner.temp }}/release
+        run: |
+          if jq -e 'has("scripts")' out/npm/package.json > /dev/null; then
+            echo "::error::out/npm/package.json has a scripts field: npm publish would run its hooks"
+            exit 1
+          fi
       # Trusted publishing (PUBLISHING.md, npm): npm trades this run's GitHub OIDC token for a
       # one-time publish token, so no npm token is stored. It needs npm 11.5.1 or newer.
       - name: npm with trusted publishing
-        run: npm install -g npm@11.6.2
-      # Keep the `./`: without it npm reads `out/npm` as a GitHub repository.
+        run: npm install -g --ignore-scripts npm@11.6.2
+      # Keep the `./`: without it npm reads `out/npm` as a GitHub repository. --ignore-scripts:
+      # no lifecycle script runs with the id-token (docs.npmjs.com/cli/v11/using-npm/config).
       - name: Publish the command line to npm
-        run: npm publish ./out/npm --access public --provenance
+        working-directory: ${{ runner.temp }}/release
+        run: npm publish ./out/npm --access public --provenance --ignore-scripts
 
   open-vsx:
     needs: package
@@ -147,16 +188,22 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
+          package-manager-cache: false
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: scripts/publish-tools
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: release-files
+          artifact-ids: ${{ needs.package.outputs.artifact_id }}
+          path: ${{ runner.temp }}/release
+      - name: The artifact holds the release files and nothing else
+        working-directory: ${{ runner.temp }}/release
+        run: *check-release-files
       - name: Publish to Open VSX
+        working-directory: ${{ runner.temp }}/release
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         if: env.OVSX_PAT != ''
-        run: scripts/publish-tools/node_modules/.bin/ovsx publish md-runbook.vsix --skip-duplicate
+        run: '"$GITHUB_WORKSPACE/scripts/publish-tools/node_modules/.bin/ovsx" publish md-runbook.vsix --skip-duplicate'
 
   marketplace:
     needs: package
@@ -170,23 +217,32 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
+          package-manager-cache: false
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: scripts/publish-tools
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: release-files
+          artifact-ids: ${{ needs.package.outputs.artifact_id }}
+          path: ${{ runner.temp }}/release
+      - name: The artifact holds the release files and nothing else
+        working-directory: ${{ runner.temp }}/release
+        run: *check-release-files
       # Off while VSCE_PAT isn't set: the Marketplace upload is by hand.
       - name: Publish to the Visual Studio Marketplace
+        working-directory: ${{ runner.temp }}/release
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         if: env.VSCE_PAT != ''
-        run: scripts/publish-tools/node_modules/.bin/vsce publish --packagePath md-runbook.vsix
+        run: '"$GITHUB_WORKSPACE/scripts/publish-tools/node_modules/.bin/vsce" publish --packagePath md-runbook.vsix'
 
   # The Android APK, built and signed by app-apk.yml (its jobs keep the key away from the build).
+  # Only the two signing secrets are passed, not `secrets: inherit` (PUBLISHING.md, Android).
   apk:
     needs: test
     uses: ./.github/workflows/app-apk.yml
-    secrets: inherit
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
 
   # Made with every file at once: a published release is immutable (Settings → General).
   github-release:
@@ -200,16 +256,28 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: release-files
+          artifact-ids: ${{ needs.package.outputs.artifact_id }}
           path: ${{ runner.temp }}/release
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: md-runbook-android
-          path: ${{ runner.temp }}/release
+          artifact-ids: ${{ needs.apk.outputs.artifact_id }}
+          path: ${{ runner.temp }}/apk
+      - name: The artifact holds the release files and nothing else
+        working-directory: ${{ runner.temp }}/release
+        run: *check-release-files
+      - name: The APK artifact holds this version's APK and nothing else
+        working-directory: ${{ runner.temp }}/apk
+        run: |
+          got=$(find . -mindepth 1 ! -type d)
+          if [ "$got" != "./md-runbook-${GITHUB_REF_NAME#v}.apk" ]; then
+            echo "::error::md-runbook-android is not md-runbook-${GITHUB_REF_NAME#v}.apk alone: $got"
+            exit 1
+          fi
       - name: GitHub release with the .vsix and the command line
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd "$RUNNER_TEMP/release"
-          gh release create "$GITHUB_REF_NAME" md-runbook.vsix md-runbook-cli.tgz md-runbook-*.apk --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+          gh release create "$GITHUB_REF_NAME" md-runbook.vsix md-runbook-cli.tgz "$RUNNER_TEMP/apk/md-runbook-${GITHUB_REF_NAME#v}.apk" \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
             --notes-file <(node "$GITHUB_WORKSPACE/scripts/release-notes.js" "$GITHUB_REF_NAME") --prerelease

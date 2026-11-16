@@ -18,7 +18,7 @@ Both are built and **off** until the owner's accounts exist. Nothing breaks with
   - A build without Firebase or the APNs entitlement says **Not set up in this build**.
 - **TestFlight** ([.github/workflows/app-testflight.yml](../.github/workflows/app-testflight.yml)):
   - On `v*` tags, and by hand on a tag. Skips with a notice while the secrets are missing.
-  - Builds without secrets, then signs (certificate + profile), then uploads in a job of its own.
+  - Builds an unsigned archive without secrets. A second job signs it, a third uploads it.
 
 ## What the owner does
 
@@ -120,8 +120,13 @@ Both are built and **off** until the owner's accounts exist. Nothing breaks with
   which a wrong setting causes for every phone.
 - **Manual signing:** automatic signing needs the App Store Connect key on the build runner, and
   cloud signing needs an Admin key. Manual signing keeps the key in the upload job.
-- **Residual risk:** `xcodebuild archive` runs build scripts from npm packages while the
-  certificate is in the keychain. It is removed right after the export.
+- **Signing in a job of its own:** the build runs npm, CocoaPods and Xcode script phases. So it
+  archives with `CODE_SIGNING_ALLOWED=NO` and never sees the certificate.
+- **Entitlements:** an unsigned archive has none, and an export alone ships without the push
+  entitlement. The sign job signs the archived app with them, then exports.
+- **Which entitlements:** the app's file from `expo prebuild`, with values from the profile. A key
+  the profile doesn't grant fails the job. The job checks the exported app for `aps-environment`.
+- **The key:** imported into a temporary keychain, not extractable, for `codesign` only.
 - **altool `--upload-package`:** Apple's documented replacement for the deprecated `--upload-app`.
 
 ## Open points
@@ -148,5 +153,9 @@ Both are built and **off** until the owner's accounts exist. Nothing breaks with
   <https://docs.expo.dev/push-notifications/sending-notifications-custom/>
 - altool (`--upload-package`, `--apiKey`, `API_PRIVATE_KEYS_DIR`):
   <https://help.apple.com/asc/appsaltool/en.lproj/static.html>
-- Unsigned archives lose entitlements: <https://developer.apple.com/forums/thread/772372>
+- Unsigned archives lose entitlements: <https://developer.apple.com/forums/thread/772372>,
+  <https://developer.apple.com/forums/thread/671800> (ITMS-90078 after `CODE_SIGNING_ALLOWED=NO`)
+- Signing nested code inside out, no entitlements on frameworks:
+  <https://developer.apple.com/documentation/xcode/using-the-latest-code-signature-format>
+- `security import -x` and `-T`: <https://ss64.com/mac/security-export.html>
 - Cloud signing with an API key needs Admin: <https://developer.apple.com/forums/thread/698117>

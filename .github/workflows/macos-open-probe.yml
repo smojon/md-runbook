@@ -50,15 +50,17 @@ jobs:
           MD_RUNBOOK_VSCODE_ARGS: ${{ inputs.args }}
           MD_RUNBOOK_VSCODE_SETTINGS: ${{ inputs.settings }}
           MD_RUNBOOK_VSCODE_KEEP_BACKGROUNDING: ${{ inputs.keep_backgrounding && '1' || '' }}
+          AB: ${{ inputs.ab }}
+          RUN: ${{ matrix.run }}
         run: |
           set -o pipefail
           sysctl -n hw.ncpu hw.memsize machdep.cpu.brand_string || true
-          if [ "${{ inputs.ab }}" != "true" ]; then
+          if [ "$AB" != "true" ]; then
             npm run test:integration 2>&1 | tee integration.log
             exit "${PIPESTATUS[0]}"
           fi
           order="off on"
-          if [ $(( ${{ matrix.run }} % 2 )) -eq 0 ]; then order="on off"; fi
+          if [ $(( RUN % 2 )) -eq 0 ]; then order="on off"; fi
           status=0
           for mode in $order; do
             # "on": the suite's default (--disable-renderer-backgrounding); "off": VS Code's default.
