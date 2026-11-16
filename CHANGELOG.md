@@ -45,6 +45,10 @@ Security fixes from a review of the parts that face the network.
   - A link no longer fills its values into a runbook that is running or waiting for an answer.
     It opens a new copy and says why.
   - A link no longer fills its values into a call's copy either.
+- **Copy with values (VS Code and the app):** a command with a comment gets no values. Before,
+  the apostrophe in `# don't` opened a quote, and a value from a link could run when pasted.
+  - The same holds for bash heredocs (`<<EOF`) and PowerShell here-strings (`@"…"@`, `@'…'@`).
+  - A reference after the shell's escape character, such as `\${param:X}`, stays a reference.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each
