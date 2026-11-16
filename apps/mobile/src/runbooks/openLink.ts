@@ -7,6 +7,7 @@
  */
 import { clearOutputBlocks } from '@md-runbook/core';
 import { LinkTrust, RunbookLink, checkedLinkTrust, linkTrust, parseRunbookLink, rawRunbookUrl } from '@md-runbook/core/runbookLink';
+import { choiceProblem } from '@md-runbook/core/secrets';
 import { readSignature, signedText } from '@md-runbook/core/signing';
 import { getHosts, loadHosts } from '../hosts/store';
 import { t } from '../i18n';
@@ -126,11 +127,15 @@ async function checkedTrust(l: RunbookLink, text: string, libraryBase: string | 
 
 /** Fill in the link's parameters and remember its host and action for the runbook screen. */
 function applyLink(runbook: Runbook, l: RunbookLink, text: string, trust: Exclude<LinkTrust, 'mismatch'>): void {
-  const declared = new Set(runbookParams(text).map((p) => p.name));
+  const declared = new Map(runbookParams(text).map((p) => [p.name, p]));
   const ignoredParams: string[] = [];
+  const refusedParams: string[] = [];
   for (const [name, value] of Object.entries(l.params)) {
-    if (declared.has(name)) setParamValue(runbook.id, name, value);
-    else ignoredParams.push(name);
+    const spec = declared.get(name);
+    if (!spec) ignoredParams.push(name);
+    // Not one of its choices ("One of: get, describe"): not taken, typed when it runs (as VS Code).
+    else if (choiceProblem(spec, value)) refusedParams.push(name);
+    else setParamValue(runbook.id, name, value);
   }
   // A link names a host; it never adds one (its address and key are the user's to set).
   const host = l.host ? getHosts().find((h) => h.name === l.host) : undefined;
@@ -138,6 +143,7 @@ function applyLink(runbook: Runbook, l: RunbookLink, text: string, trust: Exclud
     trust,
     ...(host ? { hostId: host.id } : l.host ? { missingHost: l.host } : {}),
     ignoredParams,
+    ...(refusedParams.length > 0 ? { refusedParams } : {}),
     cosign: l.action === 'cosign',
   });
 }

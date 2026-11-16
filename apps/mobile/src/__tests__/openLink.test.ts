@@ -169,6 +169,16 @@ describe('runbook links: pins, hosts, parameters, co-sign', () => {
     expect(getHosts().map((h) => h.name)).toEqual(['web-1']);
   });
 
+  it('a value not among the choices (One of:) is not taken; the banner says so (security review round 3)', async () => {
+    const text = '---\nparams:\n  - VERB: get  # One of: get, describe\n---\n\n```bash\nkubectl ${param:VERB} pods\n```\n';
+    const r = await openRunbookLink(formatRunbookLink({ text, params: { VERB: 'delete' } }), offline);
+    if (r.kind !== 'opened') throw new Error(r.message);
+    expect(paramValues(r.runbook.id)).toEqual({});
+    expect(linkContext(r.runbook.id)).toMatchObject({ ignoredParams: [], refusedParams: ['VERB'] });
+    const ok = await openRunbookLink(formatRunbookLink({ text, params: { VERB: 'describe' } }), offline);
+    expect(ok.kind === 'opened' && paramValues(ok.runbook.id)).toEqual({ VERB: 'describe' });
+  });
+
   it('the same link opened again opens the same copy, with its values; a changed runbook is a new copy', async () => {
     const link = (service: string) => formatRunbookLink({ url: 'https://x.example.net/alerts/restart.md', params: { SERVICE: service } });
     const first = await openRunbookLink(link('api'), serve(RUNBOOK));

@@ -48,7 +48,7 @@ import { isManualMark, stepState } from '@md-runbook/core/progress';
 import type { Captured } from '@md-runbook/core/checks';
 import { DEFAULT_POLICY, PolicyResult, approvalScope, evaluatePolicy } from '@md-runbook/core/policy';
 import { proposalOf } from '@md-runbook/core/proposal';
-import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
+import { fillShown, findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
 import { SignedStatus, readSignature, signedStatus, signerNames } from '@md-runbook/core/signing';
@@ -687,6 +687,30 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     setNotice(t.copyNotRunnable(libraryRefused));
     return true;
   };
+  /**
+   * What a confirmation's risky patterns see, as in VS Code and the command line: `source` with
+   * the values known now filled in (`kubectl ${param:VERB}` with VERB=delete asks). Secrets, and
+   * values not known yet, stay placeholders.
+   */
+  const shownForConfirm = (source: string, cellIndex: number): string => {
+    const text = (runbook && getRunbook(runbook.id)?.text) ?? runbook?.text ?? '';
+    // A signed cell doesn't take the front matter's defaults (runCell).
+    const signedCell = signedStatus(text)?.cells.has(cellIndex) ?? false;
+    const defaults = new Map((parseFrontMatter(text)?.params ?? []).map((p) => [p.name, p.default]));
+    return fillShown(source, (ref) => {
+      if (ref.kind === 'param') {
+        const typed = paramValues[ref.name];
+        const value = typed !== undefined && typed !== '' ? typed : signedCell ? undefined : defaults.get(ref.name);
+        return value === undefined ? undefined : { value, secret: false };
+      }
+      if (ref.kind === 'input') {
+        const typed = inputs.current[ref.name];
+        return typed ? { value: typed.value, secret: typed.masked || ref.secret } : undefined;
+      }
+      const c = ref.kind === 'out' ? captures.current[ref.name] : undefined;
+      return c ? { value: c.value, secret: c.secret } : undefined;
+    });
+  };
   const run = async (request: RunRequest, on: Host | undefined): Promise<void> => {
     if (!runbook || busy.current || refusedHere()) return;
     busy.current = true;
@@ -750,7 +774,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     // A risky command, or the cell's `confirm`: ask before it runs (and before Run all goes on).
     if (!request.confirmed && cell && isCodeMeta(cell.meta)) {
       const source = lines ? lines.steps.map((s) => s.text).join('\n') : cell.value;
-      const match = confirmationOf(source, cell.meta.info, outputSettings().allowNoConfirm);
+      const match = confirmationOf(shownForConfirm(source, cellIndex), cell.meta.info, outputSettings().allowNoConfirm);
       if (match !== undefined) {
         // Line runs and runs at breakpoints run once (no retry=), as in the extension.
         const retry = lines ? undefined : parseCellOptions(cell.meta.info).retry;
@@ -895,7 +919,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     // A risky cell asks once, before the round, naming every account it runs as.
     const cell = parse(runbook.text).cells[cellIndex];
     const match =
-      !confirmed && cell && isCodeMeta(cell.meta) ? confirmationOf(cell.value, cell.meta.info, outputSettings().allowNoConfirm) : undefined;
+      !confirmed && cell && isCodeMeta(cell.meta)
+        ? confirmationOf(shownForConfirm(cell.value, cellIndex), cell.meta.info, outputSettings().allowNoConfirm)
+        : undefined;
     if (match !== undefined && cell && isCodeMeta(cell.meta)) {
       const retry = parseCellOptions(cell.meta.info).retry;
       setConfirming({
@@ -3605,6 +3631,11 @@ function LinkNotes({ context }: { context: LinkContext }) {
       {context.ignoredParams.length > 0 ? (
         <Text testID="link-ignored-params" style={styles.signedBody}>
           {t.linkIgnoredParams(context.ignoredParams)}
+        </Text>
+      ) : null}
+      {context.refusedParams ? (
+        <Text testID="link-refused-params" style={styles.warning}>
+          {t.linkRefusedParams(context.refusedParams)}
         </Text>
       ) : null}
     </View>

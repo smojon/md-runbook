@@ -28,7 +28,7 @@ import { checkKubeContext, kubeContextParam, resolveKubeContext, wantedKubeConte
 import { approvalScope } from '@md-runbook/core/policy';
 import { alertFromParams } from '@md-runbook/core/runReport';
 import { proposalOf } from '@md-runbook/core/proposal';
-import { parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
+import { choiceProblem, parseFrontMatter, rewriteRefs } from '@md-runbook/core/secrets';
 import { signedStatus, signedStepIndex } from '@md-runbook/core/signing';
 import { LineStep, echoCommand, formatLineRange, formatLineRanges, splitSteps } from '@md-runbook/core/steps';
 import { RemoteRunOptions, SessionRunResult, SignedRun, wrongPlatform } from '@md-runbook/ssh';
@@ -194,6 +194,9 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
     const bad = checkParam(spec, value);
     if (bad)
       return { kind: 'error', message: bad === 'newline' ? t.paramNewline(ref.name) : t.paramMismatch(ref.name, spec.pattern ?? '') };
+    // One of its choices ("One of: get, describe"), wherever the value came from (a link, the default).
+    const off = choiceProblem(spec, value);
+    if (off) return { kind: 'error', message: t.paramNotAChoice(off) };
     paramEnv[ref.name] = value;
   }
   if (needs.length > 0) return { kind: 'needs', needs };

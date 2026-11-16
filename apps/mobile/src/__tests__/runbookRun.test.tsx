@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { parse } from '@md-runbook/core';
 import { addHost, getHost, pinHostKey, resetHosts } from '../hosts/store';
+import { setParamValue } from '../runbooks/params';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { resetSettings, setOutputSetting, signerName } from '../settings/store';
 import { HostList } from '../screens/HostList';
@@ -140,6 +141,18 @@ describe('asking before a risky cell, as VS Code does', () => {
   beforeEach(() => {
     resetSettings();
     setOutputSetting('launchForm', false);
+  });
+
+  it('risky patterns see the values: kubectl ${param:VERB} with VERB=delete asks first (security review round 3)', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    const rb = addRunbook('verb.md', '---\nparams:\n  - VERB: get\n---\n\n# Pods\n\n```bash\nkubectl ${param:VERB} pod web-1\n```\n');
+    setParamValue(rb.id, 'VERB', 'delete');
+    await render(<RunbookView id={rb.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    expect(screen.getByTestId('confirm-title')).toHaveTextContent('Cell 2 contains a risky command: “delete”');
+    expect(mockConnection.calls).toHaveLength(0);
   });
 
   it('a risky cell waits for Run under it; nothing is sent before', async () => {

@@ -18,6 +18,8 @@ export interface ParamSpec {
   default?: string;
   /** From the runbook's signature: a POSIX extended regular expression for the whole value. */
   pattern?: string;
+  /** The front matter's "One of: a, b": the value must be one of them (core choiceProblem). */
+  choices?: string[];
 }
 
 const isBash = (c: ParsedCell): boolean => c.kind === 'code' && shellKindForLanguage(c.languageId) === 'bash';
@@ -26,7 +28,12 @@ const isBash = (c: ParsedCell): boolean => c.kind === 'code' && shellKindForLang
 export function runbookParams(text: string): ParamSpec[] {
   const specs = new Map<string, ParamSpec>();
   const fm = parseFrontMatter(text);
-  for (const p of fm?.params ?? []) specs.set(p.name, { name: p.name, ...(p.default !== undefined ? { default: p.default } : {}) });
+  for (const p of fm?.params ?? [])
+    specs.set(p.name, {
+      name: p.name,
+      ...(p.default !== undefined ? { default: p.default } : {}),
+      ...(p.choices ? { choices: p.choices } : {}),
+    });
   for (const cell of parse(text).cells.filter(isBash)) {
     for (const ref of refsOf(cell.value, isCodeMeta(cell.meta) ? cell.meta.info : '', fm))
       if (ref.kind === 'param' && !specs.has(ref.name)) specs.set(ref.name, { name: ref.name });

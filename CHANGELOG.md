@@ -101,6 +101,11 @@ Security fixes from a review of the parts that face the network.
 - **App, Start Incident copies:** a copy whose front matter was edited, such as `practice:` or
   `kube-context:`, no longer counts as signed as a whole. Before, a changed `practice:` host ran
   without asking first.
+- **App, parameters with choices (`One of: a, b`):** a block run on its own refuses a value that
+  isn't one of them, as Run all does. A link's value outside them is not taken, and the banner
+  says so.
+- **App, confirmations:** risky patterns see the command with its values filled in, as in VS Code.
+  Before, `kubectl ${param:VERB}` with `VERB=delete` ran without asking.
 - **App, a link opened again:** it reopens its earlier copy only while that copy is the runbook the
   link gives, apart from outputs and notes. Before, an edited copy opened as signed.
 - **App: Suggest a Fix.** A failed step's ⋯ and the Steps header ask the assistant for a fix.
