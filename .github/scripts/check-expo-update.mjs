@@ -6,9 +6,12 @@
 //   everything else is as on main.
 // - package-lock.json: only the packages the named ones depend on (directly or not) may differ
 //   from main's lock. Each entry that differs is checked against registry.npmjs.org:
+//   - only the keys npm writes in a lock entry;
 //   - resolved is that package's own tarball URL (`<registry><name>/-/<base>-<version>.tgz`);
-//   - integrity and dependencies are the registry's for that version;
-//   - no new install script, bundled package, link, alias, git or file spec.
+//   - integrity, dependencies, engines, os, cpu, libc and bin are the registry's for that version;
+//   - that version was published at least 7 days before the check (the package's `time`);
+//   - no new install script or shrinkwrap, no bundled package, link, alias, git or file spec.
+//   The registry is asked again after a 429 or 5xx, as long as Retry-After says (at most 60 s).
 // When all is fine, it writes CLEAN.md, the list the pull request gets: rebuilt from the checked
 // names and versions alone, the old versions from main's package.json. No other summary text.
 //
@@ -16,6 +19,7 @@
 //   node --test .github/scripts/check-expo-update.test.mjs  (the tests)
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -25,6 +29,15 @@ const SUMMARY_VERSION = /^\d+\.\d+\.\d+(-[\w.]+)?$/;
 const LOCK_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 const NAME = /^(@[a-z0-9][\w.~-]*\/)?[A-Za-z0-9][\w.~-]*$/;
 const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall'];
+/** The keys npm writes in a lock entry: any other is refused. */
+const LOCK_KEYS = new Set([
+  'version', 'resolved', 'integrity', 'name', 'dev', 'optional', 'devOptional', 'peer', 'license',
+  'dependencies', 'optionalDependencies', 'peerDependencies', 'peerDependenciesMeta', 'bin', 'engines',
+  'os', 'cpu', 'libc', 'funding', 'hasInstallScript', 'deprecated', 'link', 'inBundle', 'extraneous',
+  'hasShrinkwrap', 'bundleDependencies',
+]);
+/** A changed lock entry's version must be this old: e2e/expo-updates.mjs's minimum age. */
+export const MIN_AGE_DAYS = 7;
 
 /** "- `expo` 58.0.19 → **58.0.21** (published …)", as e2e/expo-updates.mjs writes it: name → version. */
 export const parseSummary = (text) =>
@@ -84,20 +97,68 @@ export function dependencyTree(packages, names) {
   return seen;
 }
 
-/** The registry's version document: https://registry.npmjs.org/<name>/<version>. */
-export async function registryManifest(name, version) {
+/** The wait a Retry-After header asks for (seconds or an HTTP date), in ms, at most 60 s; undefined: none. */
+export function retryAfterMs(value, now = Date.now()) {
+  const s = String(value ?? '').trim();
+  if (s === '') return undefined;
+  const ms = /^\d+$/.test(s) ? Number(s) * 1000 : Date.parse(s) - now;
+  return Number.isNaN(ms) ? undefined : Math.min(Math.max(ms, 0), 60_000);
+}
+
+/**
+ * GETs a registry document as JSON. A 429, a 5xx or a network error is tried again, up to
+ * `attempts` times in all, after the wait Retry-After asks for (else 1, 2, 4 s); a 404 or another
+ * 4xx stops at once.
+ */
+export async function registryJson(url, { fetch: get = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), attempts = 4, timeoutMs = 30_000 } = {}) {
   let last;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    let wait = 1000 * 2 ** (attempt - 1);
     try {
-      const res = await fetch(`${REGISTRY}${name}/${version}`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(30_000) });
+      const res = await get(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
       if (res.ok) return await res.json();
+      await res.body?.cancel().catch(() => {});
       last = new Error(`HTTP ${res.status}`);
-      if (res.status === 404) break;
+      if (res.status !== 429 && res.status < 500) break;
+      wait = retryAfterMs(res.headers.get('retry-after')) ?? wait;
     } catch (e) {
       last = e;
     }
+    if (attempt < attempts) await sleep(wait);
   }
-  throw new Error(`${name}@${version} from ${REGISTRY}: ${last?.message ?? last}`);
+  throw last;
+}
+
+/** The registry's version document: https://registry.npmjs.org/<name>/<version>. */
+export async function registryManifest(name, version) {
+  try {
+    return await registryJson(`${REGISTRY}${name}/${version}`);
+  } catch (e) {
+    throw new Error(`${name}@${version} from ${REGISTRY}: ${e?.message ?? e}`);
+  }
+}
+
+/** The registry's full document of a package (its `time` has each version's publish time). */
+export async function registryPackument(name) {
+  try {
+    return await registryJson(`${REGISTRY}${name.replace('/', '%2f')}`, { timeoutMs: 120_000 });
+  } catch (e) {
+    throw new Error(`${name} from ${REGISTRY}: ${e?.message ?? e}`);
+  }
+}
+
+/** A lock entry's or a manifest's bin as npm installs it: `{name: path}`, a string under the unscoped name, paths without `./`. */
+export function normalizeBin(bin, name) {
+  if (bin === undefined || bin === null) return undefined;
+  const o = typeof bin === 'string' ? { [name.split('/').pop()]: bin } : bin;
+  if (typeof o !== 'object' || Array.isArray(o)) return bin;
+  const out = {};
+  for (const [key, target] of Object.entries(o)) {
+    const base = path.posix.basename(key.replace(/[\\:]/g, '/'));
+    const to = typeof target === 'string' ? path.posix.join('/', target.replace(/\\/g, '/')).slice(1) : '';
+    if (base && base !== '.' && base !== '..' && to) out[base] = to;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** Runs fn on each item, at most `n` at a time. */
@@ -117,10 +178,16 @@ const same = (a, b) => isDeepStrictEqual(sorted(a), sorted(b));
 /**
  * The problems of an update (empty: fine). `summary` is the summary's text, `before`/`after`
  * package.json, `lockBefore`/`lockAfter` package-lock.json, as objects; `manifest(name, version)`
- * gives the registry's version document.
+ * gives the registry's version document, `packument(name)` its full document (fetched once per
+ * name), `now` the time of the check in ms.
  */
-export async function checkUpdate({ summary, before, after, lockBefore, lockAfter, manifest = registryManifest }) {
+export async function checkUpdate({ summary, before, after, lockBefore, lockAfter, manifest = registryManifest, packument = registryPackument, now = Date.now() }) {
   const problems = [];
+  const packuments = new Map();
+  const packumentOf = (name) => {
+    if (!packuments.has(name)) packuments.set(name, packument(name));
+    return packuments.get(name);
+  };
   const named = parseSummary(summary);
   if (named.size === 0) problems.push('the summary names no updated package');
   for (const [name, version] of named) {
@@ -196,7 +263,11 @@ export async function checkUpdate({ summary, before, after, lockBefore, lockAfte
     const e = is[where];
     const old = was[where];
     const say = (p) => problems.push(`package-lock.json: ${where} ${p}`);
+    if (typeof e !== 'object' || e === null || Array.isArray(e)) return say('is not an object');
+    const unknown = Object.keys(e).filter((k) => !LOCK_KEYS.has(k));
+    if (unknown.length > 0) return say(`has keys npm doesn't write in a lock: ${unknown.map((k) => JSON.stringify(k)).join(', ')}`);
     if (e.link || e.inBundle) return say(e.link ? 'is a link' : 'is bundled in another package: its contents are not checked');
+    if (e.hasShrinkwrap && !old?.hasShrinkwrap) return say('has a shrinkwrap now: npm would install what it lists, unchecked');
     if (e.name !== old?.name) return say(`has another package name (${e.name ?? pathName(where)} for ${old?.name ?? pathName(where)}): an alias`);
     const name = e.name ?? pathName(where);
     if (!NAME.test(name)) return say(`is ${JSON.stringify(name)}, not a package name`);
@@ -221,9 +292,24 @@ export async function checkUpdate({ summary, before, after, lockBefore, lockAfte
       ['optionalDependencies', optional],
       ['peerDependencies', m.peerDependencies],
       ['peerDependenciesMeta', m.peerDependenciesMeta],
+      ['engines', m.engines],
+      ['os', m.os],
+      ['cpu', m.cpu],
+      ['libc', m.libc],
     ]) {
       if (!same(e[field], want)) say(`${field} are not the registry's`);
     }
+    if (!same(normalizeBin(e.bin, name), normalizeBin(m.bin, name))) say("bin is not the registry's");
+    // Old enough: published at least MIN_AGE_DAYS before this check, as the update job asked.
+    let p;
+    try {
+      p = await packumentOf(name);
+    } catch (err) {
+      return say(`can't be checked for its age: ${err.message}`);
+    }
+    const published = Date.parse(p?.name === name ? p?.time?.[e.version] : undefined);
+    if (Number.isNaN(published)) return say(`has no publish time on the registry for ${e.version}`);
+    if (published > now - MIN_AGE_DAYS * 86_400_000) say(`was published ${new Date(published).toISOString()}, less than ${MIN_AGE_DAYS} days ago`);
   });
   return problems.sort();
 }

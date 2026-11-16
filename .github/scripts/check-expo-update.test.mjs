@@ -3,7 +3,7 @@
 // stub.
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { checkUpdate, cleanSummary, dependencyTree, pathName, tarballUrl } from './check-expo-update.mjs';
+import { checkUpdate, cleanSummary, dependencyTree, normalizeBin, pathName, registryJson, retryAfterMs, tarballUrl } from './check-expo-update.mjs';
 
 const sha = (s) => `sha512-${Buffer.from(s).toString('base64')}`;
 const entry = (name, version, more = {}) => ({ version, resolved: tarballUrl(name, version), integrity: sha(`${name}@${version}`), ...more });
@@ -23,6 +23,16 @@ const manifest = async (name, version) => {
   const m = REGISTRY[`${name}@${version}`];
   if (!m) throw new Error('HTTP 404');
   return { name, version, dist: { integrity: sha(`${name}@${version}`) }, ...m };
+};
+// The check runs at NOW; every version in REGISTRY was published a month before, but these.
+const NOW = Date.parse('2026-11-16T12:00:00Z');
+const PUBLISHED = { 'semver@7.7.0': '2026-11-01T00:00:00.000Z' };
+const packumentCalls = [];
+const packument = async (name) => {
+  packumentCalls.push(name);
+  const versions = Object.keys(REGISTRY).filter((k) => k.slice(0, k.lastIndexOf('@')) === name).map((k) => k.slice(k.lastIndexOf('@') + 1));
+  if (versions.length === 0) throw new Error('HTTP 404');
+  return { name, time: Object.fromEntries(versions.map((v) => [v, PUBLISHED[`${name}@${v}`] ?? '2026-10-16T00:00:00.000Z'])) };
 };
 
 const pkg = (expo) => ({ name: '@md-runbook/mobile', version: '1.0.0', dependencies: { expo, 'left-pad': '1.3.0' } });
@@ -48,6 +58,8 @@ const base = () => ({
   lockBefore: lock('58.0.19', '58.1.0', '7.6.0'),
   lockAfter: lock('58.0.21', '58.1.2', '7.7.0'),
   manifest,
+  packument,
+  now: NOW,
 });
 const problems = (over = (x) => x) => checkUpdate(over(base()));
 
@@ -213,5 +225,117 @@ describe('check-expo-update', () => {
   it('a registry it cannot reach is a problem, not a pass', async () => {
     const p = await problems((x) => ({ ...x, manifest: async () => { throw new Error('fetch failed'); } }));
     assert.match(p.join('\n'), /can't be checked: fetch failed/);
+  });
+
+  it("refuses lock keys npm doesn't write, and a new shrinkwrap", async () => {
+    const odd = await problems((x) => {
+      Object.assign(x.lockAfter.packages['node_modules/semver'], { scripts: { postinstall: 'x' }, _resolved: 'https://evil.example/' });
+      return x;
+    });
+    assert.match(odd.join('\n'), /node_modules\/semver has keys npm doesn't write in a lock: "scripts", "_resolved"/);
+    const notObject = await problems((x) => {
+      x.lockAfter.packages['node_modules/semver'] = null;
+      return x;
+    });
+    assert.match(notObject.join('\n'), /node_modules\/semver is not an object/);
+    const shrinkwrap = await problems((x) => {
+      x.lockAfter.packages['node_modules/semver'].hasShrinkwrap = true;
+      return x;
+    });
+    assert.match(shrinkwrap.join('\n'), /node_modules\/semver has a shrinkwrap now/);
+    // One main's lock had already: fine. And the keys npm does write are fine.
+    const kept = await problems((x) => {
+      x.lockBefore.packages['node_modules/semver'].hasShrinkwrap = true;
+      Object.assign(x.lockAfter.packages['node_modules/semver'], { hasShrinkwrap: true, dev: true, license: 'ISC', funding: { url: 'https://example.net' }, deprecated: 'old' });
+      return x;
+    });
+    assert.deepEqual(kept, []);
+  });
+
+  it("refuses engines, os, cpu and bin that aren't the registry's; bin as npm normalizes it", async () => {
+    const withRegistry = (fields) => async (name, version) => ({ ...(await manifest(name, version)), ...(name === 'semver' ? fields : {}) });
+    const run = (lockFields, registryFields) =>
+      problems((x) => {
+        Object.assign(x.lockAfter.packages['node_modules/semver'], lockFields);
+        return { ...x, manifest: withRegistry(registryFields) };
+      });
+    assert.deepEqual(await run({ engines: { node: '>=10' }, os: ['linux'], cpu: ['x64'], bin: { semver: 'bin/semver.js' } }, { engines: { node: '>=10' }, os: ['linux'], cpu: ['x64'], bin: './bin/semver.js' }), []);
+    assert.match((await run({ engines: { node: '>=10' } }, {})).join('\n'), /node_modules\/semver engines are not the registry's/);
+    assert.match((await run({}, { os: ['darwin'] })).join('\n'), /node_modules\/semver os are not the registry's/);
+    assert.match((await run({ cpu: ['arm64'] }, { cpu: ['x64'] })).join('\n'), /node_modules\/semver cpu are not the registry's/);
+    assert.match((await run({ bin: { semver: 'bin/evil.js' } }, { bin: 'bin/semver.js' })).join('\n'), /node_modules\/semver bin is not the registry's/);
+    assert.match((await run({ bin: { semver: 'bin/semver.js', node: 'bin/evil.js' } }, { bin: { semver: './bin/semver.js' } })).join('\n'), /bin is not the registry's/);
+    assert.match((await run({ bin: { semver: 'bin/semver.js' } }, {})).join('\n'), /bin is not the registry's/);
+    // npm's own normalizing: a string under the unscoped name, no "./", folded paths.
+    assert.deepEqual(normalizeBin('./cli.js', '@expo/cli'), { cli: 'cli.js' });
+    assert.deepEqual(normalizeBin({ 'bin/x': './a/../b.js', y: '' }, 'x'), { x: 'b.js' });
+    assert.equal(normalizeBin(undefined, 'x'), undefined);
+  });
+
+  it('refuses a changed entry published less than 7 days before the check, or without a time', async () => {
+    const young = await problems((x) => ({
+      ...x,
+      packument: async (name) => ({ ...(await packument(name)), ...(name === 'semver' ? { time: { '7.7.0': '2026-11-12T00:00:00.000Z' } } : {}) }),
+    }));
+    assert.match(young.join('\n'), /node_modules\/semver was published 2026-11-12T00:00:00\.000Z, less than 7 days ago/);
+    assert.equal(young.length, 1);
+    const none = await problems((x) => ({ ...x, packument: async (name) => ({ ...(await packument(name)), time: {} }) }));
+    assert.match(none.join('\n'), /node_modules\/expo has no publish time on the registry for 58\.0\.21/);
+    const other = await problems((x) => ({ ...x, packument: async () => ({ name: 'evil', time: { '58.0.21': '2020-01-01T00:00:00Z' } }) }));
+    assert.match(other.join('\n'), /node_modules\/expo has no publish time on the registry/);
+    const down = await problems((x) => ({ ...x, packument: async () => { throw new Error('HTTP 503'); } }));
+    assert.match(down.join('\n'), /node_modules\/expo can't be checked for its age: HTTP 503/);
+    // Exactly 7 days old is old enough.
+    const edge = await problems((x) => ({ ...x, now: Date.parse('2026-11-08T00:00:00.000Z'), packument: async (name) => ({ name, time: { '58.0.21': '2026-11-01T00:00:00.000Z', '58.1.2': '2026-11-01T00:00:00.000Z', '7.7.0': '2026-11-01T00:00:00.000Z' } }) }));
+    assert.deepEqual(edge, []);
+  });
+
+  it('fetches each package document once', async () => {
+    packumentCalls.length = 0;
+    const p = await problems((x) => {
+      // A second copy of semver 7.7.0, under @expo/cli.
+      x.lockAfter.packages['node_modules/@expo/cli/node_modules/semver'] = entry('semver', '7.7.0');
+      return x;
+    });
+    assert.deepEqual(p, []);
+    assert.deepEqual(packumentCalls.sort(), ['@expo/cli', 'expo', 'semver']);
+  });
+
+  it('asks the registry again after a 429 or 5xx, as Retry-After says; a 404 stops at once', async () => {
+    const answers = (...list) => {
+      const calls = [];
+      const fetch = async (url, init) => {
+        calls.push([url, init.headers.accept]);
+        const a = list.shift();
+        if (a instanceof Error) throw a;
+        return new Response(a.body ?? '', { status: a.status, headers: a.headers ?? {} });
+      };
+      return { calls, fetch };
+    };
+    const waits = [];
+    const sleep = async (ms) => void waits.push(ms);
+
+    let r = answers({ status: 429, headers: { 'retry-after': '5' } }, { status: 503 }, new Error('ECONNRESET'), { status: 200, body: '{"ok":true}' });
+    assert.deepEqual(await registryJson('https://registry.npmjs.org/semver', { fetch: r.fetch, sleep }), { ok: true });
+    assert.deepEqual(waits, [5000, 2000, 4000]);
+    assert.deepEqual(r.calls[0], ['https://registry.npmjs.org/semver', 'application/json']);
+
+    waits.length = 0;
+    r = answers({ status: 404 });
+    await assert.rejects(registryJson('u', { fetch: r.fetch, sleep }), /HTTP 404/);
+    assert.deepEqual([r.calls.length, waits], [1, []]);
+
+    r = answers({ status: 500 }, { status: 502 }, { status: 503 }, { status: 504 }, { status: 200, body: '{}' });
+    await assert.rejects(registryJson('u', { fetch: r.fetch, sleep }), /HTTP 504/);
+    assert.equal(r.calls.length, 4, 'four tries in all');
+
+    // Retry-After: seconds or an HTTP date, never more than 60 s.
+    const now = Date.parse('2026-11-16T12:00:00Z');
+    assert.equal(retryAfterMs('7', now), 7000);
+    assert.equal(retryAfterMs('3600', now), 60_000);
+    assert.equal(retryAfterMs('Mon, 16 Nov 2026 12:00:30 GMT', now), 30_000);
+    assert.equal(retryAfterMs('Mon, 16 Nov 2026 11:00:00 GMT', now), 0);
+    assert.equal(retryAfterMs('soon', now), undefined);
+    assert.equal(retryAfterMs(null, now), undefined);
   });
 });

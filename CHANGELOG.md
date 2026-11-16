@@ -59,6 +59,9 @@ Security fixes from a review of the parts that face the network.
   is refused. GitHub shows such a block as text, not as code that runs.
 - **Expo updates workflow:** the pull request's title, commit and text come from the checked
   names and versions only. Before, text from the job that ran npm went in as it was.
+- **Expo updates workflow:** a changed lock entry may have only the keys npm writes. Its engines,
+  os, cpu and bin must be the registry's, and its version at least 7 days old.
+  - A new shrinkwrap is refused, and `npm ls` checks the tree from the lock.
 
 - **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
   through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each

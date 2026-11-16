@@ -10,8 +10,8 @@ name: Expo updates
 #
 # Two jobs (security review, 2026-11-16): `update` installs the new releases with a read-only
 # token, no token in git's config and no install scripts, so a compromised package can't push or
-# start workflows. `push` has the write token and runs no npm: it commits the two files `update`
-# made.
+# start workflows. `push` has the write token and installs nothing (only `npm ls` reads the lock):
+# it commits the two files `update` made.
 on:
   schedule:
     - cron: '23 5 * * *'
@@ -107,7 +107,8 @@ jobs:
           path: ${{ runner.temp }}/update
       # The update job ran npm, so its files are checked: only the versions the summary names
       # changed in package.json, and only their dependencies in the lock file, each as
-      # registry.npmjs.org has it (tarball URL, integrity, dependencies, no new install script).
+      # registry.npmjs.org has it (tarball URL, integrity, dependencies, engines, bin, no new
+      # install script) and published at least 7 days ago.
       # The pull request's title, commit and body take only clean.md: the list rebuilt from the
       # checked names and versions. No other text of the summary.
       - name: The update changes only what its summary says
@@ -116,6 +117,9 @@ jobs:
           cp "$RUNNER_TEMP/update/package.json" "$RUNNER_TEMP/update/package-lock.json" .
           cp "$RUNNER_TEMP/update/summary.md" "$RUNNER_TEMP/summary.md"
           node ../../.github/scripts/check-expo-update.mjs "$RUNNER_TEMP/summary.md" "$RUNNER_TEMP/clean.md"
+          # The tree from the lock alone (no node_modules here, nothing runs): every version must
+          # fit the range that asks for it.
+          npm ls --all --package-lock-only > /dev/null
       - name: Push the branch and open or update the pull request
         run: |
           # "- `expo` 58.0.19 → **58.0.21**" -> "expo 58.0.21"
