@@ -212,7 +212,7 @@ phones. What to set up in Firebase and at Apple:
   ```
 
   - `alertnames`, `runbooks` (paths, or folders ending in `/`): only those alerts. Absent: all.
-  - It answers the device's `id`; `DELETE /v1/devices/<id>` removes it.
+  - The answer is the device's `id`. `DELETE /v1/devices/<id>` removes the device.
 - **A push says** "ALERTNAME firing" and the runbook's path, and carries the alert's link
   (`/open?url=…&sha256=…`). Nothing else: no other labels, no annotations, no tokens. Google or
   Apple sees what a push carries.
