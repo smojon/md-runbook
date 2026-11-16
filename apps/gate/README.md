@@ -174,8 +174,8 @@ from each of its files up to `/`:
 - the blocks' account must not be able to write it, as anyone or through one of its groups;
 - a sticky folder such as `/tmp` is fine if the entry below it is root's or the gate account's.
 
-Some images leave `/usr/local/bin` open. Then install the gate elsewhere, such as
-`/opt/md-runbook-gate/bin`. The message names the folder to fix.
+Some images leave `/usr/local/bin` or `/opt` open. Then install the gate in a folder only root
+can change, such as `/usr/libexec/md-runbook-gate`. The message names the folder to fix.
 
 **Where blocks run:**
 - **Folder:** a shell starts in the blocks' account's home folder (else `/`). A block's `cwd=`
