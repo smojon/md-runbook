@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+Security fixes from a review of the parts that face the network.
+
+- **Command line, signed runs (`--allowed-signers`):** a front matter changed after signing is
+  refused. Before, its `env:`, `cwd:` or `shell:` applied though the run said "signed, unchanged".
+  - A version 1 signature doesn't cover the front matter: such a runbook can't set those.
+
+- **Relay:** with `RELAY_TARGETS=*:22`, other spellings of loopback and private addresses got
+  through, such as `[0:0:0:0:0:0:0:1]:22` or `[::ffff:7f00:1]:22`. The relay now parses each
+  address, and also refuses multicast, reserved and NAT64 addresses.
+- **Links (app and VS Code):** a runbook from a link counts as signed only when its signature
+  verifies against a key you trust. That holds for **Open only signed runbooks from links** too.
+  - Before, any well-formed signature block was enough.
+  - For a whole-runbook signature, changed text around the blocks also counts as unsigned now.
+  - So does an added PowerShell or cmd block next to an older signature, and an expired one.
+  - VS Code checks against `mdRunbook.signing.allowedSigners`.
+- **Library server:** `ALERT_MAP` needs `ALERTS_TOKENS`, so nobody else can post alerts.
+  `ALERTS_ALLOW_ANYONE=true` keeps the old behaviour, for a private network only.
+- **Library server:** an older release of a signed name is refused at any path, not only where it
+  was published. Before, `old/ops/restart.md` could bring back version 3 of `ops/restart`.
+- **Gate and signing:** a manifest with a second `name`, `version`, `expires` or `scope` line
+  is refused. Before, the gate read the first one and the rest of md-runbook the last. A version
+  must be a whole number and `expires` a date.
+- **Ops host in Kubernetes:** runbooks may change workloads only in the namespaces you bind, and
+  never DaemonSets. Before, they could patch any namespace's workloads, close to cluster-admin.
+  - After an upgrade, run one `kubectl create rolebinding` per namespace (apps/ops/README.md).
+- **Web container:** no other site can show the app in a frame (`frame-ancestors 'none'`,
+  `X-Frame-Options: DENY`).
+- **Runbook calls (VS Code and command line):** a call run again continues only a run copy of
+  the runbook called. Before, an edited `copy=` in its output could name any file.
+  - The copy must be next to it or in the copy folder, named after it, with the same blocks.
+  - For a signed runbook, the copy must have the same signed name and version.
+  - Otherwise a fresh copy runs, and the call's output says why.
+- **Runbook calls:** a value in `src=` fills part of one file or folder name. Before, a link's
+  `TO=../../elsewhere/evil` could make `src="releases/${param:TO}.md"` run any runbook.
+  - A value with `/`, `\` or `:` is now an error before anything runs.
+- **Parameters with choices (`One of: a, b`):** a value from a link, a call, the default or
+  `--param` must be one of them too. Before, only the input box checked it.
+  - VS Code doesn't take such a value from a link, and asks for it instead.
+- **Confirmations (VS Code and command line):** risky patterns now see the command with its
+  values filled in. Before, `kubectl ${param:VERB}` with `VERB=delete` never asked.
+  - The dialog shows those values; secret ones stay `${secret:…}`.
+  - In VS Code, a cell with placeholders asks once their values are known, not before.
+- **VS Code, redaction and AI settings:** a workspace's `redaction.patterns`, `ai.terms` and
+  `ai.internalDomains` are added to yours. Before, a workspace setting `[]` replaced your list.
+- **VS Code on Windows, recorded context:** focusing a runbook could run a `kubectl.cmd` planted
+  next to it. Context commands now look on `PATH` only.
+  - The status bar's first look runs them in your home folder.
+- **Cloud console views (VS Code):** an AWS link takes only a real region. Before, a crafted
+  zone or ARN in the output could point **Open** at another host.
+  - Values in the table stay text: a resource name can't make a link, an image or HTML.
+- **VS Code, Set Parameters and Set Inputs:** only the extension test runner can pass them
+  values. The commands themselves always ask.
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.
   An unsigned runbook gets a **Sign Runbook** button first.

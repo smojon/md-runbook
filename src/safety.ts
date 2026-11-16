@@ -3,12 +3,14 @@
  * (cluster, server, ...) as output marker attributes, with a status bar item for it.
  */
 
+import { homedir } from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { isCallLanguage } from '@md-runbook/core/call';
 import { isCodeMeta, shellKindForLanguage } from '@md-runbook/core';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { ConfirmMode, DEFAULT_CONFIRM_PATTERNS, compileConfirmPatterns, confirmationFor } from '@md-runbook/core/confirm';
+import { hasShownRefs } from '@md-runbook/core/secrets';
 import { runContextCommand } from '@md-runbook/core/node/context';
 import { OsName, currentOs, osLabel } from '@md-runbook/core/os';
 import { SECTION, executionConfig, redactionConfig } from './config';
@@ -105,7 +107,9 @@ class ContextRecorder implements CellPreparer, vscode.Disposable {
     const known = this.last.get(nb.uri.toString());
     if (!known) {
       this.item.hide();
-      if (fetch) void this.values(nb, executionConfig().env).then(() => this.refresh(false));
+      // Only focused, not run: on Windows not in the runbook's folder, where cmd.exe would find a
+      // program planted next to it (and PATH only: contextEnv). A run records the real context.
+      if (fetch) void this.values(nb, executionConfig().env, process.platform === 'win32' ? homedir() : undefined).then(() => this.refresh(false));
       return;
     }
     this.item.text = `$(cloud) ${known[attr] ?? 'unknown'}`;
@@ -174,12 +178,15 @@ async function askToRun(plan: CellPlan, cell: vscode.NotebookCell, match: string
     .filter((k) => k in plan.attrs)
     .map((k) => `${k}: ${plan.attrs[k]}`);
   const title = stepTitle(cell);
+  // The command with its values (secrets stay `${secret:…}`), redacted as output is.
+  const r = redactionConfig();
+  const redact = (s: string): string => knownSecrets.redact(r.enabled ? r.redactor.redact(s) : s);
   const on = plan.remote ? (plan.remote.group !== undefined ? ` on group ${plan.remote.group}` : ` on ${plan.remote.hosts[0]!.name}`) : '';
-  const message = match === '' ? `Run ${title}${on}?` : `Risky command in ${title}${on}: “${match.trim()}”`;
+  const message = match === '' ? `Run ${title}${on}?` : `Risky command in ${title}${on}: “${redact(match.trim())}”`;
   const retries = plan.retry && plan.retry.attempts > 1 ? `It runs up to ${plan.retry.attempts} times (retry=) until it passes.` : '';
   // On a host (or each host of a group): the accounts it runs as, every one of them.
   const where = plan.remote ? `It runs on:\n${plan.remote.hosts.map((h) => `- ${h.user}@${h.name} (${hostLabel(h)})`).join('\n')}` : '';
-  const detail = [commandPreview(plan.source), where, ctxLines.length > 0 ? `It runs in:\n${ctxLines.join('\n')}` : '', retries].filter((s) => s !== '').join('\n\n');
+  const detail = [redact(commandPreview(plan.shown ?? plan.source)), where, ctxLines.length > 0 ? `It runs in:\n${ctxLines.join('\n')}` : '', retries].filter((s) => s !== '').join('\n\n');
   const what = `confirm ${labelOf(cell)}`;
   const answer = inFront(cell.notebook)
     ? await whileWaiting(cell, what, () => vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run'), 'dialog')
@@ -199,7 +206,8 @@ async function askToRun(plan: CellPlan, cell: vscode.NotebookCell, match: string
 
 /**
  * Decides whether a cell needs confirmation (a risky pattern, or always/never per settings and
- * cell options). Without context recording it asks right away, before any secret or input prompt.
+ * cell options). Without context recording it asks right away, before any secret or input prompt,
+ * unless the cell has placeholders: then it asks once their values are known, showing them.
  * With context recording the question waits for `finalPreparer`, so it can show the context
  * computed with the cell's final environment (.env, secrets, read-only credentials).
  */
@@ -214,7 +222,15 @@ const confirmPreparer: CellPreparer = {
 
     const mode = c.get<ConfirmMode>('execution.confirm', 'patterns');
     // A runbook call's lines are values passed, not commands: only `confirm` asks.
-    const match = confirmationFor(isCallLanguage(plan.language) ? '' : plan.source, mode, regexes, cellConfirmOption(infoOf(cell)));
+    const source = isCallLanguage(plan.language) ? '' : plan.source;
+    const match = confirmationFor(source, mode, regexes, cellConfirmOption(infoOf(cell)));
+    // Placeholders: their values count too (`kubectl ${param:VERB}` with VERB=delete asks), so the
+    // question waits until they are known (the final preparer), and shows them.
+    if (hasShownRefs(source)) {
+      plan.confirm = match;
+      plan.recheckConfirm = true;
+      return;
+    }
     if (match === undefined) return;
     if (Object.keys(recordContextCommands()).length === 0) await askToRun(plan, cell, match);
     else plan.confirm = match;
@@ -306,6 +322,11 @@ export function registerSafety(context: vscode.ExtensionContext, pipeline: RunPi
   const final: CellPreparer = {
     async prepare(plan, ctx) {
       if (plan.skip !== undefined) return;
+      if (plan.recheckConfirm) {
+        // A risky match in the values wins (it says what runs); else the one as written.
+        const filled = plan.shown !== undefined ? confirmationOf(ctx.cell, plan.shown) : undefined;
+        if (filled !== undefined && (filled !== '' || plan.confirm === undefined)) plan.confirm = filled;
+      }
       // The context commands run on this machine: they say nothing about a host's.
       if (!plan.remote) await recorder.prepare(plan, ctx);
       if (plan.confirm !== undefined) await askToRun(plan, ctx.cell, plan.confirm);

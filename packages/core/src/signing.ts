@@ -40,7 +40,11 @@ export const RUNBOOK_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 export const SCOPE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** A real calendar day (the gate compares dates as text: 2026-99-99 would never expire). */
-const isDate = (s: string): boolean => DATE_RE.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+const isDate = (s: string): boolean => {
+  if (!DATE_RE.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
 
 /**
  * Names a parameter or env.* value may not have: they change how the shell or the programs it
@@ -417,6 +421,7 @@ export function parseManifest(text: string): Manifest {
     return cell;
   };
   let ended = false;
+  const once = new Set<string>();
   for (const line of lines.slice(1)) {
     if (ended) {
       if (line !== '') throw new Error('manifest: text after end');
@@ -425,14 +430,22 @@ export function parseManifest(text: string): Manifest {
     if (line === '') continue;
     const [key, a, b, ...more] = line.split(' ');
     if (more.length > 0 && key !== 'scope') throw new Error(`manifest: bad line "${line.slice(0, 40)}"`);
+    // Once each: md-runbook-gate reads the first of these, so a second would mean two things.
+    if (key === 'name' || key === 'version' || key === 'expires' || key === 'scope') {
+      if (once.has(key)) throw new Error(`manifest: more than one ${key} line`);
+      once.add(key);
+    }
     switch (key) {
       case 'name':
         m.name = a ?? '';
         break;
       case 'version':
+        // A whole number as md-runbook-gate reads it (is_num): no 0x10, 1e3, 007.
+        if (!a || !/^[1-9][0-9]{0,5}$/.test(a)) throw new Error('manifest: bad version (expected a whole number)');
         m.version = Number(a);
         break;
       case 'expires':
+        if (!a || !isDate(a)) throw new Error('manifest: bad expires (expected YYYY-MM-DD)');
         m.expires = a;
         break;
       case 'scope':

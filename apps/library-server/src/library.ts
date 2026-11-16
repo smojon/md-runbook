@@ -88,12 +88,18 @@ export interface Checked {
 
 /** The signed version of a runbook's text, or 0 when it has no readable signature. */
 export function signedVersion(text: string): number {
+  return signedRelease(text)?.version ?? 0;
+}
+
+/** The signed name (lower case) and version of a runbook's text, or undefined when it has no readable signature. */
+export function signedRelease(text: string): { name: string; version: number } | undefined {
   const block = readSignature(text);
-  if (!block) return 0;
+  if (!block) return undefined;
   try {
-    return parseManifest(block.manifest).version;
+    const m = parseManifest(block.manifest);
+    return { name: m.name.toLowerCase(), version: m.version };
   } catch {
-    return 0;
+    return undefined;
   }
 }
 
@@ -170,6 +176,7 @@ export interface PublishResult extends Checked {
 export class Library {
   private readonly lock = new Mutex();
   private readonly versionsFile: string;
+  private readonly namesFile: string;
 
   constructor(
     readonly config: LibraryConfig,
@@ -177,6 +184,28 @@ export class Library {
     private readonly sshKeygen = 'ssh-keygen',
   ) {
     this.versionsFile = join(stateDir, 'library-versions.json');
+    this.namesFile = join(stateDir, 'library-names.json');
+  }
+
+  /**
+   * The highest version ever published of each signed name (lower case), at any path: an old
+   * release can't come back under another folder (`old/ops/restart.md` for `ops/restart`; security
+   * review, 2026-11-16). Missing (a library from before): made from the files published now.
+   */
+  private async readNames(): Promise<Record<string, number>> {
+    try {
+      const v = JSON.parse(await fsp.readFile(this.namesFile, 'utf8')) as unknown;
+      if (typeof v === 'object' && v !== null) return v as Record<string, number>;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+    const names: Record<string, number> = {};
+    for (const p of await this.files()) {
+      // A file that can't be read gives no floor; it doesn't stop publishing.
+      const r = signedRelease(await fsp.readFile(join(this.config.dir, p), 'utf8').catch(() => ''));
+      if (r) names[r.name] = Math.max(names[r.name] ?? 0, r.version);
+    }
+    return names;
   }
 
   /** The folder of `path`, made where missing; refused if any part of it is a symbolic link or not a folder. */
@@ -218,9 +247,16 @@ export class Library {
       const previous = Math.max(current !== undefined ? signedVersion(current) : 0, versions[path] ?? 0);
       if (current === text) return { ...checked, path, previous, unchanged: true };
       if (checked.version <= previous) throw new HttpError(409, `${path}: version ${checked.version} is not higher than the version published (${previous}); sign it again to count the version up`);
+      const names = await this.readNames();
+      const name = checked.name.toLowerCase();
+      const highest = names[name] ?? 0;
+      if (checked.version < highest) {
+        throw new HttpError(409, `${path}: ${checked.name} version ${checked.version} is older than version ${highest}, published before (here or at another path); sign it again to count the version up`);
+      }
       await writeAtomic(file, text);
       await fsp.mkdir(dirname(this.versionsFile), { recursive: true, mode: 0o750 });
       await writeAtomic(this.versionsFile, JSON.stringify({ ...versions, [path]: checked.version }, null, 1) + '\n');
+      await writeAtomic(this.namesFile, JSON.stringify({ ...names, [name]: Math.max(highest, checked.version) }, null, 1) + '\n');
       await this.writeIndex();
       return { ...checked, path, previous };
     });
@@ -232,7 +268,14 @@ export class Library {
       const st = await lstatOrUndefined(file);
       if (!st) throw new HttpError(404, `${path} is not in the library`);
       if (!st.isFile()) throw new HttpError(409, `${path} is not a plain file on the server`);
-      const version = signedVersion(await fsp.readFile(file, 'utf8'));
+      const release = signedRelease(await fsp.readFile(file, 'utf8'));
+      // Its name keeps its highest version: an older release can't come back at another path.
+      const names = await this.readNames();
+      if (release) {
+        await fsp.mkdir(dirname(this.namesFile), { recursive: true, mode: 0o750 });
+        await writeAtomic(this.namesFile, JSON.stringify({ ...names, [release.name]: Math.max(names[release.name] ?? 0, release.version) }, null, 1) + '\n');
+      }
+      const version = release?.version ?? 0;
       await fsp.rm(file);
       await this.writeIndex();
       return { path, version };

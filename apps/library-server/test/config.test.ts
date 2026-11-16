@@ -47,7 +47,10 @@ describe('config', () => {
     const map = path.join(dir, 'map.json');
     assert.throws(() => loadConfig({ ALERT_MAP: map }), /PUBLIC_URL/);
     assert.throws(() => loadConfig({ ALERT_MAP: map, PUBLIC_URL: 'http://runbooks.example.net' }), /https/);
-    const a = loadConfig({ ALERT_MAP: map, PUBLIC_URL: 'https://runbooks.example.net/', LIBRARY_PUBLIC_PATH: 'sop', RUNS_READ_TOKENS: T }).alerts!;
+    const a = loadConfig({ ALERT_MAP: map, PUBLIC_URL: 'https://runbooks.example.net/', LIBRARY_PUBLIC_PATH: 'sop', RUNS_READ_TOKENS: T, ALERTS_TOKENS: T }).alerts!;
     assert.deepEqual([a.publicUrl, a.libraryPath, a.readTokens.length], ['https://runbooks.example.net', '/sop/', 1]);
+    // No token: refused, unless the operator says anyone may post (security review, 2026-11-16).
+    assert.throws(() => loadConfig({ ALERT_MAP: map, PUBLIC_URL: 'https://runbooks.example.net/' }), /ALERTS_TOKENS/);
+    assert.equal(loadConfig({ ALERT_MAP: map, PUBLIC_URL: 'https://runbooks.example.net/', ALERTS_ALLOW_ANYONE: 'true' }).alerts!.tokens.length, 0);
   });
 });

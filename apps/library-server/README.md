@@ -256,7 +256,8 @@ LIBRARY_DIR=/srv/runbooks LIBRARY_UPLOAD_TOKENS=… npm start
 | `ALERT_MAP` | | The alert map (JSON). Turns alerts on. |
 | `PUBLIC_URL` | required with `ALERT_MAP` | The web app's public address, `https://…`: links are `PUBLIC_URL/open?…`. |
 | `LIBRARY_PUBLIC_PATH` | `/runbooks/` | Where the web app serves the library on that address. |
-| `ALERTS_TOKENS` | none: anyone may send | Tokens Alertmanager sends (`http_config.authorization`). |
+| `ALERTS_TOKENS` | required with `ALERT_MAP` | Tokens Alertmanager sends (`http_config.authorization`). |
+| `ALERTS_ALLOW_ANYONE` | `false` | `true`: take alerts without a token. Only where nobody else can reach `/v1/alerts`: a forged alert can point on-call at another host. |
 | `ALERTS_READ_TOKENS` | `RUNS_READ_TOKENS` | Tokens that may read alerts. |
 | `ALERTS_DIR` | `STATE_DIR/alerts` | Where alerts are kept. |
 | `ALERTS_MAX_BYTES` | `1048576` | Largest webhook. |

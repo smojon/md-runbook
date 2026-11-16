@@ -211,7 +211,7 @@ describe('run summaries: the endpoint', () => {
       assert.equal(green.json.lastVerified.runner, 'ana@example.net');
       assert.equal(
         green.json.text,
-        'ops/restart-api.md: last ran green by bob at 2026-11-14T09:02:00.000Z (version 1), unverified; last verified green run by ana@example.net at 2026-11-14T09:01:00.000Z (version 1), verified: signed by the runner',
+        'ops/restart-api.md: last ran green by "bob" at 2026-11-14T09:02:00.000Z (version 1), unverified; last verified green run by ana@example.net at 2026-11-14T09:01:00.000Z (version 1), verified: signed by the runner',
       );
       // A gate's run is verified (sent with a gate token) and the newest.
       await call(`${url}/v1/runs`, 'POST', JSON.stringify(gateSummary()), GATE);

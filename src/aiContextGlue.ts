@@ -6,6 +6,7 @@ import { parse } from '@md-runbook/core';
 import { writesAsCodeCell } from '@md-runbook/core/writer';
 import { AiContext, DEFAULT_COPY_HEADER, PseudonymMap, buildAiContext, emptyMap } from '@md-runbook/core/aiContext';
 import { SECTION, writeOptions } from './config';
+import { joinedLevels } from './listSetting';
 import { notebookTextWithOutputs } from './serializer';
 
 export const PSEUDONYM_MAP_KEY = 'mdRunbook.ai.pseudonymMap';
@@ -26,7 +27,8 @@ export interface AiSettings {
 
 export function aiSettings(scope?: vscode.Uri): AiSettings {
   const c = vscode.workspace.getConfiguration(SECTION, scope);
-  const strings = (key: string): string[] => c.get<unknown[]>(key, []).filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+  // Yours and the workspace's: a workspace can add terms and domains, not drop yours (listSetting.ts).
+  const strings = (key: string): string[] => joinedLevels(c.inspect(key), (v): v is string => typeof v === 'string' && v.trim() !== '');
   return {
     copyForAiEnabled: c.get<boolean>('ai.copyForAi.enabled', true),
     pseudonymize: c.get<boolean>('ai.pseudonymize', true),

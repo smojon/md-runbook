@@ -7,9 +7,12 @@
 
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LinkProblem, LinkTrust, RunbookLink, linkTrust, linkableParams, parseVsCodeLinkQuery, rawRunbookUrl, repoPathCandidates, runbookDigest } from '@md-runbook/core/runbookLink';
+import { trustedRunbookSigner } from '@md-runbook/core/node';
+import { parseManifest, readSignature } from '@md-runbook/core/signing';
+import { LinkProblem, LinkTrust, RunbookLink, checkedLinkTrust, linkTrust, linkableParams, parseVsCodeLinkQuery, rawRunbookUrl, repoPathCandidates, runbookDigest } from '@md-runbook/core/runbookLink';
 import { runbookTitle } from '@md-runbook/core/title';
 import type { SecretsInfo } from './secrets';
 import { NOTEBOOK_TYPE } from './serializer';
@@ -30,7 +33,7 @@ const PROBLEMS: Record<LinkProblem, string> = {
 };
 
 const TRUST: Record<Exclude<LinkTrust, 'mismatch'>, string> = {
-  signed: 'signed, no signed block changed',
+  signed: 'signed by a trusted signer, unchanged',
   pinned: 'the version the link pins',
   unverified: 'not signed or pinned: read it before you run it',
 };
@@ -87,6 +90,31 @@ function linkCopy(storage: vscode.Uri, source: string, text: string, fileName: s
 }
 
 type OpenedTrust = Exclude<LinkTrust, 'mismatch'>;
+
+/**
+ * The link's trust with its signature checked: `signed` only when a signer of
+ * `mdRunbook.signing.allowedSigners` made it (ssh-keygen, as run reports and gates check it). A
+ * signature block anyone can write isn't enough (security review, 2026-11-16).
+ */
+async function checkedTrust(l: RunbookLink, text: string): Promise<LinkTrust> {
+  const trust = linkTrust(l, text);
+  if (trust !== 'signed') return trust;
+  const file = vscode.workspace.getConfiguration('mdRunbook').get<string>('signing.allowedSigners', '').trim();
+  const signer = file ? await trustedRunbookSigner(text, file.replace(/^~(?=$|[\\/])/, os.homedir())).catch(() => undefined) : undefined;
+  return checkedLinkTrust(l, trust, signer !== undefined && !signatureExpired(text));
+}
+
+/** The manifest's `expires` date has passed (UTC), as the app and gates count it. */
+function signatureExpired(text: string): boolean {
+  const block = readSignature(text);
+  if (!block) return true;
+  try {
+    const expires = parseManifest(block.manifest).expires;
+    return expires !== undefined && new Date().toISOString().slice(0, 10) > expires;
+  } catch {
+    return true;
+  }
+}
 export type OpenLinkResult = { kind: 'opened'; uri: vscode.Uri; trust: OpenedTrust; filled: string[]; ignored: string[] } | { kind: 'error'; message: string } | { kind: 'cancelled' };
 
 /** Open a link's runbook (the query of a vscode:// link, as VS Code gives it). */
@@ -122,7 +150,7 @@ export async function openRunbookLinkQuery(query: string, storage: vscode.Uri, s
         if (choice === yours) {
           // Not the pinned version: only its own signature can vouch for it.
           const { sha256: _pin, ...unpinned } = l;
-          const own = linkTrust(unpinned, localText!);
+          const own = await checkedTrust(unpinned, localText!);
           return finish(l, local, localText!, own === 'signed' ? 'signed' : 'unverified', secrets);
         }
       }
@@ -134,7 +162,7 @@ export async function openRunbookLinkQuery(query: string, storage: vscode.Uri, s
       target = linkCopy(storage, url, text, fileNameOf(url));
     }
   }
-  const trust = linkTrust(l, text);
+  const trust = await checkedTrust(l, text);
   if (trust === 'mismatch') return { kind: 'error', message: 'md-runbook: the runbook at this address is not the one the link pins (it changed since the link was made): not opened.' };
   return finish(l, target, text, trust, secrets);
 }

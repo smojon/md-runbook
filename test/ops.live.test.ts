@@ -75,6 +75,11 @@ describe('ops host', { skip: !spec && 'set MD_RUNBOOK_OPS_TEST to run' }, () => 
       'for v in "delete pods" "get secrets" "patch deployments" "update deployments --subresource=scale" "create pods --subresource=exec"; do kubectl auth can-i $v -n default; done',
     );
     assert.equal(can.out, 'no\nno\nyes\nyes\nno\n', can.err);
+    // Only in namespaces bound to md-runbook-ops-operate; never DaemonSets (security review, 2026-11-16).
+    const elsewhere = await sh(
+      'for v in "patch deployments" "create jobs" "patch daemonsets" "get deployments"; do kubectl auth can-i $v -n kube-system; done; kubectl auth can-i patch daemonsets -n default',
+    );
+    assert.equal(elsewhere.out, 'no\nno\nno\nyes\nno\n', elsewhere.err);
     const restart = await sh('kubectl -n default rollout restart deployment/web');
     assert.equal(restart.code, 0, restart.err);
     const del = await sh('kubectl -n default delete deployment web');

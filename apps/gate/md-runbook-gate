@@ -478,6 +478,25 @@ do_load() {
   mhash=$(sha256 "$work/manifest")
   mname=$(mfield name '' 2)
   mversion=$(mfield version '' 2)
+  # As core's parseManifest reads it: name, version, expires and scope once each (this reads the
+  # first one, core refuses a second), the version a whole number (a word made the floors check
+  # below fail open) and expires a date (security review, 2026-11-16).
+  dup=$(awk '$1 == "name" || $1 == "version" || $1 == "expires" || $1 == "scope" { if (seen[$1]++) { print $1; exit } }' "$work/manifest")
+  [ -z "$dup" ] || {
+    refuse "$rid" "the manifest has more than one $dup line"
+    return
+  }
+  is_num "$mversion" && [ "$mversion" -ge 1 ] || {
+    refuse "$rid" "the manifest's version is not a whole number"
+    return
+  }
+  case $(mfield expires '' 2) in
+    '' | [0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]) ;;
+    *)
+      refuse "$rid" "the manifest's expires is not a date (YYYY-MM-DD)"
+      return
+      ;;
+  esac
   [ "$count" -ge "$signers" ] || {
     refuse "$rid" "$mname version $mversion needs $signers signers here; signed by $principal"
     return
@@ -500,6 +519,11 @@ do_load() {
       return
     }
     floor=$(tr -d '\r' <"$floors" | awk -v n="$mname" '{ sub(/#.*/, "") } $1 == n && $2 ~ /^[0-9]+$/ { print $2; exit }')
+    # A floor too big for test(1) must not make the check fail open: refuse instead.
+    if [ -n "$floor" ] && ! is_num "$floor"; then
+      refuse "$rid" "the floors list has a bad version for $mname ($floor)"
+      return
+    fi
     if [ -n "$floor" ] && [ "$mversion" -lt "$floor" ]; then
       refuse "$rid" "$mname version $mversion is older than the lowest version this server runs ($floor)"
       return

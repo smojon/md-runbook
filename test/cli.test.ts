@@ -218,4 +218,21 @@ describe('cli: running a runbook', { skip: !hasBash && 'bash not installed' }, (
     const proposed = await run('```bash proposed by=claude\necho hi\n```\n');
     assert.equal(proposed.steps[0]!.status, 'not run');
   });
+
+  it('takes only one of a parameter\'s choices; risky words in its value need --yes', async () => {
+    const md = ['---', 'params:', '  - VERB: get # what to do. One of: get, describe', '---', '', '```bash', 'echo kubectl ${param:VERB} pods', '```', ''].join('\n');
+    assert.equal((await run(md, { params: { VERB: 'describe' } })).ok, true);
+    await assert.rejects(run(md, { params: { VERB: 'delete' } }), /\$\{param:VERB\} is "delete", not one of its choices: get, describe\nnothing ran/);
+    // A default that isn't a choice either.
+    const bad = await run(md.replace('VERB: get', 'VERB: remove'));
+    assert.equal(bad.steps[0]!.status, 'not run');
+    assert.match(bad.steps[0]!.message ?? '', /not one of its choices/);
+    // Matched with the values filled in: `kubectl ${param:VERB}` with VERB=delete asks.
+    const free = ['---', 'params:', '  - VERB: get', '---', '', '```bash', 'echo kubectl ${param:VERB} pods/x', '```', ''].join('\n');
+    assert.equal((await run(free)).ok, true);
+    await assert.rejects(run(free, { params: { VERB: 'delete' } }), /needs --yes here; nothing ran:[\s\S]*risky command “delete”/);
+    const declined = await run(free, { params: { VERB: 'delete' }, keepGoing: true });
+    assert.match(declined.text, /exit=declined/);
+    assert.equal((await run(free, { params: { VERB: 'delete' }, yes: true })).ok, true);
+  });
 });

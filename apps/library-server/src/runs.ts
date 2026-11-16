@@ -156,8 +156,10 @@ export class Runs {
     const [last] = await this.log.recent<RunRecord>(green, 1);
     if (!last) return { text: `${q}: no green run reported` };
     const lastVerified = last.verified ? last : (await this.log.recent<RunRecord>((r) => green(r) && r.verified, 1))[0];
+    // An unverified sender's name is quoted: it is their text, and could read "x (verified: …)"
+    // (security review, 2026-11-16).
     const say = (r: RunRecord): string =>
-      `${r.runner ?? r.summary.who} at ${r.summary.ended}${r.summary.runbook.signed ? ` (version ${r.summary.runbook.signed.version})` : ''}, ${r.verified ? (r.trust === 'gate' ? 'verified: sent by a gate' : 'verified: signed by the runner') : 'unverified'}`;
+      `${r.verified ? (r.runner ?? r.summary.who) : JSON.stringify(r.summary.who)} at ${r.summary.ended}${r.summary.runbook.signed ? ` (version ${r.summary.runbook.signed.version})` : ''}, ${r.verified ? (r.trust === 'gate' ? 'verified: sent by a gate' : 'verified: signed by the runner') : 'unverified'}`;
     const text = `${q}: last ran green by ${say(last)}` + (lastVerified && lastVerified !== last ? `; last verified green run by ${say(lastVerified)}` : '');
     return { last, ...(lastVerified ? { lastVerified } : {}), text };
   }

@@ -6,12 +6,14 @@
  * A link to a runbook of the team library opens the library copy instead (openInLibrary).
  */
 import { clearOutputBlocks } from '@md-runbook/core';
-import { LinkTrust, RunbookLink, linkTrust, parseRunbookLink, rawRunbookUrl } from '@md-runbook/core/runbookLink';
+import { LinkTrust, RunbookLink, checkedLinkTrust, linkTrust, parseRunbookLink, rawRunbookUrl } from '@md-runbook/core/runbookLink';
 import { getHosts, loadHosts } from '../hosts/store';
 import { t } from '../i18n';
 import { loadSettings, outputSettings } from '../settings/store';
 import { loadRuntimeConfig } from '../settings/runtimeConfig';
+import { isVerified, loadTrustedSigners, signatureState } from '../signing/trust';
 import {
+  keysForLibrary,
   libraryHost,
   libraryState,
   libraryTarget,
@@ -87,7 +89,7 @@ export async function openRunbookLink(
   // Opened at a cold start (a QR code, a pager alert): the hosts and settings may still be loading.
   // The remembered runbooks too, to find a copy this link opened before.
   await Promise.all([loadHosts(), loadSettings(), loadRunbooks()]);
-  const trust = linkTrust(l, text);
+  const trust = await checkedTrust(l, text, undefined);
   if (trust === 'mismatch') return { kind: 'error', message: t.linkMismatch };
   if (trust !== 'signed' && outputSettings().signedLinksOnly) return { kind: 'error', message: t.linkUnsignedRefused };
 
@@ -95,6 +97,19 @@ export async function openRunbookLink(
   const runbook = linkedRunbook(key) ?? addRunbook(fileName, text, undefined, key);
   applyLink(runbook, l, text, trust);
   return { kind: 'opened', runbook };
+}
+
+/**
+ * The link's trust with its signature checked: `signed` only when the signature verifies against
+ * the keys the runbook is checked against everywhere else (keysForLibrary: its library's and those
+ * added by you; for a runbook from elsewhere, those added by you). A signature block anyone can
+ * write isn't enough (security review, 2026-11-16).
+ */
+async function checkedTrust(l: RunbookLink, text: string, libraryBase: string | undefined): Promise<LinkTrust> {
+  const trust = linkTrust(l, text);
+  if (trust !== 'signed') return trust;
+  await loadTrustedSigners();
+  return checkedLinkTrust(l, trust, isVerified(await signatureState(text, keysForLibrary(libraryBase))));
 }
 
 /** Fill in the link's parameters and remember its host and action for the runbook screen. */
@@ -144,7 +159,7 @@ async function openInLibrary(
     text: string,
     open: () => Promise<{ kind: 'opened'; runbook: Runbook } | { kind: 'error'; message: string }>,
   ): Promise<{ kind: 'opened'; runbook: Runbook } | { kind: 'error'; message: string }> => {
-    const trust = linkTrust(l, text);
+    const trust = await checkedTrust(l, text, target.base);
     if (trust === 'mismatch') return { kind: 'error', message: t.linkMismatch };
     if (trust !== 'signed' && outputSettings().signedLinksOnly) return { kind: 'error', message: t.linkUnsignedRefused };
     const r = await open();

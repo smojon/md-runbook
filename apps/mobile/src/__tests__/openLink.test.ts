@@ -6,6 +6,9 @@ import { openRunbookLink, rawRunbookUrl } from '../runbooks/openLink';
 import { paramValues, resetParamValues } from '../runbooks/params';
 import { getRunbook, removeRunbook, resetRunbooks } from '../runbooks/store';
 import { resetSettings, setOutputSetting } from '../settings/store';
+import { allowedSignersLine, generateKey } from '@md-runbook/ssh';
+import { signPlan, signRunbook } from '../signing/sign';
+import { addSigners, resetTrustedSigners } from '../signing/trust';
 
 beforeEach(() => resetRunbooks());
 
@@ -63,7 +66,7 @@ describe('runbook links: pins, hosts, parameters, co-sign', () => {
   const offline = (async () => {
     throw new Error('no network');
   }) as unknown as typeof fetch;
-  /** The runbook with a signature block (a dummy signature: the app compares blocks, gates check signatures). */
+  /** The runbook with a signature block whose signature is a dummy: well formed, but it verifies against no key. */
   const signed = (text: string): string => {
     const m = buildManifest(text, { name: 'ops/restart', version: 1, scopes: [], patterns: { SERVICE: '[a-z]+' } });
     if ('errors' in m) throw new Error(m.errors.join('; '));
@@ -104,20 +107,53 @@ describe('runbook links: pins, hosts, parameters, co-sign', () => {
     expect(linkContext(r.runbook.id)?.trust).toBe('unverified');
   });
 
-  it('with "only signed runbooks from links" on, only a signed runbook opens (a pin is not enough)', async () => {
+  /** Signed for real, by a key the user added (Trusted signers). */
+  const reallySigned = async (text: string): Promise<string> => {
+    const key = await generateKey();
+    addSigners(await allowedSignersLine(key, 'ops@example.net'));
+    const r = await signRunbook(
+      text,
+      signPlan(text, 'restart.md'),
+      { name: 'ops/restart', scopes: '', days: '', patterns: { SERVICE: '[a-z]+' } },
+      'ops@example.net',
+      key,
+    );
+    if (!r.ok) throw new Error(r.errors.join('; '));
+    return r.text;
+  };
+
+  it('with "only signed runbooks from links" on, only a runbook signed by a trusted key opens (a pin is not enough)', async () => {
+    resetTrustedSigners();
     setOutputSetting('signedLinksOnly', true);
     try {
       const refused = { kind: 'error', message: expect.stringMatching(/not signed/) };
       expect(await openRunbookLink(formatRunbookLink({ text: RUNBOOK, params: {} }), offline)).toMatchObject(refused);
       const pinnedUrl = formatRunbookLink({ url: 'https://x.example.net/r.md', sha256: runbookDigest(RUNBOOK), params: {} });
       expect(await openRunbookLink(pinnedUrl, serve(RUNBOOK))).toMatchObject(refused);
-      const r = await openRunbookLink(formatRunbookLink({ text: signed(RUNBOOK), params: {} }), offline);
+      // Anyone can write a signature block: one that doesn't verify is not signed (security review, 2026-11-16).
+      expect(await openRunbookLink(formatRunbookLink({ text: signed(RUNBOOK), params: {} }), offline)).toMatchObject(refused);
+      const r = await openRunbookLink(formatRunbookLink({ text: await reallySigned(RUNBOOK), params: {} }), offline);
       expect(r.kind).toBe('opened');
       if (r.kind === 'opened') expect(linkContext(r.runbook.id)?.trust).toBe('signed');
     } finally {
       // Saved settings outlive resetSettings (the next link load reads them): switch it back.
       setOutputSetting('signedLinksOnly', false);
+      resetTrustedSigners();
     }
+  });
+
+  it('a signature that does not verify opens as unverified, or pinned, never signed', async () => {
+    resetTrustedSigners();
+    const forged = signed(RUNBOOK);
+    const carried = await openRunbookLink(formatRunbookLink({ text: forged, params: {} }), offline);
+    if (carried.kind !== 'opened') throw new Error(carried.message);
+    expect(linkContext(carried.runbook.id)?.trust).toBe('unverified');
+    const pinned = await openRunbookLink(
+      formatRunbookLink({ url: 'https://x.example.net/f.md', sha256: runbookDigest(forged), params: {} }),
+      serve(forged),
+    );
+    if (pinned.kind !== 'opened') throw new Error(pinned.message);
+    expect(linkContext(pinned.runbook.id)?.trust).toBe('pinned');
   });
 
   it("fills the runbook's parameters, picks a host the app has, and never adds one", async () => {

@@ -19,7 +19,9 @@ import {
   RunbookParam,
   VAR_NAME_RE,
   VarRef,
+  choiceProblem,
   dotenvSecrets,
+  fillShown,
   findRefs,
   looksSecret,
   parseDotenv,
@@ -35,6 +37,7 @@ import { SECTION } from './config';
 import { NOTEBOOK_TYPE } from './serializer';
 import { whileWaiting } from './waiting';
 import { hostSkipped } from './remoteHosts';
+import { testOnlyValues } from './testValues';
 
 /** SecretStorage can't enumerate, so the names are kept here. */
 const INDEX_KEY = 'mdRunbook.secretNames';
@@ -254,16 +257,26 @@ class SecretsFeature {
   }
 
   private async param(name: string, ctx: Asking): Promise<string> {
+    const declared = declaredParams(ctx.notebook).find((p) => p.name === name);
+    // One of its choices ("One of: a, b"), wherever the value comes from: a call, a link, the default.
+    const checked = (value: string): string => {
+      const off = choiceProblem(declared, value);
+      if (off) throw new Error(`md-runbook: ${off}`);
+      return value;
+    };
     // A copy run by a runbook call: the value the call passed.
     const fromCall = passedParam(ctx.notebook.uri, name);
-    if (fromCall !== undefined) return fromCall;
+    if (fromCall !== undefined) return checked(fromCall);
     const cache = this.session(this.params, ctx.notebook);
     const cached = cache.get(name);
-    if (cached !== undefined) return cached;
-    const declared = declaredParams(ctx.notebook).find((p) => p.name === name);
+    if (cached !== undefined) {
+      if (choiceProblem(declared, cached)) cache.delete(name); // asked again next time
+      return checked(cached);
+    }
     const def = declared?.default;
     const useDefaults = vscode.workspace.getConfiguration(SECTION).get<boolean>('params.useDefaults', false);
     if (def !== undefined && useDefaults) {
+      checked(def);
       cache.set(name, def);
       return def;
     }
@@ -378,6 +391,8 @@ class SecretsFeature {
       return;
     }
     if (refs.length > 0 && shell) {
+      // What a confirmation shows and its risky patterns see: the values, not the placeholders (secrets stay).
+      plan.shown = fillShown(plan.source, (ref) => (values[ref.name] !== undefined ? { value: values[ref.name]!, secret: secrets.has(ref.name) } : undefined));
       plan.source = rewriteRefs(plan.source, shell);
       plan.steps = plan.steps?.map((step) => rewriteRefs(step, shell));
     }
@@ -434,7 +449,9 @@ class SecretsFeature {
       try {
         if (r.kind === 'param') await this.param(r.name, { notebook: nb, cell });
         else await this.input(r.name, r.secret, { notebook: nb, cell });
-      } catch {
+      } catch (e) {
+        // Escape stops quietly; a value that isn't one of its choices says so.
+        if (!(e instanceof PromptCancelled)) void vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
         return false;
       }
     }
@@ -542,21 +559,44 @@ class SecretsFeature {
     return this.context.secrets.get(KEY_PREFIX + name);
   }
 
-  /** Set parameter values for `nb` without asking (a runbook link's values, already checked by parseRunbookLink). */
+  /** Set parameter values for `nb` without asking (a runbook link's values, checked by parseRunbookLink; one not among its choices is not taken). */
   fillParameters(nb: vscode.NotebookDocument, values: Readonly<Record<string, string>>): void {
     const cache = this.session(this.params, nb);
-    for (const [k, v] of Object.entries(values)) if (VAR_NAME_RE.test(k)) cache.set(k, v);
+    const declared = declaredParams(nb);
+    const refused: string[] = [];
+    for (const [k, v] of Object.entries(values)) {
+      if (!VAR_NAME_RE.test(k)) continue;
+      // Not one of its choices: not taken, so it is asked (the box takes only a choice).
+      const off = choiceProblem(declared.find((p) => p.name === k), v);
+      if (off) refused.push(off);
+      else cache.set(k, v);
+    }
+    if (refused.length > 0) void vscode.window.showWarningMessage(`md-runbook: the link's value is not taken: ${refused.join('; ')}. It is asked when the runbook runs.`);
   }
 
-  /** Ask for every declared parameter (`values` only from the test helper, never from a command link). */
-  async setParameters(values?: unknown): Promise<void> {
+  /** Test mode only (mdRunbook._test.setParameters): parameter values for the active runbook, not asked. */
+  setParameterValues(values: unknown): void {
+    const checked = testOnlyValues(values, isTestMode(this.context));
     const nb = activeRunbook();
     if (!nb) return;
     const cache = this.session(this.params, nb);
-    if (values !== undefined && typeof values === 'object' && values !== null && Object.values(values).every((v) => typeof v === 'string')) {
-      for (const [k, v] of Object.entries(values as Record<string, string>)) if (VAR_NAME_RE.test(k)) cache.set(k, v);
-      return;
-    }
+    for (const [k, v] of Object.entries(checked)) cache.set(k, v);
+  }
+
+  /** Test mode only (mdRunbook._test.setInputs): input values for the active runbook, not asked. */
+  setInputValues(values: unknown): void {
+    const checked = testOnlyValues(values, isTestMode(this.context));
+    const nb = activeRunbook();
+    if (!nb) return;
+    const cache = this.session(this.inputs, nb);
+    for (const [k, v] of Object.entries(checked)) cache.set(k, v);
+  }
+
+  /** Ask for every declared parameter (Set Parameters). Takes no values: a command link can't set any. */
+  async setParameters(): Promise<void> {
+    const nb = activeRunbook();
+    if (!nb) return;
+    const cache = this.session(this.params, nb);
     // Declared ones first (with their defaults), then any other the cells use.
     const params: RunbookParam[] = [...declaredParams(nb)];
     for (const r of usedRefs(nb)) if (r.kind === 'param' && !params.some((p) => p.name === r.name)) params.push({ name: r.name });
@@ -579,14 +619,10 @@ class SecretsFeature {
    * Ask for every `${input:NAME}` the runbook's cells use, the current value filled in (a secret
    * one is masked and never shown: empty keeps it). Escape stops; the values set so far stay.
    */
-  async setInputs(values?: unknown): Promise<void> {
+  async setInputs(): Promise<void> {
     const nb = activeRunbook();
     if (!nb) return;
     const cache = this.session(this.inputs, nb);
-    if (values !== undefined && typeof values === 'object' && values !== null && Object.values(values).every((v) => typeof v === 'string')) {
-      for (const [k, v] of Object.entries(values as Record<string, string>)) if (VAR_NAME_RE.test(k)) cache.set(k, v);
-      return;
-    }
     const inputs = new Map<string, boolean>();
     for (const r of usedRefs(nb)) if (r.kind === 'input') inputs.set(r.name, (inputs.get(r.name) ?? false) || r.secret);
     if (inputs.size === 0) return void vscode.window.showInformationMessage('md-runbook: this runbook has no inputs (${input:NAME}).');
@@ -728,8 +764,8 @@ export function registerSecrets(context: vscode.ExtensionContext, pipeline: RunP
         await f.allow(name);
       }),
       vscode.commands.registerCommand('mdRunbook._test.deleteSecret', (name: string) => f.deleteSecret(name)),
-      vscode.commands.registerCommand('mdRunbook._test.setParameters', (values: Record<string, string>) => f.setParameters(values)),
-      vscode.commands.registerCommand('mdRunbook._test.setInputs', (values: Record<string, string>) => f.setInputs(values)),
+      vscode.commands.registerCommand('mdRunbook._test.setParameters', (values: unknown) => f.setParameterValues(values)),
+      vscode.commands.registerCommand('mdRunbook._test.setInputs', (values: unknown) => f.setInputValues(values)),
     );
   }
   context.subscriptions.push(

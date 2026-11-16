@@ -76,6 +76,9 @@ jobs:
       - name: Install the manifest the way the README says
         run: |
           kubectl apply -f apps/ops/kubernetes/md-runbook-ops.yaml
+          # Runbooks may change workloads in `default` (the test's web deployment), nowhere else.
+          kubectl -n default create rolebinding md-runbook-ops-operate \
+            --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-ops
           ns="-n md-runbook-ops"
           kubectl $ns create configmap md-runbook-ops-keys --from-file=authorized_keys="$KEYS/authorized_keys"
           kubectl $ns create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ecdsa_key="$KEYS/ssh_host_ecdsa_key"

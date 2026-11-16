@@ -188,7 +188,7 @@ export function runbookDigest(text: string): string {
 
 /**
  * How far the opened text can be trusted. `mismatch`: the link pins other content (refuse it);
- * `signed`: the runbook carries a signature block and no signed block changed; `pinned`: the
+ * `signed`: a signature by a trusted signer covers the text as it is (checkedLinkTrust); `pinned`: the
  * text at the link's address is the one the link pins; `unverified`: neither (open it, with a
  * warning). Only a signature says who approved a runbook: a forged link or sticker can pin its
  * own text, so a pin guards a genuine link against the file changing later, nothing more, and a
@@ -196,11 +196,29 @@ export function runbookDigest(text: string): string {
  */
 export type LinkTrust = 'mismatch' | 'signed' | 'pinned' | 'unverified';
 
+/**
+ * The link's trust from the text alone: `signed` here means only that a signature block covers
+ * the text as it is (no block changed, moved or missing; for a version 2 manifest, no text
+ * either). Nobody has checked the signature yet: anyone can write a block. Pass the result
+ * through checkedLinkTrust with the signature's check before showing or using `signed`.
+ */
 export function linkTrust(l: RunbookLink, text: string): LinkTrust {
   if (l.sha256 && runbookDigest(text) !== l.sha256) return 'mismatch';
-  const signed = signedStatus(text);
-  if (signed && signed.changed.length === 0 && signed.missing.length === 0 && signed.moved.length === 0) return 'signed';
-  return l.sha256 && l.text === undefined ? 'pinned' : 'unverified';
+  const s = signedStatus(text);
+  const intact = s && s.changed.length + s.missing.length + s.moved.length + s.missingCalls.length + s.unsigned.length === 0 && !(s.version === 2 && s.textChanged);
+  if (intact) return 'signed';
+  return unsignedTrust(l);
+}
+
+const unsignedTrust = (l: RunbookLink): LinkTrust => (l.sha256 && l.text === undefined ? 'pinned' : 'unverified');
+
+/**
+ * `signed` only when a signature by a key the user trusts checked out (`verified`); otherwise what
+ * the link is without its signature (pinned or unverified). Before 2026-11-16, a well-formed block
+ * with any signature counted as signed (security review).
+ */
+export function checkedLinkTrust(l: RunbookLink, trust: LinkTrust, verified: boolean): LinkTrust {
+  return trust === 'signed' && !verified ? unsignedTrust(l) : trust;
 }
 
 /**

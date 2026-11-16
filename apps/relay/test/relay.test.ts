@@ -164,6 +164,9 @@ describe('relay', () => {
       assert.equal(await open(url, '127.0.0.1:1'), 403);
       assert.equal(await open(url, `127.0.0.1:${portOf(echo)}`), 403);
       assert.equal(await open(url, `[::1]:${portOf(echo)}`), 403);
+      // Other spellings of loopback: an IP literal never goes through the DNS lookup below.
+      for (const literal of ['0:0:0:0:0:0:0:1', '::ffff:7f00:1', '::ffff:127.0.0.1'])
+        assert.equal(await open(url, `[${literal}]:${portOf(echo)}`), 403, literal);
       // A name that resolves to an internal address: the connection is refused at lookup.
       const ws = await open(url, `localhost:${portOf(echo)}`);
       assert.ok(ws instanceof WebSocket);
@@ -184,9 +187,12 @@ describe('relay', () => {
   });
 
   it('knows internal addresses', () => {
-    for (const a of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1'])
+    for (const a of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1',
+      // Other spellings of loopback and private addresses (security review, 2026-11-16).
+      '0:0:0:0:0:0:0:1', '::ffff:7f00:1', '::ffff:a00:1', '::ffff:0:127.0.0.1', '64:ff9b::a00:1', '::127.0.0.1', '2002:7f00:1::',
+      '198.18.0.1', '224.0.0.1', '255.255.255.255', '192.0.0.1', 'ff02::1', '2001:db8::1', 'fec0::1', '203.0.113.9'])
       assert.ok(isInternal(a), a);
-    for (const a of ['8.8.8.8', '172.32.0.1', '100.128.0.1', '2001:db8::1', '::ffff:8.8.8.8']) assert.ok(!isInternal(a), a);
+    for (const a of ['8.8.8.8', '172.32.0.1', '100.128.0.1', '2a00:1450:4001::1', '::ffff:8.8.8.8', '2606:4700::1111', 'not-an-address']) assert.ok(!isInternal(a), a);
   });
 });
 

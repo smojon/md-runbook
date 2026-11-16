@@ -35,9 +35,11 @@ app's public key into `authorized_keys` yourself.
 
 [kubernetes/md-runbook-ops.yaml](kubernetes/md-runbook-ops.yaml) sets up:
 - the namespace `md-runbook-ops`, with Pod Security `restricted` enforced;
-- a service account and a ClusterRole for what runbooks may do. They may read everything
-  except Secrets, run `rollout restart` and `rollout undo`, scale, create Jobs from CronJobs,
-  and read cert-manager certificates. They may not delete anything or exec into pods;
+- a service account and what runbooks may do:
+  - read everything except Secrets, in every namespace, cert-manager certificates included;
+  - `rollout restart`, `rollout undo`, scale Deployments and StatefulSets, and create Jobs
+    from CronJobs, only in the namespaces you bind (see below);
+  - nothing else: no deleting, no exec into pods, no DaemonSets;
 - the gate's ConfigMap, the Deployment and a ClusterIP Service on port 22.
 
 ```sh
@@ -65,8 +67,19 @@ options:
 - **The relay in the cluster**, for the web app ([apps/relay](../relay/README.md), with
   `RELAY_TARGETS=md-runbook-ops.md-runbook-ops.svc:22`).
 
-**More rights.** Add rules to the ClusterRole, or bind the service account to a narrower Role per
-namespace instead. Whatever the role allows, every runbook on this host can do.
+**Where runbooks may change things.** Only in the ops namespace at first. Bind each namespace
+your runbooks may change:
+
+```sh
+kubectl -n NAMESPACE create rolebinding md-runbook-ops-operate \
+  --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-ops
+```
+
+- Bind only the namespaces you need. Whoever may change a namespace's workloads can read its
+  Secrets ([Kubernetes RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation)).
+- Never bind `kube-system`.
+- **More rights:** add rules to `md-runbook-ops-operate`. Whatever it allows, every runbook on
+  this host can do.
 
 ## Next to the relay
 

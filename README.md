@@ -390,6 +390,9 @@ expressions, and each whole match is replaced. Use lookbehind to keep context:
 ]
 ```
 
+A workspace's patterns (`.vscode/settings.json`) are added to your own. A workspace can't drop
+yours.
+
 The live view in the editor is redacted too, so secrets don't appear on screen or in screen
 shares. There, redaction works line by line as output arrives. Turn
 `mdRunbook.redaction.applyToLiveOutput` off to see raw output while debugging.
