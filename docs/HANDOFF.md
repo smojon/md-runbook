@@ -69,11 +69,13 @@ State of the project for whoever picks it up next (person or new Claude session)
   - `packages/core/src/node/sign.ts`: ssh-keygen sign/verify.
   - `src/cli/sign.ts`: `md-runbook sign|verify`.
   - `src/signing.ts`: Sign Runbook.
-  - `apps/gate/md-runbook-gate`: the server side, POSIX sh.
+  - `apps/gate`: the server side, a Go module (`cmd/md-runbook-gate`).
+    - `scripts/ci/build-gate.sh` builds it as releases do. The Release workflow attaches
+      `md-runbook-gate-<os>-<arch>` and `SHA256SUMS`; the ops image builds it from source.
   - The gate client in `packages/ssh`: `RemoteSession.run(…, signed)`.
-  - Tests: `test/signing.test.ts`, `test/gate.test.ts` (the script under /bin/sh with real
-    signatures), `test/cliSign.test.ts`, and the gate section of `test/ssh.live.test.ts`
-    (through CI's sshd).
+  - Tests: `test/signing.test.ts`, `test/gate.test.ts` (the binary in `MD_RUNBOOK_GATE_BIN`,
+    default `apps/gate/dist/md-runbook-gate`, with real signatures), `test/cliSign.test.ts`, the
+    gate section of `test/ssh.live.test.ts` (through CI's sshd), and `go test` in `apps/gate`.
   - Design and limits: `docs/features/signed-runbooks.md`.
 - **Web app hosting:** `.github/workflows/pages.yml` deploys the web build to GitHub Pages after
   a green App run on main. It does nothing until the repository variable `WEB_APP_ORIGIN` is set.

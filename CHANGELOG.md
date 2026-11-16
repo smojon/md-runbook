@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Gate binaries on each GitHub release:** `md-runbook-gate-linux-amd64`, `-linux-arm64`,
+  `-darwin-amd64` and `-darwin-arm64`, with `SHA256SUMS`. Built static, with the Go toolchain
+  `apps/gate/go.mod` names, by a job without secrets.
+- **Ops host image:** builds the gate from its Go source in a build stage, from a `golang` image
+  pinned by digest, and installs only the static binary.
+- **Dependabot:** follows the gate's Go modules (`apps/gate`) weekly, with the same 7-day wait as
+  the actions.
+
 ## 0.27.0
 
 Security fixes from five review rounds, a team runbook library in VS Code and the app, and a

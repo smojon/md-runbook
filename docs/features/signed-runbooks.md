@@ -266,8 +266,19 @@ lists the others.
 
 ## Setting up a server
 
-The gate is one POSIX `sh` script: [apps/gate](../../apps/gate/README.md) has the install steps.
-In short:
+The gate is one static binary:
+- for Linux and macOS, on amd64 and arm64;
+- on each [release](https://github.com/smojon/md-runbook/releases), with a `SHA256SUMS` file;
+- installed as [apps/gate](../../apps/gate/README.md) says. In short:
+
+```sh
+v=0.28.0                           # the release you install
+f=md-runbook-gate-linux-amd64      # or -linux-arm64, -darwin-amd64, -darwin-arm64
+base=https://github.com/smojon/md-runbook/releases/download/v$v
+curl -fsSL -O "$base/$f" -O "$base/SHA256SUMS"
+grep " $f\$" SHA256SUMS | sha256sum -c -     # macOS: shasum -a 256 -c -
+sudo install -m 755 "$f" /usr/local/bin/md-runbook-gate
+```
 
 ```
 # ~/.ssh/authorized_keys of the account the support team uses
