@@ -81,6 +81,16 @@ func Exe(pid int) string {
 	return x
 }
 
+// StartTime is when a process started, in clock ticks after boot (/proc/PID/stat, field 22): with
+// its pid it names one process for as long as the system runs. "" when it can't be read.
+func StartTime(pid int) string {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return ""
+	}
+	return ParseStartTime(string(b))
+}
+
 // NSpid is the process's pid in each PID namespace, outermost first (/proc/PID/status); nil
 // when it can't be read.
 func NSpid(pid int) []int {

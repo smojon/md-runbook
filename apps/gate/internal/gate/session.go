@@ -522,6 +522,7 @@ loop:
 		g.readExitsFile()
 	} else if g.jobMode() {
 		g.finishFollower()
+		g.jobMissingExits(term)
 	}
 	// What left the shells' process groups, before the report sender starts.
 	g.sweep("end")

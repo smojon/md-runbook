@@ -16,6 +16,13 @@ func TestParseStat(t *testing.T) {
 	if _, ok := ParseStat("garbage"); ok {
 		t.Error("garbage")
 	}
+	stat := "4242 (a) b) S 4200 4242 4100 0 -1 4194304 1 0 0 0 5 2 0 0 20 0 1 0 987654 1000 100"
+	if s := ParseStartTime(stat); s != "987654" {
+		t.Errorf("start time: %q", s)
+	}
+	if s := ParseStartTime("7 (sh) S 1 7 7"); s != "" {
+		t.Errorf("short stat: %q", s)
+	}
 	if uid, ok := ParseUID("Name:\tsh\nUid:\t1000\t1001\t1001\t1001\n"); !ok || uid != 1001 {
 		t.Errorf("uid: %d", uid)
 	}

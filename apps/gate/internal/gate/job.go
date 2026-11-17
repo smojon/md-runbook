@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,7 +43,13 @@ import (
 //
 // Before the first shell the gate checks both service accounts (SelfSubjectAccessReviews): the
 // gate's may run Jobs and nothing of the cells' rights; the cells' may not exec into pods, read
-// logs or Secrets, or start workloads in the gate's namespace. A wrong answer: no session.
+// logs, Secrets or ConfigMaps, or start workloads in the gate's namespace, and every namespace
+// where they may start or change workloads must enforce Pod Security baseline or restricted
+// (else a privileged pod reaches the node, and through it the gate's pod). A wrong answer: no
+// session.
+//
+// When the follower's stdin ends (the session ended, or the gate is gone) it ends the pod: a
+// dead-man switch, so that nothing of a session outlives it by more than the pod's grace period.
 
 // In the Job's pod: the exits file and the shells' pids (fresh with each pod). (Variables: tests
 // use folders of their own.)
@@ -54,8 +61,10 @@ var (
 const (
 	// The Job's container, and its limits.
 	jobContainer = "cells"
-	jobDeadline  = 86400 // a session lasts at most a day
-	jobTTL       = 60
+	// A cap on a live session (an on-call window stays open for hours). Leftovers don't wait for
+	// it: the follower's dead-man switch ends the pod when the gate goes.
+	jobDeadline = 86400
+	jobTTL      = 60
 	// How long the pod may take to be Ready, and how often the gate asks.
 	jobReadyMax  = 3 * time.Minute
 	jobReadyPoll = 500 * time.Millisecond
@@ -117,13 +126,15 @@ func (g *Gate) apart() bool { return g.separated() || g.jobMode() }
 
 // checkRunner: the settings of cells_runner, before anything runs. Fail closed.
 func (g *Gate) checkRunner() {
-	if p := runnerProblem(g.cfg); p != "" {
+	if p := runnerProblem(g.cfg, g.configPath); p != "" {
 		g.fatal(p)
 	}
 }
 
 // runnerProblem: "" when gate.conf's cells_runner settings go together, else what to change.
-func runnerProblem(c config.Config) string {
+// configPath: gate.conf, on the ops host a ConfigMap: report_token_file must not be next to it
+// (a Secret, mounted on a folder of its own).
+func runnerProblem(c config.Config, configPath string) string {
 	if c.CellsRunner != "kubernetes-job" {
 		if c.JobServiceAccount != "" || c.JobImage != "" {
 			return "job_service_account and job_image are for cells_runner = kubernetes-job only: add it, or remove them"
@@ -137,6 +148,8 @@ func runnerProblem(c config.Config) string {
 		return "cells_runner = kubernetes-job and cells_account don't go together: the Job's pod keeps the cells apart. Remove cells_account"
 	case c.Isolation == "scope" || c.Isolation == "bwrap":
 		return "isolation = " + c.Isolation + " doesn't go with cells_runner = kubernetes-job: the Job's pod is the isolation. Use auto or none"
+	case c.ReportToken != "" && strings.HasPrefix(filepath.Clean(c.ReportToken), filepath.Dir(filepath.Clean(configPath))+"/"):
+		return "report_token_file = " + c.ReportToken + " is in the folder of " + configPath + ", a ConfigMap on the ops host: put the token in a Secret mounted on a folder of its own (apps/ops/README.md)"
 	}
 	return ""
 }
@@ -171,6 +184,9 @@ func (g *Gate) setupJob() {
 		g.fatal("cells_runner = kubernetes-job: kubectl has no current context (" + err.Error() + "): the gate runs Jobs with its pod's service account (md-runbook-ops-start writes ~/.kube/config)")
 	}
 	host, _ := os.Hostname()
+	if !config.ValidKubeName(host) {
+		g.fatal("cells_runner = kubernetes-job: this host's name " + host + " is no pod name")
+	}
 	out, err = j.run(j.kc("get", "pod", host, "-n", j.ns, "-o", "json"), j.env, nil)
 	if err == nil {
 		j.opsUID, j.image, err = parseOwnPod(out)
@@ -189,7 +205,7 @@ func (g *Gate) setupJob() {
 	}
 	g.sweepJobs(j)
 	j.name = "md-runbook-cells-" + randHex(5)
-	spec := jobSpec{Name: j.name, NS: j.ns, OpsPod: j.opsPod, OpsUID: j.opsUID, Image: j.image, SA: j.sa, Context: j.context, GatePID: itoa(os.Getpid())}
+	spec := jobSpec{Name: j.name, NS: j.ns, OpsPod: j.opsPod, OpsUID: j.opsUID, Image: j.image, SA: j.sa, Context: j.context, GateID: gateID(os.Getpid())}
 	if _, err := j.run(j.kc("create", "-f", "-", "-o", "name"), j.env, jobManifest(spec)); err != nil {
 		g.fatal("cells_runner = kubernetes-job: can't create the cells' Job (" + err.Error() + ")")
 	}
@@ -207,7 +223,11 @@ func (g *Gate) prepareJob(j *kubeJob) {
 	t0 := time.Now()
 	pod, why := j.waitPod(time.Sleep, time.Now)
 	if why == "" {
-		if p := j.check(cellsReviews(j.ns), pod, "the cells' service account "+j.sa); len(p) > 0 {
+		p := j.check(cellsReviews(j.ns), pod, "the cells' service account "+j.sa)
+		if len(p) == 0 {
+			p = j.checkNamespaces(pod)
+		}
+		if len(p) > 0 {
 			why = strings.Join(p, "; ") + ". See apps/ops/README.md (RBAC)."
 			g.log.Event("event", "self-check", "status", "refused", "reason", "cells_runner = kubernetes-job: "+why)
 		}
@@ -256,16 +276,48 @@ func (j *kubeJob) waitPod(sleep func(time.Duration), now func() time.Time) (stri
 // check runs the reviews as the gate's service account (pod "") or, in the Job's pod, as the
 // cells'; what is wrong, each as a sentence.
 func (j *kubeJob) check(rs []review, pod, who string) []string {
-	argv, stdin := j.kc("create", "-f", "-", "-o", "json"), reviewList(rs)
-	if pod != "" {
-		req := cellsReq{Op: "exec", Argv: argv, Env: j.podEnv}.encode()
-		argv, stdin = j.execArgv(pod), append(req, stdin...)
-	}
-	out, err := j.run(argv, j.env, stdin)
+	out, err := j.kubectlAs(pod, reviewList(rs), "create", "-f", "-", "-o", "json")
 	if err != nil {
 		return []string{"can't check " + who + " (" + err.Error() + ")"}
 	}
 	return reviewProblems(out, rs, who)
+}
+
+// kubectlAs runs kubectl as the gate's service account (pod "") or in the Job's pod as the
+// cells' (through the cells' mode, before any block ran there).
+func (j *kubeJob) kubectlAs(pod string, stdin []byte, args ...string) ([]byte, error) {
+	argv := j.kc(args...)
+	if pod != "" {
+		req := cellsReq{Op: "exec", Argv: argv, Env: j.podEnv}.encode()
+		argv, stdin = j.execArgv(pod), append(req, stdin...)
+	}
+	return j.run(argv, j.env, stdin)
+}
+
+// checkNamespaces: in every namespace where the cells may start or change workloads (a
+// SelfSubjectRulesReview each, from the Job's pod), Pod Security must enforce baseline or
+// restricted. Else a block starts a privileged pod there, with the node's file system, and
+// reads the gate's pod's token and files on that node (review of 0.29.0, H2).
+func (j *kubeJob) checkNamespaces(pod string) []string {
+	out, err := j.kubectlAs(pod, nil, "get", "namespaces", "-o", "json")
+	if err != nil {
+		return []string{"can't list the namespaces as the cells' service account (" + err.Error() + ")"}
+	}
+	nss, err := kubeObjects(out)
+	if err != nil {
+		return []string{"can't read the namespaces"}
+	}
+	var names []string
+	for _, n := range nss {
+		if n.Kind == "Namespace" && config.ValidKubeName(n.Metadata.Name) {
+			names = append(names, n.Metadata.Name)
+		}
+	}
+	rules, err := j.kubectlAs(pod, rulesReviewList(names), "create", "-f", "-", "-o", "json")
+	if err != nil {
+		return []string{"can't check the cells' rights per namespace (" + err.Error() + ")"}
+	}
+	return unguardedNamespaces(nss, rules)
 }
 
 // sweepJobs deletes the Jobs of this gate's pod whose gate no longer runs (one killed before it
@@ -287,9 +339,18 @@ func (g *Gate) sweepJobs(j *kubeJob) {
 	g.log.Event("event", "job", "status", status, "jobs", strings.Join(names, " "))
 }
 
-// gateAlive: pid is a running gate (this program), or a process the gate can't look into.
-func gateAlive(pid int) bool {
-	if pid <= 1 {
+// gateID: a gate process, as a Job's label names it: its pid and its start time after boot.
+// A pid alone could be another program's by now.
+func gateID(pid int) string { return itoa(pid) + "." + procs.StartTime(pid) }
+
+// gateAlive: the gate that label id names still runs: that pid, started then, this program.
+func gateAlive(id string) bool {
+	pidS, start, ok := strings.Cut(id, ".")
+	if !ok || !textutil.IsPID(pidS) || start == "" {
+		return false
+	}
+	pid := atoi(pidS)
+	if pid <= 1 || procs.StartTime(pid) != start {
 		return false
 	}
 	if err := syscall.Kill(pid, 0); err != nil && err != syscall.EPERM {
@@ -310,7 +371,15 @@ func (g *Gate) jobCleanup() {
 		if j.follow != nil && j.follow.Process != nil {
 			syscall.Kill(-j.follow.Process.Pid, syscall.SIGKILL)
 		}
-		_, err := j.quick(j.kc("delete", "job", j.name, "-n", j.ns, "--ignore-not-found", "--wait=false"), j.env, nil)
+		var err error
+		for i, pause := 0, 500*time.Millisecond; i < 3; i, pause = i+1, pause*2 {
+			if _, err = j.quick(j.kc("delete", "job", j.name, "-n", j.ns, "--ignore-not-found", "--wait=false"), j.env, nil); err == nil {
+				break
+			}
+			if i < 2 {
+				time.Sleep(pause)
+			}
+		}
 		status := "deleted"
 		if err != nil {
 			status = "delete-failed"
@@ -482,7 +551,7 @@ func (g *Gate) startFollower(j *kubeJob, pod string) string {
 	if err := cmd.Start(); err != nil {
 		return "can't start " + j.kubectl
 	}
-	in.Write(cellsReq{Op: "follow", Paths: []string{jobExits}, Events: true}.encode())
+	in.Write(cellsReq{Op: "follow", Paths: []string{jobExits}, Events: true, EndPod: true}.encode())
 	j.follow, j.followIn, j.followDone = cmd, in, make(chan struct{})
 	go func() {
 		g.followLines(out)
@@ -505,6 +574,26 @@ func (g *Gate) finishFollower() {
 	case <-j.followDone:
 	case <-time.After(5 * time.Second):
 		syscall.Kill(-j.follow.Process.Pid, syscall.SIGKILL)
+	}
+}
+
+// jobMissingExits: at the end of a session that wasn't cut short, every signed run has its exit
+// (each shell ran all it was sent, and the follower read to the end). One that hasn't: its line
+// was kept from the gate, so the session's exits count for nothing (no run report).
+func (g *Gate) jobMissingExits(cut bool) {
+	if g.job == nil || cut {
+		return
+	}
+	g.exitsMu.Lock()
+	defer g.exitsMu.Unlock()
+	for n := 1; n <= g.runs; n++ {
+		if _, run := g.sepRuns[itoa(n)]; !run {
+			continue
+		}
+		if _, ok := g.sepExits[itoa(n)]; !ok {
+			g.junkExits("no exit came back for run " + itoa(n))
+			return
+		}
 	}
 }
 
@@ -572,9 +661,9 @@ func (g *Gate) followLines(r io.Reader) {
 // What a probe event may say, in md-runbook-probe's order.
 var probeKeys = []string{"run", "target", "address", "result", "detail", "days_left", "not_after", "cert_sha256"}
 
-// probeEvent: a line of the pod's log as the gate logs it: an md-runbook-probe event (string
-// values only, each cut to 1024 bytes) of no run, or of one of this session's. The time, account,
-// key and client are the gate's.
+// probeEvent: a line of the pod's log as the gate logs it: an md-runbook-probe event of one of
+// this session's signed runs (string values only, each cut to 1024 bytes), marked source job.
+// The time, account, key and client are the gate's.
 func probeEvent(line string, runs map[string]bool) ([]string, bool) {
 	var m map[string]any
 	if len(line) > 8192 || json.Unmarshal([]byte(line), &m) != nil || m["event"] != "probe" {
@@ -591,7 +680,10 @@ func probeEvent(line string, runs map[string]bool) ([]string, bool) {
 		}
 		kv = append(kv, k, textutil.Cut(v, 1024))
 	}
-	return kv, true
+	if len(kv) < 4 || kv[2] != "run" {
+		return nil, false
+	}
+	return append(kv, "source", "job"), true
 }
 
 // ---- the cells' mode in the Job's pod ----
@@ -769,7 +861,7 @@ func followPaths(req cellsReq) []string {
 
 // jobSpec: what the Job is made of.
 type jobSpec struct {
-	Name, NS, OpsPod, OpsUID, Image, SA, Context, GatePID string
+	Name, NS, OpsPod, OpsUID, Image, SA, Context, GateID string
 }
 
 // jobManifest: the cells' Job, as JSON for kubectl create. Pod Security "restricted": non-root,
@@ -777,7 +869,7 @@ type jobSpec struct {
 // system with emptyDirs for the home folder, /tmp and the probe's log.
 func jobManifest(s jobSpec) []byte {
 	type obj = map[string]any
-	labels := obj{"app.kubernetes.io/name": "md-runbook-cells", "app.kubernetes.io/managed-by": "md-runbook-gate", "md-runbook-job": s.Name, "md-runbook-ops-pod": s.OpsUID, "md-runbook-gate-pid": s.GatePID}
+	labels := obj{"app.kubernetes.io/name": "md-runbook-cells", "app.kubernetes.io/managed-by": "md-runbook-gate", "md-runbook-job": s.Name, "md-runbook-ops-pod": s.OpsUID, "md-runbook-gate-id": s.GateID}
 	mounts := []obj{{"name": "home", "mountPath": "/home/ops"}, {"name": "tmp", "mountPath": "/tmp"}, {"name": "log", "mountPath": "/var/log/md-runbook"}}
 	volumes := []obj{{"name": "home", "emptyDir": obj{}}, {"name": "tmp", "emptyDir": obj{}}, {"name": "log", "emptyDir": obj{}}}
 	container := obj{
@@ -788,7 +880,7 @@ func jobManifest(s jobSpec) []byte {
 		"env":             []obj{{"name": "CLUSTER_NAME", "value": s.Context}},
 		"securityContext": obj{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "runAsNonRoot": true, "capabilities": obj{"drop": []string{"ALL"}}},
 		"readinessProbe":  obj{"exec": obj{"command": []string{"/bin/sh", "-c", `test -s "$HOME/.kube/config"`}}, "periodSeconds": 1},
-		"resources":       obj{"requests": obj{"cpu": "50m", "memory": "64Mi"}, "limits": obj{"memory": "512Mi", "ephemeral-storage": "1Gi"}},
+		"resources":       obj{"requests": obj{"cpu": "50m", "memory": "64Mi"}, "limits": obj{"cpu": "1", "memory": "512Mi", "ephemeral-storage": "1Gi"}},
 		"volumeMounts":    mounts,
 	}
 	pod := obj{
@@ -835,18 +927,23 @@ type kubeObj struct {
 			Image string `json:"image"`
 		} `json:"containers"`
 		ResourceAttributes map[string]string `json:"resourceAttributes"`
+		Namespace          string            `json:"namespace"`
 	} `json:"spec"`
 	Status struct {
-		Phase      string `json:"phase"`
-		Allowed    bool   `json:"allowed"`
-		Conditions []struct {
+		Phase         string     `json:"phase"`
+		Allowed       bool       `json:"allowed"`
+		ResourceRules []kubeRule `json:"resourceRules"`
+		Incomplete    bool       `json:"incomplete"`
+		Conditions    []struct {
 			Type    string `json:"type"`
 			Status  string `json:"status"`
 			Reason  string `json:"reason"`
 			Message string `json:"message"`
 		} `json:"conditions"`
 		ContainerStatuses []struct {
-			State struct {
+			Name    string `json:"name"`
+			ImageID string `json:"imageID"`
+			State   struct {
 				Waiting *struct {
 					Reason  string `json:"reason"`
 					Message string `json:"message"`
@@ -913,7 +1010,8 @@ func parseContext(out []byte) (context, ns string, err error) {
 	return c.Current, ns, nil
 }
 
-// parseOwnPod: the gate's pod: its uid, and its image (the container ops, else the only one).
+// parseOwnPod: the gate's pod: its uid, and its image (the container ops, else the only one),
+// by digest where the image is a registry's (pinImage).
 func parseOwnPod(out []byte) (uid, image string, err error) {
 	objs, err := kubeObjects(out)
 	if err != nil || len(objs) != 1 || objs[0].Kind != "Pod" || objs[0].Metadata.UID == "" {
@@ -921,13 +1019,19 @@ func parseOwnPod(out []byte) (uid, image string, err error) {
 	}
 	p := objs[0]
 	cs := p.Spec.Containers
+	name := ""
 	for _, c := range cs {
 		if c.Name == "ops" {
-			image = c.Image
+			image, name = c.Image, c.Name
 		}
 	}
 	if image == "" && len(cs) == 1 {
-		image = cs[0].Image
+		image, name = cs[0].Image, cs[0].Name
+	}
+	for _, st := range p.Status.ContainerStatuses {
+		if image != "" && st.Name == name {
+			image = pinImage(image, st.ImageID)
+		}
 	}
 	if image == "" {
 		return "", "", errors.New("it has no container ops: set job_image")
@@ -936,6 +1040,33 @@ func parseOwnPod(out []byte) (uid, image string, err error) {
 		return "", "", errors.New("its image " + image + " is not one the gate can name: set job_image")
 	}
 	return p.Metadata.UID, image, nil
+}
+
+// pinImage: the image by the digest the gate's pod runs (status imageID), so that the Job runs
+// the same gate whatever its tag points to now. Only for an image of a registry (a host with a
+// dot or a port first) named the same: a local image (kind, a node's own) has no digest to pull
+// by. Else the spec's image.
+func pinImage(image, imageID string) string {
+	id := strings.TrimPrefix(imageID, "docker-pullable://")
+	repo, digest, ok := strings.Cut(id, "@sha256:")
+	if !ok || len(digest) != 64 || !textutil.IsHex64(digest) {
+		return image
+	}
+	host, _, _ := strings.Cut(repo, "/")
+	if !strings.Contains(repo, "/") || !strings.ContainsAny(host, ".:") {
+		return image
+	}
+	name := image
+	if i := strings.Index(name, "@"); i >= 0 {
+		name = name[:i]
+	}
+	if i := strings.LastIndex(name, ":"); i > strings.LastIndex(name, "/") {
+		name = name[:i]
+	}
+	if name != repo {
+		return image
+	}
+	return repo + "@sha256:" + digest
 }
 
 // Waiting reasons that won't pass by themselves.
@@ -984,8 +1115,8 @@ func podState(out []byte) (pod string, ready bool, fail string) {
 	return pod, false, ""
 }
 
-// orphanJobs: the Jobs whose gate (label md-runbook-gate-pid) no longer runs.
-func orphanJobs(out []byte, alive func(pid int) bool) []string {
+// orphanJobs: the Jobs whose gate (label md-runbook-gate-id: pid and start time) no longer runs.
+func orphanJobs(out []byte, alive func(id string) bool) []string {
 	objs, err := kubeObjects(out)
 	if err != nil {
 		return nil
@@ -995,8 +1126,7 @@ func orphanJobs(out []byte, alive func(pid int) bool) []string {
 		if o.Kind != "Job" || o.Metadata.DeletionTimestamp != "" || !config.ValidKubeName(o.Metadata.Name) {
 			continue
 		}
-		pid := o.Metadata.Labels["md-runbook-gate-pid"]
-		if textutil.IsPID(pid) && alive(atoi(pid)) {
+		if id := o.Metadata.Labels["md-runbook-gate-id"]; id != "" && alive(id) {
 			continue
 		}
 		names = append(names, o.Metadata.Name)
@@ -1100,20 +1230,39 @@ func opsReviews(ns string) []review {
 }
 
 // cellsReviews: in the gate's namespace the cells' service account can't reach the gate's pod
-// (exec, attach, its log: the gate's events), its Secrets and ConfigMaps (host key, gate.conf,
-// keys), nor run anything as another account there (workloads, tokens, roles).
+// (exec, attach, ephemeral containers, its log: the gate's events), its Secrets and ConfigMaps
+// (host key, report token, gate.conf, keys), nor run or change anything there (workloads, pods,
+// Jobs, tokens, roles); nowhere can it impersonate, bind or escalate roles, or reach a node's
+// kubelet. Impersonation and bindings are asked with the namespace too: a RoleBinding is
+// invisible to a review without one.
 func cellsReviews(ns string) []review {
 	no := func(verb, group, resource, sub string) review { return review{verb, group, resource, sub, ns, false} }
+	anywhere := func(verb, group, resource, sub string) review { return review{verb, group, resource, sub, "", false} }
+	rbac := "rbac.authorization.k8s.io"
 	return []review{
 		no("create", "", "pods", "exec"),
 		no("get", "", "pods", "exec"),
 		no("create", "", "pods", "attach"),
+		no("patch", "", "pods", "ephemeralcontainers"),
+		no("update", "", "pods", "ephemeralcontainers"),
 		no("get", "", "pods", "log"),
 		no("get", "", "secrets", ""),
 		no("list", "", "secrets", ""),
+		no("watch", "", "secrets", ""),
+		no("get", "", "configmaps", ""),
+		no("list", "", "configmaps", ""),
+		no("watch", "", "configmaps", ""),
+		no("create", "", "configmaps", ""),
+		no("update", "", "configmaps", ""),
+		no("patch", "", "configmaps", ""),
+		no("delete", "", "configmaps", ""),
 		no("create", "", "pods", ""),
 		no("patch", "", "pods", ""),
+		no("update", "", "pods", ""),
+		no("delete", "", "pods", ""),
 		no("create", "batch", "jobs", ""),
+		no("patch", "batch", "jobs", ""),
+		no("delete", "batch", "jobs", ""),
 		no("create", "batch", "cronjobs", ""),
 		no("create", "apps", "deployments", ""),
 		no("patch", "apps", "deployments", ""),
@@ -1121,9 +1270,109 @@ func cellsReviews(ns string) []review {
 		no("create", "apps", "daemonsets", ""),
 		no("create", "apps", "replicasets", ""),
 		no("create", "", "serviceaccounts", "token"),
-		no("update", "", "configmaps", ""),
-		no("patch", "", "configmaps", ""),
-		no("create", "rbac.authorization.k8s.io", "rolebindings", ""),
-		{"impersonate", "", "serviceaccounts", "", "", false},
+		no("create", rbac, "rolebindings", ""),
+		no("bind", rbac, "roles", ""),
+		no("escalate", rbac, "roles", ""),
+		no("bind", rbac, "clusterroles", ""),
+		no("escalate", rbac, "clusterroles", ""),
+		anywhere("create", rbac, "clusterrolebindings", ""),
+		anywhere("bind", rbac, "clusterroles", ""),
+		anywhere("escalate", rbac, "clusterroles", ""),
+		anywhere("get", "", "nodes", "proxy"),
+		anywhere("impersonate", "", "users", ""),
+		anywhere("impersonate", "", "groups", ""),
+		anywhere("impersonate", "", "serviceaccounts", ""),
+		no("impersonate", "", "users", ""),
+		no("impersonate", "", "groups", ""),
+		no("impersonate", "", "serviceaccounts", ""),
 	}
+}
+
+// kubeRule: a rule of a SelfSubjectRulesReview.
+type kubeRule struct {
+	Verbs     []string `json:"verbs"`
+	APIGroups []string `json:"apiGroups"`
+	Resources []string `json:"resources"`
+}
+
+// rulesReviewList: one SelfSubjectRulesReview per namespace, as one List.
+func rulesReviewList(names []string) []byte {
+	items := make([]map[string]any, 0, len(names))
+	for _, n := range names {
+		items = append(items, map[string]any{"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectRulesReview", "spec": map[string]any{"namespace": n}})
+	}
+	data, _ := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "List", "items": items})
+	return data
+}
+
+// What starts or changes a pod's spec: create, patch or update of these (group/resource).
+var workloads = []string{"/pods", "/pods/ephemeralcontainers", "/replicationcontrollers", "batch/jobs", "batch/cronjobs",
+	"apps/deployments", "apps/statefulsets", "apps/daemonsets", "apps/replicasets"}
+
+func ruleHas(list []string, v string) bool {
+	for _, x := range list {
+		if x == "*" || x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// startsWorkloads: a rule lets its holder create, patch or update a workload.
+func startsWorkloads(r kubeRule) bool {
+	if !ruleHas(r.Verbs, "create") && !ruleHas(r.Verbs, "patch") && !ruleHas(r.Verbs, "update") {
+		return false
+	}
+	for _, w := range workloads {
+		group, res, _ := strings.Cut(w, "/")
+		if !ruleHas(r.APIGroups, group) {
+			continue
+		}
+		top, _, hasSub := strings.Cut(res, "/")
+		for _, x := range r.Resources {
+			if x == "*" || x == res || (hasSub && x == top+"/*") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// unguardedNamespaces: each namespace where the cells may start or change workloads (or the
+// review can't say: incomplete, missing) without Pod Security baseline or restricted enforced.
+func unguardedNamespaces(nss []kubeObj, rulesOut []byte) []string {
+	reviews, err := kubeObjects(rulesOut)
+	if err != nil {
+		return []string{"can't read the cells' rights per namespace"}
+	}
+	may := map[string]bool{}
+	seen := map[string]bool{}
+	for _, r := range reviews {
+		if r.Kind != "SelfSubjectRulesReview" {
+			continue
+		}
+		ns := r.Spec.Namespace
+		seen[ns] = true
+		if r.Status.Incomplete {
+			may[ns] = true
+		}
+		for _, rule := range r.Status.ResourceRules {
+			if startsWorkloads(rule) {
+				may[ns] = true
+			}
+		}
+	}
+	var p []string
+	for _, n := range nss {
+		name := n.Metadata.Name
+		if n.Kind != "Namespace" || !config.ValidKubeName(name) || (seen[name] && !may[name]) {
+			continue
+		}
+		switch n.Metadata.Labels["pod-security.kubernetes.io/enforce"] {
+		case "baseline", "restricted":
+			continue
+		}
+		p = append(p, "the cells' service account may start workloads in namespace "+name+", which doesn't enforce Pod Security baseline or restricted: kubectl label namespace "+name+" pod-security.kubernetes.io/enforce=baseline")
+	}
+	return p
 }

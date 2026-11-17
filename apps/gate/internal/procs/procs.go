@@ -359,6 +359,23 @@ func ParseStat(stat string) (p Proc, ok bool) {
 	return p, ok1 && ok2 && ok3
 }
 
+// ParseStartTime: field 22 of /proc/PID/stat (starttime), "" when it isn't a number.
+func ParseStartTime(stat string) string {
+	shut := strings.LastIndexByte(stat, ')')
+	if shut < 0 {
+		return ""
+	}
+	// After the name, field 3 (state) comes first: field 22 is the 20th.
+	f := strings.Fields(stat[shut+1:])
+	if len(f) < 20 {
+		return ""
+	}
+	if _, ok := num(f[19]); !ok {
+		return ""
+	}
+	return f[19]
+}
+
 // ParseUID reads the effective uid from /proc/PID/status (as `ps -o uid=` shows it).
 func ParseUID(status string) (int, bool) {
 	for _, l := range strings.Split(status, "\n") {

@@ -76,6 +76,8 @@ type cellsReq struct {
 	Shells []int    `json:"shells,omitempty"`
 	Paths  []string `json:"paths,omitempty"`
 	Events bool     `json:"events,omitempty"`
+	// follow: when its stdin ends, end the pod (TERM to PID 1, tini): a dead-man switch.
+	EndPod bool `json:"end_pod,omitempty"`
 }
 
 const (
@@ -204,6 +206,11 @@ func cellsMain() int {
 		return 0
 	case "follow":
 		followFiles(followPaths(req), os.Stdin, os.Stdout, 100*time.Millisecond)
+		// The gate ended the session, or is gone: so is the pod (its container ends, and with
+		// backoffLimit 0 the Job). Nothing a block left behind outlives the session.
+		if req.EndPod {
+			syscall.Kill(1, syscall.SIGTERM)
+		}
 		return 0
 	}
 	say("cells mode: bad request")

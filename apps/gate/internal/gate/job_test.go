@@ -22,7 +22,7 @@ import (
 )
 
 var testSpec = jobSpec{Name: "md-runbook-cells-0a1b2c3d4e", NS: "md-runbook-ops", OpsPod: "md-runbook-ops-7c9f-x2", OpsUID: "1b4e28ba-2fa1-11d2-883f-0016d3cca427",
-	Image: "ghcr.io/smojon/md-runbook-ops:0.29.0", SA: "md-runbook-cells", Context: "prod-eu", GatePID: "4242"}
+	Image: "ghcr.io/smojon/md-runbook-ops:0.29.0", SA: "md-runbook-cells", Context: "prod-eu", GateID: "4242.987654"}
 
 // at: the value at a path of keys and indexes in decoded JSON.
 func at(t *testing.T, v any, path ...any) any {
@@ -65,7 +65,7 @@ func TestJobManifest(t *testing.T) {
 		{at(t, job, "metadata", "namespace"), "md-runbook-ops"},
 		{at(t, job, "metadata", "labels", "md-runbook-job"), testSpec.Name},
 		{at(t, job, "metadata", "labels", "md-runbook-ops-pod"), testSpec.OpsUID},
-		{at(t, job, "metadata", "labels", "md-runbook-gate-pid"), "4242"},
+		{at(t, job, "metadata", "labels", "md-runbook-gate-id"), "4242.987654"},
 		{at(t, job, "metadata", "labels", "app.kubernetes.io/name"), "md-runbook-cells"},
 		{at(t, job, "metadata", "ownerReferences", 0, "kind"), "Pod"},
 		{at(t, job, "metadata", "ownerReferences", 0, "name"), testSpec.OpsPod},
@@ -89,6 +89,7 @@ func TestJobManifest(t *testing.T) {
 		{at(t, c, "securityContext", "readOnlyRootFilesystem"), true},
 		{at(t, c, "securityContext", "capabilities", "drop", 0), "ALL"},
 		{at(t, c, "resources", "limits", "memory"), "512Mi"},
+		{at(t, c, "resources", "limits", "cpu"), "1"},
 		{at(t, c, "resources", "limits", "ephemeral-storage"), "1Gi"},
 		{at(t, c, "resources", "requests", "cpu"), "50m"},
 	} {
@@ -129,33 +130,41 @@ func TestExecArgv(t *testing.T) {
 func TestRunnerProblem(t *testing.T) {
 	job := config.Defaults()
 	job.CellsRunner, job.JobServiceAccount = "kubernetes-job", "md-runbook-cells"
-	if p := runnerProblem(job); p != "" {
+	const conf = "/etc/md-runbook/gate.conf"
+	if p := runnerProblem(job, conf); p != "" {
 		t.Errorf("good: %s", p)
 	}
-	if p := runnerProblem(config.Defaults()); p != "" {
+	if p := runnerProblem(config.Defaults(), conf); p != "" {
 		t.Errorf("local: %s", p)
 	}
 	for name, c := range map[string]struct {
 		change func(c *config.Config)
 		want   string
 	}{
-		"no account":       {func(c *config.Config) { c.JobServiceAccount = "" }, "needs job_service_account"},
-		"cells_account":    {func(c *config.Config) { c.CellsAccount = "mdrb-cells" }, "Remove cells_account"},
-		"scope":            {func(c *config.Config) { c.Isolation = "scope" }, "isolation = scope doesn't go"},
-		"bwrap":            {func(c *config.Config) { c.Isolation = "bwrap" }, "isolation = bwrap doesn't go"},
-		"local with keys":  {func(c *config.Config) { c.CellsRunner = "local" }, "for cells_runner = kubernetes-job only"},
-		"local with image": {func(c *config.Config) { c.CellsRunner, c.JobServiceAccount, c.JobImage = "local", "", "x:1" }, "for cells_runner = kubernetes-job only"},
+		"no account":             {func(c *config.Config) { c.JobServiceAccount = "" }, "needs job_service_account"},
+		"cells_account":          {func(c *config.Config) { c.CellsAccount = "mdrb-cells" }, "Remove cells_account"},
+		"scope":                  {func(c *config.Config) { c.Isolation = "scope" }, "isolation = scope doesn't go"},
+		"bwrap":                  {func(c *config.Config) { c.Isolation = "bwrap" }, "isolation = bwrap doesn't go"},
+		"local with keys":        {func(c *config.Config) { c.CellsRunner = "local" }, "for cells_runner = kubernetes-job only"},
+		"token in the ConfigMap": {func(c *config.Config) { c.ReportToken = "/etc/md-runbook/report-token" }, "a ConfigMap on the ops host: put the token in a Secret"},
+		"token below it":         {func(c *config.Config) { c.ReportToken = "/etc/md-runbook/x/../token" }, "a ConfigMap on the ops host"},
+		"local with image":       {func(c *config.Config) { c.CellsRunner, c.JobServiceAccount, c.JobImage = "local", "", "x:1" }, "for cells_runner = kubernetes-job only"},
 	} {
 		cfg := job
 		c.change(&cfg)
-		if p := runnerProblem(cfg); !strings.Contains(p, c.want) {
+		if p := runnerProblem(cfg, conf); !strings.Contains(p, c.want) {
 			t.Errorf("%s: %q", name, p)
 		}
+	}
+	tok := job
+	tok.ReportToken = "/etc/md-runbook-ops/report/token"
+	if p := runnerProblem(tok, conf); p != "" {
+		t.Errorf("token in a Secret: %s", p)
 	}
 	for _, iso := range []string{"auto", "none"} {
 		cfg := job
 		cfg.Isolation = iso
-		if p := runnerProblem(cfg); p != "" {
+		if p := runnerProblem(cfg, conf); p != "" {
 			t.Errorf("%s: %s", iso, p)
 		}
 	}
@@ -278,20 +287,22 @@ func TestWaitPod(t *testing.T) {
 
 func TestOrphanJobs(t *testing.T) {
 	out := []byte(`{"kind":"List","items":[
-		{"kind":"Job","metadata":{"name":"md-runbook-cells-live","labels":{"md-runbook-gate-pid":"100"}}},
-		{"kind":"Job","metadata":{"name":"md-runbook-cells-dead","labels":{"md-runbook-gate-pid":"200"}}},
+		{"kind":"Job","metadata":{"name":"md-runbook-cells-live","labels":{"md-runbook-gate-id":"100.5"}}},
+		{"kind":"Job","metadata":{"name":"md-runbook-cells-dead","labels":{"md-runbook-gate-id":"200.5"}}},
 		{"kind":"Job","metadata":{"name":"md-runbook-cells-nopid","labels":{}}},
-		{"kind":"Job","metadata":{"name":"md-runbook-cells-gone","labels":{"md-runbook-gate-pid":"300"},"deletionTimestamp":"2026-11-16T10:00:00Z"}},
-		{"kind":"Job","metadata":{"name":"--all","labels":{"md-runbook-gate-pid":"200"}}}]}`)
-	got := orphanJobs(out, func(pid int) bool { return pid == 100 })
+		{"kind":"Job","metadata":{"name":"md-runbook-cells-gone","labels":{"md-runbook-gate-id":"300.5"},"deletionTimestamp":"2026-11-16T10:00:00Z"}},
+		{"kind":"Job","metadata":{"name":"--all","labels":{"md-runbook-gate-id":"200.5"}}}]}`)
+	got := orphanJobs(out, func(id string) bool { return id == "100.5" })
 	if !reflect.DeepEqual(got, []string{"md-runbook-cells-dead", "md-runbook-cells-nopid"}) {
 		t.Errorf("%q", got)
 	}
 	if orphanJobs([]byte("oops"), nil) != nil {
 		t.Error("unreadable output: orphans")
 	}
-	if gateAlive(1) || gateAlive(0) || !gateAlive(os.Getpid()) {
-		t.Error("gateAlive")
+	// A gate is its pid and start time: the same pid, started another time, is not it.
+	me := gateID(os.Getpid())
+	if procs.HaveProc() && (!gateAlive(me) || gateAlive(itoa(os.Getpid())+".1") || gateAlive("1."+procs.StartTime(1)) || gateAlive(itoa(os.Getpid())) || gateAlive("")) {
+		t.Errorf("gateAlive (%s)", me)
 	}
 }
 
@@ -372,7 +383,7 @@ func TestJobChecks(t *testing.T) {
 		}
 		rest, _ := io.ReadAll(r)
 		return answersFor(t, rest, func(a map[string]any) bool {
-			return cellsAllowed[a["verb"].(string)+" "+a["resource"].(string)+"/"+str(a["subresource"])]
+			return cellsAllowed[a["verb"].(string)+" "+a["resource"].(string)+"/"+str(a["subresource"])+" "+str(a["namespace"])]
 		}), nil
 	}
 	j = testJob(run2)
@@ -383,13 +394,21 @@ func TestJobChecks(t *testing.T) {
 		t.Errorf("cells argv %q", gotArgv)
 	}
 	for right, want := range map[string]string{
-		"create pods/exec":             "may create pods/exec in md-runbook-ops",
-		"get pods/log":                 "may get pods/log in md-runbook-ops",
-		"list secrets/":                "may list secrets in md-runbook-ops",
-		"patch configmaps/":            "may patch configmaps in md-runbook-ops",
-		"create jobs/":                 "may create jobs (batch) in md-runbook-ops",
-		"create serviceaccounts/token": "may create serviceaccounts/token in md-runbook-ops",
-		"impersonate serviceaccounts/": "may impersonate serviceaccounts in every namespace",
+		"create pods/exec md-runbook-ops":               "may create pods/exec in md-runbook-ops",
+		"get pods/log md-runbook-ops":                   "may get pods/log in md-runbook-ops",
+		"list secrets/ md-runbook-ops":                  "may list secrets in md-runbook-ops",
+		"watch secrets/ md-runbook-ops":                 "may watch secrets in md-runbook-ops",
+		"get configmaps/ md-runbook-ops":                "may get configmaps in md-runbook-ops",
+		"patch configmaps/ md-runbook-ops":              "may patch configmaps in md-runbook-ops",
+		"patch pods/ephemeralcontainers md-runbook-ops": "may patch pods/ephemeralcontainers in md-runbook-ops",
+		"delete jobs/ md-runbook-ops":                   "may delete jobs (batch) in md-runbook-ops",
+		"create jobs/ md-runbook-ops":                   "may create jobs (batch) in md-runbook-ops",
+		"create serviceaccounts/token md-runbook-ops":   "may create serviceaccounts/token in md-runbook-ops",
+		"create clusterrolebindings/ ":                  "may create clusterrolebindings (rbac.authorization.k8s.io) in every namespace",
+		"escalate roles/ md-runbook-ops":                "may escalate roles (rbac.authorization.k8s.io) in md-runbook-ops",
+		"get nodes/proxy ":                              "may get nodes/proxy in every namespace",
+		"impersonate serviceaccounts/ ":                 "may impersonate serviceaccounts in every namespace",
+		"impersonate users/ md-runbook-ops":             "may impersonate users in md-runbook-ops",
 	} {
 		cellsAllowed = map[string]bool{right: true}
 		p := j.check(cells, "pod-1", "the cells' service account md-runbook-cells")
@@ -465,12 +484,13 @@ func TestProbeEvent(t *testing.T) {
 	runs := map[string]bool{"0000aa01": true}
 	line := `{"time":"2026-11-16T10:00:00Z","account":"root","who":"forged","client":"1.2.3.4","event":"probe","run":"0000aa01","target":"api:443","address":"10.0.0.1","result":"ok","detail":"fine","days_left":"30","not_after":"2026-12-16","cert_sha256":"ab","extra":"x","port":443}`
 	kv, ok := probeEvent(line, runs)
-	want := []string{"event", "probe", "run", "0000aa01", "target", "api:443", "address", "10.0.0.1", "result", "ok", "detail", "fine", "days_left", "30", "not_after", "2026-12-16", "cert_sha256", "ab"}
+	want := []string{"event", "probe", "run", "0000aa01", "target", "api:443", "address", "10.0.0.1", "result", "ok", "detail", "fine", "days_left", "30", "not_after", "2026-12-16", "cert_sha256", "ab", "source", "job"}
 	if !ok || !reflect.DeepEqual(kv, want) {
 		t.Errorf("%q %v", kv, ok)
 	}
-	if kv, ok := probeEvent(`{"event":"probe","target":"x:1","result":"fail"}`, runs); !ok || len(kv) != 6 {
-		t.Errorf("no run: %q %v", kv, ok)
+	// Only events of this session's signed runs.
+	if kv, ok := probeEvent(`{"event":"probe","target":"x:1","result":"fail"}`, runs); ok {
+		t.Errorf("no run: %q", kv)
 	}
 	for name, l := range map[string]string{
 		"another run": `{"event":"probe","run":"0000bb02","target":"x"}`,
@@ -551,7 +571,7 @@ func TestFollowLines(t *testing.T) {
 	}
 	data, _ := os.ReadFile(dir + "/gate.log")
 	log := string(data)
-	if !strings.Contains(log, `"account":"ops","who":"SHA256:key","client":"10.0.0.9","event":"probe","run":"0000aa01","target":"api:443","result":"ok"}`) ||
+	if !strings.Contains(log, `"account":"ops","who":"SHA256:key","client":"10.0.0.9","event":"probe","run":"0000aa01","target":"api:443","result":"ok","source":"job"}`) ||
 		strings.Count(log, `"event":"probe"`) != 1 || strings.Contains(log, "forged") || !strings.Contains(log, `"event":"end","id":"0000aa01","exit":0}`) {
 		t.Errorf("log:\n%s", log)
 	}
@@ -673,5 +693,130 @@ func TestJobShellRequest(t *testing.T) {
 		if got := decodeHeader(t, r.encode()); !reflect.DeepEqual(got, r) {
 			t.Errorf("%+v", got)
 		}
+	}
+}
+
+// The image the Job runs: the gate's pod's own, by digest where a registry can serve it.
+func TestPinImage(t *testing.T) {
+	d := strings.Repeat("ab", 32)
+	for _, c := range []struct{ image, id, want string }{
+		{"ghcr.io/smojon/md-runbook-ops:latest", "ghcr.io/smojon/md-runbook-ops@sha256:" + d, "ghcr.io/smojon/md-runbook-ops@sha256:" + d},
+		{"ghcr.io/smojon/md-runbook-ops:latest", "docker-pullable://ghcr.io/smojon/md-runbook-ops@sha256:" + d, "ghcr.io/smojon/md-runbook-ops@sha256:" + d},
+		{"localhost:5000/ops", "localhost:5000/ops@sha256:" + d, "localhost:5000/ops@sha256:" + d},
+		// A local image (kind load): no registry to pull the digest from.
+		{"md-runbook-ops:ci", "docker.io/library/md-runbook-ops@sha256:" + d, "md-runbook-ops:ci"},
+		{"md-runbook-ops:ci", "sha256:" + d, "md-runbook-ops:ci"},
+		// Another repository than the spec names, or no digest: the spec's.
+		{"ghcr.io/smojon/md-runbook-ops:latest", "ghcr.io/evil/ops@sha256:" + d, "ghcr.io/smojon/md-runbook-ops:latest"},
+		{"ghcr.io/smojon/md-runbook-ops:latest", "", "ghcr.io/smojon/md-runbook-ops:latest"},
+		{"ghcr.io/smojon/md-runbook-ops:latest", "ghcr.io/smojon/md-runbook-ops@sha256:short", "ghcr.io/smojon/md-runbook-ops:latest"},
+	} {
+		if got := pinImage(c.image, c.id); got != c.want {
+			t.Errorf("pinImage(%q, %q) = %q", c.image, c.id, got)
+		}
+	}
+	pod := `{"kind":"Pod","metadata":{"uid":"u"},"spec":{"containers":[{"name":"ops","image":"ghcr.io/smojon/md-runbook-ops:0.29.0"}]},` +
+		`"status":{"containerStatuses":[{"name":"ops","imageID":"ghcr.io/smojon/md-runbook-ops@sha256:` + d + `"}]}}`
+	if _, img, err := parseOwnPod([]byte(pod)); err != nil || img != "ghcr.io/smojon/md-runbook-ops@sha256:"+d {
+		t.Errorf("parseOwnPod: %q %v", img, err)
+	}
+}
+
+// Every namespace where the cells may start or change workloads enforces Pod Security baseline
+// or restricted (review of 0.29.0, H2).
+func TestUnguardedNamespaces(t *testing.T) {
+	nsList := []byte(`{"kind":"List","items":[
+		{"kind":"Namespace","metadata":{"name":"default","labels":{"pod-security.kubernetes.io/enforce":"baseline"}}},
+		{"kind":"Namespace","metadata":{"name":"shop"}},
+		{"kind":"Namespace","metadata":{"name":"kube-system"}},
+		{"kind":"Namespace","metadata":{"name":"lab","labels":{"pod-security.kubernetes.io/enforce":"privileged"}}},
+		{"kind":"Namespace","metadata":{"name":"gone"}}]}`)
+	nss, _ := kubeObjects(nsList)
+	read := `{"verbs":["get","list","watch"],"apiGroups":["","apps"],"resources":["pods","deployments"]}`
+	rr := func(ns, rules string, incomplete bool) string {
+		inc := ""
+		if incomplete {
+			inc = `,"incomplete":true`
+		}
+		return `{"kind":"SelfSubjectRulesReview","spec":{"namespace":"` + ns + `"},"status":{"resourceRules":[` + rules + `]` + inc + `}}` + "\n"
+	}
+	operate := read + `,{"verbs":["patch"],"apiGroups":["apps"],"resources":["deployments"]}`
+	out := rr("default", operate, false) + rr("shop", operate, false) + rr("kube-system", read, false) +
+		rr("lab", `{"verbs":["*"],"apiGroups":["batch"],"resources":["*"]}`, false) // "gone": no answer
+	p := unguardedNamespaces(nss, []byte(out))
+	got := strings.Join(p, "\n")
+	for _, ns := range []string{"namespace shop,", "namespace lab,", "namespace gone,"} {
+		if !strings.Contains(got, ns) {
+			t.Errorf("lacks %s:\n%s", ns, got)
+		}
+	}
+	if strings.Contains(got, "default") || strings.Contains(got, "kube-system") || len(p) != 3 {
+		t.Errorf("refused:\n%s", got)
+	}
+	if !strings.Contains(got, "kubectl label namespace shop pod-security.kubernetes.io/enforce=baseline") {
+		t.Errorf("no command:\n%s", got)
+	}
+	// An incomplete answer counts as may.
+	if p := unguardedNamespaces(nss[2:3], []byte(rr("kube-system", read, true))); len(p) != 1 {
+		t.Errorf("incomplete: %q", p)
+	}
+	for _, c := range []struct {
+		rule string
+		may  bool
+	}{
+		{`{"verbs":["create"],"apiGroups":[""],"resources":["pods"]}`, true},
+		{`{"verbs":["update"],"apiGroups":[""],"resources":["pods/*"]}`, true},
+		{`{"verbs":["patch"],"apiGroups":[""],"resources":["pods/ephemeralcontainers"]}`, true},
+		{`{"verbs":["*"],"apiGroups":["*"],"resources":["*"]}`, true},
+		{`{"verbs":["create"],"apiGroups":["batch"],"resources":["cronjobs"]}`, true},
+		{`{"verbs":["patch","update"],"apiGroups":["apps"],"resources":["deployments/scale"]}`, false},
+		{`{"verbs":["create"],"apiGroups":[""],"resources":["pods/exec"]}`, false},
+		{`{"verbs":["get","list"],"apiGroups":["*"],"resources":["*"]}`, false},
+		{`{"verbs":["create"],"apiGroups":["apps"],"resources":["pods"]}`, false},
+	} {
+		var r kubeRule
+		json.Unmarshal([]byte(c.rule), &r)
+		if startsWorkloads(r) != c.may {
+			t.Errorf("%s: %v", c.rule, !c.may)
+		}
+	}
+	var list struct {
+		Items []struct {
+			Kind string `json:"kind"`
+			Spec struct {
+				Namespace string `json:"namespace"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(rulesReviewList([]string{"a", "b"}), &list) != nil || len(list.Items) != 2 || list.Items[1].Kind != "SelfSubjectRulesReview" || list.Items[1].Spec.Namespace != "b" {
+		t.Errorf("rules reviews: %+v", list)
+	}
+}
+
+// A session not cut short: each signed run has its exit, or the exits count for nothing.
+func TestJobMissingExits(t *testing.T) {
+	newGate := func() *Gate {
+		g := &Gate{log: &logx.Logger{Dest: t.TempDir() + "/gate.log"}, job: &kubeJob{}}
+		g.sepRuns = map[string]sepRun{"1": {"0000aa01", "n1"}, "2": {"0000aa02", "n2"}}
+		g.sepExits = map[string]report.Exit{"1": {RC: "0"}}
+		g.runs = 2
+		g.endCh = make(chan struct{}, 1)
+		return g
+	}
+	g := newGate()
+	g.jobMissingExits(false)
+	if !strings.Contains(g.exitsBadNow(), "no exit came back for run 2") {
+		t.Errorf("missing: %q", g.exitsBadNow())
+	}
+	g = newGate()
+	g.jobMissingExits(true)
+	if g.exitsBadNow() != "" {
+		t.Errorf("cut short: %q", g.exitsBadNow())
+	}
+	g = newGate()
+	g.sepExits["2"] = report.Exit{RC: "1"}
+	g.jobMissingExits(false)
+	if g.exitsBadNow() != "" {
+		t.Errorf("complete: %q", g.exitsBadNow())
 	}
 }

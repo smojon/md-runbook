@@ -7,11 +7,12 @@ own. They can't reach the gate's token, log or state, nor another session.
 
 - `cells_runner = kubernetes-job` turns it on. The default is `local`.
 - `job_service_account = NAME`: the cells' account. Required with the runner, refused without.
-- `job_image = IMAGE`: optional. Default: the ops pod's own image (container `ops`, else its only
-  one), so the Job runs the same gate.
+- `job_image = IMAGE`: optional. Default: the ops pod's own image, by digest where a registry
+  serves it (`status.containerStatuses[].imageID`), so the Job runs the same gate.
 - The namespace is the ops pod's own (its kubeconfig's context): the owner reference needs it.
-- Fail closed: the gate doesn't start with `cells_account`, `isolation = scope|bwrap`, outside a
-  pod, or without a root-only `kubectl` in `/usr/bin` (as its other programs).
+- Fail closed: no start with `cells_account`, `isolation = scope|bwrap`, outside a pod, or
+  without a root-only `/usr/bin/kubectl`. Nor with `report_token_file` next to `gate.conf`, a
+  ConfigMap there: the token goes in a Secret.
 
 ## Session start
 
@@ -30,50 +31,49 @@ own. They can't reach the gate's token, log or state, nor another session.
   `exec` request. Only the transport changes. The request carries the shell's number: the cells'
   mode calls `setsid` and writes its pid to `/tmp/.md-runbook-gate-shells/N`.
 - Exits: appended to `/tmp/.md-runbook-gate-exits` with the run's random number, as in separated
-  mode. One more exec (`__cells follow`) streams that file to the gate, which logs `end` events.
-  - It also streams the pod's `log =` file. Probe events of this session's runs are logged again
-    under the gate's names.
-  - A block can write into that stream. As for the exits file (M1), anything but an expected line
-    ends the session, and so does the stream's early end.
-- Stop requests: the gate's pid file says `job NS JOB N`. The second connection finds the pod
-  and runs `__cells stop`, which signals shell N's descendants.
-- A shell that ends mid-session: `__cells end`: TERM to its group and descendants, KILL a second
-  later. A shell not started and sent nothing is dropped at once.
-- Session end, signals: the shells finish what they were sent, then the gate deletes the Job.
-  That ends everything in the pod. Kill and cleanup calls are bounded (5 s, `WaitDelay`).
+  mode. One more exec (`__cells follow`) streams that file, and the pod's `log =` file, to the
+  gate. Probe events of this session's runs are logged again, as `"source":"job"`.
+  - As for the exits file (M1), anything but an expected line ends the session. So do the
+    stream's early end and a run without an exit (in a session not cut short).
+- Stop requests: the gate's pid file says `job NS JOB N`; `__cells stop` signals shell N's
+  descendants. A shell ending mid-session: `__cells end` (TERM, KILL a second later).
+- Session end: the shells finish what they were sent, then the gate deletes the Job (three
+  tries). Kill and cleanup calls are bounded (5 s, `WaitDelay`).
 
 ## Cleanup
 
-- `kubectl delete job NAME --wait=false` at the end (background cascade).
-- Owner reference to the ops pod: its deletion deletes its Jobs.
-- `activeDeadlineSeconds: 86400`, `ttlSecondsAfterFinished: 60`, `backoffLimit: 0`.
-- Each session start deletes Jobs of this pod whose gate (`md-runbook-gate-pid`) is gone.
+- Dead-man switch: when the follower's stdin ends (session over, or the gate gone), it sends
+  TERM to PID 1 (tini). The container ends, and with `backoffLimit: 0` the Job.
+- Owner reference to the ops pod; `ttlSecondsAfterFinished: 60`; `activeDeadlineSeconds:
+  86400`, a cap on a live session (on-call windows stay open for hours).
+- Each session start deletes Jobs of this pod whose gate is gone: label `md-runbook-gate-id`,
+  pid and start time, so a reused pid doesn't count.
 
 ## The Job's pod
 
 - Restricted: uid 10001, no privilege escalation, no capabilities, seccomp RuntimeDefault,
-  read-only root, emptyDirs for `/home/ops`, `/tmp`, `/var/log/md-runbook`. 50m CPU and 64Mi
-  requested; 512Mi and 1Gi ephemeral storage at most.
+  read-only root, emptyDirs for `/home/ops`, `/tmp`, `/var/log/md-runbook`. Limits: 1 CPU,
+  512Mi, 1Gi ephemeral storage. NetworkPolicies: no ingress to Job pods, none to sshd from them.
 - `tini -- md-runbook-ops-start cells`: the kubeconfig of its own account (context
   `CLUSTER_NAME`, the ops pod's), then sleep. Ready once the kubeconfig is written.
 
 ## RBAC
 
-- Ops account: a Role in its namespace: Jobs (create, get, list, watch, delete), pods (get,
-  list, watch), `pods/exec` (create, get).
-- Cells' account: what the ops account had before. `pods/log` moves to the per-namespace role,
-  since the ops pod's output is the gate's log. Never bound in the ops namespace.
+- Ops account: a Role in its namespace: Jobs (create, list, delete), pods (get, list),
+  `pods/exec` (create, get).
+- Cells' account: read everywhere but Secrets, ConfigMaps and pod logs. Those two, and operate
+  rights, per namespace. Never bound in the ops namespace.
 
 ## gate_mode and the self-check
 
 - A Job session reports `gate_mode` `separated`. The `session` event adds `cells_runner`, `job`
   and `cells`; `isolation` is `pod`. Separated mode's own checks (strays, cron) don't run.
-- SelfSubjectAccessReviews, one `kubectl create -f -` for each account. A wrong answer: no
+- SelfSubjectAccessReviews per account, one `kubectl create -f -` each. A wrong answer: no
   session.
-  - Ops account, at start: it must run Jobs and exec. It must not read Secrets, list pods
-    everywhere, create pods, patch Deployments, mint tokens, bind roles or impersonate.
-  - Cells' account, in the new pod before any block, in the ops namespace: no exec, attach, pod
-    logs or Secrets. No workloads, pod or Deployment patches, or ConfigMap changes. No tokens,
-    role bindings or impersonation.
-- Limits: a fixed list, not every right. The ops account's bindings in other namespaces can't
-  be seen without listing namespaces.
+  - Ops account: it must run Jobs and exec, and hold none of the cells' rights.
+  - Cells' account, in the new pod before any block. In the ops namespace: no exec, attach,
+    ephemeral containers, logs, Secrets, ConfigMaps, workload or pod changes. No impersonation,
+    bindings, escalation or `nodes/proxy`, with the namespace or without.
+  - A namespace where the cells may change workloads (SelfSubjectRulesReviews) must enforce Pod
+    Security baseline or restricted. Else a privileged pod there owns a node.
+- Limits: a fixed list. The ops account's bindings elsewhere and admission exemptions are unseen.
