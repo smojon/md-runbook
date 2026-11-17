@@ -2,8 +2,8 @@
  * Core's line readers stay linear on hostile lines: a long run of backticks, blanks or `#`s that
  * ends in U+2028 (which `.` doesn't match, so a `^…(.*)$` pattern can't reach `$`) or in a letter.
  * Before 0.29.0 these took quadratic or cubic time: 80,000 backticks and U+2028 took 7 s in
- * matchFenceOpen, 4,000 blanks after `#` took 40 s in runbookTitle. U+2028 and U+2029 are now
- * ordinary characters inside a line, as in CommonMark.
+ * matchFenceOpen, 4,000 blanks after `#` took 40 s in runbookTitle, 3,000 backticks took 5 s in
+ * renderInline. U+2028 and U+2029 are now ordinary characters inside a line, as in CommonMark.
  */
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
@@ -12,7 +12,7 @@ import { extractProposals } from '@md-runbook/core/aiPrompt';
 import { matchFenceOpen } from '@md-runbook/core/fence';
 import { beforeComment, isBlank, valueAndHash } from '@md-runbook/core/lineText';
 import { lintRunbook } from '@md-runbook/core/lint';
-import { renderMarkdown } from '@md-runbook/core/markdown';
+import { renderInline, renderMarkdown } from '@md-runbook/core/markdown';
 import { parse } from '@md-runbook/core/parser';
 import { parseProbeOutput } from '@md-runbook/core/probe';
 import { measureProse } from '@md-runbook/core/prose';
@@ -77,6 +77,27 @@ describe('linear line readers', () => {
     fast('prose comments', () => measureProse('Text ' + '<!--'.repeat(N / 4) + ' end.'));
   });
 
+  it('inline Markdown and prose: runs of backticks, brackets, emphasis marks and quotes', () => {
+    const lines = [
+      '# ' + '`'.repeat(N),
+      '- ' + '`'.repeat(N) + ' ',
+      '['.repeat(N),
+      '['.repeat(N / 2) + '](x ' + '&quot;'.repeat(1000),
+      '](]('.repeat(N / 4) + ' '.repeat(1000) + 'x',
+      '**a '.repeat(N / 4),
+      '*a '.repeat(N / 3),
+      ' _a'.repeat(N / 3),
+      ' __a'.repeat(N / 4),
+      '~~a '.repeat(N / 4),
+      '“'.repeat(N) + 'x',
+      '«'.repeat(N) + '”',
+    ];
+    for (const line of lines) {
+      fast('renderMarkdown', () => renderMarkdown(line));
+      fast('measureProse', () => measureProse(line));
+    }
+  });
+
   it('front matter: values, comments, env entries and params with long blank runs', () => {
     const lines = [
       'cwd: a' + blanks + 'b',
@@ -117,6 +138,15 @@ describe('the readers that replaced the patterns', () => {
       sectionHeadings('# A ##\n## ## #\n### ##\n').map((h) => h.text),
       ['A', '##', ''],
     );
+  });
+
+  it('inline Markdown: code spans as CommonMark reads them, links and emphasis as before', () => {
+    assert.equal(renderInline('a `b` c ``d ` e`` f'), 'a <code>b</code> c <code>d ` e</code> f');
+    // A run closes only at a run of the same length.
+    assert.equal(renderInline('```a`'), '```a`');
+    assert.equal(renderInline('``a``` b``'), '<code>a``` b</code>');
+    assert.equal(renderInline('[`x`](https://e.x "t") **b** _i_ ~~d~~'), '<a href="https://e.x"><code>x</code></a> <strong>b</strong> <em>i</em> <del>d</del>');
+    assert.equal(renderInline('![a](b) [c] (d) [e](f g)'), '<a href="b">a</a> [c] (d) [e](f g)');
   });
 
   it('table separator rows', () => {

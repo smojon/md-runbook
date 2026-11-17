@@ -231,6 +231,44 @@ function withoutComments(line: string): string {
   return out + line.slice(at);
 }
 
+/**
+ * `text.replace(/!?\[[^\]]*\]\([^)]*\)/g, f)` in one pass: that pattern was quadratic on a long
+ * run of `[` (each one scanned to the end). A `[` whose label (up to the next `]`) isn't followed
+ * by `(` fails as every `[` before that `]` does; with no `)` left, no later link can close.
+ */
+function replaceInlineLinks(text: string, f: (link: string) => string): string {
+  let out = '';
+  let at = 0;
+  let i = text.indexOf('[');
+  while (i >= 0) {
+    const r = text.indexOf(']', i + 1);
+    if (r < 0) break;
+    if (text[r + 1] !== '(') {
+      i = text.indexOf('[', r + 1);
+      continue;
+    }
+    const c = text.indexOf(')', r + 2);
+    if (c < 0) break;
+    const start = i > at && text[i - 1] === '!' ? i - 1 : i;
+    out += text.slice(at, start) + f(text.slice(start, c + 1));
+    at = c + 1;
+    i = text.indexOf('[', at);
+  }
+  return out + text.slice(at);
+}
+
+/** A reference link `[text][ref]`, as `\[[^\]]+\]\[[^\]]*\]` found it, in one pass. */
+function hasReferenceLink(text: string): boolean {
+  for (let i = text.indexOf('['); i >= 0; ) {
+    const r = text.indexOf(']', i + 1);
+    if (r < 0) return false;
+    // The first `[` before this `]` has the longest label; it needs one character.
+    if (r > i + 1 && text[r + 1] === '[' && text.indexOf(']', r + 2) >= 0) return true;
+    i = text.indexOf('[', r + 1);
+  }
+  return false;
+}
+
 const ITEM_RE = /^(\s*)(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/;
 const QUOTE_RE = /^\s*>\s?/;
 const NOTE_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b/;
@@ -439,7 +477,32 @@ const QUOTED_RE = /[QS]\uE000\d+\uE001/g;
 const ANY_SPAN_RE = /[CLUQS]\uE000\d+\uE001/g;
 
 /** “…” and «…», over lines too. */
-const CURLY_QUOTE_RE = /\u201C[^\u201D]*\u201D|\u00AB[^\u00BB]*\u00BB/g;
+/**
+ * `text.replace(/\u201C[^\u201D]*\u201D|\u00AB[^\u00BB]*\u00BB/g, f)` in one pass: that pattern was
+ * quadratic on a long run of opening quotes with no closing one (each scanned to the end).
+ */
+function replaceCurlyQuotes(text: string, f: (quote: string) => string): string {
+  let out = '';
+  let at = 0;
+  const memo = new Map<string, number>();
+  const next = (close: string, from: number): number => {
+    const m = memo.get(close);
+    if (m !== undefined && (m < 0 || m >= from)) return m;
+    const q = text.indexOf(close, from);
+    memo.set(close, q);
+    return q;
+  };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c !== '\u201C' && c !== '\u00AB') continue;
+    const q = next(c === '\u201C' ? '\u201D' : '\u00BB', i + 1);
+    if (q < 0) continue;
+    out += text.slice(at, i) + f(text.slice(i, q + 1));
+    at = q + 1;
+    i = q;
+  }
+  return out + text.slice(at);
+}
 /**
  * "…": the opening mark after the start, a space, an opening bracket or emphasis; the closing one
  * before the end, a space, punctuation or emphasis. Not an inch mark (`a 3" pipe`) nor `x="y"`.
@@ -455,11 +518,7 @@ function plain(text: string): Plain {
   };
   // A quotation whose words end in . ? or ! ends its sentence there (“Stop.” Then…).
   const quotation = (m: string): string => keep(/[.?!][)\]*_]*\s*$/.test(m.slice(1, -1)) ? 'S' : 'Q')(m);
-  const t = text
-    .replace(/`[^`]*`/g, keep('C'))
-    .replace(/!?\[[^\]]*\]\([^)]*\)/g, keep('L'))
-    .replace(/https?:\/\/\S+/g, keep('U'))
-    .replace(CURLY_QUOTE_RE, quotation)
+  const t = replaceCurlyQuotes(replaceInlineLinks(text.replace(/`[^`]*`/g, keep('C')), keep('L')).replace(/https?:\/\/\S+/g, keep('U')), quotation)
     .replace(STRAIGHT_QUOTE_RE, quotation)
     // In an emphasis span, a ? or ! before lowercase text ends no sentence ("*Can they read it?*
     // turns red"), nor a . inside it ("*see fig. one*"); before a capital, or a . at its end, they do.
@@ -676,7 +735,13 @@ function readSentences(unit: ProseUnit, p: Plain, labels?: readonly string[]): R
 }
 
 /** A link or a URL in a text (not in a code span): a quotation's source. */
-const hasLink = (text: string): boolean => /!?\[[^\]]*\]\([^)]*\)|\[[^\]]+\]\[[^\]]*\]|https?:\/\//.test(text.replace(/`[^`]*`/g, ' '));
+const hasLink = (text: string): boolean => {
+  const t = text.replace(/`[^`]*`/g, ' ');
+  if (/https?:\/\//.test(t) || hasReferenceLink(t)) return true;
+  let found = false;
+  replaceInlineLinks(t, (m) => ((found = true), m));
+  return found;
+};
 
 /**
  * The first quotation of PROSE_LIMITS.quotationWords or more in a unit without a link: its line
@@ -886,8 +951,7 @@ export interface ProseFile {
 
 /** Lower case, links, URLs and digits dropped, only the words left: how passages are compared across files. */
 function normalised(text: string): string[] {
-  return text
-    .replace(/!?\[[^\]]*\]\([^)]*\)/g, ' ')
+  return replaceInlineLinks(text, () => ' ')
     .replace(/https?:\/\/\S+/g, ' ')
     .toLowerCase()
     .split(new RegExp(`[^${LETTERS.replace('0-9_', '')}]+`))

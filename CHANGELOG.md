@@ -40,10 +40,13 @@
   command line, the app and the library server:
   - a run of backticks or tildes ending in the Unicode line separator (U+2028);
   - a heading with a long run of blanks in it, as in a library runbook's title;
-  - front matter values, `env:` entries and `params:` items with long runs of blanks.
+  - front matter values, `env:` entries and `params:` items with long runs of blanks;
+  - long runs of backticks, `[`, `*`, `_` or quotes in text, in the app's runbook view, Preview
+    and HTML reports.
 - **Reading lines in one pass:** U+2028 and U+2029 now count as text inside a line, as in
   CommonMark.
   - A line with one can now be a fence, a heading or a front matter value.
+  - Inline code closes at a run of as many backticks as it opened with, as on GitHub.
 
 ## 0.28.0
 

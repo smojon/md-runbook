@@ -242,14 +242,12 @@ export function renderInline(text: string): string {
   const hold = (html: string): string => `\u0000${slots.push(html) - 1}\u0000`;
   let s = text.replace(/\u0000/g, '');
 
-  s = s.replace(/(`+)([\s\S]*?[^`])\1(?!`)/g, (_, _ticks: string, code: string) =>
-    hold(`<code>${escapeHtml(code.replace(/^ (.*) $/, '$1'))}</code>`),
-  );
+  s = replaceCodeSpans(s, (code) => hold(`<code>${escapeHtml(code.replace(/^ (.*) $/, '$1'))}</code>`));
   s = s.replace(/\\([!-/:-@[-`{-~])/g, (_, c: string) => hold(escapeHtml(c)));
   s = escapeHtml(s);
 
   // [text](url "title") and ![alt](url): images are not loaded (no external resources), only linked.
-  s = s.replace(/!?\[([^\]]*)\]\(([^)\s]*)(?:\s+&quot;[^)]*?&quot;)?\)/g, (_, label: string, url: string) => {
+  s = replaceLinks(s, (label, url) => {
     const href = safeUrl(url.replace(/&amp;/g, '&'));
     const inner = emphasis(label) || url;
     return href === undefined ? hold(inner) : hold(`<a href="${escapeHtml(href)}">${inner}</a>`);
@@ -262,12 +260,135 @@ export function renderInline(text: string): string {
   return s;
 }
 
+/**
+ * Code spans: a run of backticks up to the next run of the same length (CommonMark). Read in one
+ * pass: the pattern it replaces (`(`+)([\s\S]*?[^`])\1(?!`)`) took cubic time on a long run of
+ * backticks (3,000 took 5 s), trying every shorter opener at every start.
+ */
+function replaceCodeSpans(s: string, code: (content: string) => string): string {
+  if (!s.includes('`')) return s;
+  const runs: { at: number; len: number }[] = [];
+  for (let i = 0; i < s.length; ) {
+    if (s[i] !== '`') {
+      i++;
+      continue;
+    }
+    const at = i;
+    while (s[i] === '`') i++;
+    runs.push({ at, len: i - at });
+  }
+  // For each length, the runs of that length in order, and how far a search has got.
+  const byLen = new Map<number, number[]>();
+  runs.forEach((r, k) => (byLen.get(r.len) ?? byLen.set(r.len, []).get(r.len)!).push(k));
+  const cursor = new Map<number, number>();
+  let out = '';
+  let pos = 0;
+  for (let k = 0; k < runs.length; ) {
+    const r = runs[k]!;
+    const same = byLen.get(r.len)!;
+    let c = cursor.get(r.len) ?? 0;
+    while (c < same.length && same[c]! <= k) c++;
+    cursor.set(r.len, c);
+    const close = same[c];
+    if (close === undefined) {
+      k++;
+      continue;
+    }
+    const end = runs[close]!;
+    out += s.slice(pos, r.at) + code(s.slice(r.at + r.len, end.at));
+    pos = end.at + end.len;
+    k = close + 1;
+  }
+  return out + s.slice(pos);
+}
+
+/**
+ * Links on escaped text, as `!?\[([^\]]*)\]\(([^)\s]*)(?:\s+&quot;[^)]*?&quot;)?\)` read them,
+ * in one pass: that pattern was quadratic on a long run of `[` (each one scanned to the end).
+ * A `[` whose label (up to the next `]`) isn't followed by a link tail fails as every `[` before
+ * that `]` does, so the scan moves past it.
+ */
+function replaceLinks(s: string, link: (label: string, url: string) => string): string {
+  let out = '';
+  let at = 0;
+  // The first `)` or whitespace at or after a position, and the end of a blank run: both only
+  // ever asked for further on, so each is found once.
+  let urlStop = -1;
+  const stop = (from: number): number => {
+    if (urlStop < from) {
+      urlStop = from;
+      while (urlStop < s.length && s[urlStop] !== ')' && !/\s/.test(s[urlStop]!)) urlStop++;
+    }
+    return urlStop;
+  };
+  let paren = -1;
+  const nextParen = (from: number): number => {
+    if (paren !== -2 && paren < from) paren = s.indexOf(')', from);
+    if (paren < 0) paren = -2;
+    return paren === -2 ? -1 : paren;
+  };
+  let blanksFrom = -1;
+  let blanksTo = -1;
+  const tail = (k: number): { url: string; end: number } | undefined => {
+    if (s[k] !== '(') return undefined;
+    const u = stop(k + 1);
+    const url = s.slice(k + 1, u);
+    if (s[u] === ')') return { url, end: u + 1 };
+    // ` &quot;title&quot;)`: blanks, then a title up to the first `)`, ending in `&quot;`.
+    if (blanksFrom !== u) {
+      blanksFrom = u;
+      blanksTo = u;
+      while (blanksTo < s.length && /\s/.test(s[blanksTo]!)) blanksTo++;
+    }
+    const w = blanksTo;
+    if (w === u || !s.startsWith('&quot;', w)) return undefined;
+    const c = nextParen(w + 6);
+    if (c < 0 || c - 6 < w + 6 || !s.startsWith('&quot;', c - 6)) return undefined;
+    return { url, end: c + 1 };
+  };
+  let i = s.indexOf('[');
+  while (i >= 0) {
+    const r = s.indexOf(']', i + 1);
+    if (r < 0) break;
+    const t = tail(r + 1);
+    if (!t) {
+      i = s.indexOf('[', r + 1);
+      continue;
+    }
+    const start = i > at && s[i - 1] === '!' ? i - 1 : i;
+    out += s.slice(at, start) + link(s.slice(i + 1, r), t.url);
+    at = t.end;
+    i = s.indexOf('[', at);
+  }
+  return out + s.slice(at);
+}
+
+/**
+ * `s.replace(re, to)` for a global lazy `open … close` pattern, on the part of `s` a match can
+ * reach: up to the last place `closes` accepts, the rest of that delimiter's run, and one more
+ * character for a lookahead. Past it every opener's lazy scan ran to the end and failed, which
+ * made it quadratic; the result is the same.
+ */
+function replaceToLastClose(s: string, re: RegExp, to: string, delim: string, closes: (q: number) => boolean): string {
+  let q = s.lastIndexOf(delim);
+  while (q >= 0 && !closes(q)) q = q > 0 ? s.lastIndexOf(delim, q - 1) : -1;
+  if (q < 0) return s;
+  let cut = q + delim.length;
+  while (s[cut] === delim[0]) cut++;
+  cut = Math.min(cut + 1, s.length);
+  return s.slice(0, cut).replace(re, to) + s.slice(cut);
+}
+
+const nonBlank = (c: string | undefined): boolean => c !== undefined && /\S/.test(c);
+const word = (c: string | undefined): boolean => c !== undefined && /\w/.test(c);
+
 /** Bold, italic and strikethrough on already-escaped text. */
 function emphasis(s: string): string {
-  return s
-    .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^\w])__(?=\S)([\s\S]*?\S)__(?!\w)/g, '$1<strong>$2</strong>')
-    .replace(/\*(?=[^\s*])([\s\S]*?[^\s*])\*/g, '<em>$1</em>')
-    .replace(/(^|[^\w])_(?=[^\s_])([\s\S]*?[^\s_])_(?!\w)/g, '$1<em>$2</em>')
-    .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '<del>$1</del>');
+  // Each pattern's closing delimiter: a character before it that may end the text, and for `_`
+  // no word character after it.
+  s = replaceToLastClose(s, /\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>', '**', (q) => nonBlank(s[q - 1]));
+  s = replaceToLastClose(s, /(^|[^\w])__(?=\S)([\s\S]*?\S)__(?!\w)/g, '$1<strong>$2</strong>', '__', (q) => nonBlank(s[q - 1]) && !word(s[q + 2]));
+  s = replaceToLastClose(s, /\*(?=[^\s*])([\s\S]*?[^\s*])\*/g, '<em>$1</em>', '*', (q) => nonBlank(s[q - 1]) && s[q - 1] !== '*');
+  s = replaceToLastClose(s, /(^|[^\w])_(?=[^\s_])([\s\S]*?[^\s_])_(?!\w)/g, '$1<em>$2</em>', '_', (q) => nonBlank(s[q - 1]) && s[q - 1] !== '_' && !word(s[q + 1]));
+  return replaceToLastClose(s, /~~(?=\S)([\s\S]*?\S)~~/g, '<del>$1</del>', '~~', (q) => nonBlank(s[q - 1]));
 }
