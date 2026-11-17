@@ -515,13 +515,17 @@ More in [Moving between VS Code and the app](switching.md#runbook-links).
 **⋯ More → Edit as Text** opens the runbook's Markdown: Edit, Preview, or back to Runbook.
 
 - Save, Undo and Discard; the lint problems under the text, a tap goes to the line.
-- In the web app, the text is highlighted, with line numbers:
+- The text is highlighted while you type:
   - Markdown: headings, bold, italic, links, inline code, lists, quotes, front matter;
   - code blocks: the fence, the language and cell options such as `timeout=` or `os=`;
   - md-runbook's outputs, notes, run history and signatures;
   - in the app's light or dark colours.
-- The web app's text field is the browser's own: its undo, find (Ctrl+F) and screen reader work.
-- Tab puts two spaces; Shift+Tab, or Esc then Tab, leaves the field.
+- On iOS and Android, **Hosts & settings → Edit as Text → Highlight while editing** turns the
+  colours off (on by default). Turn it off if the cursor jumps or typing lags.
+- In the web app, the text has line numbers. Its text field is the browser's own: its undo, find
+  (Ctrl+F) and screen reader work.
+- In the web app, Tab puts two spaces; Shift+Tab, or Esc then Tab, leaves the field.
+- In a long runbook (from 50,000 characters), the colours follow a moment after typing.
 - A very long runbook (over 500,000 characters) is shown without colours.
 
 ## Team runbooks

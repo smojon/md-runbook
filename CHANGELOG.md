@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **App (iOS, Android): highlighting while editing.** Edit as Text colours the runbook as the
+  web app does, with the same rules and colours.
+  - On by default. **Hosts & settings → Edit as Text → Highlight while editing** turns it off:
+    the plain text field, as before.
+  - Autocorrect, spell check and capitals stay off.
+  - Over 500,000 characters, the text stays plain.
 - **Dependencies, for security alerts:**
   - `@azure/msal-node` 7.2.1: before 7.1.0, its sign-in flow could send data to a wrong server.
   - `glob` 14 and `minimatch` 11 in the extension's build and publishing tools.
