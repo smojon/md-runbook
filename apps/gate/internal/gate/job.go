@@ -108,6 +108,9 @@ type kubeJob struct {
 	// when more than one was queued); ran is closed once its exit comes back (ranExit).
 	queuedRun string
 	ran       chan struct{}
+	// settledAt: when the pod settled, and the waiting request heard so (its final notice, or the
+	// gate's line before protocol 4, comes at that moment).
+	settledAt time.Time
 	// closing: the gate ends the follower (its end is no sign of a changed stream).
 	closing atomic.Bool
 
@@ -276,7 +279,7 @@ func (j *kubeJob) settle(pod, why string) {
 		j.err = why
 		why = "this session's cells can't start: " + why
 	}
-	j.settled = true
+	j.settled, j.settledAt = true, time.Now()
 	switch {
 	case j.waiting || j.announced && why != "":
 		j.sayFinal()
@@ -377,30 +380,40 @@ func (j *kubeJob) ranExit(n string) {
 	}
 }
 
-// leftWaiting: why the client's leaving cuts the session short, else "". It left while the pod
-// was starting, or before the gate saw the end of a request sent before the pod was ready (a stop
-// then closes the session: review of 0.30.0, L5). The gate doesn't see the shell's end markers
-// (the shell writes to the client). So that request counts as open until the client's next line,
-// or, for a signed run, its exit: the gate waits up to wait for that one (the follower polls).
-// What it sent then runs for no one: the session is cut short.
-func (j *kubeJob) leftWaiting(wait time.Duration) string {
+// leftGrace: how long after the pod settled the client's leaving may still be a Stop that came as
+// the pod got ready (review of 0.30.0, L5). After it, the request that waited for the pod runs to
+// its end when the client goes (a dropped connection), as any later block does (M1).
+const leftGrace = 5 * time.Second
+
+// leftWaiting: whether the client's leaving cuts the session short (its shells end now, and the
+// Job goes), and what to log about it ("" for nothing).
+//   - It left while the pod was starting: cut.
+//   - It left within leftGrace of the pod settling, before the gate saw the end of a request sent
+//     before the pod was ready: cut. A stop then closes the session (L5): what it sent would run
+//     for no one. The gate doesn't see the shell's end markers (the shell writes to the client).
+//     So that request counts as open until the client's next line, or, for a signed run, its
+//     exit: the gate waits up to wait for that one (the follower polls). Logged for a signed run
+//     only: a raw or context request's reply is quick, and a client that leaves after it most
+//     likely left as it always does (round 1, L2).
+//   - Else: not cut.
+func (j *kubeJob) leftWaiting(wait time.Duration) (bool, string) {
 	j.mu.Lock()
-	settled, open, run, ran := j.settled, j.queued && !j.answered, j.queuedRun, j.ran
+	settled, open, run, ran, since := j.settled, j.queued && !j.answered, j.queuedRun, j.ran, time.Since(j.settledAt)
 	j.mu.Unlock()
 	switch {
 	case !settled:
-		return "the client left while the pod was starting"
-	case !open:
-		return ""
+		return true, "the client left while the pod was starting"
+	case !open || since > leftGrace:
+		return false, ""
+	case run == "":
+		return true, ""
 	}
-	if run != "" {
-		select {
-		case <-ran:
-			return ""
-		case <-time.After(wait):
-		}
+	select {
+	case <-ran:
+		return false, ""
+	case <-time.After(wait):
 	}
-	return "the client left before the gate saw the end of the request that waited for the pod"
+	return true, "the client left within " + itoa(int(leftGrace/time.Second)) + " s of the pod getting ready, before run " + run + " (which waited for the pod) ended: the session is cut short, as for a stop"
 }
 
 // waitPod: the Job's pod once Ready, or why not. At most jobReadyMax; an error that won't pass

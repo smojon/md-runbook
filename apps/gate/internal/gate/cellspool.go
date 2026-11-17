@@ -30,7 +30,8 @@ import (
 // the gate runs the cells' mode as that account (the same sudo line) with killall, which calls
 // kill(-1, SIGKILL). Then it lists the processes until none of the account is left. An account
 // with one left (a process in D state) is skipped, its lock kept until the gate ends, and the
-// next free one tried; none clear: the session doesn't start (leaseClear). An account that runs
+// next free one tried; none clear: the session doesn't start (leaseClear). So is one whose home
+// keeps a key file its check can't remove (clearCells). An account that runs
 // another gate account's blocks is no skip: the session doesn't start.
 //   - Linux: kill(-1) signals every process the caller may signal (the account's), except itself
 //     and PID 1, with the task list locked (kernel/signal.c, kill_something_info). A fork either
@@ -247,29 +248,30 @@ func hasPID1(list []procs.Proc) bool {
 }
 
 // leaseCells: the session's cells account, from the pool (after the self-check), with none of its
-// processes left; then the checks that run the cells' mode as that account (c.access): only as
-// the account this session holds, never as one another session's blocks run as (review of
-// 0.30.0, H2). Any problem stops the gate before its first shell.
+// processes left, and the checks that run the cells' mode as that account (clearCells): only as an
+// account this session holds, never as one another session's blocks run as (review of 0.30.0,
+// H2). A stuck account is skipped; any other problem stops the gate before its first shell.
 func (g *Gate) leaseCells(c selfCheck, infos []cellsInfo) {
 	pool := g.cfg.CellsPool()
 	dir := g.state + "/cells"
 	if os.MkdirAll(dir, 0o700) != nil || os.Chmod(dir, 0o700) != nil {
 		g.fatal("can't create " + dir)
 	}
+	var fatal error
 	clear := func(i int) (string, bool) {
-		g.cells, g.plan.account = infos[i], infos[i].name
-		killed, problem, stuck := clearAccount(g.clearer(), g.cells.name, g.cells.uid, g.uid, g.gateComm, true)
-		g.logKilled(killed, "start")
-		if stuck {
-			// Its lock stays held by this gate process; the next account is tried.
-			g.log.Event("event", "lease", "status", "skipped", "cells", g.cells.name, "reason", problem)
-		}
+		problem, stuck, err := g.clearCells(c, infos[i], g.clearer())
+		fatal = err
 		return problem, stuck
 	}
 	i, lk, stuck, problems, err := leaseClear(pool, flockIn(dir), clear)
 	// Nothing to end at the session's end on a stuck account: what is left may be another gate
 	// account's. Its lock is kept, so that no other session of this gate account takes it now.
 	g.cellsStuck = stuck
+	if fatal != nil {
+		g.cells, g.plan.account = cellsInfo{}, ""
+		g.log.Event("event", "self-check", "status", "refused", "reason", strings.ReplaceAll(fatal.Error(), "\n", " "))
+		g.fatal(fatal.Error())
+	}
 	if err != nil {
 		msg, event := err.Error(), "lease"
 		var refused clearRefused
@@ -286,10 +288,38 @@ func (g *Gate) leaseCells(c selfCheck, infos []cellsInfo) {
 		g.fatal(msg)
 	}
 	g.cells, g.plan.account, g.cellsLock = infos[i], infos[i].name, lk
-	if err := c.access(g.cells); err != nil {
-		g.log.Event("event", "self-check", "status", "refused", "reason", strings.ReplaceAll(err.Error(), "\n", " "))
-		g.fatal(err.Error())
+}
+
+// clearCells is a lease's look at a free account (its lock held): every process of it ends
+// (clearAccount), then its cells' mode checks it (c.access). "" when the session may take it;
+// else why not, and whether only this account is the problem (stuck: the lease skips it). fatal:
+// a problem of the gate's setup that a skip would hide (the account can read the token, ...): the
+// session doesn't start.
+//   - A key file in its home that the check removed is logged (`lease`, `removed`).
+//   - One it couldn't remove makes it stuck (review of 0.30.0, re-check M1): a block can leave
+//     one, and a refusal would stop every session until root cleans up.
+func (g *Gate) clearCells(c selfCheck, info cellsInfo, clr clearer) (problem string, stuck bool, fatal error) {
+	g.cells, g.plan.account = info, info.name
+	killed, problem, stuck := clearAccount(clr, info.name, info.uid, g.uid, g.gateComm, true)
+	g.logKilled(killed, "start")
+	if problem == "" {
+		removed, err := c.access(info)
+		if len(removed) > 0 {
+			g.log.Event("event", "lease", "status", "removed", "cells", info.name, "files", strings.Join(removed, " "))
+		}
+		var left keyFilesLeft
+		switch {
+		case errors.As(err, &left):
+			problem, stuck = left.why, true
+		case err != nil:
+			return err.Error(), false, err
+		}
 	}
+	if stuck {
+		// Its lock stays held by this gate process; the next account is tried.
+		g.log.Event("event", "lease", "status", "skipped", "cells", info.name, "reason", problem)
+	}
+	return problem, stuck, nil
 }
 
 // endCells: at the end of the session (once), every process of its cells account ends. What is

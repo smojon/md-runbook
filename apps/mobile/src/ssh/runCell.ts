@@ -298,6 +298,12 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   };
   // A packet that continues a stderr line isn't marked again.
   const markErr = stderrMarker();
+  /** Shown and saved, not checked: a line of md-runbook's own, which isn't the cell's output. */
+  const note = (text: string): void => {
+    const shown = markErr(text);
+    saved += shown;
+    show(shown);
+  };
   const write = (text: string, stream: 'stdout' | 'stderr'): void => {
     transcript += text;
     const shown = stream === 'stderr' ? markErr(text) : text;
@@ -309,8 +315,8 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   // timeout=, else Hosts & settings → Stop a cell after (none by default, as in VS Code).
   const timeout = cellTimeoutSeconds(opts.timeoutSeconds, byAssistant);
   // A line of md-runbook's own while the cell waits (the gate's Kubernetes pod starting; the time
-  // limit waits for it), as in VS Code.
-  const onNotice = (text: string): void => write(`[md-runbook] ${text}\n`, 'stderr');
+  // limit waits for it), as in VS Code: not part of what expect= and expect-not= check.
+  const onNotice = (text: string): void => note(`[md-runbook] ${text}\n`);
   const runOpts: RemoteRunOptions = {
     shell: kind,
     // An approved proposal was checked as bash, or as zsh with `shell: zsh` (the approval's rules).

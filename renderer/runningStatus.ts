@@ -6,14 +6,24 @@
  * the words and the bar every second with its own timer. The bar glides between redraws unless
  * the reader asked for reduced motion. The timer stops when the output goes.
  *
+ * Data drawn for the first time may have come minutes ago (scrolled back into view, a new webview
+ * after a split or a move): the renderer asks the extension host how long the cell has run, and
+ * counts from its answer.
+ *
  * Built separately as an ES module for the notebook webview (tsconfig.renderer.json).
  */
 
-import { RunningView, isRunningData, msToNextSecond, runningView } from './runningView';
+import { Count, ElapsedAsk, RunningData, RunningView, firstCount, hostCount, isElapsedAnswer, isRunningData, msToNextSecond, runningView } from './runningView';
 
 interface OutputItem {
   id: string;
   json(): unknown;
+}
+
+/** The part of VS Code's renderer context used here: messaging, when the extension host is there. */
+interface RendererContext {
+  postMessage?(message: unknown): void;
+  onDidReceiveMessage?(listener: (message: unknown) => void): unknown;
 }
 
 const CSS = `
@@ -37,6 +47,7 @@ export function renderRunning(element: HTMLElement, view: RunningView): void {
     const track = document.createElement('div');
     track.className = 'track';
     track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-label', 'Running');
     track.setAttribute('aria-valuemin', '0');
     track.setAttribute('aria-valuemax', '100');
     const fill = document.createElement('div');
@@ -64,33 +75,46 @@ export function renderRunning(element: HTMLElement, view: RunningView): void {
   }
 }
 
-/** The redraw timer of each output item, and the item drawing into each element. */
+/** The redraw timer of each output item, its redraw, and the item drawing into each element. */
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
+const redraws = new Map<string, () => void>();
 const drawing = new WeakMap<HTMLElement, string>();
 /**
- * When each item's data was first drawn, by this window's clock. Kept after a dispose: an item
- * drawn again (scrolled back into view) goes on counting. The oldest go past a few hundred.
+ * Each item's count, for its data (sentAt). Kept after a dispose: an item drawn again (scrolled
+ * back into view) goes on counting. The oldest go past a few hundred.
  */
-const received = new Map<string, { sentAt: number; at: number }>();
-const RECEIVED_KEPT = 200;
+const counts = new Map<string, { sentAt: number; count: Count }>();
+const COUNTS_KEPT = 200;
 
-function receivedAt(id: string, sentAt: number, now: number): number {
-  const r = received.get(id);
-  // The same data again: when it first came. New data (a new attempt): from now.
-  if (r !== undefined && r.sentAt === sentAt) return r.at;
-  received.delete(id);
-  received.set(id, { sentAt, at: now });
-  if (received.size > RECEIVED_KEPT) received.delete(received.keys().next().value!);
-  return now;
+/** The item's count; new data (first drawn here, or a new attempt) starts one, and asks the host. */
+function countFor(id: string, d: RunningData, now: number, ask: ((m: ElapsedAsk) => void) | undefined): Count {
+  const known = counts.get(id);
+  if (known !== undefined && known.sentAt === d.sentAt) return known.count;
+  const count = firstCount(d, now);
+  counts.delete(id);
+  counts.set(id, { sentAt: d.sentAt, count });
+  if (counts.size > COUNTS_KEPT) counts.delete(counts.keys().next().value!);
+  ask?.({ type: 'elapsed?', id, startedAt: d.startedAt });
+  return count;
 }
 
 function stop(id: string): void {
   const t = timers.get(id);
   if (t !== undefined) clearTimeout(t);
   timers.delete(id);
+  redraws.delete(id);
 }
 
-export function activate(): { renderOutputItem(item: OutputItem, element: HTMLElement): void; disposeOutputItem(id?: string): void } {
+export function activate(ctx: RendererContext = {}): { renderOutputItem(item: OutputItem, element: HTMLElement): void; disposeOutputItem(id?: string): void } {
+  const ask = ctx.postMessage ? (m: ElapsedAsk): void => ctx.postMessage!(m) : undefined;
+  // The host's answer: count from it, and redraw now if the item is still drawn.
+  ctx.onDidReceiveMessage?.((m) => {
+    if (!isElapsedAnswer(m)) return;
+    const known = counts.get(m.id);
+    if (known === undefined) return;
+    known.count = hostCount(m.elapsedMs, Date.now());
+    redraws.get(m.id)?.();
+  });
   return {
     renderOutputItem(item, element) {
       // New data for this item (a new attempt), or another item drawing into this element.
@@ -100,17 +124,21 @@ export function activate(): { renderOutputItem(item: OutputItem, element: HTMLEl
       drawing.set(element, item.id);
       const data = item.json();
       if (!isRunningData(data)) return;
-      const since = receivedAt(item.id, data.sentAt, Date.now());
+      countFor(item.id, data, Date.now(), ask);
       let seen = false;
       const draw = (): void => {
         // Removed without a dispose: stop once it was in the page and no longer is.
         if (seen && !element.isConnected) return stop(item.id);
         seen ||= element.isConnected;
+        const pending = timers.get(item.id);
+        if (pending !== undefined) clearTimeout(pending);
         const now = Date.now();
-        renderRunning(element, runningView(data, now, since));
+        const count = countFor(item.id, data, now, undefined);
+        renderRunning(element, runningView(data, now, count));
         // Just past the next whole second, when the words change.
-        timers.set(item.id, setTimeout(draw, msToNextSecond(data, now, since) + 20));
+        timers.set(item.id, setTimeout(draw, msToNextSecond(count, now) + 20));
       };
+      redraws.set(item.id, draw);
       draw();
     },
     disposeOutputItem(id) {

@@ -6,6 +6,8 @@ export interface FakeRun {
   /** Text per stream, delivered through onStdout/onStderr before the result. */
   stdout?: string;
   stderr?: string;
+  /** A line of md-runbook's own (a pod starting), delivered through onNotice before the output. */
+  notice?: string;
   exitCode?: number;
   newShell?: boolean;
   /** The cell ended the shell (`exit N`): `exitCode` is N, and the next run reports a new shell. */
@@ -53,6 +55,7 @@ export function fakeConnection(
           if (!opts.signal?.aborted) await new Promise<void>((r) => opts.signal?.addEventListener('abort', () => r()));
           return { exitCode: null, signal: null, timedOut: false, cancelled: true, durationMs: 5 };
         }
+        if (step.notice) opts.onNotice?.(step.notice);
         if (step.stdout) opts.onStdout?.(step.stdout);
         if (step.stderr) opts.onStderr?.(step.stderr);
         const newShell = step.newShell ?? (ended || undefined);

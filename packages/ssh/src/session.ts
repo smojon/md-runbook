@@ -85,6 +85,8 @@ export class RemoteSession {
    * is asked for that signed cell or command instead, so it runs only what was signed.
    */
   async run(source: string, opts: RemoteRunOptions = {}, signed?: SignedRun): Promise<SessionRunResult> {
+    const failed = this.podFailed();
+    if (failed) return failed;
     const lost = this.hadShell && !this.isConnected;
     const shell = await this.ensure();
     let r: SessionRunResult;
@@ -100,6 +102,8 @@ export class RemoteSession {
 
   /** `kubectl config current-context` in this session's shell (through the gate where there is one). */
   async kubeContext(opts: RemoteRunOptions = {}): Promise<SessionRunResult> {
+    const failed = this.podFailed();
+    if (failed) return failed;
     const lost = this.hadShell && !this.isConnected;
     const r = await (await this.ensure()).kubeContext(opts);
     return lost ? { ...r, newShell: true } : r;
@@ -111,6 +115,20 @@ export class RemoteSession {
     this.hadShell = false;
     this.loaded = undefined;
     await s?.close();
+  }
+
+  /**
+   * The last shell ended because the gate's Kubernetes Job couldn't start its pod, with no request
+   * waiting: the next request gets the gate's reason instead of a new connection. The one after
+   * connects again (review of 0.30.0, L1).
+   */
+  private podFailed(): SessionRunResult | undefined {
+    const s = this.shell;
+    const why = s && !s.isOpen ? s.unseenPodFailure : undefined;
+    if (why === undefined) return undefined;
+    this.shell = undefined;
+    this.loaded = undefined;
+    return { exitCode: null, signal: null, timedOut: false, cancelled: false, durationMs: 0, shellEnded: true, error: why };
   }
 
   /** Load the manifest into this shell's gate and set the cell's parameters; the gate's reason if it refused. */

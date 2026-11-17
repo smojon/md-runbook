@@ -63,16 +63,25 @@ const HOLD_TICKS = 5;
 /**
  * Whether the output written so far ends in the middle of an escape sequence (ESC, CSI, OSC, DCS
  * and the like), or between the step's own cursor save (ESC 7, CSI s) and its restore. Enough of
- * ECMA-48 to know where a sequence ends; it doesn't interpret any.
+ * ECMA-48 to know where a sequence ends; it only interprets the few that the line depends on.
  */
 export class EscapeState {
   private state: 'text' | 'esc' | 'escInter' | 'csi' | 'string' | 'stringEsc' = 'text';
   private csiParams = '';
   private saved = false;
+  private region = false;
 
   /** In a sequence, or the step's cursor is saved and not restored yet. */
   open(): boolean {
     return this.state !== 'text' || this.saved;
+  }
+
+  /**
+   * The step set the scroll region, or reset the terminal, which removes it: ESC[r (`tput reset`,
+   * full-screen programs on exit), ESC c, a soft reset (ESC[!p).
+   */
+  regionChanged(): boolean {
+    return this.region;
   }
 
   /** Back to plain text: a new step starts (the last one's output was flushed whole). */
@@ -80,6 +89,7 @@ export class EscapeState {
     this.state = 'text';
     this.csiParams = '';
     this.saved = false;
+    this.region = false;
   }
 
   feed(chunk: string): void {
@@ -103,6 +113,8 @@ export class EscapeState {
           else {
             if (c === 0x37) this.saved = true;
             else if (c === 0x38) this.saved = false;
+            // RIS
+            else if (c === 0x63) this.region = true;
             this.state = 'text';
           }
           break;
@@ -115,6 +127,9 @@ export class EscapeState {
           else if (c >= 0x40 && c <= 0x7e) {
             if (this.csiParams === '' && c === 0x73) this.saved = true;
             else if (this.csiParams === '' && c === 0x75) this.saved = false;
+            // DECSTBM (not XTRESTORE, CSI ? r; not DECCARA, CSI … $ r), DECSTR (CSI ! p).
+            else if (c === 0x72 && /^[\d;]*$/.test(this.csiParams)) this.region = true;
+            else if (c === 0x70 && this.csiParams === '!') this.region = true;
             this.state = 'text';
           } else this.csiParams += chunk[i];
           break;
@@ -164,13 +179,19 @@ export class PinnedBar {
   /**
    * A step starts: show where the run is (`read` is called again every second); pins the line the
    * first time. A sequence or a saved cursor the last step left open doesn't hold this one's line.
+   *
+   * Pinned again after a step that changed the scroll region or reset the terminal (`tput reset`):
+   * without the region, the line would scroll into the output. Only then, as reserve() may scroll
+   * the output a line early: a normal step doesn't move it.
    */
   show(read: BarRead): void {
     if (this.closed) return;
+    const repin = this.escapes.regionChanged();
     this.escapes.reset();
     this.held = 0;
     this.read = read;
     if (!this.active) this.start();
+    else if (repin && !this.suspended) this.reserve();
     this.draw();
   }
 

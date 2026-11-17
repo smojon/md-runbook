@@ -11,6 +11,8 @@
  * emptied (an output without items takes no room) and a new one is appended after that output.
  */
 
+import type { ElapsedAnswer, ElapsedAsk } from '../renderer/runningView';
+
 /** The output calls a run makes (vscode.NotebookCellExecution's). */
 export interface OutputSink<O, I> {
   appendOutput(out: readonly O[]): Thenable<void>;
@@ -115,4 +117,54 @@ export class PinnedStatus<O, I> {
     );
     return next;
   }
+}
+
+/** A running cell's live output: the output last appended, and the stream it holds. */
+export interface LiveOutput<O, S> {
+  output: O;
+  stream: S | undefined;
+}
+
+/**
+ * One flush of a running cell's output (controller.ts), each group one stream's text. A group of
+ * the live output's stream goes into it; each switch of stream starts a new output. The new
+ * outputs are appended together: with the running status, one change of the notebook per flush
+ * however often stdout and stderr alternate, not an emptied status and a new one per switch.
+ */
+export async function appendGroups<G extends { stream: S }, O, I, S>(
+  groups: readonly G[],
+  live: LiveOutput<O, S>,
+  ops: {
+    item(g: G): I;
+    output(items: I[]): O;
+    appendItems(items: I[], output: O): Thenable<void>;
+    appendOutputs(outputs: O[]): Thenable<void>;
+  },
+): Promise<LiveOutput<O, S>> {
+  const same: I[] = [];
+  const fresh: I[][] = [];
+  let stream = live.stream;
+  for (const g of groups) {
+    if (stream === undefined || stream === g.stream) (fresh.at(-1) ?? same).push(ops.item(g));
+    else fresh.push([ops.item(g)]);
+    stream = g.stream;
+  }
+  if (same.length > 0) await ops.appendItems(same, live.output);
+  if (fresh.length === 0) return { output: live.output, stream };
+  const outputs = fresh.map((items) => ops.output(items));
+  await ops.appendOutputs(outputs);
+  return { output: outputs.at(-1)!, stream };
+}
+
+/**
+ * The extension host's answer to a running status drawn for the first time in a webview
+ * (renderer/runningStatus.ts): how long the cell has run, by the clock its start was taken with.
+ * Scrolled back into view, or in a new webview (a split, a moved editor), the renderer can't tell
+ * how long ago the data came. Nothing in the notebook changes. Undefined for anything else.
+ */
+export function elapsedAnswer(message: unknown, now: number): ElapsedAnswer | undefined {
+  const m = message as Partial<ElapsedAsk> | null;
+  if (typeof m !== 'object' || m === null || m.type !== 'elapsed?') return undefined;
+  if (typeof m.id !== 'string' || m.id.length > 200 || typeof m.startedAt !== 'number' || !Number.isFinite(m.startedAt)) return undefined;
+  return { type: 'elapsed', id: m.id, elapsedMs: Math.max(0, now - m.startedAt) };
 }

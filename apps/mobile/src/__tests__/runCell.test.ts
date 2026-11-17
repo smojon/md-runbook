@@ -536,6 +536,17 @@ describe('runCell: capture= and ${out:NAME}', () => {
       message: expect.stringMatching(/it is a secret value/),
     });
   });
+
+  it("the pod's notice is shown and saved, but expect= and expect-not= don't see it", async () => {
+    const md = '# Pod\n\n```bash expect=/ok/ expect-not=/Starting/\necho ok\n```\n';
+    const notice = "Starting the session's pod…";
+    const conn = fakeConnection([{ notice, stdout: 'ok\n' }]);
+    const live: string[] = [];
+    const r = await runCell({ host, text: md, cellIndex: 1, connection: conn, onOutput: (t) => live.push(t) });
+    expect(r).toMatchObject({ kind: 'done', attrs: { check: 'ok' } });
+    expect(live.join('')).toBe(`${STDERR_MARK}[md-runbook] ${notice}\nok\n`);
+    expect(r.kind === 'done' && parse(r.text).cells[1]?.output?.text).toBe(`[md-runbook] ${notice}\nok`);
+  });
 });
 
 describe('runCell: retry= and every=', () => {

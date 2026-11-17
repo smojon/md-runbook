@@ -82,6 +82,10 @@ func TestShellLaunch(t *testing.T) {
 		if req.Op != "exec" || !reflect.DeepEqual(req.Argv, c.inner) || !reflect.DeepEqual(req.Env, env) || req.Dir != c.dir {
 			t.Errorf("%s/%q: request %+v", c.iso, c.account, req)
 		}
+		// Separated mode: no_new_privs (review of 0.30.0, H1); bwrap sets it itself.
+		if want := c.account != "" && c.iso != "bwrap"; req.NoNewPrivs != want {
+			t.Errorf("%s/%q: no_new_privs %v, want %v", c.iso, c.account, req.NoNewPrivs, want)
+		}
 	}
 }
 
@@ -275,12 +279,33 @@ type fakeSys struct {
 	idErr, sudoErr             error
 	check                      checkResult
 	checkErr                   error
+	checkHome                  string // the home folder the last check request named
 	calls                      [][]string
 	files                      fakeFS
 	// Accounts of a pool other than mdrb-cells: their uid (id -u), and what their check answers
 	// (else check, with their uid).
 	uids   map[string]string
 	checks map[string]checkResult
+	// Login shells by account (getent passwd, id -P), else shell; noGetent: an account getent
+	// doesn't know. passwd: /etc/passwd (else none).
+	shells   map[string]string
+	shell    string
+	noGetent bool
+	passwd   string
+}
+
+func (f *fakeSys) shellOf(name string) string {
+	if s, ok := f.shells[name]; ok {
+		return s
+	}
+	return f.shell
+}
+
+func (f *fakeSys) readPasswd(p string) ([]byte, error) {
+	if p != "/etc/passwd" || f.passwd == "" {
+		return nil, fs.ErrNotExist
+	}
+	return []byte(f.passwd), nil
 }
 
 // fakeFS: owners and modes by path (no links).
@@ -311,6 +336,14 @@ func (f *fakeSys) run(argv, env []string, stdin []byte) ([]byte, error) {
 		return []byte(f.groupNames), nil
 	case argv[0] == "id" && argv[1] == "-G":
 		return []byte(f.groups), nil
+	case argv[0] == "id" && argv[1] == "-P":
+		// BSD's master.passwd form: the shell is the 10th field.
+		return []byte(argv[2] + ":********:1500:1500::0:0:Cells:/Users/" + argv[2] + ":" + f.shellOf(argv[2]) + "\n"), nil
+	case argv[0] == "getent" && argv[1] == "passwd":
+		if f.noGetent {
+			return nil, errors.New("exit status 2")
+		}
+		return []byte(argv[2] + ":x:1500:1500::/home/" + argv[2] + ":" + f.shellOf(argv[2]) + "\n"), nil
 	case argv[0] == "id":
 		if u, ok := f.uids[argv[2]]; ok {
 			return []byte(u + "\n"), nil
@@ -335,6 +368,7 @@ func (f *fakeSys) run(argv, env []string, stdin []byte) ([]byte, error) {
 		if err != nil || req.Op != "check" {
 			return nil, errors.New("bad request")
 		}
+		f.checkHome = req.Home
 		data, _ := json.Marshal(res)
 		return data, f.checkErr
 	}
@@ -348,6 +382,7 @@ func goodSys() *fakeSys {
 		check:     checkResult{UID: 1500, Read: []string{}, Write: []string{"/tmp/md-runbook-gate.x/exits.y"}},
 		files:     goodFS(),
 		cronFiles: map[string]string{"/etc/cron.deny": "daemon\nmdrb-cells\n", "/etc/at.allow": "root\n"},
+		shell:     "/usr/sbin/nologin",
 	}
 }
 
@@ -358,7 +393,8 @@ func check(f *fakeSys) (cellsInfo, error) {
 	if err != nil || len(infos) != 1 {
 		return cellsInfo{}, err
 	}
-	return infos[0], c.access(infos[0])
+	_, err = c.access(infos[0])
+	return infos[0], err
 }
 
 func checkPool(f *fakeSys, key string, pool ...string) ([]cellsInfo, error) {
@@ -367,7 +403,7 @@ func checkPool(f *fakeSys, key string, pool ...string) ([]cellsInfo, error) {
 
 func testCheck(f *fakeSys, key string, pool ...string) selfCheck {
 	return selfCheck{
-		run: f.run, plan: testPlan, pool: pool, key: key, sh: "/bin/sh", id: "id", gateAccount: "support", gateUID: 1000,
+		run: f.run, plan: testPlan, pool: pool, key: key, sh: "/bin/sh", id: "id", getent: "getent", readFile: f.readPasswd, gateAccount: "support", gateUID: 1000,
 		noRead:    []string{"/etc/md-runbook/report-token", "/var/log/md-runbook-gate.log"},
 		noWrite:   []string{"/usr/local/bin/md-runbook-gate", "/etc/md-runbook/gate.conf"},
 		mustWrite: []string{"/tmp/md-runbook-gate.x/exits.y"},
@@ -383,8 +419,12 @@ func TestSelfCheck(t *testing.T) {
 	if err != nil || info.uid != 1500 || info.home != "/home/mdrb-cells" {
 		t.Fatalf("good: %+v %v", info, err)
 	}
-	if len(f.calls) != 6 {
+	if len(f.calls) != 7 {
 		t.Errorf("calls: %q", f.calls)
+	}
+	// The cells' mode looks at the account's home (checkHome).
+	if f.checkHome != "/home/mdrb-cells" {
+		t.Errorf("check of the home: %q", f.checkHome)
 	}
 	rule := "support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells"
 	for name, c := range map[string]struct {
@@ -409,6 +449,15 @@ func TestSelfCheck(t *testing.T) {
 		"readable log":     {func(f *fakeSys) { f.check.Read = []string{"/var/log/md-runbook-gate.log"} }, []string{"can read /var/log/md-runbook-gate.log"}},
 		"writable program": {func(f *fakeSys) { f.check.Write = append(f.check.Write, "/usr/local/bin/md-runbook-gate") }, []string{"can change /usr/local/bin/md-runbook-gate"}},
 		"no exits file":    {func(f *fakeSys) { f.check.Write = []string{} }, []string{"can't append to /tmp/md-runbook-gate.x/exits.y"}},
+		"open home":        {func(f *fakeSys) { f.check.HomeOpen = true }, []string{"mdrb-cells's home /home/mdrb-cells is open to other accounts", "mode 0700"}},
+		"a login key":      {func(f *fakeSys) { f.check.Logins = []string{"/home/mdrb-cells/.ssh/authorized_keys"} }, []string{"/home/mdrb-cells/.ssh/authorized_keys would let a key log in as mdrb-cells, and mdrb-cells can't remove it: remove it as root", "DenyUsers mdrb-cells"}},
+		// A login shell: a key file a block leaves, and `ssh localhost`, would give a process
+		// without no_new_privs (review of 0.30.0, re-check L3).
+		"login shell":       {func(f *fakeSys) { f.shell = "/bin/sh" }, []string{"cells_account = mdrb-cells's login shell is /bin/sh", "usermod -s /usr/sbin/nologin mdrb-cells"}},
+		"login shell bash":  {func(f *fakeSys) { f.shell = "/bin/bash" }, []string{"login shell is /bin/bash"}},
+		"empty login shell": {func(f *fakeSys) { f.shell = "" }, []string{"login shell is empty (/bin/sh)"}},
+		"nologin elsewhere": {func(f *fakeSys) { f.shell = "/opt/bin/nologin" }, []string{"login shell is /opt/bin/nologin"}},
+		"no passwd entry":   {func(f *fakeSys) { f.noGetent = true }, []string{"can't read its login shell"}},
 	} {
 		f := goodSys()
 		c.change(f)
@@ -438,6 +487,58 @@ func TestSelfCheck(t *testing.T) {
 	if info, err := check(f); err != nil || info.home != "" {
 		t.Errorf("no home: %+v %v", info, err)
 	}
+	// The login shells that let no one log in.
+	for _, sh := range []string{"/usr/sbin/nologin", "/sbin/nologin", "/usr/bin/nologin", "/bin/false", "/usr/bin/false"} {
+		f = goodSys()
+		f.shell = sh
+		if _, err := check(f); err != nil {
+			t.Errorf("%s: %v", sh, err)
+		}
+	}
+	// No getent (macOS): id -P. getent without the account: /etc/passwd.
+	f = goodSys()
+	c := testCheck(f, "cells_account", "mdrb-cells")
+	c.getent = ""
+	f.shell = "/usr/bin/false"
+	if s, ok := c.loginShell("mdrb-cells"); !ok || s != "/usr/bin/false" {
+		t.Errorf("id -P: %q %v", s, ok)
+	}
+	f.shell = "/bin/zsh"
+	if _, err := c.do(); err == nil || !strings.Contains(err.Error(), "login shell is /bin/zsh") {
+		t.Errorf("id -P, zsh: %v", err)
+	}
+	f = goodSys()
+	f.noGetent = true
+	f.passwd = "root:x:0:0:root:/root:/bin/bash\nmdrb-cells-2:x:1502:1502::/home/mdrb-cells-2:/bin/sh\nmdrb-cells:x:1500:1500::/home/mdrb-cells:/sbin/nologin\n"
+	if s, ok := testCheck(f, "cells_account", "mdrb-cells").loginShell("mdrb-cells"); !ok || s != "/sbin/nologin" {
+		t.Errorf("/etc/passwd: %q %v", s, ok)
+	}
+	if _, err := check(f); err != nil {
+		t.Errorf("/etc/passwd: %v", err)
+	}
+	// A key file the cells' mode removed: no problem, and the files for the log (only the two it
+	// looks at).
+	f = goodSys()
+	f.check.Removed = []string{"/home/mdrb-cells/.ssh/authorized_keys", "/etc/passwd", "/home/mdrb-cells/.ssh/authorized_keys2"}
+	c = testCheck(f, "cells_account", "mdrb-cells")
+	infos, err := c.do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := c.access(infos[0]); err != nil || !reflect.DeepEqual(removed, []string{"/home/mdrb-cells/.ssh/authorized_keys", "/home/mdrb-cells/.ssh/authorized_keys2"}) {
+		t.Errorf("removed: %q %v", removed, err)
+	}
+	// One it couldn't remove, alone: keyFilesLeft (the lease skips the account). With another
+	// problem: a plain refusal.
+	f.check.Logins = []string{"/home/mdrb-cells/.ssh/authorized_keys"}
+	var left keyFilesLeft
+	if _, err := c.access(infos[0]); !errors.As(err, &left) {
+		t.Errorf("one left: %v", err)
+	}
+	f.check.Read = []string{"/etc/md-runbook/report-token"}
+	if _, err := c.access(infos[0]); err == nil || errors.As(err, &left) || !strings.Contains(err.Error(), "for that account; /home/mdrb-cells/.ssh/authorized_keys would let") {
+		t.Errorf("one left, and a readable token: %v", err)
+	}
 }
 
 // A pool: every account is checked, the sudo line names them all, and two names of one uid are
@@ -461,8 +562,9 @@ func TestSelfCheckPool(t *testing.T) {
 			t.Errorf("account %d: %+v", i, infos[i])
 		}
 	}
-	// 4 for each account (id -u, -G, -Gn, its home), sudo -l; nothing as an account of the pool.
-	if len(f.calls) != 4*3+1 {
+	// 5 for each account (id -u, -G, -Gn, its login shell, its home), sudo -l; nothing as an
+	// account of the pool.
+	if len(f.calls) != 5*3+1 {
 		t.Errorf("calls: %d %q", len(f.calls), f.calls)
 	}
 	asAccount := func(calls [][]string) []string {
@@ -481,7 +583,7 @@ func TestSelfCheckPool(t *testing.T) {
 	// session's blocks run as the others).
 	c := testCheck(f, "cells_accounts", pool...)
 	f.calls = nil
-	if err := c.access(infos[1]); err != nil {
+	if _, err := c.access(infos[1]); err != nil {
 		t.Fatalf("access: %v", err)
 	}
 	if got := asAccount(f.calls); !reflect.DeepEqual(got, []string{"mdrb-cells-2"}) || len(f.calls) != 1 {
@@ -494,10 +596,10 @@ func TestSelfCheckPool(t *testing.T) {
 	if infos, err = c.do(); err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	if err := c.access(infos[0]); err != nil {
+	if _, err := c.access(infos[0]); err != nil {
 		t.Errorf("another account's finding: %v", err)
 	}
-	if err := c.access(infos[2]); err == nil || !strings.Contains(err.Error(), "cells_accounts: mdrb-cells-3: mdrb-cells-3 can read /etc/md-runbook/report-token") {
+	if _, err := c.access(infos[2]); err == nil || !strings.Contains(err.Error(), "cells_accounts: mdrb-cells-3: mdrb-cells-3 can read /etc/md-runbook/report-token") {
 		t.Errorf("one reads the token: %v", err)
 	}
 	rule := "support ALL=(mdrb-cells,mdrb-cells-2,mdrb-cells-3) NOPASSWD: /usr/local/bin/md-runbook-gate __cells"

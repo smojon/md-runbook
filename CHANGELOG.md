@@ -2,9 +2,24 @@
 
 ## Unreleased
 
-**Gate admins with separated mode:** with `cells_account =` alone, one session runs at a time
-now, and a second one refuses to start. For sessions side by side, set up a pool before you
-update (see below).
+**Gate admins with separated mode:**
+- With `cells_account =` alone, one session runs at a time now, and a second one refuses to
+  start. For sessions side by side, set up a pool before you update (see below).
+- End running sessions before you update. The first 0.30.0 session ends every process of its
+  account, a running 0.29.0 session's blocks too.
+- On Linux, blocks start with `no_new_privs`. In them, these fail:
+  - `sudo`, `su` and other setuid programs;
+  - programs that need file capabilities, such as `ping`, `traceroute` or `mtr` on older
+    distributions.
+- A pool, or a `cells_account`, serves one gate account only. A session now refuses to start
+  when its account runs another gate account's blocks.
+- Pool accounts need the login shell `/usr/sbin/nologin` or `/bin/false`. A session refuses
+  any other.
+- Add `DenyUsers` for the pool accounts to `sshd_config`. At each lease, the account removes
+  `~/.ssh/authorized_keys` and `authorized_keys2`, and the gate logs it. The gate closes the
+  home to others (mode 0700).
+- Files a block leaves in a pool home can affect a later session on that account
+  ([Separated mode](apps/gate/README.md#separated-mode)).
 
 - **CLI: the progress pinned on the bottom line, as apt shows it.** In a terminal, `md-runbook
   run` keeps one line at the bottom while the output scrolls above it:
@@ -19,9 +34,9 @@ update (see below).
   - It stays at the bottom while the output scrolls; at the end, the usual status line follows.
   - Without an estimate, a counter: `running · 12s`.
   - Theme colours; with reduced motion, the bar doesn't glide.
-- **The same words in the CLI, VS Code and the app.** The app's running cell says
+- **The same words in VS Code and the app.** The app's running cell says
   `running · 12s of about 30s` too, and its run bar `Step 3/7 · Push image`, as VS Code's status
-  bar does. A screen reader still hears `Step 3 of 7`.
+  bar does; `md-runbook run` shares that run line. A screen reader still hears `Step 3 of 7`.
 
 - **Gate: a pool of cells accounts (`cells_accounts =`).** In separated mode, each session runs
   its blocks as an account of its own. So sessions side by side can't reach each other's shells

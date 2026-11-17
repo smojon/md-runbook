@@ -273,8 +273,10 @@ scrolls:
 - `attempt 2/5` beside it, for a block with `retry=`;
 - without an estimate or a learned time, no bar: `running · 12s`.
 
-The app and `md-runbook run` use the same words. With reduced motion on, the bar jumps instead
-of gliding. When the block ends, the status block goes and the usual status line follows.
+The app uses the same words; `md-runbook run` shares only the run line (`Step 3/7 · …`).
+
+With reduced motion on, the bar jumps instead of gliding. When the block ends, the status block
+goes and the usual status line follows.
 
 After a run that took noticeably longer, the line says by how much:
 `⌚ est. 2m30s · took 3m10s (+40s)`.

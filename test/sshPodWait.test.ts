@@ -36,6 +36,12 @@ interface FakeGate {
   fail?: string;
   /** The pod gets ready right after the hello (that said `job`), before any request waits. */
   readyAtHello?: boolean;
+  /** With `fail`: the pod fails podMs after the hello, while no request waits (the gate says so at once, then ends). */
+  failAtHello?: boolean;
+  /** With `failAtHello`: the gate ends the session this long after its `failed` notice, and answers no request meanwhile. */
+  endAfterFailMs?: number;
+  /** Sessions opened (not stop requests). */
+  opened?: number;
   /** Whether the client's hello asked for pod notices. */
   asked?: boolean;
   /** Stop requests (second connections). */
@@ -52,6 +58,7 @@ function playGate(ch: SshChannel, gate: FakeGate, running: { id?: string; marker
   let settled = false;
   let notices = false;
   let final = false;
+  let failed = false;
   const out = (s: string): Promise<void> => ch.send(Buffer.from(s, 'utf8'));
   const err = (s: string): Promise<void> => ch.sendExtendedData(SshExtendedDataType.STDERR, Buffer.from(s, 'utf8'));
   const marker = async (id: string, value: number): Promise<void> => {
@@ -60,6 +67,7 @@ function playGate(ch: SshChannel, gate: FakeGate, running: { id?: string; marker
     await out(line);
   };
   running.marker = marker;
+  gate.opened = (gate.opened ?? 0) + 1;
   ch.onClosed(() => (gate.closedAt ??= Date.now()));
   /** A request whose reply the Job's shell prints: false when the pod didn't come. */
   const waitPod = async (): Promise<boolean> => {
@@ -99,10 +107,23 @@ function playGate(ch: SshChannel, gate: FakeGate, running: { id?: string; marker
           await out(`\x1e__MDRB_GATE__ ${gate.protocol} unsigned=allow\n` + (notices ? POD('job') : ''));
           await marker(m[1]!, 4242);
           if (gate.readyAtHello) settled = true;
+          const why = gate.fail;
+          if (gate.failAtHello && why !== undefined) {
+            void (async () => {
+              await sleep(gate.podMs);
+              settled = true;
+              failed = true;
+              await err(notices ? POD(`failed ${why}`) : `md-runbook-gate: ${why}
+`);
+              if (gate.endAfterFailMs) await sleep(gate.endAfterFailMs);
+              await ch.close();
+            })();
+          }
         } else if ((m = REQUEST.exec(pending))) {
           pending = pending.slice(m[0].length);
           const [, verb, id, rest] = m;
           running.id = id;
+          if (failed) continue;
           if (verb === 'raw' && Buffer.from(rest!.trim(), 'base64').toString('utf8').includes('REFUSE')) {
             // Refused by the gate itself, before any shell: its reason, exit 126, no notice.
             await err('md-runbook-gate: this server runs signed runbooks only (this cell is not signed, or changed since signing)\n');
@@ -359,6 +380,56 @@ describe("ssh: a gate's Kubernetes pod starting", () => {
       const r = await session.kubeContext({ signal: ac.signal, onNotice: () => undefined });
       assert.deepEqual([r.cancelled, r.shellEnded, gate.stops], [true, true, []]);
       assert.ok(Date.now() - t0 < 2000, `${Date.now() - t0} ms`);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("the pod fails while no request waits: the next request gets the gate's reason, the one after connects again (L1)", async () => {
+    const why = "this session's cells can't start: its pod can't start (ImagePullBackOff: x)";
+    gate = { protocol: 4, job: true, podMs: 300, fail: why, failAtHello: true, stops: [] };
+    const session = new RemoteSession(open, opts());
+    try {
+      await session.connect();
+      for (let i = 0; i < 100 && session.isConnected; i++) await sleep(20);
+      assert.equal(session.isConnected, false, 'the gate ended the session');
+      let errText = '';
+      const r = await session.kubeContext({ timeoutMs: 200, onStderr: (t) => (errText += t), onNotice: () => undefined });
+      assert.deepEqual([r.exitCode, r.shellEnded, r.error, errText], [null, true, why, '']);
+      assert.equal(gate.opened, 1, 'no new connection for that request');
+      // The pod comes this time: a new connection, and the request runs.
+      gate.failAtHello = false;
+      gate.fail = undefined;
+      gate.podMs = 0;
+      gate.closedAt = undefined;
+      const again = await session.kubeContext({ timeoutMs: 2000, podWaitMaxMs: 5000, onNotice: () => undefined });
+      assert.deepEqual([again.exitCode, again.newShell, again.error], [0, true, undefined]);
+      assert.equal(gate.opened, 2);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("the pod fails while no request waits, and the shell ends during the next request: that request gets the reason, the one after connects again (re-check L1)", async () => {
+    const why = "this session's cells can't start: its pod can't start (ImagePullBackOff: y)";
+    gate = { protocol: 4, job: true, podMs: 200, fail: why, failAtHello: true, endAfterFailMs: 1200, stops: [] };
+    const session = new RemoteSession(open, opts());
+    try {
+      await session.connect();
+      // The notice is in; the gate hasn't ended the session yet.
+      await sleep(600);
+      assert.equal(session.isConnected, true);
+      const r = await session.kubeContext({ timeoutMs: 5000, onNotice: () => undefined });
+      assert.deepEqual([r.exitCode, r.shellEnded, r.error], [null, true, why]);
+      assert.equal(gate.opened, 1);
+      // Shown once: the next request connects again instead of giving the reason a second time.
+      gate.failAtHello = false;
+      gate.fail = undefined;
+      gate.podMs = 0;
+      gate.closedAt = undefined;
+      const again = await session.kubeContext({ timeoutMs: 2000, podWaitMaxMs: 5000, onNotice: () => undefined });
+      assert.deepEqual([again.exitCode, again.newShell, again.error], [0, true, undefined]);
+      assert.equal(gate.opened, 2);
     } finally {
       await session.close();
     }
