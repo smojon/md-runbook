@@ -124,6 +124,17 @@ describe('redaction of real-world IAM/OpenShift output', () => {
     ['token_type stays', '"token_type":"Bearer"', '"token_type":"Bearer"'],
     ['bearer needs a token', 'token type: Bearer expires: 300', 'token type: Bearer expires: 300'],
     ['hashtable authorization keeps the rest', '{Authorization=Bearer abc.def.ghi, X-Forwarded-For=203.0.113.50}', `{Authorization=${R}, X-Forwarded-For=203.0.113.50}`],
+    // third review of 0.30: quoted user:pass, Redis passwords, literal values that start with $ or %
+    ['curl -u "user:pass"', 'curl -u "u:S3cretPW" https://x', `curl -u "u:${R}" https://x`],
+    ["curl -u 'user:pass with a space'", "curl -u 'u:S3cret PW' https://x", `curl -u 'u:${R}' https://x`],
+    ['curl -u "…" with an escaped quote', 'curl -u "u:S3c\\"ret" https://x', `curl -u "u:${R}" https://x`],
+    ['redis-server --requirepass', 'command: redis-server --requirepass S3cretPW', `command: redis-server --requirepass ${R}`],
+    ['redis.conf requirepass', 'requirepass S3cretPW', `requirepass ${R}`],
+    ['redis.conf masterauth', 'bind 0.0.0.0\nmasterauth S3cretPW\n', `bind 0.0.0.0\nmasterauth ${R}\n`],
+    ['CONFIG SET requirepass', 'CONFIG SET requirepass S3cretPW', `CONFIG SET requirepass ${R}`],
+    ['REDISCLI_AUTH=', 'REDISCLI_AUTH=S3cretPW redis-cli', `REDISCLI_AUTH=${R} redis-cli`],
+    ["--password '$…' (literal)", "--password '$3cretPW'", `--password ${R}`],
+    ['--password %… (no %VAR%)', '--password %3cretPW', `--password ${R}`],
   ];
   for (const [name, input, expected] of cases) {
     it(name, () => assert.equal(r.redact(input), expected));
@@ -155,6 +166,35 @@ describe('redaction of real-world IAM/OpenShift output', () => {
     const cm = 'data:\n  LOG_LEVEL: debug\nkind: ConfigMap\n';
     assert.equal(r.redact(cm), cm);
   });
+
+  it("redacts a Secret's escaped JSON in kubectl's last-applied-configuration (third review of 0.30)", () => {
+    const applied =
+      '"last-applied-configuration": "{\\"apiVersion\\":\\"v1\\",\\"data\\":{\\"db-url\\":\\"cG9zdGdyZXM6Ly91OnBAaA==\\"},\\"kind\\":\\"Secret\\"}"';
+    assert.equal(r.redact(applied), `"last-applied-configuration": "{\\"apiVersion\\":\\"v1\\",\\"data\\":{\\"db-url\\":\\"${R}\\"},\\"kind\\":\\"Secret\\"}"`);
+    const stringData = '{\\"kind\\":\\"Secret\\",\\"stringData\\":{\\"signing\\":\\"PlainS3cretValue9\\",\\"note\\":\\"a\\\\nb\\"}}';
+    assert.equal(r.redact(stringData), `{\\"kind\\":\\"Secret\\",\\"stringData\\":{\\"signing\\":\\"${R}\\",\\"note\\":\\"${R}\\"}}`);
+    // and in the whole object kubectl prints
+    const full = [
+      '{',
+      '    "apiVersion": "v1",',
+      '    "data": {',
+      '        "api-url": "aHR0cHM6Ly9leGFtcGxl"',
+      '    },',
+      '    "kind": "Secret",',
+      '    "metadata": {',
+      '        "annotations": {',
+      '            "kubectl.kubernetes.io/last-applied-configuration": "{\\"apiVersion\\":\\"v1\\",\\"kind\\":\\"Secret\\",\\"stringData\\":{\\"signing\\":\\"PlainS3cretValue9\\"}}\\n"',
+      '        }',
+      '    }',
+      '}',
+    ].join('\n');
+    const out = r.redact(full);
+    assert.doesNotMatch(out, /PlainS3cretValue9|aHR0cHM6/);
+    assert.match(out, /\\"signing\\":\\"\[REDACTED\]\\"/);
+    // a ConfigMap's escaped JSON stays
+    const cm = '{\\"kind\\":\\"ConfigMap\\",\\"data\\":{\\"LOG_LEVEL\\":\\"debug\\"}}';
+    assert.equal(r.redact(cm), cm);
+  });
 });
 
 it('key=value redaction leaves references intact', () => {
@@ -173,4 +213,20 @@ it('key=value redaction leaves references intact', () => {
   assert.equal(r.redact('{\\"token\\":\\"$env:TOK\\"}'), '{\\"token\\":\\"$env:TOK\\"}');
   // a backslash before anything else is still part of the value
   assert.equal(r.redact('password=${secret:X}\\x'), 'password=[REDACTED]}\\x');
+  // a flag's value: references stay, in "…" anything the shell expands, in '…' only REFERENCE (third review of 0.30)
+  for (const s of [
+    '--password "$PW"',
+    '--password "${PW}"',
+    '--password ${PW}',
+    '--password $(cat f)',
+    '--password %PW%',
+    '--password "%PW%"',
+    "--password '${secret:pw}'",
+    '--password $PW',
+    // the word AUTH alone is no flag
+    'redis-cli AUTH default',
+    'Send AUTH first, then the command.',
+  ]) {
+    assert.equal(r.redact(s), s, s);
+  }
 });

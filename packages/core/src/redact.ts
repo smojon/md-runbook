@@ -5,7 +5,7 @@
  * the same (redactScan.ts); they stay here as the definition.
  */
 
-import { LINEAR_FINDERS, PASSWORD_TOOLS, PasswordToolRule, SPACED_KEY_WORDS, SpanFinder, Spans } from './redactScan';
+import { BARE_FLAG_NAMES, FLAG_NAMES, LINEAR_FINDERS, PASSWORD_TOOLS, PasswordToolRule, SPACED_KEY_WORDS, SpanFinder, Spans, WRAPPERS } from './redactScan';
 
 export const REDACTED = '[REDACTED]';
 
@@ -18,7 +18,7 @@ export interface RedactionPattern {
 }
 
 const SECRET_KEYS =
-  'password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|privatekey|client[_-]?key|credentials?|\\.key';
+  'password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|privatekey|client[_-]?key|credentials?|\\.key|rediscli_auth';
 
 // Placeholders and shell references (`${secret:X}`, `$(cmd)`, `$env:X`, `%X%`) are not values. A bare
 // `$NAME` is not exempt: the patterns are case-insensitive, so it could not be told from `$ecret`.
@@ -56,6 +56,19 @@ const quotedAfter = (key: string, notValue = ''): string =>
       `(?<=${key}\\\\${q})${notValue}${ESCAPED_VALUE(q)}`,
     ])
     .join('|');
+/**
+ * A flag's value: in "…" not starting with `$` (the shell expands it) or a REFERENCE; in '…' not
+ * starting with a REFERENCE (`'$3cret'` is literal); else a word not starting with `-`, `$` or a
+ * REFERENCE (`%3cret` is a value, `%PW%` is not).
+ */
+const FLAG_VALUE = `(?:"(?!\\$)(?!${REFERENCE})[^"\\r\\n]*"|'(?!${REFERENCE})[^'\\r\\n]*'|(?![-$])(?!${REFERENCE})[^\\s"']+)`;
+/**
+ * The rest of a quoted `user:PASSWORD` (or `pass:PASSWORD`) after the user part, up to the closing
+ * quote: in "…" read with backslash escapes as quotedAfter does, in '…' up to the next `'`. It
+ * doesn't start with a space.
+ */
+const QUOTED_REST = (q: string): string =>
+  q === '"' ? `(?!\\s)(?:(?:[^"\\\\\\r\\n]|\\\\[^\\r\\n])+|[^"\\r\\n]+)(?=")` : `(?!\\s)[^'\\r\\n]+(?=')`;
 const SECRET_KEY = `\\b[\\w.-]*(?:${SECRET_KEYS})[\\w.-]*${KEY_QUOTE}[ \\t]*[:=][ \\t]*`;
 const PASS_KEY = `(?:^|[^A-Za-z0-9])(?:[\\w.-]*[_.-])?pass${KEY_QUOTE}[ \\t]*[:=][ \\t]*`;
 
@@ -108,12 +121,14 @@ const BASE_PATTERNS: readonly RedactionPattern[] = [
   },
   {
     name: 'secret-flag-value',
-    // --password value, --client-secret "value", -p value after login, mysql -pValue, curl -u user:pass
+    // --password value, --client-secret "value", --requirepass/requirepass value (Redis), -p value
+    // after login, mysql -pValue, curl -u user:pass and -u "user:pass"
     pattern:
-      '(?<=(?:^|\\s)--?(?:password|passwd|pass|secret|client-secret|token|api-key|apikey|access-key|secret-key)[ \\t]+)(?:"(?![$%])[^"\\r\\n]*"|\'(?![$%])[^\'\\r\\n]*\'|(?![-$%])[^\\s"\']+)' +
+      `(?<=(?:^|\\s)(?:--?(?:${FLAG_NAMES.join('|')})|${BARE_FLAG_NAMES.join('|')})[ \\t]+)${FLAG_VALUE}` +
       '|(?<=\\blogin\\b[^\\r\\n]*?\\s-p[ \\t]*)(?!-)[^\\s"\']+' +
       '|(?<=\\bmysql\\b[^\\r\\n]*?\\s-p)[^\\s"\']+' +
-      '|(?<=(?:^|\\s)(?:-u|--user)[ \\t]+[^\\s:"\']+:)[^\\s"\']+',
+      '|(?<=(?:^|\\s)(?:-u|--user)[ \\t]+[^\\s:"\']+:)[^\\s"\']+' +
+      ['"', "'"].map((q) => `|(?<=(?:^|\\s)(?:-u|--user)[ \\t]+${q}[^\\s:"']+:)${QUOTED_REST(q)}`).join(''),
     flags: 'i',
   },
   {
@@ -158,11 +173,18 @@ const BL = '[^\\S\\r\\n]';
  * password-flag-tool reads a line in command segments, as a shell does, simply: out of quotes,
  * `|`, `;` and `&` (`&&`, `||` too) end one, and so does the line's end. "…" (with `\"` and `\\`
  * escaped) and '…' are quotes; one left open runs to the line's end. A tool counts where its name
- * is a word of its own: after the segment's start, a blank, a quote, `(`, a backtick, `{`, `/` or
- * `\` (`/usr/bin/sshpass`, `C:\…\7z.exe`), and before a blank or a quote (`mongo-1`, `app.zip`,
- * `mongo:7` don't count); in quotes too (`sh -c "redis-cli -a …"`). But not as an option's value:
- * after `-X` or `--name` and blanks (`docker run --name mongo -p 27017:27017`). Its flag counts
- * anywhere after it in the same segment, in quotes too.
+ * is a word of its own, before a blank or a quote (`mongo-1`, `app.zip`, `mongo:7` don't count):
+ * - at the segment's start, or after a blank, a quote, `(`, a backtick or `{`, but not as an
+ *   option's value: after `-X` or `--name` and blanks (`docker run --name mongo -p 27017:27017`),
+ *   unless a wrapper comes before that option (`sudo -E sshpass`, `env -i redis-cli`);
+ * - out of quotes, after a prefix that starts a word (at the segment's start or after a blank) that
+ *   is no option's value: `@` or `-` (a Makefile recipe's `@sshpass`), `NAME=` or `NAME:`
+ *   (`ExecStart=sshpass`, `exec:sshpass`; not `--name=mongo`);
+ * - after a path's `/` or `\`: in quotes anywhere (`& "C:\Program Files\7-Zip\7z.exe"`), out of
+ *   quotes where the path is in command position: at the segment's start (after blanks), after a
+ *   quote, `(`, a backtick or `{`, or after a wrapper or `NAME=value` and blanks
+ *   (`/usr/bin/sshpass`, `sudo /usr/bin/sshpass`; not `ssh -i ~/.ssh/mongo -p 2222`).
+ * Its flag counts anywhere after it in the same segment, in quotes too.
  *
  * The linear matcher (redactScan.ts toolsBefore) also reads a line that ends in `\` out of quotes
  * as going on (`redis-cli -h h \` then `  -a …`), and a flag right after that line break. This
@@ -177,30 +199,51 @@ const SQ_CHAR = `[^'\\r\\n]`;
 const SEGMENT_ITEM = `(?:${OUT_CHAR}|"${DQ_CHAR}*"|'${SQ_CHAR}*')`;
 /** From out of quotes to a place in the same segment, maybe in a quote opened on the way. */
 const OUT_TO = `${SEGMENT_ITEM}*(?:"${DQ_CHAR}*|'${SQ_CHAR}*)?`;
-/** What a tool's name may follow, if it doesn't start its segment. */
-const TOOL_LEFT = `(?<=[\\s"'(\`{/\\\\])`;
-/** Not an option's value: no `-X` or `--name` (a whole word) and blanks right before. */
-const NOT_OPTION_VALUE = `(?<!(?<![^\\s])(?:-\\w|--\\w[\\w-]*)\\s+)`;
+/** What a tool's name may follow out of quotes, if it doesn't start its segment. */
+const TOOL_LEFT = `(?<=[\\s"'(\`{])`;
+/** In quotes, also a path's `/` or `\` (`"C:\…\7z.exe"`). */
+const TOOL_LEFT_QUOTED = `(?<=[\\s"'(\`{/\\\\])`;
+/** A wrapper (redactScan.ts WRAPPERS) and blanks: it runs the next word as a command. */
+const WRAPPER = `(?<![\\w.-])(?:${WRAPPERS.join('|')})\\s+`;
+/** Not an option's value: no `-X` or `--name` (a whole word, not right after a wrapper) and blanks right before. */
+const NOT_OPTION_VALUE = `(?<!(?<![^\\s])(?<!${WRAPPER})(?:-\\w|--\\w[\\w-]*)\\s+)`;
+/** What may start a word before a tool's name, out of quotes: `@`, `-`, `@-`, `-@`, `NAME=`, `NAME:`. */
+const TOOL_PREFIX = `(?:@-?|-@?|[A-Za-z_][\\w.-]*[=:])`;
+/** A path's character out of quotes. */
+const PATH_CHAR = `[^\\s"'|;&(\`{]`;
+/** `NAME=value`, a whole word. */
+const ASSIGN = `(?<![^\\s])[A-Za-z_][\\w.-]*=[^\\s"'|;&]*`;
+/** Command position, for a path out of quotes: the segment's start (after blanks), a quote, `(`, a backtick, `{`, a wrapper or `NAME=value`. */
+const COMMAND_LEFT = `(?<=(?:^|[\\r\\n|;&])${BL}*|["'(\`{]|${WRAPPER}|${ASSIGN}\\s+)`;
 /** `word` in any case: `[Ss][Cc]…` (the pattern has no i flag: `-p` and `-P` differ). */
 const anyCase = (word: string): string => word.replace(/[A-Za-z]/g, (c) => `[${c.toUpperCase()}${c.toLowerCase()}]`);
 const toolRule = (r: PasswordToolRule): string => {
   const word = (w: string): string => (r.anyCase ? anyCase(escapeRe(w)) : escapeRe(w));
-  const tool = `${NOT_OPTION_VALUE}(?:${r.tools.map(word).join('|')})(?:\\.[Ee][Xx][Ee])?(?=[\\s"'])`;
+  const name = `(?:${r.tools.map(word).join('|')})(?:\\.[Ee][Xx][Ee])?(?=[\\s"'])`;
+  // Out of quotes: where a command can start, after a prefix, or after a path in command position.
+  const out =
+    `(?:(?:${SEGMENT_ITEM}*${TOOL_LEFT})?${NOT_OPTION_VALUE}` +
+    `|(?:${SEGMENT_ITEM}*(?<=\\s))?${NOT_OPTION_VALUE}${TOOL_PREFIX}` +
+    `|${SEGMENT_ITEM}*${COMMAND_LEFT}${PATH_CHAR}*[/\\\\])${name}`;
+  const quoted = `${TOOL_LEFT_QUOTED}${NOT_OPTION_VALUE}${name}`;
   // The line's start, the segments before, then the tool out of quotes, in "…" or in '…', and on to a blank and the flag.
   const flag =
     `(?<![^\\r\\n])(?:${SEGMENT_ITEM}*[|;&])*` +
-    `(?:(?:${SEGMENT_ITEM}*${TOOL_LEFT})?${tool}${OUT_TO}` +
-    `|${SEGMENT_ITEM}*"${DQ_CHAR}*${TOOL_LEFT}${tool}${DQ_CHAR}*(?:"${OUT_TO})?` +
-    `|${SEGMENT_ITEM}*'${SQ_CHAR}*${TOOL_LEFT}${tool}${SQ_CHAR}*(?:'${OUT_TO})?)` +
+    `(?:${out}${OUT_TO}` +
+    `|${SEGMENT_ITEM}*"${DQ_CHAR}*${quoted}${DQ_CHAR}*(?:"${OUT_TO})?` +
+    `|${SEGMENT_ITEM}*'${SQ_CHAR}*${quoted}${SQ_CHAR}*(?:'${OUT_TO})?)` +
     `${BL}(?:${r.flags.map(word).join('|')})`;
   const gap = r.space && r.glued ? `${WS}*` : r.space ? `${WS}+` : '';
-  if (r.split !== undefined) return `(?<=${flag}${gap}[^\\s${escapeRe(r.split)}"']+${escapeRe(r.split)})[^\\s"']+`;
-  if (r.prefix !== undefined) return `(?<=${flag}${gap}${escapeRe(r.prefix)})[^\\s"']+`;
-  return `(?<=${flag}${gap})(?:"(?![$%])[^"\\r\\n]*"|'(?![$%])[^'\\r\\n]*'|(?![-$%])[^\\s"']+)`;
+  // `user<split>PASSWORD` or `<prefix>PASSWORD`: a word, or in quotes up to the closing one.
+  const credential = (before: string): string =>
+    [`(?<=${flag}${gap}${before})[^\\s"']+`, ...['"', "'"].map((q) => `(?<=${flag}${gap}${q}${before})${QUOTED_REST(q)}`)].join('|');
+  if (r.split !== undefined) return credential(`[^\\s${escapeRe(r.split)}"']+${escapeRe(r.split)}`);
+  if (r.prefix !== undefined) return credential(escapeRe(r.prefix));
+  return `(?<=${flag}${gap})${FLAG_VALUE}`;
 };
 /** `htpasswd -b FILE USER PASSWORD`, `htpasswd -nb USER PASSWORD` (the options in one word). */
 const HTPASSWD = ['(?![A-Za-z]*n)', '(?=[A-Za-z]*n)']
-  .map((n, i) => `(?<=\\bhtpasswd${WS}+-(?=[A-Za-z]*b)${n}[A-Za-z]+${WS}+${i === 0 ? `[^\\s"']+${WS}+` : ''}[^\\s"']+${WS}+)(?![-$%])[^\\s"']+`)
+  .map((n, i) => `(?<=\\bhtpasswd${WS}+-(?=[A-Za-z]*b)${n}[A-Za-z]+${WS}+${i === 0 ? `[^\\s"']+${WS}+` : ''}[^\\s"']+${WS}+)(?![-$])(?!${REFERENCE})[^\\s"']+`)
   .join('|');
 const SPACED_KEY = `\\b(?:(?:${SPACED_KEY_WORDS.join('|')})${WS}+key|pass${WS}*phrase)${KEY_QUOTE}${WS}*[:=]${WS}*`;
 
@@ -237,10 +280,11 @@ export const DEFAULT_PATTERNS: readonly RedactionPattern[] = [...BASE_PATTERNS, 
 
 /**
  * Redact every value under `data:` / `stringData:` when the text contains a Kubernetes Secret
- * (`oc get secret -o yaml|json`). Key names are kept, so the output stays useful.
+ * (`oc get secret -o yaml|json`), also in escaped JSON (`\"kind\":\"Secret\"`, `\"data\":{…}` in
+ * kubectl's last-applied-configuration annotation). Key names are kept, so the output stays useful.
  */
 export function redactSecretManifests(text: string): string {
-  if (!/["']?kind["']?[ \t]*:[ \t]*["']?Secret\b/.test(text)) return text;
+  if (!/(?:\\?["'])?kind(?:\\?["'])?[ \t]*:[ \t]*(?:\\?["'])?Secret\b/.test(text)) return text;
   // YAML: an indented block under data:/stringData:
   let out = text.replace(/^([ \t]*)(data|stringData):[ \t]*(\r?\n)((?:\1[ \t]+[^\r\n]*(?:\r?\n|$))+)/gm, (_m, indent: string, key: string, nl: string, block: string) => {
     const redacted = block.replace(/^([ \t]+[^\s:#][^:\r\n]*:[ \t]*)(?:\|[-+]?|>[-+]?)?[ \t]*(\S[^\r\n]*)?$/gm, (line: string, k: string, v?: string) =>
@@ -248,9 +292,13 @@ export function redactSecretManifests(text: string): string {
     );
     return `${indent}${key}:${nl}${redacted}`;
   });
-  // JSON: "data": { "k": "v", … }
-  out = out.replace(/("(?:data|stringData)"[ \t]*:[ \t]*\{)([^{}]*)(\})/g, (_m, open: string, body: string, close: string) =>
-    open + body.replace(/("[^"\r\n]+"[ \t]*:[ \t]*)"[^"]*"/g, `$1"${REDACTED}"`) + close,
+  // JSON: "data": { "k": "v", … }, and escaped: \"data\":{\"k\":\"v\"} (a value up to the \" that ends it)
+  out = out.replace(/(\\?"(?:data|stringData)\\?"[ \t]*:[ \t]*\{)([^{}]*)(\})/g, (_m, open: string, body: string, close: string) =>
+    open +
+    body.replace(/(\\?"(?:[^"\\\r\n]|\\[^"\r\n])+\\?"[ \t]*:[ \t]*)(?:"[^"]*"|\\"(?:[^"\\]|\\(?!"))*\\")/g, (m: string, key: string) =>
+      m.startsWith('\\', key.length) ? `${key}\\"${REDACTED}\\"` : `${key}"${REDACTED}"`,
+    ) +
+    close,
   );
   return out;
 }

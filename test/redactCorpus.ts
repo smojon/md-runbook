@@ -26,6 +26,7 @@ const KEYS = [
   'pass', 'Pass', 'PASS', 'bypass', 'compass', 'KC_PASS', '$env:KC_PASS', 'my-token', 'secrets', 'secretName', 'mysecret', 'secret2',
   '-secret', '.secret', '_token', 'a.b.password', 'pass.word', 'pwd_', 'x', 'name', 'user', 'key', 'kind', 'value', 'data', 'host',
   'passport', 'tokenizer', 'Secret-Key', '-.key', '.-key', 'a-.key', '_.key', 'secretFile', 'input', 'param',
+  'REDISCLI_AUTH', 'rediscli_auth_x', 'redisCli_Auth',
   // spaced key names (secret-key-value-spaced)
   'api key', 'API Key', 'secret  key', 'Secret\tKey', 'access key', 'private key', 'client key', 'app key', 'master key', 'account key',
   'encryption key', 'signing key', 'pass phrase', 'passphrase', 'Passphrase', 'xapi key', 'api keys', 'api monkey', 'my api key', 'api' + NBSP + 'key',
@@ -42,6 +43,8 @@ const VALUES = [
   'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig', 'eyJabcde.fghij', 'eyJabcd.efghi', 'eyJabcde.fghi', 'eyJ-eyJabcde.fghijk.', 'xeyJabcde.fghij', 'eyJabcdefgh',
   'sha256~abcdefghijklmnopqrstuvwxyz0123', '-dash', '--x', '-', '$', '%', '"', "'", '""', "''", '"$x"', "'%x'", '"a b"', "'a b'", '"unterminated',
   'bob%pw2', 'bob,pw3', 'u:pw4', 'pass:pw5', 'env:VAR', 'pw%', '%pw', ',pw',
+  // quoted credentials, literal `$` or `%` (third review of 0.30)
+  '"u:pw6"', "'u:pw 7'", '"u%pw8"', "'u,pw9'", '"pass:pw10"', "'pass:pw 11'", '"u:a\\"b"', '" u:x"', '"u: x"', "'$3cret'", '%3cret', '"%PW%"', "'%PW%'", '"$PW"', "'$PW'",
   '7f3a9c2e-55d1-4b8e-a0f2-9e8d7c6b5a41', 'admin:S3cret', 'user:p%40ss', ':', 'a:b:c', '=', '==', 'abc==', 'abcdefgh==', 'abc/def+ghi~jkl_', 'ABCDEFGHIJ',
   // backslashes: escaped quotes, escaped JSON, Windows paths
   'abc\\"def', 'a\\\\b', '\\', 'x\\', '\\"', "\\'", 'C:\\', '\\"hunter2\\"', '"a\\"b"', '"C:\\"', "'it\\'s'", '"a\\\r"', '\\"a\\\\\\"b\\"',
@@ -63,6 +66,11 @@ const FLAGS = [
   'time', 'env A=b', 'A=b', 'sudo -E', 'docker exec -it c', 'docker exec c', 'docker compose exec svc', 'kubectl exec p --', 'xexec', '"exec"',
   '/usr/bin/sshpass', './sshpass', 'C:\\T\\PsExec.exe', 'PsExec64.exe', 'sshpass.exe', 'sshpass.exex', 'PSEXEC', 'SCHTASKS', 'SchTasks /Create /RP',
   'CMDKEY', 'CMDKEY /PASS:', 'Cmdkey /Pass:', '/Rp', '/PASS:', 'mongo-1', 'mongo:7', 'app.zip', 'a.zip -P', '@zip', 'x/zip', '"a|b"', "'a;b'", '"x',
+  // prefixes, paths, wrappers, Redis (third review of 0.30)
+  '@sshpass -p', '\t-sshpass -p', '@-mongo', 'ExecStart=sshpass -p', 'exec:redis-cli -a', '--name=mongo -p', '-e HOST=mongo -p', 'ExecStart=/usr/bin/redis-cli',
+  '~/.ssh/mongo -p', 'ls /opt/mongo -p', 'ssh -i ~/.ssh/zip -P', 'sudo /usr/bin/sshpass', 'X=1 /usr/bin/sshpass', 'X="a b" /zip', '$(/usr/bin/mongo',
+  'sudo -E sshpass -p', 'env -i redis-cli -a', 'xsudo -E mongo -p', 'timeout --foreground', 'mysql -uroot -p', 'requirepass', 'masterauth', '--requirepass',
+  'CONFIG SET requirepass', 'xrequirepass', '-u "', "-U '", '-passin "pass:', 'smbclient -U"',
   'docker run -d --name mongo -p', 'ssh mongo-1 -p', 'grep -w', 'curl -k',
   // command segments (second review of 0.30): quotes, prompts, an option before a tool, continued lines
   '-c "', "-c '", 'sh -c "redis-cli -a', 'cmd /c "sqlcmd -P', '-h', '--name', '-it', '-oL', '-n 10', 'nohup', 'xargs', 'PS C:\\>', '{', '!',

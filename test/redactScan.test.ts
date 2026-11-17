@@ -198,6 +198,12 @@ const HOSTILE = [
   rep('-/mongo '),
   rep('A=/zip '),
   rep('mongo \\\n'),
+  // third review of 0.30: quoted user:pass, escaped Secret JSON, Redis flags (prefixes and paths: redactWiden.test.ts)
+  rep(' -u "a:\\"'),
+  ' -u "a:' + '\\"'.repeat(N / 2),
+  '"kind":"Secret",' + rep('\\"data\\":{\\"a\\":\\"'),
+  '"kind":"Secret","data":{' + rep('\\"a\\":\\"b\\\\'),
+  rep(' requirepass'),
 ];
 
 describe('redaction and the leak scan stay linear on 200,000-character lines', () => {

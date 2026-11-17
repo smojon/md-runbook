@@ -34,6 +34,7 @@ const SLASH = 47;
 const COLON = 58;
 const SEMI = 59;
 const EQ = 61;
+const AT = 64;
 const BACKSLASH = 92;
 const US = 95;
 const BACKTICK = 96;
@@ -255,6 +256,7 @@ const KEY_NAMES = [
   'client-key',
   'credential',
   '.key',
+  'rediscli_auth',
 ];
 const KEY_FIRST = new Set(KEY_NAMES.map((k) => k.charCodeAt(0)));
 /** `[\w.-]` */
@@ -390,6 +392,15 @@ export function quotedValueEnd(s: Scan, p: number): number {
   const q = s.c(p - 1);
   if (!isQuote(q)) return -1;
   if (s.c(p - 2) === BACKSLASH) return escapedValueEnd(s, p, q);
+  return quoteRestEnd(s, p, q);
+}
+
+/**
+ * From p in a quote q opened before it, the closing quote (QUOTE_REST in redact.ts), or -1 if
+ * there is no value: read with backslash escapes, else (a backslash before the line's end) up to
+ * the next q.
+ */
+function quoteRestEnd(s: Scan, p: number, q: number): number {
   let e = p;
   for (;;) {
     const c = s.c(e);
@@ -444,9 +455,11 @@ const quotedKeyValue = (s: Scan, p: number): number => quotedValueAfterKey(s, p,
 
 // --- secret-flag-value ---------------------------------------------------------------------------
 
-const FLAG_NAMES = ['password', 'passwd', 'pass', 'secret', 'client-secret', 'token', 'api-key', 'apikey', 'access-key', 'secret-key'];
+export const FLAG_NAMES = ['password', 'passwd', 'pass', 'secret', 'client-secret', 'token', 'api-key', 'apikey', 'access-key', 'secret-key', 'requirepass', 'masterauth'];
+/** Redis's password settings count without dashes too: `requirepass …` in redis.conf, `CONFIG SET requirepass …`. */
+export const BARE_FLAG_NAMES = ['requirepass', 'masterauth'];
 
-/** Does `(?:^|\s)--?(?:FLAG_NAMES)` end at j? */
+/** Does `(?:^|\s)(?:--?(?:FLAG_NAMES)|BARE_FLAG_NAMES)` end at j? */
 function secretFlagEndsAt(s: Scan, j: number): boolean {
   for (const name of FLAG_NAMES) {
     const d = j - name.length - 1;
@@ -454,22 +467,36 @@ function secretFlagEndsAt(s: Scan, j: number): boolean {
     if (d === 0 || isS(s.c(d - 1))) return true;
     if (s.c(d - 1) === DASH && (d === 1 || isS(s.c(d - 2)))) return true;
   }
+  for (const name of BARE_FLAG_NAMES) {
+    const d = j - name.length;
+    if (s.is(d, name) && (d === 0 || isS(s.c(d - 1)))) return true;
+  }
   return false;
 }
 
-/** `(?<=(?:^|\s)--?(?:FLAG_NAMES)[ \t]+)(?:"(?![$%])[^"\r\n]*"|'(?![$%])[^'\r\n]*'|(?![-$%])[^\s"']+)` */
+/**
+ * Is the value at p (FLAG_VALUE in redact.ts) a reference, not a secret? In "…" one that starts
+ * with `$` (the shell expands it) or REFERENCE; in '…' REFERENCE only (`'$3cret'` is literal);
+ * out of quotes one that starts with `-` or `$`, or REFERENCE (`%3cret` is a value, `%PW%` not).
+ */
+function flagValueIsReference(s: Scan, p: number): boolean {
+  const c = s.c(p);
+  if (c === DQ) return s.c(p + 1) === DOLLAR || isReference(s, p + 1);
+  if (c === SQ) return isReference(s, p + 1);
+  return c === DASH || c === DOLLAR || isReference(s, p);
+}
+
+/** `(?<=(?:^|\s)(?:--?(?:FLAG_NAMES)|BARE_FLAG_NAMES)[ \t]+)FLAG_VALUE` */
 function flagValue(s: Scan, p: number): number {
   const c = s.c(p);
   // Every value starts with no blank: inside a run of blanks, nothing is read back.
   if (!flagValueChar(c) && !isQuote(c)) return -1;
   if (!s.blank(s.c(p - 1)) || !secretFlagEndsAt(s, s.blanksBefore(p))) return -1;
+  if (flagValueIsReference(s, p)) return -1;
   if (isQuote(c)) {
-    const d = s.c(p + 1);
-    if (d === DOLLAR || d === PCT) return -1;
     const e = s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(p + 1);
     return s.c(e) === c ? e + 1 : -1;
   }
-  if (c === DASH || c === DOLLAR || c === PCT || !flagValueChar(c)) return -1;
   return s.runEnd(p, flagValueChar);
 }
 
@@ -485,16 +512,35 @@ function dashP(s: Scan, p: number, word: string, blanks: boolean): number {
 /** `[^\s:"']` */
 const userChar = (c: number): boolean => flagValueChar(c) && c !== COLON;
 
-/** `(?<=(?:^|\s)(?:-u|--user)[ \t]+[^\s:"']+:)[^\s"']+` */
+/**
+ * The rest of a quoted `user<sep>PASSWORD` from p, in the quote q before the user part, without
+ * the closing quote (QUOTED_REST in redact.ts), or -1: in "…" with backslash escapes, in '…' up
+ * to the next `'`. It doesn't start with a space.
+ */
+function quotedRestEnd(s: Scan, p: number, q: number): number {
+  const c = s.c(p);
+  if (c !== c || isS(c)) return -1;
+  if (q === DQ) return quoteRestEnd(s, p, q);
+  const e = s.next("q'", (x) => x === SQ || x === CR || x === LF).find(p);
+  return e > p && s.c(e) === SQ ? e : -1;
+}
+
+/** `(?<=(?:^|\s)(?:-u|--user)[ \t]+[^\s:"']+:)[^\s"']+`, or the user part in quotes and QUOTED_REST */
 function userPassword(s: Scan, p: number): number {
-  if (!flagValueChar(s.c(p)) || s.c(p - 1) !== COLON) return -1;
+  if (s.c(p - 1) !== COLON) return -1;
   let u = p - 1;
   while (u > 0 && userChar(s.c(u - 1))) u--;
-  if (u === p - 1 || !s.blank(s.c(u - 1))) return -1;
-  const v = s.blanksBefore(u);
+  if (u === p - 1) return -1;
+  const q = s.c(u - 1);
+  const quoted = isQuote(q);
+  const b = quoted ? u - 1 : u;
+  if (!s.blank(s.c(b - 1))) return -1;
+  const v = s.blanksBefore(b);
   const dashU = s.c(v - 2) === DASH && lower(s.c(v - 1)) === 117 && (v === 2 || isS(s.c(v - 3)));
   const dashUser = s.is(v - 6, '--user') && (v === 6 || isS(s.c(v - 7)));
-  return dashU || dashUser ? s.runEnd(p, flagValueChar) : -1;
+  if (!dashU && !dashUser) return -1;
+  if (quoted) return quotedRestEnd(s, p, q);
+  return flagValueChar(s.c(p)) ? s.runEnd(p, flagValueChar) : -1;
 }
 
 function secretFlag(s: Scan, p: number): number {
@@ -664,12 +710,12 @@ function separatedWide(s: Scan, p: number): number {
 /**
  * Tools that take a password after a flag, where that flag means the password (only those), and
  * how. `space`: the value follows blanks; `glued`: it follows the flag at once (getopt-style
- * tools). `split`: the value is `user<split>PASSWORD`, `prefix`: `<prefix>PASSWORD`. Left out on
- * purpose: `mysql -p` (covered by secret-flag-value), `-p NAME` of the MySQL tools (it asks for the
- * password, NAME is the database), `psql`, `pg_dump` and `ssh` (`-p` is the port), `psql -W` (asks),
- * `curl -u` (secret-flag-value), `docker`/`oc`/`podman login -p` (secret-flag-value). `anyCase`:
- * the tools and flags in any case (Windows). A tool counts where its name is a word of its own and
- * no option's value, and its flag only later in the same command segment (toolsBefore).
+ * tools). `split`: the value is `user<split>PASSWORD`, `prefix`: `<prefix>PASSWORD`, either one
+ * also in quotes (`-U "user%PASSWORD"`). Left out on purpose: `-p NAME` of the MySQL tools (it asks
+ * for the password, NAME is the database), `psql`, `pg_dump` and `ssh` (`-p` is the port), `psql -W`
+ * (asks), `curl -u` (secret-flag-value), `docker`/`oc`/`podman login -p` (secret-flag-value).
+ * `anyCase`: the tools and flags in any case (Windows). A tool counts where its name is a word of
+ * its own and no option's value, and its flag only later in the same command segment (toolsBefore).
  */
 export interface PasswordToolRule {
   tools: readonly string[];
@@ -684,9 +730,10 @@ export interface PasswordToolRule {
 export const PASSWORD_TOOLS: readonly PasswordToolRule[] = [
   // sshpass -p PASSWORD (getopt: -pPASSWORD too)
   { tools: ['sshpass'], flags: ['-p'], space: true, glued: true },
-  // MySQL/MariaDB tools: only -pPASSWORD (with a blank, -p asks and the next word is the database)
+  // MySQL/MariaDB tools: only -pPASSWORD (with a blank, -p asks and the next word is the database);
+  // mysql too, for -p'…' and -p"…" (secret-flag-value reads mysql's -pPASSWORD only out of quotes)
   {
-    tools: ['mysqldump', 'mysqladmin', 'mysqlimport', 'mysqlshow', 'mysqlcheck', 'mysqlpump', 'mysqlslap', 'mariadb', 'mariadb-dump', 'mariadb-admin'],
+    tools: ['mysql', 'mysqldump', 'mysqladmin', 'mysqlimport', 'mysqlshow', 'mysqlcheck', 'mysqlpump', 'mysqlslap', 'mariadb', 'mariadb-dump', 'mariadb-admin'],
     flags: ['-p'],
     glued: true,
   },
@@ -751,11 +798,30 @@ const TOOLS_RE = new RegExp([...TOOL_NAMES, 'htpasswd'].map((t) => t.replace(/[.
 
 /** `[^\S\r\n]`: a blank within a line (BL in redact.ts). */
 const isLineBlank = (c: number): boolean => isS(c) && c !== CR && c !== LF;
-/** `[\s"'(`{/\\]`: what a tool's name may follow, if it doesn't start its segment (TOOL_LEFT in redact.ts). */
-const toolLeft = (c: number): boolean =>
-  isS(c) || isQuote(c) || c === LPAREN || c === BACKTICK || c === LBRACE || c === SLASH || c === BACKSLASH;
+/** `[\s"'(`{]`: what a tool's name may follow out of quotes, if it doesn't start its segment (TOOL_LEFT in redact.ts). */
+const toolLeft = (c: number): boolean => isS(c) || isQuote(c) || c === LPAREN || c === BACKTICK || c === LBRACE;
 /** `[\s"']`: what may follow a tool's name. */
 const toolRight = (c: number): boolean => isS(c) || isQuote(c);
+/** `[^\s"'|;&(`{]`: a path's character out of quotes (PATH_CHAR). */
+const pathChar = (c: number): boolean => c === c && !toolLeft(c) && c !== PIPE && c !== SEMI && c !== AMP;
+/** `[\r\n|;&]`: what a segment starts after (out of quotes). */
+const segmentBreak = (c: number): boolean => c === CR || c === LF || c === PIPE || c === SEMI || c === AMP;
+
+/** Commands that run the next word as a command: an option after one doesn't take the next word as its value. */
+export const WRAPPERS = ['sudo', 'doas', 'env', 'time', 'xargs', 'nice', 'nohup', 'stdbuf', 'timeout'];
+
+/** Does `(?<![\w.-])(?:WRAPPERS)` end at x? */
+function wrapperEndsAt(s: Scan, x: number): boolean {
+  for (const w of WRAPPERS) if (s.has(x - w.length, w) && !keyChar(s.c(x - w.length - 1))) return true;
+  return false;
+}
+
+/** `[A-Za-z_][\w.-]*=[^\s"'|;&]*` (ASSIGN in redact.ts), a character at a time: 0 the name, 1 the value, 2 no. */
+function assignStep(state: number, c: number): number {
+  if (state === 0) return keyChar(c) ? 0 : c === EQ ? 1 : 2;
+  if (state === 1) return isQuote(c) || c === PIPE || c === SEMI || c === AMP ? 2 : 1;
+  return 2;
+}
 /** In toolsBefore's masks: this line break continues the segment (a `\` before it, out of quotes). */
 const CONTINUED = 1 << 30;
 
@@ -793,11 +859,27 @@ function optionStep(state: number, c: number): number {
 /** Is `flag` of `rule` at i (in any case for `anyCase`)? */
 const flagAt = (s: Scan, i: number, flag: string, rule: PasswordToolRule): boolean => (rule.anyCase ? s.is(i, flag) : s.has(i, flag));
 
+/** toolsBefore's character classes: a space, PATH_CHAR, TOOL_LEFT, `[\w.-]`, a segment break, `[A-Za-z_]`. */
+const C_SPACE = 1;
+const C_PATH = 2;
+const C_LEFT = 4;
+const C_KEY = 8;
+const C_BREAK = 16;
+const C_START = 32;
+const ASCII_CLASS = new Uint8Array(128).map((_, c) =>
+  (isS(c) ? C_SPACE : 0) | (pathChar(c) ? C_PATH : 0) | (toolLeft(c) ? C_LEFT : 0) | (keyChar(c) ? C_KEY : 0) | (segmentBreak(c) ? C_BREAK : 0) | (isAlpha(c) || c === US ? C_START : 0),
+);
+/** The classes of c (none for NaN, before or after the text). */
+const charClass = (c: number): number => (c < 128 ? ASCII_CLASS[c]! : c !== c ? 0 : isS(c) ? C_SPACE | C_LEFT : C_PATH);
+/** The last characters of the wrappers: a word that ends in another one is none. */
+const WRAPPER_LAST = new Set(WRAPPERS.map((w) => w.charCodeAt(w.length - 1)));
+
 /**
  * For each place i, the rules with a tool counted before it in its command segment (see redact.ts,
  * before toolRule), in one pass over the text: the segment (`|`, `;`, `&` out of quotes and line
- * breaks end it), the quotes, and the word before the blanks before i (an option or not). A line
- * break after `\` out of quotes continues the segment, and is marked CONTINUED (a flag may follow it).
+ * breaks end it), the quotes, the words before (an option, a wrapper such as `sudo`, `NAME=value`
+ * or none of these) and the path a name is in. A line break after `\` out of quotes continues the
+ * segment, and is marked CONTINUED (a flag may follow it).
  */
 function toolsBefore(s: Scan): Int32Array {
   let masks = s.toolMasks;
@@ -806,41 +888,91 @@ function toolsBefore(s: Scan): Int32Array {
   let present = 0;
   /** The rules with a tool counted in this segment. */
   let active = 0;
-  let segment = 0;
   /** The quote the scan is in (DQ or SQ), or 0. */
   let quote = 0;
   /** The next character is escaped in "…" (`\"`, `\\`). */
   let escaped = false;
   let continuedCR = false;
-  /** optionStep's state for the word being read, and whether the blanks being read follow an option. */
+  /**
+   * optionStep's and assignStep's states for the run of non-spaces being read; whether the blanks
+   * being read follow an option (not right after a wrapper), and whether the last run was a wrapper
+   * or `NAME=value`.
+   */
   let option = 0;
+  let assign = 2;
   let inWord = false;
   let afterOption = false;
-  /** The character at x and the one before (NaN before the text), and whether each is a space. */
+  let lastWrapper = false;
+  let lastAssign = false;
+  /** Only line blanks since the text's start, a line break, `|`, `;` or `&`. */
+  let afterBreak = true;
+  let segment = 0;
+  /**
+   * The word being read (from the segment's start or a space): where it starts, whether it is no
+   * option's value there, and the end of its `[A-Za-z_][\w.-]*` start (-1: none). Whether the path
+   * being read (a run of PATH_CHAR) is in command position.
+   */
+  let wordStart = -1;
+  let wordNov = false;
+  let keyEnd = -1;
+  let pathCommand = false;
+  /** The character at x and the one before (NaN before the text), and their classes. */
   let c = NaN;
-  let space = false;
+  let k = 0;
   let prev = NaN;
-  let prevSpace = false;
-  for (let x = 0; x < s.n; prev = c, prevSpace = space, x++) {
+  let prevK = 0;
+  for (let x = 0; x < s.n; prev = c, prevK = k, x++) {
     c = s.c(x);
-    space = isS(c);
+    k = charClass(c);
+    const space = (k & C_SPACE) !== 0;
+    /** No option and blanks right before x. */
+    const nov = !(afterOption && (prevK & C_SPACE) !== 0);
+    // A path starts at x: in command position at the segment's start (after blanks), after a quote,
+    // `(`, a backtick or `{`, or after a wrapper or `NAME=value`.
+    if ((k & C_PATH) !== 0 && (prevK & C_PATH) === 0) {
+      pathCommand =
+        prevK === 0 || (prevK & C_BREAK) !== 0 || ((prevK & C_LEFT) !== 0 && ((prevK & C_SPACE) === 0 || afterBreak || lastWrapper || lastAssign));
+    }
     const tools = c < 128 ? TOOLS_BY_FIRST[lower(c)] : undefined;
-    if (tools && (x === segment || toolLeft(prev)) && !(afterOption && prevSpace)) {
-      for (const t of tools) {
-        if (!(t.anyCase ? s.is(x, t.name) : s.has(x, t.name))) continue;
-        const end = x + t.name.length;
-        if (toolRight(s.c(end)) || (s.is(end, '.exe') && toolRight(s.c(end + 4)))) active |= t.bits;
+    if (tools) {
+      // Where a tool's name counts (see redact.ts, before toolRule). In quotes: after
+      // TOOL_LEFT_QUOTED, no option's value. Out of quotes: at the segment's start or after
+      // TOOL_LEFT, no option's value; after a prefix (`@`, `-`, `@-`, `-@`, `NAME=`, `NAME:`) that
+      // starts a word that is no option's value; after a path in command position.
+      let counts: boolean;
+      if (quote !== 0) counts = nov && ((prevK & C_LEFT) !== 0 || prev === SLASH || prev === BACKSLASH);
+      else if (x === segment || (prevK & C_LEFT) !== 0) counts = nov;
+      else if (prev === SLASH || prev === BACKSLASH) counts = pathCommand;
+      else if (prev === AT || prev === DASH) counts = wordNov && (wordStart === x - 1 || (wordStart === x - 2 && s.c(x - 2) === (prev === AT ? DASH : AT)));
+      else counts = (prev === EQ || prev === COLON) && wordNov && keyEnd === x - 1;
+      if (counts) {
+        for (const t of tools) {
+          if (!(t.anyCase ? s.is(x, t.name) : s.has(x, t.name))) continue;
+          const end = x + t.name.length;
+          if (toolRight(s.c(end)) || (s.is(end, '.exe') && toolRight(s.c(end + 4)))) active |= t.bits;
+        }
+        present |= active;
       }
-      present |= active;
     }
     masks[x] = active;
     if (space) {
-      if (inWord) afterOption = option === 2 || option === 4;
+      if (inWord) {
+        afterOption = (option === 2 || option === 4) && !lastWrapper;
+        lastWrapper = WRAPPER_LAST.has(prev) && wrapperEndsAt(s, x);
+        lastAssign = assign === 1;
+      }
       inWord = false;
     } else {
       option = optionStep(inWord ? option : 0, c);
+      assign = inWord ? assignStep(assign, c) : (k & C_START) !== 0 ? 0 : 2;
       inWord = true;
+      if (x === segment || (prevK & C_SPACE) !== 0) {
+        wordStart = x;
+        wordNov = nov;
+        keyEnd = (k & C_START) !== 0 ? x + 1 : -1;
+      } else if (keyEnd === x && (k & C_KEY) !== 0) keyEnd = x + 1;
     }
+    if (!space || (k & C_BREAK) !== 0) afterBreak = (k & C_BREAK) !== 0;
     if (escaped) {
       escaped = false;
       continue;
@@ -901,9 +1033,8 @@ function passwordTool(s: Scan, p: number): number {
   if (!flagValueChar(c) && !isQuote(c)) return -1;
   const before = s.c(p - 1);
   if (!s.blank(before) && !BEFORE_VALUE.has(before)) return -1;
-  // The value as secret-flag-value reads it: quoted (not a reference), or a word not starting with `-`, `$` or `%`.
-  const d = s.c(p + 1);
-  const valueOk = isQuote(c) ? d !== DOLLAR && d !== PCT : c !== DASH && c !== DOLLAR && c !== PCT;
+  /** The value as secret-flag-value reads it (FLAG_VALUE): no reference. Read once, when a rule needs it. */
+  let valueOk: boolean | undefined;
   /** Where the flag ends for a value at p: before the blanks, else at p (glued). */
   const flagEnd = s.blank(before) ? s.blanksBefore(p) : p;
   toolsBefore(s);
@@ -913,22 +1044,38 @@ function passwordTool(s: Scan, p: number): number {
     const rule = PASSWORD_TOOLS[bit]!;
     if (rule.split !== undefined) {
       // `user<split>PASSWORD`: the user part, then the separator right before p.
-      if (!flagValueChar(c) || s.c(p - 1) !== rule.split.charCodeAt(0)) continue;
+      if (s.c(p - 1) !== rule.split.charCodeAt(0)) continue;
       let u = p - 1;
       while (u > 0 && flagValueChar(s.c(u - 1)) && s.c(u - 1) !== s.c(p - 1)) u--;
       if (u === p - 1) continue;
+      const q = s.c(u - 1);
+      if (isQuote(q)) {
+        // In quotes: the flag before the quote, after blanks or glued; the value up to the closing quote.
+        if (!toolFlagBefore(s, u - 1, rule, bit)) continue;
+        const e = quotedRestEnd(s, p, q);
+        if (e >= 0) return e;
+        continue;
+      }
+      if (!flagValueChar(c)) continue;
       // After blanks, the user part is the whole run; glued, the run starts with the flag (a flag
       // follows a `\s`, so it can only start the run) and the user part is the rest.
-      const spaced = rule.space === true && s.blank(s.c(u - 1)) && toolFlagEndsAt(s, s.blanksBefore(u), rule, bit);
+      const spaced = rule.space === true && s.blank(q) && toolFlagEndsAt(s, s.blanksBefore(u), rule, bit);
       const glued = rule.glued === true && rule.flags.some((f) => u + f.length < p - 1 && flagAt(s, u, f, rule) && toolFlagEndsAt(s, u + f.length, rule, bit));
       if (spaced || glued) return s.runEnd(p, flagValueChar);
       continue;
     }
     if (rule.prefix !== undefined) {
       const at = p - rule.prefix.length;
-      if (flagValueChar(c) && s.has(at, rule.prefix) && toolFlagBefore(s, at, rule, bit)) return s.runEnd(p, flagValueChar);
+      if (!s.has(at, rule.prefix)) continue;
+      if (flagValueChar(c) && toolFlagBefore(s, at, rule, bit)) return s.runEnd(p, flagValueChar);
+      const q = s.c(at - 1);
+      if (isQuote(q) && toolFlagBefore(s, at - 1, rule, bit)) {
+        const e = quotedRestEnd(s, p, q);
+        if (e >= 0) return e;
+      }
       continue;
     }
+    valueOk ??= !flagValueIsReference(s, p);
     if (!valueOk || !(flagEnd < p ? rule.space === true : rule.glued === true) || !toolFlagEndsAt(s, flagEnd, rule, bit)) continue;
     if (isQuote(c)) {
       const e = s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(p + 1);
@@ -947,7 +1094,7 @@ function passwordTool(s: Scan, p: number): number {
  */
 function htpasswdBatch(s: Scan, p: number): number {
   const c = s.c(p);
-  if (!flagValueChar(c) || c === DASH || c === DOLLAR || c === PCT || !s.blank(s.c(p - 1))) return -1;
+  if (!flagValueChar(c) || c === DASH || c === DOLLAR || !s.blank(s.c(p - 1))) return -1;
   // htpasswd on the line before p (the words and blanks between hold no line break).
   if (s.wordEndOnLine('htpasswd', p) < 0) return -1;
   let end = s.blanksBefore(p);
@@ -967,7 +1114,7 @@ function htpasswdBatch(s: Scan, p: number): number {
     }
     if (letters && b && n === (nOption ? 1 : 2)) {
       const h = s.blanksBefore(start);
-      if (s.has(h - 8, 'htpasswd') && !isWord(s.c(h - 9))) return s.runEnd(p, flagValueChar);
+      if (s.has(h - 8, 'htpasswd') && !isWord(s.c(h - 9))) return isReference(s, p) ? -1 : s.runEnd(p, flagValueChar);
     }
     end = s.blanksBefore(start);
   }
@@ -1009,10 +1156,10 @@ export const LINEAR_FINDERS: ReadonlyMap<string, SpanFinder> = new Map([
   ['cookie-header', finder(cookieHeader, /cookie/i)],
   ['bearer-token', finder(bearer, /bearer/i)],
   ['jwt', finder(jwt, /eyJ/)],
-  ['secret-key-value-quoted', finder(quotedKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key/i)],
-  ['secret-key-value', finder(secretKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key/i)],
+  ['secret-key-value-quoted', finder(quotedKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key|rediscli_auth/i)],
+  ['secret-key-value', finder(secretKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key|rediscli_auth/i)],
   ['pass-key-value', finder(passKeyValue, /pass/i)],
-  ['secret-flag-value', finder(secretFlag, /-/)],
+  ['secret-flag-value', finder(secretFlag, /-|requirepass|masterauth/i)],
   ['keycloak-client-secret', finder(keycloakSecret, /secret/i)],
   // The widened ones (they read Unicode spaces as blanks).
   ['authorization-header-quoted', finder((s, p) => quotedHeader(s, p, 'authorization'), /authorization/i, isWideBlank)],
