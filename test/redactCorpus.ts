@@ -26,7 +26,7 @@ const KEYS = [
   'pass', 'Pass', 'PASS', 'bypass', 'compass', 'KC_PASS', '$env:KC_PASS', 'my-token', 'secrets', 'secretName', 'mysecret', 'secret2',
   '-secret', '.secret', '_token', 'a.b.password', 'pass.word', 'pwd_', 'x', 'name', 'user', 'key', 'kind', 'value', 'data', 'host',
   'passport', 'tokenizer', 'Secret-Key', '-.key', '.-key', 'a-.key', '_.key', 'secretFile', 'input', 'param',
-  'REDISCLI_AUTH', 'rediscli_auth_x', 'redisCli_Auth',
+  'REDISCLI_AUTH', 'rediscli_auth_x', 'redisCli_Auth', 'SSHPASS', 'sshpass', 'my_sshpass',
   // spaced key names (secret-key-value-spaced)
   'api key', 'API Key', 'secret  key', 'Secret\tKey', 'access key', 'private key', 'client key', 'app key', 'master key', 'account key',
   'encryption key', 'signing key', 'pass phrase', 'passphrase', 'Passphrase', 'xapi key', 'api keys', 'api monkey', 'my api key', 'api' + NBSP + 'key',
@@ -47,6 +47,8 @@ const VALUES = [
   '"u:pw6"', "'u:pw 7'", '"u%pw8"', "'u,pw9'", '"pass:pw10"', "'pass:pw 11'", '"u:a\\"b"', '" u:x"', '"u: x"', "'$3cret'", '%3cret', '"%PW%"', "'%PW%'", '"$PW"', "'$PW'",
   // references after user: in quotes (fourth review of 0.30)
   '"u:$PW"', "'u:$PW'", '"u:${secret:pw}"', "'u%${secret:pw}'", '"pass:%PW%"', '"u:$(cat f)"', '"u:${a}x"',
+  // a `\"` that closes its quote, a `${…}` user part (final review of 0.30)
+  '"C:\\x\\";', '"a\\" b"', "'p\\' x'", '"a\\"|', '"${input:U}:${secret:K}"', "'${U}:pw'", '"${a:b}:pw"', '"${a}x:pw"',
   '7f3a9c2e-55d1-4b8e-a0f2-9e8d7c6b5a41', 'admin:S3cret', 'user:p%40ss', ':', 'a:b:c', '=', '==', 'abc==', 'abcdefgh==', 'abc/def+ghi~jkl_', 'ABCDEFGHIJ',
   // backslashes: escaped quotes, escaped JSON, Windows paths
   'abc\\"def', 'a\\\\b', '\\', 'x\\', '\\"', "\\'", 'C:\\', '\\"hunter2\\"', '"a\\"b"', '"C:\\"', "'it\\'s'", '"a\\\r"', '\\"a\\\\\\"b\\"',
@@ -84,6 +86,9 @@ const FLAGS = [
   'sudo -uroot', 'sudo -u root -E', 'env -u', 'env -u x -i', 'nice -n', 'timeout -s KILL', 'timeout -k', 'stdbuf -o', 'stdbuf -oL', 'doas -u', '-u mongo',
   'ExecStart=-sshpass -p', 'ExecStart=@sshpass', 'X=-', 'X=@-zip', 'grep requirepass', '# requirepass', '#;requirepass', '; masterauth', '- requirepass',
   '-requirepass', 'config set', 'config  set masterauth', 'CONFIG get requirepass', 'xconfig set requirepass', 'set requirepass', '\n  - masterauth',
+  // htpasswd's options in several words, sshpass's own options (final review of 0.30)
+  'htpasswd -b -c f', 'htpasswd -c -b', 'htpasswd -B -b f u', 'htpasswd -n -b', 'htpasswd -bC 5 f', 'htpasswd -C', '-C 5', 'htpasswd -b "a b"',
+  'sshpass -e ssh', 'sshpass -f f', 'sshpass -P "x"', 'sshpass -d', '-f', '-e', '"sshpass"',
 ];
 const OTHER = [
   'eyJ', 'eyJhbGciOi', 'Bearer', 'bearer', 'BEARER', 'xBearer', '.', '-', '_', 'x', 'abc', 'a1', '://', 'https://user:pw@host/x', 'git://a:b@c',

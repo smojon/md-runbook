@@ -1,6 +1,7 @@
 /**
- * Secret redaction. Each pattern's whole match is replaced with [REDACTED]; patterns use
- * lookbehind/lookahead to keep surrounding context (e.g. "Authorization: [REDACTED]"). The
+ * Secret redaction. Each pattern's whole match is replaced with [REDACTED] (all patterns matched on
+ * the same text, the union replaced: createRedactor); patterns use lookbehind/lookahead to keep
+ * surrounding context (e.g. "Authorization: [REDACTED]"). The
  * regular expressions that backtrack quadratically are read by linear matchers that find exactly
  * the same (redactScan.ts); they stay here as the definition.
  */
@@ -17,21 +18,24 @@ export interface RedactionPattern {
   flags?: string;
 }
 
-const SECRET_KEYS =
-  'password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|privatekey|client[_-]?key|credentials?|\\.key|rediscli_auth';
+/** A key's closing quote, also escaped (`\"` in escaped JSON). */
+const KEY_QUOTE = `(?:\\\\?["'])?`;
+/**
+ * `sshpass` (the SSHPASS variable) counts before `=` only: `bash: sshpass: command not found` is
+ * no key and value.
+ */
+const SECRET_KEYS = `password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|privatekey|client[_-]?key|credentials?|\\.key|rediscli_auth|sshpass(?=[\\w.-]*${KEY_QUOTE}[ \\t]*=)`;
 
 // Placeholders and shell references (`${secret:X}`, `$(cmd)`, `$env:X`, `%X%`) are not values. A bare
 // `$NAME` is not exempt: the patterns are case-insensitive, so it could not be told from `$ecret`.
 // A backslash after one ends it only before a quote: `\"${secret:X}\"` in escaped JSON.
-const REFERENCE = '(?:\\$\\{[^}\\s]*\\}|\\$\\([^)\\r\\n]*\\)|\\$env:\\w+|%[A-Za-z_]\\w*%)(?![^\\s"\',;&\\\\]|\\\\(?!["\']))';
+const REFERENCE = '(?:\\$\\{[^}\\s"\']*\\}|\\$\\([^)\\r\\n]*\\)|\\$env:\\w+|%[A-Za-z_]\\w*%)(?![^\\s"\',;&\\\\]|\\\\(?!["\']))';
 /** A secret value may not be one of these words (e.g. `"token_type": "Bearer"`) or a reference. */
 const NOT_A_VALUE = `(?<!\\$\\{(?:secret|secretFile|input|param):)(?!(?:Bearer|Basic|Negotiate|true|false|null|none)\\b)(?!${REFERENCE})`;
 
 /** Marker pattern: redacts the values under `data:` / `stringData:` of Kubernetes Secret manifests. */
 const SECRET_MANIFESTS = 'k8s-secret-data';
 
-/** A key's closing quote, also escaped (`\"` in escaped JSON). */
-const KEY_QUOTE = `(?:\\\\?["'])?`;
 /** A key's value: a backslash before a quote (`\"` of escaped JSON) ends it. */
 const KEY_VALUE = `(?:[^\\s"',;&}\\\\]|\\\\(?!["']))+`;
 /**
@@ -39,22 +43,35 @@ const KEY_VALUE = `(?:[^\\s"',;&}\\\\]|\\\\(?!["']))+`;
  * reads it. A run of backslashes before q is read whole: 4m+3 of them are an escaped quote in the
  * value (`s3c\\\"ret`: the JSON was escaped twice), 4m+1 the value's 4m backslashes then the
  * closing `\"`, an even number a bare quote (no value). Before any other character, the run is in
- * the value.
+ * the value. The closing `\"` is followed by what may follow a string in JSON or a shell (ESC_CLOSES),
+ * else this is no escaped JSON and there is no value: it doesn't run on over a secret after it
+ * (`\"a b, sh -c '-token='x\"y'`).
  */
 const ESCAPED_VALUE = (q: string): string =>
-  `(?:[^${q}\\\\\\r\\n]|\\\\+(?=[^${q}\\\\\\r\\n])|(?:\\\\{4})*\\\\{3}${q}|(?:\\\\{4})+(?=\\\\${q}))+(?=\\\\${q})`;
+  `(?:[^${q}\\\\\\r\\n]|\\\\+(?=[^${q}\\\\\\r\\n])|(?:\\\\{4})*\\\\{3}${q}|(?:\\\\{4})+(?=\\\\${q}))+(?=\\\\${q}${ESC_CLOSES})`;
+/** `, : } ] ) ; & |`, a space, a quote, a backslash or the text's end. */
+const ESC_CLOSES = `(?:[,:}\\]);&|\\s"'\\\\]|$)`;
+/**
+ * What may follow a `\"` that closes its quote: `;`, `&`, `|`, a space or the text's end
+ * (`"C:\secrets\"; az login …`, a Windows path that ends in `\`). Before anything else, `\"` is an
+ * escaped quote (`"abc\"def"`).
+ */
+const CLOSES = `(?:[;&|\\s]|$)`;
+/**
+ * The rest of a value in "…" up to the closing quote: with backslash escapes (`"abc\"def"`), but a
+ * `\"` before CLOSES closes it; else (a backslash before the line's end) up to the next `"` as before.
+ */
+const DQ_REST = `(?:(?:[^"\\\\\\r\\n]|\\\\(?="${CLOSES})|\\\\(?!"${CLOSES})[^\\r\\n])+|[^"\\r\\n]+)(?=")`;
+/** In '…', no escapes (sh, PowerShell): up to the next `'`. */
+const SQ_REST = `[^'\\r\\n]+(?=')`;
 /**
  * A value in quotes after `key` (the look-behind's source up to the quote), as redactScan.ts
- * `quotedValueEnd` reads it: after `"` or `'`, with backslash escapes (`"abc\"def"`) up to the
- * closing quote, else up to the next quote as before; after `\"` or `\'` (escaped JSON), up to the
- * `\"` or `\'` that closes it (ESCAPED_VALUE).
+ * `quotedValueEnd` reads it: after `"` DQ_REST, after `'` SQ_REST; after `\"` or `\'` (escaped
+ * JSON), up to the `\"` or `\'` that closes it (ESCAPED_VALUE).
  */
 const quotedAfter = (key: string, notValue = ''): string =>
   ['"', "'"]
-    .flatMap((q) => [
-      `(?<=${key}${q})${notValue}(?:(?:[^${q}\\\\\\r\\n]|\\\\[^\\r\\n])+|[^${q}\\r\\n]+)(?=${q})`,
-      `(?<=${key}\\\\${q})${notValue}${ESCAPED_VALUE(q)}`,
-    ])
+    .flatMap((q) => [`(?<=${key}${q})${notValue}${q === '"' ? DQ_REST : SQ_REST}`, `(?<=${key}\\\\${q})${notValue}${ESCAPED_VALUE(q)}`])
     .join('|');
 /**
  * A flag's value: in "…" not starting with `$` (the shell expands it) or a REFERENCE; in '…' not
@@ -64,13 +81,15 @@ const quotedAfter = (key: string, notValue = ''): string =>
 const FLAG_VALUE = `(?:"(?!\\$)(?!${REFERENCE})[^"\\r\\n]*"|'(?!${REFERENCE})[^'\\r\\n]*'|(?![-$])(?!${REFERENCE})[^\\s"']+)`;
 /**
  * The rest of a quoted `user:PASSWORD` (or `pass:PASSWORD`) after the user part, up to the closing
- * quote: in "…" read with backslash escapes as quotedAfter does, in '…' up to the next `'`. It
- * doesn't start with a space, nor with a reference as FLAG_VALUE reads one (in "…" `$` too).
+ * quote, as quotedAfter reads it (DQ_REST, SQ_REST). It doesn't start with a space, nor with a
+ * reference as FLAG_VALUE reads one (in "…" `$` too).
  */
-const QUOTED_REST = (q: string): string =>
-  q === '"'
-    ? `(?!\\s)(?!\\$)(?!${REFERENCE})(?:(?:[^"\\\\\\r\\n]|\\\\[^\\r\\n])+|[^"\\r\\n]+)(?=")`
-    : `(?!\\s)(?!${REFERENCE})[^'\\r\\n]+(?=')`;
+const QUOTED_REST = (q: string): string => (q === '"' ? `(?!\\s)(?!\\$)(?!${REFERENCE})${DQ_REST}` : `(?!\\s)(?!${REFERENCE})${SQ_REST}`);
+/**
+ * The user part of a quoted `-u "user:PASSWORD"`: a whole `${…}` reference (`"${input:USER}:…"`,
+ * the colon inside it is no separator), or a word with no colon that isn't one.
+ */
+const QUOTED_USER = `(?:\\$\\{[^}\\s"']*\\}|(?!\\$\\{[^}\\s"']*\\}:)[^\\s:"']+)`;
 /** Where Redis's settings count without dashes (redactScan.ts BARE_FLAG_NAMES): a line's start, after blanks, `#`/`;` or `- `, or after `config set`. */
 const BARE_FLAG_START = '(?:(?:^|[\\r\\n])[ \\t]*(?:[#;]+[ \\t]*|-[ \\t]+)?|\\bconfig[ \\t]+set[ \\t]+)';
 const SECRET_KEY = `\\b[\\w.-]*(?:${SECRET_KEYS})[\\w.-]*${KEY_QUOTE}[ \\t]*[:=][ \\t]*`;
@@ -132,7 +151,7 @@ const BASE_PATTERNS: readonly RedactionPattern[] = [
       '|(?<=\\blogin\\b[^\\r\\n]*?\\s-p[ \\t]*)(?!-)[^\\s"\']+' +
       '|(?<=\\bmysql\\b[^\\r\\n]*?\\s-p)[^\\s"\']+' +
       '|(?<=(?:^|\\s)(?:-u|--user)[ \\t]+[^\\s:"\']+:)[^\\s"\']+' +
-      ['"', "'"].map((q) => `|(?<=(?:^|\\s)(?:-u|--user)[ \\t]+${q}[^\\s:"']+:)${QUOTED_REST(q)}`).join(''),
+      ['"', "'"].map((q) => `|(?<=(?:^|\\s)(?:-u|--user)[ \\t]+${q}${QUOTED_USER}:)${QUOTED_REST(q)}`).join(''),
     flags: 'i',
   },
   {
@@ -201,8 +220,11 @@ const BL = '[^\\S\\r\\n]';
  */
 /** Out of quotes: a character that neither ends a segment nor opens a quote. */
 const OUT_CHAR = `[^\\r\\n|;&"']`;
-/** In "…": a character, `\"` or `\\`, or a backslash before any other character. */
-const DQ_CHAR = `(?:[^"\\\\\\r\\n]|\\\\["\\\\]|\\\\(?=[^"\\\\\\r\\n]))`;
+/**
+ * In "…": a character, `\\`, `\"` (not before CLOSES: then the `"` closes, as in DQ_REST), or a
+ * backslash before any other character.
+ */
+const DQ_CHAR = `(?:[^"\\\\\\r\\n]|\\\\\\\\|\\\\"(?!${CLOSES})|\\\\(?=[^"\\\\\\r\\n]|"${CLOSES}))`;
 const SQ_CHAR = `[^'\\r\\n]`;
 const SEGMENT_ITEM = `(?:${OUT_CHAR}|"${DQ_CHAR}*"|'${SQ_CHAR}*')`;
 /** From out of quotes to a place in the same segment, maybe in a quote opened on the way. */
@@ -239,6 +261,16 @@ const PATH_CHAR = `[^\\s"'|;&(\`{]`;
 const ASSIGN = `(?<![^\\s])[A-Za-z_][\\w.-]*=[^\\s"'|;&]*`;
 /** Command position, for a path out of quotes: the segment's start (after blanks), a quote, `(`, a backtick, `{`, a wrapper (and its options) or `NAME=value`. */
 const COMMAND_LEFT = `(?<=(?:^|[\\r\\n|;&])${BL}*|["'(\`{]|${WRAPPER}|${ASSIGN}\\s+)`;
+/** A piece of a word among a tool's own options: a character but a space, quote, `|`, `;` or `&`, or a whole quote (`-P "Password:"`). */
+const OWN_W = `(?:[^\\s"'|;&]|"[^"\\r\\n]*"|'[^'\\r\\n]*')`;
+/**
+ * After a tool's name (PasswordToolRule `ownOptions`, redactScan.ts `ownOptionStarts`): its
+ * options, each after blanks: `-X` (X one of `letters`, the whole word) then blanks and its value,
+ * or another word that starts with `-`. Its flag counts only at the start of one of these, so not
+ * in the command it runs (`sshpass -e ssh -p 2222 host`).
+ */
+const ownOptionRun = (letters: string): string =>
+  `(?:${BL}+(?:-[${letters}]${BL}+${OWN_W}+|-(?![${letters}](?![^\\s|;&]))${OWN_W}*))*${BL}*`;
 /** `word` in any case: `[Ss][Cc]…` (the pattern has no i flag: `-p` and `-P` differ). */
 const anyCase = (word: string): string => word.replace(/[A-Za-z]/g, (c) => `[${c.toUpperCase()}${c.toLowerCase()}]`);
 const toolRule = (r: PasswordToolRule): string => {
@@ -255,12 +287,14 @@ const toolRule = (r: PasswordToolRule): string => {
     `|${pathNov}bin[/\\\\])${name}` +
     `|${pathNov}[/\\\\]${tools}\\.[Ee][Xx][Ee](?=[\\s"']))`;
   const quoted = `${TOOL_LEFT_QUOTED}${NOT_OPTION_VALUE}${name}`;
-  // The line's start, the segments before, then the tool out of quotes, in "…" or in '…', and on to a blank and the flag.
+  // The line's start, the segments before, then the tool out of quotes, in "…" or in '…', and on to
+  // a blank and the flag: anywhere later in the segment, or (ownOptions) among the tool's options.
+  const run = r.ownOptions === undefined ? undefined : ownOptionRun(r.ownOptions);
   const flag =
     `(?<![^\\r\\n])(?:${SEGMENT_ITEM}*[|;&])*` +
-    `(?:${out}${OUT_TO}` +
-    `|${SEGMENT_ITEM}*"${DQ_CHAR}*${quoted}${DQ_CHAR}*(?:"${OUT_TO})?` +
-    `|${SEGMENT_ITEM}*'${SQ_CHAR}*${quoted}${SQ_CHAR}*(?:'${OUT_TO})?)` +
+    (run === undefined
+      ? `(?:${out}${OUT_TO}` + `|${SEGMENT_ITEM}*"${DQ_CHAR}*${quoted}${DQ_CHAR}*(?:"${OUT_TO})?` + `|${SEGMENT_ITEM}*'${SQ_CHAR}*${quoted}${SQ_CHAR}*(?:'${OUT_TO})?)`
+      : `(?:${out}${run}|${SEGMENT_ITEM}*"${DQ_CHAR}*${quoted}"?${run}|${SEGMENT_ITEM}*'${SQ_CHAR}*${quoted}'?${run})`) +
     `${BL}(?:${r.flags.map(word).join('|')})`;
   const gap = r.space && r.glued ? `${WS}*` : r.space ? `${WS}+` : '';
   // `user<split>PASSWORD` or `<prefix>PASSWORD`: a word, or in quotes up to the closing one.
@@ -270,15 +304,30 @@ const toolRule = (r: PasswordToolRule): string => {
   if (r.prefix !== undefined) return credential(escapeRe(r.prefix));
   return `(?<=${flag}${gap})${FLAG_VALUE}`;
 };
-/** `htpasswd -b FILE USER PASSWORD`, `htpasswd -nb USER PASSWORD` (the options in one word). */
-const HTPASSWD = ['(?![A-Za-z]*n)', '(?=[A-Za-z]*n)']
-  .map((n, i) => `(?<=\\bhtpasswd${WS}+-(?=[A-Za-z]*b)${n}[A-Za-z]+${WS}+${i === 0 ? `[^\\s"']+${WS}+` : ''}[^\\s"']+${WS}+)(?![-$])(?!${REFERENCE})[^\\s"']+`)
-  .join('|');
+/*
+ * `htpasswd -b FILE USER PASSWORD`, `htpasswd -nb USER PASSWORD`: htpasswd reads its options with
+ * getopt (`cnmspdBbDi25C:r:v`), in one word or several (`-c -b`, `-bc`, `-B -b`); `-C` and `-r`
+ * take a value, the rest of their word or the next word (`-C 10`, `-bC10`). With `b` among them,
+ * the password is the word after FILE and USER (after USER with `n`), read as FLAG_VALUE (quoted or
+ * a word, references kept); FILE and USER may be quoted. redactScan.ts `htpasswdStarts` reads the
+ * same.
+ */
+/** An option letter of htpasswd's that takes no value (`C` and `r` take one). */
+const HT_LETTER = '[0-9A-BD-Za-qs-z]';
+/** An option word, then blanks. */
+const HT_OPTION = `-(?=[0-9A-Za-z])${HT_LETTER}*(?:[Cr](?:\\S+|${WS}+\\S+))?${WS}+`;
+/** FILE or USER, then blanks: in quotes, or a word that doesn't start with `-`. */
+const HT_ARG = `(?:"[^"\\r\\n]*"|'[^'\\r\\n]*'|[^\\s"'-][^\\s"']*)${WS}+`;
+/** One of the options (from their start) has `letter` before any value. */
+const htHas = (letter: string): string => `(?:${HT_OPTION})*-${HT_LETTER}*${letter}`;
+const HTPASSWD =
+  `(?<=\\bhtpasswd${WS}+(?=${htHas('b')})(?:(?!${htHas('n')})(?:${HT_OPTION})+${HT_ARG}|(?=${htHas('n')})(?:${HT_OPTION})+)${HT_ARG})` + FLAG_VALUE;
 const SPACED_KEY = `\\b(?:(?:${SPACED_KEY_WORDS.join('|')})${WS}+key|pass${WS}*phrase)${KEY_QUOTE}${WS}*[:=]${WS}*`;
 
 /**
- * Patterns added in 0.30 for what the ones above missed. They run after them (in the leak scan
- * too), so everything those find stays found as it was; each has a linear matcher (redactScan.ts).
+ * Patterns added in 0.30 for what the ones above missed. Only added: the redactor replaces the
+ * union of all matches, and the leak scan reports them after the others, so everything those find
+ * stays found; each has a linear matcher (redactScan.ts).
  */
 const WIDENED_PATTERNS: readonly RedactionPattern[] = [
   // "Authorization": "Basic …", Authorization: 'Bearer …', {"Cookie": "session=…"}: the value in its quotes.
@@ -370,6 +419,36 @@ export function patternFinder(p: string | RedactionPattern): SpanFinder {
   return (text) => [...text.matchAll(re)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
 }
 
+/**
+ * The union of `spans` (any order; empty ones dropped): sorted, and those that overlap or touch
+ * merged into one.
+ */
+export function mergeSpans(spans: Spans): Spans {
+  const sorted = spans.filter(([start, end]) => end > start).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const out: Spans = [];
+  for (const [start, end] of sorted) {
+    const last = out[out.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else out.push([start, end]);
+  }
+  return out;
+}
+
+/** The union of two sorted lists of spans that don't overlap among themselves, as mergeSpans gives it. */
+function unionSorted(a: Spans, b: Spans): Spans {
+  const out: Spans = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    const next = j >= b.length || (i < a.length && a[i]![0] <= b[j]![0]) ? a[i++]! : b[j++]!;
+    if (next[1] <= next[0]) continue;
+    const last = out[out.length - 1];
+    if (last && next[0] <= last[1]) last[1] = Math.max(last[1], next[1]);
+    else out.push([next[0], next[1]]);
+  }
+  return out;
+}
+
 /** `text` with every span (in order, not overlapping) but the empty ones replaced by REDACTED. */
 function replaceSpans(text: string, spans: Spans): string {
   if (spans.length === 0) return text;
@@ -383,8 +462,14 @@ function replaceSpans(text: string, spans: Spans): string {
   return out + text.slice(at);
 }
 
+/**
+ * Every pattern (yours too: each replaces its whole match) is matched on the same text, and the
+ * union of what they find is replaced, each merged span once (as redactLeaks does). Applied one
+ * after another, a long match of one pattern (a quoted value read too far) removed the key the
+ * next one needed, and that secret stayed.
+ */
 export function createRedactor(patterns: ReadonlyArray<string | RedactionPattern>): Redactor {
-  const steps: Array<(text: string) => string> = [];
+  const finders: SpanFinder[] = [];
   const errors: string[] = [];
   let manifests = false;
   for (const p of patterns) {
@@ -392,18 +477,9 @@ export function createRedactor(patterns: ReadonlyArray<string | RedactionPattern
       manifests = true;
       continue;
     }
-    const linear = LINEAR.get(patternKey(p));
-    if (linear) {
-      steps.push((text) => replaceSpans(text, linear(text)));
-      continue;
-    }
     try {
-      const re = compilePattern(p);
-      steps.push((text) => {
-        re.lastIndex = 0;
-        // Zero-length matches are left alone so a careless pattern can't splatter the text.
-        return text.replace(re, (m) => (m === '' ? m : REDACTED));
-      });
+      // Zero-length matches are left alone (mergeSpans) so a careless pattern can't splatter the text.
+      finders.push(patternFinder(p));
     } catch (e) {
       const label = typeof p === 'string' ? p : (p.name ?? p.pattern);
       errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
@@ -412,9 +488,17 @@ export function createRedactor(patterns: ReadonlyArray<string | RedactionPattern
   return {
     errors,
     redact(text: string): string {
-      let out = manifests ? redactSecretManifests(text) : text;
-      for (const step of steps) out = step(out);
-      return out;
+      const t = manifests ? redactSecretManifests(text) : text;
+      // Each finder's spans are in order and don't overlap (as matchAll finds them): merged in pairs.
+      let lists = finders.map((find) => find(t)).filter((l) => l.length > 0);
+      if (lists.length === 0) return t;
+      if (lists.length === 1) lists = [unionSorted(lists[0]!, [])];
+      while (lists.length > 1) {
+        const next: Spans[] = [];
+        for (let k = 0; k < lists.length; k += 2) next.push(k + 1 < lists.length ? unionSorted(lists[k]!, lists[k + 1]!) : lists[k]!);
+        lists = next;
+      }
+      return replaceSpans(t, lists[0]!);
     },
   };
 }

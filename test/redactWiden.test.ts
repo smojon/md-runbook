@@ -11,7 +11,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { LeakFinding, looksLikeSecret, scanForLeaks } from '@md-runbook/core/leaks';
-import { DEFAULT_PATTERNS, WIDENED_PATTERN_NAMES, createRedactor } from '@md-runbook/core/redact';
+import { DEFAULT_PATTERNS, WIDENED_PATTERN_NAMES, createRedactor, mergeSpans, patternFinder, redactSecretManifests } from '@md-runbook/core/redact';
 import { corpus, k8sCorpus, kubeCorpus } from './redactCorpus';
 
 const LINES = Number(process.env.WIDEN_CORPUS_LINES ?? 30_000);
@@ -22,7 +22,7 @@ const IDEO = String.fromCharCode(0x3000);
 
 const redactor = createRedactor(DEFAULT_PATTERNS);
 const before = createRedactor(DEFAULT_PATTERNS.filter((p) => !WIDENED_PATTERN_NAMES.has(p.name ?? '')));
-const widened = createRedactor(DEFAULT_PATTERNS.filter((p) => WIDENED_PATTERN_NAMES.has(p.name ?? '')));
+const beforeFinders = DEFAULT_PATTERNS.filter((p) => !WIDENED_PATTERN_NAMES.has(p.name ?? '')).map((p) => patternFinder(p));
 
 const kinds = (text: string): string[] => scanForLeaks(text).map((f) => f.kind);
 
@@ -169,6 +169,25 @@ describe('what the widened patterns catch', () => {
     ['Secret Key = "…"', 'Secret Key = "a b c"', `Secret Key = "${R}"`],
     ['access key', 'AWS access key: AKIAx', `AWS access key: ${R}`],
     ['passphrase', 'passphrase: s3cret', `passphrase: ${R}`],
+    // htpasswd: quoted passwords, options in several words, -C and its value (final review of 0.30)
+    ["htpasswd -b '…'", "htpasswd -b /etc/nginx/.htpasswd admin 'S3cretPw9'", `htpasswd -b /etc/nginx/.htpasswd admin ${R}`],
+    ['htpasswd -b "…"', 'htpasswd -b /etc/nginx/.htpasswd admin "S3cret Pw9"', `htpasswd -b /etc/nginx/.htpasswd admin ${R}`],
+    ["htpasswd -nb '…'", "htpasswd -nb admin 'S3cretPw9'", `htpasswd -nb admin ${R}`],
+    ['htpasswd -b -c', 'htpasswd -b -c f admin S3cretPw9', `htpasswd -b -c f admin ${R}`],
+    ['htpasswd -c -b', 'htpasswd -c -b f admin S3cretPw9', `htpasswd -c -b f admin ${R}`],
+    ['htpasswd -B -b', 'htpasswd -B -b f admin S3cretPw9', `htpasswd -B -b f admin ${R}`],
+    ['htpasswd -n -b', 'htpasswd -n -b admin S3cretPw9', `htpasswd -n -b admin ${R}`],
+    ['htpasswd -b -C 10', 'htpasswd -b -C 10 f admin S3cretPw9', `htpasswd -b -C 10 f admin ${R}`],
+    ['htpasswd -bC10', 'htpasswd -bC10 f admin S3cretPw9', `htpasswd -bC10 f admin ${R}`],
+    ['htpasswd, FILE and USER quoted', `htpasswd -cb "my dir/.htpasswd" 'a b' S3cretPw9`, `htpasswd -cb "my dir/.htpasswd" 'a b' ${R}`],
+    // sshpass: its own options only (final review of 0.30)
+    ['sshpass -f FILE -p', 'sshpass -f f -p S3cretPw9 ssh -p 22 h', `sshpass -f f -p ${R} ssh -p 22 h`],
+    ['sshpass -P "…" -p', 'sshpass -P "Password:" -p S3cretPw9 ssh h', `sshpass -P "Password:" -p ${R} ssh h`],
+    ['sshpass -pPASSWORD', 'sshpass -pS3cretPw9 ssh -p 22 h', `sshpass -p${R} ssh -p 22 h`],
+    ['"sshpass" -p', '"sshpass" -p S3cretPw9 ssh h', `"sshpass" -p ${R} ssh h`],
+    // the SSHPASS variable
+    ['SSHPASS=', 'export SSHPASS=S3cretPw9', `export SSHPASS=${R}`],
+    ["SSHPASS='…' sshpass -e", "SSHPASS='S3cretPw9' sshpass -e ssh h", `SSHPASS='${R}' sshpass -e ssh h`],
   ];
   for (const [name, input, expected] of cases) it(name, () => assert.equal(redactor.redact(input), expected));
 
@@ -235,6 +254,14 @@ describe('what the widened patterns catch', () => {
       'curl -U "u:$PW" -x p h',
       'smbclient -U "u%$PW" //h/s',
       "lftp -u 'u,%PW%' h",
+      // the command sshpass runs, htpasswd's -C value, sshpass in an error (final review of 0.30)
+      'sshpass -e ssh -p 2222 admin@host uptime',
+      'sshpass -e ssh host mkdir -p /opt/app',
+      'sshpass -f FILE ssh -p 2222 h',
+      'sshpass -d 3 scp -P 2222 f h:',
+      'htpasswd -Cb f admin x',
+      'htpasswd -b -c f',
+      'bash: sshpass: command not found',
     ]) {
       assert.equal(redactor.redact(s), before.redact(s), s);
       assert.deepEqual(kinds(s), scanForLeaks(s, { widened: false }).map((f) => f.kind), s);
@@ -281,8 +308,15 @@ function compare(text: string, added: Map<string, string[]>, where: string): voi
     else list.push('');
     added.set(g.kind, list);
   }
-  // The redactor: the widened patterns run on what the others left, so nothing they hid shows.
-  assert.equal(redactor.redact(text), widened.redact(before.redact(text)), where);
+  // The redactor replaces the union of every pattern's matches (createRedactor): each match of the
+  // patterns before 0.30 lies in one of the spans it replaces, so nothing they hid shows.
+  const t = redactSecretManifests(text);
+  const spans = mergeSpans(DEFAULT_PATTERNS.flatMap((p) => patternFinder(p)(t)));
+  for (const [start, end] of beforeFinders.flatMap((f) => f(t))) {
+    if (end === start) continue;
+    const i = spans.findIndex(([, e]) => e >= end);
+    if (i < 0 || spans[i]![0] > start) assert.fail(`${where}: [${start}, ${end}) not redacted in ${JSON.stringify(t.slice(0, 300))}`);
+  }
 }
 
 describe('only added: old findings and redactions kept', () => {
@@ -392,6 +426,19 @@ const HOSTILE = [
   'env -u' + rep(' a'),
   rep('A=-sshpass '),
   'curl' + rep(' -U "a:$'),
+  // final review of 0.30: htpasswd's options, sshpass's own options
+  rep('htpasswd -c '),
+  'htpasswd' + rep(' -b'),
+  rep(' -htpasswd'),
+  'htpasswd -b' + rep(' -C a'),
+  rep('htpasswd -b "a" '),
+  rep('htpasswd -b -C '),
+  rep(' -sshpass'),
+  'sshpass' + rep(' -e'),
+  'sshpass' + rep(' -f a'),
+  rep('sshpass -P "'),
+  rep('sshpass -P"a" '),
+  rep('SSHPASS'),
 ];
 
 describe('the widened patterns stay linear on 200,000-character lines', () => {

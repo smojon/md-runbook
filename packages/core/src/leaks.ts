@@ -5,7 +5,7 @@
  */
 
 import { beforeComment, isSpace, trimEndWith } from './lineText';
-import { DEFAULT_PATTERNS, REDACTED, WIDENED_PATTERN_NAMES, patternFinder } from './redact';
+import { DEFAULT_PATTERNS, REDACTED, WIDENED_PATTERN_NAMES, mergeSpans, patternFinder } from './redact';
 import { SpanFinder, Spans, findReferences } from './redactScan';
 
 export interface LeakScanOptions {
@@ -88,8 +88,15 @@ export function looksLikeSecret(text: string, at: number, end: number): boolean 
   return (v.length >= 6 && /[A-Za-z]/.test(v) && /[^A-Za-z]/.test(v)) || (v.length >= 12 && shannonEntropy(v) >= 3);
 }
 
+/** Does the value at `at` follow `requirepass` or `masterauth` (with or without dashes) and blanks? */
+function afterRedisSetting(text: string, at: number): boolean {
+  let i = at;
+  while (i > 0 && (text[i - 1] === ' ' || text[i - 1] === '\t')) i--;
+  return i < at && /(?:requirepass|masterauth)$/i.test(text.slice(Math.max(0, i - 11), i));
+}
+
 /** Values that are references, not secrets: `$TOKEN`, `${TOKEN}`, `$env:TOKEN`, `%TOKEN%`, `$(cmd)`. */
-const VARIABLE_REF = /^(?:(?:Bearer|Basic|token)\s+)?(?:\$\{?[A-Za-z_]\w*\}?|\$env:\w+|%\w+%|\$\(.*\)|\$\{(?:secret|input|param|out|secretFile):[\w:]+\})$/i;
+const VARIABLE_REF = /^(?:(?:Bearer|Basic|token)\s+)?(?:\$\{[A-Za-z_]\w*\}|\$[A-Za-z_]\w*|\$env:\w+|%\w+%|\$\(.*\)|\$\{(?:secret|input|param|out|secretFile):[\w:]+\})$/i;
 
 /**
  * Variable references anywhere in the text (never secrets): md-runbook's own `${secret:NAME}`,
@@ -453,12 +460,21 @@ function lastStartingBefore<T>(items: readonly T[], start: (t: T) => number, end
 }
 
 export function scanForLeaks(text: string, opts: LeakScanOptions = {}): LeakFinding[] {
+  return findLeaks(text, opts);
+}
+
+/**
+ * scanForLeaks; `secrets` (if given) gets every secret span found, also those that overlap a
+ * finding reported before them (each place is reported once).
+ */
+function findLeaks(text: string, opts: LeakScanOptions, secrets?: Spans): LeakFinding[] {
   // Findings and references don't overlap among themselves and are kept in text order, so the one
   // a span could overlap is the last that starts before its end (found by bisection: a line full of
   // findings and references stays fast).
   const spans: Span[] = [];
   const add = (offset: number, length: number, kind: string): void => {
     if (length <= 0) return;
+    if (secrets && kind !== 'internal-domain') secrets.push([offset, offset + length]);
     const i = lastStartingBefore(spans, (s) => s.offset, offset + length);
     const prev = spans[i];
     if (prev && prev.offset + prev.length > offset) return;
@@ -471,13 +487,13 @@ export function scanForLeaks(text: string, opts: LeakScanOptions = {}): LeakFind
   const skip = (m: string, at: number): boolean =>
     m.includes(REDACTED) || VARIABLE_REF.test(m.trim()) || inRef(at + (AUTH_SCHEME.exec(m)?.[0].length ?? 0));
 
-  const regexHits = (detectors: ReadonlyArray<Detector | PatternDetector>, accept?: (at: number, end: number) => boolean): void => {
+  const regexHits = (detectors: ReadonlyArray<Detector | PatternDetector>, accept?: (at: number, end: number, kind: string) => boolean): void => {
     for (const d of detectors) {
       if ('re' in d) d.re.lastIndex = 0;
       const found: Spans = 'find' in d ? d.find(text) : [...text.matchAll(d.re)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
       for (const [at, end] of found) {
         const m = text.slice(at, end);
-        if (m === '' || skip(m, at) || (accept && !accept(at, end))) continue;
+        if (m === '' || skip(m, at) || (accept && !accept(at, end, d.kind))) continue;
         // `-----BEGIN … PRIVATE KEY-----` with its body already redacted is harmless.
         if (d.kind === 'private-key' && m.startsWith('-----BEGIN') && REDACTED_AFTER.test(text.slice(end, end + 40))) continue;
         add(at, m.length, d.kind);
@@ -492,7 +508,9 @@ export function scanForLeaks(text: string, opts: LeakScanOptions = {}): LeakFind
   regexHits(CONTEXT_DETECTORS);
   spanHits(encodedSecrets(text));
   spanHits(k8sSecretValues(text));
-  regexHits(PATTERN_DETECTORS);
+  // Redis's settings are also read in prose ("requirepass and masterauth must match") and with
+  // placeholders (`requirepass ""`): their values count when they look like a secret.
+  regexHits(PATTERN_DETECTORS, (at, end, kind) => kind !== 'secret-flag-value' || !afterRedisSetting(text, at) || looksLikeSecret(text, at, end));
   for (const m of text.matchAll(TOKEN_RE)) {
     const at = m.index ?? 0;
     if (!isHighEntropyToken(m[0]) || overlapsRef(at, at + m[0].length)) continue;
@@ -526,12 +544,21 @@ export function scanForLeaks(text: string, opts: LeakScanOptions = {}): LeakFind
   });
 }
 
-/** Replace every finding except internal domains (not secrets; pseudonymization handles them) with [REDACTED]. */
+/**
+ * Replace every finding except internal domains (not secrets; pseudonymization handles them) with
+ * [REDACTED]: the union of all the secret spans found, as createRedactor does, so a finding that
+ * overlaps one reported before it still gets its whole span replaced.
+ */
 export function redactLeaks(text: string, opts: LeakScanOptions = {}): string {
-  const hits = scanForLeaks(text, opts).filter((f) => f.kind !== 'internal-domain');
-  let out = text;
-  for (const f of hits.reverse()) out = out.slice(0, f.offset) + REDACTED + out.slice(f.offset + f.length);
-  return out;
+  const secrets: Spans = [];
+  findLeaks(text, opts, secrets);
+  let out = '';
+  let at = 0;
+  for (const [start, end] of mergeSpans(secrets)) {
+    out += text.slice(at, start) + REDACTED;
+    at = end;
+  }
+  return out + text.slice(at);
 }
 
 /** One-line summary such as `2 high-entropy, 1 aws-access-key-id`. */

@@ -57,6 +57,13 @@ describe('scanForLeaks', () => {
   it('does not report the same span twice', () => {
     assert.deepEqual(kinds('token: AKIAABCDEFGHIJKLMNOP'), ['aws-access-key-id']);
   });
+
+  it("reports Redis's password settings only with a value that looks like a secret (final review of 0.30)", () => {
+    for (const s of ['requirepass ""', 'masterauth <master-password>', 'requirepass and masterauth must match', '--requirepass foobared']) assert.deepEqual(kinds(s), [], s);
+    assert.deepEqual(kinds('requirepass S3cretPW'), ['secret-flag-value']);
+    assert.deepEqual(kinds('redis-server --masterauth S3cretPW'), ['secret-flag-value']);
+    assert.deepEqual(kinds('--password foobared'), ['secret-flag-value']);
+  });
 });
 
 describe('redactLeaks', () => {

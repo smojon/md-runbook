@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { REFERENCE_RE, scanForLeaks } from '@md-runbook/core/leaks';
-import { DEFAULT_PATTERNS, REDACTED, compilePattern, createRedactor, patternFinder, redactSecretManifests } from '@md-runbook/core/redact';
+import { DEFAULT_PATTERNS, REDACTED, compilePattern, createRedactor, mergeSpans, patternFinder, redactSecretManifests } from '@md-runbook/core/redact';
 import { LINEAR_FINDERS, Spans, findReferences, isRegexSpace } from '@md-runbook/core/redactScan';
 import { corpus } from './redactCorpus';
 
@@ -21,11 +21,16 @@ const ROOT = path.join(__dirname, '..', '..');
 const LINEAR = DEFAULT_PATTERNS.filter((p) => LINEAR_FINDERS.has(p.name ?? ''));
 const byRegex = (re: RegExp, text: string): Spans => [...text.matchAll(re)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
 
-/** The redactor as it was: each pattern's regular expression in turn. */
+/** The redactor by the regular expressions: the union of what they all match, each merged span replaced once. */
 function regexRedact(text: string): string {
-  let out = redactSecretManifests(text);
-  for (const p of DEFAULT_PATTERNS) out = out.replace(compilePattern(p), (m) => (m === '' ? m : REDACTED));
-  return out;
+  const t = redactSecretManifests(text);
+  let out = '';
+  let at = 0;
+  for (const [start, end] of mergeSpans(DEFAULT_PATTERNS.flatMap((p) => byRegex(compilePattern(p), t)))) {
+    out += t.slice(at, start) + REDACTED;
+    at = end;
+  }
+  return out + t.slice(at);
 }
 
 const show = (text: string): string => JSON.stringify(text.length > 400 ? text.slice(0, 400) + '…' : text);
@@ -209,6 +214,14 @@ const HOSTILE = [
   rep('config set requirepass '),
   rep(' config set'),
   rep(' -u "a:$'),
+  // final review of 0.30: quotes that a `\"` closes, a `${…}` user part
+  rep('password="a\\" '),
+  rep('password="\\"\\"'),
+  rep('"a\\";'),
+  rep(' -u "${a:'),
+  rep(' -u "${a}:'),
+  ' -u "${' + 'a'.repeat(N),
+  rep('sshpass='),
 ];
 
 describe('redaction and the leak scan stay linear on 200,000-character lines', () => {

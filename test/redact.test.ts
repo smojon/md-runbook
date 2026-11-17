@@ -37,7 +37,8 @@ describe('default redaction patterns', () => {
     ['escaped JSON header', '{\\"Authorization\\":\\"Basic dXNlcjpwYXNz\\"}', `{\\"Authorization\\":\\"${R}\\"}`],
     // an escaped quote inside a quoted value
     ['escaped quote in a value', '{"password": "abc\\"defgh"}', `{"password": "${R}"}`],
-    ['escaped quote in single quotes', "token: 'it\\'s-a-secret'", `token: '${R}'`],
+    // in '…' a backslash escapes nothing (sh, PowerShell): `'C:\keys\'` ends at its quote (final review of 0.30)
+    ['backslash at the end in single quotes', "token: 'C:\\keys\\' next", `token: '${R}' next`],
     ['backslash before the line end', 'password = "pa ss\\"', `password = "${R}"`],
     ['escaped backslash at the end', '"secret": "abc\\\\", "x": 1', `"secret": "${R}", "x": 1`],
     // JSON escaped twice: `\\\"` is a quote in the value, `\\\\\"` a backslash then the end (second review of 0.30)
@@ -102,6 +103,62 @@ describe('custom patterns', () => {
 
   it('ignores zero-length matches', () => {
     assert.equal(createRedactor(['a*']).redact('bab'), `b${R}b`);
+  });
+
+  it('match the same text as the built-in ones, and what overlaps is replaced once', () => {
+    const c = createRedactor([...DEFAULT_PATTERNS, '\\bword=\\S+', 'hunter']);
+    assert.equal(c.redact('password=hunter2 word=x'), `password=${R} ${R}`);
+    assert.equal(c.redact('xhunter'), `x${R}`);
+  });
+});
+
+describe('a quoted value that ends in a backslash (final review of 0.30)', () => {
+  const B = '\\';
+  const cases: Array<[string, string]> = [
+    [`export DB_PASSWORD='p4ss${B}' DB_PASS='S3cretPw9'`, `export DB_PASSWORD='${R}' DB_PASS='${R}'`],
+    [`$secretsDir = "C:${B}secrets${B}"; az login --password "S3cretPw9"`, `$secretsDir = "${R}"; az login --password ${R}`],
+    [`PGPASSWORD='ab${B}' psql --password 'S3cretPw9'`, `PGPASSWORD='${R}' psql --password ${R}`],
+    [`$env:TOKEN_DIR = "C:${B}tokens${B}"; $env:DB_PASS = "Hunter2secret"`, `$env:TOKEN_DIR = "${R}"; $env:DB_PASS = "${R}"`],
+    [`password="ab${B}" token="xyz12345"`, `password="${R}" token="${R}"`],
+    [`password: 'ab${B}' # then kc_pass: 'S3cretPw9'`, `password: '${R}' # then kc_pass: '${R}'`],
+    [`mytool --password "abc${B}" | x --token "S3cretPw9"`, `mytool --password ${R} | x --token ${R}`],
+    // `\"` before anything else is still an escaped quote
+    [`{"password": "abc${B}"defgh"}`, `{"password": "${R}"}`],
+    [`{${B}"password${B}":${B}"x${B}"}`, `{${B}"password${B}":${B}"${R}${B}"}`],
+  ];
+  for (const [input, expected] of cases) it(input, () => assert.equal(r.redact(input), expected));
+
+  // Each kind of secret after a value that ends in a backslash: the first secret and the second both hidden.
+  const firsts = [`$secretsDir = "C:${B}secrets${B}"; `, `export DB_PASSWORD='p4ss${B}' `, `PGPASSWORD='ab${B}' `, `password="ab${B}" `, `API_KEY='abc${B}' `, `DB_PASS="ab${B}" ; `];
+  const seconds: Array<[string, string]> = [
+    ["DB_PASS='S3cretPw9'", 'S3cretPw9'],
+    ['API_TOKEN="S3cretPw9"', 'S3cretPw9'],
+    ['client_secret: S3cretPw9', 'S3cretPw9'],
+    ['az login --password "S3cretPw9"', 'S3cretPw9'],
+    ["curl -u 'admin:S3cretPw9' https://x", 'S3cretPw9'],
+    ['curl -u admin:S3cretPw9 https://x', 'S3cretPw9'],
+    ["curl -H 'Authorization: Basic dXNlcjpTM2NyZXRQdzk='", 'dXNlcjpTM2NyZXRQdzk'],
+    ["echo 'Cookie: session=S3cretPw9'", 'S3cretPw9'],
+    ['curl -H "X: Bearer S3cretPw9.abc"', 'S3cretPw9'],
+    ['git clone https://u:S3cretPw9@h/x', 'S3cretPw9'],
+    ['sshpass -p S3cretPw9 ssh h', 'S3cretPw9'],
+    ['redis-cli -a S3cretPw9 ping', 'S3cretPw9'],
+    ['htpasswd -b f admin S3cretPw9', 'S3cretPw9'],
+    ['mysql -pS3cretPw9 db', 'S3cretPw9'],
+    ['echo "api key: S3cretPw9"', 'S3cretPw9'],
+    ['echo ghp_abcdefghijklmnopqrstuvwxyz0123456789', 'ghp_'],
+    ['echo AKIAIOSFODNN7EXAMPLE', 'AKIA'],
+    ['echo eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig', 'eyJ'],
+    ['echo \'{"type":"secret","value":"S3cretPw9"}\'', 'S3cretPw9'],
+  ];
+  it('then a second secret of each kind', () => {
+    for (const first of firsts) {
+      for (const [second, secret] of seconds) {
+        const out = r.redact(first + second);
+        assert.ok(!out.includes(secret), `${first + second} -> ${out}`);
+        assert.ok(!/p4ss|ab\\|abc\\|C:\\secrets/.test(out), `${first + second} -> ${out}`);
+      }
+    }
   });
 });
 
@@ -202,6 +259,11 @@ describe('redaction of real-world IAM/OpenShift output', () => {
   });
 });
 
+it('redacts the password after a `${…}` user part (final review of 0.30)', () => {
+  assert.equal(r.redact('curl -u "${input:USER}:S3cretPw9" https://api'), `curl -u "\${input:USER}:${R}" https://api`);
+  assert.equal(r.redact('curl -u "${USER}:S3cretPw9" https://api'), `curl -u "\${USER}:${R}" https://api`);
+});
+
 it('key=value redaction leaves references intact', () => {
   const r = createRedactor(DEFAULT_PATTERNS);
   assert.equal(r.redact('client_secret=${secret:KC}'), 'client_secret=${secret:KC}');
@@ -240,6 +302,9 @@ it('key=value redaction leaves references intact', () => {
     'curl -u "admin:${secret:pw}" https://x',
     "curl -u 'admin:${secret:pw}' https://x",
     'curl --user "admin:%PW%" https://x',
+    // a whole `${…}` user part, its colon no separator (final review of 0.30)
+    'curl -u "${input:USER}:${secret:API_KEY}" https://api',
+    "curl -u '${input:USER}:${secret:API_KEY}' https://api",
   ]) {
     assert.equal(r.redact(s), s, s);
   }

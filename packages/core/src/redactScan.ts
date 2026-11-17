@@ -98,6 +98,10 @@ export class Scan {
   /** password-flag-tool: the rules each place is in a command of (toolsBefore), and those anywhere. */
   toolMasks: Int32Array | undefined;
   toolsPresent = 0;
+  /** password-flag-tool: where a rule with `ownOptions` may have its flag (ownOptionStarts). */
+  ownStarts: Int32Array | undefined;
+  /** password-flag-tool: where htpasswd's password starts (htpasswdStarts). */
+  htpasswd: Uint8Array | undefined;
   /** `blank`: what `[ 	]` reads (the widened patterns read every space but line ends). */
   constructor(
     readonly t: string,
@@ -258,14 +262,23 @@ const KEY_NAMES = [
   'credential',
   '.key',
   'rediscli_auth',
+  'sshpass',
 ];
 const KEY_FIRST = new Set(KEY_NAMES.map((k) => k.charCodeAt(0)));
 /** `[\w.-]` */
 const keyChar = (c: number): boolean => isWord(c) || c === DOT || c === DASH;
 
+/** Is the separator after the key that ends at k (`(?:\\?["'])?[ \t]*`, then it) a `=`? */
+function equalsAfterKey(s: Scan, k: number): boolean {
+  let j = k;
+  if (s.c(j) === BACKSLASH && isQuote(s.c(j + 1))) j += 2;
+  else if (isQuote(s.c(j))) j++;
+  return s.c(s.runEnd(j, s.blank)) === EQ;
+}
+
 /**
  * Does `\b[\w.-]*(?:SECRET_KEYS)[\w.-]*` end at k? The run of `[\w.-]` that ends at k must hold a
- * key name, with a word boundary at or before the last one's start.
+ * key name, with a word boundary at or before the last one's start (`sshpass` only before `=`).
  */
 function secretKeyEndsAt(s: Scan, k: number): boolean {
   let r0 = k;
@@ -276,6 +289,7 @@ function secretKeyEndsAt(s: Scan, k: number): boolean {
     if (!KEY_FIRST.has(lower(s.c(i)))) continue;
     for (const name of KEY_NAMES) {
       if (i + name.length <= k && s.is(i, name)) {
+        if (name === 'sshpass' && !equalsAfterKey(s, k)) continue;
         last = i;
         break;
       }
@@ -308,7 +322,7 @@ function isReference(s: Scan, p: number): boolean {
   if (c === DOLLAR) {
     const d = s.c(p + 1);
     if (d === LBRACE) {
-      const e = s.next('ref{', (x) => x === RBRACE || isS(x)).find(p + 2);
+      const e = s.next('ref{', (x) => x === RBRACE || isS(x) || isQuote(x)).find(p + 2);
       return s.c(e) === RBRACE && referenceEndsAt(s, e + 1);
     }
     if (d === LPAREN) {
@@ -385,9 +399,8 @@ function keyValue(s: Scan, p: number, keyEndsAt: (s: Scan, k: number) => boolean
 }
 
 /**
- * The end of the quoted value that starts at p (QUOTED_VALUE in redact.ts), or -1. After `"` or
- * `'`: read with backslash escapes up to the closing quote, else (a backslash before the line's
- * end) up to the next quote as before. After `\"` or `\'` (escaped JSON): up to `\"` or `\'`.
+ * The end of the quoted value that starts at p (quotedAfter in redact.ts), or -1. After `"` or
+ * `'`: quoteRestEnd. After `\"` or `\'` (escaped JSON): up to `\"` or `\'`.
  */
 export function quotedValueEnd(s: Scan, p: number): number {
   const q = s.c(p - 1);
@@ -396,25 +409,38 @@ export function quotedValueEnd(s: Scan, p: number): number {
   return quoteRestEnd(s, p, q);
 }
 
+/** CLOSES (redact.ts) at i: `;`, `&`, `|`, a space or the text's end, after a `\"` that closes its quote. */
+export function closesAt(s: Scan, i: number): boolean {
+  const c = s.c(i);
+  return c !== c || c === SEMI || c === AMP || c === PIPE || isS(c);
+}
+
 /**
- * From p in a quote q opened before it, the closing quote (QUOTE_REST in redact.ts), or -1 if
- * there is no value: read with backslash escapes, else (a backslash before the line's end) up to
- * the next q.
+ * From p in a quote q opened before it, the closing quote (DQ_REST and SQ_REST in redact.ts), or
+ * -1 if there is no value. In '…' the next `'` (no escapes, as in sh and PowerShell). In "…" read
+ * with backslash escapes, but a `\"` before CLOSES closes it (`"C:\secrets\"; …`); else (a
+ * backslash before the line's end) up to the next `"`.
  */
 function quoteRestEnd(s: Scan, p: number, q: number): number {
-  let e = p;
-  for (;;) {
-    const c = s.c(e);
-    if (c !== c || c === CR || c === LF || c === q) break;
-    if (c !== BACKSLASH) {
-      e++;
-      continue;
+  if (q === DQ) {
+    let e = p;
+    for (;;) {
+      const c = s.c(e);
+      if (c !== c || c === CR || c === LF || c === DQ) break;
+      if (c !== BACKSLASH) {
+        e++;
+        continue;
+      }
+      const d = s.c(e + 1);
+      if (d !== d || d === CR || d === LF) break;
+      if (d === DQ && closesAt(s, e + 2)) {
+        e++;
+        break;
+      }
+      e += 2;
     }
-    const d = s.c(e + 1);
-    if (d !== d || d === CR || d === LF) break;
-    e += 2;
+    if (e > p && s.c(e) === DQ) return e;
   }
-  if (e > p && s.c(e) === q) return e;
   const f = s.next(q === DQ ? 'q"' : "q'", (c) => c === q || c === CR || c === LF).find(p);
   return f > p && s.c(f) === q ? f : -1;
 }
@@ -423,7 +449,8 @@ function quoteRestEnd(s: Scan, p: number, q: number): number {
  * The end of a value after `\"` or `\'` (escaped JSON, ESCAPED_VALUE in redact.ts): up to the `\"`
  * that closes it, or -1. A run of k backslashes before the quote: k = 1, 5, 9… is a closing `\"`
  * (after (k-1)/2 escaped backslashes, an even number), k = 3, 7… an escaped quote in the value
- * (`s3c\\\"ret`), an even k a bare quote (the string around ends: no value).
+ * (`s3c\\\"ret`), an even k a bare quote (the string around ends: no value). The closing `\"` must
+ * be followed by ESC_CLOSES (escClosesAt), else there is no value.
  */
 function escapedValueEnd(s: Scan, p: number, q: number): number {
   for (let e = p; ; ) {
@@ -438,9 +465,15 @@ function escapedValueEnd(s: Scan, p: number, q: number): number {
     if (d !== d || d === CR || d === LF) return -1;
     if (d !== q) e = r;
     else if ((r - e) % 4 === 3) e = r + 1;
-    else if ((r - e) % 4 === 1) return r - 1 > p ? r - 1 : -1;
+    else if ((r - e) % 4 === 1) return r - 1 > p && escClosesAt(s, r + 1) ? r - 1 : -1;
     else return -1;
   }
+}
+
+/** ESC_CLOSES (redact.ts) at i: `, : } ] ) ; & |`, a space, a quote, a backslash or the text's end. */
+function escClosesAt(s: Scan, i: number): boolean {
+  const c = s.c(i);
+  return c !== c || isS(c) || isQuote(c) || c === BACKSLASH || c === COMMA || c === COLON || c === RBRACE || c === 93 || c === RPAREN || c === SEMI || c === AMP || c === PIPE;
 }
 
 /** `(?<=KEY(?:\\?["'])?[ \t]*[:=][ \t]*)NOT_A_VALUE` then QUOTED_VALUE (redact.ts), for the quote before p. */
@@ -550,11 +583,32 @@ function quotedRestEnd(s: Scan, p: number, q: number): number {
   return e > p && s.c(e) === SQ ? e : -1;
 }
 
-/** `(?<=(?:^|\s)(?:-u|--user)[ \t]+[^\s:"']+:)[^\s"']+`, or the user part in quotes and QUOTED_REST */
+/** `[^}\s"']`: a character of a `${…}` user part (QUOTED_USER in redact.ts). */
+const refUserChar = (c: number): boolean => flagValueChar(c) && c !== RBRACE;
+
+/** Does `\$\{[^}\s"']*\}:` start at u? */
+function refUserColonAt(s: Scan, u: number): boolean {
+  if (s.c(u) !== DOLLAR || s.c(u + 1) !== LBRACE) return false;
+  const r = s.next('refUser', (c) => !refUserChar(c)).find(u + 2);
+  return s.c(r) === RBRACE && s.c(r + 1) === COLON;
+}
+
+/**
+ * `(?<=(?:^|\s)(?:-u|--user)[ \t]+[^\s:"']+:)[^\s"']+`, or the user part in quotes (QUOTED_USER:
+ * a whole `${…}`, or a word with no colon that isn't one) and QUOTED_REST
+ */
 function userPassword(s: Scan, p: number): number {
   if (s.c(p - 1) !== COLON) return -1;
   let u = p - 1;
   while (u > 0 && userChar(s.c(u - 1))) u--;
+  // `"${input:USER}:…"`: the colon in the reference is no separator.
+  if (u < p - 1 && isQuote(s.c(u - 1)) && refUserColonAt(s, u)) u = p - 1;
+  if (s.c(p - 2) === RBRACE) {
+    // A whole `${…}` user part in quotes.
+    let r = p - 2;
+    while (r > 0 && refUserChar(s.c(r - 1))) r--;
+    if (isQuote(s.c(r - 1)) && s.c(r) === DOLLAR && s.c(r + 1) === LBRACE) u = r;
+  }
   if (u === p - 1) return -1;
   const q = s.c(u - 1);
   const quoted = isQuote(q);
@@ -750,11 +804,17 @@ export interface PasswordToolRule {
   split?: string;
   prefix?: string;
   anyCase?: boolean;
+  /**
+   * The flag counts only among the tool's own options, right after its name (ownOptionStarts):
+   * for a tool that runs a command, whose options are not its own. The letters of its options that
+   * take a value (the next word).
+   */
+  ownOptions?: string;
 }
 
 export const PASSWORD_TOOLS: readonly PasswordToolRule[] = [
-  // sshpass -p PASSWORD (getopt: -pPASSWORD too)
-  { tools: ['sshpass'], flags: ['-p'], space: true, glued: true },
+  // sshpass -p PASSWORD (getopt: -pPASSWORD too), before the command it runs (`ssh -p 2222` is a port)
+  { tools: ['sshpass'], flags: ['-p'], space: true, glued: true, ownOptions: 'fdpP' },
   // MySQL/MariaDB tools: only -pPASSWORD (with a blank, -p asks and the next word is the database);
   // mysql too, for -p'…' and -p"…" (secret-flag-value reads mysql's -pPASSWORD only out of quotes)
   {
@@ -913,6 +973,8 @@ const ASCII_CLASS = new Uint8Array(128).map((_, c) =>
 const charClass = (c: number): number => (c < 128 ? ASCII_CLASS[c]! : c !== c ? 0 : isS(c) ? C_SPACE | C_LEFT : C_PATH);
 /** The last characters of the wrappers: a word that ends in another one is none. */
 const WRAPPER_LAST = new Set(WRAPPERS.map((w) => w.charCodeAt(w.length - 1)));
+/** The rules (bits) with `ownOptions`. */
+const OWN_BITS = PASSWORD_TOOLS.reduce((m, r, bit) => (r.ownOptions !== undefined ? m | (1 << bit) : m), 0);
 
 /**
  * For each place i, the rules with a tool counted before it in its command segment (see redact.ts,
@@ -926,6 +988,8 @@ function toolsBefore(s: Scan): Int32Array {
   if (masks) return masks;
   masks = new Int32Array(s.n + 1);
   let present = 0;
+  /** For ownOptionStarts: each counted name of a rule with `ownOptions` (its end, the rules, the quote it is in). */
+  const ownRuns: number[] = [];
   /** The rules with a tool counted in this segment. */
   let active = 0;
   /** The quote the scan is in (DQ or SQ), or 0. */
@@ -1007,7 +1071,10 @@ function toolsBefore(s: Scan): Int32Array {
         for (const t of tools) {
           if (!(t.anyCase ? s.is(x, t.name) : s.has(x, t.name))) continue;
           const end = x + t.name.length;
-          if ((!exeOnly && toolRight(s.c(end))) || (s.is(end, '.exe') && toolRight(s.c(end + 4)))) active |= t.bits;
+          const nameEnd = !exeOnly && toolRight(s.c(end)) ? end : s.is(end, '.exe') && toolRight(s.c(end + 4)) ? end + 4 : -1;
+          if (nameEnd < 0) continue;
+          active |= t.bits;
+          if ((t.bits & OWN_BITS) !== 0) ownRuns.push(nameEnd, t.bits & OWN_BITS, quote);
         }
         present |= active;
       }
@@ -1051,8 +1118,9 @@ function toolsBefore(s: Scan): Int32Array {
       }
     } else if (quote === DQ) {
       if (c === BACKSLASH) {
+        // `\\`, and `\"` but before CLOSES (DQ_CHAR in redact.ts).
         const d = s.c(x + 1);
-        escaped = d === DQ || d === BACKSLASH;
+        escaped = d === BACKSLASH || (d === DQ && !closesAt(s, x + 2));
       } else if (c === DQ) quote = 0;
     } else if (quote === SQ) {
       if (c === SQ) quote = 0;
@@ -1065,16 +1133,84 @@ function toolsBefore(s: Scan): Int32Array {
   masks[s.n] = active;
   s.toolMasks = masks;
   s.toolsPresent = present;
+  if (ownRuns.length > 0) s.ownStarts = ownOptionStarts(s, ownRuns);
   return masks;
 }
 
-/** Does one of `rule`'s flags end at f, after a line blank (or a continued line break) in a segment where one of its tools counts? */
+/** `[^\s|;&]` */
+const ownWordStart = (c: number): boolean => c === c && !isS(c) && c !== PIPE && c !== SEMI && c !== AMP;
+
+/** The end of the run of OWN_W (redact.ts) from i: characters of `[^\s|;&]` but quotes, and whole quotes. */
+function ownWordEnd(s: Scan, i: number): number {
+  for (;;) {
+    const c = s.c(i);
+    if (isQuote(c)) {
+      const e = s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(i + 1);
+      if (s.c(e) !== c) return i;
+      i = e + 1;
+    } else if (ownWordStart(c)) i++;
+    else return i;
+  }
+}
+
+/** The end of the blanks from i: line blanks, and (out of the regular expression's reach) a `\` before a line break. */
+function ownBlanksEnd(s: Scan, i: number): number {
+  for (;;) {
+    const c = s.c(i);
+    if (isLineBlank(c)) i++;
+    else if (c === BACKSLASH && s.c(i + 1) === LF) i += 2;
+    else if (c === BACKSLASH && s.c(i + 1) === CR) i += s.c(i + 2) === LF ? 3 : 2;
+    else return i;
+  }
+}
+
+/**
+ * For the rules with `ownOptions`, where their flag may start (bits, by place): after the blanks
+ * that follow a counted name (and the quote it is in, if that closes right after it), then after
+ * each option and its blanks (ownOptionRun in redact.ts). `runs`: the name's end, the rules (bits)
+ * and the quote it is in, three numbers each. A place already read for a rule ends that run: what
+ * follows it was read too, so the text is read once per rule.
+ */
+function ownOptionStarts(s: Scan, runs: readonly number[]): Int32Array {
+  const starts = new Int32Array(s.n + 1);
+  for (let r = 0; r < runs.length; r += 3) {
+    for (let m = runs[r + 1]!; m !== 0; m &= m - 1) {
+      const bit = m & -m;
+      const letters = PASSWORD_TOOLS[31 - Math.clz32(bit)]!.ownOptions!;
+      let x = runs[r]!;
+      const q = runs[r + 2]!;
+      if (q !== 0 && s.c(x) === q) x++;
+      for (;;) {
+        const b = ownBlanksEnd(s, x);
+        if (b === x || (starts[b]! & bit) !== 0) break;
+        x = b;
+        starts[x]! |= bit;
+        if (s.c(x) !== DASH) break;
+        const v = s.c(x + 1);
+        if (v === v && letters.includes(String.fromCharCode(v)) && !ownWordStart(s.c(x + 2))) {
+          // `-X VALUE`
+          const b2 = ownBlanksEnd(s, x + 2);
+          const e = ownWordEnd(s, b2);
+          if (b2 === x + 2 || e === b2) break;
+          x = e;
+        } else x = ownWordEnd(s, x + 1);
+      }
+    }
+  }
+  return starts;
+}
+
+/**
+ * Does one of `rule`'s flags end at f, after a line blank (or a continued line break) in a segment
+ * where one of its tools counts (with `ownOptions`: among that tool's options)?
+ */
 function toolFlagEndsAt(s: Scan, f: number, rule: PasswordToolRule, bit: number): boolean {
   for (const flag of rule.flags) {
     const at = f - flag.length;
     if (at <= 0 || !flagAt(s, at, flag, rule)) continue;
     const m = toolsBefore(s)[at - 1]!;
-    if ((m & (1 << bit)) !== 0 && (isLineBlank(s.c(at - 1)) || (m & CONTINUED) !== 0)) return true;
+    if ((m & (1 << bit)) === 0 || (!isLineBlank(s.c(at - 1)) && (m & CONTINUED) === 0)) continue;
+    if (rule.ownOptions === undefined || ((s.ownStarts?.[at] ?? 0) & (1 << bit)) !== 0) return true;
   }
   return false;
 }
@@ -1150,38 +1286,108 @@ function passwordTool(s: Scan, p: number): number {
   return htpasswdBatch(s, p);
 }
 
+/** `[0-9A-BD-Za-qs-z]`: an option letter of htpasswd's that takes no value (HT_LETTER in redact.ts). */
+const htLetter = (c: number): boolean => isAlnum(c) && c !== 67 && c !== 114;
+/** `\S` */
+const nonSpace = (c: number): boolean => c === c && !isS(c);
+const HT_B = 1;
+const HT_N = 2;
+const HT_DONE = 4;
+
 /**
- * `htpasswd -b FILE USER PASSWORD` and `htpasswd -nb USER PASSWORD` (the options in one word with
- * `b`, and `n` or not): read back over the words before p to the options and `htpasswd`. Options in
- * several words (`-c -b`) are not read.
+ * Where htpasswd's password starts (HTPASSWD in redact.ts): after `\bhtpasswd` and blanks, its
+ * options (HT_OPTION: getopt's, in one word or several, `-C` and `-r` with a value), one with `b`,
+ * then FILE and USER (USER only with `n`), each in quotes or a word that doesn't start with `-`,
+ * and blanks. Each option and each argument is read once, whichever htpasswd reads it.
  */
-function htpasswdBatch(s: Scan, p: number): number {
-  const c = s.c(p);
-  if (!flagValueChar(c) || c === DASH || c === DOLLAR || !s.blank(s.c(p - 1))) return -1;
-  // htpasswd on the line before p (the words and blanks between hold no line break).
-  if (s.wordEndOnLine('htpasswd', p) < 0) return -1;
-  let end = s.blanksBefore(p);
-  for (let n = 0; n < 3; n++) {
-    let start = end;
-    while (start > 0 && flagValueChar(s.c(start - 1))) start--;
-    if (start === end || !s.blank(s.c(start - 1))) return -1;
-    // `-[A-Za-z]+` with `b`: the password is the third word after it, or the second with `n`.
-    let b = false;
-    let nOption = false;
-    let letters = s.c(start) === DASH && end - start >= 2;
-    for (let i = start + 1; letters && i < end; i++) {
-      const x = s.c(i);
-      letters = isAlpha(x);
-      if (x === 98) b = true;
-      if (x === 110) nOption = true;
+function htpasswdStarts(s: Scan): Uint8Array {
+  if (s.htpasswd) return s.htpasswd;
+  const starts = new Uint8Array(s.n + 1);
+  /** By an option's start: the start of the first word after the options from there (-2: none), and whether `b` and `n` were among them. */
+  const optEnd = new Int32Array(s.n + 1);
+  const optHas = new Uint8Array(s.n + 1);
+  /** By an argument's start: the start of the next word (-2: no argument, 0: not read yet). */
+  const argNext = new Int32Array(s.n + 1);
+  const blanksEnd = (i: number): number => s.runEnd(i, s.blank);
+  /** HT_OPTION at x: the start of the next word, its letters (HT_B, HT_N), or -1. */
+  const option = (x: number): [number, number] | undefined => {
+    if (s.c(x) !== DASH || !isAlnum(s.c(x + 1))) return undefined;
+    let y = x + 1;
+    let has = 0;
+    for (; htLetter(s.c(y)); y++) has |= s.c(y) === 98 ? HT_B : s.c(y) === 110 ? HT_N : 0;
+    const c = s.c(y);
+    if (c === 67 || c === 114) {
+      // `-C10` or `-C 10`
+      if (nonSpace(s.c(y + 1))) y = s.runEnd(y + 1, nonSpace);
+      else {
+        const b = blanksEnd(y + 1);
+        const e = s.runEnd(b, nonSpace);
+        if (b === y + 1 || e === b) return undefined;
+        y = e;
+      }
     }
-    if (letters && b && n === (nOption ? 1 : 2)) {
-      const h = s.blanksBefore(start);
-      if (s.has(h - 8, 'htpasswd') && !isWord(s.c(h - 9))) return isReference(s, p) ? -1 : s.runEnd(p, flagValueChar);
+    const b = blanksEnd(y);
+    return b === y ? undefined : [b, has];
+  };
+  /** The options from x: fills optEnd and optHas for x and each option after it. */
+  const options = (x: number): void => {
+    const path: number[] = [];
+    let at = x;
+    for (;;) {
+      if ((optHas[at]! & HT_DONE) !== 0) break;
+      const o = option(at);
+      if (!o) {
+        optEnd[at] = at;
+        optHas[at] = HT_DONE;
+        break;
+      }
+      path.push(at, o[1]);
+      at = o[0];
     }
-    end = s.blanksBefore(start);
+    for (let k = path.length - 2; k >= 0; k -= 2) {
+      const from = path[k]!;
+      const next = k + 2 < path.length ? path[k + 2]! : at;
+      optEnd[from] = optEnd[next]!;
+      optHas[from] = path[k + 1]! | (optHas[next]! & (HT_B | HT_N)) | HT_DONE;
+    }
+  };
+  /** HT_ARG at a: the start of the next word, or -2. */
+  const arg = (a: number): number => {
+    if (a > s.n) return -2;
+    if (argNext[a] !== 0) return argNext[a]!;
+    const c = s.c(a);
+    let y = -1;
+    if (isQuote(c)) {
+      const e = s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(a + 1);
+      if (s.c(e) === c) y = e + 1;
+    } else if (flagValueChar(c) && c !== DASH) y = s.runEnd(a, flagValueChar);
+    const b = y < 0 ? y : blanksEnd(y);
+    return (argNext[a] = y < 0 || b === y ? -2 : b);
+  };
+  for (let i = s.t.indexOf('htpasswd'); i >= 0; i = s.t.indexOf('htpasswd', i + 1)) {
+    if (isWord(s.c(i - 1))) continue;
+    const w = blanksEnd(i + 8);
+    if (w === i + 8) continue;
+    options(w);
+    const end = optEnd[w]!;
+    const has = optHas[w]!;
+    if (end === w || (has & HT_B) === 0) continue;
+    let v = arg(end);
+    if ((has & HT_N) === 0 && v >= 0) v = arg(v);
+    if (v >= 0) starts[v] = 1;
   }
-  return -1;
+  return (s.htpasswd = starts);
+}
+
+/** HTPASSWD (redact.ts) at p: htpasswd's password, read as FLAG_VALUE. */
+function htpasswdBatch(s: Scan, p: number): number {
+  if (htpasswdStarts(s)[p] !== 1 || flagValueIsReference(s, p)) return -1;
+  const c = s.c(p);
+  if (isQuote(c)) {
+    const e = s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(p + 1);
+    return s.c(e) === c ? e + 1 : -1;
+  }
+  return flagValueChar(c) ? s.runEnd(p, flagValueChar) : -1;
 }
 
 /** The first words of two-word key names whose second word (`key`) no SECRET_KEYS name holds: `api key`, `secret key`… */
@@ -1219,8 +1425,8 @@ export const LINEAR_FINDERS: ReadonlyMap<string, SpanFinder> = new Map([
   ['cookie-header', finder(cookieHeader, /cookie/i)],
   ['bearer-token', finder(bearer, /bearer/i)],
   ['jwt', finder(jwt, /eyJ/)],
-  ['secret-key-value-quoted', finder(quotedKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key|rediscli_auth/i)],
-  ['secret-key-value', finder(secretKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key|rediscli_auth/i)],
+  ['secret-key-value-quoted', finder(quotedKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key|rediscli_auth|sshpass/i)],
+  ['secret-key-value', finder(secretKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key|rediscli_auth|sshpass/i)],
   ['pass-key-value', finder(passKeyValue, /pass/i)],
   ['secret-flag-value', finder(secretFlag, /-|requirepass|masterauth/i)],
   ['keycloak-client-secret', finder(keycloakSecret, /secret/i)],

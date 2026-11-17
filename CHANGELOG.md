@@ -79,6 +79,10 @@ update (see below).
   - a no-break or other Unicode space after `key:`, `key =` or a flag;
   - passwords given to tools: `sshpass -p`, `redis-cli -a`, `ldapsearch -w`,
     `smbclient -U user%…`, `openssl -passin pass:…`, `htpasswd -b` and more;
+    - `htpasswd -b` also with the password in quotes, or its options in separate words
+      (`-c -b`, `-B -b`, `-C 10`);
+    - `sshpass -p` only among sshpass's own options: in `sshpass -e ssh -p 2222 host`, the port
+      stays readable;
   - spaced key names: `api key:`, `secret key =`, `access key:`, `passphrase:`.
   - A tool counts as a word of its own, in quotes too (`sh -c "redis-cli -a …"`), and its flag
     only in the same command.
@@ -89,6 +93,9 @@ update (see below).
     - Windows tools such as `SCHTASKS /RP` count in any case.
   - Everything found before is still found. On runbook source, the leak scan reports these only
     when the value looks like a secret, not "see vault" or a placeholder.
+  - All patterns, yours too, now match the same output, and what they find is replaced once.
+    Before, a long match could hide a key from the next pattern. Matches that touch give one
+    `[REDACTED]`.
 - **Fixed: redaction and the leak scan missed some secrets.** These are now redacted:
   - a key in escaped JSON: `{\"password\":\"…\"}`;
   - a quoted value with an escaped quote: `"abc\"def"` hid only `abc`;
@@ -96,12 +103,13 @@ update (see below).
   - a URL with a password but no user: `redis://:…@host`;
   - a user and password in quotes after `curl -u` or `smbclient -U`, a quoted `mysql -p` password;
   - Redis's `requirepass` and `masterauth` (at a line's start or after `config set`), and the
-    `REDISCLI_AUTH` variable;
+    `REDISCLI_AUTH` and `SSHPASS` variables. The leak scan reports the two settings only when the
+    value looks like a secret;
   - a Secret's values in kubectl's `last-applied-configuration` annotation.
 - **Redaction and the leak scan in linear time.** Some lines slowed every run that redacts output:
   - a long run of blanks (20,000 took 6 s, 200,000 about ten minutes);
   - `-p`, `eyJ-` or `${` repeated many times.
-  - The built-in patterns now read each line once, and redact exactly what they did.
+  - The built-in patterns now read each line once, and find exactly what they did.
 - **More text read in one pass.** These were slow on long or repeated input, and now give the
   same results in milliseconds:
   - a parameter's "One of: …" comment (1,000 blanks in it took 80 s);
