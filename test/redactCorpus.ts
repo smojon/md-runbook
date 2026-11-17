@@ -109,3 +109,62 @@ export function* corpus(seed: number, lines: number): Generator<string> {
     yield out.join(pick(r, ['\n', '\n', '\r\n', '\r']));
   }
 }
+
+const YAML_KEYS = ['kind', 'data', 'stringData', 'metadata', 'name', 'type', 'apiVersion', 'items', 'tls.crt', 'password', 'a', '"kind"', "'data'", 'Kind'];
+const YAML_VALUES = ['', '', '', 'Secret', 'Secret', '"Secret"', "'Secret'", 'ConfigMap', 'Opaque', 'v1', 'YWRtaW4=', '|', '>-', '|+2', 'x # c', '{}', '[REDACTED]', 'Secret # c', ' Secret'];
+
+/** One line of a random YAML document: a key at some depth, a list item, a break, a comment or a block line. */
+function yamlLine(r: () => number, depth: number): string {
+  const x = r();
+  if (x < 0.04) return pick(r, ['---', '...', '--- ', '']);
+  if (x < 0.08) return pick(r, ['# c', '  # c', '', '   ', '\t']);
+  const indent = '  '.repeat(depth) + (r() < 0.15 ? pick(r, ['- ', '- - ', '-  ']) : '') + (r() < 0.05 ? ' ' : '');
+  if (x < 0.15) return indent + pick(r, ['LS0tLS1CRUdJTi', 'line of a block', 'x: y: z', '-', 'a:b']);
+  const key = pick(r, YAML_KEYS);
+  const value = pick(r, YAML_VALUES);
+  return `${indent}${key}${pick(r, [':', ':', ' :', ':  '])}${value === '' ? '' : ' ' + value}${r() < 0.05 ? '  ' : ''}`;
+}
+
+/** One random JSON-like text: objects nested, `"data": {…}` and `"kind": "Secret"` in them, escaped now and then, braces missing or extra. */
+function jsonText(r: () => number, size: number): string {
+  let s = '';
+  let depth = 0;
+  for (let i = 0; i < size; i++) {
+    const x = r();
+    const q = r() < 0.15 ? '\\"' : '"';
+    if (x < 0.2) {
+      s += '{';
+      depth++;
+    } else if (x < 0.35 && (depth > 0 || r() < 0.2)) {
+      s += '}';
+      depth--;
+    } else if (x < 0.5) s += `${q}data${q}${pick(r, [':', ' : ', ':\n'])}{${q}k${q}:${q}djE=${q}${pick(r, ['', `,${q}k2${q}: ${q}v${q}`])}}`;
+    else if (x < 0.55) s += `${q}stringData${q}:{}`;
+    else if (x < 0.65) s += `${q}kind${q}${pick(r, [':', ' : '])}${q}${pick(r, ['Secret', 'Secret', 'ConfigMap', 'Secrets'])}${q}`;
+    else if (x < 0.7) s += `"s{t}r"`;
+    else s += pick(r, [',', ', ', '\n', ' ', '"a":1', '"x":"y"', '[', ']', '"data":', '"data":{', '\\"kind\\":']);
+  }
+  return s;
+}
+
+/** Random Kubernetes-like documents: YAML (`count` lines in texts of up to 60) and JSON texts, also malformed. */
+export function* k8sCorpus(seed: number, count: number): Generator<string> {
+  const r = random(seed);
+  for (let made = 0; made < count; ) {
+    if (r() < 0.6) {
+      const n = 1 + Math.floor(r() * 60);
+      const lines: string[] = [];
+      let depth = 0;
+      for (let i = 0; i < n; i++) {
+        depth = Math.max(0, Math.min(6, depth + pick(r, [-2, -1, 0, 0, 1, 1])));
+        lines.push(yamlLine(r, depth));
+      }
+      made += n;
+      yield lines.join(pick(r, ['\n', '\n', '\r\n']));
+    } else {
+      const n = 1 + Math.floor(r() * 80);
+      made += n;
+      yield jsonText(r, n);
+    }
+  }
+}

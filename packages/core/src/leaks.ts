@@ -186,7 +186,7 @@ function yamlKey(line: string): YamlKey | undefined {
   };
 }
 
-const lineIndent = (line: string): number => {
+export const lineIndent = (line: string): number => {
   const m = /^( *)((?:- +)*)/.exec(line);
   return (m?.[1] ?? '').length + (m?.[2] ?? '').length;
 };
@@ -194,8 +194,11 @@ const isBlank = (line: string): boolean => /^\s*(?:#.*)?$/.test(line);
 const isDocBreak = (line: string): boolean => /^(?:---|\.\.\.)\s*$/.test(line);
 const isSecretKind = (k: YamlKey | undefined): boolean => k?.key === 'kind' && /^["']?Secret["']?$/.test(k.value);
 
-/** Is the YAML mapping whose key at line `at` is at column `indent` a `kind: Secret`? */
-function yamlObjectIsSecret(lines: readonly string[], at: number, indent: number): boolean {
+/**
+ * Is the YAML mapping whose key at line `at` is at column `indent` a `kind: Secret`? Kept as the
+ * definition: `secretMappings` answers it for every line in one pass each way.
+ */
+export function yamlObjectIsSecret(lines: readonly string[], at: number, indent: number): boolean {
   for (let j = at - 1; j >= 0; j--) {
     const line = lines[j] ?? '';
     if (isBlank(line)) continue;
@@ -221,6 +224,87 @@ function yamlObjectIsSecret(lines: readonly string[], at: number, indent: number
   return false;
 }
 
+/**
+ * `yamlObjectIsSecret(lines, i, <column of line i>)` for every line i, in linear time. Asked for
+ * each `data:` line, the scans above read all the lines at its column: 50 KB of `data:` lines took
+ * 46 s. Here each direction keeps, per open column, what its scan would find so far: looking back,
+ * a `kind: Secret` at that column since its last list item (included) or shallower line; looking
+ * ahead, a `kind: Secret` before the next list item or shallower line. A `---` or `...` ends all.
+ */
+export function secretMappings(lines: readonly string[]): (at: number) => boolean {
+  const keys = lines.map((l) => (isBlank(l) || isDocBreak(l) ? undefined : yamlKey(l)));
+  const sweep = (from: number, step: number, update: (seen: boolean, k: YamlKey | undefined) => boolean): Uint8Array => {
+    const found = new Uint8Array(lines.length);
+    const open: Array<{ indent: number; seen: boolean }> = [];
+    for (let i = from; i >= 0 && i < lines.length; i += step) {
+      const line = lines[i] ?? '';
+      if (isBlank(line)) continue;
+      if (isDocBreak(line)) {
+        open.length = 0;
+        continue;
+      }
+      const ind = lineIndent(line);
+      while (open.length > 0 && open[open.length - 1]!.indent > ind) open.pop();
+      let top = open[open.length - 1];
+      if (top?.indent === ind) found[i] = top.seen ? 1 : 0;
+      else open.push((top = { indent: ind, seen: false }));
+      top.seen = update(top.seen, keys[i]);
+    }
+    return found;
+  };
+  // Back: a list item is read, then ends the scan. Ahead: a list item ends the scan unread.
+  const back = sweep(0, 1, (seen, k) => (k?.item ? isSecretKind(k) : seen || isSecretKind(k)));
+  const ahead = sweep(lines.length - 1, -1, (seen, k) => (k?.item ? false : seen || isSecretKind(k)));
+  return (at) => back[at] === 1 || ahead[at] === 1;
+}
+
+/**
+ * For each `[start, end)` (in order), the end of the first `}` at or after it that closes nothing
+ * opened at or after `start`, plus one, else the text's length; and for each start, the last `{`
+ * before it that nothing before it closes, else 0. As reading back and ahead from each one with a
+ * depth count did, in one pass each way: `"data":{}` repeated over 100 KB took 7.5 s.
+ */
+export function enclosingBraces(text: string, spans: ReadonlyArray<readonly [number, number]>): Array<[number, number]> {
+  const out = spans.map((): [number, number] => [0, text.length]);
+  const opens: number[] = [];
+  let at = 0;
+  spans.forEach(([start], n) => {
+    for (; at < start; at++) {
+      if (text[at] === '{') opens.push(at);
+      else if (text[at] === '}') opens.pop();
+    }
+    out[n]![0] = opens[opens.length - 1] ?? 0;
+  });
+  const closes: number[] = [];
+  at = text.length - 1;
+  for (let n = spans.length - 1; n >= 0; n--) {
+    const end = spans[n]![1];
+    for (; at >= end; at--) {
+      if (text[at] === '}') closes.push(at);
+      else if (text[at] === '{') closes.pop();
+    }
+    const close = closes[closes.length - 1];
+    if (close !== undefined) out[n]![1] = close + 1;
+  }
+  return out;
+}
+
+export const KIND_SECRET_JSON = /\\?"kind\\?"\s*:\s*\\?"Secret\\?"/;
+
+/**
+ * For each span (in order, not overlapping), whether the object around it (enclosingBraces) holds
+ * a `"kind": "Secret"`, as `KIND_SECRET_JSON.test(text.slice(start, end))` said: one found in the
+ * whole text that starts and ends inside it. They don't overlap, so the first one that starts
+ * inside says.
+ */
+export function inSecretObjects(text: string, spans: ReadonlyArray<readonly [number, number]>): boolean[] {
+  const kinds = [...text.matchAll(new RegExp(KIND_SECRET_JSON.source, 'g'))].map((k) => ({ start: k.index ?? 0, end: (k.index ?? 0) + k[0].length }));
+  return enclosingBraces(text, spans).map(([start, end]) => {
+    const kind = kinds[lastStartingBefore(kinds, (k) => k.start, start) + 1];
+    return kind !== undefined && kind.end <= end;
+  });
+}
+
 /** Values under `data:` / `stringData:` of a `kind: Secret` manifest, YAML or JSON (also escaped JSON in annotations). */
 function k8sSecretValues(text: string): Span[] {
   const out: Span[] = [];
@@ -238,10 +322,12 @@ function k8sSecretValues(text: string): Span[] {
     starts.push(pos);
     pos += l.length + 1;
   }
+  const isSecret = secretMappings(lines);
   lines.forEach((line, i) => {
     const k = yamlKey(line);
     if (!k || (k.key !== 'data' && k.key !== 'stringData') || k.value !== '') return;
-    if (!yamlObjectIsSecret(lines, i, k.indent)) return;
+    // k.indent is the line's column (lineIndent): what secretMappings asks at.
+    if (!isSecret(i)) return;
     let child = -1;
     let block = false;
     for (let j = i + 1; j < lines.length; j++) {
@@ -264,35 +350,21 @@ function k8sSecretValues(text: string): Span[] {
   });
 
   // JSON (also `\"data\":{…}` inside an escaped last-applied-configuration)
-  const kindSecret = /\\?"kind\\?"\s*:\s*\\?"Secret\\?"/;
-  for (const m of text.matchAll(/\\?"(?:data|stringData)\\?"\s*:\s*\{([^{}]*)\}/g)) {
+  const matches = [...text.matchAll(/\\?"(?:data|stringData)\\?"\s*:\s*\{([^{}]*)\}/g)];
+  const secret = inSecretObjects(
+    text,
+    matches.map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]),
+  );
+  matches.forEach((m, n) => {
+    if (!secret[n]) return;
     const at = m.index ?? 0;
-    let start = 0;
-    for (let d = 0, j = at - 1; j >= 0; j--) {
-      const ch = text[j];
-      if (ch === '}') d++;
-      else if (ch === '{' && d-- === 0) {
-        start = j;
-        break;
-      }
-    }
-    let end = text.length;
-    for (let d = 0, j = at + m[0].length; j < text.length; j++) {
-      const ch = text[j];
-      if (ch === '{') d++;
-      else if (ch === '}' && d-- === 0) {
-        end = j + 1;
-        break;
-      }
-    }
-    if (!kindSecret.test(text.slice(start, end))) continue;
     const bodyAt = at + m[0].indexOf('{') + 1;
     for (const v of (m[1] ?? '').matchAll(/\\?"[^"\\]*\\?"\s*:\s*\\?"([^"\\]*)\\?"/g)) {
       const value = v[1] ?? '';
       const valueEnd = (v.index ?? 0) + v[0].length - (v[0].endsWith('\\"') ? 2 : 1);
       push(bodyAt + valueEnd - value.length, value);
     }
-  }
+  });
   return out;
 }
 
