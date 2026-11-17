@@ -88,6 +88,39 @@ func TestIsolationAndCellsAccount(t *testing.T) {
 	}
 }
 
+func TestCellsRunner(t *testing.T) {
+	c, err := read(t, "")
+	if err != nil || c.CellsRunner != "local" || c.JobServiceAccount != "" || c.JobImage != "" {
+		t.Errorf("defaults: %+v %v", c, err)
+	}
+	c, err = read(t, "cells_runner = kubernetes-job\njob_service_account = md-runbook-cells\njob_image = ghcr.io/smojon/md-runbook-ops:0.29.0\n")
+	if err != nil || c.CellsRunner != "kubernetes-job" || c.JobServiceAccount != "md-runbook-cells" || c.JobImage != "ghcr.io/smojon/md-runbook-ops:0.29.0" {
+		t.Errorf("read: %+v %v", c, err)
+	}
+	for text, want := range map[string]string{
+		"cells_runner = kubernetes\n":      "cells_runner = kubernetes: expected local or kubernetes-job",
+		"cells_runner =\n":                 "cells_runner = : expected local or kubernetes-job",
+		"job_service_account =\n":          "job_service_account = : expected a Kubernetes service account name",
+		"job_service_account = Cells\n":    "job_service_account = Cells: expected a Kubernetes service account name",
+		"job_service_account = a b\n":      "job_service_account = a b: expected a Kubernetes service account name",
+		"job_service_account = -cells\n":   "job_service_account = -cells: expected a Kubernetes service account name",
+		"job_service_account = a..b\n":     "job_service_account = a..b: expected a Kubernetes service account name",
+		"job_image =\n":                    "job_image = : expected an image reference (leave the line out for the gate's own pod's image)",
+		"job_image = x:1 $(id)\n":          "job_image = x:1 $(id): expected an image reference (leave the line out for the gate's own pod's image)",
+		"job_image = -x\n":                 "job_image = -x: expected an image reference (leave the line out for the gate's own pod's image)",
+		"job_image = \"md-runbook-ops\"\n": "job_image = \"md-runbook-ops\": expected an image reference (leave the line out for the gate's own pod's image)",
+	} {
+		if _, err := read(t, text); err == nil || err.Error() != want {
+			t.Errorf("%q: %v, want %s", text, err, want)
+		}
+	}
+	for s, ok := range map[string]bool{"md-runbook-ops@sha256:" + strings.Repeat("a", 64): true, "localhost:5000/ops:ci": true, "ops": true, "ops ci": false, "": false} {
+		if ValidImage(s) != ok {
+			t.Errorf("ValidImage(%q) != %v", s, ok)
+		}
+	}
+}
+
 func TestAbsoluteList(t *testing.T) {
 	for s, ok := range map[string]bool{
 		"/usr/bin:/bin": true, "/x": true, "": false, "/usr/bin::/bin": false, "bin:/usr/bin": false, "/usr/bin:": false, ":/bin": false,

@@ -11,7 +11,8 @@ import (
 )
 
 // ---- the programs the gate runs (review of 0.28.0, H1) ----
-// The gate runs ssh-keygen, id, locale, getent, sh, ps, sudo, systemd-run and bwrap. It takes them
+// The gate runs ssh-keygen, id, locale, getent, sh, ps, sudo, systemd-run, bwrap and kubectl (a
+// Kubernetes Job per session, job.go). It takes them
 // only from root's system folders, once at its start, and runs them by that path. Never from the
 // PATH sshd gave, from path = (the blocks') or from /usr/local: a folder an account can write
 // would let it plant ssh-keygen (and pass any signature) or sudo.
@@ -25,7 +26,7 @@ import (
 const sysPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 // helperNames: the programs the gate runs.
-var helperNames = []string{"sh", "id", "locale", "getent", "ssh-keygen", "ps", "sudo", "systemd-run", "bwrap"}
+var helperNames = []string{"sh", "id", "locale", "getent", "ssh-keygen", "ps", "sudo", "systemd-run", "bwrap", "kubectl"}
 
 // findHelpers: where each program is in sysPath ("" when nowhere).
 func findHelpers(find func(path, name string) string) map[string]string {

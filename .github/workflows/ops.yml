@@ -1,8 +1,8 @@
 name: Ops host
 # The ops host (apps/ops) as users run it: the image in a throwaway kind cluster with the
-# manifest from apps/ops/kubernetes (Pod Security "restricted" enforced), then the same image
-# outside a cluster with a mounted kubeconfig, each driven by the app's SSH code
-# (test/ops.live.test.ts) through port-forwards. And the probe image (apps/probe): its formats
+# manifest from apps/ops/kubernetes (Pod Security "restricted" enforced; each session's blocks
+# in a Job of their own), then the same image outside a cluster with a mounted kubeconfig, each
+# driven by the app's SSH code (test/ops.live.test.ts) through port-forwards. And the probe image (apps/probe): its formats
 # with docker, then its example manifest in a kind cluster.
 on:
   push:
@@ -15,6 +15,7 @@ on:
       - 'packages/ssh/**'
       - 'packages/core/src/kubeContext.ts'
       - 'test/ops.live.test.ts'
+      - 'scripts/ci/ops-job-session.sh'
       - '.github/workflows/ops.yml'
   workflow_dispatch:
 
@@ -40,6 +41,7 @@ jobs:
         run: |
           shellcheck -S warning apps/ops/md-runbook-probe
           shellcheck -s sh -S warning apps/ops/start.sh
+          shellcheck -S warning scripts/ci/ops-job-session.sh
 
       - name: Build the image
         # No attestations: kind's containerd can't use an image index that has them.
@@ -69,6 +71,10 @@ jobs:
           cp "$KEYS/client.pub" "$KEYS/authorized_keys"
           echo "ci@example.net namespaces=\"md-runbook\" $(cut -d' ' -f1,2 "$KEYS/signer.pub")" > "$KEYS/allowed_signers"
           printf '%s\n' 'unsigned = allow' 'allowed_signers = /etc/md-runbook/allowed_signers' 'log = /var/log/md-runbook/gate.log # a comment: the gate and md-runbook-probe both strip it' 'sshd_force_command = yes' 'kill_leftovers = yes' > "$KEYS/gate.conf"
+          # In the cluster: each session's blocks in a Job, and a report token they must not read.
+          cp "$KEYS/gate.conf" "$KEYS/gate-cluster.conf"
+          printf '%s\n' 'cells_runner = kubernetes-job' 'job_service_account = md-runbook-cells' 'report_token_file = /etc/md-runbook/report-token' >> "$KEYS/gate-cluster.conf"
+          openssl rand -hex 16 > "$KEYS/report-token"
 
       - name: Cluster
         run: |
@@ -84,12 +90,13 @@ jobs:
           kubectl apply -f apps/ops/kubernetes/md-runbook-ops.yaml
           # Runbooks may change workloads in `default` (the test's web deployment), nowhere else.
           kubectl -n default create rolebinding md-runbook-ops-operate \
-            --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-ops
+            --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-cells
           ns="-n md-runbook-ops"
           kubectl $ns create configmap md-runbook-ops-keys --from-file=authorized_keys="$KEYS/authorized_keys"
           kubectl $ns create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ecdsa_key="$KEYS/ssh_host_ecdsa_key"
-          kubectl $ns create configmap md-runbook-ops-gate --from-file=gate.conf="$KEYS/gate.conf" \
-            --from-file=allowed_signers="$KEYS/allowed_signers" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl $ns create configmap md-runbook-ops-gate --from-file=gate.conf="$KEYS/gate-cluster.conf" \
+            --from-file=allowed_signers="$KEYS/allowed_signers" --from-file=report-token="$KEYS/report-token" \
+            --dry-run=client -o yaml | kubectl apply -f -
           kubectl $ns set image deployment/md-runbook-ops ops=md-runbook-ops:ci
           kubectl $ns set env deployment/md-runbook-ops CLUSTER_NAME=ops-ci
           kubectl $ns rollout status deployment/md-runbook-ops --timeout=180s
@@ -102,6 +109,11 @@ jobs:
           MD_RUNBOOK_OPS_HOST_PUB="$KEYS/ssh_host_ecdsa_key.pub" MD_RUNBOOK_OPS_SIGNER="$KEYS/signer" \
           MD_RUNBOOK_OPS_CONTEXT=ops-ci MD_RUNBOOK_OPS_IN_CLUSTER=1 \
             node --test --test-reporter=spec out/test/ops.live.test.js
+      - name: Each session's blocks in a Job of their own (cells_runner = kubernetes-job)
+        run: |
+          kubectl -n md-runbook-ops port-forward service/md-runbook-ops 2224:22 > "$RUNNER_TEMP/pf-job.log" 2>&1 &
+          for _ in $(seq 1 30); do nc -z 127.0.0.1 2224 && break; sleep 1; done
+          PORT=2224 scripts/ci/ops-job-session.sh
       - name: The gate's events are in the Pod's log
         run: |
           kubectl -n md-runbook-ops logs deployment/md-runbook-ops > "$RUNNER_TEMP/ops.log"
@@ -136,9 +148,10 @@ jobs:
       - name: Logs
         if: failure()
         run: |
-          kubectl -n md-runbook-ops describe pods || true
+          kubectl -n md-runbook-ops get jobs,pods -o wide || true
+          kubectl -n md-runbook-ops describe jobs,pods || true
           kubectl -n md-runbook-ops logs deployment/md-runbook-ops || true
-          cat "$RUNNER_TEMP/pf.log" || true
+          cat "$RUNNER_TEMP/pf.log" "$RUNNER_TEMP/pf-job.log" || true
           docker logs ops || true
 
   # The probe image (apps/probe): md-runbook-probe alone, as users run it next to their services.

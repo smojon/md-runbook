@@ -112,6 +112,8 @@ type Gate struct {
 	gateComm string
 	isoWhy   string // why auto found no isolation
 	unitID   string // the session's scopes' names
+	// The session's Kubernetes Job (cells_runner = kubernetes-job).
+	job *kubeJob
 
 	sess
 }
@@ -176,6 +178,7 @@ func (g *Gate) signals() {
 				os.Exit(1)
 			}
 			g.signalled.Store(true)
+			g.ending.Store(true)
 			g.stopShells(g.liveShells()...)
 			select {
 			case g.termCh <- struct{}{}:
@@ -322,6 +325,7 @@ func (g *Gate) settle() {
 	if c.Kubeconfig != "" && !config.AbsoluteList(c.Kubeconfig) {
 		g.fatal("kubeconfig = " + c.Kubeconfig + ": expected absolute files separated by :")
 	}
+	g.checkRunner()
 	// Run reports (report_to): optional, and never in a run's way. A bad address is logged at the
 	// start of each session and nothing is sent; the runs go on.
 	if c.ReportTo != "" {
@@ -460,6 +464,8 @@ type sess struct {
 	termCh  chan struct{}
 	// signalled: HUP, INT or TERM ended the session (exit 1, no end-session event).
 	signalled atomic.Bool
+	// ending: the session's shells are being ended (a Job's shells then need nothing in the pod).
+	ending atomic.Bool
 
 	work       string
 	token      string

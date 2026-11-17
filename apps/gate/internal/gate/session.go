@@ -52,8 +52,9 @@ type slot struct {
 	used  int
 }
 
-// shell: leader is what the gate started (the shell itself, or the wrapper it runs under); pid
-// and pgid are the shell's own (0 until found under a wrapper), cg its scope's cgroup folder.
+// shell: leader is what the gate started (the shell itself, or the wrapper it runs under; for a
+// Job's shell, kubectl, set under mu once it starts); pid and pgid are the shell's own (0 until
+// found under a wrapper), cg its scope's cgroup folder.
 type shell struct {
 	n       int
 	leader  int
@@ -64,6 +65,14 @@ type shell struct {
 	mu        sync.Mutex
 	pid, pgid int
 	cg        string
+
+	// In a Kubernetes Job (job.go): the pipe's read end until kubectl takes it, and whether it
+	// started, was dropped before, or was sent anything.
+	r                *os.File
+	abort            chan struct{}
+	abortOnce        sync.Once
+	started, aborted bool
+	sent             atomic.Bool
 }
 
 func (sh *shell) info() (pid, pgid int, cg string) {
@@ -117,13 +126,22 @@ func (g *Gate) session() int {
 	if g.separated() {
 		g.setupSeparated()
 	}
-	g.resolveIsolation()
+	// A Kubernetes Job: its pod is the isolation (job.go).
+	if g.jobMode() {
+		g.setupJob()
+		g.plan.iso = "pod"
+	} else {
+		g.resolveIsolation()
+	}
 	kv := []string{"event", "session", "unsigned", g.cfg.Unsigned, "scopes", g.cfg.Scopes, "key_scopes", g.keyScopes, "gate_mode", g.mode(), "isolation", g.plan.iso}
 	if g.plan.iso == "none" && g.isoWhy != "" {
 		kv = append(kv, "isolation_off", strings.TrimSuffix(g.isoWhy, "; "))
 	}
 	if g.separated() {
 		kv = append(kv, "cells", g.cfg.CellsAccount)
+	}
+	if g.jobMode() {
+		kv = append(kv, "cells_runner", g.cfg.CellsRunner, "job", g.job.name, "cells", g.job.sa)
 	}
 	g.log.Event(kv...)
 	if g.reportProblem != "" {
@@ -132,7 +150,7 @@ func (g *Gate) session() int {
 	if g.cfg.AllowNoGroupKill != "" {
 		g.log.Event("event", "notice", "reason", "allow_no_group_kill in "+g.configPath+" is obsolete and ignored: each shell always has a process group of its own")
 	}
-	if g.reportOn && !g.separated() {
+	if g.reportOn && !g.apart() {
 		if f, err := os.OpenFile(g.work+"/report-exits", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
 			f.Close()
 		}
@@ -145,6 +163,15 @@ func (g *Gate) session() int {
 	g.cleanup()
 	if g.signalled.Load() {
 		return 1
+	}
+	// The cells' pod never came: the session failed (its reason is on stderr and in the log).
+	if g.job != nil {
+		g.job.mu.Lock()
+		failed := g.job.err != ""
+		g.job.mu.Unlock()
+		if failed {
+			return 2
+		}
 	}
 	g.log.Event("event", "end-session")
 	return 0
@@ -207,6 +234,10 @@ func (g *Gate) cellsDir() string {
 }
 
 func (g *Gate) startShell(i int) {
+	if g.jobMode() {
+		g.startJobShell(i)
+		return
+	}
 	g.shells++
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -293,14 +324,18 @@ func (g *Gate) showPID() {
 	default:
 	}
 	pid, _, _ := sh.info()
-	if pid <= 1 {
+	content := itoa(pid)
+	// A Job's shell: its namespace, Job and number (jobStopRequest finds the pod).
+	if g.jobMode() {
+		content = "job " + g.job.ns + " " + g.job.name + " " + itoa(sh.n)
+	} else if pid <= 1 {
 		return
 	}
 	f, err := os.CreateTemp(g.state+"/pids", ".new.")
 	if err != nil {
 		return
 	}
-	_, err = f.WriteString(itoa(pid) + "\n")
+	_, err = f.WriteString(content + "\n")
 	if f.Close() != nil || err != nil || os.Rename(f.Name(), g.pidFile()) != nil {
 		os.Remove(f.Name())
 		return
@@ -318,6 +353,10 @@ func (g *Gate) retire(i int) {
 	}
 	s.sh.retired.Store(true)
 	s.sh.w.Close()
+	// A Job's shell that was sent nothing doesn't wait for the pod.
+	if g.jobMode() && !s.sh.sent.Load() {
+		s.sh.abortJobShell()
+	}
 	g.waitShell(s.sh)
 	if i == g.cur {
 		os.Remove(g.pidFile())
@@ -380,6 +419,10 @@ func (g *Gate) shellFor(hash string) {
 // send writes text to the current shell. (A shell that ended: the session ends with it.)
 func (g *Gate) send(text string) {
 	if sh := g.slots[g.cur].sh; sh != nil {
+		if g.jobMode() {
+			sh.sent.Store(true)
+			g.job.noteWaiting()
+		}
 		sh.w.WriteString(text)
 	}
 }
@@ -466,15 +509,19 @@ loop:
 		}
 	}
 	// The client is done: each shell runs what it was sent, then ends. Cut short: they end now.
+	// (A Job's shells need no ending in the pod: deleting the Job ends them.)
+	g.ending.Store(true)
 	if term {
 		g.stopShells(g.liveShells()...)
 	}
 	for i := range g.slots {
 		g.retire(i)
 	}
-	// Separated mode: the last exits the shells wrote (and their end events).
+	// Separated mode, a Job: the last exits the shells wrote (and their end events).
 	if g.separated() {
 		g.readExitsFile()
+	} else if g.jobMode() {
+		g.finishFollower()
 	}
 	// What left the shells' process groups, before the report sender starts.
 	g.sweep("end")
@@ -570,6 +617,7 @@ func nap() { time.Sleep(200 * time.Millisecond) }
 // folder.
 func (g *Gate) cleanup() {
 	g.stopShells(g.liveShells()...)
+	g.jobCleanup()
 	if g.skey != "" {
 		os.Remove(g.pidFile())
 	}
@@ -615,6 +663,11 @@ func (g *Gate) stopRequest(cmd string) bool {
 		g.fatal("no md-runbook session " + n)
 	}
 	first, _, _ := strings.Cut(string(data), "\n")
+	// A session whose cells run in a Kubernetes Job (only where this gate.conf says so).
+	if f := strings.Split(first, " "); g.jobMode() && len(f) == 4 && f[0] == "job" {
+		g.jobStopRequest(f[1], f[2], f[3], sig)
+		return true
+	}
 	if !textutil.IsPID(first) {
 		g.fatal("no md-runbook session " + n)
 	}

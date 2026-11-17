@@ -56,10 +56,32 @@ type Config struct {
 	// The account the cells run as (separated mode, through sudo); "" runs them as the gate's own
 	// account (shared mode).
 	CellsAccount string
+	// Where the cells run: local (this host: shared, or separated with cells_account) or
+	// kubernetes-job (a Kubernetes Job of their own for each session, in the gate's namespace).
+	CellsRunner string
+	// kubernetes-job: the cells' service account (required), and the Job's image ("" for the
+	// gate's own pod's image).
+	JobServiceAccount string
+	JobImage          string
 }
 
 // Isolations are the values of isolation =.
 var Isolations = []string{"auto", "scope", "bwrap", "none"}
+
+// Runners are the values of cells_runner =.
+var Runners = []string{"local", "kubernetes-job"}
+
+// A Kubernetes object name (a DNS-1123 subdomain, as service account names are).
+var kubeName = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
+
+// ValidKubeName: a name job_service_account = may hold.
+func ValidKubeName(s string) bool { return kubeName.MatchString(s) && !strings.Contains(s, "..") }
+
+// An image reference: registry/name:tag or @sha256:digest, nothing a shell or YAML would read.
+var imageRef = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$`)
+
+// ValidImage: a name job_image = may hold.
+func ValidImage(s string) bool { return imageRef.MatchString(s) }
 
 // accountName: an account name as useradd takes it (and macOS's _names).
 var accountName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,31}$`)
@@ -82,6 +104,7 @@ func Defaults() Config {
 		KillLeftovers:   "no",
 		MemoryLimit:     "512",
 		Isolation:       "auto",
+		CellsRunner:     "local",
 	}
 }
 
@@ -175,6 +198,22 @@ func (c *Config) Read(r io.Reader, name string) error {
 				return fmt.Errorf("cells_account = %s: expected an account name (leave the line out to run the cells as the gate's account)", v)
 			}
 			c.CellsAccount = v
+		case "cells_runner":
+			if v != Runners[0] && v != Runners[1] {
+				return fmt.Errorf("cells_runner = %s: expected local or kubernetes-job", v)
+			}
+			c.CellsRunner = v
+		case "job_service_account":
+			if !ValidKubeName(v) {
+				return fmt.Errorf("job_service_account = %s: expected a Kubernetes service account name", v)
+			}
+			c.JobServiceAccount = v
+		case "job_image":
+			// Empty is not "the pod's own image": leave the line out for that (fail closed).
+			if !ValidImage(v) {
+				return fmt.Errorf("job_image = %s: expected an image reference (leave the line out for the gate's own pod's image)", v)
+			}
+			c.JobImage = v
 		default:
 			return fmt.Errorf("%s: unknown setting %q", name, k)
 		}
