@@ -1,6 +1,6 @@
 {
  "CHANGELOG.md": {
-  "average": 19.1,
+  "average": 15.7,
   "phrases": 1,
   "repeats": 2,
   "sentences": 202,
@@ -12,7 +12,7 @@
   "units": 6
  },
  "spikes/ssh/README.md": {
-  "average": 20.2,
+  "average": 20.0,
   "sentences": 12,
   "units": 2
  },

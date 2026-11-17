@@ -109,14 +109,16 @@ app and everything else in other namespaces.
   - a pod that runs as another service account than `md-runbook-ops` or `md-runbook-cells`;
   - a service account other than those two and `default`.
 - Bind no role to `default` in this namespace.
-- The relay can stay in another namespace. Admit it to sshd with a NetworkPolicy that names
-  that namespace.
+- The manifest's NetworkPolicy lets pods of other namespaces reach sshd, the relay's too. You
+  can narrow it to the relay's namespace.
 
 **Two signers in production.** For runbooks that change a cluster, set `signers = 2` in
 `gate.conf`. Then one stolen signing key can't run a change alone.
 
-**Reaching it from a phone.** The Service only works inside the cluster. You have three
+**Reaching it from a phone.** The Service only works inside the cluster. You have four
 options:
+- **No open port:** a Tailscale or Cloudflare connector dials out
+  ([without an open port](../../docs/features/ops-outbound.md)).
 - **A LoadBalancer.** `kubectl $ns patch service md-runbook-ops -p '{"spec":{"type":"LoadBalancer","loadBalancerSourceRanges":["203.0.113.0/24"]}}'`
   exposes it; limit the source ranges to your own addresses.
 - **A VPN** into the cluster's network.
