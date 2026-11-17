@@ -5,7 +5,7 @@
  * the same (redactScan.ts); they stay here as the definition.
  */
 
-import { LINEAR_FINDERS, SpanFinder, Spans } from './redactScan';
+import { LINEAR_FINDERS, PASSWORD_TOOLS, PasswordToolRule, SPACED_KEY_WORDS, SpanFinder, Spans } from './redactScan';
 
 export const REDACTED = '[REDACTED]';
 
@@ -29,7 +29,7 @@ const NOT_A_VALUE = `(?<!\\$\\{(?:secret|secretFile|input|param):)(?!(?:Bearer|B
 /** Marker pattern: redacts the values under `data:` / `stringData:` of Kubernetes Secret manifests. */
 const SECRET_MANIFESTS = 'k8s-secret-data';
 
-export const DEFAULT_PATTERNS: readonly RedactionPattern[] = [
+const BASE_PATTERNS: readonly RedactionPattern[] = [
   {
     name: 'pem-private-key',
     pattern: '(?<=-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)[\\s\\S]+?(?=-----END [A-Z0-9 ]*PRIVATE KEY-----|$)',
@@ -112,6 +112,56 @@ export const DEFAULT_PATTERNS: readonly RedactionPattern[] = [
   { name: 'azure-sas-signature', pattern: '(?<=[?&]sig=)[A-Za-z0-9%+/=]{20,}' },
   { name: 'aws-access-key-id', pattern: '\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b' },
 ];
+
+/** Every JavaScript space but the line ends: the widened patterns' blank, where the ones above read `[ \t]`. */
+const WS = '[^\\S\\r\\n\\u2028\\u2029]';
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const base = (name: string): RedactionPattern => BASE_PATTERNS.find((p) => p.name === name)!;
+const quotedHeader = (name: string): string =>
+  `(?<=\\b${name}["']?${WS}*[:=]${WS}*")[^"\\r\\n]+(?=")|(?<=\\b${name}["']?${WS}*[:=]${WS}*')[^'\\r\\n]+(?=')`;
+const toolRule = (r: PasswordToolRule): string => {
+  const flag = `\\b(?:${r.tools.map(escapeRe).join('|')})\\b[^\\r\\n]*?\\s(?:${r.flags.map(escapeRe).join('|')})`;
+  const gap = r.space && r.glued ? `${WS}*` : r.space ? `${WS}+` : '';
+  if (r.split !== undefined) return `(?<=${flag}${gap}[^\\s${escapeRe(r.split)}"']+${escapeRe(r.split)})[^\\s"']+`;
+  if (r.prefix !== undefined) return `(?<=${flag}${gap}${escapeRe(r.prefix)})[^\\s"']+`;
+  return `(?<=${flag}${gap})(?:"(?![$%])[^"\\r\\n]*"|'(?![$%])[^'\\r\\n]*'|(?![-$%])[^\\s"']+)`;
+};
+/** `htpasswd -b FILE USER PASSWORD`, `htpasswd -nb USER PASSWORD` (the options in one word). */
+const HTPASSWD = ['(?![A-Za-z]*n)', '(?=[A-Za-z]*n)']
+  .map((n, i) => `(?<=\\bhtpasswd${WS}+-(?=[A-Za-z]*b)${n}[A-Za-z]+${WS}+${i === 0 ? `[^\\s"']+${WS}+` : ''}[^\\s"']+${WS}+)(?![-$%])[^\\s"']+`)
+  .join('|');
+const SPACED_KEY = `\\b(?:(?:${SPACED_KEY_WORDS.join('|')})${WS}+key|pass${WS}*phrase)["']?${WS}*[:=]${WS}*`;
+
+/**
+ * Patterns added in 0.30 for what the ones above missed. They run after them (in the leak scan
+ * too), so everything those find stays found as it was; each has a linear matcher (redactScan.ts).
+ */
+const WIDENED_PATTERNS: readonly RedactionPattern[] = [
+  // "Authorization": "Basic …", Authorization: 'Bearer …', {"Cookie": "session=…"}: the value in its quotes.
+  { name: 'authorization-header-quoted', pattern: quotedHeader('(?:Proxy-)?Authorization'), flags: 'i' },
+  { name: 'cookie-header-quoted', pattern: quotedHeader('(?:Set-)?Cookie'), flags: 'i' },
+  // The patterns that read blanks around a separator or after a flag, with Unicode spaces (no-break, ideographic…) as blanks.
+  {
+    name: 'secret-after-unicode-space',
+    pattern: ['authorization-header', 'cookie-header', 'bearer-token', 'secret-key-value-quoted', 'secret-key-value', 'pass-key-value', 'secret-flag-value', 'keycloak-client-secret']
+      .map((n) => base(n).pattern.split('[ \\t]').join(WS))
+      .join('|'),
+    flags: 'i',
+  },
+  // sshpass -p PASSWORD, redis-cli -a PASSWORD, ldapsearch -w PASSWORD, smbclient -U user%PASSWORD… (PASSWORD_TOOLS)
+  { name: 'password-flag-tool', pattern: [...PASSWORD_TOOLS.map(toolRule), HTPASSWD].join('|') },
+  // api key: …, secret key = …, "private key": "…", passphrase: … (key names SECRET_KEYS misses)
+  {
+    name: 'secret-key-value-spaced',
+    pattern: `(?<=${SPACED_KEY}")${NOT_A_VALUE}[^"\\r\\n]+(?=")|(?<=${SPACED_KEY}')${NOT_A_VALUE}[^'\\r\\n]+(?=')|(?<=${SPACED_KEY}["']?)${NOT_A_VALUE}[^\\s"',;&}]+`,
+    flags: 'i',
+  },
+];
+
+/** Names of the widened patterns: the leak scan reports what they find last, and only when it looks like a secret. */
+export const WIDENED_PATTERN_NAMES: ReadonlySet<string> = new Set(WIDENED_PATTERNS.map((p) => p.name!));
+
+export const DEFAULT_PATTERNS: readonly RedactionPattern[] = [...BASE_PATTERNS, ...WIDENED_PATTERNS];
 
 /**
  * Redact every value under `data:` / `stringData:` when the text contains a Kubernetes Secret

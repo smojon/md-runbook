@@ -5,12 +5,14 @@
  */
 
 import { beforeComment, isSpace, trimEndWith } from './lineText';
-import { DEFAULT_PATTERNS, REDACTED, patternFinder } from './redact';
+import { DEFAULT_PATTERNS, REDACTED, WIDENED_PATTERN_NAMES, patternFinder } from './redact';
 import { SpanFinder, Spans, findReferences } from './redactScan';
 
 export interface LeakScanOptions {
   /** Internal DNS suffixes (e.g. `corp.example.com`); hosts under them are reported. */
   internalDomains?: string[];
+  /** The widened patterns (0.30) too; default true (false: what 0.29 reported, for comparison). */
+  widened?: boolean;
 }
 
 export interface LeakFinding {
@@ -50,9 +52,41 @@ const EXTRA_DETECTORS: readonly Detector[] = [
 
 /** Generic key/header patterns report after the specific formats, so a span gets its most precise kind. */
 const GENERIC = new Set(['authorization-header', 'cookie-header', 'secret-key-value']);
-const PATTERN_DETECTORS: readonly PatternDetector[] = [...DEFAULT_PATTERNS]
+const PATTERN_DETECTORS: readonly PatternDetector[] = DEFAULT_PATTERNS.filter((p) => !WIDENED_PATTERN_NAMES.has(p.name ?? ''))
   .sort((a, b) => Number(GENERIC.has(a.name ?? '')) - Number(GENERIC.has(b.name ?? '')))
   .map((p) => ({ kind: p.name === 'pem-private-key' ? 'private-key' : (p.name ?? 'secret'), find: patternFinder(p) }));
+/** The widened patterns (0.30): reported after every other finding, so those stay as they were, and only for a value that looks like a secret. */
+const WIDENED_DETECTORS: readonly PatternDetector[] = DEFAULT_PATTERNS.filter((p) => WIDENED_PATTERN_NAMES.has(p.name ?? '')).map((p) => ({
+  kind: p.name!,
+  find: patternFinder(p),
+}));
+
+/** Values that stand for a secret in docs and examples: placeholders, not secrets. */
+const PLACEHOLDER =
+  /^(?:x+|\*+|\.+|-+|_+|#+|…|<[^>]*>|\{\{.*\}\}|\[[^\]]*\]|n\/a|(?:your|my|the|some|example|sample|dummy|fake|test|placeholder|new|old)(?:[-_.]?\w*)?|change[-_]?me|secrets?|password|passwd|token|redacted|hidden|none|null|undefined|true|false|tbd|todo)$/i;
+
+/**
+ * Does the value at [at, end) look like a secret? What the widened patterns find in the leak scan
+ * (on runbook source, too: prose such as "api key: see the vault") is reported only then:
+ * - one word (after an auth scheme such as `Basic`), not a placeholder, an elided example (`…`,
+ *   `...`) or a variable reference;
+ * - quoted (`"…"`, or the span is the inside of quotes): 4 characters or more;
+ * - else 6 or more with letters and a digit or symbol (`hunter2`), or 12 or more letters of
+ *   entropy 3 or more.
+ */
+export function looksLikeSecret(text: string, at: number, end: number): boolean {
+  let v = text.slice(at, end);
+  const before = text[at - 1];
+  let quoted = (before === '"' || before === "'") && text[end] === before;
+  if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) {
+    quoted = true;
+    v = v.slice(1, -1);
+  }
+  v = v.trim().replace(/^(?:Basic|Bearer|Token|Digest|Negotiate|Bot)\s+/i, '');
+  if (v === '' || /\s/.test(v) || PLACEHOLDER.test(v) || /…|\.\.\.|\$[{(A-Za-z_]|%\w+%/.test(v)) return false;
+  if (quoted) return v.length >= 4;
+  return (v.length >= 6 && /[A-Za-z]/.test(v) && /[^A-Za-z]/.test(v)) || (v.length >= 12 && shannonEntropy(v) >= 3);
+}
 
 /** Values that are references, not secrets: `$TOKEN`, `${TOKEN}`, `$env:TOKEN`, `%TOKEN%`, `$(cmd)`. */
 const VARIABLE_REF = /^(?:(?:Bearer|Basic|token)\s+)?(?:\$\{?[A-Za-z_]\w*\}?|\$env:\w+|%\w+%|\$\(.*\)|\$\{(?:secret|input|param|out|secretFile):[\w:]+\})$/i;
@@ -437,13 +471,13 @@ export function scanForLeaks(text: string, opts: LeakScanOptions = {}): LeakFind
   const skip = (m: string, at: number): boolean =>
     m.includes(REDACTED) || VARIABLE_REF.test(m.trim()) || inRef(at + (AUTH_SCHEME.exec(m)?.[0].length ?? 0));
 
-  const regexHits = (detectors: ReadonlyArray<Detector | PatternDetector>): void => {
+  const regexHits = (detectors: ReadonlyArray<Detector | PatternDetector>, accept?: (at: number, end: number) => boolean): void => {
     for (const d of detectors) {
       if ('re' in d) d.re.lastIndex = 0;
       const found: Spans = 'find' in d ? d.find(text) : [...text.matchAll(d.re)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
       for (const [at, end] of found) {
         const m = text.slice(at, end);
-        if (m === '' || skip(m, at)) continue;
+        if (m === '' || skip(m, at) || (accept && !accept(at, end))) continue;
         // `-----BEGIN … PRIVATE KEY-----` with its body already redacted is harmless.
         if (d.kind === 'private-key' && m.startsWith('-----BEGIN') && REDACTED_AFTER.test(text.slice(end, end + 40))) continue;
         add(at, m.length, d.kind);
@@ -467,6 +501,7 @@ export function scanForLeaks(text: string, opts: LeakScanOptions = {}): LeakFind
   }
   const domains = domainDetector(opts.internalDomains);
   if (domains) for (const m of text.matchAll(domains.re)) add(m.index ?? 0, m[0].length, domains.kind);
+  if (opts.widened !== false) regexHits(WIDENED_DETECTORS, (at, end) => looksLikeSecret(text, at, end));
 
   spans.sort((a, b) => a.offset - b.offset);
   const lineStarts = [0];

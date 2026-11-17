@@ -90,7 +90,11 @@ export class Scan {
   readonly n: number;
   private readonly stops = new Map<string, NextStop>();
   private readonly lineWords = new Map<string, Int32Array>();
-  constructor(readonly t: string) {
+  /** `blank`: what `[ 	]` reads (the widened patterns read every space but line ends). */
+  constructor(
+    readonly t: string,
+    readonly blank: (c: number) => boolean = isBlank,
+  ) {
     this.n = t.length;
   }
   c(i: number): number {
@@ -108,7 +112,7 @@ export class Scan {
   }
   /** The start of the run of blanks that ends at i (i itself if there is none). */
   blanksBefore(i: number): number {
-    while (i > 0 && isBlank(this.c(i - 1))) i--;
+    while (i > 0 && this.blank(this.c(i - 1))) i--;
     return i;
   }
   /** The end of the run of `ok` characters from i. */
@@ -144,11 +148,11 @@ export class Scan {
 }
 
 /** Every match of `matchAt` (the end of the match at p, or -1), as a global regular expression finds them. */
-export function finder(matchAt: (s: Scan, p: number) => number, mustHave?: RegExp): SpanFinder {
+export function finder(matchAt: (s: Scan, p: number) => number, mustHave?: RegExp, blank: (c: number) => boolean = isBlank): SpanFinder {
   return (text) => {
     const out: Spans = [];
     if (mustHave && !mustHave.test(text)) return out;
-    const s = new Scan(text);
+    const s = new Scan(text, blank);
     for (let p = 0; p < s.n; ) {
       const e = matchAt(s, p);
       if (e > p) {
@@ -194,7 +198,7 @@ const tokenMark = (c: number): boolean => isDigit(c) || c === DOT || c === US ||
 
 /** `(?<=\bBearer[ \t]+)(?=[…]*[0-9._~+/-])[…]{8,}=*` */
 function bearer(s: Scan, p: number): number {
-  if (!tokenChar(s.c(p)) || !isBlank(s.c(p - 1))) return -1;
+  if (!tokenChar(s.c(p)) || !s.blank(s.c(p - 1))) return -1;
   const j = s.blanksBefore(p);
   if (!s.is(j - 6, 'bearer') || isWord(s.c(j - 7))) return -1;
   let e = p;
@@ -378,7 +382,7 @@ function flagValue(s: Scan, p: number): number {
   const c = s.c(p);
   // Every value starts with no blank: inside a run of blanks, nothing is read back.
   if (!flagValueChar(c) && !isQuote(c)) return -1;
-  if (!isBlank(s.c(p - 1)) || !secretFlagEndsAt(s, s.blanksBefore(p))) return -1;
+  if (!s.blank(s.c(p - 1)) || !secretFlagEndsAt(s, s.blanksBefore(p))) return -1;
   if (isQuote(c)) {
     const d = s.c(p + 1);
     if (d === DOLLAR || d === PCT) return -1;
@@ -406,7 +410,7 @@ function userPassword(s: Scan, p: number): number {
   if (!flagValueChar(s.c(p)) || s.c(p - 1) !== COLON) return -1;
   let u = p - 1;
   while (u > 0 && userChar(s.c(u - 1))) u--;
-  if (u === p - 1 || !isBlank(s.c(u - 1))) return -1;
+  if (u === p - 1 || !s.blank(s.c(u - 1))) return -1;
   const v = s.blanksBefore(u);
   const dashU = s.c(v - 2) === DASH && lower(s.c(v - 1)) === 117 && (v === 2 || isS(s.c(v - 3)));
   const dashUser = s.is(v - 6, '--user') && (v === 6 || isS(s.c(v - 7)));
@@ -416,7 +420,7 @@ function userPassword(s: Scan, p: number): number {
 function secretFlag(s: Scan, p: number): number {
   // Each alternative's look-behind ends in a blank, the `p` of `-p`, or a colon.
   const prev = s.c(p - 1);
-  if (!isBlank(prev) && lower(prev) !== 112 && prev !== COLON) return -1;
+  if (!s.blank(prev) && lower(prev) !== 112 && prev !== COLON) return -1;
   let e = flagValue(s, p);
   // `(?!-)`: login's value doesn't start with a dash.
   if (e < 0 && s.c(p) !== DASH) e = dashP(s, p, 'login', true);
@@ -523,15 +527,319 @@ function referenceAt(s: Scan, p: number): number {
 /** Where leaks.ts REFERENCE_RE matches, in linear time (its `${NAME:-…}` alternative retried each `${` to the line's end). */
 export const findReferences: SpanFinder = finder(referenceAt);
 
+// --- the widened patterns (redact.ts, after the ones above) --------------------------------------
+
+/** Every JavaScript space but the line ends, `[^\S\r\n…]`: what the widened patterns read where the ones above read `[ \t]`. */
+export const isWideBlank = (c: number): boolean => isS(c) && c !== LF && c !== CR && c !== 0x2028 && c !== 0x2029;
+
+const authHeader = (s: Scan, p: number): number => header(s, p, 'authorization', true);
+const cookieHeader = (s: Scan, p: number): number => header(s, p, 'cookie', false);
+const secretKeyValue = (s: Scan, p: number): number => keyValue(s, p, secretKeyEndsAt);
+const passKeyValue = (s: Scan, p: number): number => keyValue(s, p, passKeyEndsAt);
+
+/** The value of a quoted string that starts at p (its quote at p - 1) and ends on its line, or -1. */
+function quotedEnd(s: Scan, p: number): number {
+  const q = s.c(p - 1);
+  const e = s.next(q === DQ ? 'q"' : "q'", (c) => c === q || c === CR || c === LF).find(p);
+  return e > p && s.c(e) === q ? e : -1;
+}
+
+/** `(?<=\b(?:Proxy-|Set-)?NAME["']?WS*[:=]WS*Q)[^Q\r\n]+(?=Q)`: a header's value in quotes, Q the quote before p. */
+function quotedHeader(s: Scan, p: number, name: string): number {
+  if (!isQuote(s.c(p - 1))) return -1;
+  const k = keyEnd(s, p - 1);
+  if (k < 0 || !s.is(k - name.length, name) || isWord(s.c(k - name.length - 1))) return -1;
+  return quotedEnd(s, p);
+}
+
+// The patterns that read `[ \t]` around a separator or after a flag, in DEFAULT_PATTERNS order:
+// authorization-header, cookie-header, bearer-token, secret-key-value-quoted, secret-key-value,
+// pass-key-value, secret-flag-value, keycloak-client-secret.
+
+// The ones that can match, by what comes before the value (the others can't: each needs one of these).
+const AFTER_QUOTE = [quotedKeyValue, secretKeyValue, passKeyValue, keycloakSecret];
+const AFTER_BLANK = [authHeader, cookieHeader, bearer, secretKeyValue, passKeyValue, secretFlag, keycloakSecret];
+const AFTER_SEPARATOR = [authHeader, cookieHeader, secretKeyValue, passKeyValue, secretFlag, keycloakSecret];
+const AFTER_P = [secretFlag];
+const UUID_ONLY = [keycloakSecret];
+
+/** Their alternatives (SEPARATED, in that order), the first that matches at p, read with Unicode spaces too. */
+function separatedWide(s: Scan, p: number): number {
+  const prev = s.c(p - 1);
+  const c = s.c(p);
+  let ms: ReadonlyArray<(s: Scan, p: number) => number>;
+  if (isQuote(prev)) ms = AFTER_QUOTE;
+  // Only a quoted value may start with a space.
+  else if (c !== c || isS(c)) return -1;
+  else if (s.blank(prev)) ms = AFTER_BLANK;
+  else if (prev === COLON || prev === EQ) ms = AFTER_SEPARATOR;
+  else if (lower(prev) === 112) ms = AFTER_P;
+  else if (!isWord(prev) && isHex(c)) ms = UUID_ONLY;
+  else return -1;
+  for (const m of ms) {
+    const e = m(s, p);
+    if (e >= 0) return e;
+  }
+  return -1;
+}
+
+/**
+ * Tools that take a password after a flag, where that flag means the password (only those), and
+ * how. `space`: the value follows blanks; `glued`: it follows the flag at once (getopt-style
+ * tools). `split`: the value is `user<split>PASSWORD`, `prefix`: `<prefix>PASSWORD`. Left out on
+ * purpose: `mysql -p` (covered by secret-flag-value), `-p NAME` of the MySQL tools (it asks for the
+ * password, NAME is the database), `psql`, `pg_dump` and `ssh` (`-p` is the port), `psql -W` (asks),
+ * `curl -u` (secret-flag-value), `docker`/`oc`/`podman login -p` (secret-flag-value).
+ */
+export interface PasswordToolRule {
+  tools: readonly string[];
+  flags: readonly string[];
+  space?: boolean;
+  glued?: boolean;
+  split?: string;
+  prefix?: string;
+}
+
+export const PASSWORD_TOOLS: readonly PasswordToolRule[] = [
+  // sshpass -p PASSWORD (getopt: -pPASSWORD too)
+  { tools: ['sshpass'], flags: ['-p'], space: true, glued: true },
+  // MySQL/MariaDB tools: only -pPASSWORD (with a blank, -p asks and the next word is the database)
+  {
+    tools: ['mysqldump', 'mysqladmin', 'mysqlimport', 'mysqlshow', 'mysqlcheck', 'mysqlpump', 'mysqlslap', 'mariadb', 'mariadb-dump', 'mariadb-admin'],
+    flags: ['-p'],
+    glued: true,
+  },
+  // redis-cli -a PASSWORD
+  { tools: ['redis-cli'], flags: ['-a'], space: true },
+  // OpenLDAP clients: -w PASSWORD is the bind password (-W asks)
+  {
+    tools: ['ldapsearch', 'ldapadd', 'ldapmodify', 'ldapdelete', 'ldapmodrdn', 'ldapcompare', 'ldapwhoami', 'ldappasswd', 'ldapexop'],
+    flags: ['-w'],
+    space: true,
+    glued: true,
+  },
+  // zip/unzip -P PASSWORD; 7-Zip -pPASSWORD
+  { tools: ['zip', 'unzip'], flags: ['-P'], space: true },
+  { tools: ['7z', '7za', '7zr', '7zz'], flags: ['-p'], glued: true },
+  // ipmitool -P PASSWORD
+  { tools: ['ipmitool'], flags: ['-P'], space: true, glued: true },
+  // SQL Server: sqlcmd/bcp/osql -P PASSWORD (-U is the user)
+  { tools: ['sqlcmd', 'bcp', 'osql'], flags: ['-P'], space: true },
+  // Sysinternals PsExec -p PASSWORD
+  { tools: ['psexec', 'psexec64', 'PsExec', 'PsExec64'], flags: ['-p'], space: true },
+  // Mosquitto clients -P PASSWORD (-p is the port)
+  { tools: ['mosquitto_pub', 'mosquitto_sub', 'mosquitto_rr'], flags: ['-P'], space: true },
+  // MongoDB shells and tools: -p PASSWORD
+  {
+    tools: ['mongo', 'mongosh', 'mongodump', 'mongorestore', 'mongoexport', 'mongoimport', 'mongostat', 'mongotop', 'mongofiles'],
+    flags: ['-p'],
+    space: true,
+  },
+  // Java keystores
+  {
+    tools: ['keytool', 'jarsigner'],
+    flags: ['-storepass', '-keypass', '-srcstorepass', '-deststorepass', '-srckeypass', '-destkeypass', '-new'],
+    space: true,
+  },
+  // Net-SNMP v3: -A auth and -X privacy pass phrases
+  {
+    tools: ['snmpwalk', 'snmpbulkwalk', 'snmpget', 'snmpgetnext', 'snmpbulkget', 'snmpset', 'snmptable', 'snmptrap'],
+    flags: ['-A', '-X'],
+    space: true,
+    glued: true,
+  },
+  // Samba: -U user%PASSWORD
+  { tools: ['smbclient', 'rpcclient'], flags: ['-U'], space: true, glued: true, split: '%' },
+  // lftp -u user,PASSWORD
+  { tools: ['lftp'], flags: ['-u'], space: true, split: ',' },
+  // curl's proxy credentials: -U/--proxy-user user:PASSWORD
+  { tools: ['curl'], flags: ['-U', '--proxy-user'], space: true, split: ':' },
+  // OpenSSL: -passin/-passout/-pass pass:PASSWORD, and enc -k PASSWORD
+  { tools: ['openssl'], flags: ['-passin', '-passout', '-pass'], space: true, prefix: 'pass:' },
+  { tools: ['openssl'], flags: ['-k'], space: true },
+  // Windows: cmdkey /pass:PASSWORD, schtasks /RP PASSWORD; FreeRDP /p:PASSWORD
+  { tools: ['cmdkey'], flags: ['/pass:'], glued: true },
+  { tools: ['schtasks'], flags: ['/RP', '/rp'], space: true },
+  { tools: ['xfreerdp', 'wlfreerdp', 'sdl-freerdp'], flags: ['/p:'], glued: true },
+  // NetworkManager: nmcli … password PASSWORD, wifi-sec.psk PASSWORD
+  { tools: ['nmcli'], flags: ['password', 'wifi-sec.psk'], space: true },
+];
+
+const TOOL_NAMES = [...new Set(PASSWORD_TOOLS.flatMap((r) => r.tools))];
+const TOOLS_RE = new RegExp([...TOOL_NAMES, 'htpasswd'].map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'));
+const toolMasks = new WeakMap<Scan, Int32Array>();
+/** Which rules have a tool anywhere in the text. */
+const toolsPresent = new WeakMap<Scan, number>();
+
+/** For each place i, which rules have one of their tools as a whole word before it on its line (as `\bTOOL\b[^\r\n]*?` before i). */
+function toolsBefore(s: Scan): Int32Array {
+  let masks = toolMasks.get(s);
+  if (masks) return masks;
+  const ends = new Int32Array(s.n + 1);
+  PASSWORD_TOOLS.forEach((r, bit) => {
+    for (const tool of r.tools) {
+      for (let at = s.t.indexOf(tool); at >= 0; at = s.t.indexOf(tool, at + 1)) {
+        // `\bTOOL\b` (every tool name starts and ends with a word character)
+        if (isWord(s.c(at - 1)) || isWord(s.c(at + tool.length))) continue;
+        ends[at + tool.length] = ends[at + tool.length]! | (1 << bit);
+      }
+    }
+  });
+  masks = new Int32Array(s.n + 1);
+  let cur = 0;
+  for (let x = 0; x <= s.n; x++) {
+    const prev = s.c(x - 1);
+    if (prev === CR || prev === LF) cur = 0;
+    cur |= ends[x]!;
+    masks[x] = cur;
+  }
+  toolMasks.set(s, masks);
+  toolsPresent.set(s, ends.reduce((a, b) => a | b, 0));
+  return masks;
+}
+
+/** Does one of `rule`'s flags end at f, after a `\s` that one of its tools comes before on the line? */
+function toolFlagEndsAt(s: Scan, f: number, rule: PasswordToolRule, bit: number): boolean {
+  for (const flag of rule.flags) {
+    const at = f - flag.length;
+    if (at > 0 && s.has(at, flag) && isS(s.c(at - 1)) && (toolsBefore(s)[at - 1]! & (1 << bit)) !== 0) return true;
+  }
+  return false;
+}
+
+/** Does the flag of `rule` end at f, with the value (or the user part of it) from v on: after blanks, or glued? */
+function toolFlagBefore(s: Scan, v: number, rule: PasswordToolRule, bit: number): boolean {
+  if (s.blank(s.c(v - 1))) return rule.space === true && toolFlagEndsAt(s, s.blanksBefore(v), rule, bit);
+  return rule.glued === true && toolFlagEndsAt(s, v, rule, bit);
+}
+
+/** What can come right before a value: a glued flag's last character, a split or a prefix's last one (else a blank). */
+const BEFORE_VALUE = new Set(
+  PASSWORD_TOOLS.flatMap((r) => [...(r.glued ? r.flags.map((f) => f.charCodeAt(f.length - 1)) : []), ...(r.split ? [r.split.charCodeAt(0)] : []), ...(r.prefix ? [r.prefix.charCodeAt(r.prefix.length - 1)] : [])]),
+);
+
+/** A password given to a tool (PASSWORD_TOOLS): the first rule that matches at p. */
+function passwordTool(s: Scan, p: number): number {
+  const c = s.c(p);
+  if (!flagValueChar(c) && !isQuote(c)) return -1;
+  const before = s.c(p - 1);
+  if (!s.blank(before) && !BEFORE_VALUE.has(before)) return -1;
+  // The value as secret-flag-value reads it: quoted (not a reference), or a word not starting with `-`, `$` or `%`.
+  const d = s.c(p + 1);
+  const valueOk = isQuote(c) ? d !== DOLLAR && d !== PCT : c !== DASH && c !== DOLLAR && c !== PCT;
+  /** Where the flag ends for a value at p: before the blanks, else at p (glued). */
+  const flagEnd = s.blank(before) ? s.blanksBefore(p) : p;
+  toolsBefore(s);
+  const present = toolsPresent.get(s) ?? 0;
+  for (let bit = 0; bit < PASSWORD_TOOLS.length; bit++) {
+    if ((present & (1 << bit)) === 0) continue;
+    const rule = PASSWORD_TOOLS[bit]!;
+    if (rule.split !== undefined) {
+      // `user<split>PASSWORD`: the user part, then the separator right before p.
+      if (!flagValueChar(c) || s.c(p - 1) !== rule.split.charCodeAt(0)) continue;
+      let u = p - 1;
+      while (u > 0 && flagValueChar(s.c(u - 1)) && s.c(u - 1) !== s.c(p - 1)) u--;
+      if (u === p - 1) continue;
+      // After blanks, the user part is the whole run; glued, the run starts with the flag (a flag
+      // follows a `\s`, so it can only start the run) and the user part is the rest.
+      const spaced = rule.space === true && s.blank(s.c(u - 1)) && toolFlagEndsAt(s, s.blanksBefore(u), rule, bit);
+      const glued = rule.glued === true && rule.flags.some((f) => u + f.length < p - 1 && s.has(u, f) && toolFlagEndsAt(s, u + f.length, rule, bit));
+      if (spaced || glued) return s.runEnd(p, flagValueChar);
+      continue;
+    }
+    if (rule.prefix !== undefined) {
+      const at = p - rule.prefix.length;
+      if (flagValueChar(c) && s.has(at, rule.prefix) && toolFlagBefore(s, at, rule, bit)) return s.runEnd(p, flagValueChar);
+      continue;
+    }
+    if (!valueOk || !(flagEnd < p ? rule.space === true : rule.glued === true) || !toolFlagEndsAt(s, flagEnd, rule, bit)) continue;
+    if (isQuote(c)) {
+      const e = s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(p + 1);
+      if (s.c(e) === c) return e + 1;
+      continue;
+    }
+    return s.runEnd(p, flagValueChar);
+  }
+  return htpasswdBatch(s, p);
+}
+
+/**
+ * `htpasswd -b FILE USER PASSWORD` and `htpasswd -nb USER PASSWORD` (the options in one word with
+ * `b`, and `n` or not): read back over the words before p to the options and `htpasswd`. Options in
+ * several words (`-c -b`) are not read.
+ */
+function htpasswdBatch(s: Scan, p: number): number {
+  const c = s.c(p);
+  if (!flagValueChar(c) || c === DASH || c === DOLLAR || c === PCT || !s.blank(s.c(p - 1))) return -1;
+  // htpasswd on the line before p (the words and blanks between hold no line break).
+  if (s.wordEndOnLine('htpasswd', p) < 0) return -1;
+  let end = s.blanksBefore(p);
+  for (let n = 0; n < 3; n++) {
+    let start = end;
+    while (start > 0 && flagValueChar(s.c(start - 1))) start--;
+    if (start === end || !s.blank(s.c(start - 1))) return -1;
+    // `-[A-Za-z]+` with `b`: the password is the third word after it, or the second with `n`.
+    let b = false;
+    let nOption = false;
+    let letters = s.c(start) === DASH && end - start >= 2;
+    for (let i = start + 1; letters && i < end; i++) {
+      const x = s.c(i);
+      letters = isAlpha(x);
+      if (x === 98) b = true;
+      if (x === 110) nOption = true;
+    }
+    if (letters && b && n === (nOption ? 1 : 2)) {
+      const h = s.blanksBefore(start);
+      if (s.has(h - 8, 'htpasswd') && !isWord(s.c(h - 9))) return s.runEnd(p, flagValueChar);
+    }
+    end = s.blanksBefore(start);
+  }
+  return -1;
+}
+
+/** The first words of two-word key names whose second word (`key`) no SECRET_KEYS name holds: `api key`, `secret key`… */
+export const SPACED_KEY_WORDS = ['api', 'access', 'secret', 'private', 'client', 'app', 'master', 'account', 'encryption', 'signing'];
+
+/** Does `\b(?:WORDS)WS+key` or `\bpassWS*phrase` end at k? */
+function spacedKeyEndsAt(s: Scan, k: number): boolean {
+  if (s.is(k - 3, 'key')) {
+    const j = s.blanksBefore(k - 3);
+    if (j === k - 3) return false;
+    for (const w of SPACED_KEY_WORDS) if (s.is(j - w.length, w) && !isWord(s.c(j - w.length - 1))) return true;
+    return false;
+  }
+  if (!s.is(k - 6, 'phrase')) return false;
+  const j = s.blanksBefore(k - 6);
+  return s.is(j - 4, 'pass') && !isWord(s.c(j - 5));
+}
+
+/** A spaced key name's value: in quotes (all of it), else a word as secret-key-value reads it. */
+function spacedKeyValue(s: Scan, p: number): number {
+  if (isQuote(s.c(p - 1))) {
+    const k = keyEnd(s, p - 1);
+    if (k >= 0 && spacedKeyEndsAt(s, k) && notAValue(s, p)) {
+      const e = quotedEnd(s, p);
+      if (e >= 0) return e;
+    }
+  }
+  return keyValue(s, p, spacedKeyEndsAt);
+}
+
 /** The built-in patterns (by name) that have a linear matcher. redact.ts uses one only for that exact pattern. */
 export const LINEAR_FINDERS: ReadonlyMap<string, SpanFinder> = new Map([
-  ['authorization-header', finder((s, p) => header(s, p, 'authorization', true), /authorization/i)],
-  ['cookie-header', finder((s, p) => header(s, p, 'cookie', false), /cookie/i)],
+  ['authorization-header', finder(authHeader, /authorization/i)],
+  ['cookie-header', finder(cookieHeader, /cookie/i)],
   ['bearer-token', finder(bearer, /bearer/i)],
   ['jwt', finder(jwt, /eyJ/)],
   ['secret-key-value-quoted', finder(quotedKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key/i)],
-  ['secret-key-value', finder((s, p) => keyValue(s, p, secretKeyEndsAt), /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key/i)],
-  ['pass-key-value', finder((s, p) => keyValue(s, p, passKeyEndsAt), /pass/i)],
+  ['secret-key-value', finder(secretKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key/i)],
+  ['pass-key-value', finder(passKeyValue, /pass/i)],
   ['secret-flag-value', finder(secretFlag, /-/)],
   ['keycloak-client-secret', finder(keycloakSecret, /secret/i)],
+  // The widened ones (they read Unicode spaces as blanks).
+  ['authorization-header-quoted', finder((s, p) => quotedHeader(s, p, 'authorization'), /authorization/i, isWideBlank)],
+  ['cookie-header-quoted', finder((s, p) => quotedHeader(s, p, 'cookie'), /cookie/i, isWideBlank)],
+  ['secret-after-unicode-space', finder(separatedWide, undefined, isWideBlank)],
+  ['password-flag-tool', finder(passwordTool, TOOLS_RE, isWideBlank)],
+  ['secret-key-value-spaced', finder(spacedKeyValue, /key|phrase/i, isWideBlank)],
 ]);

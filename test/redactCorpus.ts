@@ -16,6 +16,8 @@ export function random(seed: number): () => number {
   };
 }
 
+const NBSP = String.fromCharCode(0xa0);
+
 const KEYS = [
   'password', 'Password', 'PASSWORD', 'passwd', 'pwd', 'PWD', 'secret', 'Secret', 'client_secret', 'clientSecret', 'client-secret',
   'token', 'Token', 'access_token', 'refresh-token', 'id_token', 'token_type', 'tokens', 'api_key', 'apiKey', 'API-KEY', 'x-api-key',
@@ -24,6 +26,9 @@ const KEYS = [
   'pass', 'Pass', 'PASS', 'bypass', 'compass', 'KC_PASS', '$env:KC_PASS', 'my-token', 'secrets', 'secretName', 'mysecret', 'secret2',
   '-secret', '.secret', '_token', 'a.b.password', 'pass.word', 'pwd_', 'x', 'name', 'user', 'key', 'kind', 'value', 'data', 'host',
   'passport', 'tokenizer', 'Secret-Key', '-.key', '.-key', 'a-.key', '_.key', 'secretFile', 'input', 'param',
+  // spaced key names (secret-key-value-spaced)
+  'api key', 'API Key', 'secret  key', 'Secret\tKey', 'access key', 'private key', 'client key', 'app key', 'master key', 'account key',
+  'encryption key', 'signing key', 'pass phrase', 'passphrase', 'Passphrase', 'xapi key', 'api keys', 'api monkey', 'my api key', 'api' + NBSP + 'key',
 ];
 const HEADERS = ['Authorization', 'authorization', 'AUTHORIZATION', 'Proxy-Authorization', 'X-Authorization', 'xAuthorization', 'Cookie', 'cookie', 'Set-Cookie', 'set-cookie', 'XCookie', 'Cookies'];
 const VALUES = [
@@ -36,12 +41,19 @@ const VALUES = [
   'Basic', 'Negotiate YII=', 'true', 'false', 'null', 'None', 'none', 'none1', 'nullable', 'Truely', 'basically',
   'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig', 'eyJabcde.fghij', 'eyJabcd.efghi', 'eyJabcde.fghi', 'eyJ-eyJabcde.fghijk.', 'xeyJabcde.fghij', 'eyJabcdefgh',
   'sha256~abcdefghijklmnopqrstuvwxyz0123', '-dash', '--x', '-', '$', '%', '"', "'", '""', "''", '"$x"', "'%x'", '"a b"', "'a b'", '"unterminated',
+  'bob%pw2', 'bob,pw3', 'u:pw4', 'pass:pw5', 'env:VAR', 'pw%', '%pw', ',pw',
   '7f3a9c2e-55d1-4b8e-a0f2-9e8d7c6b5a41', 'admin:S3cret', 'user:p%40ss', ':', 'a:b:c', '=', '==', 'abc==', 'abcdefgh==', 'abc/def+ghi~jkl_', 'ABCDEFGHIJ',
 ];
 const FLAGS = [
   '--password', '-password', '--PASSWORD', '--pass', '-pass', '--passwd', '--client-secret', '--token', '-token', '--api-key', '--apikey',
   '--access-key', '--secret-key', '--secret', 'x--password', '---password', '--passwords', '-p', '-P', '-pS3cretPw', '-u', '-U', '--user', '--USER',
   '--u', '-user', 'login', 'oc login', 'LOGIN', 'relogin', 'login2', 'mysql', 'MYSQL', 'mysql -h db', 'mysqldump', 'kcadm.sh config credentials', 'curl',
+  // tools that take a password (password-flag-tool), and look-alikes
+  'sshpass', 'sshpass -p', 'redis-cli', 'redis-cli -a', 'ldapsearch', 'ldapsearch -x -w', '-w', '-a', '-A', '-X', 'smbclient', 'smbclient //h/s -U',
+  'rpcclient -U', 'lftp -u', 'openssl rsa -passin', 'openssl enc -k', '-passin', '-passout', 'pass:', 'htpasswd -b f', 'htpasswd -nb', 'htpasswd -bc',
+  'htpasswd -c -b', 'htpasswd', 'mysqldump -u root', 'mariadb-dump', '7z a', '7za', 'zip', 'unzip -P', 'curl -U', '--proxy-user', 'cmdkey /pass:',
+  'cmdkey', '/pass:', 'xfreerdp /p:', '/p:', 'nmcli', 'password', 'wifi-sec.psk', 'keytool', '-storepass', '-new', 'snmpwalk', 'sqlcmd', 'bcp',
+  'mongosh', 'mongo', 'mosquitto_pub', 'ipmitool', 'PsExec', 'psexec', 'schtasks', '/RP', '/rp', 'ssh', 'psql', 'xsshpass', 'sshpass2',
 ];
 const OTHER = [
   'eyJ', 'eyJhbGciOi', 'Bearer', 'bearer', 'BEARER', 'xBearer', '.', '-', '_', 'x', 'abc', 'a1', '://', 'https://user:pw@host/x', 'git://a:b@c',

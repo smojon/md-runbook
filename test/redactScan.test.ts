@@ -73,6 +73,11 @@ describe('linear redaction matchers', () => {
         'pass-key-value',
         'secret-flag-value',
         'keycloak-client-secret',
+        'authorization-header-quoted',
+        'cookie-header-quoted',
+        'secret-after-unicode-space',
+        'password-flag-tool',
+        'secret-key-value-spaced',
       ],
     );
     for (const p of LINEAR) assert.equal(patternFinder(p), LINEAR_FINDERS.get(p.name!));
@@ -183,7 +188,9 @@ describe('redaction and the leak scan stay linear on 200,000-character lines', (
       const t0 = performance.now();
       for (const line of HOSTILE) find(line);
       const ms = performance.now() - t0;
-      assert.ok(ms < BUDGET_MS, `${p.name}: ${Math.round(ms)} ms for ${HOSTILE.length} lines`);
+      // secret-after-unicode-space is eight patterns in one (each of them read with Unicode spaces).
+      const budget = p.name === 'secret-after-unicode-space' ? 4 * BUDGET_MS : BUDGET_MS;
+      assert.ok(ms < budget, `${p.name}: ${Math.round(ms)} ms for ${HOSTILE.length} lines`);
     });
   }
   it('variable references (leak scan)', () => {
@@ -202,6 +209,7 @@ describe('redaction and the leak scan stay linear on 200,000-character lines', (
     const t0 = performance.now();
     for (const line of HOSTILE) scanForLeaks(line);
     const ms = performance.now() - t0;
-    assert.ok(ms < 4 * BUDGET_MS, `${Math.round(ms)} ms`);
+    // Every detector, the widened ones included (about 180 ms a line here; quadratic would be minutes).
+    assert.ok(ms < 8 * BUDGET_MS, `${Math.round(ms)} ms`);
   });
 });
