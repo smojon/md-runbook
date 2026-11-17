@@ -35,7 +35,7 @@ import { useLibraryUrlSetting } from '../settings/store';
 import {
   SignatureState,
   SignerCheck,
-  isTrustedSigner,
+  countsFor,
   manifestOf,
   shownName,
   shownPrincipal,
@@ -44,6 +44,7 @@ import {
   trustedFor,
   untrustSigners,
   useTrustedSigners,
+  withdrawnSigner,
 } from '../signing/trust';
 import { mono, themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
@@ -194,7 +195,8 @@ function SignersCard({ library }: { library: Library }) {
   useTrustedSigners();
   const [asking, setAsking] = useState(false);
   const list = library.signers?.list ?? [];
-  const untrusted = list.filter((s) => !isTrustedSigner(s, library.base));
+  // Not counting here: never trusted, or withdrawn (a key listed again counts only after this same yes).
+  const untrusted = list.filter((s) => !countsFor(s, library.base));
   const withdrawn = withdrawnKeys(library);
   const host = libraryHost(library.base);
   // What the other device trusts for this library (a pairing link brought it): compared, never trusted.
@@ -241,6 +243,11 @@ function SignersCard({ library }: { library: Library }) {
               <Text style={styles.mono} selectable>
                 {`${s.keyType} ${s.fingerprint}`}
               </Text>
+              {withdrawnSigner(s, library.base) ? (
+                <Text testID="library-signer-was-withdrawn" style={[styles.meta, styles.warn]}>
+                  {t.signerWasWithdrawn(withdrawnSigner(s, library.base)!.withdrawnAt)}
+                </Text>
+              ) : null}
               {other ? (
                 <Text
                   testID={other.trustedThere.has(s.fingerprint) ? 'library-signer-other-yes' : 'library-signer-other-no'}

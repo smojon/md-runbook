@@ -12,7 +12,8 @@ import * as path from 'node:path';
 import { isCodeMeta, locateCodeCells, parse, shellKindForLanguage } from '@md-runbook/core';
 import { callRefs, fillRefs, parseCall } from '@md-runbook/core/call';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { callTarget, samePath, sshVerify } from '@md-runbook/core/node';
+import { callTarget, samePath } from '@md-runbook/core/node';
+import { cliSshVerify } from './allowedSignersFile';
 import { v1FrontMatterProblems } from '@md-runbook/core/frontMatterRun';
 import { currentOs } from '@md-runbook/core/os';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
@@ -81,7 +82,7 @@ export async function checkSignedRun(
   const why: string[] = [];
   for (const sig of allSignatures(status.block)) {
     try {
-      signer = await sshVerify(status.block.manifest, sig, allowedSigners, opts.sshKeygen);
+      signer = await cliSshVerify(status.block.manifest, sig, allowedSigners, opts.sshKeygen);
       break;
     } catch (e) {
       why.push(e instanceof Error ? e.message : String(e));

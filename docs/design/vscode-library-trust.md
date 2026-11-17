@@ -59,8 +59,18 @@ That matches the app, but it changes what a library server can make VS Code do.
 - The list shows two groups: yours, then each library's, under its address.
   - Removing a key removes it from the file it is in.
 - **Withdrawn keys**, as in the app: a trusted key the library no longer publishes stops counting.
-  - Kept as a `# withdrawn` comment line in the library's file, so ssh-keygen skips it.
-  - Published again: the line counts again.
+  - Kept as a `# withdrawn YYYY-MM-DD` comment line in the library's file, so ssh-keygen skips it.
+  - Published again, it stays withdrawn. A compromised server could re-list a stolen key.
+  - **Add the Team Library's Signers…** offers it again, not pre-picked, with "withdrawn on" its
+    day. The yes writes the line published now, with its options.
+- **Lines as written:** md-runbook writes each line rebuilt from what it read, never as given.
+  - Names, `namespaces`, `valid-after`, `valid-before`, key type and key; no comment.
+  - Refused: a backslash, a quote outside an option value, or an unquoted value.
+  - Refused too: an option given twice, a control character or an unusual blank.
+  - OpenSSH reads `\"` as an escape: such a line could show one key and trust another.
+- **Checks match the list:** ssh-keygen gets a private copy of each file with only the lines
+  md-runbook reads, canonical (src/filteredSigners.ts). The command line's `--allowed-signers`
+  does the same and names each line left out.
 - Moving keys: an earlier version wrote library keys into your file. Nothing moves them by itself.
   Trusted Signers… marks those lines as also published by the library's host, and **Remove** takes them out.
 

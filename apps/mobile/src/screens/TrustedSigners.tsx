@@ -48,7 +48,7 @@ export function TrustedSignersSection() {
               </Text>
               {withdrawn ? (
                 <Text testID={`trusted-signer-withdrawn-${i}`} style={styles.error}>
-                  {t.trustedWithdrawn}
+                  {t.trustedWithdrawn(s.withdrawnAt)}
                 </Text>
               ) : null}
             </View>

@@ -21,6 +21,7 @@ import {
   libraryOf,
   librarySignerFiles,
   librarySignersFile,
+  librarySignerOf,
   noteWithdrawn,
   libraryAddressOf,
   readLibrarySigners,
@@ -205,10 +206,12 @@ describe('library trust: withdrawn keys', () => {
   const header = '# header\n';
   const file = header + line('ana@example.net', KEY1) + '\n' + line('bob@example.net', KEY2) + '\n';
 
-  it('a key the library no longer publishes becomes a # withdrawn line; published again, it counts again', () => {
-    const gone = withWithdrawn(file, line('ana@example.net', KEY1) + '\n');
+  const DAY = '2026-11-17';
+
+  it('a key the library no longer publishes becomes a dated # withdrawn line; published again, it stays withdrawn', () => {
+    const gone = withWithdrawn(file, line('ana@example.net', KEY1) + '\n', DAY);
     assert.ok(gone);
-    assert.equal(gone, header + line('ana@example.net', KEY1) + '\n' + WITHDRAWN + line('bob@example.net', KEY2) + '\n');
+    assert.equal(gone, header + line('ana@example.net', KEY1) + '\n' + `${WITHDRAWN}${DAY} ` + line('bob@example.net', KEY2) + '\n');
     // ssh-keygen skips comment lines: bob no longer counts.
     assert.deepEqual(
       readSigners(gone).signers.map((s) => s.principals[0]),
@@ -216,43 +219,50 @@ describe('library trust: withdrawn keys', () => {
     );
     const shown = readLibrarySigners(gone).signers;
     assert.deepEqual(
-      shown.map((s) => [s.principals[0], s.withdrawn ?? false]),
+      shown.map((s) => [s.principals[0], s.withdrawn ?? false, s.withdrawnOn ?? '']),
       [
-        ['ana@example.net', false],
-        ['bob@example.net', true],
+        ['ana@example.net', false, ''],
+        ['bob@example.net', true, DAY],
       ],
     );
     assert.equal(withWithdrawn(gone, line('ana@example.net', KEY1) + '\n'), undefined, 'nothing changes: undefined');
-    // Published again (the options may differ: the key and names count).
-    assert.equal(withWithdrawn(gone, `ana@example.net ssh-ed25519 ${KEY1}\nbob@example.net ssh-ed25519 ${KEY2}\n`), file);
+    // Published again (a stolen key, re-listed by a compromised server): still withdrawn, until trusted again.
+    assert.equal(withWithdrawn(gone, `ana@example.net namespaces="md-runbook" ssh-ed25519 ${KEY1}\nbob@example.net ssh-ed25519 ${KEY2}\n`, DAY), undefined);
     // The library publishes none: every key is withdrawn.
-    assert.equal(withWithdrawn(file, ''), header + WITHDRAWN + line('ana@example.net', KEY1) + '\n' + WITHDRAWN + line('bob@example.net', KEY2) + '\n');
+    assert.equal(withWithdrawn(file, '', DAY), header + `${WITHDRAWN}${DAY} ` + line('ana@example.net', KEY1) + '\n' + `${WITHDRAWN}${DAY} ` + line('bob@example.net', KEY2) + '\n');
     // The same key for another name is not the same signer.
-    assert.match(withWithdrawn(file, line('eve@example.net', KEY1) + '\n' + line('bob@example.net', KEY2) + '\n') ?? '', /# withdrawn ana@example\.net/);
+    assert.match(withWithdrawn(file, line('eve@example.net', KEY1) + '\n' + line('bob@example.net', KEY2) + '\n', DAY) ?? '', /# withdrawn 2026-11-17 ana@example\.net/);
   });
 
-  it('noteWithdrawn changes the file only when you trust keys from that library', () => {
+  it('noteWithdrawn changes the file only when you trust keys from that library, and never trusts again by itself', () => {
     const storage = tmp();
     try {
       noteWithdrawn(storage, A, '');
       assert.equal(fs.existsSync(librarySignersFile(storage, A)), false);
       const { file: f } = trustLibraryLines(storage, A, [line('ana@example.net', KEY1)]);
-      noteWithdrawn(storage, A, line('bob@example.net', KEY2));
-      assert.match(fs.readFileSync(f, 'utf8'), /^# withdrawn ana@example\.net/m);
+      noteWithdrawn(storage, A, line('bob@example.net', KEY2), DAY);
+      assert.match(fs.readFileSync(f, 'utf8'), /^# withdrawn 2026-11-17 ana@example\.net/m);
       noteWithdrawn(storage, A, line('ana@example.net', KEY1));
-      assert.match(fs.readFileSync(f, 'utf8'), /^ana@example\.net/m);
+      assert.doesNotMatch(fs.readFileSync(f, 'utf8'), /^ana@example\.net/m);
+      assert.equal(librarySignerOf(fs.readFileSync(f, 'utf8'), { principals: ['ana@example.net'], keyType: 'ssh-ed25519', key: KEY1 })?.withdrawnOn, DAY);
     } finally {
       fs.rmSync(storage, { recursive: true, force: true });
     }
   });
 
-  it('trusting a withdrawn key again restores its line instead of adding one', () => {
-    const gone = header + WITHDRAWN + line('ana@example.net', KEY1) + '\n';
-    const r = withTrustedLines(gone, header, [line('ana@example.net', KEY1), line('bob@example.net', KEY2), line('bob@example.net', KEY2)]);
+  it('trusting a withdrawn key again writes the line approved now, not the old one', () => {
+    const gone = header + `${WITHDRAWN}${DAY} ` + line('ana@example.net', KEY1) + '\n';
+    const now = `ana@example.net namespaces="md-runbook",valid-before="20270101" ssh-ed25519 ${KEY1}`;
+    const r = withTrustedLines(gone, header, [now, line('bob@example.net', KEY2), line('bob@example.net', KEY2)]);
     assert.deepEqual(r.added, [0, 1]);
     assert.equal(r.already, 1);
-    assert.equal(r.text, header + line('ana@example.net', KEY1) + '\n' + line('bob@example.net', KEY2) + '\n');
+    assert.equal(r.text, header + now + '\n' + line('bob@example.net', KEY2) + '\n');
     assert.equal(withTrustedLines('', header, [line('ana@example.net', KEY1)]).text, header + line('ana@example.net', KEY1) + '\n');
+  });
+
+  it('every line written is canonical: options rebuilt from what was read, no comment', () => {
+    const r = withTrustedLines('', header, [`ana@example.net VALID-BEFORE="20270101",namespaces="md-runbook" ssh-ed25519 ${KEY1} laptop`]);
+    assert.equal(r.text, header + `ana@example.net namespaces="md-runbook",valid-before="20270101" ssh-ed25519 ${KEY1}\n`);
   });
 
   it("keys an earlier version put in your file: marked when the library publishes them too", () => {
@@ -330,12 +340,39 @@ describe('library trust: run reports and practice (ssh-keygen)', () => {
     for (const f of [copyA, copyB, copyA2, elsewhere]) assert.deepEqual(await decide(mine, f), { signer: 'me@example.net', required: true, practiceSigned: true });
   });
 
-  it('a withdrawn key stops counting, and counts again once published again', async () => {
+  it('a withdrawn key stops counting; published again, it counts only once trusted again', async () => {
     const text = await signedBy(libKey, 'ana@example.net');
     const copyA = libraryCopyFile(storage, A, { path: 'restart.md', fileName: 'restart.md', text });
     noteWithdrawn(storage, A, '');
     assert.deepEqual(await decide(text, copyA), { required: false, practiceSigned: false });
     noteWithdrawn(storage, A, `ana@example.net ${pub(libKey)}\n`);
-    assert.equal((await decide(text, copyA)).signer, 'ana@example.net');
+    assert.deepEqual(await decide(text, copyA), { required: false, practiceSigned: false }, 're-listed: still withdrawn');
+    trustLibraryLines(storage, A, [`ana@example.net namespaces="md-runbook",valid-before="20991231" ${pub(libKey)}`]);
+    assert.equal((await decide(text, copyA)).signer, 'ana@example.net', 'trusted again (the line approved now)');
+  });
+
+  it("an escaped line (the review's): refused, where ssh-keygen would trust the key after the quote", async () => {
+    const decoy = pub(ownKey).split(' ')[1]!;
+    const real = pub(libKey).split(' ')[1]!;
+    const evil = `alice namespaces="md-runbook,\\" ssh-ed25519 ${decoy} x" ssh-ed25519 ${real}`;
+    // ssh-keygen reads the key after the escaped quote: it trusts `real`.
+    const raw = path.join(dir, 'evil_signers');
+    fs.writeFileSync(raw, evil + '\n');
+    const text = await signedBy(libKey, 'alice');
+    assert.equal((await runbookSignerCheck(text, raw)).signer, 'alice');
+    // md-runbook refuses the line: never shown as `decoy`, never written.
+    const { signers, skipped } = readSigners(evil + '\n', { adding: true });
+    assert.deepEqual(signers, []);
+    assert.match(skipped[0]!.problem, /backslash/);
+    const storage2 = path.join(dir, 'storage2');
+    assert.deepEqual(trustLibraryLines(storage2, A, [evil]).added, []);
+    assert.equal(fs.existsSync(librarySignersFile(storage2, A)), false);
+  });
+
+  it('the canonical lines md-runbook writes are read by ssh-keygen as shown', async () => {
+    const storage3 = path.join(dir, 'storage3');
+    const { file } = trustLibraryLines(storage3, A, [`alice VALID-BEFORE="20991231",namespaces="md-runbook" ${pub(libKey)} laptop`]);
+    assert.match(fs.readFileSync(file, 'utf8'), /^alice namespaces="md-runbook",valid-before="20991231" ssh-ed25519 \S+$/m);
+    assert.equal((await runbookSignerCheck(await signedBy(libKey, 'alice'), file)).signer, 'alice');
   });
 });

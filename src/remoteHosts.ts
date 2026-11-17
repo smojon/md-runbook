@@ -18,7 +18,6 @@ import { ExecuteResult, RunbookShells, isCodeMeta, shellKindForLanguage } from '
 import { isCallLanguage } from '@md-runbook/core/call';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { evaluateChecks } from '@md-runbook/core/checks';
-import { runbookSignerCheck } from '@md-runbook/core/node';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { reportTrustProblem } from '@md-runbook/core/runReport';
 import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
@@ -51,7 +50,7 @@ import { runbookSignerFiles, signerOf } from './libraryTrust';
 import { META_KEY } from './outputs';
 import type { CellExecutor, CellPreparer, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
-import { CANT_CHECK_SIGNATURES, SignerCheck } from './signerCheck';
+import { CANT_CHECK_SIGNATURES, SignerCheck, signerCheckOf } from './signerCheck';
 
 const PINS_KEY = 'mdRunbook.hosts.pins';
 const PLATFORMS_KEY = 'mdRunbook.hosts.platforms';
@@ -583,7 +582,7 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     if (files.length === 0) return { ok: false };
     const text = notebookTextWithOutputs(nb);
     if (!/md-runbook:signature v1/.test(text)) return { ok: false };
-    const got = await signerOf(text, files, (t, f) => runbookSignerCheck(t, f).catch(() => ({}) as SignerCheck));
+    const got = await signerOf(text, files, (t, f) => signerCheckOf(t, f).catch(() => ({}) as SignerCheck));
     return { ok: reportTrustProblem(text, got.signer) === undefined, ...(got.cantCheck ? { cantCheck: true } : {}) };
   }
 

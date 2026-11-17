@@ -50,8 +50,8 @@ const ICONS: Record<Verdict['kind'], [string, string?]> = {
 export class LibraryTree implements vscode.TreeDataProvider<Node> {
   private readonly changed = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.changed.event;
-  private state: { base?: string; status: 'idle' | 'loading' | 'done'; read?: LibraryRead } = { status: 'idle' };
-  private verdicts = new Map<string, Verdict>();
+  /** The read and its verdicts, set together: never a read with another read's verdicts. */
+  private state: { base?: string; status: 'idle' | 'loading' | 'done'; read?: LibraryRead; verdicts?: Map<string, Verdict> } = { status: 'idle' };
   /** ssh-keygen's answer per allowed_signers file (as it is now) and text. */
   private readonly trust = new SignerCache();
   private loading: Promise<void> | undefined;
@@ -74,7 +74,13 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
   }
 
   verdictOf(e: LibraryEntry): Verdict | undefined {
-    return this.verdicts.get(e.path);
+    return this.state.verdicts?.get(e.path);
+  }
+
+  /** The library as read and its verdicts, from one read; undefined while none is done (a refresh). */
+  snapshot(): { library: Library; verdicts: ReadonlyMap<string, Verdict> } | undefined {
+    const library = this.library();
+    return library && this.state.verdicts ? { library, verdicts: this.state.verdicts } : undefined;
   }
 
   /** Read the library again (the refresh button, a changed setting, a publish). */
@@ -106,8 +112,7 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
       }
       const verdicts = read?.kind === 'ok' ? await this.check(read.library) : new Map<string, Verdict>();
       if (generation !== this.generation) return;
-      this.verdicts = verdicts;
-      this.state = { status: 'done', ...(base ? { base } : {}), ...(read ? { read } : {}) };
+      this.state = { status: 'done', ...(base ? { base } : {}), ...(read ? { read } : {}), verdicts };
       this.updateMessage();
       this.changed.fire(undefined);
     })();
@@ -190,7 +195,7 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
     const item = new vscode.TreeItem(e.title, vscode.TreeItemCollapsibleState.None);
     item.id = `library:${e.path}`;
     item.contextValue = 'libraryRunbook';
-    const v = this.verdicts.get(e.path);
+    const v = this.verdictOf(e);
     if (e.error !== undefined) {
       item.description = e.error;
       item.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('list.errorForeground'));
@@ -252,36 +257,35 @@ async function openFromLibrary(tree: LibraryTree, context: vscode.ExtensionConte
   }
   // A row (or a caller) names a runbook by its path; its text is the library read's, never the argument's.
   const named = typeof arg === 'object' && arg !== null && (arg as Node).kind === 'entry' ? (arg as Extract<Node, { kind: 'entry' }>).entry : undefined;
-  let entry = entryNamed(tree.library(), named);
-  if (named && !entry) {
-    await vscode.window.withProgress({ location: { viewId: 'mdRunbook.library' } }, () => tree.load());
-    entry = entryNamed(tree.library(), named);
+  const before = tree.snapshot();
+  if (!before || !named || !entryNamed(before.library, named)) await vscode.window.withProgress({ location: { viewId: 'mdRunbook.library' } }, () => tree.load());
+  // The entry, its verdict and the copy's address all come from this one read.
+  const snap = tree.snapshot();
+  if (!snap) return void vscode.window.showErrorMessage(`md-runbook: the team library at ${hostOf(base)} could not be read. Refresh the view.`);
+  let entry: LibraryEntry | undefined;
+  if (named) {
+    entry = entryNamed(snap.library, named);
     if (!entry) return void vscode.window.showErrorMessage('md-runbook: that runbook is not in the team library any more. Refresh the view.');
-  }
-  if (!entry) {
-    await vscode.window.withProgress({ location: { viewId: 'mdRunbook.library' } }, () => tree.load());
-    const lib = tree.library();
-    if (!lib) return void vscode.window.showErrorMessage(`md-runbook: the team library at ${hostOf(base)} could not be read.`);
+  } else {
     const picked = await vscode.window.showQuickPick(
-      lib.entries.map((e) => {
-        const v = tree.verdictOf(e);
+      snap.library.entries.map((e) => {
+        const v = snap.verdicts.get(e.path);
         return { label: e.title, description: e.path, detail: e.error ?? (v ? verdictLabel(v) : ''), entry: e };
       }),
-      { title: `md-runbook: open from the team library at ${hostOf(base)}`, matchOnDescription: true },
+      { title: `md-runbook: open from the team library at ${hostOf(snap.library.base)}`, matchOnDescription: true },
     );
     if (!picked) return;
     entry = picked.entry;
   }
   if (entry.text === undefined) return void vscode.window.showErrorMessage(`md-runbook: ${entry.path} could not be read from the library: ${entry.error ?? 'no text'}.`);
-  const lib = tree.library();
-  const v = tree.verdictOf(entry);
-  if (lib?.signedOnly && v?.kind !== 'verified') {
+  const v = snap.verdicts.get(entry.path);
+  if (snap.library.signedOnly && v?.kind !== 'verified') {
     const trust = 'Trusted Signers…';
     const choice = await vscode.window.showWarningMessage('md-runbook: this library opens verified runbooks only.', { modal: true, detail: bullets(refusalPoints(v)) }, trust);
     if (choice === trust) await vscode.commands.executeCommand('mdRunbook.trustedSigners');
     return;
   }
-  const target = libraryCopy(context.globalStorageUri, base, { ...entry, text: entry.text });
+  const target = libraryCopy(context.globalStorageUri, snap.library.base, { ...entry, text: entry.text });
   await vscode.commands.executeCommand('vscode.openWith', target, NOTEBOOK_TYPE);
   const what = v ? verdictLabel(v) : 'not checked';
   if (v?.kind === 'verified') void vscode.window.showInformationMessage(`md-runbook: opened your copy of ${entry.path} (${what}). Nothing runs until you run it.`);

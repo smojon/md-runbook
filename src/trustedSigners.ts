@@ -6,7 +6,8 @@
  *   no file set, adding one offers to make it in the extension's storage (after a yes) or to
  *   choose one;
  * - each team library's, trusted from its own allowed_signers (src/libraryTrust.ts): they count
- *   for that library's runbooks only. A key it no longer publishes is shown withdrawn.
+ *   for that library's runbooks only. A key it no longer publishes is shown withdrawn; published
+ *   again, it is offered with when it was withdrawn, not pre-picked.
  * List them with their fingerprints, remove one from the file it is in. Keys an earlier version
  * added to your file from the library are marked as also published by it.
  */
@@ -16,8 +17,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { SECTION } from './config';
-import { PublicKeyLine, SignerLine, lineForKey, parsePublicKey, parseSignerLine, readSigners, signerLineToAdd, signerNameOk, withoutSigner } from './allowedSigners';
-import { alsoPublished, libraryAddressOf, librarySignerFiles, readLibrarySigners, shownLibrary, trustLibraryLines, withTrustedLines, type LibrarySigner } from './libraryTrust';
+import { PublicKeyLine, SignerLine, SkippedLine, lineForKey, parsePublicKey, parseSignerLine, readSigners, signerLineToAdd, signerNameOk, withoutSigner } from './allowedSigners';
+import { alsoPublished, libraryAddressOf, librarySignerFiles, librarySignerOf, librarySignersFile, readLibrarySigners, shownLibrary, trustLibraryLines, withTrustedLines, type LibrarySigner } from './libraryTrust';
 import type { LibraryTree } from './libraryView';
 
 const home = (p: string): string => p.replace(/^~(?=$|[\\/])/, os.homedir());
@@ -195,8 +196,23 @@ async function addFromLibrary(context: vscode.ExtensionContext, tree: LibraryTre
   if (!lib?.allowedSigners || address === undefined) return void vscode.window.showInformationMessage('md-runbook: the team library publishes no allowed_signers file.');
   const { signers, skipped } = readSigners(lib.allowedSigners, { adding: true });
   if (signers.length === 0) return void vscode.window.showInformationMessage(`md-runbook: the team library's allowed_signers has no key md-runbook can use${skipped.length ? ` (${skipped.length} line${skipped.length === 1 ? '' : 's'} skipped)` : ''}.`);
+  // A key trusted before and withdrawn since counts again only after this same yes (never by itself).
+  const libText = readText(librarySignersFile(context.globalStorageUri.fsPath, address));
+  const withdrawnOf = (s: SignerLine): LibrarySigner | undefined => {
+    const x = librarySignerOf(libText, s);
+    return x?.withdrawn ? x : undefined;
+  };
   const picked = await vscode.window.showQuickPick(
-    signers.map((s) => ({ label: s.principals.join(', '), description: s.fingerprint, detail: [s.keyType, s.validBefore ? `valid before ${s.validBefore}` : ''].filter(Boolean).join(' · '), picked: true, s })),
+    signers.map((s) => {
+      const w = withdrawnOf(s);
+      return {
+        label: s.principals.join(', '),
+        description: s.fingerprint,
+        detail: [s.keyType, s.validBefore ? `valid before ${s.validBefore}` : '', w ? withdrawnText(w) : ''].filter(Boolean).join(' · '),
+        picked: !w,
+        s,
+      };
+    }),
     { title: `md-runbook: signers the team library at ${hostOf(lib.base)} publishes`, canPickMany: true, placeHolder: 'Compare the fingerprints with what the signers tell you' },
   );
   if (!picked || picked.length === 0) return;
@@ -209,6 +225,10 @@ async function addFromLibrary(context: vscode.ExtensionContext, tree: LibraryTre
         'The keys come from the same server as the runbooks: it vouches for itself.',
         'Trust them only if you trust that server. Better: compare the fingerprints with the signers.',
         `They count only for this library’s runbooks (${shownLibrary(address)}).`,
+        ...picked.flatMap((p) => {
+          const w = withdrawnOf(p.s);
+          return w ? [`${p.s.principals.join(', ')} (${p.s.fingerprint}): ${withdrawnText(w)}.`] : [];
+        }),
       ]),
     },
     go,
@@ -230,6 +250,20 @@ async function removeSigner(file: string, s: SignerLine, points: readonly string
   void vscode.commands.executeCommand('mdRunbook.library.refresh').then(undefined, () => undefined);
   void vscode.window.showInformationMessage(`md-runbook: ${s.principals.join(', ')} is no longer trusted.`);
 }
+
+/** Take a line md-runbook doesn't use out of your file (ssh-keygen may still read it its own way). */
+async function removeLine(file: string, k: SkippedLine): Promise<void> {
+  const go = 'Remove';
+  const sure = await vscode.window.showWarningMessage(`md-runbook: remove line ${k.line + 1} from your allowed_signers?`, { modal: true, detail: bullets([k.problem, 'ssh-keygen may still trust a key on it.']) }, go);
+  if (sure !== go) return;
+  const next = withoutSigner(readText(file), k);
+  if (next === undefined) return void vscode.window.showWarningMessage('md-runbook: that line is no longer in the file (it changed meanwhile).');
+  fs.writeFileSync(file, next, 'utf8');
+  void vscode.commands.executeCommand('mdRunbook.library.refresh').then(undefined, () => undefined);
+}
+
+/** When a key was withdrawn, in a few words. */
+const withdrawnText = (w: LibrarySigner): string => (w.withdrawnOn ? `withdrawn on ${w.withdrawnOn}` : 'withdrawn');
 
 type Item = vscode.QuickPickItem & { run?: () => Promise<void> };
 
@@ -256,7 +290,7 @@ function ownItems(file: string | undefined, libHost: string | undefined, publish
           ]),
       };
     }),
-    ...(skipped.length > 0 ? [{ label: `${skipped.length} line${skipped.length === 1 ? '' : 's'} not used`, kind: vscode.QuickPickItemKind.Separator }, ...skipped.map((k): Item => ({ label: `$(circle-slash) Line ${k.line + 1}`, detail: k.problem }))] : []),
+    ...(skipped.length > 0 ? [{ label: `${skipped.length} line${skipped.length === 1 ? '' : 's'} not used`, kind: vscode.QuickPickItemKind.Separator }, ...skipped.map((k): Item => ({ label: `$(circle-slash) Line ${k.line + 1}`, detail: `${k.problem} (choose it to remove it)`, run: () => removeLine(file, k) }))] : []),
   ];
 }
 
@@ -272,9 +306,9 @@ function libraryItems(storage: string): Item[] {
       ...signers.map((s: LibrarySigner): Item => ({
         label: `${s.withdrawn ? '$(circle-slash)' : '$(key)'} ${s.principals.join(', ')}`,
         description: s.fingerprint,
-        detail: keyDetail(s, s.withdrawn ? ['withdrawn: the library no longer publishes it'] : []),
+        detail: keyDetail(s, s.withdrawn ? [`${withdrawnText(s)}: no longer counts`] : []),
         run: () =>
-          removeSigner(file, s, s.withdrawn ? ['Withdrawn: it would count again if the library published it again.'] : [`Its runbooks from ${shown} no longer show as verified.`]),
+          removeSigner(file, s, s.withdrawn ? ['Withdrawn: it counts again only if you trust it again.'] : [`Its runbooks from ${shown} no longer show as verified.`]),
       })),
     );
   }

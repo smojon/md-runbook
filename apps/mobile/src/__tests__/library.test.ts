@@ -284,13 +284,15 @@ describe('signatures in the library', () => {
     const text = [
       '# the team',
       a + ' alice laptop',
-      `"bob@example.net,*@ops.example.net" ${(await line(bob, 'x')).split(' ').slice(2).join(' ')}`,
+      `bob@example.net,*@ops.example.net ${(await line(bob, 'x')).split(' ').slice(2).join(' ')}`,
+      // Quotes only around an option's value: quoted names are not used.
+      `"dave@example.net" ${(await line(bob, 'x')).split(' ').slice(2).join(' ')}`,
       `carol@example.net namespaces="git" ${(await line(bob, 'x')).split(' ').slice(2).join(' ')}`,
       `ca@example.net cert-authority ${(await line(bob, 'x')).split(' ').slice(2).join(' ')}`,
       'broken line',
     ].join('\n');
     const { signers, skipped } = parseAllowedSigners(text, SIGNATURE_NAMESPACE);
-    expect(skipped).toBe(3);
+    expect(skipped).toBe(4);
     expect(signers.map((s) => [s.principals, s.keyType, s.namespaces])).toEqual([
       [['alice@example.net'], 'ecdsa-sha2-nistp256', ['md-runbook']],
       [['bob@example.net', '*@ops.example.net'], 'ecdsa-sha2-nistp256', undefined],

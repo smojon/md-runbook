@@ -7,8 +7,9 @@
  *   A folder without address.txt (the first, per-host version, never released) is ignored.
  * - A library's runbooks: the Library view's rows, and your copies of them (library/<key>/, with
  *   address.txt next to the copy). A file elsewhere is no library's: your file only.
- * - A key the library no longer publishes stays as a `# withdrawn` comment line (ssh-keygen skips
- *   it), and counts again once published again.
+ * - A key the library no longer publishes stays as a `# withdrawn <date>` comment line
+ *   (ssh-keygen skips it). Published again, it counts only once trusted again.
+ * - Every line written is canonical (allowedSigners.ts canonicalLine), never as given.
  * No vscode import: unit-tested.
  */
 
@@ -16,7 +17,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { normalizeLibraryUrl } from '@md-runbook/core/library';
-import { SignerLine, parseSignerLine, readSigners, withLine } from './allowedSigners';
+import { SignerLine, SkippedLine, canonicalLine, parseSignerLine, readSigners, withLine } from './allowedSigners';
 import type { SignerCheck } from './signerCheck';
 
 export const SIGNERS_DIR = 'library-signers';
@@ -160,61 +161,66 @@ export async function signerOf(text: string, files: readonly string[], check: (t
 
 // ---- withdrawn keys ----
 
-export type LibrarySigner = SignerLine & { withdrawn?: true };
+export type LibrarySigner = SignerLine & { withdrawn?: true; withdrawnOn?: string };
 
 /** The same key for the same names. */
 const sameSigner = (a: Pick<SignerLine, 'principals' | 'keyType' | 'key'>, b: Pick<SignerLine, 'principals' | 'keyType' | 'key'>): boolean =>
   a.keyType === b.keyType && a.key === b.key && [...a.principals].sort().join(',') === [...b.principals].sort().join(',');
 
+/** A `# withdrawn [YYYY-MM-DD] line` comment: its date and its line. */
+const WITHDRAWN_RE = /^# withdrawn (?:(\d{4}-\d{2}-\d{2}) )?(.*)$/;
+
 /** A library file's signers, withdrawn ones included (their `raw` is the comment line). */
-export function readLibrarySigners(text: string): { signers: LibrarySigner[]; skipped: { line: number; problem: string }[] } {
+export function readLibrarySigners(text: string): { signers: LibrarySigner[]; skipped: SkippedLine[] } {
   const { signers, skipped } = readSigners(text);
   const withdrawn: LibrarySigner[] = [];
   text.split(/\r?\n/).forEach((raw, n) => {
     const t = raw.trim();
-    if (!t.startsWith(WITHDRAWN)) return;
-    const s = parseSignerLine(t.slice(WITHDRAWN.length), n);
-    if (s && !('problem' in s)) withdrawn.push({ ...s, raw: t, withdrawn: true });
+    const m = WITHDRAWN_RE.exec(t);
+    if (!m) return;
+    const s = parseSignerLine(m[2]!, n);
+    if (s && !('problem' in s)) withdrawn.push({ ...s, raw: t, withdrawn: true, ...(m[1] ? { withdrawnOn: m[1] } : {}) });
   });
   return { signers: [...signers, ...withdrawn].sort((a, b) => a.line - b.line), skipped };
 }
 
+/** The library file's line for this signer (counting or withdrawn), if it has one. */
+export function librarySignerOf(text: string, s: Pick<SignerLine, 'principals' | 'keyType' | 'key'>): LibrarySigner | undefined {
+  return readLibrarySigners(text).signers.find((x) => sameSigner(x, s));
+}
+
 /**
  * The library's file after a read of what it publishes (`published`: its allowed_signers text,
- * '' when it publishes none): trusted keys it no longer lists become `# withdrawn` lines, withdrawn
- * ones it lists again count again. Undefined when nothing changes.
+ * '' when it publishes none): trusted keys it no longer lists become `# withdrawn <today>` lines.
+ * A withdrawn key the library lists again stays withdrawn: it counts again only once trusted again
+ * (Add the Team Library's Signers…, with its fingerprint and when it was withdrawn). Undefined when
+ * nothing changes.
  */
-export function withWithdrawn(text: string, published: string): string | undefined {
+export function withWithdrawn(text: string, published: string, today = new Date().toISOString().slice(0, 10)): string | undefined {
   const listed = readSigners(published).signers;
   let changed = false;
   const lines = text.split(/(?<=\n)/).map((l) => {
     const eol = l.match(/\r?\n$/)?.[0] ?? '';
-    const t = l.trim();
-    if (t.startsWith(WITHDRAWN)) {
-      const s = parseSignerLine(t.slice(WITHDRAWN.length));
-      if (!s || 'problem' in s || !listed.some((x) => sameSigner(x, s))) return l;
-      changed = true;
-      return t.slice(WITHDRAWN.length) + eol;
-    }
-    const s = parseSignerLine(t);
+    const s = parseSignerLine(l);
     if (!s || 'problem' in s || listed.some((x) => sameSigner(x, s))) return l;
     changed = true;
-    return WITHDRAWN + t + eol;
+    return `${WITHDRAWN}${today} ${canonicalLine(s)}${eol}`;
   });
   return changed ? lines.join('') : undefined;
 }
 
 /** Note what the library at `address` publishes now in its file (when you trust keys from it). */
-export function noteWithdrawn(storage: string, address: string, published: string): void {
+export function noteWithdrawn(storage: string, address: string, published: string, today?: string): void {
   const file = librarySignersFile(storage, address);
   const text = readText(file);
   if (text === undefined) return;
-  const next = withWithdrawn(text, published);
+  const next = withWithdrawn(text, published, today);
   if (next !== undefined) fs.writeFileSync(file, next, 'utf8');
 }
 
 /**
- * The text with these lines trusted: a new one at the end, a withdrawn one restored. Which of
+ * The text with these lines trusted, each written in canonical form: a new one at the end; a
+ * withdrawn one replaced by the line approved now (with its options as published now). Which of
  * `lines` were added (their indexes), and how many were there already.
  */
 export function withTrustedLines(text: string, header: string, lines: readonly string[]): { text: string; added: number[]; already: number } {
@@ -224,15 +230,15 @@ export function withTrustedLines(text: string, header: string, lines: readonly s
   lines.forEach((line, i) => {
     const s = parseSignerLine(line);
     if (!s || 'problem' in s) return;
-    const { signers } = readLibrarySigners(out);
-    const found = signers.find((x) => sameSigner(x, s));
+    const canonical = canonicalLine(s);
+    const found = librarySignerOf(out, s);
     if (found && !found.withdrawn) return void already++;
     if (found) {
       const parts = out.split(/(?<=\n)/);
       const at = parts.findIndex((l) => l.trim() === found.raw);
-      parts[at] = parts[at]!.replace(WITHDRAWN, '');
+      parts[at] = canonical + (parts[at]!.match(/\r?\n$/)?.[0] ?? '');
       out = parts.join('');
-    } else out = withLine(out || header, line);
+    } else out = withLine(out || header, canonical);
     added.push(i);
   });
   return { text: out, added, already };

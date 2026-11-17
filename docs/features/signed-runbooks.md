@@ -571,10 +571,21 @@ Trusted keys count for that library only, with the options the library publishes
 with now. A `valid-before=` added to retire a key is followed.
 
 A key the library stops publishing stops counting, and is remembered so while the file can't be
-read. **Hosts & settings → Trusted signers** lists them all with where each counts, and
-**Remove**.
+read. Published again, it counts only once you trust it again: **Trust these signers** shows the
+day it was withdrawn. **Hosts & settings → Trusted signers** lists them all with where each
+counts, and **Remove**.
 
-Lines with an option OpenSSH doesn't know are skipped, as OpenSSH skips them.
+Lines with an option OpenSSH doesn't know are skipped, as OpenSSH skips them. So are lines OpenSSH
+could read otherwise than the app:
+
+- a backslash (OpenSSH reads `\"` as an escape);
+- a quote anywhere but around an option's value, or a value without quotes;
+- an option given twice;
+- a control character or a blank other than space and tab.
+
+VS Code refuses the same lines, and writes each line it adds rebuilt from what it read. Its
+checks, and `--allowed-signers` on the command line, use only the lines md-runbook reads. The
+command line names each line it leaves out.
 
 An index.json with `"signedOnly": true` makes the app open **verified** runbooks only.
 
@@ -640,7 +651,8 @@ As in the app:
 
 - Choosing a signer removes it from the file it is in, after a confirm.
 - A key the library no longer publishes is **withdrawn**: it stops counting, and is shown so.
-  - It counts again once the library publishes it again.
+  - Published again, it counts only once you trust it again. **Add the Team Library's
+    Signers…** shows when it was withdrawn.
 - A library's keys count for your copies of its runbooks too: run reports
   (`report-runs-required`, `report-runs-signed`) and Practice on a Host.
   - Links, the command line and the gate use only the file you name.

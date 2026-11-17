@@ -640,11 +640,14 @@ export function keysForLibrary(base: string | undefined): TrustedSigner[] {
   return libraryKeys(state.library?.base === base ? state.library : { base });
 }
 
-/** Keys trusted from this library that its allowed_signers no longer lists, or didn't when last read (offered to remove). */
+/**
+ * Keys trusted from this library that its allowed_signers no longer lists, or didn't when last
+ * read (offered to remove). One it lists again stays withdrawn until trusted again.
+ */
 export function withdrawnKeys(lib: Pick<Library, 'base' | 'signers'>): TrustedSigner[] {
   const published = lib.signers?.list;
   return published
-    ? trustedFor(lib.base).filter((k) => !published.some((s) => sameSigner(s, k)))
+    ? trustedFor(lib.base).filter((k) => k.withdrawn || !published.some((s) => sameSigner(s, k)))
     : trustedFor(lib.base).filter((k) => k.withdrawn);
 }
 
