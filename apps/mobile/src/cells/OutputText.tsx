@@ -2,13 +2,17 @@
  * A cell's output with colours, as in VS Code: stderr lines in red (marked in live output, listed
  * in a saved output's `stderr=`), log levels in their colours, a program's own ANSI colours. The
  * settings under Hosts & settings turn the colours off. Lines don't wrap; wide output scrolls sideways.
+ *
+ * Memoized: a running cell redraws every second (its time so far), and its output text, often
+ * long, stays the same between two chunks (the React Compiler is off).
  */
 import { STDERR_MARK, parseLineSet, styledSpans } from '@md-runbook/core';
+import { memo } from 'react';
 import { ScrollView, Text, TextStyle } from 'react-native';
 import { useOutputSettings } from '../settings/store';
 import { usePalette } from '../theme';
 
-export function OutputText({ text, stderr, style }: { text: string; stderr?: string; style: TextStyle }) {
+export const OutputText = memo(function OutputText({ text, stderr, style }: { text: string; stderr?: string; style: TextStyle }) {
   const c = usePalette();
   const s = useOutputSettings();
   const saved = parseLineSet(stderr);
@@ -41,4 +45,4 @@ export function OutputText({ text, stderr, style }: { text: string; stderr?: str
       </Text>
     </ScrollView>
   );
-}
+});
