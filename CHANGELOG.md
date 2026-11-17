@@ -18,7 +18,8 @@ update (see below).
   and `running · 12s of about 30s`, `attempt 2/5` with `retry=`.
   - It stays at the bottom while the output scrolls; at the end, the usual status line follows.
   - Without an estimate, a counter: `running · 12s`.
-  - Theme colours; with reduced motion, the bar doesn't glide.- **The same words in the CLI, VS Code and the app.** The app's running cell says
+  - Theme colours; with reduced motion, the bar doesn't glide.
+- **The same words in the CLI, VS Code and the app.** The app's running cell says
   `running · 12s of about 30s` too, and its run bar `Step 3/7 · Push image`, as VS Code's status
   bar does. A screen reader still hears `Step 3 of 7`.
 
