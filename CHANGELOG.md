@@ -6,6 +6,11 @@
   - a long run of blanks (20,000 took 6 s, 200,000 about ten minutes);
   - `-p`, `eyJ-` or `${` repeated many times.
   - The built-in patterns now read each line once, and redact exactly what they did.
+- **More text read in one pass.** These were slow on long or repeated input, and now give the
+  same results in milliseconds:
+  - a parameter's "One of: …" comment (1,000 blanks in it took 80 s);
+  - Kubernetes Secrets in the leak scan, and namespaces and URLs in Copy for AI;
+  - output colours, output block attributes, call copies, cloud views and a cell's commands.
 
 ## 0.29.0
 
