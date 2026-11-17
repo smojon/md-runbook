@@ -44,6 +44,18 @@ update (see below).
     it (review of 0.28.0).
   - What a crashed session left behind ends when the next session leases that account.
 
+- **Fixed: Kubernetes ops host, no block ran when the session's pod started slowly.** The
+  kube-context check gave up after 15 seconds, and a laptop's k3s takes 30 to 60 to start the
+  Job's pod.
+  - The pod's start no longer counts against that check or a block's `timeout=`.
+  - The app and VS Code say "Starting the session's pod…" while it waits.
+  - Stop works during the wait: the session ends, and the gate deletes the Job at once.
+  - The gate waits at most 180 seconds, then ends the session with the reason.
+  - Gate protocol 4. Older apps and gates work together as before.
+  - Docs: a cells' service account of your own needs `get` and `list` on namespaces, and
+    `imagePullSecrets` for a private registry
+    ([A Job per session](apps/ops/README.md#a-job-per-session)).
+
 - **App (iOS, Android): highlighting while editing.** Edit as Text colours the runbook as the
   web app does, with the same rules and colours.
   - On by default. **Hosts & settings → Edit as Text → Highlight while editing** turns it off:

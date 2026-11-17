@@ -6,7 +6,9 @@
 #   - two sessions get two pods;
 #   - the Job goes when its session ends;
 #   - the gate logs gate_mode separated;
-#   - a namespace the blocks may change without Pod Security enforced: no session.
+#   - a namespace the blocks may change without Pod Security enforced: no session;
+#   - pod notices (protocol 4): `job`, `starting`, `ready` before the reply; a client that
+#     goes while the pod starts ends the session, and the Job goes at once.
 # Needs KEYS (client, ssh_host_ecdsa_key.pub) and the ops Service forwarded to 127.0.0.1:$PORT.
 set -euo pipefail
 
@@ -34,14 +36,15 @@ wait_for() { # FILE PATTERN [SECONDS]
   echo "--- ${1%/*}/err" >&2; cat -v "${1%/*}/err" >&2 || true
   fail "no $2 in $1"
 }
-# A session on file descriptor FD whose input is a FIFO; its output in $work/NAME.
-open_session() { # NAME FD
+# A session on file descriptor FD whose input is a FIFO; its output in $work/NAME. With a third
+# argument, the hello asks for pod notices (protocol 4).
+open_session() { # NAME FD [pod-notices]
   mkdir -p "$work/$1"
   mkfifo "$work/$1/in"
   ssh "${ssh_opts[@]}" ops@127.0.0.1 < "$work/$1/in" > "$work/$1/out" 2> "$work/$1/err" &
   echo $! > "$work/$1/pid"
   eval "exec $2>\"\$work/\$1/in\""
-  printf ': mdrb-gate-hello 0000aa00; x\n' >&"$2"
+  printf ': mdrb-gate-hello 0000aa00%s; x\n' "${3:+ $3}" >&"$2"
   wait_for "$work/$1/out" '__MDRB_0000aa00__'
 }
 close_session() { # NAME FD
@@ -96,6 +99,41 @@ done
 k get job "$job_a" > /dev/null 2>&1 && fail "Job $job_a is still there after its session"
 k get job "$job_b" > /dev/null || fail "Job $job_b went before its session"
 close_session b 8
+
+# Pod notices (protocol 4): the kube-context probe hears that it waits for the pod, then that the
+# pod is ready, before its reply. (Its time limit stops meanwhile: test/sshPodWait.test.ts.)
+open_session d 7 pod-notices
+grep -aq $'\036__MDRB_POD__ job' "$work/d/out" || fail "no job notice after the banner"
+printf 'context 0000dd01\n' >&7
+wait_for "$work/d/out" '__MDRB_0000dd01__ 0'
+cat -v "$work/d/err"
+starting=$(grep -an $'^\036__MDRB_POD__ starting$' "$work/d/err" | cut -d: -f1 | head -n 1)
+ready=$(grep -an $'^\036__MDRB_POD__ ready$' "$work/d/err" | cut -d: -f1 | head -n 1)
+marker=$(grep -an $'\036__MDRB_0000dd01__ 0' "$work/d/err" | cut -d: -f1 | head -n 1)
+[ -n "$starting" ] && [ -n "$ready" ] && [ "$starting" -lt "$ready" ] && [ "$ready" -lt "$marker" ] ||
+  fail "pod notices: starting=$starting ready=$ready marker=$marker"
+grep -aq 'the first one waits for its pod' "$work/d/err" && fail "the gate's line as well as the notices"
+close_session d 7
+
+# A client that goes while the pod starts (a stop during the wait): the session ends at once, and
+# its Job with it, not once the pod is ready.
+open_session e 8 pod-notices
+cell 0000ee01 'echo "ran=1"' >&8
+wait_for "$work/e/err" $'\036__MDRB_POD__ starting' 30
+close_session e 8
+job_e=$(k logs "$ops_pod" -c ops | sed -n 's/.*"event":"job","status":"left","job":"\([^"]*\)".*/\1/p' | tail -n 1)
+if [ -n "$job_e" ]; then
+  for _ in $(seq 1 20); do
+    k get job "$job_e" > /dev/null 2>&1 || break
+    sleep 1
+  done
+  k get job "$job_e" > /dev/null 2>&1 && fail "Job $job_e is still there after its client left"
+  [ -z "$(value e ran)" ] || fail "a block ran for a client that left"
+  echo "ok: the client left while the pod started; Job $job_e went"
+else
+  # The pod was ready before the client went: nothing to check here.
+  echo "note: session e's pod was ready before its client left"
+fi
 
 # A namespace the blocks may change that doesn't enforce Pod Security: the session refuses,
 # naming it (a privileged pod there would own its node, and the gate's pod on it).

@@ -444,6 +444,8 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
       signal: io.signal,
       onStdout: io.onStdout,
       onStderr: io.onStderr,
+      // A gate's Kubernetes pod starting: said apart from the output (the time limit waits for it).
+      ...(io.onNotice ? { onNotice: io.onNotice } : {}),
     };
     try {
       const res = plan.probe === 'kube-context' ? await session.kubeContext(opts) : await session.run(plan.source, opts);

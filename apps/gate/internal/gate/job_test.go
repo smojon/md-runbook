@@ -281,8 +281,113 @@ func TestWaitPod(t *testing.T) {
 		t.Errorf("bad image: %q %q", pod, why)
 	}
 	run, n = answers(pending)
-	if pod, why := testJob(run).waitPod(sleep, now); pod != "" || !strings.Contains(why, "within 3 minutes") || *n < 300 || *n > 400 {
+	if pod, why := testJob(run).waitPod(sleep, now); pod != "" || !strings.Contains(why, "the session's pod wasn't ready after 180 s") || *n < 300 || *n > 400 {
 		t.Errorf("timeout: %q %q after %d", pod, why, *n)
+	}
+}
+
+// What the client hears of the pod's start (protocol 4): with pod notices, `job` after the
+// banner, `starting` before each request that waits, then `ready` or `failed` with the reason,
+// once, and nothing after; without them, the gate's line once, and a failure's reason.
+func TestPodNotices(t *testing.T) {
+	const (
+		job      = "\x1e__MDRB_POD__ job\n"
+		starting = "\x1e__MDRB_POD__ starting\n"
+		ready    = "\x1e__MDRB_POD__ ready\n"
+	)
+	newJob := func() (*kubeJob, *bytes.Buffer) {
+		var out bytes.Buffer
+		j := testJob(nil)
+		j.out = &out
+		return j, &out
+	}
+	closed := func(j *kubeJob) bool {
+		select {
+		case <-j.ready:
+			return true
+		default:
+			return false
+		}
+	}
+
+	// A client that takes pod notices: its probe waits, then runs.
+	j, out := newJob()
+	if got := j.hello(true); got != job {
+		t.Errorf("hello: %q", got)
+	}
+	j.waitFor()
+	j.waitFor()
+	if out.String() != starting+starting || closed(j) || j.isSettled() {
+		t.Errorf("waiting: %q", out.String())
+	}
+	out.Reset()
+	j.settle("md-runbook-cells-0a1b2c3d4e-x7k2p", "")
+	j.waitFor()
+	if out.String() != ready || !closed(j) || j.podName() != "md-runbook-cells-0a1b2c3d4e-x7k2p" || !j.isSettled() {
+		t.Errorf("ready: %q", out.String())
+	}
+	if got := j.hello(true); got != "" {
+		t.Errorf("hello once the pod is ready: %q", got)
+	}
+
+	// The pod won't come: the waiting request hears why, and no second line says it.
+	j, out = newJob()
+	j.hello(true)
+	j.waitFor()
+	j.settle("", "the session's pod wasn't ready after 180 s: see kubectl -n md-runbook-ops describe job x")
+	want := starting + "\x1e__MDRB_POD__ failed this session's cells can't start: the session's pod wasn't ready after 180 s: see kubectl -n md-runbook-ops describe job x\n"
+	if out.String() != want || !closed(j) || j.podName() != "" {
+		t.Errorf("failed: %q", out.String())
+	}
+
+	// Pod notices, but nothing waits: no `ready`; a failure is the gate's line.
+	j, out = newJob()
+	j.hello(true)
+	j.settle("p", "")
+	if out.String() != "" {
+		t.Errorf("ready, nothing waiting: %q", out.String())
+	}
+	j, out = newJob()
+	j.hello(true)
+	j.settle("", "its pod can't start (ImagePullBackOff: x)")
+	if out.String() != "md-runbook-gate: this session's cells can't start: its pod can't start (ImagePullBackOff: x)\n" {
+		t.Errorf("failed, nothing waiting: %q", out.String())
+	}
+
+	// A client before protocol 4 (no pod notices): the gate's line once, as before.
+	j, out = newJob()
+	if got := j.hello(false); got != "" {
+		t.Errorf("hello without notices: %q", got)
+	}
+	j.waitFor()
+	j.waitFor()
+	j.settle("p", "")
+	j.waitFor()
+	if out.String() != "md-runbook-gate: this session's blocks run in a Kubernetes Job of their own ("+testSpec.Name+"): the first one waits for its pod\n" {
+		t.Errorf("without notices: %q", out.String())
+	}
+	j, out = newJob()
+	j.hello(false)
+	j.waitFor()
+	out.Reset()
+	j.settle("", "its pod ended (Failed)")
+	if out.String() != "md-runbook-gate: this session's cells can't start: its pod ended (Failed)\n" {
+		t.Errorf("failed without notices: %q", out.String())
+	}
+
+	// The pod gets ready while requests come: never a `starting` after the `ready`.
+	for i := 0; i < 200; i++ {
+		j, out = newJob()
+		j.hello(true)
+		go j.settle("p", "")
+		for k := 0; k < 3; k++ {
+			j.waitFor()
+		}
+		<-j.ready
+		s := out.String()
+		if strings.Contains(s, ready) && !strings.HasSuffix(s, ready) || strings.Count(s, ready) > 1 || s != "" && !strings.Contains(s, ready) {
+			t.Fatalf("race: %q", s)
+		}
 	}
 }
 

@@ -308,6 +308,9 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
   const forced: Record<string, string> = outputSettings().forceColor ? { FORCE_COLOR: '1', CLICOLOR_FORCE: '1' } : {};
   // timeout=, else Hosts & settings → Stop a cell after (none by default, as in VS Code).
   const timeout = cellTimeoutSeconds(opts.timeoutSeconds, byAssistant);
+  // A line of md-runbook's own while the cell waits (the gate's Kubernetes pod starting; the time
+  // limit waits for it), as in VS Code.
+  const onNotice = (text: string): void => write(`[md-runbook] ${text}\n`, 'stderr');
   const runOpts: RemoteRunOptions = {
     shell: kind,
     // An approved proposal was checked as bash, or as zsh with `shell: zsh` (the approval's rules).
@@ -323,6 +326,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
       write(text, 'stdout');
     },
     onStderr: (text) => write(text, 'stderr'),
+    onNotice,
   };
   // A command's position among the cell's commands tells repeated ones apart (two `sleep 5`).
   const cellSteps = signedCell ? splitSteps(cell.value, 'bash') : [];
@@ -406,6 +410,7 @@ async function runCellNow(p: RunCellParams): Promise<RunOutcome> {
         signal: p.signal,
         onStdout: (t) => (out += t),
         onStderr: (t) => (err += t),
+        onNotice,
       });
       probedNewShell ||= r.newShell ?? false;
       if (r.exitCode === 0) seenContext = contextValue(out);

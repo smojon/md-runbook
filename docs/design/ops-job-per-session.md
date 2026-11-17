@@ -23,7 +23,13 @@ own. They can't reach the gate's token, log or state, nor another session.
   pod, then the exits follower.
 - Hello, `load` and `param` don't wait; the first block does, and says so on stderr. A failure
   prints the reason, logs a `job` event and ends the session (exit 2).
-- Latency: about 2 to 5 s with the image on the node; a first pull adds its time.
+- Since protocol 4, a client whose hello asks for pod notices gets `starting`, then `ready` or
+  `failed REASON`, instead of that line. Its time limit stops while the pod starts (the
+  kube-context check's 15 s, a block's `timeout=`). A client that goes during the wait ends the
+  session, and the Job goes at once.
+- Latency depends on the cluster: a few seconds with the image on the node.
+  - On a laptop's k3s, 30 to 60 s: container start, readiness probe, the cells' checks.
+  - A first pull adds its time.
 
 ## Cells across the pod boundary
 

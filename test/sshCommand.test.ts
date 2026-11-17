@@ -33,7 +33,7 @@ describe('ssh: md-runbook-gate requests', () => {
     assert.deepEqual(gateBanner('motd\n\x1e__MDRB_GATE__ 1 unsigned=refuse\n'), { protocol: 1, unsigned: 'refuse' });
     assert.equal(gateBanner('plain shell\n'), undefined);
     assert.deepEqual(signedReply(`\x1e__MDRB_SIGNED__ ops@example.net ${'a'.repeat(64)}\n`), { principal: 'ops@example.net', hash: 'a'.repeat(64) });
-    assert.match(helloCommand('h'), /^: mdrb-gate-hello h; /);
+    assert.match(helloCommand('h'), /^: mdrb-gate-hello h pod-notices; /);
   });
 });
 

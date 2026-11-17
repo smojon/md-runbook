@@ -192,6 +192,31 @@ func TestVectors(t *testing.T) {
 			checkRequest(t, v, in)
 		case "length":
 			checkLength(t, v, in)
+		case "hello":
+			// The client's hello as the session reads it (gate/session.go handle).
+			line, err := proto.NewReader(strings.NewReader(in)).Next()
+			f := textutil.Fields(line)
+			if err != nil || len(f) == 0 || f[0] != ":" {
+				t.Errorf("hello %q: not a hello line", v.ID)
+				break
+			}
+			rid, notices, ok := proto.Hello(f[1:])
+			var c struct {
+				ID         string `json:"id"`
+				PodNotices bool   `json:"podNotices"`
+			}
+			json.Unmarshal(v.Core, &c)
+			same(t, v, map[string]any{"ok": ok, "id": rid, "podNotices": notices}, map[string]any{"ok": true, "id": c.ID, "podNotices": c.PodNotices})
+		case "pod":
+			// A pod notice as the client reads it: the gate writes exactly that line.
+			var c struct {
+				State  string `json:"state"`
+				Reason string `json:"reason"`
+			}
+			json.Unmarshal(v.Core, &c)
+			if got := proto.Pod(c.State, c.Reason); got != in {
+				t.Errorf("pod %q: the gate writes %q", v.ID, got)
+			}
 		default:
 			t.Errorf("unknown kind %q", v.Kind)
 		}

@@ -423,10 +423,18 @@ func (g *Gate) send(text string) {
 	if sh := g.slots[g.cur].sh; sh != nil {
 		if g.jobMode() {
 			sh.sent.Store(true)
-			g.job.noteWaiting()
 		}
 		sh.w.WriteString(text)
 	}
+}
+
+// sendRequest: the text of a request whose reply the shell prints (run, step, raw, context). In a
+// Job whose pod isn't ready yet, the client hears first that the request waits for it.
+func (g *Gate) sendRequest(text string) {
+	if g.jobMode() && g.slots[g.cur].sh != nil {
+		g.job.waitFor()
+	}
+	g.send(text)
 }
 
 func marker(id, exit string) {
@@ -511,7 +519,13 @@ loop:
 		}
 	}
 	// The client is done: each shell runs what it was sent, then ends. Cut short: they end now.
-	// (A Job's shells need no ending in the pod: deleting the Job ends them.)
+	// (A Job's shells need no ending in the pod: deleting the Job ends them.) A client that went
+	// while the Job's pod was starting (stopped while it waited) cuts the session short too:
+	// what it sent would run for no one, and the Job goes now, not once the pod is ready.
+	if !term && g.jobMode() && !g.job.isSettled() {
+		term = true
+		g.log.Event("event", "job", "status", "left", "job", g.job.name, "reason", "the client left before the pod was ready")
+	}
 	g.ending.Store(true)
 	if term {
 		g.stopShells(g.liveShells()...)
@@ -566,9 +580,12 @@ func (g *Gate) handle(text string) {
 	}
 	if verb == ":" {
 		// : mdrb-gate-hello ID; printf ...: the app's first line (a plain shell runs it as is).
-		rid := strings.TrimSuffix(arg(1), ";")
-		if arg(0) == "mdrb-gate-hello" && textutil.IsID(rid) {
+		// (Protocol 4: `: mdrb-gate-hello ID pod-notices; ...` from a client that takes pod notices.)
+		if rid, notices, ok := proto.Hello(f); ok {
 			os.Stdout.WriteString(proto.Banner(Protocol, g.cfg.Unsigned))
+			if g.jobMode() {
+				os.Stdout.WriteString(g.job.hello(notices))
+			}
 			marker(rid, g.token)
 		} else {
 			say("this account runs md-runbook-gate: connect with the md-runbook app")

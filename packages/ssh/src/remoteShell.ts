@@ -26,8 +26,13 @@ import { Buffer } from 'buffer';
 import {
   CellCommandOptions,
   GATE_NOTE_PROTOCOL,
+  GATE_POD_PROTOCOL,
   GateInfo,
+  GatePodNotice,
+  POD_NOTICE_START,
+  POD_STARTING_NOTE,
   PROBED_SHELLS,
+  PodNoticeFilter,
   PWSH_SHELL_COMMAND,
   RemotePlatform,
   WINDOWS_SHELL_COMMAND,
@@ -91,6 +96,11 @@ export interface RemoteRunOptions extends CellCommandOptions {
   onStderr?(text: string): void;
   /** How long a stopped cell gets after SIGTERM, then after SIGKILL, before the shell is closed. Default 2 s. */
   stopGraceMs?: number;
+  /**
+   * A line about the session, not the cell's output: `POD_STARTING_NOTE` while md-runbook-gate
+   * starts the session's Kubernetes pod (`timeoutMs` waits for it). Without it, on `onStderr`.
+   */
+  onNotice?(text: string): void;
 }
 
 export interface RemoteRunResult extends RunResult {
@@ -115,6 +125,8 @@ export class ShellEndedError extends Error {
 
 interface Exchange {
   out: SentinelFilter;
+  /** Where stderr goes first: the pod notices' filter while they may come, else `err`. */
+  errIn: { write(text: string): void; flush(): void };
   err: SentinelFilter;
   check(): void;
   fail(e: Error): void;
@@ -150,6 +162,17 @@ export class RemoteShell {
   private answered: UnixShell | undefined;
   /** While the shell starts, its channel closing (cmd.exe refusing the sh command) is not the connection's end. */
   private starting = true;
+  /**
+   * md-runbook-gate runs the cells in a Kubernetes Job whose pod isn't ready yet (its hello said
+   * `job`): its stderr may hold pod notices, until `ready` or `failed`.
+   */
+  private podNotices = false;
+  /** A request waits for the session's pod (between `starting` and `ready`). */
+  private podWaiting = false;
+  /** Why the session's pod didn't start (its `failed` notice). */
+  private podFailure: string | undefined;
+  /** The running request's part in the pod notices (runText: its time limit waits for the pod). */
+  private onPod: ((n: GatePodNotice) => void) | undefined;
   private readonly decoderOut = new TextDecoder();
   private readonly decoderErr = new TextDecoder();
 
@@ -232,6 +255,7 @@ export class RemoteShell {
       let greeting = '';
       shell.pid = (await shell.exchange(randomId(), platform === 'windows' ? windowsHelloCommand : helloCommand, (t) => (greeting += t))) ?? 0;
       shell.gateInfo = platform === 'posix' ? gateBanner(greeting) : undefined;
+      shell.podNotices = shell.gateInfo !== undefined && shell.gateInfo.protocol >= GATE_POD_PROTOCOL && greeting.includes(`${POD_NOTICE_START}job\n`);
       if (noPwsh) shell.unavailable.pwsh = noPwsh;
       if (platform === 'posix' && want.unix && want.unix !== 'bash' && shell.gateInfo) {
         shell.unavailable.bash = `md-runbook-gate runs cells in bash: the runbook's shell: ${want.unix} can't be used through it.`;
@@ -378,7 +402,32 @@ export class RemoteShell {
       else cancelled = true;
       void this.stopCell(id, opts.stopGraceMs ?? 2000);
     };
-    const timer = opts.timeoutMs ? setTimeout(() => stop('timeout'), opts.timeoutMs) : undefined;
+    // The time limit: paused while the request waits for the session's pod (a gate's Kubernetes
+    // Job starting), so that the pod's start never counts against it.
+    let left = opts.timeoutMs ?? 0;
+    let since = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = (): void => {
+      if (left <= 0 || timer !== undefined) return;
+      since = Date.now();
+      timer = setTimeout(() => stop('timeout'), left);
+    };
+    const pause = (): void => {
+      if (timer === undefined) return;
+      clearTimeout(timer);
+      timer = undefined;
+      left = Math.max(1, left - (Date.now() - since));
+    };
+    let noted = false;
+    this.onPod = (n) => {
+      if (n.state !== 'starting') return arm();
+      pause();
+      if (noted) return;
+      noted = true;
+      if (opts.onNotice) opts.onNotice(POD_STARTING_NOTE);
+      else opts.onStderr?.(POD_STARTING_NOTE + '\n');
+    };
+    arm();
     const onAbort = (): void => stop('cancel');
     opts.signal?.addEventListener('abort', onAbort);
     try {
@@ -390,12 +439,25 @@ export class RemoteShell {
       // is N, as in the extension's session mode; the next cell opens a new shell. Not through
       // md-runbook-gate: its own exit status (0) is not the cell's.
       if (!timedOut && !cancelled && e.exitStatus !== undefined && !this.gateInfo) return result({ exitCode: e.exitStatus, shellEnded: true });
-      return result({ timedOut, cancelled, shellEnded: true, ...(timedOut || cancelled ? {} : { error: e.message }) });
+      // The session's pod didn't start: the gate's reason, not only that the shell ended.
+      return result({ timedOut, cancelled, shellEnded: true, ...(timedOut || cancelled ? {} : { error: this.podFailure ?? e.message }) });
     } finally {
       clearTimeout(timer);
+      this.onPod = undefined;
       opts.signal?.removeEventListener('abort', onAbort);
       this.runningId = undefined;
     }
+  }
+
+  /** A pod notice on stderr: the shell's state, then the running request's part. */
+  private podNotice(n: GatePodNotice): void {
+    if (n.state === 'starting') this.podWaiting = true;
+    if (n.state === 'ready' || n.state === 'failed') {
+      this.podWaiting = false;
+      this.podNotices = false;
+      if (n.state === 'failed') this.podFailure = n.reason;
+    }
+    this.onPod?.(n);
   }
 
   async close(): Promise<void> {
@@ -410,8 +472,10 @@ export class RemoteShell {
     return new Promise<number | undefined>((resolve, reject) => {
       const out = new SentinelFilter(markerFor(id), (t) => onOut?.(t));
       const err = new SentinelFilter(markerFor(id), (t) => onErr?.(t));
+      const errIn = this.podNotices ? new PodNoticeFilter((t) => err.write(t), (n) => this.podNotice(n)) : err;
       this.current = {
         out,
+        errIn,
         err,
         check: () => {
           if (!out.done || !err.done) return;
@@ -420,6 +484,7 @@ export class RemoteShell {
         },
         fail: (e) => {
           out.flush();
+          if (errIn !== err) errIn.flush();
           err.flush();
           this.current = undefined;
           reject(e);
@@ -432,7 +497,7 @@ export class RemoteShell {
   private deliver(stream: 'out' | 'err', text: string): void {
     const c = this.current;
     if (!c || text === '') return; // output between cells belongs to no cell
-    c[stream].write(text);
+    (stream === 'err' ? c.errIn : c.out).write(text);
     c.check();
   }
 
@@ -446,17 +511,20 @@ export class RemoteShell {
 
   /**
    * Stop the running cell `id` but keep the shell: SIGTERM to the shell's children, then SIGKILL,
-   * then, if the cell still runs (a busy loop in the shell itself), close the shell.
+   * then, if the cell still runs (a busy loop in the shell itself), close the shell. While it
+   * waits for the session's pod, nothing runs to signal: the shell closes at once, and the gate
+   * deletes the pod's Job.
    */
   private async stopCell(id: string, graceMs: number): Promise<void> {
     const running = (): boolean => !this.ended && this.runningId === id;
     for (const signal of ['TERM', 'KILL'] as const) {
       if (!running()) return;
+      if (this.podWaiting) break;
       if (this.pid > 0) await this.exec(this.platform === 'windows' ? windowsStopCommand(this.pid) : stopCommand(this.pid, signal));
       await sleep(graceMs);
     }
     if (running()) {
-      this.end('the cell did not stop, so its shell was closed');
+      this.end(this.podWaiting ? "stopped while the session's pod was starting" : 'the cell did not stop, so its shell was closed');
       await this.channel.close().catch(() => undefined);
     }
   }

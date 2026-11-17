@@ -20,6 +20,7 @@ import (
 
 	"github.com/smojon/md-runbook/apps/gate/internal/config"
 	"github.com/smojon/md-runbook/apps/gate/internal/procs"
+	"github.com/smojon/md-runbook/apps/gate/internal/proto"
 	"github.com/smojon/md-runbook/apps/gate/internal/report"
 	"github.com/smojon/md-runbook/apps/gate/internal/textutil"
 )
@@ -87,7 +88,12 @@ type kubeJob struct {
 	mu    sync.Mutex
 	pod   string
 	err   string
-	noted atomic.Bool
+	// What the client hears of the pod's start (under mu, so that no `starting` follows the
+	// end): out is the gate's stderr. notices: its hello takes pod notices (protocol 4); settled:
+	// the pod is Ready or won't be; waiting: a request heard `starting`; noted: the gate's line
+	// for other clients was said.
+	out                              io.Writer
+	notices, settled, waiting, noted bool
 	// closing: the gate ends the follower (its end is no sign of a changed stream).
 	closing atomic.Bool
 
@@ -157,7 +163,7 @@ func runnerProblem(c config.Config, configPath string) string {
 func (g *Gate) newKubeJob() *kubeJob {
 	home := os.Getenv("HOME")
 	// kubectl as the gate's other programs: from root's system folders only (helpers.go).
-	j := &kubeJob{kubectl: g.helper("kubectl"), run: runCmd, quick: killFor, exe: g.plan.exe, sa: g.cfg.JobServiceAccount, ready: make(chan struct{})}
+	j := &kubeJob{kubectl: g.helper("kubectl"), run: runCmd, quick: killFor, exe: g.plan.exe, sa: g.cfg.JobServiceAccount, ready: make(chan struct{}), out: os.Stderr}
 	j.env = []string{"PATH=" + sysPath, "LC_ALL=C", "HOME=" + home}
 	j.podEnv = []string{"PATH=" + g.cfg.Path, "LC_ALL=C", "HOME=" + home}
 	if g.cfg.Kubeconfig != "" {
@@ -235,20 +241,72 @@ func (g *Gate) prepareJob(j *kubeJob) {
 	if why == "" {
 		why = g.startFollower(j, pod)
 	}
+	if why == "" {
+		g.log.Event("event", "job", "status", "ready", "job", j.name, "pod", pod, "seconds", strconv.FormatFloat(time.Since(t0).Seconds(), 'f', 1, 64))
+	} else {
+		g.log.Event("event", "job", "status", "failed", "job", j.name, "reason", why)
+	}
+	j.settle(pod, why)
+}
+
+// settle: the pod is Ready (why "") or won't be. A request that waits for it hears so first
+// (PodReady, or PodFailed with the reason); else a failure is the gate's line, as before
+// protocol 4. Then the shells start, or end.
+func (j *kubeJob) settle(pod, why string) {
 	j.mu.Lock()
 	if why == "" {
 		j.pod = pod
 	} else {
 		j.err = why
+		why = "this session's cells can't start: " + why
+	}
+	j.settled = true
+	switch {
+	case j.waiting && why == "":
+		io.WriteString(j.out, proto.Pod(proto.PodReady, ""))
+	case j.waiting:
+		io.WriteString(j.out, proto.Pod(proto.PodFailed, why))
+	case why != "":
+		io.WriteString(j.out, "md-runbook-gate: "+why+"\n")
 	}
 	j.mu.Unlock()
-	if why == "" {
-		g.log.Event("event", "job", "status", "ready", "job", j.name, "pod", pod, "seconds", strconv.FormatFloat(time.Since(t0).Seconds(), 'f', 1, 64))
-	} else {
-		say("this session's cells can't start: " + why)
-		g.log.Event("event", "job", "status", "failed", "job", j.name, "reason", why)
-	}
 	close(j.ready)
+}
+
+// hello: what the hello's answer says after the banner. To a client that takes pod notices
+// (protocol 4), while the pod isn't ready: PodJob, so that it reads pod notices until it is.
+func (j *kubeJob) hello(notices bool) string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.notices = notices
+	if notices && !j.settled {
+		return proto.Pod(proto.PodJob, "")
+	}
+	return ""
+}
+
+// waitFor: a request whose reply the Job's shell prints (run, step, raw, context), before it
+// goes to the shell. While the pod isn't ready, a client that takes pod notices hears
+// PodStarting (its time limit waits for PodReady); another gets the gate's line, once.
+func (j *kubeJob) waitFor() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	switch {
+	case j.settled:
+	case j.notices:
+		j.waiting = true
+		io.WriteString(j.out, proto.Pod(proto.PodStarting, ""))
+	case !j.noted:
+		j.noted = true
+		io.WriteString(j.out, "md-runbook-gate: this session's blocks run in a Kubernetes Job of their own ("+j.name+"): the first one waits for its pod\n")
+	}
+}
+
+// isSettled: the pod is Ready, or won't be.
+func (j *kubeJob) isSettled() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.settled
 }
 
 // waitPod: the Job's pod once Ready, or why not. At most jobReadyMax; an error that won't pass
@@ -267,7 +325,7 @@ func (j *kubeJob) waitPod(sleep func(time.Duration), now func() time.Time) (stri
 			}
 		}
 		if now().After(deadline) {
-			return "", "its pod wasn't ready within 3 minutes: see kubectl -n " + j.ns + " describe job " + j.name
+			return "", "the session's pod wasn't ready after " + itoa(int(jobReadyMax/time.Second)) + " s: see kubectl -n " + j.ns + " describe job " + j.name
 		}
 		sleep(jobReadyPoll)
 	}
@@ -489,18 +547,6 @@ func (g *Gate) jobStopShells(shs []*shell) {
 	}
 	if pod := g.job.podName(); len(remote) > 0 && pod != "" {
 		g.job.quick(g.job.execArgv(pod), g.job.env, cellsReq{Op: "end", Shells: remote}.encode())
-	}
-}
-
-// noteWaiting: once, while the first block waits for the pod, a line that says why.
-func (j *kubeJob) noteWaiting() {
-	select {
-	case <-j.ready:
-		return
-	default:
-	}
-	if j.noted.CompareAndSwap(false, true) {
-		say("this session's blocks run in a Kubernetes Job of their own (" + j.name + "): the first one waits for its pod")
 	}
 }
 

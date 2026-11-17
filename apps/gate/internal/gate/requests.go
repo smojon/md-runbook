@@ -519,7 +519,7 @@ func (g *Gate) emitRun(rid, cell, code, nonce, kube string, hasKube bool) {
 		b.WriteString("__mdrb_n=" + itoa(g.runs) + "\n__mdrb_rx=" + textutil.SQ(g.exitsPath) + "\n")
 		b.WriteString(`printf '%s\t%s\t%s\t%s\t%s\n' "$__mdrb_n" "$__mdrb_rc" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ` + nonce + ` "$__mdrb_kr" >>"$__mdrb_rx" 2>/dev/null` + "\n")
 		b.WriteString(endMarkers)
-		g.send(b.String())
+		g.sendRequest(b.String())
 		return
 	}
 	if g.reportOn {
@@ -534,7 +534,7 @@ func (g *Gate) emitRun(rid, cell, code, nonce, kube string, hasKube bool) {
 		b.WriteString(`printf '%s\n' "{\"time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event\":\"end\",\"id\":\"$__mdrb_id\",\"exit\":$__mdrb_rc}" >>"$__mdrb_log" 2>/dev/null` + "\n")
 	}
 	b.WriteString(endMarkers)
-	g.send(b.String())
+	g.sendRequest(b.String())
 }
 
 func (g *Gate) doRaw(rid string, args []string) {
@@ -562,7 +562,7 @@ func (g *Gate) doRaw(rid string, args []string) {
 	g.slots[g.cur].dirty = true
 	g.showPID()
 	// Not a signed run: tools must not log against the last one.
-	g.send("unset MD_RUNBOOK_GATE_RUN\n" + string(text))
+	g.sendRequest("unset MD_RUNBOOK_GATE_RUN\n" + string(text))
 }
 
 // doContext: `kubectl config current-context` in the shell, for the app's kube-context guard.
@@ -574,7 +574,7 @@ func (g *Gate) doContext(rid string, args []string) {
 	}
 	g.log.Event("event", "context", "id", rid)
 	g.showPID()
-	g.send("__mdrb_id=" + rid + "\nkubectl config current-context </dev/null; __mdrb_rc=$?\n" + endMarkers)
+	g.sendRequest("__mdrb_id=" + rid + "\nkubectl config current-context </dev/null; __mdrb_rc=$?\n" + endMarkers)
 }
 
 // readExits reads the work folder's report-exits.

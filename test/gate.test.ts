@@ -15,7 +15,7 @@ import { after, before, describe, it } from 'node:test';
 import { Manifest, ManifestMeta, RESERVED_VARS, RESERVED_VAR_PREFIXES, buildManifest, formatManifest, toBase64 } from '@md-runbook/core/signing';
 import { manifestHash, sshSign } from '@md-runbook/core/node';
 import { runSummaryProblems } from '@md-runbook/core/runReport';
-import { gateAlertNote, gateNoteCommand } from '@md-runbook/ssh';
+import { gateAlertNote, gateNoteCommand, helloCommand } from '@md-runbook/ssh';
 
 const GATE = process.env.MD_RUNBOOK_GATE_BIN ?? path.resolve(__dirname, '..', '..', 'apps', 'gate', 'dist', 'md-runbook-gate');
 /** The gate is a Linux and macOS program: elsewhere, only a binary named on purpose runs. */
@@ -208,8 +208,13 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
   it('answers the hello with its banner and the session number (what a stop request names)', async () => {
     const g = start();
     const r = await g.hello();
-    assert.match(r.out, /\x1e__MDRB_GATE__ 3 unsigned=refuse\n/);
+    assert.match(r.out, /\x1e__MDRB_GATE__ 4 unsigned=refuse\n/);
     assert.ok(r.code > 1, `pid ${r.code}`);
+    // Protocol 4: the client's hello takes pod notices; outside a Kubernetes Job there are none.
+    const p = await g.send((id) => helloCommand(id));
+    assert.match(p.out, /\x1e__MDRB_GATE__ 4 unsigned=refuse\n/);
+    assert.doesNotMatch(p.out + p.err, /__MDRB_POD__/);
+    assert.equal(p.code, r.code);
     assert.equal(await g.close(), 0);
   });
 
