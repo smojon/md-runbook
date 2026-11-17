@@ -7,10 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/smojon/md-runbook/apps/gate/internal/logx"
 	"github.com/smojon/md-runbook/apps/gate/internal/report"
@@ -40,7 +44,7 @@ func TestShellLaunch(t *testing.T) {
 	sudo := []string{"/usr/bin/sudo", "-n", "-u", "mdrb-cells", "--"}
 	self := []string{"/usr/local/bin/md-runbook-gate", "__cells"}
 	bw := []string{"/usr/bin/bwrap", "--die-with-parent", "--new-session", "--unshare-pid", "--bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc", "/proc", "--"}
-	wrapEnv := []string{"PATH=" + gatePath, "LC_ALL=C"}
+	wrapEnv := []string{"PATH=" + sysPath, "LC_ALL=C"}
 	scopeEnv := append(append([]string{}, wrapEnv...), "XDG_RUNTIME_DIR=/run/user/1000")
 	cat := func(parts ...[]string) []string {
 		var out []string
@@ -87,6 +91,90 @@ func TestIsolationsToTry(t *testing.T) {
 	for want, try := range map[string][]string{"auto": {"scope"}, "scope": {"scope"}, "bwrap": {"bwrap"}, "none": nil} {
 		if got := isolationsToTry(want); !reflect.DeepEqual(got, try) {
 			t.Errorf("isolationsToTry(%q) = %q, want %q", want, got, try)
+		}
+	}
+}
+
+// A helper whose child holds its output and is stopped (as a process of the cells' account can
+// stop the cells' mode under sudo): runFor still returns, at its limit plus waitDelay (review of
+// 0.28.0).
+func TestRunForStoppedChild(t *testing.T) {
+	pidFile := t.TempDir() + "/child.pid"
+	t0 := time.Now()
+	_, err := runFor(time.Second, []string{"/bin/sh", "-c", `/bin/sh -c 'echo $$ >"$0"; kill -STOP $$; echo late' "$0" & wait`, pidFile}, nil, nil)
+	took := time.Since(t0)
+	if b, rerr := os.ReadFile(pidFile); rerr == nil {
+		if pid, perr := strconv.Atoi(strings.TrimSpace(string(b))); perr == nil {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+	if err == nil || took > time.Second+waitDelay+2*time.Second {
+		t.Errorf("runFor: %v after %s", err, took)
+	}
+}
+
+// The programs the gate runs: from sysPath only, each file and every folder above it root's and
+// writable by root alone; the gate account owning one is not enough (review of 0.28.0, H1).
+func TestHelpers(t *testing.T) {
+	var asked []string
+	h := findHelpers(func(path, name string) string {
+		asked = append(asked, path)
+		if name == "bwrap" {
+			return ""
+		}
+		return "/usr/bin/" + name
+	})
+	for _, p := range asked {
+		if p != "/usr/bin:/bin:/usr/sbin:/sbin" {
+			t.Errorf("looked in %s", p)
+		}
+	}
+	if h["ssh-keygen"] != "/usr/bin/ssh-keygen" || h["bwrap"] != "" || len(h) != len(helperNames) {
+		t.Errorf("helpers: %v", h)
+	}
+	root := func(perm os.FileMode) pathInfo { return pathInfo{perm: perm} }
+	sys := func() fakeFS {
+		fs := fakeFS{"/": root(0o755), "/usr": root(0o755), "/usr/bin": root(0o755), "/bin": {perm: 0o777, link: "usr/bin"}}
+		for _, n := range helperNames {
+			fs["/usr/bin/"+n] = root(0o755)
+		}
+		return fs
+	}
+	if p := helperProblems(h, sys().stat, -1); len(p) != 0 {
+		t.Errorf("root's: %q", p)
+	}
+	// In a user namespace that doesn't map root, root's files show as the overflow uid: accepted
+	// there, and only there.
+	outside := sys()
+	for p, i := range outside {
+		i.uid = 65534
+		outside[p] = i
+	}
+	if p := helperProblems(h, outside.stat, 65534); len(p) != 0 {
+		t.Errorf("in a user namespace: %q", p)
+	}
+	if p := helperProblems(h, outside.stat, -1); len(p) == 0 {
+		t.Error("the overflow uid outside a user namespace")
+	}
+	for name, c := range map[string]struct {
+		change func(fs fakeFS)
+		want   string
+	}{
+		"group may write the folder":    {func(fs fakeFS) { fs["/usr/bin"] = root(0o775) }, "ssh-keygen (/usr/bin/ssh-keygen): /usr/bin, a folder above /usr/bin/ssh-keygen, is writable by anyone but root"},
+		"the gate's account owns /usr":  {func(fs fakeFS) { fs["/usr"] = pathInfo{uid: 1000, perm: 0o755} }, "/usr, a folder above /usr/bin/sudo, is owned by uid 1000: make root its owner"},
+		"anyone may write the file":     {func(fs fakeFS) { fs["/usr/bin/ssh-keygen"] = root(0o757) }, "ssh-keygen (/usr/bin/ssh-keygen): /usr/bin/ssh-keygen is writable by anyone but root"},
+		"another account owns the file": {func(fs fakeFS) { fs["/usr/bin/sudo"] = pathInfo{uid: 1000, perm: 0o755} }, "sudo (/usr/bin/sudo): /usr/bin/sudo is owned by uid 1000"},
+		"a link out to an open folder": {func(fs fakeFS) {
+			fs["/usr/bin/id"] = pathInfo{perm: 0o777, link: "/srv/id"}
+			fs["/srv"] = root(0o777)
+			fs["/srv/id"] = root(0o755)
+		}, "id (/usr/bin/id): /srv, a folder above /srv/id, is writable by anyone but root"},
+	} {
+		fs := sys()
+		c.change(fs)
+		got := strings.Join(helperProblems(h, fs.stat, -1), "\n")
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
 		}
 	}
 }
@@ -150,6 +238,8 @@ func TestSudoProblem(t *testing.T) {
 // A fake system for the self-check: the programs it runs and what they answer.
 type fakeSys struct {
 	idOut, groups, home, sudoL string
+	groupNames                 string
+	cronFiles                  map[string]string
 	idErr, sudoErr             error
 	check                      checkResult
 	checkErr                   error
@@ -167,13 +257,6 @@ func (fs fakeFS) stat(p string) (pathInfo, error) {
 	return pathInfo{}, errors.New("no such file")
 }
 
-func (fs fakeFS) real(p string) (string, error) {
-	if _, ok := fs[p]; ok {
-		return p, nil
-	}
-	return "", errors.New("no such file")
-}
-
 // A system: root's folders, a sticky /tmp, and the gate's account (1000)'s folder in it.
 func goodFS() fakeFS {
 	root := func(perm os.FileMode) pathInfo { return pathInfo{uid: 0, gid: 0, perm: perm} }
@@ -188,6 +271,8 @@ func goodFS() fakeFS {
 func (f *fakeSys) run(argv, env []string, stdin []byte) ([]byte, error) {
 	f.calls = append(f.calls, argv)
 	switch {
+	case argv[0] == "id" && argv[1] == "-Gn":
+		return []byte(f.groupNames), nil
 	case argv[0] == "id" && argv[1] == "-G":
 		return []byte(f.groups), nil
 	case argv[0] == "id":
@@ -209,10 +294,11 @@ func (f *fakeSys) run(argv, env []string, stdin []byte) ([]byte, error) {
 
 func goodSys() *fakeSys {
 	return &fakeSys{
-		idOut: "1500\n", groups: "1500 27\n", home: "/home/mdrb-cells",
-		sudoL: sudoHead + "    (mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n",
-		check: checkResult{UID: 1500, Read: []string{}, Write: []string{"/tmp/md-runbook-gate.x/exits.y"}},
-		files: goodFS(),
+		idOut: "1500\n", groups: "1500 27\n", groupNames: "mdrb-cells users\n", home: "/home/mdrb-cells",
+		sudoL:     sudoHead + "    (mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n",
+		check:     checkResult{UID: 1500, Read: []string{}, Write: []string{"/tmp/md-runbook-gate.x/exits.y"}},
+		files:     goodFS(),
+		cronFiles: map[string]string{"/etc/cron.deny": "daemon\nmdrb-cells\n", "/etc/at.allow": "root\n"},
 	}
 }
 
@@ -220,12 +306,13 @@ func check(f *fakeSys) (cellsInfo, error) {
 	p := testPlan
 	p.account = "mdrb-cells"
 	return selfCheck{
-		run: f.run, plan: p, sh: "/bin/sh", gateAccount: "support", gateUID: 1000,
+		run: f.run, plan: p, sh: "/bin/sh", id: "id", gateAccount: "support", gateUID: 1000,
 		noRead:    []string{"/etc/md-runbook/report-token", "/var/log/md-runbook-gate.log"},
 		noWrite:   []string{"/usr/local/bin/md-runbook-gate", "/etc/md-runbook/gate.conf"},
 		mustWrite: []string{"/tmp/md-runbook-gate.x/exits.y"},
 		safe:      []string{"/usr/local/bin/md-runbook-gate", "/etc/md-runbook/gate.conf", "/tmp/mdrb.x/report-token"},
-		stat:      f.files.stat, real: f.files.real,
+		stat:      f.files.stat,
+		cron:      cronSetup{dir: "/etc", crontab: true, at: true, read: f.readCron},
 	}.do()
 }
 
@@ -235,7 +322,7 @@ func TestSelfCheck(t *testing.T) {
 	if err != nil || info.uid != 1500 || info.home != "/home/mdrb-cells" {
 		t.Fatalf("good: %+v %v", info, err)
 	}
-	if len(f.calls) != 5 {
+	if len(f.calls) != 6 {
 		t.Errorf("calls: %q", f.calls)
 	}
 	rule := "support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells"
@@ -243,10 +330,13 @@ func TestSelfCheck(t *testing.T) {
 		change func(f *fakeSys)
 		want   []string
 	}{
-		"no account":     {func(f *fakeSys) { f.idOut, f.idErr = "", errors.New("exit status 1") }, []string{"no such account"}},
-		"open folder":    {func(f *fakeSys) { f.files["/etc/md-runbook"] = pathInfo{perm: 0o777} }, []string{"/etc/md-runbook, a folder above /etc/md-runbook/gate.conf, is writable by mdrb-cells"}},
-		"root":           {func(f *fakeSys) { f.idOut = "0\n" }, []string{"is root"}},
-		"the gate's own": {func(f *fakeSys) { f.idOut = "1000\n" }, []string{"the gate's own account"}},
+		"no account":       {func(f *fakeSys) { f.idOut, f.idErr = "", errors.New("exit status 1") }, []string{"no such account"}},
+		"privileged group": {func(f *fakeSys) { f.groupNames = "mdrb-cells docker sudo" }, []string{"mdrb-cells is in the group docker, sudo: give the cells an account without privileged groups"}},
+		"gid 0":            {func(f *fakeSys) { f.groups = "1500 0" }, []string{"is in the group gid 0"}},
+		"may use cron":     {func(f *fakeSys) { delete(f.cronFiles, "/etc/cron.deny") }, []string{"mdrb-cells may use cron: add it to /etc/cron.deny (or create /etc/cron.allow without it)"}},
+		"open folder":      {func(f *fakeSys) { f.files["/etc/md-runbook"] = pathInfo{perm: 0o777} }, []string{"/etc/md-runbook, a folder above /etc/md-runbook/gate.conf, is writable by mdrb-cells"}},
+		"root":             {func(f *fakeSys) { f.idOut = "0\n" }, []string{"is root"}},
+		"the gate's own":   {func(f *fakeSys) { f.idOut = "1000\n" }, []string{"the gate's own account"}},
 		"no rule": {func(f *fakeSys) {
 			f.sudoL, f.sudoErr = "Sorry, user support may not run sudo on web-1.\n", errors.New("exit status 1")
 		}, []string{"lists no rule", rule}},
@@ -315,46 +405,72 @@ func TestSafePathProblem(t *testing.T) {
 		"open but not sticky /tmp":           {func(fs fakeFS) { fs["/tmp"] = pathInfo{perm: 0o777} }, "/tmp/mdrb.x/report-token", "/tmp, a folder above /tmp/mdrb.x/report-token, is writable by mdrb-cells"},
 		"a file not there yet, safe folder":  {nil, "/etc/md-runbook/revoked", ""},
 		"a folder not there":                 {nil, "/etc/nowhere/revoked", "the folder of /etc/nowhere/revoked doesn't exist"},
+		// Links: the path as written and every target (review of 0.28.0).
+		"a link in an open folder to a safe file": {func(fs fakeFS) {
+			fs["/srv"] = pathInfo{perm: 0o777}
+			fs["/srv/allowed_signers"] = pathInfo{perm: 0o777, link: "/etc/md-runbook/gate.conf"}
+		}, "/srv/allowed_signers", "/srv, a folder above /srv/allowed_signers, is writable by mdrb-cells"},
+		"a safe link to a file in an open folder": {func(fs fakeFS) {
+			fs["/srv"] = pathInfo{perm: 0o777}
+			fs["/srv/allowed_signers"] = pathInfo{perm: 0o644}
+			fs["/etc/md-runbook/allowed_signers"] = pathInfo{perm: 0o777, link: "../../srv/allowed_signers"}
+		}, "/etc/md-runbook/allowed_signers", "/srv, a folder above /srv/allowed_signers, is writable by mdrb-cells"},
+		"a linked folder (merged /usr), safe": {func(fs fakeFS) {
+			fs["/bin"] = pathInfo{perm: 0o777, link: "usr/bin"}
+			fs["/usr/bin"] = pathInfo{perm: 0o755}
+			fs["/usr/bin/id"] = pathInfo{perm: 0o755}
+		}, "/bin/id", ""},
+		"a linked folder pointing into an open one": {func(fs fakeFS) {
+			fs["/srv"] = pathInfo{perm: 0o777}
+			fs["/srv/conf"] = pathInfo{perm: 0o755}
+			fs["/etc/md-runbook"] = pathInfo{perm: 0o777, link: "/srv/conf"}
+		}, "/etc/md-runbook/gate.conf", "/srv, a folder above /srv/conf/gate.conf, is writable by mdrb-cells"},
+		"a link loop": {func(fs fakeFS) {
+			fs["/etc/a"] = pathInfo{perm: 0o777, link: "b"}
+			fs["/etc/b"] = pathInfo{perm: 0o777, link: "a"}
+		}, "/etc/a", ""},
 	} {
 		fs := goodFS()
 		if c.change != nil {
 			c.change(fs)
 		}
-		got := safePathProblem(c.path, fs.stat, fs.real, 1000, 1500, groups, "support", "mdrb-cells")
+		got := safePathProblem(c.path, fs.stat, cellsRule(1000, 1500, groups, "support", "mdrb-cells"))
 		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
 			t.Errorf("%s: %q, want %q", name, got, c.want)
 		}
 	}
 }
 
-// Separated mode: the gate reads the exits the cells' shells append, logs the end events, and
-// keeps the first line with each run's random number. A forged, garbled or truncated file
-// changes nothing that was read.
+// Separated mode: the gate reads the exits the cells' shells append and logs the end events.
+// Anything else in the file (review of 0.28.0, M1) ends the session, logged, and no report goes
+// out.
 func TestExitsFile(t *testing.T) {
-	dir := t.TempDir()
-	g := &Gate{log: &logx.Logger{Dest: dir + "/gate.log", Account: "support"}}
-	g.exitsPath = dir + "/exits"
-	g.sepRuns = map[string]sepRun{"1": {"0000aa01", "n1"}, "2": {"0000aa02", "n2"}, "3": {"0000aa03", "n3"}}
-	g.sepExits = map[string]report.Exit{}
-	write := func(s string, flag int) {
-		f, err := os.OpenFile(g.exitsPath, flag, 0o600)
-		if err != nil {
-			t.Fatal(err)
+	newGate := func(t *testing.T) (*Gate, string, func(string, int)) {
+		dir := t.TempDir()
+		g := &Gate{log: &logx.Logger{Dest: dir + "/gate.log", Account: "support"}}
+		g.endCh = make(chan struct{}, 1)
+		g.exitsPath = dir + "/exits"
+		g.sepRuns = map[string]sepRun{"1": {"0000aa01", "n1"}, "2": {"0000aa02", "n2"}, "3": {"0000aa03", "n3"}}
+		g.sepExits = map[string]report.Exit{}
+		write := func(s string, flag int) {
+			f, err := os.OpenFile(g.exitsPath, flag, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.WriteString(s)
+			f.Close()
 		}
-		f.WriteString(s)
-		f.Close()
+		return g, dir, write
 	}
-	write("2\t0\t2026-11-16T10:00:00Z\tforged\t\n1\t0\t2026-11-16T10:00:01Z\tn1\t\n2\t3\tnot a time\tn2\tkube-context is none, not prod\n2\t0\t2026-11-16T10:00:09Z\tn2\t\n3\t7", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+	g, dir, write := newGate(t)
+	write("1\t0\t2026-11-16T10:00:01Z\tn1\t\n2\t3\tnot a time\tn2\tkube-context is none, not prod\n3\t7", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 	g.readExitsFile()
 	// The rest of run 3's line comes later.
 	write("\t2026-11-16T10:00:05Z\tn3\t\n", os.O_WRONLY|os.O_APPEND)
 	g.readExitsFile()
-	// Truncated, and a later line for run 1: what was read stays.
-	write("1\t9\t2026-11-16T10:00:06Z\tn1\t\n", os.O_WRONLY|os.O_TRUNC)
-	g.readExitsFile()
 	ex := g.sepExitsCopy()
-	if ex["1"] != (report.Exit{RC: "0", Time: "2026-11-16T10:00:01Z"}) || ex["2"].RC != "3" || ex["2"].Time == "not a time" || ex["3"] != (report.Exit{RC: "7", Time: "2026-11-16T10:00:05Z"}) || len(ex) != 3 {
-		t.Errorf("exits: %+v", ex)
+	if g.exitsBadNow() != "" || ex["1"] != (report.Exit{RC: "0", Time: "2026-11-16T10:00:01Z"}) || ex["2"].RC != "3" || ex["2"].Time == "not a time" || ex["3"] != (report.Exit{RC: "7", Time: "2026-11-16T10:00:05Z"}) || len(ex) != 3 {
+		t.Errorf("exits: %+v (%s)", ex, g.exitsBadNow())
 	}
 	data, _ := os.ReadFile(dir + "/gate.log")
 	log := string(data)
@@ -364,12 +480,84 @@ func TestExitsFile(t *testing.T) {
 			t.Errorf("log lacks %s:\n%s", want, log)
 		}
 	}
-	if strings.Count(log, `"event":"end"`) != 3 {
-		t.Errorf("log:\n%s", log)
+	select {
+	case <-g.endCh:
+		t.Error("the session ended")
+	default:
+	}
+	for name, c := range map[string]struct {
+		lines string
+		then  func(write func(string, int))
+		want  string
+	}{
+		"a forged random number": {"1\t0\t2026-11-16T10:00:01Z\tforged\t\n", nil, "a line for run 1 without its random number"},
+		"no such run":            {"9\t0\t2026-11-16T10:00:01Z\tn1\t\n", nil, "a line for no run of this session"},
+		"a second line":          {"1\t0\t2026-11-16T10:00:01Z\tn1\t\n1\t1\t2026-11-16T10:00:02Z\tn1\t\n", nil, "a second line for run 1"},
+		"junk":                   {"hello\n", nil, "a line that doesn't parse"},
+		"no number":              {"1\tx\t2026-11-16T10:00:01Z\tn1\t\n", nil, "an exit that is no number"},
+		"a long line":            {strings.Repeat("x", 5000), nil, "a line is over 4096 bytes"},
+		"truncated":              {"1\t0\t2026-11-16T10:00:01Z\tn1\t\n", func(write func(string, int)) { write("", os.O_WRONLY|os.O_TRUNC) }, "it got shorter"},
+	} {
+		g, dir, write := newGate(t)
+		write(c.lines, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+		g.readExitsFile()
+		if c.then != nil {
+			c.then(write)
+			g.readExitsFile()
+		}
+		if !strings.Contains(g.exitsBadNow(), c.want) {
+			t.Errorf("%s: %q, want %q", name, g.exitsBadNow(), c.want)
+		}
+		select {
+		case <-g.endCh:
+		default:
+			t.Errorf("%s: the session goes on", name)
+		}
+		data, _ := os.ReadFile(dir + "/gate.log")
+		if !strings.Contains(string(data), `"event":"exits","status":"refused","reason":"the session's exits file was changed (`+c.want) {
+			t.Errorf("%s: log %s", name, data)
+		}
 	}
 	for s, ok := range map[string]bool{"2026-11-16T10:00:01Z": true, "2026-11-16 10:00:01Z": false, "2026-11-16T10:00:01": false, "2026-1a-16T10:00:01Z": false} {
 		if isUTCTime(s) != ok {
 			t.Errorf("isUTCTime(%q) != %v", s, ok)
+		}
+	}
+}
+
+func (f *fakeSys) readCron(p string) ([]byte, error) {
+	if c, ok := f.cronFiles[p]; ok {
+		if c == "unreadable" {
+			return nil, fs.ErrPermission
+		}
+		return []byte(c), nil
+	}
+	return nil, fs.ErrNotExist
+}
+
+// Cron and at: the cells' account may not use them (deny lists it, or allow exists without it);
+// a file the gate can't read is a problem; a tool that isn't installed is none (review of 0.28.0).
+func TestCronProblems(t *testing.T) {
+	for name, c := range map[string]struct {
+		files       map[string]string
+		crontab, at bool
+		want        string // "" none, else part of the problems
+	}{
+		"denied in both":         {map[string]string{"/etc/cron.deny": "mdrb-cells", "/etc/at.deny": " mdrb-cells \nx"}, true, true, ""},
+		"allow lists others":     {map[string]string{"/etc/cron.allow": "root\n", "/etc/at.allow": ""}, true, true, ""},
+		"allow beats deny":       {map[string]string{"/etc/cron.allow": "root", "/etc/cron.deny": ""}, true, false, ""},
+		"allow lists it":         {map[string]string{"/etc/cron.allow": "mdrb-cells\n"}, true, false, "/etc/cron.allow lists mdrb-cells: remove it"},
+		"neither file":           {map[string]string{}, true, false, "mdrb-cells may use cron"},
+		"deny without it":        {map[string]string{"/etc/at.deny": "mdrb-cellsx"}, false, true, "mdrb-cells may use at: add it to /etc/at.deny"},
+		"unreadable allow":       {map[string]string{"/etc/cron.allow": "unreadable"}, true, false, "can't read /etc/cron.allow"},
+		"unreadable deny":        {map[string]string{"/etc/at.deny": "unreadable"}, false, true, "can't read /etc/at.deny"},
+		"neither tool installed": {map[string]string{}, false, false, ""},
+		"only at is not denied":  {map[string]string{"/etc/cron.deny": "mdrb-cells"}, true, true, "may use at"},
+	} {
+		f := &fakeSys{cronFiles: c.files}
+		got := strings.Join(cronProblems(cronSetup{dir: "/etc", crontab: c.crontab, at: c.at, read: f.readCron}, "mdrb-cells"), "; ")
+		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
 		}
 	}
 }

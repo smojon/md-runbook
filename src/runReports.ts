@@ -39,7 +39,7 @@ import type { RunPipeline, RunRecord } from './pipeline';
 import { cellAttrs, labelOf, notebookProgress } from './progress';
 import type { SecretsInfo } from './secrets';
 import { NOTEBOOK_TYPE, notebookTextWithOutputs } from './serializer';
-import { SIGNING_KEY_MISSING, SIGNING_KEY_MISSING_CANCEL, reportGate, summarySigning } from './reportGate';
+import { SIGNING_KEY_MISSING, SIGNING_KEY_MISSING_CANCEL, namesReportAddress, reportGate, summarySigning } from './reportGate';
 import { hostSkipped } from './remoteHosts';
 import { CANT_CHECK_SIGNATURES, SignerCache, SignerCheck } from './signerCheck';
 
@@ -113,7 +113,7 @@ class RunReports {
     if (nb.notebookType !== NOTEBOOK_TYPE || isCallCopy(nb.uri)) return undefined;
     // The front matter is in the first cell: most runbooks stop here, without writing the text.
     const first = nb.cellCount > 0 ? nb.cellAt(0) : undefined;
-    if (first?.kind !== vscode.NotebookCellKind.Markup || !/^report-runs\s*:/m.test(first.document.getText())) return undefined;
+    if (first?.kind !== vscode.NotebookCellKind.Markup || !namesReportAddress(first.document.getText())) return undefined;
     const text = notebookTextWithOutputs(nb);
     const { signer, cantCheck } = await this.trustedSigner(text);
     const plan = reportPlan(text, signer);

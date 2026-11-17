@@ -8,7 +8,7 @@
 import type { RunsConfig } from './config';
 import { GateMode, ReceivedRunSummary, gateModeOf, gateTrustText, parseRunEnvelope, runSummaryProblems, verifyRunEnvelope } from './core';
 import { HttpError, JsonLog } from './http';
-import { nameFitsPath } from './library';
+import { runOf } from './library';
 
 /**
  * How far a summary can be believed: `runner-signed` (a key in the allowed runners signed it),
@@ -24,8 +24,9 @@ export interface RunRecord {
   verified: boolean;
   /**
    * With trust `gate` only: the mode of the gate that sent it (the summary's `gate.gate_mode`,
-   * `shared` when absent). Never set from an unverified summary. Records from before read as
-   * `shared` (recordGateMode).
+   * `shared` when absent). `separated` only when sent with a token of RUNS_SEPARATED_GATE_TOKENS
+   * (Runs.receive refuses the claim from any other). Never set from an unverified summary.
+   * Records from before read as `shared` (recordGateMode).
    */
   gateMode?: GateMode;
   /** The principal of the allowed runners whose key signed it. */
@@ -61,18 +62,17 @@ export function summaryMismatches(s: ReceivedRunSummary): string[] {
  * a gate sends (the name is the end of the path, as the library checks when publishing).
  */
 export function summaryMatches(s: ReceivedRunSummary, q: string): boolean {
-  const query = q.replace(/^\/+/, '');
-  const signed = s.runbook.signed;
-  if (signed && signed.name === query) return true;
-  if (!/\.(md|markdown)$/i.test(query)) return false;
-  const file = query.split('/').pop()!;
-  return s.runbook.file === file || (signed !== undefined && nameFitsPath(signed.name, query));
+  const { file, signed } = s.runbook;
+  return runOf({ ...(file !== undefined ? { file } : {}), ...(signed ? { name: signed.name } : {}) }, q);
 }
 
 export interface ReceiveContext {
   from: string;
-  /** The token it came with, and whether it is a gate's. */
-  token?: { label: string; gate: boolean };
+  /**
+   * The token it came with, whether it is a gate's, and whether that gate runs in separated mode
+   * (RUNS_SEPARATED_GATE_TOKENS): only then may a summary say `gate_mode: separated`.
+   */
+  token?: { label: string; gate: boolean; separated?: boolean };
 }
 
 export class Runs {
@@ -127,11 +127,21 @@ export class Runs {
       if (ctx.token?.gate) {
         trust = 'gate';
         why = undefined;
-      } else if (this.config.gateTokens.length > 0) throw new HttpError(403, "a gate's summary (client gate) needs a gate token (RUNS_GATE_TOKENS)");
+      } else if (this.config.gateTokens.length > 0 || this.config.separatedGateTokens.length > 0)
+        throw new HttpError(403, "a gate's summary (client gate) needs a gate token (RUNS_GATE_TOKENS or RUNS_SEPARATED_GATE_TOKENS)");
       else why = 'client gate, but this server has no gate tokens to tell a gate (RUNS_GATE_TOKENS)';
     }
     if (this.config.requireSigned && trust === 'unverified') throw new HttpError(403, `this server keeps only summaries signed by a known runner or sent by a gate: ${why ?? 'not verified'}`);
+    // The token decides the mode, not the summary: a shared gate's blocks can read its token and
+    // send a summary that says separated (review, 2026-11-16). Refused rather than kept as shared,
+    // so a gate in separated mode whose token is in the wrong list is noticed.
     const gateMode = gateModeOf(summary, trust === 'gate');
+    if (gateMode === 'separated' && ctx.token?.separated !== true) {
+      throw new HttpError(
+        400,
+        "the summary says gate_mode separated, but its token is not a separated gate's: a gate in separated mode needs its own token in the server's RUNS_SEPARATED_GATE_TOKENS (not in RUNS_GATE_TOKENS)",
+      );
+    }
 
     const record: RunRecord = {
       received: now.toISOString(),
@@ -160,10 +170,19 @@ export class Runs {
    * "Last ran green by X at T": the newest green run of `q`, and when that one doesn't count (runCounts),
    * the newest green run that does too. `separated`: the runbook says `report-runs-required:
    * separated` (Library.separatedRequired), so only a run a gate sent in separated mode counts.
+   * `unknown`: why the library couldn't tell; then only such a run counts too, and the answer
+   * says why (`requiredUnknown`).
    */
-  async lastGreen(q: string, o: { separated?: boolean } = {}): Promise<{ last?: RunRecord; lastVerified?: RunRecord; required?: 'separated'; text: string }> {
-    const separated = o.separated === true;
-    const required = separated ? { required: 'separated' as const } : {};
+  async lastGreen(
+    q: string,
+    o: { separated?: boolean; unknown?: string } = {},
+  ): Promise<{ last?: RunRecord; lastVerified?: RunRecord; required?: 'separated'; requiredUnknown?: string; text: string }> {
+    const separated = o.separated === true || o.unknown !== undefined;
+    const required = separated ? { required: 'separated' as const, ...(o.unknown !== undefined ? { requiredUnknown: o.unknown } : {}) } : {};
+    const asks =
+      o.unknown !== undefined
+        ? `as the server asks while it can't tell whether the runbook says report-runs-required: separated (${o.unknown})`
+        : 'as report-runs-required: separated asks';
     const green = (r: RunRecord): boolean => !!r?.summary?.runbook && r.summary.green === true && summaryMatches(r.summary, q);
     const [found] = await this.log.recent<RunRecord>(green, 1);
     if (!found) return { ...required, text: `${q}: no green run reported` };
@@ -177,7 +196,8 @@ export class Runs {
       `${r.verified ? (r.runner ?? r.summary.who) : JSON.stringify(r.summary.who)} at ${r.summary.ended}${r.summary.runbook.signed ? ` (version ${r.summary.runbook.signed.version})` : ''}, ${trustText(r)}`;
     let text = `${q}: last ran green by ${say(last)}`;
     if (lastVerified && lastVerified !== last) text += `; last ${separated ? 'green run sent by a gate in separated mode' : 'verified green run'} by ${say(lastVerified)}`;
-    else if (!lastVerified && separated) text += '; none sent by a gate in separated mode, as report-runs-required: separated asks';
+    else if (!lastVerified && separated) text += `; none sent by a gate in separated mode, ${asks}`;
+    else if (o.unknown !== undefined) text += `; only a run a gate sent in separated mode counts, ${asks}`;
     return { last, ...(lastVerified ? { lastVerified } : {}), ...required, text };
   }
 }

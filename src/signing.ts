@@ -22,7 +22,8 @@ import {
   RUNBOOK_NAME_RE,
   SCOPE_RE,
   buildManifest,
-  cosignable,
+  cosignProblem,
+  cosignRulesText,
   formatManifest,
   parseManifest,
   readSignature,
@@ -181,9 +182,12 @@ async function cosignRunbook(uri?: unknown): Promise<void> {
   const text = decoder.decode(await vscode.workspace.fs.readFile(target));
   const block = readSignature(text);
   if (!block) return void vscode.window.showErrorMessage('md-runbook: this runbook is not signed yet. Sign it first (Sign Runbook); a second signer then co-signs it.');
-  if (!cosignable(text, block)) {
+  const problem = cosignProblem(text, block);
+  if (problem) {
     return void vscode.window.showErrorMessage(
-      `md-runbook: the runbook changed since ${block.signer} signed it, so its signature no longer covers it. Sign it again (a new version), then co-sign that.`,
+      problem.why === 'rules'
+        ? `md-runbook: this runbook can't be co-signed: ${cosignRulesText(problem.errors)}.`
+        : `md-runbook: the runbook changed since ${block.signer} signed it, so its signature no longer covers it. Sign it again (a new version), then co-sign that.`,
       { modal: true },
     );
   }
@@ -225,8 +229,13 @@ async function requestCosign(uri?: unknown): Promise<void> {
   const text = decoder.decode(await vscode.workspace.fs.readFile(target));
   const block = readSignature(text);
   if (!block) return void vscode.window.showErrorMessage('md-runbook: this runbook is not signed yet. Sign it first (Sign Runbook), then ask for a co-signature.');
-  if (!cosignable(text, block)) {
-    return void vscode.window.showErrorMessage(`md-runbook: the runbook changed since ${block.signer} signed it. Sign it again, then ask for a co-signature.`);
+  const problem = cosignProblem(text, block);
+  if (problem) {
+    return void vscode.window.showErrorMessage(
+      problem.why === 'rules'
+        ? `md-runbook: this runbook can't be co-signed: ${cosignRulesText(problem.errors)}.`
+        : `md-runbook: the runbook changed since ${block.signer} signed it. Sign it again, then ask for a co-signature.`,
+    );
   }
   const pushed = await pushedRunbook(target, 'Copy the Request Anyway');
   if (!pushed) return;

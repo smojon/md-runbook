@@ -6,6 +6,13 @@
  */
 
 import type { ReportPlan } from '@md-runbook/core/runReport';
+import { parseFrontMatter } from '@md-runbook/core/secrets';
+
+/**
+ * Whether the runbook's front matter (the text of its first cell) names a report address, read
+ * as core reads it: `Report-Runs:` in any case, as the command line and the app read it.
+ */
+export const namesReportAddress = (firstCell: string): boolean => parseFrontMatter(firstCell)?.reportRuns !== undefined;
 
 export type ReportGate = { kind: 'go' } | { kind: 'ask' } | { kind: 'refuse'; why: 'key' };
 

@@ -74,9 +74,9 @@ jobs:
           set -eu
           # The gate in a folder only root can change, as the self-check asks (the runner image
           # leaves /usr/local/bin open for tool installs). Each folder up to / is checked.
-          sudo install -d -m 755 -o root -g root /opt/md-runbook-gate /opt/md-runbook-gate/bin
-          sudo install -m 755 -o root -g root apps/gate/dist/md-runbook-gate /opt/md-runbook-gate/bin/md-runbook-gate
-          d=/opt/md-runbook-gate/bin
+          sudo install -d -m 755 -o root -g root /usr/libexec/md-runbook-gate /usr/libexec/md-runbook-gate/bin
+          sudo install -m 755 -o root -g root apps/gate/dist/md-runbook-gate /usr/libexec/md-runbook-gate/bin/md-runbook-gate
+          d=/usr/libexec/md-runbook-gate/bin
           while :; do
             set -- $(stat -c '%u %a' "$d")
             if [ "$1" != 0 ] || [ $((0$2 & 022)) -ne 0 ]; then
@@ -87,17 +87,19 @@ jobs:
             d=$(dirname "$d")
           done
           # And one in a folder anyone can write, which the self-check must refuse.
-          sudo install -d -m 755 -o root -g root /opt/mdrb-open
-          sudo install -d -m 777 -o root -g root /opt/mdrb-open/bin
-          sudo install -m 755 -o root -g root apps/gate/dist/md-runbook-gate /opt/mdrb-open/bin/md-runbook-gate
+          sudo install -d -m 755 -o root -g root /usr/libexec/mdrb-open
+          sudo install -d -m 777 -o root -g root /usr/libexec/mdrb-open/bin
+          sudo install -m 755 -o root -g root apps/gate/dist/md-runbook-gate /usr/libexec/mdrb-open/bin/md-runbook-gate
           for a in mdrb-gate mdrb-cells mdrb-wide mdrb-open; do sudo useradd -m -s /bin/sh "$a"; done
           printf '%s\n' \
-            'mdrb-gate ALL=(mdrb-cells) NOPASSWD: /opt/md-runbook-gate/bin/md-runbook-gate __cells' \
+            'mdrb-gate ALL=(mdrb-cells) NOPASSWD: /usr/libexec/md-runbook-gate/bin/md-runbook-gate __cells' \
             'mdrb-wide ALL=(mdrb-cells) NOPASSWD: ALL' \
-            'mdrb-open ALL=(mdrb-cells) NOPASSWD: /opt/mdrb-open/bin/md-runbook-gate __cells' >"$RUNNER_TEMP/md-runbook-gate.sudoers"
+            'mdrb-open ALL=(mdrb-cells) NOPASSWD: /usr/libexec/mdrb-open/bin/md-runbook-gate __cells' >"$RUNNER_TEMP/md-runbook-gate.sudoers"
           sudo visudo -cf "$RUNNER_TEMP/md-runbook-gate.sudoers"
           sudo install -m 440 "$RUNNER_TEMP/md-runbook-gate.sudoers" /etc/sudoers.d/md-runbook-gate
           sudo -n -u mdrb-gate sudo -n -l
+          # The cells' account may use neither cron nor at, or the self-check refuses.
+          printf 'mdrb-cells\n' | sudo tee -a /etc/cron.deny /etc/at.deny >/dev/null
           # (/run/user/UID is that account's alone, mode 0700: root looks for the socket.)
           for a in "$(id -un)" mdrb-gate mdrb-wide; do
             sudo loginctl enable-linger "$a"
@@ -121,13 +123,13 @@ jobs:
         working-directory: .
         timeout-minutes: 10
         env:
-          MD_RUNBOOK_GATE_BIN: /opt/md-runbook-gate/bin/md-runbook-gate
+          MD_RUNBOOK_GATE_BIN: /usr/libexec/md-runbook-gate/bin/md-runbook-gate
           MD_RUNBOOK_GATE_ISOLATIONS: scope,bwrap
           MD_RUNBOOK_GATE_ACCOUNT: mdrb-gate
           MD_RUNBOOK_GATE_CELLS_ACCOUNT: mdrb-cells
           MD_RUNBOOK_GATE_WIDE_ACCOUNT: mdrb-wide
           MD_RUNBOOK_GATE_OPEN_ACCOUNT: mdrb-open
-          MD_RUNBOOK_GATE_OPEN_BIN: /opt/mdrb-open/bin/md-runbook-gate
+          MD_RUNBOOK_GATE_OPEN_BIN: /usr/libexec/mdrb-open/bin/md-runbook-gate
         run: |
           npm ci
           npm run compile

@@ -91,7 +91,12 @@ func (g *Gate) doLoad(rid string, args []string) {
 	}
 	// Each signature that verifies counts once per principal (two signatures of one key are one
 	// signer); a signature from a key this server doesn't trust counts for nothing.
-	v := sshsig.Verifier{AllowedSigners: g.cfg.AllowedSigners, Dir: g.work}
+	keygen := g.helper("ssh-keygen")
+	if keygen == "" {
+		g.refuse(rid, "this server has no ssh-keygen in "+sysPath+" (OpenSSH 8.2 or newer)")
+		return
+	}
+	v := sshsig.Verifier{Keygen: keygen, AllowedSigners: g.cfg.AllowedSigners, Dir: g.work}
 	var principals []string
 	for _, sig := range args[1:] {
 		p := v.Principal(raw, sig)

@@ -1708,6 +1708,29 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       assert.doesNotMatch(r.err, /not exactly the one rule/);
     });
 
+    it("a process of the cells' account outside this gate account's sessions stops the gate; kill_leftovers = yes ends it first (review of 0.28.0)", async () => {
+      // As a cron job or a leftover would be: under PID 1, no gate above it. It could write into a
+      // session's shells through /proc/PID/fd/0, the same account's.
+      as(CELLS, 'setsid sleep 3081 </dev/null >/dev/null 2>&1 &');
+      for (let i = 0; i < 50 && !procsWith('sleep 3081').length; i++) await pause(100);
+      const stray = procsWith('sleep 3081');
+      assert.ok(stray.length > 0, 'the stray runs');
+      try {
+        const r = await startupAs(GATE_ACCOUNT, gdir, conf);
+        assert.equal(r.code, 2, r.err);
+        assert.match(r.err, new RegExp(`processes of ${CELLS} run outside this gate account's sessions \\(.*${stray[0]} sleep`));
+        assert.match(r.err, /serves one gate account only/);
+        assert.match(readLog(), /"event":"self-check","status":"refused"/);
+        const kconf = confOf(GATE_ACCOUNT, gdir, 'sweep.conf', [`report_token_file = ${gdir}/report-token`, 'kill_leftovers = yes']);
+        const k = await startupAs(GATE_ACCOUNT, gdir, kconf);
+        assert.equal(k.code, 0, k.err);
+        assert.ok(await gone('sleep 3081'), 'kill_leftovers ended it');
+        assert.match(readLog(), new RegExp(`"event":"leftovers","status":"killed","pids":"[^"]*${stray[0]}`));
+      } finally {
+        for (const p of procsWith('sleep 3081')) spawnSync('sudo', ['-n', 'kill', '-KILL', String(p)]);
+      }
+    });
+
     it('the self-check refuses to start: a token the cells can read, root, the gate\'s own account, a wider sudo rule', async (t) => {
       // A token in a folder anyone can enter, readable by anyone.
       const open = as(GATE_ACCOUNT, 'd=$(mktemp -d /tmp/mdrb-open.XXXXXX) && chmod 755 "$d" && printf token >"$d/token" && chmod 644 "$d/token" && echo "$d"').trim();

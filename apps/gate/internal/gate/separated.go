@@ -5,11 +5,13 @@ package gate
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
+	"time"
 
 	"github.com/smojon/md-runbook/apps/gate/internal/logx"
 	"github.com/smojon/md-runbook/apps/gate/internal/procs"
@@ -48,97 +50,27 @@ type runFunc func(argv, env []string, stdin []byte) ([]byte, error)
 type selfCheck struct {
 	run         runFunc
 	plan        plan
-	sh          string
+	sh, id      string // the programs (helpers.go)
 	gateAccount string
 	gateUID     int
 	// The cells' account must not read noRead, nor write noWrite, but must write mustWrite.
 	noRead, noWrite, mustWrite []string
-	// The files whose folders must be safe up to / (safePathProblem), how to stat a path (lstat)
-	// and how to resolve one (its links): tests give their own.
+	// The files whose folders must be safe up to / (safePathProblem, cellsRule), and how to stat a
+	// path (lstat): tests give their own.
 	safe []string
 	stat statFunc
-	real func(string) (string, error)
-}
-
-// pathInfo is what the safe-path rule needs of a file or folder.
-type pathInfo struct {
-	uid, gid int
-	perm     os.FileMode // the permission bits
-	sticky   bool
-}
-
-// statFunc stats a path without following a link.
-type statFunc func(path string) (pathInfo, error)
-
-// lstat is the real statFunc.
-func lstat(p string) (pathInfo, error) {
-	fi, err := os.Lstat(p)
-	if err != nil {
-		return pathInfo{}, err
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return pathInfo{}, errors.New("no owner")
-	}
-	return pathInfo{uid: int(st.Uid), gid: int(st.Gid), perm: fi.Mode().Perm(), sticky: fi.Mode()&os.ModeSticky != 0}, nil
-}
-
-// safePathProblem: "" when every folder from p up to / is safe from the cells' account, else
-// why not (the folder named). The rule of OpenSSH's StrictModes: each folder is owned by root or
-// by the gate's account, and the cells' account can't write it (as its owner, through one of its
-// groups, or as anyone). A sticky folder it can write (/tmp) is safe when the entry below it is
-// root's or the gate account's: then others can't rename or replace that entry. p's links are
-// resolved first; a p that doesn't exist yet is checked as where it would be.
-func safePathProblem(p string, st statFunc, real func(string) (string, error), gateUID, cellsUID int, cellsGroups map[int]bool, gateAccount, cells string) string {
-	if !strings.HasPrefix(p, "/") {
-		a, err := filepath.Abs(p)
-		if err != nil {
-			return "can't check " + p
-		}
-		p = a
-	}
-	p = filepath.Clean(p)
-	if r, err := real(p); err == nil && strings.HasPrefix(r, "/") {
-		p = r
-	} else if r, err := real(filepath.Dir(p)); err == nil && strings.HasPrefix(r, "/") {
-		p = filepath.Join(r, filepath.Base(p))
-	} else {
-		return "the folder of " + p + " doesn't exist"
-	}
-	child, d := p, filepath.Dir(p)
-	for {
-		di, err := st(d)
-		if err != nil {
-			return "can't check " + d + ", a folder above " + p
-		}
-		if di.uid != 0 && di.uid != gateUID {
-			return d + ", a folder above " + p + ", is owned by uid " + strconv.Itoa(di.uid) + ": make it root's (or " + gateAccount + "'s)"
-		}
-		writable := di.perm&0o002 != 0 || (cellsGroups[di.gid] && di.perm&0o020 != 0) || (di.uid == cellsUID && di.perm&0o200 != 0)
-		if writable {
-			if !di.sticky {
-				return d + ", a folder above " + p + ", is writable by " + cells + ": make it writable by root (or " + gateAccount + ") alone"
-			}
-			ci, err := st(child)
-			if err != nil {
-				return child + " doesn't exist in " + d + ", which " + cells + " can write: create it as root (or " + gateAccount + ")"
-			}
-			if ci.uid != 0 && ci.uid != gateUID {
-				return child + " is owned by uid " + strconv.Itoa(ci.uid) + " in " + d + ", which " + cells + " can write: make it root's (or " + gateAccount + "'s)"
-			}
-		}
-		if d == "/" {
-			return ""
-		}
-		child, d = d, filepath.Dir(d)
-	}
+	// Where cron and at take their allow and deny lists from.
+	cron cronSetup
 }
 
 // do runs the check; the cells' account, or why the gate must not start.
 func (c selfCheck) do() (cellsInfo, error) {
 	var info cellsInfo
 	name := c.plan.account
-	out, err := c.run([]string{"id", "-u", name}, nil, nil)
+	if c.id == "" || c.sh == "" {
+		return info, errors.New("cells_account = " + name + ": no id or sh in " + sysPath)
+	}
+	out, err := c.run([]string{c.id, "-u", name}, nil, nil)
 	uid, aerr := strconv.Atoi(strings.TrimSpace(string(out)))
 	if err != nil || aerr != nil {
 		return info, errors.New("cells_account = " + name + ": no such account")
@@ -154,7 +86,7 @@ func (c selfCheck) do() (cellsInfo, error) {
 	info.uid = uid
 	// Its groups: a folder writable by one of them is writable by the cells.
 	groups := map[int]bool{}
-	out, err = c.run([]string{"id", "-G", name}, nil, nil)
+	out, err = c.run([]string{c.id, "-G", name}, nil, nil)
 	if err != nil {
 		return info, errors.New("cells_account = " + name + ": can't list its groups (id -G)")
 	}
@@ -162,6 +94,19 @@ func (c selfCheck) do() (cellsInfo, error) {
 		if g, err := strconv.Atoi(f); err == nil {
 			groups[g] = true
 		}
+	}
+	// No privileged group: through one, the cells could do more than the gate's account.
+	if out, err := c.run([]string{c.id, "-Gn", name}, nil, nil); err != nil {
+		return info, errors.New("cells_account = " + name + ": can't list its groups (id -Gn)")
+	} else if bad := privilegedGroups(string(out)); len(bad) > 0 || groups[0] {
+		if groups[0] && !has(bad, "gid 0") {
+			bad = append(bad, "gid 0")
+		}
+		return info, errors.New("cells_account = " + name + " is in the group " + strings.Join(bad, ", ") + ": give the cells an account without privileged groups")
+	}
+	// No cron or at jobs: one could outlive its session and write into later ones.
+	if probs := cronProblems(c.cron, name); len(probs) > 0 {
+		return info, errors.New("cells_account = " + name + ": " + strings.Join(probs, "; ") + " (a job of the cells' account could write into later sessions' shells)")
 	}
 	// Its home folder (getpwnam, as the shell's ~NAME reads it): where the cells start.
 	if out, err := c.run([]string{c.sh, "-c", "printf '%s' ~" + name}, nil, nil); err == nil && strings.HasPrefix(string(out), "/") {
@@ -173,7 +118,7 @@ func (c selfCheck) do() (cellsInfo, error) {
 		return info, errors.New("cells_account: can't find this program's own path")
 	}
 	if c.plan.sudo == "" {
-		return info, errors.New("cells_account = " + name + ": no sudo in " + gatePath + need)
+		return info, errors.New("cells_account = " + name + ": no sudo in " + sysPath + need)
 	}
 	out, err = c.run([]string{c.plan.sudo, "-n", "-l"}, nil, nil)
 	if p := sudoProblem(string(out), c.plan.account, c.plan.exe); p != "" {
@@ -183,7 +128,7 @@ func (c selfCheck) do() (cellsInfo, error) {
 	}
 	var unsafe []string
 	for _, p := range c.safe {
-		if why := safePathProblem(p, c.stat, c.real, c.gateUID, uid, groups, c.gateAccount, name); why != "" && !has(unsafe, why) {
+		if why := safePathProblem(p, c.stat, cellsRule(c.gateUID, uid, groups, c.gateAccount, name)); why != "" && !has(unsafe, why) {
 			unsafe = append(unsafe, why)
 		}
 	}
@@ -339,8 +284,8 @@ func (g *Gate) setupSeparated() {
 		add(&safe, g.cfg.Log)
 	}
 	add(&safe, g.keys...)
-	c := selfCheck{run: runCmd, plan: g.plan, sh: "/bin/sh", gateAccount: g.account, gateUID: g.uid, noRead: noRead, noWrite: noWrite, mustWrite: []string{g.exitsPath},
-		safe: safe, stat: lstat, real: filepath.EvalSymlinks}
+	c := selfCheck{run: runCmd, plan: g.plan, sh: g.helper("sh"), id: g.helper("id"), gateAccount: g.account, gateUID: g.uid, noRead: noRead, noWrite: noWrite, mustWrite: []string{g.exitsPath},
+		safe: safe, stat: lstat, cron: systemCron()}
 	info, err := c.do()
 	if err != nil {
 		g.log.Event("event", "self-check", "status", "refused", "reason", strings.ReplaceAll(err.Error(), "\n", " "))
@@ -364,12 +309,20 @@ type sepRun struct{ rid, nonce string }
 const exitsMax = 16 << 20
 
 // readExitsFile reads what the cells' shells appended since the last read: each run's exit, as
-// `N EXIT TIME NONCE [KUBE-REASON]` (tab-separated). The first line with a run's number counts, as
-// in report-exits; the gate logs its `end` event then (and the kube-context refusal it names). A
-// shorter file (truncated) is read again from its start: what was read stays read.
+// `N EXIT TIME NONCE [KUBE-REASON]` (tab-separated), one line per signed run; the gate logs its
+// `end` event then (and the kube-context refusal it names).
+//
+// Only the shells write there, but the cells' account can write the file, so a block of this
+// session can change it in place (review of 0.28.0, M1: within a session, as Trust says). What
+// isn't exactly a line the gate waits for ends the session, and no run report goes out: a line
+// that doesn't parse, a wrong number or random number, a second line for a run, a shorter file,
+// one past exitsMax (junkExits).
 func (g *Gate) readExitsFile() {
 	g.exitsMu.Lock()
 	defer g.exitsMu.Unlock()
+	if g.exitsBad != "" {
+		return
+	}
 	f, err := os.Open(g.exitsPath)
 	if err != nil {
 		return
@@ -380,10 +333,15 @@ func (g *Gate) readExitsFile() {
 		return
 	}
 	size := st.Size()
-	if size < g.exitsOff {
-		g.exitsOff, g.exitsBuf = 0, nil
+	switch {
+	case size < g.exitsOff:
+		g.junkExits("it got shorter")
+		return
+	case size > exitsMax:
+		g.junkExits("it is over " + itoa(exitsMax>>20) + " MiB")
+		return
 	}
-	for size > g.exitsOff && g.exitsRead < exitsMax {
+	for size > g.exitsOff && g.exitsBad == "" {
 		n := min(size-g.exitsOff, 1<<16)
 		buf := make([]byte, n)
 		got, _ := f.ReadAt(buf, g.exitsOff)
@@ -391,9 +349,8 @@ func (g *Gate) readExitsFile() {
 			break
 		}
 		g.exitsOff += int64(got)
-		g.exitsRead += int64(got)
 		g.exitsBuf = append(g.exitsBuf, buf[:got]...)
-		for {
+		for g.exitsBad == "" {
 			i := strings.IndexByte(string(g.exitsBuf), '\n')
 			if i < 0 {
 				break
@@ -402,8 +359,24 @@ func (g *Gate) readExitsFile() {
 			g.exitsBuf = g.exitsBuf[i+1:]
 		}
 		if len(g.exitsBuf) > 4096 {
-			g.exitsBuf = nil
+			g.junkExits("a line is over 4096 bytes")
 		}
+	}
+}
+
+// junkExits: the exits file is not what the shells write (exitsMu held). Logged, said, and the
+// session ends; its run reports don't go out.
+func (g *Gate) junkExits(why string) {
+	if g.exitsBad != "" {
+		return
+	}
+	g.exitsBad = why
+	msg := "the session's exits file was changed (" + why + "): the session ends"
+	say(msg)
+	g.log.Event("event", "exits", "status", "refused", "reason", msg)
+	select {
+	case g.endCh <- struct{}{}:
+	default:
 	}
 }
 
@@ -411,15 +384,26 @@ func (g *Gate) readExitsFile() {
 func (g *Gate) exitLine(line string) {
 	f := strings.Split(line, "\t")
 	if len(f) < 4 || len(f) > 5 {
+		g.junkExits("a line that doesn't parse")
 		return
 	}
 	run, ok := g.sepRuns[f[0]]
-	if _, done := g.sepExits[f[0]]; !ok || done || run.nonce == "" || f[3] != run.nonce {
+	_, done := g.sepExits[f[0]]
+	switch {
+	case !ok:
+		g.junkExits("a line for no run of this session")
+		return
+	case done:
+		g.junkExits("a second line for run " + f[0])
+		return
+	case run.nonce == "" || f[3] != run.nonce:
+		g.junkExits("a line for run " + f[0] + " without its random number")
 		return
 	}
 	rc := f[1]
 	if !textutil.IsNum(rc) || len(rc) > 3 {
-		rc = "1"
+		g.junkExits("an exit that is no number")
+		return
 	}
 	at := f[2]
 	if !isUTCTime(at) {
@@ -479,8 +463,10 @@ func (g *Gate) sweepCells(when string) {
 		g.log.Event("event", "leftovers", "status", "skipped", "reason", "no /proc here", "cells", g.cfg.CellsAccount, "when", when)
 		return
 	}
+	// Bounded (the sweep itself takes at most 5 seconds): a stopped cells' mode doesn't hold up the
+	// end of the session, its run reports included.
 	l := g.plan.outer("", true)
-	out, err := runCmd(l.argv, l.env, cellsReq{Op: "sweep"}.encode())
+	out, err := runFor(10*time.Second, l.argv, l.env, cellsReq{Op: "sweep", GateComm: g.gateComm}.encode())
 	var res sweepResult
 	if err != nil || json.Unmarshal(out, &res) != nil {
 		g.log.Event("event", "leftovers", "status", "skipped", "reason", "can't run the cells' mode", "cells", g.cfg.CellsAccount, "when", when)
@@ -496,4 +482,152 @@ func (g *Gate) sweepCells(when string) {
 		}
 		g.log.Event("event", "leftovers", "status", "killed", "pids", strings.Join(pids, " "), "cells", g.cfg.CellsAccount, "when", when)
 	}
+}
+
+// privileged: groups whose members can do more than an account of their own (become root, read
+// logs or disks, run containers).
+var privileged = []string{"root", "sudo", "wheel", "admin", "adm", "docker", "lxd", "incus-admin", "libvirt", "kvm", "disk", "systemd-journal", "shadow"}
+
+// privilegedGroups: the privileged groups among `id -Gn`'s.
+func privilegedGroups(idGn string) []string {
+	var out []string
+	for _, g := range strings.Fields(idGn) {
+		if has(privileged, g) && !has(out, g) {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// cronSetup: where cron and at read who may use them, and whether they are installed.
+type cronSetup struct {
+	dir         string // /etc (macOS: /usr/lib/cron)
+	crontab, at bool
+	read        func(string) ([]byte, error)
+}
+
+// systemCron: this server's.
+func systemCron() cronSetup {
+	dir := "/etc"
+	if runtime.GOOS == "darwin" {
+		dir = "/usr/lib/cron"
+	}
+	return cronSetup{dir: dir, crontab: inPath(sysPath, "crontab") != "", at: inPath(sysPath, "at") != "", read: os.ReadFile}
+}
+
+// cronProblems: "" for each tool the account can't use. It can't when tool.deny lists it, or
+// tool.allow exists without it; anything else (neither file: each tool has its own default)
+// counts as allowed. A file that can't be read is a problem too.
+func cronProblems(c cronSetup, name string) []string {
+	var out []string
+	for _, t := range []struct {
+		tool string
+		on   bool
+	}{{"cron", c.crontab}, {"at", c.at}} {
+		if !t.on {
+			continue
+		}
+		allow, deny := c.dir+"/"+t.tool+".allow", c.dir+"/"+t.tool+".deny"
+		if a, err := c.read(allow); err == nil {
+			if listed(string(a), name) {
+				out = append(out, allow+" lists "+name+": remove it")
+			}
+			continue
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			out = append(out, "can't read "+allow+": make it readable by the gate's account")
+			continue
+		}
+		d, err := c.read(deny)
+		switch {
+		case err == nil && listed(string(d), name):
+		case err != nil && !errors.Is(err, fs.ErrNotExist):
+			out = append(out, "can't read "+deny+": make it readable by the gate's account")
+		default:
+			out = append(out, name+" may use "+t.tool+": add it to "+deny+" (or create "+allow+" without it)")
+		}
+	}
+	return out
+}
+
+// listed: a line of an allow or deny file is the name.
+func listed(file, name string) bool {
+	for _, l := range strings.Split(file, "\n") {
+		if strings.TrimSpace(l) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// selfComm: this program's name as process listings show it.
+func selfComm() string {
+	if b, err := os.ReadFile("/proc/self/stat"); err == nil {
+		if p, ok := procs.ParseStat(string(b)); ok {
+			return p.Comm
+		}
+	}
+	return procs.Comm(os.Args[0])
+}
+
+// checkCellsStrays: separated mode, at the start of a session (after the sweep): every process of
+// the cells' account must run under a gate of this account. Anything else (a cron job, a login,
+// a leftover, another gate account's blocks) could write into this session's shells through
+// /proc/PID/fd/0, the same account's (review of 0.28.0, H2). A process that is just ending (a
+// session that just ended) gets a second.
+func (g *Gate) checkCellsStrays() {
+	if !g.separated() {
+		return
+	}
+	name := g.cfg.CellsAccount
+	refuse := func(msg string) {
+		g.log.Event("event", "self-check", "status", "refused", "reason", msg)
+		g.fatal(msg)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		list, err := procs.List()
+		if err != nil {
+			refuse("cells_account = " + name + ": can't list the processes")
+		}
+		if !hasPID1(list) {
+			refuse("cells_account = " + name + ": can't see other accounts' processes (is /proc mounted with hidepid?): the gate must see the cells' account's")
+		}
+		strays := procs.CellsStrays(list, g.cells.uid, procs.GateOf(g.uid, g.gateComm))
+		if len(strays) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			byPID := map[int]procs.Proc{}
+			for _, p := range list {
+				byPID[p.PID] = p
+			}
+			var shown []string
+			for i, p := range strays {
+				if i == 5 {
+					shown = append(shown, "...")
+					break
+				}
+				shown = append(shown, itoa(p)+" "+byPID[p].Comm)
+			}
+			refuse("cells_account = " + name + ": " + itoa(len(strays)) + " processes of " + name + " run outside this gate account's sessions (" + strings.Join(shown, ", ") +
+				"). A cells_account serves one gate account only, with no cron jobs, logins or user manager of its own: end them (kill_leftovers = yes ends those under no gate), or give each gate account its own cells_account")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func hasPID1(list []procs.Proc) bool {
+	for _, p := range list {
+		if p.PID == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// exitsBadNow: why the exits file was refused, "" while it is fine.
+func (g *Gate) exitsBadNow() string {
+	g.exitsMu.Lock()
+	defer g.exitsMu.Unlock()
+	return g.exitsBad
 }

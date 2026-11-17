@@ -14,6 +14,10 @@ for your server's platform when you update.
   `setsid`, `stdbuf`, `fold` or `curl`.
   - The gate gives each block's shell a process group of its own on every server.
   - The gate sends run reports itself, in the background as before.
+  - The gate runs `ssh-keygen` and its other programs only from `/usr/bin`, `/bin`,
+    `/usr/sbin` and `/sbin`, never from `/usr/local` or the PATH. Each one, and every folder
+    above it, must be root's alone, or the gate doesn't start
+    ([Needs](apps/gate/README.md#needs)).
 - **Gate: `allow_no_group_kill` is ignored.** A `gate.conf` with it still starts, and each
   session logs a `notice`. Remove it when convenient.
 - **Gate: a key line can't run the gate through a shell.** `command="sh …/md-runbook-gate"` is
@@ -41,6 +45,9 @@ for your server's platform when you update.
     read.
   - The check refuses a folder above the gate's files that the blocks' account can change, as
     OpenSSH's `StrictModes` does.
+  - One blocks' account per gate account. The check refuses any process of that account outside
+    this gate account's sessions, and an account that may use cron or at.
+  - The check refuses an account in a privileged group, such as `sudo`, `adm` or `docker`.
   - Blocks start in that account's home folder. A block's `cwd=` must be a folder it can enter.
   - The ops host has its own way: a Job per session (below).
   - See [Separated mode](apps/gate/README.md#separated-mode).
@@ -98,12 +105,39 @@ for your server's platform when you update.
   - `kube-context=` written twice on a block is an error, and only ASCII blanks are trimmed from
     its value.
   - A parameter value with a CR is refused by the gate, as clients already did.
+- **Signed parameter patterns: one reading everywhere.** Signing, the gate and the clients accept
+  only patterns that `grep -E` and they read alike. A value can no longer leave the anchors.
+  - Unbalanced parentheses are refused: `a)|(b` matched any value starting with `a`.
+  - Also refused: a backslash in brackets or before a letter (`[a-z\-]`, `\t`), `[:alpha:]`
+    without its outer brackets, doubled or lazy repetitions.
+  - Runbooks signed with such a pattern must be signed again: the gate refuses them now.
+  - `__proto__`, `constructor` and `prototype` can't be parameter or `env.*` names.
 - **Signing:** refuses a front matter `kube-context:` while a bash block has none of its own. The
   gate only checks the block's.
   - Names ending in `_proxy`, in any case, are refused: Python reads `Https_Proxy`.
   - Manifests over 2.9 MB are refused: the gate's load request would be too long.
 - **`report-runs-required` written twice:** the strictest counts, in clients and lint alike
   (before, clients took the last and lint said the first). Signing still refuses it twice.
+  - Lint checks each line's value too: a misspelt `separated` on the second line is an error.
+- **Sign these again.** Runbooks signed before this release stop verifying, and the gate refuses
+  them, if they have:
+  - a parameter or `env.` name ending in `_proxy` (rename it);
+  - `kube-context=` written twice on a block (keep one).
+- **Co-signing:** a runbook signed with a front matter `kube-context:` and a block without its
+  own `kube-context=` still verifies, but can't be co-signed. Write `kube-context=` on each bash
+  block, sign it again, then co-sign. Co-sign Runbook now says why it refuses.
+- **Library server: separated gates get their own tokens.** Only a token in the new
+  `RUNS_SEPARATED_GATE_TOKENS` may send `gate_mode: "separated"`. A shared gate's blocks can read
+  its token, so the server no longer takes the mode from the summary alone.
+  - `separated` with a token of `RUNS_GATE_TOKENS` is refused (`400`).
+  - A token in both lists stops the server at start. Give every gate its own token.
+- **Library server: `report-runs-required: separated` for every spelling of a runbook.**
+  `last-green` applies it to `deploy`, `x/deploy.md` or `prod/Deploy.markdown` when they match
+  the runs of `prod/deploy.md`.
+  - A library it can't read counts only a separated gate's run, and says why
+    (`requiredUnknown`).
+- **VS Code:** reports runs of a runbook that writes `Report-Runs:` in another case, as the app
+  and the command line do.
 
 
 ## 0.27.0

@@ -25,6 +25,7 @@ function load() {
     parser: require('@md-runbook/core/parser'),
     lint: require('@md-runbook/core/lint'),
     sha: require('@md-runbook/core/sha256'),
+    pattern: require('@md-runbook/core/signedPattern'),
     ssh: require('@md-runbook/ssh'),
   };
 }
@@ -182,6 +183,11 @@ function manifestInputs() {
     add(`param ${JSON.stringify(n)}`, withLine('param TARGET', `param ${n} ${b64('[a-z]+')}`));
     add(`env ${JSON.stringify(n)}`, withCellLine(2, 'env', `env ${n} ${b64('x')}`));
   }
+  for (const pat of ['a)|(b', '[a-z\\-]+', '\\t', '[:alpha:]', 'a**', '[a-z]+', '(a|b)+']) add(`pattern ${JSON.stringify(pat)}`, withLine('param TARGET', `param TARGET ${b64(pat)}`));
+  for (const n of ['__proto__', 'constructor', 'prototype']) {
+    add(`param ${n}`, withLine('param CTX', `param ${n} ${b64('[a-z]+')}`));
+    add(`env ${n}`, withCellLine(2, 'env', `env ${n} ${b64('x')}`));
+  }
   // Values: base64 forms.
   const values = {
     'canonical': b64('echo hi'),
@@ -305,8 +311,43 @@ function nameInputs(c) {
     // Unicode look-alikes and invisible characters: never a shell variable name.
     '\uff30\uff21\uff34\uff28', 'P\u0410TH', '\u0420ATH', 'PATH\u200b', '\u200bPATH', 'PAT\u0397', 'LD\uff3fPRELOAD', '\u212aUBECONFIG', 'pat\u0131', 'PAT\u0130',
     'HOME\0', 'PATH\n', 'PATH\r', 'PATH ', ' PATH', '\ufeffPATH',
+    // Names a JavaScript object reads otherwise (review of 0.28.0).
+    '__proto__', 'constructor', 'prototype', 'hasOwnProperty', 'toString', 'valueOf', '__PROTO__', 'Constructor', '__proto', 'proto__',
   ]) out.add(n);
   return [...out];
+}
+
+// ---- parameter patterns ----
+
+/** Patterns: the review's, then every atom with every repetition, around groups and anchors. */
+function patternInputs() {
+  const out = new Set([
+    // Review of 0.28.0: an unbalanced group left the anchors (M1), backslashes (M2), [:alpha:] alone.
+    'a)|(b', 'a)|(.*', '.*)|(a', ')(', '(a', 'a)', '((a)', '(a))', 'a)(b', '(a)|(b)', '(a|b)', 'a|b', '\\(a', 'a\\)', '\\)|\\(',
+    '[A-Za-z0-9_\\-]+', '[a\\]]', '[\\]', '[\\.]', '[\\\\]', '\\t', '\\x41', '\\d', '\\w', '\\s', '\\b', '\\1', '\\<', '\\-', '\\/', '\\a', '\\', 'a\\',
+    '\\.', '\\[', '\\]', '\\(', '\\)', '\\*', '\\+', '\\?', '\\{', '\\}', '\\|', '\\^', '\\$', '\\\\',
+    '[:alpha:]', '[:alpha:]+', '[^:alpha:]', '[[:alpha:]]', '[[:alpha:][:digit:]]', '[[:word:]]', '[[:ALPHA:]]', '[:a]', '[a:]', '[::]',
+    '[[:alnum:]]', '[[:blank:]]', '[[:cntrl:]]', '[[:graph:]]', '[[:lower:]]', '[[:print:]]', '[[:punct:]]', '[[:space:]]', '[[:upper:]]', '[[:xdigit:]]',
+    '[[=a=]]', '[[.a.]]', '[[.-.]]', '[[=ab=]]', '[[.\\.]]', '[a-[:digit:]]', '[[:digit:]-z]', '[z-a]', '[a-a]', '[]a]', '[^]a]', '[a-]', '[-a]', '[[]', '[a', '[]', '[^]',
+    '[\u00e9]', '\u00e9', '\u00e9+', '.', '..', '.{2}', '\u00e9{2}',
+    '(?i)a', '(?:a)', 'a{,3}', 'a{x}', 'a{1', 'a{1,2,3}', '{1}', 'a}', 'a]', '}', ']', '{', 'a{', '^*', '*a', 'a|*b', '(*a)', '(|a)', 'a|', '|', '()', '()*', '(a*)*', '(a+)+',
+    'a**', 'a*+', 'a+?', 'a??', 'a{2}?', 'a{2}*', 'a{2}{3}', 'a{0}', 'a{255}', 'a{256}', 'a{2,1}', 'a{01}', 'a{1,01}', 'a{1000}', 'a{0,}',
+    '^a$', 'a^', '$a', '^$', 'a\tb', 'a\u007fb', ' ', 'a b',
+    '[a-z][a-z0-9-]{0,30}', 'lab-[0-9]+|prod-eu', '[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,252}', '^(api|web)$', '.+', '.*', '[a-z]+', '[a-z]+(-[0-9]{1,3})?',
+  ]);
+  const atoms = ['a', '.', '[a-c]', '[^a]', '[[:digit:]]', '\\.', '\\\\', '(a|b)', '()', '\u00e9', '\\t', '[\\]'];
+  const reps = ['', '*', '+', '?', '{2}', '{1,}', '{0,2}', '**', '+?', '{256}', '{2,1}', '{01}'];
+  for (const a of atoms) for (const r of reps) out.add(a + r);
+  for (const [pre, post] of [['^', ''], ['', '$'], ['x|', ''], ['', '|x'], ['(', ')'], ['(', ''], ['', ')'], (['b', 'c'])]) for (const a of atoms) out.add(pre + a + post);
+  return [...out];
+}
+
+const PATTERN_VALUES = ['', 'a', 'b', 'c', 'ab', 'aa', 'aaa', 'abab', 'x', '1', '12', '.', '\\', ']', '[', '-', ':', '\u00e9', '\u00e9\u00e9', 't', '\t', 'A', ' ', 'a;b', 'a; echo INJECTED', 'zzb', 'bc', 'xa', '$x', 'a\rb', 'a\nb', 'a\0b', '()', 'web-1', 'prod-eu', 'lab-12'];
+
+function patternReading(c, pattern) {
+  const problem = c.pattern.signedPatternProblem(pattern);
+  if (problem !== undefined) return { ok: false };
+  return { ok: true, match: PATTERN_VALUES.filter((v) => c.pattern.matchesSignedPattern(pattern, v)) };
 }
 
 function nameReading(c, n) {
@@ -403,6 +444,9 @@ function runbookTemplates(c) {
   add('kube-context= twice', '```bash kube-context=prod-eu kube-context=lab-1\necho hi\n```\n');
   add('kube-context= with a no-break space', '```bash kube-context="\u00a0prod-eu"\necho hi\n```\n');
   add('a reserved env.*', '```bash env.Https_Proxy=http://x\necho hi\n```\n');
+  add('env.__proto__ on a block', '```bash env.__proto__=x env.constructor=y\necho hi\n```\n');
+  add('a pattern that leaves the anchors', '```bash\necho ${param:TARGET}\n```\n', { ...META, patterns: { TARGET: 'a)|(b' } });
+  add('a backslash in brackets', '```bash\necho ${param:TARGET}\n```\n', { ...META, patterns: { TARGET: '[A-Za-z0-9_\\-]+' } });
   add('a reserved parameter', '```bash\necho ${param:no_proxy}\n```\n', { ...META, patterns: { ...META.patterns, no_proxy: '.*' } });
   // Signature blocks: version 1 (blocks only) and 2 (the whole text).
   const BODY = '---\nmode: session\n---\n\n# T\n\n```bash\necho hi\n```\n';
@@ -520,6 +564,7 @@ function generate() {
     return q.length <= 80 ? q : `${q.slice(0, 60)}... (${s.length} characters)`;
   };
   for (const input of infoInputs()) vectors.push({ kind: 'info', id: idOf(input), input, core: infoReading(c, input) });
+  for (const input of patternInputs()) vectors.push({ kind: 'pattern', id: idOf(input), input, core: patternReading(c, input) });
   for (const input of nameInputs(c)) vectors.push({ kind: 'name', id: JSON.stringify(input).slice(1, -1), input, core: nameReading(c, input) });
   for (const t of runbookTemplates(c)) {
     for (const bom of [false, true]) {

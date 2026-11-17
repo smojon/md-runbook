@@ -35,14 +35,9 @@ var matchCases = []matchCase{
 	{`.{1,3}`, "éé", false},
 	{`[^a]{2}`, "é", true},
 	{`é`, "é", true},
-	{`[é]`, "é", false},
-	// POSIX classes, and a backslash in brackets is a backslash.
+	// POSIX classes.
 	{`[[:alpha:]][[:digit:]]+`, "a12", true},
 	{`[[:upper:]]`, "É", false},
-	{`[\]`, `\`, true},
-	{`[\.]+`, `\.`, true},
-	{`[a\]]`, `a]`, true},
-	{`[a\]]`, `]`, false},
 	{`[]a]+`, `]a`, true},
 	{`[^]a]`, `b`, true},
 	{`[^]a]`, `]`, false},
@@ -51,22 +46,16 @@ var matchCases = []matchCase{
 	{`[[.a.]-c]`, `b`, true},
 	{`[[=a=]]`, `a`, true},
 	{`[[]`, `[`, true},
-	// Escapes of special characters; a stray backslash is the character.
+	// Escapes of special characters.
 	{`a\.b`, "a.b", true},
 	{`a\.b`, "axb", false},
 	{`\$x`, "$x", true},
-	{`a\-b`, "a-b", true},
-	{`\t`, "t", true},
-	{`\t`, "\t", false},
 	// One alternative per line of the pattern, as grep -e.
 	{"a\nb", "b", true},
 	{"a\nb", "c", false},
 	{"", "", true},
 	{"", "x", false},
-	// Repetitions of repetitions read as grep reads them (signing refuses +? and the like).
-	{`a**`, "aaa", true},
-	{`a+?`, "", true},
-	{`a+?`, "aa", true},
+	// Repetitions.
 	{`(ab){2}`, "abab", true},
 	{`x{2,}`, "x", false},
 }
@@ -112,7 +101,12 @@ func refusedCases() []matchCase {
 // What grep reads otherwise than Go, or GNU-only syntax: refused, so no value matches.
 func TestRefused(t *testing.T) {
 	// (\d is a digit to the clients (JavaScript) and d to grep: refused, as signing refuses it.)
-	for _, p := range []string{`\d+`, `\w`, `\s`, `\bword\b`, `(a)\1`, `a\`, `[a`, `[z-a]`, `*a`, `(?i)a`, `(?:a)`, `a{,3}`, `[[:word:]]`, `[[:nope:]]`, `[[.ab.]]`, `\<a\>`} {
+	for _, p := range []string{`\d+`, `\w`, `\s`, `\bword\b`, `(a)\1`, `a\`, `[a`, `[z-a]`, `*a`, `(?i)a`, `(?:a)`, `a{,3}`, `[[:word:]]`, `[[:nope:]]`, `[[.ab.]]`, `\<a\>`,
+		// Read otherwise by grep, Go or the clients (review of 0.28.0): an unbalanced group escaped
+		// the anchors, a backslash in brackets or before a letter, [:alpha:] alone, doubled or
+		// lazy repetitions, odd intervals, a lone } or ], bytes above ASCII in brackets.
+		`a)|(b`, `(a`, `a)`, `a)(b`, `[a\-z]`, `[\]`, `[a\]]`, `\t`, `\x41`, `a\-b`, `[:alpha:]`, `[^:alpha:]`,
+		`a**`, `a+?`, `a?*`, `{1}`, `a{256}`, `a{2,1}`, `a{01}`, `a{x}`, `a}`, `a]`, "[\xc3\xa9]", `^*`, `a|*b`, `(*a)`, "a\tb"} {
 		if _, err := Compile(p); err == nil {
 			t.Errorf("Compile(%q) accepted", p)
 		}

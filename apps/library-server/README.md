@@ -116,8 +116,14 @@ Clients send the summary of every run to the address in a runbook's `report-runs
   | `unverified` | Anything else: what the sender says (`why` says why it isn't verified). |
 
 - `RUNS_REQUIRE_SIGNED=true` refuses `unverified` summaries (`403`).
-- With `RUNS_GATE_TOKENS` set, a summary that says `client: "gate"` is refused without a gate
-  token. So a client can't pass itself off as a gate.
+- With gate tokens set, a summary that says `client: "gate"` is refused without a gate token.
+  So a client can't pass itself off as a gate.
+- **Give every gate its own token.** A gate in separated mode (`cells_account =`) gets its token
+  in `RUNS_SEPARATED_GATE_TOKENS`, any other gate in `RUNS_GATE_TOKENS`.
+  - The token decides the mode, not the summary: a shared gate's blocks can read its token.
+  - `gate_mode: "separated"` with a token of `RUNS_GATE_TOKENS` is refused (`400`). So a token
+    in the wrong list shows in the gate's log.
+  - A token in both lists stops the server at start.
 
 `GET /v1/runs?runbook=ops/restart-api&limit=50` lists the newest runs of a runbook, newest first:
 
@@ -139,6 +145,11 @@ When the library's copy says `report-runs-required: separated`:
 - only a green run a gate sent in separated mode counts as `lastVerified`;
 - the answer has `"required": "separated"`;
 - the text says when there is none.
+
+It applies to every `runbook=` whose runs include that copy's, in any case: `prod/deploy.md`,
+`deploy`, `x/deploy.md`, `prod/deploy.markdown`. When the library can't be read, or has more than
+500 runbooks, the server can't tell. Then only a separated gate's run counts, and
+`"requiredUnknown"` says why.
 
 More in [run reports](../../docs/features/run-reports.md#a-gate-in-separated-mode).
 
@@ -292,7 +303,8 @@ LIBRARY_DIR=/srv/runbooks LIBRARY_UPLOAD_TOKENS=… npm start
 | `LIBRARY_MAX_BYTES` | `524288` | Largest runbook. |
 | `RUNS_DIR` | | Where summaries are kept. Turns run summaries on. |
 | `RUNS_TOKENS` | none: anyone may send | Tokens clients send (`report-runs-token: ${secret:NAME}`). |
-| `RUNS_GATE_TOKENS` | | Tokens of md-runbook-gate (`report_token_file`). |
+| `RUNS_GATE_TOKENS` | | Tokens of md-runbook-gate in shared mode (`report_token_file`), one per gate. |
+| `RUNS_SEPARATED_GATE_TOKENS` | | Tokens of gates in separated mode, one per gate. Only these may send `gate_mode: "separated"`. |
 | `RUNS_READ_TOKENS` | none: reading is off | Tokens that may read runs (and alerts, unless `ALERTS_READ_TOKENS`). |
 | `RUNS_ALLOWED_RUNNERS` | | The runners' keys (namespace `md-runbook-run`). |
 | `RUNS_REQUIRE_SIGNED` | `false` | Refuse summaries that no known runner signed and no gate sent. |
@@ -339,6 +351,8 @@ LIBRARY_DIR=/srv/runbooks LIBRARY_UPLOAD_TOKENS=… npm start
     verified.
     - A gate token sits on each gated server, readable by the account the gate runs as. So
       whoever can run commands there can send a summary in the gate's name.
+    - In shared mode that includes the blocks the gate runs. Only a token of
+      `RUNS_SEPARATED_GATE_TOKENS` can send a separated gate's summary.
     - One token per server, so it can be withdrawn alone.
   - *Read:* read runs and alerts (names, times, results, alert labels; no outputs).
   - *Alerts:* send alerts, which the server only records and turns into links.

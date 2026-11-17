@@ -7,6 +7,9 @@ import {
   SignatureBlock,
   armorSignature,
   buildManifest,
+  cosignProblem,
+  cosignRulesText,
+  cosignable,
   formatManifest,
   fromBase64,
   isReservedVar,
@@ -22,6 +25,7 @@ import {
   withoutSignature,
 } from '@md-runbook/core/signing';
 import { formatAttrs } from '@md-runbook/core/outputBlock';
+import { matchesSignedPattern } from '@md-runbook/core/signedPattern';
 import { roundTrip } from './helpers';
 
 const fence = (info: string, body: string): string => '```' + info + '\n' + body + '\n```\n\n';
@@ -180,8 +184,8 @@ describe('signing: the manifest', () => {
     for (const re of [
       /expires 2026-02-31: expected a date/,
       /\$\{param:PATH\}: PATH can't be a parameter/,
-      /pattern for ID: \\d\+ uses JavaScript-only syntax/,
-      /pattern for N: \[0-9\]\+\? uses JavaScript-only syntax/,
+      /pattern for ID: \\d\+: \\d: a backslash only before one of/,
+      /pattern for N: \[0-9\]\+\?: \? right after a repetition/,
       /cell 1 .*env\.LD_PRELOAD can't be set by a signed runbook/,
       /cell 1 .*env\.LC_ALL can't be set by a signed runbook/,
       /cell 2 .*\$\{param:ID:secret\} is not a plain \$\{param:NAME\}/,
@@ -230,6 +234,22 @@ describe('signing: the manifest', () => {
       assert.throws(() => parseManifest(`md-runbook-manifest 1\nname x\nversion ${v}\nend\n`), /bad version/, v);
   });
 
+  it('refuses patterns grep, the gate and clients read differently; a value never leaves the anchors (review of 0.28.0)', () => {
+    for (const p of ['a)|(b', '(a', '[A-Za-z0-9_\\-]+', '\\t', '\\x41', '[:alpha:]', 'a**']) {
+      assert.match(errorsOf(fence('bash', 'echo ${param:T}'), { patterns: { T: p } }).join('\n'), /pattern for T/, p);
+      assert.equal(matchesSignedPattern(p, 'a; echo INJECTED'), false, p);
+    }
+    assert.equal(matchesSignedPattern('[a-z]+(-[0-9]{1,3})?', 'web-12'), true);
+    assert.equal(matchesSignedPattern('[[:alpha:]][[:alnum:]_-]*', 'web_1'), true);
+    // Byte for byte, as the gate: . is one byte of UTF-8 (U+00E9 is two).
+    assert.deepEqual([matchesSignedPattern('.', String.fromCharCode(0xe9)), matchesSignedPattern('..', String.fromCharCode(0xe9))], [false, true]);
+    const signed = manifestOf(fence('bash', 'echo ${param:T}'), { patterns: { T: '[a-z]+' } });
+    assert.throws(() => parseManifest(signed.replace(/^param T \S+$/m, `param T ${toBase64('a)|(b')}`)), /pattern for T/);
+    // Names a JavaScript object reads otherwise.
+    for (const n of ['__proto__', 'constructor', 'prototype']) assert.equal(isReservedVar(n), true, n);
+    assert.match(errorsOf(fence('bash env.__proto__=x', 'echo')).join('\n'), /env\.__proto__: not a name a block can set/);
+  });
+
   it('parseManifest reads only what formatManifest writes, as the gate does (gate vectors, 2026-11-16)', () => {
     const base = manifestOf(fence('bash', 'echo a') + fence('bash', 'echo b'), { patterns: {} });
     assert.equal(parseManifest(base).cells.length, 2);
@@ -254,6 +274,24 @@ describe('signing: the manifest', () => {
     assert.deepEqual(errorsOf(fm + fence('bash kube-context=prod-eu', 'kubectl get pods')), []);
     // Twice on a block: neither counts, and it can't be signed.
     assert.match(errorsOf(fence('bash kube-context=prod-eu kube-context=lab-1', 'x')).join('\n'), /kube-context= written twice/);
+  });
+
+  it("co-signing says why a runbook signed under earlier rules can't be co-signed, and what to do (review, 2026-11-16)", () => {
+    const body = '# Pods\n\n' + fence('bash', 'kubectl get pods');
+    const text = '---\nkube-context: prod-eu\n---\n\n' + body;
+    // Signed before signing refused a front matter kube-context: (its manifest, as signing made it then).
+    const built = buildManifest(body, meta());
+    assert.ok(!('errors' in built));
+    const old = withSignature(text, { signer: 'ops@example.net', signed: '2026-10-22', manifest: formatManifest({ ...built.manifest, text: signedTextHash(text) }), signature: SIG });
+    const problem = cosignProblem(old, readSignature(old)!);
+    assert.equal(problem?.why, 'rules');
+    assert.match(problem?.why === 'rules' ? problem.errors.join('\n') : '', /front matter's kube-context: prod-eu is not checked by servers: write kube-context=prod-eu on the block/);
+    assert.equal(cosignable(old, readSignature(old)!), false);
+    assert.match(cosignRulesText(problem?.why === 'rules' ? problem.errors : []), /^it can't be signed as it is now: .*kube-context=prod-eu on the block\. A runbook signed with an earlier md-runbook may need this\. Fix it, sign it again \(a new version\), then co-sign that$/);
+    // Signed as the rules are: co-signable; changed since: `changed`.
+    const fine = sign(RUNBOOK, { patterns: { TARGET: '.+' } });
+    assert.equal(cosignProblem(fine, readSignature(fine)!), undefined);
+    assert.deepEqual(cosignProblem(fine.replace('systemctl', 'systemct1'), readSignature(fine)!), { why: 'changed' });
   });
 });
 

@@ -279,6 +279,11 @@ The gate says which in its summary: `gate.gate_mode`.
 
 - It counts only in a summary verified as sent by a gate (a gate token). An unverified
   summary's `gate_mode` is ignored.
+- The server decides the mode by the token, since a shared gate's blocks can read its token:
+  - give every gate its own token;
+  - a gate in separated mode gets its token in `RUNS_SEPARATED_GATE_TOKENS`, any other gate in
+    `RUNS_GATE_TOKENS`;
+  - `separated` with a token of `RUNS_GATE_TOKENS` is refused (`400`).
 - Without it, the summary counts as `shared`.
 - Any other value is refused (`400`), so a gate that sends one finds out from its log.
 
@@ -292,6 +297,9 @@ The library server shows it: `verified: sent by a gate (separated)` or
 - On the library server, `last-green` reads the requirement from the library's copy of the
   runbook. Only a green run that a gate sent in separated mode then counts as verified
   (`lastVerified`). The answer has `"required": "separated"`.
+- The server reads every copy whose runs the query matches, in any case (`deploy`,
+  `x/deploy.md`). A library it can't read counts only a separated gate's run, and
+  `"requiredUnknown"` says why.
 - A run from a gate in shared mode doesn't count, nor does a runner-signed one. That is the same
   as a run without a gate's report.
 - A server without the library (no `LIBRARY_DIR`) can't see the requirement: there, any verified

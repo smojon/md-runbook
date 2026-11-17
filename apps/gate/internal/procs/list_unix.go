@@ -17,10 +17,14 @@ func HaveProc() bool {
 	return err == nil
 }
 
-// List lists the processes: from /proc, else from `ps` (macOS: pid, parent, uid and group).
+// PS is the ps List runs where there is no /proc: the gate sets the one it found in root's
+// folders.
+var PS = "/bin/ps"
+
+// List lists the processes: from /proc, else from `ps` (macOS: pid, parent, uid, group and name).
 func List() ([]Proc, error) {
 	if !HaveProc() {
-		out, err := exec.Command("ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "uid=", "-o", "pgid=").Output()
+		out, err := exec.Command(PS, "-A", "-o", "pid=", "-o", "ppid=", "-o", "uid=", "-o", "pgid=", "-o", "comm=").Output()
 		if err != nil {
 			return nil, err
 		}

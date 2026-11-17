@@ -303,7 +303,12 @@ describe('report-runs-required: separated', () => {
     const built = buildManifest(unsigned, { name: 'ops/check', version: 1, scopes: [], patterns: {} });
     if ('errors' in built) throw new Error(built.errors.join('; '));
     const manifest = formatManifest(built.manifest);
-    const text = withSignature(unsigned, { signer: 'ops@example.net', signed: '2026-11-14', manifest, signature: await signSshsig(signer, manifest) });
+    const text = withSignature(unsigned, {
+      signer: 'ops@example.net',
+      signed: '2026-11-14',
+      manifest,
+      signature: await signSshsig(signer, manifest),
+    });
     expect(addSigners(await allowedSignersLine(signer, 'ops@example.net'))).toMatchObject({ added: 1 });
     const rb = addRunbook('check.md', text);
     await render(<RunbookView id={rb.id} />);

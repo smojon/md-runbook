@@ -1,22 +1,29 @@
-// Package ere matches whole values against POSIX extended regular expressions as the shell gate's
-// `grep -Eqx -e PATTERN` did in the C locale: byte by byte, POSIX bracket expressions (a
-// backslash in brackets is a backslash), one alternative per line of the pattern. It compiles with
-// regexp.CompilePOSIX, after rewriting what Go's parser reads otherwise than POSIX:
-//   - every byte is one character (C locale): bytes 0x80 to 0xFF become the runes U+0080 to
-//     U+00FF on both sides, so `.` matches one byte, never a whole UTF-8 sequence;
-//   - bracket expressions are rewritten for Go: [\] is a backslash, []a] and [^]a] start with a
-//     literal ], [[=a=]] and [[.a.]] name single bytes;
-//   - a backslash before an ordinary character is that character (grep's "stray \"), except
-//     GNU's extensions (\w, \s, \b, \<, \1 and the like) and anything Go reads otherwise: those
-//     are errors, so the value is refused. Signing refuses them too (core's NOT_POSIX_ERE).
+// Package ere matches whole values against the POSIX extended regular expressions signed runbooks
+// give their parameters, byte by byte as the shell gate's `grep -Eqx -e PATTERN` did in the C
+// locale (bytes 0x80 to 0xFF become the runes U+0080 to U+00FF on both sides, so `.` matches one
+// byte, never a whole UTF-8 sequence).
 //
-// Where Go and grep still differ ((? groups, {,n}, [:word:], a repetition with nothing before
-// it), the pattern is refused: no value matches, which fails closed.
+// Only the subset that grep, this gate and the clients (core's signedPattern.ts) read the same way
+// compiles; anything else is refused, so no value matches (fail closed), and signing refuses it
+// too:
+//   - outside brackets, a backslash only before one of .[]()*+?{}|^$\ (before, \t was a t here
+//     and a tab to clients);
+//   - parentheses balanced, no (? : a signed `a)|(b` became ^(a)|(b)$ and matched any value
+//     starting with a (review of 0.28.0, M1). The translated pattern also compiles on its own,
+//     and the wrapper's group is checked to be the whole expression;
+//   - a repetition (* + ? {m,n}) only after something it repeats and never right after another;
+//     {m}, {m,} and {m,n} with m <= n <= 255, no other { or }, no ] outside brackets;
+//   - in brackets: printable ASCII without a backslash (a backslash was one here and an escape to
+//     clients, M2), POSIX classes, [=c=], [.c.], ranges low to high; not [:alpha:] alone, which
+//     grep refused;
+//   - no control character.
 package ere
 
 import (
 	"errors"
 	"regexp"
+	"regexp/syntax"
+	"strconv"
 	"strings"
 )
 
@@ -31,13 +38,32 @@ func Compile(pattern string) (*Pattern, error) {
 		if err != nil {
 			return nil, err
 		}
-		re, err := regexp.CompilePOSIX("^(" + t + ")$")
+		// On its own first: a pattern that only compiles inside the wrapper (a)|(b) is refused.
+		if _, err := regexp.CompilePOSIX(t); err != nil {
+			return nil, err
+		}
+		whole := "^(" + t + ")$"
+		if !wrapped(whole) {
+			return nil, errPattern
+		}
+		re, err := regexp.CompilePOSIX(whole)
 		if err != nil {
 			return nil, err
 		}
 		p.alts = append(p.alts, re)
 	}
 	return p, nil
+}
+
+// wrapped: the expression is ^, one group, $, and nothing beside them at the top.
+func wrapped(whole string) bool {
+	re, err := syntax.Parse(whole, syntax.POSIX)
+	if err != nil || re.Op != syntax.OpConcat || len(re.Sub) != 3 {
+		return false
+	}
+	begin, end := re.Sub[0].Op, re.Sub[2].Op
+	return (begin == syntax.OpBeginText || begin == syntax.OpBeginLine) && re.Sub[1].Op == syntax.OpCapture && re.Sub[1].Cap == 1 &&
+		(end == syntax.OpEndText || end == syntax.OpEndLine)
 }
 
 // MatchWhole: value, a single line, matches the whole pattern.
@@ -75,38 +101,65 @@ func bytesAsRunes(s string) string {
 
 var errPattern = errors.New("not a POSIX extended regular expression this gate reads")
 
-// Characters special outside brackets in a POSIX ERE.
+// Characters special outside brackets in a POSIX ERE: a backslash only before one of these.
 const special = `.[]()*+?{}|^$\`
 
-func literal(c byte) string {
-	if c >= 0x80 {
-		return string(rune(c))
+// MaxRepeat is the largest repetition count ({m,n}).
+const MaxRepeat = 255
+
+// interval reads {m}, {m,} or {m,n} at the start of s: its length, ok false when it is none.
+func interval(s string) (n int, ok bool) {
+	end := strings.IndexByte(s, '}')
+	if end < 0 {
+		return 0, false
 	}
-	if strings.IndexByte(special, c) >= 0 {
-		return `\` + string(c)
+	body := s[1:end]
+	lo, hi, comma := body, "", false
+	if i := strings.IndexByte(body, ','); i >= 0 {
+		lo, hi, comma = body[:i], body[i+1:], true
 	}
-	return string(c)
+	count := func(d string) (int, bool) {
+		if d == "" || len(d) > 3 || (len(d) > 1 && d[0] == '0') {
+			return 0, false
+		}
+		for i := 0; i < len(d); i++ {
+			if d[i] < '0' || d[i] > '9' {
+				return 0, false
+			}
+		}
+		v, _ := strconv.Atoi(d)
+		return v, v <= MaxRepeat
+	}
+	l, ok := count(lo)
+	if !ok {
+		return 0, false
+	}
+	if comma && hi != "" {
+		h, ok := count(hi)
+		if !ok || h < l {
+			return 0, false
+		}
+	}
+	return end + 1, true
 }
 
 func translate(src string) (string, error) {
 	var out strings.Builder
+	depth := 0
+	atom, repeated := false, false
 	for i := 0; i < len(src); {
 		c := src[i]
+		if c < 0x20 || c == 0x7f {
+			return "", errPattern
+		}
 		switch {
 		case c == '\\':
-			if i+1 >= len(src) {
-				return "", errPattern // a trailing backslash: grep refuses it
-			}
-			d := src[i+1]
-			switch {
-			case strings.IndexByte(special, d) >= 0:
-				out.WriteString(`\` + string(d))
-			case strings.IndexByte("dDwWsSbB<>`'123456789", d) >= 0:
+			if i+1 >= len(src) || strings.IndexByte(special, src[i+1]) < 0 {
 				return "", errPattern
-			default:
-				out.WriteString(literal(d))
 			}
+			out.WriteString(`\` + string(src[i+1]))
 			i += 2
+			atom, repeated = true, false
 		case c == '[':
 			cls, n, err := bracket(src[i:])
 			if err != nil {
@@ -114,18 +167,55 @@ func translate(src string) (string, error) {
 			}
 			out.WriteString(cls)
 			i += n
-		// Go reads (?i) as flags and {,n} as text; grep reads (? as ( and a stray ?, and {,n} as
-		// {0,n}. Either way a pattern that means one thing to grep and another to Go: refused,
-		// so no value matches more than it would have (signing refuses (? too).
-		case (c == '(' && i+1 < len(src) && src[i+1] == '?') || (c == '{' && i+1 < len(src) && src[i+1] == ','):
+			atom, repeated = true, false
+		case c == '*' || c == '+' || c == '?' || c == '{':
+			n := 1
+			if c == '{' {
+				var ok bool
+				if n, ok = interval(src[i:]); !ok {
+					return "", errPattern
+				}
+			}
+			if !atom || repeated {
+				return "", errPattern
+			}
+			out.WriteString(src[i : i+n])
+			i += n
+			repeated = true
+		case c == '}' || c == ']':
 			return "", errPattern
-		case c >= 0x80:
-			out.WriteString(literal(c))
+		case c == '(':
+			if i+1 < len(src) && src[i+1] == '?' {
+				return "", errPattern
+			}
+			depth++
+			out.WriteByte('(')
 			i++
+			atom, repeated = false, false
+		case c == ')':
+			if depth == 0 {
+				return "", errPattern
+			}
+			depth--
+			out.WriteByte(')')
+			i++
+			atom, repeated = true, false
+		case c == '|' || c == '^' || c == '$':
+			out.WriteByte(c)
+			i++
+			atom, repeated = false, false
+		case c >= 0x80:
+			out.WriteRune(rune(c))
+			i++
+			atom, repeated = true, false
 		default:
 			out.WriteByte(c)
 			i++
+			atom, repeated = true, false
 		}
+	}
+	if depth != 0 {
+		return "", errPattern
 	}
 	return out.String(), nil
 }
@@ -142,14 +232,13 @@ type item struct {
 }
 
 func classLiteral(c byte) string {
-	if c >= 0x80 {
-		return string(rune(c))
-	}
 	if strings.IndexByte(`\]-[^`, c) >= 0 {
 		return `\` + string(c)
 	}
 	return string(c)
 }
+
+func printable(c byte) bool { return c >= 0x20 && c <= 0x7e }
 
 // bracket reads the bracket expression at the start of s ("[...]") and returns its Go form and
 // its length in s.
@@ -160,18 +249,20 @@ func bracket(s string) (string, int, error) {
 		neg = true
 		i++
 	}
+	start := i
 	var items []item
-	first := true
 	for {
 		if i >= len(s) {
 			return "", 0, errPattern // unterminated
 		}
 		c := s[i]
-		if c == ']' && !first {
+		if c == ']' && i > start {
 			i++
 			break
 		}
-		first = false
+		if c == '\\' || !printable(c) {
+			return "", 0, errPattern
+		}
 		if c == '[' && i+1 < len(s) && strings.IndexByte(":=.", s[i+1]) >= 0 {
 			kind := s[i+1]
 			end := strings.Index(s[i+2:], string(kind)+"]")
@@ -188,8 +279,8 @@ func bracket(s string) (string, int, error) {
 				items = append(items, item{class: name})
 				continue
 			}
-			// [=a=] and [.a.]: a single byte in the C locale.
-			if len(name) != 1 {
+			// [=a=] and [.a.]: one printable ASCII character, not a backslash.
+			if len(name) != 1 || name[0] == '\\' || !printable(name[0]) {
 				return "", 0, errPattern
 			}
 			items = append(items, item{b: name[0]})
@@ -198,6 +289,10 @@ func bracket(s string) (string, int, error) {
 		items = append(items, item{b: c})
 		i++
 	}
+	// [:alpha:] alone: grep refused it (the class is [[:alpha:]]).
+	if body := s[start : i-1]; len(body) >= 2 && body[0] == ':' && body[len(body)-1] == ':' {
+		return "", 0, errPattern
+	}
 	var out strings.Builder
 	out.WriteByte('[')
 	if neg {
@@ -205,18 +300,18 @@ func bracket(s string) (string, int, error) {
 	}
 	for k := 0; k < len(items); k++ {
 		it := items[k]
-		if it.class != "" {
-			out.WriteString("[:" + it.class + ":]")
-			continue
-		}
-		// A range: a byte, '-', a byte (a '-' first or last is a literal one).
-		if k+2 < len(items) && items[k+1].class == "" && items[k+1].b == '-' && items[k+2].class == "" {
-			lo, hi := it.b, items[k+2].b
-			if lo > hi {
+		// A range: an item, '-', an item (a '-' first or last is a literal one).
+		if k+2 < len(items) && items[k+1].class == "" && items[k+1].b == '-' {
+			hi := items[k+2]
+			if it.class != "" || hi.class != "" || it.b > hi.b {
 				return "", 0, errPattern
 			}
-			out.WriteString(classLiteral(lo) + "-" + classLiteral(hi))
+			out.WriteString(classLiteral(it.b) + "-" + classLiteral(hi.b))
 			k += 2
+			continue
+		}
+		if it.class != "" {
+			out.WriteString("[:" + it.class + ":]")
 			continue
 		}
 		out.WriteString(classLiteral(it.b))
