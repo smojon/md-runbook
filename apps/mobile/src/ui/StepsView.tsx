@@ -6,6 +6,7 @@
  * its Steps tab, a wide screen as the side panel beside the runbook.
  */
 import { Pressable, Text, View } from 'react-native';
+import { spokenSteps } from '@md-runbook/core/runStatus';
 import { t } from '../i18n';
 import type { PreflightPart, StepsRow } from '../runbooks/steps';
 import { themedStyles } from '../theme';
@@ -48,6 +49,7 @@ export function StepsHead({ header, onPreflight }: { header: StepsHeader; onPref
       <Text
         testID="steps-headline"
         accessibilityRole="header"
+        accessibilityLabel={spokenSteps(header.headline)}
         style={[styles.headline, header.tone === 'waiting' && styles.waiting, header.tone === 'failed' && styles.failed]}
         numberOfLines={2}
       >

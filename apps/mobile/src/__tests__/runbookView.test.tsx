@@ -99,7 +99,7 @@ describe('Run all / Resume (the one-tap action)', () => {
     await waitFor(() => expect(screen.getByTestId('run-notice').props.children).toMatch(/stopped at a failed step/));
     expect(mockConnection.calls).toHaveLength(2);
     expect(outputOf(r.id, 2)).toBe('1');
-    expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 2 of 3 failed');
+    expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 2/3 failed');
     expect(screen.getByTestId('run-primary')).toHaveTextContent('▶ Resume');
 
     script([{ stdout: 'two\n' }, { stdout: 'three\n' }]);
