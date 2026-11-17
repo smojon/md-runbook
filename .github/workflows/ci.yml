@@ -61,8 +61,8 @@ jobs:
         run: sh ../../scripts/ci/build-gate.sh dist/md-runbook-gate
       # The protocol tests in both modes, on a prepared system (Linux: macOS has neither a scope
       # nor bwrap). Isolation: a user manager for each account the gate runs as, and bwrap.
-      # Separated mode: the gate's account with exactly the one sudoers line, the blocks'
-      # account, and an account with a wider rule that the self-check must refuse.
+      # Separated mode: the gate's account with exactly the one sudoers line for a pool of 3
+      # cells accounts, and an account with a wider rule that the self-check must refuse.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: runner.os == 'Linux'
         with:
@@ -90,16 +90,17 @@ jobs:
           sudo install -d -m 755 -o root -g root /usr/libexec/mdrb-open
           sudo install -d -m 777 -o root -g root /usr/libexec/mdrb-open/bin
           sudo install -m 755 -o root -g root apps/gate/dist/md-runbook-gate /usr/libexec/mdrb-open/bin/md-runbook-gate
-          for a in mdrb-gate mdrb-cells mdrb-wide mdrb-open; do sudo useradd -m -s /bin/sh "$a"; done
+          for a in mdrb-gate mdrb-cells-1 mdrb-cells-2 mdrb-cells-3 mdrb-wide mdrb-open; do sudo useradd -m -s /bin/sh "$a"; done
+          pool=mdrb-cells-1,mdrb-cells-2,mdrb-cells-3
           printf '%s\n' \
-            'mdrb-gate ALL=(mdrb-cells) NOPASSWD: /usr/libexec/md-runbook-gate/bin/md-runbook-gate __cells' \
-            'mdrb-wide ALL=(mdrb-cells) NOPASSWD: ALL' \
-            'mdrb-open ALL=(mdrb-cells) NOPASSWD: /usr/libexec/mdrb-open/bin/md-runbook-gate __cells' >"$RUNNER_TEMP/md-runbook-gate.sudoers"
+            "mdrb-gate ALL=($pool) NOPASSWD: /usr/libexec/md-runbook-gate/bin/md-runbook-gate __cells" \
+            "mdrb-wide ALL=($pool) NOPASSWD: ALL" \
+            "mdrb-open ALL=($pool) NOPASSWD: /usr/libexec/mdrb-open/bin/md-runbook-gate __cells" >"$RUNNER_TEMP/md-runbook-gate.sudoers"
           sudo visudo -cf "$RUNNER_TEMP/md-runbook-gate.sudoers"
           sudo install -m 440 "$RUNNER_TEMP/md-runbook-gate.sudoers" /etc/sudoers.d/md-runbook-gate
           sudo -n -u mdrb-gate sudo -n -l
-          # The cells' account may use neither cron nor at, or the self-check refuses.
-          printf 'mdrb-cells\n' | sudo tee -a /etc/cron.deny /etc/at.deny >/dev/null
+          # The cells accounts may use neither cron nor at, or the self-check refuses.
+          printf 'mdrb-cells-1\nmdrb-cells-2\nmdrb-cells-3\n' | sudo tee -a /etc/cron.deny /etc/at.deny >/dev/null
           # (/run/user/UID is that account's alone, mode 0700: root looks for the socket.)
           for a in "$(id -un)" mdrb-gate mdrb-wide; do
             sudo loginctl enable-linger "$a"
@@ -126,7 +127,7 @@ jobs:
           MD_RUNBOOK_GATE_BIN: /usr/libexec/md-runbook-gate/bin/md-runbook-gate
           MD_RUNBOOK_GATE_ISOLATIONS: scope,bwrap
           MD_RUNBOOK_GATE_ACCOUNT: mdrb-gate
-          MD_RUNBOOK_GATE_CELLS_ACCOUNT: mdrb-cells
+          MD_RUNBOOK_GATE_CELLS_ACCOUNTS: mdrb-cells-1 mdrb-cells-2 mdrb-cells-3
           MD_RUNBOOK_GATE_WIDE_ACCOUNT: mdrb-wide
           MD_RUNBOOK_GATE_OPEN_ACCOUNT: mdrb-open
           MD_RUNBOOK_GATE_OPEN_BIN: /usr/libexec/mdrb-open/bin/md-runbook-gate

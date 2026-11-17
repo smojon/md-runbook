@@ -1555,19 +1555,21 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
     });
   }
 
-  // ---- separated mode: the cells as an account of their own ----
+  // ---- separated mode: the cells as accounts of their own, one per session ----
   // CI prepares the accounts (.github/workflows/ci.yml, gate job): MD_RUNBOOK_GATE_ACCOUNT runs
-  // the gate and has exactly the one sudoers line for MD_RUNBOOK_GATE_CELLS_ACCOUNT;
-  // MD_RUNBOOK_GATE_WIDE_ACCOUNT (optional) has a wider one. MD_RUNBOOK_GATE_OPEN_ACCOUNT
-  // (optional) has the one line for MD_RUNBOOK_GATE_OPEN_BIN, a copy of the gate in a folder
-  // anyone can write. The test runs them through its own sudo, and keeps their files in folders
-  // of theirs.
-  const CELLS = process.env.MD_RUNBOOK_GATE_CELLS_ACCOUNT ?? '';
+  // the gate and has exactly the one sudoers line for the pool MD_RUNBOOK_GATE_CELLS_ACCOUNTS
+  // (names separated by spaces); MD_RUNBOOK_GATE_WIDE_ACCOUNT (optional) has a wider one.
+  // MD_RUNBOOK_GATE_OPEN_ACCOUNT (optional) has the one line for MD_RUNBOOK_GATE_OPEN_BIN, a copy
+  // of the gate in a folder anyone can write. The test runs them through its own sudo, and keeps
+  // their files in folders of theirs.
+  const POOL = (process.env.MD_RUNBOOK_GATE_CELLS_ACCOUNTS ?? '').split(/\s+/).filter(Boolean);
+  /** The account a session leases when no other runs: the pool's first. */
+  const CELLS = POOL[0] ?? '';
   const GATE_ACCOUNT = process.env.MD_RUNBOOK_GATE_ACCOUNT ?? '';
   const WIDE_ACCOUNT = process.env.MD_RUNBOOK_GATE_WIDE_ACCOUNT ?? '';
   const OPEN_ACCOUNT = process.env.MD_RUNBOOK_GATE_OPEN_ACCOUNT ?? '';
   const OPEN_BIN = process.env.MD_RUNBOOK_GATE_OPEN_BIN ?? '';
-  describe('separated mode (cells_account)', { skip: !(CELLS && GATE_ACCOUNT && process.platform === 'linux') && 'needs MD_RUNBOOK_GATE_CELLS_ACCOUNT and MD_RUNBOOK_GATE_ACCOUNT (Linux; set up as in the CI gate job)' }, () => {
+  describe('separated mode (cells_accounts)', { skip: !(POOL.length >= 2 && GATE_ACCOUNT && process.platform === 'linux') && 'needs MD_RUNBOOK_GATE_CELLS_ACCOUNTS (2 or more) and MD_RUNBOOK_GATE_ACCOUNT (Linux; set up as in the CI gate job)' }, () => {
     /** `sh -c cmd` as an account, with input; its stdout. */
     const as = (account: string, cmd: string, input = ''): string => {
       const r = spawnSync('sudo', ['-n', '-u', account, '--', '/bin/sh', '-c', cmd], { input, encoding: 'utf8', cwd: '/' });
@@ -1585,9 +1587,10 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
     };
     const confOf = (account: string, d: string, name: string, lines: string[]): string => {
       const f = `${d}/${name}`;
-      as(account, `cat >${f}`, [`allowed_signers = ${d}/allowed_signers`, `log = ${d}/gate.log`, `authorized_keys = ${d}/authorized_keys`, `cells_account = ${CELLS}`, ...lines].join('\n') + '\n');
+      as(account, `cat >${f}`, [`allowed_signers = ${d}/allowed_signers`, `log = ${d}/gate.log`, `authorized_keys = ${d}/authorized_keys`, `cells_accounts = ${POOL.join(' ')}`, ...lines].join('\n') + '\n');
       return f;
     };
+
     const startAs = (account: string, d: string, conf: string, command?: string, bin = GATE): Gate => {
       const g = new Gate([`--config=${conf}`], { HOME: d, TMPDIR: d }, command, account, bin);
       gates.push(g);
@@ -1708,30 +1711,149 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       assert.doesNotMatch(r.err, /not exactly the one rule/);
     });
 
-    it("a process of the cells' account outside this gate account's sessions stops the gate; kill_leftovers = yes ends it first (review of 0.28.0)", async () => {
-      // As a cron job or a leftover would be: under PID 1, no gate above it. It could write into a
-      // session's shells through /proc/PID/fd/0, the same account's.
-      as(CELLS, 'setsid sleep 3081 </dev/null >/dev/null 2>&1 &');
-      for (let i = 0; i < 50 && !procsWith('sleep 3081').length; i++) await pause(100);
-      const stray = procsWith('sleep 3081');
-      assert.ok(stray.length > 0, 'the stray runs');
+    /** The uid of an account. */
+    const uidOf = (account: string): string => as(account, 'id -u').trim();
+    /** The gate process (not its sudo) started with this config. */
+    const gatePid = (conf: string): number | undefined =>
+      procsWith(`--config=${conf}`).find((p) => {
+        try {
+          return fs.readFileSync(`/proc/${p}/comm`, 'utf8').trim() === 'md-runbook-gate';
+        } catch {
+          return false;
+        }
+      });
+    /** None of the pids with marker over a second (a process that keeps forking can hide from one look). */
+    const stillGone = async (marker: string): Promise<boolean> => {
+      for (let i = 0; i < 10; i++) {
+        if (procsWith(marker).length) return false;
+        await pause(100);
+      }
+      return true;
+    };
+    /** A session that has leased its account (hello answers after the lease). */
+    const openSession = async (c = conf): Promise<{ g: Gate; cells: string }> => {
+      const g = startAs(GATE_ACCOUNT, gdir, c);
+      await g.hello();
+      const [m, s] = await signed(fence('bash', 'id -un'), { name: 'ops/separated-who' });
+      assert.equal((await g.request('load', m, s)).code, 0);
+      const r = await g.request('run', '1');
+      assert.equal(r.code, 0, r.err);
+      return { g, cells: r.out.trim() };
+    };
+
+    it('two sessions side by side lease different accounts of the pool; the session event names each', async () => {
+      const a = await openSession();
+      const b = await openSession();
       try {
-        const r = await startupAs(GATE_ACCOUNT, gdir, conf);
-        assert.equal(r.code, 2, r.err);
-        assert.match(r.err, new RegExp(`processes of ${CELLS} run outside this gate account's sessions \\(.*${stray[0]} sleep`));
-        assert.match(r.err, /serves one gate account only/);
-        assert.match(readLog(), /"event":"self-check","status":"refused"/);
-        const kconf = confOf(GATE_ACCOUNT, gdir, 'sweep.conf', [`report_token_file = ${gdir}/report-token`, 'kill_leftovers = yes']);
-        const k = await startupAs(GATE_ACCOUNT, gdir, kconf);
-        assert.equal(k.code, 0, k.err);
-        assert.ok(await gone('sleep 3081'), 'kill_leftovers ended it');
-        assert.match(readLog(), new RegExp(`"event":"leftovers","status":"killed","pids":"[^"]*${stray[0]}`));
+        assert.equal(a.cells, POOL[0]);
+        assert.equal(b.cells, POOL[1]);
+        assert.notEqual(uidOf(a.cells), uidOf(b.cells));
+        const cells = readLog()
+          .split('\n')
+          .filter((l) => /"event":"session"/.test(l))
+          .slice(-2)
+          .map((l) => (JSON.parse(l) as Record<string, string>).cells);
+        assert.deepEqual(cells, [POOL[0], POOL[1]]);
       } finally {
-        for (const p of procsWith('sleep 3081')) spawnSync('sudo', ['-n', 'kill', '-KILL', String(p)]);
+        assert.equal(await a.g.close(), 0);
+        assert.equal(await b.g.close(), 0);
+      }
+      // Both leases ended with their gates: the next session takes the first account again.
+      const c = await openSession();
+      assert.equal(c.cells, POOL[0]);
+      assert.equal(await c.g.close(), 0);
+    });
+
+    it("a block can't read another session's shell environment or write into its stdin (another uid)", async () => {
+      const a = await openSession();
+      const b = await openSession();
+      try {
+        const [ma, sa] = await signed(fence('bash', 'export MDRB_SECRET=a-secret-of-session-a; echo $$') + fence('bash', 'cat /proc/$$/environ >/dev/null && echo OWN-READ'), { name: 'ops/separated-a' });
+        assert.equal((await a.g.request('load', ma, sa)).code, 0);
+        const pidA = (await a.g.request('run', '1')).out.trim();
+        assert.match(pidA, /^\d+$/);
+        // Its own account reads it: the check below isn't empty.
+        assert.equal((await a.g.request('run', '2')).out, 'OWN-READ\n');
+        const probe =
+          `[ -d /proc/${pidA} ] && echo SEEN; ` +
+          `cat /proc/${pidA}/environ >/dev/null 2>&1 && echo READ || echo NO-READ; ` +
+          `( echo 'echo INJECTED' >/proc/${pidA}/fd/0 ) 2>/dev/null && echo WROTE || echo NO-WRITE; true`;
+        const [mb, sb] = await signed(fence('bash', probe), { name: 'ops/separated-b' });
+        assert.equal((await b.g.request('load', mb, sb)).code, 0);
+        const r = await b.g.request('run', '1');
+        assert.equal(r.code, 0, r.err);
+        assert.equal(r.out, 'SEEN\nNO-READ\nNO-WRITE\n');
+        // Session A's shell got nothing.
+        assert.equal((await a.g.request('run', '2')).out, 'OWN-READ\n');
+      } finally {
+        assert.equal(await a.g.close(), 0);
+        assert.equal(await b.g.close(), 0);
       }
     });
 
-    it('the self-check refuses to start: a token the cells can read, root, the gate\'s own account, a wider sudo rule', async (t) => {
+    it('all accounts in use: the next session refuses to start, and says to raise the pool', async () => {
+      const held: { g: Gate; cells: string }[] = [];
+      try {
+        for (let i = 0; i < POOL.length; i++) held.push(await openSession());
+        assert.deepEqual(held.map((h) => h.cells), POOL);
+        const r = await startupAs(GATE_ACCOUNT, gdir, conf);
+        assert.equal(r.code, 2, r.err);
+        assert.ok(r.err.includes(`all ${POOL.length} cells accounts are in use: raise the pool`), r.err);
+        assert.match(readLog(), /"event":"lease","status":"refused"/);
+      } finally {
+        for (const h of held) assert.equal(await h.g.close(), 0);
+      }
+    });
+
+    it("a program that keeps forking, left by a session's block, is gone before the next session on that account starts (review of 0.28.0)", async () => {
+      // A fork-and-exit chain: each process starts the next and exits, so no pid holds still. Its
+      // gate is killed, so the end of the session doesn't end it: the next lease must.
+      const marker = 'mdrb-chain-3093';
+      const chain = `f=/tmp/${marker}.$$; printf '%s\\n' 'sh "$0" </dev/null >/dev/null 2>&1 &' 'exit 0' >"$f"; ( setsid sh "$f" & ); ( setsid sh -c 'while :; do sleep 3094 & sleep 0.05; done' </dev/null >/dev/null 2>&1 & ); sleep 0.3; echo started`;
+      const cconf = confOf(GATE_ACCOUNT, gdir, 'crash.conf', [`report_token_file = ${gdir}/report-token`]);
+      const g = startAs(GATE_ACCOUNT, gdir, cconf);
+      await g.hello();
+      try {
+        const [m, s] = await signed(fence('bash', chain), { name: 'ops/separated-chain' });
+        assert.equal((await g.request('load', m, s)).code, 0);
+        assert.equal((await g.request('run', '1')).out, 'started\n');
+        assert.ok(procsWith('sleep 3094').length > 0, 'the forker runs');
+        const pid = gatePid(cconf);
+        assert.ok(pid, 'the gate process');
+        spawnSync('sudo', ['-n', 'kill', '-KILL', String(pid)]);
+        // (Not g.exited: the shell it left holds its output open until the next lease ends it.)
+        for (let i = 0; i < 50 && gatePid(cconf); i++) await pause(100);
+        assert.equal(gatePid(cconf), undefined, 'the gate is gone');
+        assert.ok(procsWith(marker).length > 0 || procsWith('sleep 3094').length > 0, 'the chain outlived its gate');
+        // The next session leases the same account (the crashed gate's lock went with it).
+        const next = await openSession();
+        assert.equal(next.cells, CELLS);
+        assert.ok(await stillGone(marker), 'the fork-and-exit chain is gone');
+        assert.ok(await stillGone('sleep 3094'), 'the forker and its children are gone');
+        assert.equal(await next.g.close(), 0);
+        assert.match(readLog(), new RegExp(`"event":"leftovers","status":"killed","pids":"[^"]+","cells":"${CELLS}","when":"start"`));
+      } finally {
+        for (const p of [...procsWith(marker), ...procsWith('sleep 3094')]) spawnSync('sudo', ['-n', 'kill', '-KILL', String(p)]);
+        spawnSync('sudo', ['-n', 'sh', '-c', `rm -f /tmp/${marker}.*`]);
+      }
+    });
+
+    it('a program a block left behind ends with its session, kill_leftovers or not', async () => {
+      const marker = 'sleep 3095';
+      const { g } = await openSession();
+      const [m, s] = await signed(fence('bash', escape(marker)), { name: 'ops/separated-left' });
+      assert.equal((await g.request('load', m, s)).code, 0);
+      assert.equal((await g.request('run', '1')).out, 'started\n');
+      assert.ok(procsWith(marker).length > 0);
+      assert.equal(await g.close(), 0);
+      try {
+        assert.ok(await gone(marker), 'ended with the session');
+      } finally {
+        for (const p of procsWith(marker)) spawnSync('sudo', ['-n', 'kill', '-KILL', String(p)]);
+      }
+    });
+
+    it('the self-check refuses to start: a token the cells can read, root, the gate\'s own account, a rule wider than the pool, a wider sudo rule', async (t) => {
       // A token in a folder anyone can enter, readable by anyone.
       const open = as(GATE_ACCOUNT, 'd=$(mktemp -d /tmp/mdrb-open.XXXXXX) && chmod 755 "$d" && printf token >"$d/token" && chmod 644 "$d/token" && echo "$d"').trim();
       folders.push(open);
@@ -1744,11 +1866,19 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
         [GATE_ACCOUNT, /the gate's own account/],
       ] as const) {
         const f = `${gdir}/cells-${account}.conf`;
-        as(GATE_ACCOUNT, `sed 's/^cells_account = .*/cells_account = ${account}/' ${conf} >${f}`);
+        as(GATE_ACCOUNT, `sed 's/^cells_accounts = .*/cells_account = ${account}/' ${conf} >${f}`);
         const r = await startupAs(GATE_ACCOUNT, gdir, f);
         assert.equal(r.code, 2, account);
         assert.match(r.err, why);
       }
+      // A pool of one under the pool's line: the line lets the gate's account run as more than its
+      // pool, so it is wider than the one rule.
+      const one = `${gdir}/cells-one.conf`;
+      as(GATE_ACCOUNT, `sed 's/^cells_accounts = .*/cells_account = ${CELLS}/' ${conf} >${one}`);
+      const narrow = await startupAs(GATE_ACCOUNT, gdir, one);
+      assert.equal(narrow.code, 2, narrow.err);
+      assert.match(narrow.err, /not exactly the one rule/);
+      assert.ok(narrow.err.includes(`${GATE_ACCOUNT} ALL=(${CELLS}) NOPASSWD: ${fs.realpathSync(GATE)} __cells`), narrow.err);
       if (!WIDE_ACCOUNT) {
         t.skip('a wider sudo rule: set MD_RUNBOOK_GATE_WIDE_ACCOUNT');
         return;
@@ -1757,7 +1887,7 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       const wide = await startupAs(WIDE_ACCOUNT, wdir, confOf(WIDE_ACCOUNT, wdir, 'gate.conf', []));
       assert.equal(wide.code, 2);
       assert.match(wide.err, /not exactly the one rule/);
-      assert.ok(wide.err.includes(`${WIDE_ACCOUNT} ALL=(${CELLS}) NOPASSWD: ${fs.realpathSync(GATE)} __cells`), wide.err);
+      assert.ok(wide.err.includes(`${WIDE_ACCOUNT} ALL=(${POOL.join(',')}) NOPASSWD: ${fs.realpathSync(GATE)} __cells`), wide.err);
     });
   });
 });
