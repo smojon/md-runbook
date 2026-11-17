@@ -235,7 +235,7 @@ func TestOwnNamespace(t *testing.T) {
 		t.Errorf("shared: %s", p)
 	}
 	// An account alone (no pod yet) is enough: the gate could run a Job as it.
-	if p := foreignObjects(list(append(alone, account("backup"))...), "md-runbook-ops", "md-runbook-ops", "md-runbook-cells"); !strings.Contains(p, "also has service accounts backup:") {
+	if p := foreignObjects(list(append(alone, account("backup"))...), "md-runbook-ops", "md-runbook-ops", "md-runbook-cells"); !strings.Contains(p, "also has service accounts backup: the gate could run Jobs as those accounts. ") {
 		t.Errorf("account: %s", p)
 	}
 	var many []string

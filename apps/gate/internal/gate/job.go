@@ -548,14 +548,16 @@ func foreignObjects(out []byte, ns, own, cells string) string {
 	if len(pods) == 0 && len(sas) == 0 {
 		return ""
 	}
-	var what []string
+	var what, could []string
 	if len(pods) > 0 {
 		what = append(what, "pods "+firstFew(pods))
+		could = append(could, "exec into those pods")
 	}
 	if len(sas) > 0 {
 		what = append(what, "service accounts "+firstFew(sas))
+		could = append(could, "run Jobs as those accounts")
 	}
-	return "namespace " + ns + " also has " + strings.Join(what, " and ") + ": the gate could exec into those pods and run Jobs as those accounts. Give the ops host a namespace of its own (apps/ops/README.md)."
+	return "namespace " + ns + " also has " + strings.Join(what, " and ") + ": the gate could " + strings.Join(could, " and ") + ". Give the ops host a namespace of its own (apps/ops/README.md)."
 }
 
 // firstFew: up to 5 names, then how many more.
