@@ -110,6 +110,12 @@ describe('highlight: the kinds', () => {
       ['fence', '~~~~'],
     ]);
     expect(of('- a\n  ```pwsh\n  Get-Date\n  ```\n', 'fenceLang')).toEqual(['pwsh']);
+    // Options start after the first word as core ends it (ASCII blanks): after a no-break space
+    // there are none, as core reads it; the language is the word before it, as langOf finds it.
+    const nbsp = '```bash kube-context=prod\nx\n```\n';
+    expect(of(nbsp, 'fenceLang')).toEqual(['bash']);
+    expect(of(nbsp, 'option')).toEqual([]);
+    expect(of('```bash  kube-context=prod\nx\n```\n', 'option')).toEqual(['kube-context']);
   });
 
   it("md-runbook's markers: output, notes, run history, signatures; other comments", () => {
@@ -246,6 +252,11 @@ describe('highlight: size and time', () => {
       '- '.repeat(n / 2),
       '#'.repeat(n),
       ' '.repeat(n) + 'x',
+      // U+2028 and U+2029 end no line, and core's fence pattern once backtracked on them.
+      '`'.repeat(n) + ' ',
+      '~'.repeat(n) + ' ',
+      '#' + ' '.repeat(n) + ' ',
+      '<!-- md-runbook:output start ' + ' '.repeat(n) + ' ',
     ];
     for (const line of cases) {
       // A line, and the same line many times over.

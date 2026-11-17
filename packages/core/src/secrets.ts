@@ -9,6 +9,7 @@
 import { KUBE_CONTEXT_MODES, KubeContextMode, isKubeContextValue } from './kubeContext';
 import { RunbookShells, ShellKind, parseShells } from './shellKind';
 import { LINE_RE } from './lines';
+import { beforeComment, isWhitespace, valueAndHash } from './lineText';
 
 export type RefKind = 'secret' | 'input' | 'param' | 'out';
 
@@ -249,8 +250,9 @@ function scalarAndComment(raw: string): { value: string; comment?: string } {
   const quoted = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*')\s*(?:#(.*))?$/.exec(v);
   if (quoted) return { value: unquote(quoted[1]!), ...(quoted[2] !== undefined ? { comment: quoted[2].trim() } : {}) };
   if (v.startsWith('#')) return { value: '', comment: v.slice(1).trim() };
-  const c = /\s+#(.*)$/.exec(v);
-  return c ? { value: v.slice(0, c.index), comment: c[1]!.trim() } : { value: v };
+  const value = beforeComment(v);
+  if (value.length === v.length) return { value: v };
+  return { value, comment: v.slice(v.indexOf('#', value.length) + 1).trim() };
 }
 
 /** A front matter value as written, a trailing ` # comment` dropped. */
@@ -258,8 +260,45 @@ function scalar(raw: string): string {
   return scalarAndComment(raw).value;
 }
 
-/** An `env:` entry: an indented `NAME: value` (`NAME:` alone is the empty string). */
-export const FRONT_MATTER_ENV_ENTRY = /^\s+([A-Za-z_][A-Za-z0-9_]*)\s*:(?:\s+(.*?))?\s*$/;
+/**
+ * An `env:` entry: an indented `NAME: value` (`NAME:` alone is the empty string): [line, name,
+ * value or undefined], or undefined. Read by hand: the regular expression it replaces
+ * (`^\s+(NAME)\s*:(?:\s+(.*?))?\s*$`) backtracked quadratically on a long run of blanks.
+ */
+export function frontMatterEnvEntry(line: string): [string, string, string | undefined] | undefined {
+  const m = /^\s+([A-Za-z_][A-Za-z0-9_]*)\s*:/.exec(line);
+  if (!m) return undefined;
+  const rest = line.slice(m[0].length);
+  if (rest === '') return [line, m[1]!, undefined];
+  // A value only after whitespace (`NAME:x` is no entry).
+  return isWhitespace(rest[0]) ? [line, m[1]!, rest.trim()] : undefined;
+}
+
+/**
+ * A `params:` item: `- NAME`, `- NAME: default` or `- NAME # comment`, as
+ * `^\s*-\s+(NAME)(?:\s*:(?:\s+(.*?)|\s*)|\s+(#.*)|)\s*$` read it ([line, name, default as written
+ * or undefined, `# comment` or undefined]), without its quadratic backtracking on long blank runs.
+ */
+function paramItem(line: string): [string, string, string | undefined, string | undefined] | undefined {
+  const m = /^\s*-\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(line);
+  if (!m) return undefined;
+  const rest = line.slice(m[0].length);
+  let k = 0;
+  while (isWhitespace(rest[k])) k++;
+  if (k === rest.length) return [line, m[1]!, undefined, undefined];
+  if (rest[k] === ':') {
+    const after = rest.slice(k + 1);
+    if (after === '') return [line, m[1]!, undefined, undefined];
+    return isWhitespace(after[0]) ? [line, m[1]!, after.trim(), undefined] : undefined;
+  }
+  return rest[k] === '#' && k > 0 ? [line, m[1]!, undefined, rest.slice(k)] : undefined;
+}
+
+/** After `key:` at the start of a front matter line: the rest, or undefined for another key. */
+function afterKey(line: string, key: RegExp): string | undefined {
+  const m = key.exec(line);
+  return m ? line.slice(m[0].length) : undefined;
+}
 
 /** `30m`, `1h30m`, `90s`, `45` (seconds) as seconds; undefined when it isn't a duration. */
 export function parseDurationSeconds(s: string): number | undefined {
@@ -357,18 +396,18 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       if (m) mode = m[1]!.toLowerCase() as 'session' | 'isolated';
       const t = /^timeout\s*:\s*["']?(\d+(?:\.\d+)?)s?["']?\s*(#.*)?$/i.exec(line);
       if (t) timeoutSeconds = Number(t[1]);
-      const c = /^cwd\s*:\s*(.*?)\s*$/i.exec(line);
-      if (c && c[1] !== '') cwd = unquote(c[1]!.replace(/\s+#.*$/, ''));
-      const sh = /^shell\s*:\s*(.*?)\s*(#.*)?$/i.exec(line);
-      if (sh) {
-        const { shells } = parseShells(sh[1]!);
+      // `key: value # comment`: read by hand after the key (see lineText.ts).
+      const value = (key: string): string | undefined => {
+        const v = afterKey(line, new RegExp(`^${key}\\s*:\\s*`, 'i'))?.trimEnd();
+        return v === undefined || v === '' ? undefined : unquote(beforeComment(v));
+      };
+      cwd = value('cwd') ?? cwd;
+      const sh = afterKey(line, /^shell\s*:\s*/i);
+      if (sh !== undefined) {
+        const { shells } = parseShells(valueAndHash(sh).value);
         // A second `shell:` line adds what the first didn't say; the first one counts (lint warns).
         if (shells.unix || shells.powershell) shell = { ...shells, ...shell };
       }
-      const value = (key: string): string | undefined => {
-        const v = new RegExp(`^${key}\\s*:\\s*(.*?)\\s*$`, 'i').exec(line)?.[1];
-        return v === undefined || v === '' ? undefined : unquote(v.replace(/\s+#.*$/, ''));
-      };
       incident = value('incident') ?? incident;
       severity = value('severity') ?? severity;
       practice = value('practice') ?? practice;
@@ -415,7 +454,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
       continue;
     }
     if (inEnv) {
-      const entry = FRONT_MATTER_ENV_ENTRY.exec(line);
+      const entry = frontMatterEnvEntry(line);
       // The first one counts (lint warns about the others and about lines that are no entry).
       if (entry && !(entry[1]! in env)) env[entry[1]!] = scalar(entry[2] ?? '');
       continue;
@@ -424,7 +463,7 @@ export function parseFrontMatter(text: string): FrontMatter | undefined {
     // `- NAME`, `- NAME: default`, each with an optional ` # comment` (the default as any scalar:
     // quoted, or bare up to the comment). The comment is the description, and its trailing
     // "One of: a, b" the choices (paramComment).
-    const item = /^\s*-\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*:(?:\s+(.*?)|\s*)|\s+(#.*)|)\s*$/.exec(line);
+    const item = paramItem(line);
     if (!item) continue;
     const name = item[1]!;
     if (params.some((p) => p.name === name)) continue;
@@ -457,7 +496,7 @@ export function parseDotenv(text: string): Record<string, string> {
       const end = v.indexOf("'", 1);
       v = end < 0 ? v.slice(1) : v.slice(1, end);
     } else {
-      v = v.replace(/(^|\s+)#.*$/, '').trim();
+      v = beforeComment(v, isWhitespace, true).trim();
     }
     out[m[1]!] = v;
   }

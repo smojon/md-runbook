@@ -22,7 +22,8 @@ export function usesProbe(source: string): boolean {
   return /(^|[\s;|&(])md-runbook-probe(\s|$)/m.test(source);
 }
 
-const LINE_RE = /^(OK|FAIL) {2,}(\S+) {2,}(.+)$/;
+// `[\s\S]+`, not `.+`: with `.` stopping at U+2028 the spaces before it backtracked quadratically.
+const LINE_RE = /^(OK|FAIL) {2,}(\S+) {2,}([\s\S]+)$/;
 
 /** The checks in md-runbook-probe's output, in order. */
 export function parseProbeOutput(text: string): EndpointCheck[] {

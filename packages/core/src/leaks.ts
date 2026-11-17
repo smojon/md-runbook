@@ -4,6 +4,7 @@
  * replaces the secret findings with [REDACTED].
  */
 
+import { beforeComment, isSpace, trimEndWith } from './lineText';
 import { DEFAULT_PATTERNS, REDACTED, compilePattern } from './redact';
 
 export interface LeakScanOptions {
@@ -130,17 +131,50 @@ interface YamlKey {
   valueAt: number;
 }
 
+/**
+ * `key: value` (after indentation and `- ` markers): a quoted key, or a bare one up to the first
+ * `:` (no `#` before it); then nothing, or spaces and the value. Read by hand: the regular
+ * expression it replaces backtracked quadratically on a long run of spaces.
+ */
 function yamlKey(line: string): YamlKey | undefined {
-  const m = /^( *)((?:- +)*)("[^"]*"|'[^']*'|[^\s:#'"-][^:#]*?|-[^\s:#][^:#]*?) *:(?: +(.*?))? *$/.exec(line);
-  if (!m) return undefined;
-  const raw = m[4] ?? '';
-  const value = raw.replace(/ +#.*$/, '');
+  const m = /^( *)((?:- +)*)/.exec(line)!;
+  const keyAt = m[0].length;
+  const c = line[keyAt];
+  let keyEnd: number;
+  if (c === '"' || c === "'") {
+    const close = line.indexOf(c, keyAt + 1);
+    if (close < 0) return undefined;
+    keyEnd = close + 1;
+  } else {
+    // A bare key: not starting with a blank, `:`, `#` or a quote; `-` only before another letter.
+    if (c === undefined || /[\s:#'"]/.test(c)) return undefined;
+    if (c === '-' && (keyAt + 1 >= line.length || /[\s:#]/.test(line[keyAt + 1]!))) return undefined;
+    const colon = line.indexOf(':', keyAt);
+    const hash = line.indexOf('#', keyAt);
+    if (colon < 0 || (hash >= 0 && hash < colon)) return undefined;
+    keyEnd = colon;
+    while (keyEnd > keyAt && line[keyEnd - 1] === ' ') keyEnd--;
+  }
+  let colon = keyEnd;
+  while (line[colon] === ' ') colon++;
+  if (line[colon] !== ':') return undefined;
+  // After the colon: nothing, or spaces then the value (its trailing spaces dropped).
+  const after = colon + 1;
+  let raw = '';
+  let rawAt = line.length;
+  if (after < line.length) {
+    if (line[after] !== ' ') return undefined;
+    let v = after;
+    while (line[v] === ' ') v++;
+    raw = trimEndWith(line.slice(v), isSpace);
+    rawAt = v;
+  }
   return {
-    indent: (m[1] ?? '').length + (m[2] ?? '').length,
-    item: (m[2] ?? '') !== '',
-    key: (m[3] ?? '').replace(/^["']|["']$/g, ''),
-    value,
-    valueAt: raw === '' ? line.length : line.replace(/ +$/, '').length - raw.length,
+    indent: keyAt,
+    item: m[2] !== '',
+    key: line.slice(keyAt, keyEnd).replace(/^["']|["']$/g, ''),
+    value: beforeComment(raw, isSpace),
+    valueAt: raw === '' ? line.length : rawAt,
   };
 }
 

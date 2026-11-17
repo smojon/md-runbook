@@ -15,6 +15,7 @@ import { MILESTONES, Timeline, buildTimeline, formatSeconds } from './incident';
 import { recordSigners, recordStatus } from './record';
 import { MAX_CALL_DEPTH, callFromAttrs, isCallLanguage } from './call';
 import { sha256Hex } from './sha256';
+import { atxHeading } from './title';
 
 export interface ReportOptions {
   generatedAt: Date;
@@ -67,8 +68,8 @@ function firstHeading(markdown: string): string | undefined {
       fence = open;
       continue;
     }
-    const m = /^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/.exec(line);
-    if (m?.[1]) return m[1].replace(/[*_`]/g, '');
+    const h = atxHeading(line);
+    if (h?.blank && h.text) return h.text.replace(/[*_`]/g, '');
   }
   return undefined;
 }

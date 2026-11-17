@@ -90,7 +90,8 @@ export interface ExtractedProposal {
   name?: string;
 }
 
-const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+// `[\s\S]*`, not `.*`: see fence.ts (U+2028 made this quadratic on a run of backticks).
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})([\s\S]*)$/;
 
 /** Last sentence of the prose right before a block, as a fallback reason. */
 function precedingSentence(lines: string[], before: number): string | undefined {

@@ -7,7 +7,7 @@
  */
 import { act, createElement, createRef, type ReactNode } from 'react';
 import type { RunbookTextInputHandle, RunbookTextInputProps } from '../ui/runbookTextInputProps';
-import { HIGHLIGHT_MAX, INDENT, RunbookTextInput } from '../ui/RunbookTextInput.web';
+import { HIGHLIGHT_MAX, INDENT, RunbookTextInput, sameParts } from '../ui/RunbookTextInput.web';
 import { light } from '../theme';
 
 it('the web build takes the web file', () => {
@@ -92,6 +92,29 @@ describe('the web editor', () => {
       area.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'ArrowRight' }));
     });
     expect(onSelectionChange).toHaveBeenLastCalledWith({ start: 2, end: 4 });
+    await act(async () => root.unmount());
+  });
+
+  it('a line is drawn again when its kinds change, even with the same text', async () => {
+    const { layer, render, root } = await mount('x\n# A\n');
+    const colour = (): string => (layer.children[1]!.firstElementChild as HTMLElement).style.color;
+    const heading = colour();
+    // A fence opens above it: the same text is code now.
+    await render('```\n# A\n');
+    expect(layer.children[1]!.textContent).toBe('# A');
+    expect(colour()).not.toBe(heading);
+    // Lines are compared piece by piece: no two different lines look alike (a joined key could).
+    expect(
+      sameParts(
+        [[undefined, 'x\u0001heading\u0000y']],
+        [
+          [undefined, 'x'],
+          ['heading', 'y'],
+        ],
+      ),
+    ).toBe(false);
+    expect(sameParts([['code', 'a']], [['code', 'a']])).toBe(true);
+    expect(sameParts([['code', 'a']], [['heading', 'a']])).toBe(false);
     await act(async () => root.unmount());
   });
 

@@ -8,10 +8,11 @@
  *   start, a parent before its children. `lineRuns` flattens them into coloured runs per line.
  * - Fences, cell options and md-runbook's markers are read with core's own functions and patterns
  *   (fence.ts, cellOptions.ts, outputBlock.ts), so the editor agrees with what runs.
- * - No regular expression here can backtrack badly: searches go forward with indexOf, and a
- *   search that found nothing is not repeated (see `Finder`).
+ * - Its own searches go forward with indexOf, and a search is not repeated over the same stretch
+ *   (see `Finder`). Core's patterns it runs (fence lines, output and history markers) must stay
+ *   linear on any one line, U+2028 and U+2029 included: core's tests time them on hostile lines.
  */
-import { tokenizeInfo } from '@md-runbook/core/cellOptions';
+import { INFO_LANG_RE, tokenizeInfo } from '@md-runbook/core/cellOptions';
 import { isFenceClose, matchFenceOpen, type FenceOpen } from '@md-runbook/core/fence';
 import { HISTORY_CLOSE_RE, HISTORY_OPEN_RE, OUTPUT_END_RE, OUTPUT_START_RE } from '@md-runbook/core/outputBlock';
 
@@ -285,13 +286,17 @@ function fenceLine(base: number, open: FenceOpen, out: Span[]): void {
   const infoAt = fenceAt + open.len;
   out.push({ start: base + fenceAt, end: base + infoAt, kind: 'fence' });
   const info = open.info;
-  let w = 0;
-  while (w < info.length && /\s/.test(info[w]!)) w++;
-  let we = w;
-  while (we < info.length && !/[\s{]/.test(info[we]!)) we++;
-  if (we > w) out.push({ start: base + infoAt + w, end: base + infoAt + we, kind: 'fenceLang' });
-  const restAt = infoAt + we;
-  for (const tok of tokenizeInfo(info.slice(we))) {
+  // As core reads it: the language as langOf finds it (fence.ts), the options after the first
+  // word as INFO_LANG_RE ends it (ASCII blanks only, so `bash x=1` has no options).
+  const off = INFO_LANG_RE.exec(info)?.[0].length ?? 0;
+  const lang = /^(\s*)([^\s{]+)/.exec(info);
+  if (lang) {
+    const w = lang[1]!.length;
+    const we = Math.min(w + lang[2]!.length, off);
+    if (we > w) out.push({ start: base + infoAt + w, end: base + infoAt + we, kind: 'fenceLang' });
+  }
+  const restAt = infoAt + off;
+  for (const tok of tokenizeInfo(info.slice(off))) {
     const keyEnd = tok.start + tok.key.length;
     out.push({ start: base + restAt + tok.start, end: base + restAt + keyEnd, kind: 'option' });
     // The value: after the `=`, with its quotes.

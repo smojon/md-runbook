@@ -55,9 +55,13 @@ const countLines = (text: string): number => lineAt(text, text.length) + 1;
 
 type Part = [kind: HighlightKind | undefined, text: string];
 
+/** The same pieces: each kind and text compared, so no two different lines look alike. */
+export const sameParts = (a: readonly Part[], b: readonly Part[]): boolean =>
+  a.length === b.length && a.every(([k, t], i) => b[i]![0] === k && b[i]![1] === t);
+
 /** One line of the drawing; redrawn only when its text or colours change. */
 const Line = memo(
-  function Line({ parts, colors }: { sig: string; parts: Part[]; colors: Record<HighlightKind, string> }) {
+  function Line({ parts, colors }: { parts: Part[]; colors: Record<HighlightKind, string> }) {
     return (
       <div>
         {parts.map(([kind, text], i) =>
@@ -72,7 +76,7 @@ const Line = memo(
       </div>
     );
   },
-  (a, b) => a.sig === b.sig && a.colors === b.colors,
+  (a, b) => a.colors === b.colors && sameParts(a.parts, b.parts),
 );
 
 export function RunbookTextInput({
@@ -96,10 +100,9 @@ export function RunbookTextInput({
   const shown = value.length >= DEFER_FROM ? deferred : value;
   const lines = useMemo(() => {
     if (shown.length > HIGHLIGHT_MAX) return undefined;
-    return lineRuns(shown, highlight(shown)).map((l) => {
-      const parts: Part[] = l.runs.map((r) => [r.kinds[r.kinds.length - 1], shown.slice(r.start, r.end)]);
-      return { parts, sig: parts.map(([k, t]) => `${k ?? ''}\u0000${t}`).join('\u0001') };
-    });
+    return lineRuns(shown, highlight(shown)).map((l) =>
+      l.runs.map((r): Part => [r.kinds[r.kinds.length - 1], shown.slice(r.start, r.end)]),
+    );
   }, [shown]);
   // The drawing matches the field only when it shows the same text.
   const drawn = lines !== undefined && shown === value;
@@ -206,7 +209,7 @@ export function RunbookTextInput({
           }}
         >
           {lines?.map((l, i) => (
-            <Line key={i} sig={l.sig} parts={l.parts} colors={c.highlight} />
+            <Line key={i} parts={l} colors={c.highlight} />
           ))}
         </pre>
         <textarea

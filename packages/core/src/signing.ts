@@ -33,6 +33,7 @@ import { splitSteps } from './steps';
 import { HISTORY_OPEN_RE } from './outputBlock';
 import { clearOutputBlocks } from './writer';
 import { LINE_RE, splitLines } from './lines';
+import { beforeComment } from './lineText';
 
 /** The `-n` namespace of every md-runbook signature: a signature for anything else doesn't verify. */
 export const SIGNATURE_NAMESPACE = 'md-runbook';
@@ -614,10 +615,10 @@ export function reportSigningErrors(text: string): string[] {
   const seen = new Set<string>();
   let wants = false;
   for (const line of frontMatterLines(text) ?? []) {
-    const m = /^(report-runs(?:-required|-signed|-token)?)\s*:\s*(.*?)\s*$/i.exec(line);
+    const m = /^(report-runs(?:-required|-signed|-token)?)\s*:\s*/i.exec(line);
     if (!m) continue;
     const key = m[1]!.toLowerCase();
-    const value = m[2]!.replace(/\s+#.*$/, '').replace(/^(["'])(.*)\1$/, '$2');
+    const value = beforeComment(line.slice(m[0].length).trimEnd()).replace(/^(["'])(.*)\1$/, '$2');
     if (seen.has(key)) errors.push(`front matter ${key}: written twice (keep one)`);
     seen.add(key);
     if (key === 'report-runs') {
