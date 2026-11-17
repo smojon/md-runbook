@@ -10,8 +10,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import { REFERENCE_RE, scanForLeaks } from '@md-runbook/core/leaks';
-import { DEFAULT_PATTERNS, REDACTED, compilePattern, createRedactor, mergeSpans, patternFinder, redactSecretManifests } from '@md-runbook/core/redact';
-import { LINEAR_FINDERS, Spans, findReferences, isRegexSpace } from '@md-runbook/core/redactScan';
+import { DEFAULT_PATTERNS, REDACTED, RedactionPattern, createRedactor, mergeSpans, patternFinder, patternRegexes, redactSecretManifests } from '@md-runbook/core/redact';
+import { LINEAR_FINDERS, LINEAR_PARTS, Spans, findReferences, isRegexSpace } from '@md-runbook/core/redactScan';
 import { corpus } from './redactCorpus';
 
 const LINES = Number(process.env.REDACT_CORPUS_LINES ?? 50_000);
@@ -20,13 +20,18 @@ const ROOT = path.join(__dirname, '..', '..');
 
 const LINEAR = DEFAULT_PATTERNS.filter((p) => LINEAR_FINDERS.has(p.name ?? ''));
 const byRegex = (re: RegExp, text: string): Spans => [...text.matchAll(re)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
+/** What `p` finds by its regular expressions: its own matches, or for a pattern found in parts the union of its parts' (patternRegexes). */
+function byPattern(p: RedactionPattern, text: string): Spans {
+  const res = patternRegexes(p);
+  return res.length === 1 ? byRegex(res[0]!, text) : mergeSpans(res.flatMap((re) => byRegex(re, text)));
+}
 
 /** The redactor by the regular expressions: the union of what they all match, each merged span replaced once. */
 function regexRedact(text: string): string {
   const t = redactSecretManifests(text);
   let out = '';
   let at = 0;
-  for (const [start, end] of mergeSpans(DEFAULT_PATTERNS.flatMap((p) => byRegex(compilePattern(p), t)))) {
+  for (const [start, end] of mergeSpans(DEFAULT_PATTERNS.flatMap((p) => byPattern(p, t)))) {
     out += t.slice(at, start) + REDACTED;
     at = end;
   }
@@ -47,7 +52,18 @@ const noContinuedLines = (text: string): string => text.replace(/\\(?=[\r\n])/g,
 function compare(text: string, counts: Map<string, number>, where: string): void {
   for (const p of LINEAR) {
     const t = p.name === 'password-flag-tool' ? noContinuedLines(text) : text;
-    const want = byRegex(compilePattern(p), t);
+    // A pattern found in parts: each part's matcher against that part's regular expression, then the union.
+    const parts = LINEAR_PARTS.get(p.name!);
+    if (parts) {
+      patternRegexes(p).forEach((re, i) => {
+        const want = byRegex(re, t);
+        const got = parts[i]!(t);
+        if (JSON.stringify(got) !== JSON.stringify(want)) {
+          assert.fail(`${p.name} part ${i} (${where}) on ${show(t)}:\n  regex  ${JSON.stringify(want)}\n  linear ${JSON.stringify(got)}`);
+        }
+      });
+    }
+    const want = byPattern(p, t);
     const got = LINEAR_FINDERS.get(p.name!)!(t);
     if (JSON.stringify(got) !== JSON.stringify(want)) {
       assert.fail(`${p.name} (${where}) on ${show(t)}:\n  regex  ${JSON.stringify(want)}\n  linear ${JSON.stringify(got)}`);
@@ -95,6 +111,9 @@ describe('linear redaction matchers', () => {
       ],
     );
     for (const p of LINEAR) assert.equal(patternFinder(p), LINEAR_FINDERS.get(p.name!));
+    // The patterns found in parts: a matcher for the whole and for each alternative.
+    assert.deepEqual([...LINEAR_PARTS.keys()], ['secret-key-value-quoted', 'pass-key-value', 'secret-key-value-spaced']);
+    for (const p of LINEAR.filter((x) => LINEAR_PARTS.has(x.name!))) assert.equal(patternRegexes(p).length, LINEAR_PARTS.get(p.name!)!.length, p.name);
     // A pattern of yours that only shares a name is a regular expression.
     assert.notEqual(patternFinder({ name: 'jwt', pattern: 'eyJ' }), LINEAR_FINDERS.get('jwt'));
   });
@@ -222,6 +241,9 @@ const HOSTILE = [
   rep(' -u "${a}:'),
   ' -u "${' + 'a'.repeat(N),
   rep('sshpass='),
+  // 0.30.0 review: each quote's alternative read on its own
+  rep(`password="a\\", token='`),
+  rep(`DB_PASS=\\"a; api key: '`),
 ];
 
 describe('redaction and the leak scan stay linear on 200,000-character lines', () => {

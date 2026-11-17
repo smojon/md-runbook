@@ -6,7 +6,8 @@
  * but the slowest (a 40-character look-behind at every position). Each matcher finds exactly what
  * its regular expression in redact.ts finds with the g flag (same starts, same ends): the regular
  * expressions stay the definition, and test/redactScan.test.ts compares the two on a large random
- * corpus.
+ * corpus. A pattern found in parts (redact.ts SPLIT_PATTERNS) has a matcher for each part
+ * (LINEAR_PARTS), each the same as that part's regular expression.
  *
  * A matcher reads the text once, left to right, as the regular expression is tried at each
  * position; what a look-behind checks is read backwards from the one position it can match at.
@@ -174,6 +175,21 @@ export function finder(matchAt: (s: Scan, p: number) => number, mustHave?: RegEx
     }
     return out;
   };
+}
+
+/**
+ * The union of `spans` (any order; empty ones dropped): sorted, and those that overlap or touch
+ * merged into one.
+ */
+export function mergeSpans(spans: Spans): Spans {
+  const sorted = spans.filter(([start, end]) => end > start).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const out: Spans = [];
+  for (const [start, end] of sorted) {
+    const last = out[out.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else out.push([start, end]);
+  }
+  return out;
 }
 
 // --- authorization-header, cookie-header -------------------------------------------------------
@@ -487,6 +503,16 @@ function quotedValueAfterKey(s: Scan, p: number, keyEndsAt: (s: Scan, k: number)
 
 const quotedKeyValue = (s: Scan, p: number): number => quotedValueAfterKey(s, p, secretKeyEndsAt);
 
+/** The quotes a value opens with, in quotedAfter's order (redact.ts quotedAlternatives): `"`, `\"`, `'`, `\'`. */
+const QUOTE_OPENINGS = ['"', '\\"', "'", "\\'"];
+/** `m` only where the value at p opens with `open` (one of QUOTE_OPENINGS): one alternative of quotedAfter. */
+const opensWith =
+  (open: string, m: (s: Scan, p: number) => number) =>
+  (s: Scan, p: number): number =>
+    s.c(p - 1) === open.charCodeAt(open.length - 1) && (s.c(p - 2) === BACKSLASH) === (open.length === 2) ? m(s, p) : -1;
+/** `m` (a quoted value after a key) as quotedAfter's four alternatives, one for each opening quote. */
+const byOpening = (m: (s: Scan, p: number) => number): Array<(s: Scan, p: number) => number> => QUOTE_OPENINGS.map((o) => opensWith(o, m));
+
 // --- secret-flag-value ---------------------------------------------------------------------------
 
 export const FLAG_NAMES = ['password', 'passwd', 'pass', 'secret', 'client-secret', 'token', 'api-key', 'apikey', 'access-key', 'secret-key', 'requirepass', 'masterauth'];
@@ -740,10 +766,12 @@ export const isWideBlank = (c: number): boolean => isS(c) && c !== LF && c !== C
 const authHeader = (s: Scan, p: number): number => header(s, p, 'authorization', true);
 const cookieHeader = (s: Scan, p: number): number => header(s, p, 'cookie', false);
 const secretKeyValue = (s: Scan, p: number): number => keyValue(s, p, secretKeyEndsAt);
+const passQuoted = (s: Scan, p: number): number => quotedValueAfterKey(s, p, passKeyEndsAt);
+const passBare = (s: Scan, p: number): number => keyValue(s, p, passKeyEndsAt);
 /** pass-key-value: the whole value in quotes, else a word. */
 function passKeyValue(s: Scan, p: number): number {
-  const e = quotedValueAfterKey(s, p, passKeyEndsAt);
-  return e >= 0 ? e : keyValue(s, p, passKeyEndsAt);
+  const e = passQuoted(s, p);
+  return e >= 0 ? e : passBare(s, p);
 }
 
 /** `(?<=\b(?:Proxy-|Set-)?NAME(?:\\?["'])?WS*[:=]WS*)` then QUOTED_VALUE: a header's value in quotes, after the quote before p. */
@@ -1407,17 +1435,68 @@ function spacedKeyEndsAt(s: Scan, k: number): boolean {
 }
 
 /** A spaced key name's value: in quotes (all of it), else a word as secret-key-value reads it. */
-function spacedKeyValue(s: Scan, p: number): number {
-  const o = quoteOpen(s, p);
-  if (o >= 0) {
-    const k = keyEnd(s, o);
-    if (k >= 0 && spacedKeyEndsAt(s, k) && notAValue(s, p)) {
-      const e = quotedValueEnd(s, p);
-      if (e >= 0) return e;
+const spacedQuoted = (s: Scan, p: number): number => quotedValueAfterKey(s, p, spacedKeyEndsAt);
+const spacedBare = (s: Scan, p: number): number => keyValue(s, p, spacedKeyEndsAt);
+
+const SECRET_KEYS_RE = /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key|rediscli_auth|sshpass/i;
+
+type Matcher = (s: Scan, p: number) => number;
+
+/**
+ * What a pattern found in parts finds, in one pass: [the whole pattern's spans, then each
+ * alternative's], each as its own global regular expression finds them. At each position, an
+ * alternative is tried if its own last match ended there or before, and the whole pattern is the
+ * first alternative that matches there (a regular expression's `|`): each alternative's matcher
+ * runs at most once a position.
+ */
+function partSpans(alts: readonly Matcher[], mustHave: RegExp, blank: (c: number) => boolean = isBlank): (text: string) => Spans[] {
+  return (text) => {
+    const out: Spans[] = [[], ...alts.map((): Spans => [])];
+    if (!mustHave.test(text)) return out;
+    const s = new Scan(text, blank);
+    // Where each one (the whole pattern, then each alternative) may match next.
+    const from = new Array<number>(alts.length + 1).fill(0);
+    for (let p = 0; p < s.n; p++) {
+      let whole = from[0]! <= p;
+      for (let j = 0; j < alts.length; j++) {
+        const own = from[j + 1]! <= p;
+        if (!own && !whole) continue;
+        const e = alts[j]!(s, p);
+        if (e <= p) continue;
+        if (own) {
+          out[j + 1]!.push([p, e]);
+          from[j + 1] = e;
+        }
+        if (whole) {
+          out[0]!.push([p, e]);
+          from[0] = e;
+          whole = false;
+        }
+      }
     }
-  }
-  return keyValue(s, p, spacedKeyEndsAt);
+    return out;
+  };
 }
+
+/** The patterns redact.ts finds in parts (SPLIT_PATTERNS), by name: their alternatives in its order. */
+const PART_SPANS = new Map([
+  ['secret-key-value-quoted', partSpans(byOpening(quotedKeyValue), SECRET_KEYS_RE)],
+  ['pass-key-value', partSpans([...byOpening(passQuoted), passBare], /pass/i)],
+  ['secret-key-value-spaced', partSpans([...byOpening(spacedQuoted), spacedBare], /key|phrase/i, isWideBlank)],
+]);
+/**
+ * Each part of those patterns on its own: the whole pattern's matcher, then one for each
+ * alternative (in that order), each read on the whole text (test/redactScan.test.ts compares each
+ * with its regular expression). Their union is the pattern's (LINEAR_FINDERS).
+ */
+export const LINEAR_PARTS: ReadonlyMap<string, readonly SpanFinder[]> = new Map(
+  [...PART_SPANS].map(([name, spans]) => [name, spans('').map((_, i): SpanFinder => (text) => spans(text)[i]!)]),
+);
+/** The union of what the parts of `name` find, in order and not overlapping. */
+const unionOf =
+  (name: string): SpanFinder =>
+  (text) =>
+    mergeSpans(PART_SPANS.get(name)!(text).flat());
 
 /** The built-in patterns (by name) that have a linear matcher. redact.ts uses one only for that exact pattern. */
 export const LINEAR_FINDERS: ReadonlyMap<string, SpanFinder> = new Map([
@@ -1425,9 +1504,9 @@ export const LINEAR_FINDERS: ReadonlyMap<string, SpanFinder> = new Map([
   ['cookie-header', finder(cookieHeader, /cookie/i)],
   ['bearer-token', finder(bearer, /bearer/i)],
   ['jwt', finder(jwt, /eyJ/)],
-  ['secret-key-value-quoted', finder(quotedKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key|rediscli_auth|sshpass/i)],
-  ['secret-key-value', finder(secretKeyValue, /password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|credential|\.key|rediscli_auth|sshpass/i)],
-  ['pass-key-value', finder(passKeyValue, /pass/i)],
+  ['secret-key-value-quoted', unionOf('secret-key-value-quoted')],
+  ['secret-key-value', finder(secretKeyValue, SECRET_KEYS_RE)],
+  ['pass-key-value', unionOf('pass-key-value')],
   ['secret-flag-value', finder(secretFlag, /-|requirepass|masterauth/i)],
   ['keycloak-client-secret', finder(keycloakSecret, /secret/i)],
   // The widened ones (they read Unicode spaces as blanks).
@@ -1435,5 +1514,5 @@ export const LINEAR_FINDERS: ReadonlyMap<string, SpanFinder> = new Map([
   ['cookie-header-quoted', finder((s, p) => quotedHeader(s, p, 'cookie'), /cookie/i, isWideBlank)],
   ['secret-after-unicode-space', finder(separatedWide, undefined, isWideBlank)],
   ['password-flag-tool', finder(passwordTool, TOOLS_RE, isWideBlank)],
-  ['secret-key-value-spaced', finder(spacedKeyValue, /key|phrase/i, isWideBlank)],
+  ['secret-key-value-spaced', unionOf('secret-key-value-spaced')],
 ]);

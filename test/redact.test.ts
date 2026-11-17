@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { DEFAULT_PATTERNS, createRedactor } from '@md-runbook/core';
+import { redactLeaks } from '@md-runbook/core/leaks';
 
 const r = createRedactor(DEFAULT_PATTERNS);
 const R = '[REDACTED]';
@@ -157,6 +158,36 @@ describe('a quoted value that ends in a backslash (final review of 0.30)', () =>
         const out = r.redact(first + second);
         assert.ok(!out.includes(secret), `${first + second} -> ${out}`);
         assert.ok(!/p4ss|ab\\|abc\\|C:\\secrets/.test(out), `${first + second} -> ${out}`);
+      }
+    }
+  });
+});
+
+describe('a quoted value read over the next key’s value (0.30.0 review)', () => {
+  const B = '\\';
+  // The first value's `"…"` (or `\"…\"`) reading runs to a quote inside the second secret; that
+  // secret's own `'…'` reading is found too (each quote's alternative on its own).
+  const cases: Array<[string, string]> = [
+    [`connect(password="C:${B}keys${B}", token='Kd4wD"Tn6vE')`, `connect(password="${R}')`],
+    [`mytool --password="a${B}"b --token='Kd4wD" Tn6vE'`, `mytool --password="${R}'`],
+    [`TOKEN=${B}"Zq9xA; aws_secret_access_key: 'Kd4wD${B}" Tn6vE Rp2uF'`, `TOKEN=${B}"${R}'`],
+  ];
+  for (const [input, expected] of cases) {
+    it(input, () => {
+      assert.equal(r.redact(input), expected);
+      const leaks = redactLeaks(input);
+      for (const secret of ['keys', 'Zq9xA', 'Kd4wD', 'Tn6vE', 'Rp2uF']) assert.ok(!leaks.includes(secret), `redactLeaks: ${leaks}`);
+    });
+  }
+
+  // Each opening of the first value with each of the second, the second's value holding the first's quote.
+  const firsts = [`password="a${B}"b `, `password=${B}"a `, `DB_PASS="a${B}"b `, `api key: "a${B}"b `, `password='a `];
+  const seconds = [`token='Kd4wD"Tn6vE'`, `token='Kd4wD${B}" Tn6vE'`, `DB_PASS='Kd4wD" Tn6vE'`, `secret key: 'Kd4wD" Tn6vE'`, `token="Kd4wD' Tn6vE"`, `token=${B}'Kd4wD" Tn6vE${B}'`];
+  it('each opening quote, then a second key whose value holds a quote', () => {
+    for (const first of firsts) {
+      for (const second of seconds) {
+        const out = r.redact(first + second);
+        assert.ok(!/Kd4wD|Tn6vE/.test(out), `${first + second} -> ${out}`);
       }
     }
   });

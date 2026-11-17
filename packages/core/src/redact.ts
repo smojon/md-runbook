@@ -6,7 +6,7 @@
  * the same (redactScan.ts); they stay here as the definition.
  */
 
-import { BARE_FLAG_NAMES, FLAG_NAMES, LINEAR_FINDERS, PASSWORD_TOOLS, PasswordToolRule, SPACED_KEY_WORDS, SpanFinder, Spans, WRAPPER_VALUE_OPTIONS, WRAPPERS } from './redactScan';
+import { BARE_FLAG_NAMES, FLAG_NAMES, LINEAR_FINDERS, mergeSpans, PASSWORD_TOOLS, PasswordToolRule, SPACED_KEY_WORDS, SpanFinder, Spans, WRAPPER_VALUE_OPTIONS, WRAPPERS } from './redactScan';
 
 export const REDACTED = '[REDACTED]';
 
@@ -69,10 +69,10 @@ const SQ_REST = `[^'\\r\\n]+(?=')`;
  * `quotedValueEnd` reads it: after `"` DQ_REST, after `'` SQ_REST; after `\"` or `\'` (escaped
  * JSON), up to the `\"` or `\'` that closes it (ESCAPED_VALUE).
  */
-const quotedAfter = (key: string, notValue = ''): string =>
-  ['"', "'"]
-    .flatMap((q) => [`(?<=${key}${q})${notValue}${q === '"' ? DQ_REST : SQ_REST}`, `(?<=${key}\\\\${q})${notValue}${ESCAPED_VALUE(q)}`])
-    .join('|');
+const quotedAfter = (key: string, notValue = ''): string => quotedAlternatives(key, notValue).join('|');
+/** quotedAfter's alternatives, in its order: after `"`, `\"`, `'` and `\'` (redactScan.ts QUOTE_OPENINGS). */
+const quotedAlternatives = (key: string, notValue = ''): string[] =>
+  ['"', "'"].flatMap((q) => [`(?<=${key}${q})${notValue}${q === '"' ? DQ_REST : SQ_REST}`, `(?<=${key}\\\\${q})${notValue}${ESCAPED_VALUE(q)}`]);
 /**
  * A flag's value: in "…" not starting with `$` (the shell expands it) or a REFERENCE; in '…' not
  * starting with a REFERENCE (`'$3cret'` is literal); else a word not starting with `-`, `$` or a
@@ -94,6 +94,23 @@ const QUOTED_USER = `(?:\\$\\{[^}\\s"']*\\}|(?!\\$\\{[^}\\s"']*\\}:)[^\\s:"']+)`
 const BARE_FLAG_START = '(?:(?:^|[\\r\\n])[ \\t]*(?:[#;]+[ \\t]*|-[ \\t]+)?|\\bconfig[ \\t]+set[ \\t]+)';
 const SECRET_KEY = `\\b[\\w.-]*(?:${SECRET_KEYS})[\\w.-]*${KEY_QUOTE}[ \\t]*[:=][ \\t]*`;
 const PASS_KEY = `(?:^|[^A-Za-z0-9])(?:[\\w.-]*[_.-])?pass${KEY_QUOTE}[ \\t]*[:=][ \\t]*`;
+/** A key's value out of quotes (or right after the opening one), as secret-key-value reads it. */
+const bareAfter = (key: string): string => `(?<=${key}${KEY_QUOTE})${NOT_A_VALUE}${KEY_VALUE}`;
+
+/**
+ * Built-in patterns found in parts, by name: each alternative of the pattern on its own, on the whole
+ * text, besides the whole pattern; what they all find is the pattern's (their union). One reading of
+ * a value can run over the start of the next key's value: in `password="C:\keys\", token='a"b'` the
+ * `"…"` reading runs to the `"` inside the token, and the regular expression, resuming after that
+ * match, never tries the token's `'…'` reading at its own start. Found apart, that reading is found
+ * too, and everything the whole pattern finds stays found. Each part has its linear matcher
+ * (redactScan.ts LINEAR_PARTS, in this order after the whole pattern).
+ */
+const SPLIT_PATTERNS = new Map<string, readonly string[]>();
+function splitPattern(name: string, alternatives: readonly string[], flags: string): RedactionPattern {
+  SPLIT_PATTERNS.set(name, alternatives);
+  return { name, pattern: alternatives.join('|'), flags };
+}
 
 const BASE_PATTERNS: readonly RedactionPattern[] = [
   {
@@ -123,25 +140,13 @@ const BASE_PATTERNS: readonly RedactionPattern[] = [
     name: 'jwt',
     pattern: '\\beyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}(?:\\.[A-Za-z0-9_-]*)*',
   },
-  {
-    name: 'secret-key-value-quoted',
-    // password = "Hunter 2 with spaces" → the whole quoted value; {"password": "a\"b"} and
-    // {\"password\":\"…\"} (escaped JSON) too
-    pattern: quotedAfter(SECRET_KEY, NOT_A_VALUE),
-    flags: 'i',
-  },
-  {
-    name: 'secret-key-value',
-    pattern: `(?<=${SECRET_KEY}${KEY_QUOTE})${NOT_A_VALUE}${KEY_VALUE}`,
-    flags: 'i',
-  },
-  {
-    name: 'pass-key-value',
-    // DB_PASS=…, $env:KC_PASS = "…", pass: … (but not bypass/compass); in quotes, the whole value
-    // (DB_PASS="p@ss w0rd", DB_PASS=\"…\")
-    pattern: `${quotedAfter(PASS_KEY, NOT_A_VALUE)}|(?<=${PASS_KEY}${KEY_QUOTE})${NOT_A_VALUE}${KEY_VALUE}`,
-    flags: 'i',
-  },
+  // password = "Hunter 2 with spaces" → the whole quoted value; {"password": "a\"b"} and
+  // {\"password\":\"…\"} (escaped JSON) too
+  splitPattern('secret-key-value-quoted', quotedAlternatives(SECRET_KEY, NOT_A_VALUE), 'i'),
+  { name: 'secret-key-value', pattern: bareAfter(SECRET_KEY), flags: 'i' },
+  // DB_PASS=…, $env:KC_PASS = "…", pass: … (but not bypass/compass); in quotes, the whole value
+  // (DB_PASS="p@ss w0rd", DB_PASS=\"…\")
+  splitPattern('pass-key-value', [...quotedAlternatives(PASS_KEY, NOT_A_VALUE), bareAfter(PASS_KEY)], 'i'),
   {
     name: 'secret-flag-value',
     // --password value, --client-secret "value", --requirepass/requirepass value (Redis), -p value
@@ -344,11 +349,7 @@ const WIDENED_PATTERNS: readonly RedactionPattern[] = [
   // sshpass -p PASSWORD, redis-cli -a PASSWORD, ldapsearch -w PASSWORD, smbclient -U user%PASSWORD… (PASSWORD_TOOLS)
   { name: 'password-flag-tool', pattern: [...PASSWORD_TOOLS.map(toolRule), HTPASSWD].join('|') },
   // api key: …, secret key = …, "private key": "…", passphrase: … (key names SECRET_KEYS misses)
-  {
-    name: 'secret-key-value-spaced',
-    pattern: `${quotedAfter(SPACED_KEY, NOT_A_VALUE)}|(?<=${SPACED_KEY}${KEY_QUOTE})${NOT_A_VALUE}${KEY_VALUE}`,
-    flags: 'i',
-  },
+  splitPattern('secret-key-value-spaced', [...quotedAlternatives(SPACED_KEY, NOT_A_VALUE), bareAfter(SPACED_KEY)], 'i'),
 ];
 
 /** Names of the widened patterns: the leak scan reports what they find last, and only when it looks like a secret. */
@@ -403,14 +404,30 @@ const patternKey = (p: string | RedactionPattern): string =>
 
 /** Built-in patterns read in linear time (redactScan.ts), by pattern and flags: the same regular expression of yours is too. */
 const LINEAR = new Map<string, SpanFinder>();
+/** The alternatives of the patterns found in parts (SPLIT_PATTERNS), by pattern and flags. */
+const SPLIT = new Map<string, readonly string[]>();
 for (const p of DEFAULT_PATTERNS) {
   const find = p.name === undefined ? undefined : LINEAR_FINDERS.get(p.name);
   if (find) LINEAR.set(patternKey(p), find);
+  const parts = p.name === undefined ? undefined : SPLIT_PATTERNS.get(p.name);
+  if (parts) SPLIT.set(patternKey(p), parts);
 }
 
 /**
- * Where `p` matches in `text` ([start, end), in order, as `text.matchAll` finds them): a built-in
- * pattern in linear time, any other with its regular expression. Throws if that doesn't compile.
+ * The regular expressions that define what `p` finds: its own, and for a built-in pattern found in
+ * parts (SPLIT_PATTERNS) each of its alternatives too, all on the whole text; the union of their
+ * matches is what it finds (patternFinder, in linear time). Throws if `p` doesn't compile.
+ */
+export function patternRegexes(p: string | RedactionPattern): RegExp[] {
+  const parts = SPLIT.get(patternKey(p)) ?? [];
+  const flags = typeof p === 'string' ? undefined : p.flags;
+  return [compilePattern(p), ...parts.map((pattern) => compilePattern({ pattern, flags }))];
+}
+
+/**
+ * Where `p` matches in `text` ([start, end), in order, as `text.matchAll` finds them; for a pattern
+ * found in parts, the union of its parts' matches, patternRegexes): a built-in pattern in linear
+ * time, any other with its regular expression. Throws if that doesn't compile.
  */
 export function patternFinder(p: string | RedactionPattern): SpanFinder {
   const linear = LINEAR.get(patternKey(p));
@@ -419,20 +436,8 @@ export function patternFinder(p: string | RedactionPattern): SpanFinder {
   return (text) => [...text.matchAll(re)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
 }
 
-/**
- * The union of `spans` (any order; empty ones dropped): sorted, and those that overlap or touch
- * merged into one.
- */
-export function mergeSpans(spans: Spans): Spans {
-  const sorted = spans.filter(([start, end]) => end > start).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const out: Spans = [];
-  for (const [start, end] of sorted) {
-    const last = out[out.length - 1];
-    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
-    else out.push([start, end]);
-  }
-  return out;
-}
+/** The union of spans (redactScan.ts, where the patterns found in parts merge theirs too). */
+export { mergeSpans };
 
 /** The union of two sorted lists of spans that don't overlap among themselves, as mergeSpans gives it. */
 function unionSorted(a: Spans, b: Spans): Spans {
