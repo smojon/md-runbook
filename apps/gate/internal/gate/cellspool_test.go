@@ -90,12 +90,12 @@ func TestLeaseClear(t *testing.T) {
 	f := &fakeLocks{held: map[string]bool{}}
 	stuckOnes := map[int]bool{0: true}
 	var tried []int
-	clear := func(i int) string {
+	clear := func(i int) (string, bool) {
 		tried = append(tried, i)
 		if stuckOnes[i] {
-			return "1 processes of " + testPool[i] + " are left after ending them all (300 sleep)"
+			return "1 processes of " + testPool[i] + " are left after ending them all (300 sleep)", true
 		}
-		return ""
+		return "", false
 	}
 	i, l, stuck, problems, err := leaseClear(testPool, f.lock, clear)
 	if err != nil || i != 1 || len(stuck) != 1 || !reflect.DeepEqual(tried, []int{0, 1}) || len(problems) != 1 || !strings.Contains(problems[0], "mdrb-cells-1 are left") {
@@ -140,6 +140,31 @@ func TestLeaseClear(t *testing.T) {
 	f = &fakeLocks{held: map[string]bool{}, fail: map[string]error{"mdrb-cells-2": syscall.EACCES}}
 	if _, _, _, _, err := leaseClear(testPool, f.lock, clear); err == nil || !strings.Contains(err.Error(), "can't take the lock of mdrb-cells-2") || f.held["mdrb-cells-1"] {
 		t.Errorf("a failing lock: %v %v", err, f.held)
+	}
+
+	// Another gate account's blocks run as an account (a shared pool): no skip, refused with that
+	// reason, no account leased, every lock released (review of 0.30.0, round 2, M-2: the two
+	// gate accounts don't see each other's locks, so a skip would let both use the next one).
+	const otherGate = "mdrb-cells-2 runs the blocks of another gate account's session (602 bash): a pool serves one gate account only. Give each gate account cells accounts of its own"
+	f = &fakeLocks{held: map[string]bool{}}
+	tried = nil
+	shared := func(i int) (string, bool) {
+		tried = append(tried, i)
+		switch i {
+		case 0:
+			return "1 processes of mdrb-cells-1 are left after ending them all (300 sleep)", true
+		case 1:
+			return otherGate, false
+		}
+		return "", false
+	}
+	i, l, stuck, _, err = leaseClear(testPool, f.lock, shared)
+	var refused clearRefused
+	if !errors.As(err, &refused) || refused.why != otherGate || err.Error() != otherGate || i != -1 || l != nil || len(stuck) != 0 || !reflect.DeepEqual(tried, []int{0, 1}) {
+		t.Errorf("another gate account: %d %v %d %v", i, err, len(stuck), tried)
+	}
+	if len(f.held) != 0 {
+		t.Errorf("another gate account, held: %v", f.held)
 	}
 }
 
@@ -335,8 +360,12 @@ func TestClearAccount(t *testing.T) {
 			{PID: 500, PPID: 1, UID: 1000, Comm: "md-runbook-gate"},
 		}
 	}
+	var stuck bool
 	run := func(f *fakeProcs, start bool) ([]int, string) {
-		return clearAccount(clearer{list: f.ls, killall: f.killall, sleep: func(time.Duration) {}}, "mdrb-cells-1", 1501, 1000, "md-runbook-gate", start)
+		var killed []int
+		var problem string
+		killed, problem, stuck = clearAccount(clearer{list: f.ls, killall: f.killall, sleep: func(time.Duration) {}}, "mdrb-cells-1", 1501, 1000, "md-runbook-gate", start)
+		return killed, problem
 	}
 	f := &fakeProcs{list: base(), uid: 1501}
 	killed, problem := run(f, true)
@@ -362,19 +391,20 @@ func TestClearAccount(t *testing.T) {
 		t.Errorf("twice stubborn: %q %d", problem, f.kills)
 	}
 	f = &fakeProcs{list: base(), uid: 1501, stubborn: 3}
-	if _, problem := run(f, true); !strings.Contains(problem, "2 processes of mdrb-cells-1 are left after ending them all (300 sleep, 301 sh)") || f.kills != 3 {
-		t.Errorf("stubborn: %q %d", problem, f.kills)
+	if _, problem := run(f, true); !strings.Contains(problem, "2 processes of mdrb-cells-1 are left after ending them all (300 sleep, 301 sh)") || f.kills != 3 || !stuck {
+		t.Errorf("stubborn: %q %d %v", problem, f.kills, stuck)
 	}
 	// sudo can't run it.
 	f = &fakeProcs{list: base(), uid: 1501, killErr: errors.New("exit status 1: sudo: a password is required")}
-	if _, problem := run(f, false); !strings.Contains(problem, "can't end the processes of mdrb-cells-1 through sudo (exit status 1: sudo: a password is required)") {
-		t.Errorf("sudo: %q", problem)
+	if _, problem := run(f, false); !strings.Contains(problem, "can't end the processes of mdrb-cells-1 through sudo (exit status 1: sudo: a password is required)") || !stuck {
+		t.Errorf("sudo: %q %v", problem, stuck)
 	}
 	// Another gate account's session runs as it (a shared pool): refused at the start, nothing killed.
 	other := append(base(), procs.Proc{PID: 600, PPID: 1, UID: 1001, Comm: "md-runbook-gate"}, procs.Proc{PID: 601, PPID: 600, UID: 0, Comm: "sudo"}, procs.Proc{PID: 602, PPID: 601, UID: 1501, Comm: "bash"})
 	f = &fakeProcs{list: other, uid: 1501}
-	if _, problem := run(f, true); !strings.Contains(problem, "runs the blocks of another gate account's session (602 bash)") || f.kills != 0 {
-		t.Errorf("another gate: %q %d", problem, f.kills)
+	// Not stuck: a lease refuses instead of skipping it (round 2, M-2).
+	if _, problem := run(f, true); !strings.Contains(problem, "runs the blocks of another gate account's session (602 bash)") || f.kills != 0 || stuck {
+		t.Errorf("another gate: %q %d %v", problem, f.kills, stuck)
 	}
 	// This gate's own sessions don't count (none can run as a leased account; at the end they are
 	// the session's own).
@@ -385,7 +415,7 @@ func TestClearAccount(t *testing.T) {
 	}
 	// hidepid: the gate can't see the account's processes.
 	f = &fakeProcs{list: base()[1:], uid: 1501}
-	if _, problem := run(f, true); !strings.Contains(problem, "hidepid") {
-		t.Errorf("hidepid: %q", problem)
+	if _, problem := run(f, true); !strings.Contains(problem, "hidepid") || stuck {
+		t.Errorf("hidepid: %q %v", problem, stuck)
 	}
 }

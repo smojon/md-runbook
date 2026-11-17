@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -315,14 +316,14 @@ func TestPodNotices(t *testing.T) {
 	if got := j.hello(true); got != job {
 		t.Errorf("hello: %q", got)
 	}
-	j.waitFor()
-	j.waitFor()
+	j.waitFor("")
+	j.waitFor("")
 	if out.String() != starting+starting || closed(j) || j.isSettled() {
 		t.Errorf("waiting: %q", out.String())
 	}
 	out.Reset()
 	j.settle("md-runbook-cells-0a1b2c3d4e-x7k2p", "")
-	j.waitFor()
+	j.waitFor("")
 	if out.String() != ready || !closed(j) || j.podName() != "md-runbook-cells-0a1b2c3d4e-x7k2p" || !j.isSettled() {
 		t.Errorf("ready: %q", out.String())
 	}
@@ -333,7 +334,7 @@ func TestPodNotices(t *testing.T) {
 	// The pod won't come: the waiting request hears why, and no second line says it.
 	j, out = newJob()
 	j.hello(true)
-	j.waitFor()
+	j.waitFor("")
 	j.settle("", "the session's pod wasn't ready after 180 s: see kubectl -n md-runbook-ops describe job x")
 	want := starting + "\x1e__MDRB_POD__ failed this session's cells can't start: the session's pod wasn't ready after 180 s: see kubectl -n md-runbook-ops describe job x\n"
 	if out.String() != want || !closed(j) || j.podName() != "" {
@@ -349,8 +350,8 @@ func TestPodNotices(t *testing.T) {
 	if out.String() != "" {
 		t.Errorf("ready, nothing waiting yet: %q", out.String())
 	}
-	j.waitFor()
-	j.waitFor()
+	j.waitFor("")
+	j.waitFor("")
 	if out.String() != ready {
 		t.Errorf("ready, then requests: %q", out.String())
 	}
@@ -358,7 +359,7 @@ func TestPodNotices(t *testing.T) {
 	j, out = newJob()
 	j.hello(true)
 	j.settle("", "its pod can't start (ImagePullBackOff: x)")
-	j.waitFor()
+	j.waitFor("")
 	if out.String() != "\x1e__MDRB_POD__ failed this session's cells can't start: its pod can't start (ImagePullBackOff: x)\n" {
 		t.Errorf("failed, nothing waiting: %q", out.String())
 	}
@@ -368,7 +369,7 @@ func TestPodNotices(t *testing.T) {
 	if got := j.hello(true); got != "" {
 		t.Errorf("hello once settled: %q", got)
 	}
-	j.waitFor()
+	j.waitFor("")
 	if out.String() != "" {
 		t.Errorf("not told job: %q", out.String())
 	}
@@ -378,20 +379,31 @@ func TestPodNotices(t *testing.T) {
 	if got := j.hello(false); got != "" {
 		t.Errorf("hello without notices: %q", got)
 	}
-	j.waitFor()
-	j.waitFor()
+	j.waitFor("")
+	j.waitFor("")
 	j.settle("p", "")
-	j.waitFor()
+	j.waitFor("")
 	if out.String() != "md-runbook-gate: this session's blocks run in a Kubernetes Job of their own ("+testSpec.Name+"): the first one waits for its pod\n" {
 		t.Errorf("without notices: %q", out.String())
 	}
 	j, out = newJob()
 	j.hello(false)
-	j.waitFor()
+	j.waitFor("")
 	out.Reset()
 	j.settle("", "its pod ended (Failed)")
 	if out.String() != "md-runbook-gate: this session's cells can't start: its pod ended (Failed)\n" {
 		t.Errorf("failed without notices: %q", out.String())
+	}
+
+	// A second hello without pod notices doesn't take `job` back: the request still hears
+	// `starting`, and `ready` before the shell gets it (round 2, M-1: the client relies on it).
+	j, out = newJob()
+	j.hello(true)
+	j.hello(false)
+	j.waitFor("")
+	j.settle("p", "")
+	if out.String() != starting+ready {
+		t.Errorf("a second hello: %q", out.String())
 	}
 
 	// The pod gets ready while requests come: one `ready`, never a `starting` after it.
@@ -400,7 +412,7 @@ func TestPodNotices(t *testing.T) {
 		j.hello(true)
 		go j.settle("p", "")
 		for k := 0; k < 3; k++ {
-			j.waitFor()
+			j.waitFor("")
 		}
 		<-j.ready
 		j.mu.Lock()
@@ -424,40 +436,125 @@ func TestLeftWaiting(t *testing.T) {
 	// Nothing waited: open until the pod settles, then not.
 	j := newJob()
 	j.hello(true)
-	if !j.leftWaiting() {
+	if j.leftWaiting(0) == "" {
 		t.Error("before the pod settled")
 	}
 	j.settle("p", "")
-	j.waitFor()
-	if j.leftWaiting() {
+	j.waitFor("")
+	if j.leftWaiting(0) != "" {
 		t.Error("a request after the pod was ready")
 	}
 	// A request waited; the pod got ready; the client left before its next line (its stop).
 	j = newJob()
 	j.hello(true)
 	j.spoke()
-	j.waitFor()
+	j.waitFor("")
 	j.spoke() // a line before the pod settled says nothing of the reply
 	j.settle("p", "")
-	if !j.leftWaiting() {
+	if j.leftWaiting(0) == "" {
 		t.Error("the waiting request's reply not had")
 	}
 	// Its next line: it had the reply.
 	j.spoke()
-	if j.leftWaiting() {
+	if j.leftWaiting(0) != "" {
 		t.Error("after the client's next line")
 	}
 	// A client before protocol 4 (no notices): the same.
 	j = newJob()
 	j.hello(false)
-	j.waitFor()
+	j.waitFor("")
 	j.settle("p", "")
-	if !j.leftWaiting() {
+	if j.leftWaiting(0) == "" {
 		t.Error("without notices, the reply not had")
 	}
 	j.spoke()
-	if j.leftWaiting() {
+	if j.leftWaiting(0) != "" {
 		t.Error("without notices, after the client's next line")
+	}
+	if j = newJob(); j.leftWaiting(0) != "the client left while the pod was starting" {
+		t.Errorf("starting: %q", j.leftWaiting(0))
+	}
+
+	// A signed run waited: its exit, back through the follower, is its end. A one-shot client
+	// that leaves after the reply cuts nothing short and isn't logged as gone (round 2, L-1).
+	const notSeen = "the client left before the gate saw the end of the request that waited for the pod"
+	newGate := func() *Gate {
+		g := &Gate{log: &logx.Logger{Dest: t.TempDir() + "/gate.log"}, job: newJob()}
+		g.sepRuns = map[string]sepRun{"1": {"0000aa01", "n1"}, "2": {"0000aa02", "n2"}}
+		g.sepExits = map[string]report.Exit{}
+		g.endCh = make(chan struct{}, 1)
+		g.job.closing.Store(true)
+		g.job.hello(true)
+		return g
+	}
+	exit := func(n, nonce string) string { return "0\t" + n + "\t0\t2026-11-16T10:00:01Z\t" + nonce + "\t\n" }
+	g := newGate()
+	g.job.waitFor("1")
+	g.job.settle("p", "")
+	if why := g.job.leftWaiting(0); why != notSeen {
+		t.Errorf("no exit yet: %q", why)
+	}
+	// It comes while the gate waits for it.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		g.followLines(strings.NewReader(exit("1", "n1")))
+	}()
+	if why := g.job.leftWaiting(10 * time.Second); why != "" {
+		t.Errorf("exit while waiting: %q", why)
+	}
+	// The run still pending: the gate waits, then the session is cut short.
+	g = newGate()
+	g.job.waitFor("1")
+	g.job.settle("p", "")
+	t0 := time.Now()
+	if why := g.job.leftWaiting(150 * time.Millisecond); why != notSeen || time.Since(t0) < 140*time.Millisecond {
+		t.Errorf("pending: %q after %v", why, time.Since(t0))
+	}
+	// Another run's exit, or one the gate refuses (no random number), is not that end.
+	g.followLines(strings.NewReader(exit("2", "n2")))
+	if why := g.job.leftWaiting(0); why != notSeen {
+		t.Errorf("another run's exit: %q", why)
+	}
+	g = newGate()
+	g.job.waitFor("1")
+	g.job.settle("p", "")
+	g.followLines(strings.NewReader(exit("1", "forged")))
+	if why := g.job.leftWaiting(0); why != notSeen || g.exitsBadNow() == "" {
+		t.Errorf("a refused exit: %q", why)
+	}
+	// Not a signed run (raw, context): no exit comes back, so no wait.
+	g = newGate()
+	g.job.waitFor("")
+	g.job.settle("p", "")
+	t0 = time.Now()
+	if why := g.job.leftWaiting(10 * time.Second); why != notSeen || time.Since(t0) > 5*time.Second {
+		t.Errorf("raw: %q after %v", why, time.Since(t0))
+	}
+	// Two requests sent before the pod was ready: which reply the client had is unknown.
+	g = newGate()
+	g.job.waitFor("1")
+	g.job.waitFor("2")
+	g.job.settle("p", "")
+	g.followLines(strings.NewReader(exit("1", "n1")))
+	if why := g.job.leftWaiting(0); why != notSeen {
+		t.Errorf("two queued: %q", why)
+	}
+}
+
+// The app's bound on the wait for the pod (POD_WAIT_MAX_MS) is above the gate's own, with a
+// margin for the notice's way: raise both together.
+func TestPodWaitBound(t *testing.T) {
+	src, err := os.ReadFile("../../../../packages/ssh/src/remoteShell.ts")
+	if err != nil {
+		t.Skip("no packages/ssh here: ", err)
+	}
+	m := regexp.MustCompile(`export const POD_WAIT_MAX_MS = (\d+) \* 60_000;`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("no POD_WAIT_MAX_MS = N * 60_000 in remoteShell.ts")
+	}
+	app := time.Duration(atoi(string(m[1]))) * time.Minute
+	if podWaitWorst+15*time.Second > app {
+		t.Errorf("the gate may wait %v for the pod; the app gives up after %v", podWaitWorst, app)
 	}
 }
 

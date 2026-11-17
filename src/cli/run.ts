@@ -22,6 +22,7 @@ import {
   isOverEstimate,
   runbookEstimate,
   runProgressLine,
+  unnumberedStep,
   terminalBarWidth,
   formatDurationAttr,
   formatLocalIso,
@@ -37,7 +38,7 @@ import {
 } from '@md-runbook/core';
 import { callEstimateSeconds, callTarget, executeCell, fileSha256, relativeToCaller, samePath, writeCallCopy } from '@md-runbook/core/node';
 import { callAttrs, callChainProblem, callFromAttrs, callOutputText, callRefs, checkCall, fillRefs, formatCallSteps, isCallLanguage, isDynamicSrc, parseCall, recordValues, srcValueProblem } from '@md-runbook/core/call';
-import { stepState } from '@md-runbook/core/progress';
+import { ProgressCell, checklist, computeProgress, stepState } from '@md-runbook/core/progress';
 import { KubeContextMode } from '@md-runbook/core/kubeContext';
 import type { ShellSettings } from '@md-runbook/core';
 import { cellRefs, parseCellOptions } from '@md-runbook/core/cellOptions';
@@ -57,7 +58,7 @@ import { TranscriptFile } from '@md-runbook/core/node/transcript';
 import { TranscriptEntry, transcriptNote } from '@md-runbook/core/transcript';
 import { ManualStep, PlannedBlock, RunUsageError, formatSteps, headingsOf, missingCaptures, selectManual, selectSteps, selectionLabel } from './select';
 import { taskItems } from '@md-runbook/core';
-import { RunbookPart, runbookParts } from '@md-runbook/core/parts';
+import { RunbookPart, partOf, runbookParts } from '@md-runbook/core/parts';
 import { runbookTitle } from '@md-runbook/core/title';
 import { checkSignedRun, insideRoot, repositoryRoot } from './signedRun';
 import { LINE_RE } from '@md-runbook/core/lines';
@@ -435,12 +436,49 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     if (text === undefined) return undefined;
     return formatRunbookEstimate(e, terminalBarWidth(process.stdout.isTTY ? process.stdout.columns : undefined, text.length));
   };
+  /** Blocks the pinned line was shown for: run in this run (VS Code would have their outputs). */
+  const pinnedBefore = new Set<number>();
+  /**
+   * Where block `i` is, numbered as VS Code and the app number it (core computeProgress):
+   * checklist items count; the ready check and a teardown step not run yet don't, and say so.
+   * The `▶ Step N` lines keep their numbers: --from and --to, the report and the run record use them.
+   */
+  const pinnedWhere = (i: number): { step?: number; where?: string; total: number } => {
+    const locAt = new Map(locs.map((l, k) => [l.cellIndex, k]));
+    const p = computeProgress(
+      doc.cells.map((c, ci): ProgressCell => {
+        if (c.kind !== 'code') return { kind: 'markup', tasks: checklist(c.value) };
+        const k = locAt.get(ci);
+        const opts = parseCellOptions(c.meta.kind === 'code' ? c.meta.info : '');
+        // The block running has no output yet; one run before it has one; the others, the file's.
+        const attrs: Record<string, string> | undefined = k === undefined ? undefined : k === i ? undefined : pinnedBefore.has(k) ? { exit: '0' } : locs[k]!.outputAttrs;
+        const slot = slots[ci];
+        return {
+          kind: 'code',
+          exit: attrs?.exit,
+          partial: attrs?.lines !== undefined,
+          check: attrs?.check,
+          ...(slot ? { os: slot } : {}),
+          // host= blocks never run here.
+          ...(opts.host ? { elsewhere: true } : {}),
+          ...(opts.part ? { part: opts.part } : {}),
+        };
+      }),
+    );
+    const cell = locs[i]!.cellIndex;
+    const step = p.stepOfCell[cell];
+    return { ...(step !== undefined ? { step } : { where: unnumberedStep(partOf(locs[i]!.info), cell + 1) }), total: p.total };
+  };
   /** The pinned line while block `i` runs: `Step 3/7 · 54% · 1 min left` (core runProgressLine). */
-  const pinnedLine = (i: number, since: number): { text: string; fraction: number } => {
-    const counted = planned.filter((k) => k !== readyIdx);
-    const done = counted.filter((k) => finished.has(k)).length;
-    const e = estimateNow({ i, since });
-    return runProgressLine({ step: numbers[i]!, total: Math.max(0, ...numbers), estimate: e, open: counted.length - done, percent: true, stepsDone: counted.length ? done / counted.length : 0 });
+  const pinnedRead = (i: number, since: number): (() => { text: string; fraction: number }) => {
+    const at = pinnedWhere(i);
+    pinnedBefore.add(i);
+    return () => {
+      const counted = planned.filter((k) => k !== readyIdx);
+      const done = counted.filter((k) => finished.has(k)).length;
+      const e = estimateNow({ i, since });
+      return runProgressLine({ ...at, estimate: e, open: counted.length - done, percent: true, stepsDone: counted.length ? done / counted.length : 0 });
+    };
   };
   // The ready check runs before the steps it guards, wherever it is in the file.
   const order = [...locs.keys()];
@@ -699,7 +737,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         io.log(`▶ ${where}${opts.name ? ` · ${opts.name}` : ''} · ${redact(shown)}${part} · ${resumed ? `continuing ${copyShown} (steps done there are kept)` : `copy ${copyShown}`}`);
         note(n, title, `runs ${redact(shown)}${part} as ${copyShown}`);
         const started = new Date();
-        o.pinned?.show(() => pinnedLine(i, started.getTime()));
+        if (o.pinned) o.pinned.show(pinnedRead(i, started.getTime()));
         const ctl = new AbortController();
         const onAbort = (): void => ctl.abort();
         o.signal?.addEventListener('abort', onAbort, { once: true });
@@ -859,7 +897,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       const est = opts.estimateSeconds !== undefined ? ` · est. ${formatEstimate(opts.estimateSeconds)}` : '';
       io.log(`▶ ${where}${est}${opts.name ? ` · ${opts.name}` : ''}${contextFromParam ? ` · Kubernetes context ${contextFromParam}` : ''}`);
       const started = new Date();
-      o.pinned?.show(() => pinnedLine(i, started.getTime()));
+      if (o.pinned) o.pinned.show(pinnedRead(i, started.getTime()));
       // Held like the live output when the step captures a secret: redacted once it is known.
       const entry = transcriptFile ? new TranscriptEntry((t) => transcriptFile.append(t), redact, holdOutput) : undefined;
       entry?.start({ at: started, runbook: fileName, step: n, line: loc.line + 1, section: sectionAt(loc.line), title: opts.name ?? firstLine, command: source });

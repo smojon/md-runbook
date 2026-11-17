@@ -66,12 +66,19 @@ const (
 	// it: the follower's dead-man switch ends the pod when the gate goes.
 	jobDeadline = 86400
 	jobTTL      = 60
-	// How long the pod may take to be Ready, and how often the gate asks.
+	// How long the pod may take to be Ready, and how often the gate asks. The app waits for the
+	// pod at most POD_WAIT_MAX_MS (packages/ssh/src/remoteShell.ts, 5 min): keep that above this
+	// plus the kubectl calls around it (podWaitWorst). Raise both together: TestPodWaitBound.
 	jobReadyMax  = 3 * time.Minute
 	jobReadyPoll = 500 * time.Millisecond
 	// The longest line the follower forwards (an exit, or a probe event).
 	followLineMax = 16 << 10
 )
+
+// podWaitWorst: the longest a request can wait for the pod before its final notice. The last
+// look of waitPod starts just before jobReadyMax ends; then the checks in the pod: check (1 call)
+// and checkNamespaces (2). Each kubectl call: runLimit, then waitDelay for its output.
+const podWaitWorst = jobReadyMax + jobReadyPoll + 4*(runLimit+waitDelay)
 
 // kubeJob is the session's Job: how the gate reaches Kubernetes, and what it learned.
 type kubeJob struct {
@@ -93,10 +100,14 @@ type kubeJob struct {
 	// its hello said PodJob, so it reads notices until `ready` or `failed`; final: that one was
 	// said; settled: the pod is Ready or won't be; waiting: a request heard `starting`; queued: a
 	// request went to a shell before the pod was ready; answered: the client sent a line after
-	// the pod settled (it had that request's reply); noted: the gate's line for other clients was
-	// said.
+	// the pod settled (it had that request's reply), or that request's exit came back; noted: the
+	// gate's line for other clients was said.
 	out                                                                  io.Writer
 	notices, announced, final, settled, waiting, queued, answered, noted bool
+	// queuedRun: the run number of the queued request when it is a signed run ("" otherwise, or
+	// when more than one was queued); ran is closed once its exit comes back (ranExit).
+	queuedRun string
+	ran       chan struct{}
 	// closing: the gate ends the follower (its end is no sign of a changed stream).
 	closing atomic.Bool
 
@@ -295,7 +306,9 @@ func (j *kubeJob) sayFinal() {
 func (j *kubeJob) hello(notices bool) string {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	j.notices = notices
+	// Told PodJob once, the client reads notices until the final one: a later hello doesn't take
+	// that back (no request may then reach a shell before it).
+	j.notices = notices || j.announced
 	if notices && !j.settled {
 		j.announced = true
 		return proto.Pod(proto.PodJob, "")
@@ -307,11 +320,20 @@ func (j *kubeJob) hello(notices bool) string {
 // goes to the shell. While the pod isn't ready, a client that takes pod notices hears
 // PodStarting (its time limit waits for PodReady); another gets the gate's line, once. Once it
 // is, a client told PodJob that hasn't heard PodReady yet hears it now: before any output of
-// the shell, so that a block can't fake a notice (review of 0.30.0, H1).
-func (j *kubeJob) waitFor() {
+// the shell, so that a block can't fake a notice (review of 0.30.0, H1). run: the request's run
+// number when it is a signed run (its exit comes back through the follower), else "".
+func (j *kubeJob) waitFor(run string) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	j.queued = j.queued || !j.settled
+	if !j.settled {
+		if j.queued {
+			// A second one (the client sends one at a time): which reply it had is unknown.
+			j.queuedRun = ""
+		} else if run != "" {
+			j.queuedRun, j.ran = run, make(chan struct{})
+		}
+		j.queued = true
+	}
 	switch {
 	case j.settled:
 		if j.announced {
@@ -344,14 +366,41 @@ func (j *kubeJob) spoke() {
 	}
 }
 
-// leftWaiting: the client left while the pod was starting, or before the reply of a request sent
-// before it was ready (a stop then closes the session: review of 0.30.0, L5). The gate doesn't
-// see the shell's end markers (the shell writes to the client), so that request counts as open
-// until the client's next line. What it sent then runs for no one: the session is cut short.
-func (j *kubeJob) leftWaiting() bool {
+// ranExit: the exit of run n came back through the follower. When n is the queued request, it
+// ended: the client's leaving no longer cuts the session short (review of 0.30.0, round 2, L-1).
+func (j *kubeJob) ranExit(n string) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return !j.settled || j.queued && !j.answered
+	if j.queuedRun != "" && n == j.queuedRun && !j.answered {
+		j.answered = true
+		close(j.ran)
+	}
+}
+
+// leftWaiting: why the client's leaving cuts the session short, else "". It left while the pod
+// was starting, or before the gate saw the end of a request sent before the pod was ready (a stop
+// then closes the session: review of 0.30.0, L5). The gate doesn't see the shell's end markers
+// (the shell writes to the client). So that request counts as open until the client's next line,
+// or, for a signed run, its exit: the gate waits up to wait for that one (the follower polls).
+// What it sent then runs for no one: the session is cut short.
+func (j *kubeJob) leftWaiting(wait time.Duration) string {
+	j.mu.Lock()
+	settled, open, run, ran := j.settled, j.queued && !j.answered, j.queuedRun, j.ran
+	j.mu.Unlock()
+	switch {
+	case !settled:
+		return "the client left while the pod was starting"
+	case !open:
+		return ""
+	}
+	if run != "" {
+		select {
+		case <-ran:
+			return ""
+		case <-time.After(wait):
+		}
+	}
+	return "the client left before the gate saw the end of the request that waited for the pod"
 }
 
 // waitPod: the Job's pod once Ready, or why not. At most jobReadyMax; an error that won't pass
@@ -731,6 +780,12 @@ func (g *Gate) followLines(r io.Reader) {
 			g.junkExits("a line is over 4096 bytes")
 		case src == "0":
 			g.exitLine(text)
+			// A request that waited for the pod has ended: its exit is in.
+			if n, _, _ := strings.Cut(text, "\t"); g.exitsBad == "" {
+				if _, ok := g.sepExits[n]; ok {
+					g.job.ranExit(n)
+				}
+			}
 		case src == "!0":
 			g.junkExits(textutil.Cut(text, 200))
 		case src == "1":
