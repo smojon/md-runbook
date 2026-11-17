@@ -120,7 +120,7 @@ const STDOUT = 'application/vnd.code.notebook.stdout';
 const STDERR = 'application/vnd.code.notebook.stderr';
 const decoder = new TextDecoder();
 
-/** What a step printed, as on screen now (live or loaded from the file); not the status line or earlier runs. */
+/** What a step printed, as on screen now (live or loaded from the file); not the status lines or earlier runs. */
 function outputText(cell: vscode.NotebookCell): string {
   let saved: string | undefined;
   const parts: string[] = [];
@@ -131,7 +131,7 @@ function outputText(cell: vscode.NotebookCell): string {
       if (m.text !== undefined) saved = m.text;
       continue;
     }
-    if (m?.earlier || m?.cloud) continue;
+    if (m?.running || m?.earlier || m?.cloud) continue;
     for (const item of o.items) if (item.mime === STDOUT || item.mime === STDERR || item.mime === 'text/plain') parts.push(decoder.decode(item.data));
   }
   return saved ?? parts.join('');
