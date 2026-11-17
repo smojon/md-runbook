@@ -72,6 +72,9 @@ update (see below).
   - a parameter's "One of: …" comment (1,000 blanks in it took 80 s);
   - Kubernetes Secrets in the leak scan, and namespaces and URLs in Copy for AI;
   - output colours, output block attributes, call copies, cloud views and a cell's commands.
+- **Fixed: Save was cut off in the app's Edit as Text on phones.** "Unsaved changes" is now on a
+  small line under the buttons, so Undo, Discard and Save fit in one row. Tablets and the web
+  keep one row.
 
 
 ## 0.29.0

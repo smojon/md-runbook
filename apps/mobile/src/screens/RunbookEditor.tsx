@@ -7,7 +7,7 @@
  */
 import { Stack, router } from 'expo-router';
 import { useDeferredValue, useMemo, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { t } from '../i18n';
 import { MarkdownView } from '../markdown/MarkdownView';
 import { draftOf, hasOutputs, keepDraft, signatureBreaks } from '../runbooks/editing';
@@ -24,6 +24,11 @@ type Mode = 'edit' | 'preview';
 /** Snapshots for Undo: one per pause in typing, at most this many. */
 const UNDO_MAX = 200;
 const UNDO_PAUSE_MS = 800;
+/**
+ * Narrower than this (in dp at text size 100 %): "Unsaved changes" goes on a line of its own under
+ * the buttons, as Undo, Discard, the state and Save don't fit in one row on a phone.
+ */
+const TOOLBAR_ONE_ROW = 600;
 
 /** The offset where 0-based `line` starts in `text`. */
 export function lineOffset(text: string, line: number): number {
@@ -39,6 +44,8 @@ export function lineOffset(text: string, line: number): number {
 export function RunbookEditor({ id, from }: { id: string | undefined; from?: string }) {
   const styles = useStyles();
   const colors = usePalette();
+  const { width, fontScale } = useWindowDimensions();
+  const oneRow = width / (fontScale || 1) >= TOOLBAR_ONE_ROW;
   const runbook = useRunbooks().find((r) => r.id === id);
   const [mode, setMode] = useState<Mode>('edit');
   /** The text the draft started from (the runbook as saved then). */
@@ -159,6 +166,11 @@ export function RunbookEditor({ id, from }: { id: string | undefined; from?: str
       <Text style={primary ? styles.primaryText : styles.toolText}>{label}</Text>
     </Pressable>
   );
+  const state = (
+    <Text testID="editor-state" style={oneRow ? styles.state : styles.stateLine} role="status" numberOfLines={1}>
+      {dirty ? t.editorUnsaved : (said ?? '')}
+    </Text>
+  );
 
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={96}>
@@ -185,15 +197,16 @@ export function RunbookEditor({ id, from }: { id: string | undefined; from?: str
           </View>
         </View>
       ) : null}
-      <View style={styles.toolbar}>
+      {/* Wide: one row. Narrow: the state on a line of its own under Save; the buttons wrap
+          (Save to the right) when large text still doesn't fit. */}
+      <View testID="editor-toolbar" style={styles.toolbar}>
         {button('editor-undo', 'discard', t.editorUndo, undoLast, undo.stack.length > 0)}
         {button('editor-discard', 'close', t.editorDiscard, discard, dirty)}
         <View style={styles.grow} />
-        <Text testID="editor-state" style={styles.state} role="status">
-          {dirty ? t.editorUnsaved : (said ?? '')}
-        </Text>
+        {oneRow ? state : null}
         {button('editor-save', 'save', t.editorSave, () => save(), dirty, true)}
       </View>
+      {oneRow ? null : state}
       {copyNote || hasOutputs(draft) ? (
         <Points
           testID="editor-notes"
@@ -269,7 +282,15 @@ const useStyles = themedStyles((c) => ({
   segmentText: { fontSize: 14, color: c.muted },
   segmentTextOn: { color: c.text, fontWeight: '600' },
   pressed: { opacity: 0.7 },
-  toolbar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 4 },
+  toolbar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
   grow: { flex: 1 },
   tool: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44, paddingHorizontal: 10, borderRadius: 8 },
   toolText: { fontSize: 15, color: c.link },
@@ -285,6 +306,8 @@ const useStyles = themedStyles((c) => ({
   primaryText: { fontSize: 15, fontWeight: '600', color: c.onAccent },
   disabled: { opacity: 0.4 },
   state: { fontSize: 13, color: c.muted },
+  // Its line is kept while empty, so the text field doesn't move on the first change.
+  stateLine: { fontSize: 12, lineHeight: 16, minHeight: 16, color: c.muted, textAlign: 'right', paddingHorizontal: 12, marginTop: -2 },
   notes: { paddingHorizontal: 12, gap: 2 },
   note: { fontSize: 13, color: c.muted, lineHeight: 18 },
   text: {
