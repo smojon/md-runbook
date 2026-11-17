@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.30.0
+
+What's new:
+- A run's progress shows the way apt shows it: a pinned line in the terminal.
+- VS Code and the app show a live bar under the running cell.
+- On Kubernetes, a slow pod start no longer stops the first block.
+- Separated mode gets a pool of cells accounts, so sessions side by side stay apart.
+- Redaction runs in linear time and catches more secrets.
+
+**Fixed from 0.29:** with `cells_runner = kubernetes-job`, the 15-second context check counted the pod's start, so no block ran on slow clusters.
+
+**Gate admins:**
+- In separated mode on Linux, blocks run with no new privileges: sudo, su, setuid programs and file capabilities don't work in them.
+- Pool accounts need a nologin shell.
+- End running sessions before you update (see below and the [gate README](apps/gate/README.md#separated-mode)).
+
 **Gate admins with separated mode:**
 - With `cells_account =` alone, one session runs at a time now, and a second one refuses to
   start. For sessions side by side, set up a pool before you update (see below).
