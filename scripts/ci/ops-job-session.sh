@@ -81,7 +81,7 @@ echo "session a: pod $pod_a, Job $job_a; session b: pod $pod_b, Job $job_b; ops 
 [ "$(value a whoami)" = system:serviceaccount:md-runbook-ops:md-runbook-cells ] || fail "kubectl in a block is $(value a whoami)"
 [ "$(value a token)" != "$ops_token" ] || fail "a block read the ops pod's token"
 [ -z "$(value a leak)" ] || fail "a block reached the gate: $(grep '^leak=' "$work/a/out" | tr '\n' ' ')"
-[ "$(value a done)" = 1 ] || fail "the block didn't finish"
+[ "$(value a 'done')" = 1 ] || fail "the block didn't finish"
 
 close_session a 7
 for _ in $(seq 1 60); do
