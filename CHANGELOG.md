@@ -12,12 +12,23 @@
     shouldn't.
   - Run reports say `gate_mode` `separated`.
   - The first block of a session waits for its pod, about 2 to 5 seconds.
-  - Pod logs are now read per namespace, with the rights to change things.
+  - Pod logs and ConfigMaps are now read per namespace, with the rights to change things.
+  - Every namespace the blocks may change must enforce Pod Security `baseline` or
+    `restricted`. Else the session doesn't start, and the message names the namespace.
+  - The report token goes in the Secret `md-runbook-ops-report-token`, never in the gate's
+    ConfigMap. The gate refuses a token next to `gate.conf`.
+  - The pod ends itself when the gate's connection to it ends: nothing of a session outlives it.
+  - A session whose run lost its exit sends no run report.
+  - Probe events from a Job are logged only for that session's runs, with `"source":"job"`.
+  - NetworkPolicies: Job pods take no connection, and can't reach the ops pod's sshd.
+  - The Job runs the ops pod's image by digest, where a registry serves it.
   - `kubectl` is in `/usr/bin` in the image: the gate runs it as its other programs.
   - See [A Job per session](apps/ops/README.md#a-job-per-session).
 - **Ops host admins: move your bindings** ([README](apps/ops/README.md#in-a-cluster)).
   - Apply the new manifest. Update the image before the ConfigMap.
-  - Bind each namespace to `md-runbook-cells` instead of `md-runbook-ops`.
+  - Bind each namespace to `md-runbook-cells` instead of `md-runbook-ops`, and label it
+    `pod-security.kubernetes.io/enforce=baseline` (or `restricted`).
+  - Move a report token from the gate's ConfigMap into the Secret.
   - Remove the binding in `md-runbook-ops` itself.
   - Outside a cluster, keep your own `gate.conf`: the image's default now runs Jobs.
 - **VS Code, team library: a library's signers count for its runbooks only**, as in the app.

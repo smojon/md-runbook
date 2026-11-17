@@ -71,9 +71,10 @@ jobs:
           cp "$KEYS/client.pub" "$KEYS/authorized_keys"
           echo "ci@example.net namespaces=\"md-runbook\" $(cut -d' ' -f1,2 "$KEYS/signer.pub")" > "$KEYS/allowed_signers"
           printf '%s\n' 'unsigned = allow' 'allowed_signers = /etc/md-runbook/allowed_signers' 'log = /var/log/md-runbook/gate.log # a comment: the gate and md-runbook-probe both strip it' 'sshd_force_command = yes' 'kill_leftovers = yes' > "$KEYS/gate.conf"
-          # In the cluster: each session's blocks in a Job, and a report token they must not read.
+          # In the cluster: each session's blocks in a Job, and a report token (a Secret) they must
+          # not read.
           cp "$KEYS/gate.conf" "$KEYS/gate-cluster.conf"
-          printf '%s\n' 'cells_runner = kubernetes-job' 'job_service_account = md-runbook-cells' 'report_token_file = /etc/md-runbook/report-token' >> "$KEYS/gate-cluster.conf"
+          printf '%s\n' 'cells_runner = kubernetes-job' 'job_service_account = md-runbook-cells' 'report_token_file = /etc/md-runbook-ops/report/token' >> "$KEYS/gate-cluster.conf"
           openssl rand -hex 16 > "$KEYS/report-token"
 
       - name: Cluster
@@ -88,15 +89,17 @@ jobs:
       - name: Install the manifest the way the README says
         run: |
           kubectl apply -f apps/ops/kubernetes/md-runbook-ops.yaml
-          # Runbooks may change workloads in `default` (the test's web deployment), nowhere else.
+          # Runbooks may change workloads in `default` (the test's web deployment), nowhere else,
+          # and only as Pod Security baseline allows (the gate refuses an unguarded namespace).
+          kubectl label namespace default pod-security.kubernetes.io/enforce=baseline
           kubectl -n default create rolebinding md-runbook-ops-operate \
             --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-cells
           ns="-n md-runbook-ops"
           kubectl $ns create configmap md-runbook-ops-keys --from-file=authorized_keys="$KEYS/authorized_keys"
           kubectl $ns create secret generic md-runbook-ops-hostkey --from-file=ssh_host_ecdsa_key="$KEYS/ssh_host_ecdsa_key"
+          kubectl $ns create secret generic md-runbook-ops-report-token --from-file=token="$KEYS/report-token"
           kubectl $ns create configmap md-runbook-ops-gate --from-file=gate.conf="$KEYS/gate-cluster.conf" \
-            --from-file=allowed_signers="$KEYS/allowed_signers" --from-file=report-token="$KEYS/report-token" \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --from-file=allowed_signers="$KEYS/allowed_signers" --dry-run=client -o yaml | kubectl apply -f -
           kubectl $ns set image deployment/md-runbook-ops ops=md-runbook-ops:ci
           kubectl $ns set env deployment/md-runbook-ops CLUSTER_NAME=ops-ci
           kubectl $ns rollout status deployment/md-runbook-ops --timeout=180s

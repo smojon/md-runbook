@@ -304,6 +304,8 @@ report_to = https://runbooks.example.net/v1/runs   # optional: run reports (belo
 report_token_file = /etc/md-runbook/report-token   # its bearer token
 ```
 
+The ops host keeps that token in a Secret, not next to `gate.conf` ([Run reports from the gate](#run-reports-from-the-gate)).
+
 With SSH certificates the CA puts the restriction into each certificate, and servers need no
 `authorized_keys` edits: `ssh-keygen -s ca -I alice -n support -O clear -O force-command=/usr/local/bin/md-runbook-gate alice.pub`.
 
@@ -445,6 +447,10 @@ ends. It sends one per signed runbook the session ran, whatever client ran it.
 report_to = https://runbooks.example.net/v1/runs
 report_token_file = /etc/md-runbook/report-token   # a file with the bearer token
 ```
+
+On the [ops host](../../apps/ops/README.md#in-a-cluster), `/etc/md-runbook` is a ConfigMap. Put
+the token in the Secret `md-runbook-ops-report-token` instead:
+`report_token_file = /etc/md-runbook-ops/report/token`.
 
 The summary has the [run report format](run-reports.md#the-format-version-1) with client
 `gate`:

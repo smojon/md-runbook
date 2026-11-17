@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # The ops host's Jobs (cells_runner = kubernetes-job), through OpenSSH as an app session goes:
 #   - each session's blocks run in a pod of their own, as md-runbook-cells, not in the ops pod;
-#   - a block can't read the gate's service account token, report token or log;
+#   - a block can't read the gate's service account token, report token or log, nor its
+#     ConfigMap or Secrets through the API;
 #   - two sessions get two pods;
 #   - the Job goes when its session ends;
-#   - the gate logs gate_mode separated.
+#   - the gate logs gate_mode separated;
+#   - a namespace the blocks may change without Pod Security enforced: no session.
 # Needs KEYS (client, ssh_host_ecdsa_key.pub) and the ops Service forwarded to 127.0.0.1:$PORT.
 set -euo pipefail
 
@@ -54,7 +56,10 @@ ops_token=$(k exec "$ops_pod" -c ops -- sha256sum /var/run/secrets/kubernetes.io
 probe='echo "pod=$(hostname)"
 echo "whoami=$(kubectl auth whoami -o jsonpath="{.status.userInfo.username}" 2>&1)"
 echo "token=$(sha256sum < /var/run/secrets/kubernetes.io/serviceaccount/token | cut -c1-64)"
-cat /etc/md-runbook/report-token >/dev/null 2>&1 && echo "leak=report-token"
+cat /etc/md-runbook-ops/report/token >/dev/null 2>&1 && echo "leak=report-token"
+kubectl -n md-runbook-ops get configmap md-runbook-ops-gate >/dev/null 2>&1 && echo "leak=configmap"
+kubectl -n md-runbook-ops get secret md-runbook-ops-report-token >/dev/null 2>&1 && echo "leak=secret"
+kubectl -n md-runbook-ops get secrets >/dev/null 2>&1 && echo "leak=secrets"
 grep -q "\"event\":\"session\"" /var/log/md-runbook/gate.log 2>/dev/null && echo "leak=gate-log"
 kubectl -n md-runbook-ops logs "deployment/md-runbook-ops" --tail=1 >/dev/null 2>&1 && echo "leak=pod-log"
 kubectl -n md-runbook-ops exec "deployment/md-runbook-ops" -- true >/dev/null 2>&1 && echo "leak=exec"
@@ -91,6 +96,19 @@ done
 k get job "$job_a" > /dev/null 2>&1 && fail "Job $job_a is still there after its session"
 k get job "$job_b" > /dev/null || fail "Job $job_b went before its session"
 close_session b 8
+
+# A namespace the blocks may change that doesn't enforce Pod Security: the session refuses,
+# naming it (a privileged pod there would own its node, and the gate's pod on it).
+kubectl create namespace md-runbook-unguarded
+kubectl -n md-runbook-unguarded create rolebinding md-runbook-ops-operate \
+  --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-cells
+open_session c 9
+cell 0000cc01 'echo "ran=1"' >&9
+wait_for "$work/c/err" 'namespace md-runbook-unguarded, which'
+close_session c 9
+[ -z "$(value c ran)" ] || fail "a block ran although md-runbook-unguarded doesn't enforce Pod Security"
+cat "$work/c/err"
+kubectl delete namespace md-runbook-unguarded --wait=false
 
 # Every session's Job goes (the app's tests before this ran many), pods too.
 for _ in $(seq 1 90); do
