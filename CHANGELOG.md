@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Redaction and the leak scan in linear time.** Some lines slowed every run that redacts output:
+  - a long run of blanks (20,000 took 6 s, 200,000 about ten minutes);
+  - `-p`, `eyJ-` or `${` repeated many times.
+  - The built-in patterns now read each line once, and redact exactly what they did.
+
 ## 0.29.0
 
 On Kubernetes, each session's blocks run in a Job of their own. In VS Code, a team library's
