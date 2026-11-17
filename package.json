@@ -2167,7 +2167,7 @@
           "mdRunbook.redaction.useDefaultPatterns": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Use the built-in patterns: Bearer tokens, JWTs, `password`/`secret`/`token`/`api_key` key-value pairs, PEM private keys, `Authorization`/`Cookie` headers, URL credentials, OpenShift/GitHub/AWS tokens. User settings only.",
+            "markdownDescription": "Use the built-in patterns: Bearer tokens, JWTs, `password`/`secret`/`token`/`api_key`/`api key` key-value pairs, PEM private keys, `Authorization`/`Cookie` headers (quoted too), passwords given to tools (`sshpass -p`, `redis-cli -a`, …), URL credentials, OpenShift/GitHub/AWS tokens. User settings only.",
             "scope": "machine",
             "order": 6
           },
