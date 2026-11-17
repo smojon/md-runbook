@@ -236,6 +236,25 @@ describe('cli: the pinned progress line', () => {
     bar.stop();
   });
 
+  it("a step that leaves a sequence open doesn't slow the next step's line", (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    const writes: string[] = [];
+    const bar = new PinnedBar({ isTTY: true, rows: 10, columns: 80, write: (s) => writes.push(s) }, new FakeSignals());
+    bar.show(() => ({ text: 'Step 1/2', fraction: 0 }));
+    // cat of a binary file: an OSC without its end, then the step ends.
+    bar.output('\x1b]0;never ended');
+    let text = 'Step 2/2 · 2 min left';
+    bar.show(() => ({ text, fraction: 0.5 }));
+    const n = writes.length;
+    text = 'Step 2/2 · 1 min left';
+    t.mock.timers.tick(1000);
+    assert.equal(writes.length, n + 1, 'a change shows within a second');
+    assert.match(writes.at(-1)!, /1 min left/);
+    t.mock.timers.tick(5000);
+    assert.equal(writes.length, n + 2, 'unchanged: drawn again after 5 s, as usual');
+    bar.stop();
+  });
+
   it('knows where escape sequences end', () => {
     const open = (...chunks: string[]): boolean => {
       const e = new EscapeState();

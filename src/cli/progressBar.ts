@@ -75,6 +75,13 @@ export class EscapeState {
     return this.state !== 'text' || this.saved;
   }
 
+  /** Back to plain text: a new step starts (the last one's output was flushed whole). */
+  reset(): void {
+    this.state = 'text';
+    this.csiParams = '';
+    this.saved = false;
+  }
+
   feed(chunk: string): void {
     for (let i = 0; i < chunk.length; i++) {
       const c = chunk.charCodeAt(i);
@@ -154,9 +161,14 @@ export class PinnedBar {
     this.escapes.feed(chunk);
   }
 
-  /** Show where the run is (`read` is called again every second); pins the line the first time. */
+  /**
+   * A step starts: show where the run is (`read` is called again every second); pins the line the
+   * first time. A sequence or a saved cursor the last step left open doesn't hold this one's line.
+   */
   show(read: BarRead): void {
     if (this.closed) return;
+    this.escapes.reset();
+    this.held = 0;
     this.read = read;
     if (!this.active) this.start();
     this.draw();
