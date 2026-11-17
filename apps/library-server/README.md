@@ -118,7 +118,7 @@ Clients send the summary of every run to the address in a runbook's `report-runs
 - `RUNS_REQUIRE_SIGNED=true` refuses `unverified` summaries (`403`).
 - With gate tokens set, a summary that says `client: "gate"` is refused without a gate token.
   So a client can't pass itself off as a gate.
-- **Give every gate its own token.** A gate in separated mode (`cells_account =`) gets its token
+- **Give every gate its own token.** A gate in separated mode (`cells_accounts =`) gets its token
   in `RUNS_SEPARATED_GATE_TOKENS`, any other gate in `RUNS_GATE_TOKENS`.
   - The token decides the mode, not the summary: a shared gate's blocks can read its token.
   - `gate_mode: "separated"` with a token of `RUNS_GATE_TOKENS` is refused (`400`). So a token

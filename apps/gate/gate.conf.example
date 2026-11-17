@@ -63,14 +63,20 @@ locale = auto
 # scope and bwrap are required when named: without them the gate doesn't start.
 # isolation = auto
 
-# Separated mode: the blocks run as this second, unprivileged account, not the gate's. Then they
-# can't read the report token or the log. It needs exactly this sudoers line, and no other rule
-# for the gate's account (here support):
-#   support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells
-# At the start of each session the gate checks the line, and that the account can't read the
-# token or the log. If a check fails, it refuses to start and says why. Run reports say
+# Separated mode: the blocks run as unprivileged accounts of their own, not the gate's. Then they
+# can't read the report token or the log. Each session leases a free account of the pool for its
+# whole life, so sessions side by side can't reach each other; every process of that account
+# ends at the start and end of the session. When all are in use, the next session refuses to
+# start: make the pool as large as the sessions you run at once. It needs exactly this sudoers
+# line, naming the whole pool (in any order), and no other rule for the gate's account (here
+# support):
+#   support ALL=(mdrb-cells-1,mdrb-cells-2,mdrb-cells-3,mdrb-cells-4) NOPASSWD: /usr/local/bin/md-runbook-gate __cells
+# At the start of each session the gate checks the line, and that no account of the pool can read
+# the token or the log. If a check fails, it refuses to start and says why. Run reports say
 # gate_mode "separated". Leave it out for shared mode (the default).
-# cells_account = mdrb-cells
+# cells_accounts = mdrb-cells-1 mdrb-cells-2 mdrb-cells-3 mdrb-cells-4
+# cells_account = NAME is a pool of one (one session at a time). Not together with
+# cells_accounts.
 
 # Where the blocks run: local (this host, the default) or kubernetes-job (the ops host in a
 # cluster: each session's blocks in a Kubernetes Job of their own, in the gate's namespace,
@@ -97,5 +103,5 @@ locale = auto
 # localhost). Never in a run's way: a failure is logged as a `report` event.
 # report_to = https://runbooks.example.net/v1/runs
 # A file holding the bearer token, this gate's own: one of the library server's
-# RUNS_GATE_TOKENS, or RUNS_SEPARATED_GATE_TOKENS with cells_account (separated mode).
+# RUNS_GATE_TOKENS, or RUNS_SEPARATED_GATE_TOKENS with cells_accounts (separated mode).
 # report_token_file = /etc/md-runbook/report-token

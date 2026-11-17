@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+**Gate admins with separated mode:** with `cells_account =` alone, one session runs at a time
+now, and a second one refuses to start. For sessions side by side, set up a pool before you
+update (see below).
+
+- **Gate: a pool of cells accounts (`cells_accounts =`).** In separated mode, each session runs
+  its blocks as an account of its own. So sessions side by side can't reach each other's shells
+  through `/proc`.
+  - `cells_accounts = mdrb-cells-1 mdrb-cells-2 mdrb-cells-3 mdrb-cells-4`: a session leases the
+    first free one for its whole life (a lock file in the gate's state folder).
+  - All in use: the next session refuses to start, `all 4 cells accounts are in use: raise the
+    pool`. Make the pool as large as the sessions you run at once.
+  - One sudoers line names the whole pool, in any order:
+    `support ALL=(mdrb-cells-1,mdrb-cells-2,mdrb-cells-3,mdrb-cells-4) NOPASSWD: /usr/local/bin/md-runbook-gate __cells`.
+    A line per account is refused.
+  - Each account needs the same setup as before: no cron or at, no privileged group. The gate
+    checks every one at the start of each session.
+  - `cells_account = NAME` is a pool of one. Don't set both.
+  - The `session` event names the leased account. Run reports still say `separated`.
+  - Setup: [Separated mode](apps/gate/README.md#separated-mode).
+- **Gate: every process of a session's cells account ends,** at its start and its end, with or
+  without `kill_leftovers`.
+  - On Linux this is one `kill(-1)` as that account, so a process that keeps forking can't slip
+    out. On macOS the gate repeats it, and refuses to start while one is left.
+  - The look for strays at the start of a session is gone: a forking process could slip past
+    it (review of 0.28.0).
+  - What a crashed session left behind ends when the next session leases that account.
+
 - **App (iOS, Android): highlighting while editing.** Edit as Text colours the runbook as the
   web app does, with the same rules and colours.
   - On by default. **Hosts & settings → Edit as Text → Highlight while editing** turns it off:

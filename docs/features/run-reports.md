@@ -274,8 +274,9 @@ A gate runs the blocks in one of two modes:
 
 - **shared:** as the gate's own account. A block can read the gate's report token, so it could
   send a report of its own.
-- **separated:** as a second, unprivileged account. A block can't reach the gate's report token,
-  logs or pipes.
+- **separated:** as unprivileged accounts of their own, one per session
+  ([setup](../../apps/gate/README.md#separated-mode)). A block can't reach the gate's report
+  token, logs or pipes, nor another session's shells.
 
 The gate says which in its summary: `gate.gate_mode`.
 

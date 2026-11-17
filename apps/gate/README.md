@@ -104,7 +104,8 @@ the account can do what a block can: through `/proc`, they can write into a sess
   again, so its pid never holds still. The gate stops whole process groups and lists again.
   - A program that also leaves its process group each time can slip through.
   - When new processes keep coming for 5 seconds, the log says `sweep incomplete`.
-- In separated mode the gate sweeps the blocks' account too.
+- In separated mode the blocks' accounts need no sweep: every process of a session's account
+  ends at its start and end, with or without `kill_leftovers`.
 
 Add `ExposeAuthInfo yes` to `sshd_config` to log each key's fingerprint.
 
@@ -137,8 +138,8 @@ you write `isolation = bwrap`.
 - In shared mode a block runs as the account that owns its scope. A block that means to can
   leave it, for example by asking the user manager for a service.
 - A scope ends what a block leaves behind by accident, not what it hides on purpose.
-- In separated mode blocks can't leave their scope. The gate refuses to start while the blocks'
-  account has a user manager, or any other process outside its sessions.
+- In separated mode blocks can't leave their scope. And every process of the session's blocks
+  account ends at its start and end ([Separated mode](#separated-mode)).
 
 The `session` event in the log says which isolation a session got (`isolation`), and why `auto`
 found none (`isolation_off`).
@@ -148,12 +149,21 @@ found none (`isolation_off`).
 By default the blocks run as the gate's own account (`shared`). Then a block can read the report
 token and a log file, and reach the gate through `/proc`.
 
-With `cells_account = NAME` in `gate.conf`, the blocks run as that second account instead
-(`separated`). It can't reach the token, the log or the gate's own pipes.
+With `cells_accounts = NAME …` in `gate.conf`, the blocks run as other accounts instead
+(`separated`). They can't reach the token, the log or the gate's own pipes.
 
-**One cells account per gate account.** Every process of the blocks' account can write into the
-shells of the account's sessions (through `/proc`). So that account runs this gate account's
-blocks and nothing else:
+**Why a pool.** Any process of an account can write into that account's shells and read their
+environment (through `/proc`). So each session leases an account of its own:
+- A session takes the first free account of the pool and keeps it until it ends.
+- Two sessions side by side never run as the same account, so their blocks can't reach each
+  other.
+- Make the pool as large as the sessions you run at once. When all are in use, the next session
+  refuses to start: `all 4 cells accounts are in use: raise the pool`.
+- `cells_account = NAME` still works: a pool of one, so one session at a time. Don't set both.
+
+**One pool per gate account.** The leases are lock files in the gate account's state folder
+(`~/.md-runbook-gate/cells/`), so another gate account can't see them. Each pool account runs
+this gate account's blocks and nothing else:
 - no other gate account uses it, not even one for unsigned trials;
 - no cron or at jobs, no logins, no user manager (`loginctl enable-linger`);
 - no privileged group (`sudo`, `wheel`, `adm`, `docker`, `lxd`, `incus-admin`, `libvirt`,
@@ -163,67 +173,85 @@ Give this gate its own report token, in the library server's `RUNS_SEPARATED_GAT
 server counts a summary as separated only with such a token: a shared gate's blocks can read
 theirs.
 
-Set it up once, as root:
+Set up a pool of 4 once, as root:
 
 ```sh
-useradd -m -s /usr/sbin/nologin mdrb-cells
-echo 'support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells' > /etc/sudoers.d/md-runbook-gate
+pool="mdrb-cells-1 mdrb-cells-2 mdrb-cells-3 mdrb-cells-4"
+for a in $pool; do
+  useradd -m -s /usr/sbin/nologin "$a"
+  echo "$a" >> /etc/cron.deny
+  echo "$a" >> /etc/at.deny
+  crontab -r -u "$a" 2>/dev/null   # cron.deny stops new crontabs, not existing ones
+  for j in $(atq -q a 2>/dev/null | awk -v a="$a" '$NF == a {print $1}'); do atrm "$j"; done
+done
+echo 'support ALL=(mdrb-cells-1,mdrb-cells-2,mdrb-cells-3,mdrb-cells-4) NOPASSWD: /usr/local/bin/md-runbook-gate __cells' > /etc/sudoers.d/md-runbook-gate
 chmod 440 /etc/sudoers.d/md-runbook-gate
 visudo -cf /etc/sudoers.d/md-runbook-gate
-echo mdrb-cells >> /etc/cron.deny
-echo mdrb-cells >> /etc/at.deny
-crontab -r -u mdrb-cells 2>/dev/null   # cron.deny stops new crontabs, not existing ones
-for j in $(atq -q a 2>/dev/null | awk '$NF == "mdrb-cells" {print $1}'); do atrm "$j"; done
+```
+
+and in `gate.conf`:
+
+```
+cells_accounts = mdrb-cells-1 mdrb-cells-2 mdrb-cells-3 mdrb-cells-4
 ```
 
 On Alpine (busybox cron), `cron.deny` blocks nothing: don't install cron there, or don't use
 separated mode.
 
-Here `support` is the gate's account. The line must be exactly this, with the gate's real path.
-The gate's account may have no other sudo rule.
+Here `support` is the gate's account. The sudoers line:
+- names every account of the pool in one list, in any order, and no other;
+- has the gate's real path and `__cells`, nothing more;
+- is the gate account's only sudo rule. A line for each account doesn't count: write one line.
 
-At the start of each session the gate checks. It refuses to start, and logs a `self-check`
-event, when:
-- the account doesn't exist, is root, or is the gate's own;
+**Every process of the session's account ends,** at the start (before the first block) and at
+the end of each session, with or without `kill_leftovers`:
+- The gate runs its cells mode as that account, through the same sudo line. It calls
+  `kill(-1, SIGKILL)`.
+- The gate lists the processes until none of the account is left. If one is, the session
+  refuses to start.
+- **Linux:** the kernel signals all of the account's processes at once, with its task list
+  locked. A process that keeps forking can't slip out.
+- **macOS:** the kernel signals a list it takes first. A process that forks just then can live
+  on. The gate ends them again, up to 3 times, and refuses to start while one is left.
+- What a crashed gate's session left behind ends when the next session leases that account.
+- At the start, the gate refuses instead of ending them when the account runs another gate
+  account's blocks. That pool is shared, which it must not be.
+
+At the start of each session the gate checks every account of the pool. It refuses to start,
+and logs a `self-check` event, when:
+- an account doesn't exist, is root, or is the gate's own, or two names have the same uid;
 - `sudo -n -l` lists anything but that one line;
-- the account is in a privileged group (listed above);
-- it may use cron or at: `cron.deny` and `at.deny` must list it, or `cron.allow` and
+- an account is in a privileged group (listed above);
+- an account may use cron or at: `cron.deny` and `at.deny` must list it, or `cron.allow` and
   `at.allow` exist without it (on macOS in `/usr/lib/cron`);
-- a process of the account runs outside this gate account's sessions. With
-  `kill_leftovers = yes` the gate ends those first, except other gate accounts' sessions;
 - a folder above the gate's files is not safe (see below);
-- the blocks' account can read `report_token_file` or the `log =` file;
+- an account can read `report_token_file` or the `log =` file;
 - it can change the gate's program, `gate.conf`, `allowed_signers`, the account's keys or the
   gate's state;
-- it can't enter `/tmp`.
+- it can't enter `/tmp`;
+- the gate can't see other accounts' processes (`/proc` mounted with `hidepid`).
 
-The message names the problem and the line to write. The gate can't check whether the account
+The message names the problem and the line to write. The gate can't check whether an account
 has sudo rules of its own (`sudo -l -U` needs root): don't give it any.
-
-**Limits of the process check.** It looks once, at the start of a session:
-- a process that keeps forking can slip past one look;
-- a cron or at job that starts mid-session isn't seen;
-- so give the blocks' account to one gate account only, never to trials, and remove its old
-  crontab and at jobs as above. Then nothing else runs as it.
 
 **Safe folders,** as OpenSSH's `StrictModes` asks for its files. The gate checks every folder
 from each of its files up to `/`:
 - the files: the gate's program, `gate.conf`, `allowed_signers`, `revoked`, `floors`, the
   account's keys, `report_token_file` and the `log =` file;
 - each folder must be root's or the gate account's;
-- the blocks' account must not be able to write it, as anyone or through one of its groups;
+- no pool account may be able to write it, as anyone or through one of its groups;
 - a sticky folder such as `/tmp` is fine if the entry below it is root's or the gate account's.
 
 Some images leave `/usr/local/bin` or `/opt` open. Then install the gate in a folder only root
 can change, such as `/usr/libexec/md-runbook-gate`. The message names the folder to fix.
 
 **Where blocks run:**
-- **Folder:** a shell starts in the blocks' account's home folder (else `/`). A block's `cwd=`
-  must be a folder that account can enter. Give it access with a group or an ACL.
-- **Environment:** as in shared mode, but `HOME`, `USER` and `LOGNAME` are the blocks'
+- **Folder:** a shell starts in its account's home folder (else `/`). A block's `cwd=` must be a
+  folder every pool account can enter. Give them access with a group or an ACL.
+- **Environment:** as in shared mode, but `HOME`, `USER` and `LOGNAME` are the leased
   account's, and there is no `TMPDIR`. Programs use `/tmp`.
-- **Files:** what a block writes belongs to the blocks' account. `kubeconfig =` must be readable
-  by it.
+- **Files:** what a block writes belongs to the leased account. `kubeconfig =` must be readable
+  by every pool account.
 - **Work folder:** in `/tmp`, which the blocks' account may enter but not list. The shell
   appends each run's exit to a file there that only the gate can read. The gate writes the
   `end` events to the log itself.
@@ -231,14 +259,17 @@ can change, such as `/usr/libexec/md-runbook-gate`. The message names the folder
     The session's run reports don't go out then.
 - **Stopping:** stop requests and the end of a session reach the blocks through the same
   `sudo` line.
+- **Log:** the `session` event names the leased account (`cells`).
 
 **What separated mode doesn't cover:**
-- **Sessions of the same gate account** run their blocks as the same account. A block can write
-  into another session's shells, and change their exits. The same signers run both, so it is
-  the same trust.
 - **Within a session** a block can still answer for the later runs of its runbook
   ([Trust](#trust)). It can also change a line of its session's exits file in place, if the
   line keeps its form: the gate doesn't see that.
+- **Files outlive a session.** Processes end, but what a block leaves in its account's home or
+  in `/tmp` stays. A later session on that account can read it.
+- **A shared pool.** Two gate accounts with the same pool don't see each other's leases. The
+  gate refuses when it sees the other's blocks, but two sessions that start at the same moment
+  can share an account.
 
 Run reports say which mode ran the blocks: `gate.gate_mode` is `shared` or `separated`
 ([Run reports](#run-reports)).
@@ -249,12 +280,12 @@ kubernetes-job` runs each session's blocks in a Kubernetes Job of their own inst
 - `job_service_account = NAME` is required: the Job's service account.
 - `job_image = IMAGE` is optional: the default is the gate's own pod's image.
 - The gate needs a pod to run in, and `kubectl` in `/usr/bin` like its other programs. The
-  runner doesn't go with `cells_account` or `isolation = scope` or `bwrap`.
+  runner doesn't go with `cells_accounts`, `cells_account` or `isolation = scope` or `bwrap`.
 - At the start of each session the gate checks both service accounts, and refuses to start if
   either has a right it shouldn't.
 
 **Why not `systemd-run --uid`?** It needs root, or a polkit rule that also lets the account
-start units as root. sudo can name one command and one account.
+start units as root. sudo can name one command and the accounts it may run as.
 
 ## All signed or none
 
@@ -354,9 +385,9 @@ Signed blocks run as the account. So a gate is only as strong as the account aro
 - **After any time with `unsigned = allow`**, change the report token. Remove what the account
   may have planted in its home folder and crontab.
 
-[Separated mode](#separated-mode) takes the token and the log out of the blocks' reach. A block
-can still answer for later runs of its own runbook, as above. It can also reach the blocks of
-other sessions of the same gate account, which run as the same account.
+[Separated mode](#separated-mode) takes the token and the log out of the blocks' reach, and
+runs each session's blocks as an account of its own. A block can still answer for later runs of
+its own runbook, as above.
 
 ## Check it
 
@@ -459,7 +490,8 @@ go vet ./... && gofmt -l . && go test ./...
   - Isolation: the tests take what the machine has. `MD_RUNBOOK_GATE_ISOLATIONS=scope,bwrap`
     makes them fail where one is missing.
   - Separated mode needs accounts and a sudoers line, so it runs in CI only (the `gate` job).
-    `MD_RUNBOOK_GATE_ACCOUNT` runs the gate, `MD_RUNBOOK_GATE_CELLS_ACCOUNT` the blocks, and
+    `MD_RUNBOOK_GATE_ACCOUNT` runs the gate, `MD_RUNBOOK_GATE_CELLS_ACCOUNTS` (2 or more,
+    separated by spaces) the blocks, and
     `MD_RUNBOOK_GATE_WIDE_ACCOUNT` has a wider rule the self-check must refuse. The tests run
     them with their own `sudo`.
 - `test/ssh.live.test.ts` runs the app's SSH layer through it on CI's OpenSSH server, cancelling

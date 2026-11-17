@@ -36,7 +36,7 @@ services:
       RUNS_DIR: /data/runs
       RUNS_TOKENS_FILE: /run/secrets/runs
       RUNS_GATE_TOKENS_FILE: /run/secrets/gate
-      # Gates in separated mode (cells_account): their tokens here, not in RUNS_GATE_TOKENS.
+      # Gates in separated mode (cells_accounts): their tokens here, not in RUNS_GATE_TOKENS.
       # RUNS_SEPARATED_GATE_TOKENS_FILE: /run/secrets/separated-gate
       RUNS_READ_TOKENS_FILE: /run/secrets/read
       # RUNS_ALLOWED_RUNNERS: /config/allowed_runners
