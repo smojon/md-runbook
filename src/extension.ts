@@ -39,6 +39,7 @@ import { registerOpenInApp } from './openInApp';
 import { registerMakeQr } from './makeQr';
 import { registerIncidentCommands } from './incidentCommands';
 import { registerRunbookEnv } from './runbookEnv';
+import { registerRunningStatus } from './runningStatus';
 import { registerTaskLists } from './taskLists';
 import { registerTerminal } from './terminal';
 import { registerToolbarButtons } from './toolbarButtons';
@@ -151,6 +152,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerLmTools(context, preflight);
   registerAiContext(context);
   registerTaskLists(context);
+  registerRunningStatus(context);
   registerWalkthrough(context);
   registerTranscriptCommands(context);
   registerToolbarButtons(context);

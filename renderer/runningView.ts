@@ -50,18 +50,62 @@ export function isRunningData(v: unknown): v is RunningData {
 }
 
 /**
- * Milliseconds since the start, never below 0. Each clock is only compared with itself: the time
- * to the send by the extension host's, then the time since `receivedAt` (the renderer first drew
- * this data) by the window's. A remote host's clock ahead or behind changes nothing.
+ * The renderer asks the extension host how long a cell has run, when it first draws its data
+ * (src/pinnedStatus.ts elapsedAnswer). It may be drawn minutes after it came: scrolled back into
+ * view, or in a new webview after a split or a move.
  */
-export function elapsedMs(d: RunningData, now: number, receivedAt: number): number {
-  return Math.max(0, d.sentAt - d.startedAt + (now - receivedAt));
+export interface ElapsedAsk {
+  type: 'elapsed?';
+  /** The output item's id, sent back with the answer. */
+  id: string;
+  startedAt: number;
 }
 
-/** The status at `now` (epoch ms, the window's clock), for data first drawn at `receivedAt`. */
-export function runningView(d: RunningData, now: number, receivedAt: number): RunningView {
+/** The answer: the time since the start, by the extension host's clock alone. */
+export interface ElapsedAnswer {
+  type: 'elapsed';
+  id: string;
+  elapsedMs: number;
+}
+
+export function isElapsedAnswer(v: unknown): v is ElapsedAnswer {
+  const m = v as Partial<ElapsedAnswer> | null;
+  return typeof m === 'object' && m !== null && m.type === 'elapsed' && typeof m.id === 'string' && num(m.elapsedMs);
+}
+
+/** Where the count stands: `elapsedMs` at `at` (epoch ms, the window's clock), going on by that clock. */
+export interface Count {
+  elapsedMs: number;
+  at: number;
+}
+
+/**
+ * The count when the renderer first draws data, until the extension host answers (hostCount).
+ * Drawn as it was sent: the time to the send, by the host's clock alone. Drawn later (the reason
+ * to ask): at least the time since the start by the window's clock, which a remote host's clock
+ * skew puts off until the answer comes. Never below 0.
+ */
+export function firstCount(d: RunningData, now: number): Count {
+  return { elapsedMs: Math.max(0, d.sentAt - d.startedAt, now - d.startedAt), at: now };
+}
+
+/** The count from the host's answer, received at `now`: no clock but the host's up to there. */
+export function hostCount(elapsedMs: number, now: number): Count {
+  return { elapsedMs: Math.max(0, elapsedMs), at: now };
+}
+
+/**
+ * Milliseconds since the start, never below 0: the count, then the time since by the window's
+ * clock. Each clock is only compared with itself.
+ */
+export function elapsedMs(c: Count, now: number): number {
+  return Math.max(0, c.elapsedMs + (now - c.at));
+}
+
+/** The status at `now` (epoch ms, the window's clock). */
+export function runningView(d: RunningData, now: number, c: Count): RunningView {
   const s = cellRunStatus({
-    elapsedSeconds: elapsedMs(d, now, receivedAt) / 1000,
+    elapsedSeconds: elapsedMs(c, now) / 1000,
     ...(d.estimateMs !== undefined ? { estimateSeconds: d.estimateMs / 1000 } : {}),
     ...(d.attempt !== undefined ? { attempt: d.attempt } : {}),
     ...(d.attempts !== undefined ? { attempts: d.attempts } : {}),
@@ -70,6 +114,6 @@ export function runningView(d: RunningData, now: number, receivedAt: number): Ru
 }
 
 /** Milliseconds until the words change: the next whole second since the start. */
-export function msToNextSecond(d: RunningData, now: number, receivedAt: number): number {
-  return 1000 - (elapsedMs(d, now, receivedAt) % 1000);
+export function msToNextSecond(c: Count, now: number): number {
+  return 1000 - (elapsedMs(c, now) % 1000);
 }
