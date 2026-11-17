@@ -613,22 +613,37 @@ what runs.
 The **Library** view (Runbook activity bar) shows the library at `mdRunbook.library.url`, by
 folder. Each row says what its signature is worth:
 
-- checked with `ssh-keygen -Y verify` against `mdRunbook.signing.allowedSigners`;
+- checked with `ssh-keygen -Y verify` against `mdRunbook.signing.allowedSigners`, then against
+  the keys you trusted from this library;
 - verified only when signed as a whole, unchanged, not expired, under a name that fits its path;
 - a version older than one seen before is flagged, as in the app.
 
 Opening a row makes your own copy, as a link does. A `signedOnly` library opens verified
 runbooks only.
 
-**Trusted Signers…** (Share ▾, the view's ⋯) edits that allowed_signers file:
+**Trusted Signers…** (Share ▾, the view's ⋯) lists the signers you trust in two groups:
 
-- lists each signer with its key fingerprint, and the lines it can't use;
-- adds an allowed_signers line or a public key, pasted or from a file;
-- adds the library's own `allowed_signers`, after its fingerprints and a warning;
-- removes one, after a confirm.
+- **Yours**, in `mdRunbook.signing.allowedSigners`: they count for every runbook.
+  - Add an allowed_signers line or a public key, pasted or from a file.
+  - With no file set, adding one offers to make it.
+- **Each library's**, under its address: they count for that library's runbooks only.
+  - **Add the Team Library's Signers…** adds them, after their fingerprints and a warning.
+  - VS Code keeps them in its storage, one file per library address, as the app keys them.
 
-Lines it adds get `namespaces="md-runbook"`. With no file set, it offers to make one. **Publish to Library…** and **Remove from Library…** (Share ▾) talk to the
-library server.
+As in the app:
+
+- Choosing a signer removes it from the file it is in, after a confirm.
+- A key the library no longer publishes is **withdrawn**: it stops counting, and is shown so.
+  - It counts again once the library publishes it again.
+- A library's keys count for your copies of its runbooks too: run reports
+  (`report-runs-required`, `report-runs-signed`) and Practice on a Host.
+  - Links, the command line and the gate use only the file you name.
+- Keys an earlier version added to your own file from a library stay there, counting for every
+  runbook. They are marked **also published by** that host: remove them to trust them for the
+  library's runbooks only.
+
+Lines it adds get `namespaces="md-runbook"`. **Publish to Library…** and **Remove from
+Library…** (Share ▾) talk to the library server.
 
 ## Limits
 

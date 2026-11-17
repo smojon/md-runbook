@@ -182,8 +182,10 @@ A runbook can't send anything you didn't agree to.
 when all of these hold:
 
 1. The runbook carries a signature that verifies against **signers this client trusts**:
-   - VS Code: an `allowed_signers` file named in `mdRunbook.signing.allowedSigners`, checked with
-     `ssh-keygen -Y verify`;
+   - VS Code: checked with `ssh-keygen -Y verify` against
+     - the `allowed_signers` file named in `mdRunbook.signing.allowedSigners`;
+     - for your copy of a team library runbook, also the keys trusted from that library
+       ([Trusted Signers…](signed-runbooks.md#in-vs-code));
    - the app: the keys under [Hosts & settings → Trusted signers](../app.md#trusted-signers) that
      count for the runbook:
      - for a team library copy, those trusted from its library and those added by you;

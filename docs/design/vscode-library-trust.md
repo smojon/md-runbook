@@ -4,8 +4,10 @@ Goal: a key trusted from a team library's `allowed_signers` counts for that libr
 only. The app does so already (`keysFor` in `apps/mobile/src/signing/trust.ts`). Keys you add
 yourself count for every runbook.
 
-Status: design only. It touches the run-report and practice checks, and needs more than 200
-lines, so it waits for a decision.
+Status: built for 0.29.0 (src/libraryTrust.ts). Decided 2026-11-16:
+
+1. A library's keys count for reporting on its own runbooks: yes.
+2. Keys already in your file move: no.
 
 ## Today
 
@@ -17,9 +19,12 @@ lines, so it waits for a decision.
 ## Files
 
 - Your own file stays as it is: `mdRunbook.signing.allowedSigners`. It counts for every runbook.
-- One file per library origin: `globalStorage/library-signers/<sha256(origin)>/allowed_signers`.
-  - The origin is the library base's `https://host[:port]`, as `libraryBaseOf` gives it.
-  - The folder also holds `origin.txt`, so Trusted Signers… can show where each file came from.
+- One file per library address: `globalStorage/library-signers/<sha256(address)>/allowed_signers`.
+  - The address is the library's folder, as `libraryBaseOf` gives it and the app keys it.
+  - Core's `normalizeLibraryUrl` makes it: host in lower case, no default port, ends with `/`.
+  - Two libraries on one host are two: reading one never withdraws the other's keys.
+  - The folder also holds `address.txt`, so Trusted Signers… can show where each file came from.
+  - A folder without it (the first, per-host version, never released) is ignored.
 - ssh-keygen reads one file per call. A runbook from a library is checked against your file
   first, then against its library's file: two calls at most.
   - `SignerCache` (src/signerCheck.ts) already keys by file and stamp: each file caches on its own.
@@ -28,10 +33,10 @@ lines, so it waits for a decision.
 
 - The Library view's rows: the library at `mdRunbook.library.url`.
 - Your copies of them (`globalStorage/library/<key>/…`, made by `libraryCopy`).
-  - Today the copy doesn't record where it came from. New: `libraryCopy` writes `origin.txt`
-    next to the copy, and `libraryOriginOf(uri)` reads it.
+  - Today the copy doesn't record where it came from. New: `libraryCopy` writes `address.txt`
+    next to the copy, and `libraryOf(file)` reads it.
   - A file elsewhere, or a copy saved elsewhere, is not a library's: your file only.
-- A runbook call's target inherits its caller's origin only when it is in the same copy folder.
+- A runbook call's target inherits its caller's library only when it is in the same copy folder.
 
 ## Where the check changes
 
@@ -39,7 +44,7 @@ lines, so it waits for a decision.
 | --- | --- | --- |
 | Library view | your file | your file, then the library's |
 | signedOnly library, Open | your file | the same as the view |
-| Run reports (`report-runs-required`, `-signed`) | your file | your file, then the origin's for a library copy |
+| Run reports (`report-runs-required`, `-signed`) | your file | your file, then its library's for a library copy |
 | Practice on a Host (asks unless signed) | your file | the same as run reports |
 | Links (`linkHandler.ts`) | your file | unchanged: a link is never a library's runbook |
 | Command line, gate | `--allowed-signers` | unchanged |
@@ -51,7 +56,7 @@ That matches the app, but it changes what a library server can make VS Code do.
 
 - **Add the Team Library's Signers…** writes to the library's file, not yours.
   - The modal's last point becomes: they count for this library's runbooks only.
-- The list shows two groups: yours, then each library's, under its host.
+- The list shows two groups: yours, then each library's, under its address.
   - Removing a key removes it from the file it is in.
 - **Withdrawn keys**, as in the app: a trusted key the library no longer publishes stops counting.
   - Kept as a `# withdrawn` comment line in the library's file, so ssh-keygen skips it.
@@ -61,10 +66,10 @@ That matches the app, but it changes what a library server can make VS Code do.
 
 ## Size
 
-- Files and origin: about 60 lines (`libraryTrust.ts`, no vscode import, unit-tested).
+- Files and addresses: about 60 lines (`libraryTrust.ts`, no vscode import, unit-tested).
 - Library view, Open, run reports, practice: about 50 lines.
 - Trusted Signers… groups, withdrawn keys: about 120 lines.
-- Tests: unit tests for the files and origins.
+- Tests: unit tests for the files and addresses.
   - An integration test: a key from library A doesn't verify library B's runbook.
 
 ## Open questions

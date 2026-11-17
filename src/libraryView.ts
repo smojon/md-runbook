@@ -1,18 +1,18 @@
 /**
  * The Library view (Runbook activity bar, under Steps): the team library at `mdRunbook.library.url`,
  * as the app's Team runbooks show it. Its runbooks by folder, each with what its signature is
- * worth against your trusted signers (`mdRunbook.signing.allowedSigners`, ssh-keygen). Opening one
- * makes your own copy (global storage, one per library file and text, as links do): the shared
- * file is never changed. A library whose index.json asks for signedOnly opens verified ones only.
+ * worth against your trusted signers (`mdRunbook.signing.allowedSigners`, then the keys trusted
+ * from this library: src/libraryTrust.ts; ssh-keygen). Opening one makes your own copy (global
+ * storage, one per library file and text, as links do): the shared file is never changed. A
+ * library whose index.json asks for signedOnly opens verified ones only.
  */
 
-import { createHash } from 'node:crypto';
-import * as fs from 'node:fs';
 import * as os from 'node:os';
-import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { readSigners, signerLineToAdd } from './allowedSigners';
 import { SECTION } from './config';
 import { CANT_CHECK, Library, LibraryEntry, LibraryRead, Verdict, entryNamed, groupEntries, libraryBaseOf, libraryUrlProblem, libraryVerdict, readLibrary, verdictLabel } from './libraryRead';
+import { libraryAddressOf, libraryCopyFile, noteWithdrawn, signerFiles, signerOf, trustLibraryLines } from './libraryTrust';
 import { NOTEBOOK_TYPE } from './serializer';
 import { SignerCache } from './signerCheck';
 
@@ -95,6 +95,15 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
     this.loading = (async () => {
       const read: LibraryRead | undefined = base ? await readLibrary(base) : undefined;
       if (generation !== this.generation) return;
+      // Keys trusted from it that it no longer publishes stop counting (and count again once published again).
+      const address = read?.kind === 'ok' ? libraryAddressOf(read.library.base) : undefined;
+      if (read?.kind === 'ok' && address !== undefined && read.library.allowedSigners !== undefined) {
+        try {
+          noteWithdrawn(this.storage(), address, read.library.allowedSigners);
+        } catch {
+          // Storage not writable: the file stays as it was.
+        }
+      }
       const verdicts = read?.kind === 'ok' ? await this.check(read.library) : new Map<string, Verdict>();
       if (generation !== this.generation) return;
       this.verdicts = verdicts;
@@ -105,9 +114,13 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
     return this.loading;
   }
 
-  /** Each runbook's verdict, against the allowed_signers file of the settings (a few ssh-keygen at a time). */
+  storage(): string {
+    return this.context.globalStorageUri.fsPath;
+  }
+
+  /** Each runbook's verdict, against your allowed_signers file, then the keys trusted from this library (a few ssh-keygen at a time). */
   private async check(lib: Library): Promise<Map<string, Verdict>> {
-    const file = home(this.config().get<string>('signing.allowedSigners', '').trim());
+    const files = signerFiles(home(this.config().get<string>('signing.allowedSigners', '').trim()), this.storage(), libraryAddressOf(lib.base));
     const floors = this.context.globalState.get<Record<string, Record<string, number>>>(VERSIONS_KEY, {});
     const mine = { ...(floors[lib.base] ?? {}) };
     const verdicts = new Map<string, Verdict>();
@@ -118,8 +131,8 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
         const e = todo[next++]!;
         const text = e.text!;
         let trusted: string | typeof CANT_CHECK | undefined;
-        if (file && /md-runbook:signature v1/.test(text)) {
-          const got = await this.trust.signer(text, file);
+        if (files.length > 0 && /md-runbook:signature v1/.test(text)) {
+          const got = await signerOf(text, files, (t, f) => this.trust.signer(t, f));
           trusted = got.cantCheck ? CANT_CHECK : got.signer;
         }
         const first = libraryVerdict(e.path, text, trusted, undefined);
@@ -219,16 +232,9 @@ export class LibraryTree implements vscode.TreeDataProvider<Node> {
 
 const escapeMd = (s: string): string => s.replace(/[\\`*_{}[\]()#+!|<>]/g, '\\$&');
 
-/** Your copy of a library runbook: one per library file and text, so opening it again opens the copy with its runs. */
+/** Your copy of a library runbook: one per library file and text, so opening it again opens the copy with its runs. Its address.txt makes it the library's. */
 function libraryCopy(storage: vscode.Uri, base: string, entry: LibraryEntry & { text: string }): vscode.Uri {
-  const key = createHash('sha256').update(base).update('\0').update(entry.path).update('\0').update(entry.text).digest('hex').slice(0, 16);
-  const dir = path.join(storage.fsPath, 'library', key);
-  const file = path.join(dir, entry.fileName.replace(/[\\/:*?"<>|]/g, '-'));
-  if (!fs.existsSync(file)) {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(file, entry.text, 'utf8');
-  }
-  return vscode.Uri.file(file);
+  return vscode.Uri.file(libraryCopyFile(storage.fsPath, base, entry));
 }
 
 /** Why a verdict keeps a signedOnly library's runbook closed, for the modal's points. */
@@ -318,6 +324,15 @@ export function registerLibraryView(context: vscode.ExtensionContext, testMode =
         await tree.load();
         const lib = tree.library();
         return lib ? { signedOnly: lib.signedOnly, rows: lib.entries.map((entry) => ({ node: { kind: 'entry', entry, libraryPath: entry.path }, verdict: tree.verdictOf(entry) })) } : undefined;
+      }),
+      // As Trusted Signers… → Add the Team Library's Signers… does after its yes: every key it publishes. The file's path.
+      vscode.commands.registerCommand('mdRunbook._test.trustLibrarySigners', async () => {
+        await tree.load();
+        const lib = tree.library();
+        const address = lib ? libraryAddressOf(lib.base) : undefined;
+        if (!lib?.allowedSigners || address === undefined) return undefined;
+        const { file } = trustLibraryLines(tree.storage(), address, readSigners(lib.allowedSigners, { adding: true }).signers.map(signerLineToAdd));
+        return file;
       }),
     );
   }

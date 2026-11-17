@@ -2531,7 +2531,7 @@
             "type": "string",
             "default": "",
             "scope": "machine",
-            "markdownDescription": "The signers you trust, as an OpenSSH `allowed_signers` file (the one your servers' md-runbook-gate uses). A runbook signed by one of them, and unchanged since signing, can require that its runs are reported (`report-runs-required`, `report-runs-signed`). Empty = no runbook can require it: you are asked instead. The **Library** view shows runbooks signed by them as verified. **md-runbook: Trusted Signers…** lists, adds and removes them (and makes the file when none is set). Checked with `ssh-keygen -Y verify`. User settings only.",
+            "markdownDescription": "The signers you trust, as an OpenSSH `allowed_signers` file (the one your servers' md-runbook-gate uses). A runbook signed by one of them, and unchanged since signing, can require that its runs are reported (`report-runs-required`, `report-runs-signed`). Empty = no runbook can require it: you are asked instead. The **Library** view shows runbooks signed by them as verified. Keys trusted from a team library (**Add the Team Library's Signers…**) are kept apart and count for that library's runbooks only. **md-runbook: Trusted Signers…** lists, adds and removes them (and makes the file when none is set). Checked with `ssh-keygen -Y verify`. User settings only.",
             "order": 2
           }
         }
@@ -2544,7 +2544,7 @@
             "type": "string",
             "default": "",
             "scope": "machine",
-            "markdownDescription": "The team library the **Library** view shows (Runbook activity bar): the https address of its folder, e.g. `https://runbooks.example.net/runbooks/`. Its `index.json`, else the server's JSON listing, names the runbooks. Signatures are checked against `#mdRunbook.signing.allowedSigners#`. User settings only.",
+            "markdownDescription": "The team library the **Library** view shows (Runbook activity bar): the https address of its folder, e.g. `https://runbooks.example.net/runbooks/`. Its `index.json`, else the server's JSON listing, names the runbooks. Signatures are checked against `#mdRunbook.signing.allowedSigners#`, then the keys you trusted from this library. User settings only.",
             "order": 1
           },
           "mdRunbook.library.server": {
