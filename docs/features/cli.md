@@ -211,7 +211,8 @@ Step 3/7 · 54% · 1 min left [################..............]
 - On exit, on an error and on Ctrl+C, the terminal is given back as it was.
 - `--no-progress-bar` prints the progress after each step instead:
   `[########............] 40% · 6 min left`.
-- `TERM=dumb` gets those plain lines too. Pipes, files and CI logs get no progress lines.
+- `TERM=dumb` gets those plain lines too, and so does a CI job in a pseudo-terminal (`CI` set,
+  not `false` or `0`). Pipes, files and other CI logs get no progress lines.
 
 ## Signing runbooks
 

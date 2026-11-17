@@ -184,7 +184,8 @@ export async function pasteAiProposal(context: vscode.ExtensionContext): Promise
 
 function cellOutputText(cell: vscode.NotebookCell): string {
   return cell.outputs
-    .filter((o) => !outputMeta(o)?.status && !outputMeta(o)?.earlier)
+    // What the step printed: not the status line, the running status or earlier runs.
+    .filter((o) => !outputMeta(o)?.status && !outputMeta(o)?.running && !outputMeta(o)?.earlier)
     .flatMap((o) => o.items.filter((i) => !i.mime.startsWith('image/')).map((i) => decoder.decode(i.data)))
     .join('');
 }
