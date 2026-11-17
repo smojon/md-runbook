@@ -738,12 +738,14 @@ func TestUnguardedNamespaces(t *testing.T) {
 		if incomplete {
 			inc = `,"incomplete":true`
 		}
-		return `{"kind":"SelfSubjectRulesReview","spec":{"namespace":"` + ns + `"},"status":{"resourceRules":[` + rules + `]` + inc + `}}` + "\n"
+		// As the API server answers it: no spec (the namespace asked isn't in the answer).
+		return `{"kind":"SelfSubjectRulesReview","spec":{},"status":{"resourceRules":[` + rules + `]` + inc + `}}` + "\n"
 	}
 	operate := read + `,{"verbs":["patch"],"apiGroups":["apps"],"resources":["deployments"]}`
+	names := []string{"default", "shop", "kube-system", "lab"} // "gone": not asked
 	out := rr("default", operate, false) + rr("shop", operate, false) + rr("kube-system", read, false) +
-		rr("lab", `{"verbs":["*"],"apiGroups":["batch"],"resources":["*"]}`, false) // "gone": no answer
-	p := unguardedNamespaces(nss, []byte(out))
+		rr("lab", `{"verbs":["*"],"apiGroups":["batch"],"resources":["*"]}`, false)
+	p := unguardedNamespaces(nss, names, []byte(out))
 	got := strings.Join(p, "\n")
 	for _, ns := range []string{"namespace shop,", "namespace lab,", "namespace gone,"} {
 		if !strings.Contains(got, ns) {
@@ -757,8 +759,20 @@ func TestUnguardedNamespaces(t *testing.T) {
 		t.Errorf("no command:\n%s", got)
 	}
 	// An incomplete answer counts as may.
-	if p := unguardedNamespaces(nss[2:3], []byte(rr("kube-system", read, true))); len(p) != 1 {
+	if p := unguardedNamespaces(nss[2:3], names[2:3], []byte(rr("kube-system", read, true))); len(p) != 1 || !strings.Contains(p[0], "incomplete") {
 		t.Errorf("incomplete: %q", p)
+	}
+	// Read-only namespaces without a label pass (kind's kube-system, kube-public, ...).
+	if p := unguardedNamespaces(nss[1:3], []string{"shop", "kube-system"}, []byte(rr("shop", read, false)+rr("kube-system", read, false))); len(p) != 0 {
+		t.Errorf("read only: %q", p)
+	}
+	// Answers that don't add up: refused.
+	if p := unguardedNamespaces(nss, names, []byte(rr("default", read, false))); len(p) != 1 || !strings.Contains(p[0], "1 answers for 4 namespaces") {
+		t.Errorf("short: %q", p)
+	}
+	wrong := `{"kind":"SelfSubjectRulesReview","spec":{"namespace":"lab"},"status":{}}` + "\n"
+	if p := unguardedNamespaces(nss[2:3], names[2:3], []byte(wrong)); len(p) != 1 || !strings.Contains(p[0], "in the place of kube-system") {
+		t.Errorf("misplaced: %q", p)
 	}
 	for _, c := range []struct {
 		rule string

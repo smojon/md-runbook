@@ -317,7 +317,7 @@ func (j *kubeJob) checkNamespaces(pod string) []string {
 	if err != nil {
 		return []string{"can't check the cells' rights per namespace (" + err.Error() + ")"}
 	}
-	return unguardedNamespaces(nss, rules)
+	return unguardedNamespaces(nss, names, rules)
 }
 
 // sweepJobs deletes the Jobs of this gate's pod whose gate no longer runs (one killed before it
@@ -1340,39 +1340,55 @@ func startsWorkloads(r kubeRule) bool {
 
 // unguardedNamespaces: each namespace where the cells may start or change workloads (or the
 // review can't say: incomplete, missing) without Pod Security baseline or restricted enforced.
-func unguardedNamespaces(nss []kubeObj, rulesOut []byte) []string {
-	reviews, err := kubeObjects(rulesOut)
+// The API server answers a SelfSubjectRulesReview without its spec: the answers are matched to
+// names (the reviews asked, in that order) by their place; a count that differs refuses.
+func unguardedNamespaces(nss []kubeObj, names []string, rulesOut []byte) []string {
+	objs, err := kubeObjects(rulesOut)
 	if err != nil {
 		return []string{"can't read the cells' rights per namespace"}
 	}
-	may := map[string]bool{}
-	seen := map[string]bool{}
-	for _, r := range reviews {
-		if r.Kind != "SelfSubjectRulesReview" {
-			continue
+	var reviews []kubeObj
+	for _, r := range objs {
+		if r.Kind == "SelfSubjectRulesReview" {
+			reviews = append(reviews, r)
 		}
-		ns := r.Spec.Namespace
-		seen[ns] = true
+	}
+	if len(reviews) != len(names) {
+		return []string{"can't check the cells' rights per namespace: " + itoa(len(reviews)) + " answers for " + itoa(len(names)) + " namespaces"}
+	}
+	why := map[string]string{}
+	for i, r := range reviews {
+		ns := names[i]
+		if r.Spec.Namespace != "" && r.Spec.Namespace != ns {
+			return []string{"can't check the cells' rights per namespace: an answer for " + r.Spec.Namespace + " in the place of " + ns}
+		}
 		if r.Status.Incomplete {
-			may[ns] = true
+			why[ns] = "may have rights the API server can't list (an incomplete answer)"
 		}
 		for _, rule := range r.Status.ResourceRules {
 			if startsWorkloads(rule) {
-				may[ns] = true
+				why[ns] = "may start workloads"
 			}
 		}
 	}
 	var p []string
 	for _, n := range nss {
 		name := n.Metadata.Name
-		if n.Kind != "Namespace" || !config.ValidKubeName(name) || (seen[name] && !may[name]) {
+		if n.Kind != "Namespace" || !config.ValidKubeName(name) {
+			continue
+		}
+		w, ok := why[name]
+		if !has(names, name) {
+			w, ok = "may start workloads (no answer)", true
+		}
+		if !ok {
 			continue
 		}
 		switch n.Metadata.Labels["pod-security.kubernetes.io/enforce"] {
 		case "baseline", "restricted":
 			continue
 		}
-		p = append(p, "the cells' service account may start workloads in namespace "+name+", which doesn't enforce Pod Security baseline or restricted: kubectl label namespace "+name+" pod-security.kubernetes.io/enforce=baseline")
+		p = append(p, "the cells' service account "+w+" in namespace "+name+", which doesn't enforce Pod Security baseline or restricted: kubectl label namespace "+name+" pod-security.kubernetes.io/enforce=baseline")
 	}
 	return p
 }
