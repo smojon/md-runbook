@@ -7,6 +7,7 @@
 #   - the Job goes when its session ends;
 #   - the gate logs gate_mode separated;
 #   - a namespace the blocks may change without Pod Security enforced: no session;
+#   - another app's service account in the gate's namespace: no session;
 #   - pod notices (protocol 4): `job`, `starting`, `ready` before the reply; a client that
 #     goes while the pod starts ends the session, and the Job goes at once.
 # Needs KEYS (client, ssh_host_ecdsa_key.pub) and the ops Service forwarded to 127.0.0.1:$PORT.
@@ -148,6 +149,16 @@ close_session c 9
 [ -z "$(value c ran)" ] || fail "a block ran although md-runbook-unguarded doesn't enforce Pod Security"
 cat "$work/c/err"
 kubectl delete namespace md-runbook-unguarded --wait=false
+
+# Another app's service account in the gate's namespace: the session refuses before its hello
+# (the gate could run a Job as that account).
+k create serviceaccount md-runbook-intruder
+mkdir -p "$work/f"
+printf ': mdrb-gate-hello 0000ff00; x\n' | ssh "${ssh_opts[@]}" ops@127.0.0.1 > "$work/f/out" 2> "$work/f/err" || true
+cat "$work/f/err"
+grep -q 'also has service accounts md-runbook-intruder: ' "$work/f/err" || fail "the gate ran next to another service account"
+grep -q '__MDRB_0000ff00__' "$work/f/out" && fail "a session started next to another service account"
+k delete serviceaccount md-runbook-intruder
 
 # Every session's Job goes (the app's tests before this ran many), pods too.
 for _ in $(seq 1 90); do

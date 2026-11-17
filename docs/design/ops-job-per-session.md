@@ -66,7 +66,8 @@ own. They can't reach the gate's token, log or state, nor another session.
 ## RBAC
 
 - Ops account: a Role in its namespace: Jobs (create, list, delete), pods (get, list),
-  `pods/exec` (create, get).
+  `pods/exec` (create, get), service accounts (list). Its namespace holds the ops host alone:
+  the gate refuses other pods and service accounts there.
 - Cells' account: read everywhere but Secrets, ConfigMaps and pod logs. Those two, and operate
   rights, per namespace. Never bound in the ops namespace.
 

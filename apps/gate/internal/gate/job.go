@@ -46,7 +46,8 @@ import (
 // gate's may run Jobs and nothing of the cells' rights; the cells' may not exec into pods, read
 // logs, Secrets or ConfigMaps, or start workloads in the gate's namespace, and every namespace
 // where they may start or change workloads must enforce Pod Security baseline or restricted
-// (else a privileged pod reaches the node, and through it the gate's pod). A wrong answer: no
+// (else a privileged pod reaches the node, and through it the gate's pod). The gate's namespace
+// must hold the ops host alone: no other app's pods or service accounts. A wrong answer: no
 // session.
 //
 // When the follower's stdin ends (the session ended, or the gate is gone) it ends the pod: a
@@ -89,7 +90,7 @@ type kubeJob struct {
 	quick   runFunc // on the paths that stop and clean up: bounded (killFor)
 	exe     string  // this program, in the Job's image too
 
-	ns, context, opsPod, opsUID, image, sa, name string
+	ns, context, opsPod, opsUID, opsSA, image, sa, name string
 
 	ready chan struct{} // closed once the pod is Ready (pod set) or can't be (err set)
 	mu    sync.Mutex
@@ -217,12 +218,17 @@ func (g *Gate) setupJob() {
 	if err != nil {
 		g.fatal("cells_runner = kubernetes-job: this gate runs in no pod " + host + " of namespace " + j.ns + " (" + err.Error() + ")")
 	}
-	j.opsPod = host
+	j.opsPod, j.opsSA = host, podServiceAccount(out)
 	if g.cfg.JobImage != "" {
 		j.image = g.cfg.JobImage
 	}
 	if p := j.check(opsReviews(j.ns), "", "the gate's service account"); len(p) > 0 {
 		msg := "cells_runner = kubernetes-job: " + strings.Join(p, "; ") + ". See apps/ops/README.md (RBAC)."
+		g.log.Event("event", "self-check", "status", "refused", "reason", msg)
+		g.fatal(msg)
+	}
+	if p := j.checkOwnNamespace(); p != "" {
+		msg := "cells_runner = kubernetes-job: " + p
 		g.log.Event("event", "self-check", "status", "refused", "reason", msg)
 		g.fatal(msg)
 	}
@@ -483,6 +489,81 @@ func (j *kubeJob) checkNamespaces(pod string) []string {
 		return []string{"can't check the cells' rights per namespace (" + err.Error() + ")"}
 	}
 	return unguardedNamespaces(nss, names, rules)
+}
+
+// checkOwnNamespace: the gate's namespace holds the ops host alone. The gate may exec into every
+// pod there and start Jobs as every service account there: in a namespace shared with other apps
+// (a relay, a web app), a compromised gate would get their rights too (nevis-rest-api's review,
+// 2026-11-17). "" when alone, else what to change.
+func (j *kubeJob) checkOwnNamespace() string {
+	out, err := j.run(j.kc("get", "pods,serviceaccounts", "-n", j.ns, "-o", "json"), j.env, nil)
+	if err != nil {
+		return "can't list the pods and service accounts of namespace " + j.ns + " (" + err.Error() + "). See apps/ops/README.md (RBAC)."
+	}
+	return foreignObjects(out, j.ns, j.opsSA, j.sa)
+}
+
+// podServiceAccount: the service account of the pod in kubectl's output ("default" when the
+// spec names none, as the API server does).
+func podServiceAccount(out []byte) string {
+	objs, err := kubeObjects(out)
+	if err != nil || len(objs) != 1 {
+		return ""
+	}
+	return objs[0].serviceAccount()
+}
+
+func (o kubeObj) serviceAccount() string {
+	if o.Spec.ServiceAccountName == "" {
+		return "default"
+	}
+	return o.Spec.ServiceAccountName
+}
+
+// foreignObjects: what in namespace ns isn't the ops host's: pods that run as another service
+// account than the gate's (own) or the cells', and service accounts other than those two and
+// default. "" when there is none, else the problem with up to 5 names of each.
+func foreignObjects(out []byte, ns, own, cells string) string {
+	objs, err := kubeObjects(out)
+	if err != nil {
+		return "can't read the pods and service accounts of namespace " + ns
+	}
+	if own == "" {
+		return "can't tell the gate's own service account"
+	}
+	ours := map[string]bool{own: true, cells: true}
+	var pods, sas []string
+	for _, o := range objs {
+		switch o.Kind {
+		case "Pod":
+			if sa := o.serviceAccount(); !ours[sa] {
+				pods = append(pods, o.Metadata.Name+" (as "+sa+")")
+			}
+		case "ServiceAccount":
+			if n := o.Metadata.Name; !ours[n] && n != "default" {
+				sas = append(sas, n)
+			}
+		}
+	}
+	if len(pods) == 0 && len(sas) == 0 {
+		return ""
+	}
+	var what []string
+	if len(pods) > 0 {
+		what = append(what, "pods "+firstFew(pods))
+	}
+	if len(sas) > 0 {
+		what = append(what, "service accounts "+firstFew(sas))
+	}
+	return "namespace " + ns + " also has " + strings.Join(what, " and ") + ": the gate could exec into those pods and run Jobs as those accounts. Give the ops host a namespace of its own (apps/ops/README.md)."
+}
+
+// firstFew: up to 5 names, then how many more.
+func firstFew(names []string) string {
+	if len(names) <= 5 {
+		return strings.Join(names, ", ")
+	}
+	return strings.Join(names[:5], ", ") + " and " + itoa(len(names)-5) + " more"
 }
 
 // sweepJobs deletes the Jobs of this gate's pod whose gate no longer runs (one killed before it
@@ -1085,6 +1166,7 @@ type kubeObj struct {
 			Name  string `json:"name"`
 			Image string `json:"image"`
 		} `json:"containers"`
+		ServiceAccountName string            `json:"serviceAccountName"`
 		ResourceAttributes map[string]string `json:"resourceAttributes"`
 		Namespace          string            `json:"namespace"`
 	} `json:"spec"`
@@ -1378,6 +1460,7 @@ func opsReviews(ns string) []review {
 		{"get", "", "pods", "", ns, true},
 		{"list", "", "pods", "", ns, true},
 		{"create", "", "pods", "exec", ns, true},
+		{"list", "", "serviceaccounts", "", ns, true},
 		{"list", "", "pods", "", "", false},
 		{"get", "", "secrets", "", ns, false},
 		{"create", "", "pods", "", ns, false},

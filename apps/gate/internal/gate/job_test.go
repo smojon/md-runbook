@@ -209,6 +209,77 @@ func TestParseOwnPod(t *testing.T) {
 	}
 }
 
+// The gate's namespace holds the ops host alone: its pods (the gate's and the Jobs'), and the
+// service accounts ops, cells and default (nevis-rest-api's review, 2026-11-17).
+func TestOwnNamespace(t *testing.T) {
+	pod := func(name, sa string) string {
+		spec := `{}`
+		if sa != "" {
+			spec = `{"serviceAccountName":"` + sa + `"}`
+		}
+		return `{"kind":"Pod","metadata":{"name":"` + name + `"},"spec":` + spec + `}`
+	}
+	account := func(name string) string { return `{"kind":"ServiceAccount","metadata":{"name":"` + name + `"}}` }
+	list := func(items ...string) []byte {
+		return []byte(`{"kind":"List","items":[` + strings.Join(items, ",") + `]}`)
+	}
+	alone := []string{pod("md-runbook-ops-5d8f-abcde", "md-runbook-ops"), pod("md-runbook-cells-0a1b2c3d4e-x7k2p", "md-runbook-cells"),
+		account("md-runbook-ops"), account("md-runbook-cells"), account("default")}
+	if p := foreignObjects(list(alone...), "md-runbook-ops", "md-runbook-ops", "md-runbook-cells"); p != "" {
+		t.Errorf("alone: %s", p)
+	}
+	// nevis-rest-api's lab before: the relay and the web app next to the ops host.
+	shared := append(alone, pod("relay-7c9d-xyz12", ""), pod("web-6b5a-qwe34", "web"), account("web"))
+	p := foreignObjects(list(shared...), "md-runbook", "md-runbook-ops", "md-runbook-cells")
+	if p != "namespace md-runbook also has pods relay-7c9d-xyz12 (as default), web-6b5a-qwe34 (as web) and service accounts web: the gate could exec into those pods and run Jobs as those accounts. Give the ops host a namespace of its own (apps/ops/README.md)." {
+		t.Errorf("shared: %s", p)
+	}
+	// An account alone (no pod yet) is enough: the gate could run a Job as it.
+	if p := foreignObjects(list(append(alone, account("backup"))...), "md-runbook-ops", "md-runbook-ops", "md-runbook-cells"); !strings.Contains(p, "also has service accounts backup:") {
+		t.Errorf("account: %s", p)
+	}
+	var many []string
+	for i := 0; i < 7; i++ {
+		many = append(many, account("sa-"+itoa(i)))
+	}
+	if p := foreignObjects(list(many...), "ns", "md-runbook-ops", "md-runbook-cells"); !strings.Contains(p, "service accounts sa-0, sa-1, sa-2, sa-3, sa-4 and 2 more:") {
+		t.Errorf("many: %s", p)
+	}
+	// Unreadable output, or no own account: refused.
+	if p := foreignObjects([]byte("{"), "ns", "md-runbook-ops", "md-runbook-cells"); p == "" {
+		t.Error("garbage: accepted")
+	}
+	if p := foreignObjects(list(alone...), "ns", "", "md-runbook-cells"); p == "" {
+		t.Error("no own account: accepted")
+	}
+	if sa := podServiceAccount([]byte(pod("ops-1", "md-runbook-ops"))); sa != "md-runbook-ops" {
+		t.Errorf("own: %q", sa)
+	}
+	if sa := podServiceAccount([]byte(pod("ops-1", ""))); sa != "default" {
+		t.Errorf("own, none named: %q", sa)
+	}
+	if sa := podServiceAccount([]byte("{")); sa != "" {
+		t.Errorf("own, garbage: %q", sa)
+	}
+
+	// Through kubectl: one call for both kinds, as the gate's account; a failure refuses.
+	var gotArgv []string
+	j := testJob(func(argv, env []string, stdin []byte) ([]byte, error) {
+		gotArgv = argv
+		return list(alone...), nil
+	})
+	j.opsSA, j.sa = "md-runbook-ops", "md-runbook-cells"
+	if p := j.checkOwnNamespace(); p != "" || !reflect.DeepEqual(gotArgv, []string{"/usr/bin/kubectl", "get", "pods,serviceaccounts", "-n", "md-runbook-ops", "-o", "json"}) {
+		t.Errorf("%s %q", p, gotArgv)
+	}
+	j.run = func(argv, env []string, stdin []byte) ([]byte, error) {
+		return nil, errors.New("exit status 1: forbidden")
+	}
+	if p := j.checkOwnNamespace(); !strings.Contains(p, "can't list the pods and service accounts of namespace md-runbook-ops") {
+		t.Errorf("failed: %s", p)
+	}
+}
+
 // What kubectl get jobs,pods prints, in each state the gate tells apart.
 func TestPodState(t *testing.T) {
 	list := func(items ...string) []byte {
@@ -654,7 +725,7 @@ func TestJobChecks(t *testing.T) {
 			return false
 		}
 		switch a["resource"].(string) + "/" + str(a["subresource"]) + " " + a["verb"].(string) {
-		case "jobs/ create", "jobs/ list", "jobs/ delete", "pods/ get", "pods/ list", "pods/exec create":
+		case "jobs/ create", "jobs/ list", "jobs/ delete", "pods/ get", "pods/ list", "pods/exec create", "serviceaccounts/ list":
 			return true
 		}
 		return false
@@ -790,7 +861,7 @@ func TestReviewLists(t *testing.T) {
 	for _, r := range opsReviews("ops") {
 		need[r.verb+" "+r.resource+"/"+r.sub+" "+r.ns] = r.want
 	}
-	for k, want := range map[string]bool{"create jobs/ ops": true, "delete jobs/ ops": true, "create pods/exec ops": true, "list pods/ ": false, "get secrets/ ops": false, "create pods/ ops": false} {
+	for k, want := range map[string]bool{"create jobs/ ops": true, "delete jobs/ ops": true, "create pods/exec ops": true, "list serviceaccounts/ ops": true, "list pods/ ": false, "get secrets/ ops": false, "create pods/ ops": false} {
 		if got, ok := need[k]; !ok || got != want {
 			t.Errorf("ops check: %s = %v, %v", k, got, ok)
 		}

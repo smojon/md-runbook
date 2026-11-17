@@ -20,7 +20,8 @@ metadata:
 ---
 # What the gate needs for each session's Job, in this namespace only: create, list and delete
 # Jobs, find their pods, exec into them. The gate checks at each session that it has these
-# rights and none of the cells' (else the session doesn't start).
+# rights and none of the cells' (else the session doesn't start). It also lists the pods and
+# service accounts here: this namespace must hold the ops host alone (README.md).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -37,6 +38,9 @@ rules:
   - apiGroups: ['']
     resources: [pods/exec]
     verbs: [create, get]
+  - apiGroups: ['']
+    resources: [serviceaccounts]
+    verbs: [list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

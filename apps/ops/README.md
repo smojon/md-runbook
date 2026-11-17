@@ -101,6 +101,20 @@ kubectl $ns create secret generic md-runbook-ops-report-token --from-file=token
 
 The gate refuses a `report_token_file` in the folder of `gate.conf`.
 
+**A namespace of its own.** Keep `md-runbook-ops` for the ops host alone. Put the relay, the web
+app and everything else in other namespaces.
+- The gate may exec into every pod of its namespace and start Jobs as any service account
+  there. Next to other apps, a compromised gate would get their rights too.
+- At each session the gate checks this. It refuses when the namespace has:
+  - a pod that runs as another service account than `md-runbook-ops` or `md-runbook-cells`;
+  - a service account other than those two and `default`.
+- Bind no role to `default` in this namespace.
+- The relay can stay in another namespace. Admit it to sshd with a NetworkPolicy that names
+  that namespace.
+
+**Two signers in production.** For runbooks that change a cluster, set `signers = 2` in
+`gate.conf`. Then one stolen signing key can't run a change alone.
+
 **Reaching it from a phone.** The Service only works inside the cluster. You have three
 options:
 - **A LoadBalancer.** `kubectl $ns patch service md-runbook-ops -p '{"spec":{"type":"LoadBalancer","loadBalancerSourceRanges":["203.0.113.0/24"]}}'`
@@ -146,17 +160,21 @@ the Secret.
 
 Update the image before the ConfigMap: an older gate refuses the new `gate.conf` lines.
 
+**Coming from 0.30.0:** apply the manifest again. The gate's Role gains `list` on
+`serviceaccounts`. Without it, sessions refuse with "may not list serviceaccounts".
+
 ### A Job per session
 
 `gate.conf` in the cluster has `cells_runner = kubernetes-job`. For each SSH session, the gate:
 1. checks its own service account: it may run Jobs here, and has none of the cells' rights;
-2. starts a Job of the same image, as `job_service_account` (`md-runbook-cells`);
-3. checks the cells' account in the new pod:
+2. checks that its namespace holds the ops host alone;
+3. starts a Job of the same image, as `job_service_account` (`md-runbook-cells`);
+4. checks the cells' account in the new pod:
    - in `md-runbook-ops` it can't exec into pods, read pod logs, Secrets or ConfigMaps, or
      start workloads;
    - each namespace where it may change workloads enforces Pod Security;
-4. runs the session's blocks there with `kubectl exec`;
-5. deletes the Job when the session ends.
+5. runs the session's blocks there with `kubectl exec`;
+6. deletes the Job when the session ends.
 
 What this keeps apart:
 - Blocks can't read the gate's report token, its log or its state, nor the ops pod's token.

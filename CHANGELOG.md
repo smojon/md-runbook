@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**Gate admins on Kubernetes:**
+- The ops host needs a namespace of its own. A session refuses when the gate's namespace has
+  other apps' pods or service accounts (security review by a user, 2026-11-17).
+- Apply the manifest again: the gate's Role gains `list` on `serviceaccounts`.
+- The README recommends `signers = 2` for runbooks that change a cluster.
+
 ## 0.30.0
 
 What's new:
