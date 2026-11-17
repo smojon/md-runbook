@@ -85,7 +85,7 @@ test("library: Open from Library takes the library's text, not the text a caller
   }
 });
 
-test("library: a key trusted from library A doesn't verify library B's runbook, and stops counting once A withdraws it", async () => {
+test("library: a key trusted from library A doesn't verify library B's runbook, and stops counting once A withdraws it until trusted again", async () => {
   // One key, published by both libraries (two addresses), and a runbook signed with it in each.
   const key = path.join(work, 'library-trust-key');
   fs.rmSync(key, { force: true });
@@ -120,10 +120,12 @@ test("library: a key trusted from library A doesn't verify library B's runbook, 
     // A no longer publishes it: withdrawn, kept as a comment line.
     delete filesA.allowed_signers;
     assert.equal(await verdict(a.base), 'untrusted', 'withdrawn by A');
-    assert.match(fs.readFileSync(trusted, 'utf8'), /^# withdrawn ana@example\.net/m);
-    // Published again: it counts again.
+    assert.match(fs.readFileSync(trusted, 'utf8'), /^# withdrawn \d{4}-\d{2}-\d{2} ana@example\.net/m);
+    // Published again: it stays withdrawn until you trust it again (0.29.0 review, M2).
     filesA.allowed_signers = published;
-    assert.equal(await verdict(a.base), 'verified', 'published again');
+    assert.equal(await verdict(a.base), 'untrusted', 'published again, not yet confirmed');
+    assert.ok(await vscode.commands.executeCommand<string | undefined>('mdRunbook._test.trustLibrarySigners'), 'trusted again');
+    assert.equal(await verdict(a.base), 'verified', 'published again and confirmed');
   } finally {
     if (trusted) fs.rmSync(path.dirname(trusted), { recursive: true, force: true });
     await setConfig('library.url', undefined);
