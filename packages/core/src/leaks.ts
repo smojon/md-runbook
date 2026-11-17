@@ -6,7 +6,7 @@
 
 import { beforeComment, isSpace, trimEndWith } from './lineText';
 import { DEFAULT_PATTERNS, REDACTED, patternFinder } from './redact';
-import { SpanFinder, Spans } from './redactScan';
+import { SpanFinder, Spans, findReferences } from './redactScan';
 
 export interface LeakScanOptions {
   /** Internal DNS suffixes (e.g. `corp.example.com`); hosts under them are reported. */
@@ -60,9 +60,10 @@ const VARIABLE_REF = /^(?:(?:Bearer|Basic|token)\s+)?(?:\$\{?[A-Za-z_]\w*\}?|\$e
 /**
  * Variable references anywhere in the text (never secrets): md-runbook's own `${secret:NAME}`,
  * `${input:NAME}`, `${param:NAME}`, `${secretFile:NAME}`, shell `${VAR}`, `${VAR:-default}`,
- * `$VAR`, `$(command)`, PowerShell `$env:VAR` and cmd `%VAR%`.
+ * `$VAR`, `$(command)`, PowerShell `$env:VAR` and cmd `%VAR%`. Read in linear time by
+ * redactScan.ts `findReferences` (`${…` retried each `${` to the line's end).
  */
-const REFERENCE_RE =
+export const REFERENCE_RE =
   /\$\{(?:secret|input|param|out|secretFile):[\w:]+\}|\$\{[A-Za-z_]\w*(?::?[-=?+][^}\n]*)?\}|\$\((?:[^()\n]|\([^()\n]*\))*\)|\$env:\w+|\$[A-Za-z_]\w*|%[A-Za-z_]\w*%/g;
 
 /** An auth scheme in front of a value (`Bearer $TOKEN`): the value is what counts. */
@@ -333,15 +334,33 @@ function domainDetector(domains: readonly string[] | undefined): Detector | unde
   return { kind: 'internal-domain', re: new RegExp(`(?<![\\w.-])(?:[a-z0-9-]+\\.)*(?:${alt})(?![\\w-]|\\.[a-z0-9])`, 'gi') };
 }
 
+/** The index of the last item (sorted by `start`) that starts before `end`, or -1. */
+function lastStartingBefore<T>(items: readonly T[], start: (t: T) => number, end: number): number {
+  let lo = 0;
+  let hi = items.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (start(items[mid]!) < end) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
+
 export function scanForLeaks(text: string, opts: LeakScanOptions = {}): LeakFinding[] {
+  // Findings and references don't overlap among themselves and are kept in text order, so the one
+  // a span could overlap is the last that starts before its end (found by bisection: a line full of
+  // findings and references stays fast).
   const spans: Span[] = [];
-  const taken = (start: number, end: number): boolean => spans.some((s) => start < s.offset + s.length && s.offset < end);
   const add = (offset: number, length: number, kind: string): void => {
-    if (length > 0 && !taken(offset, offset + length)) spans.push({ offset, length, kind });
+    if (length <= 0) return;
+    const i = lastStartingBefore(spans, (s) => s.offset, offset + length);
+    const prev = spans[i];
+    if (prev && prev.offset + prev.length > offset) return;
+    spans.splice(i + 1, 0, { offset, length, kind });
   };
-  const refs = [...text.matchAll(REFERENCE_RE)].map((m) => ({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
-  const inRef = (pos: number): boolean => refs.some((r) => pos >= r.start && pos < r.end);
-  const overlapsRef = (start: number, end: number): boolean => refs.some((r) => start < r.end && r.start < end);
+  const refs = findReferences(text).map(([start, end]) => ({ start, end }));
+  const overlapsRef = (start: number, end: number): boolean => (refs[lastStartingBefore(refs, (r) => r.start, end)]?.end ?? -1) > start;
+  const inRef = (pos: number): boolean => overlapsRef(pos, pos + 1);
   /** A match that is (or starts with) a variable reference, or was already redacted. */
   const skip = (m: string, at: number): boolean =>
     m.includes(REDACTED) || VARIABLE_REF.test(m.trim()) || inRef(at + (AUTH_SCHEME.exec(m)?.[0].length ?? 0));

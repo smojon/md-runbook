@@ -102,6 +102,10 @@ class Scan {
     for (let k = 0; k < word.length; k++) if (lower(this.c(i + k)) !== word.charCodeAt(k)) return false;
     return true;
   }
+  /** Does `word` start at i, exactly? */
+  has(i: number, word: string): boolean {
+    return i >= 0 && this.t.startsWith(word, i);
+  }
   /** The start of the run of blanks that ends at i (i itself if there is none). */
   blanksBefore(i: number): number {
     while (i > 0 && isBlank(this.c(i - 1))) i--;
@@ -454,6 +458,70 @@ function keycloakSecret(s: Scan, p: number): number {
   const e = keycloakJson(s, p);
   return e >= 0 ? e : secretUuid(s, p);
 }
+
+// --- variable references (leaks.ts REFERENCE_RE) ----------------------------------------------
+
+const REFERENCE_NAMES = ['secret', 'input', 'param', 'out', 'secretFile'];
+/** `[\w:]` */
+const wordOrColon = (c: number): boolean => isWord(c) || c === COLON;
+/** `[-=?+]` */
+const isExpansionOp = (c: number): boolean => c === DASH || c === EQ || c === 63 || c === PLUS;
+
+/** REFERENCE_RE (leaks.ts) at p: its alternatives in order, each read once. */
+function referenceAt(s: Scan, p: number): number {
+  const c = s.c(p);
+  const d = s.c(p + 1);
+  if (c === PCT) {
+    if (!isAlpha(d) && d !== US) return -1;
+    const e = s.runEnd(p + 2, isWord);
+    return s.c(e) === PCT ? e + 1 : -1;
+  }
+  if (c !== DOLLAR) return -1;
+  if (d === LBRACE) {
+    // `\$\{(?:secret|input|param|out|secretFile):[\w:]+\}`
+    for (const name of REFERENCE_NAMES) {
+      const at = p + 2 + name.length + 1;
+      if (!s.has(p + 2, name) || s.c(at - 1) !== COLON) continue;
+      const e = s.runEnd(at, wordOrColon);
+      if (e > at && s.c(e) === RBRACE) return e + 1;
+    }
+    // `\$\{[A-Za-z_]\w*(?::?[-=?+][^}\n]*)?\}`
+    const a = s.c(p + 2);
+    if (!isAlpha(a) && a !== US) return -1;
+    const r = s.runEnd(p + 3, isWord);
+    const op = s.c(r) === COLON && isExpansionOp(s.c(r + 1)) ? r + 2 : isExpansionOp(s.c(r)) ? r + 1 : -1;
+    if (op < 0) return s.c(r) === RBRACE ? r + 1 : -1;
+    // Each `${` inside one run ends at the same `}` or line break: found once.
+    const e = s.next('ref}', (x) => x === RBRACE || x === LF).find(op);
+    return s.c(e) === RBRACE ? e + 1 : -1;
+  }
+  if (d === LPAREN) {
+    // `\$\((?:[^()\n]|\([^()\n]*\))*\)`
+    for (let i = p + 2; i < s.n; ) {
+      const x = s.c(i);
+      if (x === RPAREN) return i + 1;
+      if (x === LF) return -1;
+      if (x !== LPAREN) {
+        i++;
+        continue;
+      }
+      let j = i + 1;
+      while (j < s.n && s.c(j) !== LPAREN && s.c(j) !== RPAREN && s.c(j) !== LF) j++;
+      if (s.c(j) !== RPAREN) return -1;
+      i = j + 1;
+    }
+    return -1;
+  }
+  // `\$env:\w+`, else `\$[A-Za-z_]\w*`
+  if (s.has(p + 1, 'env:')) {
+    const e = s.runEnd(p + 5, isWord);
+    if (e > p + 5) return e;
+  }
+  return isAlpha(d) || d === US ? s.runEnd(p + 2, isWord) : -1;
+}
+
+/** Where leaks.ts REFERENCE_RE matches, in linear time (its `${NAME:-…}` alternative retried each `${` to the line's end). */
+export const findReferences: SpanFinder = finder(referenceAt);
 
 /** The built-in patterns (by name) that have a linear matcher. redact.ts uses one only for that exact pattern. */
 export const LINEAR_FINDERS: ReadonlyMap<string, SpanFinder> = new Map([

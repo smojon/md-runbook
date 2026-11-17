@@ -8,8 +8,9 @@ import { strict as assert } from 'node:assert';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
+import { REFERENCE_RE, scanForLeaks } from '@md-runbook/core/leaks';
 import { DEFAULT_PATTERNS, REDACTED, compilePattern, createRedactor, patternFinder, redactSecretManifests } from '@md-runbook/core/redact';
-import { LINEAR_FINDERS, Spans, isRegexSpace } from '@md-runbook/core/redactScan';
+import { LINEAR_FINDERS, Spans, findReferences, isRegexSpace } from '@md-runbook/core/redactScan';
 import { corpus } from './redactCorpus';
 
 const LINES = Number(process.env.REDACT_CORPUS_LINES ?? 200_000);
@@ -37,6 +38,12 @@ function compare(text: string, counts: Map<string, number>, where: string): void
     }
     counts.set(p.name!, (counts.get(p.name!) ?? 0) + want.length);
   }
+  const want = byRegex(REFERENCE_RE, text);
+  const got = findReferences(text);
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    assert.fail(`references (${where}) on ${show(text)}:\n  regex  ${JSON.stringify(want)}\n  linear ${JSON.stringify(got)}`);
+  }
+  counts.set('references', (counts.get('references') ?? 0) + want.length);
 }
 
 function filesUnder(dir: string, out: string[] = []): string[] {
@@ -84,7 +91,7 @@ describe('linear redaction matchers', () => {
     }
     t.diagnostic(`matches: ${[...counts].map(([k, n]) => `${k} ${n}`).join(', ')}`);
     // Each pattern matched often: the corpus reaches what it guards.
-    for (const k of LINEAR.map((p) => p.name!)) assert.ok((counts.get(k) ?? 0) > LINES / 200, `${k}: ${counts.get(k)} matches`);
+    for (const k of [...LINEAR.map((p) => p.name!), 'references']) assert.ok((counts.get(k) ?? 0) > LINES / 200, `${k}: ${counts.get(k)} matches`);
   });
 
   it('find what the regular expressions find in the repository’s runbooks, docs and tests', () => {
@@ -177,9 +184,21 @@ describe('redaction and the leak scan stay linear on 200,000-character lines', (
       assert.ok(ms < BUDGET_MS, `${p.name}: ${Math.round(ms)} ms for ${HOSTILE.length} lines`);
     });
   }
+  it('variable references (leak scan)', () => {
+    const t0 = performance.now();
+    for (const line of HOSTILE) findReferences(line);
+    const ms = performance.now() - t0;
+    assert.ok(ms < BUDGET_MS, `${Math.round(ms)} ms`);
+  });
   it('the redactor, all patterns', () => {
     const t0 = performance.now();
     for (const line of HOSTILE) redactor.redact(line);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 4 * BUDGET_MS, `${Math.round(ms)} ms`);
+  });
+  it('scanForLeaks', () => {
+    const t0 = performance.now();
+    for (const line of HOSTILE) scanForLeaks(line);
     const ms = performance.now() - t0;
     assert.ok(ms < 4 * BUDGET_MS, `${Math.round(ms)} ms`);
   });
