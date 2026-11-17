@@ -569,7 +569,20 @@ const ABBREVIATION_RE = /\b(?:e\.g|i\.e|etc|vs|cf)\.$/i;
 // ends a sentence too (S, “Stop.” Then…), but not before lowercase (“Stop!” he said).
 // (After any placeholder here; splitSentences keeps the S ones. A fixed-length lookbehind, for Hermes.)
 const SENTENCE_END_RE = /(?<=[.!?\uE001])["')\]*_]*\s+(?=["'(\[*_`]*\n*[A-Za-z0-9])/g;
-const ENDS_IN_QUOTE_RE = /S\uE000\d+\uE001$/;
+/** What endsInQuote tests; kept as the definition (test/hostileText.test.ts compares the two). */
+export const ENDS_IN_QUOTE_RE = /S\uE000\d+\uE001$/;
+
+/**
+ * `ENDS_IN_QUOTE_RE.test(s)` read from the end: the expression looked for an `S` at every place
+ * in a sentence that grows with each mark that ends none (100 KB of fences took seconds).
+ */
+export function endsInQuote(s: string): boolean {
+  let i = s.length - 1;
+  if (s.charCodeAt(i) !== 0xe001) return false;
+  const last = i;
+  while (i > 0 && s.charCodeAt(i - 1) >= 48 && s.charCodeAt(i - 1) <= 57) i--;
+  return i < last && s.charCodeAt(i - 1) === 0xe000 && s[i - 2] === 'S';
+}
 
 interface Sentence {
   text: string;
@@ -604,7 +617,7 @@ function splitSentences(t: string, labels: readonly string[] = DEFAULT_LABEL_TEX
       const so = piece.slice(start, end.index).trim();
       const next = piece.slice(end.index + end[0].length).replace(/^["'(\[*_`]+/, '');
       if (ABBREVIATION_RE.test(so) || (so.endsWith('?') && isLabel(so))) continue;
-      if (so.endsWith('\uE001') && (!ENDS_IN_QUOTE_RE.test(so) || /^[a-z]/.test(next.replace(/^[\s"'(\[*_`]+/, '')))) continue;
+      if (so.endsWith('\uE001') && (!endsInQuote(so) || /^[a-z]/.test(next.replace(/^[\s"'(\[*_`]+/, '')))) continue;
       // Initials ("L. Peter Deutsch", "J. R. R. Tolkien") and "no. 6" end no sentence.
       if (isInitial(so, next) || (NUMBER_RE.test(so) && /^\d/.test(next))) continue;
       at(a + start, piece.slice(start, end.index));

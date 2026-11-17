@@ -100,7 +100,8 @@ const cap = (w: string): string => w[0] + w.slice(1).toLowerCase();
  * by `\b`, so `ERROR_CODE` and `errors` stay plain while `5-NOTICE` (Nevis) matches. No named
  * groups or lookbehind: the app's JavaScript engine (Hermes) is not sure to have them.
  */
-const MATCHER = new RegExp(
+const EXCEPTION = '\\b[A-Za-z.]*Exception\\b';
+const matcherSource = (exception: string): string =>
   LEVEL_WORDS.map((l) => {
     const alts: string[] = [];
     const words = [...l.words, ...(l.capitalized ? l.words.filter((w) => !NOT_CAPITALIZED.has(w) && !w.includes('_')).map(cap) : [])];
@@ -108,31 +109,91 @@ const MATCHER = new RegExp(
     if (l.colon?.length) alts.push(`\\b(?:${l.colon.map(esc).join('|')})(?=:)`);
     if (l.brackets?.length) alts.push(`\\[(?:${l.brackets.map((b) => b.split('').map((c) => `[${c.toLowerCase()}${c.toUpperCase()}]`).join('')).join('|')})\\]`);
     if (l.klog) alts.push(`^${l.klog}\\d{4} \\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?`);
-    if (l.extra) alts.push(...l.extra);
+    if (l.extra) alts.push(...l.extra.map((x) => (x === EXCEPTION ? exception : x)));
     return `(${alts.join('|')})`;
-  }).join('|'),
-  'gu',
-);
+  }).join('|');
+/** The definition of levelSpans (test/hostileText.test.ts compares the two). */
+export const LEVEL_MATCHER = new RegExp(matcherSource(EXCEPTION), 'gu');
+/**
+ * The same without `\b[A-Za-z.]*Exception\b` (it never matches, `(?!)`, so the groups are the
+ * same): that one read from each word boundary of a long dotted run to its end (`a.a.a…` of
+ * 50 KB, a minified script, took 3 s), so `exceptionAt` finds it, in one pass.
+ */
+const MATCHER = new RegExp(matcherSource('(?!)'), 'gu');
+const ERROR_LEVEL = LEVEL_WORDS.findIndex((l) => l.extra?.includes(EXCEPTION));
+
+const isWordCode = (c: number): boolean => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+const isExceptionChar = (c: number): boolean => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 46;
+
+/**
+ * For `line`, the first match of `\b[A-Za-z.]*Exception\b` (greedy) that starts at or after
+ * `from` (asked with `from` growing), as [start, end], or undefined. In a run of `[A-Za-z.]`,
+ * every start reaches the same end: the last `Exception` in it with a word boundary after it.
+ */
+function exceptionFinder(line: string): (from: number) => [number, number] | undefined {
+  let run = { start: -1, end: -1, match: -1 };
+  return (from) => {
+    for (let i = line.indexOf('Exception', from); i >= 0; ) {
+      if (i < run.start || i >= run.end) {
+        let start = i;
+        while (start > 0 && isExceptionChar(line.charCodeAt(start - 1))) start--;
+        let end = i;
+        while (end < line.length && isExceptionChar(line.charCodeAt(end))) end++;
+        // The last `Exception` in the run with a boundary after it: a `.`, or the run's end before no word character.
+        let match = -1;
+        for (let j = line.lastIndexOf('Exception', end - 9); j >= start && match < 0; j = j > 0 ? line.lastIndexOf('Exception', j - 1) : -1) {
+          if (!isWordCode(line.charCodeAt(j + 9))) match = j + 9;
+        }
+        run = { start, end, match };
+      }
+      for (let s = Math.max(run.start, from); s <= run.match - 9; s++) {
+        if (isWordCode(line.charCodeAt(s - 1)) !== isWordCode(line.charCodeAt(s))) return [s, run.match];
+      }
+      i = line.indexOf('Exception', run.end);
+    }
+    return undefined;
+  };
+}
 
 const ANSI_IN_LINE = /\u001b\[[0-9;]*m/;
+
+interface LevelMatch {
+  index: number;
+  text: string;
+  /** The level's place in LEVEL_WORDS, -1 if none. */
+  group: number;
+}
 
 /** The words of a line with their level; a line with ANSI colours of its own is one plain span. */
 export function levelSpans(line: string): OutputSpan[] {
   if (ANSI_IN_LINE.test(line)) return [{ text: line }];
   const spans: OutputSpan[] = [];
   let at = 0;
-  MATCHER.lastIndex = 0;
-  for (let m = MATCHER.exec(line); m; m = MATCHER.exec(line)) {
-    const k = m.findIndex((g, i) => i > 0 && g !== undefined);
-    const level = k > 0 ? LEVEL_WORDS[k - 1]?.level : undefined;
-    if (m[0] === '') {
-      MATCHER.lastIndex++;
-      continue;
+  const exceptionAt = line.includes('Exception') ? exceptionFinder(line) : undefined;
+  let pending: RegExpExecArray | null | undefined;
+  let exception: [number, number] | undefined | null;
+  const next = (from: number): LevelMatch | undefined => {
+    // A match found before stays the first from a later place as long as it starts there or after.
+    if (pending === undefined || (pending && pending.index < from)) {
+      MATCHER.lastIndex = from;
+      pending = MATCHER.exec(line);
     }
-    if (!level) continue;
-    if (m.index! > at) spans.push({ text: line.slice(at, m.index) });
-    spans.push({ text: m[0], level });
-    at = m.index! + m[0].length;
+    if (exceptionAt && (exception === undefined || (exception && exception[0] < from))) exception = exceptionAt(from) ?? null;
+    const m = pending;
+    const k = m ? m.findIndex((g, i) => i > 0 && g !== undefined) - 1 : -1;
+    // The expression's choice: the first start, and there the first alternative (the level before).
+    if (exception && (!m || exception[0] < m.index || (exception[0] === m.index && k > ERROR_LEVEL))) {
+      return { index: exception[0], text: line.slice(exception[0], exception[1]), group: ERROR_LEVEL };
+    }
+    return m ? { index: m.index, text: m[0], group: k } : undefined;
+  };
+  for (let from = 0, m = next(0); m; m = next(from)) {
+    const level = m.group >= 0 ? LEVEL_WORDS[m.group]?.level : undefined;
+    from = m.index + Math.max(m.text.length, 1);
+    if (m.text === '' || !level) continue;
+    if (m.index > at) spans.push({ text: line.slice(at, m.index) });
+    spans.push({ text: m.text, level });
+    at = m.index + m.text.length;
   }
   if (at < line.length || spans.length === 0) spans.push({ text: line.slice(at) });
   return spans;

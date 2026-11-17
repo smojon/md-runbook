@@ -339,7 +339,9 @@ export function signedText(text: string): string {
   const before = frontMatterLines(lf);
   const after = frontMatterLines(t);
   const same = before === undefined ? after === undefined : after !== undefined && before.length === after.length && before.every((l, i) => l === after[i]);
-  return (same ? '' : '\r') + t.replace(/\s+$/, '') + '\n';
+  // trimEnd: what `replace(/\s+$/, '')` removed (\s is JavaScript's whitespace and line ends), in
+  // one pass; the expression re-read a run of blanks from each of its blanks (seconds on 100 KB).
+  return (same ? '' : '\r') + t.trimEnd() + '\n';
 }
 
 /** SHA-256 (hex) of signedText: the `text` item of a version 2 manifest. */

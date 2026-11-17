@@ -52,6 +52,24 @@ update (see below).
   - `glob` 14 and `minimatch` 11 in the extension's build and publishing tools.
   - `actions/download-artifact` v8.0.2.
   - The app's copies of `glob` and `minimatch` wait for an Expo update.
+- **Redaction catches more.** Output redaction and the leak scan now also find:
+  - quoted header values: `"Authorization": "Basic …"`, `{"Cookie": "session=…"}`;
+  - a no-break or other Unicode space after `key:`, `key =` or a flag;
+  - passwords given to tools: `sshpass -p`, `redis-cli -a`, `ldapsearch -w`,
+    `smbclient -U user%…`, `openssl -passin pass:…`, `htpasswd -b` and more;
+  - spaced key names: `api key:`, `secret key =`, `access key:`, `passphrase:`.
+  - Everything found before is still found. On runbook source, the leak scan reports these only
+    when the value looks like a secret, not "see vault" or a placeholder.
+- **Redaction and the leak scan in linear time.** Some lines slowed every run that redacts output:
+  - a long run of blanks (20,000 took 6 s, 200,000 about ten minutes);
+  - `-p`, `eyJ-` or `${` repeated many times.
+  - The built-in patterns now read each line once, and redact exactly what they did.
+- **More text read in one pass.** These were slow on long or repeated input, and now give the
+  same results in milliseconds:
+  - a parameter's "One of: …" comment (1,000 blanks in it took 80 s);
+  - Kubernetes Secrets in the leak scan, and namespaces and URLs in Copy for AI;
+  - output colours, output block attributes, call copies, cloud views and a cell's commands.
+
 
 ## 0.29.0
 

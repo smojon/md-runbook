@@ -1,7 +1,11 @@
 /**
  * Secret redaction. Each pattern's whole match is replaced with [REDACTED]; patterns use
- * lookbehind/lookahead to keep surrounding context (e.g. "Authorization: [REDACTED]").
+ * lookbehind/lookahead to keep surrounding context (e.g. "Authorization: [REDACTED]"). The
+ * regular expressions that backtrack quadratically are read by linear matchers that find exactly
+ * the same (redactScan.ts); they stay here as the definition.
  */
+
+import { LINEAR_FINDERS, PASSWORD_TOOLS, PasswordToolRule, SPACED_KEY_WORDS, SpanFinder, Spans } from './redactScan';
 
 export const REDACTED = '[REDACTED]';
 
@@ -25,7 +29,7 @@ const NOT_A_VALUE = `(?<!\\$\\{(?:secret|secretFile|input|param):)(?!(?:Bearer|B
 /** Marker pattern: redacts the values under `data:` / `stringData:` of Kubernetes Secret manifests. */
 const SECRET_MANIFESTS = 'k8s-secret-data';
 
-export const DEFAULT_PATTERNS: readonly RedactionPattern[] = [
+const BASE_PATTERNS: readonly RedactionPattern[] = [
   {
     name: 'pem-private-key',
     pattern: '(?<=-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)[\\s\\S]+?(?=-----END [A-Z0-9 ]*PRIVATE KEY-----|$)',
@@ -109,6 +113,56 @@ export const DEFAULT_PATTERNS: readonly RedactionPattern[] = [
   { name: 'aws-access-key-id', pattern: '\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b' },
 ];
 
+/** Every JavaScript space but the line ends: the widened patterns' blank, where the ones above read `[ \t]`. */
+const WS = '[^\\S\\r\\n\\u2028\\u2029]';
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const base = (name: string): RedactionPattern => BASE_PATTERNS.find((p) => p.name === name)!;
+const quotedHeader = (name: string): string =>
+  `(?<=\\b${name}["']?${WS}*[:=]${WS}*")[^"\\r\\n]+(?=")|(?<=\\b${name}["']?${WS}*[:=]${WS}*')[^'\\r\\n]+(?=')`;
+const toolRule = (r: PasswordToolRule): string => {
+  const flag = `\\b(?:${r.tools.map(escapeRe).join('|')})\\b[^\\r\\n]*?\\s(?:${r.flags.map(escapeRe).join('|')})`;
+  const gap = r.space && r.glued ? `${WS}*` : r.space ? `${WS}+` : '';
+  if (r.split !== undefined) return `(?<=${flag}${gap}[^\\s${escapeRe(r.split)}"']+${escapeRe(r.split)})[^\\s"']+`;
+  if (r.prefix !== undefined) return `(?<=${flag}${gap}${escapeRe(r.prefix)})[^\\s"']+`;
+  return `(?<=${flag}${gap})(?:"(?![$%])[^"\\r\\n]*"|'(?![$%])[^'\\r\\n]*'|(?![-$%])[^\\s"']+)`;
+};
+/** `htpasswd -b FILE USER PASSWORD`, `htpasswd -nb USER PASSWORD` (the options in one word). */
+const HTPASSWD = ['(?![A-Za-z]*n)', '(?=[A-Za-z]*n)']
+  .map((n, i) => `(?<=\\bhtpasswd${WS}+-(?=[A-Za-z]*b)${n}[A-Za-z]+${WS}+${i === 0 ? `[^\\s"']+${WS}+` : ''}[^\\s"']+${WS}+)(?![-$%])[^\\s"']+`)
+  .join('|');
+const SPACED_KEY = `\\b(?:(?:${SPACED_KEY_WORDS.join('|')})${WS}+key|pass${WS}*phrase)["']?${WS}*[:=]${WS}*`;
+
+/**
+ * Patterns added in 0.30 for what the ones above missed. They run after them (in the leak scan
+ * too), so everything those find stays found as it was; each has a linear matcher (redactScan.ts).
+ */
+const WIDENED_PATTERNS: readonly RedactionPattern[] = [
+  // "Authorization": "Basic …", Authorization: 'Bearer …', {"Cookie": "session=…"}: the value in its quotes.
+  { name: 'authorization-header-quoted', pattern: quotedHeader('(?:Proxy-)?Authorization'), flags: 'i' },
+  { name: 'cookie-header-quoted', pattern: quotedHeader('(?:Set-)?Cookie'), flags: 'i' },
+  // The patterns that read blanks around a separator or after a flag, with Unicode spaces (no-break, ideographic…) as blanks.
+  {
+    name: 'secret-after-unicode-space',
+    pattern: ['authorization-header', 'cookie-header', 'bearer-token', 'secret-key-value-quoted', 'secret-key-value', 'pass-key-value', 'secret-flag-value', 'keycloak-client-secret']
+      .map((n) => base(n).pattern.split('[ \\t]').join(WS))
+      .join('|'),
+    flags: 'i',
+  },
+  // sshpass -p PASSWORD, redis-cli -a PASSWORD, ldapsearch -w PASSWORD, smbclient -U user%PASSWORD… (PASSWORD_TOOLS)
+  { name: 'password-flag-tool', pattern: [...PASSWORD_TOOLS.map(toolRule), HTPASSWD].join('|') },
+  // api key: …, secret key = …, "private key": "…", passphrase: … (key names SECRET_KEYS misses)
+  {
+    name: 'secret-key-value-spaced',
+    pattern: `(?<=${SPACED_KEY}")${NOT_A_VALUE}[^"\\r\\n]+(?=")|(?<=${SPACED_KEY}')${NOT_A_VALUE}[^'\\r\\n]+(?=')|(?<=${SPACED_KEY}["']?)${NOT_A_VALUE}[^\\s"',;&}]+`,
+    flags: 'i',
+  },
+];
+
+/** Names of the widened patterns: the leak scan reports what they find last, and only when it looks like a secret. */
+export const WIDENED_PATTERN_NAMES: ReadonlySet<string> = new Set(WIDENED_PATTERNS.map((p) => p.name!));
+
+export const DEFAULT_PATTERNS: readonly RedactionPattern[] = [...BASE_PATTERNS, ...WIDENED_PATTERNS];
+
 /**
  * Redact every value under `data:` / `stringData:` when the text contains a Kubernetes Secret
  * (`oc get secret -o yaml|json`). Key names are kept, so the output stays useful.
@@ -146,8 +200,42 @@ export function compilePattern(p: string | RedactionPattern): RegExp {
   return new RegExp(spec.pattern, normalizeFlags(spec.flags));
 }
 
+const patternKey = (p: string | RedactionPattern): string =>
+  typeof p === 'string' ? `g/${p}` : `${[...normalizeFlags(p.flags)].sort().join('')}/${p.pattern}`;
+
+/** Built-in patterns read in linear time (redactScan.ts), by pattern and flags: the same regular expression of yours is too. */
+const LINEAR = new Map<string, SpanFinder>();
+for (const p of DEFAULT_PATTERNS) {
+  const find = p.name === undefined ? undefined : LINEAR_FINDERS.get(p.name);
+  if (find) LINEAR.set(patternKey(p), find);
+}
+
+/**
+ * Where `p` matches in `text` ([start, end), in order, as `text.matchAll` finds them): a built-in
+ * pattern in linear time, any other with its regular expression. Throws if that doesn't compile.
+ */
+export function patternFinder(p: string | RedactionPattern): SpanFinder {
+  const linear = LINEAR.get(patternKey(p));
+  if (linear) return linear;
+  const re = compilePattern(p);
+  return (text) => [...text.matchAll(re)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
+}
+
+/** `text` with every span (in order, not overlapping) but the empty ones replaced by REDACTED. */
+function replaceSpans(text: string, spans: Spans): string {
+  if (spans.length === 0) return text;
+  let out = '';
+  let at = 0;
+  for (const [start, end] of spans) {
+    if (end === start) continue;
+    out += text.slice(at, start) + REDACTED;
+    at = end;
+  }
+  return out + text.slice(at);
+}
+
 export function createRedactor(patterns: ReadonlyArray<string | RedactionPattern>): Redactor {
-  const regexes: RegExp[] = [];
+  const steps: Array<(text: string) => string> = [];
   const errors: string[] = [];
   let manifests = false;
   for (const p of patterns) {
@@ -155,8 +243,18 @@ export function createRedactor(patterns: ReadonlyArray<string | RedactionPattern
       manifests = true;
       continue;
     }
+    const linear = LINEAR.get(patternKey(p));
+    if (linear) {
+      steps.push((text) => replaceSpans(text, linear(text)));
+      continue;
+    }
     try {
-      regexes.push(compilePattern(p));
+      const re = compilePattern(p);
+      steps.push((text) => {
+        re.lastIndex = 0;
+        // Zero-length matches are left alone so a careless pattern can't splatter the text.
+        return text.replace(re, (m) => (m === '' ? m : REDACTED));
+      });
     } catch (e) {
       const label = typeof p === 'string' ? p : (p.name ?? p.pattern);
       errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
@@ -166,11 +264,7 @@ export function createRedactor(patterns: ReadonlyArray<string | RedactionPattern
     errors,
     redact(text: string): string {
       let out = manifests ? redactSecretManifests(text) : text;
-      for (const re of regexes) {
-        re.lastIndex = 0;
-        // Zero-length matches are left alone so a careless pattern can't splatter the text.
-        out = out.replace(re, (m) => (m === '' ? m : REDACTED));
-      }
+      for (const step of steps) out = step(out);
       return out;
     },
   };

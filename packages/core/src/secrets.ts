@@ -9,7 +9,7 @@
 import { KUBE_CONTEXT_MODES, KubeContextMode, isKubeContextValue } from './kubeContext';
 import { RunbookShells, ShellKind, parseShells } from './shellKind';
 import { LINE_RE } from './lines';
-import { beforeComment, isWhitespace, valueAndHash } from './lineText';
+import { beforeComment, isWhitespace, trimEndWith, valueAndHash } from './lineText';
 
 export type RefKind = 'secret' | 'input' | 'param' | 'out';
 
@@ -122,26 +122,126 @@ export interface RunbookParam {
 }
 
 /**
+ * A trailing "One of: …" (a period ends the list only before a space or the end, so `1.2` can be a
+ * choice). What `oneOf` reads; kept as the definition (test/hostileText.test.ts compares the two).
+ */
+export const ONE_OF_RE = /(?:^|\s|\()one of:\s*((?:[^.()]|\.(?=\S))*?)\s*\)?\s*\.?\s*$/i;
+
+const isWs = (c: string | undefined): boolean => c !== undefined && /\s/.test(c);
+
+/**
+ * `ONE_OF_RE.exec(text)` for a trimmed `text`, as its match's index and list (group 1), in one
+ * pass: the expression's lazy list and the blanks around it backtracked exponentially (a list
+ * followed by 1,000 blanks and a letter took 80 s).
+ *
+ * The list starts after the blanks that follow `one of:` (fewer blanks never match where more
+ * don't: the list may hold any blank) and ends at the latest of its start and where the closing
+ * part of blanks, `)`, blanks, `.`, blanks to the end begins, if no `.`, `(` or `)` comes before
+ * (a `.` before a non-blank is fine). Else the next `one of:` is tried.
+ */
+export function oneOf(text: string): { index: number; list: string } | undefined {
+  // Where the closing part begins: read back from the end.
+  let close = text.length;
+  while (isWs(text[close - 1])) close--;
+  if (text[close - 1] === '.') close--;
+  while (isWs(text[close - 1])) close--;
+  if (text[close - 1] === ')') close--;
+  while (isWs(text[close - 1])) close--;
+  // The first character the list can't hold, from `from` on (asked with `from` growing).
+  let badFrom = -1;
+  let bad = -1;
+  const firstBad = (from: number): number => {
+    if (from < badFrom || from > bad) {
+      badFrom = from;
+      bad = from;
+      for (; bad < text.length; bad++) {
+        const c = text[bad];
+        if (c === '(' || c === ')' || (c === '.' && (bad + 1 >= text.length || isWs(text[bad + 1])))) break;
+      }
+    }
+    return bad;
+  };
+  // The i flag without u folds ASCII letters only.
+  const lower = text.replace(/[A-Z]+/g, (c) => c.toLowerCase());
+  for (let at = lower.indexOf('one of:'); at >= 0; at = lower.indexOf('one of:', at + 1)) {
+    // `(?:^|\s|\()` before it: the match starts there (at 0 for `^`).
+    const before = text[at - 1];
+    if (!(at === 0 || isWs(before) || before === '(')) continue;
+    let start = at + 7;
+    while (isWs(text[start])) start++;
+    const end = Math.max(start, close);
+    if (firstBad(start) >= end) return { index: at === 0 ? 0 : at - 1, list: text.slice(start, end) };
+  }
+  return undefined;
+}
+
+/** What splitChoices splits at; kept as the definition (test/hostileText.test.ts compares the two). */
+export const CHOICE_SEPARATOR_RE = /\s*,\s*(?:or\s+)?|\s+or\s+/i;
+
+/**
+ * `list.split(CHOICE_SEPARATOR_RE)` in one pass. From each blank of a run, the expression read the
+ * run to its end before failing; every blank of one run reaches the same end, so it is read once.
+ */
+export function splitChoices(list: string): string[] {
+  let runFrom = -1;
+  let runEnd = -1;
+  /** The end of the blanks from i. */
+  const blanksEnd = (i: number): number => {
+    if (i < runFrom || i > runEnd) {
+      runFrom = i;
+      runEnd = i;
+      while (isWs(list[runEnd])) runEnd++;
+    }
+    return runEnd;
+  };
+  const isOr = (i: number): boolean => (list[i] === 'o' || list[i] === 'O') && (list[i + 1] === 'r' || list[i + 1] === 'R') && isWs(list[i + 2]);
+  /** The end of a separator that starts at q, or -1. */
+  const separator = (q: number): number => {
+    // `\s*,\s*(?:or\s+)?`
+    const r = blanksEnd(q);
+    if (list[r] === ',') {
+      const e = blanksEnd(r + 1);
+      return isOr(e) ? blanksEnd(e + 2) : e;
+    }
+    // `\s+or\s+`
+    return r > q && isOr(r) ? blanksEnd(r + 2) : -1;
+  };
+  const out: string[] = [];
+  let last = 0;
+  for (let q = 0; q < list.length; ) {
+    const e = separator(q);
+    if (e < 0) {
+      q++;
+      continue;
+    }
+    out.push(list.slice(last, q));
+    last = e;
+    q = e;
+  }
+  out.push(list.slice(last));
+  return out;
+}
+
+/**
  * A parameter's comment as a description and choices: a trailing "One of: a, b, c" (any case, up
  * to the end or a closing period, maybe in parentheses; `, or` and ` or ` also separate) gives
  * the choices, the rest the description.
  */
 export function paramComment(comment: string): { description?: string; choices?: string[] } {
   const text = comment.trim();
-  // A period ends the list only before a space or the end, so `1.2` can be a choice.
-  const m = /(?:^|\s|\()one of:\s*((?:[^.()]|\.(?=\S))*?)\s*\)?\s*\.?\s*$/i.exec(text);
+  const m = oneOf(text);
   const choices = m
     ? [
         ...new Set(
-          m[1]!
-            .split(/\s*,\s*(?:or\s+)?|\s+or\s+/i)
+          splitChoices(m.list)
             .map((c) => unquote(c.trim()))
             .filter((c) => c !== ''),
         ),
       ]
     : [];
   if (!m || choices.length === 0) return text !== '' ? { description: text } : {};
-  const description = text.slice(0, m.index).replace(/[\s,;:(-]+$/, '');
+  // The separators before the list dropped, as `replace(/[\s,;:(-]+$/, '')` did, without its backtracking.
+  const description = trimEndWith(text.slice(0, m.index), (c) => c !== undefined && /[\s,;:(-]/.test(c));
   return { ...(description !== '' ? { description } : {}), choices };
 }
 

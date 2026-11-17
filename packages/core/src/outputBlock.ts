@@ -21,13 +21,47 @@ export const OUTPUT_END_RE = /^[ \t]*<!--[ \t]*md-runbook:output end[ \t]*-->[ \
 export const HISTORY_OPEN_RE = /^[ \t]*<details>[ \t]*<summary>[ \t]*md-runbook:[^<]*<\/summary>[ \t]*$/;
 export const HISTORY_CLOSE_RE = /^[ \t]*<\/details>[ \t]*$/;
 
-const ATTR_RE = /([\w-]+)=(?:"([^"]*)"|(\S+))/g;
+/** What parseAttrs reads; kept as the definition (test/hostileText.test.ts compares the two). */
+export const ATTR_RE = /([\w-]+)=(?:"([^"]*)"|(\S+))/g;
 
+const attrKeyChar = (c: string | undefined): boolean => c !== undefined && /[\w-]/.test(c);
+
+/**
+ * `key=value` and `key="value"` pairs, as ATTR_RE finds them, in one pass: the expression read
+ * each start inside a long name again to its end (100 KB of letters took seconds). A name not
+ * followed by `=` and a value fails the same way from each of its starts.
+ */
 export function parseAttrs(s: string): Record<string, string> {
   const attrs: Record<string, string> = {};
-  for (const m of s.matchAll(ATTR_RE)) {
-    const key = m[1];
-    if (key) attrs[key] = decodeAttr(m[2] ?? m[3] ?? '');
+  let noQuoteFrom = s.length + 1;
+  for (let p = 0; p < s.length; ) {
+    let r = p;
+    while (attrKeyChar(s[r])) r++;
+    if (r === p || s[r] !== '=') {
+      p = Math.max(r, p + 1);
+      continue;
+    }
+    let value: string | undefined;
+    let end = -1;
+    if (s[r + 1] === '"') {
+      const close = r + 2 >= noQuoteFrom ? -1 : s.indexOf('"', r + 2);
+      if (close < 0) noQuoteFrom = Math.min(noQuoteFrom, r + 2);
+      else {
+        value = s.slice(r + 2, close);
+        end = close + 1;
+      }
+    }
+    if (value === undefined) {
+      end = r + 1;
+      while (end < s.length && !/\s/.test(s[end]!)) end++;
+      if (end > r + 1) value = s.slice(r + 1, end);
+    }
+    if (value === undefined) {
+      p = r;
+      continue;
+    }
+    attrs[s.slice(p, r)] = decodeAttr(value);
+    p = end;
   }
   return attrs;
 }

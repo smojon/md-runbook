@@ -366,12 +366,17 @@ file that isn't open at all. Only output blocks are removed; every other byte st
 Output is redacted **before it is written to disk**, replacing matches with `[REDACTED]`. The
 built-in patterns cover:
 
-- Bearer tokens, JWTs, `Authorization` / `Proxy-Authorization` / `Cookie` / `Set-Cookie` headers
+- Bearer tokens, JWTs, `Authorization` / `Proxy-Authorization` / `Cookie` / `Set-Cookie` headers,
+  also with a quoted value (`"Authorization": "Basic …"`)
 - secret key/value pairs, where the key contains `password`, `pass`, `pwd`, `secret`, `token`,
   `api_key`, `access_key`, `private_key`, `credentials` or ends in `.key`. Forms: `key=value`,
   `key: value`, `"key": "value"` (whole quoted value), query-string and `--key=value`
+  - also keys such as `api key`, `secret key`, `access key` and `passphrase`;
+  - any space after the `:` or `=`, a no-break space too.
 - secrets passed as flags: `--password value`, `--client-secret "…"`, `oc login -p …`,
   `mysql -p…`, `curl -u user:…`
+  - and to tools that take a password: `sshpass -p`, `redis-cli -a`, `ldapsearch -w`,
+    `smbclient -U user%…`, `openssl -passin pass:…`, `htpasswd -b`, `zip -P` and more.
 - **Kubernetes Secrets**: every value under `data:` / `stringData:` of `oc get secret -o yaml|json`
   (key names are kept), plus base64-encoded keys and docker configs anywhere
 - PEM private keys (the BEGIN/END lines are kept). Certificates are not touched.

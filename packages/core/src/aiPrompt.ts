@@ -136,7 +136,8 @@ export function extractProposals(answer: string, map?: PseudonymMap): ExtractedP
     if (end < 0) break;
     const lang = (info.split(/\s+/)[0] ?? '').toLowerCase();
     if (PROPOSAL_LANGS.includes(lang)) {
-      const code = lines.slice(i + 1, end).join('\n').replace(/\s+$/, '');
+      // trimEnd is `replace(/\s+$/, '')` without its quadratic backtracking on a run of blanks.
+      const code = lines.slice(i + 1, end).join('\n').trimEnd();
       if (code.trim() !== '') {
         const fromInfo = proposalOf(info).reason;
         const reason = fromInfo !== undefined && fromInfo.trim() !== '' ? fromInfo : precedingSentence(lines, i);
