@@ -147,6 +147,34 @@ function jsonText(r: () => number, size: number): string {
   return s;
 }
 
+const KUBE_WORDS = [
+  'kubectl', 'oc', 'helm', 'kubens', 'kustomize', 'istioctl', 'flux', 'argocd', 'velero', 'find', 'xkubectl', 'kubectl2', 'get pods', 'logs',
+  '-n', '-n', '-N', '-n=', '-nprod', '-nfoo-bar', '--namespace', '--namespace=', '--namespace ', '-name', '-newer', '-not', '--namespaces', '-n-',
+  'prod', 'my-ns', 'kube-system', 'default', 'a', 'A-b', 'x_y', 'a.b', 'ns-', '1', '-x', 'foo--bar', '"prod"', "'prod'", '$NS', 'prod.', 'prod_',
+  'namespace:', 'namespace: ', '"namespace": "', '"namespace" :"', 'namespace/', 'namespaces "', 'Namespace "', 'project "', 'projects  "',
+  'oc project ', 'oc new-project ', 'oc  project\t', 'oc new-new-project ', 'xoc project ', 'kubens ', 'ns=', 'NS =', 'my_ns=', '$ns=', 'app_namespace = "',
+  'namespace=', '_ns=', 'ns =\t', 'namespace /', 'https://host.example.com/x', 'http://user:pw@db.internal:5432', 'git+ssh://git@github.com/org',
+  'ftp://a', 's3://bucket.name/key', 'a.b.c://x', '-://x', 'x://@host', 'x://user@/path', 'HTTPS://Host.Corp', 'xn--://', '1http://', '_a://b',
+  'a.a.a.a', 'https://a.', 'https://-a-.b', 'http://u@@h', 'http://u:p@h.example', 'web+x://h', 'http:/x', '://', 'a://b.c.d.', 'http://[::1]/',
+];
+
+/** Lines of `kubectl … -n NAME`, namespaces in YAML, JSON and shell, and URLs, with padding, quotes and line breaks of all kinds. */
+export function* kubeCorpus(seed: number, lines: number): Generator<string> {
+  const r = random(seed);
+  for (let made = 0; made < lines; ) {
+    const n = Math.min(lines - made, 1 + Math.floor(r() * 30));
+    const out: string[] = [];
+    for (let i = 0; i < n; i++) {
+      let line = r() < 0.2 ? pick(r, ['  ', '- ', '\t', '$ ', '> ']) : '';
+      const k = 1 + Math.floor(r() * 9);
+      for (let j = 0; j < k; j++) line += pick(r, KUBE_WORDS) + pick(r, ['', ' ', ' ', ' ', '  ', '\t', '=', '"', "'", pad(r), ',', '/', ':']);
+      out.push(line);
+    }
+    made += n;
+    yield out.join(pick(r, ['\n', '\n', '\r\n', '\r', '\u2028']));
+  }
+}
+
 /** Random Kubernetes-like documents: YAML (`count` lines in texts of up to 60) and JSON texts, also malformed. */
 export function* k8sCorpus(seed: number, count: number): Generator<string> {
   const r = random(seed);

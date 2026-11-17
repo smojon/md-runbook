@@ -57,18 +57,18 @@ export function isRegexSpace(c: number): boolean {
 }
 const isS = isRegexSpace;
 /** `[ \t]` */
-const isBlank = (c: number): boolean => c === 32 || c === TAB;
-const isDigit = (c: number): boolean => c >= 48 && c <= 57;
-const isAlpha = (c: number): boolean => (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
-const isAlnum = (c: number): boolean => isDigit(c) || isAlpha(c);
+export const isBlank = (c: number): boolean => c === 32 || c === TAB;
+export const isDigit = (c: number): boolean => c >= 48 && c <= 57;
+export const isAlpha = (c: number): boolean => (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+export const isAlnum = (c: number): boolean => isDigit(c) || isAlpha(c);
 /** `\w` (ASCII, also with the i flag: no u flag). */
-const isWord = (c: number): boolean => isAlnum(c) || c === US;
-const isQuote = (c: number): boolean => c === DQ || c === SQ;
+export const isWord = (c: number): boolean => isAlnum(c) || c === US;
+export const isQuote = (c: number): boolean => c === DQ || c === SQ;
 /** ASCII letters folded to lower case: the i flag without the u flag folds nothing else. */
-const lower = (c: number): number => (c >= 65 && c <= 90 ? c + 32 : c);
+export const lower = (c: number): number => (c >= 65 && c <= 90 ? c + 32 : c);
 
 /** A run that `stop` ends, cached: asked again from inside the last run, it answers at once. */
-class NextStop {
+export class NextStop {
   private from = -1;
   private at = -1;
   constructor(
@@ -86,7 +86,7 @@ class NextStop {
   }
 }
 
-class Scan {
+export class Scan {
   readonly n: number;
   private readonly stops = new Map<string, NextStop>();
   private readonly lineWords = new Map<string, Int32Array>();
@@ -144,7 +144,7 @@ class Scan {
 }
 
 /** Every match of `matchAt` (the end of the match at p, or -1), as a global regular expression finds them. */
-function finder(matchAt: (s: Scan, p: number) => number, mustHave?: RegExp): SpanFinder {
+export function finder(matchAt: (s: Scan, p: number) => number, mustHave?: RegExp): SpanFinder {
   return (text) => {
     const out: Spans = [];
     if (mustHave && !mustHave.test(text)) return out;
