@@ -49,7 +49,7 @@ describe('ops host', { skip: !spec && 'set MD_RUNBOOK_OPS_TEST to run' }, () => 
   after(() => shell?.close());
 
   it('every login goes to md-runbook-gate, whatever the client asks for', () => {
-    assert.deepEqual(shell.gate, { protocol: 3, unsigned: 'allow' });
+    assert.deepEqual(shell.gate, { protocol: 4, unsigned: 'allow' });
   });
 
   it('the gate is the Go binary, and ssh-keygen is there for its signature checks', async () => {
