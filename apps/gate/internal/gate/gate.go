@@ -114,6 +114,9 @@ type Gate struct {
 	cells     cellsInfo
 	cellsLock io.Closer
 	cellsEnd  sync.Once
+	// The locks of the pool's accounts the lease couldn't clear, held until the gate ends (so
+	// that no other session tries them meanwhile; an os.File closes when collected).
+	cellsStuck []io.Closer
 	// The programs the gate runs, by absolute path (helpers.go).
 	helpers map[string]string
 	// This program's name as process listings show it (separated mode: what the cells run under).

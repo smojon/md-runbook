@@ -351,15 +351,21 @@ func goodSys() *fakeSys {
 	}
 }
 
+// check: the self-check of a pool of one, then the check of its cells' mode (as when leased).
 func check(f *fakeSys) (cellsInfo, error) {
-	infos, err := checkPool(f, "cells_account", "mdrb-cells")
-	if len(infos) != 1 {
+	c := testCheck(f, "cells_account", "mdrb-cells")
+	infos, err := c.do()
+	if err != nil || len(infos) != 1 {
 		return cellsInfo{}, err
 	}
-	return infos[0], err
+	return infos[0], c.access(infos[0])
 }
 
 func checkPool(f *fakeSys, key string, pool ...string) ([]cellsInfo, error) {
+	return testCheck(f, key, pool...).do()
+}
+
+func testCheck(f *fakeSys, key string, pool ...string) selfCheck {
 	return selfCheck{
 		run: f.run, plan: testPlan, pool: pool, key: key, sh: "/bin/sh", id: "id", gateAccount: "support", gateUID: 1000,
 		noRead:    []string{"/etc/md-runbook/report-token", "/var/log/md-runbook-gate.log"},
@@ -368,7 +374,7 @@ func checkPool(f *fakeSys, key string, pool ...string) ([]cellsInfo, error) {
 		safe:      []string{"/usr/local/bin/md-runbook-gate", "/etc/md-runbook/gate.conf", "/tmp/mdrb.x/report-token"},
 		stat:      f.files.stat,
 		cron:      cronSetup{dir: "/etc", crontab: true, at: true, read: f.readCron},
-	}.do()
+	}
 }
 
 func TestSelfCheck(t *testing.T) {
@@ -455,9 +461,44 @@ func TestSelfCheckPool(t *testing.T) {
 			t.Errorf("account %d: %+v", i, infos[i])
 		}
 	}
-	// 4 for each account (id -u, -G, -Gn, its home), sudo -l, a check for each account.
-	if len(f.calls) != 4*3+1+3 {
+	// 4 for each account (id -u, -G, -Gn, its home), sudo -l; nothing as an account of the pool.
+	if len(f.calls) != 4*3+1 {
 		t.Errorf("calls: %d %q", len(f.calls), f.calls)
+	}
+	asAccount := func(calls [][]string) []string {
+		var out []string
+		for _, c := range calls {
+			if len(c) > 3 && c[0] == "/usr/bin/sudo" && c[2] == "-u" {
+				out = append(out, c[3])
+			}
+		}
+		return out
+	}
+	if got := asAccount(f.calls); len(got) != 0 {
+		t.Errorf("ran as %q before any lease", got)
+	}
+	// The cells' mode's check runs as the leased account only (review of 0.30.0, H2: another
+	// session's blocks run as the others).
+	c := testCheck(f, "cells_accounts", pool...)
+	f.calls = nil
+	if err := c.access(infos[1]); err != nil {
+		t.Fatalf("access: %v", err)
+	}
+	if got := asAccount(f.calls); !reflect.DeepEqual(got, []string{"mdrb-cells-2"}) || len(f.calls) != 1 {
+		t.Errorf("access as mdrb-cells-2 ran %q", f.calls)
+	}
+	// Its findings: for that account.
+	f = sys()
+	f.checks = map[string]checkResult{"mdrb-cells-3": {UID: 1503, Read: []string{"/etc/md-runbook/report-token"}, Write: []string{"/tmp/md-runbook-gate.x/exits.y"}}}
+	c = testCheck(f, "cells_accounts", pool...)
+	if infos, err = c.do(); err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	if err := c.access(infos[0]); err != nil {
+		t.Errorf("another account's finding: %v", err)
+	}
+	if err := c.access(infos[2]); err == nil || !strings.Contains(err.Error(), "cells_accounts: mdrb-cells-3: mdrb-cells-3 can read /etc/md-runbook/report-token") {
+		t.Errorf("one reads the token: %v", err)
 	}
 	rule := "support ALL=(mdrb-cells,mdrb-cells-2,mdrb-cells-3) NOPASSWD: /usr/local/bin/md-runbook-gate __cells"
 	for name, c := range map[string]struct {
@@ -470,10 +511,7 @@ func TestSelfCheckPool(t *testing.T) {
 		"one not named": {func(f *fakeSys) {
 			f.sudoL = sudoHead + "    (mdrb-cells, mdrb-cells-2) NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n"
 		}, []string{"not exactly the one rule", rule}},
-		"old line": {func(f *fakeSys) { f.sudoL = goodSys().sudoL }, []string{"not exactly the one rule", rule}},
-		"one reads the token": {func(f *fakeSys) {
-			f.checks = map[string]checkResult{"mdrb-cells-3": {UID: 1503, Read: []string{"/etc/md-runbook/report-token"}, Write: []string{"/tmp/md-runbook-gate.x/exits.y"}}}
-		}, []string{"cells_accounts: mdrb-cells-3: mdrb-cells-3 can read /etc/md-runbook/report-token"}},
+		"old line":       {func(f *fakeSys) { f.sudoL = goodSys().sudoL }, []string{"not exactly the one rule", rule}},
 		"one may use at": {func(f *fakeSys) { f.cronFiles["/etc/at.allow"] = "root\nmdrb-cells-2\n" }, []string{"cells_accounts: mdrb-cells-2: /etc/at.allow lists mdrb-cells-2"}},
 		"one in a group": {func(f *fakeSys) { f.groupNames = "users docker" }, []string{"cells_accounts: mdrb-cells is in the group docker"}},
 	} {
