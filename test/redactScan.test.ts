@@ -2,7 +2,8 @@
  * The linear matchers (core/redactScan.ts) find exactly what the built-in patterns' regular
  * expressions find: same starts, same ends, on a large random corpus and on the repository's own
  * runbooks, docs and tests. And they stay fast where the regular expressions were quadratic.
- * REDACT_CORPUS_LINES sets the corpus size (default 200,000 lines).
+ * REDACT_CORPUS_LINES sets the corpus size (default 50,000 lines, about 15 s; run it with 1,000,000
+ * or more after changing a pattern) and REDACT_CORPUS_SEED its seed.
  */
 import { strict as assert } from 'node:assert';
 import * as fs from 'node:fs';
@@ -13,7 +14,8 @@ import { DEFAULT_PATTERNS, REDACTED, compilePattern, createRedactor, patternFind
 import { LINEAR_FINDERS, Spans, findReferences, isRegexSpace } from '@md-runbook/core/redactScan';
 import { corpus } from './redactCorpus';
 
-const LINES = Number(process.env.REDACT_CORPUS_LINES ?? 200_000);
+const LINES = Number(process.env.REDACT_CORPUS_LINES ?? 50_000);
+const SEED = Number(process.env.REDACT_CORPUS_SEED ?? 20261117);
 const ROOT = path.join(__dirname, '..', '..');
 
 const LINEAR = DEFAULT_PATTERNS.filter((p) => LINEAR_FINDERS.has(p.name ?? ''));
@@ -86,7 +88,7 @@ describe('linear redaction matchers', () => {
   it(`find what the regular expressions find on ${LINES.toLocaleString('en')} random lines`, (t) => {
     const counts = new Map<string, number>();
     let seen = 0;
-    for (const text of corpus(20261117, LINES)) {
+    for (const text of corpus(SEED, LINES)) {
       compare(text, counts, `corpus text ${seen++}`);
     }
     t.diagnostic(`matches: ${[...counts].map(([k, n]) => `${k} ${n}`).join(', ')}`);
