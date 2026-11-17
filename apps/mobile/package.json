@@ -70,23 +70,46 @@
   },
   "private": true,
   "jest": {
-    "preset": "jest-expo",
-    "testPathIgnorePatterns": [
-      "/node_modules/",
-      "/e2e/"
-    ],
-    "moduleNameMapper": {
-      "\\.ttf$": "<rootDir>/src/testing/asset.js",
-      "^buffer$": "<rootDir>/src/testing/nodeBuffer.js",
-      "^@md-runbook/(core|ssh)$": "<rootDir>/../../packages/$1/src/index.ts",
-      "^@md-runbook/(core|ssh)/(.*)$": "<rootDir>/../../packages/$1/src/$2"
-    },
-    "moduleDirectories": [
-      "node_modules",
-      "<rootDir>/node_modules"
-    ],
-    "setupFiles": [
-      "<rootDir>/jest.setup.ts"
+    "projects": [
+      {
+        "displayName": "ios",
+        "preset": "jest-expo",
+        "testPathIgnorePatterns": [
+          "/node_modules/",
+          "/e2e/",
+          "\\.web\\.test\\.tsx?$"
+        ],
+        "moduleNameMapper": {
+          "\\.ttf$": "<rootDir>/src/testing/asset.js",
+          "^buffer$": "<rootDir>/src/testing/nodeBuffer.js",
+          "^@md-runbook/(core|ssh)$": "<rootDir>/../../packages/$1/src/index.ts",
+          "^@md-runbook/(core|ssh)/(.*)$": "<rootDir>/../../packages/$1/src/$2"
+        },
+        "moduleDirectories": [
+          "node_modules",
+          "<rootDir>/node_modules"
+        ],
+        "setupFiles": [
+          "<rootDir>/jest.setup.ts"
+        ]
+      },
+      {
+        "displayName": "web",
+        "preset": "jest-expo/web",
+        "testMatch": [
+          "<rootDir>/src/**/__tests__/**/*.web.test.ts?(x)"
+        ],
+        "moduleNameMapper": {
+          "\\.ttf$": "<rootDir>/src/testing/asset.js",
+          "^buffer$": "<rootDir>/src/testing/nodeBuffer.js",
+          "^@md-runbook/(core|ssh)$": "<rootDir>/../../packages/$1/src/index.ts",
+          "^@md-runbook/(core|ssh)/(.*)$": "<rootDir>/../../packages/$1/src/$2"
+        },
+        "moduleDirectories": [
+          "node_modules",
+          "<rootDir>/node_modules"
+        ]
+      }
     ],
     "testTimeout": 30000
   },

@@ -130,6 +130,13 @@ for your server's platform when you update.
   - A key the library no longer publishes is withdrawn: it stops counting until published again.
   - Keys an earlier version put in your own file stay there, marked as also published by the
     library. Remove them to trust them for its runbooks only.
+- **App (web): highlighting in the web app's editor.** Edit as Text colours the runbook, with
+  line numbers.
+  - Markdown, code block fences with their cell options, and md-runbook's outputs, notes and
+    signatures.
+  - Still the browser's text field: its undo, find and screen reader work as before.
+  - Esc then Tab now leaves the field too, besides Shift+Tab.
+  - iOS and Android are unchanged.
 
 
 ## 0.27.0
