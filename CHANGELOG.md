@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.29.0
+
+On Kubernetes, each session's blocks run in a Job of their own. In VS Code, a team library's
+signers count for its runbooks only. The web app's editor highlights runbooks.
+
+**Security fixes that also affect 0.27 and 0.28:** `allowed_signers` lines with escapes could
+show one key while ssh-keygen trusted another; such lines are now refused, and checks use only
+the lines md-runbook reads. Some lines could hang a client for seconds to hours; every reader
+is now linear.
+
+**Ops host admins:** move your bindings and put the report token in a Secret before you update
+(see below and the [ops README](apps/ops/README.md#in-a-cluster)).
+
 - **Ops host: each session's blocks in a Job of their own.** In a cluster, the gate starts a
   Kubernetes Job for each SSH session and runs its blocks there (`cells_runner =
   kubernetes-job`).
