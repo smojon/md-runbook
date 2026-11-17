@@ -108,7 +108,11 @@ export interface RemoteRunOptions extends CellCommandOptions {
   podWaitMaxMs?: number;
 }
 
-/** 5 min: longer than md-runbook-gate's own bound on the pod's start (3 min) and its kubectl calls. */
+/**
+ * 5 min: longer than md-runbook-gate's own bound on the pod's start (jobReadyMax, 3 min) and its
+ * kubectl calls around it (podWaitWorst in apps/gate/internal/gate/job.go, about 4.5 min). Raise
+ * both together: the gate's TestPodWaitBound reads this line.
+ */
 export const POD_WAIT_MAX_MS = 5 * 60_000;
 
 export interface RemoteRunResult extends RunResult {
@@ -172,9 +176,11 @@ export class RemoteShell {
   private starting = true;
   /**
    * md-runbook-gate runs the cells in a Kubernetes Job whose pod isn't ready yet (its hello said
-   * `job`): its stderr may hold pod notices, until `ready` or `failed`. Also over once the shell
-   * spoke: any other text on stderr of a request the shell answers, or that request's end. A
-   * notice after that is a block's output (review of 0.30.0, H1).
+   * `job`): its stderr may hold pod notices, until `ready` or `failed`, and only that ends them.
+   * Such a gate (protocol 4) says one of them before a request's text reaches a shell: before
+   * it, no block's output exists, and after it, a notice is a block's output (review of 0.30.0,
+   * H1). Other text before it is the gate's own, such as a refusal (round 2, M-1). A gate that
+   * never says it can't hold a request: the wait has its bound (`podWaitMaxMs`).
    */
   private podNotices = false;
   /** A request waits for the session's pod (between `starting` and `ready`). */
@@ -455,7 +461,7 @@ export class RemoteShell {
     opts.signal?.addEventListener('abort', onAbort);
     const podLate = (): Partial<RemoteRunResult> => (podTimedOut ? { error: `the session's pod didn't start within ${duration(podMax)}` } : {});
     try {
-      const code = await this.exchange(id, text, opts.onStdout, opts.onStderr, true);
+      const code = await this.exchange(id, text, opts.onStdout, opts.onStderr);
       return result({ exitCode: timedOut || cancelled ? null : code, timedOut, cancelled, ...podLate() });
     } catch (e) {
       if (!(e instanceof ShellEndedError)) throw e;
@@ -469,8 +475,8 @@ export class RemoteShell {
     } finally {
       clearTimeout(timer);
       clearTimeout(podTimer);
-      // The shell had this request: no notice counts from now on.
-      this.podNotices = false;
+      // Notices go on until `ready` or `failed`: a request the gate refused (126) didn't reach
+      // the shell, and the next one may still wait for the pod.
       this.podWaiting = false;
       this.onPod = undefined;
       opts.signal?.removeEventListener('abort', onAbort);
@@ -489,50 +495,24 @@ export class RemoteShell {
     this.onPod?.(n);
   }
 
-  /**
-   * Other text on stderr of a request the shell answers: the shell spoke, so the pod is up and no
-   * later notice counts (a gate sends `ready` before the shell gets the request).
-   */
-  private podOutput(filter: PodNoticeFilter): void {
-    filter.stop();
-    if (!this.podNotices) return;
-    this.podNotices = false;
-    if (!this.podWaiting) return;
-    this.podWaiting = false;
-    this.onPod?.({ state: 'ready' });
-  }
-
   async close(): Promise<void> {
     this.end('closed');
     await this.channel.close().catch(() => undefined);
     await this.session.close(SshDisconnectReason.byApplication).catch(() => undefined);
   }
 
-  /**
-   * Send `text(id)` and wait for the marker on both streams; resolves with the marker's value.
-   * `shellReply`: the shell answers it (run, step, raw, context), not the gate itself.
-   */
-  private exchange(
-    id: string,
-    text: (id: string) => string,
-    onOut?: (t: string) => void,
-    onErr?: (t: string) => void,
-    shellReply = false,
-  ): Promise<number | undefined> {
+  /** Send `text(id)` and wait for the marker on both streams; resolves with the marker's value. */
+  private exchange(id: string, text: (id: string) => string, onOut?: (t: string) => void, onErr?: (t: string) => void): Promise<number | undefined> {
     if (this.ended) return Promise.reject(new ShellEndedError('the remote shell has ended'));
     return new Promise<number | undefined>((resolve, reject) => {
       const out = new SentinelFilter(markerFor(id), (t) => onOut?.(t));
       const err = new SentinelFilter(markerFor(id), (t) => onErr?.(t));
       let errIn: Exchange['errIn'] = err;
       if (this.podNotices) {
-        const filter: PodNoticeFilter = new PodNoticeFilter(
-          (t) => {
-            if (shellReply) this.podOutput(filter);
-            err.write(t);
-          },
+        errIn = new PodNoticeFilter(
+          (t) => err.write(t),
           (n) => this.podNotice(n),
         );
-        errIn = filter;
       }
       this.current = {
         out,

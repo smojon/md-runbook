@@ -45,13 +45,14 @@ const builds = [
     minify: !watch,
   },
   {
-    // A running cell's status under its output (src/runningStatus.ts).
+    // A running cell's status under its output (src/runningStatus.ts), with the core's words.
     entryPoints: ['renderer/runningStatus.ts'],
     outfile: 'out/webview/runningStatus.js',
     bundle: true,
     platform: 'browser',
     format: 'esm',
     target: 'es2022',
+    alias,
     minify: !watch,
   },
 ];

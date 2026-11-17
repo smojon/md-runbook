@@ -16,6 +16,14 @@ export function stepFailed(step: number, total: number): string {
   return `${stepOfTotal(step, total)} failed`;
 }
 
+/**
+ * What a run line says for a running block without a step number (core computeProgress): the
+ * ready check, a teardown step, else `Cell 4` (`cellNumber` is 1-based).
+ */
+export function unnumberedStep(part: string | undefined, cellNumber: number): string {
+  return part === 'ready' ? 'Ready check' : part === 'teardown' ? 'Teardown' : `Cell ${cellNumber}`;
+}
+
 /** For a screen reader: `Step 3 of 7` instead of `Step 3/7`. */
 export function spokenSteps(text: string): string {
   return text.replace(/(\d+)\/(\d+)/g, '$1 of $2');

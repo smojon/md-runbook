@@ -12,7 +12,7 @@ import { describe, it } from 'node:test';
 import { ShellSettings } from '@md-runbook/core';
 import { nodeShellEnv, resolveShell } from '@md-runbook/core/node';
 import { parseArgs } from '../src/cli/main';
-import { PinnedBar, Signals, barLine, canPinBar } from '../src/cli/progressBar';
+import { EscapeState, PinnedBar, Signals, barLine, canPinBar } from '../src/cli/progressBar';
 import { runRunbook } from '../src/cli/run';
 
 /** A character on the screen, and the SGR it was written with ('' plain). */
@@ -165,7 +165,7 @@ describe('cli: the pinned progress line', () => {
     bar.stop();
   });
 
-  it('comes back within a second after a step cleared the screen', (t) => {
+  it('comes back within 5 s after a step cleared the screen', (t) => {
     t.mock.timers.enable({ apis: ['setInterval'] });
     const screen = new Screen(8, 60);
     const bar = new PinnedBar(screen, new FakeSignals());
@@ -173,10 +173,88 @@ describe('cli: the pinned progress line', () => {
     for (const clear of ['\x1b[H\x1b[2J', '\x1b[H\x1b[J']) {
       screen.write(clear);
       assert.equal(screen.text(7), '', JSON.stringify(clear));
-      t.mock.timers.tick(1000);
+      t.mock.timers.tick(5000);
       assert.match(screen.text(7), /^Step 1\/2 \[/, JSON.stringify(clear));
     }
     bar.stop();
+  });
+
+  it('each second, draws a changed line; an unchanged one every 5 s only', (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    const writes: string[] = [];
+    const bar = new PinnedBar({ isTTY: true, rows: 10, columns: 80, write: (s) => writes.push(s) }, new FakeSignals());
+    let text = 'Step 1/2 · 2 min left';
+    bar.show(() => ({ text, fraction: 0 }));
+    const n = writes.length;
+    t.mock.timers.tick(4000);
+    assert.equal(writes.length, n, 'nothing for 4 s: a reader up in the scrollback stays there');
+    t.mock.timers.tick(1000);
+    assert.equal(writes.length, n + 1, 'drawn again after 5 s');
+    text = 'Step 1/2 · 1 min left';
+    t.mock.timers.tick(1000);
+    assert.equal(writes.length, n + 2, 'a change shows within a second');
+    assert.match(writes.at(-1)!, /1 min left/);
+    bar.stop();
+  });
+
+  it("never draws in the middle of the step's escape sequence or its saved cursor", (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    const screen = new Screen(8, 60);
+    const bar = new PinnedBar(screen, new FakeSignals());
+    let text = 'Step 1/2';
+    bar.show(() => ({ text, fraction: 0 }));
+    const out = (s: string): void => {
+      screen.write(s);
+      bar.output(s);
+    };
+    // The step saves its cursor, writes elsewhere, and restores it in a later chunk.
+    out('start ');
+    out('\x1b7\x1b[1;50H');
+    text = 'Step 1/2 · later';
+    t.mock.timers.tick(2000);
+    assert.doesNotMatch(screen.text(7), /later/, 'held while the cursor is saved');
+    out('X\x1b8');
+    out('end\n');
+    t.mock.timers.tick(1000);
+    assert.match(screen.text(7), /^Step 1\/2 · later/);
+    assert.equal(screen.text(0).replace(/ +X$/, ''), 'start end', 'the step put its text where it meant to');
+    // A sequence cut between two chunks: the line waits for its end.
+    text = 'Step 2/2';
+    bar.output('\x1b[3');
+    t.mock.timers.tick(1000);
+    assert.doesNotMatch(screen.text(7), /Step 2\/2/);
+    bar.output('1m');
+    t.mock.timers.tick(1000);
+    assert.match(screen.text(7), /^Step 2\/2/);
+    // One never closed holds the line for 5 s at most.
+    text = 'Step 2/2 · stuck';
+    bar.output('\x1b]0;a title without its end');
+    t.mock.timers.tick(4000);
+    assert.doesNotMatch(screen.text(7), /stuck/);
+    t.mock.timers.tick(1000);
+    assert.match(screen.text(7), /stuck/);
+    bar.stop();
+  });
+
+  it('knows where escape sequences end', () => {
+    const open = (...chunks: string[]): boolean => {
+      const e = new EscapeState();
+      for (const c of chunks) e.feed(c);
+      return e.open();
+    };
+    assert.equal(open('plain'), false);
+    assert.equal(open('\x1b[31mred\x1b[0m'), false);
+    assert.equal(open('\x1b[31'), true);
+    assert.equal(open('\x1b'), true);
+    assert.equal(open('\x1b(', 'B'), false);
+    assert.equal(open('\x1b]8;;https://x\x07link'), false);
+    assert.equal(open('\x1b]0;title\x1b'), true);
+    assert.equal(open('\x1b]0;title\x1b', '\\'), false);
+    assert.equal(open('\x1bP+q\x1b\\'), false);
+    assert.equal(open('\x1b7'), true, 'the cursor saved');
+    assert.equal(open('\x1b7 moved \x1b8'), false);
+    assert.equal(open('\x1b[s moved \x1b[u'), false);
+    assert.equal(open('\x1b[31\x18'), false, 'CAN cancels it');
   });
 
   it('a resize or a resume in the middle of an output line keeps its start', () => {
@@ -321,5 +399,33 @@ describe('cli: a run with the pinned line', { skip: !hasBash && 'bash not instal
     );
     assert.ok(shown[2]!.fraction > 0.7 && shown[2]!.fraction < 0.72);
     assert.doesNotMatch(printed.join(''), /^ {2}\[/m, 'no progress lines under the steps');
+  });
+
+  it('numbers the steps as VS Code and the app do: the ready check and the teardown by name', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-bar-'));
+    const file = path.join(dir, 'r.md');
+    fs.writeFileSync(
+      file,
+      '# T\n\n' +
+        fence('bash ready', 'exit 1') +
+        fence('bash setup', 'echo up') +
+        '- [ ] look at the dashboard\n\n' +
+        fence('bash', 'echo body') +
+        fence('bash teardown', 'echo down'),
+    );
+    const shown: string[] = [];
+    const printed: string[] = [];
+    try {
+      const r = await runRunbook(
+        { file, write: false, params: {}, inputs: {}, yes: true, keepGoing: false, teardown: 'always', shell: settings, env: process.env, pinned: { show: (read) => void shown.push(read().text) } },
+        { out: (t) => printed.push(t), log: (l) => printed.push(l + '\n') },
+      );
+      assert.equal(r.ok, true, printed.join(''));
+    } finally {
+      await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
+    // The checklist item is step 2, as in VS Code's status bar; the ▶ lines keep the CLI's numbers.
+    assert.deepEqual(shown, ['Ready check', 'Step 1/3', 'Step 3/3', 'Teardown']);
+    assert.match(printed.join(''), /▶ Step 3 · r\.md:\d+ · bash/);
   });
 });

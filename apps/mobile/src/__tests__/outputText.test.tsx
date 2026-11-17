@@ -1,8 +1,16 @@
-import { render, screen } from '@testing-library/react-native';
+import { act, render, screen } from '@testing-library/react-native';
 import { STDERR_MARK } from '@md-runbook/core';
+import { useState } from 'react';
+import { Text } from 'react-native';
 import { OutputText } from '../cells/OutputText';
-import { resetSettings, setOutputSetting } from '../settings/store';
+import { resetSettings, setOutputSetting, useOutputSettings } from '../settings/store';
 import { light } from '../theme';
+
+// The real settings hook, counted: OutputText calls it once per render.
+jest.mock('../settings/store', () => {
+  const actual = jest.requireActual('../settings/store');
+  return { ...actual, useOutputSettings: jest.fn(actual.useOutputSettings) };
+});
 
 interface Node {
   type: string;
@@ -45,5 +53,27 @@ describe('coloured output', () => {
     await render(<OutputText style={{}} text={`ERROR\n${STDERR_MARK}boom`} stderr="1" />);
     expect(coloured()).toEqual([]);
     expect(screen.getByText('ERROR\nboom')).toBeTruthy();
+  });
+});
+
+describe('a running cell ticking every second', () => {
+  it("doesn't render its unchanged output again", async () => {
+    const style = {};
+    let tick: () => void = () => undefined;
+    function Cell() {
+      const [now, setNow] = useState(0);
+      tick = () => setNow((n) => n + 1);
+      return (
+        <>
+          <Text>{`running · ${now}s`}</Text>
+          <OutputText style={style} text={'INFO one\ntwo'} />
+        </>
+      );
+    }
+    await render(<Cell />);
+    const renders = jest.mocked(useOutputSettings).mock.calls.length;
+    await act(async () => tick());
+    expect(screen.getByText('running · 1s')).toBeTruthy();
+    expect(jest.mocked(useOutputSettings).mock.calls.length).toBe(renders);
   });
 });

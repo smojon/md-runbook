@@ -12,12 +12,13 @@ update (see below).
   - The terminal is given back on exit, on an error and on Ctrl+C.
   - `--no-progress-bar` prints the progress after each step, as before.
   - Pipes, CI logs and `TERM=dumb` are unchanged.
+  - The pinned line counts the steps as VS Code and the app do: a checklist item counts, the
+    ready check doesn't. The `▶ Step` lines keep their numbers, which `--from` and `--to` use.
 - **VS Code: a running cell's status under its output.** A bar against the block's estimate,
   and `running · 12s of about 30s`, `attempt 2/5` with `retry=`.
   - It stays at the bottom while the output scrolls; at the end, the usual status line follows.
   - Without an estimate, a counter: `running · 12s`.
-  - Theme colours; with reduced motion, the bar doesn't glide.
-- **The same words in the CLI, VS Code and the app.** The app's running cell says
+  - Theme colours; with reduced motion, the bar doesn't glide.- **The same words in the CLI, VS Code and the app.** The app's running cell says
   `running · 12s of about 30s` too, and its run bar `Step 3/7 · Push image`, as VS Code's status
   bar does. A screen reader still hears `Step 3 of 7`.
 
@@ -99,8 +100,8 @@ update (see below).
   - Kubernetes Secrets in the leak scan, and namespaces and URLs in Copy for AI;
   - output colours, output block attributes, call copies, cloud views and a cell's commands.
 - **Fixed: Save was cut off in the app's Edit as Text on phones.** "Unsaved changes" is now on a
-  small line under the buttons, so Undo, Discard and Save fit in one row. Tablets and the web
-  keep one row.
+  small line under the buttons, so Undo, Discard and Save fit in one row. Wide screens keep one
+  row.
 
 
 ## 0.29.0

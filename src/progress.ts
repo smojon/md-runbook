@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import { Progress, checklist, computeProgress, formatLocalIso, isCodeMeta, nextUncheckedOffset, outputBlockAttrs, runbookEstimate } from '@md-runbook/core';
 import { PartEstimate, RunbookEstimate, finishTime, formatEstimate, formatTimeLeft, remaining, stepHeadings, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
 import { isManualMark } from '@md-runbook/core/progress';
-import { runProgressLine, stepFailed } from '@md-runbook/core/runStatus';
+import { runProgressLine, stepFailed, unnumberedStep } from '@md-runbook/core/runStatus';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { osGroups } from '@md-runbook/core/os';
 import { SECTION } from './config';
@@ -113,8 +113,7 @@ export function progressStatus(nb: vscode.NotebookDocument, p: Progress = notebo
   let text: string;
   if (running) {
     const step = p.stepOfCell[running.index];
-    const part = cellPart(running);
-    const where = step !== undefined ? undefined : part === 'ready' ? 'Ready check' : part === 'teardown' ? 'Teardown' : `Cell ${running.index + 1}`;
+    const where = step !== undefined ? undefined : unnumberedStep(cellPart(running), running.index + 1);
     // The words of the CLI's pinned line and the app's run bar (core runProgressLine); `at least`
     // while steps without any estimate are still to do.
     text = `$(sync~spin) ${runProgressLine({ ...(step !== undefined ? { step } : {}), ...(where ? { where } : {}), total: p.total, label: labelOf(running), estimate: e, open: p.pending }).text}`;
