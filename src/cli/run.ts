@@ -21,6 +21,7 @@ import {
   formatRunbookEstimate,
   isOverEstimate,
   runbookEstimate,
+  runProgressLine,
   terminalBarWidth,
   formatDurationAttr,
   formatLocalIso,
@@ -97,6 +98,8 @@ export interface CliOptions {
   extraSecrets?: string[];
   /** After each step, the run's progress by the blocks' estimates (a terminal, not a CI log). */
   progress?: boolean;
+  /** The run's progress pinned on the terminal's bottom line instead (progressBar.ts). */
+  pinned?: { show(read: () => { text: string; fraction: number }): void };
   /** Where runbook calls write the copies of the runbooks they run (relative to each one; default: next to it). */
   copyFolder?: string;
   /** A failed call run again starts a fresh copy, instead of continuing the one it ran. */
@@ -410,18 +413,34 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     const p = partAt(i);
     return p === 'setup' || p === 'teardown' ? { part: p } : {};
   };
-  const progressLine = (): string | undefined => {
-    const e = runbookEstimate(
-      planned.filter((i) => i !== readyIdx).map((i) => ({ estimateSeconds: estimates[i], state: finished.has(i) ? 'done' : 'pending', ...partOfStep(i) })),
+  /** By the estimates; the block running (`running`) counts its time so far. */
+  const estimateNow = (running?: { i: number; since: number }) =>
+    runbookEstimate(
+      planned
+        .filter((i) => i !== readyIdx)
+        .map((i) => ({
+          estimateSeconds: estimates[i],
+          ...(finished.has(i) ? { state: 'done' as const } : running?.i === i ? { state: 'running' as const, elapsedSeconds: (Date.now() - running.since) / 1000 } : { state: 'pending' as const }),
+          ...partOfStep(i),
+        })),
       {
         setup: readyIdx === undefined || setupMode !== 'auto' ? 'run' : readyUp === undefined ? 'unchecked' : readyUp ? 'up' : 'run',
         teardown: teardownMode === 'no' ? 'offered' : 'chosen',
       },
     );
+  const progressLine = (): string | undefined => {
+    const e = estimateNow();
     // The bar as wide as the terminal leaves room for (ASCII: any console shows it); 20 in a log.
     const text = formatRunbookEstimate(e, 0);
     if (text === undefined) return undefined;
     return formatRunbookEstimate(e, terminalBarWidth(process.stdout.isTTY ? process.stdout.columns : undefined, text.length));
+  };
+  /** The pinned line while block `i` runs: `Step 3/7 · 54% · 1 min left` (core runProgressLine). */
+  const pinnedLine = (i: number, since: number): { text: string; fraction: number } => {
+    const counted = planned.filter((k) => k !== readyIdx);
+    const done = counted.filter((k) => finished.has(k)).length;
+    const e = estimateNow({ i, since });
+    return runProgressLine({ step: numbers[i]!, total: Math.max(0, ...numbers), estimate: e, open: counted.length - done, percent: true, stepsDone: counted.length ? done / counted.length : 0 });
   };
   // The ready check runs before the steps it guards, wherever it is in the file.
   const order = [...locs.keys()];
@@ -680,6 +699,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         io.log(`▶ ${where}${opts.name ? ` · ${opts.name}` : ''} · ${redact(shown)}${part} · ${resumed ? `continuing ${copyShown} (steps done there are kept)` : `copy ${copyShown}`}`);
         note(n, title, `runs ${redact(shown)}${part} as ${copyShown}`);
         const started = new Date();
+        o.pinned?.show(() => pinnedLine(i, started.getTime()));
         const ctl = new AbortController();
         const onAbort = (): void => ctl.abort();
         o.signal?.addEventListener('abort', onAbort, { once: true });
@@ -701,6 +721,8 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
               session: undefined,
               signal: ctl.signal,
               progress: false,
+              // The caller's pinned line goes on counting this step.
+              pinned: undefined,
               extraSecrets: [...known],
               callers: [...callers, target],
               stepPrefix: `${pre}${n}.`,
@@ -837,6 +859,7 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       const est = opts.estimateSeconds !== undefined ? ` · est. ${formatEstimate(opts.estimateSeconds)}` : '';
       io.log(`▶ ${where}${est}${opts.name ? ` · ${opts.name}` : ''}${contextFromParam ? ` · Kubernetes context ${contextFromParam}` : ''}`);
       const started = new Date();
+      o.pinned?.show(() => pinnedLine(i, started.getTime()));
       // Held like the live output when the step captures a secret: redacted once it is known.
       const entry = transcriptFile ? new TranscriptEntry((t) => transcriptFile.append(t), redact, holdOutput) : undefined;
       entry?.start({ at: started, runbook: fileName, step: n, line: loc.line + 1, section: sectionAt(loc.line), title: opts.name ?? firstLine, command: source });

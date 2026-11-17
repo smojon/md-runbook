@@ -60,13 +60,13 @@ import { factsLabel, sigLabel } from './LibrarySection';
 import { CHEAT_SHEET_URL } from '../helpLinks';
 import { lastRunContext, runContextText } from '../runbooks/runContext';
 import { textProgress } from '@md-runbook/core/textProgress';
+import { runProgressLine, spokenSteps, stepFailed } from '@md-runbook/core/runStatus';
 import { headingsOf } from '@md-runbook/core/title';
 import type { Progress, RunbookEstimate } from '@md-runbook/core';
 import {
   callEstimate,
   formatEstimate,
   finishTime,
-  formatTimeLeft,
   remaining,
   runbookEstimate,
   stepLabel,
@@ -2497,7 +2497,8 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
     const failed = progress.firstFailed;
     const c = failed ? cells[failed.cell] : undefined;
     const label = failed && c && isCodeMeta(c.meta) ? stepLabel(c.meta.info, c.value, c.languageId, headings[failed.cell]) : '';
-    const headline = runHeadline(progress);
+    // A notification is read out as often as it is looked at: `Step 2 of 3 failed`.
+    const headline = spokenSteps(runHeadline(progress));
     const body = failed && label ? t.notifyFailedStep(headline, label) : headline;
     return { body: notice ? `${body}\n${notice}` : body, ...(failed ? { cellIndex: failed.cell } : {}) };
   };
@@ -2564,7 +2565,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
             ticks={railTicks}
             chapters={railChapters}
             {...(visibleCells ? { visible: visibleCells } : {})}
-            label={runHeadline(progress, runningStep)}
+            label={spokenSteps(runHeadline(progress, runningStep))}
             onGo={goToCell}
             onOpen={openSteps}
             covered={showSteps}
@@ -3020,8 +3021,9 @@ const PANEL_WIDTH = 300;
 const MAX_CONTENT = 860;
 
 /**
- * The run, pinned on top while the run bar is scrolled away: one line (`Step 3 of 6 · Push image ·
- * 1m 40s left`, or that the run waits for you) over a thin bar; a tap shows the cell, Stop stops.
+ * The run, pinned on top while the run bar is scrolled away: one line (`Step 3/6 · Push image ·
+ * 1m 40s left`, as VS Code's status bar and the CLI say it, or that the run waits for you); a tap
+ * shows the cell, Stop stops.
  */
 function PinnedRunBar({
   progress,
@@ -3042,9 +3044,13 @@ function PinnedRunBar({
   onStop(): void;
 }) {
   const styles = useStyles();
-  const left =
-    estimate.fraction !== undefined && estimate.leftSeconds > 0 ? ` · ${t.estimateLeft(formatTimeLeft(estimate.leftSeconds))}` : '';
-  const line = waiting ? t.pinnedWaiting : `${runHeadline(progress, runningCell)}${left}`;
+  // The same words as VS Code's status bar and the CLI (core runProgressLine).
+  const left = runProgressLine({ total: progress.total, estimate, open: progress.pending }).text;
+  const line = waiting
+    ? t.pinnedWaiting
+    : runningCell?.step !== undefined
+      ? runProgressLine({ step: runningCell.step, total: progress.total, label: runningCell.label, estimate, open: progress.pending }).text
+      : [runHeadline(progress, runningCell), left].filter(Boolean).join(' · ');
   return (
     <View testID="pinned-run-bar" style={[styles.pinned, { left: offset }]}>
       <Pressable
@@ -3054,7 +3060,7 @@ function PinnedRunBar({
         onPress={onShow}
         style={styles.grow}
       >
-        <Text style={[styles.pinnedText, waiting && styles.pinnedWaiting]} numberOfLines={1}>
+        <Text style={[styles.pinnedText, waiting && styles.pinnedWaiting]} numberOfLines={1} accessibilityLabel={spokenSteps(line)}>
           {line}
         </Text>
       </Pressable>
@@ -3176,13 +3182,17 @@ interface RunningStep {
 }
 
 /**
- * The run bar's first line, in the same words as VS Code's status bar: `Step 3 of 6 · Push image`
- * while it runs, `Step 4 of 6 failed`, `Done · 6 of 6 · teardown offered`, else `2 of 6 steps done`.
+ * The run bar's first line, in the same words as VS Code's status bar and the CLI (core
+ * runStatus): `Step 3/6 · Push image` while it runs, `Step 4/6 failed`, `Done · 6 of 6 · teardown
+ * offered`, else `2 of 6 steps done`. A screen reader hears `Step 3 of 6` (spokenSteps).
  */
 function runHeadline(p: Progress, running?: RunningStep): string {
   const complete = p.done + p.skipped;
-  if (running) return running.step !== undefined ? t.progressStep(running.step, p.total, running.label) : running.label;
-  if (p.firstFailed) return t.progressStepFailed(p.firstFailed.step, p.total);
+  if (running)
+    return running.step !== undefined
+      ? runProgressLine({ step: running.step, total: p.total, label: running.label, open: p.pending }).text
+      : running.label;
+  if (p.firstFailed) return stepFailed(p.firstFailed.step, p.total);
   if (p.pending === 0 && p.total > 0) return t.progressAllDone(complete, p.total, p.offered > 0);
   return t.progressDone(complete, p.total);
 }
@@ -3233,7 +3243,12 @@ function RunBar({
   // Where the run is; a tap on it lists every step by name.
   const headline = (text: string, waitingStyle: boolean) => {
     const words = (
-      <Text testID="run-progress" style={[styles.runProgress, waitingStyle && styles.runWaiting, styles.shrink]} numberOfLines={2}>
+      <Text
+        testID="run-progress"
+        style={[styles.runProgress, waitingStyle && styles.runWaiting, styles.shrink]}
+        numberOfLines={2}
+        accessibilityLabel={spokenSteps(text)}
+      >
         {text}
       </Text>
     );

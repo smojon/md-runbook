@@ -265,6 +265,17 @@ against it, then a warning once past it:
 ⚠ ████████████████████ +40s over 2m30s
 ```
 
+**Under the output while it runs**, a status block stays at the bottom, below the output as it
+scrolls:
+
+- a bar in the theme's progress colour, in the warning colour once past the estimate;
+- `running · 12s of about 30s`, then `running · 45s · 15s over about 30s`;
+- `attempt 2/5` beside it, for a block with `retry=`;
+- without an estimate or a learned time, no bar: `running · 12s`.
+
+The app and `md-runbook run` use the same words. With reduced motion on, the bar jumps instead
+of gliding. When the block ends, the status block goes and the usual status line follows.
+
 After a run that took noticeably longer, the line says by how much:
 `⌚ est. 2m30s · took 3m10s (+40s)`.
 

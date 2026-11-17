@@ -282,8 +282,10 @@ Each has its own page with examples and settings:
   - Clear Outputs Above / Below.
 - **[How long it takes](docs/syntax.md#steps-and-progress):** `estimate=2m30s` on a block, as
   measured on a real run. The block shows it, and while it runs a bar fills at the estimate.
+  - Under a running block: `running · 12s of about 30s`, with the bar.
   - The runbook shows how far it is and about how long is left, in VS Code, the app and
-    `md-runbook run`.
+    `md-runbook run`. In a terminal, the run pins it on the bottom line, as apt does.
+  - The same words in all three.
   - `md-runbook estimate` sums them per section.
   - A [runbook call](docs/features/calls.md) counts as what it runs.
   - [Setup and teardown](docs/features/setup-teardown.md) count apart: a ready check skips a

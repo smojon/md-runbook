@@ -512,13 +512,15 @@ is counted as a block without an estimate ("2 blocks without an estimate").
 
 `skip` blocks and the ready check don't count; a group of `os=` alternatives counts once.
 Progress in time is shown in the extension's status bar item and at the top of the app's
-runbook. `md-runbook run` shows it after each step when its output is a terminal.
+runbook. `md-runbook run` pins it on the terminal's bottom line (`--no-progress-bar`: after each
+step instead).
 
 The ready check is not a step in the steps count either. A teardown that hasn't run is
 *offered*, not a step still to do.
 
-A running block's bar fills against its `estimate=`. After a run noticeably over it (more than
-a quarter and 10 s), the block says by how much.
+A running block's bar fills against its `estimate=`, under its output:
+`running · 12s of about 30s`. After a run noticeably over it (more than a quarter and 10 s),
+the block says by how much.
 
 **Setup and teardown.** In a runbook with `setup` or `teardown` steps:
 

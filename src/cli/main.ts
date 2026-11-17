@@ -12,6 +12,7 @@ import { LintProblem, formatProblem, lintRunbook } from '@md-runbook/core/lint';
 import { callEstimateSeconds, matchRunbooks, runbookReader } from '@md-runbook/core/node';
 import { buildTimeline } from '@md-runbook/core/incident';
 import { CliOptions, junitReport, markdownSummary, runRunbook } from './run';
+import { PinnedBar, canPinBar } from './progressBar';
 import { RunUsageError } from './select';
 import { notifyConfig, notifyText, runLink, sendNotification } from './notify';
 import { findBrowser, htmlToPdf } from './pdf';
@@ -96,6 +97,8 @@ Options:
   --key KEY            Sign the run summary with this SSH key (namespace md-runbook-run); needed
                        for a signed runbook with report-runs-signed: true
   --quiet              Only print the summary
+  --no-progress-bar    In a terminal, print the progress after each step instead of pinning
+                       it on the bottom line (pipes, files and CI logs get neither)
   -h, --help           Show this help
   --version            Show the version
 
@@ -118,8 +121,9 @@ the runbook required it (signed as a whole by a signer of --allowed-signers) and
 estimate adds up the blocks' estimate= options (e.g. estimate=2m30s): one line per # and ##
 section with its time and the blocks without an estimate, then the runbook's total. A run
 prints a step's estimate on its "▶ Step N" line, warns when the step took more than twice it,
-and in a terminal shows after each step how far the run is and about how long is left. With
-setup or teardown steps, a "Parts:" line says how long each part takes.
+and in a terminal pins on the bottom line how far the run is and about how long is left
+(Step 3/7 · 54% · 1 min left [######......]). With setup or teardown steps, a "Parts:" line
+says how long each part takes.
 
 \${secret:NAME} values come from the environment variable NAME and are redacted from output.
 On GitHub Actions, a summary table is added to the job summary.
@@ -153,6 +157,8 @@ export interface ParsedArgs {
   notify?: string;
   notifyOn?: string;
   quiet: boolean;
+  /** --no-progress-bar: the progress after each step, not pinned on the bottom line. */
+  noProgressBar?: boolean;
 }
 
 export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'version' {
@@ -168,6 +174,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   let notify: string | undefined;
   let notifyOn: string | undefined;
   let quiet = false;
+  let noProgressBar = false;
   const reportAllowed: string[] = [];
   let key: string | undefined;
   const value = (flag: string): string => {
@@ -232,6 +239,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
       case '--bash': o.shell.bashPath = value(a); break;
       case '--pwsh': o.shell.pwshPath = value(a); break;
       case '--quiet': quiet = true; break;
+      case '--no-progress-bar': noProgressBar = true; break;
       case '--copy-folder': o.copyFolder = value(a); break;
       case '--fresh-copy': o.freshCopy = true; break;
       case '--allowed-signers': o.allowedSigners = value(a); break;
@@ -245,7 +253,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
   }
   if (!o.file) throw new UsageError('missing the runbook file');
   if (o.from !== undefined && o.to !== undefined && o.from > o.to) throw new UsageError(`--from ${o.from} is after --to ${o.to}`);
-  return { options: o, reportAllowed, ...(key ? { key } : {}), ...(pdf ? { pdf } : {}), ...(browser ? { browser } : {}), ...(notify ? { notify } : {}), ...(notifyOn ? { notifyOn } : {}), quiet };
+  return { options: o, reportAllowed, ...(key ? { key } : {}), ...(pdf ? { pdf } : {}), ...(browser ? { browser } : {}), ...(notify ? { notify } : {}), ...(notifyOn ? { notifyOn } : {}), quiet, ...(noProgressBar ? { noProgressBar } : {}) };
 }
 
 const isProse = (p: LintProblem): boolean => p.code?.startsWith('prose-') === true;
@@ -430,13 +438,16 @@ export async function main(argv: readonly string[]): Promise<number> {
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
   let summary: Awaited<ReturnType<typeof runRunbook>>;
+  // In a terminal, the progress pinned on the bottom line (like apt); a CI log keeps plain lines.
+  const terminal = process.stdout.isTTY === true && !quiet;
+  const pinned = terminal && !parsed.noProgressBar && canPinBar(process.stdout, process.env) ? new PinnedBar(process.stdout) : undefined;
   try {
     summary = await runRunbook(
-      // The progress line after each step only in a terminal: a CI log keeps plain lines.
-      { ...options, env: process.env, signal: abort.signal, progress: process.stdout.isTTY === true && !quiet, ...(notify ? { extraSecrets: [notify.url] } : {}) },
+      { ...options, env: process.env, signal: abort.signal, progress: terminal && !pinned, ...(pinned ? { pinned } : {}), ...(notify ? { extraSecrets: [notify.url] } : {}) },
       { out: (t) => void (quiet || process.stdout.write(t)), log: (l) => void (quiet || process.stdout.write(l + '\n')) },
     );
   } catch (e) {
+    pinned?.stop();
     if (e instanceof RunUsageError) {
       // Found before the first step: nothing ran, like any other usage error.
       process.off('SIGINT', onSignal);
@@ -448,6 +459,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     await send(`✗ ${path.basename(options.file)}: the run stopped with an error${runLink(process.env) ? `\n${runLink(process.env)}` : ''}`);
     throw e;
   }
+  pinned?.stop();
   process.off('SIGINT', onSignal);
   process.off('SIGTERM', onSignal);
 

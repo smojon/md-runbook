@@ -31,12 +31,16 @@ The top of a runbook has one button that does the obvious thing:
 
 Next to it is how far the runbook is:
 
-- `Step 4 of 7 · Push image` while it runs;
-- `Step 4 of 7 failed`;
+- `Step 4/7 · Push image` while it runs;
+- `Step 4/7 failed`;
 - `Done · 7 of 7`.
 
 By the blocks' estimates, it also shows the share done, the time left and when it ends
-(`41% · 4 min left · ≈ 14:32`).
+(`41% · 4 min left · ≈ 14:32`). VS Code's status bar and `md-runbook run` use the same words.
+A screen reader hears `Step 4 of 7`.
+
+A running cell shows the same line as in VS Code over a thin bar: `running · 12s of about 30s`,
+and `attempt 2/5` with `retry=`. Without an estimate, no bar: `running · 12s`.
 
 Run all:
 
