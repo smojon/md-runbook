@@ -26,9 +26,19 @@
   - The Library view, your copies of its runbooks, run reports and Practice on a Host use them.
     Links, the command line and the gate are unchanged.
   - **Trusted Signers…** lists yours first, then each library's under its address.
-  - A key the library no longer publishes is withdrawn: it stops counting until published again.
+  - A key the library no longer publishes is withdrawn: it stops counting. Published again, it
+    counts only once you trust it again, after its fingerprint and the day it was withdrawn.
   - Keys an earlier version put in your own file stay there, marked as also published by the
     library. Remove them to trust them for its runbooks only.
+- **Signers, VS Code and the app: allowed_signers lines are written in canonical form; lines with
+  escapes are refused.** OpenSSH reads `\"` inside quotes as an escape, so such a line could show
+  one key and make ssh-keygen trust another.
+  - Refused: a backslash, a quote outside an option value, an unquoted value, an option given
+    twice, a control character or an unusual blank.
+  - Trusted Signers… lists such a line in your own file as not used: choose it to remove it.
+  - Lines added by 0.28 or before can have the problem too: check your file.
+- **App: a withdrawn key listed again needs your yes again**, as in VS Code. Before, it counted
+  again by itself.
 - **App (web): highlighting in the web app's editor.** Edit as Text colours the runbook, with
   line numbers.
   - Markdown, code block fences with their cell options, and md-runbook's outputs, notes and

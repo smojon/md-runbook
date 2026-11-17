@@ -609,7 +609,9 @@ describe('Hosts & settings → Trusted signers', () => {
     expect(screen.getByTestId('trusted-signer-0')).toHaveTextContent(/alice@example.net/);
     expect(screen.getByTestId('trusted-signer-scope-0')).toHaveTextContent(/From the team library at runbooks\.example\.net/);
     expect(screen.getByTestId('trusted-signer-1')).toHaveTextContent(/any name ending in @example.net/);
-    expect(screen.getByTestId('trusted-signer-withdrawn-1')).toHaveTextContent(/No longer published/);
+    expect(screen.getByTestId('trusted-signer-withdrawn-1')).toHaveTextContent(
+      /Withdrawn by this library on \d{4}-\d{2}-\d{2}: it no longer counts/,
+    );
     expect(screen.queryByTestId('trusted-signer-withdrawn-0')).toBeNull();
     expect(screen.getByTestId('trusted-signer-scope-2')).toHaveTextContent(/other\.example\.net/);
     expect(screen.getByTestId('trusted-signer-scope-3')).toHaveTextContent(/Added by you: counts for every runbook/);

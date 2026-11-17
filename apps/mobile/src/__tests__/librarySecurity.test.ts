@@ -51,6 +51,7 @@ import {
   resetTrustedSigners,
   signatureState,
   trustSigners,
+  withdrawnSigner,
   trustedFor,
   trustedSigners,
   unsignedRunnable,
@@ -309,6 +310,27 @@ describe('SSHSIG as OpenSSH checks it', () => {
       verify: async () => 1,
     } as unknown as SubtleCrypto;
     expect(await verifySshsig(ed25519().sign('m'), 'm', SIGNATURE_NAMESPACE, sloppy)).toBe(false);
+  });
+
+  it("allowed_signers: read strictly, as OpenSSH reads it: the review's escaped line, stray quotes, unquoted values, odd blanks", () => {
+    const k1 = ed25519().pub.toString('base64');
+    const k2 = ed25519().pub.toString('base64');
+    const lines = [
+      // OpenSSH skips \" inside quotes: it trusts k2 here, a naive reader shows k1.
+      `alice namespaces="md-runbook,\\" ssh-ed25519 ${k1} x" ssh-ed25519 ${k2}`,
+      `alice namespaces=md-runbook ssh-ed25519 ${k1}`,
+      `alice valid-before=20991231 ssh-ed25519 ${k1}`,
+      `alice namespaces="md-runbook",namespaces="git" ssh-ed25519 ${k1}`,
+      `alice namespaces="md-runbook" ssh-ed25519 ${k1} "x`,
+      `al"ice namespaces="md-runbook" ssh-ed25519 ${k1}`,
+      `alice namespaces="md-runbook"\u00a0ssh-ed25519 ${k1}`,
+      `alice\u202e namespaces="md-runbook" ssh-ed25519 ${k1}`,
+      `alice valid-before="soon" ssh-ed25519 ${k1}`,
+    ];
+    const got = parseAllowedSigners(lines.join('\n'), SIGNATURE_NAMESPACE);
+    expect(got.signers).toEqual([]);
+    expect(got.skipped).toBe(lines.length);
+    expect(parseAllowedSigners(`alice\tnamespaces="md-runbook"\tssh-ed25519 ${k1}`, SIGNATURE_NAMESPACE).signers).toHaveLength(1);
   });
 
   it('allowed_signers: a line with an option OpenSSH does not know is refused, as there', () => {
@@ -831,10 +853,20 @@ describe('one list of trusted signers: where each key counts', () => {
     expect(libraryState().library!.signers).toBeUndefined();
     expect(signatureOf(libraryState(), libraryState().library!.entries[0]!)).toMatchObject({ kind: 'unknown' });
     expect(keysFor(LIB)).toEqual([]);
-    // Published again: it counts again.
+    // Published again (a stolen key a compromised server lists again): it stays withdrawn, with its day.
     files[LIB + 'allowed_signers'] = linesFor('alice', k);
     await refreshLibrary({ fetcher: server(files), force: true });
+    expect(trustedFor(LIB)[0]).toMatchObject({ withdrawn: true, withdrawnAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+    expect(keysFor(LIB)).toEqual([]);
+    expect(withdrawnSigner(libraryState().library!.signers!.list[0]!, LIB)).toBeDefined();
+    expect(withdrawnKeys(libraryState().library!)).toHaveLength(1);
+    // Trusted again (the same prompt as a new key): the line approved now is stored, and counts.
+    const now = parseAllowedSigners(`alice valid-before="20991231" ssh-ed25519 ${k.pub.toString('base64')}`, SIGNATURE_NAMESPACE).signers;
+    trustSigners(now, LIB);
+    expect(trustedFor(LIB)).toHaveLength(1);
     expect(trustedFor(LIB)[0]!.withdrawn).toBeUndefined();
+    expect(trustedFor(LIB)[0]!.validBefore).toBe('20991231');
+    await refreshLibrary({ fetcher: server(files), force: true });
     expect(signatureOf(libraryState(), libraryState().library!.entries[0]!)).toMatchObject({ kind: 'verified' });
   });
 

@@ -1298,6 +1298,10 @@ const en = {
       ? '1 key you trusted from this library is no longer in its allowed_signers: it no longer counts here.'
       : `${n} keys you trusted from this library are no longer in its allowed_signers: they no longer count here.`,
   untrustWithdrawn: 'Forget them',
+  signerWasWithdrawn: (day?: string) =>
+    day
+      ? `This key was withdrawn on ${day}. It counts again only if you trust it again.`
+      : 'This key was withdrawn. It counts again only if you trust it again.',
   trustedSignersTitle: 'Trusted signers',
   trustedSignersPoints: [
     'A runbook is “verified” only when one of these keys signed it.',
@@ -1310,7 +1314,8 @@ const en = {
   ],
   trustedFrom: (host: string) => `From the team library at ${host}: counts for its runbooks only`,
   trustedByYou: 'Added by you: counts for every runbook',
-  trustedWithdrawn: 'No longer published by this library: it no longer counts.',
+  trustedWithdrawn: (day?: string) =>
+    day ? `Withdrawn by this library on ${day}: it no longer counts.` : 'No longer published by this library: it no longer counts.',
   trustedRemove: 'Remove',
   trustedAddLabel: 'Add signers',
   trustedAddHelp: 'allowed_signers lines as on the servers (OpenSSH’s format), one per line.',

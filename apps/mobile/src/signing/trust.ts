@@ -4,7 +4,8 @@
  * - a team library (`from`: its base address): the user trusted it from that library's
  *   `allowed_signers` (OpenSSH's format, as md-runbook-gate reads it) after seeing its names and
  *   fingerprint; it counts for that library's runbooks only, and stops counting once the library
- *   no longer publishes it (`withdrawn`, remembered);
+ *   no longer publishes it (`withdrawn`, remembered; published again, it counts only once trusted
+ *   again);
  * - "added by you" (`from`: ADDED_BY_YOU): allowed_signers lines the user pasted; they count for
  *   every runbook.
  * keysFor() gives the keys a runbook is checked against: its library's, plus the user's own.
@@ -63,6 +64,8 @@ export interface TrustedSigner extends AllowedSigner {
    * also while the file can't be read (offline, a server error), until the library lists it again.
    */
   withdrawn?: boolean;
+  /** The day it was marked withdrawn (YYYY-MM-DD). */
+  withdrawnAt?: string;
 }
 
 /** Whether the key was pasted by the user (counts everywhere) rather than trusted from a library. */
@@ -83,16 +86,43 @@ function words(line: string, sep: RegExp): string[] {
   if (cur !== '') out.push(cur);
   return out;
 }
-const unquote = (s: string): string => s.replace(/^"(.*)"$/, '$1');
 const isKeyType = (s: string): boolean => /^(ssh-|ecdsa-sha2-|sk-|rsa-)/.test(s);
-/** The options OpenSSH's allowed_signers knows (sshsig.c); a line with any other is refused, as there. */
-const KNOWN_OPTION = /^(cert-authority|namespaces=.*|valid-after=.*|valid-before=.*)$/i;
+/** An option with its value, quoted as OpenSSH requires (opt_dequote). */
+const QUOTED_OPTION = /^(namespaces|valid-after|valid-before)="([^"]*)"$/i;
+/** valid-after / valid-before as OpenSSH reads them: YYYYMMDD[HHMM[SS]][Z]. */
+const SSH_TIME = /^\d{8}(\d{4}(\d{2})?)?Z?$/i;
+
+/**
+ * Whether a line can be read the way OpenSSH reads it. OpenSSH skips \" inside quotes and reads
+ * blanks and controls its own way: a backslash, a control character or a blank other than space
+ * and tab could show one key here while a server's ssh-keygen trusts another, so such a line is
+ * not used. So are quotes anywhere but around an option's value.
+ */
+function strictLineOk(line: string): boolean {
+  if (line.includes('\\')) return false;
+  for (const ch of line) if (ch !== ' ' && ch !== '\t' && /[\p{C}\p{Z}]/u.test(ch)) return false;
+  return true;
+}
+
+/** The options of a line by name (lower case), or undefined when one is refused (unknown, unquoted, twice, cert-authority). */
+function readOptions(options: readonly string[]): Map<string, string> | undefined {
+  const values = new Map<string, string>();
+  for (const o of options) {
+    const m = QUOTED_OPTION.exec(o);
+    if (!m) return undefined;
+    const name = m[1]!.toLowerCase();
+    if (values.has(name)) return undefined;
+    values.set(name, m[2]!);
+  }
+  return values;
+}
 
 /**
  * The key lines of an allowed_signers file that may sign in `namespace` (no default: the trusted
  * signers are runbook signers, SIGNATURE_NAMESPACE). Lines the app can't use are counted in
  * `skipped`: certificate authorities (cert-authority), lines for other namespaces only, lines
- * with an option OpenSSH doesn't know, damaged lines.
+ * with an option OpenSSH doesn't know (or unquoted, or twice), lines OpenSSH could read otherwise
+ * (strictLineOk: escapes, stray quotes, odd blanks or controls), damaged lines.
  */
 export function parseAllowedSigners(text: string, namespace: string): { signers: AllowedSigner[]; skipped: number } {
   const signers: AllowedSigner[] = [];
@@ -100,40 +130,47 @@ export function parseAllowedSigners(text: string, namespace: string): { signers:
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (line === '' || line.startsWith('#')) continue;
-    const w = words(line, /\s/);
+    if (!strictLineOk(line)) {
+      skipped++;
+      continue;
+    }
+    const w = words(line, /[ \t]/);
     let i = 1;
     let options: string[] = [];
     if (w[i] !== undefined && !isKeyType(w[i]!)) options = words(w[i++]!, /,/);
     const keyType = w[i];
     const key = w[i + 1];
+    const values = readOptions(options);
     let blob: Buffer | undefined;
     try {
       blob = key && /^[A-Za-z0-9+/]+=*$/.test(key) ? Buffer.from(key, 'base64') : undefined;
     } catch {
       blob = undefined;
     }
-    const opt = (name: string): string | undefined => {
-      const o = options.find((x) => x.toLowerCase().startsWith(name + '='));
-      return o === undefined ? undefined : unquote(o.slice(name.length + 1));
-    };
     const blobType = blob && blob.length > 4 ? blob.subarray(4, 4 + blob.readUInt32BE(0)).toString('latin1') : undefined;
-    const namespaces = opt('namespaces')?.split(',');
+    const namespaces = values?.get('namespaces')?.split(',');
+    const validAfter = values?.get('valid-after');
+    const validBefore = values?.get('valid-before');
     if (
       !w[0] ||
       !keyType ||
       !blob ||
       blobType !== keyType ||
-      options.some((o) => !KNOWN_OPTION.test(o)) ||
-      options.some((o) => o.toLowerCase() === 'cert-authority') ||
-      (namespaces && !matchList(namespace, namespaces))
+      // Options known, quoted and once each (cert-authority is not used for runbooks).
+      !values ||
+      // A quote only around an option's value: not in the names, the key or a comment.
+      w[0].includes('"') ||
+      w.slice(i).some((x) => x.includes('"')) ||
+      w[0].split(',').some((p) => p === '') ||
+      (namespaces && (namespaces.some((n) => n === '' || /\s/.test(n)) || !matchList(namespace, namespaces))) ||
+      (validAfter !== undefined && !SSH_TIME.test(validAfter)) ||
+      (validBefore !== undefined && !SSH_TIME.test(validBefore))
     ) {
       skipped++;
       continue;
     }
-    const validAfter = opt('valid-after');
-    const validBefore = opt('valid-before');
     signers.push({
-      principals: unquote(w[0]).split(','),
+      principals: w[0].split(','),
       keyType,
       key: key!,
       fingerprint: keyFingerprint(new Uint8Array(blob)),
@@ -304,12 +341,26 @@ export const keysFor = (base: string | undefined): TrustedSigner[] =>
 /** Whether this key line is trusted from the library at `base` (or, with ADDED_BY_YOU, added by you). */
 export const isTrustedSigner = (s: AllowedSigner, base: string): boolean => trusted.some((x) => x.from === base && sameSigner(x, s));
 
-/** Trust these lines for the library at `base` (the user said so, after seeing them); other libraries don't use them. */
+/** Whether this key line counts for the library at `base`: trusted from it, and not withdrawn. */
+export const countsFor = (s: AllowedSigner, base: string): boolean =>
+  trusted.some((x) => x.from === base && !x.withdrawn && sameSigner(x, s));
+
+/** The withdrawn key this line would trust again for the library at `base`, if any (its trust prompt says when). */
+export const withdrawnSigner = (s: AllowedSigner, base: string): TrustedSigner | undefined =>
+  trusted.find((x) => x.from === base && x.withdrawn && sameSigner(x, s));
+
+/**
+ * Trust these lines for the library at `base` (the user said so, after seeing them); other
+ * libraries don't use them. A withdrawn key trusted again is stored as the line approved now
+ * (its options as published now), not as it was.
+ */
 export function trustSigners(signers: readonly AllowedSigner[], base: string): void {
   if (base === ADDED_BY_YOU) return;
   const add = signers.filter((s, i) => !isTrustedSigner(s, base) && signers.findIndex((x) => sameSigner(x, s)) === i);
-  // Trusted again from a library that publishes it again: it counts again.
-  const again = trusted.map((x) => (x.from === base && x.withdrawn && signers.some((s) => sameSigner(x, s)) ? stored(x, x.from) : x));
+  const again = trusted.map((x) => {
+    const now = x.from === base && x.withdrawn ? signers.find((s) => sameSigner(x, s)) : undefined;
+    return now ? stored(now, base) : x;
+  });
   save([...again, ...add.map((s) => stored(s, base))]);
 }
 
@@ -337,17 +388,17 @@ export function removeTrustedSigner(s: TrustedSigner): void {
 
 /**
  * The library at `base` was read and publishes these lines: its trusted keys it no longer lists
- * are marked withdrawn (remembered: they don't count while the file can't be read either), and
- * those it lists again are no longer.
+ * are marked withdrawn, with the day (remembered: they don't count while the file can't be read
+ * either). One it lists again stays withdrawn: it counts again only once the user trusts it again
+ * (trustSigners, after its fingerprint and when it was withdrawn), so a server that re-lists a
+ * stolen key can't bring it back by itself.
  */
-export function noteWithdrawn(base: string, published: readonly AllowedSigner[]): void {
+export function noteWithdrawn(base: string, published: readonly AllowedSigner[], today = new Date().toISOString().slice(0, 10)): void {
   let changed = false;
   const next = trusted.map((x) => {
-    if (x.from !== base) return x;
-    const gone = !published.some((s) => sameSigner(s, x));
-    if (gone === Boolean(x.withdrawn)) return x;
+    if (x.from !== base || x.withdrawn || published.some((s) => sameSigner(s, x))) return x;
     changed = true;
-    return gone ? { ...x, withdrawn: true } : stored(x, x.from);
+    return { ...x, withdrawn: true, withdrawnAt: today };
   });
   if (changed) save(next);
 }
