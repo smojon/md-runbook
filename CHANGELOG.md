@@ -2,8 +2,15 @@
 
 ## Unreleased
 
-**Gate admins:** md-runbook-gate is now a program, no longer a shell script. Install the binary
-for your server's platform when you update.
+## 0.28.0
+
+The gate is now a Go program, with per-session isolation and an optional separated mode. The
+Visual Studio Marketplace gets each release automatically.
+
+**Gate admins:** install the binary for your platform (`md-runbook-gate-<os>-<arch>` with
+`SHA256SUMS`); the protocol and `gate.conf` stay compatible. Some runbooks need signing again:
+see "Sign these again" below. Library servers: separated gates' tokens go in
+`RUNS_SEPARATED_GATE_TOKENS`.
 
 - **Gate: a binary per platform.** Linux and macOS, amd64 and arm64:
   `md-runbook-gate-<os>-<arch>` on each release, with `SHA256SUMS`. Check the sum, then install
