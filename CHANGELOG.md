@@ -43,9 +43,10 @@ update (see below).
   - The look for strays at the start of a session is gone: a forking process could slip past
     it (review of 0.28.0).
   - What a crashed session left behind ends when the next session leases that account.
-  - An account with a process that won't end (stuck in the kernel, `D` state) is skipped: the
-    session takes the next free one, and logs `"event":"lease","status":"skipped"` with the
-    reason. Only when no free account can be cleared does the session refuse to start.
+  - An account whose process won't end (stuck in the kernel) is skipped. The session takes the
+    next free one.
+  - The gate logs it as `"event":"lease","status":"skipped"`, with the reason.
+  - A session refuses to start only when no free account can be cleared.
 
 - **Fixed: Kubernetes ops host, no block ran when the session's pod started slowly.** The
   kube-context check gave up after 15 seconds, and a laptop's k3s takes 30 to 60 to start the

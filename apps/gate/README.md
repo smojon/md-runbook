@@ -207,10 +207,10 @@ Here `support` is the gate's account. The sudoers line:
 the end of each session, with or without `kill_leftovers`:
 - The gate runs its cells mode as that account, through the same sudo line. It calls
   `kill(-1, SIGKILL)`.
-- The gate lists the processes until none of the account is left. If one is (a process stuck
-  in the kernel, `D` state), the session skips that account and takes the next free one. It logs
-  `"event":"lease","status":"skipped"` with the reason. Only when no free account can be
-  cleared does the session refuse to start.
+- The gate lists the processes until none of the account is left.
+- If one is left (stuck in the kernel, `D` state), the session skips that account and takes the
+  next free one. It logs `"event":"lease","status":"skipped"` with the reason.
+- The session refuses to start only when no free account can be cleared.
 - **Linux:** the kernel signals all of the account's processes at once, with its task list
   locked. A process that keeps forking can't slip out.
 - **macOS:** the kernel signals a list it takes first. A process that forks just then can live
