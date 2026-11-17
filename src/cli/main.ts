@@ -98,7 +98,8 @@ Options:
                        for a signed runbook with report-runs-signed: true
   --quiet              Only print the summary
   --no-progress-bar    In a terminal, print the progress after each step instead of pinning
-                       it on the bottom line (pipes, files and CI logs get neither)
+                       it on the bottom line (pipes and files get neither; TERM=dumb and a
+                       CI job's terminal get the lines after each step)
   -h, --help           Show this help
   --version            Show the version
 
@@ -449,7 +450,15 @@ export async function main(argv: readonly string[]): Promise<number> {
   try {
     summary = await runRunbook(
       { ...options, env: process.env, signal: abort.signal, progress: terminal && !pinned, ...(pinned ? { pinned } : {}), ...(notify ? { extraSecrets: [notify.url] } : {}) },
-      { out: (t) => void (quiet || process.stdout.write(t)), log: (l) => void (quiet || process.stdout.write(l + '\n')) },
+      {
+        // The step's output: the pinned line is drawn between its escape sequences only.
+        out: (t) => {
+          if (quiet) return;
+          process.stdout.write(t);
+          pinned?.output(t);
+        },
+        log: (l) => void (quiet || process.stdout.write(l + '\n')),
+      },
     );
   } catch (e) {
     pinned?.stop();

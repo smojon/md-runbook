@@ -206,6 +206,9 @@ Step 3/7 · 54% · 1 min left [################..............]
 ```
 
 - The words are the same as in VS Code's status bar and the app's run bar.
+- The line counts the steps as VS Code and the app do: a checklist item counts, the ready check
+  doesn't. Its number can differ from the `▶ Step` lines, which `--from` and `--to` use.
+- Unchanged, the line is drawn again every 5 seconds, so it comes back after a step's `clear`.
 - The share shows only when every step left has an estimate. Otherwise: `at least 4 min left`.
 - The bar is plain ASCII and as wide as the terminal leaves room for.
 - On exit, on an error and on Ctrl+C, the terminal is given back as it was.

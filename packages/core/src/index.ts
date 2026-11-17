@@ -107,6 +107,6 @@ export {
   textEstimateSteps,
   withoutEstimate,
 } from './estimate';
-export { cellRunStatus, runProgressLine, spokenSteps, stepFailed, stepOfTotal } from './runStatus';
+export { cellRunStatus, runProgressLine, spokenSteps, stepFailed, stepOfTotal, unnumberedStep } from './runStatus';
 export type { CellRunInput, CellRunStatus, RunLine, RunLineInput } from './runStatus';
 export { Heading, headingsOf, runbookTitle, withoutFrontMatter } from './title';

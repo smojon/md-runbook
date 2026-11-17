@@ -55,6 +55,76 @@ const INDEX = `${ESC}D`;
 /** SGR 0: the bar in plain text, whatever colour the output left on (DECRC brings that back). */
 const PLAIN = `${ESC}[0m`;
 
+/** An unchanged line is drawn again after this many ticks (seconds). */
+const REDRAW_TICKS = 5;
+/** The ticker waits at most this many ticks for the step's escape sequence to close. */
+const HOLD_TICKS = 5;
+
+/**
+ * Whether the output written so far ends in the middle of an escape sequence (ESC, CSI, OSC, DCS
+ * and the like), or between the step's own cursor save (ESC 7, CSI s) and its restore. Enough of
+ * ECMA-48 to know where a sequence ends; it doesn't interpret any.
+ */
+export class EscapeState {
+  private state: 'text' | 'esc' | 'escInter' | 'csi' | 'string' | 'stringEsc' = 'text';
+  private csiParams = '';
+  private saved = false;
+
+  /** In a sequence, or the step's cursor is saved and not restored yet. */
+  open(): boolean {
+    return this.state !== 'text' || this.saved;
+  }
+
+  feed(chunk: string): void {
+    for (let i = 0; i < chunk.length; i++) {
+      const c = chunk.charCodeAt(i);
+      // CAN and SUB cancel a sequence; ESC starts a new one, even inside another.
+      if (c === 0x18 || c === 0x1a) {
+        this.state = 'text';
+        continue;
+      }
+      switch (this.state) {
+        case 'text':
+          if (c === 0x1b) this.state = 'esc';
+          break;
+        case 'esc':
+          if (c === 0x5b) ((this.state = 'csi'), (this.csiParams = ''));
+          // OSC, DCS, SOS, PM, APC: a string, until BEL (OSC) or ST.
+          else if (c === 0x5d || c === 0x50 || c === 0x58 || c === 0x5e || c === 0x5f) this.state = 'string';
+          else if (c >= 0x20 && c <= 0x2f) this.state = 'escInter';
+          else if (c === 0x1b) this.state = 'esc';
+          else {
+            if (c === 0x37) this.saved = true;
+            else if (c === 0x38) this.saved = false;
+            this.state = 'text';
+          }
+          break;
+        case 'escInter':
+          if (c === 0x1b) this.state = 'esc';
+          else if (c >= 0x30 && c <= 0x7e) this.state = 'text';
+          break;
+        case 'csi':
+          if (c === 0x1b) this.state = 'esc';
+          else if (c >= 0x40 && c <= 0x7e) {
+            if (this.csiParams === '' && c === 0x73) this.saved = true;
+            else if (this.csiParams === '' && c === 0x75) this.saved = false;
+            this.state = 'text';
+          } else this.csiParams += chunk[i];
+          break;
+        case 'string':
+          if (c === 0x07) this.state = 'text';
+          else if (c === 0x1b) this.state = 'stringEsc';
+          break;
+        case 'stringEsc':
+          // ST is ESC and a backslash; any other ESC starts a new sequence.
+          if (c === 0x5c) this.state = 'text';
+          else ((this.state = 'esc'), i--);
+          break;
+      }
+    }
+  }
+}
+
 export class PinnedBar {
   private read: BarRead | undefined;
   private active = false;
@@ -64,12 +134,25 @@ export class PinnedBar {
   private rows = 0;
   private shown = '';
   private timer: ReturnType<typeof setInterval> | undefined;
+  /** Ticks since the line was last written. */
+  private idle = 0;
+  /** Ticks the step's output kept the line from being drawn (in the middle of an escape sequence). */
+  private held = 0;
+  private readonly escapes = new EscapeState();
 
   constructor(
     private readonly term: BarTerminal,
     private readonly signals: Signals = process,
     private readonly tickMs = 1000,
   ) {}
+
+  /**
+   * A chunk of the step's output was written. The ticker draws only between whole escape
+   * sequences: its DECSC/DECRC must not split the step's own, or a half-written sequence.
+   */
+  output(chunk: string): void {
+    this.escapes.feed(chunk);
+  }
 
   /** Show where the run is (`read` is called again every second); pins the line the first time. */
   show(read: BarRead): void {
@@ -112,7 +195,7 @@ export class PinnedBar {
     this.term.on?.('resize', this.onResize);
     // Ctrl+C, a kill or an exit with the run still going: the terminal must not stay split.
     for (const s of ['SIGINT', 'SIGTERM', 'exit'] as const) this.signals.once(s, this.onSignal);
-    this.timer = setInterval(() => this.draw(true), this.tickMs);
+    this.timer = setInterval(() => this.tick(), this.tickMs);
     // The ticking must not keep the process alive.
     (this.timer as { unref?: () => void }).unref?.();
   }
@@ -148,15 +231,27 @@ export class PinnedBar {
   };
 
   /**
-   * The line, when it changed; `always` (each second): also when it didn't, so that it comes back
-   * after a step cleared the screen (`clear`, ESC[2J, ESC[J).
+   * Each second: the line when it changed (the time left moves on). Unchanged, it is drawn again
+   * every 5 s only, so that it comes back after a step cleared the screen (`clear`, ESC[2J,
+   * ESC[J). A terminal that jumps to the bottom on output doesn't pull a reader up in the
+   * scrollback down every second.
    */
+  private tick(): void {
+    this.idle++;
+    // Not in the middle of the step's escape sequence; but not held for ever by one never closed.
+    if (this.escapes.open() && ++this.held < HOLD_TICKS) return;
+    this.held = 0;
+    this.draw(this.idle >= REDRAW_TICKS);
+  }
+
+  /** The line, when it changed; `always`: also when it didn't. */
   private draw(always = false): void {
     if (!this.active || this.suspended || !this.read) return;
     const { text, fraction } = this.read();
     const line = barLine(text, fraction, this.term.columns ?? 80);
     if (line === this.shown && !always) return;
     this.shown = line;
+    this.idle = 0;
     // DECSC saves the output's colours too; plain before the erase (it fills with the background).
     this.term.write(`${SAVE}${ESC}[${this.rows};1H${PLAIN}${ESC}[2K${line}${RESTORE}`);
   }
