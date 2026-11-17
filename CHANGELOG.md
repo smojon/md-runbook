@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Dependencies, for security alerts:**
+  - `@azure/msal-node` 7.2.1: before 7.1.0, its sign-in flow could send data to a wrong server.
+  - `glob` 14 and `minimatch` 11 in the extension's build and publishing tools.
+  - `actions/download-artifact` v8.0.2.
+  - The app's copies of `glob` and `minimatch` wait for an Expo update.
+
 ## 0.29.0
 
 On Kubernetes, each session's blocks run in a Job of their own. In VS Code, a team library's
