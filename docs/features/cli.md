@@ -70,6 +70,7 @@ It needs Node.js 20 or newer and nothing else (one bundled file).
 | `--notify URL` | Post a summary to a chat webhook when the run fails (see [Notifications](#notifications)). Prefer the environment variable `MD_RUNBOOK_NOTIFY_URL`. |
 | `--notify-on WHEN` | `failure` (default) or `always`; or `MD_RUNBOOK_NOTIFY_ON`. |
 | `--quiet` | Print only the summary line. |
+| `--no-progress-bar` | In a terminal, print the progress after each step instead of pinning it on the bottom line (see [Progress in a terminal](#progress-in-a-terminal)). |
 
 ## Part of a runbook
 
@@ -190,10 +191,27 @@ In `md-runbook run`:
 - a step's `▶ Step N` line shows its estimate;
 - a step that took more than twice its estimate and over a minute more gets a warning, not a
   failure;
-- in a terminal, each step is followed by the progress and time left, by the estimates:
-  `[########............] 40% · 6 min left`. The bar is as wide as the terminal leaves room
-  for, in plain ASCII so any console shows it. A CI log keeps plain lines.
+- in a terminal, the bottom line shows the progress and time left (see below);
 - `--json` has `estimateSeconds` per step, the JUnit report an `estimate` property per test case.
+
+### Progress in a terminal
+
+In a terminal, the run's progress stays on the bottom line, as apt shows it. The output scrolls
+above it:
+
+```text
+▶ Step 3 · deploy.md:24 · bash · est. 1m
+Pulling image… done
+Step 3/7 · 54% · 1 min left [################..............]
+```
+
+- The words are the same as in VS Code's status bar and the app's run bar.
+- The share shows only when every step left has an estimate. Otherwise: `at least 4 min left`.
+- The bar is plain ASCII and as wide as the terminal leaves room for.
+- On exit, on an error and on Ctrl+C, the terminal is given back as it was.
+- `--no-progress-bar` prints the progress after each step instead:
+  `[########............] 40% · 6 min left`.
+- `TERM=dumb` gets those plain lines too. Pipes, files and CI logs get no progress lines.
 
 ## Signing runbooks
 
