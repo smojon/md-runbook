@@ -5,11 +5,21 @@
 **Gate admins with separated mode:**
 - With `cells_account =` alone, one session runs at a time now, and a second one refuses to
   start. For sessions side by side, set up a pool before you update (see below).
-- On Linux, blocks start with `no_new_privs`: `sudo`, `su` and setuid programs in them fail.
+- End running sessions before you update. The first 0.30.0 session ends every process of its
+  account, a running 0.29.0 session's blocks too.
+- On Linux, blocks start with `no_new_privs`. In them, these fail:
+  - `sudo`, `su` and other setuid programs;
+  - programs that need file capabilities, such as `ping`, `traceroute` or `mtr` on older
+    distributions.
 - A pool, or a `cells_account`, serves one gate account only. A session now refuses to start
   when its account runs another gate account's blocks.
-- Add `DenyUsers` for the pool accounts to `sshd_config`. A session refuses an account with
-  `~/.ssh/authorized_keys`, and closes its home to others (mode 0700).
+- Pool accounts need the login shell `/usr/sbin/nologin` or `/bin/false`. A session refuses
+  any other.
+- Add `DenyUsers` for the pool accounts to `sshd_config`. At each lease, the account removes
+  `~/.ssh/authorized_keys` and `authorized_keys2`, and the gate logs it. The gate closes the
+  home to others (mode 0700).
+- Files a block leaves in a pool home can affect a later session on that account
+  ([Separated mode](apps/gate/README.md#separated-mode)).
 
 - **CLI: the progress pinned on the bottom line, as apt shows it.** In a terminal, `md-runbook
   run` keeps one line at the bottom while the output scrolls above it:

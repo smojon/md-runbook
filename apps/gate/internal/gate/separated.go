@@ -32,6 +32,7 @@ import (
 // start when:
 //   - an account doesn't exist, is root, or is the gate's own, or two have the same uid;
 //   - one is in a privileged group, or may use cron or at;
+//   - one has a login shell other than nologin or false (loginShellOK);
 //   - `sudo -n -l` lists anything but the one rule (sudoRule), naming the whole pool;
 //   - a folder above the gate's program, gate.conf, the trusted keys, revoked, floors, the
 //     account's keys, the report token or the log is not safe (safePathProblem: the rule of
@@ -43,8 +44,11 @@ import (
 //   - the cells' account can read the report token or the log, or change the gate's program,
 //     gate.conf, the trusted keys, the account's keys or the gate's state;
 //   - it can't append to the session's exits file (the work folder is in /tmp);
-//   - its home folder stays open to other accounts, or has a key file sshd would take (checkHome;
-//     an open home of its own it closes first).
+//   - its home folder stays open to other accounts (checkHome; an open home of its own it closes
+//     first).
+//
+// A key file sshd would take in its home (authorized_keys, authorized_keys2) the check removes,
+// and the gate logs it. One it can't remove skips the account, as a stuck one (leaseCells).
 
 // cellsInfo is a cells account as the self-check found it.
 type cellsInfo struct {
@@ -63,9 +67,12 @@ type selfCheck struct {
 	run  runFunc
 	plan plan // the programs (exe, sudo); its account is set for each account checked
 	// The pool, and the setting that named it (cells_account or cells_accounts), for messages.
-	pool        []string
-	key         string
-	sh, id      string // the programs (helpers.go)
+	pool   []string
+	key    string
+	sh, id string // the programs (helpers.go)
+	getent string // "" where there is none (macOS): `id -P` then
+	// readFile reads /etc/passwd when neither has the account (nil: os.ReadFile).
+	readFile    func(string) ([]byte, error)
 	gateAccount string
 	gateUID     int
 	// The cells' account must not read noRead, nor write noWrite, but must write mustWrite.
@@ -176,11 +183,65 @@ func (c selfCheck) account(name string) (cellsInfo, error) {
 	if probs := cronProblems(c.cron, name); len(probs) > 0 {
 		return info, errors.New(what + ": " + strings.Join(probs, "; ") + " (a job of a cells account could reach the shells of a session that leased it)")
 	}
+	// No login shell: a block that writes a key file and runs `ssh localhost` would get a process
+	// without no_new_privs, where a setuid file works again (review of 0.30.0, re-check L3).
+	shell, ok := c.loginShell(name)
+	switch {
+	case !ok:
+		return info, errors.New(what + ": can't read its login shell (getent passwd, id -P or /etc/passwd)")
+	case !loginShellOK(shell):
+		if shell == "" {
+			shell = "empty (/bin/sh)"
+		}
+		return info, errors.New(what + "'s login shell is " + shell + ": a key file a block leaves would let it log in without no_new_privs. Make it nologin: usermod -s /usr/sbin/nologin " + name)
+	}
 	// Its home folder (getpwnam, as the shell's ~NAME reads it): where the cells start.
 	if out, err := c.run([]string{c.sh, "-c", "printf '%s' ~" + name}, nil, nil); err == nil && strings.HasPrefix(string(out), "/") {
 		info.home = string(out)
 	}
 	return info, nil
+}
+
+// noLoginShells: the login shells that let no one log in.
+var noLoginShells = []string{"/usr/sbin/nologin", "/sbin/nologin", "/usr/bin/nologin", "/bin/false", "/usr/bin/false"}
+
+func loginShellOK(shell string) bool { return has(noLoginShells, shell) }
+
+// loginShell: the account's login shell, from the user database: getent passwd (Linux), else
+// `id -P` (macOS, BSD), else /etc/passwd. ok: one of them had the account.
+func (c selfCheck) loginShell(name string) (shell string, ok bool) {
+	last := func(line string) (string, bool) {
+		f := strings.Split(strings.TrimRight(line, "\r\n"), ":")
+		if len(f) < 7 || f[0] != name {
+			return "", false
+		}
+		return f[len(f)-1], true
+	}
+	if c.getent != "" {
+		if out, err := c.run([]string{c.getent, "passwd", name}, nil, nil); err == nil {
+			first, _, _ := strings.Cut(string(out), "\n")
+			if s, ok := last(first); ok {
+				return s, true
+			}
+		}
+	} else if out, err := c.run([]string{c.id, "-P", name}, nil, nil); err == nil {
+		first, _, _ := strings.Cut(string(out), "\n")
+		if s, ok := last(first); ok {
+			return s, true
+		}
+	}
+	read := c.readFile
+	if read == nil {
+		read = os.ReadFile
+	}
+	if b, err := read("/etc/passwd"); err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			if s, ok := last(l); ok {
+				return s, true
+			}
+		}
+	}
+	return "", false
 }
 
 // folders: the folders above the gate's files are safe from the account (as the gate sees them:
@@ -203,7 +264,10 @@ func (c selfCheck) folders(info cellsInfo) error {
 // session leased, once none of its processes is left (leaseCells): a process of an account that
 // another session holds could stop that check, or read the session's exits path from it (review
 // of 0.30.0, H2).
-func (c selfCheck) access(info cellsInfo) error {
+//
+// removed: the key files its home had, which the cells' mode removed (checkHome). One it couldn't
+// remove is a keyFilesLeft error when it is the only problem: the lease skips that account.
+func (c selfCheck) access(info cellsInfo) (removed []string, err error) {
 	name, what, need := info.name, c.what(info.name), c.need()
 	p := c.plan
 	p.account = name
@@ -215,10 +279,16 @@ func (c selfCheck) access(info cellsInfo) error {
 		if err != nil {
 			msg += " (" + err.Error() + ")"
 		}
-		return errors.New(what + ": " + msg + need)
+		return nil, errors.New(what + ": " + msg + need)
 	}
 	if res.UID != info.uid {
-		return errors.New(what + ": sudo ran the cells' mode as uid " + strconv.Itoa(res.UID) + ", not " + strconv.Itoa(info.uid))
+		return nil, errors.New(what + ": sudo ran the cells' mode as uid " + strconv.Itoa(res.UID) + ", not " + strconv.Itoa(info.uid))
+	}
+	// Only the files it was to look at (for the log).
+	for _, f := range res.Removed {
+		if info.home != "" && has(loginFiles, strings.TrimPrefix(f, info.home+"/")) && !has(removed, f) {
+			removed = append(removed, f)
+		}
 	}
 	var problems []string
 	if len(res.Read) > 0 {
@@ -245,13 +315,24 @@ func (c selfCheck) access(info cellsInfo) error {
 		problems = append(problems, name+"'s home "+info.home+" is open to other accounts and writable by "+name+": make it "+name+"'s, mode 0700")
 	}
 	if len(res.Logins) > 0 {
-		problems = append(problems, strings.Join(res.Logins, ", ")+" would let a key log in as "+name+": remove it, and add `DenyUsers "+name+"` to sshd_config")
+		left := strings.Join(res.Logins, ", ") + " would let a key log in as " + name + ", and " + name + " can't remove it: remove it as root, and add `DenyUsers " + name + "` to sshd_config"
+		if len(problems) == 0 {
+			return removed, keyFilesLeft{left}
+		}
+		problems = append(problems, left)
 	}
 	if len(problems) > 0 {
-		return errors.New(what + ": " + strings.Join(problems, "; "))
+		return removed, errors.New(what + ": " + strings.Join(problems, "; "))
 	}
-	return nil
+	return removed, nil
 }
+
+// keyFilesLeft: the leased account's home keeps a key file its cells' mode couldn't remove. Only
+// that account is the problem, as with a stuck one: the lease skips it (review of 0.30.0,
+// re-check M1).
+type keyFilesLeft struct{ why string }
+
+func (e keyFilesLeft) Error() string { return e.why }
 
 // loginFiles: the files in a home folder that sshd reads keys from by default
 // (AuthorizedKeysFile).
@@ -263,28 +344,64 @@ var loginFiles = []string{".ssh/authorized_keys", ".ssh/authorized_keys2"}
 //     account's. A setuid file a block left there then stays out of the other accounts' reach:
 //     macOS has no no_new_privs (review of 0.30.0, H1). open: it stays open and the account can
 //     write it.
-//   - logins: the key files there that would let someone log in as the account (with sftp
-//     too, under a nologin shell) and reach a later session's shells (M2). One that can't be
-//     looked at counts too: sshd reads it as root.
-func checkHome(home string, uid int) (open bool, logins []string) {
+//   - The key files there that would let someone log in as the account (with sftp too, under a
+//     nologin shell) and reach a later session's shells (M2) are removed: a block may have left
+//     them, and a refusal would lock the gate out of that account until root cleans up (review of
+//     0.30.0, re-check M1). A home or .ssh of its own that it can't enter or change is opened to
+//     it (u+rwx) first. removed: those it removed; logins: those still there, or that it can't
+//     look at (sshd reads them as root).
+func checkHome(home string, uid int) (open bool, removed, logins []string) {
 	if home == "" {
-		return false, nil
+		return false, nil, nil
 	}
 	st, err := os.Stat(home)
 	if err != nil || !st.IsDir() {
-		return false, nil
-	}
-	for _, f := range loginFiles {
-		_, err := os.Lstat(home + "/" + f)
-		if err == nil || !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
-			logins = append(logins, home+"/"+f)
-		}
+		return false, nil, nil
 	}
 	perm := st.Mode().Perm()
-	if s, ok := st.Sys().(*syscall.Stat_t); ok && int(s.Uid) == uid && perm&0o077 != 0 && os.Chmod(home, perm&^0o077) == nil {
+	own := false
+	if s, ok := st.Sys().(*syscall.Stat_t); ok && int(s.Uid) == uid {
+		own = true
+	}
+	if own && perm&0o077 != 0 && os.Chmod(home, perm&^0o077) == nil {
 		perm &^= 0o077
 	}
-	return perm&0o077 != 0 && writable(home), logins
+	var found []string
+	for _, f := range loginFiles {
+		if p := home + "/" + f; present(p) {
+			found = append(found, p)
+		}
+	}
+	if len(found) > 0 {
+		// Its own folders on the way, opened to it: else it can't look in .ssh, or remove from it.
+		if own && perm&0o700 != 0o700 && os.Chmod(home, perm|0o700) == nil {
+			perm |= 0o700
+		}
+		if ssh, err := os.Lstat(home + "/.ssh"); err == nil && ssh.IsDir() && ssh.Mode().Perm()&0o700 != 0o700 {
+			if s, ok := ssh.Sys().(*syscall.Stat_t); ok && int(s.Uid) == uid {
+				os.Chmod(home+"/.ssh", ssh.Mode().Perm()|0o700)
+			}
+		}
+		for _, p := range found {
+			// (Only a closed folder hid that nothing is there.) A link goes, not what it names; a
+			// folder goes with what is in it.
+			if !present(p) {
+				continue
+			}
+			if os.RemoveAll(p) == nil && !present(p) {
+				removed = append(removed, p)
+			} else {
+				logins = append(logins, p)
+			}
+		}
+	}
+	return perm&0o077 != 0 && writable(home), removed, logins
+}
+
+// present: there is something at p (a link too), or p can't be looked at.
+func present(p string) bool {
+	_, err := os.Lstat(p)
+	return err == nil || !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR)
 }
 
 func has(list []string, s string) bool {
@@ -421,7 +538,7 @@ func (g *Gate) setupSeparated() {
 		add(&safe, g.cfg.Log)
 	}
 	add(&safe, g.keys...)
-	c := selfCheck{run: runCmd, plan: g.plan, pool: g.cfg.CellsPool(), key: g.cfg.CellsKey(), sh: g.helper("sh"), id: g.helper("id"), gateAccount: g.account, gateUID: g.uid,
+	c := selfCheck{run: runCmd, plan: g.plan, pool: g.cfg.CellsPool(), key: g.cfg.CellsKey(), sh: g.helper("sh"), id: g.helper("id"), getent: g.helper("getent"), gateAccount: g.account, gateUID: g.uid,
 		noRead: noRead, noWrite: noWrite, mustWrite: []string{g.exitsPath}, safe: safe, stat: lstat, cron: systemCron()}
 	infos, err := c.do()
 	if err != nil {

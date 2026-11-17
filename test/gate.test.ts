@@ -1822,23 +1822,36 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       }
     });
 
-    it("the lease refuses an account whose home has a key file sshd would take, and closes an open home (review of 0.30.0, M2)", async () => {
+    it("the lease removes a key file sshd would take from the account's home, skips the account when it can't, and closes an open home (review of 0.30.0, M2; re-check M1)", async () => {
       const home = spawnSync('getent', ['passwd', CELLS], { encoding: 'utf8' }).stdout.split(':')[5] ?? '';
       assert.match(home, /^\//);
-      as(CELLS, `chmod 755 ${home} && mkdir -p ${home}/.ssh && echo 'ssh-ed25519 AAAA x' >${home}/.ssh/authorized_keys`);
+      const exists = (p: string): boolean => spawnSync('sudo', ['-n', 'test', '-e', p]).status === 0;
+      // A block's leftovers: both key files, in a .ssh closed to the account.
+      as(CELLS, `chmod 755 ${home} && mkdir -p ${home}/.ssh && echo 'ssh-ed25519 AAAA x' >${home}/.ssh/authorized_keys && echo 'ssh-ed25519 AAAA y' >${home}/.ssh/authorized_keys2 && chmod 000 ${home}/.ssh`);
+      const a = await openSession();
+      assert.equal(a.cells, CELLS);
+      assert.equal(await a.g.close(), 0);
+      assert.equal(exists(`${home}/.ssh/authorized_keys`) || exists(`${home}/.ssh/authorized_keys2`), false);
+      assert.ok(readLog().includes(`"event":"lease","status":"removed","cells":"${CELLS}","files":"${home}/.ssh/authorized_keys ${home}/.ssh/authorized_keys2"`), readLog());
+      assert.equal(spawnSync('sudo', ['-n', 'stat', '-c', '%a', home], { encoding: 'utf8' }).stdout.trim(), '700');
+      // One the account can't remove (in a .ssh of root's): the session skips it, and leases the next.
+      spawnSync('sudo', ['-n', 'rm', '-rf', `${home}/.ssh`]);
+      spawnSync('sudo', ['-n', 'install', '-d', '-o', 'root', '-g', 'root', '-m', '755', `${home}/.ssh`]);
+      spawnSync('sudo', ['-n', 'install', '-o', 'root', '-g', 'root', '-m', '644', '/dev/null', `${home}/.ssh/authorized_keys`]);
       try {
-        const r = await startupAs(GATE_ACCOUNT, gdir, conf);
-        assert.equal(r.code, 2, r.err);
-        assert.ok(r.err.includes(`${home}/.ssh/authorized_keys would let a key log in as ${CELLS}`), r.err);
-        assert.match(readLog(), /"event":"self-check","status":"refused"/);
+        const b = await openSession();
+        try {
+          assert.equal(b.cells, POOL[1]);
+          assert.ok(readLog().includes(`"event":"lease","status":"skipped","cells":"${CELLS}","reason":"${home}/.ssh/authorized_keys would let a key log in as ${CELLS}, and ${CELLS} can't remove it`), readLog());
+        } finally {
+          assert.equal(await b.g.close(), 0);
+        }
       } finally {
-        as(CELLS, `rm -rf ${home}/.ssh`);
+        spawnSync('sudo', ['-n', 'rm', '-rf', `${home}/.ssh`]);
       }
-      as(CELLS, `chmod 755 ${home}`);
       const { g, cells } = await openSession();
       assert.equal(cells, CELLS);
       assert.equal(await g.close(), 0);
-      assert.equal(spawnSync('sudo', ['-n', 'stat', '-c', '%a', home], { encoding: 'utf8' }).stdout.trim(), '700');
     });
 
     it('all accounts in use: the next session refuses to start, and says to raise the pool', async () => {

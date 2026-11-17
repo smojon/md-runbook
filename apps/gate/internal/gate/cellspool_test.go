@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/smojon/md-runbook/apps/gate/internal/logx"
 	"github.com/smojon/md-runbook/apps/gate/internal/procs"
 )
 
@@ -165,6 +166,85 @@ func TestLeaseClear(t *testing.T) {
 	}
 	if len(f.held) != 0 {
 		t.Errorf("another gate account, held: %v", f.held)
+	}
+}
+
+// A lease's look at each free account (clearCells), with leaseClear: a key file its cells' mode
+// removed is logged and the account taken; one it couldn't remove skips the account as a stuck
+// one, and the next is leased; any other finding of the check stops the session (review of
+// 0.30.0, re-check M1: one file a block leaves must not lock the gate out).
+func TestLeaseClearCells(t *testing.T) {
+	pool := []string{"mdrb-cells", "mdrb-cells-2"}
+	sys := func() *fakeSys {
+		f := goodSys()
+		f.uids = map[string]string{"mdrb-cells-2": "1502"}
+		f.cronFiles["/etc/cron.deny"] = "daemon\nmdrb-cells\nmdrb-cells-2\n"
+		f.sudoL = sudoHead + "    (mdrb-cells, mdrb-cells-2) NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n"
+		return f
+	}
+	clr := clearer{
+		list:    func() ([]procs.Proc, error) { return []procs.Proc{{PID: 1, Comm: "init"}}, nil },
+		killall: func() error { return nil },
+		sleep:   func(time.Duration) {},
+	}
+	keys := "/home/mdrb-cells/.ssh/authorized_keys"
+	lease := func(f *fakeSys) (i int, stuck int, problems []string, err, fatal error, log string) {
+		t.Helper()
+		c := testCheck(f, "cells_accounts", pool...)
+		infos, err := c.do()
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := t.TempDir()
+		g := &Gate{log: &logx.Logger{Dest: dir + "/gate.log", Account: "support"}, uid: 1000}
+		locks := &fakeLocks{held: map[string]bool{}}
+		i, _, s, problems, err := leaseClear(pool, locks.lock, func(i int) (string, bool) {
+			p, st, ferr := g.clearCells(c, infos[i], clr)
+			fatal = ferr
+			return p, st
+		})
+		b, _ := os.ReadFile(dir + "/gate.log")
+		return i, len(s), problems, err, fatal, string(b)
+	}
+
+	// Removed: logged, and the account leased.
+	f := sys()
+	f.checks = map[string]checkResult{"mdrb-cells": {UID: 1500, Write: f.check.Write, Removed: []string{keys}}}
+	i, stuck, _, err, fatal, log := lease(f)
+	if i != 0 || stuck != 0 || err != nil || fatal != nil {
+		t.Errorf("removed: %d %d %v %v", i, stuck, err, fatal)
+	}
+	if !strings.Contains(log, `"event":"lease","status":"removed","cells":"mdrb-cells","files":"`+keys+`"`) {
+		t.Errorf("removed, log: %s", log)
+	}
+
+	// Left: the account skipped (its reason logged), the next one leased.
+	f = sys()
+	f.checks = map[string]checkResult{"mdrb-cells": {UID: 1500, Write: f.check.Write, Logins: []string{keys}}}
+	i, stuck, problems, err, fatal, log := lease(f)
+	if i != 1 || stuck != 1 || err != nil || fatal != nil || len(problems) != 1 || !strings.Contains(problems[0], keys+" would let a key log in as mdrb-cells, and mdrb-cells can't remove it") {
+		t.Errorf("left: %d %d %v %v %q", i, stuck, err, fatal, problems)
+	}
+	if !strings.Contains(log, `"event":"lease","status":"skipped","cells":"mdrb-cells","reason":"`+keys+` would let`) {
+		t.Errorf("left, log: %s", log)
+	}
+
+	// Left on every account: none clear, each one's reason.
+	f = sys()
+	f.checks = map[string]checkResult{
+		"mdrb-cells":   {UID: 1500, Write: f.check.Write, Logins: []string{keys}},
+		"mdrb-cells-2": {UID: 1502, Write: f.check.Write, Logins: []string{"/home/mdrb-cells/.ssh/authorized_keys2"}},
+	}
+	if _, stuck, problems, err, fatal, _ := lease(f); err != errNoneClear || fatal != nil || stuck != 2 || len(problems) != 2 {
+		t.Errorf("left on all: %d %v %v %q", stuck, err, fatal, problems)
+	}
+
+	// Another finding: the session doesn't start, with the check's message (no skip: the next
+	// account would most likely say the same, and a skip would hide it).
+	f = sys()
+	f.checks = map[string]checkResult{"mdrb-cells": {UID: 1500, Write: f.check.Write, Read: []string{"/etc/md-runbook/report-token"}}}
+	if i, _, _, err, fatal, _ := lease(f); i != -1 || err == nil || fatal == nil || !strings.Contains(fatal.Error(), "cells_accounts: mdrb-cells: mdrb-cells can read /etc/md-runbook/report-token") {
+		t.Errorf("a readable token: %d %v %v", i, err, fatal)
 	}
 }
 

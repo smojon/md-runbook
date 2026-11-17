@@ -90,7 +90,10 @@ jobs:
           sudo install -d -m 755 -o root -g root /usr/libexec/mdrb-open
           sudo install -d -m 777 -o root -g root /usr/libexec/mdrb-open/bin
           sudo install -m 755 -o root -g root apps/gate/dist/md-runbook-gate /usr/libexec/mdrb-open/bin/md-runbook-gate
-          for a in mdrb-gate mdrb-cells-1 mdrb-cells-2 mdrb-cells-3 mdrb-wide mdrb-open; do sudo useradd -m -s /bin/sh "$a"; done
+          for a in mdrb-gate mdrb-wide mdrb-open; do sudo useradd -m -s /bin/sh "$a"; done
+          # The cells accounts with no login shell, or the self-check refuses (the gate runs them
+          # through sudo, never a login).
+          for a in mdrb-cells-1 mdrb-cells-2 mdrb-cells-3; do sudo useradd -m -s /usr/sbin/nologin "$a"; done
           pool=mdrb-cells-1,mdrb-cells-2,mdrb-cells-3
           printf '%s\n' \
             "mdrb-gate ALL=($pool) NOPASSWD: /usr/libexec/md-runbook-gate/bin/md-runbook-gate __cells" \
@@ -101,7 +104,8 @@ jobs:
           sudo -n -u mdrb-gate sudo -n -l
           # The cells accounts may use neither cron nor at, or the self-check refuses.
           printf 'mdrb-cells-1\nmdrb-cells-2\nmdrb-cells-3\n' | sudo tee -a /etc/cron.deny /etc/at.deny >/dev/null
-          # The README's DenyUsers line for the pool: this sshd takes it, and denies each account.
+          # The README's DenyUsers line for the pool: this sshd's config check takes it, and its
+          # parsed config lists an account of the pool (no login is tried).
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/deny_host"
           printf 'HostKey %s\nDenyUsers %s\n' "$RUNNER_TEMP/deny_host" "mdrb-cells-1 mdrb-cells-2 mdrb-cells-3" >"$RUNNER_TEMP/deny_sshd_config"
           sudo mkdir -p /run/sshd

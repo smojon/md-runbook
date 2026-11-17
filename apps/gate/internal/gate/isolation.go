@@ -143,9 +143,10 @@ type checkResult struct {
 	UID   int      `json:"uid"`
 	Read  []string `json:"read"`
 	Write []string `json:"write"`
-	// The home folder (checkHome): still open to other accounts, and the files in it that would
-	// let a key log in as the account.
+	// The home folder (checkHome): still open to other accounts; the files in it that would let a
+	// key log in as the account, removed and still there.
 	HomeOpen bool     `json:"home_open,omitempty"`
+	Removed  []string `json:"removed,omitempty"`
 	Logins   []string `json:"logins,omitempty"`
 }
 
@@ -200,7 +201,7 @@ func cellsMain() int {
 				res.Write = append(res.Write, p)
 			}
 		}
-		res.HomeOpen, res.Logins = checkHome(req.Home, os.Getuid())
+		res.HomeOpen, res.Removed, res.Logins = checkHome(req.Home, os.Getuid())
 		data, _ := json.Marshal(res)
 		os.Stdout.Write(append(data, '\n'))
 		return 0

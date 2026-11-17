@@ -166,6 +166,8 @@ environment (through `/proc`). So each session leases an account of its own:
 this gate account's blocks and nothing else:
 - no other gate account uses it, not even one for unsigned trials;
 - no cron or at jobs, no logins, no user manager (`loginctl enable-linger`);
+- the login shell `/usr/sbin/nologin` or `/bin/false`. The gate runs blocks through sudo, never a
+  login;
 - no privileged group (`sudo`, `wheel`, `adm`, `docker`, `lxd`, `incus-admin`, `libvirt`,
   `kvm`, `disk`, `systemd-journal`, `shadow`), and no sudo rule of its own.
 
@@ -216,6 +218,7 @@ the end of each session, with or without `kill_leftovers`:
 - If one is left (stuck in the kernel, `D` state), the session skips that account and takes the
   next free one. It logs `"event":"lease","status":"skipped"` with the reason.
 - When sudo can't run the cells mode as an account, the session skips that account.
+- The same when the account's home keeps a key file it can't remove (see below).
 - The session refuses to start only when no free account can be cleared.
 - A skipped account stays locked until that session ends. Other sessions see it as in use.
 - The first session after that tries the skipped account again.
@@ -237,8 +240,9 @@ processes is left: never as an account another session holds. It refuses to star
 - an account is in a privileged group (listed above);
 - an account may use cron or at: `cron.deny` and `at.deny` must list it, or `cron.allow` and
   `at.allow` exist without it (on macOS in `/usr/lib/cron`);
-- the leased account's home has `.ssh/authorized_keys` or `authorized_keys2`: a key there
-  could log in as it (add `DenyUsers` as above);
+- an account's login shell isn't `nologin` or `false` (`/usr/sbin/nologin`, `/sbin/nologin`,
+  `/usr/bin/nologin`, `/bin/false`, `/usr/bin/false`). A block could log in over SSH, without
+  `no_new_privs`;
 - its home is open to other accounts and isn't its own. The gate closes a home of its own
   (mode 0700) at each lease;
 - a folder above the gate's files is not safe (see below);
@@ -251,6 +255,17 @@ processes is left: never as an account another session holds. It refuses to star
 
 The message names the problem and the line to write. The gate can't check whether an account
 has sudo rules of its own (`sudo -l -U` needs root): don't give it any.
+
+**Key files in a pool home.** A block can leave `~/.ssh/authorized_keys`. A key there could log
+in as the account and reach a later session.
+- At each lease, the leased account removes `.ssh/authorized_keys` and `authorized_keys2` from
+  its home.
+- If a block closed its own `.ssh`, the account opens it to itself first.
+- The gate logs `"event":"lease","status":"removed"` with the files.
+- When the account can't remove a file (in a folder of root's), the session skips that account.
+- Only these two default files are checked. A custom `AuthorizedKeysFile`, `.k5login` or
+  `.shosts` are not.
+- `DenyUsers` for the pool is the actual control. Keep it in `sshd_config`.
 
 **Safe folders,** as OpenSSH's `StrictModes` asks for its files. The gate checks every folder
 from each of its files up to `/`:
@@ -277,9 +292,13 @@ can change, such as `/usr/libexec/md-runbook-gate`. The message names the folder
     The session's run reports don't go out then.
 - **Stopping:** stop requests and the end of a session reach the blocks through the same
   `sudo` line.
-- **No new privileges (Linux):** the cells start with `no_new_privs`. So `sudo`, `su` and
-  setuid programs don't work in blocks in separated mode. Use shared mode for blocks that
-  need them.
+- **No new privileges (Linux):** the cells start with `no_new_privs`. In blocks in separated
+  mode, these don't work:
+  - `sudo`, `su` and other setuid programs;
+  - programs that need file capabilities, such as `ping`, `traceroute` or `mtr` on older
+    distributions.
+
+  Use shared mode for blocks that need them.
 - **Log:** the `session` event names the leased account (`cells`).
 
 **What separated mode doesn't cover:**
@@ -287,7 +306,18 @@ can change, such as `/usr/libexec/md-runbook-gate`. The message names the folder
   ([Trust](#trust)). It can also change a line of its session's exits file in place, if the
   line keeps its form: the gate doesn't see that.
 - **Files outlive a session.** Processes end, but what a block leaves in its account's home or
-  in `/tmp` stays. A later session on that account can read it.
+  in `/tmp` stays.
+  - A later session on the same account can read those files. It can also be affected by them.
+  - Config that tools load can run code. For example:
+    - `~/.kube/config`, through an `exec` plugin;
+    - `~/.gitconfig`, through a hook path or a pager;
+    - `~/.ssh/config`, through `ProxyCommand` or `LocalCommand`;
+    - Python's user site folder, through a `.pth` file.
+  - The gate doesn't wipe the homes: you may provision config there on purpose.
+  - Provision what blocks need read-only: root-owned files and folders.
+  - Keep one pool for runbooks of the same trust level.
+  - For strict isolation between untrusted runbooks, use a Kubernetes Job per session (below). Each
+    session gets a fresh pod.
   - A setuid file that a block leaves can't lift a later block on Linux: `no_new_privs`.
   - The gate closes the account's home to other accounts at each lease.
   - macOS has no `no_new_privs`. There, a setuid file a block leaves in `/tmp` lets any
