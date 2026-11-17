@@ -13,7 +13,8 @@ import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
 import { RunbookEditor, lineOffset } from '../screens/RunbookEditor';
 import { RunbookList } from '../screens/RunbookList';
 import { RunbookView } from '../screens/RunbookView';
-import { resetSettings } from '../settings/store';
+import { resetSettings, setOutputSetting } from '../settings/store';
+import { inputText } from '../testing/inputText';
 import { signPlan, signRunbook } from '../signing/sign';
 
 jest.mock('expo-router', () => ({
@@ -90,14 +91,14 @@ describe('the editor', () => {
   it('Edit: unsaved changes, Undo, Save; Preview draws it without Run buttons', async () => {
     const r = addRunbook('restart.md', RUNBOOK + OUTPUT);
     await render(<RunbookEditor id={r.id} />);
-    expect(screen.getByTestId('editor-text').props.value).toBe(RUNBOOK + OUTPUT);
+    expect(inputText(screen.getByTestId('editor-text'))).toBe(RUNBOOK + OUTPUT);
     // Its outputs are text, kept as they are.
     expect(screen.getByTestId('editor-notes')).toHaveTextContent(/md-runbook:output blocks/);
     await type('editor-text', RUNBOOK.replace('When it hangs.', 'When it hangs or is slow.') + OUTPUT);
     expect(screen.getByTestId('editor-state')).toHaveTextContent('Unsaved changes');
     expect(getRunbook(r.id)!.text).toBe(RUNBOOK + OUTPUT);
     await press('editor-undo');
-    expect(screen.getByTestId('editor-text').props.value).toBe(RUNBOOK + OUTPUT);
+    expect(inputText(screen.getByTestId('editor-text'))).toBe(RUNBOOK + OUTPUT);
     await type('editor-text', '# Restart the API\n\nWhen it is slow.\n');
     await press('editor-save');
     expect(getRunbook(r.id)!.text).toBe('# Restart the API\n\nWhen it is slow.\n');
@@ -113,6 +114,25 @@ describe('the editor', () => {
     expect(screen.getByTestId('editor-problem-0')).toHaveTextContent(/Line 3: .*timout/);
     await press('editor-problem-0');
     expect(screen.getByTestId('editor-text').props.selection).toEqual({ start: 5, end: 5 });
+    // The field's own selection after that.
+    await act(async () => {
+      fireEvent(screen.getByTestId('editor-text'), 'selectionChange', { nativeEvent: { selection: { start: 9, end: 9 } } });
+    });
+    expect(screen.getByTestId('editor-text').props.selection).toBeUndefined();
+  });
+
+  it('Highlight while editing off: the same editing with a plain value', async () => {
+    setOutputSetting('highlightEditing', false);
+    const r = addRunbook('restart.md', RUNBOOK);
+    await render(<RunbookEditor id={r.id} />);
+    expect(screen.getByTestId('editor-text').props.value).toBe(RUNBOOK);
+    await type('editor-text', RUNBOOK + 'More.\n');
+    expect(screen.getByTestId('editor-state')).toHaveTextContent('Unsaved changes');
+    await press('editor-undo');
+    expect(screen.getByTestId('editor-text').props.value).toBe(RUNBOOK);
+    await type('editor-text', RUNBOOK + 'Saved.\n');
+    await press('editor-save');
+    expect(getRunbook(r.id)!.text).toBe(RUNBOOK + 'Saved.\n');
   });
 
   it('saving a signed runbook whose signed text changed asks first', async () => {
@@ -143,7 +163,7 @@ describe('the editor', () => {
     expect(getRunbook(r.id)!.text).toBe(RUNBOOK);
     // Opened again (a new screen): the unsaved text is still there.
     await view.rerender(<RunbookEditor key="again" id={r.id} />);
-    expect(screen.getByTestId('editor-text').props.value).toBe(RUNBOOK + '\nMore.\n');
+    expect(inputText(screen.getByTestId('editor-text'))).toBe(RUNBOOK + '\nMore.\n');
     await press('editor-mode-runbook');
     await press('editor-leave-save');
     expect(getRunbook(r.id)!.text).toBe(RUNBOOK + '\nMore.\n');

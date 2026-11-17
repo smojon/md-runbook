@@ -5,7 +5,8 @@
  * app signs runbooks with, and whether a runbook's `no-confirm` is honoured; and whether runs notify
  * (asked once, at the first Run all); the team library's address; and for run reports
  * (`report-runs:`), the addresses allowed without asking (the extension's
- * mdRunbook.reports.allowedAddresses). The signers the app trusts are one list of their own
+ * mdRunbook.reports.allowedAddresses); and whether Edit as Text highlights while typing on iOS and
+ * Android. The signers the app trusts are one list of their own
  * (signing/trust.ts), for the team library and run reports alike.
  */
 import { useSyncExternalStore } from 'react';
@@ -96,6 +97,11 @@ export interface Settings {
   recordContext: boolean;
   /** Get Started was skipped or done: it no longer shows by itself on the start screen. */
   tourSeen: boolean;
+  /**
+   * Edit as Text on iOS and Android colours the runbook while you type (ui/RunbookTextInput.tsx),
+   * on by default; off: a plain text field. The web app always highlights.
+   */
+  highlightEditing: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -119,6 +125,7 @@ const DEFAULTS: Settings = {
   lineHintSeen: false,
   recordContext: false,
   tourSeen: false,
+  highlightEditing: true,
 };
 
 /** The timeouts offered (seconds; 0: none, the extension's default). */
@@ -140,7 +147,8 @@ type OutputFlag =
   | 'stopOnFailure'
   | 'lineHintSeen'
   | 'recordContext'
-  | 'tourSeen';
+  | 'tourSeen'
+  | 'highlightEditing';
 
 /** The strings of a saved list, or undefined when it isn't one. */
 const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : undefined);
@@ -184,6 +192,7 @@ async function readSettings(): Promise<void> {
       lineHintSeen: flag('lineHintSeen'),
       recordContext: flag('recordContext'),
       tourSeen: flag('tourSeen'),
+      highlightEditing: flag('highlightEditing'),
       // `trustedSigners` (allowed_signers text, before the one list) is moved by signing/trust.ts
       // migrateTrustedSigners and left out here: the next save drops it.
     };

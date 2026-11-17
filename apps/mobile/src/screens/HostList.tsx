@@ -135,6 +135,7 @@ export function HostList() {
           <HistorySection />
           <RedactionSection />
           <ColorSection />
+          {Platform.OS !== 'web' ? <EditorSection /> : null}
           <LinksSection />
           <LibrarySettings />
           <LibraryPublishSettings />
@@ -562,6 +563,29 @@ function ColorSection() {
           />
         </View>
       ))}
+    </View>
+  );
+}
+
+/** Edit as Text on iOS and Android: whether the text is highlighted while typing (the web always highlights). */
+function EditorSection() {
+  const styles = useStyles();
+  const s = useOutputSettings();
+  return (
+    <View testID="editor-settings" style={styles.section}>
+      <Text style={styles.sectionTitle}>{t.editorSettingsTitle}</Text>
+      <View style={styles.switchRow}>
+        <View style={styles.switchText}>
+          <Text style={styles.switchLabel}>{t.highlightEditing}</Text>
+          <Text style={styles.help}>{t.highlightEditingHelp}</Text>
+        </View>
+        <Toggle
+          testID="setting-highlightEditing"
+          accessibilityLabel={t.highlightEditing}
+          value={s.highlightEditing}
+          onValueChange={(on) => setOutputSetting('highlightEditing', on)}
+        />
+      </View>
     </View>
   );
 }

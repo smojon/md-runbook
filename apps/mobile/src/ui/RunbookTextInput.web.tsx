@@ -15,7 +15,9 @@ import { memo, useDeferredValue, useEffect, useImperativeHandle, useLayoutEffect
 import { View } from 'react-native';
 import { highlight, lineRuns, type HighlightKind } from '../editor/highlight';
 import { mono, usePalette } from '../theme';
-import type { RunbookTextInputProps } from './runbookTextInputProps';
+import { DEFER_FROM, HIGHLIGHT_MAX, type RunbookTextInputProps } from './runbookTextInputProps';
+
+export { DEFER_FROM, HIGHLIGHT_MAX };
 
 const FONT_SIZE = 14;
 const LINE_HEIGHT = 20;
@@ -23,10 +25,6 @@ const PAD = 10;
 const TAB_SIZE = 4;
 /** Tab: these spaces. */
 export const INDENT = '  ';
-/** From this many characters, the colours follow typing a moment later. */
-export const DEFER_FROM = 50_000;
-/** Above this many characters, the text is not highlighted. */
-export const HIGHLIGHT_MAX = 500_000;
 
 // What inline styles can't say: line numbers (a counter before each line) and the selection.
 const CSS = `

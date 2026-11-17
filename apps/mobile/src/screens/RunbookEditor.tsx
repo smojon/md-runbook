@@ -1,6 +1,6 @@
 /**
  * A runbook as text, in a screen of its own, as VS Code opens one as text, as a preview or as a
- * runbook. Edit: the Markdown in a monospace field, highlighted on the web (ui/RunbookTextInput;
+ * runbook. Edit: the Markdown in a monospace field, highlighted (ui/RunbookTextInput; on iOS and Android a setting;
  * Save, Undo, Discard; the lint problems under it, a tap goes to the line). Preview: the Markdown
  * drawn, without Run buttons. Runbook: back to the runbook screen. Unsaved text is kept while the app runs. Saving warns when a signature that
  * matches would no longer match; a runbook's outputs are part of its text and stay.

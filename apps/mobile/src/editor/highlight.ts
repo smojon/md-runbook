@@ -1,6 +1,7 @@
 /**
  * Highlighting for a runbook's Markdown, as spans over the text: plain TypeScript, no React, no
- * DOM, so the web editor (ui/RunbookTextInput.web.tsx) and, later, a native one can share it.
+ * DOM, so the web editor (ui/RunbookTextInput.web.tsx) and the iOS and Android one
+ * (ui/RunbookTextInput.tsx) share it.
  *
  * - Line by line, with a small state (in a fence, an output block, a comment, a note), so it is
  *   linear in the text and could restart from a changed line.
