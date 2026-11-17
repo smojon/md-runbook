@@ -111,6 +111,9 @@
   - All patterns, yours too, now match the same output, and what they find is replaced once.
     Before, a long match could hide a key from the next pattern. Matches that touch give one
     `[REDACTED]`.
+  - A key's value in `"…"`, `'…'`, `\"…\"` or `\'…\'` is looked for on its own, each kind of
+    quote apart. So a value read too far can't hide the next key's value:
+    `connect(password="C:\keys\", token='…')`.
 - **Fixed: redaction and the leak scan missed some secrets.** These are now redacted:
   - a key in escaped JSON: `{\"password\":\"…\"}`;
   - a quoted value with an escaped quote: `"abc\"def"` hid only `abc`;
