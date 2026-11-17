@@ -46,6 +46,9 @@ How the text is made safe:
 
   Adjacent markers are merged into one `[REDACTED]`. Variable references such as
   `${secret:API_TOKEN}` and the key of a `key=value` pair are kept.
+
+  With `mdRunbook.redaction.useDefaultPatterns` off, only the scanner sees tool passwords, spaced
+  key names and quoted headers. It redacts these only when the value looks like a secret.
 - **Untrusted outputs.** Every output is wrapped in the boundary lines shown above. Fake boundaries
   inside an output are broken up (`<<<` becomes `‹‹‹`), so an output can't close its own block.
 

@@ -30,6 +30,26 @@ describe('default redaction patterns', () => {
     ['openshift token alone', 'sha256~abcdefghijklmnopqrstuvwxyz0123', R],
     ['aws key id', 'AKIAIOSFODNN7EXAMPLE', R],
     ['github token', 'ghp_abcdefghijklmnopqrstuvwxyz0123456789', R],
+    // escaped JSON: the key's and the value's quotes escaped (review of 0.30)
+    ['escaped JSON key', '{\\"password\\":\\"hunter2\\"}', `{\\"password\\":\\"${R}\\"}`],
+    ['JSON in a JSON string', 'log line {"cfg":"{\\"db_password\\":\\"hunter2\\"}"}', `log line {"cfg":"{\\"db_password\\":\\"${R}\\"}"}`],
+    ['escaped JSON, spaces', '{\\"api_key\\" : \\"a b c\\", \\"x\\": 1}', `{\\"api_key\\" : \\"${R}\\", \\"x\\": 1}`],
+    ['escaped JSON header', '{\\"Authorization\\":\\"Basic dXNlcjpwYXNz\\"}', `{\\"Authorization\\":\\"${R}\\"}`],
+    // an escaped quote inside a quoted value
+    ['escaped quote in a value', '{"password": "abc\\"defgh"}', `{"password": "${R}"}`],
+    ['escaped quote in single quotes', "token: 'it\\'s-a-secret'", `token: '${R}'`],
+    ['backslash before the line end', 'password = "pa ss\\"', `password = "${R}"`],
+    ['escaped backslash at the end', '"secret": "abc\\\\", "x": 1', `"secret": "${R}", "x": 1`],
+    // JSON escaped twice: `\\\"` is a quote in the value, `\\\\\"` a backslash then the end (second review of 0.30)
+    ['escaped quote in escaped JSON', '{\\"password\\":\\"s3c\\\\\\"ret more\\"}', `{\\"password\\":\\"${R}\\"}`],
+    ['escaped backslash in escaped JSON', '{\\"password\\":\\"s3c\\\\\\\\\\", \\"x\\":1}', `{\\"password\\":\\"${R}\\", \\"x\\":1}`],
+    // a pass key's whole value in quotes, escaped too
+    ['pass key, quoted value with a space', 'DB_PASS="p@ss w0rd"', `DB_PASS="${R}"`],
+    ['pass key, escaped quoted value', 'DB_PASS=\\"p@ss w0rd\\"', `DB_PASS=\\"${R}\\"`],
+    ['pass key in escaped JSON', '{\\"db_pass\\":\\"p@ss w0rd\\"}', `{\\"db_pass\\":\\"${R}\\"}`],
+    // a URL with a password but no user
+    ['url password, no user', 'REDIS_URL=redis://:s3cretPw@cache:6379', `REDIS_URL=redis://:${R}@cache:6379`],
+    ['url password, no user, in text', 'connect to rediss://:s3cretPw@cache:6380/0 now', `connect to rediss://:${R}@cache:6380/0 now`],
   ];
   for (const [name, input, expected] of cases) {
     it(name, () => assert.equal(r.redact(input), expected));
@@ -145,4 +165,12 @@ it('key=value redaction leaves references intact', () => {
   assert.equal(r.redact('set PASSWORD=%DB_PW%'), 'set PASSWORD=%DB_PW%');
   assert.equal(r.redact('password=${secret:X}tail'), 'password=[REDACTED]}tail');
   assert.equal(r.redact('password=$ecret123'), 'password=[REDACTED]');
+  // in escaped JSON too: the `\` of `\"` ends a reference (second review of 0.30)
+  for (const ref of ['${secret:DB_PW}', '${input:pw}', '$(cat /run/tok)', '%PW%']) {
+    const s = `curl -d "{\\"password\\":\\"${ref}\\"}"`;
+    assert.equal(r.redact(s), s);
+  }
+  assert.equal(r.redact('{\\"token\\":\\"$env:TOK\\"}'), '{\\"token\\":\\"$env:TOK\\"}');
+  // a backslash before anything else is still part of the value
+  assert.equal(r.redact('password=${secret:X}\\x'), 'password=[REDACTED]}\\x');
 });

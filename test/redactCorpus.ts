@@ -43,6 +43,10 @@ const VALUES = [
   'sha256~abcdefghijklmnopqrstuvwxyz0123', '-dash', '--x', '-', '$', '%', '"', "'", '""', "''", '"$x"', "'%x'", '"a b"', "'a b'", '"unterminated',
   'bob%pw2', 'bob,pw3', 'u:pw4', 'pass:pw5', 'env:VAR', 'pw%', '%pw', ',pw',
   '7f3a9c2e-55d1-4b8e-a0f2-9e8d7c6b5a41', 'admin:S3cret', 'user:p%40ss', ':', 'a:b:c', '=', '==', 'abc==', 'abcdefgh==', 'abc/def+ghi~jkl_', 'ABCDEFGHIJ',
+  // backslashes: escaped quotes, escaped JSON, Windows paths
+  'abc\\"def', 'a\\\\b', '\\', 'x\\', '\\"', "\\'", 'C:\\', '\\"hunter2\\"', '"a\\"b"', '"C:\\"', "'it\\'s'", '"a\\\r"', '\\"a\\\\\\"b\\"',
+  // escaped twice: runs of 2 to 7 backslashes before a quote
+  's3c\\\\\\"ret', 'a\\\\\\\\\\"', 'a\\\\"b', 'a\\\\\\\\"b', 'a\\\\\\\\\\\\\\"b', "a\\\\\\'b", '\\\\\\\\\\\\x',
 ];
 const FLAGS = [
   '--password', '-password', '--PASSWORD', '--pass', '-pass', '--passwd', '--client-secret', '--token', '-token', '--api-key', '--apikey',
@@ -54,6 +58,16 @@ const FLAGS = [
   'htpasswd -c -b', 'htpasswd', 'mysqldump -u root', 'mariadb-dump', '7z a', '7za', 'zip', 'unzip -P', 'curl -U', '--proxy-user', 'cmdkey /pass:',
   'cmdkey', '/pass:', 'xfreerdp /p:', '/p:', 'nmcli', 'password', 'wifi-sec.psk', 'keytool', '-storepass', '-new', 'snmpwalk', 'sqlcmd', 'bcp',
   'mongosh', 'mongo', 'mosquitto_pub', 'ipmitool', 'PsExec', 'psexec', 'schtasks', '/RP', '/rp', 'ssh', 'psql', 'xsshpass', 'sshpass2',
+  // where a command starts, and where it ends (password-flag-tool)
+  '|', '||', ';', '&&', '&', '`', '(', '$(', '| sshpass -p', '; redis-cli -a', '&& ldapsearch -w', 'sudo', 'sudo sshpass -p', 'exec', '--', 'env',
+  'time', 'env A=b', 'A=b', 'sudo -E', 'docker exec -it c', 'docker exec c', 'docker compose exec svc', 'kubectl exec p --', 'xexec', '"exec"',
+  '/usr/bin/sshpass', './sshpass', 'C:\\T\\PsExec.exe', 'PsExec64.exe', 'sshpass.exe', 'sshpass.exex', 'PSEXEC', 'SCHTASKS', 'SchTasks /Create /RP',
+  'CMDKEY', 'CMDKEY /PASS:', 'Cmdkey /Pass:', '/Rp', '/PASS:', 'mongo-1', 'mongo:7', 'app.zip', 'a.zip -P', '@zip', 'x/zip', '"a|b"', "'a;b'", '"x',
+  'docker run -d --name mongo -p', 'ssh mongo-1 -p', 'grep -w', 'curl -k',
+  // command segments (second review of 0.30): quotes, prompts, an option before a tool, continued lines
+  '-c "', "-c '", 'sh -c "redis-cli -a', 'cmd /c "sqlcmd -P', '-h', '--name', '-it', '-oL', '-n 10', 'nohup', 'xargs', 'PS C:\\>', '{', '!',
+  'then', '"sshpass', "'mongo", '"C:\\P F\\7z.exe"', '7z.exe', '\\7z', '{zip', '(zip', '`zip', 'mongo"', "zip'", '\\\n', ' \\\r\n', '"a\\"b"',
+  'x"y', '\\\\', '-x=a', '--a-b', '-1', '"\\\\"', '-h\nmongo',
 ];
 const OTHER = [
   'eyJ', 'eyJhbGciOi', 'Bearer', 'bearer', 'BEARER', 'xBearer', '.', '-', '_', 'x', 'abc', 'a1', '://', 'https://user:pw@host/x', 'git://a:b@c',
@@ -63,7 +77,7 @@ const OTHER = [
 ];
 const BLANKS = ['', ' ', ' ', ' ', '  ', '\t', ' \t', '   ', '\u00a0', '\u3000', '\u2028', '\ufeff', '\u2003'];
 const SEPS = [':', '=', ': ', ' = ', ':\t', ' :  ', '  =', '":"', '": "', "'='", '"=', "':", ' : ', '=\t\t', '::', '==', ':=', '= :'];
-const QUOTES = ['', '', '', '"', "'"];
+const QUOTES = ['', '', '', '"', "'", '"', '\\"'];
 
 const pick = <T>(r: () => number, list: readonly T[]): T => list[Math.floor(r() * list.length)]!;
 

@@ -210,14 +210,18 @@ the end of each session, with or without `kill_leftovers`:
 - The gate lists the processes until none of the account is left.
 - If one is left (stuck in the kernel, `D` state), the session skips that account and takes the
   next free one. It logs `"event":"lease","status":"skipped"` with the reason.
+- When sudo can't run the cells mode as an account, the session skips that account.
 - The session refuses to start only when no free account can be cleared.
+- A skipped account stays locked until that session ends. Other sessions see it as in use.
+- The first session after that tries the skipped account again.
+- A stuck account takes a place in the pool: keep one spare account.
 - **Linux:** the kernel signals all of the account's processes at once, with its task list
   locked. A process that keeps forking can't slip out.
 - **macOS:** the kernel signals a list it takes first. A process that forks just then can live
   on. The gate ends them again, up to 3 times, and skips the account while one is left.
 - What a crashed gate's session left behind ends when the next session leases that account.
-- At the start, the gate skips the account instead of ending them when it runs another gate
-  account's blocks. That pool is shared, which it must not be.
+- At the start, an account that runs another gate account's blocks is no skip. That pool is
+  shared, which it must not be. The session refuses to start, and nothing is ended.
 
 At the start of each session the gate checks every account of the pool, then what the leased
 account can read and write. That last check runs as the leased account only, once none of its
@@ -449,8 +453,11 @@ that hello as before. Each notice is one line, `\036__MDRB_POD__ STATE`:
 - `ready`, on stderr, once: the request runs;
 - `failed REASON`, on stderr, once: the pod won't come, and the session ends.
 
-No notice comes after `ready` or `failed`, so a block's output can't fake one. A client that
-goes during the wait ends the session, and the gate deletes the Job at once.
+After `job`:
+- the gate says `ready` or `failed` before any block runs;
+- no notice comes after them, so a block's output can't fake one;
+- a client reads notices until one of them comes, also after a refusal;
+- a client that goes during the wait ends the session, and the gate deletes the Job at once.
 
 The cells' shell has two variables, so tools on the server can log against them:
 - `MD_RUNBOOK_GATE_WHO`: the key, as logged;

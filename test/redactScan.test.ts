@@ -30,13 +30,22 @@ function regexRedact(text: string): string {
 
 const show = (text: string): string => JSON.stringify(text.length > 400 ? text.slice(0, 400) + '…' : text);
 
+/**
+ * `text` with no continued line: a blank after each `\` before a line break. password-flag-tool's
+ * matcher reads such a line as going on, its regular expression reads one line at a time (see
+ * redact.ts, before toolRule), so the two are compared on this; redactWiden.test.ts tests
+ * continued lines.
+ */
+const noContinuedLines = (text: string): string => text.replace(/\\(?=[\r\n])/g, '\\ ');
+
 /** Compare every linear matcher with its regular expression on `text`; count the matches. */
 function compare(text: string, counts: Map<string, number>, where: string): void {
   for (const p of LINEAR) {
-    const want = byRegex(compilePattern(p), text);
-    const got = LINEAR_FINDERS.get(p.name!)!(text);
+    const t = p.name === 'password-flag-tool' ? noContinuedLines(text) : text;
+    const want = byRegex(compilePattern(p), t);
+    const got = LINEAR_FINDERS.get(p.name!)!(t);
     if (JSON.stringify(got) !== JSON.stringify(want)) {
-      assert.fail(`${p.name} (${where}) on ${show(text)}:\n  regex  ${JSON.stringify(want)}\n  linear ${JSON.stringify(got)}`);
+      assert.fail(`${p.name} (${where}) on ${show(t)}:\n  regex  ${JSON.stringify(want)}\n  linear ${JSON.stringify(got)}`);
     }
     counts.set(p.name!, (counts.get(p.name!) ?? 0) + want.length);
   }
@@ -118,7 +127,10 @@ describe('linear redaction matchers', () => {
 
   it('redact as the regular expressions did', () => {
     const r = createRedactor(DEFAULT_PATTERNS);
-    for (const text of corpus(7, Math.ceil(LINES / 4))) assert.equal(r.redact(text), regexRedact(text), show(text));
+    for (const raw of corpus(7, Math.ceil(LINES / 4))) {
+      const text = noContinuedLines(raw);
+      assert.equal(r.redact(text), regexRedact(text), show(text));
+    }
   });
 });
 
@@ -178,6 +190,14 @@ const HOSTILE = [
   'secret' + ' '.repeat(N),
   rep('a'),
   rep('-'),
+  // second review of 0.30: escaped JSON values, quoted pass values, a tool's name in a segment
+  'password:\\"' + '\\'.repeat(N),
+  rep('password:\\"\\\\\\"'),
+  rep('DB_PASS="a '),
+  rep('DB_PASS=\\"a '),
+  rep('-/mongo '),
+  rep('A=/zip '),
+  rep('mongo \\\n'),
 ];
 
 describe('redaction and the leak scan stay linear on 200,000-character lines', () => {

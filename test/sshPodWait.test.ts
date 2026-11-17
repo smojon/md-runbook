@@ -36,8 +36,6 @@ interface FakeGate {
   fail?: string;
   /** The pod gets ready right after the hello (that said `job`), before any request waits. */
   readyAtHello?: boolean;
-  /** A gate before review 0.30.0's H1: no `ready` to a request that didn't wait. */
-  noFinal?: boolean;
   /** Whether the client's hello asked for pod notices. */
   asked?: boolean;
   /** Stop requests (second connections). */
@@ -68,7 +66,7 @@ function playGate(ch: SshChannel, gate: FakeGate, running: { id?: string; marker
     if (!gate.job) return true;
     if (settled) {
       // Told `job`: `ready` before the shell gets its first request.
-      if (notices && !final && !gate.noFinal) await err(POD('ready'));
+      if (notices && !final) await err(POD('ready'));
       final = true;
       return true;
     }
@@ -105,15 +103,19 @@ function playGate(ch: SshChannel, gate: FakeGate, running: { id?: string; marker
           pending = pending.slice(m[0].length);
           const [, verb, id, rest] = m;
           running.id = id;
+          if (verb === 'raw' && Buffer.from(rest!.trim(), 'base64').toString('utf8').includes('REFUSE')) {
+            // Refused by the gate itself, before any shell: its reason, exit 126, no notice.
+            await err('md-runbook-gate: this server runs signed runbooks only (this cell is not signed, or changed since signing)\n');
+            await marker(id!, 126);
+            continue;
+          }
           if (!(await waitPod())) break;
           if (verb === 'context') {
             await out('lab-1\n');
             await marker(id!, 0);
           } else if (verb === 'raw') {
             const text = Buffer.from(rest!.trim(), 'base64').toString('utf8');
-            // A block that prints a pod notice of its own (EFAKE: after a line), then runs on
-            // (until stopped).
-            if (text.includes('EFAKE')) await err('x\n');
+            // A block that prints a pod notice of its own, then runs on (until stopped).
             if (text.includes('FAKE')) await err(POD('starting'));
             if (text.includes('SLEEP') || text.includes('FAKE')) continue;
             await out('ran\n');
@@ -309,27 +311,54 @@ describe("ssh: a gate's Kubernetes pod starting", () => {
     }
   });
 
-  it('a gate that never says `ready`: notices count only until the shell speaks', async () => {
-    // After a request the shell answered.
-    gate = { protocol: 4, job: true, podMs: 0, readyAtHello: true, noFinal: true, stops: [] };
-    let session = new RemoteSession(open, opts());
+  it("a refused request before the pod's `ready`: the next request still waits, with its notice and pause (round 2, M-1)", async () => {
+    gate = { protocol: 4, job: true, podMs: 1200, stops: [] };
+    const session = new RemoteSession(open, opts());
     try {
-      assert.equal((await session.kubeContext({ onNotice: () => undefined })).exitCode, 0);
       let errText = '';
-      const r = await session.run('FAKE', { timeoutMs: 400, stopGraceMs: 100, onStderr: (t) => (errText += t) });
-      assert.deepEqual([r.timedOut, errText], [true, POD('starting')]);
+      const refused = await session.run('REFUSE', { timeoutMs: 500, onStderr: (t) => (errText += t), onNotice: () => undefined });
+      assert.equal(refused.exitCode, 126);
+      assert.match(errText, /^md-runbook-gate: this server runs signed runbooks only/);
+      // The pod's start doesn't count against the time limit, and the notice is no output.
+      let out = '';
+      errText = '';
+      const notes: string[] = [];
+      const r = await session.kubeContext({ timeoutMs: 500, stopGraceMs: 100, onStdout: (t) => (out += t), onStderr: (t) => (errText += t), onNotice: (t) => notes.push(t) });
+      assert.deepEqual([r.exitCode, r.timedOut, out, errText, notes], [0, false, 'lab-1\n', '', [POD_STARTING_NOTE]]);
+      assert.ok(r.durationMs >= 1100, `${r.durationMs} ms`);
+      assert.deepEqual(gate.stops, []);
+      // After `ready`, a block's notice is its output again.
+      errText = '';
+      const f = await session.run('FAKE', { timeoutMs: 400, stopGraceMs: 100, onStderr: (t) => (errText += t), onNotice: (t) => notes.push(t) });
+      assert.deepEqual([f.timedOut, errText, notes], [true, POD('starting'), [POD_STARTING_NOTE]]);
       assert.match(gate.stops[0] ?? '', /^pkill -TERM -P 4242 /);
     } finally {
       await session.close();
     }
-    // After other text of the block's, in its first request.
-    gate = { protocol: 4, job: true, podMs: 0, readyAtHello: true, noFinal: true, stops: [] };
+  });
+
+  it("a refused request before the pod's `failed`: the next request gets the gate's reason, and a stop while it waits is quick", async () => {
+    const why = "this session's cells can't start: its pod can't start (ImagePullBackOff: x)";
+    gate = { protocol: 4, job: true, podMs: 400, fail: why, stops: [] };
+    let session = new RemoteSession(open, opts());
+    try {
+      assert.equal((await session.run('REFUSE', { onNotice: () => undefined })).exitCode, 126);
+      const r = await session.kubeContext({ timeoutMs: 200, onNotice: () => undefined });
+      assert.deepEqual([r.exitCode, r.timedOut, r.shellEnded, r.error], [null, false, true, why]);
+    } finally {
+      await session.close();
+    }
+    // Stop: the session closes at once, no signal sent (nothing runs yet).
+    gate = { protocol: 4, job: true, podMs: 10_000, stops: [] };
     session = new RemoteSession(open, opts());
     try {
-      let errText = '';
-      const r = await session.run('EFAKE', { timeoutMs: 400, stopGraceMs: 100, onStderr: (t) => (errText += t) });
-      assert.deepEqual([r.timedOut, errText], [true, 'x\n' + POD('starting')]);
-      assert.match(gate.stops[0] ?? '', /^pkill -TERM -P 4242 /);
+      assert.equal((await session.run('REFUSE', { onNotice: () => undefined })).exitCode, 126);
+      const ac = new AbortController();
+      const t0 = Date.now();
+      setTimeout(() => ac.abort(), 500);
+      const r = await session.kubeContext({ signal: ac.signal, onNotice: () => undefined });
+      assert.deepEqual([r.cancelled, r.shellEnded, gate.stops], [true, true, []]);
+      assert.ok(Date.now() - t0 < 2000, `${Date.now() - t0} ms`);
     } finally {
       await session.close();
     }
