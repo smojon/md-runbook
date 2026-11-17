@@ -2,21 +2,17 @@
  * Notebook renderer for a running cell's status (src/runningStatus.ts): a thin bar against the
  * block's estimate in the theme's progress colour (the warning colour once past it), and the words
  * every client uses: `running · 12s of about 30s · attempt 2/5`. Without an estimate, the words
- * only. Redrawn in place every second; the bar glides between redraws unless the reader asked for
- * reduced motion.
+ * only. The extension sends when the cell started once (runningView.ts); this renderer redraws
+ * the words and the bar every second with its own timer. The bar glides between redraws unless
+ * the reader asked for reduced motion. The timer stops when the output goes.
  *
  * Built separately as an ES module for the notebook webview (tsconfig.renderer.json).
  */
 
-/** What the extension sends (src/runningStatus.ts RunningState). */
-export interface RunningState {
-  text: string;
-  attempt?: string;
-  fraction?: number;
-  over: boolean;
-}
+import { RunningView, isRunningData, msToNextSecond, runningView } from './runningView';
 
 interface OutputItem {
+  id: string;
   json(): unknown;
 }
 
@@ -29,13 +25,8 @@ const CSS = `
 @media (prefers-reduced-motion: reduce) { .mdr-running .fill { transition: none; } }
 `;
 
-function isState(v: unknown): v is RunningState {
-  const s = v as Partial<RunningState> | null;
-  return typeof s === 'object' && s !== null && typeof s.text === 'string';
-}
-
 /** The status in `element`: built once, then updated in place (so the bar can glide). */
-export function renderRunning(element: HTMLElement, state: RunningState): void {
+export function renderRunning(element: HTMLElement, view: RunningView): void {
   let root = element.querySelector<HTMLElement>(':scope > .mdr-running');
   if (!root) {
     element.textContent = '';
@@ -59,26 +50,55 @@ export function renderRunning(element: HTMLElement, state: RunningState): void {
   const track = root.querySelector<HTMLElement>('.track')!;
   const fill = root.querySelector<HTMLElement>('.fill')!;
   const words = root.querySelector<HTMLElement>('.words')!;
-  const line = state.attempt ? `${state.text} · ${state.attempt}` : state.text;
-  root.classList.toggle('over', state.over);
-  // Text only: the words come from the extension, never markup.
-  words.textContent = line;
-  if (state.fraction === undefined) {
+  root.classList.toggle('over', view.over);
+  // Text only, never markup.
+  words.textContent = view.line;
+  if (view.fraction === undefined) {
     track.hidden = true;
   } else {
-    const f = Math.min(1, Math.max(0, Number.isFinite(state.fraction) ? state.fraction : 0));
+    const f = Math.min(1, Math.max(0, Number.isFinite(view.fraction) ? view.fraction : 0));
     track.hidden = false;
     track.setAttribute('aria-valuenow', String(Math.round(f * 100)));
-    track.setAttribute('aria-valuetext', line);
+    track.setAttribute('aria-valuetext', view.line);
     fill.style.width = `${(f * 100).toFixed(1)}%`;
   }
 }
 
-export function activate(): { renderOutputItem(item: OutputItem, element: HTMLElement): void } {
+/** The redraw timer of each output item, and the item drawing into each element. */
+const timers = new Map<string, ReturnType<typeof setTimeout>>();
+const drawing = new WeakMap<HTMLElement, string>();
+
+function stop(id: string): void {
+  const t = timers.get(id);
+  if (t !== undefined) clearTimeout(t);
+  timers.delete(id);
+}
+
+export function activate(): { renderOutputItem(item: OutputItem, element: HTMLElement): void; disposeOutputItem(id?: string): void } {
   return {
     renderOutputItem(item, element) {
-      const state = item.json();
-      if (isState(state)) renderRunning(element, state);
+      // New data for this item (a new attempt), or another item drawing into this element.
+      stop(item.id);
+      const before = drawing.get(element);
+      if (before !== undefined) stop(before);
+      drawing.set(element, item.id);
+      const data = item.json();
+      if (!isRunningData(data)) return;
+      let seen = false;
+      const draw = (): void => {
+        // Removed without a dispose: stop once it was in the page and no longer is.
+        if (seen && !element.isConnected) return stop(item.id);
+        seen ||= element.isConnected;
+        const now = Date.now();
+        renderRunning(element, runningView(data, now));
+        // Just past the next whole second, when the words change.
+        timers.set(item.id, setTimeout(draw, msToNextSecond(data, now) + 20));
+      };
+      draw();
+    },
+    disposeOutputItem(id) {
+      if (id !== undefined) return stop(id);
+      for (const k of [...timers.keys()]) stop(k);
     },
   };
 }
