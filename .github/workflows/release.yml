@@ -373,7 +373,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd "$RUNNER_TEMP/release"
+          # A full release, marked Latest: the Marketplace, Open VSX and npm publish it as stable
+          # too (until 0.29.0 every GitHub release was a pre-release).
           gh release create "$GITHUB_REF_NAME" md-runbook.vsix md-runbook-cli.tgz "$RUNNER_TEMP/apk/md-runbook-${GITHUB_REF_NAME#v}.apk" \
             "$RUNNER_TEMP"/gate/md-runbook-gate-* "$RUNNER_TEMP/gate/SHA256SUMS" \
             --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
-            --notes-file <(node "$GITHUB_WORKSPACE/scripts/release-notes.js" "$GITHUB_REF_NAME") --prerelease
+            --notes-file <(node "$GITHUB_WORKSPACE/scripts/release-notes.js" "$GITHUB_REF_NAME") --latest
