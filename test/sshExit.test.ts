@@ -20,7 +20,7 @@ import { Buffer } from 'buffer';
 import { RemoteSession, RemoteShell, generateKey } from '@md-runbook/ssh';
 import { connectTcp } from '@md-runbook/ssh/node';
 
-const HELLO = /^: mdrb-gate-hello (\w+);[^\n]*\n/;
+const HELLO = /^: mdrb-gate-hello (\w+)[ ;][^\n]*\n/;
 const PROBE = /^__mdrb_sh=0;[^\n]*__MDRB_(\w+)__[^\n]*\n/;
 const CELL = /^__mdrb_f=\$\(mktemp\) && cat > "\$__mdrb_f" <<'__MDRB_EOF_(\w+)'\n([\s\S]*?)__MDRB_EOF_\1\n[\s\S]*?__MDRB_\1__ "\$__mdrb_rc"\n/;
 

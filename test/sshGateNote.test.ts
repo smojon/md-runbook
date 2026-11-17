@@ -20,7 +20,7 @@ import { Buffer } from 'buffer';
 import { RemoteSession, gateAlertNote, gateNoteCommand, generateKey } from '@md-runbook/ssh';
 import { connectTcp } from '@md-runbook/ssh/node';
 
-const HELLO = /^: mdrb-gate-hello (\w+);[^\n]*\n/;
+const HELLO = /^: mdrb-gate-hello (\w+)[ ;][^\n]*\n/;
 const REQUEST = /^(\w+) ([0-9a-f]+)((?: [^\n]*)?)\n/;
 
 interface FakeGate {

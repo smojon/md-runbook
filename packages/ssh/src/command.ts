@@ -44,10 +44,96 @@ const printMarker = (marker: string, value: string): string =>
 /**
  * First line sent: reports the shell's process id (for cancelling) as its marker value. A plain
  * shell runs it as is (`:` does nothing); md-runbook-gate recognizes it and answers with its
- * banner first (`gateBanner`).
+ * banner first (`gateBanner`). `pod-notices`: a gate of protocol 4 says when a request waits for
+ * the session's Kubernetes pod (`gatePodNotice`); older gates read the ID alike and say nothing.
  */
 export function helloCommand(id: string): string {
-  return `: mdrb-gate-hello ${id}; ` + printMarker(markerFor(id), '"$$"');
+  return `: mdrb-gate-hello ${id} pod-notices; ` + printMarker(markerFor(id), '"$$"');
+}
+
+/** The gate protocol that sends pod notices to a client whose hello asks for them. */
+export const GATE_POD_PROTOCOL = 4;
+
+/** What the user sees while a request waits for the session's pod (a gate whose cells run in a Kubernetes Job). */
+export const POD_STARTING_NOTE = "Starting the session's pod…";
+
+/**
+ * A pod notice of md-runbook-gate (protocol 4; apps/gate/internal/proto, Pod): `job` after the
+ * banner (the cells run in a Job's pod, not ready yet), then on stderr `starting` before a request
+ * that waits for it, and `ready` or `failed REASON` once.
+ */
+export type GatePodNotice = { state: 'job' | 'starting' | 'ready' } | { state: 'failed'; reason: string };
+
+/** How a pod notice line starts. */
+export const POD_NOTICE_START = '\x1e__MDRB_POD__ ';
+
+/** A pod notice line (with its newline) as the gate writes it; undefined for anything else. */
+export function gatePodNotice(line: string): GatePodNotice | undefined {
+  if (!line.startsWith(POD_NOTICE_START) || !line.endsWith('\n')) return undefined;
+  const body = line.slice(POD_NOTICE_START.length, -1);
+  if (body === 'job' || body === 'starting' || body === 'ready') return { state: body };
+  if (body.startsWith('failed ') && body.length > 'failed '.length && !/[\x00-\x1f\x7f]/.test(body)) return { state: 'failed', reason: body.slice('failed '.length) };
+  return undefined;
+}
+
+/**
+ * Takes the pod notices out of a gate's stderr and passes the rest on, until `ready` or `failed`:
+ * after those, everything passes (a block's output can't fake a notice). Only a trailing piece
+ * that could still become a notice is held back.
+ */
+export class PodNoticeFilter {
+  private pending = '';
+  private over = false;
+
+  constructor(
+    private readonly emit: (text: string) => void,
+    private readonly onNotice: (n: GatePodNotice) => void,
+  ) {}
+
+  write(chunk: string): void {
+    let p = this.pending + chunk;
+    this.pending = '';
+    while (!this.over) {
+      const at = p.indexOf(POD_NOTICE_START);
+      if (at < 0) {
+        // Only the text from the last RS can be the start of a notice.
+        const rs = p.lastIndexOf('\x1e');
+        const hold = rs >= 0 && POD_NOTICE_START.startsWith(p.slice(rs)) ? rs : p.length;
+        this.send(p.slice(0, hold));
+        this.pending = p.slice(hold);
+        return;
+      }
+      this.send(p.slice(0, at));
+      p = p.slice(at);
+      const end = p.indexOf('\n');
+      if (end < 0) {
+        // A notice is one short line: a longer one is text.
+        if (p.length <= 1024) this.pending = p;
+        else this.send(p);
+        return;
+      }
+      const line = p.slice(0, end + 1);
+      p = p.slice(end + 1);
+      const n = gatePodNotice(line);
+      if (!n) {
+        this.send(line);
+        continue;
+      }
+      if (n.state === 'ready' || n.state === 'failed') this.over = true;
+      this.onNotice(n);
+    }
+    this.send(p);
+  }
+
+  /** Pass on whatever is held back (the stream ended). */
+  flush(): void {
+    this.send(this.pending);
+    this.pending = '';
+  }
+
+  private send(text: string): void {
+    if (text !== '') this.emit(text);
+  }
 }
 
 /** What md-runbook-gate said about itself in its answer to the hello. */

@@ -7,7 +7,9 @@
   "name": 558,
   "runbook": 760,
   "request": 117,
-  "length": 10
+  "length": 10,
+  "hello": 2,
+  "pod": 5
  },
  "vectors": [
   {"kind":"manifest","id":"base","input":"md-runbook-manifest 1\nname ops/test\nversion 3\nexpires 2030-01-01\nscope web staging\ntext ab0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd\nparam TARGET W2Etel0rKC1bMC05XXsxLDN9KT8=\nparam CTX bGFiLVswLTldK3xwcm9kLWV1\ncell 1 all\ninfo YmFzaA==\ncode ZWNobyBvbmU=\ncell 2 any\ninfo YmFzaCBrdWJlLWNvbnRleHQ9JHtwYXJhbTpDVFh9IGN3ZD0vdG1wIGVudi5HUkVFVElORz1oZWxsbw==\ncode ZWNobyBhCmVjaG8gJHtUQVJHRVR9\nneeds TARGET\ncwd L3RtcA==\nenv GREETING aGVsbG8=\nenv OTHER \nstep ZWNobyBh\nstep ZWNobyAke1RBUkdFVH0=\ncall 1\ncallinfo cnVuYm9vayBzcmM9b3RoZXIubWQ=\ncallbody VEFSR0VUPSR7cGFyYW06VEFSR0VUfQ==\ncallneeds TARGET\nend\n","core":{"ok":true,"name":"ops/test","version":"3","expires":"2030-01-01","scopes":["web","staging"],"text":"ab0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd","params":[["TARGET","[a-z]+(-[0-9]{1,3})?"],["CTX","lab-[0-9]+|prod-eu"]],"cells":[{"n":"1","lines":"all","info":"bash","code":"echo one","needs":[],"cwd":"","env":[],"steps":[],"kube":""},{"n":"2","lines":"any","info":"bash kube-context=${param:CTX} cwd=/tmp env.GREETING=hello","code":"echo a\necho ${TARGET}","needs":["TARGET"],"cwd":"/tmp","env":[["GREETING","hello"],["OTHER",""]],"steps":["echo a","echo ${TARGET}"],"kube":"${param:CTX}"}],"calls":[{"n":"1","info":"runbook src=other.md","body":"TARGET=${param:TARGET}","needs":["TARGET"]}]}},
@@ -2741,6 +2743,13 @@
   {"kind":"length","id":"a request of 8000000 bytes","input":{"parts":[["raw 0123456789abcdef ",1],["A",7999979],["\n",1]]},"core":{"bytes":8000000,"read":false}},
   {"kind":"length","id":"no request: empty input","input":"","core":{"bytes":0,"read":false}},
   {"kind":"length","id":"no request: a last line without its newline","input":"context 0123456789abcdef","core":{"bytes":24,"read":false}},
-  {"kind":"length","id":"an empty line","input":"\n","core":{"bytes":0,"read":true}}
+  {"kind":"length","id":"an empty line","input":"\n","core":{"bytes":0,"read":true}},
+  {"kind":"hello","id":"the client hello","input":": mdrb-gate-hello 0123456789abcdef pod-notices; printf '\\036%s %s\\n' __MDRB_0123456789abcdef__ \"$$\" >&2; printf '\\036%s %s\\n' __MDRB_0123456789abcdef__ \"$$\"\n","core":{"id":"0123456789abcdef","podNotices":true}},
+  {"kind":"hello","id":"a hello before protocol 4","input":": mdrb-gate-hello 0123456789abcdef; x\n","core":{"id":"0123456789abcdef","podNotices":false}},
+  {"kind":"pod","id":"pod notice: job","input":"\u001e__MDRB_POD__ job\n","core":{"state":"job","reason":""}},
+  {"kind":"pod","id":"pod notice: starting","input":"\u001e__MDRB_POD__ starting\n","core":{"state":"starting","reason":""}},
+  {"kind":"pod","id":"pod notice: ready","input":"\u001e__MDRB_POD__ ready\n","core":{"state":"ready","reason":""}},
+  {"kind":"pod","id":"pod notice: failed this session's cells can't start:","input":"\u001e__MDRB_POD__ failed this session's cells can't start: the session's pod wasn't ready after 180 s: see kubectl -n md-runbook-ops describe job md-runbook-cells-0a1b2c3d4e\n","core":{"state":"failed","reason":"this session's cells can't start: the session's pod wasn't ready after 180 s: see kubectl -n md-runbook-ops describe job md-runbook-cells-0a1b2c3d4e"}},
+  {"kind":"pod","id":"pod notice: failed its pod can't start (ImagePullBac","input":"\u001e__MDRB_POD__ failed its pod can't start (ImagePullBackOff: caf\u00e9 \u00ab x \u00bb)\n","core":{"state":"failed","reason":"its pod can't start (ImagePullBackOff: caf\u00e9 \u00ab x \u00bb)"}}
  ]
 }

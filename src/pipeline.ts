@@ -113,6 +113,8 @@ export interface ExecuteIO {
   signal: AbortSignal;
   onStdout(text: string): void;
   onStderr(text: string): void;
+  /** A line about the run, not the cell's output (a host's pod starting): shown as md-runbook's own. */
+  onNotice?(text: string): void;
 }
 
 export interface CellExecutor {

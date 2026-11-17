@@ -42,6 +42,51 @@ func TestMarkerBanner(t *testing.T) {
 	}
 }
 
+func TestHello(t *testing.T) {
+	cases := []struct {
+		line          string
+		rid           string
+		notices, isOK bool
+	}{
+		{`: mdrb-gate-hello feed0001; printf x`, "feed0001", false, true},
+		{`: mdrb-gate-hello feed0001 pod-notices; printf x`, "feed0001", true, true},
+		{`: mdrb-gate-hello feed0001 pod-notices`, "feed0001", false, true},
+		{`: mdrb-gate-hello feed0001; pod-notices; printf x`, "feed0001", false, true},
+		{`: mdrb-gate-hello feed0001 other; printf x`, "feed0001", false, true},
+		{`: mdrb-gate-hello feed0001`, "feed0001", false, true},
+		{`: mdrb-gate-hello FEED; x`, "FEED", false, false},
+		{`: mdrb-gate-hello ; x`, ";", false, false},
+		{`: other feed0001; x`, "", false, false},
+		{`:`, "", false, false},
+	}
+	for _, c := range cases {
+		f := strings.Fields(c.line)[1:]
+		rid, notices, ok := Hello(f)
+		if ok != c.isOK || notices != c.notices || (ok && rid != c.rid) {
+			t.Errorf("Hello(%q) = %q %v %v", c.line, rid, notices, ok)
+		}
+	}
+}
+
+func TestPod(t *testing.T) {
+	for state, want := range map[string]string{PodJob: "\x1e__MDRB_POD__ job\n", PodStarting: "\x1e__MDRB_POD__ starting\n", PodReady: "\x1e__MDRB_POD__ ready\n"} {
+		if got := Pod(state, "ignored"); got != want {
+			t.Errorf("Pod(%s) = %q", state, got)
+		}
+	}
+	// One line of printable text: control characters and line separators become spaces.
+	if got := Pod(PodFailed, " its pod can't start\n(ImagePullBackOff:\x1e x\x00é ) "); got != "\x1e__MDRB_POD__ failed its pod can't start (ImagePullBackOff:  x é )\n" {
+		t.Errorf("failed: %q", got)
+	}
+	if got := Pod(PodFailed, "\n"); got != "\x1e__MDRB_POD__ failed the session's pod didn't start\n" {
+		t.Errorf("empty reason: %q", got)
+	}
+	// At most 500 bytes, cut at a character.
+	if got, want := Pod(PodFailed, strings.Repeat("é", 400)), "\x1e__MDRB_POD__ failed "+strings.Repeat("é", 250)+"\n"; got != want {
+		t.Errorf("long: %d bytes", len(got))
+	}
+}
+
 func b(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 
 func TestParseNote(t *testing.T) {

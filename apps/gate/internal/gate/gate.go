@@ -38,6 +38,10 @@
 //	raw ID TEXT                       -> base64 shell text, only where unsigned cells are allowed
 //	context ID                        -> runs `kubectl config current-context` (the kube-context guard)
 //
+// (Protocol 4) A hello `: mdrb-gate-hello ID pod-notices; ...` takes pod notices: where the cells
+// run in a Kubernetes Job, the gate says when a request waits for the Job's pod and when that wait
+// ends, so that the pod's start is no part of the client's time limit (proto.Pod).
+//
 // A second connection whose command is `pkill -TERM|-KILL -P N 2>/dev/null; true` stops the
 // running cell of session N (the number its hello answered; what the app sends to cancel).
 //
@@ -72,7 +76,7 @@ import (
 )
 
 // Protocol is the gate protocol the hello banner names.
-const Protocol = "3"
+const Protocol = "4"
 
 // Refused is the exit of a refused request.
 const Refused = "126"

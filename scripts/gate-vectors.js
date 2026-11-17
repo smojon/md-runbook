@@ -1,6 +1,7 @@
 // The shared test vectors of md-runbook-gate and its clients: apps/gate/testdata/vectors.json.
 //
-// Each vector is an input (a manifest, a fence info string, a name, a runbook or a request line,
+// Each vector is an input (a manifest, a fence info string, a name, a runbook, a request line, the
+// hello or a pod notice the gate writes,
 // exactly as bytes: the file escapes every control and non-ASCII character) and core's reading of
 // it. The gate's Go test (apps/gate/internal/vectors) reads every vector its own way and must reach
 // the same reading; test/gateVectors.test.ts regenerates the file in memory and must find it
@@ -533,6 +534,30 @@ function requestVectors(c) {
 }
 
 /**
+ * The hello (protocol 4: the client takes pod notices), and the pod notices the gate writes, as
+ * the client reads them (gatePodNotice): the gate's proto.Pod must write exactly these lines.
+ */
+function helloPodVectors(c) {
+  const ssh = c.ssh;
+  const out = [];
+  out.push({ kind: 'hello', id: 'the client hello', input: ssh.helloCommand(ID), core: { id: ID, podNotices: true } });
+  out.push({ kind: 'hello', id: 'a hello before protocol 4', input: `: mdrb-gate-hello ${ID}; x\n`, core: { id: ID, podNotices: false } });
+  const lines = [
+    `${ssh.POD_NOTICE_START}job\n`,
+    `${ssh.POD_NOTICE_START}starting\n`,
+    `${ssh.POD_NOTICE_START}ready\n`,
+    `${ssh.POD_NOTICE_START}failed this session's cells can't start: the session's pod wasn't ready after 180 s: see kubectl -n md-runbook-ops describe job md-runbook-cells-0a1b2c3d4e\n`,
+    `${ssh.POD_NOTICE_START}failed its pod can't start (ImagePullBackOff: café « x »)\n`,
+  ];
+  for (const line of lines) {
+    const n = ssh.gatePodNotice(line);
+    if (!n) throw new Error(`the client doesn't read the pod notice ${JSON.stringify(line)}`);
+    out.push({ kind: 'pod', id: `pod notice: ${line.slice(ssh.POD_NOTICE_START.length, -1).slice(0, 40)}`, input: line, core: { state: n.state, reason: n.reason ?? '' } });
+  }
+  return out;
+}
+
+/**
  * Request lines by length: up to GATE_MAX_LINE bytes the gate reads one, a byte more ends the
  * session. The longest load request a signable manifest makes stays under it (with five
  * signatures of 2,048 base64 characters, more than an RSA 4096 SSHSIG).
@@ -574,7 +599,7 @@ function generate() {
       }
     }
   }
-  vectors.push(...requestVectors(c), ...lengthVectors(c));
+  vectors.push(...requestVectors(c), ...lengthVectors(c), ...helloPodVectors(c));
   // Long inputs as parts, so the file stays small.
   for (const v of vectors) {
     if (typeof v.input === 'string' && v.input.length > 4096) v.input = compress(v.input);

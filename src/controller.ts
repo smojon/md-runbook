@@ -753,12 +753,17 @@ export class RunbookController implements vscode.Disposable {
         result = { exitCode: null, signal: null, timedOut: false, cancelled: false, durationMs: 0 };
       } else {
         try {
-          const io: ExecuteIO = { signal: abort.signal, onStdout: write(out), onStderr: write(err) };
+          // A line of md-runbook's own while the cell waits (a host's pod starting): not output.
+          const onNotice = (t: string): void => {
+            unflushed.push({ stream: 'stderr', text: message(`[md-runbook] ${t}\n`) });
+            void flush();
+          };
+          const io: ExecuteIO = { signal: abort.signal, onStdout: write(out), onStderr: write(err), onNotice };
           // kube-context: the cluster is checked where the cell would run, before it runs.
           // (A runbook call runs no shell: the cells of the runbook it runs check their cluster.)
           // On a host, this machine's folder doesn't matter (the cell's cwd= is a folder there).
           const here = plan.remote !== undefined || fs.existsSync(plan.cwd);
-          const wrongCluster = !isCall && here ? await this.kubeContextRefusal(plan, ctx, abort.signal) : undefined;
+          const wrongCluster = !isCall && here ? await this.kubeContextRefusal(plan, ctx, abort.signal, onNotice) : undefined;
           if (!here) result = failed(`Working directory not found: ${plan.cwd}`);
           else if (wrongCluster !== undefined) result = failed(wrongCluster);
           else if (lineRun) {
@@ -881,7 +886,7 @@ export class RunbookController implements vscode.Disposable {
    * shell, its environment and folder); why the cell must not run, or undefined. A pinned cell
    * (kube-context-mode: pin) is checked for the context existing and being current instead.
    */
-  private kubeContextRefusal(plan: CellPlan, ctx: PrepareContext, signal: AbortSignal): Promise<string | undefined> {
+  private kubeContextRefusal(plan: CellPlan, ctx: PrepareContext, signal: AbortSignal, onNotice: (text: string) => void): Promise<string | undefined> {
     const meta: unknown = ctx.cell.metadata?.[META_KEY];
     const written = wantedKubeContext(parseCellOptions(isCodeMeta(meta) ? meta.info : ''), frontMatterOf(ctx.notebook));
     // A ${param:NAME} was filled in by secrets.ts; one that wasn't refuses the cell.
@@ -896,7 +901,7 @@ export class RunbookController implements vscode.Disposable {
       let stderr = '';
       const r = await this.pipeline.executorFor(ctx.notebook).execute(
         { ...plan, source: command, steps: undefined, timeoutMs: KUBE_CONTEXT_TIMEOUT_MS, probe: 'kube-context' },
-        { signal, onStdout: (t) => (stdout += t), onStderr: (t) => (stderr += t) },
+        { signal, onStdout: (t) => (stdout += t), onStderr: (t) => (stderr += t), onNotice },
         ctx,
       );
       return { exitCode: r.exitCode, stdout, stderr: r.error ?? (r.timedOut ? 'timed out' : stderr) };
