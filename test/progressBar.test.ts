@@ -389,6 +389,48 @@ describe('cli: the pinned progress line', () => {
     assert.equal(writes.length, n);
     bar.stop();
   });
+
+  it('is pinned again at the next step after a step reset the scroll region (tput reset, ESC[r)', () => {
+    const screen = new Screen(8, 60);
+    const bar = new PinnedBar(screen, new FakeSignals());
+    // The step's output, as the CLI passes it: to the bar, then to the terminal.
+    const out = (s: string): void => {
+      bar.output(s);
+      screen.write(s);
+    };
+    bar.show(() => ({ text: 'Step 1/3', fraction: 0 }));
+    // The whole screen scrolls; the line is gone with the screen.
+    out('\x1b[r\x1b[2J');
+    for (let i = 1; i <= 12; i++) out(`reset ${i}\n`);
+    assert.equal(screen.y, 7, 'the cursor on the bottom line');
+    bar.show(() => ({ text: 'Step 2/3', fraction: 0.5 }));
+    assert.match(screen.text(7), /^Step 2\/3 \[/);
+    for (let i = 1; i <= 12; i++) out(`out ${i}\n`);
+    assert.match(screen.text(7), /^Step 2\/3 \[/, 'still on the bottom line');
+    assert.ok(!screen.scrollback.some((l) => l.includes('Step 2/3')), JSON.stringify(screen.scrollback));
+    assert.deepEqual(screen.all().slice(0, 7), ['out 7', 'out 8', 'out 9', 'out 10', 'out 11', 'out 12', '']);
+    // A normal step doesn't move the output: no line scrolled early, no blank line added.
+    bar.show(() => ({ text: 'Step 3/3', fraction: 0.9 }));
+    assert.deepEqual(screen.all().slice(0, 7), ['out 7', 'out 8', 'out 9', 'out 10', 'out 11', 'out 12', '']);
+    out('last\n');
+    assert.deepEqual(screen.all().slice(0, 7), ['out 8', 'out 9', 'out 10', 'out 11', 'out 12', 'last', '']);
+    assert.match(screen.text(7), /^Step 3\/3 \[/);
+    bar.stop();
+  });
+
+  it('knows when a step changed the scroll region or reset the terminal', () => {
+    const changed = (s: string): boolean => {
+      const e = new EscapeState();
+      e.feed(s);
+      return e.regionChanged();
+    };
+    for (const s of ['\x1b[r', '\x1b[1;5r', '\x1bc', '\x1b[!p', 'text\x1b[r more']) assert.equal(changed(s), true, JSON.stringify(s));
+    for (const s of ['plain', '\x1b[?1049r', '\x1b[1;1;5;5;1$r', '\x1b[2J', '\x1b[0m', '\x1b]0;title r\x07']) assert.equal(changed(s), false, JSON.stringify(s));
+    const e = new EscapeState();
+    e.feed('\x1b[r');
+    e.reset();
+    assert.equal(e.regionChanged(), false, 'a new step starts afresh');
+  });
 });
 
 const settings: ShellSettings = { bashPath: process.env.MD_RUNBOOK_BASH };

@@ -131,7 +131,8 @@
         "entrypoint": "./out/webview/runningStatus.js",
         "mimeTypes": [
           "application/vnd.md-runbook.running+json"
-        ]
+        ],
+        "requiresMessaging": "optional"
       }
     ],
     "commands": [

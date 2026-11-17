@@ -31,6 +31,7 @@ import { ShellSettings, isCodeMeta, taskItems } from '@md-runbook/core';
 import { SECTION } from './config';
 import { ExecutionConfig, colorConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, cloudOutput, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
+import { appendGroups } from './pinnedStatus';
 import { RunningStatus, runningStatusFor } from './runningStatus';
 import { blockEstimate } from './estimates';
 import { CellPlan, ExecuteIO, PrepareContext, PromptCancelled, RunPipeline, RunRecord } from './pipeline';
@@ -650,13 +651,18 @@ export class RunbookController implements vscode.Disposable {
             for (const g of groups) {
               shown.push(g);
               cellTranscript?.out(g.stream, g.text);
-              if (liveStream === undefined || liveStream === g.stream) await exec.appendOutputItems([itemOf(g, colors)], live);
-              else {
-                live = new vscode.NotebookCellOutput([itemOf(g, colors)], runMeta('running'));
-                await appendLive([live]);
-              }
-              liveStream = g.stream;
             }
+            // A new output per switch of stream, all appended at once (pinnedStatus.ts appendGroups).
+            ({ output: live, stream: liveStream } = await appendGroups(
+              groups,
+              { output: live, stream: liveStream },
+              {
+                item: (g) => itemOf(g, colors),
+                output: (items) => new vscode.NotebookCellOutput(items, runMeta('running')),
+                appendItems: (items, output) => exec.appendOutputItems(items, output),
+                appendOutputs: appendLive,
+              },
+            ));
           })
           .then(
             () => undefined,

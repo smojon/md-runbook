@@ -5,8 +5,8 @@
  */
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { elapsedMs, isRunningData, msToNextSecond, runningView } from '../renderer/runningView';
-import { OutputSink, PinnedStatus, RunningData } from '../src/pinnedStatus';
+import { ElapsedAsk, elapsedMs, firstCount, hostCount, isElapsedAnswer, isRunningData, msToNextSecond, runningView } from '../renderer/runningView';
+import { OutputSink, PinnedStatus, RunningData, appendGroups, elapsedAnswer } from '../src/pinnedStatus';
 
 interface Out {
   name: string;
@@ -17,8 +17,10 @@ interface Out {
 class FakeCell implements OutputSink<Out, RunningData> {
   outputs: Out[] = [];
   replaced = 0;
+  appended = 0;
   constructor(readonly clock: { t: number } = { t: 0 }) {}
   async appendOutput(out: readonly Out[]): Promise<void> {
+    this.appended++;
     this.outputs.push(...out);
   }
   async replaceOutputItems(items: readonly RunningData[], output: Out): Promise<void> {
@@ -28,7 +30,7 @@ class FakeCell implements OutputSink<Out, RunningData> {
   }
   /** What shows: the outputs with items, last the status as the renderer draws it now. */
   shown(): string[] {
-    return this.outputs.filter((o) => o.items.length > 0).map((o) => (o.name === 'status' ? `[${runningView(o.items[0]!, this.clock.t, o.items[0]!.sentAt).line}]` : o.name));
+    return this.outputs.filter((o) => o.items.length > 0).map((o) => (o.name === 'status' ? `[${runningView(o.items[0]!, this.clock.t, firstCount(o.items[0]!, o.items[0]!.sentAt)).line}]` : o.name));
   }
 }
 
@@ -110,6 +112,92 @@ describe('the running status under a cell (VS Code)', () => {
     const sent = new PinnedStatus(cell, make, 5, undefined, 1).data().sentAt;
     assert.ok(sent >= before && sent <= Date.now());
   });
+
+  it('one change of the notebook per flush, however often stdout and stderr alternate', async () => {
+    type Stream = 'stdout' | 'stderr';
+    const cell = new FakeCell();
+    const first = live('live 0');
+    await cell.appendOutput([first]);
+    const s = pinned(cell, 30);
+    await s.start();
+    const [appended, replaced] = [cell.appended, cell.replaced];
+    let n = 0;
+    const itemsAdded: string[] = [];
+    const ops = {
+      item: (): RunningData => ({ startedAt: 0, sentAt: 0 }),
+      output: (items: RunningData[]): Out => ({ name: `live ${++n}`, items }),
+      appendItems: async (items: RunningData[], o: Out) => void itemsAdded.push(`${items.length} to ${o.name}`),
+      appendOutputs: (outs: Out[]) => s.append(outs),
+    };
+    // 10 switches of stream in one flush, the first group in the live output's stream.
+    const groups = Array.from({ length: 11 }, (_, i) => ({ stream: (i % 2 === 0 ? 'stdout' : 'stderr') as Stream }));
+    const after = await appendGroups(groups, { output: first, stream: 'stdout' as Stream }, ops);
+    assert.deepEqual(itemsAdded, ['1 to live 0'], 'the first group goes into the live output');
+    assert.equal(cell.appended - appended, 1, 'the 10 new outputs and the status in one append');
+    assert.equal(cell.replaced - replaced, 1, 'the old status emptied once');
+    assert.equal(cell.outputs.filter((o) => o.items.length === 0).length, 1, 'one empty output, not one per switch');
+    assert.equal(cell.shown().length, 12);
+    assert.equal(cell.shown().at(-1), '[running · 0s of about 30s]', 'the status stays last');
+    assert.deepEqual(after, { output: cell.outputs.at(-2), stream: 'stdout' });
+    // The next flush, same stream: into the live output, nothing appended.
+    const next = await appendGroups([{ stream: 'stdout' as Stream }], after, ops);
+    assert.equal(itemsAdded.at(-1), '1 to live 10');
+    assert.equal(next.output, after.output);
+    assert.equal(cell.appended - appended, 1);
+    // A first flush (no stream yet): into the empty live output, whatever the stream.
+    const fresh = await appendGroups([{ stream: 'stderr' as Stream }], { output: first, stream: undefined as Stream | undefined }, ops);
+    assert.deepEqual([itemsAdded.at(-1), fresh.stream], ['1 to live 0', 'stderr']);
+    await s.end();
+  });
+});
+
+describe('how long a cell has run, asked by a renderer drawing its status late', () => {
+  const ask = (startedAt: number, id = 'item-1'): ElapsedAsk => ({ type: 'elapsed?', id, startedAt });
+
+  it("the host answers with the time since the start by its own clock; the notebook doesn't change", () => {
+    assert.deepEqual(elapsedAnswer(ask(1_000_000), 1_180_000), { type: 'elapsed', id: 'item-1', elapsedMs: 180_000 });
+    assert.equal(elapsedAnswer(ask(2_000), 1_000)?.elapsedMs, 0, 'never below 0');
+    for (const bad of [
+      null,
+      'x',
+      {},
+      { type: 'toggleTask' },
+      { type: 'elapsed?', id: 1, startedAt: 1 },
+      { type: 'elapsed?', id: 'x' },
+      { type: 'elapsed?', id: 'x', startedAt: Number.NaN },
+      { type: 'elapsed?', id: 'x'.repeat(201), startedAt: 1 },
+    ])
+      assert.equal(elapsedAnswer(bad, 5), undefined, JSON.stringify(bad));
+  });
+
+  it('the renderer counts from the answer: drawn 3 min late, it says 3m, not 0s', () => {
+    const d: RunningData = { startedAt: 0, sentAt: 0, estimateMs: 300_000 };
+    // Before the answer: at least the time since the start by the window's clock.
+    const before = firstCount(d, 180_000);
+    assert.equal(elapsedMs(before, 180_000), 180_000);
+    assert.doesNotMatch(runningView(d, 180_000, before).line, / 0s /);
+    // Drawn as it was sent: the time to the send (a later sentAt: a new attempt's data).
+    assert.equal(elapsedMs(firstCount({ ...d, sentAt: 4_000 }, 1_000), 1_000), 4_000);
+    // The answer, then the window's own clock.
+    const answer = elapsedAnswer(ask(d.startedAt), 180_500)!;
+    assert.ok(isElapsedAnswer(answer));
+    const c = hostCount(answer.elapsedMs, 181_000);
+    assert.equal(elapsedMs(c, 191_000), 190_500);
+    assert.equal(msToNextSecond(c, 191_000), 500);
+    for (const bad of [null, {}, { type: 'elapsed', id: 'x' }, { type: 'elapsed', id: 'x', elapsedMs: 'x' }, { type: 'elapsed?', id: 'x', elapsedMs: 1 }])
+      assert.equal(isElapsedAnswer(bad), false, JSON.stringify(bad));
+  });
+
+  it("counts the same whatever the remote extension host's clock says, once it answered", () => {
+    const w = 1_000_000;
+    for (const skew of [-3_600_000, -15_000, 0, 15_000, 3_600_000]) {
+      // Started at 100 s by the host's clock; the host answers 5 s later; the window gets it at w.
+      const startedAt = 100_000 - skew;
+      const c = hostCount(elapsedAnswer(ask(startedAt), startedAt + 5_000)!.elapsedMs, w);
+      assert.equal(elapsedMs(c, w + 7_000), 12_000, `skew ${skew}`);
+      assert.deepEqual(runningView({ startedAt, sentAt: startedAt, estimateMs: 20_000 }, w + 7_000, c), { line: 'running · 12s of about 20s', fraction: 0.6, over: false }, `skew ${skew}`);
+    }
+  });
 });
 
 describe('the running status as the renderer draws it (renderer/runningView.ts)', () => {
@@ -118,34 +206,33 @@ describe('the running status as the renderer draws it (renderer/runningView.ts)'
 
   it('counts the seconds from the start, against the estimate', () => {
     const d = at(1_000_000, { estimateMs: 30_000 });
-    assert.deepEqual(runningView(d, 1_012_400, 1_000_000), { line: 'running · 12s of about 30s', fraction: 12.4 / 30, over: false });
-    assert.deepEqual(runningView(d, 1_045_000, 1_000_000), { line: 'running · 45s · 15s over about 30s', fraction: 1, over: true });
-    assert.deepEqual(runningView(at(1_000_000), 1_007_900, 1_000_000), { line: 'running · 7s', over: false });
-    assert.deepEqual(runningView(at(0, { attempt: 2, attempts: 5 }), 3_000, 0), { line: 'running · 3s · attempt 2/5', over: false });
+    const c = firstCount(d, 1_000_000);
+    assert.deepEqual(runningView(d, 1_012_400, c), { line: 'running · 12s of about 30s', fraction: 12.4 / 30, over: false });
+    assert.deepEqual(runningView(d, 1_045_000, c), { line: 'running · 45s · 15s over about 30s', fraction: 1, over: true });
+    assert.deepEqual(runningView(at(1_000_000), 1_007_900, c), { line: 'running · 7s', over: false });
+    assert.deepEqual(runningView(at(0, { attempt: 2, attempts: 5 }), 3_000, firstCount(at(0), 0)), { line: 'running · 3s · attempt 2/5', over: false });
     // The window's clock stepped back after the data came: 0s, not a negative time.
-    assert.equal(runningView(d, 999_000, 1_000_000).line, 'running · 0s of about 30s');
+    assert.equal(runningView(d, 999_000, c).line, 'running · 0s of about 30s');
   });
 
-  it("counts the same whatever the remote extension host's clock says (Remote-SSH, WSL)", () => {
-    // Started at 100 s by the host's clock, sent 5 s later; the window drew it at w, 7 s ago.
-    const d: RunningData = { startedAt: 100_000, sentAt: 105_000, estimateMs: 20_000 };
+  it("before the host answers: a window clock behind the host's (Remote-SSH, WSL) changes nothing", () => {
+    // Sent 5 s after the start and drawn at once, at w by the window's clock, 7 s ago.
     const w = 1_000_000;
-    for (const skew of [-3_600_000, -15_000, 0, 15_000, 3_600_000]) {
-      // The window's clock is `skew` ahead of the host's (behind when negative).
-      const host = { ...d, startedAt: d.startedAt - skew, sentAt: d.sentAt - skew };
-      assert.equal(elapsedMs(host, w + 7_000, w), 12_000, `skew ${skew}`);
-      assert.deepEqual(runningView(host, w + 7_000, w), { line: 'running · 12s of about 20s', fraction: 0.6, over: false }, `not over early: skew ${skew}`);
-      assert.equal(msToNextSecond(host, w + 7_250, w), 750, `skew ${skew}`);
+    for (const behind of [0, 15_000, 3_600_000]) {
+      // The window's clock is `behind` ms behind the host's.
+      const host: RunningData = { startedAt: w + behind - 5_000, sentAt: w + behind, estimateMs: 20_000 };
+      const c = firstCount(host, w);
+      assert.equal(elapsedMs(c, w + 7_000), 12_000, `behind ${behind}`);
+      assert.deepEqual(runningView(host, w + 7_000, c), { line: 'running · 12s of about 20s', fraction: 0.6, over: false }, `not over early: behind ${behind}`);
+      assert.equal(msToNextSecond(c, w + 7_250), 750, `behind ${behind}`);
     }
-    // Only the window's own clock counts after the data came.
-    assert.equal(elapsedMs(d, w, w), 5_000, 'drawn: the time to the send');
-    assert.equal(elapsedMs(d, w + 30_000, w), 35_000);
+    // A window clock ahead counts more until the answer (hostCount) puts it right.
   });
 
   it('redraws when the words change: at the next whole second since the start', () => {
-    assert.equal(msToNextSecond(at(1_000), 13_250, 1_000), 750);
-    assert.equal(msToNextSecond(at(1_000), 13_000, 1_000), 1000);
-    assert.equal(msToNextSecond(at(5_000), 1_000, 5_000), 1000);
+    assert.equal(msToNextSecond(firstCount(at(1_000), 1_000), 13_250), 750);
+    assert.equal(msToNextSecond(firstCount(at(1_000), 1_000), 13_000), 1000);
+    assert.equal(msToNextSecond(hostCount(0, 5_000), 1_000), 1000);
   });
 
   it('draws only data it understands', () => {

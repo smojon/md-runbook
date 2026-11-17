@@ -9,9 +9,24 @@
 
 import * as vscode from 'vscode';
 import { META_KEY, OutputMetadata } from './outputs';
-import { PinnedStatus, RunningData } from './pinnedStatus';
+import { PinnedStatus, RunningData, elapsedAnswer } from './pinnedStatus';
 
 export const RUNNING_MIME = 'application/vnd.md-runbook.running+json';
+export const RUNNING_RENDERER_ID = 'md-runbook.runningStatus';
+
+/**
+ * The renderer asks how long a cell has run when it first draws its status (scrolled back into
+ * view, a new webview): the answer is the time since the start by this host's clock.
+ */
+export function registerRunningStatus(context: vscode.ExtensionContext): void {
+  const messaging = vscode.notebooks.createRendererMessaging(RUNNING_RENDERER_ID);
+  context.subscriptions.push(
+    messaging.onDidReceiveMessage(({ editor, message }) => {
+      const answer = elapsedAnswer(message, Date.now());
+      if (answer) void messaging.postMessage(answer, editor);
+    }),
+  );
+}
 
 const item = (data: RunningData): vscode.NotebookCellOutputItem => vscode.NotebookCellOutputItem.json(data, RUNNING_MIME);
 
