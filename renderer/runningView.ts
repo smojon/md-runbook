@@ -12,6 +12,11 @@ import { cellRunStatus } from '@md-runbook/core/runStatus';
 export interface RunningData {
   /** When the cell started: epoch ms, by the extension host's clock. */
   startedAt: number;
+  /**
+   * When the extension sent this data, by the same clock. A remote host's clock (Remote-SSH, WSL)
+   * may be off the window's: the renderer counts from here by its own clock (elapsedMs).
+   */
+  sentAt: number;
   /** The block's estimate in ms; without one, a counter and no bar. */
   estimateMs?: number;
   /** retry=: the attempt running, and how many it may take. */
@@ -37,21 +42,26 @@ export function isRunningData(v: unknown): v is RunningData {
     typeof d === 'object' &&
     d !== null &&
     num(d.startedAt) &&
+    num(d.sentAt) &&
     (d.estimateMs === undefined || num(d.estimateMs)) &&
     (d.attempt === undefined || num(d.attempt)) &&
     (d.attempts === undefined || num(d.attempts))
   );
 }
 
-/** Milliseconds since the start, never below 0 (a remote extension host's clock may be ahead). */
-function elapsedMs(d: RunningData, now: number): number {
-  return Math.max(0, now - d.startedAt);
+/**
+ * Milliseconds since the start, never below 0. Each clock is only compared with itself: the time
+ * to the send by the extension host's, then the time since `receivedAt` (the renderer first drew
+ * this data) by the window's. A remote host's clock ahead or behind changes nothing.
+ */
+export function elapsedMs(d: RunningData, now: number, receivedAt: number): number {
+  return Math.max(0, d.sentAt - d.startedAt + (now - receivedAt));
 }
 
-/** The status at `now` (epoch ms). */
-export function runningView(d: RunningData, now: number): RunningView {
+/** The status at `now` (epoch ms, the window's clock), for data first drawn at `receivedAt`. */
+export function runningView(d: RunningData, now: number, receivedAt: number): RunningView {
   const s = cellRunStatus({
-    elapsedSeconds: elapsedMs(d, now) / 1000,
+    elapsedSeconds: elapsedMs(d, now, receivedAt) / 1000,
     ...(d.estimateMs !== undefined ? { estimateSeconds: d.estimateMs / 1000 } : {}),
     ...(d.attempt !== undefined ? { attempt: d.attempt } : {}),
     ...(d.attempts !== undefined ? { attempts: d.attempts } : {}),
@@ -60,6 +70,6 @@ export function runningView(d: RunningData, now: number): RunningView {
 }
 
 /** Milliseconds until the words change: the next whole second since the start. */
-export function msToNextSecond(d: RunningData, now: number): number {
-  return 1000 - (elapsedMs(d, now) % 1000);
+export function msToNextSecond(d: RunningData, now: number, receivedAt: number): number {
+  return 1000 - (elapsedMs(d, now, receivedAt) % 1000);
 }

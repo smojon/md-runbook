@@ -2,8 +2,8 @@
  * An output kept last in a running cell's outputs (runningStatus.ts gives it the running cell's
  * status). Without vscode, so the order of the calls is unit-tested.
  *
- * It holds when the cell started, its estimate and the attempt, not the words: the renderer
- * counts the seconds (renderer/runningView.ts). So the output changes only when that data does
+ * It holds when the cell started (and when the data was sent), its estimate and the attempt, not
+ * the words: the renderer counts the seconds (renderer/runningView.ts). So the output changes only when that data does
  * (a new attempt, the end), never every second. With transientOutputs: false, each output change
  * is a change of the notebook: dirty, and saved again by auto save.
  *
@@ -21,6 +21,8 @@ export interface OutputSink<O, I> {
 export interface RunningData {
   /** When the cell started: epoch ms. */
   startedAt: number;
+  /** When this data was sent, by the same clock: the renderer counts from here by its own clock. */
+  sentAt: number;
   /** The block's estimate in ms; without one, a counter and no bar. */
   estimateMs?: number;
   /** retry=: the attempt running, and how many it may take. */
@@ -40,6 +42,8 @@ export class PinnedStatus<O, I> {
     private readonly startedAt: number,
     private readonly estimateSeconds: number | undefined,
     private readonly attempts: number,
+    /** The extension host's clock (startedAt's). */
+    private readonly now: () => number = Date.now,
   ) {}
 
   /** What the renderer gets now. */
@@ -47,6 +51,7 @@ export class PinnedStatus<O, I> {
     const est = this.estimateSeconds;
     return {
       startedAt: this.startedAt,
+      sentAt: this.now(),
       ...(est !== undefined && Number.isFinite(est) && est > 0 ? { estimateMs: Math.round(est * 1000) } : {}),
       ...(this.attempts > 1 ? { attempt: this.attempt, attempts: this.attempts } : {}),
     };

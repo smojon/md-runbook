@@ -67,6 +67,22 @@ export function renderRunning(element: HTMLElement, view: RunningView): void {
 /** The redraw timer of each output item, and the item drawing into each element. */
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const drawing = new WeakMap<HTMLElement, string>();
+/**
+ * When each item's data was first drawn, by this window's clock. Kept after a dispose: an item
+ * drawn again (scrolled back into view) goes on counting. The oldest go past a few hundred.
+ */
+const received = new Map<string, { sentAt: number; at: number }>();
+const RECEIVED_KEPT = 200;
+
+function receivedAt(id: string, sentAt: number, now: number): number {
+  const r = received.get(id);
+  // The same data again: when it first came. New data (a new attempt): from now.
+  if (r !== undefined && r.sentAt === sentAt) return r.at;
+  received.delete(id);
+  received.set(id, { sentAt, at: now });
+  if (received.size > RECEIVED_KEPT) received.delete(received.keys().next().value!);
+  return now;
+}
 
 function stop(id: string): void {
   const t = timers.get(id);
@@ -84,15 +100,16 @@ export function activate(): { renderOutputItem(item: OutputItem, element: HTMLEl
       drawing.set(element, item.id);
       const data = item.json();
       if (!isRunningData(data)) return;
+      const since = receivedAt(item.id, data.sentAt, Date.now());
       let seen = false;
       const draw = (): void => {
         // Removed without a dispose: stop once it was in the page and no longer is.
         if (seen && !element.isConnected) return stop(item.id);
         seen ||= element.isConnected;
         const now = Date.now();
-        renderRunning(element, runningView(data, now));
+        renderRunning(element, runningView(data, now, since));
         // Just past the next whole second, when the words change.
-        timers.set(item.id, setTimeout(draw, msToNextSecond(data, now) + 20));
+        timers.set(item.id, setTimeout(draw, msToNextSecond(data, now, since) + 20));
       };
       draw();
     },

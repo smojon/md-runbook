@@ -294,6 +294,7 @@ kubernetes-job` runs each session's blocks in a Kubernetes Job of their own inst
   ([details](../ops/README.md#a-job-per-session)).
 - The pod's start takes from seconds to a minute, depending on the cluster. It doesn't count
   against the client's time limits (protocol 4, below).
+- A Stop at the exact moment the session's pod becomes ready may let the block run up to 2 s more.
 
 **Why not `systemd-run --uid`?** It needs root, or a polkit rule that also lets the account
 start units as root. sudo can name one command and the accounts it may run as.
