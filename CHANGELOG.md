@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- **Ops host: each session's blocks in a Job of their own.** In a cluster, the gate starts a
+  Kubernetes Job for each SSH session and runs its blocks there (`cells_runner =
+  kubernetes-job`).
+  - Blocks can't read the gate's report token, log or state, nor another session's.
+  - The Job runs as the new service account `md-runbook-cells`. The ops pod's own account may
+    only run those Jobs.
+  - Each session checks both accounts first, and doesn't start if one has a right it
+    shouldn't.
+  - Run reports say `gate_mode` `separated`.
+  - The first block of a session waits for its pod, about 2 to 5 seconds.
+  - Pod logs are now read per namespace, with the rights to change things.
+  - `kubectl` is in `/usr/bin` in the image: the gate runs it as its other programs.
+  - See [A Job per session](apps/ops/README.md#a-job-per-session).
+- **Ops host admins: move your bindings** ([README](apps/ops/README.md#in-a-cluster)).
+  - Apply the new manifest. Update the image before the ConfigMap.
+  - Bind each namespace to `md-runbook-cells` instead of `md-runbook-ops`.
+  - Remove the binding in `md-runbook-ops` itself.
+  - Outside a cluster, keep your own `gate.conf`: the image's default now runs Jobs.
+- **VS Code, team library: a library's signers count for its runbooks only**, as in the app.
+  - **Add the Team Library's Signers…** keeps them apart from your own allowed_signers file,
+    one file per library address, as the app keys them.
+  - The Library view, your copies of its runbooks, run reports and Practice on a Host use them.
+    Links, the command line and the gate are unchanged.
+  - **Trusted Signers…** lists yours first, then each library's under its address.
+  - A key the library no longer publishes is withdrawn: it stops counting until published again.
+  - Keys an earlier version put in your own file stay there, marked as also published by the
+    library. Remove them to trust them for its runbooks only.
+- **App (web): highlighting in the web app's editor.** Edit as Text colours the runbook, with
+  line numbers.
+  - Markdown, code block fences with their cell options, and md-runbook's outputs, notes and
+    signatures.
+  - Still the browser's text field: its undo, find and screen reader work as before.
+  - Esc then Tab now leaves the field too, besides Shift+Tab.
+  - iOS and Android are unchanged.
+
 ## 0.28.0
 
 The gate is now a Go program, with per-session isolation and an optional separated mode. The
@@ -56,28 +91,10 @@ see "Sign these again" below. Library servers: separated gates' tokens go in
     this gate account's sessions, and an account that may use cron or at.
   - The check refuses an account in a privileged group, such as `sudo`, `adm` or `docker`.
   - Blocks start in that account's home folder. A block's `cwd=` must be a folder it can enter.
-  - The ops host has its own way: a Job per session (below).
+  - Not for the ops host: it stays shared.
   - See [Separated mode](apps/gate/README.md#separated-mode).
 - **Gate: run reports say the mode.** The summary's `gate` object has `gate_mode`: `shared` or
   `separated`.
-- **Ops host: each session's blocks in a Job of their own.** In a cluster, the gate starts a
-  Kubernetes Job for each SSH session and runs its blocks there (`cells_runner =
-  kubernetes-job`).
-  - Blocks can't read the gate's report token, log or state, nor another session's.
-  - The Job runs as the new service account `md-runbook-cells`. The ops pod's own account may
-    only run those Jobs.
-  - Each session checks both accounts first, and doesn't start if one has a right it
-    shouldn't.
-  - Run reports say `gate_mode` `separated`.
-  - The first block of a session waits for its pod, about 2 to 5 seconds.
-  - Pod logs are now read per namespace, with the rights to change things.
-  - `kubectl` is in `/usr/bin` in the image: the gate runs it as its other programs.
-  - See [A Job per session](apps/ops/README.md#a-job-per-session).
-- **Ops host admins: move your bindings** ([README](apps/ops/README.md#in-a-cluster)).
-  - Apply the new manifest. Update the image before the ConfigMap.
-  - Bind each namespace to `md-runbook-cells` instead of `md-runbook-ops`.
-  - Remove the binding in `md-runbook-ops` itself.
-  - Outside a cluster, keep your own `gate.conf`: the image's default now runs Jobs.
 - **Visual Studio Marketplace by trusted publishing:** the release publishes there with
   `vsce publish --oidc`, no token, once the policy and the variable `MARKETPLACE_TRUSTED_PUBLISHING`
   are set ([PUBLISHING.md](PUBLISHING.md)). `vsce` for publishing is 4.1.0.
@@ -146,23 +163,6 @@ see "Sign these again" below. Library servers: separated gates' tokens go in
     (`requiredUnknown`).
 - **VS Code:** reports runs of a runbook that writes `Report-Runs:` in another case, as the app
   and the command line do.
-- **VS Code, team library: a library's signers count for its runbooks only**, as in the app.
-  - **Add the Team Library's Signers…** keeps them apart from your own allowed_signers file,
-    one file per library address, as the app keys them.
-  - The Library view, your copies of its runbooks, run reports and Practice on a Host use them.
-    Links, the command line and the gate are unchanged.
-  - **Trusted Signers…** lists yours first, then each library's under its address.
-  - A key the library no longer publishes is withdrawn: it stops counting until published again.
-  - Keys an earlier version put in your own file stay there, marked as also published by the
-    library. Remove them to trust them for its runbooks only.
-- **App (web): highlighting in the web app's editor.** Edit as Text colours the runbook, with
-  line numbers.
-  - Markdown, code block fences with their cell options, and md-runbook's outputs, notes and
-    signatures.
-  - Still the browser's text field: its undo, find and screen reader work as before.
-  - Esc then Tab now leaves the field too, besides Shift+Tab.
-  - iOS and Android are unchanged.
-
 
 ## 0.27.0
 
@@ -547,7 +547,6 @@ below before you update.
   - It shows once on the first start, with Skip on every card.
   - The start screen's ⋯ → **Get Started** shows it again.
 
-
 - **VS Code: Publish to Library… and Remove from Library…** (Share ▾) send a signed runbook to
   the team library server, or take one out. The upload token stays in VS Code's secret storage.
   An unsigned runbook gets a **Sign Runbook** button first.
@@ -593,7 +592,6 @@ Alerts to phones and TestFlight, both off until set up
 - **VS Code without ssh-keygen:** the Library view says it can't check signatures, and to install
   OpenSSH. Before, it said the signer wasn't trusted.
   - Run reports and Practice on a Host say so too.
-
 
 ## 0.26.8
 
