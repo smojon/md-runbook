@@ -18,7 +18,7 @@ Rebuild the container. Then `md-runbook run`, `md-runbook lint` and the rest of 
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `version` | `latest` | The command line's version: a release such as `0.19.0`, or `latest`, the newest release that has it |
+| `version` | `latest` | The command line's version: a release such as `0.19.0`, or `latest`, the release marked Latest |
 | `cli` | `true` | `false`: only the VS Code extension, no command line |
 
 ```json

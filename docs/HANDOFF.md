@@ -6,9 +6,9 @@ State of the project for whoever picks it up next (person or new Claude session)
 
 - **Released:** a tag `vX.Y.Z` runs the Release workflow (steps in
   [PUBLISHING.md](../PUBLISHING.md)).
-  - It publishes to npm and Open VSX, and makes a GitHub pre-release with the `.vsix` and the
+  - It publishes to npm, Open VSX and the Visual Studio Marketplace (publisher `smojon`).
+  - The Release workflow also makes a GitHub release marked Latest, with the `.vsix` and the
     CLI `.tgz`.
-  - The Visual Studio Marketplace (publisher `smojon`) gets each one by a manual upload.
   - The GitHub Action is used as `smojon/md-runbook@v<version>` (the release tags).
 - **Branch:** everything is on `main`, which is the default branch. Work happens on short-lived
   `feature/...` branches; CI must pass on all three systems before they are merged.

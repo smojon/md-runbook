@@ -27,20 +27,8 @@ if [ -f "$here/md-runbook-cli.tgz" ]; then
   # A package next to this script (the feature's own tests; an offline mirror).
   package="$here/md-runbook-cli.tgz"
 elif [ "$VERSION" = "latest" ]; then
-  # The newest release that has the package (they are pre-releases, which /releases/latest skips).
-  package="$(node -e '
-    fetch("https://api.github.com/repos/" + process.argv[1] + "/releases?per_page=20", { headers: { "user-agent": "md-runbook-devcontainer-feature" } })
-      .then((r) => { if (!r.ok) throw new Error("GitHub API: HTTP " + r.status); return r.json(); })
-      .then((releases) => {
-        for (const r of releases) {
-          if (r.draft) continue;
-          const a = (r.assets || []).find((x) => x.name === "md-runbook-cli.tgz");
-          if (a) return console.log(a.browser_download_url);
-        }
-        throw new Error("no release has md-runbook-cli.tgz yet");
-      })
-      .catch((e) => { console.error("md-runbook: " + e.message); process.exit(1); });
-  ' "$REPO")"
+  # The release marked Latest (each one since 0.30.0; GitHub redirects to its file).
+  package="https://github.com/$REPO/releases/latest/download/md-runbook-cli.tgz"
 else
   package="https://github.com/$REPO/releases/download/v${VERSION#v}/md-runbook-cli.tgz"
 fi

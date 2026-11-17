@@ -1,6 +1,6 @@
 {
   "id": "md-runbook",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "md-runbook",
   "description": "Run Markdown runbooks: the md-runbook command line (md-runbook run, lint, link) and the VS Code extension.",
   "documentationURL": "https://github.com/smojon/md-runbook/blob/main/docs/features/devcontainer.md",
@@ -10,7 +10,7 @@
       "type": "string",
       "default": "latest",
       "proposals": ["latest"],
-      "description": "Version of the command line: a release such as 0.19.0, or latest (the newest release that has it)."
+      "description": "Version of the command line: a release such as 0.19.0, or latest (the release marked Latest)."
     },
     "cli": {
       "type": "boolean",
