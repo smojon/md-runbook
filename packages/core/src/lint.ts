@@ -36,7 +36,7 @@ export interface LintProblem {
   code?: string;
 }
 
-const KNOWN_OPTIONS = new Set([
+export const KNOWN_OPTIONS = new Set([
   // cellOptions.ts
   'timeout', 'estimate', 'cwd', 'continue-on-error', 'skip', 'confirm', 'no-confirm', 'terminal', 'name', 'on-failure',
   'expect', 'expect-not', 'expect-exit', 'capture', 'capture-secret', 'os', 'host', 'kube-context', 'lines', 'retry', 'every',
@@ -72,9 +72,12 @@ export function suggestOption(key: string): string | undefined {
   let best: string | undefined;
   let bestDistance = Infinity;
   let tie = false;
+  // A distance is at least the difference in length: past `max` it can't be suggested, nor change
+  // which option is nearest when one is within `max`. (A long key took seconds.)
+  const near = (w: string): number => (Math.abs(k.length - w.length) > max ? max + 1 : editDistance(k, w));
   for (const option of KNOWN_OPTIONS) {
     const plural = option.endsWith('y') ? `${option.slice(0, -1)}ies` : `${option}s`;
-    const distance = Math.min(editDistance(k, option), editDistance(k, plural));
+    const distance = Math.min(near(option), near(plural));
     if (distance < bestDistance) {
       best = option;
       bestDistance = distance;

@@ -39,7 +39,45 @@ export function copyFrontMatterProblem(copyText: string, targetText: string, add
  * planted.
  */
 export function copyDigest(text: string): string {
-  return sha256Hex(text.replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/^(\s*[-*+]\s+)\[[ xX]\]/gm, '$1[ ]'));
+  return sha256Hex(uncheckTaskBoxes(text.replace(/^﻿/, '').replace(/\r\n/g, '\n')));
+}
+
+/** What uncheckTaskBoxes does; kept as the definition (test/hostileText.test.ts compares the two). */
+export const TASK_BOX_RE = /^(\s*[-*+]\s+)\[[ xX]\]/gm;
+
+const isLineEnd = (c: string | undefined): boolean => c === '\n' || c === '\r' || c?.charCodeAt(0) === 0x2028 || c?.charCodeAt(0) === 0x2029;
+const isRegexSpace = (c: string | undefined): boolean => c !== undefined && /\s/.test(c);
+
+/**
+ * `t.replace(TASK_BOX_RE, '$1[ ]')` in one pass. From each line start, `\s*` reads across empty
+ * lines to the first other character: every line start in one run of blanks and line ends reads to
+ * the same place, so it is read once (10,000 empty lines took seconds).
+ */
+export function uncheckTaskBoxes(t: string): string {
+  let out = '';
+  let pos = 0;
+  let runFrom = -1;
+  let runEnd = -1;
+  let failed = -1;
+  for (let p = 0; p < t.length; p++) {
+    if (p < pos || (p > 0 && !isLineEnd(t[p - 1]))) continue;
+    if (p < runFrom || p > runEnd) {
+      runFrom = p;
+      runEnd = p;
+      while (isRegexSpace(t[runEnd])) runEnd++;
+    }
+    const bullet = runEnd;
+    if (bullet === failed || (t[bullet] !== '-' && t[bullet] !== '*' && t[bullet] !== '+')) continue;
+    let r = bullet + 1;
+    while (isRegexSpace(t[r])) r++;
+    if (r === bullet + 1 || t[r] !== '[' || (t[r + 1] !== ' ' && t[r + 1] !== 'x' && t[r + 1] !== 'X') || t[r + 2] !== ']') {
+      failed = bullet;
+      continue;
+    }
+    out += t.slice(pos, r) + '[ ]';
+    pos = r + 3;
+  }
+  return out + t.slice(pos);
 }
 
 /** Why a call doesn't continue a copy whose digest isn't the one kept for it. */

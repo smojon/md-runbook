@@ -143,9 +143,31 @@ function cloudRun(json: unknown): CloudView | undefined {
   };
 }
 
+/** What startsJson tests; kept as the definition (test/hostileText.test.ts compares the two). */
+export const JSON_START_RE = /^\s*[[{]/m;
+const isLineEnd = (c: string): boolean => c === '\n' || c === '\r' || c.charCodeAt(0) === 0x2028 || c.charCodeAt(0) === 0x2029;
+
+/**
+ * `JSON_START_RE.test(s)` in one pass: a `[` or `{` that only blanks and line ends separate from a
+ * line's start. From each line start the expression read across all the empty lines after it
+ * (10,000 empty lines took seconds).
+ */
+export function startsJson(s: string): boolean {
+  let lineStart = true;
+  for (const c of s) {
+    if (/\s/.test(c)) {
+      if (isLineEnd(c)) lineStart = true;
+      continue;
+    }
+    if (lineStart && (c === '[' || c === '{')) return true;
+    lineStart = false;
+  }
+  return false;
+}
+
 /** The console view of a cell's standard output, or undefined when it isn't one of the kinds above. */
 export function cloudView(stdout: string): CloudView | undefined {
-  if (!/^\s*[[{]/m.test(stdout)) return undefined;
+  if (!startsJson(stdout)) return undefined;
   const json = parseJsonOutput(stdout);
   if (json === undefined) return undefined;
   for (const view of [ec2, eks, gce, gke, cloudRun]) {
