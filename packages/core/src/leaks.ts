@@ -5,11 +5,14 @@
  */
 
 import { beforeComment, isSpace, trimEndWith } from './lineText';
-import { DEFAULT_PATTERNS, REDACTED, compilePattern } from './redact';
+import { DEFAULT_PATTERNS, REDACTED, WIDENED_PATTERN_NAMES, patternFinder } from './redact';
+import { SpanFinder, Spans, findReferences } from './redactScan';
 
 export interface LeakScanOptions {
   /** Internal DNS suffixes (e.g. `corp.example.com`); hosts under them are reported. */
   internalDomains?: string[];
+  /** The widened patterns (0.30) too; default true (false: what 0.29 reported, for comparison). */
+  widened?: boolean;
 }
 
 export interface LeakFinding {
@@ -31,6 +34,12 @@ interface Detector {
   re: RegExp;
 }
 
+/** A redaction pattern as a detector (redact.ts `patternFinder`: the built-in ones that backtrack read in linear time). */
+interface PatternDetector {
+  kind: string;
+  find: SpanFinder;
+}
+
 const EXTRA_DETECTORS: readonly Detector[] = [
   { kind: 'private-key', re: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/g },
   { kind: 'gcp-api-key', re: /\bAIza[0-9A-Za-z_-]{35}\b/g },
@@ -43,9 +52,41 @@ const EXTRA_DETECTORS: readonly Detector[] = [
 
 /** Generic key/header patterns report after the specific formats, so a span gets its most precise kind. */
 const GENERIC = new Set(['authorization-header', 'cookie-header', 'secret-key-value']);
-const PATTERN_DETECTORS: readonly Detector[] = [...DEFAULT_PATTERNS]
+const PATTERN_DETECTORS: readonly PatternDetector[] = DEFAULT_PATTERNS.filter((p) => !WIDENED_PATTERN_NAMES.has(p.name ?? ''))
   .sort((a, b) => Number(GENERIC.has(a.name ?? '')) - Number(GENERIC.has(b.name ?? '')))
-  .map((p) => ({ kind: p.name === 'pem-private-key' ? 'private-key' : (p.name ?? 'secret'), re: compilePattern(p) }));
+  .map((p) => ({ kind: p.name === 'pem-private-key' ? 'private-key' : (p.name ?? 'secret'), find: patternFinder(p) }));
+/** The widened patterns (0.30): reported after every other finding, so those stay as they were, and only for a value that looks like a secret. */
+const WIDENED_DETECTORS: readonly PatternDetector[] = DEFAULT_PATTERNS.filter((p) => WIDENED_PATTERN_NAMES.has(p.name ?? '')).map((p) => ({
+  kind: p.name!,
+  find: patternFinder(p),
+}));
+
+/** Values that stand for a secret in docs and examples: placeholders, not secrets. */
+const PLACEHOLDER =
+  /^(?:x+|\*+|\.+|-+|_+|#+|…|<[^>]*>|\{\{.*\}\}|\[[^\]]*\]|n\/a|(?:your|my|the|some|example|sample|dummy|fake|test|placeholder|new|old)(?:[-_.]?\w*)?|change[-_]?me|secrets?|password|passwd|token|redacted|hidden|none|null|undefined|true|false|tbd|todo)$/i;
+
+/**
+ * Does the value at [at, end) look like a secret? What the widened patterns find in the leak scan
+ * (on runbook source, too: prose such as "api key: see the vault") is reported only then:
+ * - one word (after an auth scheme such as `Basic`), not a placeholder, an elided example (`…`,
+ *   `...`) or a variable reference;
+ * - quoted (`"…"`, or the span is the inside of quotes): 4 characters or more;
+ * - else 6 or more with letters and a digit or symbol (`hunter2`), or 12 or more letters of
+ *   entropy 3 or more.
+ */
+export function looksLikeSecret(text: string, at: number, end: number): boolean {
+  let v = text.slice(at, end);
+  const before = text[at - 1];
+  let quoted = (before === '"' || before === "'") && text[end] === before;
+  if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) {
+    quoted = true;
+    v = v.slice(1, -1);
+  }
+  v = v.trim().replace(/^(?:Basic|Bearer|Token|Digest|Negotiate|Bot)\s+/i, '');
+  if (v === '' || /\s/.test(v) || PLACEHOLDER.test(v) || /…|\.\.\.|\$[{(A-Za-z_]|%\w+%/.test(v)) return false;
+  if (quoted) return v.length >= 4;
+  return (v.length >= 6 && /[A-Za-z]/.test(v) && /[^A-Za-z]/.test(v)) || (v.length >= 12 && shannonEntropy(v) >= 3);
+}
 
 /** Values that are references, not secrets: `$TOKEN`, `${TOKEN}`, `$env:TOKEN`, `%TOKEN%`, `$(cmd)`. */
 const VARIABLE_REF = /^(?:(?:Bearer|Basic|token)\s+)?(?:\$\{?[A-Za-z_]\w*\}?|\$env:\w+|%\w+%|\$\(.*\)|\$\{(?:secret|input|param|out|secretFile):[\w:]+\})$/i;
@@ -53,9 +94,10 @@ const VARIABLE_REF = /^(?:(?:Bearer|Basic|token)\s+)?(?:\$\{?[A-Za-z_]\w*\}?|\$e
 /**
  * Variable references anywhere in the text (never secrets): md-runbook's own `${secret:NAME}`,
  * `${input:NAME}`, `${param:NAME}`, `${secretFile:NAME}`, shell `${VAR}`, `${VAR:-default}`,
- * `$VAR`, `$(command)`, PowerShell `$env:VAR` and cmd `%VAR%`.
+ * `$VAR`, `$(command)`, PowerShell `$env:VAR` and cmd `%VAR%`. Read in linear time by
+ * redactScan.ts `findReferences` (`${…` retried each `${` to the line's end).
  */
-const REFERENCE_RE =
+export const REFERENCE_RE =
   /\$\{(?:secret|input|param|out|secretFile):[\w:]+\}|\$\{[A-Za-z_]\w*(?::?[-=?+][^}\n]*)?\}|\$\((?:[^()\n]|\([^()\n]*\))*\)|\$env:\w+|\$[A-Za-z_]\w*|%[A-Za-z_]\w*%/g;
 
 /** An auth scheme in front of a value (`Bearer $TOKEN`): the value is what counts. */
@@ -178,7 +220,7 @@ function yamlKey(line: string): YamlKey | undefined {
   };
 }
 
-const lineIndent = (line: string): number => {
+export const lineIndent = (line: string): number => {
   const m = /^( *)((?:- +)*)/.exec(line);
   return (m?.[1] ?? '').length + (m?.[2] ?? '').length;
 };
@@ -186,8 +228,11 @@ const isBlank = (line: string): boolean => /^\s*(?:#.*)?$/.test(line);
 const isDocBreak = (line: string): boolean => /^(?:---|\.\.\.)\s*$/.test(line);
 const isSecretKind = (k: YamlKey | undefined): boolean => k?.key === 'kind' && /^["']?Secret["']?$/.test(k.value);
 
-/** Is the YAML mapping whose key at line `at` is at column `indent` a `kind: Secret`? */
-function yamlObjectIsSecret(lines: readonly string[], at: number, indent: number): boolean {
+/**
+ * Is the YAML mapping whose key at line `at` is at column `indent` a `kind: Secret`? Kept as the
+ * definition: `secretMappings` answers it for every line in one pass each way.
+ */
+export function yamlObjectIsSecret(lines: readonly string[], at: number, indent: number): boolean {
   for (let j = at - 1; j >= 0; j--) {
     const line = lines[j] ?? '';
     if (isBlank(line)) continue;
@@ -213,6 +258,87 @@ function yamlObjectIsSecret(lines: readonly string[], at: number, indent: number
   return false;
 }
 
+/**
+ * `yamlObjectIsSecret(lines, i, <column of line i>)` for every line i, in linear time. Asked for
+ * each `data:` line, the scans above read all the lines at its column: 50 KB of `data:` lines took
+ * 46 s. Here each direction keeps, per open column, what its scan would find so far: looking back,
+ * a `kind: Secret` at that column since its last list item (included) or shallower line; looking
+ * ahead, a `kind: Secret` before the next list item or shallower line. A `---` or `...` ends all.
+ */
+export function secretMappings(lines: readonly string[]): (at: number) => boolean {
+  const keys = lines.map((l) => (isBlank(l) || isDocBreak(l) ? undefined : yamlKey(l)));
+  const sweep = (from: number, step: number, update: (seen: boolean, k: YamlKey | undefined) => boolean): Uint8Array => {
+    const found = new Uint8Array(lines.length);
+    const open: Array<{ indent: number; seen: boolean }> = [];
+    for (let i = from; i >= 0 && i < lines.length; i += step) {
+      const line = lines[i] ?? '';
+      if (isBlank(line)) continue;
+      if (isDocBreak(line)) {
+        open.length = 0;
+        continue;
+      }
+      const ind = lineIndent(line);
+      while (open.length > 0 && open[open.length - 1]!.indent > ind) open.pop();
+      let top = open[open.length - 1];
+      if (top?.indent === ind) found[i] = top.seen ? 1 : 0;
+      else open.push((top = { indent: ind, seen: false }));
+      top.seen = update(top.seen, keys[i]);
+    }
+    return found;
+  };
+  // Back: a list item is read, then ends the scan. Ahead: a list item ends the scan unread.
+  const back = sweep(0, 1, (seen, k) => (k?.item ? isSecretKind(k) : seen || isSecretKind(k)));
+  const ahead = sweep(lines.length - 1, -1, (seen, k) => (k?.item ? false : seen || isSecretKind(k)));
+  return (at) => back[at] === 1 || ahead[at] === 1;
+}
+
+/**
+ * For each `[start, end)` (in order), the end of the first `}` at or after it that closes nothing
+ * opened at or after `start`, plus one, else the text's length; and for each start, the last `{`
+ * before it that nothing before it closes, else 0. As reading back and ahead from each one with a
+ * depth count did, in one pass each way: `"data":{}` repeated over 100 KB took 7.5 s.
+ */
+export function enclosingBraces(text: string, spans: ReadonlyArray<readonly [number, number]>): Array<[number, number]> {
+  const out = spans.map((): [number, number] => [0, text.length]);
+  const opens: number[] = [];
+  let at = 0;
+  spans.forEach(([start], n) => {
+    for (; at < start; at++) {
+      if (text[at] === '{') opens.push(at);
+      else if (text[at] === '}') opens.pop();
+    }
+    out[n]![0] = opens[opens.length - 1] ?? 0;
+  });
+  const closes: number[] = [];
+  at = text.length - 1;
+  for (let n = spans.length - 1; n >= 0; n--) {
+    const end = spans[n]![1];
+    for (; at >= end; at--) {
+      if (text[at] === '}') closes.push(at);
+      else if (text[at] === '{') closes.pop();
+    }
+    const close = closes[closes.length - 1];
+    if (close !== undefined) out[n]![1] = close + 1;
+  }
+  return out;
+}
+
+export const KIND_SECRET_JSON = /\\?"kind\\?"\s*:\s*\\?"Secret\\?"/;
+
+/**
+ * For each span (in order, not overlapping), whether the object around it (enclosingBraces) holds
+ * a `"kind": "Secret"`, as `KIND_SECRET_JSON.test(text.slice(start, end))` said: one found in the
+ * whole text that starts and ends inside it. They don't overlap, so the first one that starts
+ * inside says.
+ */
+export function inSecretObjects(text: string, spans: ReadonlyArray<readonly [number, number]>): boolean[] {
+  const kinds = [...text.matchAll(new RegExp(KIND_SECRET_JSON.source, 'g'))].map((k) => ({ start: k.index ?? 0, end: (k.index ?? 0) + k[0].length }));
+  return enclosingBraces(text, spans).map(([start, end]) => {
+    const kind = kinds[lastStartingBefore(kinds, (k) => k.start, start) + 1];
+    return kind !== undefined && kind.end <= end;
+  });
+}
+
 /** Values under `data:` / `stringData:` of a `kind: Secret` manifest, YAML or JSON (also escaped JSON in annotations). */
 function k8sSecretValues(text: string): Span[] {
   const out: Span[] = [];
@@ -230,10 +356,12 @@ function k8sSecretValues(text: string): Span[] {
     starts.push(pos);
     pos += l.length + 1;
   }
+  const isSecret = secretMappings(lines);
   lines.forEach((line, i) => {
     const k = yamlKey(line);
     if (!k || (k.key !== 'data' && k.key !== 'stringData') || k.value !== '') return;
-    if (!yamlObjectIsSecret(lines, i, k.indent)) return;
+    // k.indent is the line's column (lineIndent): what secretMappings asks at.
+    if (!isSecret(i)) return;
     let child = -1;
     let block = false;
     for (let j = i + 1; j < lines.length; j++) {
@@ -256,35 +384,21 @@ function k8sSecretValues(text: string): Span[] {
   });
 
   // JSON (also `\"data\":{…}` inside an escaped last-applied-configuration)
-  const kindSecret = /\\?"kind\\?"\s*:\s*\\?"Secret\\?"/;
-  for (const m of text.matchAll(/\\?"(?:data|stringData)\\?"\s*:\s*\{([^{}]*)\}/g)) {
+  const matches = [...text.matchAll(/\\?"(?:data|stringData)\\?"\s*:\s*\{([^{}]*)\}/g)];
+  const secret = inSecretObjects(
+    text,
+    matches.map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]),
+  );
+  matches.forEach((m, n) => {
+    if (!secret[n]) return;
     const at = m.index ?? 0;
-    let start = 0;
-    for (let d = 0, j = at - 1; j >= 0; j--) {
-      const ch = text[j];
-      if (ch === '}') d++;
-      else if (ch === '{' && d-- === 0) {
-        start = j;
-        break;
-      }
-    }
-    let end = text.length;
-    for (let d = 0, j = at + m[0].length; j < text.length; j++) {
-      const ch = text[j];
-      if (ch === '{') d++;
-      else if (ch === '}' && d-- === 0) {
-        end = j + 1;
-        break;
-      }
-    }
-    if (!kindSecret.test(text.slice(start, end))) continue;
     const bodyAt = at + m[0].indexOf('{') + 1;
     for (const v of (m[1] ?? '').matchAll(/\\?"[^"\\]*\\?"\s*:\s*\\?"([^"\\]*)\\?"/g)) {
       const value = v[1] ?? '';
       const valueEnd = (v.index ?? 0) + v[0].length - (v[0].endsWith('\\"') ? 2 : 1);
       push(bodyAt + valueEnd - value.length, value);
     }
-  }
+  });
   return out;
 }
 
@@ -326,29 +440,47 @@ function domainDetector(domains: readonly string[] | undefined): Detector | unde
   return { kind: 'internal-domain', re: new RegExp(`(?<![\\w.-])(?:[a-z0-9-]+\\.)*(?:${alt})(?![\\w-]|\\.[a-z0-9])`, 'gi') };
 }
 
+/** The index of the last item (sorted by `start`) that starts before `end`, or -1. */
+function lastStartingBefore<T>(items: readonly T[], start: (t: T) => number, end: number): number {
+  let lo = 0;
+  let hi = items.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (start(items[mid]!) < end) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
+
 export function scanForLeaks(text: string, opts: LeakScanOptions = {}): LeakFinding[] {
+  // Findings and references don't overlap among themselves and are kept in text order, so the one
+  // a span could overlap is the last that starts before its end (found by bisection: a line full of
+  // findings and references stays fast).
   const spans: Span[] = [];
-  const taken = (start: number, end: number): boolean => spans.some((s) => start < s.offset + s.length && s.offset < end);
   const add = (offset: number, length: number, kind: string): void => {
-    if (length > 0 && !taken(offset, offset + length)) spans.push({ offset, length, kind });
+    if (length <= 0) return;
+    const i = lastStartingBefore(spans, (s) => s.offset, offset + length);
+    const prev = spans[i];
+    if (prev && prev.offset + prev.length > offset) return;
+    spans.splice(i + 1, 0, { offset, length, kind });
   };
-  const refs = [...text.matchAll(REFERENCE_RE)].map((m) => ({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
-  const inRef = (pos: number): boolean => refs.some((r) => pos >= r.start && pos < r.end);
-  const overlapsRef = (start: number, end: number): boolean => refs.some((r) => start < r.end && r.start < end);
+  const refs = findReferences(text).map(([start, end]) => ({ start, end }));
+  const overlapsRef = (start: number, end: number): boolean => (refs[lastStartingBefore(refs, (r) => r.start, end)]?.end ?? -1) > start;
+  const inRef = (pos: number): boolean => overlapsRef(pos, pos + 1);
   /** A match that is (or starts with) a variable reference, or was already redacted. */
   const skip = (m: string, at: number): boolean =>
     m.includes(REDACTED) || VARIABLE_REF.test(m.trim()) || inRef(at + (AUTH_SCHEME.exec(m)?.[0].length ?? 0));
 
-  const regexHits = (detectors: readonly Detector[]): void => {
+  const regexHits = (detectors: ReadonlyArray<Detector | PatternDetector>, accept?: (at: number, end: number) => boolean): void => {
     for (const d of detectors) {
-      d.re.lastIndex = 0;
-      for (const m of text.matchAll(d.re)) {
-        const at = m.index ?? 0;
-        const end = at + m[0].length;
-        if (m[0] === '' || skip(m[0], at)) continue;
+      if ('re' in d) d.re.lastIndex = 0;
+      const found: Spans = 'find' in d ? d.find(text) : [...text.matchAll(d.re)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
+      for (const [at, end] of found) {
+        const m = text.slice(at, end);
+        if (m === '' || skip(m, at) || (accept && !accept(at, end))) continue;
         // `-----BEGIN … PRIVATE KEY-----` with its body already redacted is harmless.
-        if (d.kind === 'private-key' && m[0].startsWith('-----BEGIN') && REDACTED_AFTER.test(text.slice(end, end + 40))) continue;
-        add(at, m[0].length, d.kind);
+        if (d.kind === 'private-key' && m.startsWith('-----BEGIN') && REDACTED_AFTER.test(text.slice(end, end + 40))) continue;
+        add(at, m.length, d.kind);
       }
     }
   };
@@ -369,6 +501,7 @@ export function scanForLeaks(text: string, opts: LeakScanOptions = {}): LeakFind
   }
   const domains = domainDetector(opts.internalDomains);
   if (domains) for (const m of text.matchAll(domains.re)) add(m.index ?? 0, m[0].length, domains.kind);
+  if (opts.widened !== false) regexHits(WIDENED_DETECTORS, (at, end) => looksLikeSecret(text, at, end));
 
   spans.sort((a, b) => a.offset - b.offset);
   const lineStarts = [0];

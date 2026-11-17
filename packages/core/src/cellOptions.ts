@@ -2,6 +2,7 @@ import { CellChecks, MAX_EVERY_MS, MAX_RETRY, checkRefText, parseCapture, parseI
 import { VarRef, findRefs } from './secrets';
 import { isKubeContextValue, kubeContextRefText, wantedKubeContext } from './kubeContext';
 import { OsName, parseOsList } from './os';
+import { isBlank, trimEndWith } from './lineText';
 
 /**
  * Per-cell options in the fence info string, after the language word:
@@ -146,7 +147,7 @@ export function rewriteInfoTokens(info: string, replace: (t: InfoToken) => strin
     const r = replace(t);
     if (r === undefined) continue;
     const before = info.slice(pos, off + t.start);
-    out += r === '' ? before.replace(/[ \t]+$/, '') : before + r;
+    out += r === '' ? trimEndWith(before, isBlank) : before + r;
     pos = off + t.end;
   }
   return out + info.slice(pos);
@@ -159,8 +160,9 @@ export function rewriteInfoTokens(info: string, replace: (t: InfoToken) => strin
 export function renameInfoOption(info: string, from: string, to: string): string | undefined {
   const off = (LANG_RE.exec(info)?.[0] ?? '').length;
   let found = false;
+  const name = from.toLowerCase();
   const out = rewriteInfoTokens(info, (t) => {
-    if (found || t.key.toLowerCase() !== from.toLowerCase()) return undefined;
+    if (found || t.key.toLowerCase() !== name) return undefined;
     found = true;
     return to + info.slice(off + t.start + t.key.length, off + t.end);
   });
@@ -173,12 +175,14 @@ export function renameInfoOption(info: string, from: string, to: string): string
  */
 export function setInfoOption(info: string, key: string, value: string): string {
   let found = false;
+  const name = key.toLowerCase();
   const out = rewriteInfoTokens(info, (t) => {
-    if (found || t.key.toLowerCase() !== key.toLowerCase()) return undefined;
+    if (found || t.key.toLowerCase() !== name) return undefined;
     found = true;
     return `${key}=${value}`;
   });
-  return found ? out : `${info.replace(/[ \t]+$/, '')} ${key}=${value}`;
+  // Trailing blanks dropped as `replace(/[ \t]+$/, '')` did, without its quadratic backtracking.
+  return found ? out : `${trimEndWith(info, isBlank)} ${key}=${value}`;
 }
 
 /**

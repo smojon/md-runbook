@@ -331,8 +331,13 @@ export function splitSteps(source: string, kind: ShellKind): LineStep[] {
     steps.push({ start: start!, end, text: lines.slice(start, end + 1).map((l, k, all) => l.text + (k < all.length - 1 ? l.eol : '')).join('') });
     start = undefined;
   };
-  /** Next line that has something on it, for `continuesAbove`. */
-  const nextFilled = (i: number): string | undefined => lines.slice(i + 1).find((l) => l.text.trim() !== '')?.text;
+  /** Next line that has something on it, for `continuesAbove`: found for all lines in one pass from the end (a copy of the rest for each line was quadratic). */
+  const filledAfter: Array<string | undefined> = new Array<string | undefined>(lines.length);
+  for (let j = lines.length - 1, next: string | undefined; j >= 0; j--) {
+    filledAfter[j] = next;
+    if (lines[j]!.text.trim() !== '') next = lines[j]!.text;
+  }
+  const nextFilled = (i: number): string | undefined => filledAfter[i];
   for (let i = 0; i < lines.length; i++) {
     const code = sc.line(lines[i]!.text);
     if (start === undefined) {
