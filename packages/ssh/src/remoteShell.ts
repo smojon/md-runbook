@@ -485,8 +485,11 @@ export class RemoteShell {
       // is N, as in the extension's session mode; the next cell opens a new shell. Not through
       // md-runbook-gate: its own exit status (0) is not the cell's.
       if (!timedOut && !cancelled && e.exitStatus !== undefined && !this.gateInfo) return result({ exitCode: e.exitStatus, shellEnded: true });
-      // The session's pod didn't start: the gate's reason, not only that the shell ended.
-      return result({ timedOut, cancelled, shellEnded: true, ...(timedOut || cancelled ? {} : { error: this.podFailure ?? e.message }) });
+      // The session's pod didn't start: the gate's reason, not only that the shell ended. This
+      // request shows it, so the next one doesn't again (re-check of 0.30.0, L1).
+      if (timedOut || cancelled) return result({ timedOut, cancelled, shellEnded: true });
+      this.podFailureUnseen = false;
+      return result({ timedOut, cancelled, shellEnded: true, error: this.podFailure ?? e.message });
     } finally {
       clearTimeout(timer);
       clearTimeout(podTimer);
