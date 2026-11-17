@@ -1,6 +1,7 @@
 // Records the README demo: opens a demo runbook as a notebook in a throwaway VS Code with the dev
-// build, clicks Run All, saves, opens the file as plain Markdown, selects the first saved output
-// block, and writes a screenshot every ~250 ms to <outDir>/frames (frames.json has the timestamps).
+// build and the Steps view on the left, clicks Run All (the steps tick off, a check passes on the
+// second attempt), saves, opens the file as plain Markdown, selects the first saved output block,
+// and writes a screenshot every ~250 ms to <outDir>/frames (frames.json has the timestamps).
 // Then make_gif.py builds the GIF. Needs playwright-core (npm install it outside the repo and point
 // NODE_PATH at its node_modules), a compiled build (npm run compile) and Windows: the demo blocks
 // are PowerShell. Usage:
@@ -46,8 +47,9 @@ fs.writeFileSync(
     '## 3. Wait until it is ready',
     '',
     '```powershell retry=5 every=1s expect="successfully rolled out"',
-    '$f = "$env:TEMP\\md-runbook-gif"; $n = [int](Get-Content $f -EA 0) + 1; Set-Content $f $n',
-    'if ($n -lt 3) { "Waiting for rollout: 0 of 1 replicas available..."; exit 1 }',
+    '$f = "$env:TEMP\\md-runbook-gif"',
+    '$n = [int](Get-Content $f -EA 0) + 1; Set-Content $f $n',
+    'if ($n -lt 2) { "Waiting for rollout: 0 of 1 ready"; exit 1 }',
     'Remove-Item $f; \'deployment "checkout" successfully rolled out\'',
     '```',
     '',
@@ -55,11 +57,66 @@ fs.writeFileSync(
 );
 
 (async () => {
-  const { win, close } = await launch({ repo, out, exe, file: runbook, width: 1000, height: 940 });
+  const { win, close } = await launch({
+    repo,
+    out,
+    exe,
+    file: runbook,
+    width: 1000,
+    height: 940,
+    // Run All starts right away (no launch form for NAMESPACE: its default is used).
+    settings: { 'mdRunbook.execution.launchForm': false },
+    keybindings: [
+      { key: 'ctrl+alt+shift+j', command: 'mdRunbook.showSteps' },
+      { key: 'ctrl+alt+shift+k', command: 'workbench.action.focusActiveEditorGroup' },
+      { key: 'ctrl+alt+shift+n', command: 'notifications.toggleDoNotDisturbMode' },
+    ],
+  });
   const frames = [];
   let recording = false;
   let loop;
   try {
+    // The Steps view on the left from the first frame (the Library collapsed), the notebook
+    // focused, and Do Not Disturb on: the text view's "looks like a runbook" offer stays hidden.
+    await win.keyboard.press('Control+Alt+Shift+J');
+    await win.locator('.pane-header', { hasText: 'Steps' }).first().waitFor({ timeout: 15_000 }).catch(() => console.error('Steps view header not seen'));
+    await sleep(1000);
+    const library = win.locator('.pane-header', { hasText: 'Library' }).first();
+    if ((await library.getAttribute('aria-expanded').catch(() => null)) === 'true') await library.click();
+    await win.keyboard.press('Control+Alt+Shift+N');
+    await sleep(500);
+    await win.keyboard.press('Control+Alt+Shift+K');
+    await sleep(500);
+    await win.screenshot({ path: path.join(out, 'setup.png') });
+    // The Steps view says who ran the runbook ("Last ran green: just now (by <login>)"): the
+    // recording machine's login name shows as "ops" instead. A MutationObserver in each webview
+    // frame rewrites the text before it's painted. Installed again before each screenshot, for a
+    // frame the webview made since; a frame that still showed the name is reported.
+    const login = os.userInfo().username;
+    const mask = async () => {
+      let shown = false;
+      for (const frame of win.frames()) {
+        shown =
+          (await frame
+            .evaluate((login) => {
+              const re = new RegExp(`\\(by ${login.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g');
+              const seen = re.test(document.documentElement?.textContent ?? '');
+              if (!window.__demoMask) {
+                window.__demoMask = true;
+                const fix = () => {
+                  const w = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
+                  for (let n = w.nextNode(); n; n = w.nextNode()) if (n.data.includes(`(by ${login})`)) n.data = n.data.replace(re, '(by ops)');
+                };
+                fix();
+                new MutationObserver(fix).observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+              }
+              return seen;
+            }, login)
+            .catch(() => false)) || shown;
+      }
+      return shown;
+    };
+    await mask();
     // A visible pointer: Playwright moves the real mouse, but screenshots don't show it.
     await win.evaluate(() => {
       const c = document.createElement('div');
@@ -108,32 +165,34 @@ fs.writeFileSync(
       while (recording) {
         const t = Date.now();
         const file = `f${String(frames.length).padStart(4, '0')}.png`;
+        if (await mask()) console.error(`${file}: the login name was on screen before it was masked`);
         await win.screenshot({ path: path.join(framesDir, file) });
         frames.push({ file, t: t - t0 });
         await sleep(Math.max(0, 250 - (Date.now() - t)));
       }
     })();
 
-    await sleep(1500);
+    await sleep(2500); // the runbook and its steps, before anything runs
     const runAll = win.locator('.notebook-toolbar-container a.action-label[aria-label^="Run All"]').first();
     const rb = await runAll.boundingBox();
     if (!rb) throw new Error('Run All button not found');
     await clickAt(rb.x + rb.width / 2, rb.y + rb.height / 2);
-    await moveTo(760, 600, 600); // off the toolbar, so its tooltip goes away
-    // The progress item in the status bar counts finished cells: 0/3 … 3/3.
-    const progress = (n) =>
-      win
-        .waitForFunction((n) => (document.querySelector('.part.statusbar')?.textContent ?? '').includes(`${n}/3`), n, { timeout: 30_000 })
-        .catch(() => console.error(`progress ${n}/3 not seen`));
-    await progress(2);
-    await sleep(400);
-    // Scroll so cell 3 and its retries are on screen.
-    for (let i = 0; i < 6; i++) {
-      await win.mouse.wheel(0, 30);
-      await sleep(40);
-    }
-    await progress(3);
-    await sleep(2500);
+    // The empty activity bar: no tooltip, no cell hover bar; not on the Steps webview, where the
+    // side bar's sash would stay highlighted (it doesn't see the pointer leave).
+    await moveTo(24, 600, 800);
+    // Polled with evaluate: waitForFunction failed at once here (VS Code's CSP blocks eval, it seems).
+    const until = async (what, fn) => {
+      const end = Date.now() + 40_000;
+      while (Date.now() < end) {
+        if (await win.evaluate(fn).catch(() => false)) return;
+        await sleep(150);
+      }
+      console.error(`not seen: ${what}`);
+    };
+    // The notebook scrolls to the running cell by itself (progress.ts). Done when the toolbar has
+    // Run All again (Stop Execution while running).
+    await until('run finished', () => !!document.querySelector('.notebook-toolbar-container a.action-label[aria-label^="Run All"]'));
+    await sleep(3000);
 
     // Save, then show the same file as plain Markdown and select the first saved output block:
     // the output is in the file.

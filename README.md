@@ -4,7 +4,7 @@ Open Markdown files as VS Code notebooks: run their shell blocks and store the o
 same `.md` file. It runs natively on **Windows** (PowerShell, cmd, Git Bash; no WSL), **macOS**
 and **Linux**.
 
-![Run All on a runbook, then the same file as plain Markdown with the output saved in it](docs/demo.gif)
+![Run All on a runbook: the steps tick off in the Steps view, then the same file as plain Markdown with the output saved in it](docs/demo.gif)
 
 - The file stays plain Markdown. Opening and saving it without running anything leaves it
   **byte-for-byte unchanged**. It keeps CRLF/LF (even mixed), blank lines, `` ``` `` vs `~~~`
