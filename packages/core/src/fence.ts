@@ -10,7 +10,10 @@ export interface FenceOpen {
   info: string;
 }
 
-const OPEN_RE = /^([ \t]*)(`{3,}|~{3,})(.*)$/;
+// The info string is the rest of the line, whatever it holds: `[\s\S]`, not `.`, which doesn't
+// match U+2028 or U+2029 (lines don't end there), so `$` failed and the fence run backtracked one
+// character at a time, each time scanning the rest again: quadratic on a long run of backticks.
+const OPEN_RE = /^([ \t]*)(`{3,}|~{3,})([\s\S]*)$/;
 const CLOSE_RE = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
 
 export function matchFenceOpen(text: string): FenceOpen | null {

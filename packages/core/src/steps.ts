@@ -8,6 +8,7 @@
  */
 
 import { splitLines } from './lines';
+import { beforeComment, isBlank } from './lineText';
 import type { ShellKind } from './shellKind';
 
 export interface LineStep {
@@ -159,7 +160,7 @@ class BashScanner implements Scanner {
     // Code after a trailing operator continues on the next line.
     if (this.quote === '' && (tail.endsWith('|') || tail.endsWith('&&'))) this.cont = true;
     // A function header (`name()`, `function name`) takes its body from the next lines.
-    if (this.quote === '' && FUNCTION_HEADER.test(text.replace(/[ \t]+#.*$/, ''))) this.cont = true;
+    if (this.quote === '' && FUNCTION_HEADER.test(beforeComment(text, isBlank))) this.cont = true;
     this.inHeredoc = this.heredocs.length > 0;
     return code;
   }

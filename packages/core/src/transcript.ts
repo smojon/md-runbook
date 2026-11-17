@@ -20,6 +20,8 @@ import { LineBuffer } from './lineBuffer';
 import { formatLocalIso } from './outputBlock';
 import { applyTerminalControls } from './terminalText';
 import { LINE_RE } from './lines';
+import { sectionText } from './sections';
+import { atxHeading } from './title';
 
 export const DEFAULT_TRANSCRIPT_EXTENSION = '.transcript.log';
 
@@ -169,8 +171,6 @@ export function transcriptFileName(runbook: string, ext = DEFAULT_TRANSCRIPT_EXT
   return runbook.replace(/\.(md|markdown)$/i, '') + ext;
 }
 
-const ATX_RE = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
-
 /** The text of the last ATX heading in a Markdown cell, outside fenced blocks, or undefined. */
 export function lastHeading(markdown: string): string | undefined {
   let fence: string | undefined;
@@ -183,8 +183,8 @@ export function lastHeading(markdown: string): string | undefined {
       continue;
     }
     if (fence !== undefined) continue;
-    const m = ATX_RE.exec(line);
-    if (m) last = (m[2] ?? '').replace(/(^|[ \t]+)#+$/, '').trim();
+    const h = atxHeading(line, false);
+    if (h) last = sectionText(h.text);
   }
   return last;
 }

@@ -11,13 +11,14 @@ import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
 import { CodeCellLocation, locateCodeCells } from './locate';
-import { FRONT_MATTER_ENV_ENTRY, findRefs, parseFrontMatter, reportAddressProblem } from './secrets';
+import { findRefs, frontMatterEnvEntry, parseFrontMatter, reportAddressProblem } from './secrets';
 import { POWERSHELLS, UNIX_SHELLS, parseShells, shellKindForLanguage } from './shellKind';
 import { readSignature, signedStatus } from './signing';
 import { CALL_OPTIONS, NOT_ON_A_CALL, callRefs, checkCall, isCallLanguage, isDynamicSrc, parseCall, srcGlob } from './call';
 import { partProblems } from './parts';
 import { ProseOptions, markupCellAt, measureProse, proseLimits, sentenceMessage } from './prose';
 import { LINE_RE } from './lines';
+import { beforeComment, valueAndHash } from './lineText';
 
 /** `info`: a prose finding (prose.ts), shown but never failing a check. `prose: strict` makes them warnings. */
 export type LintSeverity = 'error' | 'warning' | 'info';
@@ -106,7 +107,7 @@ function lintFrontMatterEnv(lines: string[], end: number, signed: boolean): Lint
     const line = lines[i]!;
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
     if (!/^\s/.test(line)) break; // the next top-level key
-    const entry = FRONT_MATTER_ENV_ENTRY.exec(line);
+    const entry = frontMatterEnvEntry(line);
     if (!entry) {
       problems.push({ severity: 'warning', line: i, message: `front matter env: "${line.trim()}" is ignored (expected NAME: value, the name letters, digits and _)` });
       continue;
@@ -145,10 +146,10 @@ function lintReportRuns(text: string, lines: readonly string[], end: number): Li
   const problems: LintProblem[] = [];
   const at: Record<string, number> = {};
   for (let i = 1; i < end; i++) {
-    const m = /^(report-runs(?:-required|-signed|-token)?)\s*:\s*(.*?)\s*$/i.exec(lines[i]!);
+    const m = /^(report-runs(?:-required|-signed|-token)?)\s*:\s*/i.exec(lines[i]!);
     if (!m) continue;
     const key = m[1]!.toLowerCase();
-    const value = m[2]!.replace(/\s+#.*$/, '').replace(/^(["'])(.*)\1$/, '$2');
+    const value = beforeComment(lines[i]!.slice(m[0].length).trimEnd()).replace(/^(["'])(.*)\1$/, '$2');
     if (at[key] !== undefined) {
       // As parseFrontMatter reads them: the first valid address, the first token line, and for
       // -required and -signed the strictest (any line that asks for it).
@@ -231,8 +232,10 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
     const lines = text.replace(/^﻿/, '').split(LINE_RE);
     const end = lines.findIndex((l, i) => i > 0 && /^(---|\.\.\.)\s*$/.test(l));
     for (let i = 1; i < end; i++) {
-      const m = /^(mode|timeout|cwd|kube-context|kube-context-mode|git-bash-path-conversion|manual-steps|prose)\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
-      if (!m) continue;
+      const k = /^(mode|timeout|cwd|kube-context|kube-context-mode|git-bash-path-conversion|manual-steps|prose)\s*:\s*/i.exec(lines[i]!);
+      if (!k) continue;
+      // The value up to a `#` (see lineText.ts: read by hand, not with a lazy pattern).
+      const m = [k[0], k[1]!, valueAndHash(lines[i]!.slice(k[0].length)).value];
       const key = m[1]!.toLowerCase();
       const ignored =
         (key === 'mode' && fm.mode === undefined) ||
@@ -259,8 +262,9 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
     }
     const seen: { unix?: string; powershell?: string } = {};
     for (let i = 1; i < end; i++) {
-      const m = /^shell\s*:\s*(.*?)\s*(#.*)?$/i.exec(lines[i]!);
-      if (!m) continue;
+      const k = /^shell\s*:\s*/i.exec(lines[i]!);
+      if (!k) continue;
+      const m = [k[0], valueAndHash(lines[i]!.slice(k[0].length)).value];
       if (m[1] === '') {
         problems.push({ severity: 'warning', line: i, message: 'front matter shell: is empty: write the names on the same line (shell: zsh, pwsh), not as a list below it' });
         continue;

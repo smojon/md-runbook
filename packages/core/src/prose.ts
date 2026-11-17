@@ -31,6 +31,7 @@ import { parseCellOptions } from './cellOptions';
 import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
 import { isCodeMeta, type ParsedDocument } from './model';
 import { LINE_RE } from './lines';
+import { isWhitespace } from './lineText';
 
 export const PROSE_LIMITS = {
   sentenceWords: 20,
@@ -197,6 +198,39 @@ export interface ProseUnit {
   cited?: boolean;
 }
 
+/**
+ * A heading's text in a trimmed line (`## Step ##` → `Step`), as `^#{1,6}\s+(.*?)(?:\s+#+)?$`
+ * read it, in one pass (that pattern backtracked quadratically on a long run of blanks).
+ */
+function headingText(stripped: string): string | undefined {
+  let h = 0;
+  while (stripped[h] === '#') h++;
+  if (h < 1 || h > 6 || !isWhitespace(stripped[h])) return undefined;
+  let start = h;
+  while (isWhitespace(stripped[start])) start++;
+  let end = stripped.length;
+  let q = end;
+  while (q > start && stripped[q - 1] === '#') q--;
+  if (q < end && q > start && isWhitespace(stripped[q - 1])) {
+    end = q;
+    while (end > start && isWhitespace(stripped[end - 1])) end--;
+  }
+  return stripped.slice(start, end);
+}
+
+/** `line` with each `<!-- … -->` as a space, as `.replace(/<!--.*?-->/g, ' ')` without its quadratic scans. */
+function withoutComments(line: string): string {
+  let out = '';
+  let at = 0;
+  for (let open = line.indexOf('<!--'); open >= 0; open = line.indexOf('<!--', at)) {
+    const close = line.indexOf('-->', open + 4);
+    if (close < 0) break;
+    out += line.slice(at, open) + ' ';
+    at = close + 3;
+  }
+  return out + line.slice(at);
+}
+
 const ITEM_RE = /^(\s*)(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/;
 const QUOTE_RE = /^\s*>\s?/;
 const NOTE_RE = /^[ \t]*<!--[ \t]*md-runbook:note\b/;
@@ -319,10 +353,10 @@ function readProse(text: string, options: ProseOptions): { units: ProseUnit[]; e
     const line = raw.replace(QUOTE_RE, '');
     const stripped = line.trim();
     if (quoted && stripped) quoteEnd.set(quoteId, n);
-    const h = /^#{1,6}\s+(.*?)(?:\s+#+)?$/.exec(stripped);
-    if (h) {
+    const h = headingText(stripped);
+    if (h !== undefined) {
       close();
-      heading = h[1];
+      heading = h;
       quoteOther = true;
       list.clear();
       continue;
@@ -336,7 +370,7 @@ function readProse(text: string, options: ProseOptions): { units: ProseUnit[]; e
       continue;
     }
     const ignored = IGNORE_RE.test(line) || ignoreAt === n;
-    const body = line.replace(/<!--.*?-->/g, ' ');
+    const body = withoutComments(line);
     const item = ITEM_RE.exec(body);
     if (item || !current) {
       close();

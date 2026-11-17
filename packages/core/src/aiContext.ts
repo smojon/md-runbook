@@ -589,7 +589,8 @@ export function extractFencedBlocks(text: string): FencedBlock[] {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const blocks: FencedBlock[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const open = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(lines[i] ?? '');
+    // `[\s\S]*`, not `.*`: see fence.ts (U+2028 made this quadratic on a run of backticks).
+    const open = /^[ \t]*(`{3,}|~{3,})([\s\S]*)$/.exec(lines[i] ?? '');
     if (!open) continue;
     const fence = open[1] ?? '```';
     const info = (open[2] ?? '').trim();

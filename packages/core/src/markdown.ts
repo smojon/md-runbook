@@ -7,6 +7,8 @@
 
 import { isFenceClose, langOf, matchFenceOpen } from './fence';
 import { toLf } from './lines';
+import { isBlank, trimEndWith } from './lineText';
+import { atxHeading } from './title';
 
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&${{ '&': 'amp', '<': 'lt', '>': 'gt', '"': 'quot', "'": '#39' }[c]};`);
@@ -25,11 +27,25 @@ export function safeUrl(url: string): string | undefined {
   return url;
 }
 
-const HEADING_RE = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
 const HR_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
-const LIST_RE = /^([ \t]*)([-*+]|(\d{1,9})[.)])([ \t]+|$)(.*)$/;
-const QUOTE_RE = /^ {0,3}> ?(.*)$/;
-const TABLE_SEP_RE = /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+// `[\s\S]*`, not `.*`: U+2028 is text inside a line, and `.` stopping there made LIST_RE
+// backtrack quadratically through the blanks after the marker.
+const LIST_RE = /^([ \t]*)([-*+]|(\d{1,9})[.)])([ \t]+|$)([\s\S]*)$/;
+const QUOTE_RE = /^ {0,3}> ?([\s\S]*)$/;
+/**
+ * A table's separator row (`| --- | :-: |`): cells of `:?-+:?` between pipes, blanks around them.
+ * Read by splitting on `|`: the pattern it replaces backtracked quadratically on a long run of
+ * blanks (its blanks after a cell and before the line end could split the run any way).
+ */
+function isTableSep(line: string): boolean {
+  let s = trimEndWith(line, isBlank);
+  let k = 0;
+  while (isBlank(s[k])) k++;
+  s = s.slice(k);
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').every((cell) => /^[ \t]*:?-+:?[ \t]*$/.test(cell));
+}
 const BLANK_RE = /^[ \t]*$/;
 
 function indentWidth(s: string): number {
@@ -59,7 +75,7 @@ export function renderMarkdown(text: string, redactCode?: (code: string) => stri
 }
 
 function startsBlock(line: string): boolean {
-  return HEADING_RE.test(line) || HR_RE.test(line) || QUOTE_RE.test(line) || matchFenceOpen(line) !== null || /^[ \t]*<!--/.test(line);
+  return atxHeading(line) !== undefined || HR_RE.test(line) || QUOTE_RE.test(line) || matchFenceOpen(line) !== null || /^[ \t]*<!--/.test(line);
 }
 
 function renderBlocks(lines: string[]): string {
@@ -89,10 +105,10 @@ function renderBlocks(lines: string[]): string {
       continue;
     }
 
-    const heading = HEADING_RE.exec(line);
+    const heading = atxHeading(line);
     if (heading) {
-      const level = heading[1]!.length;
-      html += `<h${level}>${renderInline(heading[2] ?? '')}</h${level}>\n`;
+      const level = heading.level;
+      html += `<h${level}>${renderInline(heading.text)}</h${level}>\n`;
       i++;
       continue;
     }
@@ -121,7 +137,7 @@ function renderBlocks(lines: string[]): string {
       continue;
     }
 
-    if (line.includes('|') && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1]!) && lines[i + 1]!.includes('-')) {
+    if (line.includes('|') && i + 1 < lines.length && isTableSep(lines[i + 1]!) && lines[i + 1]!.includes('-')) {
       const rows: string[] = [line];
       let j = i + 2;
       while (j < lines.length && !BLANK_RE.test(lines[j]!) && lines[j]!.includes('|')) rows.push(lines[j++]!);

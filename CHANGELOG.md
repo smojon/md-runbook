@@ -36,6 +36,14 @@
   - Still the browser's text field: its undo, find and screen reader work as before.
   - Esc then Tab now leaves the field too, besides Shift+Tab.
   - iOS and Android are unchanged.
+- **No more hangs on hostile lines.** Some lines took seconds to hours to read, in VS Code, the
+  command line, the app and the library server:
+  - a run of backticks or tildes ending in the Unicode line separator (U+2028);
+  - a heading with a long run of blanks in it, as in a library runbook's title;
+  - front matter values, `env:` entries and `params:` items with long runs of blanks.
+- **Reading lines in one pass:** U+2028 and U+2029 now count as text inside a line, as in
+  CommonMark.
+  - A line with one can now be a fence, a heading or a front matter value.
 
 ## 0.28.0
 

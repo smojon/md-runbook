@@ -6,6 +6,10 @@
 
 import { isFenceClose, matchFenceOpen } from './fence';
 import { splitLines } from './lines';
+import { atxHeading, withoutClosingHashes } from './title';
+
+/** A heading's text as sections read it: a text of only `#` is empty, else no closing sequence. */
+export const sectionText = (text: string): string => (/^#+$/.test(text) ? '' : withoutClosingHashes(text)).trim();
 
 export interface SectionHeading {
   /** 0-based line. */
@@ -14,8 +18,6 @@ export interface SectionHeading {
   /** After the `#`s and spaces, without a closing `#` sequence. */
   text: string;
 }
-
-const ATX_RE = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
 
 /** The ATX headings of a runbook, outside the front matter and fenced blocks (code, outputs). */
 export function sectionHeadings(text: string): SectionHeading[] {
@@ -33,10 +35,9 @@ export function sectionHeadings(text: string): SectionHeading[] {
       i++;
       continue;
     }
-    const m = ATX_RE.exec(lines[i]!);
-    if (!m) continue;
-    const content = (m[2] ?? '').replace(/(^|[ \t]+)#+$/, '').trim();
-    out.push({ line: i, level: m[1]!.length, text: content });
+    const h = atxHeading(lines[i]!, false);
+    if (!h) continue;
+    out.push({ line: i, level: h.level, text: sectionText(h.text) });
   }
   return out;
 }
