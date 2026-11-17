@@ -1,5 +1,13 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { buildManifest, formatManifest, parseManifest, readSignature, signedStatus, signedTextHash, withSignature } from '@md-runbook/core/signing';
+import {
+  buildManifest,
+  formatManifest,
+  parseManifest,
+  readSignature,
+  signedStatus,
+  signedTextHash,
+  withSignature,
+} from '@md-runbook/core/signing';
 import { t } from '../i18n';
 import { recordSigners, recordStatus } from '@md-runbook/core/record';
 import { parseRunbookLink } from '@md-runbook/core/runbookLink';
@@ -104,7 +112,12 @@ describe('signing in the app (the logic)', () => {
     const text = '---\nkube-context: prod-eu\n---\n\n' + body;
     const built = buildManifest(body, { name: 'pods', version: 1, scopes: [], patterns: {} });
     if ('errors' in built) throw new Error(built.errors.join('; '));
-    const old = withSignature(text, { signer: 'author', signed: '2026-10-22', manifest: formatManifest({ ...built.manifest, text: signedTextHash(text) }), signature: 'AAAA' });
+    const old = withSignature(text, {
+      signer: 'author',
+      signed: '2026-10-22',
+      manifest: formatManifest({ ...built.manifest, text: signedTextHash(text) }),
+      signature: 'AAAA',
+    });
     const check = cosignCheck(old);
     expect('why' in check && check.why).toBe('rules');
     expect('errors' in check && check.errors.join('\n')).toMatch(/front matter's kube-context: prod-eu is not checked by servers/);

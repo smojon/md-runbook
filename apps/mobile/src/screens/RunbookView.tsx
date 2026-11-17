@@ -602,9 +602,7 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   );
   // A notice is a problem (red) unless it is the text sayOk last gave (green: something went well).
   const [okNotice, setOkNotice] = useState<string | undefined>(undefined);
-  const [notice, setNotice] = useState<string | undefined>(() =>
-    fromLink?.cosign ? cosignWhy(cosign, signed?.block.signer) : undefined,
-  );
+  const [notice, setNotice] = useState<string | undefined>(() => (fromLink?.cosign ? cosignWhy(cosign, signed?.block.signer) : undefined));
   const sayOk = (text: string): void => {
     setOkNotice(text);
     setNotice(text);
@@ -1794,20 +1792,12 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
           },
         },
         {
-          ...meta(
-            'cosignRunbook',
-            'share',
-            cosignWhy(cosign, signed?.block.signer),
-          ),
+          ...meta('cosignRunbook', 'share', cosignWhy(cosign, signed?.block.signer)),
           run: () => openSign('cosign'),
         },
         {
           // Same conditions as Co-sign Runbook: a signed runbook, unchanged since.
-          ...meta(
-            'requestCosign',
-            'share',
-            cosignWhy(cosign, signed?.block.signer),
-          ),
+          ...meta('requestCosign', 'share', cosignWhy(cosign, signed?.block.signer)),
           run: () =>
             void requestCosign(runbook).catch((e: unknown) => setNotice(t.shareFailed(e instanceof Error ? e.message : String(e)))),
         },

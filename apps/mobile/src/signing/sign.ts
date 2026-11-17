@@ -143,7 +143,10 @@ export async function signRunbook(
 }
 
 /** Why the runbook can't be co-signed now (`rules`: it can't be signed as it is, `errors` say why), or its block. */
-export type CosignCheck = { why: 'unsigned' | 'changed' } | { why: 'rules'; errors: string[] } | { block: SignatureBlock; manifest: Manifest };
+export type CosignCheck =
+  | { why: 'unsigned' | 'changed' }
+  | { why: 'rules'; errors: string[] }
+  | { block: SignatureBlock; manifest: Manifest };
 
 export function cosignCheck(text: string): CosignCheck {
   const block = readSignature(text);
