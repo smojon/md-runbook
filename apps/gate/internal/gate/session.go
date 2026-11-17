@@ -510,6 +510,9 @@ loop:
 			if l.err != nil {
 				break loop
 			}
+			if g.jobMode() {
+				g.job.spoke()
+			}
 			g.handle(l.text)
 			if limit > 0 && memOver(limit) {
 				say("the gate's memory is over memory_limit: the session ends")
@@ -520,11 +523,12 @@ loop:
 	}
 	// The client is done: each shell runs what it was sent, then ends. Cut short: they end now.
 	// (A Job's shells need no ending in the pod: deleting the Job ends them.) A client that went
-	// while the Job's pod was starting (stopped while it waited) cuts the session short too:
-	// what it sent would run for no one, and the Job goes now, not once the pod is ready.
-	if !term && g.jobMode() && !g.job.isSettled() {
+	// while the Job's pod was starting, or before the reply of a request that waited for it
+	// (stopped while it waited, as the pod got ready), cuts the session short too: what it sent
+	// would run for no one, and the Job goes now.
+	if !term && g.jobMode() && g.job.leftWaiting() {
 		term = true
-		g.log.Event("event", "job", "status", "left", "job", g.job.name, "reason", "the client left before the pod was ready")
+		g.log.Event("event", "job", "status", "left", "job", g.job.name, "reason", "the client left while a request waited for the pod")
 	}
 	g.ending.Store(true)
 	if term {

@@ -162,8 +162,8 @@ export function errorLines(cell: vscode.NotebookCell, n = 5): string[] {
   const out: string[] = [];
   for (const o of cell.outputs) {
     const m = outputMeta(o);
-    // The status line, earlier runs and cloud tables are not what the step printed.
-    if (m?.status || m?.earlier || m?.cloud) continue;
+    // The status lines (finished and running), earlier runs and cloud tables are not what the step printed.
+    if (m?.status || m?.running || m?.earlier || m?.cloud) continue;
     for (const item of o.items) {
       if (item.mime !== STDERR && item.mime !== STDOUT && item.mime !== 'text/plain') continue;
       const lines = decoder.decode(item.data).replace(ANSI_RE, '').split(/\r?\n/);

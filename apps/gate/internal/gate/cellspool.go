@@ -28,8 +28,9 @@ import (
 //
 // Before the session's first block, and at its end, every process of the leased account ends:
 // the gate runs the cells' mode as that account (the same sudo line) with killall, which calls
-// kill(-1, SIGKILL). Then it lists the processes until none of the account is left, and refuses
-// to start while one is.
+// kill(-1, SIGKILL). Then it lists the processes until none of the account is left. An account
+// with one left (a process in D state) is skipped, its lock kept until the gate ends, and the
+// next free one tried; none clear: the session doesn't start (leaseClear).
 //   - Linux: kill(-1) signals every process the caller may signal (the account's), except itself
 //     and PID 1, with the task list locked (kernel/signal.c, kill_something_info). A fork either
 //     finished before, and the child gets the signal too, or sees the signal and fails: a process
@@ -53,19 +54,48 @@ var errAllBusy = errors.New("all in use")
 // lockFunc takes an account's lock: errBusy when another session holds it.
 type lockFunc func(name string) (io.Closer, error)
 
+// errNoneClear: every free account of the pool kept a process through killall.
+var errNoneClear = errors.New("none can be cleared")
+
 // lease takes the first account of the pool whose lock is free: its index and the held lock.
 // A lock that fails otherwise (the folder, the file) stops the session: fail closed.
 func lease(pool []string, lock lockFunc) (int, io.Closer, error) {
+	i, l, _, _, err := leaseClear(pool, lock, nil)
+	return i, l, err
+}
+
+// leaseClear takes the first account of the pool whose lock is free and whose processes all end
+// (clear: "" or why not; nil: none to end). An account that can't be cleared (a process in D
+// state lives through SIGKILL) keeps its lock in stuck, held for the rest of this gate process,
+// and the next free one is tried: one stuck account doesn't block the pool (review of 0.30.0,
+// M3). problems: why each stuck one wasn't clear. None clear: errNoneClear; none free: errAllBusy.
+func leaseClear(pool []string, lock lockFunc, clear func(i int) string) (int, io.Closer, []io.Closer, []string, error) {
+	var stuck []io.Closer
+	var problems []string
 	for i, name := range pool {
 		l, err := lock(name)
-		if err == nil {
-			return i, l, nil
+		if errors.Is(err, errBusy) {
+			continue
 		}
-		if !errors.Is(err, errBusy) {
-			return -1, nil, errors.New("can't take the lock of " + name + ": " + err.Error())
+		if err != nil {
+			for _, s := range stuck {
+				s.Close()
+			}
+			return -1, nil, nil, problems, errors.New("can't take the lock of " + name + ": " + err.Error())
 		}
+		if clear != nil {
+			if p := clear(i); p != "" {
+				stuck = append(stuck, l)
+				problems = append(problems, p)
+				continue
+			}
+		}
+		return i, l, stuck, problems, nil
 	}
-	return -1, nil, errAllBusy
+	if len(problems) > 0 {
+		return -1, nil, stuck, problems, errNoneClear
+	}
+	return -1, nil, nil, nil, errAllBusy
 }
 
 // flockIn: the lock files in dir, NAME.lock, taken with flock (exclusive, without waiting).
@@ -195,33 +225,46 @@ func hasPID1(list []procs.Proc) bool {
 	return false
 }
 
-// leaseCells: the session's cells account, from the pool (after the self-check), and none of its
-// processes left. Any problem stops the gate before its first shell.
-func (g *Gate) leaseCells(infos []cellsInfo) {
+// leaseCells: the session's cells account, from the pool (after the self-check), with none of its
+// processes left; then the checks that run the cells' mode as that account (c.access): only as
+// the account this session holds, never as one another session's blocks run as (review of
+// 0.30.0, H2). Any problem stops the gate before its first shell.
+func (g *Gate) leaseCells(c selfCheck, infos []cellsInfo) {
 	pool := g.cfg.CellsPool()
 	dir := g.state + "/cells"
 	if os.MkdirAll(dir, 0o700) != nil || os.Chmod(dir, 0o700) != nil {
 		g.fatal("can't create " + dir)
 	}
-	i, lk, err := lease(pool, flockIn(dir))
-	if err != nil {
-		msg := err.Error()
-		if err == errAllBusy {
-			msg = busyMessage(g.cfg.CellsKey(), pool)
+	clear := func(i int) string {
+		g.cells, g.plan.account = infos[i], infos[i].name
+		killed, problem := clearAccount(g.clearer(), g.cells.name, g.cells.uid, g.uid, g.gateComm, true)
+		g.logKilled(killed, "start")
+		if problem != "" {
+			// Its lock stays held by this gate process; the next account is tried.
+			g.log.Event("event", "lease", "status", "skipped", "cells", g.cells.name, "reason", problem)
 		}
-		g.log.Event("event", "lease", "status", "refused", "reason", msg)
+		return problem
+	}
+	i, lk, stuck, problems, err := leaseClear(pool, flockIn(dir), clear)
+	// Nothing to end at the session's end on a stuck account: what is left may be another gate
+	// account's. Its lock is kept, so that no other session of this gate account takes it now.
+	g.cellsStuck = stuck
+	if err != nil {
+		msg, event := err.Error(), "lease"
+		switch err {
+		case errAllBusy:
+			msg = busyMessage(g.cfg.CellsKey(), pool)
+		case errNoneClear:
+			msg, event = g.cfg.CellsKey()+": no free cells account could be cleared: "+strings.Join(problems, "; "), "self-check"
+		}
+		g.cells, g.plan.account = cellsInfo{}, ""
+		g.log.Event("event", event, "status", "refused", "reason", msg)
 		g.fatal(msg)
 	}
 	g.cells, g.plan.account, g.cellsLock = infos[i], infos[i].name, lk
-	killed, problem := clearAccount(g.clearer(), g.cells.name, g.cells.uid, g.uid, g.gateComm, true)
-	g.logKilled(killed, "start")
-	if problem != "" {
-		// Nothing to end at the session's end: what is left may be another gate account's.
-		g.cellsLock.Close()
-		g.cellsLock = nil
-		msg := g.cfg.CellsKey() + ": " + problem
-		g.log.Event("event", "self-check", "status", "refused", "reason", msg)
-		g.fatal(msg)
+	if err := c.access(g.cells); err != nil {
+		g.log.Event("event", "self-check", "status", "refused", "reason", strings.ReplaceAll(err.Error(), "\n", " "))
+		g.fatal(err.Error())
 	}
 }
 

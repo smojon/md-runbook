@@ -1,15 +1,18 @@
 /**
  * Edit as Text on iOS and Android (ui/RunbookTextInput.tsx), in the "ios" Jest project: the
- * text input's text as coloured <Text> children (Highlight while editing, on by default), or the
+ * text input's text as coloured <Text> children (Highlight while editing: on by default on Android,
+ * off on iOS), or the
  * plain input with a value when the setting is off or the text is too long. The screen around it
  * is tested in editor.test.tsx. How the cursor behaves while typing is the platforms' (see the
  * file's header): checked on a device.
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { createRef } from 'react';
+import { Platform } from 'react-native';
 import { HIGHLIGHT_KINDS, type HighlightKind } from '../editor/highlight';
 import { HostList } from '../screens/HostList';
-import { outputSettings, resetSettings, setOutputSetting } from '../settings/store';
+import { loadSettings, outputSettings, resetSettings, setOutputSetting } from '../settings/store';
 import { inputText } from '../testing/inputText';
 import { light } from '../theme';
 import { DEFER_FROM, HIGHLIGHT_MAX, RunbookTextInput, drawLines, editorLines, type EditorLine } from '../ui/RunbookTextInput';
@@ -80,14 +83,66 @@ async function mount(value: string, extra: Partial<RunbookTextInputProps> = {}) 
   return { ref, onChangeText, onSelectionChange, again, input: () => screen.getByTestId('editor-text') };
 }
 
-beforeEach(() => resetSettings());
+beforeEach(async () => {
+  await AsyncStorage.clear();
+  resetSettings();
+  // Highlighted, as on Android by default (this project is iOS, where it is off by default).
+  setOutputSetting('highlightEditing', true);
+});
+
+afterEach(() => jest.restoreAllMocks());
+
+/** Let the settings' write to storage finish. */
+const saved = async (): Promise<Record<string, unknown>> => {
+  await new Promise((r) => setTimeout(r, 0));
+  return JSON.parse((await AsyncStorage.getItem('settings.v1')) ?? '{}') as Record<string, unknown>;
+};
 
 it('iOS and Android take this file', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   expect(require('../ui/RunbookTextInput').RunbookTextInput).toBe(RunbookTextInput);
 });
 
-describe('highlighted (the default)', () => {
+describe('the default', () => {
+  it('off on iOS (React Native drops colour-only changes there), on on Android and the web', () => {
+    expect(Platform.OS).toBe('ios');
+    resetSettings();
+    expect(outputSettings().highlightEditing).toBe(false);
+    jest.replaceProperty(Platform, 'OS', 'android');
+    resetSettings();
+    expect(outputSettings().highlightEditing).toBe(true);
+    jest.replaceProperty(Platform, 'OS', 'web');
+    resetSettings();
+    expect(outputSettings().highlightEditing).toBe(true);
+  });
+
+  it("a saved choice wins over the platform's default; the default itself is not saved", async () => {
+    await AsyncStorage.clear();
+    resetSettings();
+    setOutputSetting('stopOnFailure', false);
+    expect(await saved()).not.toHaveProperty('highlightEditing');
+    // iOS, turned on: kept after a restart.
+    setOutputSetting('highlightEditing', true);
+    expect(await saved()).toMatchObject({ highlightEditing: true });
+    resetSettings();
+    expect(outputSettings().highlightEditing).toBe(false);
+    await loadSettings();
+    expect(outputSettings().highlightEditing).toBe(true);
+    // Android, turned off: kept.
+    await AsyncStorage.setItem('settings.v1', JSON.stringify({ historySize: 0, highlightEditing: false }));
+    jest.replaceProperty(Platform, 'OS', 'android');
+    resetSettings();
+    await loadSettings();
+    expect(outputSettings().highlightEditing).toBe(false);
+    // Saved settings without a choice: the platform's default.
+    await AsyncStorage.setItem('settings.v1', JSON.stringify({ historySize: 0, stopOnFailure: false }));
+    resetSettings();
+    await loadSettings();
+    expect(outputSettings()).toMatchObject({ highlightEditing: true, stopOnFailure: false });
+  });
+});
+
+describe('highlighted', () => {
   it('the text as coloured children, one colour per kind, spelling the value exactly', async () => {
     expect(outputSettings().highlightEditing).toBe(true);
     const { input } = await mount(RUNBOOK);
@@ -178,15 +233,16 @@ describe('Highlight while editing off', () => {
     expect(coloured().length).toBeGreaterThan(0);
   });
 
-  it('Hosts & settings → Edit as Text: the toggle, on by default', async () => {
+  it('Hosts & settings → Edit as Text: the toggle, off by default on iOS', async () => {
+    resetSettings();
     await render(<HostList />);
     const toggle = screen.getByTestId('setting-highlightEditing');
     expect(screen.getByTestId('editor-settings')).toHaveTextContent(/Edit as Text.*Highlight while editing/);
-    expect(toggle.props.accessibilityState).toMatchObject({ checked: true });
+    expect(toggle.props.accessibilityState).toMatchObject({ checked: false });
     await act(async () => {
       fireEvent.press(toggle);
     });
-    expect(outputSettings().highlightEditing).toBe(false);
+    expect(outputSettings().highlightEditing).toBe(true);
   });
 });
 

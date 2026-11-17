@@ -128,8 +128,9 @@ if [ -n "$job_e" ]; then
     sleep 1
   done
   k get job "$job_e" > /dev/null 2>&1 && fail "Job $job_e is still there after its client left"
-  [ -z "$(value e ran)" ] || fail "a block ran for a client that left"
-  echo "ok: the client left while the pod started; Job $job_e went"
+  # (The pod got ready just before the client went: the block may have run by then.)
+  grep -aq $'\036__MDRB_POD__ ready' "$work/e/err" || [ -z "$(value e ran)" ] || fail "a block ran for a client that left"
+  echo "ok: the client left while a request waited for the pod; Job $job_e went"
 else
   # The pod was ready before the client went: nothing to check here.
   echo "note: session e's pod was ready before its client left"

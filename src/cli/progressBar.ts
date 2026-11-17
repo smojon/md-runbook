@@ -28,9 +28,13 @@ export interface Signals {
 /** What the bar shows: read again on every redraw, as the time left moves on during a step. */
 export type BarRead = () => { text: string; fraction: number };
 
-/** A terminal that draws the pinned line: VT sequences (TERM isn't dumb) and room for it. */
+/**
+ * A terminal that draws the pinned line: VT sequences (TERM isn't dumb) and room for it. Not in
+ * CI (`CI` set, not false or 0): a job's pseudo-terminal goes to a log, where the sequences are noise.
+ */
 export function canPinBar(term: BarTerminal, env: NodeJS.ProcessEnv): boolean {
-  return term.isTTY === true && env.TERM !== 'dumb' && (term.rows ?? 0) >= 4 && (term.columns ?? 0) >= 20;
+  const ci = env.CI !== undefined && !['', 'false', '0'].includes(env.CI.trim().toLowerCase());
+  return term.isTTY === true && env.TERM !== 'dumb' && !ci && (term.rows ?? 0) >= 4 && (term.columns ?? 0) >= 20;
 }
 
 /** The pinned line for a terminal `columns` wide: the words, then the bar; never wrapping. */
@@ -46,6 +50,10 @@ const ESC = '\x1b';
 /** DECSC / DECRC: the cursor where the output goes on. */
 const SAVE = `${ESC}7`;
 const RESTORE = `${ESC}8`;
+/** IND: down a line, scrolling at the bottom, in the same column (a \n becomes \r\n in a terminal). */
+const INDEX = `${ESC}D`;
+/** SGR 0: the bar in plain text, whatever colour the output left on (DECRC brings that back). */
+const PLAIN = `${ESC}[0m`;
 
 export class PinnedBar {
   private read: BarRead | undefined;
@@ -104,7 +112,7 @@ export class PinnedBar {
     this.term.on?.('resize', this.onResize);
     // Ctrl+C, a kill or an exit with the run still going: the terminal must not stay split.
     for (const s of ['SIGINT', 'SIGTERM', 'exit'] as const) this.signals.once(s, this.onSignal);
-    this.timer = setInterval(() => this.draw(), this.tickMs);
+    this.timer = setInterval(() => this.draw(true), this.tickMs);
     // The ticking must not keep the process alive.
     (this.timer as { unref?: () => void }).unref?.();
   }
@@ -112,13 +120,15 @@ export class PinnedBar {
   private readonly onSignal = (): void => this.stop();
 
   /**
-   * The bottom line out of the scroll region, as apt does: a new line first (the screen scrolls
+   * The bottom line out of the scroll region, as apt does: a line down first (the screen scrolls
    * when the cursor is on the last line), the region set (that moves the cursor), the cursor back.
+   * IND, not \n, keeps the column: after a resize in the middle of an output line, the rest of
+   * the line goes on after its start instead of over it.
    */
   private reserve(): void {
     this.rows = this.term.rows ?? 24;
     this.shown = '';
-    this.term.write(`\n${SAVE}${ESC}[1;${this.rows - 1}r${RESTORE}${ESC}[1A`);
+    this.term.write(`${INDEX}${SAVE}${ESC}[1;${this.rows - 1}r${RESTORE}${ESC}[1A`);
   }
 
   /**
@@ -137,12 +147,17 @@ export class PinnedBar {
     this.draw();
   };
 
-  private draw(): void {
+  /**
+   * The line, when it changed; `always` (each second): also when it didn't, so that it comes back
+   * after a step cleared the screen (`clear`, ESC[2J, ESC[J).
+   */
+  private draw(always = false): void {
     if (!this.active || this.suspended || !this.read) return;
     const { text, fraction } = this.read();
     const line = barLine(text, fraction, this.term.columns ?? 80);
-    if (line === this.shown) return;
+    if (line === this.shown && !always) return;
     this.shown = line;
-    this.term.write(`${SAVE}${ESC}[${this.rows};1H${ESC}[2K${line}${RESTORE}`);
+    // DECSC saves the output's colours too; plain before the erase (it fills with the background).
+    this.term.write(`${SAVE}${ESC}[${this.rows};1H${PLAIN}${ESC}[2K${line}${RESTORE}`);
   }
 }

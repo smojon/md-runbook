@@ -525,7 +525,9 @@ More in [Moving between VS Code and the app](switching.md#runbook-links).
   - md-runbook's outputs, notes, run history and signatures;
   - in the app's light or dark colours.
 - On iOS and Android, **Hosts & settings → Edit as Text → Highlight while editing** turns the
-  colours off (on by default). Turn it off if the cursor jumps or typing lags.
+  colours on or off. Turn it off if the cursor jumps or typing lags.
+- Highlighting is on by default on Android, and off on iOS, where colours can go stale after
+  emoji such as ✅.
 - In the web app, the text has line numbers. Its text field is the browser's own: its undo, find
   (Ctrl+F) and screen reader work.
 - In the web app, Tab puts two spaces; Shift+Tab, or Esc then Tab, leaves the field.

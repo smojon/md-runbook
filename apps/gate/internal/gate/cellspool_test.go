@@ -83,6 +83,66 @@ func TestLease(t *testing.T) {
 	}
 }
 
+// An account whose processes can't all be ended (a process in D state) doesn't block the pool:
+// it is skipped, its lock kept by the session that found it, and the next free one is leased;
+// none clear refuses (review of 0.30.0, M3). Only free accounts are cleared.
+func TestLeaseClear(t *testing.T) {
+	f := &fakeLocks{held: map[string]bool{}}
+	stuckOnes := map[int]bool{0: true}
+	var tried []int
+	clear := func(i int) string {
+		tried = append(tried, i)
+		if stuckOnes[i] {
+			return "1 processes of " + testPool[i] + " are left after ending them all (300 sleep)"
+		}
+		return ""
+	}
+	i, l, stuck, problems, err := leaseClear(testPool, f.lock, clear)
+	if err != nil || i != 1 || len(stuck) != 1 || !reflect.DeepEqual(tried, []int{0, 1}) || len(problems) != 1 || !strings.Contains(problems[0], "mdrb-cells-1 are left") {
+		t.Fatalf("one stuck: %d %v %d %v %q", i, err, len(stuck), tried, problems)
+	}
+	if !f.held["mdrb-cells-1"] || !f.held["mdrb-cells-2"] {
+		t.Errorf("held: %v", f.held)
+	}
+	// Another session meanwhile: the stuck one is busy (its lock kept), so it isn't tried again.
+	tried = nil
+	i2, l2, stuck2, _, err := leaseClear(testPool, f.lock, clear)
+	if err != nil || i2 != 2 || len(stuck2) != 0 || !reflect.DeepEqual(tried, []int{2}) {
+		t.Errorf("next session: %d %v %v", i2, err, tried)
+	}
+	// The first session ends: its locks go, and the next session tries the stuck one again.
+	l.Close()
+	stuck[0].Close()
+	tried = nil
+	i3, l3, stuck3, _, err := leaseClear(testPool, f.lock, clear)
+	if err != nil || i3 != 1 || len(stuck3) != 1 || !reflect.DeepEqual(tried, []int{0, 1}) {
+		t.Errorf("after the first ended: %d %v %v", i3, err, tried)
+	}
+	l2.Close()
+	l3.Close()
+	stuck3[0].Close()
+
+	// None clear: refused, each one's reason, their locks still held until the gate ends.
+	stuckOnes = map[int]bool{0: true, 1: true, 2: true, 3: true}
+	f = &fakeLocks{held: map[string]bool{"mdrb-cells-3": true}}
+	tried = nil
+	_, l, stuck, problems, err = leaseClear(testPool, f.lock, clear)
+	if err != errNoneClear || l != nil || len(stuck) != 3 || len(problems) != 3 || !reflect.DeepEqual(tried, []int{0, 1, 3}) {
+		t.Errorf("none clear: %v %d %q %v", err, len(stuck), problems, tried)
+	}
+	// All busy: as before.
+	f = &fakeLocks{held: map[string]bool{"mdrb-cells-1": true, "mdrb-cells-2": true, "mdrb-cells-3": true, "mdrb-cells-4": true}}
+	if _, _, _, _, err := leaseClear(testPool, f.lock, clear); err != errAllBusy {
+		t.Errorf("all busy: %v", err)
+	}
+	// A lock that fails otherwise: refused, and the stuck ones' locks released.
+	stuckOnes = map[int]bool{0: true}
+	f = &fakeLocks{held: map[string]bool{}, fail: map[string]error{"mdrb-cells-2": syscall.EACCES}}
+	if _, _, _, _, err := leaseClear(testPool, f.lock, clear); err == nil || !strings.Contains(err.Error(), "can't take the lock of mdrb-cells-2") || f.held["mdrb-cells-1"] {
+		t.Errorf("a failing lock: %v %v", err, f.held)
+	}
+}
+
 // Real flock: sessions side by side get different accounts, a fifth none; a closed lock (a gate
 // that ended) is free again.
 func TestLeaseFlockConcurrent(t *testing.T) {

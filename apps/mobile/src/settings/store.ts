@@ -6,10 +6,11 @@
  * (asked once, at the first Run all); the team library's address; and for run reports
  * (`report-runs:`), the addresses allowed without asking (the extension's
  * mdRunbook.reports.allowedAddresses); and whether Edit as Text highlights while typing on iOS and
- * Android. The signers the app trusts are one list of their own
+ * Android (off by default on iOS). The signers the app trusts are one list of their own
  * (signing/trust.ts), for the team library and run reports alike.
  */
 import { useSyncExternalStore } from 'react';
+import { Platform } from 'react-native';
 import { DEFAULT_CONFIRM_PATTERNS } from '@md-runbook/core/confirm';
 import { getJson, setJson } from '../storage/kv';
 
@@ -98,11 +99,24 @@ export interface Settings {
   /** Get Started was skipped or done: it no longer shows by itself on the start screen. */
   tourSeen: boolean;
   /**
-   * Edit as Text on iOS and Android colours the runbook while you type (ui/RunbookTextInput.tsx),
-   * on by default; off: a plain text field. The web app always highlights.
+   * Edit as Text on iOS and Android colours the runbook while you type (ui/RunbookTextInput.tsx);
+   * off: a plain text field. Off by default on iOS, on on Android (highlightEditingDefault). The
+   * web app always highlights.
    */
   highlightEditing: boolean;
 }
+
+/**
+ * Highlight while editing's default: off on iOS, on elsewhere. React Native 0.88's iOS text input
+ * (RCTTextInputComponentView `_textOf:equals:`) compares only the bare text when the old text has
+ * fallback-font glyphs (emoji such as ✅ ⚠️ ▶), during dictation, with marked text or the Korean
+ * keyboard; a colour-only change is then dropped and the colours go stale. Only a choice the user
+ * made is saved (highlightChoice), so a later default reaches everyone who didn't choose.
+ */
+export const highlightEditingDefault = (): boolean => Platform.OS !== 'ios';
+
+/** Highlight while editing as the user set it; undefined: the platform's default. */
+let highlightChoice: boolean | undefined;
 
 const DEFAULTS: Settings = {
   historySize: 0,
@@ -125,8 +139,11 @@ const DEFAULTS: Settings = {
   lineHintSeen: false,
   recordContext: false,
   tourSeen: false,
-  highlightEditing: true,
+  highlightEditing: true, // not used: defaults() takes highlightEditingDefault()
 };
+
+/** The defaults on this platform. */
+const defaults = (): Settings => ({ ...DEFAULTS, highlightEditing: highlightEditingDefault() });
 
 /** The timeouts offered (seconds; 0: none, the extension's default). */
 export const TIMEOUTS = [0, 60, 300, 600, 1800, 3600] as const;
@@ -153,7 +170,7 @@ type OutputFlag =
 /** The strings of a saved list, or undefined when it isn't one. */
 const strings = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : undefined);
 
-let settings: Settings = DEFAULTS;
+let settings: Settings = defaults();
 const listeners = new Set<() => void>();
 const emit = (): void => listeners.forEach((l) => l());
 
@@ -168,6 +185,7 @@ async function readSettings(): Promise<void> {
   const saved = await getJson(KEY, isSaved);
   if (saved) {
     const flag = (k: OutputFlag): boolean => (typeof saved[k] === 'boolean' ? saved[k] : DEFAULTS[k]);
+    highlightChoice = typeof saved.highlightEditing === 'boolean' ? saved.highlightEditing : undefined;
     settings = {
       historySize: saved.historySize ?? 0,
       colorLevels: flag('colorLevels'),
@@ -192,7 +210,7 @@ async function readSettings(): Promise<void> {
       lineHintSeen: flag('lineHintSeen'),
       recordContext: flag('recordContext'),
       tourSeen: flag('tourSeen'),
-      highlightEditing: flag('highlightEditing'),
+      highlightEditing: highlightChoice ?? highlightEditingDefault(),
       // `trustedSigners` (allowed_signers text, before the one list) is moved by signing/trust.ts
       // migrateTrustedSigners and left out here: the next save drops it.
     };
@@ -201,9 +219,11 @@ async function readSettings(): Promise<void> {
 }
 
 function update(next: Partial<Settings>): void {
+  if (typeof next.highlightEditing === 'boolean') highlightChoice = next.highlightEditing;
   settings = { ...settings, ...next };
   emit();
-  void setJson(KEY, settings).catch(() => undefined);
+  // Highlight while editing only when chosen (JSON leaves out undefined).
+  void setJson(KEY, { ...settings, highlightEditing: highlightChoice }).catch(() => undefined);
 }
 
 export const historySize = (): number => settings.historySize;
@@ -330,7 +350,8 @@ export function useOutputSettings(): Settings {
 
 /** Tests. */
 export function resetSettings(): void {
-  settings = DEFAULTS;
+  highlightChoice = undefined;
+  settings = defaults();
   loaded = undefined;
   emit();
 }
