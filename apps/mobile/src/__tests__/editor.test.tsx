@@ -60,6 +60,8 @@ beforeEach(async () => {
   await AsyncStorage.clear();
   resetRunbooks();
   resetSettings();
+  // Highlighted while editing, as on Android by default (off by default on iOS, this project).
+  setOutputSetting('highlightEditing', true);
   resetDrafts();
   jest.clearAllMocks();
   mockWidth = 412;

@@ -58,8 +58,9 @@ update (see below).
 
 - **App (iOS, Android): highlighting while editing.** Edit as Text colours the runbook as the
   web app does, with the same rules and colours.
-  - On by default. **Hosts & settings → Edit as Text → Highlight while editing** turns it off:
-    the plain text field, as before.
+  - Switch: **Hosts & settings → Edit as Text → Highlight while editing**. Off: the plain text
+    field, as before.
+  - On by default on Android; off on iOS, where colours can go stale after emoji such as ✅.
   - Autocorrect, spell check and capitals stay off.
   - Over 500,000 characters, the text stays plain.
 - **Dependencies, for security alerts:**
