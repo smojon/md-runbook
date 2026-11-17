@@ -32,17 +32,21 @@ update (see below).
     `support ALL=(mdrb-cells-1,mdrb-cells-2,mdrb-cells-3,mdrb-cells-4) NOPASSWD: /usr/local/bin/md-runbook-gate __cells`.
     A line per account is refused.
   - Each account needs the same setup as before: no cron or at, no privileged group. The gate
-    checks every one at the start of each session.
+    checks every one at the start of each session, and what the leased one can read and write.
   - `cells_account = NAME` is a pool of one. Don't set both.
   - The `session` event names the leased account. Run reports still say `separated`.
   - Setup: [Separated mode](apps/gate/README.md#separated-mode).
 - **Gate: every process of a session's cells account ends,** at its start and its end, with or
   without `kill_leftovers`.
   - On Linux this is one `kill(-1)` as that account, so a process that keeps forking can't slip
-    out. On macOS the gate repeats it, and refuses to start while one is left.
+    out. On macOS the gate repeats it.
   - The look for strays at the start of a session is gone: a forking process could slip past
     it (review of 0.28.0).
   - What a crashed session left behind ends when the next session leases that account.
+  - An account whose process won't end (stuck in the kernel) is skipped. The session takes the
+    next free one.
+  - The gate logs it as `"event":"lease","status":"skipped"`, with the reason.
+  - A session refuses to start only when no free account can be cleared.
 
 - **Fixed: Kubernetes ops host, no block ran when the session's pod started slowly.** The
   kube-context check gave up after 15 seconds, and a laptop's k3s takes 30 to 60 to start the

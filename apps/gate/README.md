@@ -207,29 +207,34 @@ Here `support` is the gate's account. The sudoers line:
 the end of each session, with or without `kill_leftovers`:
 - The gate runs its cells mode as that account, through the same sudo line. It calls
   `kill(-1, SIGKILL)`.
-- The gate lists the processes until none of the account is left. If one is, the session
-  refuses to start.
+- The gate lists the processes until none of the account is left.
+- If one is left (stuck in the kernel, `D` state), the session skips that account and takes the
+  next free one. It logs `"event":"lease","status":"skipped"` with the reason.
+- The session refuses to start only when no free account can be cleared.
 - **Linux:** the kernel signals all of the account's processes at once, with its task list
   locked. A process that keeps forking can't slip out.
 - **macOS:** the kernel signals a list it takes first. A process that forks just then can live
-  on. The gate ends them again, up to 3 times, and refuses to start while one is left.
+  on. The gate ends them again, up to 3 times, and skips the account while one is left.
 - What a crashed gate's session left behind ends when the next session leases that account.
-- At the start, the gate refuses instead of ending them when the account runs another gate
+- At the start, the gate skips the account instead of ending them when it runs another gate
   account's blocks. That pool is shared, which it must not be.
 
-At the start of each session the gate checks every account of the pool. It refuses to start,
-and logs a `self-check` event, when:
+At the start of each session the gate checks every account of the pool, then what the leased
+account can read and write. That last check runs as the leased account only, once none of its
+processes is left: never as an account another session holds. It refuses to start, and logs a
+`self-check` event, when:
 - an account doesn't exist, is root, or is the gate's own, or two names have the same uid;
 - `sudo -n -l` lists anything but that one line;
 - an account is in a privileged group (listed above);
 - an account may use cron or at: `cron.deny` and `at.deny` must list it, or `cron.allow` and
   `at.allow` exist without it (on macOS in `/usr/lib/cron`);
 - a folder above the gate's files is not safe (see below);
-- an account can read `report_token_file` or the `log =` file;
+- the leased account can read `report_token_file` or the `log =` file;
 - it can change the gate's program, `gate.conf`, `allowed_signers`, the account's keys or the
   gate's state;
 - it can't enter `/tmp`;
-- the gate can't see other accounts' processes (`/proc` mounted with `hidepid`).
+- the gate can't see other accounts' processes (`/proc` mounted with `hidepid`), or no free
+  account can be cleared (above).
 
 The message names the problem and the line to write. The gate can't check whether an account
 has sudo rules of its own (`sudo -l -U` needs root): don't give it any.

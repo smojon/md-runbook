@@ -34,6 +34,10 @@ interface FakeGate {
   podMs: number;
   /** The pod won't come: this reason. */
   fail?: string;
+  /** The pod gets ready right after the hello (that said `job`), before any request waits. */
+  readyAtHello?: boolean;
+  /** A gate before review 0.30.0's H1: no `ready` to a request that didn't wait. */
+  noFinal?: boolean;
   /** Whether the client's hello asked for pod notices. */
   asked?: boolean;
   /** Stop requests (second connections). */
@@ -49,6 +53,7 @@ function playGate(ch: SshChannel, gate: FakeGate, running: { id?: string; marker
   let busy = false;
   let settled = false;
   let notices = false;
+  let final = false;
   const out = (s: string): Promise<void> => ch.send(Buffer.from(s, 'utf8'));
   const err = (s: string): Promise<void> => ch.sendExtendedData(SshExtendedDataType.STDERR, Buffer.from(s, 'utf8'));
   const marker = async (id: string, value: number): Promise<void> => {
@@ -60,7 +65,13 @@ function playGate(ch: SshChannel, gate: FakeGate, running: { id?: string; marker
   ch.onClosed(() => (gate.closedAt ??= Date.now()));
   /** A request whose reply the Job's shell prints: false when the pod didn't come. */
   const waitPod = async (): Promise<boolean> => {
-    if (!gate.job || settled) return true;
+    if (!gate.job) return true;
+    if (settled) {
+      // Told `job`: `ready` before the shell gets its first request.
+      if (notices && !final && !gate.noFinal) await err(POD('ready'));
+      final = true;
+      return true;
+    }
     if (notices) await err(POD('starting'));
     const until = Date.now() + gate.podMs;
     while (Date.now() < until && gate.closedAt === undefined) await sleep(20);
@@ -72,6 +83,7 @@ function playGate(ch: SshChannel, gate: FakeGate, running: { id?: string; marker
       return false;
     }
     if (notices) await err(POD('ready'));
+    final = true;
     return true;
   };
   ch.onDataReceived((data) => {
@@ -88,6 +100,7 @@ function playGate(ch: SshChannel, gate: FakeGate, running: { id?: string; marker
           notices = gate.asked && gate.protocol >= 4 && gate.job;
           await out(`\x1e__MDRB_GATE__ ${gate.protocol} unsigned=allow\n` + (notices ? POD('job') : ''));
           await marker(m[1]!, 4242);
+          if (gate.readyAtHello) settled = true;
         } else if ((m = REQUEST.exec(pending))) {
           pending = pending.slice(m[0].length);
           const [, verb, id, rest] = m;
@@ -98,7 +111,9 @@ function playGate(ch: SshChannel, gate: FakeGate, running: { id?: string; marker
             await marker(id!, 0);
           } else if (verb === 'raw') {
             const text = Buffer.from(rest!.trim(), 'base64').toString('utf8');
-            // A block that prints a pod notice of its own, then runs on (until stopped).
+            // A block that prints a pod notice of its own (EFAKE: after a line), then runs on
+            // (until stopped).
+            if (text.includes('EFAKE')) await err('x\n');
             if (text.includes('FAKE')) await err(POD('starting'));
             if (text.includes('SLEEP') || text.includes('FAKE')) continue;
             await out('ran\n');
@@ -273,6 +288,70 @@ describe("ssh: a gate's Kubernetes pod starting", () => {
     }
   });
 
+  it("told `job`, the pod ready before any request waits: `ready` first, then a block's notice is output; its timeout and Stop work", async () => {
+    gate = { protocol: 4, job: true, podMs: 0, readyAtHello: true, stops: [] };
+    const session = new RemoteSession(open, opts());
+    try {
+      let errText = '';
+      const notes: string[] = [];
+      const r = await session.run('FAKE', { timeoutMs: 400, stopGraceMs: 100, onStderr: (t) => (errText += t), onNotice: (t) => notes.push(t) });
+      assert.deepEqual([r.timedOut, r.shellEnded, errText, notes], [true, undefined, POD('starting'), []]);
+      assert.match(gate.stops[0] ?? '', /^pkill -TERM -P 4242 /);
+      // Stop, too.
+      errText = '';
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(), 200);
+      const s = await session.run('FAKE', { stopGraceMs: 100, signal: ac.signal, onStderr: (t) => (errText += t), onNotice: (t) => notes.push(t) });
+      assert.deepEqual([s.cancelled, s.shellEnded, errText, notes], [true, undefined, POD('starting'), []]);
+      assert.match(gate.stops[1] ?? '', /^pkill -TERM -P 4242 /);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('a gate that never says `ready`: notices count only until the shell speaks', async () => {
+    // After a request the shell answered.
+    gate = { protocol: 4, job: true, podMs: 0, readyAtHello: true, noFinal: true, stops: [] };
+    let session = new RemoteSession(open, opts());
+    try {
+      assert.equal((await session.kubeContext({ onNotice: () => undefined })).exitCode, 0);
+      let errText = '';
+      const r = await session.run('FAKE', { timeoutMs: 400, stopGraceMs: 100, onStderr: (t) => (errText += t) });
+      assert.deepEqual([r.timedOut, errText], [true, POD('starting')]);
+      assert.match(gate.stops[0] ?? '', /^pkill -TERM -P 4242 /);
+    } finally {
+      await session.close();
+    }
+    // After other text of the block's, in its first request.
+    gate = { protocol: 4, job: true, podMs: 0, readyAtHello: true, noFinal: true, stops: [] };
+    session = new RemoteSession(open, opts());
+    try {
+      let errText = '';
+      const r = await session.run('EFAKE', { timeoutMs: 400, stopGraceMs: 100, onStderr: (t) => (errText += t) });
+      assert.deepEqual([r.timedOut, errText], [true, 'x\n' + POD('starting')]);
+      assert.match(gate.stops[0] ?? '', /^pkill -TERM -P 4242 /);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('a pod that never gets ready: the wait ends after podWaitMaxMs, as a timeout', async () => {
+    gate = { protocol: 4, job: true, podMs: 60_000, stops: [] };
+    const session = new RemoteSession(open, opts());
+    try {
+      const t0 = Date.now();
+      const r = await session.kubeContext({ timeoutMs: 200, podWaitMaxMs: 900, onNotice: () => undefined });
+      const took = Date.now() - t0;
+      assert.deepEqual([r.timedOut, r.cancelled, r.shellEnded, r.exitCode, r.error], [true, false, true, null, "the session's pod didn't start within 1 s"]);
+      assert.ok(took >= 850 && took < 5000, `${took} ms`);
+      assert.deepEqual(gate.stops, []);
+      for (let i = 0; i < 50 && gate.closedAt === undefined; i++) await sleep(20);
+      assert.ok(gate.closedAt !== undefined, 'the session closed (the gate deletes the Job)');
+    } finally {
+      await session.close();
+    }
+  });
+
   it('the filter takes notices split across packets, and passes everything else', () => {
     const notices: GatePodNotice[] = [];
     let text = '';
@@ -295,6 +374,20 @@ describe("ssh: a gate's Kubernetes pod starting", () => {
     g.flush();
     assert.deepEqual(n2, [{ state: 'starting' }, { state: 'failed', reason: 'why: here' }]);
     assert.equal(t2, 'xyz');
+    // stop(), as from the text before a notice in the same packet: that notice is text.
+    const n3: GatePodNotice[] = [];
+    let t3 = '';
+    const h: PodNoticeFilter = new PodNoticeFilter(
+      (t) => {
+        t3 += t;
+        h.stop();
+      },
+      (n) => n3.push(n),
+    );
+    h.write('\x1e__MDRB_POD__ starting\nx\x1e__MDRB_POD__ starting\n');
+    h.flush();
+    assert.deepEqual(n3, [{ state: 'starting' }]);
+    assert.equal(t3, 'x\x1e__MDRB_POD__ starting\n');
     assert.deepEqual(gatePodNotice('\x1e__MDRB_POD__ job\n'), { state: 'job' });
     assert.equal(gatePodNotice('\x1e__MDRB_POD__ failed \n'), undefined);
     assert.equal(gatePodNotice('\x1e__MDRB_POD__ ready'), undefined);

@@ -340,18 +340,37 @@ func TestPodNotices(t *testing.T) {
 		t.Errorf("failed: %q", out.String())
 	}
 
-	// Pod notices, but nothing waits: no `ready`; a failure is the gate's line.
+	// Told `job`, the pod ready before any request waits: the first request hears `ready` before
+	// the shell gets it, and only it (review of 0.30.0, H1: the client reads notices until then,
+	// so a block could otherwise fake one).
 	j, out = newJob()
 	j.hello(true)
 	j.settle("p", "")
 	if out.String() != "" {
-		t.Errorf("ready, nothing waiting: %q", out.String())
+		t.Errorf("ready, nothing waiting yet: %q", out.String())
 	}
+	j.waitFor()
+	j.waitFor()
+	if out.String() != ready {
+		t.Errorf("ready, then requests: %q", out.String())
+	}
+	// A failure, nothing waiting: the notice at once (no shell will print anything), once.
 	j, out = newJob()
 	j.hello(true)
 	j.settle("", "its pod can't start (ImagePullBackOff: x)")
-	if out.String() != "md-runbook-gate: this session's cells can't start: its pod can't start (ImagePullBackOff: x)\n" {
+	j.waitFor()
+	if out.String() != "\x1e__MDRB_POD__ failed this session's cells can't start: its pod can't start (ImagePullBackOff: x)\n" {
 		t.Errorf("failed, nothing waiting: %q", out.String())
+	}
+	// Not told `job` (the pod was ready at the hello): no notice ever.
+	j, out = newJob()
+	j.settle("p", "")
+	if got := j.hello(true); got != "" {
+		t.Errorf("hello once settled: %q", got)
+	}
+	j.waitFor()
+	if out.String() != "" {
+		t.Errorf("not told job: %q", out.String())
 	}
 
 	// A client before protocol 4 (no pod notices): the gate's line once, as before.
@@ -375,7 +394,7 @@ func TestPodNotices(t *testing.T) {
 		t.Errorf("failed without notices: %q", out.String())
 	}
 
-	// The pod gets ready while requests come: never a `starting` after the `ready`.
+	// The pod gets ready while requests come: one `ready`, never a `starting` after it.
 	for i := 0; i < 200; i++ {
 		j, out = newJob()
 		j.hello(true)
@@ -384,10 +403,61 @@ func TestPodNotices(t *testing.T) {
 			j.waitFor()
 		}
 		<-j.ready
+		j.mu.Lock()
 		s := out.String()
-		if strings.Contains(s, ready) && !strings.HasSuffix(s, ready) || strings.Count(s, ready) > 1 || s != "" && !strings.Contains(s, ready) {
+		j.mu.Unlock()
+		if !strings.HasSuffix(s, ready) || strings.Count(s, ready) != 1 {
 			t.Fatalf("race: %q", s)
 		}
+	}
+}
+
+// TestLeftWaiting: the client's leaving cuts the session short while the pod starts, and until
+// the client had the reply of a request that waited for it (review of 0.30.0, L5: a stop just as
+// the pod got ready).
+func TestLeftWaiting(t *testing.T) {
+	newJob := func() *kubeJob {
+		j := testJob(nil)
+		j.out = io.Discard
+		return j
+	}
+	// Nothing waited: open until the pod settles, then not.
+	j := newJob()
+	j.hello(true)
+	if !j.leftWaiting() {
+		t.Error("before the pod settled")
+	}
+	j.settle("p", "")
+	j.waitFor()
+	if j.leftWaiting() {
+		t.Error("a request after the pod was ready")
+	}
+	// A request waited; the pod got ready; the client left before its next line (its stop).
+	j = newJob()
+	j.hello(true)
+	j.spoke()
+	j.waitFor()
+	j.spoke() // a line before the pod settled says nothing of the reply
+	j.settle("p", "")
+	if !j.leftWaiting() {
+		t.Error("the waiting request's reply not had")
+	}
+	// Its next line: it had the reply.
+	j.spoke()
+	if j.leftWaiting() {
+		t.Error("after the client's next line")
+	}
+	// A client before protocol 4 (no notices): the same.
+	j = newJob()
+	j.hello(false)
+	j.waitFor()
+	j.settle("p", "")
+	if !j.leftWaiting() {
+		t.Error("without notices, the reply not had")
+	}
+	j.spoke()
+	if j.leftWaiting() {
+		t.Error("without notices, after the client's next line")
 	}
 }
 

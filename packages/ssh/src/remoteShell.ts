@@ -101,7 +101,15 @@ export interface RemoteRunOptions extends CellCommandOptions {
    * starts the session's Kubernetes pod (`timeoutMs` waits for it). Without it, on `onStderr`.
    */
   onNotice?(text: string): void;
+  /**
+   * How long a request may wait for the session's pod before it counts as timed out (the shell
+   * closes). Default `POD_WAIT_MAX_MS`.
+   */
+  podWaitMaxMs?: number;
 }
+
+/** 5 min: longer than md-runbook-gate's own bound on the pod's start (3 min) and its kubectl calls. */
+export const POD_WAIT_MAX_MS = 5 * 60_000;
 
 export interface RemoteRunResult extends RunResult {
   /**
@@ -164,7 +172,9 @@ export class RemoteShell {
   private starting = true;
   /**
    * md-runbook-gate runs the cells in a Kubernetes Job whose pod isn't ready yet (its hello said
-   * `job`): its stderr may hold pod notices, until `ready` or `failed`.
+   * `job`): its stderr may hold pod notices, until `ready` or `failed`. Also over once the shell
+   * spoke: any other text on stderr of a request the shell answers, or that request's end. A
+   * notice after that is a block's output (review of 0.30.0, H1).
    */
   private podNotices = false;
   /** A request waits for the session's pod (between `starting` and `ready`). */
@@ -418,10 +428,23 @@ export class RemoteShell {
       timer = undefined;
       left = Math.max(1, left - (Date.now() - since));
     };
+    // The wait itself has a bound: a gate that hangs after `starting` doesn't hold the run forever.
+    const podMax = opts.podWaitMaxMs ?? POD_WAIT_MAX_MS;
+    let podTimer: ReturnType<typeof setTimeout> | undefined;
+    let podTimedOut = false;
     let noted = false;
     this.onPod = (n) => {
-      if (n.state !== 'starting') return arm();
+      if (n.state !== 'starting') {
+        clearTimeout(podTimer);
+        podTimer = undefined;
+        return arm();
+      }
       pause();
+      podTimer ??= setTimeout(() => {
+        if (timedOut || cancelled) return;
+        podTimedOut = true;
+        stop('timeout');
+      }, podMax);
       if (noted) return;
       noted = true;
       if (opts.onNotice) opts.onNotice(POD_STARTING_NOTE);
@@ -430,11 +453,13 @@ export class RemoteShell {
     arm();
     const onAbort = (): void => stop('cancel');
     opts.signal?.addEventListener('abort', onAbort);
+    const podLate = (): Partial<RemoteRunResult> => (podTimedOut ? { error: `the session's pod didn't start within ${duration(podMax)}` } : {});
     try {
-      const code = await this.exchange(id, text, opts.onStdout, opts.onStderr);
-      return result({ exitCode: timedOut || cancelled ? null : code, timedOut, cancelled });
+      const code = await this.exchange(id, text, opts.onStdout, opts.onStderr, true);
+      return result({ exitCode: timedOut || cancelled ? null : code, timedOut, cancelled, ...podLate() });
     } catch (e) {
       if (!(e instanceof ShellEndedError)) throw e;
+      if (podTimedOut) return result({ timedOut, shellEnded: true, ...podLate() });
       // `exit N` in the cell (or a failure under `set -e`) ended the shell: the cell's exit code
       // is N, as in the extension's session mode; the next cell opens a new shell. Not through
       // md-runbook-gate: its own exit status (0) is not the cell's.
@@ -443,6 +468,10 @@ export class RemoteShell {
       return result({ timedOut, cancelled, shellEnded: true, ...(timedOut || cancelled ? {} : { error: this.podFailure ?? e.message }) });
     } finally {
       clearTimeout(timer);
+      clearTimeout(podTimer);
+      // The shell had this request: no notice counts from now on.
+      this.podNotices = false;
+      this.podWaiting = false;
       this.onPod = undefined;
       opts.signal?.removeEventListener('abort', onAbort);
       this.runningId = undefined;
@@ -460,19 +489,51 @@ export class RemoteShell {
     this.onPod?.(n);
   }
 
+  /**
+   * Other text on stderr of a request the shell answers: the shell spoke, so the pod is up and no
+   * later notice counts (a gate sends `ready` before the shell gets the request).
+   */
+  private podOutput(filter: PodNoticeFilter): void {
+    filter.stop();
+    if (!this.podNotices) return;
+    this.podNotices = false;
+    if (!this.podWaiting) return;
+    this.podWaiting = false;
+    this.onPod?.({ state: 'ready' });
+  }
+
   async close(): Promise<void> {
     this.end('closed');
     await this.channel.close().catch(() => undefined);
     await this.session.close(SshDisconnectReason.byApplication).catch(() => undefined);
   }
 
-  /** Send `text(id)` and wait for the marker on both streams; resolves with the marker's value. */
-  private exchange(id: string, text: (id: string) => string, onOut?: (t: string) => void, onErr?: (t: string) => void): Promise<number | undefined> {
+  /**
+   * Send `text(id)` and wait for the marker on both streams; resolves with the marker's value.
+   * `shellReply`: the shell answers it (run, step, raw, context), not the gate itself.
+   */
+  private exchange(
+    id: string,
+    text: (id: string) => string,
+    onOut?: (t: string) => void,
+    onErr?: (t: string) => void,
+    shellReply = false,
+  ): Promise<number | undefined> {
     if (this.ended) return Promise.reject(new ShellEndedError('the remote shell has ended'));
     return new Promise<number | undefined>((resolve, reject) => {
       const out = new SentinelFilter(markerFor(id), (t) => onOut?.(t));
       const err = new SentinelFilter(markerFor(id), (t) => onErr?.(t));
-      const errIn = this.podNotices ? new PodNoticeFilter((t) => err.write(t), (n) => this.podNotice(n)) : err;
+      let errIn: Exchange['errIn'] = err;
+      if (this.podNotices) {
+        const filter: PodNoticeFilter = new PodNoticeFilter(
+          (t) => {
+            if (shellReply) this.podOutput(filter);
+            err.write(t);
+          },
+          (n) => this.podNotice(n),
+        );
+        errIn = filter;
+      }
       this.current = {
         out,
         errIn,
@@ -540,6 +601,11 @@ export class RemoteShell {
       // The connection may be gone; the caller falls back to closing the shell.
     }
   }
+}
+
+/** 300000 → "5 min", 1500 → "2 s". */
+function duration(ms: number): string {
+  return ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 1000)} s`;
 }
 
 /** Why a cell of this shell can't run on this server, or undefined. */

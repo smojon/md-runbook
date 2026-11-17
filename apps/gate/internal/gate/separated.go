@@ -30,10 +30,15 @@ import (
 // Before each session the gate checks every account of the pool (selfCheck), and refuses to
 // start when:
 //   - an account doesn't exist, is root, or is the gate's own, or two have the same uid;
+//   - one is in a privileged group, or may use cron or at;
 //   - `sudo -n -l` lists anything but the one rule (sudoRule), naming the whole pool;
 //   - a folder above the gate's program, gate.conf, the trusted keys, revoked, floors, the
 //     account's keys, the report token or the log is not safe (safePathProblem: the rule of
-//     OpenSSH's StrictModes);
+//     OpenSSH's StrictModes).
+//
+// Those checks run nothing as the pool's accounts. Then, for the account the session leased only,
+// once none of its processes is left (leaseCells), its cells' mode through sudo (access): never
+// as an account another session's blocks run as (review of 0.30.0, H2). It refuses when
 //   - the cells' account can read the report token or the log, or change the gate's program,
 //     gate.conf, the trusted keys, the account's keys or the gate's state;
 //   - it can't append to the session's exits file (the work folder is in /tmp).
@@ -103,8 +108,7 @@ func (c selfCheck) do() ([]cellsInfo, error) {
 		uids[info.uid] = name
 		infos = append(infos, info)
 	}
-	rule := sudoRule(c.gateAccount, c.pool, c.plan.exe)
-	need := "\n  Separated mode needs exactly this sudoers line (for example in /etc/sudoers.d/md-runbook-gate), and no other rule for " + c.gateAccount + ":\n  " + rule
+	need := c.need()
 	if c.plan.exe == "" {
 		return nil, errors.New(c.key + ": can't find this program's own path")
 	}
@@ -118,11 +122,16 @@ func (c selfCheck) do() ([]cellsInfo, error) {
 		return nil, errors.New(c.key + ": sudo -n -l failed (" + err.Error() + ")" + need)
 	}
 	for _, info := range infos {
-		if err := c.files(info, need); err != nil {
+		if err := c.folders(info); err != nil {
 			return nil, err
 		}
 	}
 	return infos, nil
+}
+
+// need: the sudoers line separated mode needs, for messages.
+func (c selfCheck) need() string {
+	return "\n  Separated mode needs exactly this sudoers line (for example in /etc/sudoers.d/md-runbook-gate), and no other rule for " + c.gateAccount + ":\n  " + sudoRule(c.gateAccount, c.pool, c.plan.exe)
 }
 
 // account: what the check needs to know of an account of the pool, and its own problems.
@@ -171,19 +180,28 @@ func (c selfCheck) account(name string) (cellsInfo, error) {
 	return info, nil
 }
 
-// files: the account can't reach the gate's files (safe folders, then its cells' mode through
-// sudo checks what it can read and write).
-func (c selfCheck) files(info cellsInfo, need string) error {
-	name, what := info.name, c.what(info.name)
+// folders: the folders above the gate's files are safe from the account (as the gate sees them:
+// nothing runs as the account).
+func (c selfCheck) folders(info cellsInfo) error {
 	var unsafe []string
 	for _, p := range c.safe {
-		if why := safePathProblem(p, c.stat, cellsRule(c.gateUID, info.uid, info.groups, c.gateAccount, name)); why != "" && !has(unsafe, why) {
+		if why := safePathProblem(p, c.stat, cellsRule(c.gateUID, info.uid, info.groups, c.gateAccount, info.name)); why != "" && !has(unsafe, why) {
 			unsafe = append(unsafe, why)
 		}
 	}
 	if len(unsafe) > 0 {
-		return errors.New(what + ": " + strings.Join(unsafe, "; "))
+		return errors.New(c.what(info.name) + ": " + strings.Join(unsafe, "; "))
 	}
+	return nil
+}
+
+// access: the account can't reach the gate's files, and can append to the session's exits file:
+// its cells' mode, through sudo, checks what it can read and write. Only for the account this
+// session leased, once none of its processes is left (leaseCells): a process of an account that
+// another session holds could stop that check, or read the session's exits path from it (review
+// of 0.30.0, H2).
+func (c selfCheck) access(info cellsInfo) error {
+	name, what, need := info.name, c.what(info.name), c.need()
 	p := c.plan
 	p.account = name
 	l := p.outer("", true)
@@ -311,7 +329,8 @@ func (g *Gate) mode() string {
 
 // setupSeparated: the work folder open to the cells (enter only), the exits file they append to,
 // the self-check of every account of the pool, and the session's lease of one (with none of its
-// processes left). Any problem stops the gate before its first shell.
+// processes left, then its cells' mode's check). Any problem stops the gate before its first
+// shell.
 func (g *Gate) setupSeparated() {
 	if os.Chmod(g.work, 0o711) != nil {
 		g.fatal("can't open the work folder " + g.work + " to the cells' account")
@@ -366,7 +385,7 @@ func (g *Gate) setupSeparated() {
 		g.log.Event("event", "self-check", "status", "refused", "reason", strings.ReplaceAll(err.Error(), "\n", " "))
 		g.fatal(err.Error())
 	}
-	g.leaseCells(infos)
+	g.leaseCells(c, infos)
 	g.sepRuns = map[string]sepRun{}
 	g.sepExits = map[string]report.Exit{}
 	go func() {

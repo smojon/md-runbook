@@ -43,7 +43,7 @@ export {
   windowsHelloCommand,
   windowsStopCommand,
 } from './command';
-export { ConnectOptions, RemoteRunOptions, RemoteRunResult, RemoteShell, ShellEndedError, wrongPlatform } from './remoteShell';
+export { ConnectOptions, POD_WAIT_MAX_MS, RemoteRunOptions, RemoteRunResult, RemoteShell, ShellEndedError, wrongPlatform } from './remoteShell';
 export { RemoteSession, SessionRunResult, SignedRun } from './session';
 export { generateKey, hostKeyId, importPrivateKey, privateKeyPem, publicKeyLine } from './keys';
 export { ECDSA_P256, ExternalAwareEcdsaP256, ExternalKeyPair, ExternalP256Key, derToRs } from './externalKey';

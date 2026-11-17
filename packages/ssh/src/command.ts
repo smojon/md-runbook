@@ -105,6 +105,8 @@ export class PodNoticeFilter {
       }
       this.send(p.slice(0, at));
       p = p.slice(at);
+      // The text just passed on may have ended the notices (stop).
+      if (this.over) break;
       const end = p.indexOf('\n');
       if (end < 0) {
         // A notice is one short line: a longer one is text.
@@ -123,6 +125,11 @@ export class PodNoticeFilter {
       this.onNotice(n);
     }
     this.send(p);
+  }
+
+  /** Read no more notices: from now on everything passes, as after `ready`. */
+  stop(): void {
+    this.over = true;
   }
 
   /** Pass on whatever is held back (the stream ended). */
