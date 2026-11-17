@@ -1,13 +1,16 @@
 /**
  * ssh-keygen's answer on a runbook's signature, cached (the Library view, run reports): by the
  * allowed_signers file (its path, size and time, so an edit by Trusted Signers… or by hand counts)
- * and the text's hash. "Can't check" (no ssh-keygen) is never cached: installing OpenSSH counts
- * at the next check. No vscode import: unit-tested.
+ * and the text's hash. ssh-keygen gets the file's filtered copy (filteredSigners.ts): only the
+ * lines md-runbook reads count. "Can't check" (no ssh-keygen) is never cached: installing OpenSSH
+ * counts at the next check. No vscode import: unit-tested.
  */
 
 import { createHash } from 'node:crypto';
-import * as fs from 'node:fs';
 import { runbookSignerCheck } from '@md-runbook/core/node';
+import { fileStamp, filteredSignersFile } from './filteredSigners';
+
+export { fileStamp };
 
 /** Shown where a signature would be checked, when ssh-keygen can't be started. */
 export const CANT_CHECK_SIGNATURES = "can't check signatures: ssh-keygen not found (install OpenSSH)";
@@ -21,20 +24,16 @@ export interface SignerCheck {
 
 type Check = (text: string, file: string) => Promise<SignerCheck>;
 
-/** The file as it is now: changes when it is written (or made, or removed). */
-export function fileStamp(file: string): string {
-  try {
-    const s = fs.statSync(file);
-    return `${s.size}:${s.mtimeMs}`;
-  } catch {
-    return 'none';
-  }
-}
+/**
+ * ssh-keygen's answer on the runbook against `file`, through its filtered copy (filteredSigners.ts):
+ * only the lines md-runbook reads count, as Trusted Signers… shows them.
+ */
+export const signerCheckOf = (text: string, file: string, sshKeygen = 'ssh-keygen'): Promise<SignerCheck> => runbookSignerCheck(text, filteredSignersFile(file), sshKeygen);
 
 export class SignerCache {
   private readonly answers = new Map<string, string | undefined>();
 
-  constructor(private readonly check: Check = (text, file) => runbookSignerCheck(text, file)) {}
+  constructor(private readonly check: Check = (text, file) => signerCheckOf(text, file)) {}
 
   async signer(text: string, file: string): Promise<SignerCheck> {
     const key = `${file}\n${fileStamp(file)}\n${createHash('sha256').update(text).digest('hex')}`;
@@ -58,7 +57,7 @@ export const SSH_KEYGEN_MISSING = CANT_CHECK_SIGNATURES;
 
 /** The trusted signer of the runbook, or, when there is none, why it couldn't be checked (no ssh-keygen). */
 export async function checkSigner(text: string, allowedSigners: string, sshKeygen = 'ssh-keygen'): Promise<{ signer?: string; cantCheck?: string }> {
-  const got = await runbookSignerCheck(text, allowedSigners, sshKeygen).catch((): SignerCheck => ({}));
+  const got = await signerCheckOf(text, allowedSigners, sshKeygen).catch((): SignerCheck => ({}));
   if (got.signer !== undefined) return { signer: got.signer };
   return got.cantCheck ? { cantCheck: CANT_CHECK_SIGNATURES } : {};
 }

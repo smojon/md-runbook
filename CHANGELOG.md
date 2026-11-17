@@ -36,6 +36,8 @@
   - Refused: a backslash, a quote outside an option value, an unquoted value, an option given
     twice, a control character or an unusual blank.
   - Trusted Signers… lists such a line in your own file as not used: choose it to remove it.
+  - Checks use only the lines md-runbook reads, in VS Code and with `--allowed-signers`. Such a
+    line no longer counts anywhere. The command line names each one on stderr.
   - Lines added by 0.28 or before can have the problem too: check your file.
 - **App: a withdrawn key listed again needs your yes again**, as in VS Code. Before, it counted
   again by itself.

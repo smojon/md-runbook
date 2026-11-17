@@ -577,7 +577,9 @@ could read otherwise than the app:
 - an option given twice;
 - a control character or a blank other than space and tab.
 
-VS Code refuses the same lines, and writes each line it adds rebuilt from what it read.
+VS Code refuses the same lines, and writes each line it adds rebuilt from what it read. Its
+checks, and `--allowed-signers` on the command line, use only the lines md-runbook reads. The
+command line names each line it leaves out.
 
 An index.json with `"signedOnly": true` makes the app open **verified** runbooks only.
 

@@ -9,7 +9,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { formatLocalIso, locateCodeCells, parse } from '@md-runbook/core';
 import { recordDigest, recordSigners, recordStatement, recordStatus, withRecordCosigner, withRecordSignature } from '@md-runbook/core/record';
-import { callTarget, checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign, sshVerify } from '@md-runbook/core/node';
+import { callTarget, checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign } from '@md-runbook/core/node';
+import { cliSshVerify } from './allowedSignersFile';
 import {
   ManifestMeta,
   SignatureBlock,
@@ -300,7 +301,7 @@ async function verifyRecord(text: string, file: string, allowed: string | undefi
     const names = recordSigners(b);
     for (let i = 0; i < sigs.length; i++) {
       try {
-        out(`  record signature ${i + 1} (${names[i]}): good, by ${await sshVerify(recordStatement(b.sha256), sigs[i]!, allowed, sshKeygen)} (${allowed})`);
+        out(`  record signature ${i + 1} (${names[i]}): good, by ${await cliSshVerify(recordStatement(b.sha256), sigs[i]!, allowed, sshKeygen)} (${allowed})`);
       } catch (e) {
         out(`  record signature ${i + 1} (${names[i]}): ${e instanceof Error ? e.message : String(e)}`);
         ok = false;
@@ -376,7 +377,7 @@ export async function verifyCommand(argv: readonly string[], out: Out = stdout, 
     for (let i = 0; i < sigs.length; i++) {
       const label = sigs.length > 1 ? `signature ${i + 1} (${names[i]})` : 'signature';
       try {
-        const by = await sshVerify(status.block.manifest, sigs[i]!, allowed, sshKeygen);
+        const by = await cliSshVerify(status.block.manifest, sigs[i]!, allowed, sshKeygen);
         verified.add(by);
         out(`  ${label}: good, by ${by} (${allowed})`);
       } catch (e) {

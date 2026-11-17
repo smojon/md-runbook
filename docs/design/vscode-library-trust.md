@@ -68,6 +68,9 @@ That matches the app, but it changes what a library server can make VS Code do.
   - Refused: a backslash, a quote outside an option value, or an unquoted value.
   - Refused too: an option given twice, a control character or an unusual blank.
   - OpenSSH reads `\"` as an escape: such a line could show one key and trust another.
+- **Checks match the list:** ssh-keygen gets a private copy of each file with only the lines
+  md-runbook reads, canonical (src/filteredSigners.ts). The command line's `--allowed-signers`
+  does the same and names each line left out.
 - Moving keys: an earlier version wrote library keys into your file. Nothing moves them by itself.
   Trusted Signers… marks those lines as also published by the library's host, and **Remove** takes them out.
 

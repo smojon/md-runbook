@@ -15,7 +15,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { ReportPlan, RunStepState, addressAllowed, buildRunSummary, postRunReport, reportBody, reportPlan, REPORTED_FIELDS, SEPARATED_REQUIRED_TEXT } from '@md-runbook/core/runReport';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
-import { signRunSummary, trustedRunbookSigner, verifyRunEnvelope } from '@md-runbook/core/node';
+import { signRunSummary, verifyRunEnvelope } from '@md-runbook/core/node';
+import { cliTrustedRunbookSigner } from './allowedSignersFile';
 import type { ManualStep } from './select';
 import type { StepResult } from './run';
 
@@ -48,7 +49,7 @@ export function allowedAddresses(flags: readonly string[], env: NodeJS.ProcessEn
  */
 export async function prepareReport(text: string, o: CliReportOptions, log: (line: string) => void): Promise<PreparedReport | string | undefined> {
   if (!parseFrontMatter(text)?.reportRuns) return undefined;
-  const signer = o.allowedSigners ? await trustedRunbookSigner(text, o.allowedSigners) : undefined;
+  const signer = o.allowedSigners ? await cliTrustedRunbookSigner(text, o.allowedSigners) : undefined;
   const plan = reportPlan(text, signer);
   if (!plan) return undefined;
   const send = addressAllowed(plan.url, o.allowed);
