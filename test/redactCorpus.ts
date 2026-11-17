@@ -45,6 +45,8 @@ const VALUES = [
   'bob%pw2', 'bob,pw3', 'u:pw4', 'pass:pw5', 'env:VAR', 'pw%', '%pw', ',pw',
   // quoted credentials, literal `$` or `%` (third review of 0.30)
   '"u:pw6"', "'u:pw 7'", '"u%pw8"', "'u,pw9'", '"pass:pw10"', "'pass:pw 11'", '"u:a\\"b"', '" u:x"', '"u: x"', "'$3cret'", '%3cret', '"%PW%"', "'%PW%'", '"$PW"', "'$PW'",
+  // references after user: in quotes (fourth review of 0.30)
+  '"u:$PW"', "'u:$PW'", '"u:${secret:pw}"', "'u%${secret:pw}'", '"pass:%PW%"', '"u:$(cat f)"', '"u:${a}x"',
   '7f3a9c2e-55d1-4b8e-a0f2-9e8d7c6b5a41', 'admin:S3cret', 'user:p%40ss', ':', 'a:b:c', '=', '==', 'abc==', 'abcdefgh==', 'abc/def+ghi~jkl_', 'ABCDEFGHIJ',
   // backslashes: escaped quotes, escaped JSON, Windows paths
   'abc\\"def', 'a\\\\b', '\\', 'x\\', '\\"', "\\'", 'C:\\', '\\"hunter2\\"', '"a\\"b"', '"C:\\"', "'it\\'s'", '"a\\\r"', '\\"a\\\\\\"b\\"',
@@ -76,6 +78,12 @@ const FLAGS = [
   '-c "', "-c '", 'sh -c "redis-cli -a', 'cmd /c "sqlcmd -P', '-h', '--name', '-it', '-oL', '-n 10', 'nohup', 'xargs', 'PS C:\\>', '{', '!',
   'then', '"sshpass', "'mongo", '"C:\\P F\\7z.exe"', '7z.exe', '\\7z', '{zip', '(zip', '`zip', 'mongo"', "zip'", '\\\n', ' \\\r\n', '"a\\"b"',
   'x"y', '\\\\', '-x=a', '--a-b', '-1', '"\\\\"', '-h\nmongo',
+  // bin/ and .exe paths, wrapper options and their values, prefixes after NAME=, Redis (fourth review of 0.30)
+  '/usr/local/bin/redis-cli -a', 'kubectl exec p -- /usr/bin/mysql', 'RUN /opt/x/bin/sqlcmd', '/sbin/zip', 'C:\\bin\\7z', 'bin/mongo', 'mybin/zip',
+  'C:\\T\\7z.exe a', 'cmd /c', '/zip.EXE', 'strace -f', 'ssh -i /usr/bin/mongo', 'sudo -u', 'sudo -u root', 'sudo -u mongo', 'sudo -E -H', 'sudo -n -E',
+  'sudo -uroot', 'sudo -u root -E', 'env -u', 'env -u x -i', 'nice -n', 'timeout -s KILL', 'timeout -k', 'stdbuf -o', 'stdbuf -oL', 'doas -u', '-u mongo',
+  'ExecStart=-sshpass -p', 'ExecStart=@sshpass', 'X=-', 'X=@-zip', 'grep requirepass', '# requirepass', '#;requirepass', '; masterauth', '- requirepass',
+  '-requirepass', 'config set', 'config  set masterauth', 'CONFIG get requirepass', 'xconfig set requirepass', 'set requirepass', '\n  - masterauth',
 ];
 const OTHER = [
   'eyJ', 'eyJhbGciOi', 'Bearer', 'bearer', 'BEARER', 'xBearer', '.', '-', '_', 'x', 'abc', 'a1', '://', 'https://user:pw@host/x', 'git://a:b@c',

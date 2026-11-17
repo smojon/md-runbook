@@ -204,6 +204,11 @@ const HOSTILE = [
   '"kind":"Secret",' + rep('\\"data\\":{\\"a\\":\\"'),
   '"kind":"Secret","data":{' + rep('\\"a\\":\\"b\\\\'),
   rep(' requirepass'),
+  // fourth review of 0.30: requirepass after a line's start or config set, a reference after user: in quotes
+  rep('\n # requirepass '),
+  rep('config set requirepass '),
+  rep(' config set'),
+  rep(' -u "a:$'),
 ];
 
 describe('redaction and the leak scan stay linear on 200,000-character lines', () => {

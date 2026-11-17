@@ -134,6 +134,29 @@ describe('what the widened patterns catch', () => {
     ['a path after &&', 'cd /x && ./sshpass -p S3cretPW ssh h', `cd /x && ./sshpass -p ${R} ssh h`],
     ['a path in $(…)', 'X=$(/usr/bin/redis-cli -a S3cretPW get k)', `X=$(/usr/bin/redis-cli -a ${R} get k)`],
     ['a path in quotes', 'sh -c "cd /x && /usr/bin/sshpass -p S3cretPW ssh h"', `sh -c "cd /x && /usr/bin/sshpass -p ${R} ssh h"`],
+    // fourth review of 0.30: a path in a bin/ directory or to NAME.exe, no option's value, counts anywhere
+    ['RUN …/bin/sqlcmd', 'RUN /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P S3cretPW', `RUN /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P ${R}`],
+    ['kubectl exec -- …/bin/redis-cli', 'kubectl exec pod -- /usr/local/bin/redis-cli -a S3cretPW info', `kubectl exec pod -- /usr/local/bin/redis-cli -a ${R} info`],
+    ['docker exec …/bin/mysqldump', 'docker exec c /usr/bin/mysqldump -pS3cretPW db', `docker exec c /usr/bin/mysqldump -p${R} db`],
+    ['docker compose exec', 'docker compose exec redis /usr/local/bin/redis-cli -a S3cretPW ping', `docker compose exec redis /usr/local/bin/redis-cli -a ${R} ping`],
+    ['sudo -u root …/bin/sshpass', 'sudo -u root /usr/bin/sshpass -p S3cretPW ssh h', `sudo -u root /usr/bin/sshpass -p ${R} ssh h`],
+    ['sudo -- …/bin/sshpass', 'sudo -- /usr/bin/sshpass -p S3cretPW ssh h', `sudo -- /usr/bin/sshpass -p ${R} ssh h`],
+    ['nice -n 10 …/bin/mysql', 'nice -n 10 /usr/bin/mysql -pS3cretPW', `nice -n 10 /usr/bin/mysql -p${R}`],
+    ['watch -n 5 …/bin/redis-cli', 'watch -n 5 /usr/bin/redis-cli -a S3cretPW', `watch -n 5 /usr/bin/redis-cli -a ${R}`],
+    ['$ prompt', '$ /usr/bin/sshpass -p S3cretPW ssh h', `$ /usr/bin/sshpass -p ${R} ssh h`],
+    ['# prompt', '# /usr/sbin/sshpass -p S3cretPW ssh h', `# /usr/sbin/sshpass -p ${R} ssh h`],
+    ['YAML command:', 'command: /usr/bin/sshpass -p S3cretPW', `command: /usr/bin/sshpass -p ${R}`],
+    ['cmd /c …\\7z.exe', 'cmd /c C:\\Tools\\7z.exe a -pS3cretPW x.7z', `cmd /c C:\\Tools\\7z.exe a -p${R} x.7z`],
+    ['PS> …\\7z.exe', 'PS> C:\\Tools\\7z.exe a -pS3cretPW x.7z', `PS> C:\\Tools\\7z.exe a -p${R} x.7z`],
+    ['a path after a wrapper option', 'sudo -E /opt/x/sshpass -p S3cretPW ssh h', `sudo -E /opt/x/sshpass -p ${R} ssh h`],
+    ['a path after a wrapper option and its value', 'timeout -s KILL /opt/x/sshpass -p S3cretPW', `timeout -s KILL /opt/x/sshpass -p ${R}`],
+    // wrapper options in a row, a wrapper option's value, prefixes after NAME=
+    ['sudo -E -H', 'sudo -E -H sshpass -p S3cretPW ssh h', `sudo -E -H sshpass -p ${R} ssh h`],
+    ['sudo -n -E', 'sudo -n -E sshpass -p S3cretPW ssh h', `sudo -n -E sshpass -p ${R} ssh h`],
+    ['sudo -u root -E', 'sudo -u root -E sshpass -p S3cretPW ssh h', `sudo -u root -E sshpass -p ${R} ssh h`],
+    ['stdbuf -oL', 'stdbuf -oL redis-cli -a S3cretPW', `stdbuf -oL redis-cli -a ${R}`],
+    ['ExecStart=-', 'ExecStart=-sshpass -p S3cretPW', `ExecStart=-sshpass -p ${R}`],
+    ['ExecStart=@', 'ExecStart=@sshpass -p S3cretPW', `ExecStart=@sshpass -p ${R}`],
     // accepted: a tool's name in an echoed string counts too
     ['echo "mongosh -p …" (accepted)', 'echo "mongosh -p 27017"', `echo "mongosh -p ${R}"`],
     // Windows tools in any case
@@ -197,6 +220,21 @@ describe('what the widened patterns catch', () => {
       'sshpass -p $(cat f) ssh h',
       'sshpass -p %PW% ssh h',
       "sshpass -p '${secret:pw}' ssh h",
+      // a path elsewhere than in bin/ or to NAME.exe, or an option's value; a wrapper option's value (fourth review of 0.30)
+      'x /opt/mongo -p 2',
+      'x /opt/sshpassexe -p 2',
+      'ssh -i /usr/bin/mongo -p 2222',
+      'sudo -u mongo ssh -p 2222 h',
+      'sudo -E -u mongo ssh -p 2222 h',
+      'sudo -g zip x -P 2',
+      'env -u mongo x -p 3',
+      'timeout -k mongo 5 x -p 3',
+      'nice -n mongo x -p 3',
+      'stdbuf -o mongo x -p 3',
+      'ExecStart=+sshpass -p 2',
+      'curl -U "u:$PW" -x p h',
+      'smbclient -U "u%$PW" //h/s',
+      "lftp -u 'u,%PW%' h",
     ]) {
       assert.equal(redactor.redact(s), before.redact(s), s);
       assert.deepEqual(kinds(s), scanForLeaks(s, { widened: false }).map((f) => f.kind), s);
@@ -344,6 +382,16 @@ const HOSTILE = [
   rep('masterauth '),
   rep('REDISCLI_AUTH='),
   rep("--password '$"),
+  // fourth review of 0.30: bin/ and .exe paths, wrapper options and their values, NAME=- prefixes
+  rep(' /usr/bin/'),
+  rep('x bin/zip '),
+  rep('x /zip.exe '),
+  'sudo' + rep(' -E'),
+  'sudo' + rep(' -u a'),
+  rep('sudo -u '),
+  'env -u' + rep(' a'),
+  rep('A=-sshpass '),
+  'curl' + rep(' -U "a:$'),
 ];
 
 describe('the widened patterns stay linear on 200,000-character lines', () => {

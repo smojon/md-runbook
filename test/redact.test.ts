@@ -132,6 +132,11 @@ describe('redaction of real-world IAM/OpenShift output', () => {
     ['redis.conf requirepass', 'requirepass S3cretPW', `requirepass ${R}`],
     ['redis.conf masterauth', 'bind 0.0.0.0\nmasterauth S3cretPW\n', `bind 0.0.0.0\nmasterauth ${R}\n`],
     ['CONFIG SET requirepass', 'CONFIG SET requirepass S3cretPW', `CONFIG SET requirepass ${R}`],
+    // fourth review of 0.30: bare requirepass/masterauth only where a line starts or after config set
+    ['redis.conf commented out', '# requirepass S3cretPW', `# requirepass ${R}`],
+    ['redis.conf ; and indent', '  ; masterauth S3cretPW', `  ; masterauth ${R}`],
+    ['YAML list item', '  - requirepass S3cretPW', `  - requirepass ${R}`],
+    ['redis-cli config set', 'redis-cli -h h config  set masterauth S3cretPW', `redis-cli -h h config  set masterauth ${R}`],
     ['REDISCLI_AUTH=', 'REDISCLI_AUTH=S3cretPW redis-cli', `REDISCLI_AUTH=${R} redis-cli`],
     ["--password '$…' (literal)", "--password '$3cretPW'", `--password ${R}`],
     ['--password %… (no %VAR%)', '--password %3cretPW', `--password ${R}`],
@@ -226,6 +231,15 @@ it('key=value redaction leaves references intact', () => {
     // the word AUTH alone is no flag
     'redis-cli AUTH default',
     'Send AUTH first, then the command.',
+    // requirepass/masterauth elsewhere than at a line's start or after config set (fourth review of 0.30)
+    'grep requirepass /etc/redis/redis.conf',
+    'grep -n masterauth redis.conf',
+    'redis-cli config get requirepass',
+    // a reference after user: in quotes (fourth review of 0.30)
+    'curl -u "admin:$PW" https://x',
+    'curl -u "admin:${secret:pw}" https://x',
+    "curl -u 'admin:${secret:pw}' https://x",
+    'curl --user "admin:%PW%" https://x',
   ]) {
     assert.equal(r.redact(s), s, s);
   }

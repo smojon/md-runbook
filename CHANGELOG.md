@@ -82,10 +82,10 @@ update (see below).
   - spaced key names: `api key:`, `secret key =`, `access key:`, `passphrase:`.
   - A tool counts as a word of its own, in quotes too (`sh -c "redis-cli -a …"`), and its flag
     only in the same command.
-    - Also after `sudo -E`, a Makefile's `@` or `ExecStart=`, and as a path that starts a
-      command (`/usr/bin/sshpass`).
-    - Not inside a name, as an option's value or in a path argument: `ssh mongo-1 -p 2222`,
-      `docker run --name mongo -p 80:80` and `ssh -i ~/.ssh/mongo -p 2222` stay readable.
+    - Also after `sudo -E -H`, a Makefile's `@` or `ExecStart=-`.
+    - As a path that starts a command, or in a `bin/` folder, or to a `.exe`.
+    - Not inside a name, as an option's value or in another path: `ssh mongo-1 -p 2222`,
+      `sudo -u mongo ssh -p 2222` and `ssh -i ~/.ssh/mongo -p 2222` stay readable.
     - Windows tools such as `SCHTASKS /RP` count in any case.
   - Everything found before is still found. On runbook source, the leak scan reports these only
     when the value looks like a secret, not "see vault" or a placeholder.
@@ -95,7 +95,8 @@ update (see below).
   - a quoted `pass` value with a space: `DB_PASS="p@ss w0rd"` hid only `p@ss`;
   - a URL with a password but no user: `redis://:…@host`;
   - a user and password in quotes after `curl -u` or `smbclient -U`, a quoted `mysql -p` password;
-  - Redis's `requirepass` and `masterauth`, and the `REDISCLI_AUTH` variable;
+  - Redis's `requirepass` and `masterauth` (at a line's start or after `config set`), and the
+    `REDISCLI_AUTH` variable;
   - a Secret's values in kubectl's `last-applied-configuration` annotation.
 - **Redaction and the leak scan in linear time.** Some lines slowed every run that redacts output:
   - a long run of blanks (20,000 took 6 s, 200,000 about ten minutes);

@@ -20,6 +20,7 @@ const TAB = 9;
 const LF = 10;
 const CR = 13;
 const DQ = 34;
+const HASH = 35;
 const DOLLAR = 36;
 const PCT = 37;
 const AMP = 38;
@@ -456,10 +457,32 @@ const quotedKeyValue = (s: Scan, p: number): number => quotedValueAfterKey(s, p,
 // --- secret-flag-value ---------------------------------------------------------------------------
 
 export const FLAG_NAMES = ['password', 'passwd', 'pass', 'secret', 'client-secret', 'token', 'api-key', 'apikey', 'access-key', 'secret-key', 'requirepass', 'masterauth'];
-/** Redis's password settings count without dashes too: `requirepass …` in redis.conf, `CONFIG SET requirepass …`. */
+/**
+ * Redis's password settings count without dashes too, where a line starts (after blanks, `#` or `;`
+ * comment marks, or a YAML `- `: `requirepass …` in redis.conf) and after `config set` (`CONFIG SET
+ * requirepass …`), not elsewhere (`grep requirepass redis.conf`).
+ */
 export const BARE_FLAG_NAMES = ['requirepass', 'masterauth'];
 
-/** Does `(?:^|\s)(?:--?(?:FLAG_NAMES)|BARE_FLAG_NAMES)` end at j? */
+/** Does `(?:(?:^|[\r\n])[ \t]*(?:[#;]+[ \t]*|-[ \t]+)?|\bconfig[ \t]+set[ \t]+)` (BARE_FLAG_START in redact.ts) end at d? */
+function bareFlagStartsAt(s: Scan, d: number): boolean {
+  let i = s.blanksBefore(d);
+  if (i < d && s.is(i - 3, 'set')) {
+    const j = s.blanksBefore(i - 3);
+    if (j < i - 3 && s.is(j - 6, 'config') && !isWord(s.c(j - 7))) return true;
+  }
+  const c = s.c(i - 1);
+  if (c === DASH) {
+    if (i === d) return false;
+    i = s.blanksBefore(i - 1);
+  } else if (c === HASH || c === SEMI) {
+    while (s.c(i - 1) === HASH || s.c(i - 1) === SEMI) i--;
+    i = s.blanksBefore(i);
+  }
+  return i === 0 || s.c(i - 1) === CR || s.c(i - 1) === LF;
+}
+
+/** Does `(?:^|\s)--?(?:FLAG_NAMES)` or BARE_FLAG_START then BARE_FLAG_NAMES end at j? */
 function secretFlagEndsAt(s: Scan, j: number): boolean {
   for (const name of FLAG_NAMES) {
     const d = j - name.length - 1;
@@ -469,7 +492,7 @@ function secretFlagEndsAt(s: Scan, j: number): boolean {
   }
   for (const name of BARE_FLAG_NAMES) {
     const d = j - name.length;
-    if (s.is(d, name) && (d === 0 || isS(s.c(d - 1)))) return true;
+    if (s.is(d, name) && bareFlagStartsAt(s, d)) return true;
   }
   return false;
 }
@@ -515,11 +538,13 @@ const userChar = (c: number): boolean => flagValueChar(c) && c !== COLON;
 /**
  * The rest of a quoted `user<sep>PASSWORD` from p, in the quote q before the user part, without
  * the closing quote (QUOTED_REST in redact.ts), or -1: in "…" with backslash escapes, in '…' up
- * to the next `'`. It doesn't start with a space.
+ * to the next `'`. It doesn't start with a space, nor with a reference as FLAG_VALUE reads one (in
+ * "…" `$` too: `-u "admin:$PW"`).
  */
 function quotedRestEnd(s: Scan, p: number, q: number): number {
   const c = s.c(p);
   if (c !== c || isS(c)) return -1;
+  if ((q === DQ && c === DOLLAR) || isReference(s, p)) return -1;
   if (q === DQ) return quoteRestEnd(s, p, q);
   const e = s.next("q'", (x) => x === SQ || x === CR || x === LF).find(p);
   return e > p && s.c(e) === SQ ? e : -1;
@@ -807,13 +832,28 @@ const pathChar = (c: number): boolean => c === c && !toolLeft(c) && c !== PIPE &
 /** `[\r\n|;&]`: what a segment starts after (out of quotes). */
 const segmentBreak = (c: number): boolean => c === CR || c === LF || c === PIPE || c === SEMI || c === AMP;
 
-/** Commands that run the next word as a command: an option after one doesn't take the next word as its value. */
+/**
+ * Commands that run a later word as a command: an option after one, or after its options, doesn't
+ * take the next word as its value (`sudo -E -H sshpass`), unless it is one of the wrapper's
+ * WRAPPER_VALUE_OPTIONS (`sudo -u mongo`): then the next word is that value, and the wrapper's
+ * options go on after it (`sudo -u root -E sshpass`).
+ */
 export const WRAPPERS = ['sudo', 'doas', 'env', 'time', 'xargs', 'nice', 'nohup', 'stdbuf', 'timeout'];
+/** The one-letter options that take a value (the next word), by wrapper. */
+export const WRAPPER_VALUE_OPTIONS: Readonly<Record<string, string>> = { sudo: 'ugChprtUDRT', env: 'uCS', timeout: 'sk', nice: 'n', stdbuf: 'ioe' };
+/** By an option's letter (ASCII): the wrappers (bits, in WRAPPERS order) it takes a value of. */
+const VALUE_OPTION_OF = new Int32Array(128);
+WRAPPERS.forEach((w, bit) => {
+  for (const ch of WRAPPER_VALUE_OPTIONS[w] ?? '') VALUE_OPTION_OF[ch.charCodeAt(0)]! |= 1 << bit;
+});
 
-/** Does `(?<![\w.-])(?:WRAPPERS)` end at x? */
-function wrapperEndsAt(s: Scan, x: number): boolean {
-  for (const w of WRAPPERS) if (s.has(x - w.length, w) && !keyChar(s.c(x - w.length - 1))) return true;
-  return false;
+/** The wrappers (bits) whose `(?<![\w.-])NAME` ends at x. */
+function wrappersEndingAt(s: Scan, x: number): number {
+  let m = 0;
+  WRAPPERS.forEach((w, bit) => {
+    if (s.has(x - w.length, w) && !keyChar(s.c(x - w.length - 1))) m |= 1 << bit;
+  });
+  return m;
 }
 
 /** `[A-Za-z_][\w.-]*=[^\s"'|;&]*` (ASSIGN in redact.ts), a character at a time: 0 the name, 1 the value, 2 no. */
@@ -894,28 +934,39 @@ function toolsBefore(s: Scan): Int32Array {
   let escaped = false;
   let continuedCR = false;
   /**
-   * optionStep's and assignStep's states for the run of non-spaces being read; whether the blanks
-   * being read follow an option (not right after a wrapper), and whether the last run was a wrapper
-   * or `NAME=value`.
+   * optionStep's and assignStep's states for the run of non-spaces being read, whether it is
+   * `-[\w-]+` so far (0 nothing read, 1 `-`, 2 yes, 3 no) and its length; whether the blanks being
+   * read follow an option's name (one not in a wrapper's options, or one of a wrapper's that takes a
+   * value), and whether the last run was `NAME=value`.
    */
   let option = 0;
   let assign = 2;
+  let dashWord = 0;
+  let wordLength = 0;
   let inWord = false;
   let afterOption = false;
-  let lastWrapper = false;
   let lastAssign = false;
+  /**
+   * The wrappers (bits) whose options the next run may be (WRAPPER in redact.ts: after the wrapper
+   * and blanks, and after each of its options or an option's value), and those whose option before
+   * takes the next run as its value.
+   */
+  let wrapped = 0;
+  let valueNext = 0;
   /** Only line blanks since the text's start, a line break, `|`, `;` or `&`. */
   let afterBreak = true;
   let segment = 0;
   /**
    * The word being read (from the segment's start or a space): where it starts, whether it is no
    * option's value there, and the end of its `[A-Za-z_][\w.-]*` start (-1: none). Whether the path
-   * being read (a run of PATH_CHAR) is in command position.
+   * being read (a run of PATH_CHAR) is in command position, and whether it starts after a space
+   * and is no option's value (a tool in it counts in a `bin/` directory, or as `NAME.exe`).
    */
   let wordStart = -1;
   let wordNov = false;
   let keyEnd = -1;
   let pathCommand = false;
+  let pathNov = false;
   /** The character at x and the one before (NaN before the text), and their classes. */
   let c = NaN;
   let k = 0;
@@ -928,28 +979,35 @@ function toolsBefore(s: Scan): Int32Array {
     /** No option and blanks right before x. */
     const nov = !(afterOption && (prevK & C_SPACE) !== 0);
     // A path starts at x: in command position at the segment's start (after blanks), after a quote,
-    // `(`, a backtick or `{`, or after a wrapper or `NAME=value`.
+    // `(`, a backtick or `{`, or after a wrapper (and its options) or `NAME=value`.
     if ((k & C_PATH) !== 0 && (prevK & C_PATH) === 0) {
       pathCommand =
-        prevK === 0 || (prevK & C_BREAK) !== 0 || ((prevK & C_LEFT) !== 0 && ((prevK & C_SPACE) === 0 || afterBreak || lastWrapper || lastAssign));
+        prevK === 0 || (prevK & C_BREAK) !== 0 || ((prevK & C_LEFT) !== 0 && ((prevK & C_SPACE) === 0 || afterBreak || wrapped !== 0 || lastAssign));
+      pathNov = (prevK & C_SPACE) !== 0 && nov;
     }
     const tools = c < 128 ? TOOLS_BY_FIRST[lower(c)] : undefined;
     if (tools) {
       // Where a tool's name counts (see redact.ts, before toolRule). In quotes: after
       // TOOL_LEFT_QUOTED, no option's value. Out of quotes: at the segment's start or after
-      // TOOL_LEFT, no option's value; after a prefix (`@`, `-`, `@-`, `-@`, `NAME=`, `NAME:`) that
-      // starts a word that is no option's value; after a path in command position.
+      // TOOL_LEFT, no option's value; after a prefix (`@`, `-`, `@-`, `-@`, `NAME=`, `NAME=-`,
+      // `NAME=@`, `NAME:`) that starts a word that is no option's value; after a path in command
+      // position; after a path that is no option's value, in a `bin/` directory or as `NAME.exe`.
       let counts: boolean;
+      let exeOnly = false;
       if (quote !== 0) counts = nov && ((prevK & C_LEFT) !== 0 || prev === SLASH || prev === BACKSLASH);
       else if (x === segment || (prevK & C_LEFT) !== 0) counts = nov;
-      else if (prev === SLASH || prev === BACKSLASH) counts = pathCommand;
-      else if (prev === AT || prev === DASH) counts = wordNov && (wordStart === x - 1 || (wordStart === x - 2 && s.c(x - 2) === (prev === AT ? DASH : AT)));
+      else if (prev === SLASH || prev === BACKSLASH) {
+        counts = pathCommand || pathNov;
+        exeOnly = !pathCommand && !s.has(x - 4, 'bin');
+      } else if (prev === AT || prev === DASH)
+        counts =
+          wordNov && (wordStart === x - 1 || (wordStart === x - 2 && s.c(x - 2) === (prev === AT ? DASH : AT)) || (s.c(x - 2) === EQ && keyEnd === x - 2));
       else counts = (prev === EQ || prev === COLON) && wordNov && keyEnd === x - 1;
       if (counts) {
         for (const t of tools) {
           if (!(t.anyCase ? s.is(x, t.name) : s.has(x, t.name))) continue;
           const end = x + t.name.length;
-          if (toolRight(s.c(end)) || (s.is(end, '.exe') && toolRight(s.c(end + 4)))) active |= t.bits;
+          if ((!exeOnly && toolRight(s.c(end))) || (s.is(end, '.exe') && toolRight(s.c(end + 4)))) active |= t.bits;
         }
         present |= active;
       }
@@ -957,14 +1015,19 @@ function toolsBefore(s: Scan): Int32Array {
     masks[x] = active;
     if (space) {
       if (inWord) {
-        afterOption = (option === 2 || option === 4) && !lastWrapper;
-        lastWrapper = WRAPPER_LAST.has(prev) && wrapperEndsAt(s, x);
+        // A wrapper's option that takes a value: `-X` whole, X one of its WRAPPER_VALUE_OPTIONS.
+        const valueOf = wordLength === 2 && dashWord === 2 && prev < 128 ? VALUE_OPTION_OF[prev]! & wrapped : 0;
+        afterOption = ((option === 2 || option === 4) && wrapped === 0) || valueOf !== 0;
+        wrapped = (dashWord === 2 ? wrapped & ~valueOf : 0) | valueNext | (WRAPPER_LAST.has(prev) ? wrappersEndingAt(s, x) : 0);
+        valueNext = valueOf;
         lastAssign = assign === 1;
       }
       inWord = false;
     } else {
       option = optionStep(inWord ? option : 0, c);
       assign = inWord ? assignStep(assign, c) : (k & C_START) !== 0 ? 0 : 2;
+      dashWord = !inWord ? (c === DASH ? 1 : 3) : dashWord !== 3 && (isWord(c) || c === DASH) ? 2 : 3;
+      wordLength = inWord ? wordLength + 1 : 1;
       inWord = true;
       if (x === segment || (prevK & C_SPACE) !== 0) {
         wordStart = x;

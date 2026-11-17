@@ -5,7 +5,7 @@
  * the same (redactScan.ts); they stay here as the definition.
  */
 
-import { BARE_FLAG_NAMES, FLAG_NAMES, LINEAR_FINDERS, PASSWORD_TOOLS, PasswordToolRule, SPACED_KEY_WORDS, SpanFinder, Spans, WRAPPERS } from './redactScan';
+import { BARE_FLAG_NAMES, FLAG_NAMES, LINEAR_FINDERS, PASSWORD_TOOLS, PasswordToolRule, SPACED_KEY_WORDS, SpanFinder, Spans, WRAPPER_VALUE_OPTIONS, WRAPPERS } from './redactScan';
 
 export const REDACTED = '[REDACTED]';
 
@@ -65,10 +65,14 @@ const FLAG_VALUE = `(?:"(?!\\$)(?!${REFERENCE})[^"\\r\\n]*"|'(?!${REFERENCE})[^'
 /**
  * The rest of a quoted `user:PASSWORD` (or `pass:PASSWORD`) after the user part, up to the closing
  * quote: in "…" read with backslash escapes as quotedAfter does, in '…' up to the next `'`. It
- * doesn't start with a space.
+ * doesn't start with a space, nor with a reference as FLAG_VALUE reads one (in "…" `$` too).
  */
 const QUOTED_REST = (q: string): string =>
-  q === '"' ? `(?!\\s)(?:(?:[^"\\\\\\r\\n]|\\\\[^\\r\\n])+|[^"\\r\\n]+)(?=")` : `(?!\\s)[^'\\r\\n]+(?=')`;
+  q === '"'
+    ? `(?!\\s)(?!\\$)(?!${REFERENCE})(?:(?:[^"\\\\\\r\\n]|\\\\[^\\r\\n])+|[^"\\r\\n]+)(?=")`
+    : `(?!\\s)(?!${REFERENCE})[^'\\r\\n]+(?=')`;
+/** Where Redis's settings count without dashes (redactScan.ts BARE_FLAG_NAMES): a line's start, after blanks, `#`/`;` or `- `, or after `config set`. */
+const BARE_FLAG_START = '(?:(?:^|[\\r\\n])[ \\t]*(?:[#;]+[ \\t]*|-[ \\t]+)?|\\bconfig[ \\t]+set[ \\t]+)';
 const SECRET_KEY = `\\b[\\w.-]*(?:${SECRET_KEYS})[\\w.-]*${KEY_QUOTE}[ \\t]*[:=][ \\t]*`;
 const PASS_KEY = `(?:^|[^A-Za-z0-9])(?:[\\w.-]*[_.-])?pass${KEY_QUOTE}[ \\t]*[:=][ \\t]*`;
 
@@ -124,7 +128,7 @@ const BASE_PATTERNS: readonly RedactionPattern[] = [
     // --password value, --client-secret "value", --requirepass/requirepass value (Redis), -p value
     // after login, mysql -pValue, curl -u user:pass and -u "user:pass"
     pattern:
-      `(?<=(?:^|\\s)(?:--?(?:${FLAG_NAMES.join('|')})|${BARE_FLAG_NAMES.join('|')})[ \\t]+)${FLAG_VALUE}` +
+      `(?<=(?:(?:^|\\s)--?(?:${FLAG_NAMES.join('|')})|${BARE_FLAG_START}(?:${BARE_FLAG_NAMES.join('|')}))[ \\t]+)${FLAG_VALUE}` +
       '|(?<=\\blogin\\b[^\\r\\n]*?\\s-p[ \\t]*)(?!-)[^\\s"\']+' +
       '|(?<=\\bmysql\\b[^\\r\\n]*?\\s-p)[^\\s"\']+' +
       '|(?<=(?:^|\\s)(?:-u|--user)[ \\t]+[^\\s:"\']+:)[^\\s"\']+' +
@@ -176,14 +180,18 @@ const BL = '[^\\S\\r\\n]';
  * is a word of its own, before a blank or a quote (`mongo-1`, `app.zip`, `mongo:7` don't count):
  * - at the segment's start, or after a blank, a quote, `(`, a backtick or `{`, but not as an
  *   option's value: after `-X` or `--name` and blanks (`docker run --name mongo -p 27017:27017`),
- *   unless a wrapper comes before that option (`sudo -E sshpass`, `env -i redis-cli`);
+ *   unless that option is a wrapper's (`sudo -E -H sshpass`, `env -i redis-cli`) that takes no
+ *   value (`sudo -u mongo ssh -p 2222`: WRAPPER, redactScan.ts WRAPPERS);
  * - out of quotes, after a prefix that starts a word (at the segment's start or after a blank) that
- *   is no option's value: `@` or `-` (a Makefile recipe's `@sshpass`), `NAME=` or `NAME:`
- *   (`ExecStart=sshpass`, `exec:sshpass`; not `--name=mongo`);
+ *   is no option's value: `@` or `-` (a Makefile recipe's `@sshpass`), `NAME=`, `NAME=-`, `NAME=@`
+ *   or `NAME:` (`ExecStart=sshpass`, `ExecStart=-sshpass`, `exec:sshpass`; not `--name=mongo`);
  * - after a path's `/` or `\`: in quotes anywhere (`& "C:\Program Files\7-Zip\7z.exe"`), out of
  *   quotes where the path is in command position: at the segment's start (after blanks), after a
- *   quote, `(`, a backtick or `{`, or after a wrapper or `NAME=value` and blanks
- *   (`/usr/bin/sshpass`, `sudo /usr/bin/sshpass`; not `ssh -i ~/.ssh/mongo -p 2222`).
+ *   quote, `(`, a backtick or `{`, or after a wrapper (and its options) or `NAME=value` and blanks
+ *   (`/usr/bin/sshpass`, `sudo -E /usr/bin/sshpass`); or after a blank where the path is no
+ *   option's value and the tool is in a `bin/` (`bin\`) directory or named `NAME.exe`
+ *   (`kubectl exec p -- /usr/bin/redis-cli`, `cmd /c C:\Tools\7z.exe`; not `ssh -i ~/.ssh/mongo
+ *   -p 2222`, `ls /opt/mongo -p 2`).
  * Its flag counts anywhere after it in the same segment, in quotes too.
  *
  * The linear matcher (redactScan.ts toolsBefore) also reads a line that ends in `\` out of quotes
@@ -203,28 +211,49 @@ const OUT_TO = `${SEGMENT_ITEM}*(?:"${DQ_CHAR}*|'${SQ_CHAR}*)?`;
 const TOOL_LEFT = `(?<=[\\s"'(\`{])`;
 /** In quotes, also a path's `/` or `\` (`"C:\…\7z.exe"`). */
 const TOOL_LEFT_QUOTED = `(?<=[\\s"'(\`{/\\\\])`;
-/** A wrapper (redactScan.ts WRAPPERS) and blanks: it runs the next word as a command. */
-const WRAPPER = `(?<![\\w.-])(?:${WRAPPERS.join('|')})\\s+`;
-/** Not an option's value: no `-X` or `--name` (a whole word, not right after a wrapper) and blanks right before. */
-const NOT_OPTION_VALUE = `(?<!(?<![^\\s])(?<!${WRAPPER})(?:-\\w|--\\w[\\w-]*)\\s+)`;
-/** What may start a word before a tool's name, out of quotes: `@`, `-`, `@-`, `-@`, `NAME=`, `NAME:`. */
-const TOOL_PREFIX = `(?:@-?|-@?|[A-Za-z_][\\w.-]*[=:])`;
+/**
+ * A wrapper (redactScan.ts WRAPPERS) and blanks, then its options, each with blanks: `-[\w-]+`
+ * words, and those that take a value (WRAPPER_VALUE_OPTIONS) with that value's word. It runs the
+ * next word as a command.
+ */
+const wrapperContext = (w: string): string => {
+  const v = WRAPPER_VALUE_OPTIONS[w];
+  const option = v === undefined ? '-[\\w-]+' : `(?:-[${v}]\\s+\\S+|(?!-[${v}]\\s)-[\\w-]+)`;
+  return `(?<![\\w.-])${w}\\s+(?:${option}\\s+)*`;
+};
+const WRAPPER = `(?:${WRAPPERS.map(wrapperContext).join('|')})`;
+/** A wrapper's option that takes a value (`sudo -u`), where WRAPPER allows it. */
+const WRAPPER_VALUE_OPTION = `(?:${WRAPPERS.filter((w) => WRAPPER_VALUE_OPTIONS[w] !== undefined)
+  .map((w) => `${wrapperContext(w)}-[${WRAPPER_VALUE_OPTIONS[w]}]`)
+  .join('|')})`;
+/**
+ * Not an option's value: no `-X` or `--name` (a whole word, not after WRAPPER) and blanks right
+ * before, nor a wrapper's option that takes a value.
+ */
+const NOT_OPTION_VALUE = `(?<!(?<![^\\s])(?<!${WRAPPER})(?:-\\w|--\\w[\\w-]*)\\s+)(?<!${WRAPPER_VALUE_OPTION}\\s+)`;
+/** What may start a word before a tool's name, out of quotes: `@`, `-`, `@-`, `-@`, `NAME=`, `NAME=-`, `NAME=@`, `NAME:`. */
+const TOOL_PREFIX = `(?:@-?|-@?|[A-Za-z_][\\w.-]*(?:=[-@]?|:))`;
 /** A path's character out of quotes. */
 const PATH_CHAR = `[^\\s"'|;&(\`{]`;
 /** `NAME=value`, a whole word. */
 const ASSIGN = `(?<![^\\s])[A-Za-z_][\\w.-]*=[^\\s"'|;&]*`;
-/** Command position, for a path out of quotes: the segment's start (after blanks), a quote, `(`, a backtick, `{`, a wrapper or `NAME=value`. */
+/** Command position, for a path out of quotes: the segment's start (after blanks), a quote, `(`, a backtick, `{`, a wrapper (and its options) or `NAME=value`. */
 const COMMAND_LEFT = `(?<=(?:^|[\\r\\n|;&])${BL}*|["'(\`{]|${WRAPPER}|${ASSIGN}\\s+)`;
 /** `word` in any case: `[Ss][Cc]…` (the pattern has no i flag: `-p` and `-P` differ). */
 const anyCase = (word: string): string => word.replace(/[A-Za-z]/g, (c) => `[${c.toUpperCase()}${c.toLowerCase()}]`);
 const toolRule = (r: PasswordToolRule): string => {
   const word = (w: string): string => (r.anyCase ? anyCase(escapeRe(w)) : escapeRe(w));
-  const name = `(?:${r.tools.map(word).join('|')})(?:\\.[Ee][Xx][Ee])?(?=[\\s"'])`;
-  // Out of quotes: where a command can start, after a prefix, or after a path in command position.
+  const tools = `(?:${r.tools.map(word).join('|')})`;
+  const name = `${tools}(?:\\.[Ee][Xx][Ee])?(?=[\\s"'])`;
+  // Out of quotes: where a command can start, after a prefix, after a path in command position, or
+  // after a path that is no option's value, in a `bin/` directory or as `NAME.exe`.
+  const pathNov = `${SEGMENT_ITEM}*(?<=\\s)${NOT_OPTION_VALUE}${PATH_CHAR}*`;
   const out =
-    `(?:(?:${SEGMENT_ITEM}*${TOOL_LEFT})?${NOT_OPTION_VALUE}` +
+    `(?:(?:(?:${SEGMENT_ITEM}*${TOOL_LEFT})?${NOT_OPTION_VALUE}` +
     `|(?:${SEGMENT_ITEM}*(?<=\\s))?${NOT_OPTION_VALUE}${TOOL_PREFIX}` +
-    `|${SEGMENT_ITEM}*${COMMAND_LEFT}${PATH_CHAR}*[/\\\\])${name}`;
+    `|${SEGMENT_ITEM}*${COMMAND_LEFT}${PATH_CHAR}*[/\\\\]` +
+    `|${pathNov}bin[/\\\\])${name}` +
+    `|${pathNov}[/\\\\]${tools}\\.[Ee][Xx][Ee](?=[\\s"']))`;
   const quoted = `${TOOL_LEFT_QUOTED}${NOT_OPTION_VALUE}${name}`;
   // The line's start, the segments before, then the tool out of quotes, in "…" or in '…', and on to a blank and the flag.
   const flag =
