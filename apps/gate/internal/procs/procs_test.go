@@ -101,7 +101,8 @@ func TestShellOf(t *testing.T) {
 }
 
 // The cells' account (1500) in separated mode: a live session's cells hang under a gate (1000)
-// through sudo (root); anything else of the account is a stray (review of 0.28.0, H2).
+// through sudo (root). A lease ends all of them; the blocks of another gate account's session
+// make it refuse instead.
 //
 //	202 gate (1000) -> 203 sudo (root) -> 204 bash (1500) -> 205 sleep (1500)
 //	210 gate of another account (1001) -> 211 sudo -> 212 bash (1500)
@@ -110,7 +111,7 @@ func TestShellOf(t *testing.T) {
 //	400 cron (root) -> 401 job (1500)
 //	700 systemd --user (1500) -> 701 (sd-pam); 702 a service
 //	800 docker exec'd (1500, parent 0); 900 zombie
-func TestCellsStrays(t *testing.T) {
+func TestCellsLiveAndUnder(t *testing.T) {
 	list := []Proc{
 		{PID: 1, PPID: 0, UID: 0, Comm: "init"},
 		{PID: 202, PPID: 201, UID: 1000, Comm: "md-runbook-gate"},
@@ -132,13 +133,16 @@ func TestCellsStrays(t *testing.T) {
 		{PID: 800, PPID: 0, UID: 1500, Comm: "sh"},
 		{PID: 900, PPID: 1, UID: 1500, Comm: "sh", Zombie: true},
 	}
-	// The check: only this gate account's gates count; the other account's blocks are strays.
-	if got, want := CellsStrays(list, 1500, GateOf(1000, "md-runbook-gate")), []int{212, 221, 300, 301, 401, 700, 701, 702, 800}; !reflect.DeepEqual(got, want) {
-		t.Errorf("strays: %v, want %v", got, want)
+	// What a lease ends: every live process of the account, wherever it hangs.
+	if got, want := Live(list, 1500), []int{204, 205, 212, 221, 300, 301, 401, 700, 701, 702, 800}; !reflect.DeepEqual(got, want) {
+		t.Errorf("live: %v, want %v", got, want)
 	}
-	// The sweep: it spares any gate account's live blocks (the check refuses those instead).
-	if got, want := CellsStrays(list, 1500, AnyGate(1500, "md-runbook-gate")), []int{221, 300, 301, 401, 700, 701, 702, 800}; !reflect.DeepEqual(got, want) {
-		t.Errorf("sweep: %v, want %v", got, want)
+	// What makes it refuse instead: another gate account's blocks (this gate's own don't count).
+	if got, want := Under(list, 1500, OtherGate(1000, 1500, "md-runbook-gate")), []int{212}; !reflect.DeepEqual(got, want) {
+		t.Errorf("under another gate: %v, want %v", got, want)
+	}
+	if got := Under(list, 1500, OtherGate(1001, 1500, "md-runbook-gate")); !reflect.DeepEqual(got, []int{204, 205}) {
+		t.Errorf("seen from the other gate: %v", got)
 	}
 	if Comm("/usr/local/bin/md-runbook-gate-long-name") != "md-runbook-gate" || Comm("sh") != "sh" {
 		t.Errorf("comm: %q", Comm("/usr/local/bin/md-runbook-gate-long-name"))

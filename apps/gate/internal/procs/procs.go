@@ -262,14 +262,21 @@ func ShellOf(list []Proc, leader, uid int, inner func(pid int) bool) int {
 	return 0
 }
 
-// CellsStrays is each live process of the cells' account (separated mode) with no process above
-// it for which under is true. A session's cells run under its gate (sudo, root's, between them);
-// what left it (a double fork, setsid) hangs under PID 1 or a subreaper, a cron job or a login
-// of the cells' account under root's, and another gate account's blocks under that gate. None of
-// those is spared: not the account's user manager, not what came in from outside the PID
-// namespace (review of 0.28.0, H2: any of them can write into a session's shell through
-// /proc/PID/fd/0, the same account's).
-func CellsStrays(list []Proc, uid int, under func(Proc) bool) []int {
+// Live is each live process of the account uid (no zombie, not PID 1): in separated mode, what is
+// left of a cells account (a zombie can't do anything any more).
+func Live(list []Proc, uid int) []int {
+	var out []int
+	for _, p := range list {
+		if p.UID == uid && p.PID > 1 && !p.Zombie {
+			out = append(out, p.PID)
+		}
+	}
+	return out
+}
+
+// Under is each live process of the account uid with a process above it for which under is
+// true (a session's cells run under its gate, with sudo, root's, between them).
+func Under(list []Proc, uid int, under func(Proc) bool) []int {
 	byPID := map[int]Proc{}
 	for _, p := range list {
 		byPID[p.PID] = p
@@ -279,34 +286,25 @@ func CellsStrays(list []Proc, uid int, under func(Proc) bool) []int {
 		if p.UID != uid || p.PID <= 1 || p.Zombie {
 			continue
 		}
-		spared := false
 		for q, n := p.PPID, 0; q > 1 && n < 4096; n++ {
 			qp, ok := byPID[q]
 			if !ok {
 				break
 			}
 			if under(qp) {
-				spared = true
+				out = append(out, p.PID)
 				break
 			}
 			q = qp.PPID
-		}
-		if !spared {
-			out = append(out, p.PID)
 		}
 	}
 	return out
 }
 
-// GateOf: a gate process of the account uid (by its name, as /proc/PID/stat or ps shows it; only
-// that account can start a process of its own).
-func GateOf(uid int, comm string) func(Proc) bool {
-	return func(p Proc) bool { return p.UID == uid && p.Comm == comm }
-}
-
-// AnyGate: a gate process of any account but root and the cells' (uid).
-func AnyGate(cellsUID int, comm string) func(Proc) bool {
-	return func(p Proc) bool { return p.UID != cellsUID && p.UID != 0 && p.Comm == comm }
+// OtherGate: a gate process (by its name, as /proc/PID/stat or ps shows it) of any account but
+// root, the cells account (cellsUID) and this gate's (gateUID): another gate account's session.
+func OtherGate(gateUID, cellsUID int, comm string) func(Proc) bool {
+	return func(p Proc) bool { return p.UID != gateUID && p.UID != cellsUID && p.UID != 0 && p.Comm == comm }
 }
 
 // Comm is a program's name as /proc/PID/stat shows it: its file name, at most 15 bytes.

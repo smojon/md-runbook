@@ -138,7 +138,7 @@ func (g *Gate) session() int {
 		kv = append(kv, "isolation_off", strings.TrimSuffix(g.isoWhy, "; "))
 	}
 	if g.separated() {
-		kv = append(kv, "cells", g.cfg.CellsAccount)
+		kv = append(kv, "cells", g.cells.name)
 	}
 	if g.jobMode() {
 		kv = append(kv, "cells_runner", g.cfg.CellsRunner, "job", g.job.name, "cells", g.job.sa)
@@ -155,10 +155,9 @@ func (g *Gate) session() int {
 			f.Close()
 		}
 	}
-	// Before the first shell: no leftover of an earlier session finds it.
+	// Before the first shell: no leftover of an earlier session finds it. (Separated mode: the
+	// leased cells account has no process left already: leaseCells.)
 	g.sweep("start")
-	// Separated mode: nothing of the cells' account outside this account's sessions.
-	g.checkCellsStrays()
 	g.serve()
 	g.cleanup()
 	if g.signalled.Load() {
@@ -208,7 +207,7 @@ func (g *Gate) cellsEnv() []string {
 		if home == "" {
 			home = "/"
 		}
-		env = append(env, "HOME="+home, "USER="+g.cfg.CellsAccount, "LOGNAME="+g.cfg.CellsAccount)
+		env = append(env, "HOME="+home, "USER="+g.cells.name, "LOGNAME="+g.cells.name)
 	}
 	for _, n := range names.CellsEnv {
 		if sep && (n == "HOME" || n == "USER" || n == "LOGNAME" || n == "TMPDIR") {
@@ -330,6 +329,9 @@ func (g *Gate) showPID() {
 		content = "job " + g.job.ns + " " + g.job.name + " " + itoa(sh.n)
 	} else if pid <= 1 {
 		return
+	} else if g.separated() {
+		// The cells account it runs as: a stop request signals as that one.
+		content += "\n" + g.cells.name
 	}
 	f, err := os.CreateTemp(g.state+"/pids", ".new.")
 	if err != nil {
@@ -618,6 +620,7 @@ func nap() { time.Sleep(200 * time.Millisecond) }
 // folder.
 func (g *Gate) cleanup() {
 	g.stopShells(g.liveShells()...)
+	g.endCells()
 	g.jobCleanup()
 	if g.skey != "" {
 		os.Remove(g.pidFile())
@@ -663,7 +666,7 @@ func (g *Gate) stopRequest(cmd string) bool {
 	if err != nil {
 		g.fatal("no md-runbook session " + n)
 	}
-	first, _, _ := strings.Cut(string(data), "\n")
+	first, rest, _ := strings.Cut(string(data), "\n")
 	// A session whose cells run in a Kubernetes Job (only where this gate.conf says so).
 	if f := strings.Split(first, " "); g.jobMode() && len(f) == 4 && f[0] == "job" {
 		g.jobStopRequest(f[1], f[2], f[3], sig)
@@ -684,10 +687,16 @@ func (g *Gate) stopRequest(cmd string) bool {
 		signal = syscall.SIGKILL
 	}
 	targets := procs.Descendants(list, pid)
-	// Separated mode: the cells' programs are the cells' account's, signalled as that account.
+	// Separated mode: the cells' programs are the leased cells account's (the pid file's second
+	// line, one of the pool), signalled as that account.
 	if g.separated() {
+		account, _, _ := strings.Cut(rest, "\n")
+		if !has(g.cfg.CellsPool(), account) {
+			g.fatal("no md-runbook session " + n)
+		}
 		if len(targets) > 0 {
 			g.plan = g.basePlan()
+			g.plan.account = account
 			g.cellsKill(signal, targets)
 		}
 		return true

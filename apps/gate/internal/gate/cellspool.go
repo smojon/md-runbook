@@ -1,0 +1,266 @@
+//go:build unix
+
+package gate
+
+import (
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/smojon/md-runbook/apps/gate/internal/procs"
+)
+
+// ---- the pool of cells accounts (cells_accounts = in gate.conf) ----
+// Each session of separated mode runs its blocks as an account of its own, leased from the pool
+// for the session's whole life. Any process of an account can write into that account's shells
+// through /proc/PID/fd/0 and read their exported values through /proc/PID/environ; another
+// account's it can't. So a block can't reach another session's shells (review of 0.28.0, H2, and
+// its re-review).
+//
+// The lease is a lock file per account in the gate's state folder (flock, held by the gate
+// process for the session): the session takes the first account of the pool whose lock is free.
+// The lock goes with the gate process, a crashed one too; its descriptor is close-on-exec, so no
+// shell or block holds it. None free: the session doesn't start.
+//
+// Before the session's first block, and at its end, every process of the leased account ends:
+// the gate runs the cells' mode as that account (the same sudo line) with killall, which calls
+// kill(-1, SIGKILL). Then it lists the processes until none of the account is left, and refuses
+// to start while one is.
+//   - Linux: kill(-1) signals every process the caller may signal (the account's), except itself
+//     and PID 1, with the task list locked (kernel/signal.c, kill_something_info). A fork either
+//     finished before, and the child gets the signal too, or sees the signal and fails: a process
+//     that keeps forking can't slip out. The cells' mode itself lives on and exits 0.
+//   - macOS: kill(-1) signals a list of the processes taken first (xnu, proc_iterate), the cells'
+//     mode included, which dies with them (KILL is its exit, and counts as done). A process that
+//     forks between the list and the signal can live on: the gate lists again, ends them all
+//     again (3 times) and refuses to start while one is left.
+//
+// This replaces 0.28.0's look for strays (every process of the account under a gate of this
+// account): one look at the start, which a process that keeps forking could slip past, and which
+// didn't see a job started mid-session. What another session's blocks start now runs as another
+// account. What is left of the leased account's: a block's own programs, within its session.
+
+// errBusy: another session holds the account's lock.
+var errBusy = errors.New("in use")
+
+// errAllBusy: every account of the pool is in use.
+var errAllBusy = errors.New("all in use")
+
+// lockFunc takes an account's lock: errBusy when another session holds it.
+type lockFunc func(name string) (io.Closer, error)
+
+// lease takes the first account of the pool whose lock is free: its index and the held lock.
+// A lock that fails otherwise (the folder, the file) stops the session: fail closed.
+func lease(pool []string, lock lockFunc) (int, io.Closer, error) {
+	for i, name := range pool {
+		l, err := lock(name)
+		if err == nil {
+			return i, l, nil
+		}
+		if !errors.Is(err, errBusy) {
+			return -1, nil, errors.New("can't take the lock of " + name + ": " + err.Error())
+		}
+	}
+	return -1, nil, errAllBusy
+}
+
+// flockIn: the lock files in dir, NAME.lock, taken with flock (exclusive, without waiting).
+func flockIn(dir string) lockFunc {
+	return func(name string) (io.Closer, error) {
+		f, err := os.OpenFile(dir+"/"+name+".lock", os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			f.Close()
+			if err == syscall.EWOULDBLOCK {
+				return nil, errBusy
+			}
+			return nil, err
+		}
+		return f, nil
+	}
+}
+
+// busyMessage: why the session doesn't start when no account is free.
+func busyMessage(key string, pool []string) string {
+	if len(pool) == 1 {
+		return key + " = " + pool[0] + " is in use by another session of this account: for sessions side by side, name more accounts in cells_accounts ="
+	}
+	return "all " + itoa(len(pool)) + " cells accounts are in use: raise the pool (cells_accounts = in gate.conf)"
+}
+
+// cellsKillAll is the cells' mode's killall: KILL to every process of this account. Only as the
+// account the gate leased (want), never as root: as root, kill(-1) would end the system.
+func cellsKillAll(want, uid, euid int, kill func(int, syscall.Signal) error) int {
+	if want <= 0 || uid != want || euid != want {
+		say("cells mode: killall runs only as the cells account the gate leased")
+		return 2
+	}
+	kill(-1, syscall.SIGKILL)
+	return 0
+}
+
+// killallDone: the cells' mode's killall ran. It exits 0 (Linux), or dies in its own kill (KILL:
+// macOS; sudo then ends with the same signal). A timeout is not that: runFor killed it.
+func killallDone(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errTimeout) {
+		return err
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL {
+			return nil
+		}
+		if ee.ExitCode() == 128+int(syscall.SIGKILL) {
+			return nil
+		}
+	}
+	return err
+}
+
+// clearer is what ending an account's processes needs (tests give their own).
+type clearer struct {
+	list    func() ([]procs.Proc, error)
+	killall func() error
+	sleep   func(time.Duration)
+}
+
+// clearAccount ends every process of the account (name, uid): killall, then a listing until none
+// is left (20 looks, 50 ms apart), 3 times at most. At the start (start) it refuses instead when
+// the account runs another gate account's blocks: killall would end them, and the pool would be
+// shared. What it found before (killed), and "" or why the account isn't clear.
+func clearAccount(c clearer, name string, uid, gateUID int, gateComm string, start bool) (killed []int, problem string) {
+	list, err := c.list()
+	if err != nil {
+		return nil, "can't list the processes"
+	}
+	if !hasPID1(list) {
+		return nil, "can't see other accounts' processes (is /proc mounted with hidepid?): the gate must see " + name + "'s"
+	}
+	killed = procs.Live(list, uid)
+	if start {
+		if other := procs.Under(list, uid, procs.OtherGate(gateUID, uid, gateComm)); len(other) > 0 {
+			return nil, name + " runs the blocks of another gate account's session (" + shown(list, other) + "): a pool serves one gate account only. Give each gate account cells accounts of its own"
+		}
+	}
+	var left []int
+	for try := 0; try < 3; try++ {
+		if err := c.killall(); err != nil {
+			return killed, "can't end the processes of " + name + " through sudo (" + err.Error() + ")"
+		}
+		for look := 0; look < 20; look++ {
+			if list, err = c.list(); err != nil {
+				return killed, "can't list the processes"
+			}
+			if left = procs.Live(list, uid); len(left) == 0 {
+				return killed, ""
+			}
+			c.sleep(50 * time.Millisecond)
+		}
+	}
+	return killed, itoa(len(left)) + " processes of " + name + " are left after ending them all (" + shown(list, left) + ")"
+}
+
+// shown: up to 5 processes, as `PID name`.
+func shown(list []procs.Proc, pids []int) string {
+	byPID := map[int]procs.Proc{}
+	for _, p := range list {
+		byPID[p.PID] = p
+	}
+	var out []string
+	for i, p := range pids {
+		if i == 5 {
+			out = append(out, "...")
+			break
+		}
+		out = append(out, itoa(p)+" "+byPID[p].Comm)
+	}
+	return strings.Join(out, ", ")
+}
+
+func hasPID1(list []procs.Proc) bool {
+	for _, p := range list {
+		if p.PID == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// leaseCells: the session's cells account, from the pool (after the self-check), and none of its
+// processes left. Any problem stops the gate before its first shell.
+func (g *Gate) leaseCells(infos []cellsInfo) {
+	pool := g.cfg.CellsPool()
+	dir := g.state + "/cells"
+	if os.MkdirAll(dir, 0o700) != nil || os.Chmod(dir, 0o700) != nil {
+		g.fatal("can't create " + dir)
+	}
+	i, lk, err := lease(pool, flockIn(dir))
+	if err != nil {
+		msg := err.Error()
+		if err == errAllBusy {
+			msg = busyMessage(g.cfg.CellsKey(), pool)
+		}
+		g.log.Event("event", "lease", "status", "refused", "reason", msg)
+		g.fatal(msg)
+	}
+	g.cells, g.plan.account, g.cellsLock = infos[i], infos[i].name, lk
+	killed, problem := clearAccount(g.clearer(), g.cells.name, g.cells.uid, g.uid, g.gateComm, true)
+	g.logKilled(killed, "start")
+	if problem != "" {
+		// Nothing to end at the session's end: what is left may be another gate account's.
+		g.cellsLock.Close()
+		g.cellsLock = nil
+		msg := g.cfg.CellsKey() + ": " + problem
+		g.log.Event("event", "self-check", "status", "refused", "reason", msg)
+		g.fatal(msg)
+	}
+}
+
+// endCells: at the end of the session (once), every process of its cells account ends. What is
+// left is logged; the next session on that account ends it, or refuses to start.
+func (g *Gate) endCells() {
+	if g.cellsLock == nil {
+		return
+	}
+	g.cellsEnd.Do(func() {
+		killed, problem := clearAccount(g.clearer(), g.cells.name, g.cells.uid, g.uid, g.gateComm, false)
+		g.logKilled(killed, "end")
+		if problem != "" {
+			g.log.Event("event", "leftovers", "status", "incomplete", "reason", problem, "cells", g.cells.name, "when", "end")
+		}
+	})
+}
+
+func (g *Gate) logKilled(pids []int, when string) {
+	if len(pids) == 0 {
+		return
+	}
+	var s []string
+	for _, p := range pids {
+		s = append(s, itoa(p))
+	}
+	g.log.Event("event", "leftovers", "status", "killed", "pids", strings.Join(s, " "), "cells", g.cells.name, "when", when)
+}
+
+func (g *Gate) clearer() clearer {
+	return clearer{list: procs.List, killall: g.cellsKillAll, sleep: time.Sleep}
+}
+
+// cellsKillAll runs the cells' mode's killall as the leased account (at most 10 seconds).
+func (g *Gate) cellsKillAll() error {
+	if g.plan.exe == "" || g.plan.sudo == "" || g.plan.account == "" {
+		return errors.New("no sudo")
+	}
+	l := g.plan.outer("", true)
+	_, err := runFor(10*time.Second, l.argv, l.env, cellsReq{Op: "killall", UID: g.cells.uid}.encode())
+	return killallDone(err)
+}

@@ -50,6 +50,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -103,9 +104,12 @@ type Gate struct {
 	cellsBin      string
 	cellsArgs     []string
 
-	// How the shells start (isolation, separated mode), and the cells' account (separated mode).
-	plan  plan
-	cells cellsInfo
+	// How the shells start (isolation, separated mode), and the cells account this session leased
+	// (separated mode): its lock, held until the gate ends, and the end of its processes, once.
+	plan      plan
+	cells     cellsInfo
+	cellsLock io.Closer
+	cellsEnd  sync.Once
 	// The programs the gate runs, by absolute path (helpers.go).
 	helpers map[string]string
 	// This program's name as process listings show it (separated mode: what the cells run under).

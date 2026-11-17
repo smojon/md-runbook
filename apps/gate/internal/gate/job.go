@@ -144,8 +144,8 @@ func runnerProblem(c config.Config, configPath string) string {
 	switch {
 	case c.JobServiceAccount == "":
 		return "cells_runner = kubernetes-job needs job_service_account = NAME: the service account the cells' Jobs run as"
-	case c.CellsAccount != "":
-		return "cells_runner = kubernetes-job and cells_account don't go together: the Job's pod keeps the cells apart. Remove cells_account"
+	case len(c.CellsPool()) > 0:
+		return "cells_runner = kubernetes-job and " + c.CellsKey() + " don't go together: the Job's pod keeps the cells apart. Remove " + c.CellsKey()
 	case c.Isolation == "scope" || c.Isolation == "bwrap":
 		return "isolation = " + c.Isolation + " doesn't go with cells_runner = kubernetes-job: the Job's pod is the isolation. Use auto or none"
 	case c.ReportToken != "" && strings.HasPrefix(filepath.Clean(c.ReportToken), filepath.Dir(filepath.Clean(configPath))+"/"):

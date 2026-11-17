@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/smojon/md-runbook/apps/gate/internal/logx"
 	"github.com/smojon/md-runbook/apps/gate/internal/procs"
@@ -19,16 +18,19 @@ import (
 	"github.com/smojon/md-runbook/apps/gate/internal/textutil"
 )
 
-// ---- separated mode (cells_account = in gate.conf) ----
+// ---- separated mode (cells_accounts = or cells_account = in gate.conf) ----
 // The cells run as a second, unprivileged account, through `sudo -n -u ACCOUNT` and this
-// program's cells mode. So a block can't read what only the gate's account can: the report token,
-// the log, the gate's pipes and /proc entries, the session's work folder. What the cells' shell
-// must tell the gate (each run's exit, a kube-context refusal) it writes to a file it can only
-// append to, with the run's random number (exitsFile); the gate logs the `end` events itself.
+// program's cells mode: each session as an account of its own, leased from a pool (cellspool.go).
+// So a block can't read what only the gate's account can: the report token, the log, the gate's
+// pipes and /proc entries, the session's work folder; nor reach another session's shells. What
+// the cells' shell must tell the gate (each run's exit, a kube-context refusal) it writes to a
+// file it can only append to, with the run's random number (exitsFile); the gate logs the `end`
+// events itself.
 //
-// Before each session the gate checks (selfCheck), and refuses to start when:
-//   - the account doesn't exist, is root, or is the gate's own;
-//   - `sudo -n -l` lists anything but the one rule (sudoRule);
+// Before each session the gate checks every account of the pool (selfCheck), and refuses to
+// start when:
+//   - an account doesn't exist, is root, or is the gate's own, or two have the same uid;
+//   - `sudo -n -l` lists anything but the one rule (sudoRule), naming the whole pool;
 //   - a folder above the gate's program, gate.conf, the trusted keys, revoked, floors, the
 //     account's keys, the report token or the log is not safe (safePathProblem: the rule of
 //     OpenSSH's StrictModes);
@@ -36,10 +38,12 @@ import (
 //     gate.conf, the trusted keys, the account's keys or the gate's state;
 //   - it can't append to the session's exits file (the work folder is in /tmp).
 
-// cellsInfo is the cells' account as the self-check found it.
+// cellsInfo is a cells account as the self-check found it.
 type cellsInfo struct {
-	uid  int
-	home string
+	name   string
+	uid    int
+	home   string
+	groups map[int]bool
 }
 
 // runFunc runs a program: argv, its environment (nil: a plain one), stdin; its stdout.
@@ -48,8 +52,11 @@ type runFunc func(argv, env []string, stdin []byte) ([]byte, error)
 // selfCheck is what the separated mode's check needs: how to run programs (tests give their own)
 // and what to check.
 type selfCheck struct {
-	run         runFunc
-	plan        plan
+	run  runFunc
+	plan plan // the programs (exe, sudo); its account is set for each account checked
+	// The pool, and the setting that named it (cells_account or cells_accounts), for messages.
+	pool        []string
+	key         string
 	sh, id      string // the programs (helpers.go)
 	gateAccount string
 	gateUID     int
@@ -63,90 +70,134 @@ type selfCheck struct {
 	cron cronSetup
 }
 
-// do runs the check; the cells' account, or why the gate must not start.
-func (c selfCheck) do() (cellsInfo, error) {
-	var info cellsInfo
-	name := c.plan.account
-	if c.id == "" || c.sh == "" {
-		return info, errors.New("cells_account = " + name + ": no id or sh in " + sysPath)
+// what: how messages name an account of the pool.
+func (c selfCheck) what(name string) string {
+	if c.key == "cells_account" {
+		return "cells_account = " + name
 	}
+	return "cells_accounts: " + name
+}
+
+// do runs the check; each account of the pool, or why the gate must not start.
+func (c selfCheck) do() ([]cellsInfo, error) {
+	if len(c.pool) == 0 {
+		return nil, errors.New(c.key + ": no account")
+	}
+	if c.id == "" || c.sh == "" {
+		return nil, errors.New(c.key + ": no id or sh in " + sysPath)
+	}
+	if c.gateUID == 0 {
+		return nil, errors.New(c.key + " needs the gate to run as an account other than root")
+	}
+	var infos []cellsInfo
+	uids := map[int]string{}
+	for _, name := range c.pool {
+		info, err := c.account(name)
+		if err != nil {
+			return nil, err
+		}
+		// Two names of one uid would be one account: its sessions could reach each other.
+		if other, ok := uids[info.uid]; ok {
+			return nil, errors.New(c.key + ": " + other + " and " + name + " are the same account (uid " + strconv.Itoa(info.uid) + "): give each session an account of its own")
+		}
+		uids[info.uid] = name
+		infos = append(infos, info)
+	}
+	rule := sudoRule(c.gateAccount, c.pool, c.plan.exe)
+	need := "\n  Separated mode needs exactly this sudoers line (for example in /etc/sudoers.d/md-runbook-gate), and no other rule for " + c.gateAccount + ":\n  " + rule
+	if c.plan.exe == "" {
+		return nil, errors.New(c.key + ": can't find this program's own path")
+	}
+	if c.plan.sudo == "" {
+		return nil, errors.New(c.key + ": no sudo in " + sysPath + need)
+	}
+	out, err := c.run([]string{c.plan.sudo, "-n", "-l"}, nil, nil)
+	if p := sudoProblem(string(out), c.pool, c.plan.exe); p != "" {
+		return nil, errors.New(c.key + ": " + p + need)
+	} else if err != nil {
+		return nil, errors.New(c.key + ": sudo -n -l failed (" + err.Error() + ")" + need)
+	}
+	for _, info := range infos {
+		if err := c.files(info, need); err != nil {
+			return nil, err
+		}
+	}
+	return infos, nil
+}
+
+// account: what the check needs to know of an account of the pool, and its own problems.
+func (c selfCheck) account(name string) (cellsInfo, error) {
+	info := cellsInfo{name: name, groups: map[int]bool{}}
+	what := c.what(name)
 	out, err := c.run([]string{c.id, "-u", name}, nil, nil)
 	uid, aerr := strconv.Atoi(strings.TrimSpace(string(out)))
 	if err != nil || aerr != nil {
-		return info, errors.New("cells_account = " + name + ": no such account")
+		return info, errors.New(what + ": no such account")
 	}
 	switch {
 	case uid == 0:
-		return info, errors.New("cells_account = " + name + " is root: give the cells an unprivileged account of their own")
+		return info, errors.New(what + " is root: give the cells an unprivileged account of their own")
 	case uid == c.gateUID:
-		return info, errors.New("cells_account = " + name + " is the gate's own account: give the cells an account of their own")
-	case c.gateUID == 0:
-		return info, errors.New("cells_account needs the gate to run as an account other than root")
+		return info, errors.New(what + " is the gate's own account: give the cells an account of their own")
 	}
 	info.uid = uid
 	// Its groups: a folder writable by one of them is writable by the cells.
-	groups := map[int]bool{}
 	out, err = c.run([]string{c.id, "-G", name}, nil, nil)
 	if err != nil {
-		return info, errors.New("cells_account = " + name + ": can't list its groups (id -G)")
+		return info, errors.New(what + ": can't list its groups (id -G)")
 	}
 	for _, f := range strings.Fields(string(out)) {
 		if g, err := strconv.Atoi(f); err == nil {
-			groups[g] = true
+			info.groups[g] = true
 		}
 	}
 	// No privileged group: through one, the cells could do more than the gate's account.
 	if out, err := c.run([]string{c.id, "-Gn", name}, nil, nil); err != nil {
-		return info, errors.New("cells_account = " + name + ": can't list its groups (id -Gn)")
-	} else if bad := privilegedGroups(string(out)); len(bad) > 0 || groups[0] {
-		if groups[0] && !has(bad, "gid 0") {
+		return info, errors.New(what + ": can't list its groups (id -Gn)")
+	} else if bad := privilegedGroups(string(out)); len(bad) > 0 || info.groups[0] {
+		if info.groups[0] && !has(bad, "gid 0") {
 			bad = append(bad, "gid 0")
 		}
-		return info, errors.New("cells_account = " + name + " is in the group " + strings.Join(bad, ", ") + ": give the cells an account without privileged groups")
+		return info, errors.New(what + " is in the group " + strings.Join(bad, ", ") + ": give the cells an account without privileged groups")
 	}
-	// No cron or at jobs: one could outlive its session and write into later ones.
+	// No cron or at jobs: one could start mid-session and reach the session's shells.
 	if probs := cronProblems(c.cron, name); len(probs) > 0 {
-		return info, errors.New("cells_account = " + name + ": " + strings.Join(probs, "; ") + " (a job of the cells' account could write into later sessions' shells)")
+		return info, errors.New(what + ": " + strings.Join(probs, "; ") + " (a job of a cells account could reach the shells of a session that leased it)")
 	}
 	// Its home folder (getpwnam, as the shell's ~NAME reads it): where the cells start.
 	if out, err := c.run([]string{c.sh, "-c", "printf '%s' ~" + name}, nil, nil); err == nil && strings.HasPrefix(string(out), "/") {
 		info.home = string(out)
 	}
-	rule := c.plan.sudoRule(c.gateAccount)
-	need := "\n  Separated mode needs exactly this sudoers line (for example in /etc/sudoers.d/md-runbook-gate), and no other rule for " + c.gateAccount + ":\n  " + rule
-	if c.plan.exe == "" {
-		return info, errors.New("cells_account: can't find this program's own path")
-	}
-	if c.plan.sudo == "" {
-		return info, errors.New("cells_account = " + name + ": no sudo in " + sysPath + need)
-	}
-	out, err = c.run([]string{c.plan.sudo, "-n", "-l"}, nil, nil)
-	if p := sudoProblem(string(out), c.plan.account, c.plan.exe); p != "" {
-		return info, errors.New("cells_account = " + name + ": " + p + need)
-	} else if err != nil {
-		return info, errors.New("cells_account = " + name + ": sudo -n -l failed (" + err.Error() + ")" + need)
-	}
+	return info, nil
+}
+
+// files: the account can't reach the gate's files (safe folders, then its cells' mode through
+// sudo checks what it can read and write).
+func (c selfCheck) files(info cellsInfo, need string) error {
+	name, what := info.name, c.what(info.name)
 	var unsafe []string
 	for _, p := range c.safe {
-		if why := safePathProblem(p, c.stat, cellsRule(c.gateUID, uid, groups, c.gateAccount, name)); why != "" && !has(unsafe, why) {
+		if why := safePathProblem(p, c.stat, cellsRule(c.gateUID, info.uid, info.groups, c.gateAccount, name)); why != "" && !has(unsafe, why) {
 			unsafe = append(unsafe, why)
 		}
 	}
 	if len(unsafe) > 0 {
-		return info, errors.New("cells_account = " + name + ": " + strings.Join(unsafe, "; "))
+		return errors.New(what + ": " + strings.Join(unsafe, "; "))
 	}
-	l := c.plan.outer("", true)
-	out, err = c.run(l.argv, l.env, cellsReq{Op: "check", Read: c.noRead, Write: append(append([]string{}, c.noWrite...), c.mustWrite...)}.encode())
+	p := c.plan
+	p.account = name
+	l := p.outer("", true)
+	out, err := c.run(l.argv, l.env, cellsReq{Op: "check", Read: c.noRead, Write: append(append([]string{}, c.noWrite...), c.mustWrite...)}.encode())
 	var res checkResult
 	if err != nil || json.Unmarshal(out, &res) != nil {
 		msg := "can't run the cells' mode as " + name + " through sudo"
 		if err != nil {
 			msg += " (" + err.Error() + ")"
 		}
-		return info, errors.New("cells_account = " + name + ": " + msg + need)
+		return errors.New(what + ": " + msg + need)
 	}
-	if res.UID != uid {
-		return info, errors.New("cells_account = " + name + ": sudo ran the cells' mode as uid " + strconv.Itoa(res.UID) + ", not " + strconv.Itoa(uid))
+	if res.UID != info.uid {
+		return errors.New(what + ": sudo ran the cells' mode as uid " + strconv.Itoa(res.UID) + ", not " + strconv.Itoa(info.uid))
 	}
 	var problems []string
 	if len(res.Read) > 0 {
@@ -170,9 +221,9 @@ func (c selfCheck) do() (cellsInfo, error) {
 		problems = append(problems, name+" can't append to "+strings.Join(misses, ", ")+", the session's exits file: it must be able to enter /tmp")
 	}
 	if len(problems) > 0 {
-		return info, errors.New("cells_account = " + name + ": " + strings.Join(problems, "; "))
+		return errors.New(what + ": " + strings.Join(problems, "; "))
 	}
-	return info, nil
+	return nil
 }
 
 func has(list []string, s string) bool {
@@ -211,11 +262,10 @@ func sudoEntries(out string) []string {
 }
 
 // sudoProblem: "" when `sudo -n -l` lists exactly the one rule, else what is wrong.
-func sudoProblem(out, account, exe string) string {
-	want := "(" + account + ") NOPASSWD: " + exe + " " + CellsMode
+func sudoProblem(out string, pool []string, exe string) string {
 	e := sudoEntries(out)
 	switch {
-	case len(e) == 1 && e[0] == want:
+	case len(e) == 1 && isPoolRule(e[0], pool, exe):
 		return ""
 	case len(e) == 0:
 		return "sudo -n -l lists no rule for this account"
@@ -223,8 +273,32 @@ func sudoProblem(out, account, exe string) string {
 	return "sudo -n -l lists " + strings.Join(e, " | ") + ": that is not exactly the one rule (a wider one lets the gate's account do more than start the cells)"
 }
 
-// separated: the cells run as an account of their own.
-func (g *Gate) separated() bool { return g.cfg.CellsAccount != "" }
+// isPoolRule: a rule as `sudo -n -l` lists it is `(RUNAS) NOPASSWD: EXE __cells`, and its RUNAS
+// list (names separated by commas, as sudo prints them: ", ") names each account of the pool, in
+// any order, and nothing else: no ALL, no group (`a : b`), no other account, no negation. sudo
+// matches a runas list as a set, so the order is the admin's.
+func isPoolRule(entry string, pool []string, exe string) bool {
+	rest, ok := strings.CutPrefix(entry, "(")
+	if !ok {
+		return false
+	}
+	runas, cmd, ok := strings.Cut(rest, ")")
+	if !ok || cmd != " NOPASSWD: "+exe+" "+CellsMode {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, n := range strings.Split(runas, ",") {
+		n = strings.TrimSpace(n)
+		if !has(pool, n) {
+			return false
+		}
+		seen[n] = true
+	}
+	return len(seen) == len(pool)
+}
+
+// separated: the cells run as accounts of their own.
+func (g *Gate) separated() bool { return len(g.cfg.CellsPool()) > 0 }
 
 // mode is the gate's mode, as run reports say it. A Kubernetes Job counts as separated: its
 // cells can't reach the gate's pod (job.go).
@@ -236,7 +310,8 @@ func (g *Gate) mode() string {
 }
 
 // setupSeparated: the work folder open to the cells (enter only), the exits file they append to,
-// and the self-check. Any problem stops the gate before its first shell.
+// the self-check of every account of the pool, and the session's lease of one (with none of its
+// processes left). Any problem stops the gate before its first shell.
 func (g *Gate) setupSeparated() {
 	if os.Chmod(g.work, 0o711) != nil {
 		g.fatal("can't open the work folder " + g.work + " to the cells' account")
@@ -284,14 +359,14 @@ func (g *Gate) setupSeparated() {
 		add(&safe, g.cfg.Log)
 	}
 	add(&safe, g.keys...)
-	c := selfCheck{run: runCmd, plan: g.plan, sh: g.helper("sh"), id: g.helper("id"), gateAccount: g.account, gateUID: g.uid, noRead: noRead, noWrite: noWrite, mustWrite: []string{g.exitsPath},
-		safe: safe, stat: lstat, cron: systemCron()}
-	info, err := c.do()
+	c := selfCheck{run: runCmd, plan: g.plan, pool: g.cfg.CellsPool(), key: g.cfg.CellsKey(), sh: g.helper("sh"), id: g.helper("id"), gateAccount: g.account, gateUID: g.uid,
+		noRead: noRead, noWrite: noWrite, mustWrite: []string{g.exitsPath}, safe: safe, stat: lstat, cron: systemCron()}
+	infos, err := c.do()
 	if err != nil {
 		g.log.Event("event", "self-check", "status", "refused", "reason", strings.ReplaceAll(err.Error(), "\n", " "))
 		g.fatal(err.Error())
 	}
-	g.cells = info
+	g.leaseCells(infos)
 	g.sepRuns = map[string]sepRun{}
 	g.sepExits = map[string]report.Exit{}
 	go func() {
@@ -453,37 +528,6 @@ func (g *Gate) sepExitsCopy() map[string]report.Exit {
 	return out
 }
 
-// sweepCells: with kill_leftovers = yes in separated mode, the cells' account's processes that
-// belong to no live session end too (the cells' mode does it, as that account; Linux).
-func (g *Gate) sweepCells(when string) {
-	if g.cfg.KillLeftovers != "yes" || !g.separated() {
-		return
-	}
-	if !procs.HaveProc() {
-		g.log.Event("event", "leftovers", "status", "skipped", "reason", "no /proc here", "cells", g.cfg.CellsAccount, "when", when)
-		return
-	}
-	// Bounded (the sweep itself takes at most 5 seconds): a stopped cells' mode doesn't hold up the
-	// end of the session, its run reports included.
-	l := g.plan.outer("", true)
-	out, err := runFor(10*time.Second, l.argv, l.env, cellsReq{Op: "sweep", GateComm: g.gateComm}.encode())
-	var res sweepResult
-	if err != nil || json.Unmarshal(out, &res) != nil {
-		g.log.Event("event", "leftovers", "status", "skipped", "reason", "can't run the cells' mode", "cells", g.cfg.CellsAccount, "when", when)
-		return
-	}
-	if res.Incomplete {
-		g.log.Event("event", "leftovers", "status", "incomplete", "reason", "sweep incomplete: processes of the cells' account kept appearing (a fork loop?)", "cells", g.cfg.CellsAccount, "when", when)
-	}
-	if len(res.Killed) > 0 {
-		var pids []string
-		for _, p := range res.Killed {
-			pids = append(pids, itoa(p))
-		}
-		g.log.Event("event", "leftovers", "status", "killed", "pids", strings.Join(pids, " "), "cells", g.cfg.CellsAccount, "when", when)
-	}
-}
-
 // privileged: groups whose members can do more than an account of their own (become root, read
 // logs or disks, run containers).
 var privileged = []string{"root", "sudo", "wheel", "admin", "adm", "docker", "lxd", "incus-admin", "libvirt", "kvm", "disk", "systemd-journal", "shadow"}
@@ -567,62 +611,6 @@ func selfComm() string {
 		}
 	}
 	return procs.Comm(os.Args[0])
-}
-
-// checkCellsStrays: separated mode, at the start of a session (after the sweep): every process of
-// the cells' account must run under a gate of this account. Anything else (a cron job, a login,
-// a leftover, another gate account's blocks) could write into this session's shells through
-// /proc/PID/fd/0, the same account's (review of 0.28.0, H2). A process that is just ending (a
-// session that just ended) gets a second.
-func (g *Gate) checkCellsStrays() {
-	if !g.separated() {
-		return
-	}
-	name := g.cfg.CellsAccount
-	refuse := func(msg string) {
-		g.log.Event("event", "self-check", "status", "refused", "reason", msg)
-		g.fatal(msg)
-	}
-	deadline := time.Now().Add(time.Second)
-	for {
-		list, err := procs.List()
-		if err != nil {
-			refuse("cells_account = " + name + ": can't list the processes")
-		}
-		if !hasPID1(list) {
-			refuse("cells_account = " + name + ": can't see other accounts' processes (is /proc mounted with hidepid?): the gate must see the cells' account's")
-		}
-		strays := procs.CellsStrays(list, g.cells.uid, procs.GateOf(g.uid, g.gateComm))
-		if len(strays) == 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			byPID := map[int]procs.Proc{}
-			for _, p := range list {
-				byPID[p.PID] = p
-			}
-			var shown []string
-			for i, p := range strays {
-				if i == 5 {
-					shown = append(shown, "...")
-					break
-				}
-				shown = append(shown, itoa(p)+" "+byPID[p].Comm)
-			}
-			refuse("cells_account = " + name + ": " + itoa(len(strays)) + " processes of " + name + " run outside this gate account's sessions (" + strings.Join(shown, ", ") +
-				"). A cells_account serves one gate account only, with no cron jobs, logins or user manager of its own: end them (kill_leftovers = yes ends those under no gate), or give each gate account its own cells_account")
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-func hasPID1(list []procs.Proc) bool {
-	for _, p := range list {
-		if p.PID == 1 {
-			return true
-		}
-	}
-	return false
 }
 
 // exitsBadNow: why the exits file was refused, "" while it is fine.

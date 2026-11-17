@@ -81,9 +81,41 @@ func TestIsolationAndCellsAccount(t *testing.T) {
 	if err != nil || c.CellsAccount != "mdrb-cells" || c.Isolation != "scope" {
 		t.Errorf("read: %+v %v", c, err)
 	}
-	for s, ok := range map[string]bool{"mdrb-cells": true, "_cells": true, "c.ells_1": true, "": false, "-x": false, "1cells": false, "a:b": false, "a/b": false, "abcdefghijklmnopqrstuvwxyz0123456": false} {
+	for s, ok := range map[string]bool{"mdrb-cells": true, "_cells": true, "c.ells_1": true, "": false, "ALL": false, "All": true, "-x": false, "1cells": false, "a:b": false, "a/b": false, "abcdefghijklmnopqrstuvwxyz0123456": false} {
 		if ValidAccount(s) != ok {
 			t.Errorf("ValidAccount(%q) != %v", s, ok)
+		}
+	}
+}
+
+// cells_accounts: a pool, in gate.conf's order; cells_account is a pool of one; both is an error.
+func TestCellsPool(t *testing.T) {
+	c, err := read(t, "")
+	if err != nil || c.CellsPool() != nil {
+		t.Errorf("shared: %q %v", c.CellsPool(), err)
+	}
+	c, err = read(t, "cells_accounts = mdrb-cells-1 \t mdrb-cells-2 mdrb-cells-3 mdrb-cells-4 # four\n")
+	if err != nil || strings.Join(c.CellsPool(), ",") != "mdrb-cells-1,mdrb-cells-2,mdrb-cells-3,mdrb-cells-4" || c.CellsKey() != "cells_accounts" {
+		t.Errorf("pool: %q %v", c.CellsPool(), err)
+	}
+	c, err = read(t, "cells_account = mdrb-cells")
+	if err != nil || strings.Join(c.CellsPool(), ",") != "mdrb-cells" || c.CellsKey() != "cells_account" {
+		t.Errorf("pool of one: %q %v", c.CellsPool(), err)
+	}
+	many := strings.TrimSpace(strings.Repeat("c ", MaxPool+1))
+	for text, want := range map[string]string{
+		"cells_accounts =\n":                        "cells_accounts = : expected 1 to 64 account names separated by spaces",
+		"cells_accounts = a b,c\n":                  "cells_accounts = a b,c: b,c is not an account name",
+		"cells_accounts = a -u\n":                   "cells_accounts = a -u: -u is not an account name",
+		"cells_accounts = a ALL\n":                  "cells_accounts = a ALL: ALL is not an account name",
+		"cells_accounts = a b a\n":                  "cells_accounts = a b a: a is named twice",
+		"cells_accounts = " + many + "\n":           "expected 1 to 64 account names",
+		"cells_account = a\ncells_accounts = b c\n": "cells_account and cells_accounts don't go together",
+		"cells_accounts = b c\ncells_account = a":   "cells_account and cells_accounts don't go together",
+	} {
+		_, err := read(t, text)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %s", text, err, want)
 		}
 	}
 }

@@ -180,10 +180,12 @@ func TestHelpers(t *testing.T) {
 }
 
 func TestSudoRule(t *testing.T) {
-	p := testPlan
-	p.account = "mdrb-cells"
-	if got := p.sudoRule("support"); got != "support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells" {
+	if got := sudoRule("support", []string{"mdrb-cells"}, testPlan.exe); got != "support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells" {
 		t.Errorf("rule: %s", got)
+	}
+	pool := []string{"mdrb-cells-1", "mdrb-cells-2", "mdrb-cells-3", "mdrb-cells-4"}
+	if got := sudoRule("support", pool, testPlan.exe); got != "support ALL=(mdrb-cells-1,mdrb-cells-2,mdrb-cells-3,mdrb-cells-4) NOPASSWD: /usr/local/bin/md-runbook-gate __cells" {
+		t.Errorf("pool rule: %s", got)
 	}
 }
 
@@ -210,12 +212,42 @@ const sudoHead = "Matching Defaults entries for support on web-1:\n    env_reset
 
 func TestSudoProblem(t *testing.T) {
 	exe := "/usr/local/bin/md-runbook-gate"
+	one := []string{"mdrb-cells"}
 	good := sudoHead + "    (mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n"
-	if p := sudoProblem(good, "mdrb-cells", exe); p != "" {
+	if p := sudoProblem(good, one, exe); p != "" {
 		t.Errorf("exact rule: %s", p)
 	}
-	if p := sudoProblem(strings.ReplaceAll(good, "\n", "\r\n"), "mdrb-cells", exe); p != "" {
+	if p := sudoProblem(strings.ReplaceAll(good, "\n", "\r\n"), one, exe); p != "" {
 		t.Errorf("CRLF: %s", p)
+	}
+	// A pool: the whole pool as one runas list, in any order, as sudo prints it (", ").
+	pool := []string{"mdrb-cells-1", "mdrb-cells-2", "mdrb-cells-3", "mdrb-cells-4"}
+	rule := func(runas string) string {
+		return sudoHead + "    (" + runas + ") NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n"
+	}
+	for _, runas := range []string{"mdrb-cells-1, mdrb-cells-2, mdrb-cells-3, mdrb-cells-4", "mdrb-cells-4, mdrb-cells-2, mdrb-cells-1, mdrb-cells-3", "mdrb-cells-1,mdrb-cells-2,mdrb-cells-3,mdrb-cells-4"} {
+		if p := sudoProblem(rule(runas), pool, exe); p != "" {
+			t.Errorf("pool (%s): %s", runas, p)
+		}
+	}
+	for name, out := range map[string]string{
+		"one missing":        rule("mdrb-cells-1, mdrb-cells-2, mdrb-cells-3"),
+		"one more":           rule("mdrb-cells-1, mdrb-cells-2, mdrb-cells-3, mdrb-cells-4, mdrb-cells-5"),
+		"and ALL":            rule("mdrb-cells-1, mdrb-cells-2, mdrb-cells-3, mdrb-cells-4, ALL"),
+		"and root":           rule("mdrb-cells-1, mdrb-cells-2, mdrb-cells-3, mdrb-cells-4, root"),
+		"negation":           rule("ALL, !root"),
+		"a group":            rule("mdrb-cells-1, mdrb-cells-2, mdrb-cells-3, mdrb-cells-4 : ALL"),
+		"empty":              rule(""),
+		"a line per account": rule("mdrb-cells-1, mdrb-cells-2") + "    (mdrb-cells-3, mdrb-cells-4) NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n",
+		"another command":    sudoHead + "    (mdrb-cells-1, mdrb-cells-2, mdrb-cells-3, mdrb-cells-4) NOPASSWD: /usr/local/bin/md-runbook-gate __cells, (root) /bin/sh\n",
+	} {
+		if p := sudoProblem(out, pool, exe); p == "" {
+			t.Errorf("pool, %s: accepted", name)
+		}
+	}
+	// A pool of one takes no other account's line.
+	if p := sudoProblem(rule("mdrb-cells-1"), one, exe); p == "" {
+		t.Error("another account: accepted")
 	}
 	for name, out := range map[string]string{
 		"none":          "Sorry, user support may not run sudo on web-1.\n",
@@ -229,7 +261,7 @@ func TestSudoProblem(t *testing.T) {
 		"other program": sudoHead + "    (mdrb-cells) NOPASSWD: /tmp/md-runbook-gate __cells\n",
 		"group too":     sudoHead + "    (mdrb-cells : ALL) NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n",
 	} {
-		if p := sudoProblem(out, "mdrb-cells", exe); p == "" {
+		if p := sudoProblem(out, one, exe); p == "" {
 			t.Errorf("%s: accepted", name)
 		}
 	}
@@ -245,6 +277,10 @@ type fakeSys struct {
 	checkErr                   error
 	calls                      [][]string
 	files                      fakeFS
+	// Accounts of a pool other than mdrb-cells: their uid (id -u), and what their check answers
+	// (else check, with their uid).
+	uids   map[string]string
+	checks map[string]checkResult
 }
 
 // fakeFS: owners and modes by path (no links).
@@ -276,17 +312,30 @@ func (f *fakeSys) run(argv, env []string, stdin []byte) ([]byte, error) {
 	case argv[0] == "id" && argv[1] == "-G":
 		return []byte(f.groups), nil
 	case argv[0] == "id":
+		if u, ok := f.uids[argv[2]]; ok {
+			return []byte(u + "\n"), nil
+		}
 		return []byte(f.idOut), f.idErr
 	case argv[0] == "/bin/sh":
 		return []byte(f.home), nil
 	case reflect.DeepEqual(argv, []string{"/usr/bin/sudo", "-n", "-l"}):
 		return []byte(f.sudoL), f.sudoErr
-	case reflect.DeepEqual(argv, []string{"/usr/bin/sudo", "-n", "-u", "mdrb-cells", "--", "/usr/local/bin/md-runbook-gate", "__cells"}):
+	case len(argv) == 7 && reflect.DeepEqual(argv[:3], []string{"/usr/bin/sudo", "-n", "-u"}) && reflect.DeepEqual(argv[4:], []string{"--", "/usr/local/bin/md-runbook-gate", "__cells"}):
+		name := argv[3]
+		res, ok := f.checks[name]
+		if !ok {
+			res = f.check
+			if u, in := f.uids[name]; in {
+				res.UID, _ = strconv.Atoi(u)
+			} else if name != "mdrb-cells" {
+				return nil, errors.New("exit status 1: sudo: a password is required")
+			}
+		}
 		req, err := readCellsReq(bytes.NewReader(stdin))
 		if err != nil || req.Op != "check" {
 			return nil, errors.New("bad request")
 		}
-		data, _ := json.Marshal(f.check)
+		data, _ := json.Marshal(res)
 		return data, f.checkErr
 	}
 	return nil, errors.New("unexpected " + strings.Join(argv, " "))
@@ -303,10 +352,16 @@ func goodSys() *fakeSys {
 }
 
 func check(f *fakeSys) (cellsInfo, error) {
-	p := testPlan
-	p.account = "mdrb-cells"
+	infos, err := checkPool(f, "cells_account", "mdrb-cells")
+	if len(infos) != 1 {
+		return cellsInfo{}, err
+	}
+	return infos[0], err
+}
+
+func checkPool(f *fakeSys, key string, pool ...string) ([]cellsInfo, error) {
 	return selfCheck{
-		run: f.run, plan: p, sh: "/bin/sh", id: "id", gateAccount: "support", gateUID: 1000,
+		run: f.run, plan: testPlan, pool: pool, key: key, sh: "/bin/sh", id: "id", gateAccount: "support", gateUID: 1000,
 		noRead:    []string{"/etc/md-runbook/report-token", "/var/log/md-runbook-gate.log"},
 		noWrite:   []string{"/usr/local/bin/md-runbook-gate", "/etc/md-runbook/gate.conf"},
 		mustWrite: []string{"/tmp/md-runbook-gate.x/exits.y"},
@@ -376,6 +431,64 @@ func TestSelfCheck(t *testing.T) {
 	f.home = "~mdrb-cells"
 	if info, err := check(f); err != nil || info.home != "" {
 		t.Errorf("no home: %+v %v", info, err)
+	}
+}
+
+// A pool: every account is checked, the sudo line names them all, and two names of one uid are
+// one account.
+func TestSelfCheckPool(t *testing.T) {
+	pool := []string{"mdrb-cells", "mdrb-cells-2", "mdrb-cells-3"}
+	sys := func() *fakeSys {
+		f := goodSys()
+		f.uids = map[string]string{"mdrb-cells-2": "1502", "mdrb-cells-3": "1503"}
+		f.cronFiles["/etc/cron.deny"] = "daemon\nmdrb-cells\nmdrb-cells-2\nmdrb-cells-3\n"
+		f.sudoL = sudoHead + "    (mdrb-cells-3, mdrb-cells, mdrb-cells-2) NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n"
+		return f
+	}
+	f := sys()
+	infos, err := checkPool(f, "cells_accounts", pool...)
+	if err != nil || len(infos) != 3 {
+		t.Fatalf("good: %+v %v", infos, err)
+	}
+	for i, want := range []cellsInfo{{name: "mdrb-cells", uid: 1500}, {name: "mdrb-cells-2", uid: 1502}, {name: "mdrb-cells-3", uid: 1503}} {
+		if infos[i].name != want.name || infos[i].uid != want.uid || !infos[i].groups[27] {
+			t.Errorf("account %d: %+v", i, infos[i])
+		}
+	}
+	// 4 for each account (id -u, -G, -Gn, its home), sudo -l, a check for each account.
+	if len(f.calls) != 4*3+1+3 {
+		t.Errorf("calls: %d %q", len(f.calls), f.calls)
+	}
+	rule := "support ALL=(mdrb-cells,mdrb-cells-2,mdrb-cells-3) NOPASSWD: /usr/local/bin/md-runbook-gate __cells"
+	for name, c := range map[string]struct {
+		change func(f *fakeSys)
+		want   []string
+	}{
+		"same uid":      {func(f *fakeSys) { f.uids["mdrb-cells-3"] = "1502" }, []string{"cells_accounts: mdrb-cells-2 and mdrb-cells-3 are the same account (uid 1502)"}},
+		"one is root":   {func(f *fakeSys) { f.uids["mdrb-cells-2"] = "0" }, []string{"cells_accounts: mdrb-cells-2 is root"}},
+		"one is gate's": {func(f *fakeSys) { f.uids["mdrb-cells-3"] = "1000" }, []string{"cells_accounts: mdrb-cells-3 is the gate's own account"}},
+		"one not named": {func(f *fakeSys) {
+			f.sudoL = sudoHead + "    (mdrb-cells, mdrb-cells-2) NOPASSWD: /usr/local/bin/md-runbook-gate __cells\n"
+		}, []string{"not exactly the one rule", rule}},
+		"old line": {func(f *fakeSys) { f.sudoL = goodSys().sudoL }, []string{"not exactly the one rule", rule}},
+		"one reads the token": {func(f *fakeSys) {
+			f.checks = map[string]checkResult{"mdrb-cells-3": {UID: 1503, Read: []string{"/etc/md-runbook/report-token"}, Write: []string{"/tmp/md-runbook-gate.x/exits.y"}}}
+		}, []string{"cells_accounts: mdrb-cells-3: mdrb-cells-3 can read /etc/md-runbook/report-token"}},
+		"one may use at": {func(f *fakeSys) { f.cronFiles["/etc/at.allow"] = "root\nmdrb-cells-2\n" }, []string{"cells_accounts: mdrb-cells-2: /etc/at.allow lists mdrb-cells-2"}},
+		"one in a group": {func(f *fakeSys) { f.groupNames = "users docker" }, []string{"cells_accounts: mdrb-cells is in the group docker"}},
+	} {
+		f := sys()
+		c.change(f)
+		_, err := checkPool(f, "cells_accounts", pool...)
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+			continue
+		}
+		for _, w := range c.want {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("%s: %q lacks %q", name, err, w)
+			}
+		}
 	}
 }
 

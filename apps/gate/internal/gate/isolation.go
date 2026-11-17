@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -56,9 +57,10 @@ const CellsMode = "__cells"
 
 // cellsReq is a request to the cells' mode. Op: exec (Argv with Env, in Dir), kill (Sig to each
 // of Targets: a pid, or -group), check (which of Read the account can read, which of Write it can
-// write), scope (its cgroup, if the gate can end it there) or sweep (end the account's processes
-// that belong to no live session). In a Job's pod also stop (Sig to what runs under shell Shell),
-// end (the Shells, with what they started) and follow (stream Paths to stdout).
+// write), scope (its cgroup, if the gate can end it there) or killall (separated mode: KILL to
+// every process of the account, UID; separated.go). In a Job's pod also stop (Sig to what runs
+// under shell Shell), end (the Shells, with what they started) and follow (stream Paths to
+// stdout).
 type cellsReq struct {
 	Op      string   `json:"op"`
 	Argv    []string `json:"argv,omitempty"`
@@ -68,8 +70,8 @@ type cellsReq struct {
 	Targets []int    `json:"targets,omitempty"`
 	Read    []string `json:"read,omitempty"`
 	Write   []string `json:"write,omitempty"`
-	// sweep: the gate's name as processes show it (procs.Comm): what runs under a gate is spared.
-	GateComm string `json:"gate_comm,omitempty"`
+	// killall: the uid the gate leased; the cells' mode refuses to run as any other (never root).
+	UID int `json:"uid,omitempty"`
 	// In a Kubernetes Job's pod (job.go): the shell's number (exec, stop), the shells to end
 	// (end), and the files to follow (follow; Events: the pod's own log = file too).
 	Shell  int      `json:"shell,omitempty"`
@@ -135,12 +137,6 @@ type checkResult struct {
 	Write []string `json:"write"`
 }
 
-// sweepResult is what the sweep request answers.
-type sweepResult struct {
-	Killed     []int `json:"killed"`
-	Incomplete bool  `json:"incomplete"`
-}
-
 // cellsMain is the cells' mode; its exit code (exec doesn't return).
 func cellsMain() int {
 	req, err := readCellsReq(os.Stdin)
@@ -195,10 +191,8 @@ func cellsMain() int {
 		}
 		os.Stdout.WriteString(cg + "\n")
 		return 0
-	case "sweep":
-		data, _ := json.Marshal(cellsSweep(req.GateComm))
-		os.Stdout.Write(append(data, '\n'))
-		return 0
+	case "killall":
+		return cellsKillAll(req.UID, os.Getuid(), os.Geteuid(), syscall.Kill)
 	case "stop":
 		return stopShell(req.Shell, syscall.Signal(req.Sig))
 	case "end":
@@ -217,50 +211,6 @@ func cellsMain() int {
 	return 2
 }
 
-// cellsSweep ends this account's processes that belong to no live session (procs.CellsLeftovers):
-// stopped first, listed again until 3 passes find nothing new (at most 50 passes or 5 seconds),
-// then killed. Linux only (/proc).
-func cellsSweep(gateComm string) sweepResult {
-	res := sweepResult{Killed: []int{}}
-	// Without the gate's name every process of the account would be a stray, live sessions' too.
-	if !procs.HaveProc() || gateComm == "" {
-		return res
-	}
-	me, uid := os.Getpid(), os.Getuid()
-	stopped := map[int]bool{}
-	t0 := time.Now()
-	for pass, quiet := 0, 0; quiet < 3; pass++ {
-		if pass >= 50 || time.Since(t0) >= 5*time.Second {
-			res.Incomplete = true
-			break
-		}
-		list, err := procs.List()
-		if err != nil {
-			break
-		}
-		n := 0
-		for _, p := range procs.CellsStrays(list, uid, procs.AnyGate(uid, gateComm)) {
-			if p == me || stopped[p] {
-				continue
-			}
-			if syscall.Kill(p, syscall.SIGSTOP) == nil {
-				stopped[p] = true
-				res.Killed = append(res.Killed, p)
-				n++
-			}
-		}
-		if n == 0 {
-			quiet++
-		} else {
-			quiet = 0
-		}
-	}
-	for _, p := range res.Killed {
-		syscall.Kill(p, syscall.SIGKILL)
-	}
-	return res
-}
-
 // ---- how the gate starts the cells' shells ----
 
 // cgroupRoot is where cgroup v2 is mounted.
@@ -269,7 +219,7 @@ const cgroupRoot = "/sys/fs/cgroup"
 // plan is how this session starts its shells: the isolation it got and the account they run as.
 type plan struct {
 	iso        string // scope, bwrap or none (auto resolved)
-	account    string // cells_account: separated mode; "" shared
+	account    string // separated mode: the cells account this session leased; "" shared
 	exe        string // this program (its cells mode)
 	sudo       string
 	systemdRun string
@@ -327,9 +277,9 @@ func (p plan) shell(cells, env []string, dir, unit string) launch {
 }
 
 // sudoRule is the one line of sudoers that separated mode needs: the gate's account may run its
-// cells' mode as the cells' account, without a password, and nothing else.
-func (p plan) sudoRule(gateAccount string) string {
-	return gateAccount + " ALL=(" + p.account + ") NOPASSWD: " + p.exe + " " + CellsMode
+// cells' mode as any account of the pool, without a password, and nothing else.
+func sudoRule(gateAccount string, pool []string, exe string) string {
+	return gateAccount + " ALL=(" + strings.Join(pool, ",") + ") NOPASSWD: " + exe + " " + CellsMode
 }
 
 // runCmd runs a program to its end (at most 20 seconds) with stdin; its stdout, and an error that
@@ -361,18 +311,28 @@ func runFor(limit time.Duration, argv, env []string, stdin []byte) ([]byte, erro
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	t := time.AfterFunc(limit, func() { cmd.Process.Kill() })
+	var late atomic.Bool
+	t := time.AfterFunc(limit, func() {
+		late.Store(true)
+		cmd.Process.Kill()
+	})
 	err := cmd.Wait()
 	t.Stop()
+	if late.Load() {
+		return out.Bytes(), fmt.Errorf("%w after %s (%w)", errTimeout, limit, err)
+	}
 	if err != nil {
 		first, _, _ := strings.Cut(strings.TrimSpace(errb.String()), "\n")
 		if first != "" {
-			return out.Bytes(), fmt.Errorf("%v: %s", err, first)
+			return out.Bytes(), fmt.Errorf("%w: %s", err, first)
 		}
 		return out.Bytes(), err
 	}
 	return out.Bytes(), nil
 }
+
+// errTimeout: runFor killed the program at its limit.
+var errTimeout = errors.New("timed out")
 
 func randHex(n int) string {
 	b := make([]byte, n)
@@ -384,7 +344,7 @@ func randHex(n int) string {
 
 // basePlan: the account and programs, before the isolation is chosen.
 func (g *Gate) basePlan() plan {
-	p := plan{iso: "none", account: g.cfg.CellsAccount, sudo: g.helper("sudo"), runtimeDir: "/run/user/" + itoa(g.uid)}
+	p := plan{iso: "none", sudo: g.helper("sudo"), runtimeDir: "/run/user/" + itoa(g.uid)}
 	if exe, err := os.Executable(); err == nil && strings.HasPrefix(exe, "/") {
 		p.exe = exe
 	}

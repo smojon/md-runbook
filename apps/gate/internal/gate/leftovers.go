@@ -37,10 +37,13 @@ import (
 // sweep is best-effort: it stops whole process groups, and lists again until 3 passes in a row
 // find nothing new, for at most 50 passes or 5 seconds ("sweep incomplete" in the log).
 //
-// In separated mode the cells' account is swept as well (sweepCells).
+// In separated mode, at the end, every process of the session's cells account ends too, with
+// kill_leftovers or without (endCells; at the start, leaseCells did it).
 func (g *Gate) sweep(when string) {
 	g.sweepAccount(when)
-	g.sweepCells(when)
+	if when == "end" {
+		g.endCells()
+	}
 }
 
 func (g *Gate) sweepAccount(when string) {

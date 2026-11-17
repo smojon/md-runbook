@@ -54,8 +54,11 @@ type Config struct {
 	// the gate doesn't start.
 	Isolation string
 	// The account the cells run as (separated mode, through sudo); "" runs them as the gate's own
-	// account (shared mode).
+	// account (shared mode). A pool of one: one session at a time.
 	CellsAccount string
+	// cells_accounts: a pool of such accounts. Each session leases one that no other session of
+	// the gate's account holds (separated mode). Never together with cells_account.
+	CellsAccounts []string
 	// Where the cells run: local (this host: shared, or separated with cells_account) or
 	// kubernetes-job (a Kubernetes Job of their own for each session, in the gate's namespace).
 	CellsRunner string
@@ -86,8 +89,56 @@ func ValidImage(s string) bool { return imageRef.MatchString(s) }
 // accountName: an account name as useradd takes it (and macOS's _names).
 var accountName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,31}$`)
 
-// ValidAccount: a name cells_account = may hold.
-func ValidAccount(s string) bool { return accountName.MatchString(s) }
+// ValidAccount: a name cells_account = (and each of cells_accounts =) may hold. Never ALL: in
+// sudoers that is any account, root included.
+func ValidAccount(s string) bool { return accountName.MatchString(s) && s != "ALL" }
+
+// MaxPool: the most accounts cells_accounts = may name.
+const MaxPool = 64
+
+// CellsPool: the accounts separated mode leases from, in gate.conf's order (cells_account is a
+// pool of one); nil in shared mode.
+func (c Config) CellsPool() []string {
+	if c.CellsAccount != "" {
+		return []string{c.CellsAccount}
+	}
+	return c.CellsAccounts
+}
+
+// CellsKey: the setting that named the pool, for messages.
+func (c Config) CellsKey() string {
+	if c.CellsAccount != "" {
+		return "cells_account"
+	}
+	return "cells_accounts"
+}
+
+// parsePool reads cells_accounts =: account names separated by blanks, each once.
+func parsePool(v string) ([]string, error) {
+	names := strings.Fields(v)
+	if len(names) == 0 || len(names) > MaxPool {
+		return nil, fmt.Errorf("cells_accounts = %s: expected 1 to %d account names separated by spaces (leave the line out to run the cells as the gate's account)", v, MaxPool)
+	}
+	for i, n := range names {
+		if !ValidAccount(n) {
+			return nil, fmt.Errorf("cells_accounts = %s: %s is not an account name", v, n)
+		}
+		for _, m := range names[:i] {
+			if m == n {
+				return nil, fmt.Errorf("cells_accounts = %s: %s is named twice", v, n)
+			}
+		}
+	}
+	return names, nil
+}
+
+// finish: the checks across settings, once the whole file is read.
+func (c *Config) finish() error {
+	if c.CellsAccount != "" && len(c.CellsAccounts) > 0 {
+		return fmt.Errorf("cells_account and cells_accounts don't go together: keep cells_accounts (a pool of one is cells_accounts = %s)", c.CellsAccount)
+	}
+	return nil
+}
 
 // Defaults are the settings without a gate.conf.
 func Defaults() Config {
@@ -115,7 +166,7 @@ func (c *Config) Read(r io.Reader, name string) error {
 		line, err := br.ReadString('\n')
 		if line == "" && err != nil {
 			if err == io.EOF {
-				return nil
+				return c.finish()
 			}
 			return fmt.Errorf("can't read %s", name)
 		}
@@ -198,6 +249,12 @@ func (c *Config) Read(r io.Reader, name string) error {
 				return fmt.Errorf("cells_account = %s: expected an account name (leave the line out to run the cells as the gate's account)", v)
 			}
 			c.CellsAccount = v
+		case "cells_accounts":
+			pool, err := parsePool(v)
+			if err != nil {
+				return err
+			}
+			c.CellsAccounts = pool
 		case "cells_runner":
 			if v != Runners[0] && v != Runners[1] {
 				return fmt.Errorf("cells_runner = %s: expected local or kubernetes-job", v)
@@ -218,7 +275,7 @@ func (c *Config) Read(r io.Reader, name string) error {
 			return fmt.Errorf("%s: unknown setting %q", name, k)
 		}
 		if err != nil {
-			return nil
+			return c.finish()
 		}
 	}
 }

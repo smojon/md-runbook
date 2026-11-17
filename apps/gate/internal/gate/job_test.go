@@ -143,6 +143,7 @@ func TestRunnerProblem(t *testing.T) {
 	}{
 		"no account":             {func(c *config.Config) { c.JobServiceAccount = "" }, "needs job_service_account"},
 		"cells_account":          {func(c *config.Config) { c.CellsAccount = "mdrb-cells" }, "Remove cells_account"},
+		"cells_accounts":         {func(c *config.Config) { c.CellsAccounts = []string{"mdrb-cells-1", "mdrb-cells-2"} }, "and cells_accounts don't go together: the Job's pod keeps the cells apart. Remove cells_accounts"},
 		"scope":                  {func(c *config.Config) { c.Isolation = "scope" }, "isolation = scope doesn't go"},
 		"bwrap":                  {func(c *config.Config) { c.Isolation = "bwrap" }, "isolation = bwrap doesn't go"},
 		"local with keys":        {func(c *config.Config) { c.CellsRunner = "local" }, "for cells_runner = kubernetes-job only"},
