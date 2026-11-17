@@ -89,11 +89,14 @@ type kubeJob struct {
 	pod   string
 	err   string
 	// What the client hears of the pod's start (under mu, so that no `starting` follows the
-	// end): out is the gate's stderr. notices: its hello takes pod notices (protocol 4); settled:
-	// the pod is Ready or won't be; waiting: a request heard `starting`; noted: the gate's line
-	// for other clients was said.
-	out                              io.Writer
-	notices, settled, waiting, noted bool
+	// end): out is the gate's stderr. notices: its hello takes pod notices (protocol 4); announced:
+	// its hello said PodJob, so it reads notices until `ready` or `failed`; final: that one was
+	// said; settled: the pod is Ready or won't be; waiting: a request heard `starting`; queued: a
+	// request went to a shell before the pod was ready; answered: the client sent a line after
+	// the pod settled (it had that request's reply); noted: the gate's line for other clients was
+	// said.
+	out                                                                  io.Writer
+	notices, announced, final, settled, waiting, queued, answered, noted bool
 	// closing: the gate ends the follower (its end is no sign of a changed stream).
 	closing atomic.Bool
 
@@ -250,8 +253,10 @@ func (g *Gate) prepareJob(j *kubeJob) {
 }
 
 // settle: the pod is Ready (why "") or won't be. A request that waits for it hears so first
-// (PodReady, or PodFailed with the reason); else a failure is the gate's line, as before
-// protocol 4. Then the shells start, or end.
+// (PodReady, or PodFailed with the reason); a client told PodJob hears a failure at once (no
+// shell will print anything); else a failure is the gate's line, as before protocol 4. Then the
+// shells start, or end. A client told PodJob that waits for nothing hears PodReady with its next
+// request (waitFor), before the shell gets it.
 func (j *kubeJob) settle(pod, why string) {
 	j.mu.Lock()
 	if why == "" {
@@ -262,15 +267,27 @@ func (j *kubeJob) settle(pod, why string) {
 	}
 	j.settled = true
 	switch {
-	case j.waiting && why == "":
-		io.WriteString(j.out, proto.Pod(proto.PodReady, ""))
-	case j.waiting:
-		io.WriteString(j.out, proto.Pod(proto.PodFailed, why))
-	case why != "":
+	case j.waiting || j.announced && why != "":
+		j.sayFinal()
+	case why != "" && !j.announced:
 		io.WriteString(j.out, "md-runbook-gate: "+why+"\n")
 	}
 	j.mu.Unlock()
 	close(j.ready)
+}
+
+// sayFinal: PodReady, or PodFailed with the reason, once (under mu, once settled). After it the
+// client reads no more notices: whatever a block prints is its output (review of 0.30.0, H1).
+func (j *kubeJob) sayFinal() {
+	if j.final {
+		return
+	}
+	j.final = true
+	if j.err == "" {
+		io.WriteString(j.out, proto.Pod(proto.PodReady, ""))
+	} else {
+		io.WriteString(j.out, proto.Pod(proto.PodFailed, "this session's cells can't start: "+j.err))
+	}
 }
 
 // hello: what the hello's answer says after the banner. To a client that takes pod notices
@@ -280,6 +297,7 @@ func (j *kubeJob) hello(notices bool) string {
 	defer j.mu.Unlock()
 	j.notices = notices
 	if notices && !j.settled {
+		j.announced = true
 		return proto.Pod(proto.PodJob, "")
 	}
 	return ""
@@ -287,12 +305,18 @@ func (j *kubeJob) hello(notices bool) string {
 
 // waitFor: a request whose reply the Job's shell prints (run, step, raw, context), before it
 // goes to the shell. While the pod isn't ready, a client that takes pod notices hears
-// PodStarting (its time limit waits for PodReady); another gets the gate's line, once.
+// PodStarting (its time limit waits for PodReady); another gets the gate's line, once. Once it
+// is, a client told PodJob that hasn't heard PodReady yet hears it now: before any output of
+// the shell, so that a block can't fake a notice (review of 0.30.0, H1).
 func (j *kubeJob) waitFor() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.queued = j.queued || !j.settled
 	switch {
 	case j.settled:
+		if j.announced {
+			j.sayFinal()
+		}
 	case j.notices:
 		j.waiting = true
 		io.WriteString(j.out, proto.Pod(proto.PodStarting, ""))
@@ -307,6 +331,27 @@ func (j *kubeJob) isSettled() bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.settled
+}
+
+// spoke: the client sent a line. After the pod settled, it means the client had the reply of the
+// request that waited for the pod (it sends one request at a time, and none can be answered
+// before the pod settled).
+func (j *kubeJob) spoke() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.settled {
+		j.answered = true
+	}
+}
+
+// leftWaiting: the client left while the pod was starting, or before the reply of a request sent
+// before it was ready (a stop then closes the session: review of 0.30.0, L5). The gate doesn't
+// see the shell's end markers (the shell writes to the client), so that request counts as open
+// until the client's next line. What it sent then runs for no one: the session is cut short.
+func (j *kubeJob) leftWaiting() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return !j.settled || j.queued && !j.answered
 }
 
 // waitPod: the Job's pod once Ready, or why not. At most jobReadyMax; an error that won't pass
