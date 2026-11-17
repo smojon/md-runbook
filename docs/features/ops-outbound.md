@@ -6,7 +6,7 @@ carries encrypted bytes only.
 
 What it gives:
 - No open port 22. Scanners, password guessing and sshd bugs before login can't reach it.
-- It works behind NAT, and where firewalls forbid inbound load balancers.
+- The ops host is reachable behind NAT, and where firewalls forbid inbound load balancers.
 - The vendor's login (SSO, MFA) comes before anyone reaches sshd.
 
 What it doesn't change:
@@ -87,5 +87,5 @@ Once everyone connects through the vendor:
 
 ## Without a vendor
 
-A pairing mode for our own [relay](../../apps/relay/README.md) is on the roadmap: the ops pod
-and the clients both dial out to it. Open an issue if you need it.
+A pairing mode for our own [relay](../../apps/relay/README.md) is on the roadmap. The ops pod and
+the clients would both dial out to it. Open an issue if you need it.
