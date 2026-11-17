@@ -64,6 +64,7 @@ for your server's platform when you update.
   - Run reports say `gate_mode` `separated`.
   - The first block of a session waits for its pod, about 2 to 5 seconds.
   - Pod logs are now read per namespace, with the rights to change things.
+  - `kubectl` is in `/usr/bin` in the image: the gate runs it as its other programs.
   - See [A Job per session](apps/ops/README.md#a-job-per-session).
 - **Ops host admins: move your bindings** ([README](apps/ops/README.md#in-a-cluster)).
   - Apply the new manifest. Update the image before the ConfigMap.

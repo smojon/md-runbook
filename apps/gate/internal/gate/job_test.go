@@ -114,13 +114,13 @@ func TestJobManifest(t *testing.T) {
 }
 
 func testJob(run runFunc) *kubeJob {
-	return &kubeJob{kubectl: "/usr/local/bin/kubectl", env: []string{"PATH=" + gatePath, "LC_ALL=C", "HOME=/home/ops"},
-		podEnv: []string{"PATH=/usr/local/bin:/usr/bin:/bin", "LC_ALL=C", "HOME=/home/ops"}, run: run, exe: "/usr/local/bin/md-runbook-gate",
+	return &kubeJob{kubectl: "/usr/bin/kubectl", env: []string{"PATH=" + sysPath, "LC_ALL=C", "HOME=/home/ops"},
+		podEnv: []string{"PATH=/usr/local/bin:/usr/bin:/bin", "LC_ALL=C", "HOME=/home/ops"}, run: run, quick: run, exe: "/usr/local/bin/md-runbook-gate",
 		ns: "md-runbook-ops", name: testSpec.Name, ready: make(chan struct{})}
 }
 
 func TestExecArgv(t *testing.T) {
-	want := []string{"/usr/local/bin/kubectl", "exec", "-i", "-q", "-n", "md-runbook-ops", "md-runbook-cells-0a1b2c3d4e-x7k2p", "-c", "cells", "--", "/usr/local/bin/md-runbook-gate", "__cells"}
+	want := []string{"/usr/bin/kubectl", "exec", "-i", "-q", "-n", "md-runbook-ops", "md-runbook-cells-0a1b2c3d4e-x7k2p", "-c", "cells", "--", "/usr/local/bin/md-runbook-gate", "__cells"}
 	if got := testJob(nil).execArgv("md-runbook-cells-0a1b2c3d4e-x7k2p"); !reflect.DeepEqual(got, want) {
 		t.Errorf("%q", got)
 	}
@@ -243,7 +243,7 @@ func TestWaitPod(t *testing.T) {
 	answers := func(outs ...string) (runFunc, *int) {
 		n := 0
 		return func(argv, env []string, stdin []byte) ([]byte, error) {
-			want := []string{"/usr/local/bin/kubectl", "get", "jobs,pods", "-n", "md-runbook-ops", "-l", "md-runbook-job=" + testSpec.Name, "-o", "json"}
+			want := []string{"/usr/bin/kubectl", "get", "jobs,pods", "-n", "md-runbook-ops", "-l", "md-runbook-job=" + testSpec.Name, "-o", "json"}
 			if !reflect.DeepEqual(argv, want) {
 				return nil, errors.New("unexpected " + strings.Join(argv, " "))
 			}
@@ -343,7 +343,7 @@ func TestJobChecks(t *testing.T) {
 	if p := j.check(ops, "", "the gate's service account"); len(p) != 0 {
 		t.Errorf("good ops account: %q", p)
 	}
-	if !reflect.DeepEqual(gotArgv, []string{"/usr/local/bin/kubectl", "create", "-f", "-", "-o", "json"}) {
+	if !reflect.DeepEqual(gotArgv, []string{"/usr/bin/kubectl", "create", "-f", "-", "-o", "json"}) {
 		t.Errorf("ops argv %q", gotArgv)
 	}
 	// The cells' rights given to the gate's account too: refused, naming them.
@@ -367,7 +367,7 @@ func TestJobChecks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if req.Op != "exec" || !reflect.DeepEqual(req.Argv, []string{"/usr/local/bin/kubectl", "create", "-f", "-", "-o", "json"}) || req.Env[0] != "PATH=/usr/local/bin:/usr/bin:/bin" {
+		if req.Op != "exec" || !reflect.DeepEqual(req.Argv, []string{"/usr/bin/kubectl", "create", "-f", "-", "-o", "json"}) || req.Env[0] != "PATH=/usr/local/bin:/usr/bin:/bin" {
 			t.Errorf("request %+v", req)
 		}
 		rest, _ := io.ReadAll(r)
@@ -520,32 +520,66 @@ func TestFollowFiles(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the follower didn't end with its stdin")
 	}
-	want := "0\t1\t0\tT\tn1\t\n0\t2\t3\tT\tn2\t\n0\tafter\n1\t{\"event\":\"probe\"}\n0\tagain\n1\tlast\n"
+	// The long line and the shorter file are said, for the gate to end the session.
+	want := "0\t1\t0\tT\tn1\t\n0\t2\t3\tT\tn2\t\n!0\ta line is over 16384 bytes\n0\tafter\n1\t{\"event\":\"probe\"}\n!0\tit got shorter\n0\tagain\n1\tlast\n"
 	if out.String() != want {
 		t.Errorf("forwarded:\n%q\nwant\n%q", out.String(), want)
 	}
 }
 
+// What the gate takes of the follower's stream: exits as from separated mode's exits file, probe
+// events of this session's runs under its own names; anything else ends the session (M1).
 func TestFollowLines(t *testing.T) {
+	newGate := func(dir string) *Gate {
+		g := &Gate{log: &logx.Logger{Dest: dir + "/gate.log", Account: "ops", Who: "SHA256:key", Client: "10.0.0.9"}, job: &kubeJob{}}
+		g.sepRuns = map[string]sepRun{"1": {"0000aa01", "n1"}, "2": {"0000aa02", "n2"}}
+		g.sepExits = map[string]report.Exit{}
+		g.endCh = make(chan struct{}, 1)
+		return g
+	}
 	dir := t.TempDir()
-	g := &Gate{log: &logx.Logger{Dest: dir + "/gate.log", Account: "ops", Who: "SHA256:key", Client: "10.0.0.9"}}
-	g.sepRuns = map[string]sepRun{"1": {"0000aa01", "n1"}}
-	g.sepExits = map[string]report.Exit{}
-	stream := "0\t1\t3\t2026-11-16T10:00:00Z\tforged\t\n" +
-		"1\t" + `{"event":"probe","who":"forged","run":"0000aa01","target":"api:443","result":"ok"}` + "\n" +
-		strings.Repeat("y", followLineMax+100) + "\n" +
+	g := newGate(dir)
+	g.job.closing.Store(true)
+	good := "1\t" + `{"event":"probe","who":"forged","run":"0000aa01","target":"api:443","result":"ok"}` + "\n" +
 		"0\t1\t0\t2026-11-16T10:00:01Z\tn1\t\n" +
-		"garbage without a tab\n" +
+		"1\tnot a probe event\n" +
+		"!1\tit got shorter\n" +
 		"1\t" + `{"event":"probe","run":"0000ff99","target":"x"}` + "\n"
-	g.followLines(strings.NewReader(stream))
-	if ex := g.sepExitsCopy(); ex["1"] != (report.Exit{RC: "0", Time: "2026-11-16T10:00:01Z"}) || len(ex) != 1 {
-		t.Errorf("exits: %+v", ex)
+	g.followLines(strings.NewReader(good))
+	if ex := g.sepExitsCopy(); g.exitsBadNow() != "" || ex["1"] != (report.Exit{RC: "0", Time: "2026-11-16T10:00:01Z"}) || len(ex) != 1 {
+		t.Errorf("exits: %+v (%s)", ex, g.exitsBadNow())
 	}
 	data, _ := os.ReadFile(dir + "/gate.log")
 	log := string(data)
 	if !strings.Contains(log, `"account":"ops","who":"SHA256:key","client":"10.0.0.9","event":"probe","run":"0000aa01","target":"api:443","result":"ok"}`) ||
 		strings.Count(log, `"event":"probe"`) != 1 || strings.Contains(log, "forged") || !strings.Contains(log, `"event":"end","id":"0000aa01","exit":0}`) {
 		t.Errorf("log:\n%s", log)
+	}
+	for name, c := range map[string]struct {
+		stream  string
+		closing bool
+		want    string
+	}{
+		"forged random number": {"0\t2\t3\t2026-11-16T10:00:00Z\tforged\t\n", true, "without its random number"},
+		"a second line":        {"0\t1\t0\t2026-11-16T10:00:01Z\tn1\t\n0\t1\t0\t2026-11-16T10:00:01Z\tn1\t\n", true, "a second line for run 1"},
+		"no tab":               {"garbage\n", true, "doesn't parse"},
+		"unknown source":       {"7\tx\n", true, "doesn't parse"},
+		"long exit line":       {"0\t" + strings.Repeat("1", 5000) + "\n", true, "over 4096 bytes"},
+		"long stream line":     {strings.Repeat("y", followLineMax+100) + "\n", true, "over 16384 bytes"},
+		"exits file shorter":   {"!0\tit got shorter\n", true, "it got shorter"},
+		"follower killed":      {"0\t1\t0\t2026-11-16T10:00:01Z\tn1\t\n", false, "the exits follower in the pod ended"},
+	} {
+		g := newGate(t.TempDir())
+		g.job.closing.Store(c.closing)
+		g.followLines(strings.NewReader(c.stream))
+		if !strings.Contains(g.exitsBadNow(), c.want) {
+			t.Errorf("%s: %q", name, g.exitsBadNow())
+		}
+		select {
+		case <-g.endCh:
+		default:
+			t.Errorf("%s: the session goes on", name)
+		}
 	}
 }
 

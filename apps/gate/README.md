@@ -18,7 +18,8 @@ for, and how runbooks are signed:
 Nothing else: no `perl`, `setsid`, `stdbuf`, `fold` or `curl`.
 
 **The programs the gate runs** come from `/usr/bin`, `/bin`, `/usr/sbin` and `/sbin` only:
-`ssh-keygen`, `id`, `locale`, `getent`, `sh`, `ps`, `sudo`, `systemd-run` and `bwrap`.
+`ssh-keygen`, `id`, `locale`, `getent`, `sh`, `ps`, `sudo`, `systemd-run` and `bwrap`. With a
+Job per session, `kubectl` too.
 - Never from `/usr/local`, from `path =` or from the PATH sshd sets. A folder an account can
   write would let it plant its own `ssh-keygen`, which passes any signature.
 - Each one, and every folder above it, must be root's and writable by root alone. Else the gate
@@ -247,8 +248,8 @@ kubernetes-job` runs each session's blocks in a Kubernetes Job of their own inst
 ([A Job per session](../ops/README.md#a-job-per-session)). It counts as `separated` too.
 - `job_service_account = NAME` is required: the Job's service account.
 - `job_image = IMAGE` is optional: the default is the gate's own pod's image.
-- The gate needs `kubectl` in `path =` and a pod to run in. The runner doesn't go with
-  `cells_account` or `isolation = scope` or `bwrap`.
+- The gate needs a pod to run in, and `kubectl` in `/usr/bin` like its other programs. The
+  runner doesn't go with `cells_account` or `isolation = scope` or `bwrap`.
 - At the start of each session the gate checks both service accounts, and refuses to start if
   either has a right it shouldn't.
 

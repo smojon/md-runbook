@@ -50,7 +50,8 @@ RUN apt-get update \
  && useradd --uid 10001 --user-group --create-home --shell /bin/sh ops \
  && install -d -m 755 /etc/md-runbook /etc/md-runbook-ops \
  && install -d -o ops -g ops -m 700 /run/md-runbook-ops /var/lib/md-runbook-ops /var/log/md-runbook
-COPY --from=kubectl /kubectl /usr/local/bin/kubectl
+# kubectl in /usr/bin: md-runbook-gate runs its programs only from root's system folders.
+COPY --from=kubectl /kubectl /usr/bin/kubectl
 COPY --from=gate /md-runbook-gate /usr/local/bin/md-runbook-gate
 COPY ops/sshd_config /etc/ssh/md-runbook-ops.conf
 COPY ops/gate.conf /etc/md-runbook/gate.conf

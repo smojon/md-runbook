@@ -69,7 +69,8 @@ type kubeJob struct {
 	env     []string // the gate's kubectl's environment (its kubeconfig: the pod's account)
 	podEnv  []string // kubectl's in the Job's pod (the cells' kubeconfig)
 	run     runFunc
-	exe     string // this program, in the Job's image too
+	quick   runFunc // on the paths that stop and clean up: bounded (killFor)
+	exe     string  // this program, in the Job's image too
 
 	ns, context, opsPod, opsUID, image, sa, name string
 
@@ -78,6 +79,8 @@ type kubeJob struct {
 	pod   string
 	err   string
 	noted atomic.Bool
+	// closing: the gate ends the follower (its end is no sign of a changed stream).
+	closing atomic.Bool
 
 	follow     *exec.Cmd
 	followIn   io.WriteCloser
@@ -90,6 +93,12 @@ func (j *kubeJob) kc(args ...string) []string { return append([]string{j.kubectl
 // execArgv: the cells' mode in the Job's pod, through kubectl exec (stdin open, no banner).
 func (j *kubeJob) execArgv(pod string) []string {
 	return j.kc("exec", "-i", "-q", "-n", j.ns, pod, "-c", jobContainer, "--", j.exe, CellsMode)
+}
+
+// killFor runs a kubectl of a path that stops or cleans up: at most 5 seconds, and its output
+// given up waitDelay later (a cells' mode stopped in the pod can't hold the gate).
+func killFor(argv, env []string, stdin []byte) ([]byte, error) {
+	return runFor(5*time.Second, argv, env, stdin)
 }
 
 // podName: the Job's pod once it is Ready ("" before, or when it can't be).
@@ -134,8 +143,9 @@ func runnerProblem(c config.Config) string {
 
 func (g *Gate) newKubeJob() *kubeJob {
 	home := os.Getenv("HOME")
-	j := &kubeJob{kubectl: inPath(g.cfg.Path, "kubectl"), run: runCmd, exe: g.plan.exe, sa: g.cfg.JobServiceAccount, ready: make(chan struct{})}
-	j.env = []string{"PATH=" + gatePath, "LC_ALL=C", "HOME=" + home}
+	// kubectl as the gate's other programs: from root's system folders only (helpers.go).
+	j := &kubeJob{kubectl: g.helper("kubectl"), run: runCmd, quick: killFor, exe: g.plan.exe, sa: g.cfg.JobServiceAccount, ready: make(chan struct{})}
+	j.env = []string{"PATH=" + sysPath, "LC_ALL=C", "HOME=" + home}
 	j.podEnv = []string{"PATH=" + g.cfg.Path, "LC_ALL=C", "HOME=" + home}
 	if g.cfg.Kubeconfig != "" {
 		j.podEnv = append(j.podEnv, "KUBECONFIG="+g.cfg.Kubeconfig)
@@ -148,7 +158,7 @@ func (g *Gate) newKubeJob() *kubeJob {
 func (g *Gate) setupJob() {
 	j := g.newKubeJob()
 	if j.kubectl == "" {
-		g.fatal("cells_runner = kubernetes-job: no kubectl in path = " + g.cfg.Path)
+		g.fatal("cells_runner = kubernetes-job: no kubectl in " + sysPath)
 	}
 	if j.exe == "" {
 		g.fatal("cells_runner = kubernetes-job: can't find this program's own path")
@@ -296,10 +306,11 @@ func (g *Gate) jobCleanup() {
 		return
 	}
 	j.cleaned.Do(func() {
+		j.closing.Store(true)
 		if j.follow != nil && j.follow.Process != nil {
 			syscall.Kill(-j.follow.Process.Pid, syscall.SIGKILL)
 		}
-		_, err := j.run(j.kc("delete", "job", j.name, "-n", j.ns, "--ignore-not-found", "--wait=false"), j.env, nil)
+		_, err := j.quick(j.kc("delete", "job", j.name, "-n", j.ns, "--ignore-not-found", "--wait=false"), j.env, nil)
 		status := "deleted"
 		if err != nil {
 			status = "delete-failed"
@@ -344,6 +355,7 @@ func (g *Gate) runJobShell(sh *shell) {
 	if !sh.aborted && pod != "" {
 		cmd = exec.Command(j.kubectl, j.execArgv(pod)[1:]...)
 		cmd.Env = j.env
+		cmd.WaitDelay = waitDelay
 		cmd.Stdin = sh.r
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -407,7 +419,7 @@ func (g *Gate) jobStopShells(shs []*shell) {
 		}
 	}
 	if pod := g.job.podName(); len(remote) > 0 && pod != "" {
-		g.job.run(g.job.execArgv(pod), g.job.env, cellsReq{Op: "end", Shells: remote}.encode())
+		g.job.quick(g.job.execArgv(pod), g.job.env, cellsReq{Op: "end", Shells: remote}.encode())
 	}
 }
 
@@ -436,7 +448,7 @@ func (g *Gate) jobStopRequest(ns, name, n, sig string) {
 	if j.kubectl == "" || j.exe == "" {
 		return
 	}
-	out, err := j.run(j.kc("get", "jobs,pods", "-n", ns, "-l", "md-runbook-job="+name, "-o", "json"), j.env, nil)
+	out, err := j.quick(j.kc("get", "jobs,pods", "-n", ns, "-l", "md-runbook-job="+name, "-o", "json"), j.env, nil)
 	if err != nil {
 		return
 	}
@@ -448,7 +460,7 @@ func (g *Gate) jobStopRequest(ns, name, n, sig string) {
 	if sig == "KILL" {
 		s = syscall.SIGKILL
 	}
-	j.run(j.execArgv(pod), j.env, cellsReq{Op: "stop", Shell: atoi(n), Sig: int(s)}.encode())
+	j.quick(j.execArgv(pod), j.env, cellsReq{Op: "stop", Shell: atoi(n), Sig: int(s)}.encode())
 }
 
 // ---- exits and probe events, from the pod ----
@@ -457,6 +469,7 @@ func (g *Gate) jobStopRequest(ns, name, n, sig string) {
 func (g *Gate) startFollower(j *kubeJob, pod string) string {
 	cmd := exec.Command(j.kubectl, j.execArgv(pod)[1:]...)
 	cmd.Env = j.env
+	cmd.WaitDelay = waitDelay
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	in, err := cmd.StdinPipe()
 	if err != nil {
@@ -486,6 +499,7 @@ func (g *Gate) finishFollower() {
 	if j == nil || j.follow == nil {
 		return
 	}
+	j.closing.Store(true)
 	j.followIn.Close()
 	select {
 	case <-j.followDone:
@@ -495,38 +509,51 @@ func (g *Gate) finishFollower() {
 }
 
 // followLines reads the follower: `0<TAB>LINE` from the exits file, `1<TAB>LINE` from the pod's
-// log file. A block can write into that stream: lines are bounded, exits count only with their
-// run's random number, and probe events are logged again under the gate's own names.
+// log file, `!N<TAB>WHY` when file N changed in a way no shell writes (it got shorter, a line too
+// long). A block can write into the pod's files and into that stream. So, as for separated mode's
+// exits file (review of 0.28.0, M1), anything but an expected exit line ends the session and no
+// run report goes out: a line of the stream that doesn't parse, an exit line junkExits refuses,
+// a changed exits file, more than exitsMax, or the stream's end before the gate ends it. Probe
+// events are only logged again, under the gate's own names, when they are probe events of this
+// session's runs; other lines of that file are dropped.
 func (g *Gate) followLines(r io.Reader) {
 	br := bufio.NewReaderSize(r, followLineMax+64)
-	skipping := false
 	var read int64
+	junk := func(why string) {
+		g.exitsMu.Lock()
+		g.junkExits(why)
+		g.exitsMu.Unlock()
+	}
 	for {
 		line, err := br.ReadSlice('\n')
 		read += int64(len(line))
-		if err == bufio.ErrBufferFull {
-			skipping = true
-			continue
-		}
-		if err != nil {
+		switch {
+		case err == bufio.ErrBufferFull:
+			junk("the stream from the pod has a line over " + itoa(followLineMax) + " bytes")
+			io.Copy(io.Discard, br)
+			return
+		case err != nil:
+			if !g.job.closing.Load() {
+				junk("the exits follower in the pod ended")
+			}
+			return
+		case read > exitsMax:
+			junk("over " + itoa(exitsMax>>20) + " MiB from the pod")
+			io.Copy(io.Discard, br)
 			return
 		}
-		if skipping {
-			skipping = false
-			continue
-		}
-		if read > exitsMax {
-			continue
-		}
 		src, text, ok := strings.Cut(strings.TrimSuffix(string(line), "\n"), "\t")
-		if !ok {
-			continue
-		}
 		g.exitsMu.Lock()
-		switch src {
-		case "0":
+		switch {
+		case !ok:
+			g.junkExits("a line from the pod that doesn't parse")
+		case src == "0" && len(text) > 4096:
+			g.junkExits("a line is over 4096 bytes")
+		case src == "0":
 			g.exitLine(text)
-		case "1":
+		case src == "!0":
+			g.junkExits(textutil.Cut(text, 200))
+		case src == "1":
 			runs := map[string]bool{}
 			for _, r := range g.sepRuns {
 				runs[r.rid] = true
@@ -534,6 +561,9 @@ func (g *Gate) followLines(r io.Reader) {
 			if kv, ok := probeEvent(text, runs); ok {
 				g.log.Event(kv...)
 			}
+		case src == "!1":
+		default:
+			g.junkExits("a line from the pod that doesn't parse")
 		}
 		g.exitsMu.Unlock()
 	}
@@ -647,8 +677,9 @@ func endShells(ns []int) {
 }
 
 // followFiles writes each new complete line of the files as `INDEX<TAB>LINE`, until in ends
-// (then once more). A file that doesn't exist yet is read once it does, one that shrank from its
-// start; a line longer than followLineMax is dropped.
+// (then once more). A file that doesn't exist yet is read once it does. A file that shrank, or a
+// line longer than followLineMax, is said as `!INDEX<TAB>WHY` (the gate ends the session for the
+// exits file), and then read on from the file's start, or the next line.
 func followFiles(paths []string, in io.Reader, out io.Writer, pause time.Duration) {
 	done := make(chan struct{})
 	go func() {
@@ -665,6 +696,7 @@ func followFiles(paths []string, in io.Reader, out io.Writer, pause time.Duratio
 				continue
 			}
 			if st, err := f.Stat(); err == nil && st.Size() < off[i] {
+				out.Write([]byte("!" + itoa(i) + "\tit got shorter\n"))
 				off[i], part[i], skip[i] = 0, nil, false
 			}
 			buf := make([]byte, 64<<10)
@@ -681,12 +713,17 @@ func followFiles(paths []string, in io.Reader, out io.Writer, pause time.Duratio
 						if !skip[i] {
 							part[i] = append(part[i], data...)
 							if len(part[i]) > followLineMax {
+								out.Write([]byte("!" + itoa(i) + "\ta line is over " + itoa(followLineMax) + " bytes\n"))
 								part[i], skip[i] = nil, true
 							}
 						}
 						break
 					}
-					if !skip[i] && len(part[i])+k <= followLineMax {
+					switch {
+					case skip[i]:
+					case len(part[i])+k > followLineMax:
+						out.Write([]byte("!" + itoa(i) + "\ta line is over " + itoa(followLineMax) + " bytes\n"))
+					default:
 						line := append(append([]byte(itoa(i)+"\t"), part[i]...), data[:k]...)
 						out.Write(append(line, '\n'))
 					}
