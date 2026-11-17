@@ -164,9 +164,15 @@ What this keeps apart:
 - Run reports say `gate_mode` `separated`.
 
 What you see:
-- The first block of a session waits for the pod: 2 to 5 seconds when the node has the image.
-  It prints one line saying so.
+- The first block of a session waits for the pod, and the app and VS Code say "Starting the
+  session's pod…".
+  - How long depends on the cluster: a few seconds where the node has the image, 30 to 60
+    seconds on a laptop's k3s.
+  - A first image pull adds its time.
+  - The wait doesn't count against the kube-context check or a block's `timeout=`.
+  - Stop works during the wait: the session ends and the gate deletes the Job.
 - If the pod can't start, the session ends with the reason, such as a wrong image.
+  - The gate waits at most 180 seconds for the pod, then ends the session with that reason.
 - The log has `job` events: `created`, `ready` (with the seconds it took), `deleted`.
 
 Cleanup, if the gate can't delete a Job itself:
@@ -185,6 +191,16 @@ Settings in `gate.conf`:
 - `job_service_account = NAME`: required.
 - `job_image = IMAGE`: optional. The default is the ops pod's own image.
 - Outside a cluster, remove `cells_runner` and `job_service_account`.
+
+**Your own cells' service account.** With another `job_service_account` than
+`md-runbook-cells`, give it what the manifest gives that one:
+- `get` and `list` on `namespaces`, cluster-wide (the ClusterRole `md-runbook-ops` has them):
+  the gate's namespace check needs them.
+  Without them the session refuses with "can't list the namespaces".
+- `imagePullSecrets` for a private registry. The gate's Job names none, so the pod takes them
+  from its service account:
+  `kubectl -n md-runbook-ops patch serviceaccount NAME -p '{"imagePullSecrets":[{"name":"SECRET"}]}'`.
+  This also goes for `md-runbook-cells` itself.
 
 ## Next to the relay
 

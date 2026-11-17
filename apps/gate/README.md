@@ -283,6 +283,12 @@ kubernetes-job` runs each session's blocks in a Kubernetes Job of their own inst
   runner doesn't go with `cells_accounts`, `cells_account` or `isolation = scope` or `bwrap`.
 - At the start of each session the gate checks both service accounts, and refuses to start if
   either has a right it shouldn't.
+- A `job_service_account` of your own needs `get` and `list` on `namespaces` cluster-wide, else
+  the gate refuses with "can't list the namespaces". With a private registry, put the
+  `imagePullSecrets` on that service account: the Job names none
+  ([details](../ops/README.md#a-job-per-session)).
+- The pod's start takes from seconds to a minute, depending on the cluster. It doesn't count
+  against the client's time limits (protocol 4, below).
 
 **Why not `systemd-run --uid`?** It needs root, or a polkit rule that also lets the account
 start units as root. sudo can name one command and the accounts it may run as.
@@ -397,7 +403,7 @@ From a machine with the support key:
 printf ': mdrb-gate-hello 0123abcd; x\n' | ssh -i support_key support@server
 ```
 
-prints `__MDRB_GATE__ 3 unsigned=refuse` (after a control character) and the session's number.
+prints `__MDRB_GATE__ 4 unsigned=refuse` (after a control character) and the session's number.
 The log (`journalctl -t md-runbook-gate`, or the `log =` file) shows a `session` event.
 
 Then open a signed runbook in the md-runbook app and run a block. On the server itself,
@@ -413,7 +419,7 @@ base64 for anything that could hold spaces.
 Replies end with the marker a plain session uses (`\036__MDRB_<id>__ <exit>` on stdout and
 stderr). Refusals exit 126 with the reason on stderr.
 
-The banner's number is the protocol (3). The app sends a request only to gates whose protocol
+The banner's number is the protocol (4). The app sends a request only to gates whose protocol
 has it:
 
 | Request | |
@@ -425,6 +431,20 @@ has it:
 | `run ID N`, `step ID N K` | Run signed block N, or its command K (0-based). |
 | `raw ID TEXT` | Shell text, only where unsigned blocks are allowed. |
 | `context ID` | Runs `kubectl config current-context`, for runbooks with `kube-context:` ([Kubernetes](../../docs/features/kubernetes.md)). Answered on every server, because it only reads the kubeconfig. The gate checks a signed block's `kube-context=` itself all the same. |
+
+**Pod notices (protocol 4).** With `cells_runner = kubernetes-job`, a request can wait for the
+session's pod. The gate says when, so that the pod's start doesn't count against the client's
+time limit.
+
+Only a client whose hello is `: mdrb-gate-hello ID pod-notices; …` gets them; older gates read
+that hello as before. Each notice is one line, `\036__MDRB_POD__ STATE`:
+- `job`, after the banner: the cells run in a Job whose pod isn't ready yet;
+- `starting`, on stderr, before a request whose reply waits for the pod;
+- `ready`, on stderr, once: the request runs;
+- `failed REASON`, on stderr, once: the pod won't come, and the session ends.
+
+No notice comes after `ready` or `failed`, so a block's output can't fake one. A client that
+goes during the wait ends the session, and the gate deletes the Job at once.
 
 The cells' shell has two variables, so tools on the server can log against them:
 - `MD_RUNBOOK_GATE_WHO`: the key, as logged;
