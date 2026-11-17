@@ -452,8 +452,11 @@ that hello as before. Each notice is one line, `\036__MDRB_POD__ STATE`:
 - `ready`, on stderr, once: the request runs;
 - `failed REASON`, on stderr, once: the pod won't come, and the session ends.
 
-No notice comes after `ready` or `failed`, so a block's output can't fake one. A client that
-goes during the wait ends the session, and the gate deletes the Job at once.
+After `job`:
+- the gate says `ready` or `failed` before any block runs;
+- no notice comes after them, so a block's output can't fake one;
+- a client reads notices until one of them comes, also after a refusal;
+- a client that goes during the wait ends the session, and the gate deletes the Job at once.
 
 The cells' shell has two variables, so tools on the server can log against them:
 - `MD_RUNBOOK_GATE_WHO`: the key, as logged;
