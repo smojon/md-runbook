@@ -34,8 +34,11 @@ const SLASH = 47;
 const COLON = 58;
 const SEMI = 59;
 const EQ = 61;
+const BACKSLASH = 92;
 const US = 95;
+const BACKTICK = 96;
 const LBRACE = 123;
+const PIPE = 124;
 const RBRACE = 125;
 const TILDE = 126;
 
@@ -90,6 +93,9 @@ export class Scan {
   readonly n: number;
   private readonly stops = new Map<string, NextStop>();
   private readonly lineWords = new Map<string, Int32Array>();
+  /** password-flag-tool: the rules each place is in a command of (toolsBefore), and those anywhere. */
+  toolMasks: Int32Array | undefined;
+  toolsPresent = 0;
   /** `blank`: what `[ 	]` reads (the widened patterns read every space but line ends). */
   constructor(
     readonly t: string,
@@ -330,36 +336,84 @@ function notAValue(s: Scan, p: number): boolean {
 /** `[^\s"',;&}]` */
 const keyValueChar = (c: number): boolean => c === c && !isS(c) && !isQuote(c) && c !== COMMA && c !== SEMI && c !== AMP && c !== RBRACE;
 
+/** The end of a key's value from p, `(?:[^\s"',;&}\\]|\\(?!["']))*`: a backslash before a quote (`\"` of escaped JSON) ends it. */
+function keyValueEnd(s: Scan, p: number): number {
+  let e = p;
+  for (;;) {
+    const c = s.c(e);
+    if (c === BACKSLASH ? isQuote(s.c(e + 1)) : !keyValueChar(c)) return e;
+    e++;
+  }
+}
+
+/** Where the quote before p starts (`\"` of escaped JSON: at its backslash), or -1 if there is no quote. */
+function quoteOpen(s: Scan, p: number): number {
+  if (!isQuote(s.c(p - 1))) return -1;
+  return s.c(p - 2) === BACKSLASH ? p - 2 : p - 1;
+}
+
 /**
- * The start of the key before `["']?[ \t]*[:=][ \t]*` that ends at i, or -1: the quote before
- * the blanks is the key's own (a key name has no quote).
+ * The start of the key before `(?:\\?["'])?[ \t]*[:=][ \t]*` that ends at i, or -1: the quote
+ * before the blanks (with a backslash before it, escaped JSON) is the key's own (a key name has no
+ * quote or backslash).
  */
 function keyEnd(s: Scan, i: number): number {
   const j = s.blanksBefore(i);
   const sep = s.c(j - 1);
   if (sep !== COLON && sep !== EQ) return -1;
   let k = s.blanksBefore(j - 1);
-  if (isQuote(s.c(k - 1))) k--;
+  if (isQuote(s.c(k - 1))) {
+    k--;
+    if (s.c(k - 1) === BACKSLASH) k--;
+  }
   return k;
 }
 
-/** `(?<=KEY["']?[ \t]*[:=][ \t]*["']?)NOT_A_VALUE[^\s"',;&}]+` */
+/** `(?<=KEY(?:\\?["'])?[ \t]*[:=][ \t]*(?:\\?["'])?)NOT_A_VALUE(?:[^\s"',;&}\\]|\\(?!["']))+` */
 function keyValue(s: Scan, p: number, keyEndsAt: (s: Scan, k: number) => boolean): number {
-  if (!keyValueChar(s.c(p))) return -1;
+  const c = s.c(p);
+  if (c === BACKSLASH ? isQuote(s.c(p + 1)) : !keyValueChar(c)) return -1;
   // A quote right before p is the optional one: without it, `[:=]` would have to be that quote.
-  const k = keyEnd(s, isQuote(s.c(p - 1)) ? p - 1 : p);
+  const o = quoteOpen(s, p);
+  const k = keyEnd(s, o >= 0 ? o : p);
   if (k < 0 || !keyEndsAt(s, k) || !notAValue(s, p)) return -1;
-  return s.runEnd(p, keyValueChar);
+  return keyValueEnd(s, p);
 }
 
-/** `(?<=KEY["']?[ \t]*[:=][ \t]*Q)NOT_A_VALUE[^Q\r\n]+(?=Q)` for the quote Q before p. */
-function quotedKeyValue(s: Scan, p: number): number {
+/**
+ * The end of the quoted value that starts at p (QUOTED_VALUE in redact.ts), or -1. After `"` or
+ * `'`: read with backslash escapes up to the closing quote, else (a backslash before the line's
+ * end) up to the next quote as before. After `\"` or `\'` (escaped JSON): up to `\"` or `\'`.
+ */
+export function quotedValueEnd(s: Scan, p: number): number {
   const q = s.c(p - 1);
   if (!isQuote(q)) return -1;
-  const k = keyEnd(s, p - 1);
+  const escaped = s.c(p - 2) === BACKSLASH;
+  let e = p;
+  for (;;) {
+    const c = s.c(e);
+    if (c !== c || c === CR || c === LF || c === q) break;
+    if (c !== BACKSLASH) {
+      e++;
+      continue;
+    }
+    const d = s.c(e + 1);
+    if (d !== d || d === CR || d === LF || (escaped && d === q)) break;
+    e += 2;
+  }
+  if (escaped) return e > p && s.c(e) === BACKSLASH && s.c(e + 1) === q ? e : -1;
+  if (e > p && s.c(e) === q) return e;
+  const f = s.next(q === DQ ? 'q"' : "q'", (c) => c === q || c === CR || c === LF).find(p);
+  return f > p && s.c(f) === q ? f : -1;
+}
+
+/** `(?<=KEY(?:\\?["'])?[ \t]*[:=][ \t]*)NOT_A_VALUE` then QUOTED_VALUE (redact.ts), for the quote before p. */
+function quotedKeyValue(s: Scan, p: number): number {
+  const o = quoteOpen(s, p);
+  if (o < 0) return -1;
+  const k = keyEnd(s, o);
   if (k < 0 || !secretKeyEndsAt(s, k) || !notAValue(s, p)) return -1;
-  const e = s.next(q === DQ ? 'q"' : "q'", (c) => c === q || c === CR || c === LF).find(p);
-  return e > p && s.c(e) === q ? e : -1;
+  return quotedValueEnd(s, p);
 }
 
 // --- secret-flag-value ---------------------------------------------------------------------------
@@ -537,19 +591,13 @@ const cookieHeader = (s: Scan, p: number): number => header(s, p, 'cookie', fals
 const secretKeyValue = (s: Scan, p: number): number => keyValue(s, p, secretKeyEndsAt);
 const passKeyValue = (s: Scan, p: number): number => keyValue(s, p, passKeyEndsAt);
 
-/** The value of a quoted string that starts at p (its quote at p - 1) and ends on its line, or -1. */
-function quotedEnd(s: Scan, p: number): number {
-  const q = s.c(p - 1);
-  const e = s.next(q === DQ ? 'q"' : "q'", (c) => c === q || c === CR || c === LF).find(p);
-  return e > p && s.c(e) === q ? e : -1;
-}
-
-/** `(?<=\b(?:Proxy-|Set-)?NAME["']?WS*[:=]WS*Q)[^Q\r\n]+(?=Q)`: a header's value in quotes, Q the quote before p. */
+/** `(?<=\b(?:Proxy-|Set-)?NAME(?:\\?["'])?WS*[:=]WS*)` then QUOTED_VALUE: a header's value in quotes, after the quote before p. */
 function quotedHeader(s: Scan, p: number, name: string): number {
-  if (!isQuote(s.c(p - 1))) return -1;
-  const k = keyEnd(s, p - 1);
+  const o = quoteOpen(s, p);
+  if (o < 0) return -1;
+  const k = keyEnd(s, o);
   if (k < 0 || !s.is(k - name.length, name) || isWord(s.c(k - name.length - 1))) return -1;
-  return quotedEnd(s, p);
+  return quotedValueEnd(s, p);
 }
 
 // The patterns that read `[ \t]` around a separator or after a flag, in DEFAULT_PATTERNS order:
@@ -589,7 +637,9 @@ function separatedWide(s: Scan, p: number): number {
  * tools). `split`: the value is `user<split>PASSWORD`, `prefix`: `<prefix>PASSWORD`. Left out on
  * purpose: `mysql -p` (covered by secret-flag-value), `-p NAME` of the MySQL tools (it asks for the
  * password, NAME is the database), `psql`, `pg_dump` and `ssh` (`-p` is the port), `psql -W` (asks),
- * `curl -u` (secret-flag-value), `docker`/`oc`/`podman login -p` (secret-flag-value).
+ * `curl -u` (secret-flag-value), `docker`/`oc`/`podman login -p` (secret-flag-value). `anyCase`:
+ * the tools and flags in any case (Windows). A tool counts only where a command starts (COMMAND in
+ * redact.ts), and its flag only in the same command.
  */
 export interface PasswordToolRule {
   tools: readonly string[];
@@ -598,6 +648,7 @@ export interface PasswordToolRule {
   glued?: boolean;
   split?: string;
   prefix?: string;
+  anyCase?: boolean;
 }
 
 export const PASSWORD_TOOLS: readonly PasswordToolRule[] = [
@@ -626,7 +677,7 @@ export const PASSWORD_TOOLS: readonly PasswordToolRule[] = [
   // SQL Server: sqlcmd/bcp/osql -P PASSWORD (-U is the user)
   { tools: ['sqlcmd', 'bcp', 'osql'], flags: ['-P'], space: true },
   // Sysinternals PsExec -p PASSWORD
-  { tools: ['psexec', 'psexec64', 'PsExec', 'PsExec64'], flags: ['-p'], space: true },
+  { tools: ['psexec', 'psexec64'], flags: ['-p'], space: true, anyCase: true },
   // Mosquitto clients -P PASSWORD (-p is the port)
   { tools: ['mosquitto_pub', 'mosquitto_sub', 'mosquitto_rr'], flags: ['-P'], space: true },
   // MongoDB shells and tools: -p PASSWORD
@@ -657,52 +708,137 @@ export const PASSWORD_TOOLS: readonly PasswordToolRule[] = [
   // OpenSSL: -passin/-passout/-pass pass:PASSWORD, and enc -k PASSWORD
   { tools: ['openssl'], flags: ['-passin', '-passout', '-pass'], space: true, prefix: 'pass:' },
   { tools: ['openssl'], flags: ['-k'], space: true },
-  // Windows: cmdkey /pass:PASSWORD, schtasks /RP PASSWORD; FreeRDP /p:PASSWORD
-  { tools: ['cmdkey'], flags: ['/pass:'], glued: true },
-  { tools: ['schtasks'], flags: ['/RP', '/rp'], space: true },
+  // Windows: cmdkey /pass:PASSWORD, schtasks /RP PASSWORD (any case); FreeRDP /p:PASSWORD
+  { tools: ['cmdkey'], flags: ['/pass:'], glued: true, anyCase: true },
+  { tools: ['schtasks'], flags: ['/rp'], space: true, anyCase: true },
   { tools: ['xfreerdp', 'wlfreerdp', 'sdl-freerdp'], flags: ['/p:'], glued: true },
   // NetworkManager: nmcli … password PASSWORD, wifi-sec.psk PASSWORD
   { tools: ['nmcli'], flags: ['password', 'wifi-sec.psk'], space: true },
 ];
 
 const TOOL_NAMES = [...new Set(PASSWORD_TOOLS.flatMap((r) => r.tools))];
-const TOOLS_RE = new RegExp([...TOOL_NAMES, 'htpasswd'].map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'));
-const toolMasks = new WeakMap<Scan, Int32Array>();
-/** Which rules have a tool anywhere in the text. */
-const toolsPresent = new WeakMap<Scan, number>();
+const TOOLS_RE = new RegExp([...TOOL_NAMES, 'htpasswd'].map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i');
 
-/** For each place i, which rules have one of their tools as a whole word before it on its line (as `\bTOOL\b[^\r\n]*?` before i). */
+/** `[^\S\r\n]`: a blank within a line (BL in redact.ts). */
+const isLineBlank = (c: number): boolean => isS(c) && c !== CR && c !== LF;
+/** `[^\s|;&(`"']`: a character of a shell word (P in redact.ts). */
+const isShellWordChar = (c: number): boolean =>
+  c === c && !isS(c) && c !== PIPE && c !== SEMI && c !== AMP && c !== LPAREN && c !== BACKTICK && !isQuote(c);
+/** `(?<![^\r\n|;&(`])` before i: a command starts after the line's start or one of these. */
+const commandStartBefore = (c: number): boolean => c !== c || c === CR || c === LF || c === PIPE || c === SEMI || c === AMP || c === LPAREN || c === BACKTICK;
+/** `(?<![^\s|;&(`])` before i: what `exec` or `--` follows to start a command. */
+const wordStartBefore = (c: number): boolean => commandStartBefore(c) || isS(c);
+
+/** The start of the run of line blanks that ends at i. */
+function lineBlanksBefore(s: Scan, i: number): number {
+  while (i > 0 && isLineBlank(s.c(i - 1))) i--;
+  return i;
+}
+/** The start of the shell word that ends at i. */
+function shellWordBefore(s: Scan, i: number): number {
+  while (i > 0 && isShellWordChar(s.c(i - 1))) i--;
+  return i;
+}
+/** Is [w, j) exactly `word`? */
+const wordIs = (s: Scan, w: number, j: number, word: string): boolean => j - w === word.length && s.has(w, word);
+/** UNIT (redact.ts) on [w, j): sudo, exec, env, time, an option (`--` too) or VAR=value. */
+function isUnit(s: Scan, w: number, j: number): boolean {
+  const c = s.c(w);
+  if (c === DASH) return true;
+  if (wordIs(s, w, j, 'sudo') || wordIs(s, w, j, 'exec') || wordIs(s, w, j, 'env') || wordIs(s, w, j, 'time')) return true;
+  if (!isAlpha(c) && c !== US) return false;
+  const e = s.runEnd(w + 1, isWord);
+  return e < j && s.c(e) === EQ;
+}
+
+/**
+ * COMMAND (redact.ts) before the tool at `at`: a path before it (`/usr/bin/`, `C:\Tools\`), then,
+ * read back word by word: UNITs back to where a command starts, to `exec` or `--`; or to a word
+ * that isn't one (`exec`'s container: `docker exec -it NAME TOOL`), options, then `exec`.
+ */
+function commandAt(s: Scan, at: number): boolean {
+  const b = s.c(at - 1);
+  let k = b === SLASH || b === BACKSLASH ? shellWordBefore(s, at) : at;
+  for (;;) {
+    const j = lineBlanksBefore(s, k);
+    if (commandStartBefore(s.c(j - 1))) return true;
+    if (j === k) return false;
+    const w = shellWordBefore(s, j);
+    if (w === j) return false;
+    k = w;
+    if (!isUnit(s, w, j)) break;
+    if ((wordIs(s, w, j, 'exec') || wordIs(s, w, j, '--')) && wordStartBefore(s.c(w - 1))) return true;
+  }
+  // The word at k is exec's container: options before it, then exec.
+  for (;;) {
+    const j = lineBlanksBefore(s, k);
+    if (j === k) return false;
+    const w = shellWordBefore(s, j);
+    if (w === j) return false;
+    if (wordIs(s, w, j, 'exec')) return wordStartBefore(s.c(w - 1));
+    if (s.c(w) !== DASH) return false;
+    k = w;
+  }
+}
+
+/** Is `flag` of `rule` at i (in any case for `anyCase`)? */
+const flagAt = (s: Scan, i: number, flag: string, rule: PasswordToolRule): boolean => (rule.anyCase ? s.is(i, flag) : s.has(i, flag));
+
+/**
+ * For each place i, which rules have one of their tools where a command starts, with the rest of
+ * that command up to i: no `|`, `;`, `&` or backtick out of quotes, no line break (as
+ * `COMMAND TOOL(?:\.exe)?(?=BL)` then REACH's `(?:[^\r\n|;&`"']|"[^"\r\n]*"|'[^'\r\n]*')*` before i).
+ */
 function toolsBefore(s: Scan): Int32Array {
-  let masks = toolMasks.get(s);
+  let masks = s.toolMasks;
   if (masks) return masks;
   const ends = new Int32Array(s.n + 1);
+  let folded: string | undefined;
   PASSWORD_TOOLS.forEach((r, bit) => {
+    const text = r.anyCase ? (folded ??= s.t.replace(/[A-Z]+/g, (m) => m.toLowerCase())) : s.t;
     for (const tool of r.tools) {
-      for (let at = s.t.indexOf(tool); at >= 0; at = s.t.indexOf(tool, at + 1)) {
-        // `\bTOOL\b` (every tool name starts and ends with a word character)
-        if (isWord(s.c(at - 1)) || isWord(s.c(at + tool.length))) continue;
-        ends[at + tool.length] = ends[at + tool.length]! | (1 << bit);
+      for (let at = text.indexOf(tool); at >= 0; at = text.indexOf(tool, at + 1)) {
+        // `TOOL(?:\.exe)?(?=BL)`, then where a command starts before it.
+        let end = at + tool.length;
+        if (!isLineBlank(s.c(end))) {
+          if (!s.is(end, '.exe') || !isLineBlank(s.c(end + 4))) continue;
+          end += 4;
+        }
+        if (commandAt(s, at)) ends[end] = ends[end]! | (1 << bit);
       }
     }
   });
+  // Each run of a tool reads on outside quotes (out), in "…" (dq) or in '…' (sq).
   masks = new Int32Array(s.n + 1);
-  let cur = 0;
+  let out = 0;
+  let dq = 0;
+  let sq = 0;
   for (let x = 0; x <= s.n; x++) {
-    const prev = s.c(x - 1);
-    if (prev === CR || prev === LF) cur = 0;
-    cur |= ends[x]!;
-    masks[x] = cur;
+    out |= ends[x]!;
+    masks[x] = out;
+    const c = s.c(x);
+    if (c === CR || c === LF) out = dq = sq = 0;
+    else if (c === DQ) {
+      const was = out;
+      out = dq;
+      dq = was;
+    } else if (c === SQ) {
+      const was = out;
+      out = sq;
+      sq = was;
+    }
+    else if (c === PIPE || c === SEMI || c === AMP || c === BACKTICK) out = 0;
   }
-  toolMasks.set(s, masks);
-  toolsPresent.set(s, ends.reduce((a, b) => a | b, 0));
+  s.toolMasks = masks;
+  s.toolsPresent = ends.reduce((a, b) => a | b, 0);
   return masks;
 }
 
-/** Does one of `rule`'s flags end at f, after a `\s` that one of its tools comes before on the line? */
+/** Does one of `rule`'s flags end at f, after a line blank that one of its tools reaches out of quotes? */
 function toolFlagEndsAt(s: Scan, f: number, rule: PasswordToolRule, bit: number): boolean {
   for (const flag of rule.flags) {
     const at = f - flag.length;
-    if (at > 0 && s.has(at, flag) && isS(s.c(at - 1)) && (toolsBefore(s)[at - 1]! & (1 << bit)) !== 0) return true;
+    if (at > 0 && flagAt(s, at, flag, rule) && isLineBlank(s.c(at - 1)) && (toolsBefore(s)[at - 1]! & (1 << bit)) !== 0) return true;
   }
   return false;
 }
@@ -715,7 +851,7 @@ function toolFlagBefore(s: Scan, v: number, rule: PasswordToolRule, bit: number)
 
 /** What can come right before a value: a glued flag's last character, a split or a prefix's last one (else a blank). */
 const BEFORE_VALUE = new Set(
-  PASSWORD_TOOLS.flatMap((r) => [...(r.glued ? r.flags.map((f) => f.charCodeAt(f.length - 1)) : []), ...(r.split ? [r.split.charCodeAt(0)] : []), ...(r.prefix ? [r.prefix.charCodeAt(r.prefix.length - 1)] : [])]),
+  PASSWORD_TOOLS.flatMap((r) => [...(r.glued ? r.flags.flatMap((f) => [f.charCodeAt(f.length - 1), f.toUpperCase().charCodeAt(f.length - 1)]) : []), ...(r.split ? [r.split.charCodeAt(0)] : []), ...(r.prefix ? [r.prefix.charCodeAt(r.prefix.length - 1)] : [])]),
 );
 
 /** A password given to a tool (PASSWORD_TOOLS): the first rule that matches at p. */
@@ -730,9 +866,9 @@ function passwordTool(s: Scan, p: number): number {
   /** Where the flag ends for a value at p: before the blanks, else at p (glued). */
   const flagEnd = s.blank(before) ? s.blanksBefore(p) : p;
   toolsBefore(s);
-  const present = toolsPresent.get(s) ?? 0;
-  for (let bit = 0; bit < PASSWORD_TOOLS.length; bit++) {
-    if ((present & (1 << bit)) === 0) continue;
+  // The rules with a tool in the text, in order (lowest bit first).
+  for (let m = s.toolsPresent; m !== 0; m &= m - 1) {
+    const bit = 31 - Math.clz32(m & -m);
     const rule = PASSWORD_TOOLS[bit]!;
     if (rule.split !== undefined) {
       // `user<split>PASSWORD`: the user part, then the separator right before p.
@@ -743,7 +879,7 @@ function passwordTool(s: Scan, p: number): number {
       // After blanks, the user part is the whole run; glued, the run starts with the flag (a flag
       // follows a `\s`, so it can only start the run) and the user part is the rest.
       const spaced = rule.space === true && s.blank(s.c(u - 1)) && toolFlagEndsAt(s, s.blanksBefore(u), rule, bit);
-      const glued = rule.glued === true && rule.flags.some((f) => u + f.length < p - 1 && s.has(u, f) && toolFlagEndsAt(s, u + f.length, rule, bit));
+      const glued = rule.glued === true && rule.flags.some((f) => u + f.length < p - 1 && flagAt(s, u, f, rule) && toolFlagEndsAt(s, u + f.length, rule, bit));
       if (spaced || glued) return s.runEnd(p, flagValueChar);
       continue;
     }
@@ -815,10 +951,11 @@ function spacedKeyEndsAt(s: Scan, k: number): boolean {
 
 /** A spaced key name's value: in quotes (all of it), else a word as secret-key-value reads it. */
 function spacedKeyValue(s: Scan, p: number): number {
-  if (isQuote(s.c(p - 1))) {
-    const k = keyEnd(s, p - 1);
+  const o = quoteOpen(s, p);
+  if (o >= 0) {
+    const k = keyEnd(s, o);
     if (k >= 0 && spacedKeyEndsAt(s, k) && notAValue(s, p)) {
-      const e = quotedEnd(s, p);
+      const e = quotedValueEnd(s, p);
       if (e >= 0) return e;
     }
   }

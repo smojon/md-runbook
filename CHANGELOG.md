@@ -58,8 +58,14 @@ update (see below).
   - passwords given to tools: `sshpass -p`, `redis-cli -a`, `ldapsearch -w`,
     `smbclient -U user%…`, `openssl -passin pass:…`, `htpasswd -b` and more;
   - spaced key names: `api key:`, `secret key =`, `access key:`, `passphrase:`.
+  - A tool counts only where a command starts, so `ssh mongo -p 2222` stays readable. Windows
+    tools such as `SCHTASKS /RP` count in any case.
   - Everything found before is still found. On runbook source, the leak scan reports these only
     when the value looks like a secret, not "see vault" or a placeholder.
+- **Fixed: redaction and the leak scan missed some secrets.** These are now redacted:
+  - a key in escaped JSON: `{\"password\":\"…\"}`;
+  - a quoted value with an escaped quote: `"abc\"def"` hid only `abc`;
+  - a URL with a password but no user: `redis://:…@host`.
 - **Redaction and the leak scan in linear time.** Some lines slowed every run that redacts output:
   - a long run of blanks (20,000 took 6 s, 200,000 about ten minutes);
   - `-p`, `eyJ-` or `${` repeated many times.

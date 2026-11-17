@@ -29,6 +29,25 @@ const NOT_A_VALUE = `(?<!\\$\\{(?:secret|secretFile|input|param):)(?!(?:Bearer|B
 /** Marker pattern: redacts the values under `data:` / `stringData:` of Kubernetes Secret manifests. */
 const SECRET_MANIFESTS = 'k8s-secret-data';
 
+/** A key's closing quote, also escaped (`\"` in escaped JSON). */
+const KEY_QUOTE = `(?:\\\\?["'])?`;
+/** A key's value: a backslash before a quote (`\"` of escaped JSON) ends it. */
+const KEY_VALUE = `(?:[^\\s"',;&}\\\\]|\\\\(?!["']))+`;
+/**
+ * A value in quotes after `key` (the look-behind's source up to the quote), as redactScan.ts
+ * `quotedValueEnd` reads it: after `"` or `'`, with backslash escapes (`"abc\"def"`) up to the
+ * closing quote, else up to the next quote as before; after `\"` or `\'` (escaped JSON), up to `\"`
+ * or `\'`.
+ */
+const quotedAfter = (key: string, notValue = ''): string =>
+  ['"', "'"]
+    .flatMap((q) => [
+      `(?<=${key}${q})${notValue}(?:(?:[^${q}\\\\\\r\\n]|\\\\[^\\r\\n])+|[^${q}\\r\\n]+)(?=${q})`,
+      `(?<=${key}\\\\${q})${notValue}(?:[^${q}\\\\\\r\\n]|\\\\[^${q}\\r\\n])+(?=\\\\${q})`,
+    ])
+    .join('|');
+const SECRET_KEY = `\\b[\\w.-]*(?:${SECRET_KEYS})[\\w.-]*${KEY_QUOTE}[ \\t]*[:=][ \\t]*`;
+
 const BASE_PATTERNS: readonly RedactionPattern[] = [
   {
     name: 'pem-private-key',
@@ -59,19 +78,20 @@ const BASE_PATTERNS: readonly RedactionPattern[] = [
   },
   {
     name: 'secret-key-value-quoted',
-    // password = "Hunter 2 with spaces" → the whole quoted value
-    pattern: `(?<=\\b[\\w.-]*(?:${SECRET_KEYS})[\\w.-]*["']?[ \\t]*[:=][ \\t]*")${NOT_A_VALUE}[^"\\r\\n]+(?=")|(?<=\\b[\\w.-]*(?:${SECRET_KEYS})[\\w.-]*["']?[ \\t]*[:=][ \\t]*')${NOT_A_VALUE}[^'\\r\\n]+(?=')`,
+    // password = "Hunter 2 with spaces" → the whole quoted value; {"password": "a\"b"} and
+    // {\"password\":\"…\"} (escaped JSON) too
+    pattern: quotedAfter(SECRET_KEY, NOT_A_VALUE),
     flags: 'i',
   },
   {
     name: 'secret-key-value',
-    pattern: `(?<=\\b[\\w.-]*(?:${SECRET_KEYS})[\\w.-]*["']?[ \\t]*[:=][ \\t]*["']?)${NOT_A_VALUE}[^\\s"',;&}]+`,
+    pattern: `(?<=${SECRET_KEY}${KEY_QUOTE})${NOT_A_VALUE}${KEY_VALUE}`,
     flags: 'i',
   },
   {
     name: 'pass-key-value',
     // DB_PASS=…, $env:KC_PASS = "…", pass: … (but not bypass/compass)
-    pattern: `(?<=(?:^|[^A-Za-z0-9])(?:[\\w.-]*[_.-])?pass["']?[ \\t]*[:=][ \\t]*["']?)${NOT_A_VALUE}[^\\s"',;&}]+`,
+    pattern: `(?<=(?:^|[^A-Za-z0-9])(?:[\\w.-]*[_.-])?pass${KEY_QUOTE}[ \\t]*[:=][ \\t]*${KEY_QUOTE})${NOT_A_VALUE}${KEY_VALUE}`,
     flags: 'i',
   },
   {
@@ -94,7 +114,8 @@ const BASE_PATTERNS: readonly RedactionPattern[] = [
   },
   {
     name: 'url-credentials',
-    pattern: '(?<=\\b[a-z][a-z0-9+.-]*://[^/\\s:@]+:)[^/\\s@]+(?=@)',
+    // https://user:PASSWORD@host, redis://:PASSWORD@host (no user)
+    pattern: '(?<=\\b[a-z][a-z0-9+.-]*://[^/\\s:@]*:)[^/\\s@]+(?=@)',
     flags: 'i',
   },
   // Base64 of "-----BEGIN" (encoded keys/certs in Secret data) and of '{"auths"' (docker config).
@@ -117,10 +138,29 @@ const BASE_PATTERNS: readonly RedactionPattern[] = [
 const WS = '[^\\S\\r\\n\\u2028\\u2029]';
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const base = (name: string): RedactionPattern => BASE_PATTERNS.find((p) => p.name === name)!;
-const quotedHeader = (name: string): string =>
-  `(?<=\\b${name}["']?${WS}*[:=]${WS}*")[^"\\r\\n]+(?=")|(?<=\\b${name}["']?${WS}*[:=]${WS}*')[^'\\r\\n]+(?=')`;
+const quotedHeader = (name: string): string => quotedAfter(`\\b${name}${KEY_QUOTE}${WS}*[:=]${WS}*`);
+
+/** A blank within a line, `[^\S\r\n]` (a password tool's command ends at a line break). */
+const BL = '[^\\S\\r\\n]';
+/** A character of a shell word: no space, separator, `(`, backtick or quote. */
+const P = '[^\\s|;&(`"\']';
+/** Words between where a command starts and the tool: sudo, exec, env, time, an option (`--` too), VAR=value. */
+const UNIT = `(?:sudo|exec|env|time|-${P}*|[A-Za-z_]\\w*=${P}*)`;
+/**
+ * Where a password tool starts a command: at the line's start or after `|`, `;`, `&`, `(` or a
+ * backtick; after `exec` or `--` (`kubectl exec POD -- redis-cli`); after `exec`, options and a
+ * container (`docker exec -it NAME mongosh`). Then UNITs, then a path (`/usr/bin/`, `C:\Tools\`).
+ */
+const COMMAND =
+  `(?:(?<![^\\r\\n|;&(\`])${BL}*|(?<![^\\s|;&(\`])(?:exec|--)${BL}+|(?<![^\\s|;&(\`])exec${BL}+(?:-${P}*${BL}+)*[^\\s|;&(\`"'-]${P}*${BL}+)` +
+  `(?:${UNIT}${BL}+)*(?:${P}*[/\\\\])?`;
+/** From a tool to its flag: the same command (no `|`, `;`, `&` or backtick out of quotes, no line break). */
+const REACH = `(?:[^\\r\\n|;&\`"']|"[^"\\r\\n]*"|'[^'\\r\\n]*')*?${BL}`;
+/** `word` in any case: `[Ss][Cc]…` (the pattern has no i flag: `-p` and `-P` differ). */
+const anyCase = (word: string): string => word.replace(/[A-Za-z]/g, (c) => `[${c.toUpperCase()}${c.toLowerCase()}]`);
 const toolRule = (r: PasswordToolRule): string => {
-  const flag = `\\b(?:${r.tools.map(escapeRe).join('|')})\\b[^\\r\\n]*?\\s(?:${r.flags.map(escapeRe).join('|')})`;
+  const word = (w: string): string => (r.anyCase ? anyCase(escapeRe(w)) : escapeRe(w));
+  const flag = `${COMMAND}(?:${r.tools.map(word).join('|')})(?:\\.[Ee][Xx][Ee])?(?=${BL})${REACH}(?:${r.flags.map(word).join('|')})`;
   const gap = r.space && r.glued ? `${WS}*` : r.space ? `${WS}+` : '';
   if (r.split !== undefined) return `(?<=${flag}${gap}[^\\s${escapeRe(r.split)}"']+${escapeRe(r.split)})[^\\s"']+`;
   if (r.prefix !== undefined) return `(?<=${flag}${gap}${escapeRe(r.prefix)})[^\\s"']+`;
@@ -130,7 +170,7 @@ const toolRule = (r: PasswordToolRule): string => {
 const HTPASSWD = ['(?![A-Za-z]*n)', '(?=[A-Za-z]*n)']
   .map((n, i) => `(?<=\\bhtpasswd${WS}+-(?=[A-Za-z]*b)${n}[A-Za-z]+${WS}+${i === 0 ? `[^\\s"']+${WS}+` : ''}[^\\s"']+${WS}+)(?![-$%])[^\\s"']+`)
   .join('|');
-const SPACED_KEY = `\\b(?:(?:${SPACED_KEY_WORDS.join('|')})${WS}+key|pass${WS}*phrase)["']?${WS}*[:=]${WS}*`;
+const SPACED_KEY = `\\b(?:(?:${SPACED_KEY_WORDS.join('|')})${WS}+key|pass${WS}*phrase)${KEY_QUOTE}${WS}*[:=]${WS}*`;
 
 /**
  * Patterns added in 0.30 for what the ones above missed. They run after them (in the leak scan
@@ -153,7 +193,7 @@ const WIDENED_PATTERNS: readonly RedactionPattern[] = [
   // api key: …, secret key = …, "private key": "…", passphrase: … (key names SECRET_KEYS misses)
   {
     name: 'secret-key-value-spaced',
-    pattern: `(?<=${SPACED_KEY}")${NOT_A_VALUE}[^"\\r\\n]+(?=")|(?<=${SPACED_KEY}')${NOT_A_VALUE}[^'\\r\\n]+(?=')|(?<=${SPACED_KEY}["']?)${NOT_A_VALUE}[^\\s"',;&}]+`,
+    pattern: `${quotedAfter(SPACED_KEY, NOT_A_VALUE)}|(?<=${SPACED_KEY}${KEY_QUOTE})${NOT_A_VALUE}${KEY_VALUE}`,
     flags: 'i',
   },
 ];

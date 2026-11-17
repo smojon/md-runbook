@@ -61,6 +61,22 @@ describe('what the widened patterns catch', () => {
     ['sqlcmd -P', 'sqlcmd -S db -U sa -P s3cret', `sqlcmd -S db -U sa -P ${R}`],
     ['mongosh -p', 'mongosh -u admin -p s3cret', `mongosh -u admin -p ${R}`],
     ['snmpwalk -A -X', 'snmpwalk -v3 -A authpw1 -X privpw1 h', `snmpwalk -v3 -A ${R} -X ${R} h`],
+    // where a command starts (review of 0.30): after a separator, sudo, env, exec, `--`, a path
+    ['sudo sshpass', 'sudo sshpass -p s3cret scp f h:', `sudo sshpass -p ${R} scp f h:`],
+    ['after a pipe', 'echo x | sshpass -p s3cret ssh h', `echo x | sshpass -p ${R} ssh h`],
+    ['after &&', 'cd /tmp && redis-cli -a s3cret ping', `cd /tmp && redis-cli -a ${R} ping`],
+    ['in $(…)', 'X=$(redis-cli -a s3cret get k)', `X=$(redis-cli -a ${R} get k)`],
+    ['env VAR=value', 'env LANG=C sshpass -p s3cret ssh h', `env LANG=C sshpass -p ${R} ssh h`],
+    ['a path', '/usr/bin/sshpass -p s3cret ssh h', `/usr/bin/sshpass -p ${R} ssh h`],
+    ['docker exec', 'docker exec -it mongo mongosh -u admin -p s3cret', `docker exec -it mongo mongosh -u admin -p ${R}`],
+    ['kubectl exec --', 'kubectl exec redis-0 -- redis-cli -a s3cret ping', `kubectl exec redis-0 -- redis-cli -a ${R} ping`],
+    ['a | in quotes', 'ldapsearch -x -b "dc=x" "(|(uid=a)(uid=b))" -w s3cret', `ldapsearch -x -b "dc=x" "(|(uid=a)(uid=b))" -w ${R}`],
+    ['inline code', 'Run `sshpass -p s3cret ssh h` first.', `Run \`sshpass -p ${R} ssh h\` first.`],
+    // Windows tools in any case
+    ['SCHTASKS /RP', 'SCHTASKS /Create /RU bob /RP s3cret', `SCHTASKS /Create /RU bob /RP ${R}`],
+    ['schtasks /rp', 'schtasks /create /ru bob /rp s3cret', `schtasks /create /ru bob /rp ${R}`],
+    ['CMDKEY /PASS:', 'CMDKEY /generic:x /user:bob /PASS:s3cret', `CMDKEY /generic:x /user:bob /PASS:${R}`],
+    ['PsExec.exe', 'C:\\Tools\\PsExec.exe \\\\h -u bob -p s3cret cmd', `C:\\Tools\\PsExec.exe \\\\h -u bob -p ${R} cmd`],
     // spaced key names
     ['api key:', 'api key: abc123', `api key: ${R}`],
     ['Secret Key = "…"', 'Secret Key = "a b c"', `Secret Key = "${R}"`],
@@ -83,6 +99,16 @@ describe('what the widened patterns catch', () => {
       'api keys: none',
       'openssl rsa -passin env:PW -in k',
       'htpasswd -c .htpasswd bob',
+      // a tool's name elsewhere than where a command starts, or its flag in the next command (review of 0.30)
+      'docker run -d --name mongo -p 27017:27017 mongo:7',
+      'ssh mongo-1 -p 2222',
+      'wget https://x.example/app.zip -P /tmp/dl',
+      'ldapsearch -x -b dc=x uid | grep -w uid',
+      'openssl s_client -connect h:443 ; curl -k https://h/health',
+      'echo $X | sshpass -d 3 ssh h; psql -h db -p 5432',
+      'ldapsearch -x -b dc=x || grep -w uid f',
+      'mongosh --eval x && ssh h -p 2222',
+      'cat notes.txt # sshpass\nssh h -p 2222',
     ]) {
       assert.equal(redactor.redact(s), before.redact(s), s);
       assert.deepEqual(kinds(s), scanForLeaks(s, { widened: false }).map((f) => f.kind), s);

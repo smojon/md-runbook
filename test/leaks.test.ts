@@ -66,6 +66,17 @@ describe('redactLeaks', () => {
       'x [REDACTED] on db.corp.example.com\npassword=[REDACTED]',
     );
   });
+
+  it('replaces a URL password without a user, escaped JSON and escaped quotes (review of 0.30)', () => {
+    assert.equal(redactLeaks('REDIS_URL=redis://:s3cretPw@cache:6379'), 'REDIS_URL=redis://:[REDACTED]@cache:6379');
+    assert.equal(redactLeaks('{\\"password\\":\\"hunter2\\"}'), '{\\"password\\":\\"[REDACTED]\\"}');
+    assert.equal(redactLeaks('log line {"cfg":"{\\"db_password\\":\\"hunter2\\"}"}'), 'log line {"cfg":"{\\"db_password\\":\\"[REDACTED]\\"}"}');
+    assert.equal(redactLeaks('{"password": "abc\\"defgh"}'), '{"password": "[REDACTED]"}');
+    assert.deepEqual(
+      scanForLeaks('REDIS_URL=redis://:s3cretPw@cache:6379').map((f) => f.kind),
+      ['url-credentials'],
+    );
+  });
 });
 
 describe('helpers', () => {

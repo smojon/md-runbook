@@ -30,6 +30,19 @@ describe('default redaction patterns', () => {
     ['openshift token alone', 'sha256~abcdefghijklmnopqrstuvwxyz0123', R],
     ['aws key id', 'AKIAIOSFODNN7EXAMPLE', R],
     ['github token', 'ghp_abcdefghijklmnopqrstuvwxyz0123456789', R],
+    // escaped JSON: the key's and the value's quotes escaped (review of 0.30)
+    ['escaped JSON key', '{\\"password\\":\\"hunter2\\"}', `{\\"password\\":\\"${R}\\"}`],
+    ['JSON in a JSON string', 'log line {"cfg":"{\\"db_password\\":\\"hunter2\\"}"}', `log line {"cfg":"{\\"db_password\\":\\"${R}\\"}"}`],
+    ['escaped JSON, spaces', '{\\"api_key\\" : \\"a b c\\", \\"x\\": 1}', `{\\"api_key\\" : \\"${R}\\", \\"x\\": 1}`],
+    ['escaped JSON header', '{\\"Authorization\\":\\"Basic dXNlcjpwYXNz\\"}', `{\\"Authorization\\":\\"${R}\\"}`],
+    // an escaped quote inside a quoted value
+    ['escaped quote in a value', '{"password": "abc\\"defgh"}', `{"password": "${R}"}`],
+    ['escaped quote in single quotes', "token: 'it\\'s-a-secret'", `token: '${R}'`],
+    ['backslash before the line end', 'password = "pa ss\\"', `password = "${R}"`],
+    ['escaped backslash at the end', '"secret": "abc\\\\", "x": 1', `"secret": "${R}", "x": 1`],
+    // a URL with a password but no user
+    ['url password, no user', 'REDIS_URL=redis://:s3cretPw@cache:6379', `REDIS_URL=redis://:${R}@cache:6379`],
+    ['url password, no user, in text', 'connect to rediss://:s3cretPw@cache:6380/0 now', `connect to rediss://:${R}@cache:6380/0 now`],
   ];
   for (const [name, input, expected] of cases) {
     it(name, () => assert.equal(r.redact(input), expected));
