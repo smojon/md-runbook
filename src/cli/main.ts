@@ -434,13 +434,18 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
   const startedAt = Date.now();
   const abort = new AbortController();
-  const onSignal = (): void => abort.abort();
-  process.once('SIGINT', onSignal);
-  process.once('SIGTERM', onSignal);
-  let summary: Awaited<ReturnType<typeof runRunbook>>;
   // In a terminal, the progress pinned on the bottom line (like apt); a CI log keeps plain lines.
   const terminal = process.stdout.isTTY === true && !quiet;
   const pinned = terminal && !parsed.noProgressBar && canPinBar(process.stdout, process.env) ? new PinnedBar(process.stdout) : undefined;
+  // The bar stops with the first Ctrl+C, also before the first step: its own SIGINT listener,
+  // added later, would otherwise catch the second Ctrl+C, which then no longer ends the process.
+  const onSignal = (): void => {
+    pinned?.stop();
+    abort.abort();
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+  let summary: Awaited<ReturnType<typeof runRunbook>>;
   try {
     summary = await runRunbook(
       { ...options, env: process.env, signal: abort.signal, progress: terminal && !pinned, ...(pinned ? { pinned } : {}), ...(notify ? { extraSecrets: [notify.url] } : {}) },

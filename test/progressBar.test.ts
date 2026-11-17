@@ -15,16 +15,25 @@ import { parseArgs } from '../src/cli/main';
 import { PinnedBar, Signals, barLine, canPinBar } from '../src/cli/progressBar';
 import { runRunbook } from '../src/cli/run';
 
-/** Enough of a VT100 for the bar: text, \r, \n, DECSC/DECRC, DECSTBM, CUP, CUU, EL, ED. */
+/** A character on the screen, and the SGR it was written with ('' plain). */
+interface Cell {
+  ch: string;
+  sgr: string;
+}
+const chars = (line: Cell[]): string => line.map((c) => c.ch).join('').replace(/\s+$/, '');
+
+/** Enough of a VT100 for the bar: text, \r, \n, IND, DECSC/DECRC, DECSTBM, CUP, CUU, EL, ED, SGR. */
 class Screen extends EventEmitter {
   readonly isTTY = true;
-  lines: string[][];
+  lines: Cell[][];
   scrollback: string[] = [];
   x = 0;
   y = 0;
   top = 0;
   bottom: number;
-  private saved = { x: 0, y: 0 };
+  /** The SGR that text is written with: the parameters since the last reset. */
+  sgr = '';
+  private saved = { x: 0, y: 0, sgr: '' };
   constructor(
     public rows: number,
     public columns: number,
@@ -34,17 +43,21 @@ class Screen extends EventEmitter {
     this.bottom = rows - 1;
   }
   text(row: number): string {
-    return (this.lines[row] ?? []).join('').replace(/\s+$/, '');
+    return chars(this.lines[row] ?? []);
   }
   all(): string[] {
     return this.lines.map((_, i) => this.text(i));
   }
-  private feed(): void {
-    // ONLCR: a terminal's \n is \r\n.
-    this.x = 0;
+  /** The SGRs a row's characters were written with. */
+  sgrs(row: number): Set<string> {
+    return new Set((this.lines[row] ?? []).filter((c) => c.ch !== ' ').map((c) => c.sgr));
+  }
+  /** Down a line, scrolling at the region's bottom; \n also goes to the first column (ONLCR). */
+  private feed(cr = true): void {
+    if (cr) this.x = 0;
     if (this.y === this.bottom) {
       const gone = this.lines.splice(this.top, 1)[0]!;
-      if (this.top === 0) this.scrollback.push(gone.join('').replace(/\s+$/, ''));
+      if (this.top === 0) this.scrollback.push(chars(gone));
       this.lines.splice(this.bottom, 0, []);
     } else if (this.y < this.rows - 1) this.y++;
   }
@@ -53,8 +66,9 @@ class Screen extends EventEmitter {
       const ch = s[i]!;
       if (ch === '\x1b') {
         const next = s[i + 1];
-        if (next === '7') (this.saved = { x: this.x, y: this.y }), i++;
-        else if (next === '8') ((this.x = this.saved.x), (this.y = this.saved.y), i++);
+        if (next === '7') (this.saved = { x: this.x, y: this.y, sgr: this.sgr }), i++;
+        else if (next === '8') ((this.x = this.saved.x), (this.y = this.saved.y), (this.sgr = this.saved.sgr), i++);
+        else if (next === 'D') (this.feed(false), i++);
         else if (next === '[') {
           const m = /^\[([\d;]*)([A-Za-z])/.exec(s.slice(i + 1))!;
           i += m[0].length;
@@ -78,8 +92,14 @@ class Screen extends EventEmitter {
               this.lines[this.y] = [];
               break;
             case 'J':
-              this.lines[this.y] = this.lines[this.y]!.slice(0, this.x);
-              for (let r = this.y + 1; r < this.rows; r++) this.lines[r] = [];
+              if (p(0, 0) === 2) this.lines = this.lines.map(() => []);
+              else {
+                this.lines[this.y] = this.lines[this.y]!.slice(0, this.x);
+                for (let r = this.y + 1; r < this.rows; r++) this.lines[r] = [];
+              }
+              break;
+            case 'm':
+              this.sgr = ps.length === 0 || ps.at(-1) === 0 ? '' : `${this.sgr};${m[1]}`.replace(/^;/, '');
               break;
             default:
               throw new Error(`unexpected sequence ${m[0]}`);
@@ -90,8 +110,8 @@ class Screen extends EventEmitter {
       else {
         if (this.x >= this.columns) this.feed();
         const line = this.lines[this.y]!;
-        while (line.length < this.x) line.push(' ');
-        line[this.x++] = ch;
+        while (line.length < this.x) line.push({ ch: ' ', sgr: '' });
+        line[this.x++] = { ch, sgr: this.sgr };
       }
     }
     return true;
@@ -99,8 +119,7 @@ class Screen extends EventEmitter {
   /** As xterm: rows go at the top (the cursor stays in view) or come at the bottom; the margins reset. */
   resize(rows: number, columns: number): void {
     while (this.lines.length > rows) {
-      const gone = this.lines.shift()!;
-      this.scrollback.push(gone.join('').replace(/\s+$/, ''));
+      this.scrollback.push(chars(this.lines.shift()!));
       this.y = Math.max(0, this.y - 1);
     }
     while (this.lines.length < rows) this.lines.push([]);
@@ -129,6 +148,56 @@ describe('cli: the pinned progress line', () => {
     assert.equal(canPinBar({ rows: 24, columns: 80, write: () => true }, {}), false);
     assert.equal(canPinBar({ isTTY: true, rows: 24, columns: 80, write: () => true }, { TERM: 'dumb' }), false);
     assert.equal(canPinBar({ isTTY: true, rows: 3, columns: 80, write: () => true }, {}), false);
+    // CI with a pseudo-terminal: the job's log would get the escape sequences.
+    const tty = { isTTY: true, rows: 24, columns: 80, write: () => true };
+    for (const CI of ['true', '1', 'yes']) assert.equal(canPinBar(tty, { CI }), false, CI);
+    for (const CI of ['', 'false', '0', 'FALSE']) assert.equal(canPinBar(tty, { CI }), true, CI);
+  });
+
+  it("is drawn plain, whatever colour the output left on, and gives the output's colour back", () => {
+    const screen = new Screen(8, 60);
+    const bar = new PinnedBar(screen, new FakeSignals());
+    screen.write('\x1b[31mred, and no reset\n');
+    bar.show(() => ({ text: 'Step 1/2', fraction: 0 }));
+    assert.deepEqual(screen.sgrs(7), new Set(['']));
+    screen.write('still red\n');
+    assert.deepEqual(screen.sgrs(1), new Set(['31']));
+    bar.stop();
+  });
+
+  it('comes back within a second after a step cleared the screen', (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    const screen = new Screen(8, 60);
+    const bar = new PinnedBar(screen, new FakeSignals());
+    bar.show(() => ({ text: 'Step 1/2', fraction: 0 }));
+    for (const clear of ['\x1b[H\x1b[2J', '\x1b[H\x1b[J']) {
+      screen.write(clear);
+      assert.equal(screen.text(7), '', JSON.stringify(clear));
+      t.mock.timers.tick(1000);
+      assert.match(screen.text(7), /^Step 1\/2 \[/, JSON.stringify(clear));
+    }
+    bar.stop();
+  });
+
+  it('a resize or a resume in the middle of an output line keeps its start', () => {
+    const screen = new Screen(10, 60);
+    const bar = new PinnedBar(screen, new FakeSignals());
+    bar.show(() => ({ text: 'Step 1/2', fraction: 0 }));
+    for (let i = 1; i <= 15; i++) screen.write(`out ${i}\n`);
+    screen.write('partial ');
+    screen.resize(6, 40);
+    screen.write('rest\n');
+    assert.ok(screen.all().includes('partial rest'), JSON.stringify(screen.all()));
+    // Resumed with the cursor on the last line (the screen scrolls), in the middle of a line.
+    bar.suspend();
+    for (let i = 1; i <= 8; i++) screen.write(`ask ${i}\n`);
+    screen.write('Password: ');
+    assert.equal(screen.y, 5);
+    bar.resume();
+    screen.write('typed\n');
+    assert.ok(screen.all().includes('Password: typed'), JSON.stringify(screen.all()));
+    assert.match(screen.text(5), /^Step 1\/2 \[/);
+    bar.stop();
   });
 
   it('--no-progress-bar is an option of run', () => {
