@@ -45,6 +45,8 @@ const VALUES = [
   '7f3a9c2e-55d1-4b8e-a0f2-9e8d7c6b5a41', 'admin:S3cret', 'user:p%40ss', ':', 'a:b:c', '=', '==', 'abc==', 'abcdefgh==', 'abc/def+ghi~jkl_', 'ABCDEFGHIJ',
   // backslashes: escaped quotes, escaped JSON, Windows paths
   'abc\\"def', 'a\\\\b', '\\', 'x\\', '\\"', "\\'", 'C:\\', '\\"hunter2\\"', '"a\\"b"', '"C:\\"', "'it\\'s'", '"a\\\r"', '\\"a\\\\\\"b\\"',
+  // escaped twice: runs of 2 to 7 backslashes before a quote
+  's3c\\\\\\"ret', 'a\\\\\\\\\\"', 'a\\\\"b', 'a\\\\\\\\"b', 'a\\\\\\\\\\\\\\"b', "a\\\\\\'b", '\\\\\\\\\\\\x',
 ];
 const FLAGS = [
   '--password', '-password', '--PASSWORD', '--pass', '-pass', '--passwd', '--client-secret', '--token', '-token', '--api-key', '--apikey',
@@ -62,6 +64,10 @@ const FLAGS = [
   '/usr/bin/sshpass', './sshpass', 'C:\\T\\PsExec.exe', 'PsExec64.exe', 'sshpass.exe', 'sshpass.exex', 'PSEXEC', 'SCHTASKS', 'SchTasks /Create /RP',
   'CMDKEY', 'CMDKEY /PASS:', 'Cmdkey /Pass:', '/Rp', '/PASS:', 'mongo-1', 'mongo:7', 'app.zip', 'a.zip -P', '@zip', 'x/zip', '"a|b"', "'a;b'", '"x',
   'docker run -d --name mongo -p', 'ssh mongo-1 -p', 'grep -w', 'curl -k',
+  // command segments (second review of 0.30): quotes, prompts, an option before a tool, continued lines
+  '-c "', "-c '", 'sh -c "redis-cli -a', 'cmd /c "sqlcmd -P', '-h', '--name', '-it', '-oL', '-n 10', 'nohup', 'xargs', 'PS C:\\>', '{', '!',
+  'then', '"sshpass', "'mongo", '"C:\\P F\\7z.exe"', '7z.exe', '\\7z', '{zip', '(zip', '`zip', 'mongo"', "zip'", '\\\n', ' \\\r\n', '"a\\"b"',
+  'x"y', '\\\\', '-x=a', '--a-b', '-1', '"\\\\"', '-h\nmongo',
 ];
 const OTHER = [
   'eyJ', 'eyJhbGciOi', 'Bearer', 'bearer', 'BEARER', 'xBearer', '.', '-', '_', 'x', 'abc', 'a1', '://', 'https://user:pw@host/x', 'git://a:b@c',

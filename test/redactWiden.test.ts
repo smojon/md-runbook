@@ -72,6 +72,44 @@ describe('what the widened patterns catch', () => {
     ['kubectl exec --', 'kubectl exec redis-0 -- redis-cli -a s3cret ping', `kubectl exec redis-0 -- redis-cli -a ${R} ping`],
     ['a | in quotes', 'ldapsearch -x -b "dc=x" "(|(uid=a)(uid=b))" -w s3cret', `ldapsearch -x -b "dc=x" "(|(uid=a)(uid=b))" -w ${R}`],
     ['inline code', 'Run `sshpass -p s3cret ssh h` first.', `Run \`sshpass -p ${R} ssh h\` first.`],
+    // a tool as a word of its own anywhere in its segment (second review of 0.30): in quotes, after
+    // any command or word but an option's value, after a prompt, and in a continued line
+    ['ssh "…"', 'ssh h "sshpass -p Xs3cret1 ssh o"', `ssh h "sshpass -p ${R} ssh o"`],
+    ["bash -c '…'", "bash -c 'sshpass -p Xs3cret1 x'", `bash -c 'sshpass -p ${R} x'`],
+    ['kubectl exec … sh -c "…"', 'kubectl exec pod -- sh -c "redis-cli -a Xs3cret1 ping"', `kubectl exec pod -- sh -c "redis-cli -a ${R} ping"`],
+    ['cmd /c "…"', 'cmd /c "sqlcmd -S s -P Xs3cret1"', `cmd /c "sqlcmd -S s -P ${R}"`],
+    ['nohup', 'nohup sshpass -p Xs3cret1 ssh h', `nohup sshpass -p ${R} ssh h`],
+    ['timeout', 'timeout 5 mysql -pXs3cret1', `timeout 5 mysql -p${R}`],
+    ['xargs', 'xargs mysql -pXs3cret1', `xargs mysql -p${R}`],
+    ['watch', 'watch redis-cli -a Xs3cret1', `watch redis-cli -a ${R}`],
+    ['nice -n 10', 'nice -n 10 mysql -pXs3cret1', `nice -n 10 mysql -p${R}`],
+    ['nice -n 10 mysqldump', 'nice -n 10 mysqldump -pXs3cret1 db', `nice -n 10 mysqldump -p${R} db`],
+    ['stdbuf -oL', 'stdbuf -oL redis-cli -a Xs3cret1', `stdbuf -oL redis-cli -a ${R}`],
+    ['sudo -u root', 'sudo -u root sshpass -p Xs3cret1 ssh h', `sudo -u root sshpass -p ${R} ssh h`],
+    ['docker exec -u root', 'docker exec -it -u root db redis-cli -a Xs3cret1', `docker exec -it -u root db redis-cli -a ${R}`],
+    ['docker exec -e', 'docker exec -e FOO=bar db mysql -pXs3cret1', `docker exec -e FOO=bar db mysql -p${R}`],
+    ['docker run -it IMAGE TOOL', 'docker run -it mongo mongosh -p Xs3cret1', `docker run -it mongo mongosh -p ${R}`],
+    ['for … do', 'for h in a b; do sshpass -p Xs3cret1 ssh $h; done', `for h in a b; do sshpass -p ${R} ssh $h; done`],
+    ['then', 'then redis-cli -a Xs3cret1', `then redis-cli -a ${R}`],
+    // (secret-flag-value's mysql -p reads to the next blank, `;` too, as in 0.29.0)
+    ['{ …; }', '{ mysql -pXs3cret1; }', `{ mysql -p${R} }`],
+    ['! …', '! mysql -pXs3cret1', `! mysql -p${R}`],
+    ['$ prompt', '$ redis-cli -a Xs3cret1', `$ redis-cli -a ${R}`],
+    ['# prompt', '# mysql -pXs3cret1', `# mysql -p${R}`],
+    ['PS prompt', 'PS C:\\> sqlcmd -S s -P Xs3cret1', `PS C:\\> sqlcmd -S s -P ${R}`],
+    ['root prompt', 'root@h:~# mysql -pXs3cret1', `root@h:~# mysql -p${R}`],
+    ['Dockerfile RUN', 'RUN mysqldump -pXs3cret1 db', `RUN mysqldump -p${R} db`],
+    ['& "C:\\…\\7z.exe"', '& "C:\\Program Files\\7-Zip\\7z.exe" x a.7z -pXs3cret1', `& "C:\\Program Files\\7-Zip\\7z.exe" x a.7z -p${R}`],
+    ['an escaped quote before the flag', 'redis-cli -h "a\\"b" -a Xs3cret1', `redis-cli -h "a\\"b" -a ${R}`],
+    ['an open quote before the flag', 'redis-cli -h x"y -a Xs3cret1', `redis-cli -h x"y -a ${R}`],
+    ['a | in quotes before the flag', 'redis-cli --eval "a|b" -a Xs3cret1', `redis-cli --eval "a|b" -a ${R}`],
+    ['a continued line', 'redis-cli -h host \\\n  -a Xs3cret1 ping', `redis-cli -h host \\\n  -a ${R} ping`],
+    ['a continued line (CRLF)', 'redis-cli -h host \\\r\n  -a Xs3cret1 ping', `redis-cli -h host \\\r\n  -a ${R} ping`],
+    ['a continued line after the tool', 'sshpass \\\n -p Xs3cret1 ssh h', `sshpass \\\n -p ${R} ssh h`],
+    ['a flag right after a continued line', 'sshpass \\\n-p Xs3cret1 ssh h', `sshpass \\\n-p ${R} ssh h`],
+    ['continued twice', 'redis-cli \\\r\n  -h h \\\r\n  -a Xs3cret1', `redis-cli \\\r\n  -h h \\\r\n  -a ${R}`],
+    // accepted: a tool's name in an echoed string counts too
+    ['echo "mongosh -p …" (accepted)', 'echo "mongosh -p 27017"', `echo "mongosh -p ${R}"`],
     // Windows tools in any case
     ['SCHTASKS /RP', 'SCHTASKS /Create /RU bob /RP s3cret', `SCHTASKS /Create /RU bob /RP ${R}`],
     ['schtasks /rp', 'schtasks /create /ru bob /rp s3cret', `schtasks /create /ru bob /rp ${R}`],
@@ -109,6 +147,16 @@ describe('what the widened patterns catch', () => {
       'ldapsearch -x -b dc=x || grep -w uid f',
       'mongosh --eval x && ssh h -p 2222',
       'cat notes.txt # sshpass\nssh h -p 2222',
+      // an option's value, a name with a dash, dot, colon or @, the next segment or line (second review of 0.30)
+      'ssh -h mongo -p 2222',
+      'docker run -it --name mongo -p 27017:27017 mongo',
+      'mongo@h -p 2222',
+      'echo "a" | mongo-1 -p 2222',
+      'sshpass -f pw ssh h ; ssh h "-p 2222"',
+      'echo "sshpass;" -p 2222',
+      'sshpass -f pw ssh h \\ x\n -p 2222',
+      'sshpass -f pw ssh h "\\\n -p 2222',
+      'sshpass -f pw ssh h\\\\ && ssh -p 2222 h',
     ]) {
       assert.equal(redactor.redact(s), before.redact(s), s);
       assert.deepEqual(kinds(s), scanForLeaks(s, { widened: false }).map((f) => f.kind), s);
@@ -210,20 +258,52 @@ const HOSTILE = [
   rep("Cookie: '"),
   rep('pass phrase'),
   'mysqldump' + rep(' -p'),
+  // a tool's name in a segment (second review of 0.30: reading back word by word took 21 s for 64,000 characters)
+  rep('-/mongo '),
+  rep('A=/zip '),
+  rep('-h mongo '),
+  rep('mongo -p '),
+  rep('"sshpass -p '),
+  rep("'sshpass "),
+  rep('sshpass "'),
+  rep('-c "redis-cli -a '),
+  rep('(zip{zip`zip/zip\\zip '),
+  rep('7z.exe -p'),
+  rep('mongo \\\n'),
+  rep('sshpass \\\r\n -p '),
+  'sshpass' + rep(' \\\n'),
+  rep('\\"'),
+  rep('"a\\'),
+  rep('sshpass |'),
+  // escaped JSON values and quoted pass values
+  'password:\\"' + '\\'.repeat(N),
+  rep('password:\\"\\\\\\"'),
+  rep('DB_PASS="a '),
+  rep('DB_PASS=\\"a '),
 ];
 
 describe('the widened patterns stay linear on 200,000-character lines', () => {
-  it('each of them, and the leak scan', () => {
+  // Each line on its own (a quadratic reading takes minutes for one), the slowest one reported.
+  const slowest = (run: (line: string) => void): [number, string] => {
+    let worst: [number, string] = [0, ''];
+    for (const line of HOSTILE) {
+      const t0 = performance.now();
+      run(line);
+      const ms = performance.now() - t0;
+      if (ms > worst[0]) worst = [ms, JSON.stringify(line.slice(0, 30))];
+    }
+    return worst;
+  };
+  it('each of them, and the leak scan', (t) => {
     for (const p of DEFAULT_PATTERNS.filter((x) => WIDENED_PATTERN_NAMES.has(x.name ?? ''))) {
       const r = createRedactor([p]);
-      const t0 = performance.now();
-      for (const line of HOSTILE) r.redact(line);
-      const ms = performance.now() - t0;
+      const [ms, line] = slowest((l) => r.redact(l));
+      t.diagnostic(`${p.name}: at most ${Math.round(ms)} ms (${line})`);
       // secret-after-unicode-space is eight patterns in one.
-      assert.ok(ms < (p.name === 'secret-after-unicode-space' ? 4 : 1) * BUDGET_MS, `${p.name}: ${Math.round(ms)} ms`);
+      assert.ok(ms < (p.name === 'secret-after-unicode-space' ? 4 : 1) * BUDGET_MS, `${p.name}: ${Math.round(ms)} ms on ${line}`);
     }
-    const t0 = performance.now();
-    for (const line of HOSTILE) scanForLeaks(line);
-    assert.ok(performance.now() - t0 < 4 * BUDGET_MS, `scanForLeaks: ${Math.round(performance.now() - t0)} ms`);
+    const [ms, line] = slowest((l) => scanForLeaks(l));
+    t.diagnostic(`scanForLeaks: at most ${Math.round(ms)} ms (${line})`);
+    assert.ok(ms < 4 * BUDGET_MS, `scanForLeaks: ${Math.round(ms)} ms on ${line}`);
   });
 });
