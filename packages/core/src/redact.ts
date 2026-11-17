@@ -1,7 +1,11 @@
 /**
  * Secret redaction. Each pattern's whole match is replaced with [REDACTED]; patterns use
- * lookbehind/lookahead to keep surrounding context (e.g. "Authorization: [REDACTED]").
+ * lookbehind/lookahead to keep surrounding context (e.g. "Authorization: [REDACTED]"). The
+ * regular expressions that backtrack quadratically are read by linear matchers that find exactly
+ * the same (redactScan.ts); they stay here as the definition.
  */
+
+import { LINEAR_FINDERS, SpanFinder, Spans } from './redactScan';
 
 export const REDACTED = '[REDACTED]';
 
@@ -146,8 +150,42 @@ export function compilePattern(p: string | RedactionPattern): RegExp {
   return new RegExp(spec.pattern, normalizeFlags(spec.flags));
 }
 
+const patternKey = (p: string | RedactionPattern): string =>
+  typeof p === 'string' ? `g/${p}` : `${[...normalizeFlags(p.flags)].sort().join('')}/${p.pattern}`;
+
+/** Built-in patterns read in linear time (redactScan.ts), by pattern and flags: the same regular expression of yours is too. */
+const LINEAR = new Map<string, SpanFinder>();
+for (const p of DEFAULT_PATTERNS) {
+  const find = p.name === undefined ? undefined : LINEAR_FINDERS.get(p.name);
+  if (find) LINEAR.set(patternKey(p), find);
+}
+
+/**
+ * Where `p` matches in `text` ([start, end), in order, as `text.matchAll` finds them): a built-in
+ * pattern in linear time, any other with its regular expression. Throws if that doesn't compile.
+ */
+export function patternFinder(p: string | RedactionPattern): SpanFinder {
+  const linear = LINEAR.get(patternKey(p));
+  if (linear) return linear;
+  const re = compilePattern(p);
+  return (text) => [...text.matchAll(re)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
+}
+
+/** `text` with every span (in order, not overlapping) but the empty ones replaced by REDACTED. */
+function replaceSpans(text: string, spans: Spans): string {
+  if (spans.length === 0) return text;
+  let out = '';
+  let at = 0;
+  for (const [start, end] of spans) {
+    if (end === start) continue;
+    out += text.slice(at, start) + REDACTED;
+    at = end;
+  }
+  return out + text.slice(at);
+}
+
 export function createRedactor(patterns: ReadonlyArray<string | RedactionPattern>): Redactor {
-  const regexes: RegExp[] = [];
+  const steps: Array<(text: string) => string> = [];
   const errors: string[] = [];
   let manifests = false;
   for (const p of patterns) {
@@ -155,8 +193,18 @@ export function createRedactor(patterns: ReadonlyArray<string | RedactionPattern
       manifests = true;
       continue;
     }
+    const linear = LINEAR.get(patternKey(p));
+    if (linear) {
+      steps.push((text) => replaceSpans(text, linear(text)));
+      continue;
+    }
     try {
-      regexes.push(compilePattern(p));
+      const re = compilePattern(p);
+      steps.push((text) => {
+        re.lastIndex = 0;
+        // Zero-length matches are left alone so a careless pattern can't splatter the text.
+        return text.replace(re, (m) => (m === '' ? m : REDACTED));
+      });
     } catch (e) {
       const label = typeof p === 'string' ? p : (p.name ?? p.pattern);
       errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
@@ -166,11 +214,7 @@ export function createRedactor(patterns: ReadonlyArray<string | RedactionPattern
     errors,
     redact(text: string): string {
       let out = manifests ? redactSecretManifests(text) : text;
-      for (const re of regexes) {
-        re.lastIndex = 0;
-        // Zero-length matches are left alone so a careless pattern can't splatter the text.
-        out = out.replace(re, (m) => (m === '' ? m : REDACTED));
-      }
+      for (const step of steps) out = step(out);
       return out;
     },
   };

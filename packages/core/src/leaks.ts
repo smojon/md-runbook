@@ -5,7 +5,8 @@
  */
 
 import { beforeComment, isSpace, trimEndWith } from './lineText';
-import { DEFAULT_PATTERNS, REDACTED, compilePattern } from './redact';
+import { DEFAULT_PATTERNS, REDACTED, patternFinder } from './redact';
+import { SpanFinder, Spans } from './redactScan';
 
 export interface LeakScanOptions {
   /** Internal DNS suffixes (e.g. `corp.example.com`); hosts under them are reported. */
@@ -31,6 +32,12 @@ interface Detector {
   re: RegExp;
 }
 
+/** A redaction pattern as a detector (redact.ts `patternFinder`: the built-in ones that backtrack read in linear time). */
+interface PatternDetector {
+  kind: string;
+  find: SpanFinder;
+}
+
 const EXTRA_DETECTORS: readonly Detector[] = [
   { kind: 'private-key', re: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/g },
   { kind: 'gcp-api-key', re: /\bAIza[0-9A-Za-z_-]{35}\b/g },
@@ -43,9 +50,9 @@ const EXTRA_DETECTORS: readonly Detector[] = [
 
 /** Generic key/header patterns report after the specific formats, so a span gets its most precise kind. */
 const GENERIC = new Set(['authorization-header', 'cookie-header', 'secret-key-value']);
-const PATTERN_DETECTORS: readonly Detector[] = [...DEFAULT_PATTERNS]
+const PATTERN_DETECTORS: readonly PatternDetector[] = [...DEFAULT_PATTERNS]
   .sort((a, b) => Number(GENERIC.has(a.name ?? '')) - Number(GENERIC.has(b.name ?? '')))
-  .map((p) => ({ kind: p.name === 'pem-private-key' ? 'private-key' : (p.name ?? 'secret'), re: compilePattern(p) }));
+  .map((p) => ({ kind: p.name === 'pem-private-key' ? 'private-key' : (p.name ?? 'secret'), find: patternFinder(p) }));
 
 /** Values that are references, not secrets: `$TOKEN`, `${TOKEN}`, `$env:TOKEN`, `%TOKEN%`, `$(cmd)`. */
 const VARIABLE_REF = /^(?:(?:Bearer|Basic|token)\s+)?(?:\$\{?[A-Za-z_]\w*\}?|\$env:\w+|%\w+%|\$\(.*\)|\$\{(?:secret|input|param|out|secretFile):[\w:]+\})$/i;
@@ -339,16 +346,16 @@ export function scanForLeaks(text: string, opts: LeakScanOptions = {}): LeakFind
   const skip = (m: string, at: number): boolean =>
     m.includes(REDACTED) || VARIABLE_REF.test(m.trim()) || inRef(at + (AUTH_SCHEME.exec(m)?.[0].length ?? 0));
 
-  const regexHits = (detectors: readonly Detector[]): void => {
+  const regexHits = (detectors: ReadonlyArray<Detector | PatternDetector>): void => {
     for (const d of detectors) {
-      d.re.lastIndex = 0;
-      for (const m of text.matchAll(d.re)) {
-        const at = m.index ?? 0;
-        const end = at + m[0].length;
-        if (m[0] === '' || skip(m[0], at)) continue;
+      if ('re' in d) d.re.lastIndex = 0;
+      const found: Spans = 'find' in d ? d.find(text) : [...text.matchAll(d.re)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]);
+      for (const [at, end] of found) {
+        const m = text.slice(at, end);
+        if (m === '' || skip(m, at)) continue;
         // `-----BEGIN … PRIVATE KEY-----` with its body already redacted is harmless.
-        if (d.kind === 'private-key' && m[0].startsWith('-----BEGIN') && REDACTED_AFTER.test(text.slice(end, end + 40))) continue;
-        add(at, m[0].length, d.kind);
+        if (d.kind === 'private-key' && m.startsWith('-----BEGIN') && REDACTED_AFTER.test(text.slice(end, end + 40))) continue;
+        add(at, m.length, d.kind);
       }
     }
   };
