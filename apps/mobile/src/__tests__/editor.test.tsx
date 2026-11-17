@@ -4,7 +4,7 @@
  * unsaved text survives leaving the screen; outputs are text and stay.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import { Alert } from 'react-native';
 import { generateKey } from '@md-runbook/ssh';
@@ -23,6 +23,13 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: jest.fn(() => false) },
 }));
 jest.mock('../ssh/transport', () => ({ openTransport: jest.fn(), transportReady: async () => undefined }));
+/** A Pixel 9 Pro's width in dp, unless a test sets another. */
+let mockWidth = 412;
+let mockFontScale = 1;
+jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({
+  __esModule: true,
+  default: () => ({ width: mockWidth, height: 900, scale: 2, fontScale: mockFontScale }),
+}));
 
 const RUNBOOK = '# Restart the API\n\nWhen it hangs.\n\n```bash\nsystemctl restart api\n```\n';
 const OUTPUT = '<!-- md-runbook:output start exit=0 -->\n```text\nok\n```\n<!-- md-runbook:output end -->\n';
@@ -55,6 +62,8 @@ beforeEach(async () => {
   resetSettings();
   resetDrafts();
   jest.clearAllMocks();
+  mockWidth = 412;
+  mockFontScale = 1;
 });
 
 describe('editing (the logic)', () => {
@@ -106,6 +115,30 @@ describe('the editor', () => {
     await press('editor-mode-preview');
     expect(screen.getByTestId('editor-preview')).toHaveTextContent(/Restart the API.*When it is slow\./);
     expect(screen.queryByTestId('editor-text')).toBeNull();
+  });
+
+  it.each([
+    ['a small phone', 320, 1, false],
+    ['a Pixel 9 Pro', 412, 1, false],
+    ['a large phone', 430, 1, false],
+    ['a tablet with large text', 820, 1.5, false],
+    ['a tablet', 820, 1, true],
+  ])('the toolbar on %s (%i dp): Undo, Discard, the state and Save', async (_, width, fontScale, oneRow) => {
+    mockWidth = width;
+    mockFontScale = fontScale;
+    const r = addRunbook('restart.md', RUNBOOK);
+    await render(<RunbookEditor id={r.id} />);
+    await type('editor-text', RUNBOOK + 'More.\n');
+    const toolbar = screen.getByTestId('editor-toolbar');
+    expect(within(toolbar).getByLabelText('Undo')).toBeEnabled();
+    expect(within(toolbar).getByLabelText('Discard')).toBeEnabled();
+    expect(within(toolbar).getByLabelText('Save')).toBeEnabled();
+    expect(screen.getByTestId('editor-state')).toHaveTextContent('Unsaved changes');
+    expect(screen.getByRole('status')).toBe(screen.getByTestId('editor-state'));
+    // Narrow: the state on its own line, so the row holds the buttons only; wide: one row, as before.
+    expect(within(toolbar).queryByTestId('editor-state') !== null).toBe(oneRow);
+    // Save is last in its row (right-aligned, after a wrap too).
+    expect(toolbar.children.at(-1)).toBe(within(toolbar).getByTestId('editor-save'));
   });
 
   it('lists lint problems; a tap goes back to the text', async () => {
