@@ -44,6 +44,16 @@ const builds = [
     target: 'es2022',
     minify: !watch,
   },
+  {
+    // A running cell's status under its output (src/runningStatus.ts).
+    entryPoints: ['renderer/runningStatus.ts'],
+    outfile: 'out/webview/runningStatus.js',
+    bundle: true,
+    platform: 'browser',
+    format: 'esm',
+    target: 'es2022',
+    minify: !watch,
+  },
 ];
 
 // The Steps view's row buttons are codicons: the view loads the font and its CSS from out/codicons

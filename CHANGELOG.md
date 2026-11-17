@@ -6,6 +6,21 @@
 now, and a second one refuses to start. For sessions side by side, set up a pool before you
 update (see below).
 
+- **CLI: the progress pinned on the bottom line, as apt shows it.** In a terminal, `md-runbook
+  run` keeps one line at the bottom while the output scrolls above it:
+  `Step 3/7 · 54% · 1 min left [########........]`.
+  - The terminal is given back on exit, on an error and on Ctrl+C.
+  - `--no-progress-bar` prints the progress after each step, as before.
+  - Pipes, CI logs and `TERM=dumb` are unchanged.
+- **VS Code: a running cell's status under its output.** A bar against the block's estimate,
+  and `running · 12s of about 30s`, `attempt 2/5` with `retry=`.
+  - It stays at the bottom while the output scrolls; at the end, the usual status line follows.
+  - Without an estimate, a counter: `running · 12s`.
+  - Theme colours; with reduced motion, the bar doesn't glide.
+- **The same words in the CLI, VS Code and the app.** The app's running cell says
+  `running · 12s of about 30s` too, and its run bar `Step 3/7 · Push image`, as VS Code's status
+  bar does. A screen reader still hears `Step 3 of 7`.
+
 - **Gate: a pool of cells accounts (`cells_accounts =`).** In separated mode, each session runs
   its blocks as an account of its own. So sessions side by side can't reach each other's shells
   through `/proc`.

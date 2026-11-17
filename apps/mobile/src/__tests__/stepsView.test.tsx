@@ -94,13 +94,13 @@ describe('a phone: Runbook | Steps', () => {
     expect(screen.getByTestId('view-runbook')).toBeSelected();
 
     await press('run-primary');
-    await waitFor(() => expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 3 of 3 failed'));
+    await waitFor(() => expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 3/3 failed'));
     // Not switched by the run: still the runbook.
     expect(screen.queryByTestId('steps-view')).toBeNull();
     // ⋯ More → Show Steps switches too.
     await press('more-actions');
     await press('action-showSteps');
-    expect(screen.getByTestId('steps-headline')).toHaveTextContent('Step 3 of 3 failed');
+    expect(screen.getByTestId('steps-headline')).toHaveTextContent('Step 3/3 failed');
     expect(screen.getByTestId('steps-row-1')).toHaveProp(
       'accessibilityLabel',
       expect.stringMatching(/^Step 1: Guide \(Say hello\), done, took /),
@@ -396,7 +396,7 @@ describe('after a failure: Retry step and Resume', () => {
     await press('view-steps');
     expect(screen.queryByTestId('steps-retry')).toBeNull();
     await press('steps-run');
-    await waitFor(() => expect(screen.getByTestId('steps-headline')).toHaveTextContent('Step 2 of 3 failed'));
+    await waitFor(() => expect(screen.getByTestId('steps-headline')).toHaveTextContent('Step 2/3 failed'));
     expect(sources()).toEqual(['echo one', 'echo two']);
     expect(screen.getByTestId('steps-error-2')).toHaveTextContent('boom');
     await press('steps-retry');

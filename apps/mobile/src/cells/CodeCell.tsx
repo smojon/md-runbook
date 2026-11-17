@@ -6,7 +6,6 @@
  */
 import {
   ParsedCell,
-  blockProgress,
   formatEstimate,
   formatLearned,
   isCodeMeta,
@@ -18,6 +17,7 @@ import {
 } from '@md-runbook/core';
 import { parseCellOptions, rewriteInfoTokens } from '@md-runbook/core/cellOptions';
 import { parseInterval } from '@md-runbook/core/checks';
+import { cellRunStatus } from '@md-runbook/core/runStatus';
 import { OutputText } from './OutputText';
 import { CloudView } from './CloudView';
 import { cloudView } from '@md-runbook/core/cloudViews';
@@ -148,9 +148,18 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
   // After a run noticeably over the estimate: by how much (core's overEstimate), beside the output.
   const tookSeconds = cell.output?.attrs.duration !== undefined ? parseInterval(cell.output.attrs.duration) : undefined;
   const overBy = declared !== undefined && tookSeconds !== undefined ? overEstimate(tookSeconds / 1000, declared) : undefined;
-  const now = useNow(running?.startedAt !== undefined && estimate !== undefined);
+  // While it runs: `running · 12s of about 30s · attempt 2/5`, as in VS Code (core cellRunStatus),
+  // with a bar against the estimate; a counter without one.
+  const now = useNow(running?.startedAt !== undefined);
   const elapsed = running?.startedAt !== undefined ? Math.max(0, (now - running.startedAt) / 1000) : undefined;
-  const timing = estimate !== undefined && elapsed !== undefined ? blockProgress(elapsed, estimate) : undefined;
+  const status =
+    elapsed !== undefined
+      ? cellRunStatus({
+          elapsedSeconds: elapsed,
+          ...(estimate !== undefined ? { estimateSeconds: estimate } : {}),
+          ...(running?.attempt ? { attempt: running.attempt.n, attempts: running.attempt.of } : {}),
+        })
+      : undefined;
   const problems = p.problems ?? NO_PROBLEMS;
   // The worst problem on each source line, for a mark beside it.
   const problemLines = new Map<number, LintProblem['severity']>();
@@ -408,26 +417,22 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
             </View>
           ) : (
             <Text testID={`cell-${index}-running`} style={styles.outputHeader}>
-              {running.step
-                ? t.runningLine(lineLabel(running.step))
-                : running.attempt
-                  ? running.attempt.waitMs !== undefined
-                    ? t.retryWaiting(running.attempt.n, running.attempt.of, formatWait(running.attempt.waitMs))
-                    : t.runningAttempt(running.attempt.n, running.attempt.of)
-                  : t.running}
-              {timing && estimate !== undefined && elapsed !== undefined ? (
-                <Text testID={`cell-${index}-timing-text`} style={timing.overSeconds > 0 ? styles.overText : undefined}>
-                  {' · '}
-                  {timing.overSeconds > 0
-                    ? t.estimateOver(formatEstimate(timing.overSeconds), fmtEst(estimate))
-                    : t.estimateOf(formatEstimate(elapsed), fmtEst(estimate))}
+              {running.step ? (
+                t.runningLine(lineLabel(running.step))
+              ) : running.attempt?.waitMs !== undefined ? (
+                t.retryWaiting(running.attempt.n, running.attempt.of, formatWait(running.attempt.waitMs))
+              ) : status ? (
+                <Text testID={`cell-${index}-timing-text`} style={status.over ? styles.overText : undefined}>
+                  {status.line}
                 </Text>
-              ) : null}
+              ) : (
+                t.running
+              )}
             </Text>
           )}
-          {timing && estimate !== undefined && elapsed !== undefined ? (
+          {status?.fraction !== undefined && !running.step && running.attempt?.waitMs === undefined ? (
             <View testID={`cell-${index}-timing`} style={styles.timing}>
-              <TimeBar fraction={timing.fraction} over={timing.overSeconds > 0} />
+              <TimeBar fraction={status.fraction} over={status.over} />
             </View>
           ) : null}
           {/* Redacted on screen too, as in VS Code (mdRunbook.redaction.applyToLiveOutput): as it arrives (safety.ts liveWindow). */}

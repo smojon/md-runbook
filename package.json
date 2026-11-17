@@ -124,6 +124,14 @@
           "path": "./out/webview/index.js"
         },
         "requiresMessaging": "optional"
+      },
+      {
+        "id": "md-runbook.runningStatus",
+        "displayName": "Markdown Runbook running cell",
+        "entrypoint": "./out/webview/runningStatus.js",
+        "mimeTypes": [
+          "application/vnd.md-runbook.running+json"
+        ]
       }
     ],
     "commands": [

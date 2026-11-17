@@ -525,7 +525,6 @@ const en = {
   lineFailedNote: (lines: string) => `[md-runbook] line ${lines} failed; the lines after it were not run`,
   retryNote: (attempt: number, attempts: number, why: string, wait: string) =>
     `[md-runbook] attempt ${attempt}/${attempts} failed (${why}); trying again in ${wait}`,
-  runningAttempt: (attempt: number, attempts: number) => `Running… attempt ${attempt}/${attempts}`,
   retryWaiting: (attempt: number, attempts: number, wait: string) =>
     `Attempt ${attempt}/${attempts} failed · trying again in ${wait} (Stop to end here)`,
   confirmTitle: (cell: number) => `Run cell ${cell}?`,
@@ -819,8 +818,6 @@ const en = {
   stopRun: '■ Stop',
   runFromStart: 'Run all from the start',
   progressDone: (done: number, total: number) => `${done} of ${total} steps done`,
-  progressStep: (step: number, total: number, label: string) => `Step ${step} of ${total} · ${label}`,
-  progressStepFailed: (step: number, total: number) => `Step ${step} of ${total} failed`,
   progressAllDone: (done: number, total: number, teardownOffered: boolean) =>
     `Done · ${done} of ${total}${teardownOffered ? ' · teardown offered' : ''}`,
   /** estimate= on a cell: how long it takes, as measured on a real run. */
@@ -831,7 +828,6 @@ const en = {
   /** After a run noticeably over its estimate, beside the output's duration. */
   tookOver: (estimate: string, over: string) => `est. ${estimate} (+${over} over)`,
   /** The runbook's progress by its estimates. */
-  estimateLeft: (left: string) => `${left} left`,
   estimateNothingLeft: 'nothing left',
   withoutEstimate: (n: number) => (n === 1 ? '1 block without an estimate' : `${n} blocks without an estimate`),
   runStopped: 'Run all stopped at a failed step: fix it, then Resume.',

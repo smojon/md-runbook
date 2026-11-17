@@ -113,15 +113,34 @@ describe('estimate= (how long a cell takes)', () => {
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-1-run'));
     });
-    // One line: Running · 0s of 1s, the bar under it.
-    await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/ \d+s of 1s$/));
+    // One line, the words of every client (core cellRunStatus), the bar under it.
+    await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/^running · \d+s of about 1s$/));
     expect(screen.getByTestId('cell-1-timing')).toBeTruthy();
-    await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/\+\d+s over 1s$/), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/^running · \d+s · \d+s over about 1s$/), {
+      timeout: 5000,
+    });
     expect(screen.getByTestId('run-estimate-text')).toHaveProp('accessibilityLabel', '99% · 1 step left');
-    expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 1 of 1 · sleep 100');
+    expect(screen.getByTestId('run-progress')).toHaveTextContent('Step 1/1 · sleep 100');
+    expect(screen.getByTestId('run-progress')).toHaveProp('accessibilityLabel', 'Step 1 of 1 · sleep 100');
     await act(async () => {
       fireEvent.press(screen.getByTestId('cell-1-stop'));
     });
     await waitFor(() => expect(screen.queryByTestId('cell-1-timing')).toBeNull());
+  });
+
+  it('without an estimate: a counter and no bar; with retry=, the attempt', async () => {
+    addHost({ name: 'web-1', hostname: 'web1', port: 22, username: 'deploy' });
+    mockConnection = fakeConnection([{ waitForAbort: true }]);
+    const r = addRunbook('wait.md', '# Steps\n\n```bash retry=3 every=1s\nsleep 100\n```\n');
+    await render(<RunbookView id={r.id} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-run'));
+    });
+    await waitFor(() => expect(screen.getByTestId('cell-1-timing-text')).toHaveTextContent(/^running · \d+s · attempt 1\/3$/));
+    expect(screen.queryByTestId('cell-1-timing')).toBeNull();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-stop'));
+    });
+    await waitFor(() => expect(screen.queryByTestId('cell-1-timing-text')).toBeNull());
   });
 });
