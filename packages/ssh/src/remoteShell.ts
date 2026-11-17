@@ -187,6 +187,10 @@ export class RemoteShell {
   private podWaiting = false;
   /** Why the session's pod didn't start (its `failed` notice). */
   private podFailure: string | undefined;
+  /** Pod notices that come between requests (deliver). */
+  private idlePod: PodNoticeFilter | undefined;
+  /** The `failed` notice came between requests, and no request has shown it yet. */
+  private podFailureUnseen = false;
   /** The running request's part in the pod notices (runText: its time limit waits for the pod). */
   private onPod: ((n: GatePodNotice) => void) | undefined;
   private readonly decoderOut = new TextDecoder();
@@ -303,6 +307,14 @@ export class RemoteShell {
   }
 
   /**
+   * Why the gate's Kubernetes Job couldn't start this session's pod, when its `failed` notice came
+   * between requests and no request has shown it yet.
+   */
+  get unseenPodFailure(): string | undefined {
+    return this.podFailureUnseen ? this.podFailure : undefined;
+  }
+
+  /**
    * Run one cell in the remote shell; output streams to `onStdout`/`onStderr` as it arrives. bash
    * cells run on Linux and macOS servers, pwsh and cmd cells on Windows ones. Through
    * md-runbook-gate the cell goes as an unsigned request, which the gate refuses (exit 126, its
@@ -405,7 +417,10 @@ export class RemoteShell {
       durationMs: Date.now() - started,
       ...r,
     });
-    if (this.ended) return result({ error: 'the remote shell has ended', shellEnded: true });
+    if (this.ended) {
+      this.podFailureUnseen = false;
+      return result({ error: this.podFailure ?? 'the remote shell has ended', shellEnded: true });
+    }
     if (opts.signal?.aborted) return result({ cancelled: true });
 
     let timedOut = false;
@@ -537,7 +552,23 @@ export class RemoteShell {
 
   private deliver(stream: 'out' | 'err', text: string): void {
     const c = this.current;
-    if (!c || text === '') return; // output between cells belongs to no cell
+    if (text === '') return;
+    if (!c) {
+      // Output between cells belongs to no cell. But a pod notice still counts: the gate says
+      // `failed` at once when no request waits, and the next request shows its reason (review of
+      // 0.30.0, L1).
+      if (stream === 'err' && this.podNotices) {
+        this.idlePod ??= new PodNoticeFilter(
+          () => undefined,
+          (n) => {
+            this.podNotice(n);
+            if (n.state === 'failed') this.podFailureUnseen = true;
+          },
+        );
+        this.idlePod.write(text);
+      }
+      return;
+    }
     (stream === 'err' ? c.errIn : c.out).write(text);
     c.check();
   }

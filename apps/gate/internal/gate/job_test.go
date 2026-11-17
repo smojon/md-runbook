@@ -433,30 +433,36 @@ func TestLeftWaiting(t *testing.T) {
 		j.out = io.Discard
 		return j
 	}
-	// Nothing waited: open until the pod settles, then not.
+	// cut: whether leaving cuts the session short, without a wait (wait 0).
+	cut := func(j *kubeJob) bool {
+		c, _ := j.leftWaiting(0)
+		return c
+	}
+	// Nothing waited: cut until the pod settles, then not.
 	j := newJob()
 	j.hello(true)
-	if j.leftWaiting(0) == "" {
-		t.Error("before the pod settled")
+	if c, why := j.leftWaiting(0); !c || why != "the client left while the pod was starting" {
+		t.Errorf("before the pod settled: %v %q", c, why)
 	}
 	j.settle("p", "")
 	j.waitFor("")
-	if j.leftWaiting(0) != "" {
+	if cut(j) {
 		t.Error("a request after the pod was ready")
 	}
-	// A request waited; the pod got ready; the client left before its next line (its stop).
+	// A request waited; the pod got ready; the client left before its next line (its stop): cut,
+	// and not logged (not a signed run: round 1, L2).
 	j = newJob()
 	j.hello(true)
 	j.spoke()
 	j.waitFor("")
 	j.spoke() // a line before the pod settled says nothing of the reply
 	j.settle("p", "")
-	if j.leftWaiting(0) == "" {
-		t.Error("the waiting request's reply not had")
+	if c, why := j.leftWaiting(0); !c || why != "" {
+		t.Errorf("the waiting request's reply not had: %v %q", c, why)
 	}
 	// Its next line: it had the reply.
 	j.spoke()
-	if j.leftWaiting(0) != "" {
+	if cut(j) {
 		t.Error("after the client's next line")
 	}
 	// A client before protocol 4 (no notices): the same.
@@ -464,20 +470,24 @@ func TestLeftWaiting(t *testing.T) {
 	j.hello(false)
 	j.waitFor("")
 	j.settle("p", "")
-	if j.leftWaiting(0) == "" {
+	if !cut(j) {
 		t.Error("without notices, the reply not had")
 	}
 	j.spoke()
-	if j.leftWaiting(0) != "" {
+	if cut(j) {
 		t.Error("without notices, after the client's next line")
-	}
-	if j = newJob(); j.leftWaiting(0) != "the client left while the pod was starting" {
-		t.Errorf("starting: %q", j.leftWaiting(0))
 	}
 
 	// A signed run waited: its exit, back through the follower, is its end. A one-shot client
 	// that leaves after the reply cuts nothing short and isn't logged as gone (round 2, L-1).
-	const notSeen = "the client left before the gate saw the end of the request that waited for the pod"
+	const notSeen = "the client left within 5 s of the pod getting ready, before run 1 (which waited for the pod) ended: the session is cut short, as for a stop"
+	left := func(g *Gate, wait time.Duration) string {
+		c, why := g.job.leftWaiting(wait)
+		if c != (why != "") {
+			t.Errorf("cut %v, logged %q", c, why)
+		}
+		return why
+	}
 	newGate := func() *Gate {
 		g := &Gate{log: &logx.Logger{Dest: t.TempDir() + "/gate.log"}, job: newJob()}
 		g.sepRuns = map[string]sepRun{"1": {"0000aa01", "n1"}, "2": {"0000aa02", "n2"}}
@@ -491,7 +501,7 @@ func TestLeftWaiting(t *testing.T) {
 	g := newGate()
 	g.job.waitFor("1")
 	g.job.settle("p", "")
-	if why := g.job.leftWaiting(0); why != notSeen {
+	if why := left(g, 0); why != notSeen {
 		t.Errorf("no exit yet: %q", why)
 	}
 	// It comes while the gate waits for it.
@@ -499,7 +509,7 @@ func TestLeftWaiting(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		g.followLines(strings.NewReader(exit("1", "n1")))
 	}()
-	if why := g.job.leftWaiting(10 * time.Second); why != "" {
+	if why := left(g, 10*time.Second); why != "" {
 		t.Errorf("exit while waiting: %q", why)
 	}
 	// The run still pending: the gate waits, then the session is cut short.
@@ -507,28 +517,29 @@ func TestLeftWaiting(t *testing.T) {
 	g.job.waitFor("1")
 	g.job.settle("p", "")
 	t0 := time.Now()
-	if why := g.job.leftWaiting(150 * time.Millisecond); why != notSeen || time.Since(t0) < 140*time.Millisecond {
+	if why := left(g, 150*time.Millisecond); why != notSeen || time.Since(t0) < 140*time.Millisecond {
 		t.Errorf("pending: %q after %v", why, time.Since(t0))
 	}
 	// Another run's exit, or one the gate refuses (no random number), is not that end.
 	g.followLines(strings.NewReader(exit("2", "n2")))
-	if why := g.job.leftWaiting(0); why != notSeen {
+	if why := left(g, 0); why != notSeen {
 		t.Errorf("another run's exit: %q", why)
 	}
 	g = newGate()
 	g.job.waitFor("1")
 	g.job.settle("p", "")
 	g.followLines(strings.NewReader(exit("1", "forged")))
-	if why := g.job.leftWaiting(0); why != notSeen || g.exitsBadNow() == "" {
+	if why := left(g, 0); why != notSeen || g.exitsBadNow() == "" {
 		t.Errorf("a refused exit: %q", why)
 	}
-	// Not a signed run (raw, context): no exit comes back, so no wait.
+	// Not a signed run (raw, context): no exit comes back, so no wait. Cut, but not logged as cut
+	// short: the client most likely had the reply and left (round 1, L2).
 	g = newGate()
 	g.job.waitFor("")
 	g.job.settle("p", "")
 	t0 = time.Now()
-	if why := g.job.leftWaiting(10 * time.Second); why != notSeen || time.Since(t0) > 5*time.Second {
-		t.Errorf("raw: %q after %v", why, time.Since(t0))
+	if c, why := g.job.leftWaiting(10 * time.Second); !c || why != "" || time.Since(t0) > 5*time.Second {
+		t.Errorf("raw: %v %q after %v", c, why, time.Since(t0))
 	}
 	// Two requests sent before the pod was ready: which reply the client had is unknown.
 	g = newGate()
@@ -536,8 +547,42 @@ func TestLeftWaiting(t *testing.T) {
 	g.job.waitFor("2")
 	g.job.settle("p", "")
 	g.followLines(strings.NewReader(exit("1", "n1")))
-	if why := g.job.leftWaiting(0); why != notSeen {
-		t.Errorf("two queued: %q", why)
+	if c, _ := g.job.leftWaiting(0); !c {
+		t.Error("two queued: not cut")
+	}
+
+	// A disconnect later than leftGrace after the pod settled, during the run that waited for it
+	// (a dropped network, 10 minutes into the block): the run goes on to its end, as any later
+	// block does, and nothing is logged (review of 0.30.0, M1).
+	long := func(run string) *Gate {
+		g := newGate()
+		g.job.waitFor(run)
+		g.job.settle("p", "")
+		g.job.mu.Lock()
+		g.job.settledAt = time.Now().Add(-10 * time.Minute)
+		g.job.mu.Unlock()
+		return g
+	}
+	t0 = time.Now()
+	if c, why := long("1").job.leftWaiting(10 * time.Second); c || why != "" || time.Since(t0) > 5*time.Second {
+		t.Errorf("a signed run, later: %v %q after %v", c, why, time.Since(t0))
+	}
+	if c, why := long("").job.leftWaiting(0); c || why != "" {
+		t.Errorf("raw, later: %v %q", c, why)
+	}
+	// Just inside the grace (a stop as the pod got ready, L5): still cut.
+	g = long("1")
+	g.job.mu.Lock()
+	g.job.settledAt = time.Now().Add(-leftGrace + time.Second)
+	g.job.mu.Unlock()
+	if why := left(g, 0); why != notSeen {
+		t.Errorf("within the grace: %q", why)
+	}
+	// Before the pod settled, however long the wait: cut, logged.
+	g = newGate()
+	g.job.waitFor("1")
+	if c, why := g.job.leftWaiting(0); !c || why != "the client left while the pod was starting" {
+		t.Errorf("starting: %v %q", c, why)
 	}
 }
 

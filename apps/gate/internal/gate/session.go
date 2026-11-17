@@ -524,13 +524,14 @@ loop:
 	}
 	// The client is done: each shell runs what it was sent, then ends. Cut short: they end now.
 	// (A Job's shells need no ending in the pod: deleting the Job ends them.) A client that went
-	// while the Job's pod was starting, or before the reply of a request that waited for it
-	// (stopped while it waited, as the pod got ready), cuts the session short too: what it sent
-	// would run for no one, and the Job goes now. A signed run's exit that comes back within 2 s
-	// is that request's end (a one-shot client leaves after its reply).
+	// while the Job's pod was starting, or within seconds of its start before the reply of a
+	// request that waited for it (stopped as the pod got ready), cuts the session short too: what
+	// it sent would run for no one, and the Job goes now (leftWaiting). A signed run's exit that
+	// comes back within 2 s is that request's end (a one-shot client leaves after its reply).
 	if !term && g.jobMode() {
-		if why := g.job.leftWaiting(2 * time.Second); why != "" {
-			term = true
+		cut, why := g.job.leftWaiting(2 * time.Second)
+		term = cut
+		if why != "" {
 			g.log.Event("event", "job", "status", "left", "job", g.job.name, "reason", why)
 		}
 	}
@@ -715,8 +716,8 @@ func (g *Gate) stopRequest(cmd string) bool {
 	// Separated mode: the cells' programs are the leased cells account's (the pid file's second
 	// line, one of the pool), signalled as that account.
 	if g.separated() {
-		account, _, _ := strings.Cut(rest, "\n")
-		if !has(g.cfg.CellsPool(), account) {
+		account, ok := stopAccount(rest, g.cfg.CellsPool())
+		if !ok {
 			g.fatal("no md-runbook session " + n)
 		}
 		if len(targets) > 0 {
@@ -730,4 +731,16 @@ func (g *Gate) stopRequest(cmd string) bool {
 		syscall.Kill(p, signal)
 	}
 	return true
+}
+
+// stopAccount: the cells account a separated session's pid file names (the lines after the pid),
+// if it is one of the pool. A file without that line was written by a gate before 0.30.0, which
+// had one cells_account: during an update, its live session is stopped as the pool's only account
+// (review of 0.30.0, L4). With a larger pool, which one is unknown.
+func stopAccount(rest string, pool []string) (string, bool) {
+	account, _, _ := strings.Cut(rest, "\n")
+	if account == "" && len(pool) == 1 {
+		return pool[0], true
+	}
+	return account, has(pool, account)
 }

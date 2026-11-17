@@ -101,6 +101,12 @@ jobs:
           sudo -n -u mdrb-gate sudo -n -l
           # The cells accounts may use neither cron nor at, or the self-check refuses.
           printf 'mdrb-cells-1\nmdrb-cells-2\nmdrb-cells-3\n' | sudo tee -a /etc/cron.deny /etc/at.deny >/dev/null
+          # The README's DenyUsers line for the pool: this sshd takes it, and denies each account.
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/deny_host"
+          printf 'HostKey %s\nDenyUsers %s\n' "$RUNNER_TEMP/deny_host" "mdrb-cells-1 mdrb-cells-2 mdrb-cells-3" >"$RUNNER_TEMP/deny_sshd_config"
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd -t -f "$RUNNER_TEMP/deny_sshd_config"
+          sudo /usr/sbin/sshd -T -f "$RUNNER_TEMP/deny_sshd_config" -C user=mdrb-cells-2,host=localhost,addr=127.0.0.1 | grep -Eq '^denyusers( .*)? mdrb-cells-2( |$)'
           # (/run/user/UID is that account's alone, mode 0700: root looks for the socket.)
           for a in "$(id -un)" mdrb-gate mdrb-wide; do
             sudo loginctl enable-linger "$a"

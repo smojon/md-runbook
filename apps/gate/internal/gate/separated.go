@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/smojon/md-runbook/apps/gate/internal/logx"
 	"github.com/smojon/md-runbook/apps/gate/internal/procs"
@@ -41,7 +42,9 @@ import (
 // as an account another session's blocks run as (review of 0.30.0, H2). It refuses when
 //   - the cells' account can read the report token or the log, or change the gate's program,
 //     gate.conf, the trusted keys, the account's keys or the gate's state;
-//   - it can't append to the session's exits file (the work folder is in /tmp).
+//   - it can't append to the session's exits file (the work folder is in /tmp);
+//   - its home folder stays open to other accounts, or has a key file sshd would take (checkHome;
+//     an open home of its own it closes first).
 
 // cellsInfo is a cells account as the self-check found it.
 type cellsInfo struct {
@@ -205,7 +208,7 @@ func (c selfCheck) access(info cellsInfo) error {
 	p := c.plan
 	p.account = name
 	l := p.outer("", true)
-	out, err := c.run(l.argv, l.env, cellsReq{Op: "check", Read: c.noRead, Write: append(append([]string{}, c.noWrite...), c.mustWrite...)}.encode())
+	out, err := c.run(l.argv, l.env, cellsReq{Op: "check", Read: c.noRead, Write: append(append([]string{}, c.noWrite...), c.mustWrite...), Home: info.home}.encode())
 	var res checkResult
 	if err != nil || json.Unmarshal(out, &res) != nil {
 		msg := "can't run the cells' mode as " + name + " through sudo"
@@ -238,10 +241,50 @@ func (c selfCheck) access(info cellsInfo) error {
 	if len(misses) > 0 {
 		problems = append(problems, name+" can't append to "+strings.Join(misses, ", ")+", the session's exits file: it must be able to enter /tmp")
 	}
+	if res.HomeOpen {
+		problems = append(problems, name+"'s home "+info.home+" is open to other accounts and writable by "+name+": make it "+name+"'s, mode 0700")
+	}
+	if len(res.Logins) > 0 {
+		problems = append(problems, strings.Join(res.Logins, ", ")+" would let a key log in as "+name+": remove it, and add `DenyUsers "+name+"` to sshd_config")
+	}
 	if len(problems) > 0 {
 		return errors.New(what + ": " + strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// loginFiles: the files in a home folder that sshd reads keys from by default
+// (AuthorizedKeysFile).
+var loginFiles = []string{".ssh/authorized_keys", ".ssh/authorized_keys2"}
+
+// checkHome is the check request's look at the cells account's home folder, as that account, at
+// the lease (none of its processes is left, so nothing changes it meanwhile).
+//   - An open home (group or others may enter it) is closed (mode go-rwx) when it is the
+//     account's. A setuid file a block left there then stays out of the other accounts' reach:
+//     macOS has no no_new_privs (review of 0.30.0, H1). open: it stays open and the account can
+//     write it.
+//   - logins: the key files there that would let someone log in as the account (with sftp
+//     too, under a nologin shell) and reach a later session's shells (M2). One that can't be
+//     looked at counts too: sshd reads it as root.
+func checkHome(home string, uid int) (open bool, logins []string) {
+	if home == "" {
+		return false, nil
+	}
+	st, err := os.Stat(home)
+	if err != nil || !st.IsDir() {
+		return false, nil
+	}
+	for _, f := range loginFiles {
+		_, err := os.Lstat(home + "/" + f)
+		if err == nil || !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+			logins = append(logins, home+"/"+f)
+		}
+	}
+	perm := st.Mode().Perm()
+	if s, ok := st.Sys().(*syscall.Stat_t); ok && int(s.Uid) == uid && perm&0o077 != 0 && os.Chmod(home, perm&^0o077) == nil {
+		perm &^= 0o077
+	}
+	return perm&0o077 != 0 && writable(home), logins
 }
 
 func has(list []string, s string) bool {

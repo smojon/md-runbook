@@ -1796,6 +1796,51 @@ describe('md-runbook-gate', { skip: !RUNS && 'the gate runs on Linux and macOS (
       }
     });
 
+    it("a setuid file one session's block leaves doesn't make another session's block its account (no_new_privs; review of 0.30.0, H1)", async (t) => {
+      const file = `/tmp/mdrb-suid-${process.pid}`;
+      const a = await openSession();
+      const b = await openSession();
+      try {
+        const [ma, sa] = await signed(fence('bash', `cp /bin/bash ${file} && chmod 4755 ${file} && echo made`), { name: 'ops/separated-suid-a' });
+        assert.equal((await a.g.request('load', ma, sa)).code, 0);
+        assert.equal((await a.g.request('run', '1')).out, 'made\n');
+        // Outside the gate (no no_new_privs) it does: else setuid doesn't work in /tmp here.
+        const lifted = spawnSync('sudo', ['-n', '-u', b.cells, '--', file, '-p', '-c', 'id -u'], { encoding: 'utf8', cwd: '/' }).stdout.trim();
+        if (lifted !== uidOf(a.cells)) {
+          t.skip(`a setuid file in /tmp doesn't lift here (${lifted})`);
+          return;
+        }
+        const [mb, sb] = await signed(fence('bash', `${file} -p -c 'id -u'`), { name: 'ops/separated-suid-b' });
+        assert.equal((await b.g.request('load', mb, sb)).code, 0);
+        const r = await b.g.request('run', '1');
+        assert.equal(r.code, 0, r.err);
+        assert.equal(r.out.trim(), uidOf(b.cells));
+      } finally {
+        assert.equal(await a.g.close(), 0);
+        assert.equal(await b.g.close(), 0);
+        spawnSync('sudo', ['-n', 'rm', '-f', file]);
+      }
+    });
+
+    it("the lease refuses an account whose home has a key file sshd would take, and closes an open home (review of 0.30.0, M2)", async () => {
+      const home = spawnSync('getent', ['passwd', CELLS], { encoding: 'utf8' }).stdout.split(':')[5] ?? '';
+      assert.match(home, /^\//);
+      as(CELLS, `chmod 755 ${home} && mkdir -p ${home}/.ssh && echo 'ssh-ed25519 AAAA x' >${home}/.ssh/authorized_keys`);
+      try {
+        const r = await startupAs(GATE_ACCOUNT, gdir, conf);
+        assert.equal(r.code, 2, r.err);
+        assert.ok(r.err.includes(`${home}/.ssh/authorized_keys would let a key log in as ${CELLS}`), r.err);
+        assert.match(readLog(), /"event":"self-check","status":"refused"/);
+      } finally {
+        as(CELLS, `rm -rf ${home}/.ssh`);
+      }
+      as(CELLS, `chmod 755 ${home}`);
+      const { g, cells } = await openSession();
+      assert.equal(cells, CELLS);
+      assert.equal(await g.close(), 0);
+      assert.equal(spawnSync('sudo', ['-n', 'stat', '-c', '%a', home], { encoding: 'utf8' }).stdout.trim(), '700');
+    });
+
     it('all accounts in use: the next session refuses to start, and says to raise the pool', async () => {
       const held: { g: Gate; cells: string }[] = [];
       try {

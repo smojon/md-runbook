@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -80,6 +81,13 @@ type cellsReq struct {
 	Events bool     `json:"events,omitempty"`
 	// follow: when its stdin ends, end the pod (TERM to PID 1, tini): a dead-man switch.
 	EndPod bool `json:"end_pod,omitempty"`
+	// exec, separated mode (the cells run as an account of their own): no_new_privs before the
+	// exec, on Linux (setNoNewPrivs). Else a setuid file that one session's block left would let a
+	// later session's block become that account, and reach whichever session leased it then
+	// (review of 0.30.0, H1). Fail closed: no shell when it can't be set.
+	NoNewPrivs bool `json:"no_new_privs,omitempty"`
+	// check: the cells account's home folder (checkHome).
+	Home string `json:"home,omitempty"`
 }
 
 const (
@@ -135,6 +143,10 @@ type checkResult struct {
 	UID   int      `json:"uid"`
 	Read  []string `json:"read"`
 	Write []string `json:"write"`
+	// The home folder (checkHome): still open to other accounts, and the files in it that would
+	// let a key log in as the account.
+	HomeOpen bool     `json:"home_open,omitempty"`
+	Logins   []string `json:"logins,omitempty"`
 }
 
 // cellsMain is the cells' mode; its exit code (exec doesn't return).
@@ -155,6 +167,14 @@ func cellsMain() int {
 		}
 		if req.Shell > 0 {
 			markShell(req.Shell)
+		}
+		if req.NoNewPrivs {
+			// The flag is the thread's: set it on the thread that execs.
+			runtime.LockOSThread()
+			if err := setNoNewPrivs(); err != nil {
+				say("cells mode: can't set no_new_privs (" + err.Error() + "): the cells don't start")
+				return 126
+			}
 		}
 		err := syscall.Exec(req.Argv[0], req.Argv, req.Env)
 		say("can't start " + req.Argv[0] + ": " + err.Error())
@@ -180,6 +200,7 @@ func cellsMain() int {
 				res.Write = append(res.Write, p)
 			}
 		}
+		res.HomeOpen, res.Logins = checkHome(req.Home, os.Getuid())
 		data, _ := json.Marshal(res)
 		os.Stdout.Write(append(data, '\n'))
 		return 0
@@ -272,7 +293,9 @@ func (p plan) shell(cells, env []string, dir, unit string) launch {
 		unit = ""
 	}
 	l := p.outer(unit, p.account != "")
-	l.header = cellsReq{Op: "exec", Argv: inner, Env: env, Dir: dir}.encode()
+	// Separated mode: no_new_privs. Not with bwrap, which sets it itself in its namespace, and
+	// which may be a setuid program (no_new_privs before it would stop it).
+	l.header = cellsReq{Op: "exec", Argv: inner, Env: env, Dir: dir, NoNewPrivs: p.account != "" && p.iso != "bwrap"}.encode()
 	return l
 }
 

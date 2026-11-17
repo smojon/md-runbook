@@ -2,9 +2,14 @@
 
 ## Unreleased
 
-**Gate admins with separated mode:** with `cells_account =` alone, one session runs at a time
-now, and a second one refuses to start. For sessions side by side, set up a pool before you
-update (see below).
+**Gate admins with separated mode:**
+- With `cells_account =` alone, one session runs at a time now, and a second one refuses to
+  start. For sessions side by side, set up a pool before you update (see below).
+- On Linux, blocks start with `no_new_privs`: `sudo`, `su` and setuid programs in them fail.
+- A pool, or a `cells_account`, serves one gate account only. A session now refuses to start
+  when its account runs another gate account's blocks.
+- Add `DenyUsers` for the pool accounts to `sshd_config`. A session refuses an account with
+  `~/.ssh/authorized_keys`, and closes its home to others (mode 0700).
 
 - **CLI: the progress pinned on the bottom line, as apt shows it.** In a terminal, `md-runbook
   run` keeps one line at the bottom while the output scrolls above it:

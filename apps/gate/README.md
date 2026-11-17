@@ -187,7 +187,12 @@ done
 echo 'support ALL=(mdrb-cells-1,mdrb-cells-2,mdrb-cells-3,mdrb-cells-4) NOPASSWD: /usr/local/bin/md-runbook-gate __cells' > /etc/sudoers.d/md-runbook-gate
 chmod 440 /etc/sudoers.d/md-runbook-gate
 visudo -cf /etc/sudoers.d/md-runbook-gate
+# No SSH logins as a pool account, sftp included
+echo "DenyUsers $pool" > /etc/ssh/sshd_config.d/md-runbook-gate.conf
+sshd -t && (systemctl reload ssh || systemctl reload sshd)
 ```
+
+Without `sshd_config.d`, add the `DenyUsers` line to `sshd_config`, above any `Match` block.
 
 and in `gate.conf`:
 
@@ -232,6 +237,10 @@ processes is left: never as an account another session holds. It refuses to star
 - an account is in a privileged group (listed above);
 - an account may use cron or at: `cron.deny` and `at.deny` must list it, or `cron.allow` and
   `at.allow` exist without it (on macOS in `/usr/lib/cron`);
+- the leased account's home has `.ssh/authorized_keys` or `authorized_keys2`: a key there
+  could log in as it (add `DenyUsers` as above);
+- its home is open to other accounts and isn't its own. The gate closes a home of its own
+  (mode 0700) at each lease;
 - a folder above the gate's files is not safe (see below);
 - the leased account can read `report_token_file` or the `log =` file;
 - it can change the gate's program, `gate.conf`, `allowed_signers`, the account's keys or the
@@ -268,6 +277,9 @@ can change, such as `/usr/libexec/md-runbook-gate`. The message names the folder
     The session's run reports don't go out then.
 - **Stopping:** stop requests and the end of a session reach the blocks through the same
   `sudo` line.
+- **No new privileges (Linux):** the cells start with `no_new_privs`. So `sudo`, `su` and
+  setuid programs don't work in blocks in separated mode. Use shared mode for blocks that
+  need them.
 - **Log:** the `session` event names the leased account (`cells`).
 
 **What separated mode doesn't cover:**
@@ -276,6 +288,11 @@ can change, such as `/usr/libexec/md-runbook-gate`. The message names the folder
   line keeps its form: the gate doesn't see that.
 - **Files outlive a session.** Processes end, but what a block leaves in its account's home or
   in `/tmp` stays. A later session on that account can read it.
+  - A setuid file that a block leaves can't lift a later block on Linux: `no_new_privs`.
+  - The gate closes the account's home to other accounts at each lease.
+  - macOS has no `no_new_privs`. There, a setuid file a block leaves in `/tmp` lets any
+    account act as its owner. Use Linux where sessions must stay apart.
+  - On Linux too, an account outside the gate can run such a file. Mount `/tmp` with `nosuid`.
 - **A shared pool.** Two gate accounts with the same pool don't see each other's leases. The
   gate refuses when it sees the other's blocks, but two sessions that start at the same moment
   can share an account.
@@ -299,6 +316,8 @@ kubernetes-job` runs each session's blocks in a Kubernetes Job of their own inst
 - The pod's start takes from seconds to a minute, depending on the cluster. It doesn't count
   against the client's time limits (protocol 4, below).
 - A Stop at the exact moment the session's pod becomes ready may let the block run up to 2 s more.
+- When the connection drops during the session's first block, the block runs to its end, as any
+  block does. Only within 5 s of the pod getting ready does the session end at once, as for a Stop.
 
 **Why not `systemd-run --uid`?** It needs root, or a polkit rule that also lets the account
 start units as root. sudo can name one command and the accounts it may run as.

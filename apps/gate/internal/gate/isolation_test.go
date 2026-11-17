@@ -82,6 +82,10 @@ func TestShellLaunch(t *testing.T) {
 		if req.Op != "exec" || !reflect.DeepEqual(req.Argv, c.inner) || !reflect.DeepEqual(req.Env, env) || req.Dir != c.dir {
 			t.Errorf("%s/%q: request %+v", c.iso, c.account, req)
 		}
+		// Separated mode: no_new_privs (review of 0.30.0, H1); bwrap sets it itself.
+		if want := c.account != "" && c.iso != "bwrap"; req.NoNewPrivs != want {
+			t.Errorf("%s/%q: no_new_privs %v, want %v", c.iso, c.account, req.NoNewPrivs, want)
+		}
 	}
 }
 
@@ -275,6 +279,7 @@ type fakeSys struct {
 	idErr, sudoErr             error
 	check                      checkResult
 	checkErr                   error
+	checkHome                  string // the home folder the last check request named
 	calls                      [][]string
 	files                      fakeFS
 	// Accounts of a pool other than mdrb-cells: their uid (id -u), and what their check answers
@@ -335,6 +340,7 @@ func (f *fakeSys) run(argv, env []string, stdin []byte) ([]byte, error) {
 		if err != nil || req.Op != "check" {
 			return nil, errors.New("bad request")
 		}
+		f.checkHome = req.Home
 		data, _ := json.Marshal(res)
 		return data, f.checkErr
 	}
@@ -386,6 +392,10 @@ func TestSelfCheck(t *testing.T) {
 	if len(f.calls) != 6 {
 		t.Errorf("calls: %q", f.calls)
 	}
+	// The cells' mode looks at the account's home (checkHome).
+	if f.checkHome != "/home/mdrb-cells" {
+		t.Errorf("check of the home: %q", f.checkHome)
+	}
 	rule := "support ALL=(mdrb-cells) NOPASSWD: /usr/local/bin/md-runbook-gate __cells"
 	for name, c := range map[string]struct {
 		change func(f *fakeSys)
@@ -409,6 +419,8 @@ func TestSelfCheck(t *testing.T) {
 		"readable log":     {func(f *fakeSys) { f.check.Read = []string{"/var/log/md-runbook-gate.log"} }, []string{"can read /var/log/md-runbook-gate.log"}},
 		"writable program": {func(f *fakeSys) { f.check.Write = append(f.check.Write, "/usr/local/bin/md-runbook-gate") }, []string{"can change /usr/local/bin/md-runbook-gate"}},
 		"no exits file":    {func(f *fakeSys) { f.check.Write = []string{} }, []string{"can't append to /tmp/md-runbook-gate.x/exits.y"}},
+		"open home":        {func(f *fakeSys) { f.check.HomeOpen = true }, []string{"mdrb-cells's home /home/mdrb-cells is open to other accounts", "mode 0700"}},
+		"a login key":      {func(f *fakeSys) { f.check.Logins = []string{"/home/mdrb-cells/.ssh/authorized_keys"} }, []string{"/home/mdrb-cells/.ssh/authorized_keys would let a key log in as mdrb-cells", "DenyUsers mdrb-cells"}},
 	} {
 		f := goodSys()
 		c.change(f)
