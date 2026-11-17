@@ -6,7 +6,8 @@ const path = require('path');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function launch({ repo, out, exe, file, width, height }) {
+// settings and keybindings: extra entries for this take (record.js opens the Steps view by key).
+async function launch({ repo, out, exe, file, width, height, settings = {}, keybindings = [] }) {
   const ud = path.join(out, 'ud');
   fs.rmSync(ud, { recursive: true, force: true });
   fs.mkdirSync(path.join(ud, 'User'), { recursive: true });
@@ -32,13 +33,14 @@ async function launch({ repo, out, exe, file, width, height }) {
         'extensions.autoCheckUpdates': false,
         'editor.lightbulb.enabled': 'off',
         'editor.cursorBlinking': 'solid',
+        ...settings,
       },
       null,
       2,
     ),
   );
   // The text view opens without a visible command palette (the toolbar button may not fit).
-  fs.writeFileSync(path.join(ud, 'User', 'keybindings.json'), JSON.stringify([{ key: 'ctrl+alt+shift+m', command: 'mdRunbook.openAsText' }]));
+  fs.writeFileSync(path.join(ud, 'User', 'keybindings.json'), JSON.stringify([{ key: 'ctrl+alt+shift+m', command: 'mdRunbook.openAsText' }, ...keybindings]));
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await _electron.launch({

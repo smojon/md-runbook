@@ -8,8 +8,9 @@ which only prints simulated `kubectl` output, so it runs anywhere and changes no
 
 `docs/demo.gif` (top of the README) is recorded, not drawn:
 
-- `scripts/demo-gif/record.js` drives a throwaway VS Code with the dev build through Run All, Save
-  and Open as Markdown Text. Then it selects the first saved output block.
+- `scripts/demo-gif/record.js` drives a throwaway VS Code with the dev build, the Steps view open,
+  through Run All, Save and Open as Markdown Text. Then it selects the first saved output block.
+  It shows the login name in the Steps view ("by …") as `ops`.
 - `scripts/demo-gif/make_gif.py` turns the frames into the GIF.
 
 `scripts/demo-gif/stills.js` takes the README's two stills (`docs/1-notebook.png`,
