@@ -9,6 +9,7 @@ import * as vscode from 'vscode';
 import { Progress, checklist, computeProgress, formatLocalIso, isCodeMeta, nextUncheckedOffset, outputBlockAttrs, runbookEstimate } from '@md-runbook/core';
 import { PartEstimate, RunbookEstimate, finishTime, formatEstimate, formatTimeLeft, remaining, stepHeadings, stepLabel, withoutEstimate } from '@md-runbook/core/estimate';
 import { isManualMark } from '@md-runbook/core/progress';
+import { runProgressLine, stepFailed } from '@md-runbook/core/runStatus';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
 import { osGroups } from '@md-runbook/core/os';
 import { SECTION } from './config';
@@ -107,18 +108,18 @@ export function labelOf(cell: vscode.NotebookCell, headings = notebookHeadings(c
 export function progressStatus(nb: vscode.NotebookDocument, p: Progress = notebookProgress(nb), now = Date.now()): ProgressStatus {
   const e = runbookEstimate(notebookEstimateSteps(nb, cellAttrs, now), notebookPartStates(nb, cellAttrs));
   const left = e.fraction !== undefined && e.leftSeconds > 0 ? e.leftSeconds : undefined;
-  // A floor while steps without any estimate are still to do.
-  const leftText = (s: number): string => `${e.unestimatedLeft > 0 ? 'at least ' : ''}${formatTimeLeft(s)} left`;
   const running = runningCell(nb);
   const complete = p.done + p.skipped;
   let text: string;
   if (running) {
     const step = p.stepOfCell[running.index];
     const part = cellPart(running);
-    const where = step !== undefined ? `Step ${step}/${p.total}` : part === 'ready' ? 'Ready check' : part === 'teardown' ? 'Teardown' : `Cell ${running.index + 1}`;
-    text = `$(sync~spin) ${where} · ${labelOf(running)}${left !== undefined ? ` · ${leftText(left)}` : ''}`;
+    const where = step !== undefined ? undefined : part === 'ready' ? 'Ready check' : part === 'teardown' ? 'Teardown' : `Cell ${running.index + 1}`;
+    // The words of the CLI's pinned line and the app's run bar (core runProgressLine); `at least`
+    // while steps without any estimate are still to do.
+    text = `$(sync~spin) ${runProgressLine({ ...(step !== undefined ? { step } : {}), ...(where ? { where } : {}), total: p.total, label: labelOf(running), estimate: e, open: p.pending }).text}`;
   } else if (p.firstFailed) {
-    text = `$(error) Step ${p.firstFailed.step}/${p.total} failed`;
+    text = `$(error) ${stepFailed(p.firstFailed.step, p.total)}`;
   } else if (p.pending === 0 && p.total > 0) {
     text = `$(pass-filled) Done · ${complete}/${p.total}${p.offered > 0 ? ' · teardown offered' : ''}`;
   } else {

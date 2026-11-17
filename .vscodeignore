@@ -1,6 +1,7 @@
 **
 !out/dist/extension.js
 !out/webview/index.js
+!out/webview/runningStatus.js
 !out/codicons/codicon.css
 !out/codicons/codicon.ttf
 !out/codicons/LICENSE

@@ -31,6 +31,8 @@ import { ShellSettings, isCodeMeta, taskItems } from '@md-runbook/core';
 import { SECTION } from './config';
 import { ExecutionConfig, colorConfig, executionConfig, redactionConfig } from './config';
 import { META_KEY, OutputMetadata, cloudOutput, earlierRuns, earlierRunsOutput, statusLine, statusOutput } from './outputs';
+import { RunningStatus, runningStatusFor } from './runningStatus';
+import { blockEstimate } from './estimates';
 import { CellPlan, ExecuteIO, PrepareContext, PromptCancelled, RunPipeline, RunRecord } from './pipeline';
 import { copyOrigin } from './copyOrigins';
 import { knownSecrets } from './knownSecrets';
@@ -595,6 +597,7 @@ export class RunbookController implements vscode.Disposable {
     const ranSteps: number[] = [];
     let ended = false;
     let timer: NodeJS.Timeout | undefined;
+    let runningStatus: RunningStatus | undefined;
     let cancelSub: vscode.Disposable | undefined;
     /** This cell's abort, while it runs (cancel(), for a runbook call that is stopped). */
     let runningAbort: AbortController | undefined;
@@ -630,6 +633,12 @@ export class RunbookController implements vscode.Disposable {
       // (in-place replacements keep the old metadata on the extension host side).
       await exec.clearOutput();
       await exec.appendOutput([live]);
+      // The running status pinned under the output (runningStatus.ts): a whole-cell run that runs.
+      const attemptsPlanned = lineRun ? 1 : (plan.retry?.attempts ?? 1);
+      runningStatus = !lineRun && prepareError === undefined && plan.skip === undefined ? runningStatusFor(exec, started.getTime(), blockEstimate(cell)?.seconds, attemptsPlanned) : undefined;
+      await runningStatus?.start();
+      /** New outputs go above the running status. */
+      const appendLive = (outputs: vscode.NotebookCellOutput[]): Thenable<void> => (runningStatus ? runningStatus.append(outputs) : exec.appendOutput(outputs));
 
       let flushing = Promise.resolve();
       const flush = (): Promise<void> => {
@@ -644,7 +653,7 @@ export class RunbookController implements vscode.Disposable {
               if (liveStream === undefined || liveStream === g.stream) await exec.appendOutputItems([itemOf(g, colors)], live);
               else {
                 live = new vscode.NotebookCellOutput([itemOf(g, colors)], runMeta('running'));
-                await exec.appendOutput([live]);
+                await appendLive([live]);
               }
               liveStream = g.stream;
             }
@@ -680,7 +689,7 @@ export class RunbookController implements vscode.Disposable {
         live = outputs[outputs.length - 1]!;
         liveStream = groups[groups.length - 1]?.stream;
         await exec.clearOutput();
-        await exec.appendOutput(outputs);
+        await appendLive(outputs);
       };
 
       const failed = (error: string): ExecuteResult => ({ exitCode: null, signal: null, timedOut: false, cancelled: false, error, durationMs: 0 });
@@ -724,6 +733,7 @@ export class RunbookController implements vscode.Disposable {
         const executor = isCall ? this.pipeline.callExecutor! : this.pipeline.executorFor(notebook);
         for (;;) {
           attempt++;
+          runningStatus?.setAttempt(attempt);
           const r = await executor.execute(plan, io, ctx);
           out.flush();
           err.flush();
@@ -775,6 +785,7 @@ export class RunbookController implements vscode.Disposable {
 
       cancelSub.dispose();
       clearInterval(timer);
+      await runningStatus?.end();
       await cleanup();
       out.flush();
       err.flush();
@@ -860,6 +871,7 @@ export class RunbookController implements vscode.Disposable {
       return run;
     } finally {
       if (timer) clearInterval(timer);
+      void runningStatus?.end();
       cancelSub?.dispose();
       if (runningAbort && this.running.get(notebook.uri.toString()) === runningAbort) this.running.delete(notebook.uri.toString());
       await cleanup();
