@@ -282,10 +282,13 @@ func sudoRule(gateAccount string, pool []string, exe string) string {
 	return gateAccount + " ALL=(" + strings.Join(pool, ",") + ") NOPASSWD: " + exe + " " + CellsMode
 }
 
-// runCmd runs a program to its end (at most 20 seconds) with stdin; its stdout, and an error that
+// runLimit: how long runCmd lets a program run.
+const runLimit = 20 * time.Second
+
+// runCmd runs a program to its end (at most runLimit) with stdin; its stdout, and an error that
 // names its exit and the first line of its stderr. In a session of its own: no terminal.
 func runCmd(argv, env []string, stdin []byte) ([]byte, error) {
-	return runFor(20*time.Second, argv, env, stdin)
+	return runFor(runLimit, argv, env, stdin)
 }
 
 // waitDelay: how long a program's output may stay open after it ended or was killed. sudo's

@@ -429,10 +429,11 @@ func (g *Gate) send(text string) {
 }
 
 // sendRequest: the text of a request whose reply the shell prints (run, step, raw, context). In a
-// Job whose pod isn't ready yet, the client hears first that the request waits for it.
-func (g *Gate) sendRequest(text string) {
+// Job whose pod isn't ready yet, the client hears first that the request waits for it. run: the
+// run's number for a signed run, else "".
+func (g *Gate) sendRequest(text, run string) {
 	if g.jobMode() && g.slots[g.cur].sh != nil {
-		g.job.waitFor()
+		g.job.waitFor(run)
 	}
 	g.send(text)
 }
@@ -525,10 +526,13 @@ loop:
 	// (A Job's shells need no ending in the pod: deleting the Job ends them.) A client that went
 	// while the Job's pod was starting, or before the reply of a request that waited for it
 	// (stopped while it waited, as the pod got ready), cuts the session short too: what it sent
-	// would run for no one, and the Job goes now.
-	if !term && g.jobMode() && g.job.leftWaiting() {
-		term = true
-		g.log.Event("event", "job", "status", "left", "job", g.job.name, "reason", "the client left while a request waited for the pod")
+	// would run for no one, and the Job goes now. A signed run's exit that comes back within 2 s
+	// is that request's end (a one-shot client leaves after its reply).
+	if !term && g.jobMode() {
+		if why := g.job.leftWaiting(2 * time.Second); why != "" {
+			term = true
+			g.log.Event("event", "job", "status", "left", "job", g.job.name, "reason", why)
+		}
 	}
 	g.ending.Store(true)
 	if term {
