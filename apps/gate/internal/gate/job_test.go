@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -323,27 +324,36 @@ func TestJobPolicy(t *testing.T) {
 
 	// Accepted: no policy (or no binding) guards the namespace.
 	j.run = answer(nil)
-	if p := j.checkPolicy(); p != "the admission policy md-runbook-ops-jobs doesn't guard the Jobs of namespace md-runbook-ops: a test Job as the gate's own service account md-runbook-ops passed. Apply apps/ops/kubernetes/md-runbook-ops.yaml again (Kubernetes 1.30 or later)." {
+	if p := j.checkPolicy(); p != "the admission policy md-runbook-ops-jobs doesn't guard the Jobs of namespace md-runbook-ops: a test Job as the gate's own service account md-runbook-ops passed. Apply apps/ops/kubernetes/admission-policy.yaml (Kubernetes 1.30 or later)." {
 		t.Errorf("accepted: %s", p)
 	}
-	// Refused for another reason (another policy, a webhook, RBAC), or kubectl failed: refused,
+	// Refused by the API server for another reason (another policy, a webhook, RBAC): refused,
 	// with that reason.
+	const cant = "can't tell whether the admission policy md-runbook-ops-jobs guards the Jobs of namespace md-runbook-ops: "
 	for _, err := range []error{
 		errors.New(`exit status 1: Error from server (Forbidden): error when creating "STDIN": jobs.batch "x" is forbidden: ValidatingAdmissionPolicy 'other-policy' with binding 'other' denied request: no`),
 		errors.New(`exit status 1: Error from server (Forbidden): jobs.batch is forbidden: User "system:serviceaccount:md-runbook-ops:md-runbook-ops" cannot create resource "jobs"`),
-		errors.New("exit status 1: error: You must be logged in to the server (Unauthorized)"),
 	} {
 		j.run = answer(err)
-		p := j.checkPolicy()
-		if !strings.HasPrefix(p, "can't tell whether the admission policy md-runbook-ops-jobs guards the Jobs of namespace md-runbook-ops: a test Job as the gate's own service account was refused for another reason ("+err.Error()+"). ") ||
-			!strings.HasSuffix(p, "Apply apps/ops/kubernetes/md-runbook-ops.yaml again (Kubernetes 1.30 or later).") {
+		if p := j.checkPolicy(); p != cant+"a test Job as the gate's own service account was refused for another reason ("+err.Error()+"). Apply apps/ops/kubernetes/admission-policy.yaml (Kubernetes 1.30 or later)." {
 			t.Errorf("%v: %s", err, p)
 		}
+	}
+	// kubectl failed, or didn't answer in time: it says so.
+	failed := errors.New("exit status 1: error: You must be logged in to the server (Unauthorized)")
+	j.run = answer(failed)
+	if p := j.checkPolicy(); p != cant+"kubectl failed ("+failed.Error()+")" {
+		t.Errorf("failed: %s", p)
+	}
+	late := fmt.Errorf("%w after 20s (%w)", errTimeout, errors.New("signal: killed"))
+	j.run = answer(late)
+	if p := j.checkPolicy(); p != cant+"kubectl didn't answer ("+late.Error()+")" {
+		t.Errorf("timeout: %s", p)
 	}
 
 	// The real Job refused by the policy: job_service_account or job_image doesn't match it.
 	if p := createProblem(denied); !strings.HasPrefix(p, "can't create the cells' Job (exit status 1: ") ||
-		!strings.HasSuffix(p, "): job_service_account and job_image must match the policy md-runbook-ops-jobs in apps/ops/kubernetes/md-runbook-ops.yaml. Change them together") {
+		!strings.HasSuffix(p, "): job_service_account and job_image must match the policy md-runbook-ops-jobs in apps/ops/kubernetes/admission-policy.yaml. Change them together") {
 		t.Errorf("create, policy: %s", p)
 	}
 	if p := createProblem(errors.New("exit status 1: quota")); p != "can't create the cells' Job (exit status 1: quota)" {

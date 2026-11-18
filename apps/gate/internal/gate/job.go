@@ -507,7 +507,8 @@ func (j *kubeJob) checkOwnNamespace() string {
 }
 
 // The admission policy that holds the gate's Jobs to jobManifest's shape (apps/ops/kubernetes/
-// md-runbook-ops.yaml), and how the API server's refusal names it.
+// admission-policy.yaml), and how the API server's refusal names it. (Its sibling
+// md-runbook-ops-exec lets the gate exec only into pods named md-runbook-cells-*: the Jobs'.)
 const (
 	jobPolicy       = "md-runbook-ops-jobs"
 	jobPolicyDenied = "ValidatingAdmissionPolicy '" + jobPolicy + "'"
@@ -520,14 +521,19 @@ const (
 func (j *kubeJob) checkPolicy() string {
 	spec := jobSpec{Name: "md-runbook-cells-check-" + randHex(5), NS: j.ns, OpsPod: j.opsPod, OpsUID: j.opsUID, Image: j.image, SA: j.opsSA, Context: j.context, GateID: "check"}
 	_, err := j.run(j.kc("create", "--dry-run=server", "-f", "-", "-o", "name"), j.env, jobManifest(spec))
-	fix := "Apply apps/ops/kubernetes/md-runbook-ops.yaml again (Kubernetes 1.30 or later)."
+	fix := "Apply apps/ops/kubernetes/admission-policy.yaml (Kubernetes 1.30 or later)."
+	cant := "can't tell whether the admission policy " + jobPolicy + " guards the Jobs of namespace " + j.ns + ": "
 	switch {
 	case err == nil:
 		return "the admission policy " + jobPolicy + " doesn't guard the Jobs of namespace " + j.ns + ": a test Job as the gate's own service account " + j.opsSA + " passed. " + fix
 	case strings.Contains(err.Error(), jobPolicyDenied):
 		return ""
+	case errors.Is(err, errTimeout):
+		return cant + "kubectl didn't answer (" + err.Error() + ")"
+	case !strings.Contains(err.Error(), "Error from server"):
+		return cant + "kubectl failed (" + err.Error() + ")"
 	}
-	return "can't tell whether the admission policy " + jobPolicy + " guards the Jobs of namespace " + j.ns + ": a test Job as the gate's own service account was refused for another reason (" + err.Error() + "). " + fix
+	return cant + "a test Job as the gate's own service account was refused for another reason (" + err.Error() + "). " + fix
 }
 
 // createProblem: why the cells' Job wasn't created. Refused by the admission policy:
@@ -535,7 +541,7 @@ func (j *kubeJob) checkPolicy() string {
 func createProblem(err error) string {
 	msg := "can't create the cells' Job (" + err.Error() + ")"
 	if strings.Contains(err.Error(), jobPolicyDenied) {
-		msg += ": job_service_account and job_image must match the policy " + jobPolicy + " in apps/ops/kubernetes/md-runbook-ops.yaml. Change them together"
+		msg += ": job_service_account and job_image must match the policy " + jobPolicy + " in apps/ops/kubernetes/admission-policy.yaml. Change them together"
 	}
 	return msg
 }

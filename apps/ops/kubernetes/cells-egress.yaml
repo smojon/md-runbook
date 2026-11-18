@@ -8,7 +8,9 @@
 #   kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes -o wide
 # (ENDPOINTS and PORTS; a managed cluster may list several: one ipBlock each.) Some network
 # plugins check before the translation: there add the Service's address too (kubectl get service
-# kubernetes -n default, port 443).
+# kubernetes -n default, port 443). On Cilium, an ipBlock with a node's address may need
+# policy-cidr-match-mode: nodes. Without the right address, sessions refuse (after the Job's pod
+# waits 60 s for the API server).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -20,7 +22,7 @@ spec:
       app.kubernetes.io/name: md-runbook-cells
   policyTypes: [Egress]
   egress:
-    # The cluster's DNS.
+    # The cluster's DNS. NodeLocal DNSCache (169.254.20.10) or OpenShift's DNS: a rule of their own.
     - to:
         - namespaceSelector:
             matchLabels:

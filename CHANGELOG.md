@@ -3,12 +3,16 @@
 ## Unreleased
 
 **Gate admins on Kubernetes:**
-- An admission policy lets the gate's account create only the cells' Job.
-  - Not as another account, not with a Secret, not without the NetworkPolicies' label.
-- Each session checks that the policy is in force, and refuses without it.
-- Apply the manifest again before you update, as a cluster admin. It needs Kubernetes 1.30 or
-  later.
-- With a mirror of the image, set the policy's `repository` first.
+- Admission policies let the gate's account create only the cells' Jobs, and exec only into
+  their pods.
+  - No Job as another account, with a Secret, or without the NetworkPolicies' label.
+  - No exec into the ops pod.
+- Each session checks the Job policy is in force, and refuses without it.
+- Before you update, apply
+  [admission-policy.yaml](apps/ops/kubernetes/admission-policy.yaml) as a cluster admin.
+  - It needs Kubernetes 1.30 or later.
+  - Applying this file leaves your ConfigMap and Deployment as they are.
+- With a mirror of the image, set `repository` in that file first.
 - New, opt-in: [cells-egress.yaml](apps/ops/kubernetes/cells-egress.yaml) limits the Job pods to
   DNS and the API server.
   - The [ops host README](apps/ops/README.md) says how to fill in the address.

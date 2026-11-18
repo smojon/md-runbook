@@ -1,0 +1,145 @@
+# What the ops pod's account may create and exec into, in md-runbook-ops: only the cells' Jobs.
+# Apply it with md-runbook-ops.yaml, as a cluster admin (it is cluster-scoped), on Kubernetes
+# 1.30 or later. Applying it again changes nothing else (your ConfigMap, your Deployment):
+#   kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
+# The gate checks at each session that md-runbook-ops-jobs is in force (else the session doesn't
+# start). Other accounts' Jobs and execs (yours, the cells' elsewhere) aren't affected.
+#
+# RBAC lets the gate's account create any Job here: as any service account, with this
+# namespace's Secrets and ConfigMaps as volumes or env (the host key, the report token,
+# gate.conf), without the label the NetworkPolicies select, on a node or runtime of its choice,
+# or with another image. This policy lets it create only the cells' Job, in the shape
+# md-runbook-gate makes it.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: md-runbook-ops-jobs
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        resources: [jobs]
+        operations: [CREATE, UPDATE]
+  # Only the gate's account (namespace md-runbook-ops, service account md-runbook-ops).
+  matchConditions:
+    - name: the-gate
+      expression: "request.userInfo.username == 'system:serviceaccount:md-runbook-ops:md-runbook-ops'"
+  variables:
+    # The ops image's repository: a mirror changes this one line. Any tag or digest of it.
+    - { name: repository, expression: "'ghcr.io/smojon/md-runbook-ops'" }
+    - name: pod
+      expression: object.spec.template.spec
+  validations:
+    # job_service_account in gate.conf: change both together.
+    - expression: >-
+        has(variables.pod.serviceAccountName) && variables.pod.serviceAccountName == 'md-runbook-cells' &&
+        (!has(variables.pod.serviceAccount) || variables.pod.serviceAccount == 'md-runbook-cells')
+      message: "the gate's Jobs run as the service account md-runbook-cells only"
+    # The NetworkPolicies md-runbook-cells (and md-runbook-cells-egress) select the label. The
+    # gate's two labels, and the four the Job's API adds; no annotations (some network plugins
+    # read them: another network, another address).
+    - expression: >-
+        has(object.spec.template.metadata) && has(object.spec.template.metadata.labels) &&
+        'app.kubernetes.io/name' in object.spec.template.metadata.labels &&
+        object.spec.template.metadata.labels['app.kubernetes.io/name'] == 'md-runbook-cells' &&
+        object.spec.template.metadata.labels.all(k, k in ['app.kubernetes.io/name', 'md-runbook-job',
+        'batch.kubernetes.io/controller-uid', 'batch.kubernetes.io/job-name', 'controller-uid', 'job-name']) &&
+        (!has(object.spec.template.metadata.annotations) || size(object.spec.template.metadata.annotations) == 0)
+      message: "the gate's Jobs' pods carry the label app.kubernetes.io/name=md-runbook-cells, only the gate's and the Job API's labels, and no annotations"
+    - expression: >-
+        !has(object.spec.manualSelector) || !object.spec.manualSelector
+      message: "the gate's Jobs take the selector Kubernetes makes"
+    - expression: >-
+        size(variables.pod.containers) == 1 &&
+        (!has(variables.pod.initContainers) || size(variables.pod.initContainers) == 0) &&
+        (!has(variables.pod.ephemeralContainers) || size(variables.pod.ephemeralContainers) == 0)
+      message: "the gate's Jobs have one container, no init or ephemeral containers"
+    # As many slashes as the repository: "repo:5000/other" would be another registry's image.
+    - expression: >-
+        variables.pod.containers.all(c, has(c.image) &&
+        (c.image.startsWith(variables.repository + ':') || c.image.startsWith(variables.repository + '@sha256:')) &&
+        size(c.image.split('/')) == size(variables.repository.split('/')))
+      message: "the gate's Jobs run the ops image only (the policy's variable repository)"
+    - expression: >-
+        !has(variables.pod.volumes) || variables.pod.volumes.all(v, has(v.emptyDir))
+      message: "the gate's Jobs mount emptyDir volumes only: no Secret, ConfigMap, hostPath or other"
+    - expression: >-
+        variables.pod.containers.all(c, (!has(c.envFrom) || size(c.envFrom) == 0) &&
+        (!has(c.env) || c.env.all(e, !has(e.valueFrom))))
+      message: "the gate's Jobs take no env from Secrets, ConfigMaps or fields (no valueFrom, no envFrom)"
+    - expression: >-
+        !(has(variables.pod.hostNetwork) && variables.pod.hostNetwork) &&
+        !(has(variables.pod.hostPID) && variables.pod.hostPID) &&
+        !(has(variables.pod.hostIPC) && variables.pod.hostIPC) &&
+        variables.pod.containers.all(c, !has(c.ports) || c.ports.all(p, !has(p.hostPort) || p.hostPort == 0))
+      message: "the gate's Jobs share no host namespace (network, PID, IPC) and take no host port"
+    # Where and how the pod runs: the scheduler's and the cluster's defaults, not the gate's choice.
+    - expression: >-
+        !has(variables.pod.runtimeClassName) && !has(variables.pod.nodeName) &&
+        !has(variables.pod.nodeSelector) && !has(variables.pod.affinity) &&
+        !has(variables.pod.tolerations) && !has(variables.pod.priorityClassName)
+      message: "the gate's Jobs choose no runtime class, node, node selector, affinity, tolerations or priority class"
+    # Also Pod Security restricted's, here for the pod's own fields, not the namespace's label.
+    - expression: >-
+        has(variables.pod.securityContext) &&
+        has(variables.pod.securityContext.runAsNonRoot) && variables.pod.securityContext.runAsNonRoot == true &&
+        has(variables.pod.securityContext.seccompProfile) && variables.pod.securityContext.seccompProfile.type == 'RuntimeDefault'
+      message: "the gate's Jobs run as non-root with the seccomp profile RuntimeDefault"
+    - expression: >-
+        variables.pod.containers.all(c, has(c.securityContext) &&
+        has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false &&
+        !(has(c.securityContext.privileged) && c.securityContext.privileged) &&
+        (!has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.add) ||
+        size(c.securityContext.capabilities.add) == 0) &&
+        (!has(c.securityContext.runAsNonRoot) || c.securityContext.runAsNonRoot == true) &&
+        (!has(c.securityContext.seccompProfile) || c.securityContext.seccompProfile.type == 'RuntimeDefault'))
+      message: "the gate's Jobs run without privilege escalation, privileged mode or added capabilities"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: md-runbook-ops-jobs
+spec:
+  policyName: md-runbook-ops-jobs
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: md-runbook-ops
+---
+# RBAC lets the gate's account exec into every pod here, its own too (the host key, the report
+# token, gate.conf). This policy lets it exec only into the cells' Jobs' pods, whose names start
+# with md-runbook-cells- (the Job's name). Attach and port-forward: the same, though its Role
+# grants neither.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: md-runbook-ops-exec
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: [v1]
+        resources: [pods/exec, pods/attach, pods/portforward]
+        operations: [CONNECT]
+  matchConditions:
+    - name: the-gate
+      expression: "request.userInfo.username == 'system:serviceaccount:md-runbook-ops:md-runbook-ops'"
+  validations:
+    - expression: "request.name.startsWith('md-runbook-cells-')"
+      message: "the gate execs only into its Jobs' pods (md-runbook-cells-*)"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: md-runbook-ops-exec
+spec:
+  policyName: md-runbook-ops-exec
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: md-runbook-ops

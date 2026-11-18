@@ -3,7 +3,9 @@
 # roles below are all a runbook can do: read in every namespace, change only in the namespaces
 # you bind. The ops pod's own account may only run those Jobs. There is no kubeconfig to copy
 # and no cloud key anywhere. Before `kubectl apply -f` this file, see apps/ops/README.md: your
-# keys, your signers, and the cluster's name for kube-context:.
+# keys, your signers, and the cluster's name for kube-context:. Apply admission-policy.yaml
+# with it. Applying this file again resets the ConfigMap and the Deployment to these samples:
+# apply your edited copy.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -21,7 +23,8 @@ metadata:
 # What the gate needs for each session's Job, in this namespace only: create, list and delete
 # Jobs, find their pods, exec into them. The gate checks at each session that it has these
 # rights and none of the cells' (else the session doesn't start). It also lists the pods and
-# service accounts here: this namespace must hold the ops host alone (README.md).
+# service accounts here: this namespace must hold the ops host alone (README.md). RBAC can't
+# say which Jobs, nor which pods: admission-policy.yaml (apply it too) allows only the cells'.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -55,88 +58,6 @@ subjects:
   - kind: ServiceAccount
     name: md-runbook-ops
     namespace: md-runbook-ops
----
-# RBAC lets the gate's account create any Job here: as any service account, with this
-# namespace's Secrets and ConfigMaps as volumes or env (the host key, the report token, gate.conf),
-# without the label the NetworkPolicies select, or another image. This policy lets it create only
-# the cells' Job, in the shape md-runbook-gate makes it. The gate checks at each session that it
-# is enforced (else the session doesn't start). Cluster-scoped: apply it as a cluster admin.
-# Kubernetes 1.30 or later. Other accounts' Jobs (yours, the cells' elsewhere) aren't affected.
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: md-runbook-ops-jobs
-spec:
-  failurePolicy: Fail
-  matchConstraints:
-    resourceRules:
-      - apiGroups: [batch]
-        apiVersions: [v1]
-        resources: [jobs]
-        operations: [CREATE, UPDATE]
-  # Only the gate's account (namespace md-runbook-ops, service account md-runbook-ops).
-  matchConditions:
-    - name: the-gate
-      expression: "request.userInfo.username == 'system:serviceaccount:md-runbook-ops:md-runbook-ops'"
-  variables:
-    # The ops image's repository: a mirror changes this one line. Any tag or digest of it.
-    - { name: repository, expression: "'ghcr.io/smojon/md-runbook-ops'" }
-    - name: pod
-      expression: object.spec.template.spec
-  validations:
-    # job_service_account in gate.conf: change both together.
-    - expression: >-
-        has(variables.pod.serviceAccountName) && variables.pod.serviceAccountName == 'md-runbook-cells' &&
-        (!has(variables.pod.serviceAccount) || variables.pod.serviceAccount == 'md-runbook-cells')
-      message: "the gate's Jobs run as the service account md-runbook-cells only"
-    # The NetworkPolicies md-runbook-cells (and md-runbook-cells-egress) select it.
-    - expression: >-
-        has(object.spec.template.metadata) && has(object.spec.template.metadata.labels) &&
-        'app.kubernetes.io/name' in object.spec.template.metadata.labels &&
-        object.spec.template.metadata.labels['app.kubernetes.io/name'] == 'md-runbook-cells'
-      message: "the gate's Jobs carry the label app.kubernetes.io/name=md-runbook-cells"
-    - expression: >-
-        size(variables.pod.containers) == 1 &&
-        (!has(variables.pod.initContainers) || size(variables.pod.initContainers) == 0) &&
-        (!has(variables.pod.ephemeralContainers) || size(variables.pod.ephemeralContainers) == 0)
-      message: "the gate's Jobs have one container, no init or ephemeral containers"
-    # As many slashes as the repository: "repo:5000/other" would be another registry's image.
-    - expression: >-
-        variables.pod.containers.all(c, has(c.image) &&
-        (c.image.startsWith(variables.repository + ':') || c.image.startsWith(variables.repository + '@sha256:')) &&
-        size(c.image.split('/')) == size(variables.repository.split('/')))
-      message: "the gate's Jobs run the ops image only (the policy's variable repository)"
-    - expression: >-
-        !has(variables.pod.volumes) || variables.pod.volumes.all(v, has(v.emptyDir))
-      message: "the gate's Jobs mount emptyDir volumes only: no Secret, ConfigMap, hostPath or other"
-    - expression: >-
-        variables.pod.containers.all(c, (!has(c.envFrom) || size(c.envFrom) == 0) &&
-        (!has(c.env) || c.env.all(e, !has(e.valueFrom))))
-      message: "the gate's Jobs take no env from Secrets, ConfigMaps or fields (no valueFrom, no envFrom)"
-    - expression: >-
-        !(has(variables.pod.hostNetwork) && variables.pod.hostNetwork) &&
-        !(has(variables.pod.hostPID) && variables.pod.hostPID) &&
-        !(has(variables.pod.hostIPC) && variables.pod.hostIPC)
-      message: "the gate's Jobs share no host namespace (network, PID, IPC)"
-    - expression: >-
-        variables.pod.containers.all(c, has(c.securityContext) &&
-        has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false &&
-        !(has(c.securityContext.privileged) && c.securityContext.privileged) &&
-        (!has(c.securityContext.capabilities) || !has(c.securityContext.capabilities.add) ||
-        size(c.securityContext.capabilities.add) == 0))
-      message: "the gate's Jobs run without privilege escalation, privileged mode or added capabilities"
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: md-runbook-ops-jobs
-spec:
-  policyName: md-runbook-ops-jobs
-  validationActions: [Deny]
-  matchResources:
-    namespaceSelector:
-      matchLabels:
-        kubernetes.io/metadata.name: md-runbook-ops
 ---
 # The sessions' Jobs: what their blocks may do in the cluster is this account's.
 apiVersion: v1

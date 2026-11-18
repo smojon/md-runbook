@@ -11,7 +11,8 @@
 #   - pod notices (protocol 4): `job`, `starting`, `ready` before the reply; a client that
 #     goes while the pod starts ends the session, and the Job goes at once;
 #   - the admission policy md-runbook-ops-jobs: without its binding, no session; with it, the
-#     gate's account can't create a Job as another account, with a Secret, or without the label;
+#     gate's account can't create a Job as another account, with a Secret, without the label,
+#     or of another shape; md-runbook-ops-exec: it can't exec into the ops pod;
 #   - cells-egress.yaml: blocks still reach the API server and DNS, not another namespace's
 #     Service nor the internet.
 # Needs KEYS (client, ssh_host_ecdsa_key.pub) and the ops Service forwarded to 127.0.0.1:$PORT.
@@ -187,7 +188,7 @@ grep -q '__MDRB_0000ab00__' "$work/g/out" && fail "a session started without the
 kubectl create -f "$work/binding.json"
 
 # The policy itself, as the gate's account would ask (kind's admin may impersonate it): a Job
-# like the gate's passes (a dry run); as another account, with a Secret, without the label: no.
+# like the gate's passes (a dry run); any other shape is refused by the policy.
 image=$(k get deployment md-runbook-ops -o jsonpath='{.spec.template.spec.containers[0].image}')
 as_gate=(--as="system:serviceaccount:$ns:md-runbook-ops")
 test_job() { # SERVICE_ACCOUNT LABEL VOLUME
@@ -200,28 +201,57 @@ test_job() { # SERVICE_ACCOUNT LABEL VOLUME
 "volumeMounts":[{"name":"v","mountPath":"/v"}]}],"volumes":['"$3"']}}}}'
 }
 empty='{"name":"v","emptyDir":{}}'
-denied() { # WHAT JOB: refused by the policy; a Job that got through is deleted, and fails
-  local out
-  if out=$(kubectl "${as_gate[@]}" create -f - -o name <<<"$2" 2>&1); then
-    k delete "$out" --wait=false || true
-    fail "$1: the gate's account created it"
+good=$(test_job md-runbook-cells md-runbook-cells "$empty")
+variant() { jq -c "$1" <<<"$good"; } # JQ_FILTER: the good Job, changed
+# denied MODE WHAT JOB: refused by the policy (MODE dry: a server dry run; real: a create, and a
+# Job that got through is deleted). 1 when refused for another reason.
+denied() {
+  local out dry=()
+  [ "$1" = dry ] && dry=(--dry-run=server)
+  if out=$(kubectl "${as_gate[@]}" create "${dry[@]}" -f - -o name <<<"$3" 2>&1); then
+    [ "$1" = dry ] || k delete "$out" --wait=false || true
+    fail "$2: the gate's account may create it ($out)"
   fi
-  grep -qF "$policy" <<<"$out" || { echo "$out" >&2; return 1; }
-  echo "ok: $1: refused by the policy"
+  grep -qF "$policy" <<<"$out" || { echo "$2: $out" >&2; return 1; }
+  echo "ok: $2: refused by the policy"
 }
-# The first one also waits until the binding is back in force.
+# The re-created binding takes a moment to be in force: dry runs until it is. (A dry run that
+# passes meanwhile is no failure yet.)
 for i in $(seq 1 30); do
-  denied "a Job as the gate's own account" "$(test_job md-runbook-ops md-runbook-cells "$empty")" && break
-  [ "$i" -lt 30 ] || fail "a Job as the gate's own account: not refused by the policy"
+  out=$(kubectl "${as_gate[@]}" create --dry-run=server -f - -o name <<<"$(test_job md-runbook-ops md-runbook-cells "$empty")" 2>&1) || true
+  grep -qF "$policy" <<<"$out" && break
+  [ "$i" -lt 30 ] || fail "the binding is back, but a Job as the gate's own account isn't refused after 30 s: $out"
   sleep 1
 done
-denied "a Job as the account default" "$(test_job default md-runbook-cells "$empty")" || fail "account default"
-denied "a Job with the host key Secret as a volume" \
+echo "the binding is in force again after $i s"
+denied real "a Job as the gate's own account" "$(test_job md-runbook-ops md-runbook-cells "$empty")" || fail "own account"
+denied real "a Job as the account default" "$(test_job default md-runbook-cells "$empty")" || fail "account default"
+denied real "a Job with the host key Secret as a volume" \
   "$(test_job md-runbook-cells md-runbook-cells '{"name":"v","secret":{"secretName":"md-runbook-ops-hostkey"}}')" || fail "a Secret volume"
-denied "a Job without the label app.kubernetes.io/name=md-runbook-cells" "$(test_job md-runbook-cells other "$empty")" || fail "no label"
-out=$(kubectl "${as_gate[@]}" create --dry-run=server -f - -o name <<<"$(test_job md-runbook-cells md-runbook-cells "$empty")" 2>&1) ||
+denied real "a Job without the label app.kubernetes.io/name=md-runbook-cells" "$(test_job md-runbook-cells other "$empty")" || fail "no label"
+for c in \
+  'another registry|.spec.template.spec.containers[0].image="md-runbook-ops:5000/evil:x"' \
+  'another repository|.spec.template.spec.containers[0].image="md-runbook-ops-evil:x"' \
+  'envFrom a ConfigMap|.spec.template.spec.containers[0].envFrom=[{"configMapRef":{"name":"md-runbook-ops-gate"}}]' \
+  'hostNetwork|.spec.template.spec.hostNetwork=true' \
+  'another label|.spec.template.metadata.labels.extra="1"' \
+  'an annotation|.spec.template.metadata.annotations={"k8s.v1.cni.cncf.io/networks":"other"}' \
+  'a runtime class|.spec.template.spec.runtimeClassName="runc"' \
+  'a node|.spec.template.spec.nodeName="ops-control-plane"'; do
+  denied dry "a Job with ${c%%|*}" "$(variant "${c#*|}")" || fail "${c%%|*}"
+done
+# The Job's API adds its labels (job-name, controller-uid) before admission: the policy allows them.
+out=$(kubectl "${as_gate[@]}" create --dry-run=server -f - -o json <<<"$good" 2>&1) ||
   fail "a Job like the gate's, as the gate's account: $out"
-echo "ok: a Job like the gate's passes ($out)"
+echo "ok: a Job like the gate's passes, its pods' labels: $(jq -c '.spec.template.metadata.labels' <<<"$out")"
+
+# Exec: the gate's account may exec only into its Jobs' pods (the sessions above did), not into
+# the ops pod (policy md-runbook-ops-exec).
+if out=$(kubectl "${as_gate[@]}" -n "$ns" exec "$ops_pod" -c ops -- true 2>&1); then
+  fail "the gate's account may exec into the ops pod"
+fi
+grep -qF "ValidatingAdmissionPolicy 'md-runbook-ops-exec'" <<<"$out" || fail "exec into the ops pod: refused, but not by md-runbook-ops-exec: $out"
+echo "ok: exec into the ops pod as the gate's account: refused by the policy"
 
 # ---- cells-egress.yaml: the Job pods reach DNS and the API server, nothing else ----
 # The API server's endpoint (what the NetworkPolicy sees), as README.md says to find it.

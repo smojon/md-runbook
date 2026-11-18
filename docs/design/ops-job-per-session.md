@@ -75,20 +75,28 @@ own. They can't reach the gate's token, log or state, nor another session.
 - Cells' account: read everywhere but Secrets, ConfigMaps and pod logs. Those two, and operate
   rights, per namespace. Never bound in the ops namespace.
 
-## Admission policy
+## Admission policies
 
-- RBAC can't limit the shape of the Jobs the ops account creates. Workload creation implies
-  the namespace's Secrets and service accounts (RBAC good practices).
-- The ValidatingAdmissionPolicy `md-runbook-ops-jobs` (Kubernetes 1.30+), bound with `Deny` to
-  the ops namespace. It matches Job CREATE and UPDATE by the ops account only.
-- The policy allows `jobManifest`'s shape:
-  - the cells' account and label;
+- RBAC can't limit the shape of the Jobs the ops account creates, nor the pods it execs into.
+  Workload creation implies the namespace's Secrets and service accounts (RBAC good practices).
+- `apps/ops/kubernetes/admission-policy.yaml` (Kubernetes 1.30+): two ValidatingAdmissionPolicies,
+  bound with `Deny` to the ops namespace, matching the ops account only. A file of its own, so
+  that an update applies it without resetting the sample ConfigMap.
+- `md-runbook-ops-jobs`: Job CREATE and UPDATE. It allows `jobManifest`'s shape:
+  - the cells' account and label; only the gate's labels and the Job API's four, no annotations;
+  - no `manualSelector`;
   - one container of the ops image's repository (a `variables` entry);
   - `emptyDir` volumes only, no `valueFrom` or `envFrom`;
-  - no host namespaces, privilege escalation or added capabilities.
+  - no host namespaces or host ports, privilege escalation or added capabilities;
+  - non-root and seccomp `RuntimeDefault` in the pod itself, not only through Pod Security;
+  - no runtime class, node, node selector, affinity, tolerations or priority class.
+- `md-runbook-ops-exec`: CONNECT on `pods/exec`, `pods/attach`, `pods/portforward`. The pod's
+  name (`request.name`) must start with `md-runbook-cells-`, as the Jobs' pods do.
 - Self-check, before the sweep: `kubectl create --dry-run=server` of the cells' Job as the ops
   account itself. It must fail, naming `ValidatingAdmissionPolicy 'md-runbook-ops-jobs'`.
-  - Accepted, or refused for another reason: no session.
+  (CI showed that the policy runs on server dry runs.)
+  - Accepted, or refused for another reason: no session. A kubectl failure or timeout says so.
+  - The exec policy isn't checked: it comes in the same file.
   - The real Job refused by the policy: the message names `job_service_account` and
     `job_image`.
 - No opt-out: every supported Kubernetes version has the API.
