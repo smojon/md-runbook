@@ -2,11 +2,20 @@
 
 ## Unreleased
 
+## 0.30.1
+
+What's new:
+- On Kubernetes, the ops host needs a namespace of its own.
+- Lint warns before the next signing of a runbook would fail.
+- A new guide shows the ops host [without an open port](docs/features/ops-outbound.md) (Tailscale, Cloudflare).
+
 **Gate admins on Kubernetes:**
-- The ops host needs a namespace of its own. A session refuses when the gate's namespace has
-  other apps' pods or service accounts (security review by a user, 2026-11-17).
-- Apply the manifest again: the gate's Role gains `list` on `serviceaccounts`.
-- The README recommends `signers = 2` for runbooks that change a cluster.
+- A session refuses when the gate's namespace has other apps' pods or service accounts
+  (security review by a user, 2026-11-17).
+- Apply the manifest again before you update: the gate's Role gains `list` on
+  `serviceaccounts`. Without it, the self-check refuses.
+- The [ops host README](apps/ops/README.md) recommends `signers = 2` for runbooks that change
+  a cluster.
 
 **Lint:** a signed runbook with a front matter `kube-context:` warns on each bash block without
 its own `kube-context=`. Signing refuses those since 0.28, so the next signing would fail.
