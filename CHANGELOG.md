@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.31.0
+
+What's new:
+- On Kubernetes, admission policies limit the ops host's gate to the cells' Jobs and pods.
+- **Gate admins: apply the admission policy before you update** (see below), or sessions refuse.
+- Redaction hides the whole word when text is glued after a quoted secret.
+
 **Gate admins on Kubernetes:**
 - Admission policies let the gate's account create only the cells' Jobs, and exec only into
   their pods.
