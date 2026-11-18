@@ -226,6 +226,13 @@ describe('text glued to a closing quote is part of the value', () => {
     [`smbclient //h/s -U 'admin%Kd4wD'Rp2uF`, `smbclient //h/s -U 'admin%${R}`],
     [`openssl rsa -passin 'pass:Kd4wD'Rp2uF -in k`, `openssl rsa -passin 'pass:${R} -in k`],
     [`htpasswd -b f admin 'Kd4wD'Rp2uF`, `htpasswd -b f admin ${R}`],
+    // a tail may start with `- @ ! % ~ ^ * = ? /` too, and hold `\X` pairs
+    ...['-', '@', '!', '%', '~', '^', '*', '=', '?', '/'].map((c): [string, string] => [`password='Kd4wD'${c}Rp2uF`, `password='${R}`]),
+    [`password='Kd4wD'Rp${B} 2uF next`, `password='${R} next`],
+    [`<input password="Kd4wD"/>`, `<input password="${R}>`],
+    // escaped values glue segments too: the inner shell reads `Kd4wDRp2uFTn6vE`
+    [`sh -c "db --password=${B}"Kd4wD${B}"Rp2uF${B}"Tn6vE${B}" x"`, `sh -c "db --password=${B}"${R} x"`],
+    [`sh -c "db --password=${B}"Kd4wD${B}"Rp2uF'Tn6vE' x"`, `sh -c "db --password=${B}"${R} x"`],
   ];
   for (const [input, expected] of cases) {
     it(input, () => {
@@ -248,14 +255,39 @@ describe('text glued to a closing quote is part of the value', () => {
     [`password='Kd4wD'|x`, `password='${R}'|x`],
     [`password='Kd4wD'`, `password='${R}'`],
     ['`password="Kd4wD"`', `\`password="${R}"\``],
-    [`<input password="Kd4wD"/>`, `<input password="${R}"/>`],
     [`password="Kd4wD".`, `password="${R}".`],
+    [`password="Kd4wD".encode()`, `password="${R}".encode()`],
+    [`password='Kd4wD'+suffix`, `password='${R}'+suffix`],
+    [`password: 'Kd4wD':x`, `password: '${R}':x`],
     // the closing quote of a string around the command
     [`{"cmd": "mysql -p'Kd4wD'", "x": "y"}`, `{"cmd": "mysql -p${R}", "x": "y"}`],
     [`ssh h "mysql -p'Kd4wD'" && echo "ok"`, `ssh h "mysql -p${R}" && echo "ok"`],
     [`args: ["--password='Kd4wD'","-v"]`, `args: ["--password='${R}'","-v"]`],
   ];
   for (const [input, expected] of kept) it(input, () => assert.equal(r.redact(input), expected));
+
+  // A quote that opens the next value (after a key, a flag, `-u`, htpasswd's USER) is never glued
+  // over: that value is still read from its start (review of the glued-tail fix).
+  const next = [
+    `password: 'Kd4wD'' token: 'Tn6vE Rp2uF'`,
+    `password="Kd4wD""token="Rp2uF Tn6vE"`,
+    `password='Kd4wD'${B}''token='Rp2uF Tn6vE'`,
+    `Authorization: 'Kd4wD''Authorization: 'Bearer Rp2uF Tn6vE'`,
+    `{"Authorization": "Kd4wD""Authorization": "Rp2uF Tn6vE"}`,
+    `htpasswd -b f u 'Kd4wD''htpasswd -b f u 'Rp2uF Tn6vE'`,
+    `--password 'Kd4wD'' --password 'Rp2uF Tn6vE'`,
+    `redis-cli -a 'Kd4wD'' -a 'Rp2uF Tn6vE' ping`,
+    `curl -u "admin:Kd4wD${B}"b -u "x:Rp2uF Tn6vE"`,
+    `openssl rsa -passin "pass:Kd4wD${B}"b -passout "pass:Rp2uF Tn6vE"`,
+    `smbclient //h/s -U "admin%Kd4wD${B}"b -U "x%Rp2uF Tn6vE"`,
+    `password=${B}"Kd4wD${B}"x${B}"token=${B}"Rp2uF Tn6vE${B}"`,
+  ];
+  for (const input of next) {
+    it(input, () => {
+      const out = r.redact(input);
+      assert.ok(!/Kd4wD|Rp2uF|Tn6vE/.test(out), `${input} -> ${out}`);
+    });
+  }
 });
 
 describe('redaction of real-world IAM/OpenShift output', () => {

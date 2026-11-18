@@ -56,6 +56,7 @@ const VALUES = [
   's3c\\\\\\"ret', 'a\\\\\\\\\\"', 'a\\\\"b', 'a\\\\\\\\"b', 'a\\\\\\\\\\\\\\"b', "a\\\\\\'b", '\\\\\\\\\\\\x',
   // text glued to a closing quote: words, segments, `'\''`, and what ends one
   '"a"b', "'a'b", `'a'"b"c`, "'it'\\''s'", '"a""b"', `"a"'b c'`, "'a'.b", "'a'$X", '\\"a\\"b', '\\"a\\"-b', `'a'"b`, "\"a\"\\'b", "'a'b,c", "'a'b)c", "'a'`b`", "'a''b c'", '"a""b c"', `'a'b"c d"`,
+  "'a'-b", '"a"@b', "'a'/>", "'a'b\\ c", '"a"+b', '\\"a\\"b\\"c\\"', "\\\"a\\\"b'c'", "'a'' token: 'b c'", '"a""x="', "'a'\\''x='",
 ];
 const FLAGS = [
   '--password', '-password', '--PASSWORD', '--pass', '-pass', '--passwd', '--client-secret', '--token', '-token', '--api-key', '--apikey',
