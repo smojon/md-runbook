@@ -54,6 +54,8 @@ const VALUES = [
   'abc\\"def', 'a\\\\b', '\\', 'x\\', '\\"', "\\'", 'C:\\', '\\"hunter2\\"', '"a\\"b"', '"C:\\"', "'it\\'s'", '"a\\\r"', '\\"a\\\\\\"b\\"',
   // escaped twice: runs of 2 to 7 backslashes before a quote
   's3c\\\\\\"ret', 'a\\\\\\\\\\"', 'a\\\\"b', 'a\\\\\\\\"b', 'a\\\\\\\\\\\\\\"b', "a\\\\\\'b", '\\\\\\\\\\\\x',
+  // text glued to a closing quote: words, segments, `'\''`, and what ends one
+  '"a"b', "'a'b", `'a'"b"c`, "'it'\\''s'", '"a""b"', `"a"'b c'`, "'a'.b", "'a'$X", '\\"a\\"b', '\\"a\\"-b', `'a'"b`, "\"a\"\\'b", "'a'b,c", "'a'b)c", "'a'`b`", "'a''b c'", '"a""b c"', `'a'b"c d"`,
 ];
 const FLAGS = [
   '--password', '-password', '--PASSWORD', '--pass', '-pass', '--passwd', '--client-secret', '--token', '-token', '--api-key', '--apikey',
@@ -118,7 +120,7 @@ function keyValueLine(r: () => number): string {
   const sep = r() < 0.7 ? pick(r, SEPS) : pad(r) + pick(r, [':', '=']) + pad(r);
   const value = pick(r, VALUES);
   const pre = r() < 0.5 ? '' : pick(r, ['export ', '  ', '- ', '{', '"', "'", 'x', '$', '.', '-', '[', 'set ', '?', '&', '\t', ' ']);
-  const post = r() < 0.5 ? '' : pick(r, [',', ';', '}', '"', "'", ' ', '&x=1', ' # c', pad(r) + 'x', '\r']);
+  const post = r() < 0.5 ? '' : pick(r, [',', ';', '}', '"', "'", ' ', '&x=1', ' # c', pad(r) + 'x', '\r', 'x', '$y', '"b"', "'b'c", "\\'", ')', ']']);
   return `${pre}${q1}${key}${q1}${sep}${q2}${value}${q2}${post}`;
 }
 

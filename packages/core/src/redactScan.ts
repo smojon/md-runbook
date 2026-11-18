@@ -414,15 +414,68 @@ function keyValue(s: Scan, p: number, keyEndsAt: (s: Scan, k: number) => boolean
   return keyValueEnd(s, p);
 }
 
+/** GLUE_START (redact.ts): `[\w$]` */
+const glueStart = (c: number): boolean => isWord(c) || c === DOLLAR;
+/** GLUE_CHAR (redact.ts): `[^\s"'\\|&;()<>,}\]`]` */
+const glueChar = (c: number): boolean =>
+  c === c &&
+  !isS(c) &&
+  !isQuote(c) &&
+  c !== BACKSLASH &&
+  c !== PIPE &&
+  c !== AMP &&
+  c !== SEMI &&
+  c !== LPAREN &&
+  c !== RPAREN &&
+  c !== 60 &&
+  c !== 62 &&
+  c !== COMMA &&
+  c !== RBRACE &&
+  c !== 93 &&
+  c !== BACKTICK;
+
+/**
+ * The end of the text glued to a closing quote, from i right after it (GLUED in redact.ts; i if
+ * there is none): GLUE_START, a quoted segment of GLUE_CHAR (of anything but a line end right
+ * after a quote of its kind) or `\'`, then GLUE_CHAR, segments and `\'`. Read once, up to the
+ * first character that doesn't go on (a segment's to its quote).
+ */
+function glueEnd(s: Scan, i: number): number {
+  for (let e = i; ; ) {
+    const c = s.c(e);
+    if (e > i ? glueChar(c) : glueStart(c)) e++;
+    else if (isQuote(c)) {
+      const f = s.c(e - 1) === c ? s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(e + 1) : s.runEnd(e + 1, glueChar);
+      if (s.c(f) !== c) return e;
+      e = f + 1;
+    } else if (c === BACKSLASH && s.c(e + 1) === SQ) e += 2;
+    else return e;
+  }
+}
+
+/**
+ * Does a key's value open at the quote at o (at its backslash for `\"`)? Then nothing is glued to
+ * that quote when it closes a value (notAfterKey in redact.ts): the next value starts there.
+ */
+type KeyBefore = (s: Scan, o: number) => boolean;
+
+/** The end of a value whose closing quote is at e: after the text glued to it, if any (else e, the quote left out). */
+function glued(s: Scan, e: number, keyBefore?: KeyBefore): number {
+  if (keyBefore?.(s, e)) return e;
+  const g = glueEnd(s, e + 1);
+  return g > e + 1 ? g : e;
+}
+
 /**
  * The end of the quoted value that starts at p (quotedAfter in redact.ts), or -1. After `"` or
- * `'`: quoteRestEnd. After `\"` or `\'` (escaped JSON): up to `\"` or `\'`.
+ * `'`: quoteRestEnd. After `\"` or `\'` (escaped JSON): up to `\"` or `\'`. `keyBefore`: the
+ * value's key (nothing glued to a quote after it).
  */
-export function quotedValueEnd(s: Scan, p: number): number {
+export function quotedValueEnd(s: Scan, p: number, keyBefore?: KeyBefore): number {
   const q = s.c(p - 1);
   if (!isQuote(q)) return -1;
-  if (s.c(p - 2) === BACKSLASH) return escapedValueEnd(s, p, q);
-  return quoteRestEnd(s, p, q);
+  if (s.c(p - 2) === BACKSLASH) return escapedValueEnd(s, p, q, keyBefore);
+  return quoteRestEnd(s, p, q, keyBefore);
 }
 
 /** CLOSES (redact.ts) at i: `;`, `&`, `|`, a space or the text's end, after a `\"` that closes its quote. */
@@ -435,9 +488,10 @@ export function closesAt(s: Scan, i: number): boolean {
  * From p in a quote q opened before it, the closing quote (DQ_REST and SQ_REST in redact.ts), or
  * -1 if there is no value. In '…' the next `'` (no escapes, as in sh and PowerShell). In "…" read
  * with backslash escapes, but a `\"` before CLOSES closes it (`"C:\secrets\"; …`); else (a
- * backslash before the line's end) up to the next `"`.
+ * backslash before the line's end) up to the next `"`. Text glued to the closing quote is in the
+ * value too (glued: the end is after it).
  */
-function quoteRestEnd(s: Scan, p: number, q: number): number {
+function quoteRestEnd(s: Scan, p: number, q: number, keyBefore?: KeyBefore): number {
   if (q === DQ) {
     let e = p;
     for (;;) {
@@ -455,10 +509,10 @@ function quoteRestEnd(s: Scan, p: number, q: number): number {
       }
       e += 2;
     }
-    if (e > p && s.c(e) === DQ) return e;
+    if (e > p && s.c(e) === DQ) return glued(s, e, keyBefore);
   }
   const f = s.next(q === DQ ? 'q"' : "q'", (c) => c === q || c === CR || c === LF).find(p);
-  return f > p && s.c(f) === q ? f : -1;
+  return f > p && s.c(f) === q ? glued(s, f, keyBefore) : -1;
 }
 
 /**
@@ -466,9 +520,10 @@ function quoteRestEnd(s: Scan, p: number, q: number): number {
  * that closes it, or -1. A run of k backslashes before the quote: k = 1, 5, 9… is a closing `\"`
  * (after (k-1)/2 escaped backslashes, an even number), k = 3, 7… an escaped quote in the value
  * (`s3c\\\"ret`), an even k a bare quote (the string around ends: no value). The closing `\"` must
- * be followed by ESC_CLOSES (escClosesAt), else there is no value.
+ * be followed by ESC_CLOSES (escClosesAt), or by glued text (ESC_GLUED: the end is after it), else
+ * there is no value.
  */
-function escapedValueEnd(s: Scan, p: number, q: number): number {
+function escapedValueEnd(s: Scan, p: number, q: number, keyBefore?: KeyBefore): number {
   for (let e = p; ; ) {
     const c = s.c(e);
     if (c !== c || c === CR || c === LF || c === q) return -1;
@@ -481,8 +536,11 @@ function escapedValueEnd(s: Scan, p: number, q: number): number {
     if (d !== d || d === CR || d === LF) return -1;
     if (d !== q) e = r;
     else if ((r - e) % 4 === 3) e = r + 1;
-    else if ((r - e) % 4 === 1) return r - 1 > p && escClosesAt(s, r + 1) ? r - 1 : -1;
-    else return -1;
+    else if ((r - e) % 4 === 1) {
+      if (r - 1 <= p) return -1;
+      if (escClosesAt(s, r + 1)) return r - 1;
+      return glueStart(s.c(r + 1)) && !keyBefore?.(s, r - 1) ? s.runEnd(r + 2, glueChar) : -1;
+    } else return -1;
   }
 }
 
@@ -498,7 +556,10 @@ function quotedValueAfterKey(s: Scan, p: number, keyEndsAt: (s: Scan, k: number)
   if (o < 0) return -1;
   const k = keyEnd(s, o);
   if (k < 0 || !keyEndsAt(s, k) || !notAValue(s, p)) return -1;
-  return quotedValueEnd(s, p);
+  return quotedValueEnd(s, p, (t, c) => {
+    const kc = keyEnd(t, c);
+    return kc >= 0 && keyEndsAt(t, kc);
+  });
 }
 
 const quotedKeyValue = (s: Scan, p: number): number => quotedValueAfterKey(s, p, secretKeyEndsAt);
@@ -577,7 +638,7 @@ function flagValue(s: Scan, p: number): number {
   if (flagValueIsReference(s, p)) return -1;
   if (isQuote(c)) {
     const e = s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(p + 1);
-    return s.c(e) === c ? e + 1 : -1;
+    return s.c(e) === c ? glueEnd(s, e + 1) : -1;
   }
   return s.runEnd(p, flagValueChar);
 }
@@ -606,7 +667,7 @@ function quotedRestEnd(s: Scan, p: number, q: number): number {
   if ((q === DQ && c === DOLLAR) || isReference(s, p)) return -1;
   if (q === DQ) return quoteRestEnd(s, p, q);
   const e = s.next("q'", (x) => x === SQ || x === CR || x === LF).find(p);
-  return e > p && s.c(e) === SQ ? e : -1;
+  return e > p && s.c(e) === SQ ? glued(s, e) : -1;
 }
 
 /** `[^}\s"']`: a character of a `${…}` user part (QUOTED_USER in redact.ts). */
@@ -778,9 +839,11 @@ function passKeyValue(s: Scan, p: number): number {
 function quotedHeader(s: Scan, p: number, name: string): number {
   const o = quoteOpen(s, p);
   if (o < 0) return -1;
-  const k = keyEnd(s, o);
-  if (k < 0 || !s.is(k - name.length, name) || isWord(s.c(k - name.length - 1))) return -1;
-  return quotedValueEnd(s, p);
+  const named = (t: Scan, i: number): boolean => {
+    const k = keyEnd(t, i);
+    return k >= 0 && t.is(k - name.length, name) && !isWord(t.c(k - name.length - 1));
+  };
+  return named(s, o) ? quotedValueEnd(s, p, named) : -1;
 }
 
 // The patterns that read `[ \t]` around a separator or after a flag, in DEFAULT_PATTERNS order:
@@ -1306,7 +1369,7 @@ function passwordTool(s: Scan, p: number): number {
     if (!valueOk || !(flagEnd < p ? rule.space === true : rule.glued === true) || !toolFlagEndsAt(s, flagEnd, rule, bit)) continue;
     if (isQuote(c)) {
       const e = s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(p + 1);
-      if (s.c(e) === c) return e + 1;
+      if (s.c(e) === c) return glueEnd(s, e + 1);
       continue;
     }
     return s.runEnd(p, flagValueChar);
@@ -1413,7 +1476,7 @@ function htpasswdBatch(s: Scan, p: number): number {
   const c = s.c(p);
   if (isQuote(c)) {
     const e = s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(p + 1);
-    return s.c(e) === c ? e + 1 : -1;
+    return s.c(e) === c ? glueEnd(s, e + 1) : -1;
   }
   return flagValueChar(c) ? s.runEnd(p, flagValueChar) : -1;
 }

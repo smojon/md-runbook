@@ -17,6 +17,9 @@
   DNS and the API server.
   - The [ops host README](apps/ops/README.md) says how to fill in the address.
 
+**Fixed:** a secret in quotes with more text glued after the closing quote (`password='abc'def`)
+showed that text. A shell reads it as one word, so the whole word is now redacted.
+
 ## 0.30.1
 
 What's new:

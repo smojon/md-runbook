@@ -38,17 +38,42 @@ const SECRET_MANIFESTS = 'k8s-secret-data';
 
 /** A key's value: a backslash before a quote (`\"` of escaped JSON) ends it. */
 const KEY_VALUE = `(?:[^\\s"',;&}\\\\]|\\\\(?!["']))+`;
+/*
+ * A shell joins what is glued to a closing quote into the same word: `'Kd4wD'Rp2uF` is
+ * `Kd4wDRp2uF`, so the glued text is part of the secret (redactScan.ts `glueEnd`). Kept narrow,
+ * so structured text keeps what follows a string (`"x", `, `"x"}`, `"x"]`, `'x')`, `'x' # c`):
+ * - it starts with a letter, digit, `_` or `$` (GLUE_START), a quoted segment (`'a'"b"`,
+ *   `'it''s'`) or `\'` (`'it'\''s'`);
+ * - it goes on with GLUE_CHAR (anything but a blank, a quote, a backslash, `| & ; ( ) < >` that end
+ *   a shell word, `, } ]` and a backtick), segments and `\'`;
+ * - a segment holds GLUE_CHAR only: in `"mysql -p'abc'", "x"` the `"` ends the enclosing string.
+ *   Right after a quote of its own kind it holds anything but a line end (`'it''s a pw'` in YAML
+ *   and SQL, `"a""b c"` in CSV): no string around can end there.
+ */
+const GLUE_START = '[\\w$]';
+const GLUE_CHAR = '[^\\s"\'\\\\|&;()<>,}\\]`]';
+const GLUE_SEGMENT = `(?:(?<=")"[^"\\r\\n]*"|(?<=')'[^'\\r\\n]*'|"${GLUE_CHAR}*"|'${GLUE_CHAR}*'|\\\\')`;
+/** What is glued to a closing quote, right after it. */
+const GLUED = `(?:${GLUE_START}|${GLUE_SEGMENT})(?:${GLUE_CHAR}|${GLUE_SEGMENT})*`;
+/** After an escaped value's closing `\"`: glued text with no quote (`\"abc\"def`). */
+const ESC_GLUED = `${GLUE_START}${GLUE_CHAR}*`;
+/**
+ * Nothing is glued to a closing quote that `key` (a value's look-behind source) comes before: that
+ * quote opens the next key's value (`password="a\"b token="Kd4wD' Tn6vE"`), which the same
+ * reading must still find from its start.
+ */
+const notAfterKey = (key: string | undefined): string => (key === undefined ? '' : `(?<!${key})`);
 /**
  * A value after `\"` (or `\'`, q) up to the `\"` that closes it, as redactScan.ts `escapedValueEnd`
  * reads it. A run of backslashes before q is read whole: 4m+3 of them are an escaped quote in the
  * value (`s3c\\\"ret`: the JSON was escaped twice), 4m+1 the value's 4m backslashes then the
  * closing `\"`, an even number a bare quote (no value). Before any other character, the run is in
  * the value. The closing `\"` is followed by what may follow a string in JSON or a shell (ESC_CLOSES),
- * else this is no escaped JSON and there is no value: it doesn't run on over a secret after it
- * (`\"a b, sh -c '-token='x\"y'`).
+ * or by glued text (ESC_GLUED, then in the value); else this is no escaped JSON and there is no
+ * value: it doesn't run on over a secret after it (`\"a b, sh -c '-token='x\"-y'`).
  */
-const ESCAPED_VALUE = (q: string): string =>
-  `(?:[^${q}\\\\\\r\\n]|\\\\+(?=[^${q}\\\\\\r\\n])|(?:\\\\{4})*\\\\{3}${q}|(?:\\\\{4})+(?=\\\\${q}))+(?=\\\\${q}${ESC_CLOSES})`;
+const ESCAPED_VALUE = (q: string, key?: string): string =>
+  `(?:[^${q}\\\\\\r\\n]|\\\\+(?=[^${q}\\\\\\r\\n])|(?:\\\\{4})*\\\\{3}${q}|(?:\\\\{4})+(?=\\\\${q}))+(?:(?=\\\\${q}${ESC_CLOSES})|${notAfterKey(key)}\\\\${q}${ESC_GLUED})`;
 /** `, : } ] ) ; & |`, a space, a quote, a backslash or the text's end. */
 const ESC_CLOSES = `(?:[,:}\\]);&|\\s"'\\\\]|$)`;
 /**
@@ -60,10 +85,12 @@ const CLOSES = `(?:[;&|\\s]|$)`;
 /**
  * The rest of a value in "…" up to the closing quote: with backslash escapes (`"abc\"def"`), but a
  * `\"` before CLOSES closes it; else (a backslash before the line's end) up to the next `"` as before.
+ * Text glued to the closing quote (GLUED) is in the value too, the quote with it (not after `key`).
  */
-const DQ_REST = `(?:(?:[^"\\\\\\r\\n]|\\\\(?="${CLOSES})|\\\\(?!"${CLOSES})[^\\r\\n])+|[^"\\r\\n]+)(?=")`;
-/** In '…', no escapes (sh, PowerShell): up to the next `'`. */
-const SQ_REST = `[^'\\r\\n]+(?=')`;
+const DQ_REST = (key?: string): string =>
+  `(?:(?:[^"\\\\\\r\\n]|\\\\(?="${CLOSES})|\\\\(?!"${CLOSES})[^\\r\\n])+|[^"\\r\\n]+)(?=")(?:${notAfterKey(key)}"${GLUED})?`;
+/** In '…', no escapes (sh, PowerShell): up to the next `'`, and GLUED after it. */
+const SQ_REST = (key?: string): string => `[^'\\r\\n]+(?=')(?:${notAfterKey(key)}'${GLUED})?`;
 /**
  * A value in quotes after `key` (the look-behind's source up to the quote), as redactScan.ts
  * `quotedValueEnd` reads it: after `"` DQ_REST, after `'` SQ_REST; after `\"` or `\'` (escaped
@@ -72,19 +99,19 @@ const SQ_REST = `[^'\\r\\n]+(?=')`;
 const quotedAfter = (key: string, notValue = ''): string => quotedAlternatives(key, notValue).join('|');
 /** quotedAfter's alternatives, in its order: after `"`, `\"`, `'` and `\'` (redactScan.ts QUOTE_OPENINGS). */
 const quotedAlternatives = (key: string, notValue = ''): string[] =>
-  ['"', "'"].flatMap((q) => [`(?<=${key}${q})${notValue}${q === '"' ? DQ_REST : SQ_REST}`, `(?<=${key}\\\\${q})${notValue}${ESCAPED_VALUE(q)}`]);
+  ['"', "'"].flatMap((q) => [`(?<=${key}${q})${notValue}${q === '"' ? DQ_REST(key) : SQ_REST(key)}`, `(?<=${key}\\\\${q})${notValue}${ESCAPED_VALUE(q, key)}`]);
 /**
  * A flag's value: in "…" not starting with `$` (the shell expands it) or a REFERENCE; in '…' not
- * starting with a REFERENCE (`'$3cret'` is literal); else a word not starting with `-`, `$` or a
- * REFERENCE (`%3cret` is a value, `%PW%` is not).
+ * starting with a REFERENCE (`'$3cret'` is literal), either with GLUED after it; else a word not
+ * starting with `-`, `$` or a REFERENCE (`%3cret` is a value, `%PW%` is not).
  */
-const FLAG_VALUE = `(?:"(?!\\$)(?!${REFERENCE})[^"\\r\\n]*"|'(?!${REFERENCE})[^'\\r\\n]*'|(?![-$])(?!${REFERENCE})[^\\s"']+)`;
+const FLAG_VALUE = `(?:"(?!\\$)(?!${REFERENCE})[^"\\r\\n]*"(?:${GLUED})?|'(?!${REFERENCE})[^'\\r\\n]*'(?:${GLUED})?|(?![-$])(?!${REFERENCE})[^\\s"']+)`;
 /**
  * The rest of a quoted `user:PASSWORD` (or `pass:PASSWORD`) after the user part, up to the closing
  * quote, as quotedAfter reads it (DQ_REST, SQ_REST). It doesn't start with a space, nor with a
  * reference as FLAG_VALUE reads one (in "…" `$` too).
  */
-const QUOTED_REST = (q: string): string => (q === '"' ? `(?!\\s)(?!\\$)(?!${REFERENCE})${DQ_REST}` : `(?!\\s)(?!${REFERENCE})${SQ_REST}`);
+const QUOTED_REST = (q: string): string => (q === '"' ? `(?!\\s)(?!\\$)(?!${REFERENCE})${DQ_REST()}` : `(?!\\s)(?!${REFERENCE})${SQ_REST()}`);
 /**
  * The user part of a quoted `-u "user:PASSWORD"`: a whole `${…}` reference (`"${input:USER}:…"`,
  * the colon inside it is no separator), or a word with no colon that isn't one.

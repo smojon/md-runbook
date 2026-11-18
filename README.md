@@ -379,6 +379,7 @@ built-in patterns cover:
   `mysql -p…`, `curl -u user:…`
   - and to tools that take a password: `sshpass -p`, `redis-cli -a`, `ldapsearch -w`,
     `smbclient -U user%…`, `openssl -passin pass:…`, `htpasswd -b`, `zip -P` and more.
+- a quoted value with text glued to its closing quote, in full: a shell reads `'abc'def` as one word
 - **Kubernetes Secrets**: every value under `data:` / `stringData:` of `oc get secret -o yaml|json`
   (key names are kept), plus base64-encoded keys and docker configs anywhere
 - PEM private keys (the BEGIN/END lines are kept). Certificates are not touched.

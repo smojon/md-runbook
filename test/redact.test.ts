@@ -193,6 +193,71 @@ describe('a quoted value read over the next key’s value (0.30.0 review)', () =
   });
 });
 
+describe('text glued to a closing quote is part of the value', () => {
+  const B = '\\';
+  // A shell joins `'Kd4wD'Rp2uF` into one word: `Rp2uF` is part of the secret.
+  const cases: Array<[string, string]> = [
+    [`password='Kd4wD'Rp2uF`, `password='${R}`],
+    [`password="Kd4wD"Rp2uF`, `password="${R}`],
+    [`password='Kd4wD'Rp2uF next`, `password='${R} next`],
+    [`password="Kd4wD"Rp2uF;echo`, `password="${R};echo`],
+    // escaped: `\"…\"` in a string run by a shell
+    [`sh -c "db --password=${B}"Kd4wD${B}"Rp2uF x"`, `sh -c "db --password=${B}"${R} x"`],
+    [`{${B}"password${B}":${B}"Kd4wD${B}"Rp2uF}`, `{${B}"password${B}":${B}"${R}}`],
+    // further segments: other quotes, doubled quotes, `'\''`
+    [`password='Kd4wD'"Rp2uF"Tn6vE`, `password='${R}`],
+    [`password: 'Kd4wD''Rp2uF'`, `password: '${R}`],
+    [`password: 'Kd4wD''s Rp2uF'`, `password: '${R}`],
+    [`password="Kd4wD""Rp2uF Tn6vE"`, `password="${R}`],
+    [`password='Kd4wD'${B}''Rp2uF'`, `password='${R}`],
+    [`password="Kd4wD"'Rp2uF'x.y`, `password="${R}`],
+    // each family that reads a quoted value
+    [`DB_PASS='Kd4wD'Rp2uF`, `DB_PASS='${R}`],
+    [`api key: "Kd4wD"Rp2uF`, `api key: "${R}`],
+    [`{"Authorization": "Basic Kd4wD"Rp2uF}`, `{"Authorization": "${R}}`],
+    [`{"Cookie": 'id=Kd4wD'Rp2uF}`, `{"Cookie": '${R}}`],
+    [`password:${String.fromCharCode(0xa0)}'Kd4wD'Rp2uF`, `password:${String.fromCharCode(0xa0)}'${R}`],
+    [`curl -u 'admin:Kd4wD'Rp2uF https://x`, `curl -u 'admin:${R} https://x`],
+    [`curl -u "admin:Kd4wD"Rp2uF https://x`, `curl -u "admin:${R} https://x`],
+    [`--password 'Kd4wD'Rp2uF x`, `--password ${R} x`],
+    [`--client-secret "Kd4wD"'Rp2uF' x`, `--client-secret ${R} x`],
+    [`sshpass -p 'Kd4wD'Rp2uF ssh h`, `sshpass -p ${R} ssh h`],
+    [`mysql -p'Kd4wD'Rp2uF db`, `mysql -p${R} db`],
+    [`smbclient //h/s -U 'admin%Kd4wD'Rp2uF`, `smbclient //h/s -U 'admin%${R}`],
+    [`openssl rsa -passin 'pass:Kd4wD'Rp2uF -in k`, `openssl rsa -passin 'pass:${R} -in k`],
+    [`htpasswd -b f admin 'Kd4wD'Rp2uF`, `htpasswd -b f admin ${R}`],
+  ];
+  for (const [input, expected] of cases) {
+    it(input, () => {
+      assert.equal(r.redact(input), expected);
+      const leaks = redactLeaks(input);
+      for (const secret of ['Kd4wD', 'Rp2uF', 'Tn6vE']) assert.ok(!leaks.includes(secret), `redactLeaks: ${leaks}`);
+    });
+  }
+
+  // What follows a string in structured text, a blank or a word's end is kept.
+  const kept: Array<[string, string]> = [
+    [`{"password": "Kd4wD", "a": 1}`, `{"password": "${R}", "a": 1}`],
+    [`{"password":"Kd4wD"}`, `{"password":"${R}"}`],
+    [`[password='Kd4wD']`, `[password='${R}']`],
+    [`password: 'Kd4wD' # c`, `password: '${R}' # c`],
+    [`connect(password="Kd4wD")`, `connect(password="${R}")`],
+    [`{${B}"password${B}":${B}"Kd4wD${B}",${B}"a${B}":1}`, `{${B}"password${B}":${B}"${R}${B}",${B}"a${B}":1}`],
+    [`Connect -Password 'Kd4wD')`, `Connect -Password ${R})`],
+    [`password='Kd4wD';echo`, `password='${R}';echo`],
+    [`password='Kd4wD'|x`, `password='${R}'|x`],
+    [`password='Kd4wD'`, `password='${R}'`],
+    ['`password="Kd4wD"`', `\`password="${R}"\``],
+    [`<input password="Kd4wD"/>`, `<input password="${R}"/>`],
+    [`password="Kd4wD".`, `password="${R}".`],
+    // the closing quote of a string around the command
+    [`{"cmd": "mysql -p'Kd4wD'", "x": "y"}`, `{"cmd": "mysql -p${R}", "x": "y"}`],
+    [`ssh h "mysql -p'Kd4wD'" && echo "ok"`, `ssh h "mysql -p${R}" && echo "ok"`],
+    [`args: ["--password='Kd4wD'","-v"]`, `args: ["--password='${R}'","-v"]`],
+  ];
+  for (const [input, expected] of kept) it(input, () => assert.equal(r.redact(input), expected));
+});
+
 describe('redaction of real-world IAM/OpenShift output', () => {
   const cases: Array<[string, string, string]> = [
     ['flag with space', 'kcadm.sh config credentials --user admin --password Adm1n-Kc-Pw', `kcadm.sh config credentials --user admin --password ${R}`],

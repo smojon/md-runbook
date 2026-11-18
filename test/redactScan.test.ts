@@ -244,6 +244,16 @@ const HOSTILE = [
   // 0.30.0 review: each quote's alternative read on its own
   rep(`password="a\\", token='`),
   rep(`DB_PASS=\\"a; api key: '`),
+  // text glued to a closing quote
+  rep(`password='a'`),
+  rep(`password='a'"`),
+  rep(`password='a''`),
+  `password='a''` + 'b'.repeat(N),
+  rep(`password="a"'b`),
+  rep(`--password 'a'b"`),
+  rep(`password=\\"a\\"b`),
+  rep(`sshpass -p 'a'\\'`),
+  `password='a'"` + 'b'.repeat(N),
 ];
 
 describe('redaction and the leak scan stay linear on 200,000-character lines', () => {
