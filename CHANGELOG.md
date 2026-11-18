@@ -8,6 +8,9 @@
 - Apply the manifest again: the gate's Role gains `list` on `serviceaccounts`.
 - The README recommends `signers = 2` for runbooks that change a cluster.
 
+**Lint:** a signed runbook with a front matter `kube-context:` warns on each bash block without
+its own `kube-context=`. Signing refuses those since 0.28, so the next signing would fail.
+
 ## 0.30.0
 
 What's new:

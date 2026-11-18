@@ -396,6 +396,23 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
         message: `front matter shell: ${unix} in a signed runbook: servers run its signed blocks in bash, and without the gate they would run in ${unix}`,
       });
     }
+    // The gate checks a block's own kube-context= only, and signing refuses a front matter
+    // kube-context: on a bash block without one (since 0.28). Runbooks signed before then still
+    // verify, and their next signing fails: say so now (a user's report, 2026-11-18).
+    if (fm?.kubeContext !== undefined) {
+      for (const loc of locs) {
+        const cell = doc.cells[loc.cellIndex]!;
+        if (!isCodeMeta(cell.meta) || shellKindForLanguage(loc.language) !== 'bash') continue;
+        const o = parseCellOptions(loc.info);
+        if (o.kubeContext !== undefined || o.errors.some((e) => e.startsWith('kube-context'))) continue;
+        problems.push({
+          severity: 'warning',
+          line: loc.line,
+          cell: { index: loc.cellIndex },
+          message: `the front matter's kube-context: ${fm.kubeContext} is not checked by servers, and signing this runbook again fails: write kube-context=${fm.kubeContext} on the block`,
+        });
+      }
+    }
     for (const loc of locs.filter((l) => signed.changed.includes(l.cellIndex))) {
       problems.push({
         severity: 'warning',

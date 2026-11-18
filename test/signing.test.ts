@@ -490,6 +490,19 @@ describe('signing: which cells are signed', () => {
     assert.equal(w.line, 1);
   });
 
+  it('lint warns before signing again: a front matter kube-context: on a block without its own (signing refuses it since 0.28)', () => {
+    // Signed before 0.28, or the front matter added since: the signature still verifies.
+    const body = sign(fence('bash', 'kubectl get pods') + fence('bash kube-context=prod-eu', 'kubectl get nodes') + fence('powershell', 'Get-Date'));
+    const text = '---\nkube-context: prod-eu\n---\n\n' + body;
+    const ps = lintRunbook(text);
+    const ws = ps.filter((p) => /kube-context: prod-eu is not checked by servers, and signing this runbook again fails: write kube-context=prod-eu on the block/.test(p.message));
+    assert.equal(ws.length, 1, ps.map((p) => p.message).join('\n'));
+    // On the fence of the block without kube-context= (the one before its first line).
+    assert.equal(ws[0]!.line, text.split('\n').indexOf('kubectl get pods') - 1);
+    // Unsigned: nothing (the runbook may never be signed).
+    assert.doesNotMatch(lintRunbook('---\nkube-context: prod-eu\n---\n\n' + fence('bash', 'kubectl get pods')).map((p) => p.message).join('\n'), /signing this runbook again/);
+  });
+
   it('finds the signed command of a line run by its text', () => {
     const cell = signedStatus(signed)!.cells.get(2)!;
     assert.equal(signedStepIndex(cell, 'echo "${param:TARGET}"'), 2);
