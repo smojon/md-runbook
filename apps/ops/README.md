@@ -71,7 +71,11 @@ kubeconfig:
     CronJobs, read pod logs and ConfigMaps, only in the namespaces you bind (see below);
   - nothing else: no deleting, no exec into pods, no DaemonSets;
 - the gate's ConfigMap, the Deployment and a ClusterIP Service on port 22;
-- NetworkPolicies: the Job pods take no connection, and can't reach the ops pod's sshd.
+- NetworkPolicies: the Job pods take no connection, and can't reach the ops pod's sshd;
+- the admission policy `md-runbook-ops-jobs`: the gate's account may create only the cells' Job.
+
+Apply it as a cluster admin: the ClusterRoles and the admission policy are cluster-wide. It needs
+Kubernetes 1.30 or later.
 
 ```sh
 kubectl apply -f apps/ops/kubernetes/md-runbook-ops.yaml
@@ -111,6 +115,29 @@ app and everything else in other namespaces.
 - Bind no role to `default` in this namespace.
 - The manifest's NetworkPolicy lets pods of other namespaces reach sshd, the relay's too. You
   can narrow it to the relay's namespace.
+
+**The admission policy.** RBAC can't limit the shape of a Job. So the gate's account could
+create any Job in its namespace:
+- as another service account, its own or `default`;
+- with the host key, the report token or `gate.conf` as a volume or env;
+- without the label the NetworkPolicies select;
+- with host namespaces, a `hostPath`, or another image.
+
+The ValidatingAdmissionPolicy `md-runbook-ops-jobs` refuses all that. For the gate's account
+in `md-runbook-ops`, a Job must have:
+- the service account `md-runbook-cells` and the label `app.kubernetes.io/name=md-runbook-cells`;
+- one container, of the ops image's repository (any tag or digest);
+- `emptyDir` volumes only, and no env from Secrets or ConfigMaps;
+- no host namespaces, no privilege escalation, no added capabilities.
+
+Your own Jobs and other accounts' Jobs aren't affected.
+
+At each session the gate checks the policy: a dry run of a Job as its own account must fail.
+Else the session refuses with `the admission policy md-runbook-ops-jobs doesn't
+guard the Jobs`.
+
+**A mirror of the image:** change the policy's `repository` variable. That's one line in the
+manifest.
 
 **Two signers in production.** For runbooks that change a cluster, set `signers = 2` in
 `gate.conf`. Then one stolen signing key can't run a change alone.
@@ -165,18 +192,23 @@ Update the image before the ConfigMap: an older gate refuses the new `gate.conf`
 **Coming from 0.30.0:** apply the manifest again. The gate's Role gains `list` on
 `serviceaccounts`. Without it, sessions refuse with "may not list serviceaccounts".
 
+**Coming from 0.30:** apply the manifest again, as a cluster admin.
+- It adds the admission policy `md-runbook-ops-jobs`. Without it, sessions refuse.
+- With a mirror, set the policy's `repository` first.
+
 ### A Job per session
 
 `gate.conf` in the cluster has `cells_runner = kubernetes-job`. For each SSH session, the gate:
 1. checks its own service account: it may run Jobs here, and has none of the cells' rights;
 2. checks that its namespace holds the ops host alone;
-3. starts a Job of the same image, as `job_service_account` (`md-runbook-cells`);
-4. checks the cells' account in the new pod:
+3. checks that the admission policy guards its Jobs (a dry run);
+4. starts a Job of the same image, as `job_service_account` (`md-runbook-cells`);
+5. checks the cells' account in the new pod:
    - in `md-runbook-ops` it can't exec into pods, read pod logs, Secrets or ConfigMaps, or
      start workloads;
    - each namespace where it may change workloads enforces Pod Security;
-5. runs the session's blocks there with `kubectl exec`;
-6. deletes the Job when the session ends.
+6. runs the session's blocks there with `kubectl exec`;
+7. deletes the Job when the session ends.
 
 What this keeps apart:
 - Blocks can't read the gate's report token, its log or its state, nor the ops pod's token.
@@ -202,25 +234,52 @@ Cleanup, if the gate can't delete a Job itself:
 - a session lasts at most a day, a cap for long on-call windows.
 
 **Network.** The NetworkPolicies need a network plugin that enforces them.
-- Egress stays open for runbooks. Where a cloud's metadata address (169.254.169.254) gives
-  out node credentials, block it with a policy of your own: that part is cluster-specific.
+- Egress stays open for runbooks, unless you apply the egress policy (below).
 - Some plugins also apply an `ipBlock` to pod addresses. There the Job pods can still reach
   sshd, but they have no key to log in.
 
+**Egress (opt-in).** [kubernetes/cells-egress.yaml](kubernetes/cells-egress.yaml) lets the Job
+pods reach only the cluster's DNS and the API server. It blocks:
+- the cloud's metadata address (169.254.169.254), where it gives out node credentials;
+- other namespaces' Services, and the pods behind them;
+- the internet.
+
+Apply it when your runbooks only use kubectl. Runbooks often call services too, such as health
+checks: add a rule for each.
+
+Before you apply it, put in your API server's address and port. The policy sees the address
+behind the `kubernetes` Service:
+
+```sh
+kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes -o wide
+# ENDPOINTS: the cidr (ADDRESS/32), one ipBlock each; PORTS: the port (often 6443)
+kubectl apply -f apps/ops/kubernetes/cells-egress.yaml
+```
+
+- Some network plugins check before the Service's translation. There, add the Service's address
+  too (`kubectl get service kubernetes -n default`, port 443).
+- Some plugins (k3s's, for one) drop a new pod's traffic for its first seconds. The Job's pod
+  waits for the API server, up to 60 seconds, before it's ready.
+- Without the right address, sessions refuse: the gate's check of the cells' account in the pod
+  fails.
+
 Settings in `gate.conf`:
 - `job_service_account = NAME`: required.
-- `job_image = IMAGE`: optional. The default is the ops pod's own image.
+- `job_image = IMAGE`: optional. The default is the ops pod's own image. It must be of the
+  repository the admission policy allows.
 - Outside a cluster, remove `cells_runner` and `job_service_account`.
 
 **Your own cells' service account.** With another `job_service_account` than
-`md-runbook-cells`, give it what the manifest gives that one:
-- `get` and `list` on `namespaces`, cluster-wide (the ClusterRole `md-runbook-ops` has them):
-  the gate's namespace check needs them.
-  Without them the session refuses with "can't list the namespaces".
-- `imagePullSecrets` for a private registry. The gate's Job names none, so the pod takes them
-  from its service account:
-  `kubectl -n md-runbook-ops patch serviceaccount NAME -p '{"imagePullSecrets":[{"name":"SECRET"}]}'`.
-  This also goes for `md-runbook-cells` itself.
+`md-runbook-cells`:
+- Change the admission policy's account to it too. Else the policy refuses the cells' Job.
+- Give it what the manifest gives that one:
+  - `get` and `list` on `namespaces`, cluster-wide (the ClusterRole `md-runbook-ops` has them):
+    the gate's namespace check needs them.
+    Without them the session refuses with "can't list the namespaces".
+  - `imagePullSecrets` for a private registry. The gate's Job names none, so the pod takes them
+    from its service account:
+    `kubectl -n md-runbook-ops patch serviceaccount NAME -p '{"imagePullSecrets":[{"name":"SECRET"}]}'`.
+    This also goes for `md-runbook-cells` itself.
 
 ## Next to the relay
 

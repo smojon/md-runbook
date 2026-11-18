@@ -3,8 +3,9 @@
 # container's output, then sshd. Runs as the account ops. See README.md.
 #
 # `md-runbook-ops-start cells` starts a session's Job instead (cells_runner = kubernetes-job):
-# the kubeconfig of the Job's own service account, then nothing but waiting. The gate runs the
-# session's blocks in it with kubectl exec, and deletes the Job when the session ends.
+# the kubeconfig of the Job's own service account once the API server answers, then nothing but
+# waiting. The gate runs the session's blocks in it with kubectl exec, and deletes the Job when
+# the session ends.
 set -eu
 
 run=/run/md-runbook-ops
@@ -15,17 +16,20 @@ say() { printf 'md-runbook-ops: %s\n' "$*" >&2; }
 
 # The Pod's service account as kubeconfig, context CLUSTER_NAME (what kube-context: names). The
 # token file is renewed by Kubernetes; kubectl reads it for each request.
-in_cluster_kubeconfig() {
-  cluster=${CLUSTER_NAME:-in-cluster}
+api_server() {
   host=$KUBERNETES_SERVICE_HOST
   case $host in *:*) host="[$host]" ;; esac
+  echo "https://$host:${KUBERNETES_SERVICE_PORT:-443}"
+}
+in_cluster_kubeconfig() {
+  cluster=${CLUSTER_NAME:-in-cluster}
   cat >"$HOME/.kube/config" <<EOF
 apiVersion: v1
 kind: Config
 clusters:
 - name: $cluster
   cluster:
-    server: https://$host:${KUBERNETES_SERVICE_PORT:-443}
+    server: $(api_server)
     certificate-authority: $sa/ca.crt
 users:
 - name: $1
@@ -43,6 +47,24 @@ EOF
 }
 in_cluster() { [ -r "$sa/token" ] && [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; }
 
+# Waits until the API server answers (any HTTP status), at most 60 s. Under an egress
+# NetworkPolicy (cells-egress.yaml) some network plugins drop a new pod's traffic for its first
+# seconds. Without one, the first try answers. No credential is sent, so no certificate check:
+# any answer shows the way is open.
+wait_for_api() {
+  end=$(($(date +%s) + 60))
+  while :; do
+    code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 3 \
+      "$(api_server)/livez" 2>/dev/null) || true
+    case $code in '' | 000) ;; *) return 0 ;; esac
+    if [ "$(date +%s)" -ge "$end" ]; then
+      say "cells: no answer from the API server $(api_server) after 60 s; going on (see README.md, Egress)"
+      return 0
+    fi
+    sleep 1
+  done
+}
+
 mkdir -p "$HOME/.kube"
 
 # ---- a session's Job ----
@@ -51,6 +73,7 @@ if [ "${1:-}" = cells ]; then
     say "cells: no service account here: this mode runs only as the gate's Kubernetes Job"
     exit 1
   fi
+  wait_for_api
   in_cluster_kubeconfig md-runbook-cells
   # Ready (the Job's readiness probe looks for the kubeconfig); stops with the Pod.
   exec sleep infinity

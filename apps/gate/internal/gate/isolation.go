@@ -349,13 +349,24 @@ func runFor(limit time.Duration, argv, env []string, stdin []byte) ([]byte, erro
 		return out.Bytes(), fmt.Errorf("%w after %s (%w)", errTimeout, limit, err)
 	}
 	if err != nil {
-		first, _, _ := strings.Cut(strings.TrimSpace(errb.String()), "\n")
-		if first != "" {
+		if first := firstErrLine(errb.String()); first != "" {
 			return out.Bytes(), fmt.Errorf("%w: %s", err, first)
 		}
 		return out.Bytes(), err
 	}
 	return out.Bytes(), nil
+}
+
+// firstErrLine: the first line of a failed program's stderr that isn't kubectl's "Warning: "
+// (the API server's warnings come before its error), else the first line.
+func firstErrLine(stderr string) string {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	for _, l := range lines {
+		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "Warning: ") {
+			return l
+		}
+	}
+	return strings.TrimSpace(lines[0])
 }
 
 // errTimeout: runFor killed the program at its limit.

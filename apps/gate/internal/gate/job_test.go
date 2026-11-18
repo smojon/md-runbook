@@ -280,6 +280,92 @@ func TestOwnNamespace(t *testing.T) {
 	}
 }
 
+// The admission policy md-runbook-ops-jobs guards the namespace's Jobs: a dry run of the cells'
+// Job as the gate's own service account must be refused by it.
+func TestJobPolicy(t *testing.T) {
+	denied := errors.New(`exit status 1: Error from server (Invalid): error when creating "STDIN": jobs.batch "md-runbook-cells-check-0a1b2c3d4e" is invalid: : ValidatingAdmissionPolicy 'md-runbook-ops-jobs' with binding 'md-runbook-ops-jobs' denied request: the gate's Jobs run as the service account md-runbook-cells only`)
+	var gotArgv []string
+	var gotJob map[string]any
+	answer := func(err error) runFunc {
+		return func(argv, env []string, stdin []byte) ([]byte, error) {
+			gotArgv, gotJob = argv, nil
+			if e := json.Unmarshal(stdin, &gotJob); e != nil {
+				t.Fatal(e)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return []byte("job.batch/x (server dry run)\n"), nil
+		}
+	}
+	j := testJob(answer(denied))
+	j.opsSA, j.sa, j.opsPod, j.opsUID, j.image, j.context = "md-runbook-ops", "md-runbook-cells", testSpec.OpsPod, testSpec.OpsUID, testSpec.Image, "prod-eu"
+	if p := j.checkPolicy(); p != "" {
+		t.Errorf("refused by the policy: %s", p)
+	}
+	if !reflect.DeepEqual(gotArgv, []string{"/usr/bin/kubectl", "create", "--dry-run=server", "-f", "-", "-o", "name"}) {
+		t.Errorf("argv %q", gotArgv)
+	}
+	// The cells' Job in all but its account (the gate's own) and its name.
+	pod := at(t, gotJob, "spec", "template", "spec")
+	if sa := at(t, pod, "serviceAccountName"); sa != "md-runbook-ops" {
+		t.Errorf("account %v", sa)
+	}
+	if name := at(t, gotJob, "metadata", "name").(string); !regexp.MustCompile(`^md-runbook-cells-check-[0-9a-f]{10}$`).MatchString(name) || !config.ValidKubeName(name) {
+		t.Errorf("name %q", name)
+	}
+	if img := at(t, pod, "containers", 0, "image"); img != testSpec.Image {
+		t.Errorf("image %v", img)
+	}
+	if l := at(t, gotJob, "spec", "template", "metadata", "labels", "app.kubernetes.io/name"); l != "md-runbook-cells" {
+		t.Errorf("label %v", l)
+	}
+
+	// Accepted: no policy (or no binding) guards the namespace.
+	j.run = answer(nil)
+	if p := j.checkPolicy(); p != "the admission policy md-runbook-ops-jobs doesn't guard the Jobs of namespace md-runbook-ops: a test Job as the gate's own service account md-runbook-ops passed. Apply apps/ops/kubernetes/md-runbook-ops.yaml again (Kubernetes 1.30 or later)." {
+		t.Errorf("accepted: %s", p)
+	}
+	// Refused for another reason (another policy, a webhook, RBAC), or kubectl failed: refused,
+	// with that reason.
+	for _, err := range []error{
+		errors.New(`exit status 1: Error from server (Forbidden): error when creating "STDIN": jobs.batch "x" is forbidden: ValidatingAdmissionPolicy 'other-policy' with binding 'other' denied request: no`),
+		errors.New(`exit status 1: Error from server (Forbidden): jobs.batch is forbidden: User "system:serviceaccount:md-runbook-ops:md-runbook-ops" cannot create resource "jobs"`),
+		errors.New("exit status 1: error: You must be logged in to the server (Unauthorized)"),
+	} {
+		j.run = answer(err)
+		p := j.checkPolicy()
+		if !strings.HasPrefix(p, "can't tell whether the admission policy md-runbook-ops-jobs guards the Jobs of namespace md-runbook-ops: a test Job as the gate's own service account was refused for another reason ("+err.Error()+"). ") ||
+			!strings.HasSuffix(p, "Apply apps/ops/kubernetes/md-runbook-ops.yaml again (Kubernetes 1.30 or later).") {
+			t.Errorf("%v: %s", err, p)
+		}
+	}
+
+	// The real Job refused by the policy: job_service_account or job_image doesn't match it.
+	if p := createProblem(denied); !strings.HasPrefix(p, "can't create the cells' Job (exit status 1: ") ||
+		!strings.HasSuffix(p, "): job_service_account and job_image must match the policy md-runbook-ops-jobs in apps/ops/kubernetes/md-runbook-ops.yaml. Change them together") {
+		t.Errorf("create, policy: %s", p)
+	}
+	if p := createProblem(errors.New("exit status 1: quota")); p != "can't create the cells' Job (exit status 1: quota)" {
+		t.Errorf("create: %s", p)
+	}
+}
+
+// kubectl prints the API server's warnings before its error: the error is what the gate says.
+func TestFirstErrLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"Error from server (Forbidden): no\n":                          "Error from server (Forbidden): no",
+		"Warning: would violate x\nWarning: y\nError from server: z\n": "Error from server: z",
+		"Warning: only a warning\n":                                    "Warning: only a warning",
+		"\n  first\nsecond":                                            "first",
+		"":                                                             "",
+	} {
+		if got := firstErrLine(in); got != want {
+			t.Errorf("%q: %q", in, got)
+		}
+	}
+}
+
 // What kubectl get jobs,pods prints, in each state the gate tells apart.
 func TestPodState(t *testing.T) {
 	list := func(items ...string) []byte {

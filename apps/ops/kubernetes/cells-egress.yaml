@@ -1,0 +1,46 @@
+# Optional: where the sessions' Job pods may connect. Without it they reach anything the cluster
+# reaches; with it, only the cluster's DNS and the API server: not the cloud's metadata address
+# (169.254.169.254), not other namespaces' Services, not the internet. Opt-in, because runbooks
+# often call services (health checks, a status page): add a rule for each. See README.md (Egress).
+#
+# Before `kubectl apply -f` this file, put your API server's address and port below. A
+# NetworkPolicy sees the address after the kubernetes Service is translated, so the endpoints':
+#   kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes -o wide
+# (ENDPOINTS and PORTS; a managed cluster may list several: one ipBlock each.) Some network
+# plugins check before the translation: there add the Service's address too (kubectl get service
+# kubernetes -n default, port 443).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: md-runbook-cells-egress
+  namespace: md-runbook-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: md-runbook-cells
+  policyTypes: [Egress]
+  egress:
+    # The cluster's DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # The API server: kubectl in the blocks, and the gate's check of the cells' account.
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.10/32 # your API server's address
+      ports:
+        - { protocol: TCP, port: 6443 } # its port
+    # A service your runbooks call, for example:
+    # - to:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: shop
+    #   ports:
+    #     - { protocol: TCP, port: 8080 }

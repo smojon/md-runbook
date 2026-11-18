@@ -47,8 +47,9 @@ import (
 // logs, Secrets or ConfigMaps, or start workloads in the gate's namespace, and every namespace
 // where they may start or change workloads must enforce Pod Security baseline or restricted
 // (else a privileged pod reaches the node, and through it the gate's pod). The gate's namespace
-// must hold the ops host alone: no other app's pods or service accounts. A wrong answer: no
-// session.
+// must hold the ops host alone: no other app's pods or service accounts. The admission policy
+// md-runbook-ops-jobs must refuse any other Job from the gate's account (a dry run as its own
+// account). A wrong answer: no session.
 //
 // When the follower's stdin ends (the session ended, or the gate is gone) it ends the pod: a
 // dead-man switch, so that nothing of a session outlives it by more than the pod's grace period.
@@ -227,16 +228,18 @@ func (g *Gate) setupJob() {
 		g.log.Event("event", "self-check", "status", "refused", "reason", msg)
 		g.fatal(msg)
 	}
-	if p := j.checkOwnNamespace(); p != "" {
-		msg := "cells_runner = kubernetes-job: " + p
-		g.log.Event("event", "self-check", "status", "refused", "reason", msg)
-		g.fatal(msg)
+	for _, check := range []func() string{j.checkOwnNamespace, j.checkPolicy} {
+		if p := check(); p != "" {
+			msg := "cells_runner = kubernetes-job: " + p
+			g.log.Event("event", "self-check", "status", "refused", "reason", msg)
+			g.fatal(msg)
+		}
 	}
 	g.sweepJobs(j)
 	j.name = "md-runbook-cells-" + randHex(5)
 	spec := jobSpec{Name: j.name, NS: j.ns, OpsPod: j.opsPod, OpsUID: j.opsUID, Image: j.image, SA: j.sa, Context: j.context, GateID: gateID(os.Getpid())}
 	if _, err := j.run(j.kc("create", "-f", "-", "-o", "name"), j.env, jobManifest(spec)); err != nil {
-		g.fatal("cells_runner = kubernetes-job: can't create the cells' Job (" + err.Error() + ")")
+		g.fatal("cells_runner = kubernetes-job: " + createProblem(err))
 	}
 	g.job = j
 	g.exitsPath = jobExits
@@ -501,6 +504,40 @@ func (j *kubeJob) checkOwnNamespace() string {
 		return "can't list the pods and service accounts of namespace " + j.ns + " (" + err.Error() + "). See apps/ops/README.md (RBAC)."
 	}
 	return foreignObjects(out, j.ns, j.opsSA, j.sa)
+}
+
+// The admission policy that holds the gate's Jobs to jobManifest's shape (apps/ops/kubernetes/
+// md-runbook-ops.yaml), and how the API server's refusal names it.
+const (
+	jobPolicy       = "md-runbook-ops-jobs"
+	jobPolicyDenied = "ValidatingAdmissionPolicy '" + jobPolicy + "'"
+)
+
+// checkPolicy: the admission policy guards this namespace's Jobs. RBAC lets the gate create any
+// Job here: as any service account, with the Secrets as volumes. The policy lets it create only
+// the cells' Job. A dry run (nothing is created) of that Job as the gate's own service account
+// must be refused by the policy. "" when it is, else what to change.
+func (j *kubeJob) checkPolicy() string {
+	spec := jobSpec{Name: "md-runbook-cells-check-" + randHex(5), NS: j.ns, OpsPod: j.opsPod, OpsUID: j.opsUID, Image: j.image, SA: j.opsSA, Context: j.context, GateID: "check"}
+	_, err := j.run(j.kc("create", "--dry-run=server", "-f", "-", "-o", "name"), j.env, jobManifest(spec))
+	fix := "Apply apps/ops/kubernetes/md-runbook-ops.yaml again (Kubernetes 1.30 or later)."
+	switch {
+	case err == nil:
+		return "the admission policy " + jobPolicy + " doesn't guard the Jobs of namespace " + j.ns + ": a test Job as the gate's own service account " + j.opsSA + " passed. " + fix
+	case strings.Contains(err.Error(), jobPolicyDenied):
+		return ""
+	}
+	return "can't tell whether the admission policy " + jobPolicy + " guards the Jobs of namespace " + j.ns + ": a test Job as the gate's own service account was refused for another reason (" + err.Error() + "). " + fix
+}
+
+// createProblem: why the cells' Job wasn't created. Refused by the admission policy:
+// job_service_account or job_image isn't what the policy allows.
+func createProblem(err error) string {
+	msg := "can't create the cells' Job (" + err.Error() + ")"
+	if strings.Contains(err.Error(), jobPolicyDenied) {
+		msg += ": job_service_account and job_image must match the policy " + jobPolicy + " in apps/ops/kubernetes/md-runbook-ops.yaml. Change them together"
+	}
+	return msg
 }
 
 // podServiceAccount: the service account of the pod in kubectl's output ("default" when the

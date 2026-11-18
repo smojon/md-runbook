@@ -17,7 +17,8 @@ own. They can't reach the gate's token, log or state, nor another session.
 ## Session start
 
 - Before the hello, about half a second of kubectl: `config view` and `get pod HOSTNAME` (context,
-  namespace, uid, image). Then the ops account's self-check, the sweep and `create -f -`.
+  namespace, uid, image). Then the ops account's self-check, the namespace and policy checks,
+  the sweep and `create -f -`.
 - In the background: `get jobs,pods -l md-runbook-job=NAME` every 0.5 s until Ready, at most
   3 minutes. A bad image or a failed Job ends it at once. Then the cells' self-check in the
   pod, then the exits follower.
@@ -62,6 +63,9 @@ own. They can't reach the gate's token, log or state, nor another session.
   512Mi, 1Gi ephemeral storage. NetworkPolicies: no ingress to Job pods, none to sshd from them.
 - `tini -- md-runbook-ops-start cells`: the kubeconfig of its own account (context
   `CLUSTER_NAME`, the ops pod's), then sleep. Ready once the kubeconfig is written.
+  - Before that it waits for the API server to answer (`curl /livez`, any status), at most
+    60 s. Under an egress NetworkPolicy, some plugins drop a new pod's traffic for seconds.
+- Egress, opt-in (`cells-egress.yaml`): DNS and the API server's endpoint only.
 
 ## RBAC
 
@@ -70,6 +74,24 @@ own. They can't reach the gate's token, log or state, nor another session.
   the gate refuses other pods and service accounts there.
 - Cells' account: read everywhere but Secrets, ConfigMaps and pod logs. Those two, and operate
   rights, per namespace. Never bound in the ops namespace.
+
+## Admission policy
+
+- RBAC can't limit the shape of the Jobs the ops account creates. Workload creation implies
+  the namespace's Secrets and service accounts (RBAC good practices).
+- The ValidatingAdmissionPolicy `md-runbook-ops-jobs` (Kubernetes 1.30+), bound with `Deny` to
+  the ops namespace. It matches Job CREATE and UPDATE by the ops account only.
+- The policy allows `jobManifest`'s shape:
+  - the cells' account and label;
+  - one container of the ops image's repository (a `variables` entry);
+  - `emptyDir` volumes only, no `valueFrom` or `envFrom`;
+  - no host namespaces, privilege escalation or added capabilities.
+- Self-check, before the sweep: `kubectl create --dry-run=server` of the cells' Job as the ops
+  account itself. It must fail, naming `ValidatingAdmissionPolicy 'md-runbook-ops-jobs'`.
+  - Accepted, or refused for another reason: no session.
+  - The real Job refused by the policy: the message names `job_service_account` and
+    `job_image`.
+- No opt-out: every supported Kubernetes version has the API.
 
 ## gate_mode and the self-check
 

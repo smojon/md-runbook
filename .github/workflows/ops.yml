@@ -89,7 +89,13 @@ jobs:
 
       - name: Install the manifest the way the README says
         run: |
-          kubectl apply -f apps/ops/kubernetes/md-runbook-ops.yaml
+          # The admission policy allows the ops image's repository only: here the image kind loaded,
+          # named as the gate's Jobs name it (md-runbook-ops:ci; a local image isn't pinned).
+          # One line, as for a mirror.
+          sed '/name: repository,/s|ghcr.io/smojon/md-runbook-ops|md-runbook-ops|' \
+            apps/ops/kubernetes/md-runbook-ops.yaml > "$RUNNER_TEMP/md-runbook-ops.yaml"
+          test "$(diff apps/ops/kubernetes/md-runbook-ops.yaml "$RUNNER_TEMP/md-runbook-ops.yaml" | grep -c '^>')" = 1
+          kubectl apply -f "$RUNNER_TEMP/md-runbook-ops.yaml"
           # Runbooks may change workloads in `default` (the test's web deployment), nowhere else,
           # and only as Pod Security baseline allows (the gate refuses an unguarded namespace).
           kubectl label namespace default pod-security.kubernetes.io/enforce=baseline
@@ -154,6 +160,8 @@ jobs:
         run: |
           kubectl -n md-runbook-ops get jobs,pods -o wide || true
           kubectl -n md-runbook-ops describe jobs,pods || true
+          kubectl get validatingadmissionpolicy,validatingadmissionpolicybinding -o yaml || true
+          kubectl -n md-runbook-ops get networkpolicies -o yaml || true
           kubectl -n md-runbook-ops logs deployment/md-runbook-ops || true
           cat "$RUNNER_TEMP/pf.log" "$RUNNER_TEMP/pf-job.log" || true
           docker logs ops || true
