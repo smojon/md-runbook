@@ -153,7 +153,9 @@ wait_for "$work/c/err" 'namespace md-runbook-unguarded, which'
 close_session c 9
 [ -z "$(value c ran)" ] || fail "a block ran although md-runbook-unguarded doesn't enforce Pod Security"
 cat "$work/c/err"
-kubectl delete namespace md-runbook-unguarded --wait=false
+# Gone before the next sessions: one that starts while it is still terminating refuses as above
+# (the egress session did, 807134e's Ops host run).
+kubectl delete namespace md-runbook-unguarded --timeout=180s
 
 # Another app's service account in the gate's namespace: the session refuses before its hello
 # (the gate could run a Job as that account).
