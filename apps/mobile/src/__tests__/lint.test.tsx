@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { parse } from '@md-runbook/core';
 import { addRunbook, getRunbook, resetRunbooks } from '../runbooks/store';
-import { fixCellOption, runbookProblems } from '../runbooks/lint';
+import { addCallComment, fixCellOption, runbookProblems } from '../runbooks/lint';
 import { BUNDLED } from '../runbooks/sample';
 import { RunbookView } from '../screens/RunbookView';
 
@@ -151,6 +151,42 @@ describe('problems in the runbook view', () => {
     const text = `---\nprose: strict\n---\n# Notes\n\nBasically run it.\n`;
     expect(runbookProblems(text).all.map((x) => x.message)).toEqual(['Delete "Basically"']);
     expect(runbookProblems(text).notes.size).toBe(0);
+  });
+
+  it('a runbook call shows what it runs; an empty one gets a note under it, and its fix adds the comment', async () => {
+    const text =
+      '# Campaign\n\n```runbook name="2a. Restore the cluster" src="campaign/2a-restore-cluster.runbook.md" section=Restore confirm\n```\n\n```runbook src=b.md\n# Runs the runbook b.md\n```\n';
+    const p = runbookProblems(text);
+    expect(p.all).toEqual([]);
+    expect([...p.hints.keys()]).toEqual([1]);
+    expect(p.underCell.get(1)![0]!.addComment).toBe('# Runs the runbook campaign/2a-restore-cluster.runbook.md (section Restore)');
+    const r = addRunbook('campaign.md', text);
+    await render(<RunbookView id={r.id} />);
+    // As on the call's status bar in VS Code: name → src · section, first on its status line.
+    expect(screen.getByTestId('cell-1-call-text')).toHaveTextContent(
+      '2a. Restore the cluster → campaign/2a-restore-cluster.runbook.md · section Restore',
+    );
+    expect(screen.getByTestId('cell-2-call-text')).toHaveTextContent('b.md');
+    // Not counted as a problem; the options the label shows aren't shown twice.
+    expect(screen.queryByTestId('problems-card')).toBeNull();
+    expect(screen.queryByText(/src="campaign/)).toBeNull();
+    expect(screen.getByText('runbook confirm')).toBeTruthy();
+    expect(screen.getByTestId('cell-1-problems')).toHaveTextContent(/body is empty: a plain Markdown viewer shows an empty box/);
+    expect(screen.queryByTestId('cell-2-problems')).toBeNull();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('cell-1-problem-0-add-comment'));
+    });
+    expect(parse(getRunbook(r.id)!.text).cells[1]!.value).toBe(
+      '# Runs the runbook campaign/2a-restore-cluster.runbook.md (section Restore)',
+    );
+    expect(screen.queryByTestId('cell-1-problems')).toBeNull();
+  });
+
+  it('addCallComment: only on a call with an empty body', () => {
+    expect(addCallComment('# A\n\n```runbook src=a.md\nENV=1\n```\n', 1)).toBeUndefined();
+    expect(addCallComment('# A\n\n```bash\n```\n', 1)).toBeUndefined();
+    expect(addCallComment('# A\n\n```runbook name=x\n```\n', 1)).toBeUndefined();
+    expect(addCallComment('# A\n\n```runbook src=a.md\n```\n', 1)).toBe('# A\n\n```runbook src=a.md\n# Runs the runbook a.md\n```\n');
   });
 
   it('Go to Next Problem opens the card for the front matter, then goes to each cell', async () => {

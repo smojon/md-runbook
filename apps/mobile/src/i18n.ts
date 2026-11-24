@@ -721,6 +721,8 @@ const en = {
   problemWarning: 'Warning',
   problemInfo: 'Note',
   fixOption: (from: string, to: string) => `Change “${from}” to “${to}”`,
+  /** The fix of a runbook call with an empty body (core's CALL_COMMENT_FIX_TITLE, VS Code's Quick Fix). */
+  addCallComment: 'Add a comment naming the runbook',
   problemsSummary: (errors: number, warnings: number) =>
     [errors > 0 ? `${errors} error${errors === 1 ? '' : 's'}` : '', warnings > 0 ? `${warnings} warning${warnings === 1 ? '' : 's'}` : '']
       .filter(Boolean)

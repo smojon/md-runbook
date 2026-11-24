@@ -110,7 +110,7 @@ import { CellRef, cellRef, cellRefIn, resolveCell, resolveIn, runRules, sameRule
 import { DiffSheet } from '../cells/DiffSheet';
 import { DiffLine, lineDiff } from '../cells/lineDiff';
 import { CodeCell, ProblemRow } from '../cells/CodeCell';
-import { LintProblem, RunbookProblems, fixCellOption, runbookProblems } from '../runbooks/lint';
+import { LintProblem, RunbookProblems, addCallComment, fixCellOption, runbookProblems } from '../runbooks/lint';
 import { Codicon } from '../ui/Codicon';
 import { SaveBar } from '../cells/SaveBar';
 import { Host, getHost, hostLabel, pinHostKey, useHosts } from '../hosts/store';
@@ -1904,6 +1904,10 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
   const fixOption = (index: number, from: string, to: string): void => {
     if (runbook) write(fixCellOption(getRunbook(runbook.id)?.text ?? runbook.text, index, from, to));
   };
+  /** A runbook call with an empty body: the comment naming what it runs, as its body (lint's fix). */
+  const addComment = (index: number): void => {
+    if (runbook) write(addCallComment(getRunbook(runbook.id)?.text ?? runbook.text, index));
+  };
   /** Each cell with problems in turn (the runbook's own problems first, in the card at the top), then around again. */
   const goToNextProblem = (): void => {
     const stops = [...(problems.runbook.length > 0 ? [-1] : []), ...[...problems.byCell.keys()].sort((a, b) => a - b)];
@@ -2896,8 +2900,9 @@ export function RunbookView({ id, autorun = false }: { id: string | undefined; a
                 {...(stepMarks.has(index) ? { marks: stepMarks.get(index)! } : {})}
                 onClearMark={(which) => toggleStepMark(index, which)}
                 onActions={() => setCellSheet(cellActions(index))}
-                {...(problems.byCell.has(index) ? { problems: problems.byCell.get(index)! } : {})}
+                {...(problems.underCell.has(index) ? { problems: problems.underCell.get(index)! } : {})}
                 onFix={(from, to) => fixOption(index, from, to)}
+                onAddComment={() => addComment(index)}
                 runbookId={approvalId}
                 platform={host?.platform}
                 below={
@@ -3075,7 +3080,7 @@ const EMPTY: ReadonlySet<string> = new Set();
 /** A cell counts as on screen once half of it shows (the rail's pale box). */
 const VIEWABILITY = { itemVisiblePercentThreshold: 50 };
 const NO_BREAKS: ReadonlySet<number> = new Set();
-const NO_LINT: RunbookProblems = { all: [], byCell: new Map(), runbook: [], notes: new Map() };
+const NO_LINT: RunbookProblems = { all: [], byCell: new Map(), runbook: [], notes: new Map(), hints: new Map(), underCell: new Map() };
 
 /**
  * Prose notes under a Markdown cell (lint's info: a long sentence, a padding word): one muted line,

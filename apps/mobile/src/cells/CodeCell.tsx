@@ -16,6 +16,7 @@ import {
   shellKindForLanguage,
 } from '@md-runbook/core';
 import { parseCellOptions, rewriteInfoTokens } from '@md-runbook/core/cellOptions';
+import { CALL_LABEL_KEYS, callLabel, isCallLanguage } from '@md-runbook/core/call';
 import { parseInterval } from '@md-runbook/core/checks';
 import { cellRunStatus } from '@md-runbook/core/runStatus';
 import { OutputText } from './OutputText';
@@ -91,6 +92,8 @@ export interface CodeCellProps {
   problems?: readonly LintProblem[];
   /** Rename a misspelled option to lint's suggestion (the "did you mean" fix). */
   onFix?(from: string, to: string): void;
+  /** A runbook call with an empty body: add the comment that names what it runs (lint's fix). */
+  onAddComment?(): void;
 }
 
 export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
@@ -139,10 +142,15 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
   const estimate = declared ?? p.learnedEstimate;
   /** A learned estimate reads `~1m`: it is not in the file. */
   const fmtEst = declared === undefined && p.learnedEstimate !== undefined ? formatLearned : formatEstimate;
-  // The fence options as written, but estimate= once: the chip beside them shows it.
+  // A runbook call: what it runs (name → src · section), first on its status line, as in VS Code.
+  const what = isCodeMeta(cell.meta) && isCallLanguage(cell.languageId) ? callLabel(cell.meta.info, cell.value) : undefined;
+  // The fence options as written, but estimate= once: the chip beside them shows it. A call's
+  // name=, src= and section= once too: its label shows them.
+  const shownElsewhere = (key: string): boolean =>
+    (key === 'estimate' && estimate !== undefined) || (what !== undefined && CALL_LABEL_KEYS.has(key));
   const info = isCodeMeta(cell.meta)
-    ? estimate !== undefined
-      ? rewriteInfoTokens(cell.meta.info, (tok) => (tok.key.toLowerCase() === 'estimate' ? '' : undefined))
+    ? estimate !== undefined || what !== undefined
+      ? rewriteInfoTokens(cell.meta.info, (tok) => (shownElsewhere(tok.key.toLowerCase()) ? '' : undefined))
       : cell.meta.info
     : cell.languageId;
   // After a run noticeably over the estimate: by how much (core's overEstimate), beside the output.
@@ -285,6 +293,14 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
       ) : null}
       <View style={styles.statusLine}>
         <View style={styles.statusLeft}>
+          {what ? (
+            <View testID={`cell-${index}-call`} accessible accessibilityLabel={what.tooltip.replace(/\n/g, '. ')} style={styles.callLabel}>
+              <Codicon name="references" size={12} color={c.muted} />
+              <Text testID={`cell-${index}-call-text`} style={styles.statusText} numberOfLines={1}>
+                {what.text}
+              </Text>
+            </View>
+          ) : null}
           {can.ok && runnable && !running ? (
             <View style={styles.statusButtons}>
               {steps.length > 1 ? (
@@ -386,7 +402,13 @@ export const CodeCell = memo(function CodeCell(p: CodeCellProps) {
       {problems.length > 0 ? (
         <View testID={`cell-${index}-problems`} style={styles.problems}>
           {problems.map((pr, i) => (
-            <ProblemRow key={i} id={`cell-${index}-problem-${i}`} problem={pr} {...(p.onFix ? { onFix: p.onFix } : {})} />
+            <ProblemRow
+              key={i}
+              id={`cell-${index}-problem-${i}`}
+              problem={pr}
+              {...(p.onFix ? { onFix: p.onFix } : {})}
+              {...(p.onAddComment ? { onAddComment: p.onAddComment } : {})}
+            />
           ))}
         </View>
       ) : null}
@@ -480,6 +502,7 @@ export function ProblemRow({
   problem,
   where,
   onFix,
+  onAddComment,
   onPress,
 }: {
   id: string;
@@ -487,6 +510,8 @@ export function ProblemRow({
   /** Overrides the "Line N" label (the runbook's problems card names the cell). */
   where?: string;
   onFix?(from: string, to: string): void;
+  /** An empty runbook call: add the comment `problem.addComment` as its body. */
+  onAddComment?(): void;
   /** Tapping the message (the problems card: go to the cell). */
   onPress?(): void;
 }) {
@@ -526,6 +551,12 @@ export function ProblemRow({
           >
             <Codicon name="lightbulb" size={12} color={c.link} />
             <Text style={styles.statusLink}>{t.fixOption(problem.fix.option, problem.fix.to)}</Text>
+          </Pressable>
+        ) : null}
+        {problem.addComment !== undefined && onAddComment ? (
+          <Pressable testID={`${id}-add-comment`} accessibilityRole="button" onPress={onAddComment} style={styles.statusButton}>
+            <Codicon name="lightbulb" size={12} color={c.link} />
+            <Text style={styles.statusLink}>{t.addCallComment}</Text>
           </Pressable>
         ) : null}
       </View>
@@ -654,6 +685,7 @@ const useStyles = themedStyles((c) => ({
   actionText: { fontSize: 13, color: c.link },
   statusLine: { flexDirection: 'row', alignItems: 'center', marginLeft: 34, paddingHorizontal: 4, paddingTop: 4, minHeight: 24, gap: 8 },
   statusLeft: { flex: 1 },
+  callLabel: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   statusText: { fontSize: 12, color: c.muted, flexShrink: 1 },
   lineHint: { fontSize: 12, color: c.muted, marginLeft: 38, paddingHorizontal: 4, paddingTop: 2 },
   why: { fontSize: 12, lineHeight: 17, color: c.muted, marginLeft: 38, paddingHorizontal: 4, paddingTop: 2 },
