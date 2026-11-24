@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.31.1
+
+**Fixed:** in VS Code, a cell's progress bar kept counting after the run ended. It stayed over the
+run's status line: `running · 2h1m53s` under a run of 2m40s. It now goes when the run ends.
+
 ## 0.31.0
 
 What's new:
