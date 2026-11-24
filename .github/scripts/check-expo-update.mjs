@@ -8,7 +8,7 @@
 //   from main's lock. Each entry that differs is checked against registry.npmjs.org:
 //   - only the keys npm writes in a lock entry;
 //   - resolved is that package's own tarball URL (`<registry><name>/-/<base>-<version>.tgz`);
-//   - integrity, dependencies, engines, os, cpu, libc and bin are the registry's for that version;
+//   - integrity, dependencies, engines, os, cpu and bin are the registry's for that version, and libc when the lock has it;
 //   - that version was published at least 7 days before the check (the package's `time`);
 //   - no new install script or shrinkwrap, no bundled package, link, alias, git or file spec.
 //   The registry is asked again after a 429 or 5xx, as long as Retry-After says (at most 60 s).
@@ -295,10 +295,12 @@ export async function checkUpdate({ summary, before, after, lockBefore, lockAfte
       ['engines', m.engines],
       ['os', m.os],
       ['cpu', m.cpu],
-      ['libc', m.libc],
     ]) {
       if (!same(e[field], want)) say(`${field} are not the registry's`);
     }
+    // npm 10 (Node 22's) writes no libc in a lock: none is fine, any other must be the registry's.
+    // It only chooses which platform's package installs; leaving it out adds no code.
+    if (e.libc !== undefined && !same(e.libc, m.libc)) say("libc are not the registry's");
     if (!same(normalizeBin(e.bin, name), normalizeBin(m.bin, name))) say("bin is not the registry's");
     // Old enough: published at least MIN_AGE_DAYS before this check, as the update job asked.
     let p;

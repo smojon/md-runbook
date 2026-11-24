@@ -252,7 +252,7 @@ describe('check-expo-update', () => {
     assert.deepEqual(kept, []);
   });
 
-  it("refuses engines, os, cpu and bin that aren't the registry's; bin as npm normalizes it", async () => {
+  it("refuses engines, os, cpu, libc and bin that aren't the registry's; bin as npm normalizes it", async () => {
     const withRegistry = (fields) => async (name, version) => ({ ...(await manifest(name, version)), ...(name === 'semver' ? fields : {}) });
     const run = (lockFields, registryFields) =>
       problems((x) => {
@@ -266,6 +266,11 @@ describe('check-expo-update', () => {
     assert.match((await run({ bin: { semver: 'bin/evil.js' } }, { bin: 'bin/semver.js' })).join('\n'), /node_modules\/semver bin is not the registry's/);
     assert.match((await run({ bin: { semver: 'bin/semver.js', node: 'bin/evil.js' } }, { bin: { semver: './bin/semver.js' } })).join('\n'), /bin is not the registry's/);
     assert.match((await run({ bin: { semver: 'bin/semver.js' } }, {})).join('\n'), /bin is not the registry's/);
+    // libc: npm 10 writes none in a lock (the 19 Nov failures); one it writes must be the registry's.
+    assert.deepEqual(await run({}, { libc: ['glibc'] }), []);
+    assert.deepEqual(await run({ libc: ['glibc'] }, { libc: ['glibc'] }), []);
+    assert.match((await run({ libc: ['musl'] }, { libc: ['glibc'] })).join('\n'), /node_modules\/semver libc are not the registry's/);
+    assert.match((await run({ libc: ['glibc'] }, {})).join('\n'), /node_modules\/semver libc are not the registry's/);
     // npm's own normalizing: a string under the unscoped name, no "./", folded paths.
     assert.deepEqual(normalizeBin('./cli.js', '@expo/cli'), { cli: 'cli.js' });
     assert.deepEqual(normalizeBin({ 'bin/x': './a/../b.js', y: '' }, 'x'), { x: 'b.js' });
