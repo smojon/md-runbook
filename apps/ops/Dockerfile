@@ -24,18 +24,33 @@ COPY gate/ ./
 RUN GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH:-amd64}" \
     go build -trimpath -ldflags="-s -w -buildid=" -o /md-runbook-gate ./cmd/md-runbook-gate
 
-FROM debian:13.1-slim AS kubectl
-ARG KUBECTL_VERSION=v1.34.1
+# Debian 13 slim, both stages, by the digest of its multi-arch index: a rebuild gets the bytes we
+# tested, not whatever the tag names that day. Dependabot (.github/dependabot.yml) proposes new
+# ones. By hand: `docker buildx imagetools inspect debian:13-slim`, its Digest line, in both FROMs.
+#
+# kubectl, checked against SHA-256s written down here, not against a .sha256 fetched from the
+# host the binary comes from (one compromised host could change both). 1.35: kubectl works within
+# one minor version of the cluster, so with 1.34 to 1.36. For another version, change all three:
+#   curl -fsSL https://dl.k8s.io/release/VERSION/bin/linux/ARCH/kubectl.sha256
+# The release builds amd64 and arm64 (release.yml); another architecture stops the build.
+FROM debian:13.8-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0 AS kubectl
+ARG KUBECTL_VERSION=v1.35.10
+ARG KUBECTL_SHA256_AMD64=c49a28f1f4efc4d475ed05f47f2ce8e563bf7bef69ed77fe1b924ea6d83b6327
+ARG KUBECTL_SHA256_ARM64=283f1be6a46b3695b625e25030106b8ffe18bd0d3a900f5b65c259ca407f04f5
 ARG TARGETARCH
-RUN apt-get update \
+RUN arch="${TARGETARCH:-amd64}" \
+ && case "$arch" in \
+      amd64) sum="$KUBECTL_SHA256_AMD64" ;; \
+      arm64) sum="$KUBECTL_SHA256_ARM64" ;; \
+      *) echo "no kubectl SHA-256 for $arch: add a KUBECTL_SHA256_ build argument" >&2; exit 1 ;; \
+    esac \
+ && apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
- && arch="${TARGETARCH:-amd64}" \
- && url="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl" \
- && curl -fsSLo /kubectl "$url" \
- && echo "$(curl -fsSL "$url.sha256")  /kubectl" | sha256sum -c - \
+ && curl -fsSLo /kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl" \
+ && echo "$sum  /kubectl" | sha256sum -c - \
  && chmod 755 /kubectl
 
-FROM debian:13.1-slim
+FROM debian:13.8-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
 # openssh-client: ssh-keygen (-Y checks signatures in the gate; start.sh makes the host key).
 # The gate is a static binary and needs nothing else. (procps comes with openssh-server.)
 # For runbooks: curl, jq, and what md-runbook-probe uses (openssl, ping, dig).

@@ -5,7 +5,10 @@
 #
 # The build context is apps/ (the probe script is in apps/ops, shared with the ops host).
 
-FROM debian:13.1-slim
+# Debian 13 slim by the digest of its multi-arch index, like apps/ops/Dockerfile: a rebuild gets
+# the bytes we tested. Dependabot (.github/dependabot.yml) proposes new ones. By hand:
+# `docker buildx imagetools inspect debian:13-slim`, its Digest line.
+FROM debian:13.8-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
 # The base image has bash, coreutils (timeout, date), getent and logger. The probe needs openssl
 # and the CAs, and ping for --ping.
 RUN apt-get update \
