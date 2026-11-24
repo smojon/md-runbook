@@ -13,7 +13,7 @@
 #   - the admission policy md-runbook-ops-jobs: without its binding, no session; with it, the
 #     gate's account can't create a Job as another account, with a Secret, without the label,
 #     or of another shape; md-runbook-ops-exec: it can't exec into the ops pod;
-#   - kube-system bound, even with Pod Security enforced: no session;
+#   - a kube-* namespace bound, even with Pod Security enforced: no session;
 #   - md-runbook-ops-workloads: as the cells' account, restart, undo, scale and set image pass, a
 #     patch of the template's service account or volumes doesn't, nor creating a Job; without
 #     its binding, no session;
@@ -162,26 +162,28 @@ cat "$work/c/err"
 # (the egress session did, 807134e's Ops host run).
 kubectl delete namespace md-runbook-unguarded --timeout=180s
 
-# kube-system bound, even with Pod Security enforced: the session refuses, naming it (its pods run
-# as the cluster's controllers). The label stays only for this session: kube-system's own pods
-# don't meet baseline.
+# A kube-* namespace bound, even with Pod Security enforced: the session refuses, naming it
+# (kube-system's pods run as the cluster's controllers). The gate refuses every kube-* name, so a
+# namespace of our own stands in: labelling kube-system itself would block its own pods (they
+# don't meet baseline) if one restarted meanwhile.
 cells_sa=system:serviceaccount:$ns:md-runbook-cells
-kubectl label namespace kube-system pod-security.kubernetes.io/enforce=baseline
-kubectl -n kube-system create rolebinding md-runbook-ops-operate \
+sys_ns=kube-md-runbook-test
+kubectl create namespace "$sys_ns"
+kubectl label namespace "$sys_ns" pod-security.kubernetes.io/enforce=baseline
+kubectl -n "$sys_ns" create rolebinding md-runbook-ops-operate \
   --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-cells
 open_session sys 9
 cell 0000cd01 'echo "ran=1"' >&9
-wait_for "$work/sys/err" 'may start workloads in namespace kube-system: never bind md-runbook-ops-operate'
+wait_for "$work/sys/err" "may start workloads in namespace $sys_ns: never bind md-runbook-ops-operate"
 close_session sys 9
-[ -z "$(value sys ran)" ] || fail "a block ran although the cells may change kube-system"
+[ -z "$(value sys ran)" ] || fail "a block ran although the cells may change $sys_ns"
 cat "$work/sys/err"
-grep -q 'kubectl label namespace kube-system' "$work/sys/err" && fail "the refusal suggests labelling kube-system"
-kubectl -n kube-system delete rolebinding md-runbook-ops-operate
-kubectl label namespace kube-system pod-security.kubernetes.io/enforce-
-# Gone before the next sessions (the API server's RBAC cache takes a moment).
+grep -q "kubectl label namespace $sys_ns" "$work/sys/err" && fail "the refusal suggests labelling $sys_ns"
+# Gone before the next sessions (one starting while it terminates would refuse as above).
+kubectl delete namespace "$sys_ns" --timeout=180s
 for i in $(seq 1 30); do
-  [ "$(kubectl auth can-i patch deployments -n kube-system --as="$cells_sa" 2>/dev/null)" = no ] && break
-  [ "$i" -lt 30 ] || fail "the cells may still patch deployments in kube-system"
+  [ "$(kubectl auth can-i patch deployments -n "$sys_ns" --as="$cells_sa" 2>/dev/null)" = no ] && break
+  [ "$i" -lt 30 ] || fail "the cells may still patch deployments in $sys_ns"
   sleep 1
 done
 
