@@ -5,13 +5,8 @@
 //   node e2e/audit.mjs
 import { execFileSync } from 'node:child_process';
 
-const REVIEWED = {
-  // picomatch <= 4.0.7: ReDoS through repeated extglobs (2026-11). Pulled in by Expo's bundler
-  // (@expo/metro-config) and Jest at build time; it matches our own config's globs, never input
-  // from a runbook or a user, and isn't part of the app on the phone. No fixed version yet.
-  // Accepted by the maintainer on 2026-11-17 for the 0.30.0 release.
-  'GHSA-fc5q-39xc-vjpf': 'picomatch, build-time globs only',
-};
+// (GHSA-fc5q-39xc-vjpf, picomatch, was here until GitHub withdrew it on 2026-11-18.)
+const REVIEWED = {};
 
 let out;
 try {
