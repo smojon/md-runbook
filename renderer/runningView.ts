@@ -24,6 +24,20 @@ export interface RunningData {
   attempts?: number;
 }
 
+/**
+ * What a status gets when it goes (the run ended, or the status moved below a new output): the
+ * renderer draws nothing and stops its timer. Not no items at all: VS Code doesn't take an
+ * extension's output away when its items go (its update throws on no mime type), so the old
+ * drawing stayed, counting for hours. An item of the same mime is an update the renderer is given.
+ */
+export interface EndedData {
+  ended: true;
+}
+
+export function isEndedData(v: unknown): v is EndedData {
+  return typeof v === 'object' && v !== null && (v as Partial<EndedData>).ended === true;
+}
+
 /** What the renderer draws. */
 export interface RunningView {
   /** `running · 12s of about 30s · attempt 2/5`. */

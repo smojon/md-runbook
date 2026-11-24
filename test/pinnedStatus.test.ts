@@ -1,43 +1,54 @@
 /**
  * A running cell's status in VS Code (src/pinnedStatus.ts): kept last while new outputs come in,
- * changed only when its data does, emptied when the run ends. A fake cell stands in for the
+ * changed only when its data does, ended when the run ends. A fake cell stands in for the
  * notebook API. The renderer's words (renderer/runningView.ts) are tested at the end.
  */
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { ElapsedAsk, elapsedMs, firstCount, hostCount, isElapsedAnswer, isRunningData, msToNextSecond, runningView } from '../renderer/runningView';
+import { ElapsedAsk, EndedData, elapsedMs, firstCount, hostCount, isElapsedAnswer, isEndedData, isRunningData, msToNextSecond, runningView } from '../renderer/runningView';
 import { OutputSink, PinnedStatus, RunningData, appendGroups, elapsedAnswer } from '../src/pinnedStatus';
+
+type Item = RunningData | EndedData;
 
 interface Out {
   name: string;
-  items: RunningData[];
+  items: Item[];
 }
 
+/** Drawn: an output with an item that isn't the ended one (the renderer draws that as nothing). */
+const drawn = (o: Out): boolean => o.items.length > 0 && !isEndedData(o.items[0]);
+
 /** A cell's outputs, as VS Code keeps them: append, replace the items of one (it must be there). */
-class FakeCell implements OutputSink<Out, RunningData> {
+class FakeCell implements OutputSink<Out, Item> {
   outputs: Out[] = [];
   replaced = 0;
   appended = 0;
+  /** Replaced by no items at all: VS Code then leaves the old drawing, its timer counting. */
+  noItems = 0;
   constructor(readonly clock: { t: number } = { t: 0 }) {}
   async appendOutput(out: readonly Out[]): Promise<void> {
     this.appended++;
     this.outputs.push(...out);
   }
-  async replaceOutputItems(items: readonly RunningData[], output: Out): Promise<void> {
+  async replaceOutputItems(items: readonly Item[], output: Out): Promise<void> {
     this.replaced++;
+    if (items.length === 0) this.noItems++;
     if (!this.outputs.includes(output)) throw new Error('no such output');
     output.items = [...items];
   }
   /** What shows: the outputs with items, last the status as the renderer draws it now. */
   shown(): string[] {
-    return this.outputs.filter((o) => o.items.length > 0).map((o) => (o.name === 'status' ? `[${runningView(o.items[0]!, this.clock.t, firstCount(o.items[0]!, o.items[0]!.sentAt)).line}]` : o.name));
+    return this.outputs.filter(drawn).map((o) => {
+      const d = o.items[0] as RunningData;
+      return o.name === 'status' ? `[${runningView(d, this.clock.t, firstCount(d, d.sentAt)).line}]` : o.name;
+    });
   }
 }
 
 const live = (name: string): Out => ({ name, items: [{ startedAt: 0, sentAt: 0 }] });
 
 const pinned = (cell: FakeCell, estimate?: number, attempts = 1) =>
-  new PinnedStatus<Out, RunningData>(cell, { output: (s) => ({ name: 'status', items: [s] }), item: (s) => s }, 0, estimate, attempts, () => cell.clock.t);
+  new PinnedStatus<Out, Item>(cell, { output: (s) => ({ name: 'status', items: [s] }), item: (s) => s, ended: (e) => e }, 0, estimate, attempts, () => cell.clock.t);
 
 describe('the running status under a cell (VS Code)', () => {
   it('stays last while the output grows and switches streams, and goes at the end', async () => {
@@ -52,10 +63,16 @@ describe('the running status under a cell (VS Code)', () => {
     assert.deepEqual(cell.shown(), ['stdout 1', 'stderr 1', '[running · 12s of about 30s]']);
     await s.append([live('stdout 2')]);
     assert.equal(cell.shown().at(-1), '[running · 12s of about 30s]', 'still last');
-    assert.equal(cell.outputs.filter((o) => o.name === 'status' && o.items.length > 0).length, 1, 'one status shows');
+    assert.equal(cell.outputs.filter((o) => o.name === 'status' && drawn(o)).length, 1, 'one status shows');
     clock.t = 45_000;
     await s.end();
     assert.deepEqual(cell.shown(), ['stdout 1', 'stderr 1', 'stdout 2'], 'gone: the status line of the run follows');
+    // Every status that went was given the ended item, never no items (VS Code left those drawn).
+    assert.equal(cell.noItems, 0);
+    assert.deepEqual(
+      cell.outputs.filter((o) => o.name === 'status').map((o) => o.items),
+      [[{ ended: true }], [{ ended: true }], [{ ended: true }]],
+    );
     // After the end (a secret captured redraws the output): no status comes back.
     await s.append([live('redrawn')]);
     assert.deepEqual(cell.shown(), ['stdout 1', 'stderr 1', 'stdout 2', 'redrawn']);
@@ -73,7 +90,7 @@ describe('the running status under a cell (VS Code)', () => {
     assert.equal(cell.replaced, 0, 'no replaceOutputItems while it runs');
     assert.equal(cell.outputs.length, outputs);
     await s.end();
-    assert.equal(cell.replaced, 1, 'emptied once at the end');
+    assert.equal(cell.replaced, 1, 'ended once at the end');
   });
 
   it('retry=: the attempt, and a new status after the outputs were cleared for it', async () => {
@@ -100,7 +117,7 @@ describe('the running status under a cell (VS Code)', () => {
 
   it('sends when it started and when it sent, the estimate in ms and the attempt; nothing that changes by itself', () => {
     const cell = new FakeCell();
-    const make = { output: () => live('x'), item: (s: RunningData) => s };
+    const make = { output: () => live('x'), item: (s: Item) => s, ended: (e: Item) => e };
     const host = { t: 1_700_000_004_000 };
     const s = new PinnedStatus(cell, make, 1_700_000_000_000, 30, 1, () => host.t);
     assert.deepEqual(s.data(), { startedAt: 1_700_000_000_000, sentAt: 1_700_000_004_000, estimateMs: 30_000 });
@@ -134,8 +151,8 @@ describe('the running status under a cell (VS Code)', () => {
     const after = await appendGroups(groups, { output: first, stream: 'stdout' as Stream }, ops);
     assert.deepEqual(itemsAdded, ['1 to live 0'], 'the first group goes into the live output');
     assert.equal(cell.appended - appended, 1, 'the 10 new outputs and the status in one append');
-    assert.equal(cell.replaced - replaced, 1, 'the old status emptied once');
-    assert.equal(cell.outputs.filter((o) => o.items.length === 0).length, 1, 'one empty output, not one per switch');
+    assert.equal(cell.replaced - replaced, 1, 'the old status ended once');
+    assert.equal(cell.outputs.filter((o) => !drawn(o)).length, 1, 'one ended output, not one per switch');
     assert.equal(cell.shown().length, 12);
     assert.equal(cell.shown().at(-1), '[running · 0s of about 30s]', 'the status stays last');
     assert.deepEqual(after, { output: cell.outputs.at(-2), stream: 'stdout' });
@@ -250,5 +267,14 @@ describe('the running status as the renderer draws it (renderer/runningView.ts)'
       { startedAt: Number.NaN, sentAt: 2 },
     ])
       assert.equal(isRunningData(bad), false, JSON.stringify(bad));
+  });
+
+  it('the ended item is never drawn as running: the renderer draws nothing and stops counting', () => {
+    const ended: EndedData = { ended: true };
+    assert.equal(isEndedData(ended), true);
+    assert.equal(isRunningData(ended), false);
+    assert.equal(isEndedData({ startedAt: 1, sentAt: 2 }), false);
+    assert.equal(isEndedData({ ended: 'true' }), false);
+    assert.equal(isEndedData(null), false);
   });
 });

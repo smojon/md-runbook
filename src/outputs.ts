@@ -27,7 +27,7 @@ export interface OutputMetadata {
   earlier?: boolean;
   /** A cloud console table of the output (cloudViews.ts); display only, never persisted. */
   cloud?: boolean;
-  /** The running cell's status under its output (runningStatus.ts); display only, emptied when it ends. */
+  /** The running cell's status under its output (runningStatus.ts); display only, ended (drawn as nothing) when it ends. */
   running?: boolean;
 }
 

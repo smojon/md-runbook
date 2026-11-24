@@ -4,11 +4,13 @@
  * uses (core cellRunStatus): `running · 12s of about 30s`, `attempt 2/5`. Without an estimate, a
  * counter only (`running · 12s`). The running-status renderer draws it and counts the seconds
  * (renderer/runningStatus.ts): the output changes only for a new attempt and at the end.
- * It stays last (pinnedStatus.ts); when the run ends it goes, and the status line follows as before.
+ * It stays last (pinnedStatus.ts); when the run ends it is ended (drawn as nothing), and the status
+ * line follows as before.
  */
 
 import * as vscode from 'vscode';
 import { META_KEY, OutputMetadata } from './outputs';
+import type { EndedData } from '../renderer/runningView';
 import { PinnedStatus, RunningData, elapsedAnswer } from './pinnedStatus';
 
 export const RUNNING_MIME = 'application/vnd.md-runbook.running+json';
@@ -28,7 +30,7 @@ export function registerRunningStatus(context: vscode.ExtensionContext): void {
   );
 }
 
-const item = (data: RunningData): vscode.NotebookCellOutputItem => vscode.NotebookCellOutputItem.json(data, RUNNING_MIME);
+const item = (data: RunningData | EndedData): vscode.NotebookCellOutputItem => vscode.NotebookCellOutputItem.json(data, RUNNING_MIME);
 
 export type RunningStatus = PinnedStatus<vscode.NotebookCellOutput, vscode.NotebookCellOutputItem>;
 
@@ -40,7 +42,7 @@ export function runningStatusFor(exec: vscode.NotebookCellExecution, startedAt: 
       appendOutput: (outputs) => exec.appendOutput(outputs),
       replaceOutputItems: (items, output) => exec.replaceOutputItems(items, output),
     },
-    { output: (data) => new vscode.NotebookCellOutput([item(data)], { [META_KEY]: meta }), item },
+    { output: (data) => new vscode.NotebookCellOutput([item(data)], { [META_KEY]: meta }), item, ended: item },
     startedAt,
     estimateSeconds,
     attempts,

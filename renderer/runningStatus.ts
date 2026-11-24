@@ -4,7 +4,8 @@
  * every client uses: `running · 12s of about 30s · attempt 2/5`. Without an estimate, the words
  * only. The extension sends when the cell started once (runningView.ts); this renderer redraws
  * the words and the bar every second with its own timer. The bar glides between redraws unless
- * the reader asked for reduced motion. The timer stops when the output goes.
+ * the reader asked for reduced motion. The timer stops when the output goes, or when it is given
+ * the ended item (runningView.ts EndedData): then it draws nothing.
  *
  * Data drawn for the first time may have come minutes ago (scrolled back into view, a new webview
  * after a split or a move): the renderer asks the extension host how long the cell has run, and
@@ -123,7 +124,12 @@ export function activate(ctx: RendererContext = {}): { renderOutputItem(item: Ou
       if (before !== undefined) stop(before);
       drawing.set(element, item.id);
       const data = item.json();
-      if (!isRunningData(data)) return;
+      // Ended (runningView.ts EndedData), or nothing we can draw: draw nothing, count no more.
+      if (!isRunningData(data)) {
+        element.textContent = '';
+        counts.delete(item.id);
+        return;
+      }
       countFor(item.id, data, Date.now(), ask);
       let seen = false;
       const draw = (): void => {

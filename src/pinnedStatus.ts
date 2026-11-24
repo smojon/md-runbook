@@ -8,10 +8,12 @@
  * is a change of the notebook: dirty, and saved again by auto save.
  *
  * A cell's outputs can't be removed one by one: a status that must move below a new output is
- * emptied (an output without items takes no room) and a new one is appended after that output.
+ * ended (its item replaced by the ended one, which the renderer draws as nothing) and a new one is
+ * appended after that output. Never emptied of all items: VS Code then leaves the old drawing in
+ * place, and its timer counted on for hours after the run (renderer/runningView.ts EndedData).
  */
 
-import type { ElapsedAnswer, ElapsedAsk } from '../renderer/runningView';
+import type { ElapsedAnswer, ElapsedAsk, EndedData } from '../renderer/runningView';
 
 /** The output calls a run makes (vscode.NotebookCellExecution's). */
 export interface OutputSink<O, I> {
@@ -40,7 +42,7 @@ export class PinnedStatus<O, I> {
 
   constructor(
     private readonly sink: OutputSink<O, I>,
-    private readonly make: { output(data: RunningData): O; item(data: RunningData): I },
+    private readonly make: { output(data: RunningData): O; item(data: RunningData): I; ended(data: EndedData): I },
     private readonly startedAt: number,
     private readonly estimateSeconds: number | undefined,
     private readonly attempts: number,
@@ -103,7 +105,7 @@ export class PinnedStatus<O, I> {
     this.output = undefined;
     if (old === undefined) return;
     try {
-      await this.sink.replaceOutputItems([], old);
+      await this.sink.replaceOutputItems([this.make.ended({ ended: true })], old);
     } catch {
       // Gone already (the outputs were cleared for a new attempt).
     }
@@ -129,7 +131,7 @@ export interface LiveOutput<O, S> {
  * One flush of a running cell's output (controller.ts), each group one stream's text. A group of
  * the live output's stream goes into it; each switch of stream starts a new output. The new
  * outputs are appended together: with the running status, one change of the notebook per flush
- * however often stdout and stderr alternate, not an emptied status and a new one per switch.
+ * however often stdout and stderr alternate, not an ended status and a new one per switch.
  */
 export async function appendGroups<G extends { stream: S }, O, I, S>(
   groups: readonly G[],
