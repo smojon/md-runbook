@@ -91,7 +91,7 @@ spec:
         - name: metrics
           # By the digest of its multi-arch index: every node pulls the same bytes. Dependabot
           # proposes new ones (.github/dependabot.yml).
-          image: busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+          image: busybox:1.38.0@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4
           imagePullPolicy: IfNotPresent
           # The text exposition format's content type, for Prometheus 3.
           command:
