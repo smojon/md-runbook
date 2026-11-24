@@ -17,6 +17,8 @@
 #   - md-runbook-ops-workloads: as the cells' account, restart, undo, scale and set image pass, a
 #     patch of the template's service account or volumes doesn't, nor creating a Job; without
 #     its binding, no session;
+#   - a namespace the blocks may change whose service account has a ClusterRoleBinding: no
+#     session; once the binding goes, sessions run;
 #   - cells-egress.yaml: blocks still reach the API server and DNS, not another namespace's
 #     Service nor the internet;
 #   - ops-egress.yaml: sessions still work; the ops pod doesn't reach another namespace's Service.
@@ -197,6 +199,23 @@ kubectl create namespace "$w"
 kubectl label namespace "$w" pod-security.kubernetes.io/enforce=baseline
 kubectl -n "$w" create rolebinding md-runbook-ops-operate \
   --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-cells
+# A service account there with cluster-wide rights (an image a runbook sets would run as it): no
+# session, naming it. Once its ClusterRoleBinding goes, sessions run again.
+kubectl -n "$w" create serviceaccount md-runbook-wide
+kubectl create clusterrolebinding md-runbook-wide --clusterrole=view --serviceaccount="$w:md-runbook-wide"
+open_session wide 9
+cell 0000cf01 'echo "ran=1"' >&9
+wait_for "$work/wide/err" "namespace $w, where service accounts have cluster-wide rights: md-runbook-wide → view (binding md-runbook-wide)"
+close_session wide 9
+[ -z "$(value wide ran)" ] || fail "a block ran although a service account of $w has cluster-wide rights"
+cat "$work/wide/err"
+kubectl delete clusterrolebinding md-runbook-wide
+open_session wide2 9
+cell 0000cf02 'echo "ran=1"' >&9
+wait_for "$work/wide2/out" '__MDRB_0000cf02__ 0'
+close_session wide2 9
+[ "$(value wide2 ran)" = 1 ] || fail "no session after the ClusterRoleBinding of $w's account went"
+echo "ok: a namespace whose account has a ClusterRoleBinding refuses sessions, and not once it goes"
 kubectl -n "$w" create deployment app --image=registry.k8s.io/pause:3.10
 kubectl -n "$w" rollout status deployment/app --timeout=120s
 kubectl "${as_cells[@]}" -n "$w" rollout restart deployment/app

@@ -151,8 +151,8 @@ spec:
 # In a namespace you bind md-runbook-ops-operate in, RBAC lets the cells' account patch any part
 # of a Deployment or StatefulSet: its pod template too. A runbook could then run the pods as
 # another service account of that namespace (a controller's, with cluster-wide rights), mount
-# its Secrets, or reach the node. This policy lets the cells keep a template's identity and
-# reach as it was. What runbooks need still passes:
+# its Secrets, or reach the node. This policy keeps which account the pods run as, what they
+# mount and where they run as it was; not the code they run. What runbooks need still passes:
 #   - kubectl rollout restart: an annotation of the template (not compared);
 #   - kubectl scale: the scale subresource, which this policy doesn't match; spec.replicas too;
 #   - kubectl set image, and set env with plain values: images and values aren't compared;
@@ -160,8 +160,10 @@ spec:
 #     volumes, containers' names, env sources, security context, host and node fields.
 # What it can't stop:
 #   - set image runs any code as the service account the workload already has, with the Secrets
-#     it already mounts. So bind no namespace whose workloads' accounts have rights you wouldn't
-#     give every runbook (README.md, "Where runbooks may change things").
+#     it already mounts. The gate refuses a namespace whose accounts have ClusterRoleBindings;
+#     it can't see rights that RoleBindings give them. So bind no namespace whose workloads'
+#     accounts have rights you wouldn't give every runbook (README.md, "Where runbooks may change
+#     things").
 #   - Rights you add to md-runbook-ops-operate beyond these kinds (pods, DaemonSets, ReplicaSets).
 # Created objects (the opt-in `jobs create`, or rights you add) have no older version to compare
 # with: they must run as the account default, with no Secret as a volume or env.

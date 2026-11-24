@@ -63,8 +63,8 @@ kubeconfig:
 
 [kubernetes/md-runbook-ops.yaml](kubernetes/md-runbook-ops.yaml) sets up:
 - the namespace `md-runbook-ops`, with Pod Security `restricted` enforced;
-- the service account `md-runbook-ops` of the ops pod: it runs the sessions' Jobs, and reads one
-  admission policy;
+- the service account `md-runbook-ops` of the ops pod: it runs the sessions' Jobs, reads one
+  admission policy and lists ClusterRoleBindings;
 - the service account `md-runbook-cells` of those Jobs, and what runbooks may do:
   - read everything except Secrets, ConfigMaps and pod logs, in every namespace, cert-manager
     certificates included;
@@ -168,9 +168,11 @@ What still passes:
 - `kubectl set image`, and `kubectl set env` with plain values;
 - `kubectl rollout undo`, to a revision with the same fields as above.
 
-What it can't stop:
-- A new image runs any code as the workload's own account, with the Secrets it mounts.
-- Bind only namespaces whose workloads may do what any runbook may do (below).
+It stops a change of which account the pods run as. It doesn't stop:
+- a new image running any code as the workload's own account, with the Secrets it mounts.
+
+The gate covers that only for cluster-wide rights (below). So bind only namespaces whose
+workloads may do what any runbook may do.
 
 What the cells create (opt-in Jobs) has nothing to compare with. It must:
 - run as the account `default`;
@@ -215,11 +217,26 @@ kubectl -n NAMESPACE create rolebinding md-runbook-ops-operate \
 
 **What a binding gives every runbook.** Binding a namespace lets runbooks act with its workloads:
 - restart, roll back and scale them;
-- run any image as their service accounts (`kubectl set image`), with the Secrets they mount;
+- change their image (`kubectl set image`). The new image's code runs as the workload's service
+  account, with the Secrets it mounts. Runbooks can thus run code as any account a workload
+  there uses.
 - with `jobs create` opted in: run pods of their own there. Without the policy, as any of its
   service accounts.
 
 See [Kubernetes RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation).
+
+**The gate refuses namespaces with cluster-wide accounts.** At each session it lists the
+ClusterRoleBindings. It refuses a namespace runbooks may change when one names:
+- a service account of that namespace (as a ServiceAccount, or its user name);
+- or the group `system:serviceaccounts:NAMESPACE`.
+
+The message names up to three: `ACCOUNT → CLUSTERROLE (binding NAME)`. Bindings to every account
+(`system:serviceaccounts`, `system:authenticated`) don't count: the cells have those rights too.
+
+What it can't see:
+- RoleBindings in other namespaces that give these accounts rights there;
+- rights from outside RBAC: a webhook authorizer;
+- cloud roles tied to an account: EKS IRSA or Pod Identity, GKE or AKS Workload Identity.
 
 So:
 - Bind only the namespaces you need.
@@ -271,12 +288,13 @@ kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
 **Coming from 0.31.x:** apply both files again, as a cluster admin.
 - `admission-policy.yaml` adds the policy `md-runbook-ops-workloads` and its binding.
 - Your copy of `md-runbook-ops.yaml` needs from the stock file:
-  - the ClusterRole and ClusterRoleBinding `md-runbook-ops-gate`: the gate reads the policy with
-    them;
+  - the ClusterRole and ClusterRoleBinding `md-runbook-ops-gate`: the gate reads the policy and
+    lists the ClusterRoleBindings with them;
   - `md-runbook-ops-operate` without `jobs create` (opt-in now);
   - the log volume's `sizeLimit`.
 - Without them, sessions refuse while runbooks may change workloads somewhere.
 - A binding in a `kube-*` namespace now refuses sessions: delete it.
+- A binding in a namespace whose service accounts have cluster-wide bindings refuses them too.
 - Keep the rules you added to `md-runbook-ops-operate` in your copy: `kubectl apply` replaces
   its rules.
 
@@ -292,6 +310,7 @@ kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
      start workloads;
    - each namespace where it may change workloads enforces Pod Security, and none is `kube-*`;
    - if it may change workloads anywhere, `md-runbook-ops-workloads` is bound;
+   - no service account of such a namespace has a ClusterRoleBinding;
 6. runs the session's blocks there with `kubectl exec`;
 7. deletes the Job when the session ends.
 

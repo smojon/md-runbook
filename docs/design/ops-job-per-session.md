@@ -72,9 +72,11 @@ own. They can't reach the gate's token, log or state, nor another session.
 - Ops account: a Role in its namespace: Jobs (create, list, delete), pods (get, list),
   `pods/exec` (create, get), service accounts (list). Its namespace holds the ops host alone:
   the gate refuses other pods and service accounts there.
-- Ops account, cluster-wide: `get` on `md-runbook-ops-workloads` and its binding, by name only
-  (ClusterRole `md-runbook-ops-gate`). Its self-check refuses a get without a name, a list or a
-  change of the admission policies.
+- Ops account, cluster-wide (ClusterRole `md-runbook-ops-gate`):
+  - `get` on `md-runbook-ops-workloads` and its binding, by name only;
+  - `list` on ClusterRoleBindings (`kubectl get` of a type lists; no `get` needed).
+  - The gate's self-check refuses a get without a name, a list or a change of the policies.
+  - The self-check also refuses a get or change of any RBAC object, and bind or escalate.
 - Cells' account: read everywhere but Secrets, ConfigMaps and pod logs. Those two, and operate
   rights, per namespace.
   - Never bound in the ops namespace, nor in a `kube-*` one: the gate refuses both.
@@ -117,6 +119,15 @@ own. They can't reach the gate's token, log or state, nor another session.
   - Self-check, when the cells may change workloads somewhere (rules reviews): the ops account
     gets the policy and binding. Missing, `failurePolicy: Ignore`, no `Deny`, or a narrowed
     binding: no session. Fetched before the Job, so the pod's wait has no call more.
+- The policy can't stop `kubectl set image`: `rollout undo` needs image changes. A new image runs
+  as the workload's own account. So the gate also refuses a namespace the cells may change when
+  a ClusterRoleBinding names one of its accounts.
+  - Subjects that count: a ServiceAccount of that namespace, its user name
+    (`system:serviceaccount:NS:NAME`), the group `system:serviceaccounts:NS`.
+  - Ignored: `system:serviceaccounts`, `system:authenticated` (the cells have those rights too),
+    and the cells' own account.
+  - The list is fetched before the Job too. Unlisted or unreadable: no session.
+  - Not seen: RoleBindings elsewhere, webhook authorizers, cloud roles of an account.
 
 ## gate_mode and the self-check
 

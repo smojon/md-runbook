@@ -60,10 +60,15 @@ subjects:
     name: md-runbook-ops
     namespace: md-runbook-ops
 ---
-# The gate's one cluster-wide right: get the admission policy md-runbook-ops-workloads and its
-# binding by name (admission-policy.yaml). Without them it refuses sessions once runbooks may
-# change workloads somewhere. It checks at each session that it may get nothing else of the
-# policies, list them, or change them.
+# The gate's cluster-wide reads, for its checks once runbooks may change workloads somewhere
+# (else it refuses sessions):
+#   - the admission policy md-runbook-ops-workloads and its binding, by name
+#     (admission-policy.yaml);
+#   - the ClusterRoleBindings: it refuses a namespace whose service accounts have cluster-wide
+#     rights (a runbook's image would run as them). `kubectl get clusterrolebindings` lists;
+#     it needs no get.
+# It checks at each session that it may do nothing more: get or change the policies, get or
+# change any RBAC object, bind or escalate roles.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -73,6 +78,9 @@ rules:
     resources: [validatingadmissionpolicies, validatingadmissionpolicybindings]
     resourceNames: [md-runbook-ops-workloads]
     verbs: [get]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings]
+    verbs: [list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -147,8 +155,10 @@ subjects:
 # Never cluster-wide, never in kube-* (the gate refuses both): whoever may change a namespace's
 # workloads can read its Secrets and act as its service accounts (Kubernetes RBAC good
 # practices, "Workload creation"). The admission policy md-runbook-ops-workloads keeps a patch
-# from changing a pod template's service account, volumes and the like; a new image still runs
-# as the account the workload has. No DaemonSets: they run on every node, often privileged. Add
+# from changing which service account a pod template runs as, its volumes and the like. A new
+# image still runs as the account the workload has: the gate refuses a namespace whose accounts
+# have cluster-wide bindings, not rights from RoleBindings. No DaemonSets: they run on every
+# node, often privileged. Add
 # rules for more (pods/exec, delete) once you need them: pods/exec lets a block read the token
 # of every pod it execs into.
 apiVersion: rbac.authorization.k8s.io/v1
