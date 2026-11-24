@@ -1,0 +1,56 @@
+# Optional: where the ops pod (sshd and md-runbook-gate) may connect. Without it, it reaches
+# anything the cluster reaches; with it, only the cluster's DNS, the API server and, if you add
+# it, the run reports' host (report_to). Not the cloud's metadata address (169.254.169.254), not
+# other namespaces' Services, not the internet. A compromised gate holds the host key and the
+# report token: this keeps it from sending them anywhere else. See README.md (Egress).
+#
+# What still works:
+#   - sshd's replies: a NetworkPolicy lets the replies of an allowed connection through, and the
+#     md-runbook-ops policy allows the connections to sshd;
+#   - the gate's Jobs and kubectl exec: both go to the API server (it reaches the kubelet, not
+#     this pod);
+#   - kubectl port-forward to sshd: it enters the pod through the kubelet.
+#
+# Before `kubectl apply -f` this file, put your API server's address and port below, as for
+# cells-egress.yaml: the endpoints of the kubernetes Service, which the policy sees:
+#   kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes -o wide
+# (ENDPOINTS and PORTS; a managed cluster may list several: one ipBlock each.) Some network
+# plugins check before the Service's translation: there add the Service's address too (kubectl
+# get service kubernetes -n default, port 443). On Cilium, an ipBlock with a node's address may
+# need policy-cidr-match-mode: nodes. Without the right address, sessions refuse: the gate can't
+# start their Jobs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: md-runbook-ops-egress
+  namespace: md-runbook-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: md-runbook-ops
+  policyTypes: [Egress]
+  egress:
+    # The cluster's DNS: the report_to host's name. NodeLocal DNSCache (169.254.20.10) or
+    # OpenShift's DNS: a rule of their own.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # The API server: the gate's Jobs, kubectl exec into their pods, its checks.
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.10/32 # your API server's address
+      ports:
+        - { protocol: TCP, port: 6443 } # its port
+    # The run reports' host (report_to in gate.conf), for example:
+    # - to:
+    #     - ipBlock:
+    #         cidr: 198.51.100.0/24 # the report host's addresses
+    #   ports:
+    #     - { protocol: TCP, port: 443 }

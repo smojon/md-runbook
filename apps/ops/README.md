@@ -63,18 +63,21 @@ kubeconfig:
 
 [kubernetes/md-runbook-ops.yaml](kubernetes/md-runbook-ops.yaml) sets up:
 - the namespace `md-runbook-ops`, with Pod Security `restricted` enforced;
-- the service account `md-runbook-ops` of the ops pod: it may only run the sessions' Jobs;
+- the service account `md-runbook-ops` of the ops pod: it runs the sessions' Jobs, and reads one
+  admission policy;
 - the service account `md-runbook-cells` of those Jobs, and what runbooks may do:
   - read everything except Secrets, ConfigMaps and pod logs, in every namespace, cert-manager
     certificates included;
-  - `rollout restart`, `rollout undo`, scale Deployments and StatefulSets, create Jobs from
-    CronJobs, read pod logs and ConfigMaps, only in the namespaces you bind (see below);
-  - nothing else: no deleting, no exec into pods, no DaemonSets;
+  - `rollout restart`, `rollout undo`, scale Deployments and StatefulSets, read pod logs and
+    ConfigMaps, only in the namespaces you bind (see below);
+  - nothing else: no deleting, no exec into pods, no DaemonSets, no Jobs (opt-in, below);
 - the gate's ConfigMap, the Deployment and a ClusterIP Service on port 22;
 - NetworkPolicies: the Job pods take no connection, and can't reach the ops pod's sshd.
 
 [kubernetes/admission-policy.yaml](kubernetes/admission-policy.yaml) holds the admission
-policies: the gate's account may create only the cells' Jobs, and exec only into their pods.
+policies:
+- the gate's account may create only the cells' Jobs, and exec only into their pods;
+- the cells' account may restart and scale workloads, not change who their pods run as.
 
 Apply both as a cluster admin: the ClusterRoles and the policies are cluster-wide. They need
 Kubernetes 1.30 or later.
@@ -146,6 +149,39 @@ At each session the gate checks `md-runbook-ops-jobs`: a dry run of a Job as its
 must fail. Else the session refuses with `the admission policy md-runbook-ops-jobs doesn't
 guard the Jobs`.
 
+The policy `md-runbook-ops-workloads` holds the cells' account, in every namespace. RBAC lets it
+patch a Deployment's pod template. So without the policy, a runbook could:
+- run the pods as another service account of that namespace;
+- add a Secret as a volume or env, or a container;
+- pick host namespaces, a node, tolerations or a runtime class.
+
+The policy compares each change with the object as it was. It refuses a change to:
+- the template's service account and token mount;
+- its volumes, and the names of its containers and init containers;
+- where env comes from (`envFrom`, `valueFrom`), plain values aside;
+- the security context, host namespaces and host ports;
+- the node, node selector, affinity, tolerations and runtime class.
+
+What still passes:
+- `kubectl rollout restart`: it changes an annotation only;
+- `kubectl scale`: the scale subresource, which the policy doesn't match;
+- `kubectl set image`, and `kubectl set env` with plain values;
+- `kubectl rollout undo`, to a revision with the same fields as above.
+
+What it can't stop:
+- A new image runs any code as the workload's own account, with the Secrets it mounts.
+- Bind only namespaces whose workloads may do what any runbook may do (below).
+
+What the cells create (opt-in Jobs) has nothing to compare with. It must:
+- run as the account `default`;
+- mount no Secret, as a volume or env;
+- for a Job: name a CronJob as its controller, as `kubectl create job --from=cronjob/NAME` does.
+  A runbook can write that line itself: it states the intent, the two rules above hold.
+
+At each session, if the cells may change workloads somewhere, the gate reads the policy and its
+binding. They must deny in every namespace. Else the session refuses with `the admission policy
+md-runbook-ops-workloads or its binding is missing`.
+
 **A mirror of the image:** change the `repository` variable in `admission-policy.yaml`. That's
 one line.
 
@@ -177,12 +213,33 @@ kubectl -n NAMESPACE create rolebinding md-runbook-ops-operate \
   - A cluster-wide exemption of that namespace in the admission configuration undoes the label.
     The gate can't see it.
 
-- Bind only the namespaces you need. Whoever may change a namespace's workloads can read its
-  Secrets ([Kubernetes RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation)).
-- Never bind `kube-system`, and never `md-runbook-ops` itself. The gate refuses to start a
-  session there.
+**What a binding gives every runbook.** Binding a namespace lets runbooks act with its workloads:
+- restart, roll back and scale them;
+- run any image as their service accounts (`kubectl set image`), with the Secrets they mount;
+- with `jobs create` opted in: run pods of their own there. Without the policy, as any of its
+  service accounts.
+
+See [Kubernetes RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation).
+
+So:
+- Bind only the namespaces you need.
+- Never bind a namespace where a controller with cluster-wide rights runs. For example:
+  `argocd`, `flux-system`, `cert-manager`, `external-secrets`, ingress controllers.
+  - Its service account's rights become every runbook's.
+  - Check a namespace first: `kubectl get rolebindings,clusterrolebindings -A -o wide | grep NAMESPACE/`
+    lists the roles of its service accounts (`NAMESPACE/NAME` in the last column).
+- Never bind `kube-*` namespaces (`kube-system` and the like): their service accounts run the
+  cluster. The gate refuses a session then, whatever their labels.
+- Never bind `md-runbook-ops` itself. The gate refuses that too.
+- The cells read every pod spec in the cluster. A credential written inline in `env` is readable
+  by every runbook: use Secrets.
 - **More rights:** add rules to `md-runbook-ops-operate`. Whatever it allows, every runbook on
   this host can do.
+  - `pods/exec` lets a block read the token of every pod it execs into: it acts as their
+    accounts.
+  - `jobs create` (for `kubectl create job --from=cronjob/NAME`) is commented out in the
+    manifest. It lets runbooks run pods of their own there. The policy holds them to the account
+    `default`, without Secrets.
 
 **Coming from 0.28 or before:** the bindings named the ops pod's account. Move each one to the
 cells' account, and remove the one in `md-runbook-ops`:
@@ -211,6 +268,18 @@ kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
 - For the Role, apply your own copy of `md-runbook-ops.yaml`. The stock file resets the sample
   ConfigMap (your signers, `gate.conf`) and the Deployment's `CLUSTER_NAME`.
 
+**Coming from 0.31.x:** apply both files again, as a cluster admin.
+- `admission-policy.yaml` adds the policy `md-runbook-ops-workloads` and its binding.
+- Your copy of `md-runbook-ops.yaml` needs from the stock file:
+  - the ClusterRole and ClusterRoleBinding `md-runbook-ops-gate`: the gate reads the policy with
+    them;
+  - `md-runbook-ops-operate` without `jobs create` (opt-in now);
+  - the log volume's `sizeLimit`.
+- Without them, sessions refuse while runbooks may change workloads somewhere.
+- A binding in a `kube-*` namespace now refuses sessions: delete it.
+- Keep the rules you added to `md-runbook-ops-operate` in your copy: `kubectl apply` replaces
+  its rules.
+
 ### A Job per session
 
 `gate.conf` in the cluster has `cells_runner = kubernetes-job`. For each SSH session, the gate:
@@ -221,7 +290,8 @@ kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
 5. checks the cells' account in the new pod:
    - in `md-runbook-ops` it can't exec into pods, read pod logs, Secrets or ConfigMaps, or
      start workloads;
-   - each namespace where it may change workloads enforces Pod Security;
+   - each namespace where it may change workloads enforces Pod Security, and none is `kube-*`;
+   - if it may change workloads anywhere, `md-runbook-ops-workloads` is bound;
 6. runs the session's blocks there with `kubectl exec`;
 7. deletes the Job when the session ends.
 
@@ -281,6 +351,28 @@ kubectl apply -f apps/ops/kubernetes/cells-egress.yaml
   them a rule of their own.
 - On Cilium, an `ipBlock` with a node's address may need `policy-cidr-match-mode: nodes`.
   The API server often runs on the control plane nodes.
+
+**The ops pod's egress (opt-in).** [kubernetes/ops-egress.yaml](kubernetes/ops-egress.yaml) does
+the same for the ops pod. It may then reach only:
+- the cluster's DNS and the API server;
+- the run reports' host, if you add it (`report_to`: a commented rule).
+
+The ops pod holds the host key and the report token. This keeps a compromised gate from sending
+them elsewhere.
+
+What still works:
+- sshd's replies: a NetworkPolicy lets the replies of an allowed connection through;
+- the sessions' Jobs and `kubectl exec`: both go through the API server;
+- `kubectl port-forward` to sshd.
+
+Put in your API server's address and port as for `cells-egress.yaml`, then:
+
+```sh
+kubectl apply -f apps/ops/kubernetes/ops-egress.yaml
+```
+
+- Without the right address, sessions refuse: the gate can't start their Jobs.
+- The same notes as above apply: NodeLocal DNSCache, Cilium, the Service's address.
 
 Settings in `gate.conf`:
 - `job_service_account = NAME`: required.

@@ -1,9 +1,13 @@
 # What the ops pod's account may create and exec into, in md-runbook-ops: only the cells' Jobs.
-# Apply it with md-runbook-ops.yaml, as a cluster admin (it is cluster-scoped), on Kubernetes
-# 1.30 or later. Applying it again changes nothing else (your ConfigMap, your Deployment):
+# And what the cells' account may change in the namespaces you bind: not a pod template's service
+# account, volumes, env sources, security context, host or node (md-runbook-ops-workloads, at the
+# end). Apply it with md-runbook-ops.yaml, as a cluster admin (it is cluster-scoped), on
+# Kubernetes 1.30 or later. Applying it again changes nothing else (your ConfigMap, your
+# Deployment):
 #   kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
-# The gate checks at each session that md-runbook-ops-jobs is in force (else the session doesn't
-# start). Other accounts' Jobs and execs (yours, the cells' elsewhere) aren't affected.
+# The gate checks at each session that md-runbook-ops-jobs is in force, and md-runbook-ops-workloads
+# once the cells may change workloads somewhere (else the session doesn't start). Other accounts'
+# Jobs, execs and changes (yours, the controllers') aren't affected.
 #
 # RBAC lets the gate's account create any Job here: as any service account, with this
 # namespace's Secrets and ConfigMaps as volumes or env (the host key, the report token,
@@ -143,3 +147,149 @@ spec:
     namespaceSelector:
       matchLabels:
         kubernetes.io/metadata.name: md-runbook-ops
+---
+# In a namespace you bind md-runbook-ops-operate in, RBAC lets the cells' account patch any part
+# of a Deployment or StatefulSet: its pod template too. A runbook could then run the pods as
+# another service account of that namespace (a controller's, with cluster-wide rights), mount
+# its Secrets, or reach the node. This policy lets the cells keep a template's identity and
+# reach as it was. What runbooks need still passes:
+#   - kubectl rollout restart: an annotation of the template (not compared);
+#   - kubectl scale: the scale subresource, which this policy doesn't match; spec.replicas too;
+#   - kubectl set image, and set env with plain values: images and values aren't compared;
+#   - kubectl rollout undo: passes when the older revision has the same service account,
+#     volumes, containers' names, env sources, security context, host and node fields.
+# What it can't stop:
+#   - set image runs any code as the service account the workload already has, with the Secrets
+#     it already mounts. So bind no namespace whose workloads' accounts have rights you wouldn't
+#     give every runbook (README.md, "Where runbooks may change things").
+#   - Rights you add to md-runbook-ops-operate beyond these kinds (pods, DaemonSets, ReplicaSets).
+# Created objects (the opt-in `jobs create`, or rights you add) have no older version to compare
+# with: they must run as the account default, with no Secret as a volume or env.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: md-runbook-ops-workloads
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    # deployments, not deployments/scale: kubectl scale isn't matched. A patch is an UPDATE.
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        resources: [deployments, statefulsets]
+        operations: [CREATE, UPDATE]
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        resources: [jobs, cronjobs]
+        operations: [CREATE, UPDATE]
+  # Only the cells' account (job_service_account in gate.conf: change both together).
+  matchConditions:
+    - name: the-cells
+      expression: "request.userInfo.username == 'system:serviceaccount:md-runbook-ops:md-runbook-cells'"
+  # Variables are evaluated when first used: was (oldObject) only by UPDATE's checks, as
+  # oldObject is null for a CREATE.
+  variables:
+    - name: update
+      expression: "request.operation == 'UPDATE'"
+    - name: tpl
+      expression: "object.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec : object.spec.template.spec"
+    - name: was
+      expression: "oldObject.kind == 'CronJob' ? oldObject.spec.jobTemplate.spec.template.spec : oldObject.spec.template.spec"
+    - name: containers
+      expression: "variables.tpl.containers + (has(variables.tpl.initContainers) ? variables.tpl.initContainers : [])"
+    - name: wasContainers
+      expression: "variables.was.containers + (has(variables.was.initContainers) ? variables.was.initContainers : [])"
+  validations:
+    # ---- UPDATE: the template keeps what decides who its pods are and what they reach ----
+    # (Each field: present in both and equal, or in neither.)
+    - expression: >-
+        !variables.update || (
+        has(variables.tpl.serviceAccountName) == has(variables.was.serviceAccountName) &&
+        (!has(variables.tpl.serviceAccountName) || variables.tpl.serviceAccountName == variables.was.serviceAccountName) &&
+        has(variables.tpl.serviceAccount) == has(variables.was.serviceAccount) &&
+        (!has(variables.tpl.serviceAccount) || variables.tpl.serviceAccount == variables.was.serviceAccount) &&
+        has(variables.tpl.automountServiceAccountToken) == has(variables.was.automountServiceAccountToken) &&
+        (!has(variables.tpl.automountServiceAccountToken) || variables.tpl.automountServiceAccountToken == variables.was.automountServiceAccountToken))
+      message: "runbooks can't change a pod template's service account (serviceAccountName, serviceAccount, automountServiceAccountToken)"
+    - expression: >-
+        !variables.update || (
+        has(variables.tpl.volumes) == has(variables.was.volumes) &&
+        (!has(variables.tpl.volumes) || variables.tpl.volumes == variables.was.volumes))
+      message: "runbooks can't change a pod template's volumes"
+    # A new container (or init container) would mount the volumes with an image of the runbook's.
+    - expression: >-
+        !variables.update || (
+        variables.tpl.containers.map(c, c.name) == variables.was.containers.map(c, c.name) &&
+        (has(variables.tpl.initContainers) ? variables.tpl.initContainers.map(c, c.name) : []) ==
+        (has(variables.was.initContainers) ? variables.was.initContainers.map(c, c.name) : []))
+      message: "runbooks can't add, remove or rename a pod template's containers or init containers"
+    # Env from Secrets, ConfigMaps or fields: as it was. Plain values (kubectl set env A=b) may change.
+    - expression: >-
+        !variables.update || variables.containers.all(c, variables.wasContainers.exists(o, o.name == c.name &&
+        has(c.envFrom) == has(o.envFrom) && (!has(c.envFrom) || c.envFrom == o.envFrom) &&
+        (has(c.env) ? c.env.filter(e, has(e.valueFrom)) : []) == (has(o.env) ? o.env.filter(e, has(e.valueFrom)) : [])))
+      message: "runbooks can't change where a container's env comes from (envFrom, valueFrom: Secrets, ConfigMaps)"
+    - expression: >-
+        !variables.update || variables.containers.all(c, variables.wasContainers.exists(o, o.name == c.name &&
+        has(c.securityContext) == has(o.securityContext) && (!has(c.securityContext) || c.securityContext == o.securityContext) &&
+        (has(c.ports) ? c.ports.filter(p, has(p.hostPort)).map(p, p.hostPort) : []) ==
+        (has(o.ports) ? o.ports.filter(p, has(p.hostPort)).map(p, p.hostPort) : [])))
+      message: "runbooks can't change a container's security context or host ports"
+    - expression: >-
+        !variables.update || (
+        has(variables.tpl.securityContext) == has(variables.was.securityContext) &&
+        (!has(variables.tpl.securityContext) || variables.tpl.securityContext == variables.was.securityContext) &&
+        has(variables.tpl.hostNetwork) == has(variables.was.hostNetwork) &&
+        (!has(variables.tpl.hostNetwork) || variables.tpl.hostNetwork == variables.was.hostNetwork) &&
+        has(variables.tpl.hostPID) == has(variables.was.hostPID) &&
+        (!has(variables.tpl.hostPID) || variables.tpl.hostPID == variables.was.hostPID) &&
+        has(variables.tpl.hostIPC) == has(variables.was.hostIPC) &&
+        (!has(variables.tpl.hostIPC) || variables.tpl.hostIPC == variables.was.hostIPC) &&
+        has(variables.tpl.hostUsers) == has(variables.was.hostUsers) &&
+        (!has(variables.tpl.hostUsers) || variables.tpl.hostUsers == variables.was.hostUsers))
+      message: "runbooks can't change a pod template's security context or host namespaces"
+    # Where the pods run: a control plane node, or a runtime without isolation, is another reach.
+    - expression: >-
+        !variables.update || (
+        has(variables.tpl.nodeName) == has(variables.was.nodeName) &&
+        (!has(variables.tpl.nodeName) || variables.tpl.nodeName == variables.was.nodeName) &&
+        has(variables.tpl.nodeSelector) == has(variables.was.nodeSelector) &&
+        (!has(variables.tpl.nodeSelector) || variables.tpl.nodeSelector == variables.was.nodeSelector) &&
+        has(variables.tpl.affinity) == has(variables.was.affinity) &&
+        (!has(variables.tpl.affinity) || variables.tpl.affinity == variables.was.affinity) &&
+        has(variables.tpl.tolerations) == has(variables.was.tolerations) &&
+        (!has(variables.tpl.tolerations) || variables.tpl.tolerations == variables.was.tolerations) &&
+        has(variables.tpl.runtimeClassName) == has(variables.was.runtimeClassName) &&
+        (!has(variables.tpl.runtimeClassName) || variables.tpl.runtimeClassName == variables.was.runtimeClassName))
+      message: "runbooks can't change a pod template's node, node selector, affinity, tolerations or runtime class"
+    # ---- CREATE: nothing to compare with ----
+    - expression: >-
+        variables.update || (
+        (!has(variables.tpl.serviceAccountName) || variables.tpl.serviceAccountName == 'default') &&
+        (!has(variables.tpl.serviceAccount) || variables.tpl.serviceAccount == 'default'))
+      message: "what runbooks create runs as the service account default"
+    # A Secret can hold another account's token (a legacy service-account-token Secret).
+    - expression: >-
+        variables.update || (
+        (!has(variables.tpl.volumes) || variables.tpl.volumes.all(v, !has(v.secret) &&
+        !(has(v.projected) && has(v.projected.sources) && v.projected.sources.exists(s, has(s.secret))))) &&
+        variables.containers.all(c, (!has(c.envFrom) || c.envFrom.all(f, !has(f.secretRef))) &&
+        (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef)))))
+      message: "what runbooks create mounts no Secret, as a volume or env"
+    # kubectl create job --from=cronjob/NAME names the CronJob as the Job's controller. A runbook
+    # can write that reference itself: this keeps to the intent, the two rules above hold the rest.
+    - expression: >-
+        variables.update || object.kind != 'Job' ||
+        (has(object.metadata.ownerReferences) &&
+        object.metadata.ownerReferences.exists(r, r.kind == 'CronJob' && has(r.controller) && r.controller))
+      message: "runbooks create Jobs from CronJobs only (kubectl create job --from=cronjob/NAME)"
+---
+# Every namespace: the gate refuses a session while the cells may change workloads somewhere and
+# this binding is missing, narrowed, or doesn't deny.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: md-runbook-ops-workloads
+spec:
+  policyName: md-runbook-ops-workloads
+  validationActions: [Deny]
