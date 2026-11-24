@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { copyFileName } from '../history';
 import { withFrontMatterValues } from '../incident';
 import { clearOutputBlocks } from '../writer';
-import { recordValues } from '../call';
+import { isDynamicSrc, parseCall, recordValues } from '../call';
 export { recordValues };
 import { callEstimate } from '../estimate';
 import { currentOs } from '../os';
@@ -19,6 +19,23 @@ export { copyTextProblem };
 /** The absolute path src= (placeholders filled) names, relative to the calling file's folder. */
 export function callTarget(parentFile: string, src: string): string {
   return path.resolve(path.dirname(path.resolve(parentFile)), src);
+}
+
+/**
+ * The runbook file a call names, as a run resolves it (callTarget), to open it; or why it can't be
+ * known before it runs: no src=, placeholders in it, or no such file.
+ */
+export function calledRunbookFile(parentFile: string, info: string): { file: string } | { problem: string } {
+  const src = parseCall(info, '').src;
+  if (src === undefined) return { problem: 'this call names no runbook: add src=, the runbook to run (relative to this file)' };
+  if (isDynamicSrc(src)) return { problem: `src="${src}" has placeholders: the runbook it runs is known only when it runs` };
+  const file = callTarget(parentFile, src);
+  try {
+    if (fs.statSync(file).isFile()) return { file };
+  } catch {
+    // not there
+  }
+  return { problem: `src="${src}": no such runbook: ${relativeToCaller(parentFile, file)}` };
 }
 
 /** `to` relative to the calling file's folder, with `/` separators (for output blocks and messages). */

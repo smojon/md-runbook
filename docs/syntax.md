@@ -163,6 +163,7 @@ NAME=value
 | `src=PATH` | relative to the folder of the `.md` file; may use `${param:}` and `${out:}`, whose values fill part of one file or folder name (no `/`, `\` or `:`) | The runbook to run. Required. |
 | `section=TEXT` | the start of a heading, case-sensitive; repeatable | Run only the steps under it (as `md-runbook run --section`). |
 | a body line `NAME=value` | `NAME` a parameter of the runbook called; the value may use `${param:}`, `${out:}`, `${input:}`, `${secret:}`, and may be quoted | Passed as `${param:NAME}`. Blank lines and `#` comments are allowed. |
+| a first body line `# Runs the runbook PATH` | a comment | What a plain Markdown viewer shows of the call: it doesn't show the fence options. Lint notes an empty body; its Quick Fix adds this line. |
 
 The runbook called runs as a copy next to it (`<file>.<yyyyMMdd-HHmmss>.md`). It runs in a
 session of its own, with only the parameters passed. Its output block records `runbook=`,

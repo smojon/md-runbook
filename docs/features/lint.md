@@ -18,6 +18,7 @@ option on purpose, to show a marker.
 | A front matter `mode:`, `timeout:` or `cwd:` value that is ignored (`mode: sometimes`) | warning |
 | A front matter `shell:` name that is ignored: unknown (`fish`), a path (`/bin/zsh`), or a second one for the same cells | warning |
 | A front matter `prose:` value that is ignored (`prose: loud`) | warning |
+| A runbook call with an empty body: a plain Markdown viewer shows an empty box (see below) | info |
 | Prose that could be shorter: see [Prose](#prose) | info (`prose: strict`: warning) |
 
 ## In the editor
@@ -45,6 +46,13 @@ Markdown editor:
 
 The Quick Fix renames the option on the block's fence and keeps its value as written.
 
+A runbook call with an empty body gets a note: `This call's body is empty: a plain Markdown
+viewer shows an empty box. Add a comment saying what it runs.`
+
+- Its Quick Fix **Add a comment naming the runbook** writes the body's first line:
+  `# Runs the runbook campaign/2a-restore.runbook.md (section Restore)`.
+- The note shows as information, whatever `mdRunbook.lint.prose` says: it is not a prose note.
+
 The runbook view marks a code step that never ran in a recorded run
 ([run history](history.md#run-history)) and has no output now. The hint is information, not a
 warning: `This step has never run here.`
@@ -62,6 +70,8 @@ each change.
 - **⋯ More → Go to Next Problem** goes through them in turn.
 - A misspelled option with a suggestion has a **Change "retires" to "retry"** button under the
   problem. It renames the option as the Quick Fix does.
+- A runbook call with an empty body shows its note under the call, with an **Add a comment
+  naming the runbook** button. The note isn't counted at the top.
 
 Prose notes are not problems, and are not counted at the top. A muted line under their Markdown
 cell says how many there are ("2 prose notes"); tap it to list them. With `prose: strict` they
@@ -77,6 +87,9 @@ md-runbook lint --strict runbooks/*.md   # also exit 1 on warnings
 Each problem is printed as `file:line: severity: message`. Prose notes are printed too, as
 `info`. They never change the exit code, not even with `--strict` (`prose: strict` makes them
 warnings).
+
+An empty runbook call is an `info` note too, never failing. It ends with the line to add:
+`First line: # Runs the runbook a.md`.
 
 On GitHub Actions problems are also annotations (prose notes as notices), so they show on a pull
 request's changed lines:

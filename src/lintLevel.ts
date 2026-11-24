@@ -1,6 +1,7 @@
 /**
  * How a lint problem shows in VS Code (lint.ts), without vscode so it can be tested: errors and
- * warnings as they are; prose findings (info) as the `mdRunbook.lint.prose` setting says.
+ * warnings as they are; prose findings (info) as the `mdRunbook.lint.prose` setting says; other
+ * info (an empty call body) as information.
  */
 import type { LintProblem } from '@md-runbook/core/lint';
 
@@ -15,7 +16,9 @@ export const proseSetting = (value: unknown): ProseSetting => (value === 'hint' 
  * also those a runbook's `prose: strict` made warnings (the command line still reports them).
  */
 export function markerLevel(p: Pick<LintProblem, 'severity' | 'code'>, prose: ProseSetting): MarkerLevel | undefined {
-  if (prose === 'off' && p.code?.startsWith('prose-')) return undefined;
+  const isProse = p.code?.startsWith('prose-') === true;
+  if (prose === 'off' && isProse) return undefined;
   if (p.severity === 'error' || p.severity === 'warning') return p.severity;
-  return prose === 'hint' ? 'hint' : 'information';
+  // Other info isn't prose: the prose setting doesn't change it.
+  return prose === 'hint' && isProse ? 'hint' : 'information';
 }
