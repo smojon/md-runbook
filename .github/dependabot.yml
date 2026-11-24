@@ -1,6 +1,8 @@
-# Bumps the actions pinned by commit SHA in .github/workflows and action.yml, and the Go modules
-# of md-runbook-gate (apps/gate). A new version waits 7 days, like the Expo updates
-# (expo-updates.yml): a compromised release is usually pulled by then.
+# Bumps the actions pinned by commit SHA in .github/workflows and action.yml, the Go modules
+# of md-runbook-gate (apps/gate), and the images the ops host and the probe pin by digest (their
+# Dockerfiles, and the probe's Kubernetes manifest: Dependabot reads manifests only in the
+# directories named). A new version waits 7 days, like the Expo updates (expo-updates.yml): a
+# compromised release is usually pulled by then.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -20,4 +22,15 @@ updates:
       default-days: 7
     groups:
       gate:
+        patterns: ['*']
+  # A new golang version in apps/ops/Dockerfile stops the build until apps/gate/go.mod's
+  # toolchain line names it too: change that line in the same pull request.
+  - package-ecosystem: docker
+    directories: [/apps/ops, /apps/probe, /apps/probe/kubernetes]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      images:
         patterns: ['*']

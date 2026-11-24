@@ -89,7 +89,9 @@ spec:
             - { name: kube-ca, mountPath: /etc/kube-ca, readOnly: true }
             - { name: metrics, mountPath: /metrics }
         - name: metrics
-          image: busybox:1.37.0
+          # By the digest of its multi-arch index: every node pulls the same bytes. Dependabot
+          # proposes new ones (.github/dependabot.yml).
+          image: busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
           imagePullPolicy: IfNotPresent
           # The text exposition format's content type, for Prometheus 3.
           command:
