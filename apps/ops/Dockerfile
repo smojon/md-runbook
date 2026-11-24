@@ -9,7 +9,7 @@
 # md-runbook-gate from source, as a release builds it (scripts/ci/build-gate.sh): static, without
 # file paths or a build ID, with the Go toolchain go.mod names, which must be this image's (the
 # build stops otherwise). Built on the build machine for the target platform, without emulation.
-FROM --platform=$BUILDPLATFORM golang:1.26.11-trixie@sha256:f9e99477a80ccd7adfb69780510b22c7249ce9169885f18aa762cd886e75e018 AS gate
+FROM --platform=$BUILDPLATFORM golang:1.27.4-trixie@sha256:430985542100b871e108ccc00e8dcc5eef08ca14ee5825e98ebf563d8ffec4ee AS gate
 ARG TARGETOS
 ARG TARGETARCH
 ENV GOTOOLCHAIN=local CGO_ENABLED=0

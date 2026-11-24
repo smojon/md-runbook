@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      # go.mod's toolchain line, exactly: go-version-file reads only its `go` line (1.26 = newest).
+      # go.mod's toolchain line, exactly: go-version-file reads only its `go` line (1.27 = newest).
       - id: go
         run: echo "version=$(sed -n 's/^toolchain go//p' apps/gate/go.mod)" >> "$GITHUB_OUTPUT"
         working-directory: ${{ github.workspace }}
@@ -159,7 +159,7 @@ jobs:
       - run: npm ci
       # The Go gate for its protocol tests (test/gate.test.ts, in npm test) and the SSH tests
       # through it, on Linux and macOS.
-      # go.mod's toolchain line, exactly: go-version-file reads only its `go` line (1.26 = newest).
+      # go.mod's toolchain line, exactly: go-version-file reads only its `go` line (1.27 = newest).
       - id: go
         run: echo "version=$(sed -n 's/^toolchain go//p' apps/gate/go.mod)" >> "$GITHUB_OUTPUT"
         working-directory: ${{ github.workspace }}
