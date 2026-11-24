@@ -72,15 +72,23 @@ own. They can't reach the gate's token, log or state, nor another session.
 - Ops account: a Role in its namespace: Jobs (create, list, delete), pods (get, list),
   `pods/exec` (create, get), service accounts (list). Its namespace holds the ops host alone:
   the gate refuses other pods and service accounts there.
+- Ops account, cluster-wide (ClusterRole `md-runbook-ops-gate`):
+  - `get` on `md-runbook-ops-workloads` and its binding, by name only;
+  - `list` on ClusterRoleBindings (`kubectl get` of a type lists; no `get` needed).
+  - The gate's self-check refuses a get without a name, a list or a change of the policies.
+  - The self-check also refuses a get or change of any RBAC object, and bind or escalate.
 - Cells' account: read everywhere but Secrets, ConfigMaps and pod logs. Those two, and operate
-  rights, per namespace. Never bound in the ops namespace.
+  rights, per namespace.
+  - Never bound in the ops namespace, nor in a `kube-*` one: the gate refuses both.
+  - No `jobs create` by default (opt-in).
 
 ## Admission policies
 
 - RBAC can't limit the shape of the Jobs the ops account creates, nor the pods it execs into.
   Workload creation implies the namespace's Secrets and service accounts (RBAC good practices).
 - `apps/ops/kubernetes/admission-policy.yaml` (Kubernetes 1.30+): two ValidatingAdmissionPolicies,
-  bound with `Deny` to the ops namespace, matching the ops account only. A file of its own, so
+  bound with `Deny` to the ops namespace, matching the ops account only. A third is for the
+  cells' account (below). A file of its own, so
   that an update applies it without resetting the sample ConfigMap.
 - `md-runbook-ops-jobs`: Job CREATE and UPDATE. It allows `jobManifest`'s shape:
   - the cells' account and label; only the gate's labels and the Job API's four, no annotations;
@@ -100,6 +108,26 @@ own. They can't reach the gate's token, log or state, nor another session.
   - The real Job refused by the policy: the message names `job_service_account` and
     `job_image`.
 - No opt-out: every supported Kubernetes version has the API.
+- `md-runbook-ops-workloads`: the cells' account, every namespace.
+  - UPDATE of Deployments, StatefulSets, Jobs and CronJobs compares the pod template with
+    `oldObject`.
+  - Compared: service account, volumes, container names, env sources, security contexts, host
+    and node fields.
+  - Images, annotations and replicas may change: restart, scale, set image, undo.
+  - CREATE (opt-in rights): the account `default`, no Secrets; a Job names a CronJob as its
+    controller.
+  - Self-check, when the cells may change workloads somewhere (rules reviews): the ops account
+    gets the policy and binding. Missing, `failurePolicy: Ignore`, no `Deny`, or a narrowed
+    binding: no session. Fetched before the Job, so the pod's wait has no call more.
+- The policy can't stop `kubectl set image`: `rollout undo` needs image changes. A new image runs
+  as the workload's own account. So the gate also refuses a namespace the cells may change when
+  a ClusterRoleBinding names one of its accounts.
+  - Subjects that count: a ServiceAccount of that namespace, its user name
+    (`system:serviceaccount:NS:NAME`), the group `system:serviceaccounts:NS`.
+  - Ignored: `system:serviceaccounts`, `system:authenticated` (the cells have those rights too),
+    and the cells' own account.
+  - The list is fetched before the Job too. Unlisted or unreadable: no session.
+  - Not seen: RoleBindings elsewhere, webhook authorizers, cloud roles of an account.
 
 ## gate_mode and the self-check
 

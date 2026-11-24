@@ -43,7 +43,8 @@ kubeconfig:
   block could have copied the old one, and a copy can pose as this host.
   - Change a mounted kubeconfig's credentials and the report token too.
 - **The log is a file `ops` can write**, so a block can change it. The container's output keeps
-  each line as it was written: rely on that copy (`kubectl logs`).
+  each line as it was written: rely on that copy, shipped off the host
+  ([The audit log](#the-audit-log-and-a-stolen-key)).
 - **Its run reports are only as good as its signed blocks:** a block can read the report token.
   The gate's README says what a gate's word needs: [Trust](../gate/README.md#trust).
 - `gate.conf` here has `sshd_force_command = yes`: sshd runs the gate for every login, so the key
@@ -63,18 +64,21 @@ kubeconfig:
 
 [kubernetes/md-runbook-ops.yaml](kubernetes/md-runbook-ops.yaml) sets up:
 - the namespace `md-runbook-ops`, with Pod Security `restricted` enforced;
-- the service account `md-runbook-ops` of the ops pod: it may only run the sessions' Jobs;
+- the service account `md-runbook-ops` of the ops pod: it runs the sessions' Jobs, reads one
+  admission policy and lists ClusterRoleBindings;
 - the service account `md-runbook-cells` of those Jobs, and what runbooks may do:
   - read everything except Secrets, ConfigMaps and pod logs, in every namespace, cert-manager
     certificates included;
-  - `rollout restart`, `rollout undo`, scale Deployments and StatefulSets, create Jobs from
-    CronJobs, read pod logs and ConfigMaps, only in the namespaces you bind (see below);
-  - nothing else: no deleting, no exec into pods, no DaemonSets;
+  - `rollout restart`, `rollout undo`, scale Deployments and StatefulSets, read pod logs and
+    ConfigMaps, only in the namespaces you bind (see below);
+  - nothing else: no deleting, no exec into pods, no DaemonSets, no Jobs (opt-in, below);
 - the gate's ConfigMap, the Deployment and a ClusterIP Service on port 22;
 - NetworkPolicies: the Job pods take no connection, and can't reach the ops pod's sshd.
 
 [kubernetes/admission-policy.yaml](kubernetes/admission-policy.yaml) holds the admission
-policies: the gate's account may create only the cells' Jobs, and exec only into their pods.
+policies:
+- the gate's account may create only the cells' Jobs, and exec only into their pods;
+- the cells' account may restart and scale workloads, not change who their pods run as.
 
 Apply both as a cluster admin: the ClusterRoles and the policies are cluster-wide. They need
 Kubernetes 1.30 or later.
@@ -95,6 +99,14 @@ kubectl $ns edit configmap md-runbook-ops-gate
 kubectl $ns rollout restart deployment/md-runbook-ops
 kubectl $ns logs deployment/md-runbook-ops | grep 'host key'   # the fingerprint the app shows
 ```
+
+**Keep your settings in your own copy.** Applying the stock `md-runbook-ops.yaml` again resets
+them:
+- the ConfigMap `md-runbook-ops-gate` (`gate.conf`, your signers, `signers = 2`, `report_to`);
+- the Deployment's `CLUSTER_NAME` and image.
+
+So keep a copy of the manifest with your settings, in git. At each update, take the release's
+changes into it (the "Coming from" notes below list them), then apply your copy.
 
 **Run reports.** The bearer token goes in a Secret, never in the gate's ConfigMap: blocks can't
 read Secrets here.
@@ -146,11 +158,55 @@ At each session the gate checks `md-runbook-ops-jobs`: a dry run of a Job as its
 must fail. Else the session refuses with `the admission policy md-runbook-ops-jobs doesn't
 guard the Jobs`.
 
+The policy `md-runbook-ops-workloads` holds the cells' account, in every namespace. RBAC lets it
+patch a Deployment's pod template. So without the policy, a runbook could:
+- run the pods as another service account of that namespace;
+- add a Secret as a volume or env, or a container;
+- pick host namespaces, a node, tolerations or a runtime class.
+
+The policy compares each change with the object as it was. It refuses a change to:
+- the template's service account and token mount;
+- its volumes, and the names of its containers and init containers;
+- where env comes from (`envFrom`, `valueFrom`), plain values aside;
+- the security context, host namespaces and host ports;
+- the node, node selector, affinity, tolerations and runtime class.
+
+What still passes:
+- `kubectl rollout restart`: it changes an annotation only;
+- `kubectl scale`: the scale subresource, which the policy doesn't match;
+- `kubectl set image`, and `kubectl set env` with plain values;
+- `kubectl rollout undo`, to a revision with the same fields as above.
+
+It stops a change of which account the pods run as. It doesn't stop:
+- a new image running any code as the workload's own account, with the Secrets it mounts.
+
+The gate covers that only for cluster-wide rights (below). So bind only namespaces whose
+workloads may do what any runbook may do.
+
+What the cells create (opt-in Jobs) has nothing to compare with. It must:
+- run as the account `default`;
+- mount no Secret, as a volume or env;
+- for a Job: name a CronJob as its controller, as `kubectl create job --from=cronjob/NAME` does.
+  A runbook can write that line itself: it states the intent, the two rules above hold.
+
+At each session, if the cells may change workloads somewhere, the gate reads the policy and its
+binding. They must deny in every namespace. Else the session refuses with `the admission policy
+md-runbook-ops-workloads or its binding is missing`.
+
 **A mirror of the image:** change the `repository` variable in `admission-policy.yaml`. That's
 one line.
 
 **Two signers in production.** For runbooks that change a cluster, set `signers = 2` in
 `gate.conf`. Then one stolen signing key can't run a change alone.
+
+**Scopes and old versions.** `scopes = *` runs runbooks signed for any scope, in any version
+ever signed. A stolen SSH key can then run a staging runbook here, or an old buggy version.
+- Set `scopes = prod-eu` (this cluster), and sign its runbooks with `--scope prod-eu`. A runbook
+  without scopes then doesn't run here.
+- Withdraw old versions: add `floors` and `revoked` files to the ConfigMap, next to
+  `allowed_signers`. In `gate.conf`: `floors = /etc/md-runbook/floors`, `revoked = /etc/md-runbook/revoked`.
+- Sign with `--expires-in DAYS`, so a release stops by itself.
+- See [Withdrawing a release](../../docs/features/signed-runbooks.md).
 
 **Reaching it from a phone.** The Service only works inside the cluster. You have four
 options:
@@ -177,12 +233,48 @@ kubectl -n NAMESPACE create rolebinding md-runbook-ops-operate \
   - A cluster-wide exemption of that namespace in the admission configuration undoes the label.
     The gate can't see it.
 
-- Bind only the namespaces you need. Whoever may change a namespace's workloads can read its
-  Secrets ([Kubernetes RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation)).
-- Never bind `kube-system`, and never `md-runbook-ops` itself. The gate refuses to start a
-  session there.
+**What a binding gives every runbook.** Binding a namespace lets runbooks act with its workloads:
+- restart, roll back and scale them;
+- change their image (`kubectl set image`). The new image's code runs as the workload's service
+  account, with the Secrets it mounts. Runbooks can thus run code as any account a workload
+  there uses.
+- with `jobs create` opted in: run pods of their own there. Without the policy, as any of its
+  service accounts.
+
+See [Kubernetes RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation).
+
+**The gate refuses namespaces with cluster-wide accounts.** At each session it lists the
+ClusterRoleBindings. It refuses a namespace runbooks may change when one names:
+- a service account of that namespace (as a ServiceAccount, or its user name);
+- or the group `system:serviceaccounts:NAMESPACE`.
+
+The message names up to three: `ACCOUNT → CLUSTERROLE (binding NAME)`. Bindings to every account
+(`system:serviceaccounts`, `system:authenticated`) don't count: the cells have those rights too.
+
+What it can't see:
+- RoleBindings in other namespaces that give these accounts rights there;
+- rights from outside RBAC: a webhook authorizer;
+- cloud roles tied to an account: EKS IRSA or Pod Identity, GKE or AKS Workload Identity.
+
+So:
+- Bind only the namespaces you need.
+- Never bind a namespace where a controller with cluster-wide rights runs. For example:
+  `argocd`, `flux-system`, `cert-manager`, `external-secrets`, ingress controllers.
+  - Its service account's rights become every runbook's.
+  - Check a namespace first: `kubectl get rolebindings,clusterrolebindings -A -o wide | grep NAMESPACE/`
+    lists the roles of its service accounts (`NAMESPACE/NAME` in the last column).
+- Never bind `kube-*` namespaces (`kube-system` and the like): their service accounts run the
+  cluster. The gate refuses a session then, whatever their labels.
+- Never bind `md-runbook-ops` itself. The gate refuses that too.
+- The cells read every pod spec in the cluster. A credential written inline in `env` is readable
+  by every runbook: use Secrets.
 - **More rights:** add rules to `md-runbook-ops-operate`. Whatever it allows, every runbook on
   this host can do.
+  - `pods/exec` lets a block read the token of every pod it execs into: it acts as their
+    accounts.
+  - `jobs create` (for `kubectl create job --from=cronjob/NAME`) is commented out in the
+    manifest. It lets runbooks run pods of their own there. The policy holds them to the account
+    `default`, without Secrets.
 
 **Coming from 0.28 or before:** the bindings named the ops pod's account. Move each one to the
 cells' account, and remove the one in `md-runbook-ops`:
@@ -211,6 +303,19 @@ kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
 - For the Role, apply your own copy of `md-runbook-ops.yaml`. The stock file resets the sample
   ConfigMap (your signers, `gate.conf`) and the Deployment's `CLUSTER_NAME`.
 
+**Coming from 0.31.x:** apply both files again, as a cluster admin.
+- `admission-policy.yaml` adds the policy `md-runbook-ops-workloads` and its binding.
+- Your copy of `md-runbook-ops.yaml` needs from the stock file:
+  - the ClusterRole and ClusterRoleBinding `md-runbook-ops-gate`: the gate reads the policy and
+    lists the ClusterRoleBindings with them;
+  - `md-runbook-ops-operate` without `jobs create` (opt-in now);
+  - the log volume's `sizeLimit`.
+- Without them, sessions refuse while runbooks may change workloads somewhere.
+- A binding in a `kube-*` namespace now refuses sessions: delete it.
+- A binding in a namespace whose service accounts have cluster-wide bindings refuses them too.
+- Keep the rules you added to `md-runbook-ops-operate` in your copy: `kubectl apply` replaces
+  its rules.
+
 ### A Job per session
 
 `gate.conf` in the cluster has `cells_runner = kubernetes-job`. For each SSH session, the gate:
@@ -221,7 +326,9 @@ kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
 5. checks the cells' account in the new pod:
    - in `md-runbook-ops` it can't exec into pods, read pod logs, Secrets or ConfigMaps, or
      start workloads;
-   - each namespace where it may change workloads enforces Pod Security;
+   - each namespace where it may change workloads enforces Pod Security, and none is `kube-*`;
+   - if it may change workloads anywhere, `md-runbook-ops-workloads` is bound;
+   - no service account of such a namespace has a ClusterRoleBinding;
 6. runs the session's blocks there with `kubectl exec`;
 7. deletes the Job when the session ends.
 
@@ -248,7 +355,15 @@ Cleanup, if the gate can't delete a Job itself:
 - the next session deletes Jobs whose gate (pid and start time) is gone;
 - a session lasts at most a day, a cap for long on-call windows.
 
-**Network.** The NetworkPolicies need a network plugin that enforces them.
+**Network.** The NetworkPolicies need a network plugin that enforces them. Without one they do
+nothing, and nothing tells you.
+- Managed clusters often don't enforce them until you turn it on:
+  [GKE](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/network-policy),
+  [EKS](https://docs.aws.amazon.com/eks/latest/userguide/cni-network-policy-configure.html)
+  (the VPC CNI's `enableNetworkPolicy`),
+  [AKS](https://learn.microsoft.com/en-us/azure/aks/use-network-policies) (a policy engine).
+- Check it after applying `cells-egress.yaml` (below): a signed block with
+  `curl -m 3 -sS http://169.254.169.254/ || echo blocked` must print `blocked`.
 - Egress stays open for runbooks, unless you apply the egress policy (below).
 - Some plugins also apply an `ipBlock` to pod addresses. There the Job pods can still reach
   sshd, but they have no key to log in.
@@ -282,6 +397,28 @@ kubectl apply -f apps/ops/kubernetes/cells-egress.yaml
 - On Cilium, an `ipBlock` with a node's address may need `policy-cidr-match-mode: nodes`.
   The API server often runs on the control plane nodes.
 
+**The ops pod's egress (opt-in).** [kubernetes/ops-egress.yaml](kubernetes/ops-egress.yaml) does
+the same for the ops pod. It may then reach only:
+- the cluster's DNS and the API server;
+- the run reports' host, if you add it (`report_to`: a commented rule).
+
+The ops pod holds the host key and the report token. This keeps a compromised gate from sending
+them elsewhere.
+
+What still works:
+- sshd's replies: a NetworkPolicy lets the replies of an allowed connection through;
+- the sessions' Jobs and `kubectl exec`: both go through the API server;
+- `kubectl port-forward` to sshd.
+
+Put in your API server's address and port as for `cells-egress.yaml`, then:
+
+```sh
+kubectl apply -f apps/ops/kubernetes/ops-egress.yaml
+```
+
+- Without the right address, sessions refuse: the gate can't start their Jobs.
+- The same notes as above apply: NodeLocal DNSCache, Cilium, the Service's address.
+
 Settings in `gate.conf`:
 - `job_service_account = NAME`: required.
 - `job_image = IMAGE`: optional. The default is the ops pod's own image. It must be of the
@@ -299,6 +436,34 @@ Settings in `gate.conf`:
     from its service account:
     `kubectl -n md-runbook-ops patch serviceaccount NAME -p '{"imagePullSecrets":[{"name":"SECRET"}]}'`.
     This also goes for `md-runbook-cells` itself.
+
+### The audit log, and a stolen key
+
+**Ship the log off the cluster.** The gate logs each session and block, with the key's
+fingerprint, to a file and to the container's output.
+- Collect the container's output with your log collector (Fluent Bit, Vector, your cloud's
+  logging).
+- `kubectl logs` alone isn't enough. A restarted or moved pod takes its log with it, and the
+  kubelet keeps only the newest files.
+- The log volume holds 256 MiB. Past that, Kubernetes evicts the pod.
+- The Kubernetes audit log names the cells' account, not the person. The gate's log says which
+  key ran what: keep both.
+
+**A key stolen, or someone leaving:**
+1. Save the log, unless it's shipped already:
+   `kubectl $ns logs deployment/md-runbook-ops > gate-$(date +%F).log`.
+2. Remove their line from `authorized_keys`, then apply it:
+
+   ```sh
+   kubectl $ns create configmap md-runbook-ops-keys --from-file=authorized_keys \
+     --dry-run=client -o yaml | kubectl apply -f -
+   ```
+
+3. End open sessions: `kubectl $ns rollout restart deployment/md-runbook-ops`. A session lasts up
+   to a day, and a removed key doesn't end it. Its Job goes with the old pod.
+4. A signing key: remove its line from `allowed_signers`. Withdraw what it signed (`revoked` or
+   `floors`, above), and sign again what you keep.
+5. Look for what the key ran: its fingerprint is on each line of the log.
 
 ## Next to the relay
 
@@ -381,8 +546,30 @@ docker build -t md-runbook-ops -f apps/ops/Dockerfile apps
     pinned by digest.
   - The image gets only the static binary.
 
-`KUBECTL_VERSION` (a build argument) picks kubectl, and the build checks the download against
-its published SHA-256.
+- **kubectl** is 1.35 (`KUBECTL_VERSION`), for clusters from 1.34 to 1.36: kubectl supports one
+  minor version either side ([version skew policy](https://kubernetes.io/releases/version-skew-policy/#kubectl)).
+  - The build checks the download against SHA-256s written in the Dockerfile, not fetched with
+    it.
+- **Debian** is pinned by digest too.
+
+### Verify the image before you deploy
+
+Each release signs where its images and files were built (GitHub artifact attestations).
+
+- Find the release's image digest: `docker buildx imagetools inspect ghcr.io/smojon/md-runbook-ops:0.32.0`.
+  Copy the `Digest:` line (`sha256:…`).
+- Check it came from md-runbook's release workflow:
+
+  ```sh
+  gh attestation verify oci://ghcr.io/smojon/md-runbook-ops@sha256:DIGEST \
+    --repo smojon/md-runbook \
+    --signer-workflow smojon/md-runbook/.github/workflows/release.yml
+  ```
+
+- Pin that digest in the Deployment: `image: ghcr.io/smojon/md-runbook-ops@sha256:DIGEST`.
+  - A tag can be moved to other bytes; a digest can't.
+  - With a mirror, the digest stays the same.
+- Release files work the same way: `gh attestation verify md-runbook-gate-linux-amd64 --repo smojon/md-runbook`.
 
 Each md-runbook release publishes the image as `ghcr.io/smojon/md-runbook-ops`. The
 [Ops host workflow](../../.github/workflows/ops.yml) tests

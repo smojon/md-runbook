@@ -55,12 +55,19 @@ jobs:
   # (apps/web) and the library server (apps/library-server) for amd64 and arm64, as ghcr.io/OWNER/md-runbook-ops:VERSION and :latest (the
   # others the same). The first push makes a private package: set it to public once in the
   # package's settings. Built without a build cache (no cache-from).
+  #
+  # Each image gets a signed build provenance (GitHub artifact attestation) for the digest buildx
+  # pushed, so admins can check an image came from this workflow before they deploy it
+  # (`gh attestation verify oci://...`, apps/ops/README.md). Signed here, in the job that built it:
+  # a digest read back from the registry later could be someone else's image.
   images:
     needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      packages: write # push the images, and their attestations next to them
+      id-token: write # the OIDC token the attestation's signing certificate is issued for
+      attestations: write # store the attestations in this repository
     strategy:
       matrix:
         include:
@@ -80,6 +87,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Build and push
+        id: build
         env:
           IMAGE: ${{ matrix.image }}
           CONTEXT: ${{ matrix.context }}
@@ -89,7 +97,26 @@ jobs:
           docker buildx build --platform linux/amd64,linux/arm64 -f "apps/${IMAGE#md-runbook-}/Dockerfile" \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.version=$version" \
+            --metadata-file "$RUNNER_TEMP/build.json" \
             -t "$image:$version" -t "$image:latest" --push "$CONTEXT"
+          # The digest of the image index this build pushed (both platforms): what the tags name.
+          digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/build.json")
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::buildx gave no image digest: $digest"
+            exit 1
+          fi
+          echo "$image@$digest"
+          echo "name=$image" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      # Pushed to the registry too, so it can be verified from there (--bundle-from-oci). No storage
+      # record: GitHub makes those only for organization-owned repositories.
+      - name: Attest the image's build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.build.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
 
   # Publishing is split by credential (security review, 2026-11-16). `package` runs the
   # repository's dependencies with no secret and no write token. Each publish job then gets one
@@ -323,9 +350,69 @@ jobs:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
 
+  # Signed build provenance (GitHub artifact attestations) for every file the GitHub release gets:
+  # the .vsix, the command line's .tgz, the APK, the gate binaries and their SHA256SUMS. Before
+  # github-release, which needs this job: a published release is immutable, so it never goes
+  # out with files that have no attestation. Its own job, so the OIDC token is next to neither
+  # the repository's dependencies (package, gate) nor the token that creates the release.
+  attest:
+    needs: [package, apk, gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # the OIDC token the attestation's signing certificate is issued for
+      attestations: write # store the attestations in this repository
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.package.outputs.artifact_id }}
+          path: ${{ runner.temp }}/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.apk.outputs.artifact_id }}
+          path: ${{ runner.temp }}/apk
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.gate.outputs.artifact_id }}
+          path: ${{ runner.temp }}/gate
+      - name: The artifact holds the release files and nothing else
+        working-directory: ${{ runner.temp }}/release
+        run: *check-release-files
+      - name: The APK artifact holds this version's APK and nothing else
+        working-directory: ${{ runner.temp }}/apk
+        run: &check-apk |
+          got=$(find . -mindepth 1 ! -type d)
+          if [ "$got" != "./md-runbook-${GITHUB_REF_NAME#v}.apk" ]; then
+            echo "::error::md-runbook-android is not md-runbook-${GITHUB_REF_NAME#v}.apk alone: $got"
+            exit 1
+          fi
+      - name: The gate artifact holds the four binaries and their SHA256SUMS, nothing else
+        working-directory: ${{ runner.temp }}/gate
+        run: &check-gate |
+          got=$(find . -mindepth 1 ! -type d | LC_ALL=C sort)
+          want=$(printf './%s\n' SHA256SUMS md-runbook-gate-darwin-amd64 md-runbook-gate-darwin-arm64 md-runbook-gate-linux-amd64 md-runbook-gate-linux-arm64 | LC_ALL=C sort)
+          if [ "$got" != "$want" ]; then
+            echo "::error::gate-binaries is not the expected files"
+            diff <(echo "$want") <(echo "$got") || true
+            exit 1
+          fi
+          test "$(wc -l < SHA256SUMS)" = 4
+          sha256sum --strict -c SHA256SUMS
+      # The files exactly as github-release attaches them (the same artifacts, by ID). The npm
+      # package has npm's own provenance (npm job, --provenance).
+      - name: Attest the release files' build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/release/md-runbook.vsix
+            ${{ runner.temp }}/release/md-runbook-cli.tgz
+            ${{ runner.temp }}/apk/md-runbook-*.apk
+            ${{ runner.temp }}/gate/md-runbook-gate-*
+            ${{ runner.temp }}/gate/SHA256SUMS
+
   # Made with every file at once: a published release is immutable (Settings → General).
   github-release:
-    needs: [package, apk, gate]
+    needs: [package, apk, gate, attest]
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub release
@@ -350,24 +437,10 @@ jobs:
         run: *check-release-files
       - name: The APK artifact holds this version's APK and nothing else
         working-directory: ${{ runner.temp }}/apk
-        run: |
-          got=$(find . -mindepth 1 ! -type d)
-          if [ "$got" != "./md-runbook-${GITHUB_REF_NAME#v}.apk" ]; then
-            echo "::error::md-runbook-android is not md-runbook-${GITHUB_REF_NAME#v}.apk alone: $got"
-            exit 1
-          fi
+        run: *check-apk
       - name: The gate artifact holds the four binaries and their SHA256SUMS, nothing else
         working-directory: ${{ runner.temp }}/gate
-        run: |
-          got=$(find . -mindepth 1 ! -type d | LC_ALL=C sort)
-          want=$(printf './%s\n' SHA256SUMS md-runbook-gate-darwin-amd64 md-runbook-gate-darwin-arm64 md-runbook-gate-linux-amd64 md-runbook-gate-linux-arm64 | LC_ALL=C sort)
-          if [ "$got" != "$want" ]; then
-            echo "::error::gate-binaries is not the expected files"
-            diff <(echo "$want") <(echo "$got") || true
-            exit 1
-          fi
-          test "$(wc -l < SHA256SUMS)" = 4
-          sha256sum --strict -c SHA256SUMS
+        run: *check-gate
       - name: GitHub release with the .vsix, the command line, the APK and the gate
         env:
           GH_TOKEN: ${{ github.token }}

@@ -13,8 +13,15 @@
 #   - the admission policy md-runbook-ops-jobs: without its binding, no session; with it, the
 #     gate's account can't create a Job as another account, with a Secret, without the label,
 #     or of another shape; md-runbook-ops-exec: it can't exec into the ops pod;
+#   - a kube-* namespace bound, even with Pod Security enforced: no session;
+#   - md-runbook-ops-workloads: as the cells' account, restart, undo, scale and set image pass, a
+#     patch of the template's service account or volumes doesn't, nor creating a Job; without
+#     its binding, no session;
+#   - a namespace the blocks may change whose service account has a ClusterRoleBinding: no
+#     session; once the binding goes, sessions run;
 #   - cells-egress.yaml: blocks still reach the API server and DNS, not another namespace's
-#     Service nor the internet.
+#     Service nor the internet;
+#   - ops-egress.yaml: sessions still work; the ops pod doesn't reach another namespace's Service.
 # Needs KEYS (client, ssh_host_ecdsa_key.pub) and the ops Service forwarded to 127.0.0.1:$PORT.
 set -euo pipefail
 
@@ -157,6 +164,95 @@ cat "$work/c/err"
 # (the egress session did, 807134e's Ops host run).
 kubectl delete namespace md-runbook-unguarded --timeout=180s
 
+# A kube-* namespace bound, even with Pod Security enforced: the session refuses, naming it
+# (kube-system's pods run as the cluster's controllers). The gate refuses every kube-* name, so a
+# namespace of our own stands in: labelling kube-system itself would block its own pods (they
+# don't meet baseline) if one restarted meanwhile.
+cells_sa=system:serviceaccount:$ns:md-runbook-cells
+sys_ns=kube-md-runbook-test
+kubectl create namespace "$sys_ns"
+kubectl label namespace "$sys_ns" pod-security.kubernetes.io/enforce=baseline
+kubectl -n "$sys_ns" create rolebinding md-runbook-ops-operate \
+  --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-cells
+open_session sys 9
+cell 0000cd01 'echo "ran=1"' >&9
+wait_for "$work/sys/err" "may start workloads in namespace $sys_ns: never bind md-runbook-ops-operate"
+close_session sys 9
+[ -z "$(value sys ran)" ] || fail "a block ran although the cells may change $sys_ns"
+cat "$work/sys/err"
+grep -q "kubectl label namespace $sys_ns" "$work/sys/err" && fail "the refusal suggests labelling $sys_ns"
+# Gone before the next sessions (one starting while it terminates would refuse as above).
+kubectl delete namespace "$sys_ns" --timeout=180s
+for i in $(seq 1 30); do
+  [ "$(kubectl auth can-i patch deployments -n "$sys_ns" --as="$cells_sa" 2>/dev/null)" = no ] && break
+  [ "$i" -lt 30 ] || fail "the cells may still patch deployments in $sys_ns"
+  sleep 1
+done
+
+# ---- the admission policy md-runbook-ops-workloads, in a namespace runbooks may change ----
+# As the cells' account (kind's admin may impersonate it): restart, undo, scale and set image
+# pass; a patch of the template's service account or volumes is refused by the policy; Jobs
+# can't be created at all (RBAC: jobs create is opt-in).
+w=md-runbook-workloads
+as_cells=(--as="$cells_sa")
+kubectl create namespace "$w"
+kubectl label namespace "$w" pod-security.kubernetes.io/enforce=baseline
+kubectl -n "$w" create rolebinding md-runbook-ops-operate \
+  --clusterrole=md-runbook-ops-operate --serviceaccount=md-runbook-ops:md-runbook-cells
+# A service account there with cluster-wide rights (an image a runbook sets would run as it): no
+# session, naming it. Once its ClusterRoleBinding goes, sessions run again.
+kubectl -n "$w" create serviceaccount md-runbook-wide
+kubectl create clusterrolebinding md-runbook-wide --clusterrole=view --serviceaccount="$w:md-runbook-wide"
+open_session wide 9
+cell 0000cf01 'echo "ran=1"' >&9
+wait_for "$work/wide/err" "namespace $w, where service accounts have cluster-wide rights: md-runbook-wide → view (binding md-runbook-wide)"
+close_session wide 9
+[ -z "$(value wide ran)" ] || fail "a block ran although a service account of $w has cluster-wide rights"
+cat "$work/wide/err"
+kubectl delete clusterrolebinding md-runbook-wide
+open_session wide2 9
+cell 0000cf02 'echo "ran=1"' >&9
+wait_for "$work/wide2/out" '__MDRB_0000cf02__ 0'
+close_session wide2 9
+[ "$(value wide2 ran)" = 1 ] || fail "no session after the ClusterRoleBinding of $w's account went"
+echo "ok: a namespace whose account has a ClusterRoleBinding refuses sessions, and not once it goes"
+kubectl -n "$w" create deployment app --image=registry.k8s.io/pause:3.10
+kubectl -n "$w" rollout status deployment/app --timeout=120s
+kubectl "${as_cells[@]}" -n "$w" rollout restart deployment/app
+kubectl -n "$w" rollout status deployment/app --timeout=120s
+kubectl "${as_cells[@]}" -n "$w" rollout undo deployment/app
+kubectl "${as_cells[@]}" -n "$w" scale deployment/app --replicas=2
+kubectl "${as_cells[@]}" -n "$w" set image deployment/app pause=registry.k8s.io/pause:3.9 --dry-run=server
+echo "ok: as the cells' account: rollout restart, rollout undo, scale and set image pass"
+workloads="ValidatingAdmissionPolicy 'md-runbook-ops-workloads'"
+for c in \
+  'another service account|{"spec":{"template":{"spec":{"serviceAccountName":"md-runbook-other"}}}}' \
+  'a Secret volume|{"spec":{"template":{"spec":{"volumes":[{"name":"s","secret":{"secretName":"md-runbook-any"}}]}}}}'; do
+  if out=$(kubectl "${as_cells[@]}" -n "$w" patch deployment app -p "${c#*|}" 2>&1); then
+    fail "a patch with ${c%%|*}: the cells' account may make it ($out)"
+  fi
+  grep -qF "$workloads" <<<"$out" || fail "a patch with ${c%%|*}: refused, but not by md-runbook-ops-workloads: $out"
+  echo "ok: a patch with ${c%%|*}: refused by the policy"
+done
+if out=$(kubectl "${as_cells[@]}" -n "$w" create job md-runbook-job --image=registry.k8s.io/pause:3.10 2>&1); then
+  fail "the cells' account may create a Job ($out)"
+fi
+grep -q 'cannot create resource "jobs"' <<<"$out" || fail "create job: refused, but not by RBAC: $out"
+echo "ok: create job as the cells' account: forbidden"
+
+# Without the policy's binding, while the cells may change workloads (default, $w): no session.
+kubectl get validatingadmissionpolicybinding md-runbook-ops-workloads -o json |
+  jq 'del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.generation, .metadata.managedFields, .status)' > "$work/workloads-binding.json"
+kubectl delete validatingadmissionpolicybinding md-runbook-ops-workloads
+open_session wl 9
+cell 0000ce01 'echo "ran=1"' >&9
+wait_for "$work/wl/err" 'the admission policy md-runbook-ops-workloads or its binding is missing'
+close_session wl 9
+[ -z "$(value wl ran)" ] || fail "a block ran without the binding md-runbook-ops-workloads"
+cat "$work/wl/err"
+kubectl create -f "$work/workloads-binding.json"
+kubectl delete namespace "$w" --timeout=180s
+
 # Another app's service account in the gate's namespace: the session refuses before its hello
 # (the gate could run a Job as that account).
 k create serviceaccount md-runbook-intruder
@@ -280,6 +376,9 @@ close_session h 7
 grep -a '=' "$work/h/out" | grep -av MDRB || true
 [ "$(value h service)" = open ] || fail "before the egress policy: no connection to the other namespace's Service"
 internet_before=$(value h internet)
+# The ops pod too, before ops-egress.yaml (below).
+k exec "$ops_pod" -c ops -- nc -z -w 3 "echo.$target.svc.cluster.local" 8080 ||
+  fail "before ops-egress.yaml: the ops pod doesn't reach the other namespace's Service"
 
 sed -e "s|192.0.2.10/32|$api_ip/32|" -e "s|port: 6443 }|port: $api_port }|" "$(dirname "$0")/../../apps/ops/kubernetes/cells-egress.yaml" > "$work/egress.yaml"
 grep -q "cidr: $api_ip/32" "$work/egress.yaml" && grep -q "port: $api_port }" "$work/egress.yaml" || fail "cells-egress.yaml: the placeholders moved"
@@ -302,6 +401,24 @@ else
 fi
 echo "ok: under cells-egress.yaml the blocks reach the API server and DNS only"
 kubectl delete -f "$work/egress.yaml"
+
+# ---- ops-egress.yaml: the ops pod reaches DNS and the API server, nothing else ----
+# A session still works through it: sshd's replies (the policy is stateful), the gate's Job and
+# its kubectl exec (both through the API server), over the same port-forward.
+sed -e "s|192.0.2.10/32|$api_ip/32|" -e "s|port: 6443 }|port: $api_port }|" "$(dirname "$0")/../../apps/ops/kubernetes/ops-egress.yaml" > "$work/ops-egress.yaml"
+grep -q "cidr: $api_ip/32" "$work/ops-egress.yaml" && grep -q "port: $api_port }" "$work/ops-egress.yaml" || fail "ops-egress.yaml: the placeholders moved"
+kubectl apply -f "$work/ops-egress.yaml"
+open_session j 7
+cell 0000ac03 "kubectl get pods -n $ns -o name >/dev/null && echo api=ok" >&7
+wait_for "$work/j/out" '__MDRB_0000ac03__ 0' 150
+close_session j 7
+[ "$(value j api)" = ok ] || fail "under ops-egress.yaml: no session"
+k exec "$ops_pod" -c ops -- getent hosts "echo.$target.svc.cluster.local" > /dev/null || fail "under ops-egress.yaml: the ops pod has no DNS"
+if k exec "$ops_pod" -c ops -- nc -z -w 3 "echo.$target.svc.cluster.local" 8080; then
+  fail "under ops-egress.yaml: the ops pod reaches the other namespace's Service"
+fi
+echo "ok: under ops-egress.yaml a session works, and the ops pod reaches DNS but not the other Service"
+kubectl delete -f "$work/ops-egress.yaml"
 kubectl delete namespace "$target" --wait=false
 
 # Every session's Job goes (the app's tests before this ran many), pods too.
