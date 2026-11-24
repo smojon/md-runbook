@@ -250,7 +250,9 @@ spec:
           type: RuntimeDefault
       containers:
         - name: ops
-          # Published with each md-runbook release; pin one (:0.11.0) once you rely on it.
+          # Published with each md-runbook release. In production, pin a release by its digest
+          # (ghcr.io/smojon/md-runbook-ops@sha256:…), checked with `gh attestation verify`: see
+          # the README, "Verify the image before you deploy". :latest moves with each release.
           image: ghcr.io/smojon/md-runbook-ops:latest
           imagePullPolicy: IfNotPresent
           env:

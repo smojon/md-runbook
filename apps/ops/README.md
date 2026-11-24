@@ -43,7 +43,8 @@ kubeconfig:
   block could have copied the old one, and a copy can pose as this host.
   - Change a mounted kubeconfig's credentials and the report token too.
 - **The log is a file `ops` can write**, so a block can change it. The container's output keeps
-  each line as it was written: rely on that copy (`kubectl logs`).
+  each line as it was written: rely on that copy, shipped off the host
+  ([The audit log](#the-audit-log-and-a-stolen-key)).
 - **Its run reports are only as good as its signed blocks:** a block can read the report token.
   The gate's README says what a gate's word needs: [Trust](../gate/README.md#trust).
 - `gate.conf` here has `sshd_force_command = yes`: sshd runs the gate for every login, so the key
@@ -98,6 +99,14 @@ kubectl $ns edit configmap md-runbook-ops-gate
 kubectl $ns rollout restart deployment/md-runbook-ops
 kubectl $ns logs deployment/md-runbook-ops | grep 'host key'   # the fingerprint the app shows
 ```
+
+**Keep your settings in your own copy.** Applying the stock `md-runbook-ops.yaml` again resets
+them:
+- the ConfigMap `md-runbook-ops-gate` (`gate.conf`, your signers, `signers = 2`, `report_to`);
+- the Deployment's `CLUSTER_NAME` and image.
+
+So keep a copy of the manifest with your settings, in git. At each update, take the release's
+changes into it (the "Coming from" notes below list them), then apply your copy.
 
 **Run reports.** The bearer token goes in a Secret, never in the gate's ConfigMap: blocks can't
 read Secrets here.
@@ -189,6 +198,15 @@ one line.
 
 **Two signers in production.** For runbooks that change a cluster, set `signers = 2` in
 `gate.conf`. Then one stolen signing key can't run a change alone.
+
+**Scopes and old versions.** `scopes = *` runs runbooks signed for any scope, in any version
+ever signed. A stolen SSH key can then run a staging runbook here, or an old buggy version.
+- Set `scopes = prod-eu` (this cluster), and sign its runbooks with `--scope prod-eu`. A runbook
+  without scopes then doesn't run here.
+- Withdraw old versions: add `floors` and `revoked` files to the ConfigMap, next to
+  `allowed_signers`. In `gate.conf`: `floors = /etc/md-runbook/floors`, `revoked = /etc/md-runbook/revoked`.
+- Sign with `--expires-in DAYS`, so a release stops by itself.
+- See [Withdrawing a release](../../docs/features/signed-runbooks.md).
 
 **Reaching it from a phone.** The Service only works inside the cluster. You have four
 options:
@@ -337,7 +355,15 @@ Cleanup, if the gate can't delete a Job itself:
 - the next session deletes Jobs whose gate (pid and start time) is gone;
 - a session lasts at most a day, a cap for long on-call windows.
 
-**Network.** The NetworkPolicies need a network plugin that enforces them.
+**Network.** The NetworkPolicies need a network plugin that enforces them. Without one they do
+nothing, and nothing tells you.
+- Managed clusters often don't enforce them until you turn it on:
+  [GKE](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/network-policy),
+  [EKS](https://docs.aws.amazon.com/eks/latest/userguide/cni-network-policy-configure.html)
+  (the VPC CNI's `enableNetworkPolicy`),
+  [AKS](https://learn.microsoft.com/en-us/azure/aks/use-network-policies) (a policy engine).
+- Check it after applying `cells-egress.yaml` (below): a signed block with
+  `curl -m 3 -sS http://169.254.169.254/ || echo blocked` must print `blocked`.
 - Egress stays open for runbooks, unless you apply the egress policy (below).
 - Some plugins also apply an `ipBlock` to pod addresses. There the Job pods can still reach
   sshd, but they have no key to log in.
@@ -410,6 +436,34 @@ Settings in `gate.conf`:
     from its service account:
     `kubectl -n md-runbook-ops patch serviceaccount NAME -p '{"imagePullSecrets":[{"name":"SECRET"}]}'`.
     This also goes for `md-runbook-cells` itself.
+
+### The audit log, and a stolen key
+
+**Ship the log off the cluster.** The gate logs each session and block, with the key's
+fingerprint, to a file and to the container's output.
+- Collect the container's output with your log collector (Fluent Bit, Vector, your cloud's
+  logging).
+- `kubectl logs` alone isn't enough. A restarted or moved pod takes its log with it, and the
+  kubelet keeps only the newest files.
+- The log volume holds 256 MiB. Past that, Kubernetes evicts the pod.
+- The Kubernetes audit log names the cells' account, not the person. The gate's log says which
+  key ran what: keep both.
+
+**A key stolen, or someone leaving:**
+1. Save the log, unless it's shipped already:
+   `kubectl $ns logs deployment/md-runbook-ops > gate-$(date +%F).log`.
+2. Remove their line from `authorized_keys`, then apply it:
+
+   ```sh
+   kubectl $ns create configmap md-runbook-ops-keys --from-file=authorized_keys \
+     --dry-run=client -o yaml | kubectl apply -f -
+   ```
+
+3. End open sessions: `kubectl $ns rollout restart deployment/md-runbook-ops`. A session lasts up
+   to a day, and a removed key doesn't end it. Its Job goes with the old pod.
+4. A signing key: remove its line from `allowed_signers`. Withdraw what it signed (`revoked` or
+   `floors`, above), and sign again what you keep.
+5. Look for what the key ran: its fingerprint is on each line of the log.
 
 ## Next to the relay
 
@@ -492,8 +546,30 @@ docker build -t md-runbook-ops -f apps/ops/Dockerfile apps
     pinned by digest.
   - The image gets only the static binary.
 
-`KUBECTL_VERSION` (a build argument) picks kubectl, and the build checks the download against
-its published SHA-256.
+- **kubectl** is 1.35 (`KUBECTL_VERSION`), for clusters from 1.34 to 1.36: kubectl supports one
+  minor version either side ([version skew policy](https://kubernetes.io/releases/version-skew-policy/#kubectl)).
+  - The build checks the download against SHA-256s written in the Dockerfile, not fetched with
+    it.
+- **Debian** is pinned by digest too.
+
+### Verify the image before you deploy
+
+Each release signs where its images and files were built (GitHub artifact attestations).
+
+- Find the release's image digest: `docker buildx imagetools inspect ghcr.io/smojon/md-runbook-ops:0.32.0`.
+  Copy the `Digest:` line (`sha256:…`).
+- Check it came from md-runbook's release workflow:
+
+  ```sh
+  gh attestation verify oci://ghcr.io/smojon/md-runbook-ops@sha256:DIGEST \
+    --repo smojon/md-runbook \
+    --signer-workflow smojon/md-runbook/.github/workflows/release.yml
+  ```
+
+- Pin that digest in the Deployment: `image: ghcr.io/smojon/md-runbook-ops@sha256:DIGEST`.
+  - A tag can be moved to other bytes; a digest can't.
+  - With a mirror, the digest stays the same.
+- Release files work the same way: `gh attestation verify md-runbook-gate-linux-amd64 --repo smojon/md-runbook`.
 
 Each md-runbook release publishes the image as `ghcr.io/smojon/md-runbook-ops`. The
 [Ops host workflow](../../.github/workflows/ops.yml) tests

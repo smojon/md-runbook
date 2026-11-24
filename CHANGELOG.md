@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+What's new, from a security review of the ops host in a cluster:
+- Runbooks can no longer act through a namespace's powerful service accounts.
+- Images and release files come with signed build provenance.
+- **Gate admins: update your copy of the manifest and apply both files** (see below), or
+  sessions refuse.
+
+**Gate admins on Kubernetes:**
+- The gate refuses a session when runbooks may change workloads in:
+  - a `kube-*` namespace, whatever its labels;
+  - a namespace whose service accounts have cluster-wide rights (a ClusterRoleBinding names
+    them). Runbooks could change an image there, and run code as those accounts.
+- `md-runbook-ops-operate` no longer creates Jobs. It's an opt-in rule in the manifest now.
+- A new admission policy, `md-runbook-ops-workloads`. Runbooks may restart, roll back, scale and
+  change images. They can't change a workload's service account, volumes, Secrets or security
+  settings.
+- To update:
+  - Apply [admission-policy.yaml](apps/ops/kubernetes/admission-policy.yaml) as a cluster admin.
+  - Take the stock manifest's changes into your own copy, then apply it. The README's "Coming
+    from 0.31.x" lists them.
+  - Don't apply the stock manifest itself: it resets your ConfigMap, `CLUSTER_NAME` and image.
+- New, opt-in: [ops-egress.yaml](apps/ops/kubernetes/ops-egress.yaml) limits the ops pod to DNS,
+  the API server and your run-report host.
+- **Verify the image:** `gh attestation verify`, then pin it by digest. The README says how.
+- The image has kubectl 1.35 (clusters 1.34 to 1.36) and Debian 13.7, pinned by digest.
+- The README now covers:
+  - shipping the gate's log off the cluster;
+  - what to do when a key is stolen, or someone leaves;
+  - checking that network policies are enforced;
+  - scopes and version floors in production.
+
 ## 0.31.1
 
 **Fixed:** in VS Code, a cell's progress bar kept counting after the run ended. It stayed over the
