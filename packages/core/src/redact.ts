@@ -28,8 +28,9 @@ const SECRET_KEYS = `password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key
 
 // Placeholders and shell references (`${secret:X}`, `$(cmd)`, `$env:X`, `%X%`) are not values. A bare
 // `$NAME` is not exempt: the patterns are case-insensitive, so it could not be told from `$ecret`.
-// A backslash after one ends it only before a quote: `\"${secret:X}\"` in escaped JSON.
-const REFERENCE = '(?:\\$\\{[^}\\s"\']*\\}|\\$\\([^)\\r\\n]*\\)|\\$env:\\w+|%[A-Za-z_]\\w*%)(?![^\\s"\',;&\\\\]|\\\\(?!["\']))';
+// A backslash after one ends it only before a quote: `\"${secret:X}\"` in escaped JSON. `$env:` in
+// any case, also in a pattern without the i flag (password-flag-tool: `$ENV:PW`).
+const REFERENCE = '(?:\\$\\{[^}\\s"\']*\\}|\\$\\([^)\\r\\n]*\\)|\\$[Ee][Nn][Vv]:\\w+|%[A-Za-z_]\\w*%)(?![^\\s"\',;&\\\\]|\\\\(?!["\']))';
 /** A secret value may not be one of these words (e.g. `"token_type": "Bearer"`) or a reference. */
 const NOT_A_VALUE = `(?<!\\$\\{(?:secret|secretFile|input|param):)(?!(?:Bearer|Basic|Negotiate|true|false|null|none)\\b)(?!${REFERENCE})`;
 
@@ -72,9 +73,15 @@ const gluePieces = (opener: string): string => `(?:${GLUE_CHAR}|${glueSegment(op
 /**
  * What is glued to a bare word (a flag's or key's value out of quotes) that stops at a quote:
  * `--password abc'def'` is `abcdef` (redactScan.ts `bareGlueEnd`). It starts with a segment only:
- * in `'C:\keys\' next` the `\'` is no escape.
+ * in `'C:\keys\' next` the `\'` is no escape. Not after `[ ( { : = <`, where code and JSON open
+ * a string (`["a", "b"]`, `os.environ["KEY"]`, `[{"name":"x"}]`).
  */
-const bareGlued = (opener: string): string => `(?=["'])${gluePieces(opener)}`;
+const bareGlued = (opener: string): string => `(?<![[({:=<])(?=["'])${gluePieces(opener)}`;
+/**
+ * What is glued to an empty value's closing quote (`password=''abc`): as `glued`, but not starting
+ * with a quote, `-` (the next option: `-u a:''-H`), `$` or a REFERENCE (`""${PW}`: no secret there).
+ */
+const emptyGlued = (q: string, opener: string): string => `${notAfter(opener)}${q}(?=${GLUE_START})(?![-$])(?!${REFERENCE})${gluePieces(opener)}`;
 /** A value's closing quote q, which no value opens, then what is glued to it. */
 const closingGlued = (q: string, opener: string): string => `${notAfter(opener)}${q}${glued(opener)}`;
 /**
@@ -110,12 +117,12 @@ const CLOSES = `(?:[;&|\\s]|$)`;
  * The rest of a value in "…" up to the closing quote: with backslash escapes (`"abc\"def"`), but a
  * `\"` before CLOSES closes it; else (a backslash before the line's end) up to the next `"` as before.
  * Text glued to the closing quote is in the value too, the quote with it (closingGlued; `opener`:
- * see notAfter). An empty value counts only with glued text: `password=""abc` is `abc`.
+ * see notAfter). An empty value counts only with glued text (emptyGlued): `password=""abc` is `abc`.
  */
 const DQ_REST = (opener: string): string =>
-  `(?:(?:(?:[^"\\\\\\r\\n]|\\\\(?="${CLOSES})|\\\\(?!"${CLOSES})[^\\r\\n])+|[^"\\r\\n]+)(?=")(?:${closingGlued('"', opener)})?|${closingGlued('"', opener)})`;
+  `(?:(?:(?:[^"\\\\\\r\\n]|\\\\(?="${CLOSES})|\\\\(?!"${CLOSES})[^\\r\\n])+|[^"\\r\\n]+)(?=")(?:${closingGlued('"', opener)})?|${emptyGlued('"', opener)})`;
 /** In '…', no escapes (sh, PowerShell): up to the next `'`, and what is glued to it (`''abc` too). */
-const SQ_REST = (opener: string): string => `(?:[^'\\r\\n]+(?=')(?:${closingGlued("'", opener)})?|${closingGlued("'", opener)})`;
+const SQ_REST = (opener: string): string => `(?:[^'\\r\\n]+(?=')(?:${closingGlued("'", opener)})?|${emptyGlued("'", opener)})`;
 /** In $'…' (bash's ANSI-C quotes), a character or a backslash and the one it escapes (`\'`, `\\`). */
 const ANSI_CHAR = `(?:[^'\\\\\\r\\n]|\\\\[^\\r\\n])`;
 /** In $'…': up to the `'` that closes it, and what is glued to it (redactScan.ts `ansiEnd`). */
@@ -137,7 +144,7 @@ const quotedAlternatives = (key: string, notValue = ''): string[] => [
  *   REFERENCE, in '…' and $'…' not starting with a REFERENCE (`'$3cret'` is literal). With glued
  *   text it is a value anyway (`'${secret:X}'abc` holds `abc`);
  * - in `\"…\"` (escaped in `sh -c "…"` or JSON), as ESCAPED_VALUE reads it, its quotes with it; not
- *   starting with `$` or a REFERENCE;
+ *   starting with `$` or a REFERENCE, but with glued text a value anyway, as in "…";
  * - else a word not starting with `-`, `$` or a REFERENCE (`%3cret` is a value, `%PW%` is not), and
  *   what is glued to it (`abc'def'`).
  * `opener`: the look-behind source before it (see notAfter).
@@ -146,7 +153,7 @@ const FLAG_VALUE = (opener: string): string =>
   `(?:"(?:[^"\\r\\n]*${closingGlued('"', opener)}|(?!\\$)(?!${REFERENCE})[^"\\r\\n]*")` +
   `|'(?:[^'\\r\\n]*${closingGlued("'", opener)}|(?!${REFERENCE})[^'\\r\\n]*')` +
   `|\\$'(?:${ANSI_CHAR}*${closingGlued("'", opener)}|(?!${REFERENCE})${ANSI_CHAR}*')` +
-  `|\\\\"(?!\\$)(?!${REFERENCE})${ESC_BODY('"')}(?:\\\\"(?=${ESC_CLOSES})|${notAfter(opener)}\\\\"${escGlued('"', opener)})` +
+  `|\\\\"(?:${ESC_BODY('"')}${notAfter(opener)}\\\\"${escGlued('"', opener)}|(?!\\$)(?!${REFERENCE})${ESC_BODY('"')}\\\\"(?=${ESC_CLOSES}))` +
   `|(?![-$])(?!${REFERENCE})[^\\s"']+(?:${bareGlued(opener)})?)`;
 /**
  * The rest of a quoted `user:PASSWORD` (or `pass:PASSWORD`) after the user part, up to the closing
@@ -169,6 +176,11 @@ const SECRET_FLAG = `(?:(?:^|\\s)--?(?:${FLAG_NAMES.join('|')})|${BARE_FLAG_STAR
 const USER_FLAG = '(?:^|\\s)(?:-u|--user)[ \\t]+';
 /** Where a quote opens the password of `-u` (see notAfter): after USER_FLAG (`-u "a:pw"`) or after `user:` (`-u a:'pw'`). */
 const USER_OPENER = `${USER_FLAG}(?:[^\\s:"']+:)?`;
+/**
+ * Where a quote opens any of secret-flag-value's values (see notAfter): one match must not glue
+ * over the start of another alternative's value (`--password a''' -u u:'s e c'`).
+ */
+const SECRET_OPENER = `(?:${SECRET_FLAG}|${USER_OPENER})`;
 const SECRET_KEY = `\\b[\\w.-]*(?:${SECRET_KEYS})[\\w.-]*${KEY_QUOTE}[ \\t]*[:=][ \\t]*`;
 const PASS_KEY = `(?:^|[^A-Za-z0-9])(?:[\\w.-]*[_.-])?pass${KEY_QUOTE}[ \\t]*[:=][ \\t]*`;
 /**
@@ -233,12 +245,12 @@ const BASE_PATTERNS: readonly RedactionPattern[] = [
     // --password value, --client-secret "value", --requirepass/requirepass value (Redis), -p value
     // after login, mysql -pValue, curl -u user:pass, -u "user:pass" and -u user:'pass'
     pattern:
-      `(?<=${SECRET_FLAG})${FLAG_VALUE(SECRET_FLAG)}` +
+      `(?<=${SECRET_FLAG})${FLAG_VALUE(SECRET_OPENER)}` +
       '|(?<=\\blogin\\b[^\\r\\n]*?\\s-p[ \\t]*)(?!-)[^\\s"\']+' +
       '|(?<=\\bmysql\\b[^\\r\\n]*?\\s-p)[^\\s"\']+' +
-      `|(?<=${USER_FLAG}[^\\s:"']+:)[^\\s"']+(?:${bareGlued(USER_OPENER)})?` +
-      ['"', "'"].map((q) => `|(?<=${USER_FLAG}${q}${QUOTED_USER}:)${QUOTED_REST(q, USER_OPENER)}`).join('') +
-      ['"', "'"].map((q) => `|(?<=${USER_FLAG}[^\\s:"']+:${q})${QUOTED_REST(q, USER_OPENER)}`).join(''),
+      `|(?<=${USER_FLAG}[^\\s:"']+:)[^\\s"']+(?:${bareGlued(SECRET_OPENER)})?` +
+      ['"', "'"].map((q) => `|(?<=${USER_FLAG}${q}${QUOTED_USER}:)${QUOTED_REST(q, SECRET_OPENER)}`).join('') +
+      ['"', "'"].map((q) => `|(?<=${USER_FLAG}[^\\s:"']+:${q})${QUOTED_REST(q, SECRET_OPENER)}`).join(''),
     flags: 'i',
   },
   {
@@ -386,9 +398,11 @@ const toolRule = (r: PasswordToolRule): string => {
   const gap = r.space && r.glued ? `${WS}*` : r.space ? `${WS}+` : '';
   // Where nothing is glued over a quote (notAfter): one of the flags after a blank, then the gap.
   // Every value of the rule opens after one; the whole `flag` would make the expression too large.
-  // With `ownOptions`, none: its flag counts only at the start of an option word, read with its
-  // quotes whole (OWN_W), so a quote glued to a value opens none (`sshpass -p 'a'' -p 'b` is one word).
-  const opener = run === undefined ? `${BL}(?:${r.flags.map(word).join('|')})${gap}` : '(?!)';
+  // With `ownOptions`, its flag counts only at the start of an option word, read with its quotes
+  // whole (OWN_W): a flag right after `''` or `""` (not `\''`) is inside the value's word, as in
+  // `sshpass -p 'a'' -p 'b`, so it opens none there. After anything else it may (`a''' sshpass -p '`).
+  const flagGap = `${BL}(?:${r.flags.map(word).join('|')})${gap}`;
+  const opener = run === undefined ? flagGap : `(?<!(?<!\\\\)'')(?<!(?<!\\\\)"")${flagGap}`;
   // `user<split>PASSWORD` or `<prefix>PASSWORD`: a word (and what is glued to it), or in quotes up to the closing one.
   const credential = (before: string): string =>
     [`(?<=${flag}${gap}${before})[^\\s"']+(?:${bareGlued(opener)})?`, ...['"', "'"].map((q) => `(?<=${flag}${gap}${q}${before})${QUOTED_REST(q, opener)}`)].join('|');

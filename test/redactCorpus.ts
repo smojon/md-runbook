@@ -61,6 +61,9 @@ const VALUES = [
   "$'a\\'b c'", "$'a\\\\'", "$''", "$'${secret:X}'", "$'${secret:X}'b", "$'a", "$'a\\", "$'a'b", "''abc", '""abc', "''", "abc'def'", 'abc"def"',
   "abc'd e'", 'a"b" c"', "'${secret:X}'abc", '"$PW"abc', '"${secret:X}"x', "a'' -p 'b", "admin:'a b'", 'admin:"a"', "u:abc'd'", "u:''x", '\\"$PW\\"',
   '\\"a b\\"', '\\"a\\"', '\\"a\\"b', "'a'\\'' -p 'x y'", "x'' token='b c'", "a'token='b'", "a'' -u u:'b c'",
+  // review of the glued-quote fixes: references glued, odd quote runs, code brackets, empty values
+  'a"$X"', "a'...'", "a''' -u u:'b c'", "a''' sshpass -p 'b c'", "''-H", '""${PW}', "''$X", `''"$PW"`, '[{"a"', 'os.environ["K"]', '("a", "")',
+  '\\"${secret:X}\\"t', "'$ENV:n'", "'a'' -p 'b c'", "'a'\\'' sshpass -p 'b'",
 ];
 const FLAGS = [
   '--password', '-password', '--PASSWORD', '--pass', '-pass', '--passwd', '--client-secret', '--token', '-token', '--api-key', '--apikey',

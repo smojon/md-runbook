@@ -75,10 +75,12 @@ const PLACEHOLDER =
  *   entropy 3 or more.
  * With `blanks` (QUOTED_BLANKS), a value in quotes may hold blanks (`-p "Kd4 wD7"`, `"pass:a b c"`:
  * it starts or ends at a quote) if none of its words is a placeholder (`"your password"`): 4
- * characters or more.
+ * characters or more. A value glued from parts is judged by its literal parts (literalParts).
  */
 export function looksLikeSecret(text: string, at: number, end: number, blanks = false): boolean {
   let v = text.slice(at, end);
+  const literal = literalParts(v);
+  if (literal !== v) return literal !== '' && looksLikeSecret(literal, 0, literal.length, blanks);
   const before = text[at - 1];
   let quoted = (before === '"' || before === "'") && text[end] === before;
   const inQuotes = /^["']|["']$/.test(v) || /["']/.test(before ?? '') || /["']/.test(text[end] ?? '');
@@ -92,6 +94,29 @@ export function looksLikeSecret(text: string, at: number, end: number, blanks = 
   if (quoted) return v.length >= 4;
   return (v.length >= 6 && /[A-Za-z]/.test(v) && /[^A-Za-z]/.test(v)) || (v.length >= 12 && shannonEntropy(v) >= 3);
 }
+
+/** A reference or an elision: no literal text. */
+const NOT_LITERAL = /\$[{(A-Za-z_]|%\w+%|…|\.\.\./;
+/** A quoted part, or a run out of quotes, of a value glued from parts. */
+const VALUE_PART = /(["'])[^"'\r\n]*\1|[^"']+|["']/g;
+/** A reference out of quotes. */
+const BARE_REFERENCE = /\$\{[^}\s]*\}|\$\([^)\r\n]*\)|\$[A-Za-z_]\w*(?::\w+)?|%\w+%/g;
+
+/**
+ * `v` without what its quoted parts glue in that holds no literal text (`Kd4wD7"$SUFFIX"`,
+ * `'${secret:X}'Kd4wD7`, `Kd4wD7'...'`), nor references out of quotes beside them; `v` itself
+ * if it has no quoted part next to another part.
+ */
+function literalParts(v: string): string {
+  const parts = v.match(VALUE_PART) ?? [];
+  if (parts.length < 2 || !parts.some((p) => p.length >= 2 && (p[0] === '"' || p[0] === "'") && p[p.length - 1] === p[0])) return v;
+  const kept = parts.map((p) => {
+    if (p.length >= 2 && (p[0] === '"' || p[0] === "'") && p[p.length - 1] === p[0]) return NOT_LITERAL.test(p) ? '' : p;
+    return isQuoteChar(p) ? p : p.replace(BARE_REFERENCE, '');
+  });
+  return kept.join('');
+}
+const isQuoteChar = (p: string): boolean => p === '"' || p === "'";
 
 /**
  * The widened patterns whose quoted values may hold blanks in the leak scan (looksLikeSecret): a
@@ -539,8 +564,11 @@ function findLeaks(text: string, opts: LeakScanOptions, secrets?: Spans): LeakFi
   const domains = domainDetector(opts.internalDomains);
   if (domains) for (const m of text.matchAll(domains.re)) add(m.index ?? 0, m[0].length, domains.kind);
   // A widened finding that overlaps a secret already found is part of it (`"pass:b c"`, where
-  // pass-key-value found `b`): replaced whole, though not reported again (each place once).
-  if (opts.widened !== false) regexHits(WIDENED_DETECTORS, (at, end, kind) => looksLikeSecret(text, at, end, QUOTED_BLANKS.has(kind)) || overlapsSecret(at, end));
+  // pass-key-value found `b`): replaced whole, though not reported again (each place once). Not
+  // over an elided example (`pass:…`, …).
+  if (opts.widened !== false) {
+    regexHits(WIDENED_DETECTORS, (at, end, kind) => looksLikeSecret(text, at, end, QUOTED_BLANKS.has(kind)) || (overlapsSecret(at, end) && !/…|\.\.\./.test(text.slice(at, end))));
+  }
 
   spans.sort((a, b) => a.offset - b.offset);
   const lineStarts = [0];

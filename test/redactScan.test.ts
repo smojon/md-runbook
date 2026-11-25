@@ -158,7 +158,11 @@ describe('linear redaction matchers', () => {
   });
 });
 
-/** Each call well under what a quadratic reading takes (tens of seconds for 200,000 characters). */
+/**
+ * Each call well under what a quadratic reading takes (tens of seconds for 200,000 characters):
+ * BUDGET_MS for 88 hostile lines (0.32.0's set). The budgets grow with the lines (BUDGET below),
+ * so each line keeps the same share.
+ */
 const BUDGET_MS = Number(process.env.REDACT_BUDGET_MS ?? 2_000);
 const N = 200_000;
 
@@ -277,6 +281,8 @@ const HOSTILE = [
   rep(`password=""a`),
   rep(`--password '\${a}'`),
 ];
+/** BUDGET_MS, for as many lines as HOSTILE has. */
+const BUDGET = (BUDGET_MS * HOSTILE.length) / 88;
 
 describe('redaction and the leak scan stay linear on 200,000-character lines', () => {
   const redactor = createRedactor(DEFAULT_PATTERNS);
@@ -287,7 +293,7 @@ describe('redaction and the leak scan stay linear on 200,000-character lines', (
       for (const line of HOSTILE) find(line);
       const ms = performance.now() - t0;
       // secret-after-unicode-space is eight patterns in one (each of them read with Unicode spaces).
-      const budget = p.name === 'secret-after-unicode-space' ? 4 * BUDGET_MS : BUDGET_MS;
+      const budget = p.name === 'secret-after-unicode-space' ? 4 * BUDGET : BUDGET;
       assert.ok(ms < budget, `${p.name}: ${Math.round(ms)} ms for ${HOSTILE.length} lines`);
     });
   }
@@ -295,19 +301,19 @@ describe('redaction and the leak scan stay linear on 200,000-character lines', (
     const t0 = performance.now();
     for (const line of HOSTILE) findReferences(line);
     const ms = performance.now() - t0;
-    assert.ok(ms < BUDGET_MS, `${Math.round(ms)} ms`);
+    assert.ok(ms < BUDGET, `${Math.round(ms)} ms`);
   });
   it('the redactor, all patterns', () => {
     const t0 = performance.now();
     for (const line of HOSTILE) redactor.redact(line);
     const ms = performance.now() - t0;
-    assert.ok(ms < 4 * BUDGET_MS, `${Math.round(ms)} ms`);
+    assert.ok(ms < 4 * BUDGET, `${Math.round(ms)} ms`);
   });
   it('scanForLeaks', () => {
     const t0 = performance.now();
     for (const line of HOSTILE) scanForLeaks(line);
     const ms = performance.now() - t0;
     // Every detector, the widened ones included (about 180 ms a line here; quadratic would be minutes).
-    assert.ok(ms < 8 * BUDGET_MS, `${Math.round(ms)} ms`);
+    assert.ok(ms < 8 * BUDGET, `${Math.round(ms)} ms`);
   });
 });

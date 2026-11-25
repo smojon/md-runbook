@@ -361,6 +361,53 @@ describe('escaped, ANSI-C and glued quotes (after 0.32)', () => {
   for (const [input, expected] of keptAfter) it(input, () => assert.equal(r.redact(input), expected));
 });
 
+describe('review of the glued-quote fixes (after 0.32)', () => {
+  const B = '\\';
+  // The leak scan judges a glued value by its literal part: a reference or `...` glued to it no longer hides it.
+  const literal = [
+    'sshpass -p Kd4wD7"$SUFFIX" ssh h',
+    'smbclient //h/s -U admin%Kd4wD7"$X"',
+    'htpasswd -b f u Kd4wD7"$X"',
+    'zip -P Kd4wD7"$X" a.zip f',
+    'api key: Kd4wD7"$X"',
+    "sshpass -p Kd4wD7'...' ssh h",
+    'sshpass -p "$PW"Kd4wD7 ssh h',
+    "sshpass -p '${secret:X}'Kd4wD7 ssh h",
+    `sshpass -p 'Kd4wD7'"$X" ssh h`,
+  ];
+  for (const input of literal) {
+    it(input, () => {
+      assert.ok(!r.redact(input).includes('Kd4wD7'), r.redact(input));
+      assert.ok(!redactLeaks(input).includes('Kd4wD7'), redactLeaks(input));
+    });
+  }
+
+  const cases: Array<[string, string]> = [
+    // Nothing is glued over a quote that opens another value of the same pattern.
+    [`--password a''' -u u:'s e c'`, `--password ${R}' -u u:'${R}'`],
+    [`sshpass -p a''' sshpass -p 's e c'`, `sshpass -p ${R}' sshpass -p ${R}`],
+    // an empty value then the next option: no value
+    [`-u a:''-H 'X: y'`, `-u a:''-H 'X: y'`],
+    // As in 0.32.0: no glue after `[ ( { : = <`, where code and JSON open a string.
+    ['{"secrets":[{"name":"builder-token-x"}],"x":"y"}', `{"secrets":${R}"name":"builder-token-x"}],"x":"y"}`],
+    ['"tokens": ["abc", "def"]', `"tokens": ${R}"abc", "def"]`],
+    ['api_key = os.environ["API_KEY"]', `api_key = ${R}"API_KEY"]`],
+    ['password = os.getenv("DB_PASSWORD", "")', `password = ${R}"DB_PASSWORD", "")`],
+    // An empty value with a reference glued to it holds no secret; an escaped reference with a tail is a value.
+    ['PASSWORD=""${PW}', 'PASSWORD=""${PW}'],
+    ["PASSWORD=''$X", "PASSWORD=''$X"],
+    [`password=''"$PW"`, `password=''"$PW"`],
+    [`--password ${B}"\${secret:X}${B}"tail`, `--password ${R}`],
+    [`mosquitto_pub -P '$ENV:n'`, `mosquitto_pub -P '$ENV:n'`],
+  ];
+  for (const [input, expected] of cases) {
+    it(input, () => {
+      assert.equal(r.redact(input), expected);
+      assert.equal(redactLeaks(input).includes(' e c'), false);
+    });
+  }
+});
+
 describe('redaction of real-world IAM/OpenShift output', () => {
   const cases: Array<[string, string, string]> = [
     ['flag with space', 'kcadm.sh config credentials --user admin --password Adm1n-Kc-Pw', `kcadm.sh config credentials --user admin --password ${R}`],

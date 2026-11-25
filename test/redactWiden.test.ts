@@ -297,6 +297,13 @@ describe('what the widened patterns catch', () => {
     assert.equal(looksLikeSecret('"Kd4 wD7"', 0, 9), false);
     assert.equal(looksLikeSecret('"Kd4 wD7"', 0, 9, true), true);
     assert.equal(looksLikeSecret('x Kd4 wD7 y', 2, 9, true), false);
+    // A widened finding over an elided example is not added to a secret it overlaps (README).
+    assert.ok(redactLeaks('`openssl -passin pass:…`, `htpasswd -b`').endsWith(', `htpasswd -b`'));
+    // A glued value is judged by its literal part.
+    assert.equal(looksLikeSecret('Kd4wD7"$X"', 0, 10), true);
+    assert.equal(looksLikeSecret(`'\${secret:X}'Kd4wD7`, 0, 19), true);
+    assert.equal(looksLikeSecret(`'\${secret:X}'"$Y"`, 0, 17), false);
+    assert.equal(looksLikeSecret(`xx'...'`, 0, 7), false);
   });
 });
 

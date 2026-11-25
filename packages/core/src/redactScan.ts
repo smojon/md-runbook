@@ -43,6 +43,7 @@ const GT = 62;
 const QUESTION = 63;
 const AT = 64;
 const BACKSLASH = 92;
+const LBRACKET = 91;
 const RBRACKET = 93;
 const CARET = 94;
 const US = 95;
@@ -423,7 +424,7 @@ function keyValue(s: Scan, p: number, keyEndsAt: (s: Scan, k: number) => boolean
   if (k < 0 || !keyEndsAt(s, k) || !notAValue(s, p)) return -1;
   // A value in $'…' is read in its quotes (quotedValueEnd).
   if (c === DOLLAR && s.c(p + 1) === SQ && ansiEnd(s, p + 2) > p + 2) return -1;
-  return bareGlueEnd(s, keyValueEnd(s, p), keyOpensAt(keyEndsAt));
+  return bareGlueEnd(s, keyValueEnd(s, p), keyOpener(keyEndsAt));
 }
 
 /** GLUE_START (redact.ts): `[\w$@!%~^*=?/-]` */
@@ -478,10 +479,13 @@ function glueEnd(s: Scan, i: number, opensAt: OpensAt): number {
 
 /**
  * The end of the text glued to a bare word that ends at e (bareGlued in redact.ts), or e: it starts
- * with a segment (`--password abc'def'`), not with `\'` (in `'C:\keys\'` that is no escape).
+ * with a segment (`--password abc'def'`), not with `\'` (in `'C:\keys\'` that is no escape), and
+ * not after `[ ( { : = <` (`["a", "b"]`, `os.environ["KEY"]`).
  */
 function bareGlueEnd(s: Scan, e: number, opensAt: OpensAt): number {
-  return isQuote(s.c(e)) ? glueRun(s, e, opensAt) : e;
+  const b = s.c(e - 1);
+  if (!isQuote(s.c(e)) || b === LBRACKET || b === LPAREN || b === LBRACE || b === COLON || b === EQ || b === LT) return e;
+  return glueRun(s, e, opensAt);
 }
 
 /** glueEnd's reading from i: GLUE_CHAR, segments and `\X` pairs, up to the first character that doesn't go on. */
@@ -614,8 +618,14 @@ function quoteRestEnd(s: Scan, p: number, q: number, opensAt: OpensAt): number {
   return f > p && s.c(f) === q ? glued(s, f, opensAt) : -1;
 }
 
-/** An empty value whose closing quote is at e: the end of the text glued to it, or -1 if there is none (`''abc`). */
+/**
+ * An empty value whose closing quote is at e: the end of the text glued to it, or -1 if there is
+ * none (`''abc`; emptyGlued in redact.ts). That text starts with GLUE_START but not `-` (the next
+ * option), `$` or a reference (`""${PW}`).
+ */
 function emptyGlued(s: Scan, e: number, opensAt: OpensAt): number {
+  const c = s.c(e + 1);
+  if (!glueStart(c) || c === DASH || c === DOLLAR || isReference(s, e + 1)) return -1;
   const g = glueEnd(s, e + 1, opensAt);
   return g > e + 1 ? g : -1;
 }
@@ -627,9 +637,9 @@ function emptyGlued(s: Scan, e: number, opensAt: OpensAt): number {
  * (`s3c\\\"ret`), an even k a bare quote (the string around ends: no value). The closing `\"` must
  * be followed by ESC_CLOSES (escClosesAt), or by glued text (escGlueEnd: the end is after it), else
  * there is no value. `withClose`: before ESC_CLOSES the end is after the closing `\"` (a flag's
- * value, FLAG_VALUE in redact.ts), else before it.
+ * value, FLAG_VALUE in redact.ts), else before it. `gluedOnly`: a value only with glued text.
  */
-function escapedValueEnd(s: Scan, p: number, q: number, opensAt: OpensAt, withClose: boolean): number {
+function escapedValueEnd(s: Scan, p: number, q: number, opensAt: OpensAt, withClose: boolean, gluedOnly = false): number {
   for (let e = p; ; ) {
     const c = s.c(e);
     if (c !== c || c === CR || c === LF || c === q) return -1;
@@ -644,7 +654,7 @@ function escapedValueEnd(s: Scan, p: number, q: number, opensAt: OpensAt, withCl
     else if ((r - e) % 4 === 3) e = r + 1;
     else if ((r - e) % 4 === 1) {
       if (r - 1 <= p) return -1;
-      if (escClosesAt(s, r + 1)) return withClose ? r + 1 : r - 1;
+      if (escClosesAt(s, r + 1)) return gluedOnly ? -1 : withClose ? r + 1 : r - 1;
       // Text after the `\"`. If the next value opens there, no value: one with this text would
       // hide that value's start, and one without it ends before a word, which is no escaped JSON
       // (ESC_CLOSES): as before glued text was read.
@@ -666,16 +676,22 @@ function quotedValueAfterKey(s: Scan, p: number, keyEndsAt: (s: Scan, k: number)
   if (o < 0) return -1;
   const k = keyEnd(s, o);
   if (k < 0 || !keyEndsAt(s, k) || !notAValue(s, p)) return -1;
-  return quotedValueEnd(s, p, keyOpensAt(keyEndsAt));
+  return quotedValueEnd(s, p, keyOpener(keyEndsAt));
 }
 
-/** OpensAt for a key's value: the key and its separator end at the quote. */
-const keyOpensAt =
-  (keyEndsAt: (s: Scan, k: number) => boolean): OpensAt =>
-  (s, o) => {
-    const k = keyEnd(s, o);
-    return k >= 0 && keyEndsAt(s, k);
-  };
+/** OpensAt for a key's value: the key and its separator end at the quote. Made once for each kind of key. */
+const KEY_OPENERS = new Map<(s: Scan, k: number) => boolean, OpensAt>();
+function keyOpener(keyEndsAt: (s: Scan, k: number) => boolean): OpensAt {
+  let o = KEY_OPENERS.get(keyEndsAt);
+  if (!o) {
+    o = (s, i) => {
+      const k = keyEnd(s, i);
+      return k >= 0 && keyEndsAt(s, k);
+    };
+    KEY_OPENERS.set(keyEndsAt, o);
+  }
+  return o;
+}
 
 const quotedKeyValue = (s: Scan, p: number): number => quotedValueAfterKey(s, p, secretKeyEndsAt);
 
@@ -685,7 +701,7 @@ const QUOTE_OPENINGS = ['"', '\\"', "'", "\\'", "$'"];
 const opensWith =
   (open: string, m: (s: Scan, p: number) => number) =>
   (s: Scan, p: number): number =>
-    valueOpen(s, p) === p - open.length && s.has(p - open.length, open) ? m(s, p) : -1;
+    s.c(p - 1) === open.charCodeAt(open.length - 1) && valueOpen(s, p) === p - open.length && s.has(p - open.length, open) ? m(s, p) : -1;
 /** `m` (a quoted value after a key) as quotedAfter's four alternatives, one for each opening quote. */
 const byOpening = (m: (s: Scan, p: number) => number): Array<(s: Scan, p: number) => number> => QUOTE_OPENINGS.map((o) => opensWith(o, m));
 
@@ -736,34 +752,25 @@ function secretFlagEndsAt(s: Scan, j: number): boolean {
 const secretFlagOpensAt: OpensAt = (s, o) => s.blank(s.c(o - 1)) && secretFlagEndsAt(s, s.blanksBefore(o));
 
 /**
- * The end of a quoted value whose closing quote is at e and whose inside starts at i: after the
- * text glued to it; else after the quote, unless the inside is a reference (`ref`).
- */
-function quotedFlagEnd(s: Scan, e: number, opensAt: OpensAt, ref: (s: Scan) => boolean): number {
-  const g = glueEnd(s, e + 1, opensAt);
-  return g > e + 1 ? g : ref(s) ? -1 : e + 1;
-}
-
-/**
  * FLAG_VALUE (redact.ts) at p, a value opening there (`opensAt`), or -1. In "…" (not a reference:
  * starting with `$`, the shell expands it, or REFERENCE), '…' or $'…' (not REFERENCE: `'$3cret'`
  * is literal), with what is glued to its closing quote, then a value anyway; in `\"…\"` as
- * escapedValueEnd reads it, not a reference as in "…"; else a word not starting with `-`, `$` or
- * REFERENCE (`%3cret` is a value, `%PW%` not), and what is glued to it.
+ * escapedValueEnd reads it, not a reference as in "…" unless glued text follows; else a word not
+ * starting with `-`, `$` or REFERENCE (`%3cret` is a value, `%PW%` not), and what is glued to it.
  */
 function flagValueEnd(s: Scan, p: number, opensAt: OpensAt): number {
   const c = s.c(p);
-  if (isQuote(c)) {
-    const e = s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(p + 1);
-    if (s.c(e) !== c) return -1;
-    return quotedFlagEnd(s, e, opensAt, (t) => (c === DQ && t.c(p + 1) === DOLLAR) || isReference(t, p + 1));
+  if (isQuote(c) || (c === DOLLAR && s.c(p + 1) === SQ)) {
+    const ansi = c === DOLLAR;
+    const i = ansi ? p + 2 : p + 1;
+    const e = ansi ? ansiEnd(s, i) : s.next(c === DQ ? 'q"' : "q'", (x) => x === c || x === CR || x === LF).find(i);
+    if (e < 0 || s.c(e) !== (ansi ? SQ : c)) return -1;
+    const g = glueEnd(s, e + 1, opensAt);
+    if (g > e + 1) return g;
+    return (c === DQ && s.c(i) === DOLLAR) || isReference(s, i) ? -1 : e + 1;
   }
-  if (c === DOLLAR && s.c(p + 1) === SQ) {
-    const e = ansiEnd(s, p + 2);
-    return e < 0 ? -1 : quotedFlagEnd(s, e, opensAt, (t) => isReference(t, p + 2));
-  }
-  if (c === BACKSLASH && s.c(p + 1) === DQ && s.c(p + 2) !== DOLLAR && !isReference(s, p + 2)) {
-    const e = escapedValueEnd(s, p + 2, DQ, opensAt, true);
+  if (c === BACKSLASH && s.c(p + 1) === DQ) {
+    const e = escapedValueEnd(s, p + 2, DQ, opensAt, true, s.c(p + 2) === DOLLAR || isReference(s, p + 2));
     if (e >= 0) return e;
   }
   if (!flagValueChar(c) || c === DASH || c === DOLLAR || isReference(s, p)) return -1;
@@ -776,7 +783,7 @@ function flagValue(s: Scan, p: number): number {
   // Every value starts with no blank: inside a run of blanks, nothing is read back.
   if (!flagValueChar(c) && !isQuote(c)) return -1;
   if (!secretFlagOpensAt(s, p)) return -1;
-  return flagValueEnd(s, p, secretFlagOpensAt);
+  return flagValueEnd(s, p, secretOpensAt);
 }
 
 /** `(?<=\bWORD\b[^\r\n]*?\s-p[ \t]*)` (blanks: login) or `(?<=\bWORD\b[^\r\n]*?\s-p)` (mysql), then `[^\s"']+` */
@@ -824,6 +831,9 @@ const userOpensAt: OpensAt = (s, o) => {
   return u < o - 1 && userFlagOpensAt(s, u);
 };
 
+/** SECRET_OPENER (redact.ts): any of secret-flag-value's values opens at o (a secret flag, or `-u`). */
+const secretOpensAt: OpensAt = (s, o) => secretFlagOpensAt(s, o) || userOpensAt(s, o);
+
 /** `[^}\s"']`: a character of a `${…}` user part (QUOTED_USER in redact.ts). */
 const refUserChar = (c: number): boolean => flagValueChar(c) && c !== RBRACE;
 
@@ -845,7 +855,7 @@ function userPassword(s: Scan, p: number): number {
     // `-u user:'PASSWORD'`
     let u = p - 2;
     while (u > 0 && userChar(s.c(u - 1))) u--;
-    return u < p - 2 && userFlagOpensAt(s, u) ? quotedRestEnd(s, p, q0, userOpensAt) : -1;
+    return u < p - 2 && userFlagOpensAt(s, u) ? quotedRestEnd(s, p, q0, secretOpensAt) : -1;
   }
   if (q0 !== COLON) return -1;
   let u = p - 1;
@@ -862,8 +872,8 @@ function userPassword(s: Scan, p: number): number {
   const q = s.c(u - 1);
   const quoted = isQuote(q);
   if (!userFlagOpensAt(s, quoted ? u - 1 : u)) return -1;
-  if (quoted) return quotedRestEnd(s, p, q, userOpensAt);
-  return flagValueChar(s.c(p)) ? bareGlueEnd(s, s.runEnd(p, flagValueChar), userOpensAt) : -1;
+  if (quoted) return quotedRestEnd(s, p, q, secretOpensAt);
+  return flagValueChar(s.c(p)) ? bareGlueEnd(s, s.runEnd(p, flagValueChar), secretOpensAt) : -1;
 }
 
 function secretFlag(s: Scan, p: number): number {
@@ -1479,13 +1489,19 @@ function toolFlagBefore(s: Scan, v: number, rule: PasswordToolRule, bit: number)
 const toolOpensAt =
   (rule: PasswordToolRule): OpensAt =>
   (s, o) => {
-    if (rule.ownOptions !== undefined) return false;
     // Where the flag ends: before the blanks (`space`; with `glued` too, there may be none), else at o.
     const b = s.blanksBefore(o);
     let f = o;
     if (rule.space && (b < o || rule.glued)) f = b;
     else if (!rule.glued) return false;
-    return rule.flags.some((flag) => flagAt(s, f - flag.length, flag, rule) && isLineBlank(s.c(f - flag.length - 1)));
+    return rule.flags.some((flag) => {
+      const at = f - flag.length;
+      if (!flagAt(s, at, flag, rule) || !isLineBlank(s.c(at - 1))) return false;
+      if (rule.ownOptions === undefined) return true;
+      // With `ownOptions`: not right after `''` or `""` (but `\''`), inside the value's word.
+      const q = s.c(at - 2);
+      return !(isQuote(q) && s.c(at - 3) === q && s.c(at - 4) !== BACKSLASH);
+    });
   };
 
 /** What can come right before a value: a glued flag's last character, a split or a prefix's last one (else a blank). */
@@ -1677,9 +1693,11 @@ type Matcher = (s: Scan, p: number) => number;
  * alternative's], each as its own global regular expression finds them. At each position, an
  * alternative is tried if its own last match ended there or before, and the whole pattern is the
  * first alternative that matches there (a regular expression's `|`): each alternative's matcher
- * runs at most once a position.
+ * runs at most once a position. The first QUOTE_OPENINGS.length alternatives (byOpening) match only
+ * after a quote: elsewhere they are not called.
  */
 function partSpans(alts: readonly Matcher[], mustHave: RegExp, blank: (c: number) => boolean = isBlank): (text: string) => Spans[] {
+  const quoted = QUOTE_OPENINGS.length;
   return (text) => {
     const out: Spans[] = [[], ...alts.map((): Spans => [])];
     if (!mustHave.test(text)) return out;
@@ -1688,7 +1706,7 @@ function partSpans(alts: readonly Matcher[], mustHave: RegExp, blank: (c: number
     const from = new Array<number>(alts.length + 1).fill(0);
     for (let p = 0; p < s.n; p++) {
       let whole = from[0]! <= p;
-      for (let j = 0; j < alts.length; j++) {
+      for (let j = isQuote(s.c(p - 1)) ? 0 : quoted; j < alts.length; j++) {
         const own = from[j + 1]! <= p;
         if (!own && !whole) continue;
         const e = alts[j]!(s, p);
