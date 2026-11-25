@@ -8,12 +8,12 @@ A company CA signs short-lived SSH certificates. Servers trust the CA instead of
   CA. `authorized_keys` can stay empty.
 - **Names in the audit.** The gate logs the certificate's key ID as `who`, such as
   `alice@example.com`, instead of a key fingerprint.
-  - The session event adds the serial (`cert_serial`), the CA (`cert_ca`) and the key (`key`).
+  - Every event adds the CA's fingerprint (`cert_ca`): the name is that CA's word.
+  - The session event adds the serial (`cert_serial`) and the key (`key`).
   - The run report's `who` and `md-runbook audit --who` use the key ID too.
 - **Offboarding by expiry.** A certificate valid for 8 hours stops by itself. A KRL revokes one
   sooner.
-- **Rules in the certificate.** Principals, validity, `force-command`, `source-address`: sshd
-  enforces them.
+- **Rules in the certificate.** Principals, validity, `source-address`: sshd enforces them.
 
 ## A CA by hand
 
@@ -27,7 +27,7 @@ ssh-keygen -L -f alice-cert.pub
 ```
 
 - `-I`: the key ID. sshd logs it, and the gate logs it as `who`. Make it the person's own
-  name, one per person.
+  name, one per person (rules below).
 - `-n`: the principals. On the ops host: `ops`, or a name from `authorized_principals`.
 - `-V`: the validity. `+8h` is from now to 8 hours on. Without `-V`, a certificate never
   expires.
@@ -42,12 +42,17 @@ See [ssh-keygen(1), CERTIFICATES](https://man.openbsd.org/ssh-keygen.1#CERTIFICA
 - **Any OpenSSH server with the gate** ([apps/gate](../../apps/gate/README.md)):
   - `TrustedUserCAKeys` in `sshd_config` names the CA's public key;
   - `ExposeAuthInfo yes` lets the gate read the certificate;
-  - restrict the certificate to the gate with `-O force-command=`, or use `ForceCommand`.
+  - `ForceCommand` runs the gate for every login, as on the ops host. Or put
+    `command="…/md-runbook-gate"` before each principal in `AuthorizedPrincipalsFile`.
+  - A certificate's own `-O force-command=` is only an extra. A certificate signed without it
+    would get a shell.
 
 The [sshd_config(5)](https://man.openbsd.org/sshd_config.5) rules that matter:
 - Without `AuthorizedPrincipalsFile`, the certificate must name the account as a principal.
 - With it, it must name one of the file's principals instead.
 - A certificate without principals never logs in through `TrustedUserCAKeys`.
+- `TrustedUserCAKeys` may list several CAs. Then each may sign any key ID: list one CA, or CAs
+  that share one name space.
 
 ## Revoking: a KRL
 
@@ -61,6 +66,8 @@ ssh-keygen -Q -f revoked_keys alice-cert.pub                  # non-zero: revoke
 - `serial:` and `id:` lines need the CA's public key (`-s`).
 - `id:` revokes every certificate of that CA with that key ID.
 - sshd's `RevokedKeys` takes the KRL. If sshd can't read that file, it refuses every key.
+- An empty file revokes nothing. Ship one from the start: a later revocation then only changes
+  its content.
 - See [ssh-keygen(1), KEY REVOCATION LISTS](https://man.openbsd.org/ssh-keygen.1#KEY_REVOCATION_LISTS).
 
 ## Offboarding
@@ -75,7 +82,11 @@ ssh-keygen -Q -f revoked_keys alice-cert.pub                  # non-zero: revoke
 
 - [step-ca](https://smallstep.com/docs/tutorials/ssh-certificate-login/) (Smallstep):
   - `step ca init --ssh` makes a user CA. Its `ssh_user_key.pub` goes into `TrustedUserCAKeys`.
-  - `step ssh certificate` gets a certificate. Its default lifetime is 16 hours.
+  - `step ssh certificate KEY-ID KEY-FILE` gets a certificate. Its default lifetime is 16 hours.
+  - The requester names the key ID there
+    ([reference](https://smallstep.com/docs/step-cli/reference/ssh/certificate/)). Check that
+    your provisioner sets it from the person's verified identity. Else anyone can log in under
+    another's name.
 - [HashiCorp Vault's SSH secrets engine](https://developer.hashicorp.com/vault/docs/secrets/ssh/signed-ssh-certificates):
   - it signs users' keys by role, with a TTL;
   - the key ID is the token's display name by default;
@@ -86,11 +97,12 @@ ssh-keygen -Q -f revoked_keys alice-cert.pub                  # non-zero: revoke
 
 The CA writes the key ID: whoever runs the CA decides the names in the log. The gate uses it as
 `who` only when it is:
-- 1 to 256 bytes of UTF-8;
-- without control or invisible characters, line breaks, or spaces other than U+0020;
-- without a space at either end.
+- 1 to 256 characters of printable ASCII: letters, digits, punctuation;
+- with single spaces between words, none at either end;
+- not shaped like a key's fingerprint (`SHA256:…`, `MD5:…`).
 
-Else `who` is the key's fingerprint, and the session event says why (`cert_problem`).
+Else `who` is the key's fingerprint, and the session event says why (`cert_problem`). So no line
+breaks, no look-alike letters from other scripts, no invisible characters.
 
 ## Limits
 

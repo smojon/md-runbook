@@ -410,6 +410,7 @@ Each event carries the time, the account, the client address and the key (`who`)
 `ExposeAuthInfo yes` in `sshd_config`, `who` is:
 - the key's fingerprint;
 - or, for an [SSH certificate](ssh-certificates.md), its key ID, such as `alice@example.com`.
+  Each event then also names the CA (`cert_ca`).
 
 `--who=NAME` on the key line wins over both.
 

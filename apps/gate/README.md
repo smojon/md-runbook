@@ -76,7 +76,12 @@ The command may start with `exec`, and values may be quoted: `--who='Alice Smith
 shell would expand (`$`, a backtick, `;`) is refused. So is `sh md-runbook-gate`: the gate is a
 program, which `sh` can't run.
 
-With SSH certificates, put the restriction into the certificate instead:
+With SSH certificates, restrict on the server:
+- `ForceCommand` in `sshd_config` (below, `sshd_force_command`);
+- or `restrict,command="/usr/local/bin/md-runbook-gate"` before each principal in
+  `AuthorizedPrincipalsFile`.
+
+The certificate's own restriction is only an extra: one signed without it would get a shell.
 `ssh-keygen -s ca -I alice -n support -O clear -O force-command=/usr/local/bin/md-runbook-gate alice.pub`.
 
 **Keep the gate's files out of the account's reach.** Signed blocks run as the account, so it
@@ -109,11 +114,13 @@ the account can do what a block can: through `/proc`, they can write into a sess
 
 Add `ExposeAuthInfo yes` to `sshd_config` to log who logged in (`who`):
 - a plain key: its fingerprint;
-- a user certificate: its key ID, such as `alice@example.com`. The session event adds
-  `cert_serial`, `cert_ca` (the CA's fingerprint) and `key` (the key's fingerprint).
-  - The key ID is the CA's text. A key ID that is empty, over 256 bytes, not UTF-8, or with a
-    control or invisible character isn't used. `who` is then the key's fingerprint, and
-    `cert_problem` says why.
+- a user certificate: its key ID, such as `alice@example.com`.
+  - Every event adds `cert_ca`, the CA's fingerprint: the key ID is that CA's word. Trust one CA
+    in `TrustedUserCAKeys`, or CAs that share one name space.
+  - The session event adds `cert_serial` and `key` (the key's fingerprint).
+  - The key ID must be printable ASCII with single spaces, at most 256 bytes. It must not look
+    like `SHA256:…` or `MD5:…`. Else `who` is the key's fingerprint, and `cert_problem` says
+    why.
   - sshd checked the certificate before the login; the gate only reads it.
 - `--who=NAME` on the key line wins over both.
 

@@ -8,16 +8,24 @@ A company CA signs short-lived SSH certificates; the gate's log names the person
 ([guide](docs/features/ssh-certificates.md)).
 - **The gate:** for a certificate login, `who` is the certificate's key ID (with `ExposeAuthInfo
   yes`). It goes into the log, the run report and `MD_RUNBOOK_GATE_WHO`.
-  - The session event adds `cert_serial`, `cert_ca` and `key` (fingerprints).
-  - A key ID with a control or invisible character, or over 256 bytes, isn't used. `who` then
-    stays the key's fingerprint, and `cert_problem` says why.
+  - Every event adds `cert_ca`, the CA's fingerprint. The session event adds `cert_serial` and
+    `key`.
+  - The key ID must be printable ASCII, at most 256 bytes, not shaped like `SHA256:…`. Else
+    `who` stays the key's fingerprint, and `cert_problem` says why.
   - Plain keys and `--who=` work as before.
 - **The ops host:** optional files in the ConfigMap `md-runbook-ops-keys`
   ([README](apps/ops/README.md#ssh-certificates)):
   - `user_ca`: certificates of this CA may log in, for the principal `ops`;
-  - `authorized_principals`: the principals a certificate must name instead;
+  - `authorized_principals`: the principals a certificate must name instead. Empty or
+    unreadable: no certificate logs in;
   - `revoked_keys`: a KRL or public keys that sshd refuses.
-- Without these files the ops host works exactly as before.
+- Without these files the ops host logs in as before.
+- **sshd's lines in the ops host's output start with `sshd: `.** sshd writes a key ID raw, line
+  breaks included. Without the prefix, a certificate's key ID could add a line that passes for
+  a gate event.
+- **`md-runbook audit` reads a gate event only at a line's start**, or after a time or a
+  `md-runbook-gate` syslog header ([formats](docs/features/cli.md#gate-audit)). Before, any text
+  before the first `{` was skipped.
 
 ## 0.33.0
 

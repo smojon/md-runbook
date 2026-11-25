@@ -504,41 +504,53 @@ Your CA signs short-lived certificates; this host trusts the CA. The guide:
 [SSH certificates](../../docs/features/ssh-certificates.md).
 
 Add these files to the ConfigMap `md-runbook-ops-keys`, each optional:
-- `user_ca`: the CA's public key, one per line. Its certificates may log in
-  (`TrustedUserCAKeys`).
+- `user_ca`: the CA's public key (`TrustedUserCAKeys`). Its certificates may log in.
+  - List one CA, or CAs that share one name space: each CA listed may sign any key ID.
 - `authorized_principals`: one principal per line (`AuthorizedPrincipalsFile`).
   - Without it, a certificate must name the principal `ops`, the account.
   - With it, it must name one of these instead. Pick a name for this host alone, such as
     `md-runbook-ops-prod`. Then a certificate your CA signs for `ops` elsewhere can't log in here.
+  - Empty, or unreadable: no certificate logs in. The start says so.
 - `revoked_keys`: a KRL from `ssh-keygen -k`, or public keys (`RevokedKeys`). Plain keys too.
+  - Ship an empty one from the start: it revokes nothing. A later revocation then needs no
+    restart.
 
 `authorized_keys` keeps working next to them.
 
 ```sh
+touch revoked_keys    # once
 kubectl $ns create configmap md-runbook-ops-keys --from-file=authorized_keys \
   --from-file=user_ca --from-file=authorized_principals --from-file=revoked_keys \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl $ns rollout restart deployment/md-runbook-ops
-kubectl $ns logs deployment/md-runbook-ops | grep -E 'SSH certificates|revoked'
+kubectl $ns logs deployment/md-runbook-ops | grep -E 'SSH certificates|principals|revoked'
 ```
 
 What the gate logs:
 - `who`: the certificate's key ID, such as `alice@example.com`;
-- in the session event: `cert_serial`, `cert_ca` (the CA's fingerprint) and `key` (the key's);
-- a key ID with a control character, or over 256 bytes: `who` is the key's fingerprint, and
-  `cert_problem` says why.
+- `cert_ca`, the CA's fingerprint, on every event;
+- in the session event: `cert_serial` and `key` (the key's fingerprint);
+- a key ID it can't use: `who` is the key's fingerprint, and `cert_problem` says why. It takes
+  printable ASCII with single spaces, at most 256 bytes, not shaped like `SHA256:…`.
+
+sshd's own lines are in the container's output too:
+- each starts with `sshd: `;
+- sshd writes a key ID as it is, line breaks included. The prefix keeps such a line from passing
+  for a gate event;
+- `md-runbook audit` reads gate events only at a line's start, or after a time or a syslog
+  header ([formats](../../docs/features/cli.md#gate-audit)).
 
 When a change counts:
 - The start script adds each sshd directive only when its file is there. Adding or removing a
   file needs a restart (`rollout restart`).
   - [sshd_config(5)](https://man.openbsd.org/sshd_config.5): with `RevokedKeys`, an unreadable
     file refuses every key. So the host doesn't start when `revoked_keys` can't be read.
-  - A missing `AuthorizedPrincipalsFile` would match no principal.
 - sshd reads the files at each login. A changed file counts once Kubernetes updates the mount:
   the kubelet's sync period plus its cache delay
   ([mounted ConfigMaps](https://kubernetes.io/docs/concepts/configuration/configmap/#mounted-configmaps-are-updated-automatically)).
 - Never remove `revoked_keys` from a running host: sshd then refuses every key until a restart.
-- The KRL is binary: `kubectl create configmap` keeps it under `binaryData`, which works.
+- A KRL is binary. `kubectl create configmap` keeps a file that isn't valid UTF-8 under
+  `binaryData`, which the mount serves as it was.
 - A revoked certificate doesn't end an open session: restart the pod.
 
 Outside a cluster, put the same files next to `authorized_keys` in the mounted `keys` folder.

@@ -298,6 +298,16 @@ md-runbook audit /var/log/md-runbook-gate.log --record runbooks/failover.2026102
 | `--who KEY` | Only this key (fingerprint, an SSH certificate's key ID, or the gate's `--who` name) |
 | `--out FILE` | `.html` (default `gate-audit.html`), `.pdf` (needs Chrome, Edge or Chromium) or `.json` |
 
+A gate event is a JSON line. `audit` reads it:
+- at the start of a line: the gate's file, `journalctl -o cat`, `kubectl logs`;
+- after a time: `kubectl logs --timestamps`, `docker logs -t`, a container runtime's log file
+  (`TIME stdout F `);
+- after a syslog header with the tag `md-runbook-gate`: `/var/log/syslog`, `journalctl`,
+  `journalctl -o short-iso`, RFC 5424.
+
+Nowhere else. Other programs write text they don't control into the same log, such as
+`sshd: …` lines. An event after such text is skipped, not read.
+
 ## QR codes and labels
 
 `md-runbook qr file.md` writes `file.qr.svg`, a QR code that opens the runbook in the app
