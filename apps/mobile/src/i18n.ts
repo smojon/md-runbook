@@ -475,6 +475,47 @@ const en = {
     'Give servers that check your signatures its new allowed_signers line.',
     'The old key stops working in this app.',
   ],
+  // A certificate on the app's key (ssh/appCert.ts), under This app's SSH key
+  certTitle: 'Certificate',
+  certNonePoints: [
+    'For hosts that trust your company’s SSH certificate authority (CA).',
+    'Send the public key above to your CA. Attach the …-cert.pub file it gives back.',
+  ],
+  certPasskeyPoints: ['Certificates work with the app’s own key, not with a passkey.'],
+  certPaste: 'Paste',
+  certFromFile: 'From a file',
+  certPasteLabel: 'The …-cert.pub line',
+  certPastePlaceholder: 'ecdsa-sha2-nistp256-cert-v01@openssh.com AAAA…',
+  certAttach: 'Attach',
+  certRemove: 'Remove',
+  certRemoveTitle: 'Remove the certificate?',
+  certRemovePoints: ['Hosts that only trust your CA refuse the key then.', 'The key itself stays.'],
+  /** The key ID and users come escaped and cut (core shownText): they are the certificate's text. */
+  certKeyId: (id: string) => (id ? `Key ID: ${id}` : 'Key ID: none'),
+  certPrincipals: (shown: string) => (shown ? `Users: ${shown}` : 'Users: any (no principals)'),
+  certRestrictions: (names: string) => `Restrictions: ${names}`,
+  certValidUntil: (date: string, left: string) => `Valid until ${date} (${left})`,
+  certValidForever: 'Valid forever',
+  certCa: (fingerprint: string, check: 'valid' | 'invalid' | 'unchecked') =>
+    check === 'valid'
+      ? `CA: ${fingerprint} (signature checked)`
+      : check === 'invalid'
+        ? `CA: ${fingerprint}: signature not valid`
+        : `CA: ${fingerprint} (as the certificate says)`,
+  certFarFuture: 'far in the future',
+  certExpiring: (left: string) => `Expires ${left}. Get a new one from your CA.`,
+  certExpired: (date: string) => `Expired ${date}. Hosts that need it refuse the login. Get a new one from your CA.`,
+  certNotYet: (date: string) => `Valid from ${date}. Hosts that need it refuse the login until then.`,
+  certOtherKey: 'This certificate is for another key. Send the public key above to your CA.',
+  certUnreadable: (why: string) => `Not a user certificate: ${why}`,
+  certBadSignature: 'The CA’s signature is not valid: the certificate was changed or damaged.',
+  certFileTooLarge: 'This file is too large for a certificate.',
+  certAttached: 'Certificate attached: logins send it first.',
+  inTime: (n: number, unit: 'day' | 'hour' | 'minute') => `in ${n} ${unit}${n === 1 ? '' : 's'}`,
+  /** On the start screen: the certificate needs replacing. A tap opens Hosts & settings. */
+  certHomeExpiring: (left: string) => `Your SSH certificate expires ${left}. Tap to replace it.`,
+  certHomeExpired: 'Your SSH certificate expired. Tap to replace it.',
+  certHomeNotYet: (date: string) => `Your SSH certificate is valid from ${date}. Tap to see it.`,
   // The web app inside another site's frame: it doesn't run there.
   framedTitle: 'Open md-runbook directly',
   framedPoints: ['It doesn’t run inside another page.', 'Open its address in a tab of its own.'],

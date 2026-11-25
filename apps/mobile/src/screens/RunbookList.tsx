@@ -15,6 +15,7 @@ import { setPinned, usePins } from '../runbooks/pins';
 import { themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
 import { LibrarySection } from './LibrarySection';
+import { CertificateNotice } from './KeyCertificate';
 import { NewRunbookSheet } from '../ui/NewRunbookSheet';
 import { ActionsSheet, AppAction } from '../ui/ActionsSheet';
 import { HomeHeaderButtons } from '../ui/HomeHeader';
@@ -208,6 +209,7 @@ export function RunbookList() {
               {error}
             </Text>
           ) : null}
+          <CertificateNotice />
           <NewRunbookSheet visible={creating} onClose={() => setCreating(false)} />
         </View>
       }

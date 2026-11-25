@@ -4,15 +4,17 @@
  * socket or a Windows named pipe); exported from `@md-runbook/ssh/node`.
  *
  * Protocol: draft-ietf-sshm-ssh-agent. Each message is a uint32 length, a type byte, the contents.
- * Ed25519, ECDSA (P-256, P-384, P-521) and RSA keys (signed as rsa-sha2-512). The library has no
- * Ed25519, so `agentAlgorithms` adds it: agent keys sign with it, and an Ed25519 host key is
- * verified with Node's crypto.
+ * Ed25519, ECDSA (P-256, P-384, P-521) and RSA keys (signed as rsa-sha2-512), and certificates of
+ * these (cert.ts: the agent signs with the certificate's key and names the plain type). The
+ * library has no Ed25519, so `agentAlgorithms` adds it: agent keys sign with it, and an Ed25519
+ * host key is verified with Node's crypto.
  */
 
 import * as crypto from 'node:crypto';
 import * as net from 'node:net';
 import { Buffer } from 'buffer';
-import { KeyPair, PublicKeyAlgorithm, Signer, SshSessionConfiguration, Verifier } from '@microsoft/dev-tunnels-ssh';
+import { KeyPair, PublicKeyAlgorithm, Signer, SshAlgorithms, SshSessionConfiguration, Verifier } from '@microsoft/dev-tunnels-ssh';
+import { CERT_TYPES, certificatesFirst } from './cert';
 
 /** Windows OpenSSH's agent service (PowerShell/openssh-portable, ssh-agent/agent.c AGENT_PIPE_ID). */
 export const WINDOWS_AGENT_PIPE = '\\\\.\\pipe\\openssh-ssh-agent';
@@ -28,8 +30,9 @@ const MAX_MESSAGE = 256 * 1024;
 
 export const ED25519 = 'ssh-ed25519';
 const RSA = 'ssh-rsa';
-/** The key types an agent key may have here (the library's, and Ed25519). */
-const USABLE = new Set([ED25519, RSA, 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521']);
+const RSA_CERT = 'ssh-rsa-cert-v01@openssh.com';
+/** The key types an agent key may have here (the library's, Ed25519, and their certificates). */
+const USABLE = new Set([ED25519, RSA, 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521', ...Object.keys(CERT_TYPES)]);
 
 /** Where the agent listens: SSH_AUTH_SOCK, else Windows OpenSSH's pipe on Windows. */
 export function agentPath(env: Record<string, string | undefined> = process.env, platform: string = process.platform): string | undefined {
@@ -99,9 +102,10 @@ export function parseSignResponse(body: Buffer): Buffer {
   return new Reader(body).bytes();
 }
 
-/** A sign request for `blob`'s key over `data`. RSA keys sign with SHA-512. */
+/** A sign request for `blob`'s key over `data`. RSA keys and certificates sign with SHA-512 (the agent then names the signature rsa-sha2-512). */
 export function signRequest(blob: Uint8Array, data: Uint8Array): Buffer {
-  const flags = blobType(blob) === RSA ? RSA_SHA2_512 : 0;
+  const type = blobType(blob);
+  const flags = type === RSA || type === RSA_CERT ? RSA_SHA2_512 : 0;
   return Buffer.concat([Buffer.from([SIGN_REQUEST]), sshString(blob), sshString(data), u32(flags)]);
 }
 
@@ -302,8 +306,9 @@ export class Ed25519Algorithm extends PublicKeyAlgorithm {
 }
 
 /**
- * For `ConnectOptions.configure`: agent keys sign through the agent (RSA, ECDSA), and Ed25519 is
- * added last, so a server is asked for its ECDSA or RSA host key first (the same one each time).
+ * For `ConnectOptions.configure`: agent keys sign through the agent (RSA, ECDSA), and Ed25519,
+ * then P-521, are added last, so a server is asked for its P-256/384 or RSA host key first (the
+ * same one each time). RemoteShell.connect adds the certificate algorithms after this.
  */
 export function agentAlgorithms(config: SshSessionConfiguration): void {
   // Only the library's own RSA and ECDSA (passkeys and the like write their own signature data).
@@ -311,12 +316,18 @@ export function agentAlgorithms(config: SshSessionConfiguration): void {
     a && !(a instanceof AgentAware) && /^(rsa-sha2-(256|512)|ecdsa-sha2-nistp(256|384|521))$/.test(a.name) ? new AgentAware(a) : a;
   const list = config.publicKeyAlgorithms;
   for (let i = 0; i < list.length; i++) list[i] = wrap(list[i] ?? null);
-  if (!config.publicKeyAlgorithms.some((a) => a?.name === ED25519)) config.publicKeyAlgorithms.push(new Ed25519Algorithm());
+  if (!list.some((a) => a?.name === ED25519)) list.push(new Ed25519Algorithm());
+  // P-521 agent keys (and their certificates): the library has it, but not in its default list.
+  // After Ed25519: a server with both host keys goes on showing the Ed25519 one it showed
+  // before (the pinned one), not a "changed" P-521 key.
+  const p521 = SshAlgorithms.publicKey.ecdsaSha2Nistp521;
+  if (p521 && !list.some((a) => a?.name === p521.name)) list.push(new AgentAware(p521));
 }
 
 /** The usable keys of the agent at `path` (agentPath()) as key pairs; [] without an agent. */
 export async function agentKeys(path: string | undefined): Promise<AgentKeyPair[]> {
   if (!path) return [];
   const agent = new AgentClient(path);
-  return (await agent.identities()).map((id) => new AgentKeyPair(agent, id));
+  // Certificates first: sshd counts each key tried (MaxAuthTries).
+  return certificatesFirst((await agent.identities()).map((id) => new AgentKeyPair(agent, id)));
 }

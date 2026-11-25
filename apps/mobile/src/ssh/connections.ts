@@ -10,6 +10,7 @@ import type { RunbookShells } from '@md-runbook/core';
 import { RemoteSession, hostKeyId } from '@md-runbook/ssh';
 import type { Host } from '../hosts/store';
 import { appKey } from './appKey';
+import { appCert, loadAppCert, loginKeys } from './appCert';
 import { openTransport } from './transport';
 
 export interface Connection {
@@ -38,15 +39,19 @@ const entries = new Map<string, Entry>();
 
 /**
  * The connection of a runbook to a host, made on first use; replaced when the host's address, user
- * or trusted key changed, or the runbook's `shell:` (the shells the server starts for it).
+ * or trusted key changed, the runbook's `shell:` (the shells the server starts for it), or the
+ * key's certificate (attached, replaced or removed).
  */
 export async function connectionFor(host: Host, runbookId: string, shells?: RunbookShells): Promise<Connection> {
-  const signature = signatureOf(host, shells);
+  await loadAppCert();
+  const cert = appCert();
+  const signature = `${signatureOf(host, shells)}:${cert ? `${cert.caFingerprint}/${cert.serial}/${cert.validBefore}` : ''}`;
   const id = keyOf(host.id, runbookId);
   const existing = entries.get(id);
   if (existing?.signature === signature) return existing;
   if (existing) void existing.session.close().catch(() => undefined);
-  const key = await appKey();
+  // The key's certificate first, when there is one (hosts that trust a CA).
+  const [key, ...moreKeys] = await loginKeys(await appKey());
   const entry: Entry = {
     hostId: host.id,
     runbookId,
@@ -54,7 +59,8 @@ export async function connectionFor(host: Host, runbookId: string, shells?: Runb
     secrets: new Set(),
     session: new RemoteSession(() => openTransport(host), {
       username: host.username,
-      key,
+      key: key!,
+      moreKeys,
       shells,
       verifyHostKey: (line) => {
         if (host.hostKey !== undefined && hostKeyId(line) === host.hostKey) return true;

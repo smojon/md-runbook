@@ -194,6 +194,18 @@ The app never stores a password or reads a private key file.
   - A passkey needs a page the browser trusts (https), and hosts with OpenSSH 8.4 or newer.
     Nothing changes on the server.
   - Without a passkey, the web app keeps its key in the browser's storage for the site.
+- **A certificate** (Hosts & settings → This app's SSH key → Certificate): for hosts that trust
+  your company's SSH certificate authority (CA). No `authorized_keys` line per phone.
+  - Send the app's public key to your CA. Attach the `…-cert.pub` it gives back: **Paste** or
+    **From a file**.
+  - The app shows its key ID, users (principals), expiry, restrictions and CA. It checks the
+    CA's signature where the device can, and refuses one that doesn't check out.
+  - Logins send it first, then the key alone. Outside its dates (5 minutes of leeway) it isn't
+    sent.
+  - The start screen warns when it expires soon, has expired or isn't valid yet. **Remove**
+    takes it off.
+  - A new key drops it: the CA signs the new key again.
+  - Not with a passkey. See [SSH certificates](features/ssh-certificates.md).
 - **Groups**: give hosts a group (a customer, a site, a team); Hosts & settings filters by group.
   A cell's ⋯ → **Run on a Group…** runs it on each host of a group in turn. The output has a
   section per host; hosts whose key isn't trusted yet are skipped, with a note.

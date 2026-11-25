@@ -27,6 +27,21 @@ A company CA signs short-lived SSH certificates; the gate's log names the person
   `md-runbook-gate` syslog header ([formats](docs/features/cli.md#gate-audit)). Before, any text
   before the first `{` was skipped.
 
+### SSH certificates (clients)
+
+Log in with OpenSSH user certificates from your company's CA. See
+[SSH certificates](docs/features/ssh-certificates.md).
+- VS Code: certificates in your SSH agent work, with no setting.
+- VS Code: **Key Certificate…** (Run ▾, Hosts…) attaches one to md-runbook's own key, from a
+  file or pasted. It shows the key ID, users, expiry and CA, and warns before and after expiry.
+- App and web app: **Hosts & settings → This app's SSH key → Certificate** does the same,
+  hardware keys included. The start screen warns when it expires.
+- Ed25519, ECDSA and RSA certificates; RSA signs with SHA-512. Not with passkeys.
+- A login tries up to 2 certificates within their dates, before the keys it tried until now.
+  A refused one says if it expired or is for another user.
+- The CA's signature is checked before a certificate is attached, where the device can.
+- VS Code: ECDSA P-521 keys in the agent work too.
+
 ## 0.33.0
 
 What's new:

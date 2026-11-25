@@ -12,9 +12,13 @@ import * as path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Buffer } from 'buffer';
 import { SshAlgorithms, SshSessionConfiguration } from '@microsoft/dev-tunnels-ssh';
+import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
+import { certAlgorithms, sessionConfiguration } from '@md-runbook/ssh';
+import { testCertificate } from './sshCertFixture';
 import {
   AgentClient,
   AgentKeyPair,
+  Ed25519Algorithm,
   Ed25519PublicKey,
   WINDOWS_AGENT_PIPE,
   agentAlgorithms,
@@ -179,8 +183,11 @@ describe('ssh: agent keys', () => {
     agentAlgorithms(config); // twice changes nothing
     const ed = config.publicKeyAlgorithms.filter((a) => a?.name === 'ssh-ed25519');
     assert.equal(ed.length, 1);
-    // Last: servers are asked for their ECDSA or RSA host key first.
-    assert.equal(config.publicKeyAlgorithms[config.publicKeyAlgorithms.length - 1], ed[0]);
+    // After the library's own, then P-521: servers are asked for their ECDSA or RSA host key first.
+    assert.deepEqual(
+      config.publicKeyAlgorithms.map((a) => a?.name),
+      ['rsa-sha2-512', 'rsa-sha2-256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp256', 'ssh-ed25519', 'ecdsa-sha2-nistp521'],
+    );
     const [key] = await agentKeys(agent.path);
     const data = Buffer.from('exchange hash');
     const sig = await ed[0]!.createSigner(key!).sign(data);
@@ -204,5 +211,113 @@ describe('ssh: agent keys', () => {
     await assert.rejects(agentKeys(missing), /no SSH agent at/);
     assert.deepEqual(await agentKeys(undefined), []);
     assert.ok((await agentKeys(agent.path))[0] instanceof AgentKeyPair);
+  });
+});
+
+// `ssh-add id` also loads id-cert.pub: the agent lists the key and its certificate, and signs
+// with either blob; OpenSSH names the signature with the plain type (checked with OpenSSH 9.7).
+describe('ssh: agent certificates', () => {
+  const ed = ed25519();
+  const rs = rsa();
+  const edCert: FakeKey = { blob: testCertificate(ed.blob), sign: ed.sign };
+  const rsCert: FakeKey = { blob: testCertificate(rs.blob), sign: rs.sign };
+  let agent: Awaited<ReturnType<typeof fakeAgent>>;
+  before(async () => {
+    agent = await fakeAgent([ed, edCert, rs, rsCert]);
+  });
+  after(() => agent.close());
+
+  it('host key types offered, in order: as before, then P-521 after Ed25519, certificates last', () => {
+    const names = (configure: ((c: SshSessionConfiguration) => void) | undefined, cert: boolean) =>
+      sessionConfiguration({ configure }, cert ? [{ keyAlgorithmName: 'ecdsa-sha2-nistp256-cert-v01@openssh.com' } as KeyPair] : []).publicKeyAlgorithms.map((a) => a?.name);
+    const vscode = [
+      'ecdsa-sha2-nistp256',
+      'rsa-sha2-512',
+      'rsa-sha2-256',
+      'ecdsa-sha2-nistp384',
+      'ecdsa-sha2-nistp256',
+      'sk-ecdsa-sha2-nistp256@openssh.com',
+      'ssh-ed25519',
+      'ecdsa-sha2-nistp521',
+    ];
+    // VS Code (agentAlgorithms): a server with Ed25519 and P-521 host keys still shows its Ed25519 one.
+    assert.deepEqual(names(agentAlgorithms, false), vscode);
+    assert.deepEqual(names(agentAlgorithms, true), [
+      ...vscode,
+      'ssh-ed25519-cert-v01@openssh.com',
+      'ecdsa-sha2-nistp256-cert-v01@openssh.com',
+      'ecdsa-sha2-nistp384-cert-v01@openssh.com',
+      'ecdsa-sha2-nistp521-cert-v01@openssh.com',
+      'rsa-sha2-512-cert-v01@openssh.com',
+    ]);
+    // The app (no configure): as before; certificates only last.
+    const app = ['ecdsa-sha2-nistp256', 'rsa-sha2-512', 'rsa-sha2-256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp256', 'sk-ecdsa-sha2-nistp256@openssh.com'];
+    assert.deepEqual(names(undefined, false), app);
+    assert.deepEqual(names(undefined, true), [...app, 'ecdsa-sha2-nistp256-cert-v01@openssh.com', 'ecdsa-sha2-nistp384-cert-v01@openssh.com', 'rsa-sha2-512-cert-v01@openssh.com']);
+  });
+
+  it('lists certificates, first (sshd counts each key tried)', async () => {
+    const ids = await new AgentClient(agent.path).identities();
+    assert.deepEqual(
+      ids.map((k) => k.type),
+      ['ssh-ed25519', 'ssh-ed25519-cert-v01@openssh.com', 'ssh-rsa', 'ssh-rsa-cert-v01@openssh.com'],
+    );
+    assert.deepEqual(
+      (await agentKeys(agent.path)).map((k) => k.keyAlgorithmName),
+      ['ssh-ed25519-cert-v01@openssh.com', 'ssh-rsa-cert-v01@openssh.com', 'ssh-ed25519', 'ssh-rsa'],
+    );
+    // An RSA certificate signs with SHA-512 too (flag 4).
+    const r = signRequest(rsCert.blob, Buffer.from('d'));
+    assert.equal(r.readUInt32BE(r.length - 4), 4);
+  });
+
+  it('the agent signs with the certificate; the plain key verifies; the login names the certificate type', async () => {
+    const config = new SshSessionConfiguration();
+    agentAlgorithms(config);
+    certAlgorithms(config);
+    const [edKey, rsKey] = await agentKeys(agent.path);
+    const data = Buffer.from('login data');
+    const find = (k: AgentKeyPair) => config.publicKeyAlgorithms.find((a) => a?.keyAlgorithmName === k.keyAlgorithmName)!;
+
+    const edAlg = find(edKey!);
+    assert.equal(edAlg.name, 'ssh-ed25519-cert-v01@openssh.com');
+    const edSig = await edAlg.createSigner(edKey!).sign(data);
+    const host = new Ed25519PublicKey();
+    await host.setPublicKeyBytes(ed.blob);
+    assert.equal(await new Ed25519Algorithm().createVerifier(host).verify(data, edSig), true);
+    assert.ok((await edKey!.getPublicKeyBytes())!.equals(edCert.blob));
+
+    const rsAlg = find(rsKey!);
+    assert.equal(rsAlg.name, 'rsa-sha2-512-cert-v01@openssh.com');
+    agent.flags.length = 0;
+    const rsSig = await rsAlg.createSigner(rsKey!).sign(data);
+    assert.deepEqual(agent.flags, [4]);
+    const lib = SshAlgorithms.publicKey.rsaWithSha512!;
+    const pub = lib.createKeyPair();
+    await pub.setPublicKeyBytes(rs.blob);
+    assert.equal(await lib.createVerifier(pub).verify(data, rsSig), true);
+    const wire = rsAlg.createSignatureData(rsSig);
+    assert.equal(wire.subarray(4, 4 + wire.readUInt32BE(0)).toString(), 'rsa-sha2-512');
+  });
+
+  it('an agent that names the signature otherwise is refused', async () => {
+    const odd: FakeKey = {
+      blob: testCertificate(ed.blob),
+      sign: (d) => {
+        const sig = ed.sign(d);
+        return Buffer.concat([str('ssh-ed25519-cert-v01@openssh.com'), sig.subarray(4 + 11)]);
+      },
+    };
+    const wrong = await fakeAgent([odd]);
+    try {
+      const config = new SshSessionConfiguration();
+      agentAlgorithms(config);
+      certAlgorithms(config);
+      const [key] = await agentKeys(wrong.path);
+      const alg = config.publicKeyAlgorithms.find((a) => a?.keyAlgorithmName === key!.keyAlgorithmName)!;
+      await assert.rejects(alg.createSigner(key!).sign(Buffer.from('d')), /signed with ssh-ed25519-cert-v01@openssh\.com, not ssh-ed25519/);
+    } finally {
+      wrong.close();
+    }
   });
 });

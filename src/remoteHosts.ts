@@ -21,7 +21,8 @@ import { evaluateChecks } from '@md-runbook/core/checks';
 import { proposalOf } from '@md-runbook/core/proposal';
 import { reportTrustProblem } from '@md-runbook/core/runReport';
 import { findRefs, parseFrontMatter } from '@md-runbook/core/secrets';
-import type { RemoteRunOptions, RemoteSession } from '@md-runbook/ssh';
+import { shownText } from '@md-runbook/core/shownText';
+import type { CaSignatureCheck, CertKeyPair, CertificateState, RemoteRunOptions, RemoteSession, SshCertificate } from '@md-runbook/ssh';
 import { SECTION } from './config';
 import {
   CellTarget,
@@ -46,6 +47,7 @@ import {
   readHosts,
   remoteEnv,
 } from './hostList';
+import { caText, expiryWarning, keyIdText, principalsText, restrictionsText, validityText } from './keyCertificate';
 import { runbookSignerFiles, signerOf } from './libraryTrust';
 import { META_KEY } from './outputs';
 import type { CellExecutor, CellPreparer, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
@@ -55,8 +57,12 @@ import { CANT_CHECK_SIGNATURES, SignerCheck, signerCheckOf } from './signerCheck
 const PINS_KEY = 'mdRunbook.hosts.pins';
 const PLATFORMS_KEY = 'mdRunbook.hosts.platforms';
 const OWN_KEY = 'mdRunbook.hosts.key';
-/** Servers allow about six login attempts: the agent's first keys, then md-runbook's own. */
+/** A certificate for md-runbook's own key (its `…-cert.pub` line), from the user's CA. */
+const OWN_CERT = 'mdRunbook.hosts.keyCert';
+/** Servers allow about six login attempts: the agent's first plain keys, then md-runbook's own (certificates come on top). */
 const MAX_AGENT_KEYS = 5;
+/** Bigger than any certificate a CA issues: a file over this is not read. */
+const MAX_CERT_FILE = 64 * 1024;
 
 /** The SSH client, loaded on first use (not while VS Code starts the extension). */
 let loaded: Promise<typeof import('@md-runbook/ssh') & typeof import('@md-runbook/ssh/node')> | undefined;
@@ -144,6 +150,8 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
   private readonly practiceAgreed = new Set<string>();
   /** Run on a Group…: the group the next run of a cell goes to. */
   private readonly pendingGroup = new Map<vscode.NotebookCell, string>();
+  /** Certificate warnings shown (CA, serial, key ID, state): once each per window. */
+  private readonly certWarned = new Set<string>();
   private readonly status = Object.assign(vscode.window.createStatusBarItem('mdRunbook.practice', vscode.StatusBarAlignment.Left, 99), { name: 'md-runbook practice' });
 
   readonly preparer: CellPreparer = { prepare: (plan, ctx) => this.prepare(plan, ctx) };
@@ -220,17 +228,57 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     return key;
   }
 
-  /** The agent's keys (a few), then md-runbook's own if there is one. */
+  /**
+   * The agent's first plain keys, then md-runbook's own, as before certificates. Certificates
+   * within their dates come first, on top (at most 2: the agent's, the one on md-runbook's key),
+   * so a host that doesn't trust the CA still gets the keys it got before.
+   */
   private async keys(): Promise<KeyPair[]> {
+    const own = await this.ownKey(false);
+    const cert = own ? await this.ownCertKey(own) : undefined;
+    if (cert) void this.warnExpiry(cert.certificate);
     let fromAgent: KeyPair[] = [];
     try {
       const { agentKeys, agentPath } = await ssh();
-      fromAgent = (await agentKeys(agentPath())).slice(0, MAX_AGENT_KEYS);
+      fromAgent = await agentKeys(agentPath());
     } catch {
       // No agent running: md-runbook's own key, if there is one.
     }
-    const own = await this.ownKey(false);
-    return own ? [...fromAgent, own] : fromAgent;
+    const { chooseLoginKeys } = await ssh();
+    return chooseLoginKeys<KeyPair>({ agent: fromAgent, own, ownCert: cert, maxPlainAgent: MAX_AGENT_KEYS });
+  }
+
+  /** The stored certificate: parsed, or why it can't be read; undefined when there is none. */
+  private async ownCert(): Promise<{ line: string; cert: SshCertificate } | { line: string; error: string } | undefined> {
+    const line = await this.context.secrets.get(OWN_CERT);
+    if (!line) return undefined;
+    try {
+      return { line, cert: (await ssh()).parseCertificate(line) };
+    } catch (e) {
+      return { line, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /** md-runbook's key with its certificate; undefined without one, or when it is for another key. */
+  private async ownCertKey(own: KeyPair): Promise<CertKeyPair | undefined> {
+    const c = await this.ownCert();
+    if (!c || !('cert' in c)) return undefined;
+    try {
+      return await (await ssh()).CertKeyPair.create(own, c.cert);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Warn once per certificate and state: expiring soon, expired, not valid yet. */
+  private async warnExpiry(cert: SshCertificate): Promise<void> {
+    const state = (await ssh()).certificateState(cert);
+    const text = expiryWarning(cert, state);
+    const id = `${cert.caFingerprint}:${cert.serial}:${cert.keyId}:${state}`;
+    if (!text || this.certWarned.has(id)) return;
+    this.certWarned.add(id);
+    const replace = 'Replace…';
+    if ((await vscode.window.showWarningMessage(`md-runbook: ${text}`, replace)) === replace) await this.certMenu();
   }
 
   // ---- connections ----
@@ -239,11 +287,13 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     return `${nb.uri.toString()}\n${pinKeyOf(host)}\n${host.user}`;
   }
 
-  /** One session per runbook and host, kept between cells; replaced when the host, its pin or `shell:` changed. */
+  /** One session per runbook and host, kept between cells; replaced when the host, its pin, `shell:` or the key's certificate changed. */
   private async connection(nb: vscode.NotebookDocument, host: HostEntry): Promise<Connection> {
     const shells: RunbookShells | undefined = frontMatterShells(nb);
     const pinned = this.pin(host);
-    const signature = `${pinKeyOf(host)}:${host.user}:${pinned ?? ''}:${shells?.unix ?? ''}:${shells?.powershell ?? ''}`;
+    const certLine = (await this.context.secrets.get(OWN_CERT)) ?? '';
+    const cert = certLine ? crypto.createHash('sha256').update(certLine).digest('hex').slice(0, 16) : '';
+    const signature = `${pinKeyOf(host)}:${host.user}:${pinned ?? ''}:${shells?.unix ?? ''}:${shells?.powershell ?? ''}:${cert}`;
     const id = this.connectionKey(nb, host);
     const existing = this.connections.get(id);
     if (existing?.signature === signature) return existing;
@@ -689,11 +739,12 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     if ((await vscode.window.showInformationMessage('md-runbook: no hosts yet.', add)) === add) await this.editHost(undefined);
   }
 
-  /** Hosts…: add, edit, remove; forget a host key; md-runbook's public key. */
+  /** Hosts…: add, edit, remove; forget a host key; md-runbook's public key and its certificate. */
   async hostsCommand(): Promise<void> {
     type Item = vscode.QuickPickItem & { action: () => Promise<void> };
     const hosts = configuredHosts();
     const { problems } = readHosts(cfg().get<unknown>('hosts', []));
+    const cert = await this.certDescription();
     const items: Item[] = [
       ...hosts.map((h) => ({
         label: `$(server) ${h.name}`,
@@ -705,6 +756,7 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
       { label: '$(add) Add Host…', action: () => this.editHost(undefined) },
       { label: '$(file-text) Add from ~/.ssh/config…', action: () => this.addFromSshConfig() },
       { label: '$(key) Copy md-runbook Public Key', description: 'for the hosts’ authorized_keys', action: () => this.copyPublicKey() },
+      { label: '$(verified) Key Certificate…', description: cert, action: () => this.certMenu() },
       { label: '$(gear) Open Settings', description: 'mdRunbook.hosts', action: async () => void vscode.commands.executeCommand('workbench.action.openSettings', `${SECTION}.hosts`) },
     ];
     const pick = await vscode.window.showQuickPick(items, {
@@ -793,10 +845,157 @@ class RemoteHosts implements RemoteTargets, vscode.Disposable {
     if (pick) await this.editHost(undefined, pick.c);
   }
 
-  private async copyPublicKey(): Promise<void> {
+  private async copyPublicKey(forCa = false): Promise<void> {
     const line = await (await ssh()).publicKeyLine((await this.ownKey(true))!, `md-runbook-vscode@${os.hostname()}`);
     await vscode.env.clipboard.writeText(line);
-    void vscode.window.showInformationMessage('md-runbook: public key copied. Add it to ~/.ssh/authorized_keys on each host.', { modal: false });
+    const where = forCa ? 'Send it to your certificate authority (CA) to sign.' : 'Add it to ~/.ssh/authorized_keys on each host.';
+    void vscode.window.showInformationMessage(`md-runbook: public key copied. ${where}`, { modal: false });
+  }
+
+  // ---- the certificate on md-runbook's key ----
+
+  /** For the Hosts… line: the certificate's key ID and validity, or none. */
+  private async certDescription(): Promise<string> {
+    try {
+      const c = await this.ownCert();
+      if (!c) return 'none: for hosts that trust a CA';
+      if (!('cert' in c)) return 'can’t be read';
+      return `${keyIdText(c.cert)} · ${validityText(c.cert, (await ssh()).certificateState(c.cert))}`;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Key Certificate… (Run ▾, Hosts…, Command Palette): what the certificate
+   * says, attach one (file or paste), copy the key for the CA, remove it. Kept in secret storage
+   * with the key.
+   */
+  async certMenu(): Promise<void> {
+    type Item = vscode.QuickPickItem & { action: () => Promise<void> };
+    const { certificateState, checkCaSignature } = await ssh();
+    const c = await this.ownCert();
+    const own = await this.ownKey(false);
+    const items: Item[] = [];
+    if (c && 'cert' in c) {
+      const state = certificateState(c.cert);
+      const check = await checkCaSignature(c.cert);
+      const mine = own ? (await this.ownCertKey(own)) !== undefined : false;
+      items.push({
+        label: `${state === 'valid' && check !== 'invalid' ? '$(verified)' : '$(warning)'} ${keyIdText(c.cert)}`,
+        description: principalsText(c.cert),
+        detail: mine ? `${validityText(c.cert, state)} · ${caText(c.cert, check)}` : 'For another key: md-runbook’s key changed. Attach a certificate for the current key.',
+        action: () => this.showCert(c.cert, state, check),
+      });
+    } else if (c) {
+      items.push({ label: '$(warning) The stored certificate can’t be read', detail: shownText(c.error, 200), action: async () => undefined });
+    }
+    items.push(
+      { label: '$(folder-opened) Attach from File…', description: '…-cert.pub', action: () => this.attachCertFromFile() },
+      { label: '$(clippy) Paste Certificate…', action: () => this.pasteCert() },
+      { label: '$(key) Copy md-runbook Public Key', description: 'for your CA to sign', action: () => this.copyPublicKey(true) },
+    );
+    if (c) items.push({ label: '$(trash) Remove Certificate', action: () => this.removeCert() });
+    const pick = await vscode.window.showQuickPick(items, {
+      title: 'Key Certificate',
+      placeHolder: c ? 'Agent certificates (ssh-add) work without this' : 'For hosts that trust your company’s SSH CA. Agent certificates (ssh-add) work without this.',
+    });
+    await pick?.action();
+  }
+
+  private async showCert(cert: SshCertificate, state: CertificateState, check: CaSignatureCheck): Promise<void> {
+    const restrictions = restrictionsText(cert);
+    await vscode.window.showInformationMessage(`Certificate ${keyIdText(cert)}`, {
+      modal: true,
+      detail: [
+        `- Users (principals): ${principalsText(cert)}`,
+        `- ${validityText(cert, state)}`,
+        `- Serial: ${cert.serial}`,
+        `- ${caText(cert, check)}`,
+        ...(restrictions ? [`- Restrictions: ${restrictions}`] : []),
+      ].join('\n'),
+    });
+  }
+
+  private async attachCertFromFile(): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      title: 'md-runbook: the certificate your CA issued (…-cert.pub)',
+      canSelectMany: false,
+      openLabel: 'Attach Certificate',
+      filters: { Certificates: ['pub'], 'All files': ['*'] },
+      defaultUri: vscode.Uri.file(path.join(os.homedir(), '.ssh')),
+    });
+    if (!picked?.[0]) return;
+    let text: string;
+    try {
+      // Read only what can be a certificate (a wrong pick could be any file).
+      if ((await vscode.workspace.fs.stat(picked[0])).size > MAX_CERT_FILE) return void this.notAttached(['This file is too large for a certificate.']);
+      text = Buffer.from(await vscode.workspace.fs.readFile(picked[0])).toString('utf8');
+    } catch (e) {
+      return void this.notAttached([`Can’t read ${picked[0].fsPath}: ${e instanceof Error ? e.message : String(e)}`]);
+    }
+    await this.attachCert(text);
+  }
+
+  private async pasteCert(): Promise<void> {
+    const { parseCertificate } = await ssh();
+    const text = await vscode.window.showInputBox({
+      title: 'Paste Certificate',
+      prompt: 'The line of the …-cert.pub file your CA issued',
+      placeHolder: 'ecdsa-sha2-nistp256-cert-v01@openssh.com AAAA…',
+      ignoreFocusOut: true,
+      validateInput: (v) => {
+        if (v.trim() === '') return undefined;
+        try {
+          parseCertificate(v);
+          return undefined;
+        } catch (e) {
+          return e instanceof Error ? e.message : String(e);
+        }
+      },
+    });
+    if (text?.trim()) await this.attachCert(text);
+  }
+
+  /** A short title, then why, as points. */
+  private notAttached(points: string[]): Thenable<unknown> {
+    return vscode.window.showErrorMessage('Certificate not attached', { modal: true, detail: points.map((p) => `- ${p}`).join('\n') });
+  }
+
+  /** Check the certificate is for md-runbook's key and its CA signature holds, then keep it. */
+  private async attachCert(text: string): Promise<void> {
+    const { CertKeyPair, certificateLine, certificateState, checkCaSignature, parseCertificate } = await ssh();
+    let cert: SshCertificate;
+    try {
+      // The first non-empty line: a …-cert.pub file has one.
+      cert = parseCertificate(text.split(/\r?\n/).find((l) => l.trim() !== '') ?? '');
+    } catch (e) {
+      return void this.notAttached([`Not a user certificate: ${shownText(e instanceof Error ? e.message : String(e), 200)}.`]);
+    }
+    try {
+      await CertKeyPair.create((await this.ownKey(true))!, cert);
+    } catch {
+      return void this.notAttached(['It is for another key.', 'Send md-runbook’s public key to your CA: Copy md-runbook Public Key, in this menu.']);
+    }
+    const check = await checkCaSignature(cert);
+    if (check === 'invalid') return void this.notAttached(['The CA’s signature is not valid: the certificate was changed or damaged.']);
+    await this.context.secrets.store(OWN_CERT, certificateLine(cert));
+    const state = certificateState(cert);
+    const warning = expiryWarning(cert, state);
+    if (warning) void vscode.window.showWarningMessage(`md-runbook: ${warning}`);
+    else void vscode.window.showInformationMessage(`md-runbook: certificate ${keyIdText(cert)} attached. Users: ${principalsText(cert)}. ${validityText(cert, state)}.`);
+  }
+
+  private async removeCert(): Promise<void> {
+    const remove = 'Remove';
+    const answer = await vscode.window.showWarningMessage(
+      'Remove the certificate from md-runbook’s key?',
+      { modal: true, detail: '- Hosts that only trust your CA refuse the key then.\n- The key itself stays.' },
+      remove,
+    );
+    if (answer !== remove) return;
+    await this.context.secrets.delete(OWN_CERT);
+    vscode.window.setStatusBarMessage('md-runbook: the certificate is removed', 5000);
   }
 
   /** Tests only: pin a host key, allow a host for a runbook, md-runbook's public key line. */
@@ -884,6 +1083,7 @@ export function registerRemoteHosts(context: vscode.ExtensionContext, pipeline: 
   context.subscriptions.push(
     f,
     vscode.commands.registerCommand('mdRunbook.hosts', () => f.hostsCommand()),
+    vscode.commands.registerCommand('mdRunbook.keyCertificate', () => f.certMenu()),
     vscode.commands.registerCommand('mdRunbook.practiceOnHost', (arg?: unknown) => f.practiceCommand(arg)),
     vscode.commands.registerCommand('mdRunbook.runOnGroup', (arg?: unknown, group?: unknown) => (runCell ? f.groupCommand(runCell, arg, group) : undefined)),
     vscode.window.onDidChangeActiveNotebookEditor(() => f.refreshStatus()),
