@@ -126,19 +126,29 @@ keys=/etc/md-runbook-ops/keys
 #   authorized_principals   AuthorizedPrincipalsFile: the certificate must name one of these
 #                           principals instead.
 #   revoked_keys            RevokedKeys: a KRL (ssh-keygen -k) or public keys; also for plain keys.
+# A file that is there but can't be read fails closed: authorized_principals then matches no
+# principal, and revoked_keys stops the start.
+there() { [ -e "$1" ] || [ -L "$1" ]; }
 set --
 if has_lines "$keys/user_ca"; then
   set -- "$@" -o "TrustedUserCAKeys=$keys/user_ca"
-  if [ -r "$keys/authorized_principals" ]; then
-    set -- "$@" -o "AuthorizedPrincipalsFile=$keys/authorized_principals"
-    say "SSH certificates: from the CAs in $keys/user_ca, for the principals in $keys/authorized_principals"
+  p=$keys/authorized_principals
+  if there "$p"; then
+    set -- "$@" -o "AuthorizedPrincipalsFile=$p"
+    if [ ! -r "$p" ]; then
+      say "can't read $p: no SSH certificate can log in"
+    elif ! has_lines "$p"; then
+      say "no principals in $p: no SSH certificate can log in"
+    else
+      say "SSH certificates: from the CAs in $keys/user_ca, for the principals in $p"
+    fi
   else
     say "SSH certificates: from the CAs in $keys/user_ca, for the principal ops"
   fi
-elif [ -e "$keys/user_ca" ] || [ -e "$keys/authorized_principals" ]; then
+elif there "$keys/user_ca" || there "$keys/authorized_principals"; then
   say "no CA key in $keys/user_ca: no SSH certificate can log in (README.md)"
 fi
-if [ -e "$keys/revoked_keys" ]; then
+if there "$keys/revoked_keys"; then
   if [ -r "$keys/revoked_keys" ]; then
     set -- "$@" -o "RevokedKeys=$keys/revoked_keys"
     say "revoked keys and certificates: $keys/revoked_keys"
@@ -160,4 +170,12 @@ fi
 touch "$logdir/gate.log"
 tail -n 0 -F "$logdir/gate.log" 2>/dev/null &
 
-exec /usr/sbin/sshd -D -e -f /etc/ssh/md-runbook-ops.conf "$@"
+# sshd's log, each line prefixed "sshd: ". sshd writes its stderr log raw: a certificate's key ID
+# with a line break would start a line of its own, which could pass for a gate event (review of
+# the SSH certificates, 2026-11-25). So sshd -E writes to a file of its own (sshd(8): -E appends
+# the debug logs to a file instead of the system log), and the prefix goes on every line. The
+# trailing CR of sshd's stderr lines goes too.
+touch "$logdir/sshd.log"
+tail -n 0 -F "$logdir/sshd.log" 2>/dev/null | sed -u 's/\r$//; s/^/sshd: /' >&2 &
+
+exec /usr/sbin/sshd -D -E "$logdir/sshd.log" -f /etc/ssh/md-runbook-ops.conf "$@"

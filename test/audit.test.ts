@@ -44,6 +44,37 @@ describe('gate audit (core)', () => {
     assert.equal(skipped, 1);
   });
 
+  it('reads the prefixes of syslog, journalctl, kubectl and container logs; no other text before an event', () => {
+    const e = ev({ time: '2026-11-25T10:00:00Z', event: 'run', id: '9', runbook: 'ops/restart', version: '3', hash: 'h3', signer: 'ops@example.net', cell: '1', step: '' });
+    const read = [
+      e,
+      `Nov 25 10:00:00 web-1 md-runbook-gate[812]: ${e}`,
+      `Nov  5 10:00:00.123456 web-1 md-runbook-gate[812]: ${e}`, // journalctl -o short-precise
+      `Nov 25 10:00:00 web-1 md-runbook-gate: ${e}`, // logger without a pid
+      `<13>Nov 25 10:00:00 web-1 md-runbook-gate[812]: ${e}`,
+      `2026-11-25T10:00:00+0000 web-1 md-runbook-gate[812]: ${e}`, // journalctl -o short-iso
+      `2026-11-25T10:00:00.123+01:00 web-1 md-runbook-gate[812]: ${e}`, // rsyslog, RFC 3339 times
+      `<13>1 2026-11-25T10:00:00.123Z web-1 md-runbook-gate 812 - - ${e}`, // RFC 5424
+      `2026-11-25T10:00:00.123456789Z ${e}`, // kubectl logs --timestamps
+      `2026-11-25T10:00:00.123456789Z stdout F ${e}`, // a container runtime's log file
+    ];
+    assert.equal(parseGateLog(read.join('\n')).events.length, read.length);
+    // sshd on stderr writes a certificate's key ID raw: text it doesn't control, before or after a
+    // line break, never passes for an event (review of the SSH certificates).
+    const forged = [
+      `sshd: ${e}`,
+      `sshd: Accepted publickey for ops from 10.0.0.9 port 4711 ssh2: ED25519-CERT SHA256:x ID x md-runbook-gate[1]: ${e}`,
+      `Nov 25 10:00:00 web-1 sshd[900]: ${e}`,
+      `md-runbook-ops: ${e}`,
+      ` ${e}`,
+      `x${e}`,
+      `2026-11-25T10:00:00Z stdout P ${e}`,
+      `2026-11-25T10:00:00Z sshd: ${e}`,
+    ];
+    const r = parseGateLog(forged.join('\n'));
+    assert.deepEqual([r.events.length, r.skipped], [0, forged.length]);
+  });
+
   it('a run has who, where, the runbook, the parameters, its exit and duration', () => {
     const a = buildAudit(parseGateLog(LOG).events);
     assert.equal(a.sessions, 1);

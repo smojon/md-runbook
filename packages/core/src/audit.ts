@@ -101,19 +101,38 @@ export interface Audit {
   skipped: number;
 }
 
-/** The gate events in a log: JSON lines, alone or after a syslog prefix ("… md-runbook-gate[42]: {…}"). */
+const TIME = String.raw`\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:[.,]\d+)?(?:Z|[+-]\d\d:?\d\d)?`;
+const BSD_TIME = String.raw`[A-Z][a-z]{2} [ \d]?\d \d\d:\d\d:\d\d(?:\.\d+)?`;
+/**
+ * Where a gate event may start on a line, and nowhere else:
+ * - at the start (the gate's file, `journalctl -o cat`, `kubectl logs`);
+ * - after an RFC 3339 time (`kubectl logs --timestamps`, `docker logs -t`), or a container
+ *   runtime's log line (`TIME stdout F `);
+ * - after a syslog header with the tag md-runbook-gate: RFC 3164 (`Oct 26 21:02:00 web-1
+ *   md-runbook-gate[812]: `, as /var/log/syslog and `journalctl` write it), with an ISO time
+ *   (`journalctl -o short-iso`), or RFC 5424 (`<13>1 TIME web-1 md-runbook-gate 812 - - `).
+ *
+ * Not after any other text: other programs write text they don't control into the same log.
+ * sshd on stderr writes a certificate's key ID raw, line breaks included (review of the SSH
+ * certificates, 2026-11-25), so `sshd: {…}` or `… ID x md-runbook-gate: {…}` never counts.
+ */
+const EVENT_START = new RegExp(
+  String.raw`^(?:${TIME} (?:(?:stdout|stderr) F )?|(?:<\d{1,3}>)?(?:${BSD_TIME}|${TIME}) \S+ md-runbook-gate(?:\[\d+\])?: |<\d{1,3}>1 ${TIME} \S+ md-runbook-gate \S+ \S+ - )?\{`,
+);
+
+/** The gate events in a log: JSON lines, alone or after a prefix of the forms above. */
 export function parseGateLog(text: string): { events: GateEvent[]; skipped: number } {
   const events: GateEvent[] = [];
   let skipped = 0;
   for (const line of text.split(/\r?\n/)) {
     if (line.trim() === '') continue;
-    const at = line.indexOf('{');
-    if (at < 0) {
+    const m = EVENT_START.exec(line);
+    if (!m) {
       skipped++;
       continue;
     }
     try {
-      const e = JSON.parse(line.slice(at)) as GateEvent;
+      const e = JSON.parse(line.slice(m[0].length - 1)) as GateEvent;
       if (typeof e.time === 'string' && typeof e.event === 'string') events.push(e);
       else skipped++;
     } catch {

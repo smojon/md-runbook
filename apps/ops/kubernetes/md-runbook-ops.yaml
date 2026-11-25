@@ -319,7 +319,8 @@ spec:
         - { name: run, emptyDir: { medium: Memory } }
         - { name: state, emptyDir: {} }
         # The gate's log grows by about 0.5 KB per event and isn't rotated: 256Mi holds some
-        # 500,000 events, years of sessions. Over it, the kubelet evicts the pod (a new one
+        # 500,000 events, years of sessions. sshd's log (a few lines per login) is here too. Over
+        # it, the kubelet evicts the pod (a new one
         # starts with an empty log) rather than fill the node's disk. Every line is also on the
         # container's output (kubectl logs): rely on that copy.
         - name: log
