@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.33.0
+
 What's new:
 - The ops host's remaining findings from the security review of 0.31.1 (all low).
 - Redaction hides more forms of a secret in command lines.
