@@ -16,7 +16,7 @@ The SSH client is built in (no `ssh` program is started).
 - **Add from ~/.ssh/config…**: picks a `Host` entry and fills in its address, port and user.
 - A host's **Edit…**, **Forget Host Key** and **Remove**.
 - **Copy md-runbook Public Key**: for a host's `~/.ssh/authorized_keys`.
-- **md-runbook Key Certificate…**: a certificate from your CA for that key (see
+- **Key Certificate…**: a certificate from your CA for that key (see
   [Certificates](#certificates)).
 
 They are kept in the user setting `mdRunbook.hosts`:
@@ -48,12 +48,14 @@ They are kept in the user setting `mdRunbook.hosts`:
 For hosts that trust your company's SSH certificate authority (CA). See
 [SSH certificates](ssh-certificates.md).
 
-- **Hosts… → md-runbook Key Certificate…** attaches one to md-runbook's own key:
+- **Key Certificate…** (Run ▾, Hosts…, Command Palette) attaches one to md-runbook's own key:
   - **Copy md-runbook Public Key**: send it to your CA.
   - **Attach from File…** or **Paste Certificate…**: the `…-cert.pub` it gives back. One for
-    another key is refused.
-  - The menu shows its key ID, users (principals) and expiry. **Remove Certificate** takes it off.
-- A login tries certificates first: sshd counts each key tried (`MaxAuthTries`, 6).
+    another key, or with a CA signature that doesn't check out, is refused.
+  - The menu shows its key ID, users (principals), expiry, restrictions and CA. It says whether
+    the CA's signature was checked here. **Remove Certificate** takes it off.
+- A login tries certificates first, at most 2, and only within their dates (5 minutes of
+  leeway). The keys tried before come after them, as before: 5 from the agent, then md-runbook's.
 - A warning shows before it expires and after. It comes in the last quarter of its life, at
   most a day ahead.
 - A refused login says when a certificate expired, or isn't for that user.

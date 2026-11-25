@@ -568,6 +568,12 @@
         "icon": "$(server)"
       },
       {
+        "command": "mdRunbook.keyCertificate",
+        "title": "Key Certificate…",
+        "category": "md-runbook",
+        "icon": "$(verified)"
+      },
+      {
         "command": "mdRunbook.runOnGroup",
         "title": "Run on a Group…",
         "category": "md-runbook",
@@ -1514,6 +1520,10 @@
         {
           "command": "mdRunbook.hosts",
           "group": "2_hosts@3"
+        },
+        {
+          "command": "mdRunbook.keyCertificate",
+          "group": "2_hosts@4"
         },
         {
           "command": "mdRunbook.clearAllOutputs",

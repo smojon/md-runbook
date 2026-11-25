@@ -1,7 +1,7 @@
 /** The words VS Code shows for the certificate on md-runbook's key (src/keyCertificate.ts). */
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { expiryWarning, inTime, localTime, principalsText, validityText } from '../src/keyCertificate';
+import { caText, expiryWarning, inTime, keyIdText, localTime, principalsText, restrictionsText, validityText } from '../src/keyCertificate';
 
 const now = Date.UTC(2026, 10, 25, 12, 0) / 1000;
 const cert = (validAfter: number, validBefore: number, principals = ['alice']) => ({
@@ -42,5 +42,30 @@ describe('VS Code: key certificate text', () => {
   it('lists the principals', () => {
     assert.equal(principalsText(cert(0, 1, ['alice', 'deploy'])), 'alice, deploy');
     assert.equal(principalsText(cert(0, 1, [])), 'no principals (any user)');
+  });
+
+  it("a certificate's text can't fake a line, reorder text or run long", () => {
+    // A principal that would look like the CA line in the details' bullet list.
+    assert.equal(principalsText(cert(0, 1, ['alice\n- CA: SHA256:fake'])), 'alice\\u{a}- CA: SHA256:fake');
+    assert.equal(keyIdText({ keyId: 'ops‮gnp.exe' }), 'ops\\u{202e}gnp.exe');
+    assert.equal(keyIdText({ keyId: '' }), 'no key ID');
+    assert.equal(keyIdText({ keyId: 'k'.repeat(100) }), `${'k'.repeat(64)}…`);
+    assert.equal(principalsText(cert(0, 1, Array.from({ length: 12 }, (_, i) => `u${i}`))), 'u0, u1, u2, u3, u4, u5, u6, u7, +4 more');
+    assert.equal(restrictionsText({ criticalOptions: { 'force-command': '/bin/true', 'source-address': '10.0.0.0/8' } }), 'force-command, source-address');
+    assert.equal(restrictionsText({ criticalOptions: {} }), undefined);
+  });
+
+  it('far or broken dates read as such, never NaN', () => {
+    assert.equal(localTime(2 ** 60), 'far in the future');
+    assert.equal(localTime(NaN), 'far in the future');
+    assert.equal(inTime(Infinity), 'far in the future');
+    assert.equal(validityText(cert(2 ** 60, Infinity), 'not-yet', now * 1000), 'Valid from far in the future (far in the future)');
+  });
+
+  it('says whether the CA signature was checked', () => {
+    const c = { caFingerprint: 'SHA256:abc' };
+    assert.equal(caText(c, 'valid'), 'CA SHA256:abc (signature checked)');
+    assert.equal(caText(c, 'invalid'), 'CA SHA256:abc: signature not valid');
+    assert.equal(caText(c, 'unchecked'), 'CA SHA256:abc (as the certificate says)');
   });
 });
