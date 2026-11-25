@@ -18,12 +18,12 @@ These leaked before:
 - Text glued before a quote: `--password abc'def'`, `password=abc"def"`.
 - An empty quoted value or a quoted reference with text glued to it: `password=''abc`,
   `--password '${secret:X}'abc`.
-- `sshpass -p 'a'' -p 'b c'`, where a shell reads one password word.
+- `sshpass -p '…'' -p '…'`, where a shell reads one password word.
 
 The leak scan also reports:
 - a quoted password with blanks given to a tool, or after a Unicode space;
-- a value with a reference or `...` glued to it, such as `sshpass -p Kd4wD7"$SUFFIX"`. It
-  judges the literal part.
+- a value with a reference glued to it, such as `sshpass -p …"$SUFFIX"`. It judges the
+  literal part.
 
 ### Ops host (cells_runner = kubernetes-job)
 
