@@ -143,6 +143,7 @@ func (g *Gate) session() int {
 	if g.jobMode() {
 		kv = append(kv, "cells_runner", g.cfg.CellsRunner, "job", g.job.name, "cells", g.job.sa)
 	}
+	kv = append(kv, g.certLog()...)
 	g.log.Event(kv...)
 	if g.reportProblem != "" {
 		g.log.Event("event", "report", "status", "off", "reason", g.reportProblem)

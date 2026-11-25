@@ -10,8 +10,8 @@
 //
 // Options (in the authorized_keys command): --config=FILE (default /etc/md-runbook/gate.conf),
 // --unsigned=allow|refuse and --scopes=a,b (override the config for this key), --signers=N,
-// --who=NAME (the name logged for this key; default: the key's fingerprint, with ExposeAuthInfo
-// yes in sshd). --sshd-force-command (sshd_config's ForceCommand only) and sshd_force_command =
+// --who=NAME (the name logged for this key; default, with ExposeAuthInfo yes in sshd: a user
+// certificate's key ID, else the key's fingerprint). --sshd-force-command (sshd_config's ForceCommand only) and sshd_force_command =
 // yes in a gate.conf the account can't change go together: one without the other stops the gate.
 //
 // Each signed runbook runs in a shell of its own (bash --noprofile --norc, else sh) with the PATH
@@ -53,6 +53,7 @@ package gate
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -72,6 +73,7 @@ import (
 	"github.com/smojon/md-runbook/apps/gate/internal/names"
 	"github.com/smojon/md-runbook/apps/gate/internal/proto"
 	"github.com/smojon/md-runbook/apps/gate/internal/report"
+	"github.com/smojon/md-runbook/apps/gate/internal/sshcert"
 	"github.com/smojon/md-runbook/apps/gate/internal/textutil"
 )
 
@@ -92,6 +94,10 @@ type Gate struct {
 	keyUnsigned, keyScopes, keySigners string
 	who                                string
 	cliForce                           bool
+	// The user certificate of the login (nil for a plain key), and why its key ID isn't who or
+	// why it couldn't be read ("" when nothing went wrong).
+	cert        *sshcert.Cert
+	certProblem string
 
 	// self: this program's path, as the key lines name it (the shell gate's $0).
 	self    string
@@ -374,8 +380,8 @@ func (g *Gate) identify() {
 		g.fatal("sshd_force_command = yes in " + g.configPath + ", a file this account can change: make it and its folder root-owned and not writable by the account")
 	}
 	g.client, _, _ = strings.Cut(os.Getenv("SSH_CLIENT"), " ")
-	if auth := os.Getenv("SSH_USER_AUTH"); g.who == "" && auth != "" && readable(auth) {
-		g.who = fingerprint(g.helper("ssh-keygen"), auth)
+	if auth := os.Getenv("SSH_USER_AUTH"); auth != "" && readable(auth) {
+		g.identifyKey(authKey(auth))
 	}
 	g.log.Account, g.log.Who, g.log.Client = g.account, g.who, g.client
 	// This program's path as sh found it: argv[0], or for a bare name its place in the PATH (a
@@ -390,27 +396,80 @@ func (g *Gate) identify() {
 	}
 }
 
-// fingerprint: the key that logged in (ExposeAuthInfo's file: its first publickey line), as
-// ssh-keygen -l prints it.
-func fingerprint(keygen, auth string) string {
+// identifyKey: who logged in, from the key that did (authKey's).
+//   - A user certificate: who is its key ID (what the CA says the person is), unless the key ID
+//     isn't fit for the log (sshcert.Name): then the plain key's fingerprint, and the session
+//     event says why. The session event also names the serial, the CA and the plain key.
+//   - A plain key, or a certificate this gate can't read: its fingerprint, as ssh-keygen -l
+//     prints it.
+//
+// --who= on the key line still wins. sshd checked the certificate before the login: the gate
+// only reads it.
+func (g *Gate) identifyKey(key string) {
+	if key == "" {
+		return
+	}
+	c, err := sshcert.FromAuthLine(key)
+	if err == nil {
+		g.cert = c
+		if g.who == "" {
+			name, problem := sshcert.Name(c.KeyID)
+			g.who, g.certProblem = name, problem
+			if name == "" {
+				g.who = c.Key
+			}
+		}
+		return
+	}
+	if !errors.Is(err, sshcert.ErrNotCert) {
+		g.certProblem = err.Error()
+	}
+	if g.who == "" {
+		g.who = fingerprint(g.helper("ssh-keygen"), key)
+	}
+}
+
+// certLog: the session event's fields for a certificate login (none for a plain key).
+func (g *Gate) certLog() []string {
+	var kv []string
+	if c := g.cert; c != nil {
+		kv = append(kv, "key", c.Key, "cert_serial", strconv.FormatUint(c.Serial, 10), "cert_ca", c.CA)
+	}
+	if g.certProblem != "" {
+		kv = append(kv, "cert_problem", g.certProblem)
+	}
+	return kv
+}
+
+// authKey: the key that logged in: ExposeAuthInfo's file, its first publickey line, without
+// "publickey " ("" when there is none).
+func authKey(auth string) string {
 	data, err := os.ReadFile(auth)
-	if err != nil || keygen == "" {
+	if err != nil {
 		return ""
 	}
 	for _, l := range strings.Split(string(data), "\n") {
 		if key, ok := strings.CutPrefix(l, "publickey "); ok {
-			cmd := exec.Command(keygen, "-lf", "-")
-			cmd.Stdin = strings.NewReader(key + "\n")
-			out, err := cmd.Output()
-			if err != nil {
-				return ""
-			}
-			first, _, _ := strings.Cut(string(out), "\n")
-			if f := textutil.Fields(first); len(f) >= 2 {
-				return f[1]
-			}
-			return ""
+			return key
 		}
+	}
+	return ""
+}
+
+// fingerprint: a key's fingerprint as ssh-keygen -l prints it.
+func fingerprint(keygen, key string) string {
+	if keygen == "" {
+		return ""
+	}
+	cmd := exec.Command(keygen, "-lf", "-")
+	cmd.Stdin = strings.NewReader(key + "\n")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	first, _, _ := strings.Cut(string(out), "\n")
+	if f := textutil.Fields(first); len(f) >= 2 {
+		return f[1]
 	}
 	return ""
 }
