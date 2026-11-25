@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### SSH certificates (clients)
+
+Log in with OpenSSH user certificates from your company's CA. See
+[SSH certificates](docs/features/ssh-certificates.md).
+- VS Code: certificates in your SSH agent work, with no setting.
+- VS Code: **Hosts… → md-runbook Key Certificate…** attaches one to md-runbook's own key, from a
+  file or pasted. It shows the key ID, users and expiry, and warns before and after expiry.
+- App and web app: **Hosts & settings → This app's SSH key → Certificate** does the same,
+  hardware keys included. The start screen warns when it expires.
+- Ed25519, ECDSA and RSA certificates; RSA signs with SHA-512. Not with passkeys.
+- A login tries certificates first. A refused one says if it expired or is for another user.
+- VS Code: ECDSA P-521 keys in the agent work too.
+
 ## 0.33.0
 
 What's new:
