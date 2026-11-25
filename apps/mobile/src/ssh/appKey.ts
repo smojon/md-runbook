@@ -21,6 +21,7 @@ import { Platform } from 'react-native';
 import { RUN_SIGNATURE_NAMESPACE } from '@md-runbook/core/runReport';
 import { HardwareKey } from '../../modules/hardware-key';
 import { deleteSecret, getSecret, setSecret } from '../storage/secure';
+import { dropAppCert } from './appCert';
 import { createPasskey, forgetPasskey, loadPasskey, passkeysAvailable } from './passkey';
 import { loadWebKey, makeWebKey, removeWebKey, webKeysAvailable } from './webKey';
 import { loadSettings, outputSettings, setOutputSetting } from '../settings/store';
@@ -137,6 +138,8 @@ export async function appPublicKeyLine(): Promise<string> {
 export async function resetAppKey(): Promise<void> {
   cached = undefined;
   await deleteSecret(KEY);
+  // A certificate is for one key: the CA signs the new one again.
+  await dropAppCert();
   await HardwareKey?.remove(ALIAS);
   if (webKeysAvailable()) await removeWebKey();
   if (passkeysAvailable()) await forgetPasskey();
@@ -151,6 +154,7 @@ export async function replaceWithUnexportableKey(): Promise<AppKey> {
   const pair = await makeWebKey();
   cached = undefined;
   await deleteSecret(KEY);
+  await dropAppCert();
   cached = Promise.resolve({ pair, storage: 'browser-key' });
   return cached;
 }
@@ -168,6 +172,7 @@ export async function setKeyNeedsUser(on: boolean): Promise<AppKey> {
     setOutputSetting('keyNeedsUser', true);
     cached = undefined;
     await deleteSecret(KEY);
+    await dropAppCert();
     if (webKeysAvailable()) await removeWebKey();
     cached = Promise.resolve({ pair, storage: 'passkey' });
     return cached;

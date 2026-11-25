@@ -58,6 +58,7 @@ import { LibrarySettings } from './LibrarySettings';
 import { LibraryPublishSettings } from './LibraryPublishSettings';
 import { AlertPushSettings } from './AlertPushSettings';
 import { TrustedSignersSection } from './TrustedSigners';
+import { KeyCertificateSection } from './KeyCertificate';
 import { ConfirmPatternsSetting, RedactionSection, RunningSection } from './RunSettings';
 
 /** The hosts, the app's public key to put on them and, on the web, the relay settings. */
@@ -352,6 +353,7 @@ function AppKeySection() {
       >
         <Text style={styles.buttonText}>{copied ? t.copied : t.copy}</Text>
       </Pressable>
+      <KeyCertificateSection storage={storage} />
     </View>
   );
 }
