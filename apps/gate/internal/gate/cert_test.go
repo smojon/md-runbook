@@ -59,13 +59,13 @@ func TestIdentifyKey(t *testing.T) {
 		problem        string
 	}{
 		{name: "a certificate", key: fixtureKey(t, "ed25519-cert.pub"),
-			wantWho: "alice@example", wantLog: []string{"key", certAlice, "cert_serial", "42", "cert_ca", certCA}},
+			wantWho: "alice@example", wantLog: []string{"key", certAlice, "cert_serial", "42"}},
 		{name: "a certificate with --who=", key: fixtureKey(t, "ed25519-cert.pub"), who: "Ops Team",
-			wantWho: "Ops Team", wantLog: []string{"key", certAlice, "cert_serial", "42", "cert_ca", certCA}},
+			wantWho: "Ops Team", wantLog: []string{"key", certAlice, "cert_serial", "42"}},
 		{name: "a key ID with a line break", key: fixtureKey(t, "ed25519-nl-cert.pub"),
-			wantWho: certAlice, wantLog: []string{"key", certAlice, "cert_serial", "9", "cert_ca", certCA}, problem: "key ID with a control or invisible character (U+000A)"},
+			wantWho: certAlice, wantLog: []string{"key", certAlice, "cert_serial", "9"}, problem: "key ID with a character other than printable ASCII (U+000A)"},
 		{name: "a certificate with sshd's note", key: fixtureKey(t, "ed25519-cert.pub") + " signature count = 3",
-			wantWho: "alice@example", wantLog: []string{"key", certAlice, "cert_serial", "42", "cert_ca", certCA}},
+			wantWho: "alice@example", wantLog: []string{"key", certAlice, "cert_serial", "42"}},
 		{name: "no key", key: ""},
 	} {
 		g := &Gate{who: c.who, helpers: map[string]string{"ssh-keygen": keygen}}
@@ -78,10 +78,19 @@ func TestIdentifyKey(t *testing.T) {
 			t.Errorf("%s: who %q, log %q; want %q, %q", c.name, g.who, g.certLog(), c.wantWho, want)
 		}
 		// One valid JSON line, whatever the key ID was.
+		// Every event names the certificate's CA (cert_ca): the key ID is its word.
 		l := &logx.Logger{Account: "ops", Who: g.who}
+		if g.cert != nil {
+			l.CA = g.cert.CA
+		}
 		line := l.Line(append([]string{"event", "session"}, g.certLog()...)...)
 		if !json.Valid([]byte(line)) || strings.ContainsAny(line, "\n\r") {
 			t.Errorf("%s: not one JSON line: %s", c.name, line)
+		}
+		var ev map[string]string
+		json.Unmarshal([]byte(line), &ev)
+		if wantCA := map[bool]string{true: certCA, false: ""}[c.key != ""]; ev["cert_ca"] != wantCA {
+			t.Errorf("%s: cert_ca %q in %s", c.name, ev["cert_ca"], line)
 		}
 	}
 

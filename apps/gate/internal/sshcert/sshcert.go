@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -155,10 +154,11 @@ func Fingerprint(blob []byte) string {
 }
 
 // Name is the key ID as the gate logs it (who, MD_RUNBOOK_GATE_WHO, the run report), or why it
-// isn't one. The CA writes it, and some CAs let the person choose it: it must be one line of
-// printable UTF-8 of at most MaxKeyID bytes, without control or format characters (no line
-// breaks, escapes, bidirectional overrides or invisible characters). Spaces are fine, but not at
-// either end.
+// isn't one. The CA writes it, and some CAs let the person choose it. So it must be printable
+// ASCII (0x21 to 0x7E) with single spaces between words, of at most MaxKeyID bytes: no line
+// breaks or escapes, and no look-alike or invisible Unicode characters (review of the SSH
+// certificates, 2026-11-25). Nor may it look like a key's fingerprint (SHA256:…, MD5:…), what
+// who is for a plain key.
 func Name(keyID string) (string, string) {
 	switch {
 	case keyID == "":
@@ -167,16 +167,20 @@ func Name(keyID string) (string, string) {
 		return "", "key ID longer than " + strconv.Itoa(MaxKeyID) + " bytes"
 	case !utf8.ValidString(keyID):
 		return "", "key ID not UTF-8"
-	case strings.TrimSpace(keyID) != keyID:
-		return "", "key ID with a space at either end"
 	}
 	for _, r := range keyID {
-		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp, unicode.Co, unicode.Cs) || r == unicode.ReplacementChar {
-			return "", fmt.Sprintf("key ID with a control or invisible character (U+%04X)", r)
+		if r < 0x20 || r > 0x7e {
+			return "", fmt.Sprintf("key ID with a character other than printable ASCII (U+%04X)", r)
 		}
-		if unicode.IsSpace(r) && r != ' ' {
-			return "", "key ID with a space other than U+0020"
-		}
+	}
+	upper := strings.ToUpper(keyID)
+	switch {
+	case keyID[0] == ' ' || keyID[len(keyID)-1] == ' ':
+		return "", "key ID with a space at either end"
+	case strings.Contains(keyID, "  "):
+		return "", "key ID with two spaces in a row"
+	case strings.HasPrefix(upper, "SHA256:") || strings.HasPrefix(upper, "MD5:"):
+		return "", "key ID shaped like a key's fingerprint"
 	}
 	return keyID, ""
 }

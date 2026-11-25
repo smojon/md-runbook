@@ -185,7 +185,7 @@ func (g *Gate) sendReports() {
 	exits := g.readExits()
 	host, _ := os.Hostname()
 	s := report.Session{Who: g.who, Account: g.account, Client: g.client, Host: host, Mode: g.mode()}
-	b := report.Batch{To: []byte(g.cfg.ReportTo), Token: token, Log: []byte(g.cfg.Log), Account: []byte(g.account), Who: []byte(g.who), Client: []byte(g.client)}
+	b := report.Batch{To: []byte(g.cfg.ReportTo), Token: token, Log: []byte(g.cfg.Log), Account: []byte(g.account), Who: []byte(g.who), Client: []byte(g.client), CA: []byte(g.log.CA)}
 	seen := map[string]bool{}
 	for _, r := range g.reportRuns {
 		if seen[r.Hash] {

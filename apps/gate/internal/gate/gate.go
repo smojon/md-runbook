@@ -384,6 +384,9 @@ func (g *Gate) identify() {
 		g.identifyKey(authKey(auth))
 	}
 	g.log.Account, g.log.Who, g.log.Client = g.account, g.who, g.client
+	if g.cert != nil {
+		g.log.CA = g.cert.CA
+	}
 	// This program's path as sh found it: argv[0], or for a bare name its place in the PATH (a
 	// script's $0 was that path).
 	g.self = os.Args[0]
@@ -399,7 +402,8 @@ func (g *Gate) identify() {
 // identifyKey: who logged in, from the key that did (authKey's).
 //   - A user certificate: who is its key ID (what the CA says the person is), unless the key ID
 //     isn't fit for the log (sshcert.Name): then the plain key's fingerprint, and the session
-//     event says why. The session event also names the serial, the CA and the plain key.
+//     event says why. The session event also names the serial and the plain key, and every
+//     event the CA (cert_ca): the key ID is that CA's word.
 //   - A plain key, or a certificate this gate can't read: its fingerprint, as ssh-keygen -l
 //     prints it.
 //
@@ -429,11 +433,12 @@ func (g *Gate) identifyKey(key string) {
 	}
 }
 
-// certLog: the session event's fields for a certificate login (none for a plain key).
+// certLog: the session event's fields for a certificate login (none for a plain key). Every
+// event has cert_ca too (logx.Logger.CA).
 func (g *Gate) certLog() []string {
 	var kv []string
 	if c := g.cert; c != nil {
-		kv = append(kv, "key", c.Key, "cert_serial", strconv.FormatUint(c.Serial, 10), "cert_ca", c.CA)
+		kv = append(kv, "key", c.Key, "cert_serial", strconv.FormatUint(c.Serial, 10))
 	}
 	if g.certProblem != "" {
 		kv = append(kv, "cert_problem", g.certProblem)

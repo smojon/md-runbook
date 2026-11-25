@@ -171,27 +171,49 @@ func TestSecurityKeyLayout(t *testing.T) {
 }
 
 func TestName(t *testing.T) {
-	ok := []string{"alice@example", "Bob Builder", "vault-oidc-alice-0123abcd", "Zoë", strings.Repeat("a", MaxKeyID), `quote" back\slash`}
+	ok := []string{"alice@example", "Bob Builder", "vault-oidc-alice-0123abcd", "a", "~!#$%&'()*+,-./:;<=>?[]^_`{|}", strings.Repeat("a", MaxKeyID), `quote" back\slash`, "sha256-team", "MD5 owner"}
 	for _, id := range ok {
 		if name, problem := Name(id); name != id || problem != "" {
 			t.Errorf("%q: %q %q", id, name, problem)
 		}
 	}
-	bad := []string{
-		"", strings.Repeat("a", MaxKeyID+1), "a\nb", "a\rb", "a\tb", "a\x00b", "a\x1bb", "a\x7fb",
-		"a\u0085b", // C1 control (NEL)
-		"a\u202eb", // right-to-left override
-		"a\u200bb", // zero-width space
-		"a\u2028b", // line separator
-		"a\u00a0b", // no-break space
-		"a\ufffdb", // replacement character
-		"a\ue000b", // private use
-		"a\xffb",   // not UTF-8
-		" alice", "alice ",
+	ascii := func(r string) string { return "key ID with a character other than printable ASCII (U+" + r + ")" }
+	bad := []struct{ id, want string }{
+		{"", "empty key ID"},
+		{strings.Repeat("a", MaxKeyID+1), "key ID longer than 256 bytes"},
+		{"a\nb", ascii("000A")},
+		{"a\rb", ascii("000D")},
+		{"a\tb", ascii("0009")},
+		{"a\x00b", ascii("0000")},
+		{"a\x1bb", ascii("001B")},
+		{"a\x7fb", ascii("007F")},
+		{"a\u0085b", ascii("0085")},      // C1 control (NEL)
+		{"a‮b", ascii("202E")},           // right-to-left override
+		{"a​b", ascii("200B")},           // zero-width space
+		{"a b", ascii("2028")},           // line separator
+		{"a b", ascii("00A0")},           // no-break space
+		{"a�b", ascii("FFFD")},           // replacement character
+		{"ab", ascii("E000")},           // private use
+		{"aㅤb", ascii("3164")},           // Hangul filler
+		{"aﾠb", ascii("FFA0")},           // halfwidth Hangul filler
+		{"aᅟb", ascii("115F")},           // Hangul choseong filler
+		{"a️b", ascii("FE0F")},           // variation selector
+		{"a͏b", ascii("034F")},           // combining grapheme joiner
+		{"a⠀b", ascii("2800")},           // braille blank
+		{"a͸b", ascii("0378")},           // unassigned
+		{"аlice@example", ascii("0430")}, // Cyrillic a
+		{"Zoë", ascii("00EB")},
+		{"a\xffb", "key ID not UTF-8"},
+		{" alice", "key ID with a space at either end"},
+		{"alice ", "key ID with a space at either end"},
+		{"alice  smith", "key ID with two spaces in a row"},
+		{"SHA256:lq96FEEJbMFUKPOV5ZWPHvOIb0rTtA6mSw6OVq1ZawY", "key ID shaped like a key's fingerprint"},
+		{"sha256:x", "key ID shaped like a key's fingerprint"},
+		{"MD5:12:34", "key ID shaped like a key's fingerprint"},
 	}
-	for _, id := range bad {
-		if name, problem := Name(id); name != "" || problem == "" {
-			t.Errorf("%q: accepted as %q", id, name)
+	for _, c := range bad {
+		if name, problem := Name(c.id); name != "" || problem != c.want {
+			t.Errorf("%q: %q, %q; want %q", c.id, name, problem, c.want)
 		}
 	}
 }

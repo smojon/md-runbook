@@ -23,6 +23,9 @@ type Logger struct {
 	// Dest is "syslog" or a file.
 	Dest                 string
 	Account, Who, Client string
+	// CA: the fingerprint of the CA that signed the login's SSH certificate, "" for a plain key.
+	// On every line as cert_ca: who is that CA's word (several CAs could name the same person).
+	CA string
 
 	mu sync.Mutex
 	sl *syslog.Writer
@@ -31,13 +34,17 @@ type Logger struct {
 // Now is the time as the gate logs it (UTC, seconds).
 func Now() string { return time.Now().UTC().Format("2006-01-02T15:04:05Z") }
 
-// Line is an event as one JSON line: time, account, who, client, then the pairs (KEY, VALUE, ...).
+// Line is an event as one JSON line: time, account, who, client, cert_ca (for a certificate
+// login), then the pairs (KEY, VALUE, ...).
 func (l *Logger) Line(kv ...string) string {
 	var b strings.Builder
 	b.WriteString(`{"time":"` + Now() + `"`)
 	b.WriteString(`,"account":` + textutil.JSON(l.Account))
 	b.WriteString(`,"who":` + textutil.JSON(l.Who))
 	b.WriteString(`,"client":` + textutil.JSON(l.Client))
+	if l.CA != "" {
+		b.WriteString(`,"cert_ca":` + textutil.JSON(l.CA))
+	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		b.WriteString(`,"` + kv[i] + `":` + textutil.JSON(kv[i+1]))
 	}

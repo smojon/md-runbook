@@ -29,6 +29,8 @@ type Batch struct {
 	Account []byte
 	Who     []byte
 	Client  []byte
+	// CA: the fingerprint of the CA of the login's SSH certificate (empty for a plain key).
+	CA      []byte
 	Reports []Item
 }
 
@@ -60,7 +62,7 @@ func SenderMain(in io.Reader) int {
 	if json.Unmarshal(data, &b) != nil {
 		return 1
 	}
-	l := &logx.Logger{Dest: string(b.Log), Account: string(b.Account), Who: string(b.Who), Client: string(b.Client)}
+	l := &logx.Logger{Dest: string(b.Log), Account: string(b.Account), Who: string(b.Who), Client: string(b.Client), CA: string(b.CA)}
 	client := Client()
 	for _, it := range b.Reports {
 		code := "000"
