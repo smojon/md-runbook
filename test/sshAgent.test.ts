@@ -12,7 +12,8 @@ import * as path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Buffer } from 'buffer';
 import { SshAlgorithms, SshSessionConfiguration } from '@microsoft/dev-tunnels-ssh';
-import { certAlgorithms } from '@md-runbook/ssh';
+import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
+import { certAlgorithms, sessionConfiguration } from '@md-runbook/ssh';
 import { testCertificate } from './sshCertFixture';
 import {
   AgentClient,
@@ -182,8 +183,11 @@ describe('ssh: agent keys', () => {
     agentAlgorithms(config); // twice changes nothing
     const ed = config.publicKeyAlgorithms.filter((a) => a?.name === 'ssh-ed25519');
     assert.equal(ed.length, 1);
-    // Last: servers are asked for their ECDSA or RSA host key first.
-    assert.equal(config.publicKeyAlgorithms[config.publicKeyAlgorithms.length - 1], ed[0]);
+    // After the library's own, then P-521: servers are asked for their ECDSA or RSA host key first.
+    assert.deepEqual(
+      config.publicKeyAlgorithms.map((a) => a?.name),
+      ['rsa-sha2-512', 'rsa-sha2-256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp256', 'ssh-ed25519', 'ecdsa-sha2-nistp521'],
+    );
     const [key] = await agentKeys(agent.path);
     const data = Buffer.from('exchange hash');
     const sig = await ed[0]!.createSigner(key!).sign(data);
@@ -222,6 +226,35 @@ describe('ssh: agent certificates', () => {
     agent = await fakeAgent([ed, edCert, rs, rsCert]);
   });
   after(() => agent.close());
+
+  it('host key types offered, in order: as before, then P-521 after Ed25519, certificates last', () => {
+    const names = (configure: ((c: SshSessionConfiguration) => void) | undefined, cert: boolean) =>
+      sessionConfiguration({ configure }, cert ? [{ keyAlgorithmName: 'ecdsa-sha2-nistp256-cert-v01@openssh.com' } as KeyPair] : []).publicKeyAlgorithms.map((a) => a?.name);
+    const vscode = [
+      'ecdsa-sha2-nistp256',
+      'rsa-sha2-512',
+      'rsa-sha2-256',
+      'ecdsa-sha2-nistp384',
+      'ecdsa-sha2-nistp256',
+      'sk-ecdsa-sha2-nistp256@openssh.com',
+      'ssh-ed25519',
+      'ecdsa-sha2-nistp521',
+    ];
+    // VS Code (agentAlgorithms): a server with Ed25519 and P-521 host keys still shows its Ed25519 one.
+    assert.deepEqual(names(agentAlgorithms, false), vscode);
+    assert.deepEqual(names(agentAlgorithms, true), [
+      ...vscode,
+      'ssh-ed25519-cert-v01@openssh.com',
+      'ecdsa-sha2-nistp256-cert-v01@openssh.com',
+      'ecdsa-sha2-nistp384-cert-v01@openssh.com',
+      'ecdsa-sha2-nistp521-cert-v01@openssh.com',
+      'rsa-sha2-512-cert-v01@openssh.com',
+    ]);
+    // The app (no configure): as before; certificates only last.
+    const app = ['ecdsa-sha2-nistp256', 'rsa-sha2-512', 'rsa-sha2-256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp256', 'sk-ecdsa-sha2-nistp256@openssh.com'];
+    assert.deepEqual(names(undefined, false), app);
+    assert.deepEqual(names(undefined, true), [...app, 'ecdsa-sha2-nistp256-cert-v01@openssh.com', 'ecdsa-sha2-nistp384-cert-v01@openssh.com', 'rsa-sha2-512-cert-v01@openssh.com']);
+  });
 
   it('lists certificates, first (sshd counts each key tried)', async () => {
     const ids = await new AgentClient(agent.path).identities();

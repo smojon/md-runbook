@@ -306,9 +306,9 @@ export class Ed25519Algorithm extends PublicKeyAlgorithm {
 }
 
 /**
- * For `ConnectOptions.configure`: agent keys sign through the agent (RSA, ECDSA), and P-521 and
- * Ed25519 are added last, so a server is asked for its P-256/384 or RSA host key first (the same
- * one each time). RemoteShell.connect adds the certificate algorithms after this (certAlgorithms).
+ * For `ConnectOptions.configure`: agent keys sign through the agent (RSA, ECDSA), and Ed25519,
+ * then P-521, are added last, so a server is asked for its P-256/384 or RSA host key first (the
+ * same one each time). RemoteShell.connect adds the certificate algorithms after this.
  */
 export function agentAlgorithms(config: SshSessionConfiguration): void {
   // Only the library's own RSA and ECDSA (passkeys and the like write their own signature data).
@@ -316,10 +316,12 @@ export function agentAlgorithms(config: SshSessionConfiguration): void {
     a && !(a instanceof AgentAware) && /^(rsa-sha2-(256|512)|ecdsa-sha2-nistp(256|384|521))$/.test(a.name) ? new AgentAware(a) : a;
   const list = config.publicKeyAlgorithms;
   for (let i = 0; i < list.length; i++) list[i] = wrap(list[i] ?? null);
+  if (!list.some((a) => a?.name === ED25519)) list.push(new Ed25519Algorithm());
   // P-521 agent keys (and their certificates): the library has it, but not in its default list.
+  // After Ed25519: a server with both host keys goes on showing the Ed25519 one it showed
+  // before (the pinned one), not a "changed" P-521 key.
   const p521 = SshAlgorithms.publicKey.ecdsaSha2Nistp521;
   if (p521 && !list.some((a) => a?.name === p521.name)) list.push(new AgentAware(p521));
-  if (!list.some((a) => a?.name === ED25519)) list.push(new Ed25519Algorithm());
 }
 
 /** The usable keys of the agent at `path` (agentPath()) as key pairs; [] without an agent. */

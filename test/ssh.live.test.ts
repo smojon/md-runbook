@@ -423,15 +423,15 @@ describe('ssh: live server, agent keys', { skip: !spec && 'set MD_RUNBOOK_SSH_TE
 
 // OpenSSH user certificates: sshd trusts a CA (TrustedUserCAKeys, scripts/ci/start-sshd.sh); the
 // keys below are in no authorized_keys, so only their certificates can log them in.
-const userCa = process.env.MD_RUNBOOK_SSH_HOST_PUB ? path.join(path.dirname(process.env.MD_RUNBOOK_SSH_HOST_PUB), 'user_ca') : '';
-describe('ssh: live server, certificates', { skip: (!spec && 'set MD_RUNBOOK_SSH_TEST to run') || (!fs.existsSync(userCa) && 'no user_ca next to the host key') }, () => {
+describe('ssh: live server, certificates', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }, () => {
   let dir: string;
   let pinned: string;
-  /** ssh-keygen -s user_ca … on `pubLine`: the -cert.pub line. */
-  const certify = (pubLine: string, name: string, args: string[]): string => {
+  let userCa: string;
+  /** ssh-keygen -s `ca` … on `pubLine`: the -cert.pub line. */
+  const certify = (pubLine: string, name: string, args: string[], ca = userCa): string => {
     const file = path.join(dir, `${name}.pub`);
     fs.writeFileSync(file, `${pubLine}\n`);
-    execFileSync('ssh-keygen', ['-q', '-s', userCa, '-I', name, ...args, file]);
+    execFileSync('ssh-keygen', ['-q', '-s', ca, '-I', name, ...args, file]);
     return fs.readFileSync(path.join(dir, `${name}-cert.pub`), 'utf8').trim();
   };
   const session = (key: KeyPair, more: Partial<import('@md-runbook/ssh').ConnectOptions> = {}) =>
@@ -441,10 +441,36 @@ describe('ssh: live server, certificates', { skip: (!spec && 'set MD_RUNBOOK_SSH
     const r = await s.run(`echo ${text}`, { onStdout: (t) => (out += t) });
     assert.deepEqual([r.exitCode, out], [0, `${text}\n`]);
   };
+  /** An ssh-agent of its own, with these keys (made here) and the -cert.pub files `prepare` writes next to them. */
+  const withAgent = async (
+    name: string,
+    keys: { file: string; type: string; bits?: string[] }[],
+    prepare: (file: string) => void,
+    body: (sock: string) => Promise<void>,
+  ): Promise<void> => {
+    const sock = path.join(dir, `${name}.sock`);
+    const { spawn } = await import('node:child_process');
+    const agentProcess = spawn('ssh-agent', ['-D', '-a', sock], { stdio: 'ignore' });
+    try {
+      for (let i = 0; i < 50 && !fs.existsSync(sock); i++) await new Promise((r) => setTimeout(r, 100));
+      for (const k of keys) {
+        const file = path.join(dir, k.file);
+        execFileSync('ssh-keygen', ['-q', '-t', k.type, ...(k.bits ?? []), '-N', '', '-C', k.file, '-f', file]);
+        prepare(file);
+        // ssh-add loads id-cert.pub next to the key too.
+        execFileSync('ssh-add', [file], { env: { ...process.env, SSH_AUTH_SOCK: sock }, stdio: 'ignore' });
+      }
+      await body(sock);
+    } finally {
+      agentProcess.kill();
+    }
+  };
 
   before(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mdrb-certs-'));
     pinned = hostKeyId(fs.readFileSync(process.env.MD_RUNBOOK_SSH_HOST_PUB!, 'utf8'));
+    userCa = path.join(path.dirname(process.env.MD_RUNBOOK_SSH_HOST_PUB!), 'user_ca');
+    assert.ok(fs.existsSync(userCa), `no ${userCa}: scripts/ci/start-sshd.sh makes the user CA next to the host key`);
   });
 
   it("md-runbook's own key with a certificate logs in; without it, it doesn't", async () => {
@@ -483,43 +509,79 @@ describe('ssh: live server, certificates', { skip: (!spec && 'set MD_RUNBOOK_SSH
     await assert.rejects(RemoteShell.connect(await connectTcp(host, Number(port)), { username: user, key: expired, verifyHostKey: (k) => hostKeyId(k) === pinned }), /authentication failed.*certificate "expired" expired 2020-01-0[12]T/);
     const other = await CertKeyPair.create(key, certify(line, 'other', ['-n', 'not-this-user']));
     await assert.rejects(RemoteShell.connect(await connectTcp(host, Number(port)), { username: user, key: other, verifyHostKey: (k) => hostKeyId(k) === pinned }), /authentication failed.*not for user/);
+    // A refused host key: no certificate hint (nothing was sent).
+    await assert.rejects(RemoteShell.connect(await connectTcp(host, Number(port)), { username: user, key: expired, verifyHostKey: () => false }), (e: Error) => /authentication failed/.test(e.message) && !/expired/.test(e.message));
   });
 
-  it('agent certificates (Ed25519, ECDSA P-521, RSA as rsa-sha2-512) log in', async () => {
-    const sock = path.join(dir, 'agent.sock');
-    const { spawn } = await import('node:child_process');
-    const agentProcess = spawn('ssh-agent', ['-D', '-a', sock], { stdio: 'ignore' });
-    try {
-      for (let i = 0; i < 50 && !fs.existsSync(sock); i++) await new Promise((r) => setTimeout(r, 100));
-      for (const [type, bits] of [['ed25519', []], ['ecdsa', ['-b', '521']], ['rsa', []]] as const) {
-        const file = path.join(dir, `agent_${type}`);
-        execFileSync('ssh-keygen', ['-q', '-t', type, ...bits, '-N', '', '-C', `agent-${type}`, '-f', file]);
-        execFileSync('ssh-keygen', ['-q', '-s', userCa, '-I', `agent-${type}`, '-n', user, `${file}.pub`]);
-        // ssh-add loads id-cert.pub next to the key too.
-        execFileSync('ssh-add', [file], { env: { ...process.env, SSH_AUTH_SOCK: sock }, stdio: 'ignore' });
-      }
-      const { agentAlgorithms, agentKeys } = await import('@md-runbook/ssh/node');
-      const keys = await agentKeys(sock);
-      const certs = keys.filter((k) => k.keyAlgorithmName.endsWith('-cert-v01@openssh.com'));
-      assert.deepEqual(
-        certs.map((k) => k.keyAlgorithmName).sort(),
-        ['ecdsa-sha2-nistp521-cert-v01@openssh.com', 'ssh-ed25519-cert-v01@openssh.com', 'ssh-rsa-cert-v01@openssh.com'],
-      );
-      // Certificates first: they are what logs in here.
-      assert.deepEqual(keys.slice(0, 3), certs);
-      for (const key of certs) {
-        const s = session(key, { configure: agentAlgorithms });
+  it('agent certificates (Ed25519, ECDSA P-256/384/521, RSA as rsa-sha2-512) log in', async () => {
+    const types = [
+      { file: 'agent_ed25519', type: 'ed25519' },
+      { file: 'agent_p256', type: 'ecdsa', bits: ['-b', '256'] },
+      { file: 'agent_p384', type: 'ecdsa', bits: ['-b', '384'] },
+      { file: 'agent_p521', type: 'ecdsa', bits: ['-b', '521'] },
+      { file: 'agent_rsa', type: 'rsa' },
+    ];
+    await withAgent(
+      'agent-certs',
+      types,
+      (file) => execFileSync('ssh-keygen', ['-q', '-s', userCa, '-I', path.basename(file), '-n', user, `${file}.pub`]),
+      async (sock) => {
+        const { agentAlgorithms, agentKeys } = await import('@md-runbook/ssh/node');
+        const keys = await agentKeys(sock);
+        const certs = keys.filter((k) => k.keyAlgorithmName.endsWith('-cert-v01@openssh.com'));
+        assert.deepEqual(certs.map((k) => k.keyAlgorithmName).sort(), [
+          'ecdsa-sha2-nistp256-cert-v01@openssh.com',
+          'ecdsa-sha2-nistp384-cert-v01@openssh.com',
+          'ecdsa-sha2-nistp521-cert-v01@openssh.com',
+          'ssh-ed25519-cert-v01@openssh.com',
+          'ssh-rsa-cert-v01@openssh.com',
+        ]);
+        // Certificates first: they are what logs in here.
+        assert.deepEqual(keys.slice(0, certs.length), certs);
+        for (const key of certs) {
+          const s = session(key, { configure: agentAlgorithms });
+          try {
+            await echo(s, 'cert-agent');
+          } catch (e) {
+            throw new Error(`${key.keyAlgorithmName}: ${e instanceof Error ? e.message : String(e)}`);
+          } finally {
+            await s.close();
+          }
+        }
+        // The plain keys alone are refused (not in authorized_keys).
+        const plain = keys.find((k) => k.keyAlgorithmName === 'ssh-ed25519')!;
+        await assert.rejects(RemoteShell.connect(await connectTcp(host, Number(port)), { username: user, key: plain, configure: agentAlgorithms, verifyHostKey: (k) => hostKeyId(k) === pinned }), /authentication failed/);
+      },
+    );
+  });
+
+  it("a certificate the host doesn't trust costs one try: the 5th plain agent key still logs in", async () => {
+    // Another CA, which sshd doesn't trust: as a host outside the company's CA.
+    const otherCa = path.join(dir, 'other_ca');
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'other-ca', '-f', otherCa]);
+    const plain = [1, 2, 3, 4, 5].map((n) => ({ file: `plain_${n}`, type: 'ed25519' }));
+    await withAgent(
+      'agent-plain',
+      plain,
+      (file) => {
+        if (file.endsWith('plain_1')) execFileSync('ssh-keygen', ['-q', '-s', otherCa, '-I', 'untrusted', '-n', user, `${file}.pub`]);
+        // Only the last plain key is on the host.
+        if (file.endsWith('plain_5')) fs.appendFileSync(process.env.MD_RUNBOOK_SSH_AUTHORIZED_KEYS!, fs.readFileSync(`${file}.pub`, 'utf8'));
+      },
+      async (sock) => {
+        const { agentAlgorithms, agentKeys } = await import('@md-runbook/ssh/node');
+        const { chooseLoginKeys } = await import('@md-runbook/ssh');
+        const keys = await chooseLoginKeys({ agent: await agentKeys(sock) });
+        // The certificate, then the 5 plain keys: 6 tries, sshd's default MaxAuthTries.
+        assert.equal(keys.length, 6);
+        assert.equal(keys[0]!.keyAlgorithmName, 'ssh-ed25519-cert-v01@openssh.com');
+        const s = session(keys[0]!, { moreKeys: keys.slice(1), configure: agentAlgorithms });
         try {
-          await echo(s, `cert-${key.keyAlgorithmName.split('-')[1]}`);
+          await echo(s, 'plain-5');
         } finally {
           await s.close();
         }
-      }
-      // The plain keys alone are refused (not in authorized_keys).
-      const plain = keys.find((k) => k.keyAlgorithmName === 'ssh-ed25519')!;
-      await assert.rejects(RemoteShell.connect(await connectTcp(host, Number(port)), { username: user, key: plain, configure: agentAlgorithms, verifyHostKey: (k) => hostKeyId(k) === pinned }), /authentication failed/);
-    } finally {
-      agentProcess.kill();
-    }
+      },
+    );
   });
 });

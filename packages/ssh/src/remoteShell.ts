@@ -59,7 +59,8 @@ import {
 } from './command';
 import { ExternalAwareEcdsaP256 } from './externalKey';
 import { PasskeySkEcdsaP256 } from './passkey';
-import { certAlgorithms, certificateState, isCertType, parseCertificate } from './cert';
+import { shownList, shownText } from '@md-runbook/core/shownText';
+import { certAlgorithms, certificateState, isCertType, parseCertificate, utcTime } from './cert';
 
 export interface ConnectOptions {
   username: string;
@@ -218,26 +219,32 @@ export class RemoteShell {
 
   /** Connect over `stream`, check the host key, authenticate with `key`, start the shell. */
   static async connect(stream: Stream, opts: ConnectOptions): Promise<RemoteShell> {
-    const config = new SshSessionConfiguration();
-    // Keys held by the device's keystore (ExternalKeyPair) sign through it; other keys as before.
-    if (SshAlgorithms.publicKey.ecdsaSha2Nistp256) config.publicKeyAlgorithms.unshift(new ExternalAwareEcdsaP256());
-    // Passkeys (the web app): last, as the library offers these as host key types too.
-    config.publicKeyAlgorithms.push(new PasskeySkEcdsaP256());
-    config.keepAliveTimeoutInSeconds = opts.keepAliveSeconds ?? 15;
-    opts.configure?.(config);
     const keys = [opts.key, ...(opts.moreKeys ?? [])];
-    // Certificates sign with their plain key's algorithm, as configured above: added last.
-    if (keys.some((k) => isCertType(k.keyAlgorithmName))) certAlgorithms(config);
+    const config = sessionConfiguration(opts, keys);
     const session = new SshClientSession(config);
+    let hostKeyRefused = false;
     session.onAuthenticating((e: SshAuthenticatingEventArgs) => {
       if (e.authenticationType !== SshAuthenticationType.serverPublicKey || !e.publicKey) return;
       const key = e.publicKey;
-      e.authenticationPromise = (async () => ((await opts.verifyHostKey(await exportPublicKey(key))) ? {} : null))();
+      e.authenticationPromise = (async () => {
+        if (await opts.verifyHostKey(await exportPublicKey(key))) return {};
+        hostKeyRefused = true;
+        return null;
+      })();
     });
     const start = async (): Promise<RemoteShell> => {
-      await session.connect(stream);
+      const connecting = session.connect(stream);
+      // The library reads the server's version on a promise it awaits only once the key exchange
+      // started: when the server drops the connection before that (sshd's PerSourcePenalties, a
+      // firewall), the failed read would be an unhandled rejection after connect() already threw.
+      (session as unknown as { versionExchangePromise?: Promise<unknown> }).versionExchangePromise?.catch(() => undefined);
+      await connecting;
       const ok = await session.authenticate({ username: opts.username, publicKeys: keys });
-      if (!ok) throw new Error(`authentication failed (host key refused, or the key was not accepted)${await certificateHint(keys, opts.username)}`);
+      if (!ok) {
+        // The certificates are no reason when the host key was the problem (nothing was sent).
+        const hint = hostKeyRefused ? '' : await certificateHint(keys, opts.username);
+        throw new Error(`authentication failed (host key refused, or the key was not accepted)${hint}`);
+      }
       // sh/bash first. On a Windows server cmd.exe (or PowerShell) runs the request and fails at
       // once, closing the channel: then Windows PowerShell.
       const want = opts.shells ?? {};
@@ -636,24 +643,42 @@ export function wrongPlatform(platform: RemotePlatform, kind: ShellKind): string
 }
 
 /**
+ * The session's algorithms: keystore keys (ExternalKeyPair) first as before, passkeys, the
+ * caller's changes (agentAlgorithms), and the certificate algorithms last when a key is one. The
+ * library offers this list as host key types too, in this order.
+ */
+export function sessionConfiguration(opts: Pick<ConnectOptions, 'configure' | 'keepAliveSeconds'>, keys: readonly KeyPair[]): SshSessionConfiguration {
+  const config = new SshSessionConfiguration();
+  // Keys held by the device's keystore (ExternalKeyPair) sign through it; other keys as before.
+  if (SshAlgorithms.publicKey.ecdsaSha2Nistp256) config.publicKeyAlgorithms.unshift(new ExternalAwareEcdsaP256());
+  // Passkeys (the web app): last, as the library offers these as host key types too.
+  config.publicKeyAlgorithms.push(new PasskeySkEcdsaP256());
+  config.keepAliveTimeoutInSeconds = opts.keepAliveSeconds ?? 15;
+  opts.configure?.(config);
+  // Certificates sign with their plain key's algorithm, as configured above: added last.
+  if (keys.some((k) => isCertType(k.keyAlgorithmName))) certAlgorithms(config);
+  return config;
+}
+
+/**
  * Why a certificate among the keys may have been refused, as far as the client can tell: its dates
  * (the client's clock) or its principals (unless the server maps them: AuthorizedPrincipalsFile).
+ * Never throws: it only adds to another error.
  */
 export async function certificateHint(keys: readonly KeyPair[], username: string): Promise<string> {
   const notes: string[] = [];
   for (const k of keys) {
-    if (!isCertType(k.keyAlgorithmName)) continue;
-    let c;
     try {
-      c = parseCertificate((await k.getPublicKeyBytes())!);
+      if (!isCertType(k.keyAlgorithmName)) continue;
+      const c = parseCertificate((await k.getPublicKeyBytes())!);
+      const name = c.keyId ? `certificate "${shownText(c.keyId)}"` : 'certificate';
+      const state = certificateState(c);
+      if (state === 'expired') notes.push(`the ${name} expired ${utcTime(c.validBefore)}`);
+      else if (state === 'not-yet') notes.push(`the ${name} is valid from ${utcTime(c.validAfter)}`);
+      else if (c.principals.length > 0 && !c.principals.includes(username)) notes.push(`the ${name} is not for user ${shownText(username)} (principals: ${shownList(c.principals)})`);
     } catch {
-      continue;
+      // Unreadable: no hint from this key.
     }
-    const name = c.keyId ? `certificate "${c.keyId}"` : 'certificate';
-    const state = certificateState(c);
-    if (state === 'expired') notes.push(`the ${name} expired ${new Date(c.validBefore * 1000).toISOString()}`);
-    else if (state === 'not-yet') notes.push(`the ${name} is valid from ${new Date(c.validAfter * 1000).toISOString()}`);
-    else if (c.principals.length > 0 && !c.principals.includes(username)) notes.push(`the ${name} is not for user ${username} (principals: ${c.principals.join(', ')})`);
   }
   return notes.length > 0 ? `; ${notes.join('; ')}` : '';
 }

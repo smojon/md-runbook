@@ -43,23 +43,31 @@ export {
   windowsHelloCommand,
   windowsStopCommand,
 } from './command';
-export { ConnectOptions, POD_WAIT_MAX_MS, certificateHint, RemoteRunOptions, RemoteRunResult, RemoteShell, ShellEndedError, wrongPlatform } from './remoteShell';
+export { ConnectOptions, POD_WAIT_MAX_MS, certificateHint, sessionConfiguration, RemoteRunOptions, RemoteRunResult, RemoteShell, ShellEndedError, wrongPlatform } from './remoteShell';
 export { RemoteSession, SessionRunResult, SignedRun } from './session';
 export { generateKey, hostKeyId, importPrivateKey, privateKeyPem, publicKeyLine } from './keys';
 export {
   CERT_TYPES,
+  CLOCK_SKEW_SECONDS,
+  CaSignatureCheck,
   CertAlgorithm,
   CertKeyPair,
   CertificateState,
+  LoginKeyChoice,
   SshCertificate,
   certAlgorithms,
   certificateLine,
+  certificateOf,
+  certificateUsable,
+  checkCaSignature,
+  chooseLoginKeys,
   certificateMatches,
   certificateState,
   certificatesFirst,
   isCertType,
   keyFingerprint,
   parseCertificate,
+  utcTime,
 } from './cert';
 export { ECDSA_P256, ExternalAwareEcdsaP256, ExternalKeyPair, ExternalP256Key, derToRs } from './externalKey';
 export {

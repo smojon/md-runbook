@@ -18,10 +18,14 @@ import {
   certificateLine,
   certificateState,
   certificatesFirst,
+  checkCaSignature,
+  chooseLoginKeys,
   generateKey,
   keyFingerprint,
   parseCertificate,
+  utcTime,
 } from '@md-runbook/ssh';
+import { shownList, shownText } from '@md-runbook/core/shownText';
 import { agentAlgorithms } from '@md-runbook/ssh/node';
 import { FIXTURES } from './helpers';
 import { testCertificate, testCertificateLine } from './sshCertFixture';
@@ -60,7 +64,7 @@ describe('ssh: certificates', () => {
     assert.equal(ed.serial, '42');
     assert.equal(ed.validAfter, Date.UTC(2025, 0, 1) / 1000);
     assert.equal(ed.validBefore, Date.UTC(2035, 0, 1) / 1000);
-    assert.deepEqual(ed.criticalOptions, {});
+    assert.deepEqual({ ...ed.criticalOptions }, {});
     assert.ok(ed.extensions.includes('permit-pty'));
     // No -V: valid forever; the largest serial stays exact.
     const p256 = parseCertificate(fixture('ecdsab256-cert.pub'));
@@ -69,7 +73,7 @@ describe('ssh: certificates', () => {
     assert.equal(p256.serial, '18446744073709551615');
     // -O force-command=/usr/bin/true -O source-address=10.0.0.0/8 -O clear -O permit-pty
     const p521 = parseCertificate(fixture('ecdsab521-cert.pub'));
-    assert.deepEqual(p521.criticalOptions, { 'force-command': '/usr/bin/true', 'source-address': '10.0.0.0/8' });
+    assert.deepEqual({ ...p521.criticalOptions }, { 'force-command': '/usr/bin/true', 'source-address': '10.0.0.0/8' });
     assert.deepEqual(p521.extensions, ['permit-pty']);
     // The blob alone reads the same (an agent lists blobs).
     assert.deepEqual(parseCertificate(ed.blob).keyId, 'alice@example');
@@ -182,5 +186,74 @@ describe('ssh: certificates', () => {
     assert.equal(await certificateHint([key], 'alice'), '');
     // The test builder makes what ssh-keygen makes.
     assert.equal(parseCertificate(testCertificate(own, { certType: 1 })).keyType, 'ecdsa-sha2-nistp256');
+  });
+
+  it("checks the CA's signature (Ed25519, ECDSA, RSA CAs); a changed certificate fails", async () => {
+    for (const name of ['ed25519-cert.pub', 'ecdsab521-cert.pub', 'rsab2048-cert.pub', 'ed25519-cert-by-ecdsa-ca.pub', 'ed25519-cert-by-rsa-ca.pub']) {
+      const c = parseCertificate(fixture(name));
+      assert.equal(await checkCaSignature(c), 'valid', name);
+      // One byte of the nonce changed: the CA didn't sign that.
+      const blob = Buffer.from(c.blob);
+      const at = 4 + blob.readUInt32BE(0) + 4;
+      blob[at] = blob[at]! ^ 1;
+      assert.equal(await checkCaSignature(parseCertificate(blob)), 'invalid', name);
+    }
+    // The test builder's random signature.
+    const key = await generateKey();
+    assert.equal(await checkCaSignature(parseCertificate(testCertificate((await key.getPublicKeyBytes())!))), 'invalid');
+    // No Web Crypto: can't say.
+    assert.equal(await checkCaSignature(parseCertificate(fixture('ed25519-cert.pub')), null), 'unchecked');
+    const notSupported = { importKey: async () => Promise.reject(Object.assign(new Error('no'), { name: 'NotSupportedError' })) } as unknown as Parameters<typeof checkCaSignature>[1];
+    assert.equal(await checkCaSignature(parseCertificate(fixture('ed25519-cert.pub')), notSupported), 'unchecked');
+  });
+
+  it('login keys: certificates (within their dates, at most 2) on top of the 5 plain agent keys and the own key', async () => {
+    const now = Date.UTC(2026, 10, 25) / 1000;
+    const plainKey = async (): Promise<KeyPair> => generateKey();
+    const certKey = async (o: Parameters<typeof testCertificateLine>[1] = {}): Promise<CertKeyPair> => {
+      const k = await generateKey();
+      return CertKeyPair.create(k, testCertificateLine((await k.getPublicKeyBytes())!, o));
+    };
+    const plain = await Promise.all([1, 2, 3, 4, 5, 6].map(plainKey));
+    const agentCert = await certKey({ validAfter: now - 3600, validBefore: now + 3600 });
+    const own = await plainKey();
+    // 1 certificate + 5 plain agent keys (+ a 6th the budget leaves out) + own: the certificate comes on top.
+    const one = await chooseLoginKeys({ agent: [agentCert, ...plain], own, now: now * 1000 });
+    assert.deepEqual(one, [agentCert, ...plain.slice(0, 5), own]);
+    // An own certificate keeps a place; at most 2 certificates.
+    const ownCert = await certKey();
+    const more = [await certKey(), await certKey()];
+    const two = await chooseLoginKeys({ agent: [agentCert, ...more, ...plain], own, ownCert, now: now * 1000 });
+    assert.deepEqual(two, [agentCert, ownCert, ...plain.slice(0, 5), own]);
+    // Expired and not yet valid ones are left out, with 5 minutes of clock skew either way.
+    const expired = await certKey({ validAfter: 0, validBefore: now - 301 });
+    const justExpired = await certKey({ validAfter: 0, validBefore: now - 299 });
+    const notYet = await certKey({ validAfter: now + 301 });
+    const almost = await certKey({ validAfter: now + 299 });
+    assert.deepEqual(await chooseLoginKeys({ agent: [expired, notYet, ...plain.slice(0, 2)], now: now * 1000 }), plain.slice(0, 2));
+    assert.deepEqual(await chooseLoginKeys({ agent: [justExpired, almost], now: now * 1000 }), [justExpired, almost]);
+    // Principals don't count (AuthorizedPrincipalsFile may map them).
+    const otherUser = await certKey({ principals: ['ops'] });
+    assert.deepEqual(await chooseLoginKeys({ agent: [otherUser], now: now * 1000 }), [otherUser]);
+  });
+
+  it('dates and text from a certificate never break what shows them', async () => {
+    assert.equal(utcTime(Infinity), 'never');
+    assert.equal(utcTime(2 ** 60), 'far in the future');
+    assert.equal(utcTime(NaN), 'far in the future');
+    assert.equal(utcTime(0), '1970-01-01T00:00:00.000Z');
+    // A certificate with a far date: the hint says so instead of throwing.
+    const key = await generateKey();
+    const own = (await key.getPublicKeyBytes())!;
+    const far = await CertKeyPair.create(key, testCertificateLine(own, { validAfter: 2 ** 52, keyId: 'far' }));
+    assert.equal(await certificateHint([far], 'alice'), '; the certificate "far" is valid from far in the future');
+    // Control and bidi characters can't fake a line or reorder text; long text is cut.
+    const fake = await CertKeyPair.create(key, testCertificateLine(own, { keyId: 'x‮', principals: ['alice\n- CA: SHA256:fake'] }));
+    assert.equal(await certificateHint([fake], 'bob'), '; the certificate "x\\u{202e}" is not for user bob (principals: alice\\u{a}- CA: SHA256:fake)');
+    assert.equal(shownText('a\u0085b c⁦d\u0000'), 'a\\u{85}b\\u{2028}c\\u{2066}d\\u{0}');
+    assert.equal(shownText('x'.repeat(70)), `${'x'.repeat(64)}…`);
+    assert.equal(shownList(['a', 'b', 'c'], 2), 'a, b, +1 more');
+    // Option names are plain names: no prototype.
+    assert.equal(Object.getPrototypeOf(parseCertificate(fixture('ecdsab521-cert.pub')).criticalOptions), null);
   });
 });

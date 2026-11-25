@@ -22,6 +22,12 @@ printf '%s\n' \
   "StrictModes no" \
   "PidFile $d/sshd.pid" > sshd_config
 sshd_bin="$(command -v sshd || echo /usr/sbin/sshd)"
+# OpenSSH 9.8+ drops connections from a source whose logins failed (PerSourcePenalties): the
+# tests' refused logins, all from 127.0.0.1, would get the next tests' connections dropped during
+# the key exchange. Off where sshd knows the option.
+if "$sshd_bin" -t -f "$d/sshd_config" -o PerSourcePenalties=no 2>/dev/null; then
+  echo "PerSourcePenalties no" >> sshd_config
+fi
 "$sshd_bin" -f "$d/sshd_config" -E "$d/sshd.log"
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if nc -z 127.0.0.1 2222 2>/dev/null; then
