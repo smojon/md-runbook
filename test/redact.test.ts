@@ -278,6 +278,9 @@ describe('text glued to a closing quote is part of the value', () => {
     `--password 'Kd4wD'' --password 'Rp2uF Tn6vE'`,
     `redis-cli -a 'Kd4wD'' -a 'Rp2uF Tn6vE' ping`,
     `curl -u "admin:Kd4wD${B}"b -u "x:Rp2uF Tn6vE"`,
+    `curl -u admin:'Kd4wD'' -u x:'Rp2uF Tn6vE'`,
+    `password=Kd4wD'' token='Rp2uF Tn6vE'`,
+    `password=Kd4wD'token='Rp2uF Tn6vE'`,
     `openssl rsa -passin "pass:Kd4wD${B}"b -passout "pass:Rp2uF Tn6vE"`,
     `smbclient //h/s -U "admin%Kd4wD${B}"b -U "x%Rp2uF Tn6vE"`,
     `password=${B}"Kd4wD${B}"x${B}"token=${B}"Rp2uF Tn6vE${B}"`,
@@ -288,6 +291,74 @@ describe('text glued to a closing quote is part of the value', () => {
       assert.ok(!/Kd4wD|Rp2uF|Tn6vE/.test(out), `${input} -> ${out}`);
     });
   }
+});
+
+describe('escaped, ANSI-C and glued quotes (after 0.32)', () => {
+  const B = '\\';
+  const cases: Array<[string, string]> = [
+    // a flag's value in escaped quotes: `sh -c "…"` or JSON
+    [`sh -c "db --password ${B}"Kd4wD7${B}" --host x"`, `sh -c "db --password ${R} --host x"`],
+    [`bash -c "mysql -p${B}"Kd4wD7${B}" -h x"`, `bash -c "mysql -p${R} -h x"`],
+    [`sh -c "db --password=${B}"Kd4wD7${B}" --host x"`, `sh -c "db --password=${B}"${R}${B}" --host x"`],
+    [`{"cmd":"db --password ${B}"Kd4wD7${B}" --host x"}`, `{"cmd":"db --password ${R} --host x"}`],
+    [`sh -c "db --password ${B}"Kd4wD7${B}"Rp2uF x"`, `sh -c "db --password ${R} x"`],
+    // -u user:'PASSWORD'
+    [`curl -u admin:'Kd4wD7' https://x`, `curl -u admin:'${R}' https://x`],
+    [`curl --user admin:'Kd4w D7' https://x`, `curl --user admin:'${R}' https://x`],
+    [`curl -u admin:"Kd4wD7" https://x`, `curl -u admin:"${R}" https://x`],
+    [`curl -u admin:'Kd4wD7'Rp2uF https://x`, `curl -u admin:'${R} https://x`],
+    // bash's $'…' (ANSI-C quotes): `\'` and `\\` are escapes in it
+    [`export PASSWORD=$'Kd4${B}'wD7 x'`, `export PASSWORD=$'${R}'`],
+    [`mysql --password=$'Kd4wD7${B}n' -h x`, `mysql --password=$'${R}' -h x`],
+    [`mysql --password $'Kd4wD7${B}n' -h x`, `mysql --password ${R} -h x`],
+    [`sshpass -p $'Kd4 wD7' ssh h`, `sshpass -p ${R} ssh h`],
+    [`mysql -p$'Kd4wD7' -h x`, `mysql -p${R} -h x`],
+    [`DB_PASS=$'Kd4 wD7'`, `DB_PASS=$'${R}'`],
+    // text glued before a quote: one shell word
+    [`--password abc'Kd4wD7' x`, `--password ${R} x`],
+    [`password=abc"Kd4wD7" x`, `password=${R} x`],
+    [`curl -u admin:abc'Kd4wD7' x`, `curl -u admin:${R} x`],
+    [`smbclient //h/s -U admin%abc'Kd4wD7'"Rp2uF" x`, `smbclient //h/s -U admin%${R} x`],
+    // an empty value with glued text, a reference with glued text
+    [`password=''Kd4wD7`, `password='${R}`],
+    [`password=""Kd4wD7 x`, `password="${R} x`],
+    [`--password '\${secret:X}'Kd4wD7`, `--password ${R}`],
+    [`--password "$PW"Kd4wD7 x`, `--password ${R} x`],
+    // sshpass reads `'a'' -p 'b` as one word: its own options are whole words
+    [`sshpass -p 'Kd4wD7'' -p 'Rp2uF Tn6vE' ssh h`, `sshpass -p ${R} Tn6vE' ssh h`],
+    // doubled quotes: the secret hidden, the closing quote with it (as before)
+    [`$password = "Kd4""wD7 tail"`, `$password = "${R}`],
+  ];
+  for (const [input, expected] of cases) {
+    it(input, () => {
+      assert.equal(r.redact(input), expected);
+      const leaks = redactLeaks(input);
+      for (const secret of ['Kd4', 'wD7', 'Rp2uF']) assert.ok(!leaks.includes(secret), `redactLeaks: ${leaks}`);
+    });
+  }
+
+  // What follows a string in structured text, a reference and an empty value stay.
+  const kept = [
+    `{"password": "", "a": 1}`,
+    `password: '' # c`,
+    `--password '\${secret:X}' x`,
+    `--password $'\${secret:X}' x`,
+    `password=$'\${secret:X}'`,
+    `curl -u admin:'\${secret:pw}' https://x`,
+    `curl -u admin:"$PW" https://x`,
+    `sh -c "db --password=${B}"\${secret:X}${B}" x"`,
+  ];
+  for (const input of kept) it(input, () => assert.equal(r.redact(input), input));
+  // A quote after a bare value that ends an enclosing string, or holds a blank, is not glued.
+  const keptAfter: Array<[string, string]> = [
+    [`{"cmd":"x --password abc", "y":"z"}`, `{"cmd":"x --password ${R}", "y":"z"}`],
+    [`{"cmd":"x --password abc"}`, `{"cmd":"x --password ${R}"}`],
+    [`args: ["x --password abc","-v"]`, `args: ["x --password ${R}","-v"]`],
+    [`{"x":"password=abc","y":"z"}`, `{"x":"password=${R}","y":"z"}`],
+    [`ssh h "mysql --password abc" && echo "ok"`, `ssh h "mysql --password ${R}" && echo "ok"`],
+    [`echo 'curl -u a:abc' 'x'`, `echo 'curl -u a:${R}' 'x'`],
+  ];
+  for (const [input, expected] of keptAfter) it(input, () => assert.equal(r.redact(input), expected));
 });
 
 describe('redaction of real-world IAM/OpenShift output', () => {

@@ -10,7 +10,7 @@ import { strict as assert } from 'node:assert';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
-import { LeakFinding, looksLikeSecret, scanForLeaks } from '@md-runbook/core/leaks';
+import { LeakFinding, looksLikeSecret, redactLeaks, scanForLeaks } from '@md-runbook/core/leaks';
 import { DEFAULT_PATTERNS, WIDENED_PATTERN_NAMES, createRedactor, mergeSpans, patternFinder, redactSecretManifests } from '@md-runbook/core/redact';
 import { corpus, k8sCorpus, kubeCorpus } from './redactCorpus';
 
@@ -280,6 +280,24 @@ describe('what the widened patterns catch', () => {
     assert.equal(looksLikeSecret('vault', 0, 5), false);
     assert.equal(looksLikeSecret('"your-token"', 0, 12), false);
   });
+
+  it('reports a quoted value with blanks where the pattern reads structure, not prose (after 0.32)', () => {
+    // A tool's flag, a key after a Unicode space, a header's name: the whole quoted value.
+    assert.deepEqual(kinds('sshpass -p "Kd4 wD7" ssh h'), ['password-flag-tool']);
+    assert.equal(redactLeaks('sshpass -p "Kd4 wD7" ssh h'), `sshpass -p ${R} ssh h`);
+    assert.equal(redactLeaks('smbclient -U "x%Kd4 wD7"'), `smbclient -U "x%${R}"`);
+    assert.equal(redactLeaks(`password:${NBSP}"Kd4 wD7"`), `password:${NBSP}"${R}"`);
+    assert.equal(redactLeaks('{"Cookie": "id=Kd4wD7; x=Rp2uF"}'), `{"Cookie": "${R}"}`);
+    // A widened finding that overlaps one found before is part of it: `b` found by pass-key-value.
+    assert.equal(redactLeaks('openssl rsa -passout "pass:b c"'), `openssl rsa -passout "pass:${R}"`);
+    // Placeholders and prose stay: a placeholder word, a spaced key name, too short, out of quotes.
+    for (const s of ['sshpass -p "your password" ssh h', 'api key: "ask the ops team"', 'smbclient -U "x%b c"', `Authorization:${NBSP}see the vault`]) {
+      assert.deepEqual(kinds(s), [], s);
+    }
+    assert.equal(looksLikeSecret('"Kd4 wD7"', 0, 9), false);
+    assert.equal(looksLikeSecret('"Kd4 wD7"', 0, 9, true), true);
+    assert.equal(looksLikeSecret('x Kd4 wD7 y', 2, 9, true), false);
+  });
 });
 
 const same = (a: LeakFinding, b: LeakFinding): boolean => a.offset === b.offset && a.length === b.length && a.kind === b.kind;
@@ -439,6 +457,14 @@ const HOSTILE = [
   rep('sshpass -P "'),
   rep('sshpass -P"a" '),
   rep('SSHPASS'),
+  // after 0.32: $'…', escaped values, text glued before a quote
+  rep(`sshpass -p $'`),
+  rep(`mysql -p$'a`),
+  rep(`mysql -p\\"a`),
+  rep(`sshpass -p 'a''`),
+  'smbclient' + rep(` -U a%b'`),
+  'openssl' + rep(` -passin pass:a"`),
+  rep(`api key: $'a`),
 ];
 
 describe('the widened patterns stay linear on 200,000-character lines', () => {

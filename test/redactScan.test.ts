@@ -259,6 +259,23 @@ const HOSTILE = [
   rep(`password=\\"a\\"b`),
   rep(`sshpass -p 'a'\\'`),
   `password='a'"` + 'b'.repeat(N),
+  // after 0.32: $'…', escaped flag values, -u user:'…', text glued before a quote, empty values
+  rep(`password=$'a`),
+  rep(`password=$'\\'`),
+  `password=$'` + `\\'`.repeat(N / 2),
+  rep(`--password $'`),
+  rep(`--password \\"a`),
+  rep(`--password \\"a\\"b\\"`),
+  '--password \\"' + '\\'.repeat(N),
+  rep(` -u a:'`),
+  rep(` -u a:'b'':'`),
+  rep(`password=a'`),
+  rep(`password=a'b'`),
+  rep(`--password a'b' `),
+  rep(`--password a"`),
+  rep(`password=''`),
+  rep(`password=""a`),
+  rep(`--password '\${a}'`),
 ];
 
 describe('redaction and the leak scan stay linear on 200,000-character lines', () => {

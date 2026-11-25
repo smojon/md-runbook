@@ -73,20 +73,32 @@ const PLACEHOLDER =
  * - quoted (`"…"`, or the span is the inside of quotes): 4 characters or more;
  * - else 6 or more with letters and a digit or symbol (`hunter2`), or 12 or more letters of
  *   entropy 3 or more.
+ * With `blanks` (QUOTED_BLANKS), a value in quotes may hold blanks (`-p "Kd4 wD7"`, `"pass:a b c"`:
+ * it starts or ends at a quote) if none of its words is a placeholder (`"your password"`): 4
+ * characters or more.
  */
-export function looksLikeSecret(text: string, at: number, end: number): boolean {
+export function looksLikeSecret(text: string, at: number, end: number, blanks = false): boolean {
   let v = text.slice(at, end);
   const before = text[at - 1];
   let quoted = (before === '"' || before === "'") && text[end] === before;
+  const inQuotes = /^["']|["']$/.test(v) || /["']/.test(before ?? '') || /["']/.test(text[end] ?? '');
   if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v[v.length - 1] === v[0]) {
     quoted = true;
     v = v.slice(1, -1);
   }
   v = v.trim().replace(/^(?:Basic|Bearer|Token|Digest|Negotiate|Bot)\s+/i, '');
-  if (v === '' || /\s/.test(v) || PLACEHOLDER.test(v) || /…|\.\.\.|\$[{(A-Za-z_]|%\w+%/.test(v)) return false;
+  if (v === '' || PLACEHOLDER.test(v) || /…|\.\.\.|\$[{(A-Za-z_]|%\w+%/.test(v)) return false;
+  if (/\s/.test(v)) return blanks && inQuotes && !v.split(/\s+/).some((w) => PLACEHOLDER.test(w)) && v.length >= 4;
   if (quoted) return v.length >= 4;
   return (v.length >= 6 && /[A-Za-z]/.test(v) && /[^A-Za-z]/.test(v)) || (v.length >= 12 && shannonEntropy(v) >= 3);
 }
+
+/**
+ * The widened patterns whose quoted values may hold blanks in the leak scan (looksLikeSecret): a
+ * tool's flag, a key or flag after a Unicode space, a header's name, each with a quote, is
+ * structure, not prose. The spaced key names (`api key: "see the vault"`) are words of prose.
+ */
+const QUOTED_BLANKS = new Set(['password-flag-tool', 'secret-after-unicode-space', 'authorization-header-quoted', 'cookie-header-quoted']);
 
 /** Does the value at `at` follow `requirepass` or `masterauth` (with or without dashes) and blanks? */
 function afterRedisSetting(text: string, at: number): boolean {
@@ -480,6 +492,13 @@ function findLeaks(text: string, opts: LeakScanOptions, secrets?: Spans): LeakFi
     if (prev && prev.offset + prev.length > offset) return;
     spans.splice(i + 1, 0, { offset, length, kind });
   };
+  /** Does [at, end) overlap a secret reported before (no internal domain)? Reported spans don't overlap: read back from the last one that starts before `end`. */
+  const overlapsSecret = (at: number, end: number): boolean => {
+    for (let i = lastStartingBefore(spans, (s) => s.offset, end); i >= 0 && spans[i]!.offset + spans[i]!.length > at; i--) {
+      if (spans[i]!.kind !== 'internal-domain') return true;
+    }
+    return false;
+  };
   const refs = findReferences(text).map(([start, end]) => ({ start, end }));
   const overlapsRef = (start: number, end: number): boolean => (refs[lastStartingBefore(refs, (r) => r.start, end)]?.end ?? -1) > start;
   const inRef = (pos: number): boolean => overlapsRef(pos, pos + 1);
@@ -519,7 +538,9 @@ function findLeaks(text: string, opts: LeakScanOptions, secrets?: Spans): LeakFi
   }
   const domains = domainDetector(opts.internalDomains);
   if (domains) for (const m of text.matchAll(domains.re)) add(m.index ?? 0, m[0].length, domains.kind);
-  if (opts.widened !== false) regexHits(WIDENED_DETECTORS, (at, end) => looksLikeSecret(text, at, end));
+  // A widened finding that overlaps a secret already found is part of it (`"pass:b c"`, where
+  // pass-key-value found `b`): replaced whole, though not reported again (each place once).
+  if (opts.widened !== false) regexHits(WIDENED_DETECTORS, (at, end, kind) => looksLikeSecret(text, at, end, QUOTED_BLANKS.has(kind)) || overlapsSecret(at, end));
 
   spans.sort((a, b) => a.offset - b.offset);
   const lineStarts = [0];

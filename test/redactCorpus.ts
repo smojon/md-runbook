@@ -57,6 +57,10 @@ const VALUES = [
   // text glued to a closing quote: words, segments, `'\''`, and what ends one
   '"a"b', "'a'b", `'a'"b"c`, "'it'\\''s'", '"a""b"', `"a"'b c'`, "'a'.b", "'a'$X", '\\"a\\"b', '\\"a\\"-b', `'a'"b`, "\"a\"\\'b", "'a'b,c", "'a'b)c", "'a'`b`", "'a''b c'", '"a""b c"', `'a'b"c d"`,
   "'a'-b", '"a"@b', "'a'/>", "'a'b\\ c", '"a"+b', '\\"a\\"b\\"c\\"', "\\\"a\\\"b'c'", "'a'' token: 'b c'", '"a""x="', "'a'\\''x='",
+  // after 0.32: $'…', text glued before a quote, empty values and references with glued text, escaped flag values
+  "$'a\\'b c'", "$'a\\\\'", "$''", "$'${secret:X}'", "$'${secret:X}'b", "$'a", "$'a\\", "$'a'b", "''abc", '""abc', "''", "abc'def'", 'abc"def"',
+  "abc'd e'", 'a"b" c"', "'${secret:X}'abc", '"$PW"abc', '"${secret:X}"x', "a'' -p 'b", "admin:'a b'", 'admin:"a"', "u:abc'd'", "u:''x", '\\"$PW\\"',
+  '\\"a b\\"', '\\"a\\"', '\\"a\\"b', "'a'\\'' -p 'x y'", "x'' token='b c'", "a'token='b'", "a'' -u u:'b c'",
 ];
 const FLAGS = [
   '--password', '-password', '--PASSWORD', '--pass', '-pass', '--passwd', '--client-secret', '--token', '-token', '--api-key', '--apikey',
@@ -92,6 +96,8 @@ const FLAGS = [
   // htpasswd's options in several words, sshpass's own options (final review of 0.30)
   'htpasswd -b -c f', 'htpasswd -c -b', 'htpasswd -B -b f u', 'htpasswd -n -b', 'htpasswd -bC 5 f', 'htpasswd -C', '-C 5', 'htpasswd -b "a b"',
   'sshpass -e ssh', 'sshpass -f f', 'sshpass -P "x"', 'sshpass -d', '-f', '-e', '"sshpass"',
+  // after 0.32: escaped and ANSI-C quotes, -u user:'…'
+  'sh -c "db --password', '-u admin:', '--user u:', "-u a:'", 'sshpass -p $', "sshpass -p 'a''", '-p\\"', '--password \\"', "--password $'", 'mysql -p$',
 ];
 const OTHER = [
   'eyJ', 'eyJhbGciOi', 'Bearer', 'bearer', 'BEARER', 'xBearer', '.', '-', '_', 'x', 'abc', 'a1', '://', 'https://user:pw@host/x', 'git://a:b@c',
