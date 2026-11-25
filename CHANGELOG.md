@@ -2,9 +2,12 @@
 
 ## Unreleased
 
-What's new, from a security review of the ops host in a cluster:
+## 0.32.0
+
+What's new, mostly from a security review of the ops host in a cluster:
 - Runbooks can no longer act through a namespace's powerful service accounts.
 - Images and release files come with signed build provenance.
+- A runbook call shows what it runs, even with an empty body.
 - **Gate admins: update your copy of the manifest and apply both files** (see below), or
   sessions refuse.
 
@@ -26,6 +29,7 @@ What's new, from a security review of the ops host in a cluster:
   the API server and your run-report host.
 - **Verify the image:** `gh attestation verify`, then pin it by digest. The README says how.
 - The image has kubectl 1.35 (clusters 1.34 to 1.36) and Debian 13.7, pinned by digest.
+- The gate is built with Go 1.27.4.
 - The README now covers:
   - shipping the gate's log off the cluster;
   - what to do when a key is stolen, or someone leaves;
