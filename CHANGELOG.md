@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### SSH certificates (server)
+
+A company CA signs short-lived SSH certificates; the gate's log names the person
+([guide](docs/features/ssh-certificates.md)).
+- **The gate:** for a certificate login, `who` is the certificate's key ID (with `ExposeAuthInfo
+  yes`). It goes into the log, the run report and `MD_RUNBOOK_GATE_WHO`.
+  - The session event adds `cert_serial`, `cert_ca` and `key` (fingerprints).
+  - A key ID with a control or invisible character, or over 256 bytes, isn't used. `who` then
+    stays the key's fingerprint, and `cert_problem` says why.
+  - Plain keys and `--who=` work as before.
+- **The ops host:** optional files in the ConfigMap `md-runbook-ops-keys`
+  ([README](apps/ops/README.md#ssh-certificates)):
+  - `user_ca`: certificates of this CA may log in, for the principal `ops`;
+  - `authorized_principals`: the principals a certificate must name instead;
+  - `revoked_keys`: a KRL or public keys that sshd refuses.
+- Without these files the ops host works exactly as before.
+
 ## 0.33.0
 
 What's new:

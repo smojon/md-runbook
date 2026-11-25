@@ -26,6 +26,7 @@ All of these are read-only mounts:
 | Path | What | Without it |
 | --- | --- | --- |
 | `/etc/md-runbook-ops/keys/authorized_keys` | Public keys allowed to log in: the app's key from **Hosts & settings → This app's SSH key**, one line per phone | nobody can log in |
+| `/etc/md-runbook-ops/keys/user_ca`, `authorized_principals`, `revoked_keys` | [SSH certificates](#ssh-certificates): your CA, its principals, revoked keys | no certificate logs in |
 | `/etc/md-runbook-ops/hostkey/ssh_host_ecdsa_key` | The server's host key, which the app pins | one is made at first start (kept in `/var/lib/md-runbook-ops`) |
 | `/etc/md-runbook/gate.conf`, `/etc/md-runbook/allowed_signers` | The gate's policy and the publishers' keys | signed runbooks only, and no publishers yet |
 | `/etc/md-runbook-ops/kubeconfig/config` | kubectl's login outside a cluster | inside a cluster: the Pod's service account |
@@ -497,10 +498,55 @@ Give the second host its own copy of the namespaced objects. Add its accounts as
 ClusterRoleBindings `md-runbook-ops` and `md-runbook-ops-gate`. We haven't tested two hosts in
 one cluster yet.
 
+### SSH certificates
+
+Your CA signs short-lived certificates; this host trusts the CA. The guide:
+[SSH certificates](../../docs/features/ssh-certificates.md).
+
+Add these files to the ConfigMap `md-runbook-ops-keys`, each optional:
+- `user_ca`: the CA's public key, one per line. Its certificates may log in
+  (`TrustedUserCAKeys`).
+- `authorized_principals`: one principal per line (`AuthorizedPrincipalsFile`).
+  - Without it, a certificate must name the principal `ops`, the account.
+  - With it, it must name one of these instead. Pick a name for this host alone, such as
+    `md-runbook-ops-prod`. Then a certificate your CA signs for `ops` elsewhere can't log in here.
+- `revoked_keys`: a KRL from `ssh-keygen -k`, or public keys (`RevokedKeys`). Plain keys too.
+
+`authorized_keys` keeps working next to them.
+
+```sh
+kubectl $ns create configmap md-runbook-ops-keys --from-file=authorized_keys \
+  --from-file=user_ca --from-file=authorized_principals --from-file=revoked_keys \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl $ns rollout restart deployment/md-runbook-ops
+kubectl $ns logs deployment/md-runbook-ops | grep -E 'SSH certificates|revoked'
+```
+
+What the gate logs:
+- `who`: the certificate's key ID, such as `alice@example.com`;
+- in the session event: `cert_serial`, `cert_ca` (the CA's fingerprint) and `key` (the key's);
+- a key ID with a control character, or over 256 bytes: `who` is the key's fingerprint, and
+  `cert_problem` says why.
+
+When a change counts:
+- The start script adds each sshd directive only when its file is there. Adding or removing a
+  file needs a restart (`rollout restart`).
+  - [sshd_config(5)](https://man.openbsd.org/sshd_config.5): with `RevokedKeys`, an unreadable
+    file refuses every key. So the host doesn't start when `revoked_keys` can't be read.
+  - A missing `AuthorizedPrincipalsFile` would match no principal.
+- sshd reads the files at each login. A changed file counts once Kubernetes updates the mount:
+  the kubelet's sync period plus its cache delay
+  ([mounted ConfigMaps](https://kubernetes.io/docs/concepts/configuration/configmap/#mounted-configmaps-are-updated-automatically)).
+- Never remove `revoked_keys` from a running host: sshd then refuses every key until a restart.
+- The KRL is binary: `kubectl create configmap` keeps it under `binaryData`, which works.
+- A revoked certificate doesn't end an open session: restart the pod.
+
+Outside a cluster, put the same files next to `authorized_keys` in the mounted `keys` folder.
+
 ### The audit log, and a stolen key
 
-**Ship the log off the cluster.** The gate logs each session and block, with the key's
-fingerprint, to a file and to the container's output.
+**Ship the log off the cluster.** The gate logs each session and block to a file and to the
+container's output. Each line names the key: its fingerprint, or the certificate's key ID.
 - Collect the container's output with your log collector (Fluent Bit, Vector, your cloud's
   logging).
 - `kubectl logs` alone isn't enough. A restarted or moved pod takes its log with it, and the
@@ -519,11 +565,15 @@ fingerprint, to a file and to the container's output.
      --dry-run=client -o yaml | kubectl apply -f -
    ```
 
+   With [SSH certificates](#ssh-certificates), list the other files too. Add their key ID or
+   serial to the KRL in `revoked_keys`, or wait for their certificates to expire.
+
 3. End open sessions: `kubectl $ns rollout restart deployment/md-runbook-ops`. A session lasts up
    to a day, and a removed key doesn't end it. Its Job goes with the old pod.
 4. A signing key: remove its line from `allowed_signers`. Withdraw what it signed (`revoked` or
    `floors`, above), and sign again what you keep.
-5. Look for what the key ran: its fingerprint is on each line of the log.
+5. Look for what the key ran: its fingerprint, or the certificate's key ID, is on each line of
+   the log.
 
 ## Next to the relay
 

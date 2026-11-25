@@ -249,6 +249,8 @@ Each has its own page with examples and settings:
   the wrong cluster. Or, with `kube-context-mode: pin`, it runs every cell on that cluster
   without touching your default context.
   - The ops host runs the app's runbooks against your clusters with no credential on the phone.
+    It takes [SSH certificates](docs/features/ssh-certificates.md) from your CA, and its log
+    names the person.
   - `md-runbook-probe` checks endpoints and certificates from inside the cluster, and its
     results go into the record and the audit.
 - **[For auditors](docs/features/for-auditors.md):** what md-runbook records and enforces, for:

@@ -182,6 +182,10 @@ kubectl runs there:
 Either way, every login goes to md-runbook-gate. Out of the box it runs signed runbooks only,
 and it logs every request.
 
+Logins take keys from `authorized_keys`, or [SSH certificates](ssh-certificates.md) from your
+company CA. With certificates, the log names the person (the key ID), and leaving needs no key
+list change.
+
 To the app, the ops host is a host like any other:
 
 - add it under **Hosts & settings**;

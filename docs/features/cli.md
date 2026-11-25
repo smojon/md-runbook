@@ -295,7 +295,7 @@ md-runbook audit /var/log/md-runbook-gate.log --record runbooks/failover.2026102
 | `--record FILE.md` | A saved run record to match (repeatable) |
 | `--since DATE`, `--until DATE` | Only runs in this period (`2026-10-26` or `2026-10-26T22:00:00Z`) |
 | `--runbook NAME` | Only this signed runbook |
-| `--who KEY` | Only this key (fingerprint, or the gate's `--who` name) |
+| `--who KEY` | Only this key (fingerprint, an SSH certificate's key ID, or the gate's `--who` name) |
 | `--out FILE` | `.html` (default `gate-audit.html`), `.pdf` (needs Chrome, Edge or Chromium) or `.json` |
 
 ## QR codes and labels

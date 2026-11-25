@@ -406,8 +406,12 @@ One JSON line per event goes to syslog (tag `md-runbook-gate`) or a file. The ev
 - `stop`;
 - `report`: a run report sent or not (below).
 
-Each event carries the time, the account, the client address and the key. The key is its
-fingerprint with `ExposeAuthInfo yes` in `sshd_config`, or the name given with `--who=NAME`.
+Each event carries the time, the account, the client address and the key (`who`). With
+`ExposeAuthInfo yes` in `sshd_config`, `who` is:
+- the key's fingerprint;
+- or, for an [SSH certificate](ssh-certificates.md), its key ID, such as `alice@example.com`.
+
+`--who=NAME` on the key line wins over both.
 
 The `end` events are written by the account's own shell, and a log file must be writable by the
 account. So a block (or unsigned text where it is allowed) could add lines of its own. For a log
@@ -458,7 +462,8 @@ The summary has the [run report format](run-reports.md#the-format-version-1) wit
 - `runbook.signed`: the signed name, version, manifest hash and the signers the gate accepted
   (`trusted: true`). There is no `file` or `sha256`: the gate never sees the runbook's text,
   only its signed manifest.
-- `who`: the key's fingerprint (with `ExposeAuthInfo yes`), or `--who=NAME`, else the account.
+- `who`: with `ExposeAuthInfo yes`, the key's fingerprint or an
+  [SSH certificate](ssh-certificates.md)'s key ID; or `--who=NAME`; else the account.
 - `gate`: the server's name (`uname -n`), the account, and the SSH client's address (`from`).
   `gate_mode` says how the blocks ran: `shared` or `separated`
   ([a gate in separated mode](run-reports.md#a-gate-in-separated-mode)). Without it, the

@@ -107,7 +107,17 @@ the account can do what a block can: through `/proc`, they can write into a sess
 - In separated mode the blocks' accounts need no sweep: every process of a session's account
   ends at its start and end, with or without `kill_leftovers`.
 
-Add `ExposeAuthInfo yes` to `sshd_config` to log each key's fingerprint.
+Add `ExposeAuthInfo yes` to `sshd_config` to log who logged in (`who`):
+- a plain key: its fingerprint;
+- a user certificate: its key ID, such as `alice@example.com`. The session event adds
+  `cert_serial`, `cert_ca` (the CA's fingerprint) and `key` (the key's fingerprint).
+  - The key ID is the CA's text. A key ID that is empty, over 256 bytes, not UTF-8, or with a
+    control or invisible character isn't used. `who` is then the key's fingerprint, and
+    `cert_problem` says why.
+  - sshd checked the certificate before the login; the gate only reads it.
+- `--who=NAME` on the key line wins over both.
+
+See [SSH certificates](../../docs/features/ssh-certificates.md).
 
 ## Isolation
 
@@ -376,7 +386,9 @@ The check reads key lines with their options (`restrict`, `from=`, quoted values
 any other `%` token is an error.
 
 What it can't see, so keep this account for the gate alone and without a password:
-- keys from `AuthorizedKeysCommand`, and the principals of SSH certificates;
+- keys from `AuthorizedKeysCommand`;
+- SSH certificates (`TrustedUserCAKeys`, `AuthorizedPrincipalsFile`): it logs their key IDs, but
+  can't list who may log in;
 - password or keyboard-interactive logins;
 - other programs running as the same account.
 

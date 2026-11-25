@@ -51,7 +51,8 @@ mechanisms support is for your own framework and your auditors to decide.
 
 - **Server side (independent of the operator).** The gate logs one JSON line per event to syslog
   (tag `md-runbook-gate`) or a file:
-  - the session (account, key fingerprint, client address);
+  - the session (account, key fingerprint or [SSH certificate](ssh-certificates.md) key ID,
+    client address);
   - which runbook and version was loaded, and which signer the gate accepted;
   - every parameter value, every block run;
   - refusals with their reason, unsigned code where allowed (by hash), stops.
