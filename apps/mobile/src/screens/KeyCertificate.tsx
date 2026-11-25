@@ -1,9 +1,13 @@
 /**
  * Hosts & settings → This app's SSH key → Certificate: attach the OpenSSH certificate the
  * company CA issued for this key (paste or file), see its key ID, users and expiry, remove it.
- * The start screen shows CertificateNotice when it expires soon or has expired.
+ * The start screen shows CertificateNotice when it expires soon, has expired or isn't valid yet.
+ *
+ * Key IDs, principals and option names are the certificate's text: shown escaped and cut (core
+ * shownText), so they can't fake a line or reorder what follows.
  */
-import { CertKeyPair, type SshCertificate } from '@md-runbook/ssh';
+import { shownList, shownText } from '@md-runbook/core/shownText';
+import { CertKeyPair, type CaSignatureCheck, type SshCertificate, checkCaSignature } from '@md-runbook/ssh';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -25,16 +29,17 @@ import { confirmThen } from '../ui/confirm';
 import { Points } from '../ui/Points';
 
 const left = (seconds: number, now = Date.now()): string => {
-  const { n, unit } = timeLeft(seconds, now);
-  return t.inTime(n, unit);
+  const l = timeLeft(seconds, now);
+  return l ? t.inTime(l.n, l.unit) : t.certFarFuture;
 };
+const when = (seconds: number): string => localDateTime(seconds) ?? t.certFarFuture;
 
 /** The warning for the certificate's state, or undefined while it is valid. */
 export function certWarning(cert: SshCertificate, now = Date.now()): string | undefined {
   const state = appCertState(cert, now);
-  if (state === 'expired') return t.certExpired(localDateTime(cert.validBefore));
+  if (state === 'expired') return t.certExpired(when(cert.validBefore));
   if (state === 'expiring') return t.certExpiring(left(cert.validBefore, now));
-  if (state === 'not-yet') return t.certNotYet(localDateTime(cert.validAfter));
+  if (state === 'not-yet') return t.certNotYet(when(cert.validAfter));
   return undefined;
 }
 
@@ -48,7 +53,18 @@ export function KeyCertificateSection({ storage }: { storage: KeyStorage | undef
   /** A stored certificate found not to be for the key in use (it changed elsewhere). */
   const [mismatched, setMismatched] = useState<SshCertificate | undefined>();
   const otherKey = cert !== undefined && mismatched === cert;
+  /** The CA signature's check, for the certificate it was made for. */
+  const [checked, setChecked] = useState<{ cert: SshCertificate; check: CaSignatureCheck } | undefined>();
+  const check: CaSignatureCheck = checked && checked.cert === cert ? checked.check : 'unchecked';
   useEffect(() => void loadAppCert(), []);
+  useEffect(() => {
+    let live = true;
+    if (!cert) return;
+    void checkCaSignature(cert).then((c) => live && setChecked({ cert, check: c }));
+    return () => {
+      live = false;
+    };
+  }, [cert]);
   useEffect(() => {
     let live = true;
     if (!cert) return;
@@ -83,7 +99,14 @@ export function KeyCertificateSection({ storage }: { storage: KeyStorage | undef
       const reason = e instanceof CertificateError ? e.reason : 'unreadable';
       setMessage({
         ok: false,
-        text: reason === 'other-key' ? t.certOtherKey : reason === 'passkey' ? t.certPasskeyPoints[0]! : t.certUnreadable(why),
+        text:
+          reason === 'other-key'
+            ? t.certOtherKey
+            : reason === 'passkey'
+              ? t.certPasskeyPoints[0]!
+              : reason === 'signature'
+                ? t.certBadSignature
+                : t.certUnreadable(shownText(why, 200)),
       });
     }
   };
@@ -102,7 +125,8 @@ export function KeyCertificateSection({ storage }: { storage: KeyStorage | undef
       setMessage(undefined);
       void removeAppCert();
     });
-  const warning = cert ? (otherKey ? t.certOtherKey : certWarning(cert)) : undefined;
+  const warning = cert ? (otherKey ? t.certOtherKey : check === 'invalid' ? t.certBadSignature : certWarning(cert)) : undefined;
+  const restrictions = cert ? Object.keys(cert.criticalOptions) : [];
 
   return (
     <View testID="key-cert" style={styles.block}>
@@ -110,14 +134,21 @@ export function KeyCertificateSection({ storage }: { storage: KeyStorage | undef
       {cert ? (
         <View testID="key-cert-details">
           <Text style={styles.body} selectable>
-            {t.certKeyId(cert.keyId)}
+            {t.certKeyId(shownText(cert.keyId))}
           </Text>
-          <Text style={styles.body}>{t.certPrincipals(cert.principals)}</Text>
+          <Text testID="key-cert-users" style={styles.body}>
+            {t.certPrincipals(shownList(cert.principals))}
+          </Text>
           <Text testID="key-cert-validity" style={styles.body}>
-            {cert.validBefore === Infinity ? t.certValidForever : t.certValidUntil(localDateTime(cert.validBefore), left(cert.validBefore))}
+            {cert.validBefore === Infinity ? t.certValidForever : t.certValidUntil(when(cert.validBefore), left(cert.validBefore))}
           </Text>
-          <Text style={styles.mono} selectable>
-            {t.certCa(cert.caFingerprint)}
+          {restrictions.length > 0 ? (
+            <Text testID="key-cert-restrictions" style={styles.body}>
+              {t.certRestrictions(shownList(restrictions))}
+            </Text>
+          ) : null}
+          <Text testID="key-cert-ca" style={styles.mono} selectable>
+            {t.certCa(cert.caFingerprint, check)}
           </Text>
           {warning ? (
             <Text testID="key-cert-warning" role="alert" style={[styles.help, { color: colors.warningText }]}>
@@ -193,7 +224,7 @@ export function KeyCertificateSection({ storage }: { storage: KeyStorage | undef
   );
 }
 
-/** Start screen: the certificate expires soon or has expired. A tap opens Hosts & settings. */
+/** Start screen: the certificate expires soon, has expired or isn't valid yet. A tap opens Hosts & settings. */
 export function CertificateNotice() {
   const styles = useStyles();
   const colors = usePalette();
@@ -201,8 +232,13 @@ export function CertificateNotice() {
   useEffect(() => void loadAppCert(), []);
   if (!cert) return null;
   const state = appCertState(cert);
-  if (state !== 'expiring' && state !== 'expired') return null;
-  const text = state === 'expired' ? t.certHomeExpired : t.certHomeExpiring(left(cert.validBefore));
+  if (state === 'valid') return null;
+  const text =
+    state === 'expired'
+      ? t.certHomeExpired
+      : state === 'not-yet'
+        ? t.certHomeNotYet(when(cert.validAfter))
+        : t.certHomeExpiring(left(cert.validBefore));
   return (
     <Pressable
       testID="cert-notice"

@@ -15,5 +15,9 @@ export async function pickCertificateFile(): Promise<CertPick> {
   const asset = picked.assets[0];
   if (!asset) return { kind: 'canceled' };
   if (asset.size !== undefined && asset.size > MAX_CERT_TEXT) return { kind: 'too-large' };
-  return { kind: 'picked', text: await new FsFile(asset.uri).text() };
+  const file = new FsFile(asset.uri);
+  // The picker may not say the size: ask the file before reading it (a wrong pick could be any
+  // file). A size the file can't say either isn't read.
+  if (asset.size === undefined && (file.size === null || file.size > MAX_CERT_TEXT)) return { kind: 'too-large' };
+  return { kind: 'picked', text: await file.text() };
 }

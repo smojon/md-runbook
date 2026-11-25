@@ -6,7 +6,7 @@
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { CertKeyPair, generateKey } from '@md-runbook/ssh';
-import { randomBytes } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, sign as nodeSign } from 'node:crypto';
 import { Alert } from 'react-native';
 import { appKey, appKeyInfo, resetAppKey } from '../ssh/appKey';
 import {
@@ -36,15 +36,26 @@ const str = (b: Uint8Array | string): Buffer => {
   return Buffer.concat([u32(v.length), v]);
 };
 
-/** A user certificate line for a plain public key blob, in OpenSSH's format (the CA signature is random: clients don't check it). */
+/** A test CA (Ed25519): the app checks the CA's signature before it shows or keeps a certificate. */
+const ca = generateKeyPairSync('ed25519');
+const caBlob = str(Buffer.concat([str('ssh-ed25519'), str(Buffer.from(ca.publicKey.export({ format: 'jwk' }).x!, 'base64url'))]));
+
+/** A user certificate line for a plain public key blob, in OpenSSH's format, signed by the test CA (`forged`: a random signature). */
 function certLine(
   publicKey: Uint8Array,
-  o: { keyId?: string; principals?: string[]; validAfter?: number; validBefore?: number } = {},
+  o: {
+    keyId?: string;
+    principals?: string[];
+    validAfter?: number;
+    validBefore?: number;
+    options?: [string, string][];
+    forged?: boolean;
+  } = {},
 ): string {
   const pk = Buffer.from(publicKey);
   const n = pk.readUInt32BE(0);
   const type = `${pk.subarray(4, 4 + n).toString('ascii')}-cert-v01@openssh.com`;
-  const blob = Buffer.concat([
+  const signed = Buffer.concat([
     str(type),
     str(randomBytes(32)),
     pk.subarray(4 + n),
@@ -54,12 +65,13 @@ function certLine(
     str(Buffer.concat((o.principals ?? ['alice']).map((p) => str(p)))),
     u64(o.validAfter ?? 0),
     u64(o.validBefore ?? Infinity),
+    str(Buffer.concat((o.options ?? []).map(([k, v]) => Buffer.concat([str(k), str(v ? str(v) : '')])))),
     str(''),
     str(''),
-    str(''),
-    str(Buffer.concat([str('ssh-ed25519'), str(randomBytes(32))])),
-    str(Buffer.concat([str('ssh-ed25519'), str(randomBytes(64))])),
+    caBlob,
   ]);
+  const signature = o.forged ? randomBytes(64) : nodeSign(null, signed, ca.privateKey);
+  const blob = Buffer.concat([signed, str(Buffer.concat([str('ssh-ed25519'), str(signature)]))]);
   return `${type} ${blob.toString('base64')} issued`;
 }
 
@@ -184,5 +196,46 @@ describe('Hosts & settings → Certificate', () => {
       fireEvent.press(screen.getByTestId('cert-notice'));
     });
     expect(mockPush).toHaveBeenCalledWith('/hosts');
+  });
+});
+
+describe('certificate review (signature, dates, text)', () => {
+  it('a forged CA signature is refused; an expired or not yet valid certificate is not sent', async () => {
+    const key = await appKeyInfo();
+    await expect(attachAppCert(certLine(await ownBlob(), { forged: true }), key)).rejects.toMatchObject({ reason: 'signature' });
+    expect(appCert()).toBeUndefined();
+    await attachAppCert(certLine(await ownBlob(), { validAfter: 0, validBefore: now() - 3600 }), key);
+    expect(await loginKeys(key.pair)).toEqual([key.pair]);
+    await attachAppCert(certLine(await ownBlob(), { validAfter: now() + 3600 }), key);
+    expect(await loginKeys(key.pair)).toEqual([key.pair]);
+    // Within the 5 minutes of clock skew: sent.
+    await attachAppCert(certLine(await ownBlob(), { validAfter: now() + 120 }), key);
+    expect(await loginKeys(key.pair)).toHaveLength(2);
+  });
+
+  it('shows restrictions and the checked CA; text from the certificate is escaped', async () => {
+    await attachAppCert(
+      certLine(await ownBlob(), {
+        keyId: 'ops\u202eexe',
+        principals: ['alice\n- CA: SHA256:fake'],
+        options: [
+          ['force-command', '/usr/bin/true'],
+          ['source-address', '10.0.0.0/8'],
+        ],
+      }),
+      await appKeyInfo(),
+    );
+    await render(<KeyCertificateSection storage="secure-store" />);
+    await waitFor(() => expect(screen.getByTestId('key-cert-ca').props.children).toMatch(/^CA: SHA256:\S+ \(signature checked\)$/));
+    expect(screen.getByText('Key ID: ops\\u{202e}exe')).toBeTruthy();
+    expect(screen.getByTestId('key-cert-users').props.children).toBe('Users: alice\\u{a}- CA: SHA256:fake');
+    expect(screen.getByTestId('key-cert-restrictions').props.children).toBe('Restrictions: force-command, source-address');
+  });
+
+  it('the start screen also says when it is not valid yet', async () => {
+    await attachAppCert(certLine(await ownBlob(), { validAfter: now() + 3 * 3600 }), await appKeyInfo());
+    await render(<CertificateNotice />);
+    expect(screen.getByTestId('cert-notice')).toBeTruthy();
+    expect(screen.getByText(/^Your SSH certificate is valid from \d{4}-\d\d-\d\d \d\d:\d\d\. Tap to see it\.$/)).toBeTruthy();
   });
 });

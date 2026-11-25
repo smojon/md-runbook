@@ -14,6 +14,8 @@ import {
   type SshCertificate,
   certificateLine,
   certificateState,
+  certificateUsable,
+  checkCaSignature,
   parseCertificate,
 } from '@md-runbook/ssh';
 import { useSyncExternalStore } from 'react';
@@ -58,7 +60,7 @@ export function useAppCert(): SshCertificate | undefined {
 
 export class CertificateError extends Error {
   constructor(
-    readonly reason: 'passkey' | 'other-key' | 'unreadable',
+    readonly reason: 'passkey' | 'other-key' | 'unreadable' | 'signature',
     message: string,
   ) {
     super(message);
@@ -74,7 +76,8 @@ const firstLine = (text: string): string =>
 
 /**
  * Check the certificate (a `…-cert.pub` line) is for `key`, then keep it. Throws a
- * CertificateError: a passkey, another key's certificate, not a user certificate.
+ * CertificateError: a passkey, another key's certificate, not a user certificate, a CA signature
+ * that doesn't check out (where this device can check it).
  */
 export async function attachAppCert(text: string, key: AppKey): Promise<SshCertificate> {
   if (key.storage === 'passkey') throw new CertificateError('passkey', 'a passkey');
@@ -90,6 +93,7 @@ export async function attachAppCert(text: string, key: AppKey): Promise<SshCerti
   } catch (e) {
     throw new CertificateError('other-key', e instanceof Error ? e.message : String(e));
   }
+  if ((await checkCaSignature(cert)) === 'invalid') throw new CertificateError('signature', 'the CA signature is not valid');
   await setSecret(KEY, certificateLine(cert));
   current = cert;
   emit();
@@ -108,12 +112,13 @@ export async function dropAppCert(): Promise<void> {
 }
 
 /**
- * The keys a login tries: the certificate on the key first (sshd counts each key tried), then
- * the key alone, for hosts that list it in authorized_keys.
+ * The keys a login tries: the certificate on the key first, when within its dates (a few minutes
+ * of clock skew allowed; sshd counts each key tried), then the key alone, for hosts that list it
+ * in authorized_keys.
  */
-export async function loginKeys(pair: KeyPair): Promise<KeyPair[]> {
+export async function loginKeys(pair: KeyPair, now = Date.now()): Promise<KeyPair[]> {
   await loadAppCert();
-  if (!current) return [pair];
+  if (!current || !certificateUsable(current, now)) return [pair];
   try {
     return [await CertKeyPair.create(pair, current), pair];
   } catch {
@@ -126,16 +131,24 @@ export function appCertState(cert: SshCertificate, now = Date.now()): Certificat
   return certificateState(cert, now);
 }
 
-/** How long until `seconds` from now, rounded down: days from 2 days, hours from 2 hours, else minutes (at least 1). */
-export function timeLeft(seconds: number, now = Date.now()): { n: number; unit: 'day' | 'hour' | 'minute' } {
+/** Seconds JavaScript dates reach: a certificate may say more. */
+const MAX_DATE_SECONDS = 8.64e12;
+
+/**
+ * How long until `seconds` from now, rounded down: days from 2 days, hours from 2 hours, else
+ * minutes (at least 1). Undefined past what a date can say.
+ */
+export function timeLeft(seconds: number, now = Date.now()): { n: number; unit: 'day' | 'hour' | 'minute' } | undefined {
+  if (!Number.isFinite(seconds) || seconds > MAX_DATE_SECONDS) return undefined;
   const s = Math.max(60, seconds - now / 1000);
   if (s >= 2 * 86400) return { n: Math.floor(s / 86400), unit: 'day' };
   if (s >= 2 * 3600) return { n: Math.floor(s / 3600), unit: 'hour' };
   return { n: Math.floor(s / 60), unit: 'minute' };
 }
 
-/** `2026-11-25 14:05` in local time (as the extension shows it). */
-export function localDateTime(seconds: number): string {
+/** `2026-11-25 14:05` in local time (as the extension shows it); undefined past what a date can say. */
+export function localDateTime(seconds: number): string | undefined {
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > MAX_DATE_SECONDS) return undefined;
   const d = new Date(seconds * 1000);
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
