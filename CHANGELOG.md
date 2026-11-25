@@ -2,10 +2,28 @@
 
 ## Unreleased
 
-The ops host's remaining findings from the security review of 0.31.1 (all low):
+What's new:
+- The ops host's remaining findings from the security review of 0.31.1 (all low).
+- Redaction hides more forms of a secret in command lines.
 - **Gate admins: apply `admission-policy.yaml` again.** Until you do, sessions refuse where
   runbooks may change workloads: `the admission policy md-runbook-ops-workloads has no rule on
   the namespace`.
+
+### Redaction
+
+These leaked before:
+- A flag's value in escaped quotes: `sh -c "db --password \"…\""`.
+- `curl -u user:'password'` and `-u user:"password"`.
+- bash's `$'…'` quotes, with their escapes, for keys, flags and password tools.
+- Text glued before a quote: `--password abc'def'`, `password=abc"def"`.
+- An empty quoted value or a quoted reference with text glued to it: `password=''abc`,
+  `--password '${secret:X}'abc`.
+- `sshpass -p 'a'' -p 'b c'`, where a shell reads one password word.
+
+The leak scan also reports:
+- a quoted password with blanks given to a tool, or after a Unicode space;
+- a value with a reference or `...` glued to it, such as `sshpass -p Kd4wD7"$SUFFIX"`. It
+  judges the literal part.
 
 ### Ops host (cells_runner = kubernetes-job)
 
