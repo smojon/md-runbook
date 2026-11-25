@@ -317,6 +317,8 @@ export function lint(argv: readonly string[], out: (line: string) => void = (l) 
   let failed = false;
   let count = 0;
   let notes = 0;
+  /** Info that isn't prose (an empty call body): never failing either. */
+  let hints = 0;
   for (const file of checked) {
     if (!fs.existsSync(file)) {
       out(`${file}: error: no such file`);
@@ -328,7 +330,8 @@ export function lint(argv: readonly string[], out: (line: string) => void = (l) 
       out(formatProblem(file, p));
       if (annotate) out(`::${p.severity === 'info' ? 'notice' : p.severity} file=${file},line=${p.line + 1}::${p.message.replace(/\r?\n/g, ' ')}`);
       if (p.severity === 'info') {
-        notes++;
+        if (isProse(p)) notes++;
+        else hints++;
         continue;
       }
       count++;
@@ -336,7 +339,8 @@ export function lint(argv: readonly string[], out: (line: string) => void = (l) 
     }
   }
   const prose = notes > 0 ? `, ${notes} prose note${notes === 1 ? '' : 's'}` : '';
-  out(`${failed ? '✗' : '✓'} ${checked.length} file${checked.length === 1 ? '' : 's'} checked, ${count} problem${count === 1 ? '' : 's'}${prose}`);
+  const other = hints > 0 ? `, ${hints} note${hints === 1 ? '' : 's'}` : '';
+  out(`${failed ? '✗' : '✓'} ${checked.length} file${checked.length === 1 ? '' : 's'} checked, ${count} problem${count === 1 ? '' : 's'}${other}${prose}`);
   return failed ? 1 : 0;
 }
 

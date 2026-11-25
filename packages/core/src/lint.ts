@@ -2,8 +2,8 @@
  * Static checks on a runbook, before anything runs: invalid or unknown cell options, `every=`
  * without `retry=`, `${out:NAME}` with no earlier `capture=NAME`, `${param:NAME}` not declared
  * in the front matter, a name used as two kinds of placeholder, front matter values that are
- * ignored, blocks changed since the runbook was signed, and prose that could be shorter
- * (prose.ts, as info). Used by `md-runbook lint` and by the editor's problem markers.
+ * ignored, blocks changed since the runbook was signed, a runbook call with an empty body (info,
+ * with the comment that fixes it), and prose that could be shorter (prose.ts, as info). Used by `md-runbook lint` and by the editor's problem markers.
  */
 
 import { INFO_LANG_RE, cellRefs, parseCellOptions, tokenizeInfo } from './cellOptions';
@@ -14,7 +14,7 @@ import { CodeCellLocation, locateCodeCells } from './locate';
 import { findRefs, frontMatterEnvEntry, parseFrontMatter, reportAddressProblem } from './secrets';
 import { POWERSHELLS, UNIX_SHELLS, parseShells, shellKindForLanguage } from './shellKind';
 import { readSignature, signedStatus } from './signing';
-import { CALL_OPTIONS, NOT_ON_A_CALL, callRefs, checkCall, isCallLanguage, isDynamicSrc, parseCall, srcGlob } from './call';
+import { CALL_OPTIONS, NOT_ON_A_CALL, callBodyComment, callRefs, checkCall, isCallLanguage, isDynamicSrc, isEmptyCallBody, parseCall, srcGlob } from './call';
 import { partProblems } from './parts';
 import { ProseOptions, markupCellAt, measureProse, proseLimits, sentenceMessage } from './prose';
 import { LINE_RE } from './lines';
@@ -32,9 +32,16 @@ export interface LintProblem {
   cell?: { index: number; sourceLine?: number };
   /** An unknown option that looks like a typo: rename `option` to `to` on the fence line (renameInfoOption). */
   fix?: { option: string; to: string };
-  /** What kind of finding, for the prose checks (prose.ts): `prose-sentence`, `prose-repeat`, … */
+  /** What kind of finding: the prose checks' (prose.ts) `prose-sentence`, `prose-repeat`, …; CALL_EMPTY_BODY. */
   code?: string;
+  /** A call with an empty body: this comment, inserted as its body's first line, says what it runs (a Quick Fix). */
+  addComment?: string;
 }
+
+/** The code of a runbook call whose body is empty: info, never a prose finding. */
+export const CALL_EMPTY_BODY = 'call-empty-body';
+/** Its message: what a plain Markdown viewer shows, and what to do. */
+export const CALL_EMPTY_BODY_MESSAGE = "This call's body is empty: a plain Markdown viewer shows an empty box. Add a comment saying what it runs.";
 
 export const KNOWN_OPTIONS = new Set([
   // cellOptions.ts
@@ -530,6 +537,11 @@ function lintCall(loc: CodeCellLocation, declared: ReadonlySet<string>, captured
     }
   }
   if (call.src === undefined) return problems;
+  // The call is all in its fence options, which a Markdown preview doesn't show (a team's report).
+  const comment = isEmptyCallBody(loc.source) ? callBodyComment(loc.info) : undefined;
+  if (comment !== undefined) {
+    problems.push({ severity: 'info', code: CALL_EMPTY_BODY, message: CALL_EMPTY_BODY_MESSAGE, line: loc.line + 1, cell: { index: loc.cellIndex, sourceLine: 0 }, addComment: comment });
+  }
   if (isDynamicSrc(call.src)) {
     const glob = srcGlob(call.src);
     const matches = options.matchRunbooks?.(glob);
@@ -573,5 +585,7 @@ function signatureLine(text: string): number {
 
 /** `file:line: error: message`, the format editors and CI systems link to. */
 export function formatProblem(file: string, p: LintProblem): string {
-  return `${file}:${p.line + 1}: ${p.severity}: ${p.message}`;
+  // On the command line the Quick Fix is the line to add.
+  const fix = p.addComment !== undefined ? ` First line: ${p.addComment}` : '';
+  return `${file}:${p.line + 1}: ${p.severity}: ${p.message}${fix}`;
 }

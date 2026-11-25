@@ -44,11 +44,13 @@ Each runbook that needs it calls it ([runbook calls](calls.md)):
 
 ````markdown
 ```runbook src=../lab/ka4.md section="Start the lab" setup
+# Runs the runbook ../lab/ka4.md (section Start the lab)
 ```
 
 …the runbook's own steps…
 
 ```runbook src=../lab/ka4.md section="Stop the lab" teardown
+# Runs the runbook ../lab/ka4.md (section Stop the lab)
 ```
 ````
 

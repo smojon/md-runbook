@@ -10,7 +10,8 @@ import { matchRunbooks, runbookReader } from '@md-runbook/core/node';
 import { SECTION } from './config';
 import { isCodeMeta } from '@md-runbook/core';
 import { renameInfoOption } from '@md-runbook/core/cellOptions';
-import { LintProblem, lintRunbook, suggestOption } from '@md-runbook/core/lint';
+import { CALL_EMPTY_BODY, LintProblem, lintRunbook, suggestOption } from '@md-runbook/core/lint';
+import { CALL_COMMENT_FIX_TITLE, callBodyComment, isEmptyCallBody } from '@md-runbook/core/call';
 import { withInfo } from '@md-runbook/core/proposal';
 import { META_KEY } from './outputs';
 import { neverRanCells, onDidChangeRuns, runsKeyOf } from './runs';
@@ -68,6 +69,36 @@ async function fixCellOption(notebook: unknown, index: unknown, from: unknown, t
 }
 
 /**
+ * Quick Fix for a call with an empty body: a comment naming the runbook as its first line, so a
+ * plain Markdown viewer shows what it runs. The comment is made again from the fence options (the
+ * code action gets copies of the diagnostics, without extra fields): in the runbook view from the
+ * cell's metadata, in the Markdown text from the fence line above the body.
+ */
+function callCommentFix(doc: vscode.TextDocument, d: vscode.Diagnostic): vscode.CodeAction | undefined {
+  const edit = new vscode.WorkspaceEdit();
+  if (doc.uri.scheme === 'vscode-notebook-cell') {
+    const cell = vscode.workspace.notebookDocuments.flatMap((nb) => nb.getCells()).find((c) => c.document.uri.toString() === doc.uri.toString());
+    const meta: unknown = cell?.metadata?.[META_KEY];
+    const comment = isCodeMeta(meta) && isEmptyCallBody(doc.getText()) ? callBodyComment(meta.info) : undefined;
+    if (comment === undefined) return undefined;
+    edit.insert(doc.uri, new vscode.Position(0, 0), doc.getText() === '' ? comment : `${comment}\n`);
+  } else {
+    // The finding is on the body's first line: the fence is the line above it.
+    const at = d.range.start.line;
+    const fence = at > 0 ? FENCE_LINE_RE.exec(doc.lineAt(at - 1).text) : null;
+    const comment = fence ? callBodyComment(fence[2]!.trim()) : undefined;
+    if (!fence || comment === undefined) return undefined;
+    const indent = /^\s*/.exec(fence[1]!)![0];
+    edit.insert(doc.uri, new vscode.Position(at, 0), `${indent}${comment}${doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n'}`);
+  }
+  const action = new vscode.CodeAction(CALL_COMMENT_FIX_TITLE, vscode.CodeActionKind.QuickFix);
+  action.diagnostics = [d];
+  action.isPreferred = true;
+  action.edit = edit;
+  return action;
+}
+
+/**
  * Quick Fix for a misspelled cell option: rename it on the fence, in the runbook view (the cell's
  * fence options, kept in its metadata) and in the Markdown text (the fence line).
  */
@@ -75,6 +106,11 @@ const typoFixes: vscode.CodeActionProvider = {
   provideCodeActions(doc, _range, context) {
     const actions: vscode.CodeAction[] = [];
     for (const d of context.diagnostics) {
+      if (d.source === 'md-runbook' && d.code === CALL_EMPTY_BODY) {
+        const action = callCommentFix(doc, d);
+        if (action) actions.push(action);
+        continue;
+      }
       const m = d.source === 'md-runbook' && d.code === TYPO_CODE ? TYPO_RE.exec(d.message) : null;
       if (!m) continue;
       const [, from, to] = m as unknown as [string, string, string];

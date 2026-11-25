@@ -30,6 +30,10 @@ BACKUP_DIR=${out:BACKUP_DIR}
 - `section=` runs only the steps under the headings that start with it, as
   `md-runbook run --section` does (repeat it for several). A section that matches no heading of
   the runbook called is an error before anything runs.
+- Start the body with a comment that names the runbook: `# Runs the runbook releases/….md`.
+  - A plain Markdown viewer (GitHub, a preview) doesn't show the fence options. Without the
+    comment, an empty call is an empty box there.
+  - Lint notes an empty body. Its Quick Fix **Add a comment naming the runbook** writes the line.
 - `name=`, `confirm`, `timeout=` (for the whole call), `continue-on-error`, `skip`,
   `kube-context=` and `estimate=` mean what they mean on any block. Options for a shell
   (`cwd=`, `env.NAME=`, `expect=`, `capture=`, `retry=`, …) have no effect on a call; lint says
@@ -109,6 +113,8 @@ finishes (`✓ first`, `✗ second (1)`) and ends with the result:
 6 done, 1 skipped · sha256 3f1c…
 ```
 
+- The cell's status bar starts with what it runs: `name → src · section`. Click it to open that
+  runbook. A `src=` with placeholders is known only when the call runs.
 - **Open …** on the cell's status bar opens the copy it ran.
 - **Fresh copy** on the cell's status bar runs it in a new copy instead of continuing the failed
   run's copy. So does *md-runbook: Run Runbook Call with a Fresh Copy*.
@@ -128,6 +134,9 @@ The md-runbook app (phone and web) runs a call the same way:
    runbook that called it, where **Resume** goes on after the call.
 
 A call that failed continues in its copy when run again.
+
+The call's status line starts with what it runs, as in VS Code. An empty body gets the same note
+under the call, with the same fix.
 
 Where the app finds the runbook a call names:
 

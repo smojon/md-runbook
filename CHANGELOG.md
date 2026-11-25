@@ -32,6 +32,12 @@ What's new, from a security review of the ops host in a cluster:
   - checking that network policies are enforced;
   - scopes and version floors in production.
 
+**Runbook calls:** a call cell shows what it runs, even with an empty body.
+- In VS Code, its status bar starts with `name → src · section`. Click it to open that runbook.
+- The app shows the same line on the call.
+- Lint notes a call with an empty body: a plain Markdown viewer shows an empty box. The Quick
+  Fix adds `# Runs the runbook <src>` as its first line (a button in the app).
+
 ## 0.31.1
 
 **Fixed:** in VS Code, a cell's progress bar kept counting after the run ended. It stayed over the

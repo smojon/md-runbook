@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ExecuteResult, isCodeMeta, locateCodeCells, parse, stepState, taskItems } from '@md-runbook/core';
-import { CallResult, callAttrs, callChainProblem, callFromAttrs, callOutputText, checkCall, fillRefs, formatCallSteps, isCallLanguage, isDynamicSrc, parseCall, recordValues, srcValueProblem } from '@md-runbook/core/call';
+import { CallResult, callAttrs, callChainProblem, callFromAttrs, callLabel, callOutputText, checkCall, fillRefs, formatCallSteps, isCallLanguage, isDynamicSrc, parseCall, recordValues, srcValueProblem } from '@md-runbook/core/call';
 import { copyDigest } from '@md-runbook/core/callCopy';
 import { resumableCopy } from '@md-runbook/core/node/callCopyRecord';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
@@ -20,7 +20,7 @@ import { outputBlockAttrs } from '@md-runbook/core/progress';
 import { parseFrontMatter } from '@md-runbook/core/secrets';
 import { inSections, sectionHeadings } from '@md-runbook/core/sections';
 import { osGroups } from '@md-runbook/core/os';
-import { callTarget, fileSha256, relativeToCaller, samePath, writeCallCopy } from '@md-runbook/core/node';
+import { callTarget, calledRunbookFile, fileSha256, relativeToCaller, samePath, writeCallCopy } from '@md-runbook/core/node';
 import { readSignature } from '@md-runbook/core/signing';
 import { SECTION } from './config';
 import { META_KEY, outputMeta } from './outputs';
@@ -317,10 +317,24 @@ export class CallExecutor implements CellExecutor {
   }
 }
 
-/** The status bar of a call cell: open the copy it ran; run it with a fresh copy. */
+/**
+ * The status bar of a call cell: what it runs (its fence options aren't on screen, and its body may
+ * be empty), which opens that runbook; open the copy it ran; run it with a fresh copy.
+ */
 function callItems(cell: vscode.NotebookCell): vscode.NotebookCellStatusBarItem[] {
   if (cell.kind !== vscode.NotebookCellKind.Code || !isCallLanguage(cell.document.languageId)) return [];
   const items: vscode.NotebookCellStatusBarItem[] = [];
+  const label = callLabel(infoOf(cell), cell.document.getText());
+  if (label) {
+    // A `$(` in a name or path is text, not an icon.
+    const what = new vscode.NotebookCellStatusBarItem(`$(references) ${label.text.replace(/\$\(/g, '\\$(')}`, vscode.NotebookCellStatusBarAlignment.Left);
+    what.command = { title: 'Open the Runbook a Call Runs', command: 'mdRunbook.openCalledRunbook', arguments: [cell] };
+    what.tooltip = `${label.tooltip}\nClick to open it.`;
+    what.accessibilityInformation = { label: label.tooltip.replace(/\n/g, '. ') };
+    // First, after a question the cell waits on (waiting.ts, 1000) and before Retry (failedActions.ts, 900).
+    what.priority = 950;
+    items.push(what);
+  }
   const last = callFromAttrs(attrsOf(cell.outputs, cell.metadata?.[META_KEY]));
   if (last && cell.notebook.uri.scheme === 'file') {
     const open = new vscode.NotebookCellStatusBarItem(`$(go-to-file) Open ${path.basename(last.copy)}`, vscode.NotebookCellStatusBarAlignment.Left);
@@ -360,6 +374,18 @@ export function registerCalls(context: vscode.ExtensionContext, pipeline: RunPip
       }
     }),
     vscode.notebooks.registerNotebookCellStatusBarItemProvider(NOTEBOOK_TYPE, { onDidChangeCellStatusBarItems: changed.event, provideCellStatusBarItems: callItems }),
+    // A call's fence options changed (they are the cell's metadata): what it runs, shown again.
+    vscode.workspace.onDidChangeNotebookDocument((e) => {
+      if (e.notebook.notebookType === NOTEBOOK_TYPE && e.cellChanges.some((c) => c.metadata !== undefined && isCallLanguage(c.cell.document.languageId))) changed.fire();
+    }),
+    vscode.commands.registerCommand('mdRunbook.openCalledRunbook', async (arg?: unknown) => {
+      const cell = targetCell(arg);
+      if (!cell || !isCallLanguage(cell.document.languageId)) return void vscode.window.showInformationMessage('md-runbook: select a runbook call (a ```runbook block).');
+      if (cell.notebook.uri.scheme !== 'file') return void vscode.window.showInformationMessage('md-runbook: save the runbook to a file first: src= is relative to it.');
+      const called = calledRunbookFile(cell.notebook.uri.fsPath, infoOf(cell));
+      if ('problem' in called) return void vscode.window.showInformationMessage(`md-runbook: ${called.problem}`);
+      await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(called.file), NOTEBOOK_TYPE, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+    }),
     vscode.commands.registerCommand('mdRunbook.openCallCopy', async (arg?: unknown) => {
       const cell = targetCell(arg);
       const last = cell ? callFromAttrs(attrsOf(cell.outputs, cell.metadata?.[META_KEY])) : undefined;

@@ -306,6 +306,12 @@
         "icon": "$(go-to-file)"
       },
       {
+        "command": "mdRunbook.openCalledRunbook",
+        "title": "Open the Runbook a Call Runs",
+        "category": "md-runbook",
+        "icon": "$(references)"
+      },
+      {
         "command": "mdRunbook.runCallFresh",
         "title": "Run Runbook Call with a Fresh Copy",
         "category": "md-runbook",
@@ -1471,6 +1477,11 @@
           "command": "mdRunbook.openCallCopy",
           "when": "mdRunbook.selectionIsCall",
           "group": "1_run@5"
+        },
+        {
+          "command": "mdRunbook.openCalledRunbook",
+          "when": "mdRunbook.selectionIsCall",
+          "group": "1_run@6"
         },
         {
           "command": "mdRunbook.showSteps",

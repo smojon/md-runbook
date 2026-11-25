@@ -16,7 +16,7 @@
  * and the call's output; running is in the CLI and the extension.
  */
 
-import { INFO_LANG_RE, tokenizeInfo } from './cellOptions';
+import { INFO_LANG_RE, parseCellOptions, tokenizeInfo } from './cellOptions';
 import { RefKind, VAR_NAME_RE, VarRef, findRefs, parseFrontMatter, replaceRefs } from './secrets';
 import { inSections, missingSections, sectionHeadings, sectionOnTitle } from './sections';
 import { locateCodeCells } from './locate';
@@ -146,6 +146,79 @@ export function fillRefs(text: string, value: (kind: RefKind, name: string) => s
 /** Whether src= depends on values known only at run time. */
 export function isDynamicSrc(src: string): boolean {
   return /\$\{(param|out|input|secret):/.test(src);
+}
+
+/** At most `max` characters: the start, then `…` (after a whole word when one ends near the cut). */
+function shortEnd(s: string, max: number): string {
+  const chars = Array.from(s);
+  if (chars.length <= max) return s;
+  const cut = chars.slice(0, max - 1).join('');
+  const space = cut.lastIndexOf(' ');
+  return (space >= cut.length * 0.6 ? cut.slice(0, space) : cut).trimEnd() + '…';
+}
+
+/** At most `max` characters of a path: `…` then its end, from a folder boundary when there is one. */
+function shortPath(s: string, max: number): string {
+  const chars = Array.from(s);
+  if (chars.length <= max) return s;
+  const tail = chars.slice(-(max - 1)).join('');
+  const slash = tail.indexOf('/');
+  return '…' + (slash >= 0 && slash < tail.length - 1 ? tail.slice(slash) : tail);
+}
+
+/** ` (section A)`, ` (sections A, B)`, or '' without section=. */
+function sectionsSuffix(sections: readonly string[]): string {
+  return sections.length ? ` (section${sections.length === 1 ? '' : 's'} ${sections.join(', ')})` : '';
+}
+
+/** The fence options a call's label shows (callLabel). */
+export const CALL_LABEL_KEYS: ReadonlySet<string> = new Set(['name', 'src', 'section']);
+
+export interface CallLabel {
+  /** One short line: `name → src · section S` (each part shortened; src= as written). */
+  text: string;
+  /** Every value in full, one per line. */
+  tooltip: string;
+}
+
+/**
+ * What a call runs, for its cell (VS Code's status bar, the app's call line): its name= if any, its
+ * src= as written (a dynamic one with its placeholders) and its section= values. Undefined for a
+ * call with neither name= nor src=.
+ */
+export function callLabel(info: string, source = ''): CallLabel | undefined {
+  const call = parseCall(info, source);
+  const name = parseCellOptions(info).name?.trim() || undefined;
+  if (call.src === undefined && name === undefined) return undefined;
+  const parts: string[] = [];
+  if (name !== undefined) parts.push(shortEnd(name, 40));
+  if (call.src !== undefined) parts.push(shortPath(call.src, 60));
+  let text = parts.join(' → ');
+  if (call.sections.length) text += ` · section${call.sections.length === 1 ? '' : 's'} ${shortEnd(call.sections.map((s) => shortEnd(s, 30)).join(', '), 40)}`;
+  const tooltip = [
+    call.src !== undefined ? `Runs the runbook ${call.src}` : 'Runs a runbook: src= is missing',
+    ...(name !== undefined ? [`Name: ${name}`] : []),
+    ...(call.sections.length ? [`Section${call.sections.length === 1 ? '' : 's'}: ${call.sections.map((s) => `"${s}"`).join(', ')}`] : []),
+    ...(call.src !== undefined && isDynamicSrc(call.src) ? ['Its file is known when it runs: src= has placeholders'] : []),
+  ].join('\n');
+  return { text, tooltip };
+}
+
+/** The fix of an empty call body (lint's CALL_EMPTY_BODY): VS Code's Quick Fix, the app's button. */
+export const CALL_COMMENT_FIX_TITLE = 'Add a comment naming the runbook';
+
+/** Whether a call's body passes nothing and says nothing: a plain Markdown viewer shows an empty box. */
+export function isEmptyCallBody(source: string): boolean {
+  return source.trim() === '';
+}
+
+/**
+ * The comment that names what a call runs, for its body's first line: `# Runs the runbook PATH`,
+ * with ` (section S)` when it has section=. Undefined without src=.
+ */
+export function callBodyComment(info: string): string | undefined {
+  const call = parseCall(info, '');
+  return call.src === undefined ? undefined : `# Runs the runbook ${call.src}${sectionsSuffix(call.sections)}`;
 }
 
 /** src= as a glob: each placeholder becomes `*` (releases/${param:TO}.md → releases/*.md). */
