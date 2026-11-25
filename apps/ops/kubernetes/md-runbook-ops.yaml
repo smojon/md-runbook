@@ -60,8 +60,10 @@ subjects:
     name: md-runbook-ops
     namespace: md-runbook-ops
 ---
-# The gate's cluster-wide reads, for its checks once runbooks may change workloads somewhere
-# (else it refuses sessions):
+# The gate's cluster-wide reads, for its checks once runbooks may change workloads somewhere.
+# Needed only once you bind md-runbook-ops-operate (or other workload rights) in a namespace:
+# then, without it, the gate refuses sessions. Where runbooks change nothing, you may leave this
+# ClusterRole and its binding out. What it reads:
 #   - the admission policy md-runbook-ops-workloads and its binding, by name
 #     (admission-policy.yaml);
 #   - the ClusterRoleBindings: it refuses a namespace whose service accounts have cluster-wide

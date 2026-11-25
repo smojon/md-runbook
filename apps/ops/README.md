@@ -333,15 +333,26 @@ kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
 **Coming from 0.31.x:** apply both files again, as a cluster admin.
 - `admission-policy.yaml` adds the policy `md-runbook-ops-workloads` and its binding.
 - Your copy of `md-runbook-ops.yaml` needs from the stock file:
-  - the ClusterRole and ClusterRoleBinding `md-runbook-ops-gate`: the gate reads the policy and
-    lists the ClusterRoleBindings with them;
   - `md-runbook-ops-operate` without `jobs create` (opt-in now);
-  - the log volume's `sizeLimit`.
-- Without them, sessions refuse while runbooks may change workloads somewhere.
+  - the log volume's `sizeLimit`;
+  - once you bind `md-runbook-ops-operate` somewhere: the ClusterRole and ClusterRoleBinding
+    `md-runbook-ops-gate`. The gate reads the policy and lists the ClusterRoleBindings with
+    them. Where runbooks change no workloads, you may leave them out.
+- Without that ClusterRole, while runbooks may change workloads, sessions refuse with:
+  - `the gate's service account can't read the admission policy md-runbook-ops-workloads`;
+  - `the gate's service account may not list clusterrolebindings`.
 - A binding in a `kube-*` namespace now refuses sessions: delete it.
 - A binding in a namespace whose service accounts have cluster-wide bindings refuses them too.
 - Keep the rules you added to `md-runbook-ops-operate` in your copy: `kubectl apply` replaces
   its rules.
+
+**Coming from 0.32.x:** apply `admission-policy.yaml` again, as a cluster admin. With a mirror,
+set `repository` in the file first.
+- It adds a rule on the namespace to `md-runbook-ops-workloads`.
+- Without it, while runbooks may change workloads, sessions refuse with `the admission policy
+  md-runbook-ops-workloads has no rule on the namespace`.
+- Your copy of `md-runbook-ops.yaml` needs nothing new. Its namespace must keep Pod Security
+  `restricted`, as the stock file labels it.
 
 ### A Job per session
 
