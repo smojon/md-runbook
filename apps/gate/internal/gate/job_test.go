@@ -977,7 +977,9 @@ func TestReviewLists(t *testing.T) {
 	}
 	for k, want := range map[string]bool{"create jobs/ ops": true, "delete jobs/ ops": true, "create pods/exec ops": true, "list serviceaccounts/ ops": true, "list pods/ ": false, "get secrets/ ops": false, "create pods/ ops": false,
 		"get validatingadmissionpolicybindings/ ": false, "list validatingadmissionpolicies/ ": false, "update validatingadmissionpolicybindings/ ": false, "delete validatingadmissionpolicies/ ": false,
-		"get clusterrolebindings/ ": false, "create clusterrolebindings/ ": false, "bind clusterroles/ ": false, "escalate roles/ ": false, "list rolebindings/ ": false} {
+		"get clusterrolebindings/ ": false, "create clusterrolebindings/ ": false, "bind clusterroles/ ": false, "escalate roles/ ": false, "list rolebindings/ ": false,
+		"create deployments/ ops": false, "create cronjobs/ ops": false, "create replicationcontrollers/ ops": false, "patch pods/ ops": false,
+		"patch pods/ephemeralcontainers ops": false, "create pods/attach ops": false, "create pods/portforward ops": false} {
 		if got, ok := need[k]; !ok || got != want {
 			t.Errorf("ops check: %s = %v, %v", k, got, ok)
 		}
@@ -1342,7 +1344,8 @@ func TestUnguardedNamespaces(t *testing.T) {
 // only with its binding denying in every namespace; it counts where the cells may change
 // workloads (security review of 0.31, H2).
 func TestWorkloadPolicy(t *testing.T) {
-	const pol = `{"apiVersion":"admissionregistration.k8s.io/v1","kind":"ValidatingAdmissionPolicy","metadata":{"name":"md-runbook-ops-workloads"},"spec":{"failurePolicy":"Fail"}}`
+	const rule = `"validations":[{"expression":"variables.update"},{"expression":"namespaceObject != null && namespaceObject.metadata.labels['pod-security.kubernetes.io/enforce'] in ['baseline']"}]`
+	const pol = `{"apiVersion":"admissionregistration.k8s.io/v1","kind":"ValidatingAdmissionPolicy","metadata":{"name":"md-runbook-ops-workloads"},"spec":{"failurePolicy":"Fail",` + rule + `}}`
 	bind := func(spec string) string {
 		return `{"apiVersion":"admissionregistration.k8s.io/v1","kind":"ValidatingAdmissionPolicyBinding","metadata":{"name":"md-runbook-ops-workloads"},"spec":` + spec + `}`
 	}
@@ -1371,8 +1374,11 @@ func TestWorkloadPolicy(t *testing.T) {
 	}{
 		// The API server's defaults: empty selectors, matchPolicy.
 		"defaulted":        {list(pol, bind(`{"policyName":"md-runbook-ops-workloads","validationActions":["Deny"],"matchResources":{"namespaceSelector":{},"objectSelector":{},"matchPolicy":"Equivalent"}}`)), nil, ""},
-		"no failurePolicy": {list(`{"kind":"ValidatingAdmissionPolicy","metadata":{"name":"md-runbook-ops-workloads"},"spec":{}}`, good), nil, ""},
-		"not found":        {nil, errors.New(`exit status 1: Error from server (NotFound): validatingadmissionpolicybindings.admissionregistration.k8s.io "md-runbook-ops-workloads" not found`), missing},
+		"no failurePolicy": {list(`{"kind":"ValidatingAdmissionPolicy","metadata":{"name":"md-runbook-ops-workloads"},"spec":{`+rule+`}}`, good), nil, ""},
+		// 0.32.0's policy: no rule on the namespace (its labels held only at the session's start).
+		"no namespace rule": {list(`{"kind":"ValidatingAdmissionPolicy","metadata":{"name":"md-runbook-ops-workloads"},"spec":{"failurePolicy":"Fail","validations":[{"expression":"variables.update"}]}}`, good), nil,
+			"the admission policy md-runbook-ops-workloads has no rule on the namespace (Pod Security, kube-*): it predates md-runbook 0.33.0. " + apply + " again"},
+		"not found": {nil, errors.New(`exit status 1: Error from server (NotFound): validatingadmissionpolicybindings.admissionregistration.k8s.io "md-runbook-ops-workloads" not found`), missing},
 		"forbidden": {nil, errors.New(`exit status 1: Error from server (Forbidden): validatingadmissionpolicies.admissionregistration.k8s.io "md-runbook-ops-workloads" is forbidden`),
 			`the gate's service account can't read the admission policy md-runbook-ops-workloads (exit status 1: Error from server (Forbidden): validatingadmissionpolicies.admissionregistration.k8s.io "md-runbook-ops-workloads" is forbidden). Apply apps/ops/kubernetes/md-runbook-ops.yaml (ClusterRole md-runbook-ops-gate)`},
 		"failed":          {nil, errors.New("exit status 1: error: You must be logged in to the server (Unauthorized)"), "can't tell whether the admission policy md-runbook-ops-workloads is in force (exit status 1: error: You must be logged in to the server (Unauthorized))"},
@@ -1414,6 +1420,123 @@ func TestWorkloadPolicy(t *testing.T) {
 	if p := unpolicedNamespaces(readOnly, missing); len(readOnly) != 0 || p != "" {
 		t.Errorf("read only: %q %q", readOnly, p)
 	}
+}
+
+// The shipped policy has the namespace rule the gate looks for.
+func TestShippedWorkloadPolicy(t *testing.T) {
+	src, err := os.ReadFile("../../../ops/kubernetes/admission-policy.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range strings.Split(string(src), "\n---\n") {
+		if strings.Contains(doc, "\nkind: ValidatingAdmissionPolicy\n") && strings.Contains(doc, "\n  name: md-runbook-ops-workloads\n") {
+			if !hasNamespaceRule([]policyValidation{{doc}}) {
+				t.Error("admission-policy.yaml: md-runbook-ops-workloads has no namespace rule")
+			}
+			return
+		}
+	}
+	t.Error("admission-policy.yaml: no policy md-runbook-ops-workloads")
+}
+
+// The gate's own namespace enforces Pod Security restricted (security review of 0.31.1, lows).
+func TestOwnNamespaceLabel(t *testing.T) {
+	nss, _ := kubeObjects([]byte(`{"kind":"List","items":[
+		{"kind":"Namespace","metadata":{"name":"md-runbook-ops","labels":{"pod-security.kubernetes.io/enforce":"restricted"}}},
+		{"kind":"Namespace","metadata":{"name":"ops-b","labels":{"pod-security.kubernetes.io/enforce":"baseline"}}},
+		{"kind":"Namespace","metadata":{"name":"ops-c"}}]}`))
+	if p := ownNamespaceProblem(nss, "md-runbook-ops"); p != "" {
+		t.Errorf("restricted: %q", p)
+	}
+	for ns, want := range map[string]string{
+		"ops-b":    "the gate's namespace ops-b doesn't enforce Pod Security restricted: kubectl label --overwrite namespace ops-b pod-security.kubernetes.io/enforce=restricted",
+		"ops-c":    "the gate's namespace ops-c doesn't enforce Pod Security restricted: kubectl label --overwrite namespace ops-c pod-security.kubernetes.io/enforce=restricted",
+		"ops-gone": "the cells' service account can't see the gate's namespace ops-gone",
+	} {
+		if p := ownNamespaceProblem(nss, ns); p != want {
+			t.Errorf("%s: %q", ns, p)
+		}
+	}
+}
+
+// While a session lasts, the gate checks again the policy and the ClusterRoleBindings of the
+// namespaces the cells may change; a problem ends the session, a kubectl that can't tell doesn't
+// (security review of 0.31.1, lows: checks once per session).
+func TestRecheck(t *testing.T) {
+	pol := `{"kind":"ValidatingAdmissionPolicy","metadata":{"name":"md-runbook-ops-workloads"},"spec":{"failurePolicy":"Fail","validations":[{"expression":"namespaceObject.metadata.labels['pod-security.kubernetes.io/enforce']"}]}}`
+	bind := `{"kind":"ValidatingAdmissionPolicyBinding","metadata":{"name":"md-runbook-ops-workloads"},"spec":{"policyName":"md-runbook-ops-workloads","validationActions":["Deny"]}}`
+	wide := `{"kind":"ClusterRoleBinding","metadata":{"name":"wide"},"roleRef":{"kind":"ClusterRole","name":"cluster-admin"},"subjects":[{"kind":"ServiceAccount","name":"app","namespace":"shop"}]}`
+	var policyOut, bindingsOut string
+	var policyErr, bindingsErr error
+	j := testJob(func(argv, env []string, stdin []byte) ([]byte, error) {
+		if argv[2] == "clusterrolebindings" {
+			return []byte(bindingsOut), bindingsErr
+		}
+		return []byte(policyOut), policyErr
+	})
+	j.sa, j.may = "md-runbook-cells", []string{"shop"}
+	reset := func() {
+		policyOut, bindingsOut = `{"kind":"List","items":[`+pol+`,`+bind+`]}`, `{"kind":"List","items":[]}`
+		policyErr, bindingsErr = nil, nil
+	}
+	reset()
+	if p := j.recheck(); len(p) != 0 {
+		t.Errorf("fine: %q", p)
+	}
+	bindingsOut = `{"kind":"List","items":[` + wide + `]}`
+	if p := j.recheck(); len(p) != 1 || !strings.Contains(p[0], "namespace shop, where service accounts have cluster-wide rights: app → cluster-admin (binding wide)") {
+		t.Errorf("wide: %q", p)
+	}
+	reset()
+	policyErr = errors.New(`exit status 1: Error from server (NotFound): validatingadmissionpolicybindings.admissionregistration.k8s.io "md-runbook-ops-workloads" not found`)
+	if p := j.recheck(); len(p) != 1 || !strings.Contains(p[0], "may change workloads in namespaces shop, but the admission policy md-runbook-ops-workloads or its binding is missing") {
+		t.Errorf("binding gone: %q", p)
+	}
+	// The API server out of reach: nothing found, the next round tells.
+	reset()
+	policyErr = errors.New("exit status 1: Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout")
+	bindingsErr = errTimeout
+	if p := j.recheck(); len(p) != 0 {
+		t.Errorf("unreachable: %q", p)
+	}
+
+	newGate := func() *Gate {
+		g := &Gate{log: &logx.Logger{Dest: t.TempDir() + "/gate.log"}}
+		g.endCh = make(chan struct{}, 1)
+		return g
+	}
+	// A problem: the session ends, after one round.
+	reset()
+	bindingsOut = `{"kind":"List","items":[` + wide + `]}`
+	g, rounds := newGate(), 0
+	g.watchJob(j, func(d time.Duration) {
+		if d != recheckEvery {
+			t.Errorf("sleep %v", d)
+		}
+		rounds++
+	})
+	select {
+	case <-g.endCh:
+	default:
+		t.Error("not ended")
+	}
+	if b, _ := os.ReadFile(g.log.Dest); rounds != 1 || !strings.Contains(string(b), `"event":"self-check","status":"refused"`) || !strings.Contains(string(b), "The session ends.") {
+		t.Errorf("%d rounds, log %s", rounds, b)
+	}
+	// Fine: rounds go on until the session ends.
+	reset()
+	g, rounds = newGate(), 0
+	g.watchJob(j, func(time.Duration) {
+		if rounds++; rounds == 3 {
+			g.ending.Store(true)
+		}
+	})
+	if rounds != 3 || len(g.endCh) != 0 {
+		t.Errorf("fine: %d rounds, ended %d", rounds, len(g.endCh))
+	}
+	// Nowhere the cells may change workloads: no rounds.
+	j.may = nil
+	g.watchJob(j, func(time.Duration) { t.Error("slept") })
 }
 
 // Namespaces the cells may change whose service accounts have cluster-wide rights: refused, with

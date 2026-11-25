@@ -68,7 +68,8 @@ kubeconfig:
   admission policy and lists ClusterRoleBindings;
 - the service account `md-runbook-cells` of those Jobs, and what runbooks may do:
   - read everything except Secrets, ConfigMaps and pod logs, in every namespace, cert-manager
-    certificates included;
+    certificates included. That covers every pod's spec, with the env values written in it.
+    Keep passwords and tokens in Secrets (`secretKeyRef`), not in plain `value`s;
   - `rollout restart`, `rollout undo`, scale Deployments and StatefulSets, read pod logs and
     ConfigMaps, only in the namespaces you bind (see below);
   - nothing else: no deleting, no exec into pods, no DaemonSets, no Jobs (opt-in, below);
@@ -128,8 +129,13 @@ app and everything else in other namespaces.
   - a pod that runs as another service account than `md-runbook-ops` or `md-runbook-cells`;
   - a service account other than those two and `default`.
 - Bind no role to `default` in this namespace.
-- The manifest's NetworkPolicy lets pods of other namespaces reach sshd, the relay's too. You
-  can narrow it to the relay's namespace.
+- The manifest's NetworkPolicy lets every address reach sshd. Its `ipBlock`s 0.0.0.0/0 and ::/0
+  cover clients outside the cluster, and on some network plugins every pod too. To narrow it:
+  - replace those `ipBlock`s with your clients' ranges (a load balancer's, a VPN's, a
+    connector's);
+  - set its `namespaceSelector` to the relay's namespace.
+- At each session the gate also checks that this namespace enforces Pod Security `restricted`,
+  as the manifest labels it.
 
 **The admission policies.** RBAC can't limit the shape of a Job, nor which pod to exec into.
 So the gate's account could:
@@ -189,9 +195,17 @@ What the cells create (opt-in Jobs) has nothing to compare with. It must:
 - for a Job: name a CronJob as its controller, as `kubectl create job --from=cronjob/NAME` does.
   A runbook can write that line itself: it states the intent, the two rules above hold.
 
+Each change must also be in a namespace that enforces Pod Security `baseline` or `restricted`,
+outside `kube-*` and `md-runbook-ops`. The gate checks this when a session starts. The policy
+then holds it for the session's length: a label removed meanwhile, or a namespace bound later.
+
 At each session, if the cells may change workloads somewhere, the gate reads the policy and its
 binding. They must deny in every namespace. Else the session refuses with `the admission policy
 md-runbook-ops-workloads or its binding is missing`.
+- A policy from before 0.33.0 lacks the namespace rule: the session refuses. Apply
+  `admission-policy.yaml` again.
+- While a session lasts, the gate reads the policy and the ClusterRoleBindings again, every 5
+  minutes. If it would now refuse the session, the session ends.
 
 **A mirror of the image:** change the `repository` variable in `admission-policy.yaml`. That's
 one line.
@@ -217,6 +231,19 @@ options:
 - **A VPN** into the cluster's network.
 - **The relay in the cluster**, for the web app ([apps/relay](../relay/README.md), with
   `RELAY_TARGETS=md-runbook-ops.md-runbook-ops.svc:22`).
+
+**Client addresses.** The gate logs each client's address.
+- Behind a LoadBalancer, that's a node's address by default. Add
+  `"externalTrafficPolicy":"Local"` to the patch above to keep the client's own.
+- `from="203.0.113.0/24"` before a key in `authorized_keys` limits where it may log in from. It
+  needs the client's own address.
+- Behind a relay, a connector or SNAT, every client has the same address. So `from=` can't tell
+  them apart.
+- After failed logins, sshd refuses that address for a while: from 15 seconds, up to 10
+  minutes (OpenSSH's `PerSourcePenalties`). With one shared address, one client with a wrong
+  key locks the others out too, until it lifts by itself.
+- A client that stops answering (a phone out of coverage): sshd ends its session after 5
+  minutes. Its Job goes too.
 
 **Where runbooks may change things.** Nowhere at first. For each namespace your runbooks may
 change, enforce Pod Security, then bind it:
@@ -388,6 +415,10 @@ kubectl apply -f apps/ops/kubernetes/cells-egress.yaml
 
 - Some network plugins check before the Service's translation. There, add the Service's address
   too (`kubectl get service kubernetes -n default`, port 443).
+- The API server's addresses can change: sessions then refuse until you update the policy.
+  - On EKS, each Kubernetes version update replaces them
+    ([EKS network requirements](https://docs.aws.amazon.com/eks/latest/userguide/network-reqs.html)).
+    Allow your cluster subnets' CIDRs instead.
 - Some plugins (k3s's, for one) drop a new pod's traffic for its first seconds. The Job's pod
   waits for the API server, up to 60 seconds, before it's ready.
 - Without the right address, sessions refuse after that wait: the gate can't check the cells'
@@ -417,7 +448,8 @@ kubectl apply -f apps/ops/kubernetes/ops-egress.yaml
 ```
 
 - Without the right address, sessions refuse: the gate can't start their Jobs.
-- The same notes as above apply: NodeLocal DNSCache, Cilium, the Service's address.
+- The same notes as above apply: NodeLocal DNSCache, Cilium, the Service's address, addresses
+  that change.
 
 Settings in `gate.conf`:
 - `job_service_account = NAME`: required.
@@ -436,6 +468,23 @@ Settings in `gate.conf`:
     from its service account:
     `kubectl -n md-runbook-ops patch serviceaccount NAME -p '{"imagePullSecrets":[{"name":"SECRET"}]}'`.
     This also goes for `md-runbook-cells` itself.
+
+**Another namespace, or two ops hosts in one cluster.** The gate finds its namespace from its
+pod. The admission policies name `md-runbook-ops` themselves:
+- each policy's `matchConditions` (`system:serviceaccount:md-runbook-ops:…`);
+- the `namespaceSelector` of the bindings `md-runbook-ops-jobs` and `md-runbook-ops-exec`;
+- the namespace rule of `md-runbook-ops-workloads`.
+
+Change each of them with the namespace. Keep the policies' names: the gate looks for them.
+
+For a second host (say `md-runbook-ops-eu`), widen the policies rather than copying them:
+- `matchConditions`: `request.userInfo.username in [...]`, with both hosts' accounts;
+- the bindings: a `namespaceSelector` with both namespaces (`matchExpressions`, operator `In`);
+- the namespace rule: refuse both namespaces.
+
+Give the second host its own copy of the namespaced objects. Add its accounts as subjects to the
+ClusterRoleBindings `md-runbook-ops` and `md-runbook-ops-gate`. We haven't tested two hosts in
+one cluster yet.
 
 ### The audit log, and a stolen key
 

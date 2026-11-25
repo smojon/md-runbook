@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+The ops host's remaining findings from the security review of 0.31.1 (all low):
+- **Gate admins: apply `admission-policy.yaml` again.** Until you do, sessions refuse where
+  runbooks may change workloads: `the admission policy md-runbook-ops-workloads has no rule on
+  the namespace`.
+
+### Ops host (cells_runner = kubernetes-job)
+
+- The policy `md-runbook-ops-workloads` checks the namespace at each change:
+  - it must enforce Pod Security `baseline` or `restricted`;
+  - it can't be `kube-*` or `md-runbook-ops`.
+- Before, the gate checked that only when a session started. A label removed during a session,
+  or a namespace bound later, went unnoticed for up to a day.
+- While a session lasts, the gate checks the policy and the ClusterRoleBindings again every 5
+  minutes. If it would now refuse the session, the session ends.
+- The gate's namespace must enforce Pod Security `restricted`, as the manifest labels it.
+- The gate's account may not create Deployments, StatefulSets, DaemonSets, ReplicaSets,
+  ReplicationControllers or CronJobs in its namespace. It may not patch pods or add ephemeral
+  containers, attach or port-forward. The gate checks this with the rest at each session.
+- sshd ends a session whose client stopped answering, after 5 minutes. Before, a phone gone
+  out of coverage behind a relay kept its session and Job for up to a day.
+- sshd no longer offers the SHA-1 and 64-bit tag MACs. The app's SSH library uses neither.
+- The README has new notes:
+  - client addresses behind a load balancer or relay;
+  - narrowing the NetworkPolicy for sshd;
+  - plain env values in pod specs, which runbooks can read;
+  - API server addresses that change (EKS);
+  - another namespace, or two ops hosts in one cluster.
+
 ## 0.32.0
 
 What's new, mostly from a security review of the ops host in a cluster:

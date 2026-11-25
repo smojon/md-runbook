@@ -27,4 +27,14 @@ PermitUserRC no
 # The gate logs each key's fingerprint.
 ExposeAuthInfo yes
 
+# A client gone without a word (a phone out of coverage, behind a relay or load balancer that
+# keeps the TCP connection open): its session, and the session's Job, end after 5 minutes
+# without an answer, not after the Job's day. The app's SSH library answers these requests.
+ClientAliveInterval 60
+ClientAliveCountMax 5
+# OpenSSH's defaults, without the SHA-1 and 64-bit tag MACs. The app's SSH library uses
+# hmac-sha2-256/512 (-etm) or AES-GCM; its key exchange (ECDH P-256/384, DH group 14/16) and
+# ciphers (AES-GCM, AES-CTR) are among the defaults, kept.
+MACs -hmac-sha1,hmac-sha1-etm@openssh.com,umac-64@openssh.com,umac-64-etm@openssh.com
+
 LogLevel INFO

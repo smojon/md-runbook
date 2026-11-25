@@ -53,7 +53,9 @@ import (
 // account there may have cluster-wide rights (a new image would run as it). The gate's
 // namespace must hold the ops host alone: no other app's pods or service accounts. The admission
 // policy md-runbook-ops-jobs must refuse any other Job from the gate's account (a dry run as its
-// own account). A wrong answer: no session.
+// own account). The gate's namespace must enforce restricted. A wrong answer: no session. While
+// the session lasts, the gate checks the workloads policy and the ClusterRoleBindings again
+// (watchJob); the policy holds the namespaces' labels at each change itself.
 //
 // When the follower's stdin ends (the session ended, or the gate is gone) it ends the pod: a
 // dead-man switch, so that nothing of a session outlives it by more than the pod's grace period.
@@ -103,6 +105,9 @@ type kubeJob struct {
 	// too, they count where the cells may change workloads (riskyNamespaces).
 	bindings    []byte
 	bindingsErr error
+	// may: the namespaces where the cells may start or change workloads (checkNamespaces, before
+	// any block). The gate checks them again while the session lasts (watchJob).
+	may []string
 
 	ready chan struct{} // closed once the pod is Ready (pod set) or can't be (err set)
 	mu    sync.Mutex
@@ -282,10 +287,65 @@ func (g *Gate) prepareJob(j *kubeJob) {
 	}
 	if why == "" {
 		g.log.Event("event", "job", "status", "ready", "job", j.name, "pod", pod, "seconds", strconv.FormatFloat(time.Since(t0).Seconds(), 'f', 1, 64))
+		go g.watchJob(j, time.Sleep)
 	} else {
 		g.log.Event("event", "job", "status", "failed", "job", j.name, "reason", why)
 	}
 	j.settle(pod, why)
+}
+
+// recheckEvery: how often a live session checks again what the start's checks found and someone
+// may change meanwhile (a session lasts up to a day): the policy md-runbook-ops-workloads, and
+// the ClusterRoleBindings of the namespaces the cells may change. The policy's namespace rule
+// holds the namespaces' labels at each change itself (admission-policy.yaml).
+const recheckEvery = 5 * time.Minute
+
+// watchJob: while the session lasts, where the cells may change workloads, the checks above
+// every recheckEvery, as the gate's account (never through the pod, where blocks have run). A
+// problem found ends the session, as it would have refused it; a check that can't tell (the API
+// server unreachable) waits for the next round.
+func (g *Gate) watchJob(j *kubeJob, sleep func(time.Duration)) {
+	if len(j.may) == 0 {
+		return
+	}
+	for {
+		sleep(recheckEvery)
+		if g.ending.Load() {
+			return
+		}
+		p := j.recheck()
+		if len(p) == 0 || g.ending.Load() {
+			continue
+		}
+		msg := "cells_runner = kubernetes-job: " + strings.Join(p, "; ") + ". The session ends. See apps/ops/README.md (RBAC)."
+		g.log.Event("event", "self-check", "status", "refused", "reason", msg, "job", j.name)
+		say(msg)
+		select {
+		case g.endCh <- struct{}{}:
+		default:
+		}
+		return
+	}
+}
+
+// recheck: what is wrong now with the policy md-runbook-ops-workloads and the ClusterRoleBindings
+// of j.may; nothing when kubectl couldn't tell (other than a refusal by the API server).
+func (j *kubeJob) recheck() []string {
+	unsure := func(err error) bool {
+		return err != nil && !strings.Contains(err.Error(), "(NotFound)") && !strings.Contains(err.Error(), "(Forbidden)")
+	}
+	var p []string
+	out, err := j.run(j.kc("get", "validatingadmissionpolicy/"+workloadPolicy, "validatingadmissionpolicybinding/"+workloadPolicy, "-o", "json"), j.env, nil)
+	if !unsure(err) {
+		if w := unpolicedNamespaces(j.may, workloadPolicyProblem(out, err)); w != "" {
+			p = append(p, w)
+		}
+	}
+	out, err = j.run(j.kc("get", "clusterrolebindings", "-o", "json"), j.env, nil)
+	if !unsure(err) {
+		p = append(p, riskyNamespaces(j.may, out, err, j.ns, j.sa)...)
+	}
+	return p
 }
 
 // settle: the pod is Ready (why "") or won't be. A request that waits for it hears so first
@@ -494,6 +554,9 @@ func (j *kubeJob) checkNamespaces(pod string) []string {
 	if err != nil {
 		return []string{"can't read the namespaces"}
 	}
+	if p := ownNamespaceProblem(nss, j.ns); p != "" {
+		return []string{p}
+	}
 	var names []string
 	for _, n := range nss {
 		if n.Kind == "Namespace" && config.ValidKubeName(n.Metadata.Name) {
@@ -508,6 +571,7 @@ func (j *kubeJob) checkNamespaces(pod string) []string {
 		return p
 	}
 	may := writableNamespaces(names, rules)
+	j.may = may
 	var p []string
 	if w := unpolicedNamespaces(may, j.workloads); w != "" {
 		p = append(p, w)
@@ -516,6 +580,23 @@ func (j *kubeJob) checkNamespaces(pod string) []string {
 		p = append(p, riskyNamespaces(may, j.bindings, j.bindingsErr, j.ns, j.sa)...)
 	}
 	return p
+}
+
+// ownNamespaceProblem: the gate's namespace (ns) enforces Pod Security restricted, as the
+// manifest labels it. The admission policy md-runbook-ops-jobs holds the cells' Jobs to that
+// shape; the label holds every other pod there too (security review of 0.31.1, lows). "" when
+// it does, else what to change.
+func ownNamespaceProblem(nss []kubeObj, ns string) string {
+	for _, n := range nss {
+		if n.Kind != "Namespace" || n.Metadata.Name != ns {
+			continue
+		}
+		if n.Metadata.Labels["pod-security.kubernetes.io/enforce"] == "restricted" {
+			return ""
+		}
+		return "the gate's namespace " + ns + " doesn't enforce Pod Security restricted: kubectl label --overwrite namespace " + ns + " pod-security.kubernetes.io/enforce=restricted"
+	}
+	return "the cells' service account can't see the gate's namespace " + ns
 }
 
 // writableNamespaces: the names (in order) where the cells may start or change workloads, or the
@@ -655,9 +736,10 @@ func workloadPolicyProblem(out []byte, err error) string {
 			Name string `json:"name"`
 		} `json:"metadata"`
 		Spec struct {
-			FailurePolicy     string   `json:"failurePolicy"`
-			PolicyName        string   `json:"policyName"`
-			ValidationActions []string `json:"validationActions"`
+			FailurePolicy     string             `json:"failurePolicy"`
+			Validations       []policyValidation `json:"validations"`
+			PolicyName        string             `json:"policyName"`
+			ValidationActions []string           `json:"validationActions"`
 			MatchResources    *struct {
 				NamespaceSelector    *selector         `json:"namespaceSelector"`
 				ObjectSelector       *selector         `json:"objectSelector"`
@@ -694,6 +776,9 @@ func workloadPolicyProblem(out []byte, err error) string {
 			if s.FailurePolicy != "" && s.FailurePolicy != "Fail" {
 				return "the admission policy " + workloadPolicy + " has failurePolicy " + s.FailurePolicy + ": an error would let a change through. " + apply
 			}
+			if !hasNamespaceRule(s.Validations) {
+				return "the admission policy " + workloadPolicy + " has no rule on the namespace (Pod Security, kube-*): it predates md-runbook 0.33.0. " + apply + " again"
+			}
 			policy = true
 		case "ValidatingAdmissionPolicyBinding":
 			m := s.MatchResources
@@ -708,6 +793,22 @@ func workloadPolicyProblem(out []byte, err error) string {
 		return "the admission policy " + workloadPolicy + " or its binding is missing. " + apply
 	}
 	return ""
+}
+
+type policyValidation struct {
+	Expression string `json:"expression"`
+}
+
+// hasNamespaceRule: one of the policy's validations reads the namespace's Pod Security label
+// (admission-policy.yaml, "the namespace"). With it, a label removed or a namespace bound after
+// the session's start is refused at the change itself, not at the next session.
+func hasNamespaceRule(vs []policyValidation) bool {
+	for _, v := range vs {
+		if strings.Contains(v.Expression, "namespaceObject") && strings.Contains(v.Expression, "pod-security.kubernetes.io/enforce") {
+			return true
+		}
+	}
+	return false
 }
 
 // unpolicedNamespaces: "" when the cells may change workloads nowhere (may: writableNamespaces)
@@ -1722,7 +1823,8 @@ func reviewProblems(out []byte, rs []review, who string) []string {
 }
 
 // opsReviews: the gate's service account runs the Jobs in its namespace, and holds none of the
-// cells' rights (reading across namespaces, Secrets, workloads, tokens, roles). Of the admission
+// cells' rights (reading across namespaces, Secrets, workloads, tokens, roles), nor another way
+// to start or reach a pod in its namespace (security review of 0.31.1, lows). Of the admission
 // policies it may only get md-runbook-ops-workloads and its binding by name (checkWorkloadPolicy):
 // a get without a name, a list or a change is refused, so it can't weaken them. Of RBAC it may
 // only list ClusterRoleBindings (riskyNamespaces): no get, no change, no bind or escalate, nothing
@@ -1759,7 +1861,19 @@ func opsReviews(ns string) []review {
 		{"list", "", "pods", "", "", false},
 		{"get", "", "secrets", "", ns, false},
 		{"create", "", "pods", "", ns, false},
+		{"patch", "", "pods", "", ns, false},
+		// Other ways to start a pod here (the policy md-runbook-ops-jobs holds only Jobs), or to
+		// reach one (md-runbook-ops-exec holds these two, not ephemeral containers).
+		{"create", "apps", "deployments", "", ns, false},
+		{"create", "apps", "statefulsets", "", ns, false},
+		{"create", "apps", "daemonsets", "", ns, false},
+		{"create", "apps", "replicasets", "", ns, false},
+		{"create", "", "replicationcontrollers", "", ns, false},
+		{"create", "batch", "cronjobs", "", ns, false},
 		{"patch", "apps", "deployments", "", ns, false},
+		{"patch", "", "pods", "ephemeralcontainers", ns, false},
+		{"create", "", "pods", "attach", ns, false},
+		{"create", "", "pods", "portforward", ns, false},
 		{"create", "", "serviceaccounts", "token", ns, false},
 		{"create", "rbac.authorization.k8s.io", "rolebindings", "", ns, false},
 		{"impersonate", "", "serviceaccounts", "", "", false},

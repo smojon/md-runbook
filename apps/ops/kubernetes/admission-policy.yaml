@@ -202,6 +202,18 @@ spec:
     - name: wasContainers
       expression: "variables.was.containers + (has(variables.was.initContainers) ? variables.was.initContainers : [])"
   validations:
+    # ---- The namespace (CREATE and UPDATE) ----
+    # The gate checks it at each session's start; this holds it at each change while the session
+    # lasts: a Pod Security label removed, or a kube-* or the gate's namespace bound later. The
+    # gate refuses sessions while the policy lacks this rule (it looks for namespaceObject and the
+    # label's name in an expression).
+    - expression: >-
+        namespaceObject != null &&
+        !namespaceObject.metadata.name.startsWith('kube-') && namespaceObject.metadata.name != 'md-runbook-ops' &&
+        has(namespaceObject.metadata.labels) &&
+        'pod-security.kubernetes.io/enforce' in namespaceObject.metadata.labels &&
+        namespaceObject.metadata.labels['pod-security.kubernetes.io/enforce'] in ['baseline', 'restricted']
+      message: "runbooks change workloads only in namespaces that enforce Pod Security baseline or restricted, never in kube-* or md-runbook-ops"
     # ---- UPDATE: the template keeps what decides who its pods are and what they reach ----
     # (Each field: present in both and equal, or in neither.)
     - expression: >-

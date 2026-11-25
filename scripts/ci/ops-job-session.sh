@@ -164,6 +164,20 @@ cat "$work/c/err"
 # (the egress session did, 807134e's Ops host run).
 kubectl delete namespace md-runbook-unguarded --timeout=180s
 
+# The gate's own namespace without Pod Security restricted: no session, naming the fix.
+kubectl label --overwrite namespace "$ns" pod-security.kubernetes.io/enforce=baseline
+open_session own 9
+cell 0000cc02 'echo "ran=1"' >&9
+wait_for "$work/own/err" "the gate's namespace $ns doesn't enforce Pod Security restricted"
+close_session own 9
+kubectl label --overwrite namespace "$ns" pod-security.kubernetes.io/enforce=restricted
+[ -z "$(value own ran)" ] || fail "a block ran although $ns doesn't enforce Pod Security restricted"
+echo "ok: the gate's namespace without restricted refuses sessions"
+
+# A change of a pod template's annotation: an UPDATE the policy md-runbook-ops-workloads sees.
+touch='{"spec":{"template":{"metadata":{"annotations":{"md-runbook/test":"1"}}}}}'
+workloads="ValidatingAdmissionPolicy 'md-runbook-ops-workloads'"
+
 # A kube-* namespace bound, even with Pod Security enforced: the session refuses, naming it
 # (kube-system's pods run as the cluster's controllers). The gate refuses every kube-* name, so a
 # namespace of our own stands in: labelling kube-system itself would block its own pods (they
@@ -181,6 +195,14 @@ close_session sys 9
 [ -z "$(value sys ran)" ] || fail "a block ran although the cells may change $sys_ns"
 cat "$work/sys/err"
 grep -q "kubectl label namespace $sys_ns" "$work/sys/err" && fail "the refusal suggests labelling $sys_ns"
+# A kube-* namespace bound while a session lasts (the gate checked at its start): the policy
+# refuses the cells' change there itself.
+kubectl -n "$sys_ns" create deployment app --image=registry.k8s.io/pause:3.10
+if out=$(kubectl --as="$cells_sa" -n "$sys_ns" patch deployment app -p "$touch" --dry-run=server 2>&1); then
+  fail "a change in $sys_ns as the cells' account: the policy let it through ($out)"
+fi
+grep -qF "$workloads" <<<"$out" || fail "a change in $sys_ns: refused, but not by md-runbook-ops-workloads: $out"
+echo "ok: a change in a kube-* namespace: refused by the policy"
 # Gone before the next sessions (one starting while it terminates would refuse as above).
 kubectl delete namespace "$sys_ns" --timeout=180s
 for i in $(seq 1 30); do
@@ -224,7 +246,22 @@ kubectl "${as_cells[@]}" -n "$w" rollout undo deployment/app
 kubectl "${as_cells[@]}" -n "$w" scale deployment/app --replicas=2
 kubectl "${as_cells[@]}" -n "$w" set image deployment/app pause=registry.k8s.io/pause:3.9 --dry-run=server
 echo "ok: as the cells' account: rollout restart, rollout undo, scale and set image pass"
-workloads="ValidatingAdmissionPolicy 'md-runbook-ops-workloads'"
+# Its Pod Security label removed while a session lasts: the policy refuses the cells' next change.
+# (The policy reads the namespace from the API server's cache: a few tries each way.)
+kubectl label namespace "$w" pod-security.kubernetes.io/enforce-
+for i in $(seq 1 20); do
+  out=$(kubectl "${as_cells[@]}" -n "$w" patch deployment app -p "$touch" --dry-run=server 2>&1) || break
+  [ "$i" -lt 20 ] || fail "a change in $w without its Pod Security label: the policy let it through ($out)"
+  sleep 1
+done
+grep -qF "$workloads" <<<"$out" || fail "a change in $w without its label: refused, but not by md-runbook-ops-workloads: $out"
+kubectl label namespace "$w" pod-security.kubernetes.io/enforce=baseline
+for i in $(seq 1 20); do
+  kubectl "${as_cells[@]}" -n "$w" patch deployment app -p "$touch" --dry-run=server >/dev/null 2>&1 && break
+  [ "$i" -lt 20 ] || fail "a change in $w with its label back: still refused"
+  sleep 1
+done
+echo "ok: a namespace's Pod Security label removed: the cells' changes there refused by the policy"
 for c in \
   'another service account|{"spec":{"template":{"spec":{"serviceAccountName":"md-runbook-other"}}}}' \
   'a Secret volume|{"spec":{"template":{"spec":{"volumes":[{"name":"s","secret":{"secretName":"md-runbook-any"}}]}}}}'; do
