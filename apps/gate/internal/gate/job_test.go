@@ -848,7 +848,10 @@ func TestJobChecks(t *testing.T) {
 		t.Errorf("ops with secrets: %q", p)
 	}
 	extra = "deployments"
-	if p := j.check(ops, "", "the gate's service account"); len(p) != 1 || p[0] != "the gate's service account may patch deployments (apps) in md-runbook-ops" {
+	if p := j.check(ops, "", "the gate's service account"); !reflect.DeepEqual(p, []string{
+		"the gate's service account may create deployments (apps) in md-runbook-ops",
+		"the gate's service account may patch deployments (apps) in md-runbook-ops",
+	}) {
 		t.Errorf("ops with deployments: %q", p)
 	}
 	// More of the admission policies than a get by name (which a review without a name can't
