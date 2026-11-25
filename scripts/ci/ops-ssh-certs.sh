@@ -113,7 +113,24 @@ logs_have() { # PATTERN: in the ops pod's log, within 20 s
   done
   return 1
 }
-ok() { login "$1" "$1" "$1-cert.pub" || { cat "$work/$1.err" >&2; fail "$2: no session"; }; echo "ok: $2: logs in"; }
+# why NAME: what the client got, and the end of the pod's log.
+why() {
+  echo "--- $1: ssh's output" >&2; cat "$work/$1.out" >&2 || true
+  echo "--- $1: ssh's errors" >&2; cat "$work/$1.err" >&2 || true
+  echo "--- the pod's log (end)" >&2; k logs "$pod" -c ops --tail=40 >&2 || true
+}
+# login_ok NAME KEY [CERT]: a session, retried for up to 90 s. All logins here come from
+# 127.0.0.1 (the port-forward), so the refused ones add up in sshd's PerSourcePenalties
+# (OpenSSH 9.8+, sshd_config(5)), which then drops connections from that address for a while.
+login_ok() {
+  for try in 1 2 3 4; do
+    login "$@" && return 0
+    why "$1"
+    [ "$try" = 4 ] || { echo "note: $1: no session (try $try), again in 30 s" >&2; sleep 30; }
+  done
+  return 1
+}
+ok() { login_ok "$1" "$1" "$1-cert.pub" || fail "$2: no session"; echo "ok: $2: logs in"; }
 refused() { # NAME WHAT [KEY_ONLY]
   if [ -n "${3:-}" ]; then
     login "$1" "$1" && fail "$2: a session"
@@ -124,7 +141,7 @@ refused() { # NAME WHAT [KEY_ONLY]
   echo "ok: $2: refused"
 }
 plain_ok() { # WHAT
-  login plain "$KEYS/client" || { cat "$work/plain.err" >&2; fail "$1: a plain key: no session"; }
+  login_ok plain "$KEYS/client" || fail "$1: a plain key: no session"
   echo "ok: $1: a plain key logs in"
 }
 
