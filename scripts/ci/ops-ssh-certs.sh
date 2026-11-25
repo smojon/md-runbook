@@ -151,12 +151,8 @@ ca_fp=$(fp ca.pub)
 ok alice "a certificate for ops"
 logs_have '"who":"alice@example".*"cert_ca":"'"$ca_fp"'","event":"session".*"key":"'"$(fp alice.pub)"'","cert_serial":"42"' ||
   fail "no session event with who alice@example, the CA, the key and serial 42"
-refused expired "an expired certificate"
-refused wrong "a certificate for another principal"
-refused stranger "a certificate of another CA"
-refused revoked "a certificate revoked by serial"
-refused mallory "a certificate revoked by key ID"
-refused revplain "a plain key that revoked_keys lists" key-only
+# In each part, the logins that must pass come before the refused ones: all come from 127.0.0.1,
+# and after a few refused logins sshd's PerSourcePenalties drop that address for a while.
 ok eve "a key ID with a line break and a forged event"
 logs_have '"who":"'"$(fp eve.pub)"'".*"event":"session".*"cert_serial":"47","cert_problem":"key ID with a character other than printable ASCII (U+000A)"' ||
   fail "a key ID with a line break: who isn't the key's fingerprint"
@@ -176,6 +172,13 @@ plain_ok "with user_ca"
 logs_have '"who":"'"$(fp "$KEYS/client.pub")"'".*"event":"session"' || fail "a plain key: who isn't its fingerprint"
 grep '"who":"'"$(fp "$KEYS/client.pub")"'".*"event":"session"' pod.log > plain-session.log || true
 grep -q cert_ plain-session.log && fail "a plain key's session event names a certificate"
+refused expired "an expired certificate"
+refused wrong "a certificate for another principal"
+refused stranger "a certificate of another CA"
+refused revoked "a certificate revoked by serial"
+refused mallory "a certificate revoked by key ID"
+refused revplain "a plain key that revoked_keys lists" key-only
+snap
 echo "sshd's lines on the certificates:"
 grep -E 'certificate|revoked|Accepted publickey' pod.log || true
 
@@ -184,8 +187,8 @@ echo md-runbook-oncall > authorized_principals
 keys 2226 user_ca=ca.pub revoked_keys=revoked_keys authorized_principals=authorized_principals
 ok oncall "a certificate for a principal of authorized_principals"
 logs_have '"who":"oncall@example".*"event":"session".*"cert_serial":"48"' || fail "no session event for oncall@example"
-refused alice "with authorized_principals, a certificate for ops"
 plain_ok "with authorized_principals"
+refused alice "with authorized_principals, a certificate for ops"
 
 # ---- outside a cluster: files that can't be read, or are empty ----
 # start PORT NAME FILE...: the image with these files next to authorized_keys (FILE=SOURCE, or
@@ -222,15 +225,15 @@ started() { # PORT NAME MESSAGE: listening, and the start said MESSAGE
 : > empty
 start 2227 md-runbook-certs-empty user_ca=ca.pub authorized_principals=empty revoked_keys=empty
 started 2227 md-runbook-certs-empty "no principals in /etc/md-runbook-ops/keys/authorized_principals"
+plain_ok "with an empty authorized_principals and an empty revoked_keys"
 refused alice "an empty authorized_principals, a certificate for ops"
 refused oncall "an empty authorized_principals, a certificate for md-runbook-oncall"
-plain_ok "with an empty authorized_principals and an empty revoked_keys"
 
 start 2228 md-runbook-certs-unreadable user_ca=ca.pub authorized_principals=-
 started 2228 md-runbook-certs-unreadable "can't read /etc/md-runbook-ops/keys/authorized_principals"
+plain_ok "with an unreadable authorized_principals"
 refused alice "an unreadable authorized_principals, a certificate for ops"
 refused oncall "an unreadable authorized_principals, a certificate for md-runbook-oncall"
-plain_ok "with an unreadable authorized_principals"
 
 start 2229 md-runbook-certs-revoked user_ca=ca.pub revoked_keys=-
 for _ in $(seq 1 30); do
