@@ -45,6 +45,9 @@ const r = await session.run('cd /srv && ls', { timeoutMs: 60_000, signal, onStdo
     Not security-key (`sk-`) certificates, nor host certificates.
   - `parseCertificate` reads the key ID, principals, dates, serial and CA fingerprint.
     `certificateState` says valid, expiring, expired or not yet valid. sshd checks the CA.
+  - `checkCaSignature` checks the CA's signature with Web Crypto, for what a screen shows.
+  - `chooseLoginKeys`: up to 2 certificates within their dates, then the keys tried before (5
+    plain agent keys, the own key).
 - Remote shells: bash (login shell, for the user's PATH), else sh. cmd and PowerShell remotes are
   not supported yet.
 
