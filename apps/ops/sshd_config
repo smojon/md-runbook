@@ -13,6 +13,8 @@ PermitRootLogin no
 # The keys come from a read-only mount (a ConfigMap or a bind mount): see README.md.
 AuthorizedKeysFile /etc/md-runbook-ops/keys/authorized_keys
 StrictModes no
+# SSH certificates (TrustedUserCAKeys, AuthorizedPrincipalsFile, RevokedKeys): start.sh adds them
+# with -o, each only when its file is in that mount (README.md, "SSH certificates").
 
 # Whatever the client asks for, the gate answers: signed runbooks, and unsigned cells only where
 # /etc/md-runbook/gate.conf allows them. No forwarding, no terminal, no environment from the client.
@@ -24,7 +26,7 @@ PermitTTY no
 PermitUserEnvironment no
 # ~/.ssh/rc would run before the gate: the account can write it.
 PermitUserRC no
-# The gate logs each key's fingerprint.
+# The gate logs each key's fingerprint, or a user certificate's key ID.
 ExposeAuthInfo yes
 
 # A client gone without a word (a phone out of coverage, behind a relay or load balancer that

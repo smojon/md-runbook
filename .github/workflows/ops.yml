@@ -16,6 +16,7 @@ on:
       - 'packages/core/src/kubeContext.ts'
       - 'test/ops.live.test.ts'
       - 'scripts/ci/ops-job-session.sh'
+      - 'scripts/ci/ops-ssh-certs.sh'
       - 'scripts/ci/probe-metrics.sh'
       - '.github/workflows/ops.yml'
   workflow_dispatch:
@@ -43,6 +44,7 @@ jobs:
           shellcheck -S warning apps/ops/md-runbook-probe
           shellcheck -s sh -S warning apps/ops/start.sh
           shellcheck -S warning scripts/ci/ops-job-session.sh
+          shellcheck -S warning scripts/ci/ops-ssh-certs.sh
 
       - name: Build the image
         # No attestations: kind's containerd can't use an image index that has them.
@@ -133,6 +135,9 @@ jobs:
           grep -q '"event":"probe".*"run":"[^"]\{1,\}".*"result":"ok".*"cert_sha256":"[0-9a-f]\{64\}"' "$RUNNER_TEMP/ops.log"
           node out/dist/cli.js audit "$RUNNER_TEMP/ops.log" --out "$RUNNER_TEMP/audit.json" || test $? = 1
           node -e 'const a=require(process.argv[1]); if(!a.probes.some(p=>p.run&&p.run.runbook==="ops/probe"&&p.ok)) process.exit(1)' "$RUNNER_TEMP/audit.json"
+      - name: SSH certificates (user_ca, authorized_principals, revoked_keys)
+        # Restarts the ops pod: after the checks of its log above.
+        run: scripts/ci/ops-ssh-certs.sh
 
       - name: Outside a cluster, with a mounted kubeconfig (as next to the relay)
         run: |
@@ -164,6 +169,7 @@ jobs:
           kubectl -n md-runbook-ops get networkpolicies -o yaml || true
           kubectl -n md-runbook-ops logs deployment/md-runbook-ops || true
           cat "$RUNNER_TEMP/pf.log" "$RUNNER_TEMP/pf-job.log" || true
+          kubectl -n md-runbook-ops get configmap md-runbook-ops-keys -o yaml || true
           docker logs ops || true
 
   # The probe image (apps/probe): md-runbook-probe alone, as users run it next to their services.

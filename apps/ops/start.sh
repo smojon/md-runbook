@@ -113,8 +113,42 @@ chmod 600 "$HOME/.kube/config" 2>/dev/null || true
 
 # ---- keys and the gate ----
 has_lines() { grep -q '^[^#[:space:]]' "$1" 2>/dev/null; }
-has_lines /etc/md-runbook-ops/keys/authorized_keys ||
-  say "no keys in /etc/md-runbook-ops/keys/authorized_keys: nobody can log in yet (README.md)"
+keys=/etc/md-runbook-ops/keys
+
+# SSH user certificates, each file optional (README.md, "SSH certificates"). sshd_config is in
+# the image, so these directives go on sshd's command line (-o), and only for files that are
+# there: sshd_config(5) says RevokedKeys refuses every key when its file can't be read, and an
+# AuthorizedPrincipalsFile that is missing matches no principal. sshd reads them at each login: a
+# changed file counts once the mount shows it; a file added or removed, after a restart.
+#   user_ca                 TrustedUserCAKeys: certificates of these CAs may log in. Without
+#                           authorized_principals, the certificate must name the principal ops
+#                           (the account).
+#   authorized_principals   AuthorizedPrincipalsFile: the certificate must name one of these
+#                           principals instead.
+#   revoked_keys            RevokedKeys: a KRL (ssh-keygen -k) or public keys; also for plain keys.
+set --
+if has_lines "$keys/user_ca"; then
+  set -- "$@" -o "TrustedUserCAKeys=$keys/user_ca"
+  if [ -r "$keys/authorized_principals" ]; then
+    set -- "$@" -o "AuthorizedPrincipalsFile=$keys/authorized_principals"
+    say "SSH certificates: from the CAs in $keys/user_ca, for the principals in $keys/authorized_principals"
+  else
+    say "SSH certificates: from the CAs in $keys/user_ca, for the principal ops"
+  fi
+elif [ -e "$keys/user_ca" ] || [ -e "$keys/authorized_principals" ]; then
+  say "no CA key in $keys/user_ca: no SSH certificate can log in (README.md)"
+fi
+if [ -e "$keys/revoked_keys" ]; then
+  if [ -r "$keys/revoked_keys" ]; then
+    set -- "$@" -o "RevokedKeys=$keys/revoked_keys"
+    say "revoked keys and certificates: $keys/revoked_keys"
+  else
+    say "can't read $keys/revoked_keys: not starting (sshd would refuse every key)"
+    exit 1
+  fi
+fi
+has_lines "$keys/authorized_keys" || has_lines "$keys/user_ca" ||
+  say "no keys in $keys/authorized_keys: nobody can log in yet (README.md)"
 has_lines /etc/md-runbook/allowed_signers ||
   say "no signers in /etc/md-runbook/allowed_signers: signed runbooks can't run yet"
 say "gate: $(grep -E '^[[:space:]]*unsigned[[:space:]]*=' /etc/md-runbook/gate.conf 2>/dev/null | tr -d ' ' || echo 'unsigned=refuse')"
@@ -126,4 +160,4 @@ fi
 touch "$logdir/gate.log"
 tail -n 0 -F "$logdir/gate.log" 2>/dev/null &
 
-exec /usr/sbin/sshd -D -e -f /etc/ssh/md-runbook-ops.conf
+exec /usr/sbin/sshd -D -e -f /etc/ssh/md-runbook-ops.conf "$@"

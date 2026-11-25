@@ -292,6 +292,8 @@ spec:
             - { name: log, mountPath: /var/log/md-runbook }
       volumes:
         # kubectl -n md-runbook-ops create configmap md-runbook-ops-keys --from-file=authorized_keys
+        # SSH certificates, each optional: --from-file=user_ca, =authorized_principals and
+        # =revoked_keys (README.md, "SSH certificates").
         - name: keys
           configMap:
             name: md-runbook-ops-keys
