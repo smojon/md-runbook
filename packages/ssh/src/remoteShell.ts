@@ -59,6 +59,7 @@ import {
 } from './command';
 import { ExternalAwareEcdsaP256 } from './externalKey';
 import { PasskeySkEcdsaP256 } from './passkey';
+import { certAlgorithms, certificateState, isCertType, parseCertificate } from './cert';
 
 export interface ConnectOptions {
   username: string;
@@ -224,6 +225,9 @@ export class RemoteShell {
     config.publicKeyAlgorithms.push(new PasskeySkEcdsaP256());
     config.keepAliveTimeoutInSeconds = opts.keepAliveSeconds ?? 15;
     opts.configure?.(config);
+    const keys = [opts.key, ...(opts.moreKeys ?? [])];
+    // Certificates sign with their plain key's algorithm, as configured above: added last.
+    if (keys.some((k) => isCertType(k.keyAlgorithmName))) certAlgorithms(config);
     const session = new SshClientSession(config);
     session.onAuthenticating((e: SshAuthenticatingEventArgs) => {
       if (e.authenticationType !== SshAuthenticationType.serverPublicKey || !e.publicKey) return;
@@ -232,8 +236,8 @@ export class RemoteShell {
     });
     const start = async (): Promise<RemoteShell> => {
       await session.connect(stream);
-      const ok = await session.authenticate({ username: opts.username, publicKeys: [opts.key, ...(opts.moreKeys ?? [])] });
-      if (!ok) throw new Error('authentication failed (host key refused, or the key was not accepted)');
+      const ok = await session.authenticate({ username: opts.username, publicKeys: keys });
+      if (!ok) throw new Error(`authentication failed (host key refused, or the key was not accepted)${await certificateHint(keys, opts.username)}`);
       // sh/bash first. On a Windows server cmd.exe (or PowerShell) runs the request and fails at
       // once, closing the channel: then Windows PowerShell.
       const want = opts.shells ?? {};
@@ -629,6 +633,29 @@ export function wrongPlatform(platform: RemotePlatform, kind: ShellKind): string
   }
   if (platform === 'windows' && kind === 'bash') return 'This is a Windows server: bash and sh cells need a Linux or macOS server.';
   return undefined;
+}
+
+/**
+ * Why a certificate among the keys may have been refused, as far as the client can tell: its dates
+ * (the client's clock) or its principals (unless the server maps them: AuthorizedPrincipalsFile).
+ */
+export async function certificateHint(keys: readonly KeyPair[], username: string): Promise<string> {
+  const notes: string[] = [];
+  for (const k of keys) {
+    if (!isCertType(k.keyAlgorithmName)) continue;
+    let c;
+    try {
+      c = parseCertificate((await k.getPublicKeyBytes())!);
+    } catch {
+      continue;
+    }
+    const name = c.keyId ? `certificate "${c.keyId}"` : 'certificate';
+    const state = certificateState(c);
+    if (state === 'expired') notes.push(`the ${name} expired ${new Date(c.validBefore * 1000).toISOString()}`);
+    else if (state === 'not-yet') notes.push(`the ${name} is valid from ${new Date(c.validAfter * 1000).toISOString()}`);
+    else if (c.principals.length > 0 && !c.principals.includes(username)) notes.push(`the ${name} is not for user ${username} (principals: ${c.principals.join(', ')})`);
+  }
+  return notes.length > 0 ? `; ${notes.join('; ')}` : '';
 }
 
 export function execRequest(command: string): CommandRequestMessage {

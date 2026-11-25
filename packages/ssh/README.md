@@ -35,9 +35,21 @@ const r = await session.run('cd /srv && ls', { timeoutMs: 60_000, signal, onStdo
 - **Agent keys** (Node, `@md-runbook/ssh/node`): `agentKeys(agentPath())` lists an SSH agent's
   Ed25519, ECDSA and RSA keys; pass one as `key` (more in `moreKeys`) with
   `configure: agentAlgorithms`. The agent signs. On Windows the OpenSSH agent's pipe is used.
+  - Certificates in the agent are listed too, first.
+- **Certificates** (OpenSSH user certificates, `cert.ts`):
+  - `CertKeyPair.create(key, certLine)` puts a `…-cert.pub` on a key you have (your own, an
+    external one). It refuses a certificate for another key.
+  - The login sends the certificate; the key signs. `connect` adds the certificate algorithms
+    when a key is one.
+  - Ed25519, ECDSA P-256/384/521, and RSA as `rsa-sha2-512-cert-v01@openssh.com` (never SHA-1).
+    Not security-key (`sk-`) certificates, nor host certificates.
+  - `parseCertificate` reads the key ID, principals, dates, serial and CA fingerprint.
+    `certificateState` says valid, expiring, expired or not yet valid. sshd checks the CA.
 - Remote shells: bash (login shell, for the user's PATH), else sh. cmd and PowerShell remotes are
   not supported yet.
 
-Tests: `test/sshCommand.test.ts` (the shell commands, in a local bash), `test/sshAgent.test.ts`
-(a fake agent) and
-`test/ssh.live.test.ts` (against the OpenSSH server CI starts with `scripts/ci/start-sshd.sh`).
+Tests:
+- `test/sshCommand.test.ts`: the shell commands, in a local bash.
+- `test/sshAgent.test.ts`: a fake agent.
+- `test/sshCert.test.ts`: ssh-keygen's certificates.
+- `test/ssh.live.test.ts`: against the OpenSSH server CI starts with `scripts/ci/start-sshd.sh`.

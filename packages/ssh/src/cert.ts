@@ -1,0 +1,341 @@
+/**
+ * OpenSSH user certificates: a company CA signs the user's public key for a time (hours to
+ * weeks); sshd trusts the CA (TrustedUserCAKeys), so no authorized_keys line per key.
+ *
+ * Format: PROTOCOL.certkeys / draft-miller-ssh-cert. The certificate is the public key blob sent
+ * in the login; the signature is the plain key's (draft §3.2): `ssh-ed25519`, `ecdsa-sha2-…`, and
+ * for RSA `rsa-sha2-512` under the login algorithm `rsa-sha2-512-cert-v01@openssh.com` (never
+ * SHA-1 `ssh-rsa`). sshd checks the CA's signature, the principals and the dates; the client only
+ * reads them, to show them and to warn before expiry.
+ *
+ * Not here: security-key certificates (sk-…): not checked against OpenSSH with passkeys.
+ */
+import type { KeyPair, SshSessionConfiguration, Signer, Verifier } from '@microsoft/dev-tunnels-ssh';
+import { PublicKeyAlgorithm } from '@microsoft/dev-tunnels-ssh';
+import { sha256Bytes } from '@md-runbook/core/sha256';
+import { Buffer } from 'buffer';
+
+interface CertSpec {
+  /** The plain key type the certificate is for. */
+  plain: string;
+  /** The login (userauth) algorithm name. */
+  login: string;
+  /** The plain algorithm whose signer and signature name are used. */
+  signature: string;
+}
+
+/** The certificate types this client logs in with. RSA only with SHA-512. */
+export const CERT_TYPES: Readonly<Record<string, CertSpec>> = {
+  'ssh-ed25519-cert-v01@openssh.com': { plain: 'ssh-ed25519', login: 'ssh-ed25519-cert-v01@openssh.com', signature: 'ssh-ed25519' },
+  'ecdsa-sha2-nistp256-cert-v01@openssh.com': {
+    plain: 'ecdsa-sha2-nistp256',
+    login: 'ecdsa-sha2-nistp256-cert-v01@openssh.com',
+    signature: 'ecdsa-sha2-nistp256',
+  },
+  'ecdsa-sha2-nistp384-cert-v01@openssh.com': {
+    plain: 'ecdsa-sha2-nistp384',
+    login: 'ecdsa-sha2-nistp384-cert-v01@openssh.com',
+    signature: 'ecdsa-sha2-nistp384',
+  },
+  'ecdsa-sha2-nistp521-cert-v01@openssh.com': {
+    plain: 'ecdsa-sha2-nistp521',
+    login: 'ecdsa-sha2-nistp521-cert-v01@openssh.com',
+    signature: 'ecdsa-sha2-nistp521',
+  },
+  'ssh-rsa-cert-v01@openssh.com': { plain: 'ssh-rsa', login: 'rsa-sha2-512-cert-v01@openssh.com', signature: 'rsa-sha2-512' },
+};
+
+export const isCertType = (type: string): boolean => Object.prototype.hasOwnProperty.call(CERT_TYPES, type);
+
+const USER_CERT = 1;
+/** Bigger than any real certificate (an RSA 16384 key and CA fit easily). */
+const MAX_CERT_BYTES = 16 * 1024;
+
+export interface SshCertificate {
+  /** `ssh-ed25519-cert-v01@openssh.com` and the like. */
+  type: string;
+  /** The plain key type (`ssh-ed25519`). */
+  keyType: string;
+  /** The whole certificate: the public key blob of a login. */
+  blob: Buffer;
+  /** The certified key's plain public key blob (as in an authorized_keys line). */
+  publicKey: Buffer;
+  /** The CA's serial number, in decimal. */
+  serial: string;
+  /** The key ID (`ssh-keygen -I`): what sshd logs. */
+  keyId: string;
+  /** The users the certificate may log in as; empty means any (sshd refuses those by default). */
+  principals: string[];
+  /** Seconds since 1970; 0 means always. */
+  validAfter: number;
+  /** Seconds since 1970; Infinity means forever. */
+  validBefore: number;
+  /** force-command, source-address and the like, with their values. */
+  criticalOptions: Record<string, string>;
+  /** permit-pty and the like. */
+  extensions: string[];
+  /** The CA's key fingerprint, `SHA256:…` as ssh-keygen -l shows it. */
+  caFingerprint: string;
+  /** The comment of the line it was read from. */
+  comment: string;
+}
+
+class Reader {
+  at = 0;
+  constructor(private readonly b: Buffer) {}
+  private need(n: number): void {
+    if (this.at + n > this.b.length) throw new Error('not an OpenSSH certificate (cut short)');
+  }
+  u32(): number {
+    this.need(4);
+    const n = this.b.readUInt32BE(this.at);
+    this.at += 4;
+    return n;
+  }
+  /** A uint64 as two halves: exact up to 2^53, Infinity above. */
+  u64(): { hi: number; lo: number; value: number } {
+    const hi = this.u32();
+    const lo = this.u32();
+    const value = hi >= 0x200000 ? Infinity : hi * 0x100000000 + lo;
+    return { hi, lo, value };
+  }
+  bytes(): Buffer {
+    const n = this.u32();
+    this.need(n);
+    const v = this.b.subarray(this.at, this.at + n);
+    this.at += n;
+    return Buffer.from(v);
+  }
+  text(): string {
+    return this.bytes().toString('utf8');
+  }
+  get done(): boolean {
+    return this.at === this.b.length;
+  }
+}
+
+const u32 = (n: number): Buffer => {
+  const b = Buffer.alloc(4);
+  b.writeUInt32BE(n >>> 0, 0);
+  return b;
+};
+const sshString = (b: Uint8Array | string): Buffer => {
+  const v = typeof b === 'string' ? Buffer.from(b, 'utf8') : Buffer.from(b);
+  return Buffer.concat([u32(v.length), v]);
+};
+
+/** The strings packed in one string (principals). */
+function strings(b: Buffer): string[] {
+  const r = new Reader(b);
+  const out: string[] = [];
+  while (!r.done) out.push(r.text());
+  return out;
+}
+
+/** Name/value pairs packed in one string (critical options, extensions); a value is itself a string, maybe empty. */
+function options(b: Buffer): Record<string, string> {
+  const r = new Reader(b);
+  const out: Record<string, string> = {};
+  while (!r.done) {
+    const name = r.text();
+    const data = r.bytes();
+    // A value is a string inside the data (draft §2.2); empty data means no value.
+    out[name] = data.length === 0 ? '' : new Reader(data).text();
+  }
+  return out;
+}
+
+const decimal = (hi: number, lo: number): string => (BigInt(hi) * BigInt(0x100000000) + BigInt(lo)).toString();
+
+/** `SHA256:…` of a public key blob, unpadded base64 as ssh-keygen -l prints it. */
+export function keyFingerprint(blob: Uint8Array): string {
+  return `SHA256:${Buffer.from(sha256Bytes(blob)).toString('base64').replace(/=+$/, '')}`;
+}
+
+/**
+ * A user certificate from its `…-cert.pub` line (`type base64 comment`), or the blob itself.
+ * Throws with a reason for anything else: a plain key, a host certificate, an unknown type.
+ */
+export function parseCertificate(input: string | Uint8Array): SshCertificate {
+  let blob: Buffer;
+  let lineType: string | undefined;
+  let comment = '';
+  if (typeof input === 'string') {
+    const parts = input.trim().split(/\s+/);
+    if (parts.length < 2) throw new Error('not an OpenSSH certificate: expected the line of a …-cert.pub file');
+    lineType = parts[0]!;
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(parts[1]!)) throw new Error('not an OpenSSH certificate: the key is not base64');
+    blob = Buffer.from(parts[1]!, 'base64');
+    comment = parts.slice(2).join(' ');
+  } else blob = Buffer.from(input);
+  if (blob.length > MAX_CERT_BYTES) throw new Error('not an OpenSSH certificate: too large');
+  const r = new Reader(blob);
+  const type = r.text();
+  if (lineType !== undefined && lineType !== type) throw new Error(`not an OpenSSH certificate: the line says ${lineType}, the key is ${type}`);
+  if (!type.endsWith('-cert-v01@openssh.com')) throw new Error(`not a certificate but a plain key (${type}): use the …-cert.pub file`);
+  const spec = CERT_TYPES[type];
+  if (!spec) throw new Error(`this certificate type is not supported: ${type}`);
+  r.bytes(); // nonce
+  const keyStart = r.at;
+  if (spec.plain === 'ssh-ed25519') {
+    if (r.bytes().length !== 32) throw new Error('not an OpenSSH certificate: bad Ed25519 key');
+  } else if (spec.plain === 'ssh-rsa') {
+    r.bytes(); // e
+    r.bytes(); // n
+  } else {
+    const curve = r.text();
+    if (`ecdsa-sha2-${curve}` !== spec.plain) throw new Error(`not an OpenSSH certificate: curve ${curve} in a ${type}`);
+    r.bytes(); // Q
+  }
+  const keyFields = blob.subarray(keyStart, r.at);
+  const serial = r.u64();
+  const certType = r.u32();
+  if (certType !== USER_CERT) throw new Error('this is a host certificate, not a user certificate');
+  const keyId = r.text();
+  const principals = strings(r.bytes());
+  const validAfter = r.u64().value;
+  const before = r.u64();
+  const criticalOptions = options(r.bytes());
+  const extensions = Object.keys(options(r.bytes()));
+  r.bytes(); // reserved
+  const caKey = r.bytes();
+  r.bytes(); // signature
+  if (!r.done) throw new Error('not an OpenSSH certificate: data after the signature');
+  return {
+    type,
+    keyType: spec.plain,
+    blob,
+    publicKey: Buffer.concat([sshString(spec.plain), keyFields]),
+    serial: decimal(serial.hi, serial.lo),
+    keyId,
+    principals,
+    validAfter,
+    validBefore: before.hi === 0xffffffff && before.lo === 0xffffffff ? Infinity : before.value,
+    criticalOptions,
+    extensions,
+    caFingerprint: keyFingerprint(caKey),
+    comment,
+  };
+}
+
+/** The certificate as a `…-cert.pub` line. */
+export function certificateLine(cert: SshCertificate): string {
+  return `${cert.type} ${cert.blob.toString('base64')}${cert.comment ? ` ${cert.comment}` : ''}`;
+}
+
+export type CertificateState = 'not-yet' | 'valid' | 'expiring' | 'expired';
+
+/**
+ * Where the certificate is in its validity at `now` (ms). `expiring`: in its last quarter, and at
+ * most a day left (a week-long certificate warns a day ahead, an 8-hour one 2 hours ahead).
+ */
+export function certificateState(cert: Pick<SshCertificate, 'validAfter' | 'validBefore'>, now = Date.now()): CertificateState {
+  const s = now / 1000;
+  if (s < cert.validAfter) return 'not-yet';
+  if (s >= cert.validBefore) return 'expired';
+  if (cert.validBefore === Infinity) return 'valid';
+  const lifetime = cert.validBefore - cert.validAfter;
+  return cert.validBefore - s <= Math.min(86400, lifetime / 4) ? 'expiring' : 'valid';
+}
+
+/** The certificate is for this public key blob (compared with the plain key's blob). */
+export function certificateMatches(cert: SshCertificate, publicKeyBlob: Uint8Array): boolean {
+  return cert.publicKey.equals(Buffer.from(publicKeyBlob));
+}
+
+/**
+ * A key the client already has (its own, a hardware key) with a certificate: the login sends the
+ * certificate, the key signs. Refuses a certificate for another key.
+ */
+export class CertKeyPair implements KeyPair {
+  comment: string | null;
+  private constructor(
+    readonly inner: KeyPair,
+    readonly certificate: SshCertificate,
+  ) {
+    this.comment = certificate.keyId || null;
+  }
+
+  static async create(inner: KeyPair, cert: SshCertificate | string): Promise<CertKeyPair> {
+    const c = typeof cert === 'string' ? parseCertificate(cert) : cert;
+    const own = await inner.getPublicKeyBytes();
+    if (!own || !certificateMatches(c, own)) throw new Error(`this certificate is for another key (${keyFingerprint(c.publicKey)})`);
+    return new CertKeyPair(inner, c);
+  }
+
+  get keyAlgorithmName(): string {
+    return this.certificate.type;
+  }
+  get hasPublicKey(): boolean {
+    return true;
+  }
+  get hasPrivateKey(): boolean {
+    return this.inner.hasPrivateKey;
+  }
+  /** The certificate, whatever algorithm asks. */
+  getPublicKeyBytes(_algorithmName?: string): Promise<Buffer | null> {
+    return Promise.resolve(Buffer.from(this.certificate.blob));
+  }
+  setPublicKeyBytes(): Promise<void> {
+    return Promise.reject(new Error('a certificate cannot be changed'));
+  }
+  generate(): Promise<void> {
+    return Promise.reject(new Error('a certificate is issued by its CA'));
+  }
+  importParameters(): Promise<void> {
+    return Promise.reject(new Error('a certificate cannot be changed'));
+  }
+  exportParameters(): Promise<never> {
+    return Promise.reject(new Error('a certificate cannot be exported'));
+  }
+  dispose(): void {}
+}
+
+/**
+ * A certificate login algorithm: the login names the certificate type, the plain algorithm signs
+ * (its signer for the inner key; agent keys through the agent) and names the signature.
+ */
+export class CertAlgorithm extends PublicKeyAlgorithm {
+  constructor(
+    certType: string,
+    login: string,
+    readonly plain: PublicKeyAlgorithm,
+  ) {
+    super(login, certType, plain.hashAlgorithmName);
+  }
+  createKeyPair(): KeyPair {
+    throw new Error('host certificates are not supported');
+  }
+  generateKeyPair(): Promise<KeyPair> {
+    return Promise.reject(new Error('a certificate is issued by its CA'));
+  }
+  createSigner(keyPair: KeyPair): Signer {
+    return this.plain.createSigner(keyPair instanceof CertKeyPair ? keyPair.inner : keyPair);
+  }
+  createVerifier(): Verifier {
+    throw new Error('host certificates are not supported');
+  }
+  /** The plain key's signature name (`ssh-ed25519`, `rsa-sha2-512`), as draft §3.2 says. */
+  createSignatureData(signature: Buffer): Buffer {
+    return this.plain.createSignatureData(signature);
+  }
+}
+
+/**
+ * Add a certificate algorithm for each certificate type whose plain algorithm is configured (after
+ * the session's other changes: it signs with what is there). Last in the list, so a server is
+ * never asked for a host certificate when it has a plain host key we know.
+ */
+export function certAlgorithms(config: SshSessionConfiguration): void {
+  const list = config.publicKeyAlgorithms;
+  for (const [certType, spec] of Object.entries(CERT_TYPES)) {
+    if (list.some((a) => a?.keyAlgorithmName === certType)) continue;
+    const plain = list.find((a) => a?.name === spec.signature);
+    if (plain) list.push(new CertAlgorithm(certType, spec.login, plain));
+  }
+}
+
+/** Certificates first (stable): sshd counts each key tried (MaxAuthTries, 6 by default). */
+export function certificatesFirst<T extends { keyAlgorithmName: string }>(keys: readonly T[]): T[] {
+  return [...keys.filter((k) => isCertType(k.keyAlgorithmName)), ...keys.filter((k) => !isCertType(k.keyAlgorithmName))];
+}
