@@ -18,7 +18,7 @@ import { isCallCopy } from './calls';
 import { showRunbook } from './currentRunbook';
 import { RunPipeline, RunRecord } from './pipeline';
 import { labelOf, notebookProgress } from './progress';
-import { onDidChangeWaiting, waitingIn } from './waiting';
+import { answerAsked, onDidChangeWaiting, waitingIn } from './waiting';
 
 const cfg = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfiguration(SECTION);
 const enabled = (): boolean => cfg().get<boolean>('notifications.enabled', true);
@@ -127,28 +127,34 @@ export function registerNotifications(pipeline: RunPipeline, context: vscode.Ext
     },
   });
   // Waiting for you: one notice per question, only while you look away and only for a question
-  // asked on the cell (a value box or a dialog shows itself); it closes once answered.
+  // asked on the cell (a value box or a dialog shows itself). Its buttons are the cell's answers
+  // and Show the Step: the cell may be out of view, in a call's copy (a team's report).
   const told = new Map<string, string>();
-  const open = new Map<string, () => void>();
+  /** For tests: the notices shown, and what a click on one of their buttons does. */
+  const notices: { text: string; buttons: string[]; pick: (label: string) => Promise<void> }[] = [];
   /** Says so for each runbook that waits for an answer on a cell while you look away. */
   const checkWaiting = (): void => {
-      for (const nb of vscode.workspace.notebookDocuments) {
-        const key = nb.uri.toString();
-        const w = waitingIn(nb);
-        const id = w ? `${w.cell.index}#${w.what}` : undefined;
-        if (told.has(key) && told.get(key) !== id) {
-          open.get(key)?.();
-          open.delete(key);
-          told.delete(key);
-        }
-        if (!w || !id || w.where !== 'cell' || told.get(key) === id || !enabled() || !lookingAway(nb)) continue;
-        told.set(key, id);
-        systemNotify(nameOf(nb), `Waiting for you: ${w.what}`);
-        void vscode.window.withProgress(
-          { location: vscode.ProgressLocation.Notification, title: `md-runbook: ${nameOf(nb)} waits for you: ${w.what}. Answer on the cell (the status bar item shows it).` },
-          () => new Promise<void>((resolve) => open.set(key, resolve)),
-        );
-      }
+    for (const nb of vscode.workspace.notebookDocuments) {
+      const key = nb.uri.toString();
+      const w = waitingIn(nb);
+      const id = w ? `${w.cell.index}#${w.what}` : undefined;
+      if (told.has(key) && told.get(key) !== id) told.delete(key);
+      if (!w || !id || w.where !== 'cell' || told.get(key) === id || !enabled() || !lookingAway(nb)) continue;
+      told.set(key, id);
+      systemNotify(nameOf(nb), `Waiting for you: ${w.question ?? w.what}`);
+      const show = 'Show the Step';
+      const text = `md-runbook: ${nameOf(nb)} waits for you: ${w.question ?? w.what}`;
+      const buttons = [...(w.answers ?? []).map((a) => a.label), show];
+      const pick = async (label: string | undefined): Promise<void> => {
+        if (label === show) return void (await showRunbook(nb, (w.shownOn ?? w.cell).index));
+        const a = w.answers?.find((x) => x.label === label);
+        // Answered meanwhile (on the cell, the Steps view): this notice is old, and answers nothing.
+        if (a && !answerAsked(w, a.id)) void vscode.window.showInformationMessage('md-runbook: that question was answered already.');
+      };
+      notices.push({ text, buttons, pick });
+      if (notices.length > 20) notices.shift();
+      void vscode.window.showInformationMessage(text, ...buttons).then(pick);
+    }
   };
   context.subscriptions.push(
     onDidChangeWaiting(checkWaiting),
@@ -156,7 +162,12 @@ export function registerNotifications(pipeline: RunPipeline, context: vscode.Ext
     vscode.window.onDidChangeActiveNotebookEditor(checkWaiting),
     vscode.window.onDidChangeActiveTextEditor(checkWaiting),
     vscode.window.onDidChangeWindowState(checkWaiting),
-    { dispose: () => open.forEach((close) => close()) },
+    // For tests: the waiting notices shown (text, buttons), and a click on one's button.
+    vscode.commands.registerCommand('mdRunbook._waitingNotices', () => notices.map((n) => ({ text: n.text, buttons: n.buttons }))),
+    vscode.commands.registerCommand('mdRunbook._pickWaitingNotice', (index?: unknown, label?: unknown) => {
+      const n = typeof index === 'number' ? notices[index] : undefined;
+      return n && typeof label === 'string' && n.buttons.includes(label) ? n.pick(label) : undefined;
+    }),
     // A notification asked for (Notify Me When It Starts): VS Code's, and the system's when that is on.
     vscode.commands.registerCommand('mdRunbook._notifyNow', (title?: unknown, body?: unknown) => {
       if (typeof title !== 'string' || typeof body !== 'string') return;

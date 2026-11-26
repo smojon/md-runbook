@@ -103,6 +103,14 @@ Run the call cell (or Run All): the copy opens beside the runbook, and its steps
 run as you would run them yourself. So you see each one, answer its confirmations and give the
 inputs it asks for.
 
+When a step of the copy asks on its cell (a risky command, a step by hand):
+
+- the copy scrolls to the cell, and its **Run** / **Don't Run** buttons;
+- the status bar and the Steps view show the question, named after the copy;
+- the notification has the same buttons, and **Show the Step**.
+
+The same holds for a call inside a call.
+
 The parameters the call passes are never asked again. The call cell lists each step as it
 finishes (`✓ first`, `✗ second (1)`) and ends with the result:
 

@@ -36,6 +36,9 @@ While it runs or waits for you with another file in front, the item stays, named
 `deploy-checkout · ⟳ Step 2/5 · Build the image · 22s left`. A click brings the runbook back. The
 Steps view follows the same runbook, with its name under the view's title.
 
+A question on a cell's buttons in another runbook comes first: the item shows it, named, and a
+click goes to the cell. While a call's copy waits for you, the Steps view shows the copy.
+
 | When | Status bar |
 | --- | --- |
 | Not running | `☰ 2/6 · ~4 min` (steps done or skipped, and the time left by the blocks' estimates; `at least 4 min` while steps without any estimate are still to do) |
@@ -223,9 +226,13 @@ front (another file, another window), a notification says so:
 A run of one cell notifies only when it took at least 30 s
 (`mdRunbook.notifications.afterSeconds`).
 
-A question asked on the cell shows a notice that closes by itself once answered. Such questions
-are a step by hand, the teardown, and a risky command while another file is in front. A value
-box or a dialog shows itself, so no notice for those.
+A question asked on the cell shows a notice with the cell's buttons and **Show the Step**:
+
+- a step by hand;
+- the teardown;
+- a risky command while another file is in front (the notice names the command).
+
+A value box or a dialog shows itself, so no notice for those.
 
 Nothing while you watch the runbook. **Don't Show Again** turns them off
 (`mdRunbook.notifications.enabled`).

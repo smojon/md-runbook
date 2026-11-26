@@ -1,10 +1,12 @@
 /**
  * The runbook the progress surfaces follow (the status bar item, the Steps view): the runbook in
- * front, else one that runs or waits for you, else the last one in front. So a run stays on
- * screen while you read another file, and coming back finds it where it was.
+ * front (or the copy of a call it runs, while that waits for you), else one that runs or waits for
+ * you, else the last one in front. So a run stays on screen while you read another file, and
+ * coming back finds it where it was.
  */
 
 import * as vscode from 'vscode';
+import { runsUnder } from './callTree';
 import { anyRunning } from './estimates';
 import { NOTEBOOK_TYPE } from './serializer';
 import { onDidChangeWaiting, waitingIn } from './waiting';
@@ -18,8 +20,14 @@ const isRunbook = (nb: vscode.NotebookDocument | undefined): nb is vscode.Notebo
 
 export function currentRunbook(): vscode.NotebookDocument | undefined {
   const active = vscode.window.activeNotebookEditor?.notebook;
-  if (isRunbook(active)) return active;
   const busy = vscode.workspace.notebookDocuments.filter(isRunbook);
+  // A call the runbook in front runs waits for you (its copy beside it): that copy, so the
+  // question shows where you look (a team's report).
+  if (isRunbook(active)) {
+    if (waitingIn(active)) return active;
+    const key = active.uri.toString();
+    return busy.find((nb) => nb !== active && waitingIn(nb) !== undefined && runsUnder(nb.uri.toString(), key)) ?? active;
+  }
   return busy.find((nb) => waitingIn(nb) !== undefined) ?? busy.find((nb) => anyRunning(nb)) ?? (isRunbook(last) ? last : undefined);
 }
 

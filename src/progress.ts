@@ -248,7 +248,13 @@ export function registerProgress(context: vscode.ExtensionContext, pipeline: Run
     timer = undefined;
     // The runbook in front, else one that runs or waits for you (currentRunbook.ts): a run stays
     // in the status bar while another file is in front, named so you know which one.
-    const nb = currentRunbook();
+    // A question on a cell's buttons in another runbook outranks the progress of this one: no
+    // one would see it otherwise (a team's report).
+    const current = currentRunbook();
+    const nb =
+      current && !waitingIn(current)
+        ? (vscode.workspace.notebookDocuments.find((d) => d !== current && d.notebookType === NOTEBOOK_TYPE && !d.isClosed && waitingIn(d)?.where === 'cell') ?? current)
+        : current;
     const p = nb && vscode.workspace.getConfiguration(SECTION).get<boolean>('progress.statusBar', true) ? notebookProgress(nb) : undefined;
     const running = !!p && !!nb && anyRunning(nb);
     if (running && !ticker) ticker = setInterval(refresh, 1000);

@@ -22,6 +22,7 @@ import { inSections, sectionHeadings } from '@md-runbook/core/sections';
 import { osGroups } from '@md-runbook/core/os';
 import { callTarget, calledRunbookFile, fileSha256, relativeToCaller, samePath, writeCallCopy } from '@md-runbook/core/node';
 import { readSignature } from '@md-runbook/core/signing';
+import { setCaller } from './callTree';
 import { SECTION } from './config';
 import { META_KEY, outputMeta } from './outputs';
 import { CellExecutor, CellPlan, ExecuteIO, PrepareContext, RunPipeline } from './pipeline';
@@ -213,6 +214,7 @@ export class CallExecutor implements CellExecutor {
     const copyUri = vscode.Uri.file(copy);
     const copyShown = relativeToCaller(parentFile, copy);
     passed.set(copyUri.toString(), { params, callers: [...callers, target] });
+    setCaller(copyUri.toString(), ctx.notebook.uri.toString());
     const part = call.sections.length ? ` (section${call.sections.length === 1 ? '' : 's'} ${call.sections.map((t) => `"${t}"`).join(', ')})` : '';
     io.onStdout(`[md-runbook] ${resumed ? 'continuing' : 'running'} ${shown}${part} as ${copyShown}${resumed ? ' (steps done there are kept)' : ''}\n`);
 

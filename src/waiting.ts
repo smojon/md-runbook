@@ -21,7 +21,7 @@ export interface WaitingAnswer {
   tooltip?: string;
 }
 
-interface Waiting {
+export interface Waiting {
   cell: vscode.NotebookCell;
   /** What is asked, e.g. "parameter NAMESPACE". */
   what: string;
@@ -33,6 +33,8 @@ interface Waiting {
    * while it's edited, so a checklist item's question shows on the code block that waits after it.
    */
   shownOn?: vscode.NotebookCell;
+  /** The question in one line, for a notification (else `what`): a risky command names it. */
+  question?: string;
   answer?: (id: string) => void;
 }
 
@@ -90,6 +92,7 @@ export function askOnCell(
   settle?: (answer: (id: string | undefined) => void) => vscode.Disposable | undefined,
   token?: vscode.CancellationToken,
   shownOn?: vscode.NotebookCell,
+  question?: string,
 ): Promise<string | undefined> {
   return new Promise((resolve) => {
     const key = keyOf(cell);
@@ -101,13 +104,35 @@ export function askOnCell(
       changed.fire();
       resolve(id);
     };
-    const entry: Waiting = { cell, what, where: 'cell', answers, answer: done, ...(shownOn ? { shownOn } : {}) };
+    const entry: Waiting = { cell, what, where: 'cell', answers, answer: done, ...(shownOn ? { shownOn } : {}), ...(question ? { question } : {}) };
     waiting.set(key, entry);
     const s = settle?.(done);
     if (s) subs.push(s);
     if (token) subs.push(token.onCancellationRequested(() => done(undefined)));
     changed.fire();
+    revealBeside(shownOn ?? cell);
   });
+}
+
+/**
+ * The buttons in view where the runbook shows beside the one in front (a call's copy): scrolled
+ * to, without taking the focus. The editor in front never scrolls under the reader.
+ */
+function revealBeside(cell: vscode.NotebookCell): void {
+  const active = vscode.window.activeNotebookEditor;
+  const editor = vscode.window.visibleNotebookEditors.find((e) => e !== active && e.notebook === cell.notebook);
+  if (!editor || cell.index < 0) return;
+  editor.revealRange(new vscode.NotebookRange(cell.index, cell.index + 1), vscode.NotebookEditorRevealType.InCenterIfOutsideViewport);
+}
+
+/**
+ * Answer the question `w` asked, if it still waits (a notification's button): a later question on
+ * the same cell is not answered by an old notification.
+ */
+export function answerAsked(w: Waiting, id: string): boolean {
+  if (waiting.get(keyOf(w.cell)) !== w || !w.answer || !w.answers?.some((a) => a.id === id)) return false;
+  w.answer(id);
+  return true;
 }
 
 /** A click on one of a waiting cell's buttons (`cellUri`: the cell's document URI). */

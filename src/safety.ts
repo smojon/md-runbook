@@ -191,10 +191,18 @@ async function askToRun(plan: CellPlan, cell: vscode.NotebookCell, match: string
   const what = `confirm ${labelOf(cell)}`;
   const answer = inFront(cell.notebook)
     ? await whileWaiting(cell, what, () => vscode.window.showWarningMessage(message, { modal: true, detail }, 'Run'), 'dialog')
-    : (await askOnCell(cell, what, [
-        { id: 'run', label: 'Run', icon: 'play', tooltip: `${message}\n\n${detail}` },
-        { id: 'no', label: "Don't Run", icon: 'circle-slash', tooltip: 'Stops the run here (Resume Run asks again)' },
-      ])) === 'run'
+    : (await askOnCell(
+          cell,
+          what,
+          [
+            { id: 'run', label: 'Run', icon: 'play', tooltip: `${message}\n\n${detail}` },
+            { id: 'no', label: "Don't Run", icon: 'circle-slash', tooltip: 'Stops the run here (Resume Run asks again)' },
+          ],
+          undefined,
+          undefined,
+          undefined,
+          message,
+        )) === 'run'
       ? 'Run'
       : undefined;
   if (answer !== 'Run') {

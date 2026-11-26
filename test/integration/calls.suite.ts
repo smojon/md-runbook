@@ -93,6 +93,61 @@ test('a failed call stops Run All; run again, it continues its copy; Fresh copy 
   await closeAll();
 });
 
+/** Polls `fn` (async) until it gives a value. */
+async function poll<T>(what: string, fn: () => Promise<T | undefined | false>, ms = 60_000): Promise<T> {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await fn();
+    if (v !== undefined && v !== false) return v;
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+// A team's report: a risky command in a call's copy asked on the copy's cell, out of view,
+// while the status bar and the Steps view followed the caller and the notice had no buttons.
+test("a question in a call's copy: the status bar and the Steps view show it, the notice answers it", async () => {
+  writeFile('call-child4.md', child('echo "B will apply"')); // `apply`: a risky command, it asks
+  const uri = writeFile('call-parent4.md', parent('```runbook src=call-child4.md\nENV=dev\n```'));
+  const editor = await openRunbook(uri);
+  const call = editor.notebook.cellAt(2);
+  await step('run the call', runCells(editor, 2, 3));
+  type Asked = { cell: string; what: string; answers: string[] };
+  const asked = await poll('the question on the copy', async () =>
+    ((await vscode.commands.executeCommand<Asked[]>('mdRunbook._waitingAnswers')) ?? []).find((q) => q.what === 'confirm second'),
+  );
+  assert.match(asked.cell, /call-child4\.\d{8}-\d{6}\.md/);
+  // The caller stays in front; the surfaces that follow it show the copy's question.
+  assert.equal(vscode.window.activeNotebookEditor?.notebook.uri.toString(), uri.toString());
+  const item = await poll('the status bar item', async () => {
+    const s = await vscode.commands.executeCommand<{ text: string; command?: string }>('mdRunbook._statusItem');
+    return s?.text.includes('Waiting for you: confirm second') ? s : undefined;
+  });
+  assert.match(item.text, /^call-child4\.\d{8}-\d{6} · /);
+  assert.equal(item.command, 'mdRunbook._revealCell');
+  type Row = { kind: string; index?: number; state?: string; answers?: { id: string }[] };
+  const m = (await vscode.commands.executeCommand<{ title: string; state: string; rows: Row[] }>('mdRunbook._steps'))!;
+  assert.match(m.title, /^call-child4\.\d{8}-\d{6}\.md$/);
+  assert.equal(m.state, 'waiting');
+  assert.deepEqual(m.rows.find((r) => r.state === 'waiting')?.answers?.map((a) => a.id), ['run', 'no']);
+  // The notice names the command and has the answers as buttons.
+  type Notice = { text: string; buttons: string[] };
+  const notices = await poll('the notice', async () => {
+    const n = (await vscode.commands.executeCommand<Notice[]>('mdRunbook._waitingNotices')) ?? [];
+    return n.some((x) => x.text.includes('call-child4')) ? n : undefined;
+  });
+  const at = notices.findIndex((x) => x.text.includes('call-child4'));
+  assert.match(notices[at]!.text, /waits for you: Risky command in second .*“.*apply.*”/);
+  assert.deepEqual(notices[at]!.buttons, ['Run', "Don't Run", 'Show the Step']);
+  await step('Run, from the notice', vscode.commands.executeCommand('mdRunbook._pickWaitingNotice', at, 'Run'));
+  assert.equal(await waitForRun(call, 90_000), true, outputText(call));
+  assert.match(plain(call), /✓ second/);
+  // An old notice answers nothing (the question is gone).
+  await vscode.commands.executeCommand('mdRunbook._pickWaitingNotice', at, "Don't Run");
+  assert.equal(call.executionSummary?.success, true);
+  await closeAll();
+});
+
 test('run again: a copy with planted "done" outputs is not continued, and its steps run', async () => {
   const body = child('echo "B ${param:ENV}"');
   writeFile('call-child3.md', body);

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A question in a runbook call's copy could wait for good.** Before:
+  - a risky command in the copy asked on its cell, out of view;
+  - the status bar and the Steps view showed the caller;
+  - the notice had no buttons.
+- Now:
+  - the copy scrolls to the cell;
+  - the status bar and the Steps view show the question, named after the copy;
+  - the notice names the command and has **Run**, **Don't Run** and **Show the Step**.
+- A question on a cell's buttons in a runbook behind another: the status bar shows it first.
+
 ## 0.34.0
 
 What's new:
