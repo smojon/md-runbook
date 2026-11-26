@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.34.1
+
+What's new:
+- VS Code: a question a runbook call asks (a risky command, a step by hand) shows where you look,
+  and its notice can answer it.
+
 ### Fixed
 
 - **A question in a runbook call's copy could wait for good.** Before:

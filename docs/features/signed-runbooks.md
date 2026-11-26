@@ -272,7 +272,7 @@ The gate is one static binary:
 - installed as [apps/gate](../../apps/gate/README.md) says. In short:
 
 ```sh
-v=0.34.0                           # the release you install
+v=0.34.1                           # the release you install
 f=md-runbook-gate-linux-amd64      # or -linux-arm64, -darwin-amd64, -darwin-arm64
 base=https://github.com/smojon/md-runbook/releases/download/v$v
 curl -fsSL -O "$base/$f" -O "$base/SHA256SUMS"
