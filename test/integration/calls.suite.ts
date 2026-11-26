@@ -111,7 +111,8 @@ test("a question in a call's copy: the status bar and the Steps view show it, th
   const uri = writeFile('call-parent4.md', parent('```runbook src=call-child4.md\nENV=dev\n```'));
   const editor = await openRunbook(uri);
   const call = editor.notebook.cellAt(2);
-  await step('run the call', runCells(editor, 2, 3));
+  // The run ends only once the question is answered: not awaited before.
+  const running = runCells(editor, 2, 3);
   type Asked = { cell: string; what: string; answers: string[] };
   const asked = await poll('the question on the copy', async () =>
     ((await vscode.commands.executeCommand<Asked[]>('mdRunbook._waitingAnswers')) ?? []).find((q) => q.what === 'confirm second'),
@@ -140,6 +141,7 @@ test("a question in a call's copy: the status bar and the Steps view show it, th
   assert.match(notices[at]!.text, /waits for you: Risky command in second .*“.*apply.*”/);
   assert.deepEqual(notices[at]!.buttons, ['Run', "Don't Run", 'Show the Step']);
   await step('Run, from the notice', vscode.commands.executeCommand('mdRunbook._pickWaitingNotice', at, 'Run'));
+  await step('the run', running, 90_000);
   assert.equal(await waitForRun(call, 90_000), true, outputText(call));
   assert.match(plain(call), /✓ second/);
   // An old notice answers nothing (the question is gone).
