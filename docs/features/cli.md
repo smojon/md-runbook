@@ -415,7 +415,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: smojon/md-runbook@v0.33.0
+      - uses: smojon/md-runbook@v0.34.0
         with:
           runbook: runbooks/smoke.md
           params: |

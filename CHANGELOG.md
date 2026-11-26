@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.34.0
+
+What's new:
+- Log in with SSH certificates from your company's CA, in VS Code, the app and the web app.
+- On the ops host, certificates are optional: without a CA file nothing changes.
+- The gate's log and run report name the person (the certificate's key ID).
+
 ### SSH certificates (server)
 
 A company CA signs short-lived SSH certificates; the gate's log names the person

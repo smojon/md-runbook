@@ -32,7 +32,7 @@ Each release has a binary per platform: `md-runbook-gate-linux-amd64`, `-linux-a
 `-darwin-amd64` and `-darwin-arm64`. Download yours and `SHA256SUMS`, and check the sum:
 
 ```sh
-v=0.33.0 os=linux arch=amd64
+v=0.34.0 os=linux arch=amd64
 base=https://github.com/smojon/md-runbook/releases/download/v$v
 curl -fL -O "$base/md-runbook-gate-$os-$arch" -O "$base/SHA256SUMS"
 grep " md-runbook-gate-$os-$arch\$" SHA256SUMS | sha256sum -c -   # macOS: shasum -a 256 -c -
