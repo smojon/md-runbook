@@ -61,7 +61,7 @@ import { ExternalAwareEcdsaP256 } from './externalKey';
 import { PasskeySkEcdsaP256 } from './passkey';
 import { shownList, shownText } from '@md-runbook/core/shownText';
 import { certAlgorithms, certificateState, isCertType, parseCertificate, utcTime } from './cert';
-import { KeyLogin } from './login';
+import { KeyLogin, keyCount } from './login';
 
 export interface ConnectOptions {
   username: string;
@@ -273,8 +273,17 @@ export class RemoteShell {
         const before = login.left;
         const r = await login.run(s);
         if (r === 'ok') return s;
-        // Again only for keys left, and only after a connection that tried one: at most one connection per key.
-        if (r === 'refused' || !reopen || gaveUp || login.left === 0 || login.left === before) throw await refused(login.notes());
+        const left = login.left;
+        // Every key was refused (the connection may have ended at the last one, at MaxAuthTries).
+        if (r === 'refused' || left === 0) throw await refused(login.signNotes());
+        // No key went out on this connection: it was lost, not refused. Also the end of reconnecting
+        // (at most one connection per key).
+        if (left === before) throw new Error(`the connection closed with ${keyCount(left)} left to try${login.signNotes()}`);
+        if (!reopen || gaveUp) {
+          const more = left === 1 ? '1 more key was' : `${left} more keys were`;
+          throw await refused(`${login.signNotes()}; the server closed the connection before ${more} tried`);
+        }
+        // The server ended the login with keys left (MaxAuthTries): a new connection for them.
         await closeAll();
         try {
           stream = await reopen();
@@ -284,7 +293,8 @@ export class RemoteShell {
           }
           s = await connected(stream);
         } catch (e) {
-          throw await refused(login.notes(e instanceof Error ? e.message : String(e)));
+          const why = shownText(e instanceof Error ? e.message : String(e), 200);
+          throw new Error(`the server ended the login with ${keyCount(left)} left to try, and connecting again failed: ${why}${login.signNotes()}`);
         }
       }
     };

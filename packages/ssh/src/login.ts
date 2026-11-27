@@ -9,7 +9,7 @@
  * that throws ends the session, and the keys left are lost with the connection.
  */
 
-import { KeyPair, ObjectDisposedError, SshClientSession, SshConnectionError } from '@microsoft/dev-tunnels-ssh';
+import { AuthenticationFailureMessage, KeyPair, ObjectDisposedError, SshClientSession, SshConnectionError } from '@microsoft/dev-tunnels-ssh';
 import { Buffer } from 'buffer';
 import { shownText } from '@md-runbook/core/shownText';
 import { certificateOf } from './cert';
@@ -38,7 +38,9 @@ async function offer(session: SshClientSession, username: string, key: KeyPair):
   try {
     await started;
   } catch (e) {
-    if (session.isClosed && (e instanceof ObjectDisposedError || e instanceof SshConnectionError)) return { kind: 'closed-unsent' };
+    // The connection's errors, also before the session knows it closed (a failed write): signers
+    // don't throw these.
+    if (e instanceof ObjectDisposedError || e instanceof SshConnectionError) return { kind: 'closed-unsent' };
     return { kind: 'cannot-sign', message: e instanceof Error ? e.message : String(e) };
   }
   try {
@@ -46,6 +48,21 @@ async function offer(session: SshClientSession, username: string, key: KeyPair):
   } catch {
     return { kind: 'closed-sent' };
   }
+}
+
+/**
+ * The methods the server's last refusal listed, as they come: the library reads them only to skip
+ * its own queued methods, which one key per call doesn't have.
+ */
+function watchRefusals(session: SshClientSession): () => string[] | undefined {
+  let methods: string[] | undefined;
+  const s = session as unknown as { handleMessage(m: unknown, c?: unknown): void | Promise<void> };
+  const handle = s.handleMessage.bind(session);
+  s.handleMessage = (m, c) => {
+    if (m instanceof AuthenticationFailureMessage) methods = m.methodNames ?? [];
+    return handle(m, c);
+  };
+  return () => methods;
 }
 
 /** The key's plain public key (a certificate's certified key): a certificate and its key sign with the same private key. */
@@ -56,6 +73,11 @@ async function signingKeyId(key: KeyPair): Promise<string> {
   } catch {
     return '';
   }
+}
+
+/** "1 key", "3 keys". */
+export function keyCount(n: number): string {
+  return n === 1 ? '1 key' : `${n} keys`;
 }
 
 /** One login's keys across its connections: which are left to try, and why some couldn't sign. */
@@ -76,11 +98,13 @@ export class KeyLogin {
   }
 
   /**
-   * Offer the keys not tried yet on `session`, in order, until one logs in: 'ok'; every key was
-   * tried: 'refused'; or the connection ended first: 'closed' (`left` says how many keys wait).
-   * A key counts as tried once its signature was sent, or when its signer threw.
+   * Offer the keys not tried yet on `session` (new, its host key checked), in order, until one
+   * logs in: 'ok'; every key was tried, or the server takes no more keys: 'refused'; or the
+   * connection ended first: 'closed' (`left` says how many keys wait). A key counts as tried once
+   * its signature was sent, or when its signer threw.
    */
   async run(session: SshClientSession): Promise<'ok' | 'refused' | 'closed'> {
+    const methods = watchRefusals(session);
     while (this.next < this.keys.length) {
       if (session.isClosed) return 'closed';
       const key = this.keys[this.next]!;
@@ -102,18 +126,19 @@ export class KeyLogin {
         const text = `a key could not sign: ${shownText(r.message, 200)}`;
         if (!this.signErrors.includes(text)) this.signErrors.push(text);
       }
+      // The server takes no more keys (AuthenticationMethods publickey,keyboard-interactive after
+      // the first, PubkeyAuthentication no): the keys left can't log in here, nor on a new connection.
+      const listed = methods();
+      if (r.kind === 'refused' && listed !== undefined && !listed.includes('publickey')) {
+        this.next = this.keys.length;
+        return 'refused';
+      }
     }
     return 'refused';
   }
 
-  /** What to add to "authentication failed": the keys that couldn't sign, the keys not tried. */
-  notes(reconnectError?: string): string {
-    const notes = [...this.signErrors];
-    if (this.left > 0) {
-      const keys = this.left === 1 ? '1 more key was' : `${this.left} more keys were`;
-      const why = reconnectError === undefined ? '' : ` (reconnecting failed: ${shownText(reconnectError, 200)})`;
-      notes.push(`the server closed the connection before ${keys} tried${why}`);
-    }
-    return notes.map((n) => `; ${n}`).join('');
+  /** Why keys couldn't sign, to add to an error. */
+  signNotes(): string {
+    return this.signErrors.map((n) => `; ${n}`).join('');
   }
 }

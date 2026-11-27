@@ -55,6 +55,8 @@ const r = await session.run('cd /srv && ls', { timeoutMs: 60_000, signal, onStdo
   - The server may end the login with keys left (sshd's `MaxAuthTries`). Then a new connection
     tries them, same host-key check, within `connectTimeoutMs`.
   - At most one connection per key.
+  - A reconnect that fails has its own error, without "authentication failed".
+  - A refusal that no longer lists `publickey` ends the login: no more keys, no new connection.
   - `connect(stream, opts)`: one connection; the error says how many keys were left.
 - Remote shells: bash (login shell, for the user's PATH), else sh. cmd and PowerShell remotes are
   not supported yet.

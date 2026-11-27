@@ -77,6 +77,8 @@ describe('ssh: the login tries each key once', () => {
   let authorized = '';
   /** The connection ends at this many refused keys (sshd's MaxAuthTries). */
   let maxTries = 6;
+  /** A refusal lists keyboard-interactive only, as sshd's does once publickey is done or off. */
+  let noMorePublicKey = false;
   /** The keys offered, per connection. */
   let offered: string[][] = [];
   const open = () => connectTcp('127.0.0.1', port);
@@ -99,6 +101,8 @@ describe('ssh: the login tries each key once', () => {
           tried.push(blob);
           if (blob === authorized) return {};
           if (tried.length >= maxTries) await session.close(SshDisconnectReason.noMoreAuthMethodsAvailable, 'Too many authentication failures');
+          // The library's refusal lists the configured methods.
+          if (noMorePublicKey) config.authenticationMethods.splice(0, config.authenticationMethods.length, ...config.authenticationMethods.filter((m) => m !== 'publickey'));
           return null;
         })();
       });
@@ -120,6 +124,7 @@ describe('ssh: the login tries each key once', () => {
   beforeEach(() => {
     offered = [];
     maxTries = 6;
+    noMorePublicKey = false;
   });
 
   it("a key that can't sign is skipped: the next key logs in on the same connection", async () => {
@@ -210,5 +215,61 @@ describe('ssh: the login tries each key once', () => {
     );
     assert.equal(opens, 3);
     assert.deepEqual(offered.map((o) => o.length), [1, 1, 1]);
+  });
+
+  it('a refusal that no longer lists publickey (AuthenticationMethods, partial success): no more keys, no new connection', async () => {
+    const keys = await Promise.all(Array.from({ length: 3 }, () => generateKey()));
+    authorized = 'none';
+    noMorePublicKey = true;
+    let opens = 0;
+    await assert.rejects(
+      RemoteShell.connect(async () => (opens++, open()), { ...base, key: keys[0]!, moreKeys: keys.slice(1) }),
+      /^Error: authentication failed \(host key refused, or the key was not accepted\)$/,
+    );
+    assert.equal(opens, 1);
+    assert.deepEqual(offered, [[await blobOf(keys[0]!)]]);
+  });
+
+  it('the connect timeout during a reconnect: the error is the timeout, and the late connection is closed', async () => {
+    const keys = await Promise.all(Array.from({ length: 2 }, () => generateKey()));
+    authorized = await blobOf(keys[1]!);
+    maxTries = 1;
+    let opens = 0;
+    let lateClosed = false;
+    let late: Promise<unknown> = Promise.resolve();
+    const slowSecond = async () => {
+      if (opens++ === 0) return open();
+      const p = (async () => {
+        await new Promise((r) => setTimeout(r, 1000));
+        const s = await open();
+        const close = s.close.bind(s);
+        s.close = () => ((lateClosed = true), close());
+        return s;
+      })();
+      late = p;
+      return p;
+    };
+    await assert.rejects(RemoteShell.connect(slowSecond, { ...base, key: keys[0]!, moreKeys: keys.slice(1), connectTimeoutMs: 500 }), /^Error: connecting timed out/);
+    await late;
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(lateClosed, true);
+    // The second key was never offered (the late connection opened, and closed).
+    assert.deepEqual(offered.flat(), [await blobOf(keys[0]!)]);
+  });
+
+  it("a reconnect that fails (network, relay) says so, not that authentication failed", async () => {
+    const keys = await Promise.all(Array.from({ length: 4 }, () => generateKey()));
+    authorized = await blobOf(keys[3]!);
+    maxTries = 2;
+    let opens = 0;
+    const failSecond = async () => {
+      if (opens++ === 0) return open();
+      throw new Error('the relay refused the connection');
+    };
+    await assert.rejects(
+      RemoteShell.connect(failSecond, { ...base, key: keys[0]!, moreKeys: keys.slice(1) }),
+      /^Error: the server ended the login with 2 keys left to try, and connecting again failed: the relay refused the connection$/,
+    );
+    assert.equal(opens, 2);
   });
 });

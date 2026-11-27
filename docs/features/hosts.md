@@ -43,10 +43,13 @@ They are kept in the user setting `mdRunbook.hosts`:
   Public Key** makes it the first time.
 - Key files are not read. Put a key with a passphrase in the agent.
 - Each key is tried once, in order:
-  - A key that can't sign (the agent refuses, a hardware key prompt is cancelled) is skipped. Its
-    certificate is skipped too, and the error says why if no key logs in.
+  - A key that can't sign (the agent refuses, a hardware key prompt is cancelled) is skipped. It
+    isn't asked again, also not as its certificate. If no key logs in, the error says why.
   - The server ends the login after a few refused keys (sshd's `MaxAuthTries`, 6 by default).
     Then md-runbook connects again for the keys left, in the same connect time.
+  - sshd's `PerSourcePenalties` (OpenSSH 9.8+) count each failed connection: 5 s each, refused
+    from 15 s. A login past `MaxAuthTries` has one more. Behind a relay or a shared NAT, put the
+    key that logs in first, or raise `MaxAuthTries`.
 
 ### Certificates
 
