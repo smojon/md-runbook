@@ -86,6 +86,11 @@ locale = auto
 # cells_runner = kubernetes-job
 # job_service_account = md-runbook-cells
 # job_image = ghcr.io/smojon/md-runbook-ops:0.29.0
+# job_audit_who = yes: the Kubernetes audit log names who ran each block (the Job's kubectl
+# impersonates its own service account, with who in the user extra md-runbook.dev/operator).
+# Needs apps/ops/kubernetes/impersonation.yaml. A block can change the name: the gate's log
+# stays the authority (docs/features/kubernetes.md). Default no.
+# job_audit_who = yes
 
 # allow_no_group_kill (yes or no) is obsolete: the gate gives each shell a process group of its
 # own. A gate.conf with it still works; each session logs a notice.

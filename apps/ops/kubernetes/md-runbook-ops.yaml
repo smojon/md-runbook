@@ -218,6 +218,8 @@ data:
     kill_leftovers = yes
     cells_runner = kubernetes-job
     job_service_account = md-runbook-cells
+    # The Kubernetes audit log names who ran each block: apply impersonation.yaml first.
+    # job_audit_who = yes
     # Run reports: the token in the Secret md-runbook-ops-report-token, never in this ConfigMap.
     # report_to = https://runbooks.example.net/v1/runs
     # report_token_file = /etc/md-runbook-ops/report/token

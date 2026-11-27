@@ -192,6 +192,75 @@ To the app, the ops host is a host like any other:
 - put its name in a [host group](../app.md#hosts-and-the-apps-key) per cluster;
 - pin runbooks to it with `host=`.
 
+### Who in the Kubernetes audit log
+
+Each session's blocks run as one service account, `md-runbook-cells`. So the cluster's audit log
+can't tell people apart; the gate's log can. `job_audit_who = yes` in `gate.conf` (off by
+default) puts the person into the audit log too.
+
+How:
+- The Job's kubectl impersonates **its own** service account, with the user extra
+  `md-runbook.dev/operator` set to the gate's `who`: the certificate's key ID, else the key's
+  fingerprint (or `--who=`).
+- Same user name, same groups: the same rights. The admission policies still match it.
+- Each audit event then has:
+  - `user`: `md-runbook-cells`, with the pod's name in its extra
+    (`authentication.kubernetes.io/pod-name`). The API server sets it; no block can change it.
+  - `impersonatedUser`: `md-runbook-cells` again, with `md-runbook.dev/operator: [alice@example.com]`.
+
+Set it up:
+1. `kubectl apply -f apps/ops/kubernetes/impersonation.yaml` (a Role and a ClusterRole).
+2. Add `job_audit_who = yes` to `gate.conf`, then restart the ops Deployment.
+3. Your audit policy logs at level `Metadata` or more: `user` and `impersonatedUser` are in
+   every event.
+
+What a block can't do:
+- Impersonate anyone else: the Role names `md-runbook-cells` only (`resourceNames`), in
+  `md-runbook-ops` only. No users, no groups, no uids.
+- Set another extra key, such as the pod's.
+- Gain a right: the impersonated account is the same account.
+
+What a block can do, so the gate's log stays the authority:
+- **Drop the impersonation** (a kubeconfig of its own). The audit event then shows
+  `md-runbook-cells` and its pod, as without `job_audit_who`.
+- **Set another value** in `md-runbook.dev/operator`. RBAC can limit an extra's values
+  (`resourceNames`), but can't tie them to a session: every session's pod has the same account.
+- So the extra is a claim. To check it: the event's pod name (the API server's word) → the
+  gate's `job` event with that `pod` → its `who`.
+
+What the gate checks at each session, before any block:
+- `kubectl auth whoami` in the pod: `md-runbook-cells`, with `who` and no other extra. Else no
+  session: the RBAC is missing, or `job_image` is older than the gate.
+- The cells' account may not impersonate more: any service account, user or group, the gate's
+  account, `system:masters`, `md-runbook-cells` in another namespace, uids, the pod's extras.
+- `who` must be printable ASCII, at most 256 bytes. Else no session.
+
+Not covered: the gate outside a cluster (`kubeconfig =` in `gate.conf`). There the kubeconfig is
+yours: give each person their own if the audit log must name them.
+
+Why this design (checked 2026-11-27):
+- **Not one Kubernetes user per person.** RBAC can limit impersonation to listed users. But every
+  block of every session could then act as any of them, and the audit log would name the wrong
+  person with full confidence. Also, the admission policy `md-runbook-ops-workloads` matches the
+  cells' user name: it wouldn't hold such a user.
+- **Not constrained impersonation** ([KEP-5284](https://kep.k8s.io/5284): alpha in Kubernetes
+  1.35, beta and on by default in 1.36). Its service-account mode takes the user name only, no
+  extras. A request with an extra falls back to the classic `impersonate` check.
+- Confidence: high on what RBAC allows (the API server's impersonation code,
+  `staging/src/k8s.io/apiserver/pkg/endpoints/filters/impersonation/mode.go` in Kubernetes);
+  medium on managed clusters' audit pipelines (they should keep `impersonatedUser`: check
+  yours). CI checks it in a kind cluster's audit log.
+
+Sources:
+- [User impersonation](https://kubernetes.io/docs/reference/access-authn-authz/user-impersonation/):
+  the headers, `userextras/KEY`, `resourceNames`, constrained impersonation, the audit fields.
+- [Audit Event](https://kubernetes.io/docs/reference/config-api/apiserver-audit.v1/): `user`,
+  `impersonatedUser`.
+- [kubeconfig](https://kubernetes.io/docs/reference/config-api/kubeconfig.v1/): `as`,
+  `as-user-extra`.
+- [Bound service account tokens](https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/):
+  the pod's name in the token's extra (stable since 1.32).
+
 ## Is everything up? Endpoint and certificate checks
 
 Expired certificates and unreachable dependencies cause many outages, and they look different

@@ -11,6 +11,8 @@ A company CA signs short-lived SSH certificates. Servers trust the CA instead of
   - Every event adds the CA's fingerprint (`cert_ca`): the name is that CA's word.
   - The session event adds the serial (`cert_serial`) and the key (`key`).
   - The run report's `who` and `md-runbook audit --who` use the key ID too.
+  - On the ops host in a cluster, `job_audit_who = yes` puts it into the Kubernetes audit log
+    as well ([how](kubernetes.md#who-in-the-kubernetes-audit-log)).
 - **Offboarding by expiry.** A certificate valid for 8 hours stops by itself. A KRL revokes one
   sooner.
 - **Rules in the certificate.** Principals, validity, `source-address`: sshd enforces them.

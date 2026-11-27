@@ -4,6 +4,8 @@
 
 What's new:
 - SSH logins try every key, also past the server's limit, in VS Code, the app and the web app.
+- Ops host: the Kubernetes audit log can name who ran each block, not just the cells' account.
+  Opt-in: `job_audit_who = yes`.
 
 ### Fixed
 
@@ -22,6 +24,27 @@ What's new:
   - md-runbook connects again for the keys left, same host-key check, same connect time;
   - each key is tried once, in order;
   - if connecting again fails, the error says so (not "authentication failed").
+
+### Who in the Kubernetes audit log (ops host)
+
+- **How:** the session's Job runs kubectl as its own service account, impersonated, with `who`
+  in the user extra `md-runbook.dev/operator` (the certificate's key ID, or the key's
+  fingerprint).
+  - Same account, same rights: the admission policies still match it.
+  - Audit events show `user` (the cells' account and its pod) and `impersonatedUser` (with the
+    person).
+- **Set up:** apply `apps/ops/kubernetes/impersonation.yaml`, add `job_audit_who = yes` to
+  `gate.conf`, restart the ops Deployment.
+- **Limits:** a block can drop the impersonation or set another name. The gate's log stays the
+  authority; the pod's name in the audit event ties it to the session.
+- **The gate's checks, before any block:**
+  - `kubectl auth whoami` in the pod shows the cells' account with `who`. Else no session.
+  - The cells' account may impersonate nothing more: no other service account, user, group or
+    uid, not the gate's account, not `system:masters`, not the pod's extras. This check runs
+    with or without `job_audit_who`.
+  - `who` must be printable ASCII, at most 256 bytes.
+- Not with `kubeconfig =`, nor outside a cluster.
+- [Details and sources](docs/features/kubernetes.md#who-in-the-kubernetes-audit-log).
 
 ### Gate
 

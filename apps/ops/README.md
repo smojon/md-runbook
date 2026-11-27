@@ -368,6 +368,8 @@ set `repository` in the file first.
    - each namespace where it may change workloads enforces Pod Security, and none is `kube-*`;
    - if it may change workloads anywhere, `md-runbook-ops-workloads` is bound;
    - no service account of such a namespace has a ClusterRoleBinding;
+   - it may impersonate no one, except itself with `job_audit_who` (then `kubectl auth whoami`
+     must show who logged in);
 6. runs the session's blocks there with `kubectl exec`;
 7. deletes the Job when the session ends.
 
@@ -467,6 +469,9 @@ Settings in `gate.conf`:
 - `job_service_account = NAME`: required.
 - `job_image = IMAGE`: optional. The default is the ops pod's own image. It must be of the
   repository `admission-policy.yaml` allows.
+- `job_audit_who = yes`: optional, off by default. The Kubernetes audit log names the person
+  behind each block's kubectl call. Apply `kubernetes/impersonation.yaml` first
+  ([how and why](../../docs/features/kubernetes.md#who-in-the-kubernetes-audit-log)).
 - Outside a cluster, remove `cells_runner` and `job_service_account`.
 
 **Your own cells' service account.** With another `job_service_account` than
@@ -566,6 +571,9 @@ container's output. Each line names the key: its fingerprint, or the certificate
 - The log volume holds 256 MiB. Past that, Kubernetes evicts the pod.
 - The Kubernetes audit log names the cells' account, not the person. The gate's log says which
   key ran what: keep both.
+  - With `job_audit_who = yes`, audit events also carry the person, in `impersonatedUser`'s
+    extra `md-runbook.dev/operator`. A block can change that value: the gate's log stays the
+    authority ([details](../../docs/features/kubernetes.md#who-in-the-kubernetes-audit-log)).
 
 **A key stolen, or someone leaving:**
 1. Save the log, unless it's shipped already:
