@@ -17,6 +17,7 @@ on:
       - 'test/ops.live.test.ts'
       - 'scripts/ci/ops-job-session.sh'
       - 'scripts/ci/ops-ssh-certs.sh'
+      - 'scripts/ci/ops-audit-who.sh'
       - 'scripts/ci/probe-metrics.sh'
       - '.github/workflows/ops.yml'
   workflow_dispatch:
@@ -45,6 +46,7 @@ jobs:
           shellcheck -s sh -S warning apps/ops/start.sh
           shellcheck -S warning scripts/ci/ops-job-session.sh
           shellcheck -S warning scripts/ci/ops-ssh-certs.sh
+          shellcheck -S warning scripts/ci/ops-audit-who.sh
 
       - name: Build the image
         # No attestations: kind's containerd can't use an image index that has them.
@@ -83,7 +85,47 @@ jobs:
       - name: Cluster
         run: |
           command -v kind || { sudo curl -fsSLo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 && sudo chmod +x /usr/local/bin/kind; }
-          kind create cluster --name ops --wait 180s
+          # An audit log of the cells' account's requests (ops-audit-who.sh reads it). kind's
+          # kubeadm config is v1beta3 or v1beta4 depending on its version: a patch for each (kind
+          # applies the one whose apiVersion matches). https://kind.sigs.k8s.io/docs/user/auditing/
+          audit="$RUNNER_TEMP/kind-audit"
+          mkdir -p "$audit"
+          printf '%s\n' 'apiVersion: audit.k8s.io/v1' 'kind: Policy' 'omitStages: [RequestReceived]' 'rules:' \
+            '- level: Metadata' '  users: ["system:serviceaccount:md-runbook-ops:md-runbook-cells"]' '- level: None' > "$audit/audit-policy.yaml"
+          cat > "$RUNNER_TEMP/kind-ops.yaml" <<EOF
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+          - role: control-plane
+            extraMounts:
+            - hostPath: $audit
+              containerPath: /etc/kubernetes/policies
+              readOnly: true
+            kubeadmConfigPatches:
+            - |
+              apiVersion: kubeadm.k8s.io/v1beta3
+              kind: ClusterConfiguration
+              apiServer:
+                extraArgs:
+                  audit-log-path: /var/log/kubernetes/kube-apiserver-audit.log
+                  audit-policy-file: /etc/kubernetes/policies/audit-policy.yaml
+                extraVolumes:
+                - {name: audit-policies, hostPath: /etc/kubernetes/policies, mountPath: /etc/kubernetes/policies, readOnly: true, pathType: DirectoryOrCreate}
+                - {name: audit-logs, hostPath: /var/log/kubernetes, mountPath: /var/log/kubernetes, readOnly: false, pathType: DirectoryOrCreate}
+            - |
+              apiVersion: kubeadm.k8s.io/v1beta4
+              kind: ClusterConfiguration
+              apiServer:
+                extraArgs:
+                - {name: audit-log-path, value: /var/log/kubernetes/kube-apiserver-audit.log}
+                - {name: audit-policy-file, value: /etc/kubernetes/policies/audit-policy.yaml}
+                extraVolumes:
+                - {name: audit-policies, hostPath: /etc/kubernetes/policies, mountPath: /etc/kubernetes/policies, readOnly: true, pathType: DirectoryOrCreate}
+                - {name: audit-logs, hostPath: /var/log/kubernetes, mountPath: /var/log/kubernetes, readOnly: false, pathType: DirectoryOrCreate}
+          EOF
+          kind version
+          kind create cluster --name ops --config "$RUNNER_TEMP/kind-ops.yaml" --wait 180s
+          docker exec ops-control-plane test -f /var/log/kubernetes/kube-apiserver-audit.log
           docker save md-runbook-ops:ci -o "$RUNNER_TEMP/ops-image.tar"
           kind load image-archive "$RUNNER_TEMP/ops-image.tar" --name ops
           docker exec ops-control-plane crictl images | grep md-runbook-ops
@@ -138,6 +180,9 @@ jobs:
       - name: SSH certificates (user_ca, authorized_principals, revoked_keys)
         # Restarts the ops pod: after the checks of its log above.
         run: scripts/ci/ops-ssh-certs.sh
+      - name: job_audit_who (the Kubernetes audit log names who ran a block)
+        # Restarts the ops pod too, and puts gate.conf and the keys back.
+        run: scripts/ci/ops-audit-who.sh
 
       - name: Outside a cluster, with a mounted kubeconfig (as next to the relay)
         run: |
@@ -168,6 +213,7 @@ jobs:
           kubectl get validatingadmissionpolicy,validatingadmissionpolicybinding -o yaml || true
           kubectl -n md-runbook-ops get networkpolicies -o yaml || true
           kubectl -n md-runbook-ops logs deployment/md-runbook-ops || true
+          docker exec ops-control-plane tail -n 20 /var/log/kubernetes/kube-apiserver-audit.log || true
           cat "$RUNNER_TEMP/pf.log" "$RUNNER_TEMP/pf-job.log" || true
           kubectl -n md-runbook-ops get configmap md-runbook-ops-keys -o yaml || true
           docker logs ops || true
