@@ -88,6 +88,10 @@ describe('ssh: the login asks about each key, then signs once', () => {
   let freeQueries = 0;
   /** A refusal lists keyboard-interactive only, as sshd's does once publickey is done or off. */
   let noMorePublicKey = false;
+  /** Servers that answer queries wrongly: never; with PK_OK for another key (these keys); with success. */
+  let silentQueries = false;
+  let otherPkOk: string[] = [];
+  let successOnQuery = false;
   /** Per connection: the keys asked about, their algorithms, and the keys signed. */
   let offered: string[][] = [];
   let algorithms: string[][] = [];
@@ -130,6 +134,13 @@ describe('ssh: the login asks about each key, then signs once', () => {
           else {
             asked.push(blob);
             algs.push(r.keyAlgorithmName!);
+            if (silentQueries) return;
+            if (otherPkOk.includes(blob)) {
+              const ok = new PublicKeyOKMessage();
+              ok.keyAlgorithmName = r.keyAlgorithmName;
+              ok.publicKey = (await (await generateKey()).getPublicKeyBytes())!;
+              return session.sendMessage(ok);
+            }
             // Certificates: this server has no certificate algorithm (the library would end the
             // session). It answers as sshd: yes to those it knows, else a refusal.
             if (!config.publicKeyAlgorithms.some((a) => a?.name === r.keyAlgorithmName)) {
@@ -152,9 +163,11 @@ describe('ssh: the login asks about each key, then signs once', () => {
         const query = e.authenticationType === SshAuthenticationType.clientPublicKeyQuery;
         if ((!query && e.authenticationType !== SshAuthenticationType.clientPublicKey) || !e.publicKey) return;
         const key = e.publicKey;
+        // A server that takes the query as the login: the library then logs the client in.
+        if (query && successOnQuery) (e as { authenticationType: SshAuthenticationType }).authenticationType = SshAuthenticationType.clientPublicKey;
         e.authenticationPromise = (async () => {
           const blob = await blobOf(key);
-          if (authorized.includes(blob) || (query && queryOnly.includes(blob))) return {};
+          if (successOnQuery || authorized.includes(blob) || (query && queryOnly.includes(blob))) return {};
           await refuse(query);
           return null;
         })();
@@ -183,6 +196,9 @@ describe('ssh: the login asks about each key, then signs once', () => {
     maxTries = 6;
     freeQueries = 0;
     noMorePublicKey = false;
+    silentQueries = false;
+    otherPkOk = [];
+    successOnQuery = false;
   });
 
   it("a key the server doesn't know is asked about, never signed: the next key logs in", async () => {
@@ -238,6 +254,43 @@ describe('ssh: the login asks about each key, then signs once', () => {
     try {
       assert.deepEqual(offered, [blobs]);
       assert.deepEqual(signed, [blobs]);
+    } finally {
+      await shell.close();
+    }
+  });
+
+  it('a server that never answers a query: the connect timeout ends the login, nothing signs', async () => {
+    silentQueries = true;
+    const hw = await hardwareKey();
+    authorized = [await blobOf(hw)];
+    await assert.rejects(RemoteShell.connect(open, { ...base, key: hw, connectTimeoutMs: 500 }), /^Error: connecting timed out/);
+    assert.equal(hw.signs, 0);
+    assert.deepEqual(signed, [[]]);
+  });
+
+  it('PK_OK for another key: the key asked about is refused, not signed; the next key logs in', async () => {
+    const hw = await hardwareKey();
+    const good = await generateKey();
+    otherPkOk = [await blobOf(hw)];
+    authorized = [await blobOf(good)];
+    const shell = await RemoteShell.connect(open, { ...base, key: hw, moreKeys: [good] });
+    try {
+      assert.equal(hw.signs, 0);
+      assert.deepEqual(offered, [[otherPkOk[0], authorized[0]]]);
+      assert.deepEqual(signed, [authorized]);
+    } finally {
+      await shell.close();
+    }
+  });
+
+  it('a server that answers the query with success: logged in, nothing signs', async () => {
+    successOnQuery = true;
+    const hw = await hardwareKey();
+    const shell = await RemoteShell.connect(open, { ...base, key: hw, moreKeys: [await generateKey()] });
+    try {
+      assert.equal(hw.signs, 0);
+      assert.deepEqual(offered, [[await blobOf(hw)]]);
+      assert.deepEqual(signed, [[]]);
     } finally {
       await shell.close();
     }

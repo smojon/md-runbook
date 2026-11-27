@@ -4,7 +4,7 @@
  *   does: only a key the server would accept signs, so a hardware key, a passkey or an agent that
  *   confirms prompts only when the server knows the key;
  * - a key that can't sign (the agent refused, a hardware key's prompt cancelled, a keystore error)
- *   is skipped: the next key is offered on the same connection (nothing was sent for it);
+ *   is skipped: the next key is offered on the same connection (no signature was sent for it);
  * - a server that ends the connection before every key was tried (sshd's MaxAuthTries, 6 by
  *   default) can be asked again, over a new connection, with the keys not tried yet.
  *
@@ -31,7 +31,7 @@ import { certificateOf } from './cert';
 type Offer =
   | { kind: 'ok' }
   | { kind: 'refused' }
-  /** The signer threw: nothing was sent for this key. */
+  /** The signer threw: no signature was sent for this key (only its query, which the server accepted). */
   | { kind: 'cannot-sign'; message: string }
   /** The connection ended after the key's query or signature was sent (sshd's MaxAuthTries ends it instead of refusing). */
   | { kind: 'closed-sent' }
