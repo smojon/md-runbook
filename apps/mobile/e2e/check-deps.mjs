@@ -48,7 +48,9 @@ for (const [, name, major, minor, wantMajor, wantMinor] of lines) {
   const published = firstRelease(name, wantMajor, wantMinor);
   if (published !== undefined && Date.now() - published < minAgeDays * DAY) {
     const ripe = new Date(published + minAgeDays * DAY).toISOString().slice(0, 10);
-    console.log(`::warning title=Expo release held::${line} (published ${new Date(published).toISOString().slice(0, 10)}, held until ${ripe})`);
+    console.log(
+      `::warning title=Expo release held::${line} (published ${new Date(published).toISOString().slice(0, 10)}, held until ${ripe})`,
+    );
     continue;
   }
   console.error(`::error title=Expo version mismatch::${line}`);
