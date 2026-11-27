@@ -13,9 +13,11 @@
 #   - set only the extra md-runbook.dev/operator (userextras are cluster-scoped: a ClusterRole).
 #     Any value: RBAC can't tie it to the session. A block can set another name, or drop the
 #     impersonation. The gate's log stays the authority (docs/features/kubernetes.md).
-# No users, groups or uids: no block can act as anyone else. The gate refuses a session when the
-# cells' account may impersonate more (any service account, user or group, the gate's account,
-# system:masters, the pod's own extras).
+# No users, groups or uids: no block can act as anyone else. The gate reads the cells' rules in
+# each namespace and refuses a session when any other rule lets them impersonate: by name too,
+# and constrained impersonation's verbs (impersonate:..., impersonate-on:...). Rights from a
+# webhook authorizer it can't list (docs/features/kubernetes.md). The impersonated identity has
+# the same user name and groups, but no UID and none of the token's extras.
 #
 # Another job_service_account, or another namespace: change the names here, and in
 # resourceNames.

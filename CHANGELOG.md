@@ -27,9 +27,9 @@ What's new:
 
 ### Who in the Kubernetes audit log (ops host)
 
-- **How:** the session's Job runs kubectl as its own service account, impersonated, with `who`
-  in the user extra `md-runbook.dev/operator` (the certificate's key ID, or the key's
-  fingerprint).
+- **How:** the session's Job runs kubectl as its own service account, impersonated.
+  - The user extra `md-runbook.dev/operator` holds `who`: the certificate's key ID, or the key's
+    fingerprint.
   - Same account, same rights: the admission policies still match it.
   - Audit events show `user` (the cells' account and its pod) and `impersonatedUser` (with the
     person).
@@ -39,9 +39,11 @@ What's new:
   authority; the pod's name in the audit event ties it to the session.
 - **The gate's checks, before any block:**
   - `kubectl auth whoami` in the pod shows the cells' account with `who`. Else no session.
-  - The cells' account may impersonate nothing more: no other service account, user, group or
-    uid, not the gate's account, not `system:masters`, not the pod's extras. This check runs
-    with or without `job_audit_who`.
+  - The cells' rules (a rules review per namespace) allow no other impersonation. Named rights
+    count too, such as `users [kubernetes-admin]`.
+  - Constrained impersonation's verbs (`impersonate:…`, `impersonate-on:…`) are refused.
+  - The gate reads the rules with or without `job_audit_who`.
+  - Not seen: rights from a webhook authorizer (an incomplete rules review).
   - `who` must be printable ASCII, at most 256 bytes.
 - Not with `kubeconfig =`, nor outside a cluster.
 - [Details and sources](docs/features/kubernetes.md#who-in-the-kubernetes-audit-log).

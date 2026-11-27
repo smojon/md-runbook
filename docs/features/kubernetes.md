@@ -199,20 +199,25 @@ can't tell people apart; the gate's log can. `job_audit_who = yes` in `gate.conf
 default) puts the person into the audit log too.
 
 How:
-- The Job's kubectl impersonates **its own** service account, with the user extra
-  `md-runbook.dev/operator` set to the gate's `who`: the certificate's key ID, else the key's
+- The Job's kubectl impersonates **its own** service account, with one user extra:
+  `md-runbook.dev/operator`.
+- `md-runbook.dev/operator` holds the gate's `who`: the certificate's key ID, else the key's
   fingerprint (or `--who=`).
 - Same user name, same groups: the same rights. The admission policies still match it.
 - Each audit event then has:
   - `user`: `md-runbook-cells`, with the pod's name in its extra
     (`authentication.kubernetes.io/pod-name`). The API server sets it; no block can change it.
   - `impersonatedUser`: `md-runbook-cells` again, with `md-runbook.dev/operator: [alice@example.com]`.
+- The impersonated identity has no UID and none of the token's extras. A policy of yours keyed on
+  those sees another identity. RBAC and the md-runbook admission policies don't use them.
 
 Set it up:
 1. `kubectl apply -f apps/ops/kubernetes/impersonation.yaml` (a Role and a ClusterRole).
 2. Add `job_audit_who = yes` to `gate.conf`, then restart the ops Deployment.
 3. Your audit policy logs at level `Metadata` or more: `user` and `impersonatedUser` are in
    every event.
+
+Needs Kubernetes 1.30 or later, as the admission policies do.
 
 What a block can't do:
 - Impersonate anyone else: the Role names `md-runbook-cells` only (`resourceNames`), in
@@ -221,35 +226,52 @@ What a block can't do:
 - Gain a right: the impersonated account is the same account.
 
 What a block can do, so the gate's log stays the authority:
-- **Drop the impersonation** (a kubeconfig of its own). The audit event then shows
-  `md-runbook-cells` and its pod, as without `job_audit_who`.
-- **Set another value** in `md-runbook.dev/operator`. RBAC can limit an extra's values
-  (`resourceNames`), but can't tie them to a session: every session's pod has the same account.
-- So the extra is a claim. To check it: the event's pod name (the API server's word) → the
-  gate's `job` event with that `pod` → its `who`.
+- **Drop the impersonation.** The audit event then shows `md-runbook-cells` and its pod, as
+  without `job_audit_who`.
+- **Set another value** in `md-runbook.dev/operator`. RBAC can limit an extra's values, but not
+  per session: every session's pod has the same account.
+
+The extra is a claim. To check it, follow the event's pod name (the API server's word) to the
+gate's `job` event with that `pod`. That event names `who`.
+
+A missing extra is no sign of tampering. These skip the kubeconfig: a runbook's own `KUBECONFIG`,
+an SDK's in-cluster config, `curl` with the pod's token.
+
+`who` is in the Job's env (`MD_RUNBOOK_KUBE_WHO`). Whoever may read Jobs or pods in
+`md-runbook-ops` sees it.
 
 What the gate checks at each session, before any block:
-- `kubectl auth whoami` in the pod: `md-runbook-cells`, with `who` and no other extra. Else no
-  session: the RBAC is missing, or `job_image` is older than the gate.
-- The cells' account may not impersonate more: any service account, user or group, the gate's
-  account, `system:masters`, `md-runbook-cells` in another namespace, uids, the pod's extras.
-- `who` must be printable ASCII, at most 256 bytes. Else no session.
+- `kubectl auth whoami` in the pod shows `md-runbook-cells`, with `who` and no other extra. Else
+  no session: the RBAC is missing, or `job_image` is older than the gate.
+- `who` is printable ASCII, at most 256 bytes. Else no session.
+- The cells' rules, per namespace (a `SelfSubjectRulesReview` each) allow no other impersonation.
+  Allowed: impersonation.yaml's two rules, with or without `job_audit_who`.
+  - Refused: `impersonate` or `*` on users, groups, service accounts, uids, nodes or user extras.
+    Names don't help: `users [kubernetes-admin]` is refused too.
+  - Refused: any verb of constrained impersonation (`impersonate:…`, `impersonate-on:…`).
+- Questions without a name back this up (`SelfSubjectAccessReview`).
+  - They ask the classic verb and constrained impersonation's verbs.
+  - By name, they ask about the gate's account, `system:masters` and the pod's extras.
+
+What it can't check: rights a webhook authorizer gives (the rules review is then incomplete).
+Only the questions above hold there, and they can't see rights limited to names.
 
 Not covered: the gate outside a cluster (`kubeconfig =` in `gate.conf`). There the kubeconfig is
 yours: give each person their own if the audit log must name them.
 
 Why this design (checked 2026-11-27):
-- **Not one Kubernetes user per person.** RBAC can limit impersonation to listed users. But every
-  block of every session could then act as any of them, and the audit log would name the wrong
-  person with full confidence. Also, the admission policy `md-runbook-ops-workloads` matches the
-  cells' user name: it wouldn't hold such a user.
+- **Not one Kubernetes user per person.** RBAC can limit impersonation to listed users.
+  - But every block of every session could act as any of them.
+  - The audit log would then name the wrong person, with full confidence.
+  - The admission policy `md-runbook-ops-workloads` matches the cells' user name: it wouldn't
+    hold such a user.
 - **Not constrained impersonation** ([KEP-5284](https://kep.k8s.io/5284): alpha in Kubernetes
   1.35, beta and on by default in 1.36). Its service-account mode takes the user name only, no
   extras. A request with an extra falls back to the classic `impersonate` check.
-- Confidence: high on what RBAC allows (the API server's impersonation code,
-  `staging/src/k8s.io/apiserver/pkg/endpoints/filters/impersonation/mode.go` in Kubernetes);
-  medium on managed clusters' audit pipelines (they should keep `impersonatedUser`: check
-  yours). CI checks it in a kind cluster's audit log.
+- **Confidence: high** on what RBAC allows. It rests on the API server's impersonation code
+  (`staging/src/k8s.io/apiserver/pkg/endpoints/filters/impersonation/mode.go`).
+- **Confidence: medium** on managed clusters' audit pipelines: they should keep
+  `impersonatedUser`. Check yours. CI checks a kind cluster's audit log.
 
 Sources:
 - [User impersonation](https://kubernetes.io/docs/reference/access-authn-authz/user-impersonation/):
@@ -259,7 +281,11 @@ Sources:
 - [kubeconfig](https://kubernetes.io/docs/reference/config-api/kubeconfig.v1/): `as`,
   `as-user-extra`.
 - [Bound service account tokens](https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/):
-  the pod's name in the token's extra (stable since 1.32).
+  the node's name and the credential ID in the token's extra, stable since 1.32. The pod's name
+  is older: `PodNameKey` is in
+  [Kubernetes 1.19's `pkg/serviceaccount`](https://pkg.go.dev/k8s.io/kubernetes@v1.19.8-rc.0/pkg/serviceaccount).
+- [Environment variables](https://kubernetes.io/docs/tasks/inject-data-application/define-interdependent-environment-variables/):
+  the kubelet expands `$(VAR)`, not `$$(VAR)`. The gate doubles each `$` of `who` (CI checks a key ID with `$(id)`).
 
 ## Is everything up? Endpoint and certificate checks
 

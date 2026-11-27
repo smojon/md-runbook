@@ -355,12 +355,15 @@ kubernetes-job` runs each session's blocks in a Kubernetes Job of their own inst
 ([A Job per session](../ops/README.md#a-job-per-session)). It counts as `separated` too.
 - `job_service_account = NAME` is required: the Job's service account.
 - `job_image = IMAGE` is optional: the default is the gate's own pod's image.
-- `job_audit_who = yes` is optional (default `no`): the Job's kubectl impersonates its own
-  service account, with `who` in the user extra `md-runbook.dev/operator`. The Kubernetes audit
-  log then names the person. It needs `apps/ops/kubernetes/impersonation.yaml`, and doesn't go
-  with `kubeconfig =`. Before any block, the gate checks `kubectl auth whoami` in the pod, and
-  that the cells' account may impersonate nothing more
+- `job_audit_who = yes` is optional (default `no`): the Kubernetes audit log names the person
   ([details](../../docs/features/kubernetes.md#who-in-the-kubernetes-audit-log)).
+  - The Job's kubectl impersonates its own service account, with `who` in the user extra
+    `md-runbook.dev/operator`.
+  - `job_audit_who` needs `apps/ops/kubernetes/impersonation.yaml`, and doesn't go with
+    `kubeconfig =`.
+  - Before any block, the gate checks `kubectl auth whoami` in the pod.
+- In every session, the cells' account may impersonate nothing but itself and that extra. The
+  gate reads its rules in each namespace, and refuses to start otherwise.
 - The gate needs a pod to run in, and `kubectl` in `/usr/bin` like its other programs. The
   runner doesn't go with `cells_accounts`, `cells_account` or `isolation = scope` or `bwrap`.
 - At the start of each session the gate checks both service accounts, and refuses to start if
