@@ -423,16 +423,24 @@ kubectl apply -f "$work/egress.yaml"
 
 # A new session's pod starts under the policy: start.sh waits for the API server, the gate checks
 # the cells' account through it, and the block reaches it; not the Service, not the internet.
-open_session i 8
-cell 0000ac02 "$reach" >&8
-wait_for "$work/i/out" '__MDRB_0000ac02__ 0' 150
-close_session i 8
-grep -a '=' "$work/i/out" | grep -av MDRB || true
-[ "$(value i api)" = ok ] || fail "under the egress policy: no API server"
-[ "$(value i dns)" = ok ] || fail "under the egress policy: no DNS"
-[ -z "$(value i service)" ] || fail "under the egress policy: the other namespace's Service is reachable"
+# The network plugin takes the new policy a moment later, and the API doesn't say when: a pod in
+# that moment may start unprotected (Kubernetes docs, NetworkPolicy "Pod lifecycle"). So a session
+# that still reaches the Service is followed by a new one, up to 3; the last one counts.
+for try in 1 2 3; do
+  open_session "i$try" 8
+  cell 0000ac02 "$reach" >&8
+  wait_for "$work/i$try/out" '__MDRB_0000ac02__ 0' 150
+  close_session "i$try" 8
+  grep -a '=' "$work/i$try/out" | grep -av MDRB || true
+  [ -n "$(value "i$try" service)" ] || break
+  echo "note: session $try reached the Service, the policy may not be in effect yet"
+  sleep 10
+done
+[ "$(value "i$try" api)" = ok ] || fail "under the egress policy: no API server"
+[ "$(value "i$try" dns)" = ok ] || fail "under the egress policy: no DNS"
+[ -z "$(value "i$try" service)" ] || fail "under the egress policy: the other namespace's Service is reachable"
 if [ "$internet_before" = open ]; then
-  [ -z "$(value i internet)" ] || fail "under the egress policy: the internet is reachable"
+  [ -z "$(value "i$try" internet)" ] || fail "under the egress policy: the internet is reachable"
 else
   echo "note: 1.1.1.1:443 wasn't reachable before the policy either"
 fi

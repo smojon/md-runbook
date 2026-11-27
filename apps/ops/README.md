@@ -430,6 +430,9 @@ kubectl apply -f apps/ops/kubernetes/cells-egress.yaml
 
 - Some network plugins check before the Service's translation. There, add the Service's address
   too (`kubectl get service kubernetes -n default`, port 443).
+- A new policy takes effect a moment after you apply it, and the API doesn't say when. A session
+  that starts in that moment may not be under it.
+  ([Kubernetes: Pod lifecycle](https://kubernetes.io/docs/concepts/services-networking/network-policies/#pod-lifecycle))
 - The API server's addresses can change: sessions then refuse until you update the policy.
   - On EKS, each Kubernetes version update replaces them
     ([EKS network requirements](https://docs.aws.amazon.com/eks/latest/userguide/network-reqs.html)).
