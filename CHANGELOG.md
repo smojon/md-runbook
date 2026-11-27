@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.35.0
+
 What's new:
 - SSH logins try every key, also past the server's limit, in VS Code, the app and the web app.
 - Ops host: the Kubernetes audit log can name who ran each block, not just the cells' account.

@@ -56,7 +56,7 @@ the file format (cell options, placeholders, output markers):
 On GitHub Actions you can also use the action, which builds the runner from its own source:
 
 ```yaml
-- uses: smojon/md-runbook@v0.34.1
+- uses: smojon/md-runbook@v0.35.0
   with:
     runbook: runbooks/smoke.md
     report: report.html
