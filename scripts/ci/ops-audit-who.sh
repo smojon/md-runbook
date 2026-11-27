@@ -5,8 +5,11 @@
 #   - with it, a certificate login (key ID alice@example): kubectl in a block is the cells'
 #     account, with alice@example in the extra md-runbook.dev/operator; a plain key: its
 #     fingerprint;
+#   - a key ID with ', #, ": ", { and $: kubectl carries it as it is;
 #   - a block can't impersonate the gate's account, system:masters, another user, or another
-#     extra key;
+#     extra key: the API server refuses each as an impersonation;
+#   - a grant of more impersonation (a named service account; constrained impersonation's
+#     verbs): no session;
 #   - the API server's audit log (the kind cluster's audit policy): the block's call, with user
 #     the cells' account and its pod, and impersonatedUser with alice@example.
 # Needs KEYS (client, client.pub, ssh_host_ecdsa_key.pub, authorized_keys, gate-cluster.conf,
@@ -27,6 +30,9 @@ cd "$work"
 ssh-keygen -q -t ed25519 -N '' -C ci-audit-ca -f ca
 ssh-keygen -q -t ed25519 -N '' -C alice -f alice
 ssh-keygen -q -s ca -I alice@example -n ops -z 77 -V -5m:+1h alice.pub
+odd_id="o'brien #1: {x} \$HOME \$(id)"
+ssh-keygen -q -t ed25519 -N '' -C odd -f odd
+ssh-keygen -q -s ca -I "$odd_id" -n ops -z 78 -V -5m:+1h odd.pub
 port=2231
 echo "[127.0.0.1]:$port $(cut -d' ' -f1,2 "$KEYS/ssh_host_ecdsa_key.pub")" > known_hosts
 
@@ -72,42 +78,63 @@ wait_for() { # FILE PATTERN [SECONDS]
   fail "no $2 in $1"
 }
 # session NAME KEY [CERT] BLOCK: one session on its own FIFO, the block as a raw request; the
-# session's output in $work/NAME/out and err once the block ended (or the session did).
+# session's output in $work/s/NAME/out and err once the block ended (or the session did). (Not
+# $work/NAME: the key files are there.)
 session() {
-  local name=$1 key=$2 cert=$3 block=$4 certopt=()
+  local name=$1 key=$2 cert=$3 block=$4 certopt=() d="$work/s/$1"
   [ -n "$cert" ] && certopt=(-o CertificateFile="$cert")
-  mkdir -p "$work/$name"
-  mkfifo "$work/$name/in"
+  mkdir -p "$d"
+  mkfifo "$d/in"
   ssh -T -p "$port" -i "$key" "${certopt[@]}" -o BatchMode=yes -o IdentitiesOnly=yes \
     -o UserKnownHostsFile="$work/known_hosts" -o StrictHostKeyChecking=yes -o LogLevel=ERROR \
-    ops@127.0.0.1 < "$work/$name/in" > "$work/$name/out" 2> "$work/$name/err" &
+    ops@127.0.0.1 < "$d/in" > "$d/out" 2> "$d/err" &
   local pid=$!
-  exec 7> "$work/$name/in"
+  exec 7> "$d/in"
   printf ': mdrb-gate-hello 0000ab00; x\n' >&7
-  wait_for "$work/$name/out" '__MDRB_0000ab00__'
+  wait_for "$d/out" '__MDRB_0000ab00__'
   cell 0000ab01 "$block" >&7
   # The block's end, or the gate's line that the session's cells can't start.
   for _ in $(seq 1 600); do
-    grep -aq '__MDRB_0000ab01__' "$work/$name/out" && break
-    grep -aq "cells can't start" "$work/$name/err" && break
+    grep -aq '__MDRB_0000ab01__' "$d/out" && break
+    grep -aq "cells can't start" "$d/err" && break
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.2
   done
   exec 7>&-
   wait "$pid" || true
+  echo "--- session $name" >&2
+  tr '\036' '|' < "$d/out" >&2 || true
+  cat "$d/err" >&2 || true
 }
-value() { sed -n "s/^$2=//p" "$work/$1/out" | head -n 1; }
+value() { sed -n "s/^$2=//p" "$work/s/$1/out" | head -n 1; }
+# refused NAME WHAT PATTERN: session NAME's cells didn't start, the gate saying PATTERN.
+refused() {
+  grep -aq "cells can't start" "$work/s/$1/err" || fail "$2: the cells started"
+  grep -aq -- "$3" "$work/s/$1/err" || fail "$2: not the reason ($3)"
+  [ -z "$(value "$1" 'done')" ] || fail "$2: a block ran"
+  echo "ok: $2: no session"
+}
 
 block='kubectl auth whoami -o json > /tmp/whoami.json 2>&1 || true
 echo "user=$(jq -r .status.userInfo.username /tmp/whoami.json 2>/dev/null)"
 echo "operator=$(jq -r ".status.userInfo.extra[\"md-runbook.dev/operator\"] | join(\",\")" /tmp/whoami.json 2>/dev/null)"
 echo "extras=$(jq -r ".status.userInfo.extra | keys | join(\",\")" /tmp/whoami.json 2>/dev/null)"
 kubectl -n default get deployment web -o name > /dev/null 2>&1 && echo "read=ok"
-kubectl auth whoami --as=system:serviceaccount:md-runbook-ops:md-runbook-ops > /dev/null 2>&1 && echo "forged=gate-account"
-kubectl auth whoami --as=system:admin > /dev/null 2>&1 && echo "forged=user"
-kubectl auth whoami --as='"$cells"' --as-group=system:masters > /dev/null 2>&1 && echo "forged=masters"
-kubectl auth whoami --as=system:serviceaccount:default:default > /dev/null 2>&1 && echo "forged=other-account"
-kubectl auth whoami --as='"$cells"' --as-user-extra=scopes=admin > /dev/null 2>&1 && echo "forged=other-extra"
+# Each must fail as an impersonation the API server refuses, not for another reason.
+forge() { # NAME KUBECTL-ARGS...
+  local out
+  if out=$(kubectl auth whoami "${@:2}" 2>&1); then
+    echo "forged=$1"
+  elif ! printf "%s" "$out" | grep -q "cannot impersonate"; then
+    echo "unclear=$1: $(printf "%s" "$out" | head -n 1)"
+  fi
+}
+forge gate-account --as=system:serviceaccount:md-runbook-ops:md-runbook-ops
+forge user --as=system:admin
+forge masters --as='"$cells"' --as-group=system:masters
+forge other-account --as=system:serviceaccount:default:default
+forge other-extra --as='"$cells"' --as-user-extra=scopes=admin
+forge pod-extra --as='"$cells"' --as-user-extra=authentication.kubernetes.io/pod-name=x
 kubectl auth whoami --as='"$cells"' --as-user-extra=md-runbook.dev/operator=mallory@example -o json > /tmp/claim.json 2>&1 &&
   grep -q mallory@example /tmp/claim.json && echo "claim=any"
 echo "done=1"'
@@ -119,20 +146,17 @@ echo 'job_audit_who = yes' >> gate-audit.conf
 kubectl delete -f "$root/apps/ops/kubernetes/impersonation.yaml" --ignore-not-found
 gate gate-audit.conf
 session norbac alice alice-cert.pub "$block"
-grep -aq "cells can't start" norbac/err || fail "job_audit_who without the RBAC: the cells started"
-grep -aq "can't impersonate itself" norbac/err || { cat norbac/err >&2; fail "job_audit_who without the RBAC: not the reason"; }
-[ -z "$(value norbac 'done')" ] || fail "job_audit_who without the RBAC: a block ran"
-echo "ok: job_audit_who without the RBAC: no session"
+refused norbac "job_audit_who without the RBAC" "kubectl auth whoami failed"
 
 # ---- with it ----
 kubectl apply -f "$root/apps/ops/kubernetes/impersonation.yaml"
 session alice alice alice-cert.pub "$block"
-cat alice/out | tr '\036' '|'
 [ "$(value alice user)" = "$cells" ] || fail "kubectl in a block is $(value alice user)"
 [ "$(value alice operator)" = alice@example ] || fail "the operator extra is $(value alice operator)"
 [ "$(value alice extras)" = md-runbook.dev/operator ] || fail "extras: $(value alice extras)"
 [ "$(value alice read)" = ok ] || fail "the impersonated account lost its rights (get deployment web)"
-[ -z "$(value alice forged)" ] || fail "a block impersonated: $(grep '^forged=' alice/out | tr '\n' ' ')"
+[ -z "$(value alice forged)" ] || fail "a block impersonated: $(grep '^forged=' s/alice/out | tr '\n' ' ')"
+[ -z "$(value alice unclear)" ] || fail "an impersonation failed for another reason: $(grep '^unclear=' s/alice/out | tr '\n' ' ')"
 [ "$(value alice 'done')" = 1 ] || fail "the block didn't finish"
 echo "ok: a certificate login: kubectl is the cells' account with operator alice@example; no other impersonation"
 # What RBAC can't hold (docs/features/kubernetes.md): the extra's value is the block's to choose.
@@ -141,6 +165,50 @@ echo "ok: a certificate login: kubectl is the cells' account with operator alice
 session plain "$KEYS/client" "" "$block"
 [ "$(value plain operator)" = "$(fp "$KEYS/client.pub")" ] || fail "a plain key: the operator extra is $(value plain operator)"
 echo "ok: a plain key: the operator extra is its fingerprint"
+
+session odd odd odd-cert.pub "$block"
+[ "$(value odd operator)" = "$odd_id" ] || fail "a key ID with ' # : { \$: the operator extra is $(value odd operator)"
+echo "ok: a key ID with ' # : { \$: the operator extra is the key ID as it is"
+
+# ---- more impersonation than impersonation.yaml's: no session ----
+kubectl apply -f - <<'YAML'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: ci-impersonate-gate, namespace: md-runbook-ops}
+rules:
+  - {apiGroups: [''], resources: [serviceaccounts], resourceNames: [md-runbook-ops], verbs: [impersonate]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: ci-impersonate-gate, namespace: md-runbook-ops}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: ci-impersonate-gate}
+subjects: [{kind: ServiceAccount, name: md-runbook-cells, namespace: md-runbook-ops}]
+YAML
+session named alice alice-cert.pub "$block"
+refused named "impersonate the gate's account by name" "may impersonate.*serviceaccounts.*md-runbook-ops"
+kubectl -n "$ns" delete role/ci-impersonate-gate rolebinding/ci-impersonate-gate
+
+# Rights no question without a name sees, only the rules review: a user by name, and
+# constrained impersonation's verbs (KEP-5284; RBAC takes any verb, on any version).
+kubectl apply -f - <<'YAML'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: ci-impersonate-constrained}
+rules:
+  - {apiGroups: [''], resources: [users], resourceNames: [kubernetes-admin], verbs: [impersonate]}
+  - {apiGroups: [authentication.k8s.io], resources: [users], resourceNames: [kubernetes-admin], verbs: ['impersonate:user-info']}
+  - {apiGroups: [''], resources: [pods], verbs: ['impersonate-on:user-info:get']}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: ci-impersonate-constrained}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ci-impersonate-constrained}
+subjects: [{kind: ServiceAccount, name: md-runbook-cells, namespace: md-runbook-ops}]
+YAML
+session constrained alice alice-cert.pub "$block"
+refused constrained "a user by name" "verbs \[impersonate\] on \[users\] of API groups \[\] named \[kubernetes-admin\]"
+refused constrained "constrained impersonation's verbs" "verbs \[impersonate:user-info\] on \[users\]"
+kubectl delete clusterrole/ci-impersonate-constrained clusterrolebinding/ci-impersonate-constrained
 
 # ---- the API server's audit log ----
 docker exec ops-control-plane cat "$audit_log" > audit.log
