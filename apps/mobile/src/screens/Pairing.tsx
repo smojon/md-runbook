@@ -24,9 +24,10 @@ import { publicBaseOf, toPublicRelayUrl } from '../settings/publicAddress';
 import { usePublicUrlSetting } from '../settings/store';
 import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { loadTrustedSigners, useTrustedSigners } from '../signing/trust';
-import { appPublicKeyLine } from '../ssh/appKey';
+import { InsecurePageError, appPublicKeyLine } from '../ssh/appKey';
 import { RelaySettings, getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
 import { mono, themedStyles } from '../theme';
+import { InsecurePageNotice } from '../ui/InsecurePageNotice';
 import { Points } from '../ui/Points';
 import { QrView } from '../ui/QrView';
 import { Toggle } from '../ui/Toggle';
@@ -210,13 +211,18 @@ export function DeviceKeyCard() {
   const { width } = useWindowDimensions();
   const [line, setLine] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [insecure, setInsecure] = useState(false);
   const [copied, setCopied] = useState(false);
   const [qr, setQr] = useState(false);
   useEffect(() => {
     let live = true;
     appPublicKeyLine().then(
       (l) => live && setLine(l),
-      (e: unknown) => live && setError(e instanceof Error ? e.message : String(e)),
+      (e: unknown) => {
+        if (!live) return;
+        setInsecure(e instanceof InsecurePageError);
+        setError(e instanceof Error ? e.message : String(e));
+      },
     );
     return () => {
       live = false;
@@ -227,7 +233,9 @@ export function DeviceKeyCard() {
     <View testID="device-key" style={styles.card}>
       <Text style={styles.title}>{t.pairKeyTitle}</Text>
       <Text style={styles.label}>{t.pairKeyLabel}</Text>
-      {error ? (
+      {insecure ? (
+        <InsecurePageNotice testID="device-key-insecure" textStyle={styles.error} />
+      ) : error ? (
         <Text style={styles.error}>{t.appKeyFailed(error)}</Text>
       ) : (
         <Text testID="device-public-key" style={styles.key} selectable>

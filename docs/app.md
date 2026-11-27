@@ -193,7 +193,8 @@ The app never stores a password or reads a private key file.
     without that check.
   - A passkey needs a page the browser trusts (https), and hosts with OpenSSH 8.4 or newer.
     Nothing changes on the server.
-  - Without a passkey, the web app keeps its key in the browser's storage for the site.
+  - Without a passkey, the web app's key is one the browser won't export, kept for the site.
+  - On a plain `http://` page (not `localhost`), the web app makes no key. Open it over https.
 - **A certificate** (Hosts & settings → This app's SSH key → Certificate): for hosts that trust
   your company's SSH certificate authority (CA). No `authorized_keys` line per phone.
   - Send the app's public key to your CA. Attach the `…-cert.pub` it gives back: **Paste** or

@@ -1,7 +1,7 @@
 /**
  * The web app's "Use a passkey": the switch makes a passkey (the browser's WebAuthn, stubbed here
  * with an authenticator in Node), the key line becomes a verify-required sk-ecdsa one, logins and
- * signatures go through navigator.credentials.get, and off makes a library key again. OpenSSH's own
+ * signatures go through navigator.credentials.get, and off makes a WebCrypto key again. OpenSSH's own
  * check of these signatures is in the repository's test/sshPasskey.test.ts and ssh.live.test.ts.
  */
 import { WEBAUTHN_SK_ECDSA_P256, base64url } from '@md-runbook/ssh';
@@ -14,6 +14,23 @@ jest.mock('../storage/secure', () => ({
   setSecret: async (k: string, v: string) => void mockSecrets.set(k, v),
   deleteSecret: async (k: string) => void mockSecrets.delete(k),
 }));
+/** The WebCrypto key's store (IndexedDB in the browser). */
+const mockWebStore = { keys: undefined as CryptoKeyPair | undefined };
+jest.mock('../ssh/webKey', () => {
+  const actual = jest.requireActual<typeof import('../ssh/webKey')>('../ssh/webKey');
+  const store = {
+    get: async () => mockWebStore.keys,
+    put: async (k: CryptoKeyPair) => void (mockWebStore.keys = k),
+    remove: async () => void (mockWebStore.keys = undefined),
+  };
+  return {
+    ...actual,
+    webKeysAvailable: () => true,
+    loadWebKey: () => actual.loadWebKey(store),
+    makeWebKey: () => actual.makeWebKey(store),
+    removeWebKey: () => actual.removeWebKey(store),
+  };
+});
 jest.mock('../settings/store', () => {
   const s = { keyNeedsUser: false };
   return { loadSettings: async () => s, outputSettings: () => s, setOutputSetting: (k: 'keyNeedsUser', v: boolean) => (s[k] = v) };
@@ -69,10 +86,10 @@ beforeAll(() => {
 });
 
 describe('the web app with "Use a passkey"', () => {
-  it('makes a passkey, logs in and signs with it, and goes back to a library key when off', async () => {
+  it('makes a passkey, logs in and signs with it, and goes back to a WebCrypto key when off', async () => {
     const { appKeyInfo, appPublicKeyLine, setKeyNeedsUser } = jest.requireActual<typeof import('../ssh/appKey')>('../ssh/appKey');
-    // Off (the default): a key made by the SSH library, kept in the browser's storage.
-    expect((await appKeyInfo()).storage).toBe('browser');
+    // Off (the default): a WebCrypto key the browser won't export.
+    expect((await appKeyInfo()).storage).toBe('browser-key');
     const before = await appPublicKeyLine();
     expect(before).toMatch(/^ecdsa-sha2-nistp256 /);
 
@@ -80,11 +97,11 @@ describe('the web app with "Use a passkey"', () => {
     authenticator.refuseNext = true;
     await expect(setKeyNeedsUser(true)).rejects.toThrow(/not allowed/);
     expect(await appPublicKeyLine()).toBe(before);
-    expect(mockSecrets.has('app-key.pkcs8')).toBe(true);
+    expect(mockWebStore.keys).toBeDefined();
 
     const k = await setKeyNeedsUser(true);
     expect(k.storage).toBe('passkey');
-    expect(mockSecrets.has('app-key.pkcs8')).toBe(false);
+    expect(mockWebStore.keys).toBeUndefined();
     const line = await appPublicKeyLine();
     expect(line).toMatch(/^verify-required sk-ecdsa-sha2-nistp256@openssh\.com AAAA\S+ md-runbook-app$/);
     // Only public parts are kept.
@@ -95,10 +112,12 @@ describe('the web app with "Use a passkey"', () => {
     expect(blob.subarray(4, 4 + WEBAUTHN_SK_ECDSA_P256.length).toString()).toBe(WEBAUTHN_SK_ECDSA_P256);
     expect(authenticator.gets.at(-1)).toEqual({ userVerification: 'required', rpId: RP, id: Buffer.from('cred-1').toString('base64url') });
 
-    // Off again: the passkey is forgotten here, a new library key is made.
-    expect((await setKeyNeedsUser(false)).storage).toBe('browser');
+    // Off again: the passkey is forgotten here, a new WebCrypto key is made.
+    expect((await setKeyNeedsUser(false)).storage).toBe('browser-key');
     expect(mockSecrets.has('app-key.passkey')).toBe(false);
     expect(await appPublicKeyLine()).toMatch(/^ecdsa-sha2-nistp256 /);
+    // Never a key readable in the browser's storage.
+    expect(mockSecrets.has('app-key.pkcs8')).toBe(false);
   });
 
   it('a passkey made for another host name is not offered: the switch asks for a new one', async () => {

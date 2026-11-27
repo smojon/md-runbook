@@ -457,6 +457,13 @@ const en = {
   keyChanged: 'New key made: copy its public key above to your hosts.',
   appKeyFailed: (why: string) => `The key could not be made: ${why}`,
   appKeyRetry: 'Try again',
+  /** Web on plain http (not localhost): no key is made (ssh/appKey.ts InsecurePageError). */
+  insecurePageTitle: 'Open this app over https',
+  insecurePagePoints: [
+    'This page is plain http: the browser can’t keep a key safe here.',
+    'localhost counts as secure.',
+    'Ask your admin for the https address.',
+  ],
   keyNotEnforced:
     'This key doesn’t ask for you: it was made outside the secure hardware. Turn the switch off and on to make a hardware key.',
   appKeyStorage: {

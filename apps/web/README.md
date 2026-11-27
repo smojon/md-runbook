@@ -2,7 +2,7 @@
 
 The web app behind nginx, for hosting it yourself. It is apps/mobile's web export, the same
 build GitHub Pages serves. Host it next to your relay and ops host, inside a company network, or
-in a lab.
+in a lab, over https.
 
 ```sh
 docker build -t md-runbook-web -f apps/web/Dockerfile .     # from the repository root
@@ -11,10 +11,18 @@ docker run --rm -p 127.0.0.1:8080:8080 --read-only --tmpfs /tmp md-runbook-web
 
 Released with md-runbook as `ghcr.io/smojon/md-runbook-web:VERSION`, for amd64 and arm64.
 
-- **A domain of its own**: the app keeps its SSH key and stored secrets in the origin's
-  localStorage. Any other page served from the same origin could read them, so serve nothing
-  else there. The relay on the same origin, under `/v1/`, is fine: it is part of the app.
-- **TLS** is your reverse proxy's job; the container speaks HTTP on port 8080 as a non-root user.
+- **https, except on localhost**: the container speaks plain HTTP on port 8080, as a non-root user.
+  - Plain HTTP is only for `localhost`, as in the `docker run` above.
+  - Anywhere else, put https in front: the compose file with Caddy under [Settings](#settings) does.
+  - Over plain HTTP from another address, the app makes no SSH key. It asks for https instead.
+  - The reason: script injected on the way could use the key and read the stored tokens.
+- **A domain of its own**: any other page served from the same origin could read the app's
+  storage. So serve nothing else there.
+  - New SSH keys are WebCrypto keys the browser won't export, kept in IndexedDB.
+  - Script on the page can read localStorage. It holds the relay token and library upload tokens.
+    It also holds stored secrets (`${secret:NAME}`) and the assistant's API key.
+  - Also there: an SSH key made by an earlier version, until the user replaces it.
+  - The relay on the same origin, under `/v1/`, is fine: it is part of the app.
 - **Runbook links** work as on Pages: `https://<your domain>/open?url=…&host=…` opens the runbook
   in the app ([runbook links](../../docs/switching.md#runbook-links)). The browser downloads the
   runbook, so its server must allow your origin (CORS), or serve it from the same origin.
@@ -83,7 +91,7 @@ services:
     expose: ['8022']
 
   caddy:
-    image: caddy:2.10.2-alpine
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     restart: unless-stopped
     ports: ['80:80', '443:443']
     volumes:

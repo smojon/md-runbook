@@ -80,7 +80,7 @@ State of the project for whoever picks it up next (person or new Claude session)
 - **Web app hosting:** `.github/workflows/pages.yml` deploys the web build to GitHub Pages after
   a green App run on main. It does nothing until the repository variable `WEB_APP_ORIGIN` is set.
   - It refuses to deploy unless Pages serves exactly that origin. The reason: the app keeps its
-    SSH key in the origin's localStorage. `smojon.github.io` is shared with the account's other
+    relay token and other secrets in the origin's localStorage. `smojon.github.io` is shared with the account's other
     Pages sites.
 - **Examples:**
   - `examples/sample.runbook.md`: the hand test drive, opened by **Open Sample Runbook**;

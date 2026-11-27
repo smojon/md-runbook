@@ -2,7 +2,7 @@
  * The web app's key as a WebCrypto key the browser won't export (ssh/webKey.ts): made with
  * extractable false, kept as a CryptoKey (a Map here, IndexedDB in the browser), signing through
  * crypto.subtle for SSH logins and signatures. A key from an earlier version (PKCS#8 in the
- * browser's storage) stays until the user replaces it.
+ * browser's storage) stays until the user replaces it. Off a secure page (plain http) no key is made.
  */
 import { ExternalAwareEcdsaP256, publicKeyLine, signSshsig } from '@md-runbook/ssh';
 import { webcrypto } from 'node:crypto';
@@ -24,11 +24,13 @@ const memory = (): WebKeyStore & { keys: CryptoKeyPair | undefined } => {
 };
 
 const mockStore = memory();
+/** False: a page without WebCrypto (plain http from a LAN address). */
+const mockWebKeys = { available: true };
 jest.mock('../ssh/webKey', () => {
   const actual = jest.requireActual<typeof import('../ssh/webKey')>('../ssh/webKey');
   return {
     ...actual,
-    webKeysAvailable: () => true,
+    webKeysAvailable: () => mockWebKeys.available,
     loadWebKey: () => actual.loadWebKey(mockStore),
     makeWebKey: () => actual.makeWebKey(mockStore),
     removeWebKey: () => actual.removeWebKey(mockStore),
@@ -57,6 +59,7 @@ const fresh = (): AppKeyModule => {
 beforeEach(() => {
   mockStore.keys = undefined;
   mockSecrets.clear();
+  mockWebKeys.available = true;
 });
 
 describe('a key the browser won’t export (WebCrypto)', () => {
@@ -106,5 +109,41 @@ describe('the web app’s key', () => {
     expect(mockSecrets.has('app-key.pkcs8')).toBe(false);
     expect(await m.appPublicKeyLine()).not.toBe(old);
     expect((await fresh().appKeyInfo()).storage).toBe('browser-key');
+  });
+
+  it('off a secure page (plain http): no key at all, nothing readable stored', async () => {
+    mockWebKeys.available = false;
+    const m = fresh();
+    await expect(m.appKeyInfo()).rejects.toBeInstanceOf(m.InsecurePageError);
+    await expect(m.appPublicKeyLine()).rejects.toThrow(/open the app over https/);
+    expect(mockSecrets.size).toBe(0);
+    expect(mockStore.keys).toBeUndefined();
+    // Not cached: the same browser on https makes its key.
+    mockWebKeys.available = true;
+    expect((await m.appKeyInfo()).storage).toBe('browser-key');
+  });
+
+  it('off a secure page an earlier version’s key still logs in; after a reset none is made', async () => {
+    const { generateKey, privateKeyPem } = jest.requireActual<typeof import('@md-runbook/ssh')>('@md-runbook/ssh');
+    const pem = await privateKeyPem(await generateKey());
+    mockSecrets.set('app-key.pkcs8', pem);
+    mockWebKeys.available = false;
+    const m = fresh();
+    expect((await m.appKeyInfo()).storage).toBe('browser');
+    expect(mockSecrets.get('app-key.pkcs8')).toBe(pem);
+    await m.resetAppKey();
+    await expect(m.appKeyInfo()).rejects.toBeInstanceOf(m.InsecurePageError);
+    expect(mockSecrets.size).toBe(0);
+  });
+
+  it('an unreadable earlier key: a WebCrypto key on a secure page, never a new readable one', async () => {
+    mockSecrets.set('app-key.pkcs8', 'not a key');
+    expect((await fresh().appKeyInfo()).storage).toBe('browser-key');
+    expect(mockSecrets.get('app-key.pkcs8')).toBe('not a key');
+    mockStore.keys = undefined;
+    mockWebKeys.available = false;
+    const m = fresh();
+    await expect(m.appKeyInfo()).rejects.toBeInstanceOf(m.InsecurePageError);
+    expect(mockSecrets.get('app-key.pkcs8')).toBe('not a key');
   });
 });

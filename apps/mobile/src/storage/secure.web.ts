@@ -1,7 +1,9 @@
 /**
  * Web: the browser has no keychain, so secrets sit in localStorage of the app's origin: the relay
- * token, the assistant's API key, and an earlier version's app key (new ones are WebCrypto keys
- * the browser won't export, ssh/webKey.ts). Other origins can't read them, but the browser
+ * token, library upload tokens, stored secrets (${secret:NAME}), the assistant's API key, and an
+ * earlier version's app key (new ones are WebCrypto keys the browser won't export, ssh/webKey.ts;
+ * none is made on a plain-http page, ssh/appKey.ts). Not secret, also here: the key's certificate
+ * and the passkey's id. Other origins can't read them, but the browser
  * profile holds them in clear, and so can script on the page (the page's CSP, public/index.html).
  */
 const prefix = 'mdrb.secure.';

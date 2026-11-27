@@ -6,6 +6,7 @@ import { VAR_NAME_RE } from '@md-runbook/core/secrets';
 import { Host, hostLabel, useHosts } from '../hosts/store';
 import { t } from '../i18n';
 import {
+  InsecurePageError,
   KeyStorage,
   appAllowedRunnersLine,
   appAllowedSignersLine,
@@ -48,6 +49,7 @@ import { PairDeviceCard } from './Pairing';
 import { SIGNER_NAME_RE } from '@md-runbook/core/signing';
 import { mono, themedStyles, usePalette } from '../theme';
 import { Codicon } from '../ui/Codicon';
+import { InsecurePageNotice } from '../ui/InsecurePageNotice';
 import { Points } from '../ui/Points';
 import { Toggle } from '../ui/Toggle';
 import { QrView } from '../ui/QrView';
@@ -185,6 +187,8 @@ function AppKeySection() {
   const styles = useStyles();
   const [line, setLine] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
+  /** Web on plain http: no key is made there (not an error a retry fixes). */
+  const [insecure, setInsecure] = useState(false);
   const [copied, setCopied] = useState(false);
   const [storage, setStorage] = useState<KeyStorage | undefined>();
   /** Try again after an error (a hardware key that failed is not replaced by a software one). */
@@ -193,7 +197,11 @@ function AppKeySection() {
     let live = true;
     appPublicKeyLine().then(
       (l) => live && setLine(l),
-      (e: unknown) => live && setError(e instanceof Error ? e.message : String(e)),
+      (e: unknown) => {
+        if (!live) return;
+        setInsecure(e instanceof InsecurePageError);
+        setError(e instanceof Error ? e.message : String(e));
+      },
     );
     appKeyInfo().then(
       (k) => live && setStorage(k.storage),
@@ -224,6 +232,7 @@ function AppKeySection() {
       setStorage(k.storage);
       setLine(await appPublicKeyLine());
       setError(undefined);
+      setInsecure(false);
       setCopied(false);
       setNewKey(true);
     } catch (e) {
@@ -238,6 +247,7 @@ function AppKeySection() {
       setStorage(k.storage);
       setLine(await appPublicKeyLine());
       setError(undefined);
+      setInsecure(false);
       setCopied(false);
       setNewKey(true);
     } catch (e) {
@@ -248,7 +258,9 @@ function AppKeySection() {
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{t.appKeyTitle}</Text>
       <Text style={styles.help}>{t.appKeyHelp}</Text>
-      {error ? (
+      {insecure ? (
+        <InsecurePageNotice testID="app-key-insecure" textStyle={[styles.error, styles.strong]} pointStyle={[styles.error, styles.point]} />
+      ) : error ? (
         <>
           <Text testID="app-key-error" role="alert" style={styles.error}>
             {t.appKeyFailed(error)}

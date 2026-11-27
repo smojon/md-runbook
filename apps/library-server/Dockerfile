@@ -5,7 +5,10 @@
 #
 # The build context is the repository root: the server is built with packages/core's sources.
 
-FROM node:22.23.1-alpine AS build
+# Node 22.23.5 (2026-11-11, a security release), both stages, by the digest of its multi-arch
+# index: a rebuild gets the bytes we tested. By hand: `docker buildx imagetools inspect
+# node:22.N.N-alpine`, its Digest line, in both FROMs.
+FROM node:22.23.5-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS build
 WORKDIR /src/apps/library-server
 COPY apps/library-server/package.json apps/library-server/package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -15,7 +18,7 @@ COPY apps/library-server/src ./src
 COPY apps/library-server/test ./test
 RUN npx tsc -p . && npm prune --omit=dev
 
-FROM node:22.23.1-alpine
+FROM node:22.23.5-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
 # Runbook and runner signatures are checked with OpenSSH's ssh-keygen, as md-runbook-gate does.
 RUN apk add --no-cache openssh-keygen && mkdir -p /data /library && chown node:node /data /library
 ENV NODE_ENV=production \

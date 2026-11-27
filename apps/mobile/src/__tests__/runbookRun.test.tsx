@@ -21,7 +21,8 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('../ssh/transport', () => ({ openTransport: jest.fn(), transportReady: async () => undefined }));
 jest.mock('../ssh/appKey', () => ({
-  appPublicKeyLine: async () => 'ecdsa-sha2-nistp256 AAAAtest md-runbook-app',
+  InsecurePageError: class InsecurePageError extends Error {},
+  appPublicKeyLine: jest.fn(async () => 'ecdsa-sha2-nistp256 AAAAtest md-runbook-app'),
   appKeyInfo: async () => ({ pair: {}, storage: 'hardware' }),
   appAllowedSignersLine: async (who: string) => `${who} namespaces="md-runbook" ecdsa-sha2-nistp256 AAAAtest`,
 }));
@@ -318,6 +319,18 @@ describe('hosts screens', () => {
       fireEvent.press(screen.getByTestId('copy-public-key'));
     });
     expect(screen.getByText('Copied')).toBeTruthy();
+  });
+
+  it('web on plain http: no key, a short note to open the app over https', async () => {
+    const m = jest.requireMock<{ InsecurePageError: new () => Error; appPublicKeyLine: jest.Mock }>('../ssh/appKey');
+    m.appPublicKeyLine.mockRejectedValueOnce(new m.InsecurePageError());
+    await render(<HostList />);
+    await waitFor(() => expect(screen.getByTestId('app-key-insecure')).toBeTruthy());
+    expect(screen.getByText('Open this app over https')).toBeTruthy();
+    expect(screen.getByText('localhost counts as secure.')).toBeTruthy();
+    // Not an error a retry fixes.
+    expect(screen.queryByTestId('app-key-retry')).toBeNull();
+    expect(screen.queryByTestId('app-public-key')).toBeNull();
   });
 
   it("Signing: the name for signatures, and the key's line for the servers' allowed_signers", async () => {

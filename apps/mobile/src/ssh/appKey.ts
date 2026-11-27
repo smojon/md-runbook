@@ -9,9 +9,12 @@
  * - web: a WebCrypto key the browser won't export, kept in IndexedDB (webKey.ts); a key made by
  *   an earlier version (PKCS#8 in the browser's storage) stays until the user replaces it
  *   (replaceWithUnexportableKey), as hosts trust it;
- * - phones whose keystore can't make such keys (or a browser without WebCrypto or IndexedDB):
- *   made by the SSH library, kept in secure storage (the browser's storage on the web); a hardware
- *   key that fails otherwise is an error (shown under Hosts & settings), not a silent software key;
+ * - web off a secure page (plain http from a LAN address: no crypto.subtle) or without IndexedDB:
+ *   no key at all (InsecurePageError). A software key would sit readable in localStorage, where
+ *   script injected on the way (http) reads it; localhost counts as secure;
+ * - phones whose keystore can't make such keys: made by the SSH library, kept in secure storage; a
+ *   hardware key that fails otherwise is an error (shown under Hosts & settings), not a silent
+ *   software key;
  * - web with "Use a passkey" on: a passkey for this site (passkey.ts); the authenticator signs.
  */
 import type { KeyPair } from '@microsoft/dev-tunnels-ssh';
@@ -32,7 +35,8 @@ const COMMENT = 'md-runbook-app';
 
 /**
  * hardware: Secure Enclave / TEE / StrongBox; keystore: the platform keystore without such hardware;
- * browser: PKCS#8 in the browser's storage (readable there); browser-key: a WebCrypto key it won't export.
+ * browser: PKCS#8 in the browser's storage (readable there; an earlier version's, never made now);
+ * browser-key: a WebCrypto key it won't export.
  */
 export type KeyStorage = 'hardware' | 'keystore' | 'secure-store' | 'browser' | 'browser-key' | 'passkey';
 
@@ -43,6 +47,14 @@ export interface AppKey {
 
 let cached: Promise<AppKey> | undefined;
 
+/** Web: the page can't keep a key the browser won't export (not https, or no WebCrypto/IndexedDB). */
+export class InsecurePageError extends Error {
+  constructor() {
+    super('this page can’t keep the key safe: open the app over https (localhost works too)');
+    this.name = 'InsecurePageError';
+  }
+}
+
 async function softwareKey(): Promise<AppKey> {
   const storage: KeyStorage = Platform.OS === 'web' ? 'browser' : 'secure-store';
   const pem = await getSecret(KEY);
@@ -50,8 +62,13 @@ async function softwareKey(): Promise<AppKey> {
     try {
       return { pair: await importPrivateKey(pem), storage };
     } catch {
-      // Unreadable (a different format from an older version): make a new one below.
+      // Unreadable (a different format from an older version): a new one below.
     }
+  }
+  // Never made on the web: it would be readable in localStorage (InsecurePageError above).
+  if (Platform.OS === 'web') {
+    if (webKeysAvailable()) return browserKey();
+    throw new InsecurePageError();
   }
   const pair = await generateKey();
   await setSecret(KEY, await privateKeyPem(pair));
@@ -99,9 +116,13 @@ export function appKeyInfo(): Promise<AppKey> {
       // On the web the switch means a passkey: the authenticator asks for the person each time.
       if (outputSettings().keyNeedsUser) return passkeyKey();
     }
-    // A key from an earlier version stays: the hosts have its public key.
+    // A key from an earlier version stays: the hosts have its public key. On the web it is already
+    // readable in localStorage (on any page of this origin): refusing it would protect nothing.
     if ((await getSecret(KEY)) !== null) return softwareKey();
-    if (Platform.OS === 'web') return webKeysAvailable() ? browserKey() : softwareKey();
+    if (Platform.OS === 'web') {
+      if (!webKeysAvailable()) throw new InsecurePageError();
+      return browserKey();
+    }
     if (!HardwareKey) return softwareKey();
     try {
       return await hardwareKey(HardwareKey);
