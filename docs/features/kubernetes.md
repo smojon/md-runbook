@@ -244,10 +244,18 @@ What the gate checks at each session, before any block:
 - `kubectl auth whoami` in the pod shows `md-runbook-cells`, with `who` and no other extra. Else
   no session: the RBAC is missing, or `job_image` is older than the gate.
 - `who` is printable ASCII, at most 256 bytes. Else no session.
-- The cells' rules, per namespace (a `SelfSubjectRulesReview` each) allow no other impersonation.
-  Allowed: impersonation.yaml's two rules, with or without `job_audit_who`.
-  - Refused: `impersonate` or `*` on users, groups, service accounts, uids, nodes or user extras.
-    Names don't help: `users [kubernetes-admin]` is refused too.
+- The gate reads the cells' rules per namespace (a `SelfSubjectRulesReview` each), with or
+  without `job_audit_who`.
+  - Allowed: impersonation.yaml's two rules.
+  - Allowed: service accounts of another namespace than `md-runbook-ops`, as Kubernetes' `edit`
+    and `admin` roles grant. The cells may impersonate service accounts only where they may
+    already run workloads as them.
+  - Such a namespace counts as one where the cells run workloads. It must enforce Pod Security,
+    can't be `kube-*`, and none of its service accounts may have a ClusterRoleBinding.
+  - Refused: `impersonate` or `*` on users, groups, uids, nodes or user extras. Names don't help:
+    `users [kubernetes-admin]` is refused too.
+  - Refused: any service account in `md-runbook-ops` but `md-runbook-cells`. A ClusterRoleBinding's
+    rule shows up there too.
   - Refused: any verb of constrained impersonation (`impersonate:…`, `impersonate-on:…`).
 - Questions without a name back this up (`SelfSubjectAccessReview`).
   - They ask the classic verb and constrained impersonation's verbs.

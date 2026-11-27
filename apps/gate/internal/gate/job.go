@@ -377,10 +377,20 @@ func auditWhoAnswer(out []byte, as, who string) string {
 //   - impersonate or * on users, groups, serviceaccounts, uids, nodes, userextras (or *), in the
 //     core group, authentication.k8s.io or *;
 //
-// except impersonate on serviceaccounts [sa] in the cells' own namespace, and on
-// userextras/md-runbook.dev/operator. Allowed with or without job_audit_who: impersonating itself
-// gives the account nothing. An incomplete review (a webhook authorizer) can't list every rule:
-// there only cellsReviews' questions hold.
+// except:
+//   - impersonate on serviceaccounts [sa] in the cells' own namespace, and on
+//     userextras/md-runbook.dev/operator (impersonation.yaml). Allowed with or without
+//     job_audit_who: impersonating itself gives the account nothing.
+//   - impersonate (or *) on serviceaccounts of the core group, named or not, in another
+//     namespace: Kubernetes' edit and admin roles grant it. There the cells may act as the
+//     namespace's service accounts, as they may run workloads as them where they may create
+//     pods. So namespaceRights counts such a namespace as one where they may start workloads:
+//     Pod Security, no kube-*, and riskyNamespaces (no service account there with cluster-wide
+//     rights) hold for it. A ClusterRoleBinding's rule is in the gate's namespace's review too:
+//     refused there.
+//
+// An incomplete review (a webhook authorizer) can't list every rule: there only cellsReviews'
+// questions hold.
 func impersonationRules(names []string, rulesOut []byte, ns, sa string) []string {
 	objs, err := kubeObjects(rulesOut)
 	if err != nil {
@@ -399,7 +409,7 @@ func impersonationRules(names []string, rulesOut []byte, ns, sa string) []string
 	where := map[string][]string{}
 	for i, r := range reviews {
 		for _, rule := range r.Status.ResourceRules {
-			if !impersonates(rule) || shippedImpersonation(rule, names[i] == ns, sa) {
+			if !impersonates(rule) || shippedImpersonation(rule, names[i] == ns, sa) || names[i] != ns && saImpersonation(rule) {
 				continue
 			}
 			k := "verbs [" + strings.Join(rule.Verbs, " ") + "] on [" + strings.Join(rule.Resources, " ") + "] of API groups [" + strings.Join(rule.APIGroups, " ") + "]"
@@ -414,12 +424,12 @@ func impersonationRules(names []string, rulesOut []byte, ns, sa string) []string
 	}
 	var p []string
 	for _, k := range order {
-		ns := where[k]
-		in := "namespace " + ns[0]
-		if len(ns) > 1 {
-			in = itoa(len(ns)) + " namespaces (" + firstFew(ns) + ")"
+		at := where[k]
+		in := "namespace " + at[0]
+		if len(at) > 1 {
+			in = itoa(len(at)) + " namespaces (" + firstFew(at) + ")"
 		}
-		p = append(p, "the cells' service account may impersonate: "+k+", in "+in+". Only impersonation.yaml's two rules may let it impersonate (itself, and the extra "+auditExtra+")")
+		p = append(p, "the cells' service account may impersonate: "+k+", in "+in+". Only impersonation.yaml's rules (itself, and the extra "+auditExtra+") may let it impersonate, and outside namespace "+ns+" its service accounts (as Kubernetes' edit role does)")
 	}
 	return p
 }
@@ -451,6 +461,32 @@ func impersonates(r kubeRule) bool {
 		}
 	}
 	return false
+}
+
+// saImpersonation: the rule lets the cells impersonate service accounts, and nothing more: the
+// classic verb (or *), the core group only, no resource that names other identities.
+func saImpersonation(r kubeRule) bool {
+	verb := false
+	for _, v := range r.Verbs {
+		if strings.HasPrefix(v, "impersonate:") || strings.HasPrefix(v, "impersonate-on:") {
+			return false
+		}
+		verb = verb || v == "*" || v == "impersonate"
+	}
+	if !verb || len(r.APIGroups) != 1 || r.APIGroups[0] != "" {
+		return false
+	}
+	accounts := false
+	for _, res := range r.Resources {
+		switch {
+		case res == "serviceaccounts":
+			accounts = true
+		case res == "*", res == "users", res == "groups", res == "uids", res == "nodes", res == "userextras",
+			strings.HasPrefix(res, "userextras/"), strings.HasPrefix(res, "*/"):
+			return false
+		}
+	}
+	return accounts
 }
 
 // shippedImpersonation: one of impersonation.yaml's rules, as a rules review lists it.
@@ -776,10 +812,10 @@ func (j *kubeJob) checkNamespaces(pod string) []string {
 	if p := impersonationRules(names, rules, j.ns, j.sa); len(p) > 0 {
 		return p
 	}
-	if p := unguardedNamespaces(nss, names, rules); len(p) > 0 {
+	if p := unguardedNamespaces(nss, names, rules, j.ns, j.sa); len(p) > 0 {
 		return p
 	}
-	may := writableNamespaces(names, rules)
+	may := writableNamespaces(names, rules, j.ns, j.sa)
 	j.may = may
 	var p []string
 	if w := unpolicedNamespaces(may, j.workloads); w != "" {
@@ -810,8 +846,8 @@ func ownNamespaceProblem(nss []kubeObj, ns string) string {
 
 // writableNamespaces: the names (in order) where the cells may start or change workloads, or the
 // rules review can't say (incomplete), by the reviews unguardedNamespaces read.
-func writableNamespaces(names []string, rulesOut []byte) []string {
-	rights, _, _ := namespaceRights(names, rulesOut)
+func writableNamespaces(names []string, rulesOut []byte, own, sa string) []string {
+	rights, _, _ := namespaceRights(names, rulesOut, own, sa)
 	var may []string
 	for _, n := range names {
 		if _, ok := rights[n]; ok {
@@ -2116,9 +2152,11 @@ func opsReviews(ns string) []review {
 // Impersonation: job_audit_who's RBAC (impersonation.yaml) lets the account impersonate itself
 // (resourceNames, a Role in its namespace) and set the extra md-runbook.dev/operator. A review
 // without a name doesn't match a rule limited to resourceNames, so the reviews without one
-// refuse anything broader. The named ones refuse a list that names the gate's account (sa: the
-// cells', ops: the gate's), system:masters, or the cells' name in another namespace (a
-// ClusterRoleBinding); and other extras (the pod's, which the API server sets) and uids.
+// refuse anything broader. The named ones refuse a list that names the gate's account (ops),
+// system:masters; and other extras (the pod's, which the API server sets) and uids. The rules
+// reviews (impersonationRules) see more; these hold where those are incomplete. sa: the cells'
+// account (not asked by name: in a namespace where Kubernetes' edit role is bound, the cells may
+// impersonate every account, theirs too, and namespaceRights counts that).
 func cellsReviews(ns, sa, ops string) []review {
 	no := func(verb, group, resource, sub string) review {
 		return review{verb, group, resource, sub, ns, false, ""}
@@ -2127,13 +2165,8 @@ func cellsReviews(ns, sa, ops string) []review {
 		return review{verb, group, resource, sub, "", false, ""}
 	}
 	rbac := "rbac.authorization.k8s.io"
-	other := "default"
-	if ns == other {
-		other = "kube-system"
-	}
 	named := []review{
 		{"impersonate", "", "groups", "", "", false, "system:masters"},
-		{"impersonate", "", "serviceaccounts", "", other, false, sa},
 		anywhere("impersonate", "authentication.k8s.io", "uids", ""),
 	}
 	// The extras the API server sets for a pod's token.
@@ -2265,7 +2298,7 @@ func startsWorkloads(r kubeRule) bool {
 // cells may start or change workloads, or the review can't say (incomplete), with why; starts:
 // those where a rule says so. The API server answers a SelfSubjectRulesReview without its spec:
 // the answers are matched to names by their place; a count that differs is a problem.
-func namespaceRights(names []string, rulesOut []byte) (why map[string]string, starts map[string]bool, problem string) {
+func namespaceRights(names []string, rulesOut []byte, own, sa string) (why map[string]string, starts map[string]bool, problem string) {
 	objs, err := kubeObjects(rulesOut)
 	if err != nil {
 		return nil, nil, "can't read the cells' rights per namespace"
@@ -2289,6 +2322,12 @@ func namespaceRights(names []string, rulesOut []byte) (why map[string]string, st
 			why[ns] = "may have rights the API server can't list (an incomplete answer)"
 		}
 		for _, rule := range r.Status.ResourceRules {
+			// Acting as a service account of the namespace counts as running workloads as it
+			// (impersonationRules allows it outside the gate's namespace): Kubernetes' edit and
+			// admin roles grant it. Not impersonation.yaml's rule of the cells' own account.
+			if saImpersonation(rule) && !(ns == own && shippedImpersonation(rule, true, sa)) && !starts[ns] {
+				why[ns], starts[ns] = "may act as its service accounts", true
+			}
 			if startsWorkloads(rule) {
 				why[ns], starts[ns] = "may start workloads", true
 			}
@@ -2305,8 +2344,8 @@ func kubeNamespace(name string) bool { return strings.HasPrefix(name, "kube-") }
 // review can't say: incomplete, missing) without Pod Security baseline or restricted enforced;
 // and each kube-* namespace where a rule lets them, whatever its labels: a workload there can
 // run as a controller's service account (security review of 0.31, H1).
-func unguardedNamespaces(nss []kubeObj, names []string, rulesOut []byte) []string {
-	why, starts, problem := namespaceRights(names, rulesOut)
+func unguardedNamespaces(nss []kubeObj, names []string, rulesOut []byte, own, sa string) []string {
+	why, starts, problem := namespaceRights(names, rulesOut, own, sa)
 	if problem != "" {
 		return []string{problem}
 	}
@@ -2325,7 +2364,7 @@ func unguardedNamespaces(nss []kubeObj, names []string, rulesOut []byte) []strin
 			continue
 		}
 		if kubeNamespace(name) && starts[name] {
-			p = append(p, "the cells' service account may start workloads in namespace "+name+": "+never)
+			p = append(p, "the cells' service account "+w+" in namespace "+name+": "+never)
 			continue
 		}
 		switch n.Metadata.Labels["pod-security.kubernetes.io/enforce"] {

@@ -332,7 +332,6 @@ func TestCellsImpersonationReviews(t *testing.T) {
 		"impersonate  serviceaccounts/ md-runbook-ops ",                                        // any of the namespace (no resourceNames)
 		"impersonate  serviceaccounts/  ",                                                      // any, anywhere
 		"impersonate  serviceaccounts/ md-runbook-ops md-runbook-ops",                          // the gate's own
-		"impersonate  serviceaccounts/ default md-runbook-cells",                               // the cells' name elsewhere
 		"impersonate  groups/  system:masters",                                                 // by name
 		"impersonate  users/  ",                                                                // any user
 		"impersonate authentication.k8s.io uids/  ",                                            // uids
@@ -363,13 +362,12 @@ func TestCellsImpersonationReviews(t *testing.T) {
 			t.Errorf("review %s", r)
 		}
 	}
-	// In the namespace default, the cells' name elsewhere is asked in kube-system.
-	found := false
-	for _, r := range cellsReviews("default", "cells", "ops") {
-		found = found || r.ns == "kube-system" && r.name == "cells"
-	}
-	if !found {
-		t.Error("namespace default: no review of the cells' name in kube-system")
+	// Nothing about service accounts of other namespaces: Kubernetes' edit role there grants
+	// that (impersonationRules and namespaceRights handle it).
+	for _, r := range rs {
+		if r.resource == "serviceaccounts" && r.ns != "" && r.ns != "md-runbook-ops" {
+			t.Errorf("review %s", r)
+		}
 	}
 }
 
@@ -1455,7 +1453,7 @@ func TestUnguardedNamespaces(t *testing.T) {
 	names := []string{"default", "shop", "kube-system", "lab"} // "gone": not asked
 	out := rr("default", operate, false) + rr("shop", operate, false) + rr("kube-system", read, false) +
 		rr("lab", `{"verbs":["*"],"apiGroups":["batch"],"resources":["*"]}`, false)
-	p := unguardedNamespaces(nss, names, []byte(out))
+	p := unguardedNamespaces(nss, names, []byte(out), "md-runbook-ops", "md-runbook-cells")
 	got := strings.Join(p, "\n")
 	for _, ns := range []string{"namespace shop,", "namespace lab,", "namespace gone,"} {
 		if !strings.Contains(got, ns) {
@@ -1469,11 +1467,11 @@ func TestUnguardedNamespaces(t *testing.T) {
 		t.Errorf("no command:\n%s", got)
 	}
 	// An incomplete answer counts as may.
-	if p := unguardedNamespaces(nss[2:3], names[2:3], []byte(rr("kube-system", read, true))); len(p) != 1 || !strings.Contains(p[0], "incomplete") {
+	if p := unguardedNamespaces(nss[2:3], names[2:3], []byte(rr("kube-system", read, true)), "md-runbook-ops", "md-runbook-cells"); len(p) != 1 || !strings.Contains(p[0], "incomplete") {
 		t.Errorf("incomplete: %q", p)
 	}
 	// Read-only namespaces without a label pass (kind's kube-system, kube-public, ...).
-	if p := unguardedNamespaces(nss[1:3], []string{"shop", "kube-system"}, []byte(rr("shop", read, false)+rr("kube-system", read, false))); len(p) != 0 {
+	if p := unguardedNamespaces(nss[1:3], []string{"shop", "kube-system"}, []byte(rr("shop", read, false)+rr("kube-system", read, false)), "md-runbook-ops", "md-runbook-cells"); len(p) != 0 {
 		t.Errorf("read only: %q", p)
 	}
 	// kube-* namespaces where a rule lets the cells change workloads: refused whatever their
@@ -1485,7 +1483,7 @@ func TestUnguardedNamespaces(t *testing.T) {
 		{"kind":"Namespace","metadata":{"name":"kube-public"}},
 		{"kind":"Namespace","metadata":{"name":"kubeflow","labels":{"pod-security.kubernetes.io/enforce":"baseline"}}}]}`))
 	kubeNames := []string{"kube-system", "kube-node-lease", "kube-public", "kubeflow"}
-	p = unguardedNamespaces(kube, kubeNames, []byte(rr("", operate, false)+rr("", `{"verbs":["*"],"apiGroups":["*"],"resources":["*"]}`, false)+rr("", operate, false)+rr("", operate, false)))
+	p = unguardedNamespaces(kube, kubeNames, []byte(rr("", operate, false)+rr("", `{"verbs":["*"],"apiGroups":["*"],"resources":["*"]}`, false)+rr("", operate, false)+rr("", operate, false)), "md-runbook-ops", "md-runbook-cells")
 	never := ": never bind md-runbook-ops-operate (or any workload rights) in kube-* namespaces; their service accounts run the cluster"
 	if want := []string{
 		"the cells' service account may start workloads in namespace kube-system" + never,
@@ -1494,20 +1492,20 @@ func TestUnguardedNamespaces(t *testing.T) {
 	}; !reflect.DeepEqual(p, want) {
 		t.Errorf("kube-*: %q", p)
 	}
-	if p := unguardedNamespaces(kube, kubeNames, []byte(rr("", read, false)+rr("", read, false)+rr("", read, false)+rr("", read, false))); len(p) != 0 {
+	if p := unguardedNamespaces(kube, kubeNames, []byte(rr("", read, false)+rr("", read, false)+rr("", read, false)+rr("", read, false)), "md-runbook-ops", "md-runbook-cells"); len(p) != 0 {
 		t.Errorf("kube-*, read only: %q", p)
 	}
 	// Unlabelled, an incomplete answer: refused as before, without the label command.
-	if p := unguardedNamespaces(kube[2:3], kubeNames[2:3], []byte(rr("", read, true))); len(p) != 1 || !strings.Contains(p[0], "incomplete") ||
+	if p := unguardedNamespaces(kube[2:3], kubeNames[2:3], []byte(rr("", read, true)), "md-runbook-ops", "md-runbook-cells"); len(p) != 1 || !strings.Contains(p[0], "incomplete") ||
 		!strings.HasSuffix(p[0], never) || strings.Contains(p[0], "kubectl label") {
 		t.Errorf("kube-public, incomplete: %q", p)
 	}
 	// Answers that don't add up: refused.
-	if p := unguardedNamespaces(nss, names, []byte(rr("default", read, false))); len(p) != 1 || !strings.Contains(p[0], "1 answers for 4 namespaces") {
+	if p := unguardedNamespaces(nss, names, []byte(rr("default", read, false)), "md-runbook-ops", "md-runbook-cells"); len(p) != 1 || !strings.Contains(p[0], "1 answers for 4 namespaces") {
 		t.Errorf("short: %q", p)
 	}
 	wrong := `{"kind":"SelfSubjectRulesReview","spec":{"namespace":"lab"},"status":{}}` + "\n"
-	if p := unguardedNamespaces(nss[2:3], names[2:3], []byte(wrong)); len(p) != 1 || !strings.Contains(p[0], "in the place of kube-system") {
+	if p := unguardedNamespaces(nss[2:3], names[2:3], []byte(wrong), "md-runbook-ops", "md-runbook-cells"); len(p) != 1 || !strings.Contains(p[0], "in the place of kube-system") {
 		t.Errorf("misplaced: %q", p)
 	}
 	for _, c := range []struct {
@@ -1609,7 +1607,7 @@ func TestWorkloadPolicy(t *testing.T) {
 	}
 	names := []string{"default", "shop", "lab"}
 	out := []byte(rr(read, false) + rr(read+","+patch, false) + rr(read, true))
-	may := writableNamespaces(names, out)
+	may := writableNamespaces(names, out, "md-runbook-ops", "md-runbook-cells")
 	if !reflect.DeepEqual(may, []string{"shop", "lab"}) {
 		t.Errorf("writable: %q", may)
 	}
@@ -1619,7 +1617,7 @@ func TestWorkloadPolicy(t *testing.T) {
 	if p := unpolicedNamespaces(may, ""); p != "" {
 		t.Errorf("in force: %q", p)
 	}
-	readOnly := writableNamespaces(names, []byte(rr(read, false)+rr(read, false)+rr(read, false)))
+	readOnly := writableNamespaces(names, []byte(rr(read, false)+rr(read, false)+rr(read, false)), "md-runbook-ops", "md-runbook-cells")
 	if p := unpolicedNamespaces(readOnly, missing); len(readOnly) != 0 || p != "" {
 		t.Errorf("read only: %q %q", readOnly, p)
 	}
@@ -1904,9 +1902,11 @@ func TestImpersonationRules(t *testing.T) {
 	for name, c := range map[string]struct{ rule, where, want string }{
 		"a named user":          {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["users"],"resourceNames":["kubernetes-admin"]}`, "all", "verbs [impersonate] on [users] of API groups [] named [kubernetes-admin], in 3 namespaces (default, md-runbook-ops, shop)"},
 		"a named group":         {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["groups"],"resourceNames":["kubeadm:cluster-admins"]}`, "all", "named [kubeadm:cluster-admins]"},
-		"another account":       {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["argocd-application-controller"]}`, "shop", "named [argocd-application-controller], in namespace shop"},
+		"another account here":  {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["argocd-application-controller"]}`, ns, "named [argocd-application-controller], in namespace md-runbook-ops"},
+		"accounts everywhere":   {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"]}`, "all", "on [serviceaccounts] of API groups [], in namespace md-runbook-ops"},
+		"accounts, group *":     {`{"verbs":["impersonate"],"apiGroups":["*"],"resources":["serviceaccounts"]}`, "shop", "of API groups [*], in namespace shop"},
+		"accounts and users":    {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts","users"]}`, "shop", "on [serviceaccounts users]"},
 		"the gate's account":    {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["md-runbook-ops"]}`, ns, "named [md-runbook-ops], in namespace md-runbook-ops"},
-		"its name elsewhere":    {self, "shop", "named [md-runbook-cells], in namespace shop"},
 		"self and more":         {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["md-runbook-cells","md-runbook-ops"]}`, ns, "named [md-runbook-cells md-runbook-ops]"},
 		"any account":           {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"]}`, ns, "verbs [impersonate] on [serviceaccounts] of API groups [], in namespace md-runbook-ops"},
 		"constrained":           {`{"verbs":["impersonate:serviceaccount"],"apiGroups":["authentication.k8s.io"],"resources":["serviceaccounts"]}`, ns, "verbs [impersonate:serviceaccount]"},
@@ -1931,7 +1931,7 @@ func TestImpersonationRules(t *testing.T) {
 			out += rr(rules...)
 		}
 		p := impersonationRules(names, []byte(out), ns, sa)
-		if len(p) != 1 || !strings.Contains(p[0], c.want) || !strings.Contains(p[0], "Only impersonation.yaml's two rules") {
+		if len(p) != 1 || !strings.Contains(p[0], c.want) || !strings.Contains(p[0], "Only impersonation.yaml's rules") {
 			t.Errorf("%s: %q", name, p)
 		}
 	}
@@ -1941,5 +1941,66 @@ func TestImpersonationRules(t *testing.T) {
 	}
 	if p := impersonationRules(names, []byte("{"), ns, sa); len(p) != 1 {
 		t.Errorf("garbage: %q", p)
+	}
+}
+
+// Kubernetes' edit and admin roles let the cells impersonate a namespace's service accounts. In a
+// namespace other than the gate's that is allowed, and counts as running workloads there: Pod
+// Security, no kube-*, and riskyNamespaces hold for it.
+func TestServiceAccountImpersonation(t *testing.T) {
+	const ns, sa = "md-runbook-ops", "md-runbook-cells"
+	read := `{"verbs":["get","list","watch"],"apiGroups":[""],"resources":["pods"]}`
+	self := `{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["md-runbook-cells"]}`
+	// bootstrappolicy's editRules: impersonate on serviceaccounts of the core group.
+	edit := `{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"]}`
+	star := `{"verbs":["*"],"apiGroups":[""],"resources":["serviceaccounts","configmaps"]}`
+	rr := func(rules ...string) string {
+		return `{"kind":"SelfSubjectRulesReview","spec":{},"status":{"resourceRules":[` + strings.Join(rules, ",") + `]}}` + "\n"
+	}
+	names := []string{ns, "shop"}
+	for _, rule := range []string{edit, star} {
+		out := []byte(rr(read, self) + rr(read, rule))
+		if p := impersonationRules(names, out, ns, sa); len(p) != 0 {
+			t.Errorf("%s in shop: %q", rule, p)
+		}
+		// shop counts as a namespace where the cells run workloads; the gate's own (self) doesn't.
+		if may := writableNamespaces(names, out, ns, sa); !reflect.DeepEqual(may, []string{"shop"}) {
+			t.Errorf("%s: may %q", rule, may)
+		}
+		// So shop must enforce Pod Security.
+		nss, _ := kubeObjects([]byte(`{"kind":"List","items":[{"kind":"Namespace","metadata":{"name":"md-runbook-ops","labels":{"pod-security.kubernetes.io/enforce":"restricted"}}},{"kind":"Namespace","metadata":{"name":"shop"}}]}`))
+		if p := unguardedNamespaces(nss, names, out, ns, sa); len(p) != 1 || !strings.Contains(p[0], "may act as its service accounts in namespace shop, which doesn't enforce Pod Security") {
+			t.Errorf("%s: unguarded %q", rule, p)
+		}
+	}
+	// The same rule in the gate's namespace: refused. Through a ClusterRoleBinding (in every
+	// namespace's review), refused through the gate's namespace.
+	if p := impersonationRules(names, []byte(rr(read, self, edit)+rr(read)), ns, sa); len(p) != 1 || !strings.Contains(p[0], "in namespace md-runbook-ops") {
+		t.Errorf("in the gate's namespace: %q", p)
+	}
+	if p := impersonationRules(names, []byte(rr(read, self, edit)+rr(read, edit)), ns, sa); len(p) != 1 || !strings.Contains(p[0], "in namespace md-runbook-ops.") {
+		t.Errorf("cluster-wide: %q", p)
+	}
+	// In a kube-* namespace: never.
+	kube, _ := kubeObjects([]byte(`{"kind":"List","items":[{"kind":"Namespace","metadata":{"name":"kube-system","labels":{"pod-security.kubernetes.io/enforce":"restricted"}}}]}`))
+	if p := unguardedNamespaces(kube, []string{"kube-system"}, []byte(rr(edit)), ns, sa); len(p) != 1 || !strings.Contains(p[0], "may act as its service accounts in namespace kube-system: never bind") {
+		t.Errorf("kube-system: %q", p)
+	}
+	// A service account of shop with cluster-wide rights: riskyNamespaces refuses shop.
+	may := writableNamespaces(names, []byte(rr(read, self)+rr(read, edit)), ns, sa)
+	crbs := []byte(`{"kind":"List","items":[{"kind":"ClusterRoleBinding","metadata":{"name":"shop-admin"},"roleRef":{"kind":"ClusterRole","name":"cluster-admin"},"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"shop"}]}]}`)
+	if p := riskyNamespaces(may, crbs, nil, ns, sa); len(p) != 1 || !strings.Contains(p[0], "namespace shop, where service accounts have cluster-wide rights: deployer → cluster-admin") {
+		t.Errorf("risky: %q", p)
+	}
+	// Not service accounts only: not this rule.
+	for _, r := range []kubeRule{
+		{Verbs: []string{"impersonate"}, APIGroups: []string{""}, Resources: []string{"*"}},
+		{Verbs: []string{"impersonate:serviceaccount"}, APIGroups: []string{""}, Resources: []string{"serviceaccounts"}},
+		{Verbs: []string{"impersonate"}, APIGroups: []string{"", "authentication.k8s.io"}, Resources: []string{"serviceaccounts"}},
+		{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"serviceaccounts"}},
+	} {
+		if saImpersonation(r) {
+			t.Errorf("saImpersonation(%+v)", r)
+		}
 	}
 }
