@@ -17,6 +17,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { IncomingMessage, Server, createServer } from 'node:http';
 import { BlockList, LookupFunction, Socket, connect, isIP } from 'node:net';
 import { lookup as dnsLookup } from 'node:dns';
+import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { RelayConfig } from './config';
 
@@ -24,6 +25,8 @@ export const PROTOCOL = 1;
 export const SUBPROTOCOL = 'mdrb-relay.v1';
 /** Bytes queued towards the browser above which reading from the SSH server pauses. */
 const HIGH_WATER = 1 << 20;
+/** How long a refused client may take to read the refusal before its socket is closed anyway. */
+const REFUSAL_LINGER_MS = 5000;
 const STATUS_TEXT: Record<number, string> = {
   400: 'Bad Request',
   401: 'Unauthorized',
@@ -50,6 +53,9 @@ export interface Relay {
 }
 
 const digest = (s: string): Buffer => createHash('sha256').update(s).digest();
+function destroySocket(this: Duplex): void {
+  this.destroy();
+}
 
 export function createRelay(config: RelayConfig, version: string, log: (e: LogEvent) => void = defaultLog): Relay {
   const tokenDigests = config.tokens.map(digest);
@@ -121,9 +127,16 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
   });
 
   server.on('upgrade', (req, socket, head) => {
+    // Node removes its own 'error' listener on upgrade: without this one, a client that resets the
+    // connection while being refused crashes the relay (threat-model review, 2026-11-27). As in the
+    // ws README's "Client authentication" example.
+    socket.on('error', destroySocket);
     const refuse = (status: number, why: string, client: string): void => {
       log({ event: 'refused', client, why, status });
-      socket.end(`HTTP/1.1 ${status} ${STATUS_TEXT[status]}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`);
+      // Closed once the answer is out, as ws does: a client that keeps its side open can't hold
+      // the socket. One that never reads is cut off after a while.
+      socket.end(`HTTP/1.1 ${status} ${STATUS_TEXT[status]}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`, () => socket.destroy());
+      setTimeout(() => socket.destroy(), REFUSAL_LINGER_MS).unref();
     };
     const client = clientOf(req);
     const now = Date.now();
@@ -148,6 +161,8 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
     if (allowed === 'any' && isIP(literal) && isInternal(literal)) return refuse(403, `target ${target} (internal address)`, client);
     if (sockets.size >= config.maxConnections) return refuse(429, 'relay full', client);
     if ((perClient.get(client) ?? 0) >= config.maxPerClient) return refuse(429, 'client limit', client);
+    // ws puts its own 'error' listener on the socket from here on.
+    socket.removeListener('error', destroySocket);
     wss.handleUpgrade(req, socket, head, (ws) => pipe(ws, client, target, allowed === 'any'));
   });
 

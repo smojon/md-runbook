@@ -4,7 +4,7 @@
 #   docker build -t md-runbook-relay apps/relay
 #   docker run --rm -p 127.0.0.1:8022:8022 -e RELAY_TOKEN=… -e RELAY_TARGETS=web1:22 md-runbook-relay
 
-FROM node:22.23.1-alpine AS build
+FROM node:22.23.5-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -13,7 +13,7 @@ COPY src ./src
 COPY test ./test
 RUN npx tsc -p . && npm prune --omit=dev
 
-FROM node:22.23.1-alpine
+FROM node:22.23.5-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
 ENV NODE_ENV=production \
     RELAY_HOST=0.0.0.0 \
     RELAY_PORT=8022

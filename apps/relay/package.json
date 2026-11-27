@@ -15,7 +15,7 @@
     "test": "npm run build && node --test \"dist/test/**/*.test.js\""
   },
   "dependencies": {
-    "ws": "8.22.0"
+    "ws": "8.23.0"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { AddressInfo, Server, createServer } from 'node:net';
+import { AddressInfo, Server, connect as connectTcp, createServer } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 import { WebSocket } from 'ws';
 import { RelayConfig, isTargetSpec, loadConfig } from '../src/config';
@@ -138,6 +138,39 @@ describe('relay', () => {
       assert.ok(first instanceof WebSocket);
       assert.equal(await open(url, target), 429);
       first.close();
+    } finally {
+      await relay.close();
+    }
+  });
+
+  it('keeps serving when a refused client resets its connection (threat-model review, 2026-11-27)', async () => {
+    const { relay, url } = await startRelay({ targets: [target], maxFailures: 5 });
+    try {
+      // A session that is open before, and must still work after.
+      const ws = await open(url, target);
+      assert.ok(ws instanceof WebSocket);
+      const port = portOf(relay.server);
+      // Wrong path (404), wrong token (401), then too many failures (429); the reset lands
+      // before, during and after the refusal is written.
+      for (const path of ['/nope', '/v1/ssh'])
+        for (let i = 0; i < 15; i++)
+          await new Promise<void>((resolve) => {
+            const s = connectTcp(port, '127.0.0.1', () => {
+              s.write(
+                `GET ${path}?target=${target} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+                  `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: ${SUBPROTOCOL}, token.wrong-token-of-24-characters\r\n\r\n`,
+              );
+              setTimeout(() => s.resetAndDestroy(), i % 3 === 0 ? 0 : i % 3 === 1 ? 5 : 20);
+              setTimeout(resolve, 30);
+            });
+            s.on('error', () => resolve());
+          });
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal((await fetch(`${url}/healthz`)).status, 200);
+      const reply = nextMessage(ws);
+      ws.send(Buffer.from('still here'));
+      assert.equal((await reply).toString(), 'echo:still here');
+      ws.close();
     } finally {
       await relay.close();
     }

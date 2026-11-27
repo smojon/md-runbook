@@ -19,6 +19,9 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
+    # Room for the default 50 connections (RELAY_MAX_CONNECTIONS); raise both together.
+    mem_limit: 256m
+    pids_limit: 256
     # Not published: only Caddy reaches it.
     expose: ['8022']
 
@@ -49,12 +52,16 @@ services:
     security_opt: ['no-new-privileges:true']
 
   caddy:
-    image: caddy:2.10.2-alpine
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     restart: unless-stopped
     ports: ['80:80', '443:443']
     volumes:
       - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
+    # Caddy needs no capability but binding ports 80 and 443 (Docker allows that anyway, other runtimes may not).
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ['no-new-privileges:true']
 
 secrets:
   relay_token:
