@@ -203,6 +203,54 @@ func TestJobManifestAuditWho(t *testing.T) {
 	if env := envOf(s); !reflect.DeepEqual(env, want) {
 		t.Errorf("with job_audit_who: %v", env)
 	}
+	// The kubelet expands $(VAR) in env values, and $$ is a $: each $ doubles (review, L1).
+	s.Who = "a$(HOME)$$b$"
+	if env := envOf(s); at(t, env, 2, "value") != "a$$(HOME)$$$$b$$" {
+		t.Errorf("a who with $: %v", env)
+	}
+}
+
+// md-runbook-ops-start cells writes the impersonation into the kubeconfig as YAML single-quoted
+// strings: a who with the characters YAML, sh or the kubelet would read comes back as it was.
+func TestStartImpersonation(t *testing.T) {
+	src, err := os.ReadFile("../../../ops/start.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.ReplaceAll(string(src), "\r\n", "\n")
+	i := strings.Index(text, "\nimpersonation() {\n")
+	if i < 0 {
+		t.Fatal("start.sh: no impersonation()")
+	}
+	fn := text[i : i+strings.Index(text[i:], "\n}\n")+3]
+	run := func(mode, as, who string) string {
+		cmd := exec.Command("/bin/sh", "-c", fn+`impersonation "$1"`, "sh", mode)
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "MD_RUNBOOK_KUBE_AS=" + as, "MD_RUNBOOK_KUBE_WHO=" + who}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	const as = "system:serviceaccount:md-runbook-ops:md-runbook-cells"
+	who := `o'brien #1: {x} $HOME $(id) \n "q" ''`
+	got := run("cells", as, who)
+	quoted := "'" + strings.ReplaceAll(who, "'", "''") + "'"
+	want := "    as: '" + as + "'\n    as-user-extra:\n      md-runbook.dev/operator:\n      - " + quoted + "\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+	// Unquoted as YAML reads it: the same who.
+	if back := strings.ReplaceAll(quoted[1:len(quoted)-1], "''", "'"); back != who {
+		t.Errorf("back %q", back)
+	}
+	// The ops pod (no cells), or no job_audit_who: nothing.
+	if got := run("", as, who); got != "" {
+		t.Errorf("ops: %q", got)
+	}
+	if got := run("cells", "", ""); got != "" {
+		t.Errorf("without: %q", got)
+	}
 }
 
 // What who may be in the impersonation's extra.
@@ -251,7 +299,7 @@ func TestCheckAuditWho(t *testing.T) {
 		t.Errorf("argv %q", argv)
 	}
 	fail = errors.New(`exit status 1: users "system:serviceaccount:md-runbook-ops:md-runbook-cells" is forbidden: User "system:serviceaccount:md-runbook-ops:md-runbook-cells" cannot impersonate resource "serviceaccounts"`)
-	if p := j.checkAuditWho("pod-1"); !strings.Contains(p, "can't impersonate itself") || !strings.Contains(p, "impersonation.yaml") {
+	if p := j.checkAuditWho("pod-1"); !strings.Contains(p, "kubectl auth whoami failed") || !strings.Contains(p, "impersonation.yaml") {
 		t.Errorf("refused: %s", p)
 	}
 	fail = nil
@@ -289,6 +337,11 @@ func TestCellsImpersonationReviews(t *testing.T) {
 		"impersonate  users/  ",                                                                // any user
 		"impersonate authentication.k8s.io uids/  ",                                            // uids
 		"impersonate authentication.k8s.io userextras/authentication.kubernetes.io/pod-name  ", // the API server's extras
+		"impersonate authentication.k8s.io userextras/authentication.kubernetes.io/node-uid  ",
+		"impersonate:serviceaccount authentication.k8s.io serviceaccounts/  ", // constrained impersonation
+		"impersonate:serviceaccount authentication.k8s.io serviceaccounts/ md-runbook-ops ",
+		"impersonate:user-info authentication.k8s.io users/  ",
+		"impersonate:associated-node authentication.k8s.io nodes/  ",
 	} {
 		if r, ok := byKey[k]; !ok || r.want {
 			t.Errorf("no refusing review %q", k)
@@ -1827,5 +1880,66 @@ func TestJobMissingExits(t *testing.T) {
 	g.jobMissingExits(false)
 	if g.exitsBadNow() != "" {
 		t.Errorf("complete: %q", g.exitsBadNow())
+	}
+}
+
+// The rules reviews from the Job's pod: any impersonation but impersonation.yaml's two rules is
+// refused, by name or verb (review of job_audit_who, M1, M2, L2).
+func TestImpersonationRules(t *testing.T) {
+	const ns, sa = "md-runbook-ops", "md-runbook-cells"
+	read := `{"verbs":["get","list","watch"],"apiGroups":["","apps"],"resources":["pods","deployments"]}`
+	self := `{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["md-runbook-cells"]}`
+	extra := `{"verbs":["impersonate"],"apiGroups":["authentication.k8s.io"],"resources":["userextras/md-runbook.dev/operator"]}`
+	rr := func(rules ...string) string {
+		return `{"kind":"SelfSubjectRulesReview","spec":{},"status":{"resourceRules":[` + strings.Join(rules, ",") + `]}}` + "\n"
+	}
+	names := []string{"default", ns, "shop"}
+	// The shipped rules (self in its own namespace, the extra everywhere), and rules that don't
+	// impersonate: nothing refused.
+	ok := rr(read, extra, `{"verbs":["*"],"apiGroups":["apps"],"resources":["*"]}`) + rr(read, extra, self) +
+		rr(read, extra, `{"verbs":["*"],"apiGroups":[""],"resources":["pods","configmaps"]}`, `{"verbs":["impersonate"],"apiGroups":[""],"resources":["pods"]}`)
+	if p := impersonationRules(names, []byte(ok), ns, sa); len(p) != 0 {
+		t.Errorf("shipped: %q", p)
+	}
+	for name, c := range map[string]struct{ rule, where, want string }{
+		"a named user":          {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["users"],"resourceNames":["kubernetes-admin"]}`, "all", "verbs [impersonate] on [users] of API groups [] named [kubernetes-admin], in 3 namespaces (default, md-runbook-ops, shop)"},
+		"a named group":         {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["groups"],"resourceNames":["kubeadm:cluster-admins"]}`, "all", "named [kubeadm:cluster-admins]"},
+		"another account":       {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["argocd-application-controller"]}`, "shop", "named [argocd-application-controller], in namespace shop"},
+		"the gate's account":    {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["md-runbook-ops"]}`, ns, "named [md-runbook-ops], in namespace md-runbook-ops"},
+		"its name elsewhere":    {self, "shop", "named [md-runbook-cells], in namespace shop"},
+		"self and more":         {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["md-runbook-cells","md-runbook-ops"]}`, ns, "named [md-runbook-cells md-runbook-ops]"},
+		"any account":           {`{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"]}`, ns, "verbs [impersonate] on [serviceaccounts] of API groups [], in namespace md-runbook-ops"},
+		"constrained":           {`{"verbs":["impersonate:serviceaccount"],"apiGroups":["authentication.k8s.io"],"resources":["serviceaccounts"]}`, ns, "verbs [impersonate:serviceaccount]"},
+		"constrained, on":       {`{"verbs":["impersonate-on:serviceaccount:*"],"apiGroups":["apps"],"resources":["deployments"]}`, "shop", "verbs [impersonate-on:serviceaccount:*]"},
+		"associated node":       {`{"verbs":["impersonate:associated-node"],"apiGroups":["authentication.k8s.io"],"resources":["nodes"]}`, "all", "impersonate:associated-node"},
+		"another extra":         {`{"verbs":["impersonate"],"apiGroups":["authentication.k8s.io"],"resources":["userextras/scopes"]}`, "all", "userextras/scopes"},
+		"the pod's extra":       {`{"verbs":["impersonate"],"apiGroups":["authentication.k8s.io"],"resources":["userextras/authentication.kubernetes.io/pod-uid"]}`, "all", "pod-uid"},
+		"uids":                  {`{"verbs":["impersonate"],"apiGroups":["authentication.k8s.io"],"resources":["uids"]}`, "all", "[uids]"},
+		"everything":            {`{"verbs":["*"],"apiGroups":["*"],"resources":["*"]}`, "all", "verbs [*] on [*] of API groups [*]"},
+		"* on users":            {`{"verbs":["*"],"apiGroups":[""],"resources":["users"]}`, "all", "verbs [*] on [users]"},
+		"the extra, more verbs": {`{"verbs":["impersonate","impersonate:user-info"],"apiGroups":["authentication.k8s.io"],"resources":["userextras/md-runbook.dev/operator"]}`, "all", "impersonate:user-info"},
+	} {
+		var out string
+		for _, n := range names {
+			rules := []string{read, extra}
+			if n == ns {
+				rules = append(rules, self)
+			}
+			if c.where == "all" || c.where == n {
+				rules = append(rules, c.rule)
+			}
+			out += rr(rules...)
+		}
+		p := impersonationRules(names, []byte(out), ns, sa)
+		if len(p) != 1 || !strings.Contains(p[0], c.want) || !strings.Contains(p[0], "Only impersonation.yaml's two rules") {
+			t.Errorf("%s: %q", name, p)
+		}
+	}
+	// A missing answer, or garbage: refused.
+	if p := impersonationRules(names, []byte(rr(read)), ns, sa); len(p) != 1 || !strings.Contains(p[0], "1 answers for 3 namespaces") {
+		t.Errorf("missing: %q", p)
+	}
+	if p := impersonationRules(names, []byte("{"), ns, sa); len(p) != 1 {
+		t.Errorf("garbage: %q", p)
 	}
 }

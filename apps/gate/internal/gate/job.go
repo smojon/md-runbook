@@ -335,7 +335,7 @@ func auditWhoProblem(who string) string {
 func (j *kubeJob) checkAuditWho(pod string) string {
 	out, err := j.kubectlAs(pod, nil, "auth", "whoami", "-o", "json")
 	if err != nil {
-		return "job_audit_who: the cells' service account can't impersonate itself with who (" + err.Error() + "). Apply apps/ops/kubernetes/impersonation.yaml, or remove job_audit_who"
+		return "job_audit_who: kubectl auth whoami failed in the Job's pod (" + err.Error() + "). Is apps/ops/kubernetes/impersonation.yaml applied (the cells' service account must impersonate itself with who)? The cluster needs Kubernetes 1.30 or later. Else remove job_audit_who"
 	}
 	return auditWhoAnswer(out, j.as, j.who)
 }
@@ -365,6 +365,104 @@ func auditWhoAnswer(out []byte, as, who string) string {
 		return "job_audit_who: kubectl in the Job's pod has other extras than " + auditExtra + " (is it impersonating?)"
 	}
 	return ""
+}
+
+// impersonationRules: the rules of the cells' rules reviews (one per namespace, from the Job's
+// pod: checkNamespaces) that let them impersonate anyone or anything but impersonation.yaml's
+// two (review of job_audit_who, M1, M2, L2). A review without a name (cellsReviews) can't see a
+// rule limited to resourceNames (users [kubernetes-admin]), nor constrained impersonation's
+// verbs (impersonate:serviceaccount, impersonate-on:…; beta and on since Kubernetes 1.36). The
+// rules can. Refused:
+//   - any impersonate:… or impersonate-on:… verb, on anything;
+//   - impersonate or * on users, groups, serviceaccounts, uids, nodes, userextras (or *), in the
+//     core group, authentication.k8s.io or *;
+//
+// except impersonate on serviceaccounts [sa] in the cells' own namespace, and on
+// userextras/md-runbook.dev/operator. Allowed with or without job_audit_who: impersonating itself
+// gives the account nothing. An incomplete review (a webhook authorizer) can't list every rule:
+// there only cellsReviews' questions hold.
+func impersonationRules(names []string, rulesOut []byte, ns, sa string) []string {
+	objs, err := kubeObjects(rulesOut)
+	if err != nil {
+		return []string{"can't read the cells' rights per namespace"}
+	}
+	var reviews []kubeObj
+	for _, o := range objs {
+		if o.Kind == "SelfSubjectRulesReview" {
+			reviews = append(reviews, o)
+		}
+	}
+	if len(reviews) != len(names) {
+		return []string{"can't check the cells' rights per namespace: " + itoa(len(reviews)) + " answers for " + itoa(len(names)) + " namespaces"}
+	}
+	var order []string
+	where := map[string][]string{}
+	for i, r := range reviews {
+		for _, rule := range r.Status.ResourceRules {
+			if !impersonates(rule) || shippedImpersonation(rule, names[i] == ns, sa) {
+				continue
+			}
+			k := "verbs [" + strings.Join(rule.Verbs, " ") + "] on [" + strings.Join(rule.Resources, " ") + "] of API groups [" + strings.Join(rule.APIGroups, " ") + "]"
+			if len(rule.ResourceNames) > 0 {
+				k += " named [" + strings.Join(rule.ResourceNames, " ") + "]"
+			}
+			if _, ok := where[k]; !ok {
+				order = append(order, k)
+			}
+			where[k] = append(where[k], names[i])
+		}
+	}
+	var p []string
+	for _, k := range order {
+		ns := where[k]
+		in := "namespace " + ns[0]
+		if len(ns) > 1 {
+			in = itoa(len(ns)) + " namespaces (" + firstFew(ns) + ")"
+		}
+		p = append(p, "the cells' service account may impersonate: "+k+", in "+in+". Only impersonation.yaml's two rules may let it impersonate (itself, and the extra "+auditExtra+")")
+	}
+	return p
+}
+
+// impersonates: the rule allows some impersonation (impersonationRules).
+func impersonates(r kubeRule) bool {
+	verb := false
+	for _, v := range r.Verbs {
+		if strings.HasPrefix(v, "impersonate:") || strings.HasPrefix(v, "impersonate-on:") {
+			return true
+		}
+		verb = verb || v == "*" || v == "impersonate"
+	}
+	if !verb {
+		return false
+	}
+	group := false
+	for _, g := range r.APIGroups {
+		group = group || g == "*" || g == "" || g == "authentication.k8s.io"
+	}
+	if !group {
+		return false
+	}
+	for _, res := range r.Resources {
+		switch {
+		case res == "*", res == "users", res == "groups", res == "serviceaccounts", res == "uids", res == "nodes", res == "userextras",
+			strings.HasPrefix(res, "userextras/"), strings.HasPrefix(res, "*/"):
+			return true
+		}
+	}
+	return false
+}
+
+// shippedImpersonation: one of impersonation.yaml's rules, as a rules review lists it.
+func shippedImpersonation(r kubeRule, own bool, sa string) bool {
+	one := func(l []string, v string) bool { return len(l) == 1 && l[0] == v }
+	if !one(r.Verbs, "impersonate") {
+		return false
+	}
+	if own && one(r.APIGroups, "") && one(r.Resources, "serviceaccounts") && one(r.ResourceNames, sa) {
+		return true
+	}
+	return one(r.APIGroups, "authentication.k8s.io") && one(r.Resources, "userextras/"+auditExtra)
 }
 
 // prepareJob: the pod Ready, the cells' service account checked in it (before any block), the
@@ -674,6 +772,9 @@ func (j *kubeJob) checkNamespaces(pod string) []string {
 	rules, err := j.kubectlAs(pod, rulesReviewList(names), "create", "-f", "-", "-o", "json")
 	if err != nil {
 		return []string{"can't check the cells' rights per namespace (" + err.Error() + ")"}
+	}
+	if p := impersonationRules(names, rules, j.ns, j.sa); len(p) > 0 {
+		return p
 	}
 	if p := unguardedNamespaces(nss, names, rules); len(p) > 0 {
 		return p
@@ -1597,7 +1698,9 @@ func jobManifest(s jobSpec) []byte {
 	volumes := []obj{{"name": "home", "emptyDir": obj{}}, {"name": "tmp", "emptyDir": obj{}}, {"name": "log", "emptyDir": obj{}}}
 	env := []obj{{"name": "CLUSTER_NAME", "value": s.Context}}
 	if s.As != "" {
-		env = append(env, obj{"name": "MD_RUNBOOK_KUBE_AS", "value": s.As}, obj{"name": "MD_RUNBOOK_KUBE_WHO", "value": s.Who})
+		// The kubelet expands $(VAR) in env values; $$ is a $ (review of job_audit_who, L1).
+		esc := func(v string) string { return strings.ReplaceAll(v, "$", "$$") }
+		env = append(env, obj{"name": "MD_RUNBOOK_KUBE_AS", "value": esc(s.As)}, obj{"name": "MD_RUNBOOK_KUBE_WHO", "value": esc(s.Who)})
 	}
 	container := obj{
 		"name":            jobContainer,
@@ -2032,8 +2135,21 @@ func cellsReviews(ns, sa, ops string) []review {
 		{"impersonate", "", "groups", "", "", false, "system:masters"},
 		{"impersonate", "", "serviceaccounts", "", other, false, sa},
 		anywhere("impersonate", "authentication.k8s.io", "uids", ""),
-		anywhere("impersonate", "authentication.k8s.io", "userextras", "authentication.kubernetes.io/pod-name"),
-		anywhere("impersonate", "authentication.k8s.io", "userextras", "authentication.kubernetes.io/credential-id"),
+	}
+	// The extras the API server sets for a pod's token.
+	for _, x := range []string{"pod-name", "pod-uid", "node-name", "node-uid", "credential-id"} {
+		named = append(named, anywhere("impersonate", "authentication.k8s.io", "userextras", "authentication.kubernetes.io/"+x))
+	}
+	// Constrained impersonation (KEP-5284), for a rules review that is incomplete (a webhook
+	// authorizer): its verbs are asked too. impersonationRules refuses them in the rules.
+	for _, c := range []struct{ verb, resource string }{
+		{"impersonate:serviceaccount", "serviceaccounts"}, {"impersonate:user-info", "users"}, {"impersonate:user-info", "groups"},
+		{"impersonate:user-info", "uids"}, {"impersonate:arbitrary-node", "nodes"}, {"impersonate:associated-node", "nodes"},
+	} {
+		named = append(named, anywhere(c.verb, "authentication.k8s.io", c.resource, ""))
+		if c.resource == "serviceaccounts" {
+			named = append(named, no(c.verb, "authentication.k8s.io", c.resource, ""))
+		}
 	}
 	if ops != "" {
 		named = append(named, review{"impersonate", "", "serviceaccounts", "", ns, false, ops})
@@ -2096,9 +2212,10 @@ func cellsReviews(ns, sa, ops string) []review {
 
 // kubeRule: a rule of a SelfSubjectRulesReview.
 type kubeRule struct {
-	Verbs     []string `json:"verbs"`
-	APIGroups []string `json:"apiGroups"`
-	Resources []string `json:"resources"`
+	Verbs         []string `json:"verbs"`
+	APIGroups     []string `json:"apiGroups"`
+	Resources     []string `json:"resources"`
+	ResourceNames []string `json:"resourceNames"`
 }
 
 // rulesReviewList: one SelfSubjectRulesReview per namespace, as one List.
