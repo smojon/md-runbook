@@ -5,6 +5,22 @@
 What's new:
 - The guide to the ops host [without an open port](docs/features/ops-outbound.md) follows the
   gate's checks and the vendors' current docs. New: why not a sidecar, Pod Security, egress, phones.
+- Ops host: the gate also refuses namespaces whose accounts have RoleBindings in other namespaces.
+  Upgrade: apply its ClusterRole again (below).
+
+### Ops host: RoleBindings count too
+
+- **A namespace's accounts with rights in other namespaces were not seen.** Before:
+  - the gate refused a namespace runbooks may change when a ClusterRoleBinding named one of its
+    service accounts;
+  - a RoleBinding in another namespace, such as `view` in `payments`, passed.
+- Now:
+  - the gate lists the RoleBindings of every namespace too, and refuses those the same way;
+  - the message names them: `ACCOUNT → ROLE in namespace OTHER (binding OTHER/NAME)`;
+  - RoleBindings in the account's own namespace don't count.
+- **Upgrade:** apply the ClusterRole `md-runbook-ops-gate` from the stock `md-runbook-ops.yaml`.
+  It adds `list` on `rolebindings`. Without it, while runbooks may change workloads, sessions
+  refuse.
 
 ### Fixed
 

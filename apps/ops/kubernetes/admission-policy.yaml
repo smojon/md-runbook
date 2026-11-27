@@ -160,10 +160,10 @@ spec:
 #     volumes, containers' names, env sources, security context, host and node fields.
 # What it can't stop:
 #   - set image runs any code as the service account the workload already has, with the Secrets
-#     it already mounts. The gate refuses a namespace whose accounts have ClusterRoleBindings;
-#     it can't see rights that RoleBindings give them. So bind no namespace whose workloads'
-#     accounts have rights you wouldn't give every runbook (README.md, "Where runbooks may change
-#     things").
+#     it already mounts. The gate refuses a namespace whose accounts have ClusterRoleBindings,
+#     or RoleBindings in other namespaces; not rights in their own. So bind no namespace whose
+#     workloads' accounts have rights you wouldn't give every runbook (README.md, "Where
+#     runbooks may change things").
 #   - Rights you add to md-runbook-ops-operate beyond these kinds (pods, DaemonSets, ReplicaSets).
 # Created objects (the opt-in `jobs create`, or rights you add) have no older version to compare
 # with: they must run as the account default, with no Secret as a volume or env.

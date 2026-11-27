@@ -127,7 +127,8 @@ own. They can't reach the gate's token, log or state, nor another session.
   - Ignored: `system:serviceaccounts`, `system:authenticated` (the cells have those rights too),
     and the cells' own account.
   - The list is fetched before the Job too. Unlisted or unreadable: no session.
-  - Not seen: RoleBindings elsewhere, webhook authorizers, cloud roles of an account.
+  - RoleBindings in other namespaces count too (since 0.36); not those in the account's own.
+  - Not seen: webhook authorizers, cloud roles of an account.
 
 ## gate_mode and the self-check
 

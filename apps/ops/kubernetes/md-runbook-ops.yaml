@@ -66,8 +66,8 @@ subjects:
 # ClusterRole and its binding out. What it reads:
 #   - the admission policy md-runbook-ops-workloads and its binding, by name
 #     (admission-policy.yaml);
-#   - the ClusterRoleBindings: it refuses a namespace whose service accounts have cluster-wide
-#     rights (a runbook's image would run as them). `kubectl get clusterrolebindings` lists;
+#   - the ClusterRoleBindings and RoleBindings: it refuses a namespace whose service accounts
+#     have rights beyond it (a runbook's image would run as them). `kubectl get` lists them;
 #     it needs no get.
 # It checks at each session that it may do nothing more: get or change the policies, get or
 # change any RBAC object, bind or escalate roles.
@@ -81,7 +81,7 @@ rules:
     resourceNames: [md-runbook-ops-workloads]
     verbs: [get]
   - apiGroups: [rbac.authorization.k8s.io]
-    resources: [clusterrolebindings]
+    resources: [clusterrolebindings, rolebindings]
     verbs: [list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

@@ -51,11 +51,11 @@ import (
 // may be among them, labels or not: their service accounts run the cluster. Where they may
 // change workloads, the admission policy md-runbook-ops-workloads must be bound (it keeps a
 // patch from changing a pod template's service account, volumes or the like), and no service
-// account there may have cluster-wide rights (a new image would run as it). The gate's
+// account there may have rights beyond it (a new image would run as it). The gate's
 // namespace must hold the ops host alone: no other app's pods or service accounts. The admission
 // policy md-runbook-ops-jobs must refuse any other Job from the gate's account (a dry run as its
 // own account). The gate's namespace must enforce restricted. A wrong answer: no session. While
-// the session lasts, the gate checks the workloads policy and the ClusterRoleBindings again
+// the session lasts, the gate checks the workloads policy and the bindings again
 // (watchJob); the policy holds the namespaces' labels at each change itself.
 //
 // When the follower's stdin ends (the session ended, or the gate is gone) it ends the pod: a
@@ -105,7 +105,7 @@ type kubeJob struct {
 	// workloads: why md-runbook-ops-workloads isn't in force ("" when it is), asked before the
 	// Job (so the pod's wait has no call more); it counts once the cells may change workloads.
 	workloads string
-	// bindings: the ClusterRoleBindings (kubectl get -o json), or why not; asked before the Job
+	// bindings: the ClusterRoleBindings and RoleBindings (bindingsArgs), or why not; asked before the Job
 	// too, they count where the cells may change workloads (riskyNamespaces).
 	bindings    []byte
 	bindingsErr error
@@ -386,7 +386,7 @@ func auditWhoAnswer(out []byte, as, who string) string {
 //     (create serviceaccounts/token without resourceNames: mintsTokens). Kubernetes' edit and
 //     admin roles grant both. A token is acting as the account already; so the namespace counts
 //     as one where they start workloads (the workloads list): Pod Security, no kube-*, and
-//     riskyNamespaces (no service account there with cluster-wide rights) hold for it.
+//     riskyNamespaces (no service account there with rights beyond it) hold for it.
 //     Without the token right, impersonating would be more than the cells have (review of
 //     686b108: pods alone don't do it, the workloads policy keeps their pods' account; and
 //     impersonated requests escape that policy, which matches the cells' user name): refused.
@@ -589,7 +589,7 @@ func (g *Gate) prepareJob(j *kubeJob) {
 
 // recheckEvery: how often a live session checks again what the start's checks found and someone
 // may change meanwhile (a session lasts up to a day): the policy md-runbook-ops-workloads, and
-// the ClusterRoleBindings of the namespaces the cells may change. The policy's namespace rule
+// the bindings of the namespaces the cells may change. The policy's namespace rule
 // holds the namespaces' labels at each change itself (admission-policy.yaml).
 const recheckEvery = 5 * time.Minute
 
@@ -621,7 +621,7 @@ func (g *Gate) watchJob(j *kubeJob, sleep func(time.Duration)) {
 	}
 }
 
-// recheck: what is wrong now with the policy md-runbook-ops-workloads and the ClusterRoleBindings
+// recheck: what is wrong now with the policy md-runbook-ops-workloads and the bindings
 // of j.may; nothing when kubectl couldn't tell (other than a refusal by the API server).
 func (j *kubeJob) recheck() []string {
 	unsure := func(err error) bool {
@@ -634,7 +634,7 @@ func (j *kubeJob) recheck() []string {
 			p = append(p, w)
 		}
 	}
-	out, err = j.run(j.kc("get", "clusterrolebindings", "-o", "json"), j.env, nil)
+	out, err = j.run(j.kc(bindingsArgs...), j.env, nil)
 	if !unsure(err) {
 		p = append(p, riskyNamespaces(j.may, out, err, j.ns, j.sa)...)
 	}
@@ -908,32 +908,39 @@ func writableNamespaces(names []string, rulesOut []byte, own, sa string) []strin
 	return may
 }
 
-// listBindings: the cluster's ClusterRoleBindings, as the gate's service account (list: the
-// ClusterRole md-runbook-ops-gate). Fetched before the Job, so the pod's wait has no call more;
-// they count once the cells may change workloads somewhere (riskyNamespaces).
+// bindingsArgs: the cluster's ClusterRoleBindings and every namespace's RoleBindings, in one
+// list (kubectl get, as the gate's service account: list, the ClusterRole md-runbook-ops-gate).
+var bindingsArgs = []string{"get", "clusterrolebindings,rolebindings", "--all-namespaces", "-o", "json"}
+
+// listBindings: the bindings (bindingsArgs). Fetched before the Job, so the pod's wait has no
+// call more; they count once the cells may change workloads somewhere (riskyNamespaces).
 func (j *kubeJob) listBindings() {
-	j.bindings, j.bindingsErr = j.run(j.kc("get", "clusterrolebindings", "-o", "json"), j.env, nil)
+	j.bindings, j.bindingsErr = j.run(j.kc(bindingsArgs...), j.env, nil)
 }
 
-// riskyNamespaces: each namespace in may whose service accounts have cluster-wide rights (a
-// ClusterRoleBinding names one of them, as a ServiceAccount, its user name, or the group
-// system:serviceaccounts:NS). There a runbook may change a workload's image (kubectl set image,
-// which the policy md-runbook-ops-workloads lets through for rollout undo) and so run its own
-// code as that workload's account: with cluster-wide rights, an argocd or flux would hand them
-// to every runbook (security review of 0.31, H2). Ignored: what every service account or every
-// user has (the groups system:serviceaccounts, system:authenticated): the cells have it too; and
-// the cells' own account. A list that failed or can't be read refuses.
+// riskyNamespaces: each namespace in may whose service accounts have rights beyond it: a
+// ClusterRoleBinding, or a RoleBinding in another namespace, names one of them (as a
+// ServiceAccount, its user name, or the group system:serviceaccounts:NS). There a runbook may
+// change a workload's image (kubectl set image, which the policy md-runbook-ops-workloads lets
+// through for rollout undo) and so run its own code as that workload's account: an argocd or
+// flux would hand its rights to every runbook (security review of 0.31, H2). A RoleBinding's
+// ServiceAccount without a namespace is one of the binding's own (as RBAC reads it: appliesToUser,
+// pkg/registry/rbac/validation/rule.go). Ignored: rights in the account's own namespace (the
+// README: bind only namespaces whose workloads may do what any runbook may); what every service
+// account or every user has (the groups system:serviceaccounts, system:authenticated): the cells
+// have it too; and the cells' own account. A list that failed or can't be read refuses.
 func riskyNamespaces(may []string, out []byte, err error, cellsNS, cellsSA string) []string {
 	if err != nil {
 		if strings.Contains(err.Error(), "(Forbidden)") {
-			return []string{"the gate's service account may not list clusterrolebindings (" + err.Error() + "): it checks the service accounts of the namespaces runbooks may change. Apply apps/ops/kubernetes/md-runbook-ops.yaml (ClusterRole md-runbook-ops-gate)"}
+			return []string{"the gate's service account may not list clusterrolebindings and rolebindings (" + err.Error() + "): it checks the service accounts of the namespaces runbooks may change. Apply apps/ops/kubernetes/md-runbook-ops.yaml (ClusterRole md-runbook-ops-gate)"}
 		}
-		return []string{"can't list the clusterrolebindings (" + err.Error() + ")"}
+		return []string{"can't list the clusterrolebindings and rolebindings (" + err.Error() + ")"}
 	}
 	type binding struct {
 		Kind     string `json:"kind"`
 		Metadata struct {
-			Name string `json:"name"`
+			Name      string `json:"name"`
+			Namespace string `json:"namespace"`
 		} `json:"metadata"`
 		RoleRef struct {
 			Kind string `json:"kind"`
@@ -947,8 +954,8 @@ func riskyNamespaces(may []string, out []byte, err error, cellsNS, cellsSA strin
 		Items []binding `json:"items"`
 	}
 	var list binding
-	if json.Unmarshal(out, &list) != nil || list.Kind != "List" && list.Kind != "ClusterRoleBindingList" {
-		return []string{"can't read the clusterrolebindings"}
+	if json.Unmarshal(out, &list) != nil || list.Kind != "List" {
+		return []string{"can't read the clusterrolebindings and rolebindings"}
 	}
 	writable := map[string]bool{}
 	for _, n := range may {
@@ -956,14 +963,28 @@ func riskyNamespaces(may []string, out []byte, err error, cellsNS, cellsSA strin
 	}
 	found := map[string][]string{}
 	for _, b := range list.Items {
-		if b.Kind != "" && b.Kind != "ClusterRoleBinding" {
-			continue
+		// where: the binding's namespace ("" for a ClusterRoleBinding); what: how the message
+		// names its rights.
+		where, what := "", b.RoleRef.Name+" (binding "+b.Metadata.Name+")"
+		switch b.Kind {
+		case "ClusterRoleBinding":
+		case "RoleBinding":
+			if b.Metadata.Namespace == "" {
+				return []string{"can't read the clusterrolebindings and rolebindings"}
+			}
+			where = b.Metadata.Namespace
+			what = b.RoleRef.Name + " in namespace " + where + " (binding " + where + "/" + b.Metadata.Name + ")"
+		default:
+			return []string{"can't read the clusterrolebindings and rolebindings"}
 		}
 		for _, s := range b.Subjects {
 			ns, who := "", ""
 			switch s.Kind {
 			case "ServiceAccount":
 				ns, who = s.Namespace, s.Name
+				if ns == "" {
+					ns = where
+				}
 			case "User":
 				// A service account's user name: system:serviceaccount:NS:NAME.
 				if rest, ok := strings.CutPrefix(s.Name, "system:serviceaccount:"); ok {
@@ -974,10 +995,10 @@ func riskyNamespaces(may []string, out []byte, err error, cellsNS, cellsSA strin
 					ns, who = rest, "group "+s.Name
 				}
 			}
-			if !writable[ns] || ns == cellsNS && who == cellsSA {
+			if !writable[ns] || ns == where || ns == cellsNS && who == cellsSA {
 				continue
 			}
-			found[ns] = append(found[ns], who+" → "+b.RoleRef.Name+" (binding "+b.Metadata.Name+")")
+			found[ns] = append(found[ns], who+" → "+what)
 		}
 	}
 	var p []string
@@ -990,7 +1011,7 @@ func riskyNamespaces(may []string, out []byte, err error, cellsNS, cellsSA strin
 		if len(ex) > 3 {
 			shown += " and " + itoa(len(ex)-3) + " more"
 		}
-		p = append(p, "the cells' service account may change workloads in namespace "+n+", where service accounts have cluster-wide rights: "+shown+
+		p = append(p, "the cells' service account may change workloads in namespace "+n+", where service accounts have rights beyond it: "+shown+
 			". Runbooks could run code as those accounts by changing an image: don't bind md-runbook-ops-operate in "+n+" (apps/ops/README.md)")
 	}
 	return p
@@ -2140,8 +2161,8 @@ func reviewProblems(out []byte, rs []review, who string) []string {
 // to start or reach a pod in its namespace (security review of 0.31.1, lows). Of the admission
 // policies it may only get md-runbook-ops-workloads and its binding by name (checkWorkloadPolicy):
 // a get without a name, a list or a change is refused, so it can't weaken them. Of RBAC it may
-// only list ClusterRoleBindings (riskyNamespaces): no get, no change, no bind or escalate, nothing
-// of roles or RoleBindings.
+// only list ClusterRoleBindings and RoleBindings (riskyNamespaces): no get, no change, no bind or
+// escalate, nothing of roles.
 func opsReviews(ns string) []review {
 	var policies []review
 	for _, res := range []string{"validatingadmissionpolicies", "validatingadmissionpolicybindings"} {
@@ -2156,7 +2177,7 @@ func opsReviews(ns string) []review {
 	}{
 		{"clusterrolebindings", append([]string{"get"}, change...)},
 		{"clusterroles", append([]string{"get", "list", "bind", "escalate"}, change...)},
-		{"rolebindings", append([]string{"list"}, change...)},
+		{"rolebindings", append([]string{"get"}, change...)},
 		{"roles", append([]string{"list", "bind", "escalate"}, change...)},
 	} {
 		for _, verb := range c.verbs {

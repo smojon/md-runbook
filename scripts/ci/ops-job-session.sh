@@ -227,7 +227,7 @@ kubectl -n "$w" create serviceaccount md-runbook-wide
 kubectl create clusterrolebinding md-runbook-wide --clusterrole=view --serviceaccount="$w:md-runbook-wide"
 open_session wide 9
 cell 0000cf01 'echo "ran=1"' >&9
-wait_for "$work/wide/err" "namespace $w, where service accounts have cluster-wide rights: md-runbook-wide → view (binding md-runbook-wide)"
+wait_for "$work/wide/err" "namespace $w, where service accounts have rights beyond it: md-runbook-wide → view (binding md-runbook-wide)"
 close_session wide 9
 [ -z "$(value wide ran)" ] || fail "a block ran although a service account of $w has cluster-wide rights"
 cat "$work/wide/err"
@@ -238,6 +238,23 @@ wait_for "$work/wide2/out" '__MDRB_0000cf02__ 0'
 close_session wide2 9
 [ "$(value wide2 ran)" = 1 ] || fail "no session after the ClusterRoleBinding of $w's account went"
 echo "ok: a namespace whose account has a ClusterRoleBinding refuses sessions, and not once it goes"
+# The same for a RoleBinding in another namespace; one in the account's own namespace is fine.
+kubectl -n "$w" create rolebinding md-runbook-local --clusterrole=view --serviceaccount="$w:md-runbook-wide"
+kubectl -n default create rolebinding md-runbook-elsewhere --clusterrole=view --serviceaccount="$w:md-runbook-wide"
+open_session wide3 9
+cell 0000cf03 'echo "ran=1"' >&9
+wait_for "$work/wide3/err" "namespace $w, where service accounts have rights beyond it: md-runbook-wide → view in namespace default (binding default/md-runbook-elsewhere)"
+close_session wide3 9
+[ -z "$(value wide3 ran)" ] || fail "a block ran although a service account of $w has a RoleBinding in default"
+if grep -q "md-runbook-local" "$work/wide3/err"; then fail "the RoleBinding in $w itself was named: $(cat "$work/wide3/err")"; fi
+kubectl -n default delete rolebinding md-runbook-elsewhere
+open_session wide4 9
+cell 0000cf04 'echo "ran=1"' >&9
+wait_for "$work/wide4/out" '__MDRB_0000cf04__ 0'
+close_session wide4 9
+[ "$(value wide4 ran)" = 1 ] || fail "no session after the RoleBinding of $w's account in default went"
+kubectl -n "$w" delete rolebinding md-runbook-local
+echo "ok: a namespace whose account has a RoleBinding elsewhere refuses sessions, one in its own doesn't"
 kubectl -n "$w" create deployment app --image=registry.k8s.io/pause:3.10
 kubectl -n "$w" rollout status deployment/app --timeout=120s
 kubectl "${as_cells[@]}" -n "$w" rollout restart deployment/app

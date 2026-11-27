@@ -1178,7 +1178,7 @@ func TestReviewLists(t *testing.T) {
 	}
 	for k, want := range map[string]bool{"create jobs/ ops": true, "delete jobs/ ops": true, "create pods/exec ops": true, "list serviceaccounts/ ops": true, "list pods/ ": false, "get secrets/ ops": false, "create pods/ ops": false,
 		"get validatingadmissionpolicybindings/ ": false, "list validatingadmissionpolicies/ ": false, "update validatingadmissionpolicybindings/ ": false, "delete validatingadmissionpolicies/ ": false,
-		"get clusterrolebindings/ ": false, "create clusterrolebindings/ ": false, "bind clusterroles/ ": false, "escalate roles/ ": false, "list rolebindings/ ": false,
+		"get clusterrolebindings/ ": false, "create clusterrolebindings/ ": false, "bind clusterroles/ ": false, "escalate roles/ ": false, "get rolebindings/ ": false, "create rolebindings/ ": false,
 		"create deployments/ ops": false, "create cronjobs/ ops": false, "create replicationcontrollers/ ops": false, "patch pods/ ops": false,
 		"patch pods/ephemeralcontainers ops": false, "create pods/attach ops": false, "create pods/portforward ops": false} {
 		if got, ok := need[k]; !ok || got != want {
@@ -1698,7 +1698,7 @@ func TestRecheck(t *testing.T) {
 	var policyOut, bindingsOut string
 	var policyErr, bindingsErr error
 	j := testJob(func(argv, env []string, stdin []byte) ([]byte, error) {
-		if argv[2] == "clusterrolebindings" {
+		if argv[2] == "clusterrolebindings,rolebindings" {
 			return []byte(bindingsOut), bindingsErr
 		}
 		return []byte(policyOut), policyErr
@@ -1713,7 +1713,7 @@ func TestRecheck(t *testing.T) {
 		t.Errorf("fine: %q", p)
 	}
 	bindingsOut = `{"kind":"List","items":[` + wide + `]}`
-	if p := j.recheck(); len(p) != 1 || !strings.Contains(p[0], "namespace shop, where service accounts have cluster-wide rights: app → cluster-admin (binding wide)") {
+	if p := j.recheck(); len(p) != 1 || !strings.Contains(p[0], "namespace shop, where service accounts have rights beyond it: app → cluster-admin (binding wide)") {
 		t.Errorf("wide: %q", p)
 	}
 	reset()
@@ -1768,7 +1768,7 @@ func TestRecheck(t *testing.T) {
 	g.watchJob(j, func(time.Duration) { t.Error("slept") })
 }
 
-// Namespaces the cells may change whose service accounts have cluster-wide rights: refused, with
+// Namespaces the cells may change whose service accounts have rights beyond it (ClusterRoleBindings here): refused, with
 // up to 3 bindings each (security review of 0.31, H2: set image runs as the workload's account).
 func TestRiskyNamespaces(t *testing.T) {
 	crb := func(name, role string, subjects ...string) string {
@@ -1804,10 +1804,10 @@ func TestRiskyNamespaces(t *testing.T) {
 		return ". Runbooks could run code as those accounts by changing an image: don't bind md-runbook-ops-operate in " + ns + " (apps/ops/README.md)"
 	}
 	want := []string{
-		"the cells' service account may change workloads in namespace argocd, where service accounts have cluster-wide rights: " +
+		"the cells' service account may change workloads in namespace argocd, where service accounts have rights beyond it: " +
 			"argocd-application-controller → cluster-admin (binding argocd-application-controller), argocd-server → argocd-server (binding argocd-server), " +
 			"group system:serviceaccounts:argocd → view (binding argocd-group) and 1 more" + end("argocd"),
-		"the cells' service account may change workloads in namespace shop, where service accounts have cluster-wide rights: reader → view (binding shop-reader)" + end("shop"),
+		"the cells' service account may change workloads in namespace shop, where service accounts have rights beyond it: reader → view (binding shop-reader)" + end("shop"),
 	}
 	if p := riskyNamespaces([]string{"default", "argocd", "shop"}, out, nil, ops, cells); !reflect.DeepEqual(p, want) {
 		t.Errorf("risky:\n%s", strings.Join(p, "\n"))
@@ -1830,28 +1830,90 @@ func TestRiskyNamespaces(t *testing.T) {
 		t.Errorf("many: %q", p)
 	}
 	// No list, or one that can't be read: refused, naming the missing right.
-	forbidden := errors.New(`exit status 1: Error from server (Forbidden): clusterrolebindings.rbac.authorization.k8s.io is forbidden: User "system:serviceaccount:md-runbook-ops:md-runbook-ops" cannot list resource "clusterrolebindings"`)
+	forbidden := errors.New(`exit status 1: Error from server (Forbidden): rolebindings.rbac.authorization.k8s.io is forbidden: User "system:serviceaccount:md-runbook-ops:md-runbook-ops" cannot list resource "rolebindings" in API group "rbac.authorization.k8s.io" at the cluster scope`)
 	if p := riskyNamespaces([]string{"shop"}, nil, forbidden, ops, cells); len(p) != 1 ||
-		!strings.HasPrefix(p[0], "the gate's service account may not list clusterrolebindings (exit status 1: ") || !strings.HasSuffix(p[0], "Apply apps/ops/kubernetes/md-runbook-ops.yaml (ClusterRole md-runbook-ops-gate)") {
+		!strings.HasPrefix(p[0], "the gate's service account may not list clusterrolebindings and rolebindings (exit status 1: ") || !strings.HasSuffix(p[0], "Apply apps/ops/kubernetes/md-runbook-ops.yaml (ClusterRole md-runbook-ops-gate)") {
 		t.Errorf("forbidden: %q", p)
 	}
-	if p := riskyNamespaces([]string{"shop"}, nil, errors.New("exit status 1: timeout"), ops, cells); !reflect.DeepEqual(p, []string{"can't list the clusterrolebindings (exit status 1: timeout)"}) {
+	if p := riskyNamespaces([]string{"shop"}, nil, errors.New("exit status 1: timeout"), ops, cells); !reflect.DeepEqual(p, []string{"can't list the clusterrolebindings and rolebindings (exit status 1: timeout)"}) {
 		t.Errorf("failed: %q", p)
 	}
-	for _, bad := range []string{"{", `{"kind":"Status"}`, `[]`} {
-		if p := riskyNamespaces([]string{"shop"}, []byte(bad), nil, ops, cells); !reflect.DeepEqual(p, []string{"can't read the clusterrolebindings"}) {
+	// Not a List, or an item that isn't a binding (or a RoleBinding without its namespace).
+	for _, bad := range []string{"{", `{"kind":"Status"}`, `[]`, `{"kind":"ClusterRoleBindingList","items":[]}`, string(list(`{"kind":"Role","metadata":{"name":"x","namespace":"shop"}}`)),
+		string(list(`{"metadata":{"name":"x"}}`)), string(list(`{"kind":"RoleBinding","metadata":{"name":"x"},"subjects":[` + sa("shop", "a") + `]}`))} {
+		if p := riskyNamespaces([]string{"shop"}, []byte(bad), nil, ops, cells); !reflect.DeepEqual(p, []string{"can't read the clusterrolebindings and rolebindings"}) {
 			t.Errorf("%s: %q", bad, p)
 		}
 	}
-	// The list, as the gate's account.
+	// The list, as the gate's account: ClusterRoleBindings and every namespace's RoleBindings.
 	var gotArgv []string
 	j := testJob(func(argv, env []string, stdin []byte) ([]byte, error) {
 		gotArgv = argv
 		return out, nil
 	})
 	j.listBindings()
-	if !reflect.DeepEqual(gotArgv, []string{"/usr/bin/kubectl", "get", "clusterrolebindings", "-o", "json"}) || string(j.bindings) != string(out) || j.bindingsErr != nil {
+	if !reflect.DeepEqual(gotArgv, []string{"/usr/bin/kubectl", "get", "clusterrolebindings,rolebindings", "--all-namespaces", "-o", "json"}) || string(j.bindings) != string(out) || j.bindingsErr != nil {
 		t.Errorf("argv %q", gotArgv)
+	}
+}
+
+// A RoleBinding in another namespace that names a service account of a namespace the cells may
+// change: refused as a ClusterRoleBinding is (rights beyond it). One in the account's own
+// namespace: not this check (the README's rule: bind only namespaces whose workloads may do what
+// any runbook may).
+func TestRiskyNamespacesRoleBindings(t *testing.T) {
+	rb := func(ns, name, roleKind, role string, subjects ...string) string {
+		return `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"` + name + `","namespace":"` + ns + `"},` +
+			`"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"` + roleKind + `","name":"` + role + `"},"subjects":[` + strings.Join(subjects, ",") + `]}`
+	}
+	sa := func(ns, name string) string {
+		if ns == "" {
+			return `{"kind":"ServiceAccount","name":"` + name + `"}`
+		}
+		return `{"kind":"ServiceAccount","name":"` + name + `","namespace":"` + ns + `"}`
+	}
+	subj := func(kind, name string) string {
+		return `{"apiGroup":"rbac.authorization.k8s.io","kind":"` + kind + `","name":"` + name + `"}`
+	}
+	list := func(items ...string) []byte {
+		return []byte(`{"apiVersion":"v1","kind":"List","items":[` + strings.Join(items, ",") + `],"metadata":{"resourceVersion":""}}`)
+	}
+	ops, cells := "md-runbook-ops", "md-runbook-cells"
+	out := list(
+		// In the account's own namespace: by namespace, without one (the binding's), by user name.
+		rb("shop", "local", "Role", "deployer", sa("shop", "app")),
+		rb("shop", "local-default", "ClusterRole", "admin", sa("", "app")),
+		rb("shop", "local-user", "ClusterRole", "edit", subj("User", "system:serviceaccount:shop:app"), subj("Group", "system:serviceaccounts:shop")),
+		// The cells' own account, wherever bound (the operate role in each namespace).
+		rb("shop", "md-runbook-ops-operate", "ClusterRole", "md-runbook-ops-operate", sa(ops, cells)),
+		rb("web", "md-runbook-ops-operate", "ClusterRole", "md-runbook-ops-operate", sa(ops, cells)),
+		// Elsewhere: refused, for shop's accounts.
+		rb("payments", "shop-reads-payments", "Role", "secret-reader", sa("shop", "app")),
+		rb("kube-system", "shop-group", "ClusterRole", "view", subj("Group", "system:serviceaccounts:shop")),
+		rb("web", "shop-user", "ClusterRole", "edit", subj("User", "system:serviceaccount:shop:worker")),
+		// Without a namespace: an account of the binding's namespace (payments' app), not shop's.
+		rb("payments", "payments-default", "ClusterRole", "admin", sa("", "app")),
+		// Every account or user: the cells have it too.
+		rb("public", "everyone", "ClusterRole", "view", subj("Group", "system:serviceaccounts"), subj("Group", "system:authenticated")),
+	)
+	want := []string{"the cells' service account may change workloads in namespace shop, where service accounts have rights beyond it: " +
+		"app → secret-reader in namespace payments (binding payments/shop-reads-payments), " +
+		"group system:serviceaccounts:shop → view in namespace kube-system (binding kube-system/shop-group), " +
+		"worker → edit in namespace web (binding web/shop-user)" +
+		". Runbooks could run code as those accounts by changing an image: don't bind md-runbook-ops-operate in shop (apps/ops/README.md)"}
+	if p := riskyNamespaces([]string{"shop", "web"}, out, nil, ops, cells); !reflect.DeepEqual(p, want) {
+		t.Errorf("risky:\n%s", strings.Join(p, "\n"))
+	}
+	// payments' binding without a namespace: rights of payments' app in payments, its own. And
+	// shop's bindings in web count for shop, not web.
+	if p := riskyNamespaces([]string{"web", "payments"}, out, nil, ops, cells); len(p) != 0 {
+		t.Errorf("web, payments: %q", p)
+	}
+	// A ClusterRoleBinding and a RoleBinding in the same list, as kubectl gives them.
+	crb := `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"wide"},"roleRef":{"kind":"ClusterRole","name":"view"},"subjects":[` + sa("web", "ci") + `]}`
+	if p := riskyNamespaces([]string{"web"}, list(crb, rb("shop", "ci-in-shop", "ClusterRole", "edit", sa("web", "ci"))), nil, ops, cells); len(p) != 1 ||
+		!strings.Contains(p[0], "namespace web, where service accounts have rights beyond it: ci → view (binding wide), ci → edit in namespace shop (binding shop/ci-in-shop).") {
+		t.Errorf("both: %q", p)
 	}
 }
 
@@ -2038,7 +2100,7 @@ func TestServiceAccountImpersonation(t *testing.T) {
 	// A service account of shop with cluster-wide rights: riskyNamespaces refuses shop.
 	may := writableNamespaces(names, []byte(rr(read, self)+rr(read, named, token)), ns, sa)
 	crbs := []byte(`{"kind":"List","items":[{"kind":"ClusterRoleBinding","metadata":{"name":"shop-admin"},"roleRef":{"kind":"ClusterRole","name":"cluster-admin"},"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"shop"}]}]}`)
-	if p := riskyNamespaces(may, crbs, nil, ns, sa); len(p) != 1 || !strings.Contains(p[0], "namespace shop, where service accounts have cluster-wide rights: deployer → cluster-admin") {
+	if p := riskyNamespaces(may, crbs, nil, ns, sa); len(p) != 1 || !strings.Contains(p[0], "namespace shop, where service accounts have rights beyond it: deployer → cluster-admin") {
 		t.Errorf("risky: %q", p)
 	}
 	// Not service accounts only: not this rule.

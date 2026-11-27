@@ -187,7 +187,7 @@ What still passes:
 It stops a change of which account the pods run as. It doesn't stop:
 - a new image running any code as the workload's own account, with the Secrets it mounts.
 
-The gate covers that only for cluster-wide rights (below). So bind only namespaces whose
+The gate covers that only for rights beyond the namespace (below). So bind only namespaces whose
 workloads may do what any runbook may do.
 
 What the cells create (opt-in Jobs) has nothing to compare with. It must:
@@ -205,8 +205,7 @@ binding. They must deny in every namespace. Else the session refuses with `the a
 md-runbook-ops-workloads or its binding is missing`.
 - A policy from before 0.33.0 lacks the namespace rule: the session refuses. Apply
   `admission-policy.yaml` again.
-- While a session lasts, the gate reads the policy and the ClusterRoleBindings again, every 5
-  minutes. If it would now refuse the session, the session ends.
+- While a session lasts, the gate reads the policy and the bindings again, every 5 minutes. If it would now refuse the session, the session ends.
 
 **A mirror of the image:** change the `repository` variable in `admission-policy.yaml`. That's
 one line.
@@ -271,16 +270,23 @@ kubectl -n NAMESPACE create rolebinding md-runbook-ops-operate \
 
 See [Kubernetes RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation).
 
-**The gate refuses namespaces with cluster-wide accounts.** At each session it lists the
-ClusterRoleBindings. It refuses a namespace runbooks may change when one names:
+**The gate refuses namespaces whose accounts have rights beyond them.** At each session it lists
+the ClusterRoleBindings, and the RoleBindings of every namespace. It refuses a namespace runbooks
+may change when a ClusterRoleBinding, or a RoleBinding in another namespace, names:
 - a service account of that namespace (as a ServiceAccount, or its user name);
 - or the group `system:serviceaccounts:NAMESPACE`.
 
-The message names up to three: `ACCOUNT → CLUSTERROLE (binding NAME)`. Bindings to every account
-(`system:serviceaccounts`, `system:authenticated`) don't count: the cells have those rights too.
+The message names up to three:
+- `ACCOUNT → CLUSTERROLE (binding NAME)`;
+- `ACCOUNT → ROLE in namespace OTHER (binding OTHER/NAME)`.
+
+Not counted:
+- bindings to every account (`system:serviceaccounts`, `system:authenticated`): the cells have
+  those rights too;
+- RoleBindings in the account's own namespace. Its workloads' rights there are yours to judge
+  (above).
 
 What it can't see:
-- RoleBindings in other namespaces that give these accounts rights there;
 - rights from outside RBAC: a webhook authorizer;
 - cloud roles tied to an account: EKS IRSA or Pod Identity, GKE or AKS Workload Identity.
 
@@ -337,8 +343,8 @@ kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
   - `md-runbook-ops-operate` without `jobs create` (opt-in now);
   - the log volume's `sizeLimit`;
   - once you bind `md-runbook-ops-operate` somewhere: the ClusterRole and ClusterRoleBinding
-    `md-runbook-ops-gate`. The gate reads the policy and lists the ClusterRoleBindings with
-    them. Where runbooks change no workloads, you may leave them out.
+    `md-runbook-ops-gate`. The gate reads the policy and lists the bindings with them. Where
+    runbooks change no workloads, you may leave them out.
 - Without that ClusterRole, while runbooks may change workloads, sessions refuse with:
   - `the gate's service account can't read the admission policy md-runbook-ops-workloads`;
   - `the gate's service account may not list clusterrolebindings`.
@@ -355,6 +361,13 @@ set `repository` in the file first.
 - Your copy of `md-runbook-ops.yaml` needs nothing new. Its namespace must keep Pod Security
   `restricted`, as the stock file labels it.
 
+**Coming from 0.35.x:** apply the ClusterRole `md-runbook-ops-gate` from the stock
+`md-runbook-ops.yaml` again, as a cluster admin. It adds `list` on `rolebindings`.
+- Without it, while runbooks may change workloads, sessions refuse with `the gate's service
+  account may not list clusterrolebindings and rolebindings`.
+- A namespace whose service accounts have RoleBindings in other namespaces now refuses sessions.
+  Find them: `kubectl get rolebindings -A -o wide | grep NAMESPACE/` (the last column).
+
 ### A Job per session
 
 `gate.conf` in the cluster has `cells_runner = kubernetes-job`. For each SSH session, the gate:
@@ -367,7 +380,8 @@ set `repository` in the file first.
      start workloads;
    - each namespace where it may change workloads enforces Pod Security, and none is `kube-*`;
    - if it may change workloads anywhere, `md-runbook-ops-workloads` is bound;
-   - no service account of such a namespace has a ClusterRoleBinding;
+   - no service account of such a namespace has a ClusterRoleBinding, or a RoleBinding
+     elsewhere;
    - its rules let it impersonate only itself and one extra (`impersonation.yaml`), and
      service accounts whose tokens it may create (Kubernetes' `edit` role);
    - with `job_audit_who`, `kubectl auth whoami` in the pod shows who logged in;

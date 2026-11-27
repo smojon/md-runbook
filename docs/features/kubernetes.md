@@ -257,8 +257,8 @@ What the gate checks at each session, before any block:
     policy matches the cells' user name, and the API server swaps it before admission.
   - Such a namespace counts as one where the cells run workloads, and so does one with the token
     right alone. It must enforce Pod Security and can't be `kube-*`.
-  - None of its service accounts may have a ClusterRoleBinding. RoleBindings elsewhere the gate
-    can't see: don't bind `edit` where an account has rights in other namespaces.
+  - None of its service accounts may have a ClusterRoleBinding, or a RoleBinding in another
+    namespace.
   - Refused: `impersonate` or `*` on users, groups, uids, nodes or user extras. Names don't help:
     `users [kubernetes-admin]` is refused too.
   - Refused: any service account in `md-runbook-ops` but `md-runbook-cells`. A ClusterRoleBinding's
