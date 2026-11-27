@@ -26,6 +26,7 @@ import { useRuntimeConfig } from '../settings/runtimeConfig';
 import { loadTrustedSigners, useTrustedSigners } from '../signing/trust';
 import { InsecurePageError, appPublicKeyLine } from '../ssh/appKey';
 import { RelaySettings, getRelaySettings, setRelaySettings } from '../ssh/relaySettings';
+import type { WebKeyBlocker } from '../ssh/webKey';
 import { mono, themedStyles } from '../theme';
 import { InsecurePageNotice } from '../ui/InsecurePageNotice';
 import { Points } from '../ui/Points';
@@ -211,7 +212,7 @@ export function DeviceKeyCard() {
   const { width } = useWindowDimensions();
   const [line, setLine] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
-  const [insecure, setInsecure] = useState(false);
+  const [insecure, setInsecure] = useState<WebKeyBlocker | undefined>();
   const [copied, setCopied] = useState(false);
   const [qr, setQr] = useState(false);
   useEffect(() => {
@@ -220,7 +221,7 @@ export function DeviceKeyCard() {
       (l) => live && setLine(l),
       (e: unknown) => {
         if (!live) return;
-        setInsecure(e instanceof InsecurePageError);
+        setInsecure(e instanceof InsecurePageError ? e.reason : undefined);
         setError(e instanceof Error ? e.message : String(e));
       },
     );
@@ -234,7 +235,7 @@ export function DeviceKeyCard() {
       <Text style={styles.title}>{t.pairKeyTitle}</Text>
       <Text style={styles.label}>{t.pairKeyLabel}</Text>
       {insecure ? (
-        <InsecurePageNotice testID="device-key-insecure" textStyle={styles.error} />
+        <InsecurePageNotice reason={insecure} testID="device-key-insecure" textStyle={styles.error} />
       ) : error ? (
         <Text style={styles.error}>{t.appKeyFailed(error)}</Text>
       ) : (

@@ -25,12 +25,13 @@ const memory = (): WebKeyStore & { keys: CryptoKeyPair | undefined } => {
 
 const mockStore = memory();
 /** False: a page without WebCrypto (plain http from a LAN address). */
-const mockWebKeys = { available: true };
+const mockWebKeys = { available: true, blocker: 'insecure' as 'insecure' | 'no-storage' };
 jest.mock('../ssh/webKey', () => {
   const actual = jest.requireActual<typeof import('../ssh/webKey')>('../ssh/webKey');
   return {
     ...actual,
     webKeysAvailable: () => mockWebKeys.available,
+    webKeyBlocker: () => mockWebKeys.blocker,
     loadWebKey: () => actual.loadWebKey(mockStore),
     makeWebKey: () => actual.makeWebKey(mockStore),
     removeWebKey: () => actual.removeWebKey(mockStore),
@@ -60,6 +61,7 @@ beforeEach(() => {
   mockStore.keys = undefined;
   mockSecrets.clear();
   mockWebKeys.available = true;
+  mockWebKeys.blocker = 'insecure';
 });
 
 describe('a key the browser won’t export (WebCrypto)', () => {
@@ -77,6 +79,20 @@ describe('a key the browser won’t export (WebCrypto)', () => {
     // The same key next time.
     const again = await loadWebKey(store, subtle);
     expect(await publicKeyLine(again!, 'x')).toBe(await publicKeyLine(pair, 'x'));
+  });
+
+  it('why no such key: plain http (no secure page) or no IndexedDB on a secure one', () => {
+    const { webKeyBlocker } = jest.requireActual<typeof import('../ssh/webKey')>('../ssh/webKey');
+    const g = globalThis as { isSecureContext?: boolean };
+    const before = g.isSecureContext;
+    try {
+      g.isSecureContext = true;
+      expect(webKeyBlocker()).toBe('no-storage');
+      g.isSecureContext = false;
+      expect(webKeyBlocker()).toBe('insecure');
+    } finally {
+      g.isSecureContext = before;
+    }
   });
 
   it('DER from r ‖ s: leading zeros dropped, a high bit gets a 0 byte', () => {
@@ -116,11 +132,20 @@ describe('the web app’s key', () => {
     const m = fresh();
     await expect(m.appKeyInfo()).rejects.toBeInstanceOf(m.InsecurePageError);
     await expect(m.appPublicKeyLine()).rejects.toThrow(/open the app over https/);
+    await expect(m.appKeyInfo()).rejects.toMatchObject({ reason: 'insecure' });
     expect(mockSecrets.size).toBe(0);
     expect(mockStore.keys).toBeUndefined();
     // Not cached: the same browser on https makes its key.
     mockWebKeys.available = true;
     expect((await m.appKeyInfo()).storage).toBe('browser-key');
+  });
+
+  it('a secure page without IndexedDB: refused too, saying so (not plain http)', async () => {
+    mockWebKeys.available = false;
+    mockWebKeys.blocker = 'no-storage';
+    const m = fresh();
+    await expect(m.appKeyInfo()).rejects.toMatchObject({ reason: 'no-storage', message: expect.stringMatching(/IndexedDB/) });
+    expect(mockSecrets.size).toBe(0);
   });
 
   it('off a secure page an earlier version’s key still logs in; after a reset none is made', async () => {

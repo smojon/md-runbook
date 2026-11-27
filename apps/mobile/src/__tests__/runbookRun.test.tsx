@@ -21,10 +21,17 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('../ssh/transport', () => ({ openTransport: jest.fn(), transportReady: async () => undefined }));
 jest.mock('../ssh/appKey', () => ({
-  InsecurePageError: class InsecurePageError extends Error {},
+  InsecurePageError: class InsecurePageError extends Error {
+    reason: string;
+    constructor(why?: 'insecure' | 'no-storage') {
+      super(why ?? 'insecure');
+      this.reason = why ?? 'insecure';
+    }
+  },
   appPublicKeyLine: jest.fn(async () => 'ecdsa-sha2-nistp256 AAAAtest md-runbook-app'),
   appKeyInfo: async () => ({ pair: {}, storage: 'hardware' }),
-  appAllowedSignersLine: async (who: string) => `${who} namespaces="md-runbook" ecdsa-sha2-nistp256 AAAAtest`,
+  appAllowedSignersLine: jest.fn(async (who: string) => `${who} namespaces="md-runbook" ecdsa-sha2-nistp256 AAAAtest`),
+  appAllowedRunnersLine: jest.fn(async (who: string) => `${who} namespaces="md-runbook-run" ecdsa-sha2-nistp256 AAAAtest`),
 }));
 let script: FakeRun[] = [];
 let mockConnection = fakeConnection();
@@ -321,9 +328,17 @@ describe('hosts screens', () => {
     expect(screen.getByText('Copied')).toBeTruthy();
   });
 
-  it('web on plain http: no key, a short note to open the app over https', async () => {
-    const m = jest.requireMock<{ InsecurePageError: new () => Error; appPublicKeyLine: jest.Mock }>('../ssh/appKey');
+  type KeyMock = {
+    InsecurePageError: new (reason?: 'insecure' | 'no-storage') => Error;
+    appPublicKeyLine: jest.Mock;
+    appAllowedSignersLine: jest.Mock;
+    appAllowedRunnersLine: jest.Mock;
+  };
+  it('web on plain http: no key, a short note to open the app over https, a dash for the signing lines', async () => {
+    const m = jest.requireMock<KeyMock>('../ssh/appKey');
     m.appPublicKeyLine.mockRejectedValueOnce(new m.InsecurePageError());
+    m.appAllowedSignersLine.mockRejectedValueOnce(new m.InsecurePageError());
+    m.appAllowedRunnersLine.mockRejectedValueOnce(new m.InsecurePageError());
     await render(<HostList />);
     await waitFor(() => expect(screen.getByTestId('app-key-insecure')).toBeTruthy());
     expect(screen.getByText('Open this app over https')).toBeTruthy();
@@ -331,6 +346,22 @@ describe('hosts screens', () => {
     // Not an error a retry fixes.
     expect(screen.queryByTestId('app-key-retry')).toBeNull();
     expect(screen.queryByTestId('app-public-key')).toBeNull();
+    // The signing lines: a dash, not "Making the key…" for good.
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('signer-name'), 'me@example.net');
+    });
+    await waitFor(() => expect(screen.getByTestId('allowed-signers-line').props.children).toBe('—'));
+    expect(screen.getByTestId('allowed-runners-line').props.children).toBe('—');
+    expect(screen.getByTestId('copy-allowed-signers').props.accessibilityState).toMatchObject({ disabled: true });
+  });
+
+  it('web on https without IndexedDB: no key, the note says why (not plain http)', async () => {
+    const m = jest.requireMock<KeyMock>('../ssh/appKey');
+    m.appPublicKeyLine.mockRejectedValueOnce(new m.InsecurePageError('no-storage'));
+    await render(<HostList />);
+    await waitFor(() => expect(screen.getByTestId('app-key-insecure')).toBeTruthy());
+    expect(screen.getByText('This browser can’t keep the key here')).toBeTruthy();
+    expect(screen.queryByText('Open this app over https')).toBeNull();
   });
 
   it("Signing: the name for signatures, and the key's line for the servers' allowed_signers", async () => {

@@ -50,6 +50,17 @@ export const indexedDbKeyStore: WebKeyStore = {
   remove: async () => void (await inStore('readwrite', (s) => s.delete(ID))),
 };
 
+/**
+ * Why the browser can't keep such a key here: insecure, a page that isn't secure (plain http,
+ * not localhost: no crypto.subtle); no-storage, a secure page without IndexedDB (off by a policy).
+ */
+export type WebKeyBlocker = 'insecure' | 'no-storage';
+
+export function webKeyBlocker(): WebKeyBlocker {
+  const secure = globalThis.crypto?.subtle !== undefined && (globalThis as { isSecureContext?: boolean }).isSecureContext !== false;
+  return secure ? 'no-storage' : 'insecure';
+}
+
 /** The web app on a secure page with WebCrypto and IndexedDB. */
 export function webKeysAvailable(): boolean {
   return (

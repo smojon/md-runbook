@@ -18,7 +18,7 @@ import {
 import { forgetConsent, loadConsents, useConsents } from '../reports/send';
 import { passkeysAvailable } from '../ssh/passkey';
 import { HardwareKey } from '../../modules/hardware-key';
-import { webKeysAvailable } from '../ssh/webKey';
+import { type WebKeyBlocker, webKeysAvailable } from '../ssh/webKey';
 import { forgetSecret, loadSecretNames, storeSecret, useSecretNames } from '../secrets/store';
 import {
   HISTORY_SIZES,
@@ -187,8 +187,8 @@ function AppKeySection() {
   const styles = useStyles();
   const [line, setLine] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
-  /** Web on plain http: no key is made there (not an error a retry fixes). */
-  const [insecure, setInsecure] = useState(false);
+  /** Web on plain http or without IndexedDB: no key is made there (not an error a retry fixes). */
+  const [insecure, setInsecure] = useState<WebKeyBlocker | undefined>();
   const [copied, setCopied] = useState(false);
   const [storage, setStorage] = useState<KeyStorage | undefined>();
   /** Try again after an error (a hardware key that failed is not replaced by a software one). */
@@ -199,7 +199,7 @@ function AppKeySection() {
       (l) => live && setLine(l),
       (e: unknown) => {
         if (!live) return;
-        setInsecure(e instanceof InsecurePageError);
+        setInsecure(e instanceof InsecurePageError ? e.reason : undefined);
         setError(e instanceof Error ? e.message : String(e));
       },
     );
@@ -232,7 +232,7 @@ function AppKeySection() {
       setStorage(k.storage);
       setLine(await appPublicKeyLine());
       setError(undefined);
-      setInsecure(false);
+      setInsecure(undefined);
       setCopied(false);
       setNewKey(true);
     } catch (e) {
@@ -247,7 +247,7 @@ function AppKeySection() {
       setStorage(k.storage);
       setLine(await appPublicKeyLine());
       setError(undefined);
-      setInsecure(false);
+      setInsecure(undefined);
       setCopied(false);
       setNewKey(true);
     } catch (e) {
@@ -259,7 +259,12 @@ function AppKeySection() {
       <Text style={styles.sectionTitle}>{t.appKeyTitle}</Text>
       <Text style={styles.help}>{t.appKeyHelp}</Text>
       {insecure ? (
-        <InsecurePageNotice testID="app-key-insecure" textStyle={[styles.error, styles.strong]} pointStyle={[styles.error, styles.point]} />
+        <InsecurePageNotice
+          reason={insecure}
+          testID="app-key-insecure"
+          textStyle={[styles.error, styles.strong]}
+          pointStyle={[styles.error, styles.point]}
+        />
       ) : error ? (
         <>
           <Text testID="app-key-error" role="alert" style={styles.error}>
@@ -385,6 +390,9 @@ function SigningSection() {
   const [runnersLine, setRunnersLine] = useState<string | undefined>();
   const [copied, setCopied] = useState(false);
   const [copiedRunners, setCopiedRunners] = useState(false);
+  /** No key (refused or failed): each line shows a dash, not Making the key… for good. */
+  const [noKey, setNoKey] = useState(false);
+  const [noRunnersKey, setNoRunnersKey] = useState(false);
   // Only a name allowed_signers reads as written gets a line (and is saved).
   const principal = SIGNER_NAME_RE.test(name.trim()) ? name.trim() : undefined;
   useEffect(() => {
@@ -394,15 +402,31 @@ function SigningSection() {
     Promise.resolve()
       .then(() => appAllowedSignersLine(principal))
       .then(
-        (l) => live && setLine(l),
-        () => live && setLine(undefined),
+        (l) => {
+          if (!live) return;
+          setLine(l);
+          setNoKey(false);
+        },
+        () => {
+          if (!live) return;
+          setLine(undefined);
+          setNoKey(true);
+        },
       );
     // The same key, for the run reports it signs (namespace md-runbook-run).
     Promise.resolve()
       .then(() => appAllowedRunnersLine(principal))
       .then(
-        (l) => live && setRunnersLine(l),
-        () => live && setRunnersLine(undefined),
+        (l) => {
+          if (!live) return;
+          setRunnersLine(l);
+          setNoRunnersKey(false);
+        },
+        () => {
+          if (!live) return;
+          setRunnersLine(undefined);
+          setNoRunnersKey(true);
+        },
       );
     return () => {
       live = false;
@@ -449,7 +473,7 @@ function SigningSection() {
       ) : null}
       <Text style={styles.help}>{t.allowedSignersHelp}</Text>
       <Text testID="allowed-signers-line" style={styles.key} selectable>
-        {shown ?? (principal === undefined ? t.signerNameFirst : t.appKeyLoading)}
+        {shown ?? (principal === undefined ? t.signerNameFirst : noKey ? t.noKeyLine : t.appKeyLoading)}
       </Text>
       <Pressable
         testID="copy-allowed-signers"
@@ -462,7 +486,7 @@ function SigningSection() {
       </Pressable>
       <Text style={styles.help}>{t.allowedRunnersHelp}</Text>
       <Text testID="allowed-runners-line" style={styles.key} selectable>
-        {shownRunners ?? (principal === undefined ? t.signerNameFirst : t.appKeyLoading)}
+        {shownRunners ?? (principal === undefined ? t.signerNameFirst : noRunnersKey ? t.noKeyLine : t.appKeyLoading)}
       </Text>
       <Pressable
         testID="copy-allowed-runners"

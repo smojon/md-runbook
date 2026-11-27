@@ -26,7 +26,7 @@ import { HardwareKey } from '../../modules/hardware-key';
 import { deleteSecret, getSecret, setSecret } from '../storage/secure';
 import { dropAppCert } from './appCert';
 import { createPasskey, forgetPasskey, loadPasskey, passkeysAvailable } from './passkey';
-import { loadWebKey, makeWebKey, removeWebKey, webKeysAvailable } from './webKey';
+import { type WebKeyBlocker, loadWebKey, makeWebKey, removeWebKey, webKeyBlocker, webKeysAvailable } from './webKey';
 import { loadSettings, outputSettings, setOutputSetting } from '../settings/store';
 
 const KEY = 'app-key.pkcs8';
@@ -47,10 +47,14 @@ export interface AppKey {
 
 let cached: Promise<AppKey> | undefined;
 
-/** Web: the page can't keep a key the browser won't export (not https, or no WebCrypto/IndexedDB). */
+/** Web: the page can't keep a key the browser won't export (not https, or no IndexedDB). */
 export class InsecurePageError extends Error {
-  constructor() {
-    super('this page can’t keep the key safe: open the app over https (localhost works too)');
+  constructor(readonly reason: WebKeyBlocker = webKeyBlocker()) {
+    super(
+      reason === 'insecure'
+        ? 'this page can’t keep the key safe: open the app over https (localhost works too)'
+        : 'this browser can’t keep the key safe here: its site storage (IndexedDB) is off',
+    );
     this.name = 'InsecurePageError';
   }
 }

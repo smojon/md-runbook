@@ -457,13 +457,21 @@ const en = {
   keyChanged: 'New key made: copy its public key above to your hosts.',
   appKeyFailed: (why: string) => `The key could not be made: ${why}`,
   appKeyRetry: 'Try again',
-  /** Web on plain http (not localhost): no key is made (ssh/appKey.ts InsecurePageError). */
+  /** Web on plain http (not localhost): no key is made (ssh/appKey.ts InsecurePageError, insecure). */
   insecurePageTitle: 'Open this app over https',
   insecurePagePoints: [
     'This page is plain http: the browser can’t keep a key safe here.',
     'localhost counts as secure.',
     'Ask your admin for the https address.',
   ],
+  /** Web on https without IndexedDB (off by a policy): no key is made either. */
+  noKeyStorageTitle: 'This browser can’t keep the key here',
+  noKeyStoragePoints: [
+    'Its site storage (IndexedDB) is off, perhaps by a policy.',
+    'Allow site storage for this address, or use another browser.',
+  ],
+  /** The signing lines when the app has no key (the key section says why). */
+  noKeyLine: '—',
   keyNotEnforced:
     'This key doesn’t ask for you: it was made outside the secure hardware. Turn the switch off and on to make a hardware key.',
   appKeyStorage: {
