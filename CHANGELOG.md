@@ -41,9 +41,12 @@ What's new:
   - `kubectl auth whoami` in the pod shows the cells' account with `who`. Else no session.
   - The cells' rules (a rules review per namespace) allow no other impersonation. Named rights
     count too, such as `users [kubernetes-admin]`.
-  - The cells may impersonate service accounts only where they may already run workloads as
-    them: outside `md-runbook-ops`, as Kubernetes' `edit` role grants. Such a namespace gets the
-    workload checks (Pod Security, no `kube-*`, no account with cluster-wide rights).
+  - The cells may impersonate service accounts only where they may already act as them. That
+    is outside `md-runbook-ops`, with `create serviceaccounts/token` for every account there, as
+    Kubernetes' `edit` role grants.
+  - Such a namespace gets the workload checks: Pod Security, no `kube-*`, no account with
+    cluster-wide rights.
+  - The token right alone counts as running workloads now too.
   - Constrained impersonation's verbs (`impersonate:…`, `impersonate-on:…`) are refused.
   - The gate reads the rules with or without `job_audit_who`.
   - Not seen: rights from a webhook authorizer (an incomplete rules review).

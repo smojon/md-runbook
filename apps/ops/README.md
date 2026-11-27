@@ -369,7 +369,7 @@ set `repository` in the file first.
    - if it may change workloads anywhere, `md-runbook-ops-workloads` is bound;
    - no service account of such a namespace has a ClusterRoleBinding;
    - its rules let it impersonate only itself and one extra (`impersonation.yaml`), and
-     service accounts of a namespace it may change (Kubernetes' `edit` role);
+     service accounts whose tokens it may create (Kubernetes' `edit` role);
    - with `job_audit_who`, `kubectl auth whoami` in the pod shows who logged in;
 6. runs the session's blocks there with `kubectl exec`;
 7. deletes the Job when the session ends.

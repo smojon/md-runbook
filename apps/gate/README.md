@@ -363,8 +363,8 @@ kubernetes-job` runs each session's blocks in a Kubernetes Job of their own inst
     `kubeconfig =`.
   - Before any block, the gate checks `kubectl auth whoami` in the pod.
 - In every session, the gate reads the cells' rules in each namespace. They may impersonate
-  only themselves, that extra, and service accounts where they may already run workloads as
-  them. Else the session doesn't start.
+  only themselves, that extra, and service accounts whose tokens they may create (Kubernetes'
+  `edit` role). Else the session doesn't start.
 - The gate needs a pod to run in, and `kubectl` in `/usr/bin` like its other programs. The
   runner doesn't go with `cells_accounts`, `cells_account` or `isolation = scope` or `bwrap`.
 - At the start of each session the gate checks both service accounts, and refuses to start if

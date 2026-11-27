@@ -16,7 +16,8 @@
 # No users, groups or uids: no block can act as anyone else. The gate reads the cells' rules in
 # each namespace and refuses a session when any other rule lets them impersonate: by name too,
 # and constrained impersonation's verbs (impersonate:..., impersonate-on:...). Outside
-# md-runbook-ops, service accounts (Kubernetes' edit role) count as running workloads there.
+# md-runbook-ops, service accounts pass where the cells may also create their tokens
+# (Kubernetes' edit role): that namespace counts as one where they run workloads.
 # Rights from a webhook authorizer it can't list (docs/features/kubernetes.md). The impersonated
 # identity has the same user name and groups, but no UID and none of the token's extras.
 #

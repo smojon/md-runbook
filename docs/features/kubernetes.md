@@ -247,11 +247,18 @@ What the gate checks at each session, before any block:
 - The gate reads the cells' rules per namespace (a `SelfSubjectRulesReview` each), with or
   without `job_audit_who`.
   - Allowed: impersonation.yaml's two rules.
-  - Allowed: service accounts of another namespace than `md-runbook-ops`, as Kubernetes' `edit`
-    and `admin` roles grant. The cells may impersonate service accounts only where they may
-    already run workloads as them.
-  - Such a namespace counts as one where the cells run workloads. It must enforce Pod Security,
-    can't be `kube-*`, and none of its service accounts may have a ClusterRoleBinding.
+  - Allowed: service accounts of a namespace other than `md-runbook-ops`, if the cells may create
+    their tokens there. That is `create serviceaccounts/token` without `resourceNames`.
+    Kubernetes' `edit` and `admin` roles grant both.
+  - The cells may impersonate service accounts only where they may already act as them. A token
+    is that already; pods aren't: `md-runbook-ops-workloads` keeps the account of the cells'
+    pods.
+  - Why the token right matters: impersonated requests escape `md-runbook-ops-workloads`. The
+    policy matches the cells' user name, and the API server swaps it before admission.
+  - Such a namespace counts as one where the cells run workloads, and so does one with the token
+    right alone. It must enforce Pod Security and can't be `kube-*`.
+  - None of its service accounts may have a ClusterRoleBinding. RoleBindings elsewhere the gate
+    can't see: don't bind `edit` where an account has rights in other namespaces.
   - Refused: `impersonate` or `*` on users, groups, uids, nodes or user extras. Names don't help:
     `users [kubernetes-admin]` is refused too.
   - Refused: any service account in `md-runbook-ops` but `md-runbook-cells`. A ClusterRoleBinding's

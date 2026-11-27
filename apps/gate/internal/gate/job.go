@@ -382,12 +382,15 @@ func auditWhoAnswer(out []byte, as, who string) string {
 //     userextras/md-runbook.dev/operator (impersonation.yaml). Allowed with or without
 //     job_audit_who: impersonating itself gives the account nothing.
 //   - impersonate (or *) on serviceaccounts of the core group, named or not, in another
-//     namespace: Kubernetes' edit and admin roles grant it. There the cells may act as the
-//     namespace's service accounts, as they may run workloads as them where they may create
-//     pods. So namespaceRights counts such a namespace as one where they may start workloads:
-//     Pod Security, no kube-*, and riskyNamespaces (no service account there with cluster-wide
-//     rights) hold for it. A ClusterRoleBinding's rule is in the gate's namespace's review too:
-//     refused there.
+//     namespace whose review also lets the cells create a token for every service account
+//     (create serviceaccounts/token without resourceNames: mintsTokens). Kubernetes' edit and
+//     admin roles grant both. A token is acting as the account already; so the namespace counts
+//     as one where they start workloads (the workloads list): Pod Security, no kube-*, and
+//     riskyNamespaces (no service account there with cluster-wide rights) hold for it.
+//     Without the token right, impersonating would be more than the cells have (review of
+//     686b108: pods alone don't do it, the workloads policy keeps their pods' account; and
+//     impersonated requests escape that policy, which matches the cells' user name): refused.
+//     A ClusterRoleBinding's rule is in the gate's namespace's review too: refused there.
 //
 // An incomplete review (a webhook authorizer) can't list every rule: there only cellsReviews'
 // questions hold.
@@ -405,21 +408,36 @@ func impersonationRules(names []string, rulesOut []byte, ns, sa string) []string
 	if len(reviews) != len(names) {
 		return []string{"can't check the cells' rights per namespace: " + itoa(len(reviews)) + " answers for " + itoa(len(names)) + " namespaces"}
 	}
+	// Two kinds of refusal: a rule that impersonates more than allowed anywhere, and one that
+	// impersonates a namespace's service accounts where the cells can't mint their tokens.
 	var order []string
 	where := map[string][]string{}
+	add := func(k, n string) {
+		if _, ok := where[k]; !ok {
+			order = append(order, k)
+		}
+		where[k] = append(where[k], n)
+	}
 	for i, r := range reviews {
+		n := names[i]
+		tokens := false
 		for _, rule := range r.Status.ResourceRules {
-			if !impersonates(rule) || shippedImpersonation(rule, names[i] == ns, sa) || names[i] != ns && saImpersonation(rule) {
+			tokens = tokens || mintsTokens(rule)
+		}
+		for _, rule := range r.Status.ResourceRules {
+			if !impersonates(rule) || shippedImpersonation(rule, n == ns, sa) {
 				continue
 			}
 			k := "verbs [" + strings.Join(rule.Verbs, " ") + "] on [" + strings.Join(rule.Resources, " ") + "] of API groups [" + strings.Join(rule.APIGroups, " ") + "]"
 			if len(rule.ResourceNames) > 0 {
 				k += " named [" + strings.Join(rule.ResourceNames, " ") + "]"
 			}
-			if _, ok := where[k]; !ok {
-				order = append(order, k)
+			switch {
+			case n == ns || !saImpersonation(rule):
+				add(k, n)
+			case !tokens:
+				add("\x00"+k, n)
 			}
-			where[k] = append(where[k], names[i])
 		}
 	}
 	var p []string
@@ -429,9 +447,34 @@ func impersonationRules(names []string, rulesOut []byte, ns, sa string) []string
 		if len(at) > 1 {
 			in = itoa(len(at)) + " namespaces (" + firstFew(at) + ")"
 		}
-		p = append(p, "the cells' service account may impersonate: "+k+", in "+in+". Only impersonation.yaml's rules (itself, and the extra "+auditExtra+") may let it impersonate, and outside namespace "+ns+" its service accounts (as Kubernetes' edit role does)")
+		if rule, ok := strings.CutPrefix(k, "\x00"); ok {
+			msg := "the cells' service account may impersonate service accounts (" + rule + ") in " + in + ", but may not create their tokens there (create serviceaccounts/token, for every account). " +
+				"Only there does acting as them give no more than they have: grant both, as Kubernetes' edit role does, or neither"
+			if strings.HasSuffix(rule, " named ["+sa+"]") {
+				msg += ". Is impersonation.yaml's rule bound cluster-wide? It belongs in a RoleBinding in namespace " + ns
+			}
+			p = append(p, msg)
+			continue
+		}
+		p = append(p, "the cells' service account may impersonate: "+k+", in "+in+". Only impersonation.yaml's rules (itself, and the extra "+auditExtra+") may let it impersonate, and outside namespace "+ns+" service accounts whose tokens it may create (as Kubernetes' edit role)")
 	}
 	return p
+}
+
+// mintsTokens: the rule lets the cells create a token for every service account of the
+// namespace (create serviceaccounts/token in the core group, no resourceNames). Where they may,
+// they may act as those accounts already; and the namespace counts as one where they start
+// workloads (the workloads list).
+func mintsTokens(r kubeRule) bool {
+	if len(r.ResourceNames) > 0 || !ruleHas(r.Verbs, "create") || !ruleHas(r.APIGroups, "") {
+		return false
+	}
+	for _, res := range r.Resources {
+		if res == "*" || res == "serviceaccounts/token" || res == "serviceaccounts/*" || res == "*/token" {
+			return true
+		}
+	}
+	return false
 }
 
 // impersonates: the rule allows some impersonation (impersonationRules).
@@ -2263,7 +2306,10 @@ func rulesReviewList(names []string) []byte {
 
 // What starts or changes a pod's spec: create, patch or update of these (group/resource).
 var workloads = []string{"/pods", "/pods/ephemeralcontainers", "/replicationcontrollers", "batch/jobs", "batch/cronjobs",
-	"apps/deployments", "apps/statefulsets", "apps/daemonsets", "apps/replicasets"}
+	"apps/deployments", "apps/statefulsets", "apps/daemonsets", "apps/replicasets",
+	// A token of any service account here is acting as it, as a pod of it would be (review of
+	// job_audit_who: the same power as impersonating it).
+	"/serviceaccounts/token"}
 
 func ruleHas(list []string, v string) bool {
 	for _, x := range list {
@@ -2323,8 +2369,9 @@ func namespaceRights(names []string, rulesOut []byte, own, sa string) (why map[s
 		}
 		for _, rule := range r.Status.ResourceRules {
 			// Acting as a service account of the namespace counts as running workloads as it
-			// (impersonationRules allows it outside the gate's namespace): Kubernetes' edit and
-			// admin roles grant it. Not impersonation.yaml's rule of the cells' own account.
+			// (impersonationRules allows it outside the gate's namespace, with the token right,
+			// which counts by itself too): Kubernetes' edit and admin roles grant both. Not
+			// impersonation.yaml's rule of the cells' own account.
 			if saImpersonation(rule) && !(ns == own && shippedImpersonation(rule, true, sa)) && !starts[ns] {
 				why[ns], starts[ns] = "may act as its service accounts", true
 			}

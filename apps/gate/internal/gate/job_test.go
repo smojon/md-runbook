@@ -1931,7 +1931,13 @@ func TestImpersonationRules(t *testing.T) {
 			out += rr(rules...)
 		}
 		p := impersonationRules(names, []byte(out), ns, sa)
-		if len(p) != 1 || !strings.Contains(p[0], c.want) || !strings.Contains(p[0], "Only impersonation.yaml's rules") {
+		// One refusal; a rule in every namespace's review may also get the one for other
+		// namespaces without the token right (TestServiceAccountImpersonation).
+		found := false
+		for _, x := range p {
+			found = found || strings.Contains(x, c.want) && strings.Contains(x, "Only impersonation.yaml's rules")
+		}
+		if !found || len(p) > 2 || len(p) == 2 && !strings.Contains(strings.Join(p, "\n"), "may not create their tokens") {
 			t.Errorf("%s: %q", name, p)
 		}
 	}
@@ -1951,43 +1957,81 @@ func TestServiceAccountImpersonation(t *testing.T) {
 	const ns, sa = "md-runbook-ops", "md-runbook-cells"
 	read := `{"verbs":["get","list","watch"],"apiGroups":[""],"resources":["pods"]}`
 	self := `{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["md-runbook-cells"]}`
-	// bootstrappolicy's editRules: impersonate on serviceaccounts of the core group.
+	// bootstrappolicy's editRules: impersonate on serviceaccounts of the core group, and create
+	// on serviceaccounts/token.
 	edit := `{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"]}`
+	token := `{"verbs":["create"],"apiGroups":[""],"resources":["serviceaccounts/token"]}`
 	star := `{"verbs":["*"],"apiGroups":[""],"resources":["serviceaccounts","configmaps"]}`
+	named := `{"verbs":["impersonate"],"apiGroups":[""],"resources":["serviceaccounts"],"resourceNames":["ci-deployer"]}`
 	rr := func(rules ...string) string {
 		return `{"kind":"SelfSubjectRulesReview","spec":{},"status":{"resourceRules":[` + strings.Join(rules, ",") + `]}}` + "\n"
 	}
 	names := []string{ns, "shop"}
-	for _, rule := range []string{edit, star} {
-		out := []byte(rr(read, self) + rr(read, rule))
+	nss, _ := kubeObjects([]byte(`{"kind":"List","items":[{"kind":"Namespace","metadata":{"name":"md-runbook-ops","labels":{"pod-security.kubernetes.io/enforce":"restricted"}}},{"kind":"Namespace","metadata":{"name":"shop"}}]}`))
+	// With the token right in the same namespace: allowed, and shop counts as a namespace where
+	// the cells run workloads (the gate's own, with the self rule, doesn't).
+	for name, rules := range map[string][]string{
+		"edit":           {read, edit, token},
+		"* verbs":        {read, star, token},
+		"named":          {read, named, token},
+		"self, in shop":  {read, self, token},
+		"tokens via *":   {read, edit, `{"verbs":["*"],"apiGroups":["*"],"resources":["serviceaccounts/*"]}`},
+		"tokens, verb *": {read, edit, `{"verbs":["*"],"apiGroups":[""],"resources":["serviceaccounts/token"]}`},
+	} {
+		out := []byte(rr(read, self) + rr(rules...))
 		if p := impersonationRules(names, out, ns, sa); len(p) != 0 {
-			t.Errorf("%s in shop: %q", rule, p)
+			t.Errorf("%s: %q", name, p)
 		}
-		// shop counts as a namespace where the cells run workloads; the gate's own (self) doesn't.
 		if may := writableNamespaces(names, out, ns, sa); !reflect.DeepEqual(may, []string{"shop"}) {
-			t.Errorf("%s: may %q", rule, may)
+			t.Errorf("%s: may %q", name, may)
 		}
-		// So shop must enforce Pod Security.
-		nss, _ := kubeObjects([]byte(`{"kind":"List","items":[{"kind":"Namespace","metadata":{"name":"md-runbook-ops","labels":{"pod-security.kubernetes.io/enforce":"restricted"}}},{"kind":"Namespace","metadata":{"name":"shop"}}]}`))
-		if p := unguardedNamespaces(nss, names, out, ns, sa); len(p) != 1 || !strings.Contains(p[0], "may act as its service accounts in namespace shop, which doesn't enforce Pod Security") {
-			t.Errorf("%s: unguarded %q", rule, p)
+		if p := unguardedNamespaces(nss, names, out, ns, sa); len(p) != 1 || !strings.Contains(p[0], "in namespace shop, which doesn't enforce Pod Security") {
+			t.Errorf("%s: unguarded %q", name, p)
 		}
 	}
-	// The same rule in the gate's namespace: refused. Through a ClusterRoleBinding (in every
+	// Without it (review of 686b108: the cells' pods keep their own account, and impersonated
+	// requests escape md-runbook-ops-workloads): refused.
+	for name, rules := range map[string][]string{
+		"edit's impersonate only":      {read, edit},
+		"named, no token":              {read, named},
+		"token for some names only":    {read, edit, `{"verbs":["create"],"apiGroups":[""],"resources":["serviceaccounts/token"],"resourceNames":["ci-deployer"]}`},
+		"token, other verb":            {read, edit, `{"verbs":["get"],"apiGroups":[""],"resources":["serviceaccounts/token"]}`},
+		"token of another API group":   {read, edit, `{"verbs":["create"],"apiGroups":["apps"],"resources":["serviceaccounts/token"]}`},
+		"workloads but no token (pod)": {read, edit, `{"verbs":["create"],"apiGroups":[""],"resources":["pods"]}`},
+	} {
+		p := impersonationRules(names, []byte(rr(read, self)+rr(rules...)), ns, sa)
+		if len(p) != 1 || !strings.Contains(p[0], "in namespace shop, but may not create their tokens there") {
+			t.Errorf("%s: %q", name, p)
+		}
+	}
+	// impersonation.yaml's rule bound cluster-wide (in every review): "shipped" in the gate's
+	// namespace, refused elsewhere, saying so.
+	p := impersonationRules(names, []byte(rr(read, self)+rr(read, self)), ns, sa)
+	if len(p) != 1 || !strings.Contains(p[0], "named [md-runbook-cells]) in namespace shop, but may not create their tokens") ||
+		!strings.Contains(p[0], "Is impersonation.yaml's rule bound cluster-wide? It belongs in a RoleBinding in namespace md-runbook-ops") {
+		t.Errorf("self rule cluster-wide: %q", p)
+	}
+	// (The same rule as a Role in shop looks the same in the rules reviews: the same refusal. With
+	// the token right in shop it passes, above: "self, in shop".)
+	// In the gate's namespace: refused, tokens or not. Through a ClusterRoleBinding (in every
 	// namespace's review), refused through the gate's namespace.
-	if p := impersonationRules(names, []byte(rr(read, self, edit)+rr(read)), ns, sa); len(p) != 1 || !strings.Contains(p[0], "in namespace md-runbook-ops") {
+	if p := impersonationRules(names, []byte(rr(read, self, edit, token)+rr(read)), ns, sa); len(p) != 1 || !strings.Contains(p[0], "may impersonate: verbs [impersonate] on [serviceaccounts] of API groups [], in namespace md-runbook-ops.") {
 		t.Errorf("in the gate's namespace: %q", p)
 	}
-	if p := impersonationRules(names, []byte(rr(read, self, edit)+rr(read, edit)), ns, sa); len(p) != 1 || !strings.Contains(p[0], "in namespace md-runbook-ops.") {
+	if p := impersonationRules(names, []byte(rr(read, self, edit, token)+rr(read, edit, token)), ns, sa); len(p) != 1 || !strings.Contains(p[0], "in namespace md-runbook-ops.") {
 		t.Errorf("cluster-wide: %q", p)
+	}
+	// The token right alone counts as starting workloads too: the same power.
+	if may := writableNamespaces(names, []byte(rr(read, self)+rr(read, token)), ns, sa); !reflect.DeepEqual(may, []string{"shop"}) {
+		t.Errorf("token only: may %q", may)
 	}
 	// In a kube-* namespace: never.
 	kube, _ := kubeObjects([]byte(`{"kind":"List","items":[{"kind":"Namespace","metadata":{"name":"kube-system","labels":{"pod-security.kubernetes.io/enforce":"restricted"}}}]}`))
-	if p := unguardedNamespaces(kube, []string{"kube-system"}, []byte(rr(edit)), ns, sa); len(p) != 1 || !strings.Contains(p[0], "may act as its service accounts in namespace kube-system: never bind") {
+	if p := unguardedNamespaces(kube, []string{"kube-system"}, []byte(rr(edit, token)), ns, sa); len(p) != 1 || !strings.Contains(p[0], "in namespace kube-system: never bind") {
 		t.Errorf("kube-system: %q", p)
 	}
 	// A service account of shop with cluster-wide rights: riskyNamespaces refuses shop.
-	may := writableNamespaces(names, []byte(rr(read, self)+rr(read, edit)), ns, sa)
+	may := writableNamespaces(names, []byte(rr(read, self)+rr(read, named, token)), ns, sa)
 	crbs := []byte(`{"kind":"List","items":[{"kind":"ClusterRoleBinding","metadata":{"name":"shop-admin"},"roleRef":{"kind":"ClusterRole","name":"cluster-admin"},"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"shop"}]}]}`)
 	if p := riskyNamespaces(may, crbs, nil, ns, sa); len(p) != 1 || !strings.Contains(p[0], "namespace shop, where service accounts have cluster-wide rights: deployer → cluster-admin") {
 		t.Errorf("risky: %q", p)
