@@ -120,12 +120,14 @@ echo "user=$(jq -r .status.userInfo.username /tmp/whoami.json 2>/dev/null)"
 echo "operator=$(jq -r ".status.userInfo.extra[\"md-runbook.dev/operator\"] | join(\",\")" /tmp/whoami.json 2>/dev/null)"
 echo "extras=$(jq -r ".status.userInfo.extra | keys | join(\",\")" /tmp/whoami.json 2>/dev/null)"
 kubectl -n default get deployment web -o name > /dev/null 2>&1 && echo "read=ok"
-# Each must fail as an impersonation the API server refuses, not for another reason.
+# Each must fail as an impersonation the API server refuses, not for another reason. A GET of
+# /api (discovery: any authenticated user may), whose 403 kubectl prints as the API server says
+# it; kubectl auth whoami turns every 403 into a text of its own.
 forge() { # NAME KUBECTL-ARGS...
   local out
-  if out=$(kubectl auth whoami "${@:2}" 2>&1); then
+  if out=$(kubectl get --raw /api "${@:2}" 2>&1); then
     echo "forged=$1"
-  elif ! printf "%s" "$out" | grep -q "cannot impersonate"; then
+  elif ! printf "%s" "$out" | grep -q "cannot impersonate resource"; then
     echo "unclear=$1: $(printf "%s" "$out" | head -n 1)"
   fi
 }
