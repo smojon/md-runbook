@@ -176,6 +176,43 @@ describe('relay', () => {
     }
   });
 
+  it('answers 400 to a URL it cannot read, as an upgrade or a plain request, and keeps serving', async () => {
+    const logs: LogEvent[] = [];
+    const { relay, url } = await startRelay({ targets: [target] }, logs);
+    try {
+      const ws = await open(url, target);
+      assert.ok(ws instanceof WebSocket);
+      const port = portOf(relay.server);
+      // `new URL` throws on each of these; a throw in a handler used to end the relay.
+      const raw = (path: string, upgrade: boolean): Promise<string> =>
+        new Promise((resolve) => {
+          let got = '';
+          const s = connectTcp(port, '127.0.0.1', () =>
+            s.write(
+              `GET ${path} HTTP/1.1\r\nHost: x\r\n` +
+                (upgrade
+                  ? `Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: ${SUBPROTOCOL}\r\n`
+                  : 'Connection: close\r\n') +
+                '\r\n',
+            ),
+          );
+          s.on('data', (d) => (got += d.toString()));
+          s.on('close', () => resolve(got));
+          s.on('error', () => resolve(got));
+        });
+      for (const path of ['//[', 'http://[', 'http://a:b@/', 'http://%/'])
+        for (const upgrade of [true, false]) assert.match(await raw(path, upgrade), /^HTTP\/1\.1 400 /, `${path} upgrade=${upgrade}`);
+      assert.ok(logs.some((e) => e.event === 'refused' && e.why === 'url'));
+      assert.equal((await fetch(`${url}/healthz`)).status, 200);
+      const reply = nextMessage(ws);
+      ws.send(Buffer.from('still here'));
+      assert.equal((await reply).toString(), 'echo:still here');
+      ws.close();
+    } finally {
+      await relay.close();
+    }
+  });
+
   it('closes the WebSocket when the SSH server cannot be reached', async () => {
     const gone = await echoServer();
     const port = portOf(gone);

@@ -1,8 +1,9 @@
 # Bumps the actions pinned by commit SHA in .github/workflows and action.yml, the Go modules
-# of md-runbook-gate (apps/gate), and the images the ops host and the probe pin by digest (their
-# Dockerfiles, and the probe's Kubernetes manifest: Dependabot reads manifests only in the
-# directories named). A new version waits 7 days, like the Expo updates (expo-updates.yml): a
-# compromised release is usually pulled by then.
+# of md-runbook-gate (apps/gate), the images pinned by digest (the ops host, probe, relay,
+# library server and web app Dockerfiles, the probe's Kubernetes manifest, the compose
+# examples: Dependabot reads manifests only in the directories named), and the relay's and
+# library server's npm packages. A new version waits 7 days, like the Expo updates
+# (expo-updates.yml): a compromised release is usually pulled by then.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -27,8 +28,7 @@ updates:
   # toolchain line names it too: change that line in the same pull request.
   # The relay, library server and web app images too (relay-web threat model, 2026-11-27: their
   # base images were weeks behind security releases). Node stays on its LTS major and nginx on
-  # its stable line (1.30.x): a new major or line is a change of its own. Not covered: the
-  # Caddy tags in the compose examples and READMEs (bump them by hand with these).
+  # its stable line (1.30.x): a new major or line is a change of its own.
   - package-ecosystem: docker
     directories: [/apps/ops, /apps/probe, /apps/probe/kubernetes, /apps/relay, /apps/library-server, /apps/web]
     schedule:
@@ -42,6 +42,17 @@ updates:
         update-types: [version-update:semver-major, version-update:semver-minor]
     groups:
       images:
+        patterns: ['*']
+  # The Caddy front in the compose examples (compose.example.yml matches Dependabot's
+  # compose file pattern). The copy in apps/web/README.md stays by hand: bump it with these.
+  - package-ecosystem: docker-compose
+    directories: [/apps/relay, /apps/library-server]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      compose:
         patterns: ['*']
   # The relay's and library server's npm packages (the relay pinned a ws with an advisory).
   - package-ecosystem: npm

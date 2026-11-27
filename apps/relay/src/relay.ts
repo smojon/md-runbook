@@ -107,12 +107,24 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
   const corsOrigin = (origin: string | undefined): string | undefined =>
     config.origins.length === 0 ? '*' : origin && config.origins.includes(origin) ? origin : undefined;
 
+  // A request's URL, or undefined when it can't be read: `new URL` throws on such as `//[` or
+  // `http://%/`, and a throw in a server handler would end the relay (review of the 2026-11-27 fixes).
+  const urlOf = (raw: string | undefined): URL | undefined => {
+    try {
+      return new URL(raw ?? '/', 'http://relay');
+    } catch {
+      return undefined;
+    }
+  };
+
   const server = createServer((req, res) => {
-    const path = new URL(req.url ?? '/', 'http://relay').pathname;
+    const path = urlOf(req.url)?.pathname;
     const headers: Record<string, string> = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
     const allow = corsOrigin(req.headers.origin);
     if (allow) headers['access-control-allow-origin'] = allow;
-    if (req.method === 'GET' && path === '/v1/server-info') {
+    if (path === undefined) {
+      res.writeHead(400, headers).end();
+    } else if (req.method === 'GET' && path === '/v1/server-info') {
       res.writeHead(200, { ...headers, 'content-type': 'application/json' }).end(JSON.stringify(info));
     } else if (req.method === 'GET' && path === '/healthz') {
       res.writeHead(200, { ...headers, 'content-type': 'text/plain' }).end('ok');
@@ -136,11 +148,13 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
       // Closed once the answer is out, as ws does: a client that keeps its side open can't hold
       // the socket. One that never reads is cut off after a while.
       socket.end(`HTTP/1.1 ${status} ${STATUS_TEXT[status]}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`, () => socket.destroy());
-      setTimeout(() => socket.destroy(), REFUSAL_LINGER_MS).unref();
+      const linger = setTimeout(() => socket.destroy(), REFUSAL_LINGER_MS).unref();
+      socket.once('close', () => clearTimeout(linger));
     };
     const client = clientOf(req);
     const now = Date.now();
-    const url = new URL(req.url ?? '/', 'http://relay');
+    const url = urlOf(req.url);
+    if (!url) return refuse(400, 'url', client);
     if (url.pathname !== '/v1/ssh') return refuse(404, 'path', client);
     if (failedRecently(client, now) >= config.maxFailures) return refuse(429, 'too many failed tokens', client);
     const origin = req.headers.origin;
