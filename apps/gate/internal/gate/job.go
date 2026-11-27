@@ -469,8 +469,16 @@ func mintsTokens(r kubeRule) bool {
 	if len(r.ResourceNames) > 0 || !ruleHas(r.Verbs, "create") || !ruleHas(r.APIGroups, "") {
 		return false
 	}
-	for _, res := range r.Resources {
-		if res == "*" || res == "serviceaccounts/token" || res == "serviceaccounts/*" || res == "*/token" {
+	return rbacResourceMatches(r.Resources, "serviceaccounts/token")
+}
+
+// rbacResourceMatches: a rule's resources match RESOURCE or RESOURCE/SUB as RBAC matches them
+// (ResourceMatches, pkg/apis/rbac/v1/evaluation_helpers.go): *, the exact name, or */SUB for a
+// subresource. Not RESOURCE/*: RBAC has no such form (review of 489c70f).
+func rbacResourceMatches(resources []string, res string) bool {
+	_, sub, hasSub := strings.Cut(res, "/")
+	for _, x := range resources {
+		if x == "*" || x == res || hasSub && x == "*/"+sub {
 			return true
 		}
 	}
@@ -2327,14 +2335,8 @@ func startsWorkloads(r kubeRule) bool {
 	}
 	for _, w := range workloads {
 		group, res, _ := strings.Cut(w, "/")
-		if !ruleHas(r.APIGroups, group) {
-			continue
-		}
-		top, _, hasSub := strings.Cut(res, "/")
-		for _, x := range r.Resources {
-			if x == "*" || x == res || (hasSub && x == top+"/*") {
-				return true
-			}
+		if ruleHas(r.APIGroups, group) && rbacResourceMatches(r.Resources, res) {
+			return true
 		}
 	}
 	return false

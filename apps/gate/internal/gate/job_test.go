@@ -1513,7 +1513,9 @@ func TestUnguardedNamespaces(t *testing.T) {
 		may  bool
 	}{
 		{`{"verbs":["create"],"apiGroups":[""],"resources":["pods"]}`, true},
-		{`{"verbs":["update"],"apiGroups":[""],"resources":["pods/*"]}`, true},
+		// RBAC has no RESOURCE/* form (ResourceMatches): pods/* grants nothing; */SUB does.
+		{`{"verbs":["update"],"apiGroups":[""],"resources":["pods/*"]}`, false},
+		{`{"verbs":["update"],"apiGroups":[""],"resources":["*/ephemeralcontainers"]}`, true},
 		{`{"verbs":["patch"],"apiGroups":[""],"resources":["pods/ephemeralcontainers"]}`, true},
 		{`{"verbs":["*"],"apiGroups":["*"],"resources":["*"]}`, true},
 		{`{"verbs":["create"],"apiGroups":["batch"],"resources":["cronjobs"]}`, true},
@@ -1971,12 +1973,13 @@ func TestServiceAccountImpersonation(t *testing.T) {
 	// With the token right in the same namespace: allowed, and shop counts as a namespace where
 	// the cells run workloads (the gate's own, with the self rule, doesn't).
 	for name, rules := range map[string][]string{
-		"edit":           {read, edit, token},
-		"* verbs":        {read, star, token},
-		"named":          {read, named, token},
-		"self, in shop":  {read, self, token},
-		"tokens via *":   {read, edit, `{"verbs":["*"],"apiGroups":["*"],"resources":["serviceaccounts/*"]}`},
-		"tokens, verb *": {read, edit, `{"verbs":["*"],"apiGroups":[""],"resources":["serviceaccounts/token"]}`},
+		"edit":               {read, edit, token},
+		"* verbs":            {read, star, token},
+		"named":              {read, named, token},
+		"self, in shop":      {read, self, token},
+		"tokens via */token": {read, edit, `{"verbs":["create"],"apiGroups":["*"],"resources":["*/token"]}`},
+		"tokens via *":       {read, edit, `{"verbs":["create"],"apiGroups":[""],"resources":["*"]}`},
+		"tokens, verb *":     {read, edit, `{"verbs":["*"],"apiGroups":[""],"resources":["serviceaccounts/token"]}`},
 	} {
 		out := []byte(rr(read, self) + rr(rules...))
 		if p := impersonationRules(names, out, ns, sa); len(p) != 0 {
@@ -1992,11 +1995,13 @@ func TestServiceAccountImpersonation(t *testing.T) {
 	// Without it (review of 686b108: the cells' pods keep their own account, and impersonated
 	// requests escape md-runbook-ops-workloads): refused.
 	for name, rules := range map[string][]string{
-		"edit's impersonate only":      {read, edit},
-		"named, no token":              {read, named},
-		"token for some names only":    {read, edit, `{"verbs":["create"],"apiGroups":[""],"resources":["serviceaccounts/token"],"resourceNames":["ci-deployer"]}`},
-		"token, other verb":            {read, edit, `{"verbs":["get"],"apiGroups":[""],"resources":["serviceaccounts/token"]}`},
-		"token of another API group":   {read, edit, `{"verbs":["create"],"apiGroups":["apps"],"resources":["serviceaccounts/token"]}`},
+		"edit's impersonate only":    {read, edit},
+		"named, no token":            {read, named},
+		"token for some names only":  {read, edit, `{"verbs":["create"],"apiGroups":[""],"resources":["serviceaccounts/token"],"resourceNames":["ci-deployer"]}`},
+		"token, other verb":          {read, edit, `{"verbs":["get"],"apiGroups":[""],"resources":["serviceaccounts/token"]}`},
+		"token of another API group": {read, edit, `{"verbs":["create"],"apiGroups":["apps"],"resources":["serviceaccounts/token"]}`},
+		// RBAC has no RESOURCE/* form: no token right (review of 489c70f).
+		"serviceaccounts/*":            {read, edit, `{"verbs":["*"],"apiGroups":["*"],"resources":["serviceaccounts/*"]}`},
 		"workloads but no token (pod)": {read, edit, `{"verbs":["create"],"apiGroups":[""],"resources":["pods"]}`},
 	} {
 		p := impersonationRules(names, []byte(rr(read, self)+rr(rules...)), ns, sa)
@@ -2045,6 +2050,50 @@ func TestServiceAccountImpersonation(t *testing.T) {
 	} {
 		if saImpersonation(r) {
 			t.Errorf("saImpersonation(%+v)", r)
+		}
+	}
+}
+
+// The workloads rules as RBAC matches resources: *, the exact name, */SUB for a subresource; not
+// RESOURCE/* (pkg/apis/rbac/v1/evaluation_helpers.go, ResourceMatches; review of 489c70f).
+func TestStartsWorkloadsRBACMatching(t *testing.T) {
+	rule := func(verb, group string, resources ...string) kubeRule {
+		return kubeRule{Verbs: []string{verb}, APIGroups: []string{group}, Resources: resources}
+	}
+	for _, c := range []struct {
+		r    kubeRule
+		want bool
+	}{
+		{rule("create", "", "*/token"), true},
+		{rule("create", "", "serviceaccounts/token"), true},
+		{rule("create", "", "*"), true},
+		{rule("create", "", "serviceaccounts/*"), false},
+		{rule("patch", "", "*/ephemeralcontainers"), true},
+		{rule("patch", "", "pods/ephemeralcontainers"), true},
+		{rule("patch", "", "pods/*"), false},
+		{rule("create", "", "*/exec"), false},
+		{rule("create", "apps", "deployments"), true},
+		{rule("create", "apps", "*/scale"), false},
+		{rule("get", "", "*/token"), false},
+		{rule("create", "*", "*/token"), true},
+	} {
+		if got := startsWorkloads(c.r); got != c.want {
+			t.Errorf("startsWorkloads(%+v) = %v", c.r, got)
+		}
+	}
+	for _, c := range []struct {
+		r    kubeRule
+		want bool
+	}{
+		{rule("create", "", "*/token"), true},
+		{rule("create", "", "serviceaccounts/token"), true},
+		{rule("*", "*", "*"), true},
+		{rule("create", "", "serviceaccounts/*"), false},
+		{rule("create", "", "serviceaccounts"), false},
+		{rule("create", "", "*/exec"), false},
+	} {
+		if got := mintsTokens(c.r); got != c.want {
+			t.Errorf("mintsTokens(%+v) = %v", c.r, got)
 		}
 	}
 }
