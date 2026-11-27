@@ -159,7 +159,7 @@ subjects:
 # practices, "Workload creation"). The admission policy md-runbook-ops-workloads keeps a patch
 # from changing which service account a pod template runs as, its volumes and the like. A new
 # image still runs as the account the workload has: the gate refuses a namespace whose accounts
-# have cluster-wide bindings, not rights from RoleBindings. No DaemonSets: they run on every
+# have bindings beyond it (cluster-wide, or in other namespaces). No DaemonSets: they run on every
 # node, often privileged. Add
 # rules for more (pods/exec, delete) once you need them: pods/exec lets a block read the token
 # of every pod it execs into.

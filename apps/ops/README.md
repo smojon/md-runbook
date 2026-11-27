@@ -66,7 +66,7 @@ kubeconfig:
 [kubernetes/md-runbook-ops.yaml](kubernetes/md-runbook-ops.yaml) sets up:
 - the namespace `md-runbook-ops`, with Pod Security `restricted` enforced;
 - the service account `md-runbook-ops` of the ops pod: it runs the sessions' Jobs, reads one
-  admission policy and lists ClusterRoleBindings;
+  admission policy and lists ClusterRoleBindings and RoleBindings;
 - the service account `md-runbook-cells` of those Jobs, and what runbooks may do:
   - read everything except Secrets, ConfigMaps and pod logs, in every namespace, cert-manager
     certificates included. That covers every pod's spec, with the env values written in it.
@@ -205,7 +205,8 @@ binding. They must deny in every namespace. Else the session refuses with `the a
 md-runbook-ops-workloads or its binding is missing`.
 - A policy from before 0.33.0 lacks the namespace rule: the session refuses. Apply
   `admission-policy.yaml` again.
-- While a session lasts, the gate reads the policy and the bindings again, every 5 minutes. If it would now refuse the session, the session ends.
+- While a session lasts, the gate reads the policy and the bindings again, every 5 minutes. If
+  it would now refuse the session, the session ends.
 
 **A mirror of the image:** change the `repository` variable in `admission-policy.yaml`. That's
 one line.
@@ -285,9 +286,13 @@ Not counted:
   those rights too;
 - RoleBindings in the account's own namespace. Its workloads' rights there are yours to judge
   (above).
+  - Never let them `patch` or `update` their own Namespace. A runbook's image could then drop
+    its Pod Security label, and start a privileged pod
+    ([RBAC good practices: namespace modification](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#namespace-modification)).
 
 What it can't see:
 - rights from outside RBAC: a webhook authorizer;
+- the roles' rules: it may list bindings, not read roles;
 - cloud roles tied to an account: EKS IRSA or Pod Identity, GKE or AKS Workload Identity.
 
 So:
@@ -347,7 +352,7 @@ kubectl apply -f apps/ops/kubernetes/admission-policy.yaml
     runbooks change no workloads, you may leave them out.
 - Without that ClusterRole, while runbooks may change workloads, sessions refuse with:
   - `the gate's service account can't read the admission policy md-runbook-ops-workloads`;
-  - `the gate's service account may not list clusterrolebindings`.
+  - `the gate's service account may not list clusterrolebindings and rolebindings`.
 - A binding in a `kube-*` namespace now refuses sessions: delete it.
 - A binding in a namespace whose service accounts have cluster-wide bindings refuses them too.
 - Keep the rules you added to `md-runbook-ops-operate` in your copy: `kubectl apply` replaces
@@ -366,7 +371,12 @@ set `repository` in the file first.
 - Without it, while runbooks may change workloads, sessions refuse with `the gate's service
   account may not list clusterrolebindings and rolebindings`.
 - A namespace whose service accounts have RoleBindings in other namespaces now refuses sessions.
-  Find them: `kubectl get rolebindings -A -o wide | grep NAMESPACE/` (the last column).
+  The message names the bindings, up to three.
+  - To find them all: `kubectl get rolebindings -A -o wide | grep -E 'NAMESPACE/|system:serviceaccounts?:NAMESPACE\b'`.
+    Skip the lines in NAMESPACE itself: they don't count.
+- On a cluster with tens of thousands of RoleBindings, the list may take longer than the
+  gate's 20 seconds per kubectl call. Sessions then refuse with `can't list the
+  clusterrolebindings and rolebindings`.
 
 ### A Job per session
 

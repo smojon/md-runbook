@@ -570,6 +570,9 @@ func (g *Gate) prepareJob(j *kubeJob) {
 		if len(p) == 0 {
 			p = j.checkNamespaces(pod)
 		}
+		// The bindings' list can be large (every namespace's RoleBindings): not kept for the
+		// session's life (recheck lists them again).
+		j.bindings = nil
 		if len(p) > 0 {
 			why = strings.Join(p, "; ") + ". See apps/ops/README.md (RBAC)."
 			g.log.Event("event", "self-check", "status", "refused", "reason", "cells_runner = kubernetes-job: "+why)

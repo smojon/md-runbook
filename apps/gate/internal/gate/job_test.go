@@ -1716,6 +1716,11 @@ func TestRecheck(t *testing.T) {
 	if p := j.recheck(); len(p) != 1 || !strings.Contains(p[0], "namespace shop, where service accounts have rights beyond it: app → cluster-admin (binding wide)") {
 		t.Errorf("wide: %q", p)
 	}
+	// A RoleBinding elsewhere, made while the session lasts.
+	bindingsOut = `{"kind":"List","items":[{"kind":"RoleBinding","metadata":{"name":"reads","namespace":"payments"},"roleRef":{"kind":"ClusterRole","name":"view"},"subjects":[{"kind":"ServiceAccount","name":"app","namespace":"shop"}]}]}`
+	if p := j.recheck(); len(p) != 1 || !strings.Contains(p[0], "namespace shop, where service accounts have rights beyond it: app → view in namespace payments (binding payments/reads)") {
+		t.Errorf("rolebinding: %q", p)
+	}
 	reset()
 	policyErr = errors.New(`exit status 1: Error from server (NotFound): validatingadmissionpolicybindings.admissionregistration.k8s.io "md-runbook-ops-workloads" not found`)
 	if p := j.recheck(); len(p) != 1 || !strings.Contains(p[0], "may change workloads in namespaces shop, but the admission policy md-runbook-ops-workloads or its binding is missing") {
