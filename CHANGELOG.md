@@ -6,6 +6,15 @@ What's new:
 - The guide to the ops host [without an open port](docs/features/ops-outbound.md) follows the
   gate's checks and the vendors' current docs. New: why not a sidecar, Pod Security, egress, phones.
 
+### Fixed
+
+- **Hardware keys prompted for keys the server refuses.** Before:
+  - each key signed straight away, also one the server doesn't know;
+  - a hardware key, a passkey or a confirming agent asked for a touch for nothing.
+- Now:
+  - md-runbook first asks the server whether it takes the key, as `ssh` does;
+  - only a key it takes signs; a certificate is asked about as the certificate.
+
 ## 0.35.0
 
 What's new:

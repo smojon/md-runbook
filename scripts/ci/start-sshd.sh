@@ -28,6 +28,11 @@ sshd_bin="$(command -v sshd || echo /usr/sbin/sshd)"
 if "$sshd_bin" -t -f "$d/sshd_config" -o PerSourcePenalties=no 2>/dev/null; then
   echo "PerSourcePenalties no" >> sshd_config
 fi
+# OpenSSH 10.6+ doesn't count the first 6 refused key queries against MaxAuthTries (max-pk-ok).
+# Counted here, as before 10.6: the MaxAuthTries test still needs its second connection.
+if "$sshd_bin" -t -f "$d/sshd_config" -o PubkeyAuthOptions=max-pk-ok:0 2>/dev/null; then
+  echo "PubkeyAuthOptions max-pk-ok:0" >> sshd_config
+fi
 "$sshd_bin" -f "$d/sshd_config" -E "$d/sshd.log"
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if nc -z 127.0.0.1 2222 2>/dev/null; then

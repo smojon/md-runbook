@@ -49,6 +49,8 @@ const r = await session.run('cd /srv && ls', { timeoutMs: 60_000, signal, onStdo
   - `chooseLoginKeys`: up to 2 certificates within their dates, then the keys tried before (5
     plain agent keys, the own key).
 - **Login** (`login.ts`): `key`, then `moreKeys`, one at a time, each once.
+  - Each key is queried first (RFC 4252 §7, as OpenSSH's `ssh`). Only a key the server accepts
+    signs. A certificate is queried as the certificate.
   - A signer that throws: the key is skipped (nothing was sent), and so is its certificate or
     plain twin. Its message is in the error if no key logs in.
   - `connect(open, opts)` takes a function that opens the transport, as `RemoteSession` passes.

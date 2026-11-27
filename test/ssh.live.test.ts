@@ -184,6 +184,27 @@ describe('ssh: live server', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }
     await assert.rejects(RemoteShell.connect(await open(), { ...opts(), key: unverified }), /authentication failed/);
   });
 
+  it("a key the server doesn't know is never asked to sign (the login asks about it first): the next key logs in", async () => {
+    const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    const jwk = publicKey.export({ format: 'jwk' });
+    let asked = 0;
+    const unknown = await ExternalKeyPair.create({
+      publicKey: new Uint8Array(Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x!, 'base64url'), Buffer.from(jwk.y!, 'base64url')])),
+      sign: async (data) => {
+        asked++;
+        return new Uint8Array(nodeSign('sha256', data, privateKey));
+      },
+    });
+    let opens = 0;
+    const s = await RemoteShell.connect(() => (opens++, open()), { ...opts(), key: unknown, moreKeys: [key] });
+    try {
+      assert.equal((await s.run('true')).exitCode, 0);
+      assert.deepEqual([asked, opens], [0, 1]);
+    } finally {
+      s.close();
+    }
+  });
+
   it("a key that can't sign (a cancelled hardware key prompt) is skipped: the next key logs in", async () => {
     const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
     const jwk = publicKey.export({ format: 'jwk' });
@@ -195,6 +216,8 @@ describe('ssh: live server', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }
         throw new Error('the hardware key was cancelled');
       },
     });
+    // Known to the server: it says yes when asked, so the key is asked to sign.
+    fs.appendFileSync(process.env.MD_RUNBOOK_SSH_AUTHORIZED_KEYS!, (await publicKeyLine(cancelled, 'cancelled')) + '\n');
     let opens = 0;
     const s = await RemoteShell.connect(() => (opens++, open()), { ...opts(), key: cancelled, moreKeys: [key] });
     try {

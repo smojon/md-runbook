@@ -43,6 +43,8 @@ They are kept in the user setting `mdRunbook.hosts`:
   Public Key** makes it the first time.
 - Key files are not read. Put a key with a passphrase in the agent.
 - Each key is tried once, in order:
+  - md-runbook first asks the server whether it takes the key, as `ssh` does. Only a key it takes
+    signs: a hardware key or a confirming agent prompts only then.
   - A key that can't sign (the agent refuses, a hardware key prompt is cancelled) is skipped. It
     isn't asked again, also not as its certificate. If no key logs in, the error says why.
   - The server ends the login after a few refused keys (sshd's `MaxAuthTries`, 6 by default).

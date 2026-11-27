@@ -1,16 +1,21 @@
 /**
  * The login's keys, against an SSH server in this process (the library's own server side) that
- * knows one key and, as sshd does at MaxAuthTries, ends the connection at its Nth refused key
- * instead of refusing it: a key that can't sign is skipped, and the keys left after such an end
- * are tried over a new connection.
+ * knows some keys and, as sshd does at MaxAuthTries, ends the connection at its Nth refused key
+ * instead of refusing it. Each key is asked about first (RFC 4252 §7): only a key the server would
+ * accept signs. A key that can't sign is skipped, and the keys left after such an end are tried
+ * over a new connection.
  */
 import { strict as assert } from 'node:assert';
 import { generateKeyPairSync, sign as nodeSign } from 'node:crypto';
 import * as net from 'node:net';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import {
+  AuthenticationFailureMessage,
+  AuthenticationRequestMessage,
   KeyPair,
   NodeStream,
+  PublicKeyOKMessage,
+  PublicKeyRequestMessage,
   SshAlgorithms,
   SshAuthenticatingEventArgs,
   SshAuthenticationType,
@@ -69,40 +74,88 @@ async function hardwareKey(fail?: string): Promise<ExternalKeyPair & { signs: nu
   return Object.defineProperty(key, 'signs', { get: () => counter.signs }) as ExternalKeyPair & { signs: number };
 }
 
-describe('ssh: the login tries each key once', () => {
+describe('ssh: the login asks about each key, then signs once', () => {
   let server: net.Server;
   let port = 0;
   let hostKey: KeyPair;
-  /** The key the server accepts (base64 of its blob). */
-  let authorized = '';
+  /** The keys the server accepts (base64 of their blobs). */
+  let authorized: string[] = [];
+  /** Keys the server says yes to when asked, and refuses signed (a key option the signature fails). */
+  let queryOnly: string[] = [];
   /** The connection ends at this many refused keys (sshd's MaxAuthTries). */
   let maxTries = 6;
+  /** Refused queries that don't count (OpenSSH 10.6's PubkeyAuthOptions max-pk-ok; before it: 0). */
+  let freeQueries = 0;
   /** A refusal lists keyboard-interactive only, as sshd's does once publickey is done or off. */
   let noMorePublicKey = false;
-  /** The keys offered, per connection. */
+  /** Per connection: the keys asked about, their algorithms, and the keys signed. */
   let offered: string[][] = [];
+  let algorithms: string[][] = [];
+  let signed: string[][] = [];
   const open = () => connectTcp('127.0.0.1', port);
   const base = { username: 'deploy', verifyHostKey: () => true, keepAliveSeconds: 0 };
 
   before(async () => {
     hostKey = await SshAlgorithms.publicKey.ecdsaSha2Nistp256!.generateKeyPair();
     server = net.createServer((socket) => {
-      const tried: string[] = [];
-      offered.push(tried);
+      const asked: string[] = [];
+      const algs: string[] = [];
+      const sent: string[] = [];
+      offered.push(asked);
+      algorithms.push(algs);
+      signed.push(sent);
+      let refusals = 0;
+      let free = freeQueries;
       const config = new SshSessionConfiguration();
       config.maxClientAuthenticationAttempts = 100;
       const session = new SshServerSession(config);
       session.credentials = { publicKeys: [hostKey] };
+      /** A refused key: counted (queries once the free ones are used up), the connection ended at maxTries. */
+      const refuse = async (query: boolean): Promise<void> => {
+        if (!query || free-- <= 0) {
+          refusals++;
+          if (refusals >= maxTries) await session.close(SshDisconnectReason.noMoreAuthMethodsAvailable, 'Too many authentication failures');
+        }
+        // The library's refusal lists the configured methods.
+        if (noMorePublicKey) config.authenticationMethods.splice(0, config.authenticationMethods.length, ...config.authenticationMethods.filter((m) => m !== 'publickey'));
+      };
+      // Every publickey request, as it arrives (also those for algorithms this server lacks).
+      const s = session as unknown as { handleMessage(m: unknown, c?: unknown): void | Promise<void> };
+      const handle = s.handleMessage.bind(session);
+      s.handleMessage = async (m, c) => {
+        if (m instanceof AuthenticationRequestMessage && m.methodName === 'publickey') {
+          const r = m.convertTo(new PublicKeyRequestMessage(), true);
+          const blob = Buffer.from(r.publicKey!).toString('base64');
+          if (r.hasSignature) sent.push(blob);
+          else {
+            asked.push(blob);
+            algs.push(r.keyAlgorithmName!);
+            // Certificates: this server has no certificate algorithm (the library would end the
+            // session). It answers as sshd: yes to those it knows, else a refusal.
+            if (!config.publicKeyAlgorithms.some((a) => a?.name === r.keyAlgorithmName)) {
+              if (authorized.includes(blob)) {
+                const ok = new PublicKeyOKMessage();
+                ok.keyAlgorithmName = r.keyAlgorithmName;
+                ok.publicKey = r.publicKey;
+                return session.sendMessage(ok);
+              }
+              await refuse(true);
+              const no = new AuthenticationFailureMessage();
+              no.methodNames = config.authenticationMethods;
+              return session.isClosed ? undefined : session.sendMessage(no);
+            }
+          }
+        }
+        return handle(m, c);
+      };
       session.onAuthenticating((e: SshAuthenticatingEventArgs) => {
-        if (e.authenticationType !== SshAuthenticationType.clientPublicKey || !e.publicKey) return;
+        const query = e.authenticationType === SshAuthenticationType.clientPublicKeyQuery;
+        if ((!query && e.authenticationType !== SshAuthenticationType.clientPublicKey) || !e.publicKey) return;
         const key = e.publicKey;
         e.authenticationPromise = (async () => {
           const blob = await blobOf(key);
-          tried.push(blob);
-          if (blob === authorized) return {};
-          if (tried.length >= maxTries) await session.close(SshDisconnectReason.noMoreAuthMethodsAvailable, 'Too many authentication failures');
-          // The library's refusal lists the configured methods.
-          if (noMorePublicKey) config.authenticationMethods.splice(0, config.authenticationMethods.length, ...config.authenticationMethods.filter((m) => m !== 'publickey'));
+          if (authorized.includes(blob) || (query && queryOnly.includes(blob))) return {};
+          await refuse(query);
           return null;
         })();
       });
@@ -123,18 +176,68 @@ describe('ssh: the login tries each key once', () => {
   after(() => server.close());
   beforeEach(() => {
     offered = [];
+    algorithms = [];
+    signed = [];
+    authorized = [];
+    queryOnly = [];
     maxTries = 6;
+    freeQueries = 0;
     noMorePublicKey = false;
+  });
+
+  it("a key the server doesn't know is asked about, never signed: the next key logs in", async () => {
+    const unknown = await hardwareKey();
+    const good = await generateKey();
+    authorized = [await blobOf(good)];
+    const shell = await RemoteShell.connect(open, { ...base, key: unknown, moreKeys: [good] });
+    try {
+      assert.equal(unknown.signs, 0);
+      assert.deepEqual(offered, [[await blobOf(unknown), authorized[0]]]);
+      assert.deepEqual(signed, [authorized]);
+    } finally {
+      await shell.close();
+    }
+  });
+
+  it("a certificate is asked about as the certificate (its type and blob): refused, its key doesn't sign", async () => {
+    const hw = await hardwareKey();
+    const cert = await CertKeyPair.create(hw, testCertificateLine((await hw.getPublicKeyBytes())!, { keyId: 'ops', principals: ['deploy'] }));
+    const good = await generateKey();
+    authorized = [await blobOf(good)];
+    const shell = await RemoteShell.connect(open, { ...base, key: cert, moreKeys: [good] });
+    try {
+      assert.equal(hw.signs, 0);
+      assert.deepEqual(offered, [[await blobOf(cert), authorized[0]]]);
+      assert.deepEqual(algorithms, [['ecdsa-sha2-nistp256-cert-v01@openssh.com', 'ecdsa-sha2-nistp256']]);
+      assert.deepEqual(signed, [authorized]);
+    } finally {
+      await shell.close();
+    }
   });
 
   it("a key that can't sign is skipped: the next key logs in on the same connection", async () => {
     const cancelled = await hardwareKey('the hardware key was cancelled');
     const good = await generateKey();
-    authorized = await blobOf(good);
+    authorized = [await blobOf(cancelled), await blobOf(good)];
     const shell = await RemoteShell.connect(open, { ...base, key: cancelled, moreKeys: [good] });
     try {
       assert.equal(cancelled.signs, 1);
-      assert.deepEqual(offered, [[authorized]]);
+      assert.deepEqual(offered, [authorized]);
+      assert.deepEqual(signed, [[authorized[1]]]);
+    } finally {
+      await shell.close();
+    }
+  });
+
+  it('a key the server says yes to but refuses signed counts as tried: the next key logs in', async () => {
+    const keys = await Promise.all(Array.from({ length: 2 }, () => generateKey()));
+    const blobs = await Promise.all(keys.map(blobOf));
+    queryOnly = [blobs[0]!];
+    authorized = [blobs[1]!];
+    const shell = await RemoteShell.connect(open, { ...base, key: keys[0]!, moreKeys: keys.slice(1) });
+    try {
+      assert.deepEqual(offered, [blobs]);
+      assert.deepEqual(signed, [blobs]);
     } finally {
       await shell.close();
     }
@@ -144,13 +247,15 @@ describe('ssh: the login tries each key once', () => {
     maxTries = 3;
     const keys = await Promise.all(Array.from({ length: 8 }, () => generateKey()));
     const blobs = await Promise.all(keys.map(blobOf));
-    authorized = blobs[7]!;
+    authorized = [blobs[7]!];
     let hostKeyChecks = 0;
     const session = new RemoteSession(open, { ...base, key: keys[0]!, moreKeys: keys.slice(1), verifyHostKey: () => (hostKeyChecks++, true) });
     try {
       await session.connect();
       assert.equal(session.isConnected, true);
+      // Each refused query counted (sshd before 10.6).
       assert.deepEqual(offered, [blobs.slice(0, 3), blobs.slice(3, 6), blobs.slice(6)]);
+      assert.deepEqual(signed, [[], [], [blobs[7]]]);
       // The same host key on the next connections: accepted without asking again.
       assert.equal(hostKeyChecks, 1);
     } finally {
@@ -158,10 +263,27 @@ describe('ssh: the login tries each key once', () => {
     }
   });
 
+  it("refused queries that don't count (OpenSSH 10.6's max-pk-ok): the keys fit on one connection", async () => {
+    maxTries = 2;
+    freeQueries = 6;
+    const keys = await Promise.all(Array.from({ length: 6 }, () => generateKey()));
+    const blobs = await Promise.all(keys.map(blobOf));
+    authorized = [blobs[5]!];
+    let opens = 0;
+    const shell = await RemoteShell.connect(async () => (opens++, open()), { ...base, key: keys[0]!, moreKeys: keys.slice(1) });
+    try {
+      assert.equal(opens, 1);
+      assert.deepEqual(offered, [blobs]);
+      assert.deepEqual(signed, [[blobs[5]]]);
+    } finally {
+      await shell.close();
+    }
+  });
+
   it('another host key on the next connection is checked again, and a refusal ends the login', async () => {
     maxTries = 1;
     const keys = await Promise.all(Array.from({ length: 3 }, () => generateKey()));
-    authorized = await blobOf(keys[2]!);
+    authorized = [await blobOf(keys[2]!)];
     let checks = 0;
     // The first check accepts, the next (a key that is not the accepted one) refuses.
     const opts = { ...base, key: keys[0]!, moreKeys: keys.slice(1), verifyHostKey: () => checks++ === 0 };
@@ -186,7 +308,7 @@ describe('ssh: the login tries each key once', () => {
   it('with one connection only (a stream, not an opener), the error says how many keys were not tried', async () => {
     maxTries = 2;
     const keys = await Promise.all(Array.from({ length: 5 }, () => generateKey()));
-    authorized = await blobOf(keys[4]!);
+    authorized = [await blobOf(keys[4]!)];
     await assert.rejects(RemoteShell.connect(await open(), { ...base, key: keys[0]!, moreKeys: keys.slice(1) }), /^Error: authentication failed .*; the server closed the connection before 3 more keys were tried$/);
     assert.equal(offered.length, 1);
   });
@@ -195,18 +317,19 @@ describe('ssh: the login tries each key once', () => {
     const cancelled = await hardwareKey('the hardware key was cancelled');
     const cert = await CertKeyPair.create(cancelled, testCertificateLine((await cancelled.getPublicKeyBytes())!, { keyId: 'ops', principals: ['deploy'] }));
     const stranger = await generateKey();
-    authorized = 'none';
+    // The server would take the certificate: it signs (and fails), its plain twin is skipped.
+    authorized = [await blobOf(cert)];
     await assert.rejects(
       RemoteShell.connect(open, { ...base, key: cert, moreKeys: [cancelled, stranger] }),
       /^Error: authentication failed \(host key refused, or the key was not accepted\); a key could not sign: the hardware key was cancelled$/,
     );
     assert.equal(cancelled.signs, 1);
-    assert.deepEqual(offered, [[await blobOf(stranger)]]);
+    assert.deepEqual(offered, [[await blobOf(cert), await blobOf(stranger)]]);
+    assert.deepEqual(signed, [[]]);
   });
 
   it('a server that takes one key per connection: one connection per key, none beyond', async () => {
     const keys = await Promise.all(Array.from({ length: 3 }, () => generateKey()));
-    authorized = 'none';
     maxTries = 1;
     let opens = 0;
     await assert.rejects(
@@ -219,7 +342,6 @@ describe('ssh: the login tries each key once', () => {
 
   it('a refusal that no longer lists publickey (AuthenticationMethods, partial success): no more keys, no new connection', async () => {
     const keys = await Promise.all(Array.from({ length: 3 }, () => generateKey()));
-    authorized = 'none';
     noMorePublicKey = true;
     let opens = 0;
     await assert.rejects(
@@ -232,7 +354,7 @@ describe('ssh: the login tries each key once', () => {
 
   it('the connect timeout during a reconnect: the error is the timeout, and the late connection is closed', async () => {
     const keys = await Promise.all(Array.from({ length: 2 }, () => generateKey()));
-    authorized = await blobOf(keys[1]!);
+    authorized = [await blobOf(keys[1]!)];
     maxTries = 1;
     let opens = 0;
     let lateClosed = false;
@@ -259,7 +381,7 @@ describe('ssh: the login tries each key once', () => {
 
   it("a reconnect that fails (network, relay) says so, not that authentication failed", async () => {
     const keys = await Promise.all(Array.from({ length: 4 }, () => generateKey()));
-    authorized = await blobOf(keys[3]!);
+    authorized = [await blobOf(keys[3]!)];
     maxTries = 2;
     let opens = 0;
     const failSecond = async () => {
