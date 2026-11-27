@@ -48,6 +48,14 @@ const r = await session.run('cd /srv && ls', { timeoutMs: 60_000, signal, onStdo
   - `checkCaSignature` checks the CA's signature with Web Crypto, for what a screen shows.
   - `chooseLoginKeys`: up to 2 certificates within their dates, then the keys tried before (5
     plain agent keys, the own key).
+- **Login** (`login.ts`): `key`, then `moreKeys`, one at a time, each once.
+  - A signer that throws: the key is skipped (nothing was sent), and so is its certificate or
+    plain twin. Its message is in the error if no key logs in.
+  - `connect(open, opts)` takes a function that opens the transport, as `RemoteSession` passes.
+  - The server may end the login with keys left (sshd's `MaxAuthTries`). Then a new connection
+    tries them, same host-key check, within `connectTimeoutMs`.
+  - At most one connection per key.
+  - `connect(stream, opts)`: one connection; the error says how many keys were left.
 - Remote shells: bash (login shell, for the user's PATH), else sh. cmd and PowerShell remotes are
   not supported yet.
 
@@ -55,4 +63,5 @@ Tests:
 - `test/sshCommand.test.ts`: the shell commands, in a local bash.
 - `test/sshAgent.test.ts`: a fake agent.
 - `test/sshCert.test.ts`: ssh-keygen's certificates.
+- `test/sshKeyRetry.test.ts`: the login's keys, against a server in the test.
 - `test/ssh.live.test.ts`: against the OpenSSH server CI starts with `scripts/ci/start-sshd.sh`.

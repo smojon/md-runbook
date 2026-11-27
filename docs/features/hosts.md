@@ -42,6 +42,11 @@ They are kept in the user setting `mdRunbook.hosts`:
 - **Else md-runbook's own key**, kept in VS Code's secret storage. **Hosts… → Copy md-runbook
   Public Key** makes it the first time.
 - Key files are not read. Put a key with a passphrase in the agent.
+- Each key is tried once, in order:
+  - A key that can't sign (the agent refuses, a hardware key prompt is cancelled) is skipped. Its
+    certificate is skipped too, and the error says why if no key logs in.
+  - The server ends the login after a few refused keys (sshd's `MaxAuthTries`, 6 by default).
+    Then md-runbook connects again for the keys left, in the same connect time.
 
 ### Certificates
 

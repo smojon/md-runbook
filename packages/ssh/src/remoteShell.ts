@@ -61,6 +61,7 @@ import { ExternalAwareEcdsaP256 } from './externalKey';
 import { PasskeySkEcdsaP256 } from './passkey';
 import { shownList, shownText } from '@md-runbook/core/shownText';
 import { certAlgorithms, certificateState, isCertType, parseCertificate, utcTime } from './cert';
+import { KeyLogin } from './login';
 
 export interface ConnectOptions {
   username: string;
@@ -217,34 +218,78 @@ export class RemoteShell {
     session.onClosed((e) => this.end(e.message ? `the connection closed: ${e.message}` : 'the connection closed'));
   }
 
-  /** Connect over `stream`, check the host key, authenticate with `key`, start the shell. */
-  static async connect(stream: Stream, opts: ConnectOptions): Promise<RemoteShell> {
+  /**
+   * Connect, check the host key, log in with `key` and then `moreKeys`, start the shell.
+   * `transport` is the connection, or what opens one: then, when the server ends the login before
+   * every key was tried (sshd's MaxAuthTries, 6 by default), a new connection tries the keys left,
+   * after the same host-key check, within the same `connectTimeoutMs`.
+   */
+  static async connect(transport: Stream | (() => Promise<Stream>), opts: ConnectOptions): Promise<RemoteShell> {
     const keys = [opts.key, ...(opts.moreKeys ?? [])];
-    const config = sessionConfiguration(opts, keys);
-    const session = new SshClientSession(config);
+    const reopen = typeof transport === 'function' ? transport : undefined;
+    let stream = reopen ? await reopen() : (transport as Stream);
+    let session: SshClientSession | undefined;
+    let gaveUp = false;
     let hostKeyRefused = false;
-    session.onAuthenticating((e: SshAuthenticatingEventArgs) => {
-      if (e.authenticationType !== SshAuthenticationType.serverPublicKey || !e.publicKey) return;
-      const key = e.publicKey;
-      e.authenticationPromise = (async () => {
-        if (await opts.verifyHostKey(await exportPublicKey(key))) return {};
-        hostKeyRefused = true;
-        return null;
-      })();
-    });
-    const start = async (): Promise<RemoteShell> => {
-      const connecting = session.connect(stream);
+    /** The host key this login accepted: shown again on its next connection, it isn't asked about again. */
+    let accepted: string | undefined;
+    const connected = async (st: Stream): Promise<SshClientSession> => {
+      const s = (session = new SshClientSession(sessionConfiguration(opts, keys)));
+      s.onAuthenticating((e: SshAuthenticatingEventArgs) => {
+        if (e.authenticationType !== SshAuthenticationType.serverPublicKey || !e.publicKey) return;
+        const key = e.publicKey;
+        e.authenticationPromise = (async () => {
+          const line = await exportPublicKey(key);
+          if (line === accepted || (await opts.verifyHostKey(line))) {
+            accepted = line;
+            return {};
+          }
+          hostKeyRefused = true;
+          return null;
+        })();
+      });
+      const connecting = s.connect(st);
       // The library reads the server's version on a promise it awaits only once the key exchange
       // started: when the server drops the connection before that (sshd's PerSourcePenalties, a
       // firewall), the failed read would be an unhandled rejection after connect() already threw.
-      (session as unknown as { versionExchangePromise?: Promise<unknown> }).versionExchangePromise?.catch(() => undefined);
+      (s as unknown as { versionExchangePromise?: Promise<unknown> }).versionExchangePromise?.catch(() => undefined);
       await connecting;
-      const ok = await session.authenticate({ username: opts.username, publicKeys: keys });
-      if (!ok) {
-        // The certificates are no reason when the host key was the problem (nothing was sent).
-        const hint = hostKeyRefused ? '' : await certificateHint(keys, opts.username);
-        throw new Error(`authentication failed (host key refused, or the key was not accepted)${hint}`);
+      return s;
+    };
+    const login = new KeyLogin(keys, opts.username);
+    const refused = async (notes = ''): Promise<Error> => {
+      // The certificates and keys are no reason when the host key was the problem (nothing was sent).
+      const hint = hostKeyRefused ? '' : (await certificateHint(keys, opts.username)) + notes;
+      return new Error(`authentication failed (host key refused, or the key was not accepted)${hint}`);
+    };
+    const closeAll = async (): Promise<void> => {
+      await session?.close(SshDisconnectReason.byApplication).catch(() => undefined);
+      await stream.close().catch(() => undefined);
+    };
+    const logIn = async (): Promise<SshClientSession> => {
+      let s = await connected(stream);
+      for (;;) {
+        if (!(await s.authenticateServer())) throw await refused();
+        const before = login.left;
+        const r = await login.run(s);
+        if (r === 'ok') return s;
+        // Again only for keys left, and only after a connection that tried one: at most one connection per key.
+        if (r === 'refused' || !reopen || gaveUp || login.left === 0 || login.left === before) throw await refused(login.notes());
+        await closeAll();
+        try {
+          stream = await reopen();
+          if (gaveUp) {
+            await stream.close().catch(() => undefined);
+            throw new Error('timed out');
+          }
+          s = await connected(stream);
+        } catch (e) {
+          throw await refused(login.notes(e instanceof Error ? e.message : String(e)));
+        }
       }
+    };
+    const start = async (): Promise<RemoteShell> => {
+      const session = await logIn();
       // sh/bash first. On a Windows server cmd.exe (or PowerShell) runs the request and fails at
       // once, closing the channel: then Windows PowerShell.
       const want = opts.shells ?? {};
@@ -256,12 +301,12 @@ export class RemoteShell {
       if (!shell) throw new Error('the server did not start a shell (sh, bash or Windows PowerShell)');
       return shell;
     };
-    const closeAll = async (): Promise<void> => {
-      await session.close(SshDisconnectReason.byApplication).catch(() => undefined);
-      await stream.close().catch(() => undefined);
+    const timedOut = async (): Promise<void> => {
+      gaveUp = true;
+      await closeAll();
     };
     try {
-      return await withTimeout(start(), opts.connectTimeoutMs ?? 20_000, 'connecting', closeAll);
+      return await withTimeout(start(), opts.connectTimeoutMs ?? 20_000, 'connecting', timedOut);
     } catch (e) {
       await closeAll();
       throw e;

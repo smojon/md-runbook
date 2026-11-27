@@ -161,7 +161,7 @@ export class RemoteSession {
 
   private async ensure(): Promise<RemoteShell> {
     if (this.shell?.isOpen) return this.shell;
-    this.connecting ??= (async () => RemoteShell.connect(await this.open(), this.opts))().finally(() => (this.connecting = undefined));
+    this.connecting ??= (async () => RemoteShell.connect(this.open, this.opts))().finally(() => (this.connecting = undefined));
     const shell = await this.connecting;
     this.shell = shell;
     this.hadShell = true;

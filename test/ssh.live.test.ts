@@ -183,6 +183,46 @@ describe('ssh: live server', { skip: !spec && 'set MD_RUNBOOK_SSH_TEST to run' }
     }
     await assert.rejects(RemoteShell.connect(await open(), { ...opts(), key: unverified }), /authentication failed/);
   });
+
+  it("a key that can't sign (a cancelled hardware key prompt) is skipped: the next key logs in", async () => {
+    const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    const jwk = publicKey.export({ format: 'jwk' });
+    let asked = 0;
+    const cancelled = await ExternalKeyPair.create({
+      publicKey: new Uint8Array(Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x!, 'base64url'), Buffer.from(jwk.y!, 'base64url')])),
+      sign: async () => {
+        asked++;
+        throw new Error('the hardware key was cancelled');
+      },
+    });
+    let opens = 0;
+    const s = await RemoteShell.connect(() => (opens++, open()), { ...opts(), key: cancelled, moreKeys: [key] });
+    try {
+      assert.equal((await s.run('true')).exitCode, 0);
+      assert.deepEqual([asked, opens], [1, 1]);
+    } finally {
+      s.close();
+    }
+    // Alone, it can't log in: the error says why.
+    await assert.rejects(RemoteShell.connect(open, { ...opts(), key: cancelled }), /authentication failed.*a key could not sign: the hardware key was cancelled/);
+  });
+
+  it("more keys than sshd's MaxAuthTries (6), the last one known: a new connection tries the keys left", async () => {
+    const strangers = await Promise.all(Array.from({ length: 7 }, () => generateKey()));
+    let opens = 0;
+    const s = await RemoteShell.connect(() => (opens++, open()), { ...opts(), key: strangers[0]!, moreKeys: [...strangers.slice(1), key] });
+    try {
+      assert.equal((await s.run('true')).exitCode, 0);
+      assert.equal(opens, 2);
+    } finally {
+      s.close();
+    }
+    // Over one connection only (a stream), the error says how many keys were left.
+    await assert.rejects(
+      RemoteShell.connect(await open(), { ...opts(), key: strangers[0]!, moreKeys: [...strangers.slice(1), key] }),
+      /authentication failed.*the server closed the connection before 2 more keys were tried/,
+    );
+  });
 });
 
 /**

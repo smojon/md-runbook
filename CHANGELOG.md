@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+What's new:
+- SSH logins try every key, also past the server's limit, in VS Code, the app and the web app.
+
+### Fixed
+
+- **A key that couldn't sign ended the login.** Before:
+  - the agent refusing, a cancelled hardware key prompt or a keystore error closed the
+    connection;
+  - the next keys were not tried.
+- Now:
+  - that key is skipped, and the next key is tried;
+  - its certificate is not asked again;
+  - if no key logs in, the error says why the key couldn't sign.
+- **Keys past the server's limit were never tried.** Before:
+  - sshd ends a login after 6 refused keys (`MaxAuthTries`), and up to 8 keys are offered;
+  - the keys left were lost.
+- Now:
+  - md-runbook connects again for the keys left, same host-key check, same connect time;
+  - each key is tried once, in order.
+
 ### Gate
 
 - The gate reads at most 1 MiB of sshd's login file (`ExposeAuthInfo`).
