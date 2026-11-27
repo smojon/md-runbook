@@ -446,10 +446,19 @@ func (g *Gate) certLog() []string {
 	return kv
 }
 
+// maxAuthInfo: how much of ExposeAuthInfo's file the gate reads. sshd takes no SSH packet over
+// 256 KiB (OpenSSH's PACKET_MAX_SIZE), so a key from one, in base64, fits many times over.
+const maxAuthInfo = 1 << 20
+
 // authKey: the key that logged in: ExposeAuthInfo's file, its first publickey line, without
-// "publickey " ("" when there is none).
+// "publickey " ("" when there is none). It reads at most maxAuthInfo bytes of the file.
 func authKey(auth string) string {
-	data, err := os.ReadFile(auth)
+	f, err := os.Open(auth)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxAuthInfo))
 	if err != nil {
 		return ""
 	}

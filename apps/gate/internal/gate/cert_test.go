@@ -47,6 +47,16 @@ func TestAuthKey(t *testing.T) {
 	if got := authKey(filepath.Join(dir, "none")); got != "" {
 		t.Errorf("no file: %q", got)
 	}
+	// A file past maxAuthInfo: the gate reads only its start.
+	big := "publickey " + cert + "\n" + strings.Repeat("x", maxAuthInfo) + "\npublickey " + other + "\n"
+	os.WriteFile(auth, []byte(big), 0o600)
+	if got := authKey(auth); got != cert {
+		t.Errorf("big file, key at the start: %q", got)
+	}
+	os.WriteFile(auth, []byte(strings.Repeat("x", maxAuthInfo)+"\npublickey "+cert+"\n"), 0o600)
+	if got := authKey(auth); got != "" {
+		t.Errorf("big file, key past the limit: %q", got)
+	}
 }
 
 // who for each kind of login, and what the session event adds.

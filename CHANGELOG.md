@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Gate
+
+- The gate reads at most 1 MiB of sshd's login file (`ExposeAuthInfo`).
+- The README says how far to trust `who` in shared mode.
+
 ## 0.34.1
 
 What's new:

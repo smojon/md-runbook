@@ -123,6 +123,9 @@ Add `ExposeAuthInfo yes` to `sshd_config` to log who logged in (`who`):
     why.
   - sshd checked the certificate before the login; the gate only reads it.
 - `--who=NAME` on the key line wins over both.
+- sshd's file belongs to the login account. In shared mode, trust `who` as much as the log.
+  - A block could rewrite the file of a session that starts at the same time.
+  - In separated mode and with a Job per session, blocks can't reach it.
 
 See [SSH certificates](../../docs/features/ssh-certificates.md).
 
