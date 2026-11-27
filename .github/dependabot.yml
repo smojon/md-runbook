@@ -25,12 +25,31 @@ updates:
         patterns: ['*']
   # A new golang version in apps/ops/Dockerfile stops the build until apps/gate/go.mod's
   # toolchain line names it too: change that line in the same pull request.
+  # The relay, library server and web app images too (relay-web threat model, 2026-11-27: their
+  # base images were weeks behind security releases). Node stays on its LTS major and nginx on
+  # its stable line (1.30.x): a new major or line is a change of its own. Not covered: the
+  # Caddy tags in the compose examples and READMEs (bump them by hand with these).
   - package-ecosystem: docker
-    directories: [/apps/ops, /apps/probe, /apps/probe/kubernetes]
+    directories: [/apps/ops, /apps/probe, /apps/probe/kubernetes, /apps/relay, /apps/library-server, /apps/web]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]
+      - dependency-name: nginx/nginx-unprivileged
+        update-types: [version-update:semver-major, version-update:semver-minor]
+    groups:
+      images:
+        patterns: ['*']
+  # The relay's and library server's npm packages (the relay pinned a ws with an advisory).
+  - package-ecosystem: npm
+    directories: [/apps/relay, /apps/library-server]
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
     groups:
-      images:
+      servers:
         patterns: ['*']

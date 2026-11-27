@@ -7,6 +7,29 @@ What's new:
   gate's checks and the vendors' current docs. New: why not a sidecar, Pod Security, egress, phones.
 - Ops host: the gate also refuses namespaces whose accounts have RoleBindings in other namespaces.
   Upgrade: apply its ClusterRole again (below).
+- Relay and web app: fixes from a security review (below). Update the relay first.
+
+### Relay and web app: security review
+
+- **A client without a token could stop the relay.** Before:
+  - a connection reset while the relay refused it crashed the process;
+  - every open session dropped.
+- Now: the relay closes that connection and keeps serving.
+- **The relay's WebSocket library had an advisory.** `ws` 8.23.0 fixes a memory exhaustion by
+  ping flood ([GHSA-37g9-w4hg-h9qr](https://github.com/websockets/ws/security/advisories/GHSA-37g9-w4hg-h9qr)).
+- **The web app could keep a readable SSH key.** Before:
+  - on a plain-http page (not localhost), it made a key the page's scripts could read.
+- Now:
+  - it asks you to open the app over https, and makes no key;
+  - a key made by an earlier version keeps working.
+- **Newer base images, pinned by digest:**
+  - Node 22.23.5 (security release) in the relay, library server and web images;
+  - nginx 1.30.7 in the web image, now from `nginx/nginx-unprivileged`;
+  - Caddy 2.11.9 in the compose examples and the web README.
+- **Compose examples:** memory and process limits for the relay and the library server. Caddy
+  runs with no capability but binding ports.
+- The web README: plain http only on localhost; anywhere else, put https in front.
+- Dependabot now watches these images and the relay's and library server's npm packages.
 
 ### Ops host: RoleBindings count too
 
