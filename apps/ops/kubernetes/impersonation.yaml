@@ -1,0 +1,67 @@
+# Opt-in: the Kubernetes audit log names the person behind each block's kubectl call
+# (job_audit_who = yes in gate.conf). Apply it with md-runbook-ops.yaml, as a cluster admin:
+#   kubectl apply -f apps/ops/kubernetes/impersonation.yaml
+# The Job's kubectl then impersonates its own service account, md-runbook-cells, with who logged
+# in (the certificate's key ID, or the key's fingerprint) in the user extra
+# md-runbook.dev/operator. Same user name, same groups: the same rights, and the admission
+# policies still match it. Audit events show user (the pod's account and pod) and
+# impersonatedUser (with the extra).
+#
+# These rules allow nothing more:
+#   - impersonate only md-runbook-cells itself, in md-runbook-ops (a Role: resourceNames name the
+#     account of this namespace only);
+#   - set only the extra md-runbook.dev/operator (userextras are cluster-scoped: a ClusterRole).
+#     Any value: RBAC can't tie it to the session. A block can set another name, or drop the
+#     impersonation. The gate's log stays the authority (docs/features/kubernetes.md).
+# No users, groups or uids: no block can act as anyone else. The gate refuses a session when the
+# cells' account may impersonate more (any service account, user or group, the gate's account,
+# system:masters, the pod's own extras).
+#
+# Another job_service_account, or another namespace: change the names here, and in
+# resourceNames.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: md-runbook-cells-impersonate-self
+  namespace: md-runbook-ops
+rules:
+  - apiGroups: ['']
+    resources: [serviceaccounts]
+    resourceNames: [md-runbook-cells]
+    verbs: [impersonate]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: md-runbook-cells-impersonate-self
+  namespace: md-runbook-ops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: md-runbook-cells-impersonate-self
+subjects:
+  - kind: ServiceAccount
+    name: md-runbook-cells
+    namespace: md-runbook-ops
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: md-runbook-cells-operator-extra
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [userextras/md-runbook.dev/operator]
+    verbs: [impersonate]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: md-runbook-cells-operator-extra
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: md-runbook-cells-operator-extra
+subjects:
+  - kind: ServiceAccount
+    name: md-runbook-cells
+    namespace: md-runbook-ops

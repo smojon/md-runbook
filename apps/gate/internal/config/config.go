@@ -66,6 +66,9 @@ type Config struct {
 	// gate's own pod's image).
 	JobServiceAccount string
 	JobImage          string
+	// job_audit_who = yes: the Job's kubectl impersonates its own service account, with who in
+	// the user extra md-runbook.dev/operator, so that the Kubernetes audit log names the person.
+	JobAuditWho bool
 }
 
 // Isolations are the values of isolation =.
@@ -271,6 +274,14 @@ func (c *Config) Read(r io.Reader, name string) error {
 				return fmt.Errorf("job_image = %s: expected an image reference (leave the line out for the gate's own pod's image)", v)
 			}
 			c.JobImage = v
+		case "job_audit_who":
+			switch v {
+			case "yes":
+				c.JobAuditWho = true
+			case "no":
+			default:
+				return fmt.Errorf("job_audit_who = %s: expected yes or no", v)
+			}
 		default:
 			return fmt.Errorf("%s: unknown setting %q", name, k)
 		}

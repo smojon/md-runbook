@@ -152,6 +152,8 @@ func TestRunnerProblem(t *testing.T) {
 		"token in the ConfigMap": {func(c *config.Config) { c.ReportToken = "/etc/md-runbook/report-token" }, "a ConfigMap on the ops host: put the token in a Secret"},
 		"token below it":         {func(c *config.Config) { c.ReportToken = "/etc/md-runbook/x/../token" }, "a ConfigMap on the ops host"},
 		"local with image":       {func(c *config.Config) { c.CellsRunner, c.JobServiceAccount, c.JobImage = "local", "", "x:1" }, "for cells_runner = kubernetes-job only"},
+		"local with audit who":   {func(c *config.Config) { c.CellsRunner, c.JobServiceAccount, c.JobAuditWho = "local", "", true }, "job_audit_who is for cells_runner = kubernetes-job only"},
+		"audit who, kubeconfig":  {func(c *config.Config) { c.JobAuditWho, c.Kubeconfig = true, "/etc/kube/config" }, "job_audit_who = yes doesn't go with kubeconfig ="},
 	} {
 		cfg := job
 		c.change(&cfg)
@@ -170,6 +172,151 @@ func TestRunnerProblem(t *testing.T) {
 		if p := runnerProblem(cfg, conf); p != "" {
 			t.Errorf("%s: %s", iso, p)
 		}
+	}
+	audit := job
+	audit.JobAuditWho = true
+	if p := runnerProblem(audit, conf); p != "" {
+		t.Errorf("job_audit_who: %s", p)
+	}
+}
+
+// job_audit_who: the Job's env carries the impersonation for md-runbook-ops-start; without it,
+// only CLUSTER_NAME.
+func TestJobManifestAuditWho(t *testing.T) {
+	envOf := func(s jobSpec) []any {
+		var job map[string]any
+		if err := json.Unmarshal(jobManifest(s), &job); err != nil {
+			t.Fatal(err)
+		}
+		return at(t, job, "spec", "template", "spec", "containers", 0, "env").([]any)
+	}
+	if env := envOf(testSpec); len(env) != 1 {
+		t.Errorf("without job_audit_who: %v", env)
+	}
+	s := testSpec
+	s.As, s.Who = "system:serviceaccount:md-runbook-ops:md-runbook-cells", "alice@example 'x'"
+	want := []any{
+		map[string]any{"name": "CLUSTER_NAME", "value": "prod-eu"},
+		map[string]any{"name": "MD_RUNBOOK_KUBE_AS", "value": s.As},
+		map[string]any{"name": "MD_RUNBOOK_KUBE_WHO", "value": s.Who},
+	}
+	if env := envOf(s); !reflect.DeepEqual(env, want) {
+		t.Errorf("with job_audit_who: %v", env)
+	}
+}
+
+// What who may be in the impersonation's extra.
+func TestAuditWhoProblem(t *testing.T) {
+	for _, ok := range []string{"alice@example", "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU", "Alice Smith (on-call)", "a'b\"c\\d", strings.Repeat("x", 256)} {
+		if p := auditWhoProblem(ok); p != "" {
+			t.Errorf("%q: %s", ok, p)
+		}
+	}
+	for who, want := range map[string]string{
+		"":                       "no name",
+		strings.Repeat("x", 257): "longer than 256",
+		" alice":                 "space at either end",
+		"alice ":                 "space at either end",
+		"alice\nbob":             "printable ASCII",
+		"al\tice":                "printable ASCII",
+		"alicé":                  "printable ASCII",
+		"alice\x7f":              "printable ASCII",
+	} {
+		if p := auditWhoProblem(who); !strings.Contains(p, want) {
+			t.Errorf("%q: %q, want %s", who, p, want)
+		}
+	}
+}
+
+// The check in the Job's pod: kubectl auth whoami, through the cells' mode, before any block.
+func TestCheckAuditWho(t *testing.T) {
+	const as = "system:serviceaccount:md-runbook-ops:md-runbook-cells"
+	good := `{"kind":"SelfSubjectReview","apiVersion":"authentication.k8s.io/v1","status":{"userInfo":{"username":"` + as + `","groups":["system:serviceaccounts","system:serviceaccounts:md-runbook-ops","system:authenticated"],"extra":{"md-runbook.dev/operator":["alice@example"]}}}}`
+	var argv []string
+	out, fail := good, error(nil)
+	run := func(a, env []string, stdin []byte) ([]byte, error) {
+		argv = a
+		req, err := readCellsReq(bytes.NewReader(stdin))
+		if err != nil || req.Op != "exec" || !reflect.DeepEqual(req.Argv, []string{"/usr/bin/kubectl", "auth", "whoami", "-o", "json"}) {
+			t.Errorf("request %+v %v", req, err)
+		}
+		return []byte(out), fail
+	}
+	j := testJob(run)
+	j.as, j.who = as, "alice@example"
+	if p := j.checkAuditWho("pod-1"); p != "" {
+		t.Errorf("good: %s", p)
+	}
+	if !reflect.DeepEqual(argv, j.execArgv("pod-1")) {
+		t.Errorf("argv %q", argv)
+	}
+	fail = errors.New(`exit status 1: users "system:serviceaccount:md-runbook-ops:md-runbook-cells" is forbidden: User "system:serviceaccount:md-runbook-ops:md-runbook-cells" cannot impersonate resource "serviceaccounts"`)
+	if p := j.checkAuditWho("pod-1"); !strings.Contains(p, "can't impersonate itself") || !strings.Contains(p, "impersonation.yaml") {
+		t.Errorf("refused: %s", p)
+	}
+	fail = nil
+	// Not impersonating (an older image): the pod's own extras, no who.
+	plain := `{"kind":"SelfSubjectReview","status":{"userInfo":{"username":"` + as + `","extra":{"authentication.kubernetes.io/pod-name":["md-runbook-cells-x"]}}}}`
+	for name, c := range map[string]struct{ out, want string }{
+		"plain":      {plain, "doesn't carry who"},
+		"other who":  {strings.Replace(good, "alice@example", "mallory@example", 1), "doesn't carry who"},
+		"two values": {strings.Replace(good, `["alice@example"]`, `["alice@example","bob"]`, 1), "doesn't carry who"},
+		"more extra": {strings.Replace(good, `"extra":{`, `"extra":{"scopes":["x"],`, 1), "other extras"},
+		"other user": {strings.Replace(good, as, "system:serviceaccount:md-runbook-ops:md-runbook-ops", 1), "not " + as},
+		"garbage":    {"{", "can't read"},
+		"other kind": {strings.Replace(good, "SelfSubjectReview", "Status", 1), "can't read"},
+	} {
+		out = c.out
+		if p := j.checkAuditWho("pod-1"); !strings.Contains(p, c.want) {
+			t.Errorf("%s: %q, want %s", name, p, c.want)
+		}
+	}
+}
+
+// The cells' impersonation beyond job_audit_who's rule: refused, by name too.
+func TestCellsImpersonationReviews(t *testing.T) {
+	rs := cellsReviews("md-runbook-ops", "md-runbook-cells", "md-runbook-ops")
+	byKey := map[string]review{}
+	for _, r := range rs {
+		byKey[r.verb+" "+r.group+" "+r.resource+"/"+r.sub+" "+r.ns+" "+r.name] = r
+	}
+	for _, k := range []string{
+		"impersonate  serviceaccounts/ md-runbook-ops ",                                        // any of the namespace (no resourceNames)
+		"impersonate  serviceaccounts/  ",                                                      // any, anywhere
+		"impersonate  serviceaccounts/ md-runbook-ops md-runbook-ops",                          // the gate's own
+		"impersonate  serviceaccounts/ default md-runbook-cells",                               // the cells' name elsewhere
+		"impersonate  groups/  system:masters",                                                 // by name
+		"impersonate  users/  ",                                                                // any user
+		"impersonate authentication.k8s.io uids/  ",                                            // uids
+		"impersonate authentication.k8s.io userextras/authentication.kubernetes.io/pod-name  ", // the API server's extras
+	} {
+		if r, ok := byKey[k]; !ok || r.want {
+			t.Errorf("no refusing review %q", k)
+		}
+	}
+	// A named allowance is reported with its name.
+	j := testJob(func(argv, env []string, stdin []byte) ([]byte, error) {
+		return answersFor(t, stdin, func(a map[string]any) bool {
+			return a["verb"] == "impersonate" && a["name"] == "md-runbook-ops"
+		}), nil
+	})
+	p := j.check(rs, "", "the cells' service account md-runbook-cells")
+	if len(p) != 1 || p[0] != "the cells' service account md-runbook-cells may impersonate serviceaccounts md-runbook-ops in md-runbook-ops" {
+		t.Errorf("%q", p)
+	}
+	// Without the gate's account's name (its pod named none), that review is left out.
+	for _, r := range cellsReviews("md-runbook-ops", "md-runbook-cells", "") {
+		if r.ns == "md-runbook-ops" && r.name != "" {
+			t.Errorf("review %s", r)
+		}
+	}
+	// In the namespace default, the cells' name elsewhere is asked in kube-system.
+	found := false
+	for _, r := range cellsReviews("default", "cells", "ops") {
+		found = found || r.ns == "kube-system" && r.name == "cells"
+	}
+	if !found {
+		t.Error("namespace default: no review of the cells' name in kube-system")
 	}
 }
 
@@ -873,7 +1020,7 @@ func TestJobChecks(t *testing.T) {
 	extra = ""
 
 	// The cells' account: checked in the Job's pod, through the cells' mode, before any block.
-	cells := cellsReviews(ns)
+	cells := cellsReviews(ns, "md-runbook-cells", "md-runbook-ops")
 	cellsAllowed := map[string]bool{}
 	run2 := func(argv, env []string, stdin []byte) ([]byte, error) {
 		gotArgv = argv
@@ -955,7 +1102,7 @@ func TestReviewLists(t *testing.T) {
 			} `json:"spec"`
 		} `json:"items"`
 	}
-	rs := cellsReviews("ops")
+	rs := cellsReviews("ops", "cells", "ops-sa")
 	if err := json.Unmarshal(reviewList(rs), &list); err != nil || list.Kind != "List" || len(list.Items) != len(rs) {
 		t.Fatalf("%+v %v", list, err)
 	}
@@ -1440,6 +1587,32 @@ func TestShippedWorkloadPolicy(t *testing.T) {
 		}
 	}
 	t.Error("admission-policy.yaml: no policy md-runbook-ops-workloads")
+}
+
+// The shipped RBAC of job_audit_who grants what the gate's checks allow, nothing more: the cells'
+// account impersonates itself (by name, in a Role) and sets the extra md-runbook.dev/operator.
+func TestShippedImpersonation(t *testing.T) {
+	src, err := os.ReadFile("../../../ops/kubernetes/impersonation.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.ReplaceAll(string(src), "\r\n", "\n")
+	var rules []string
+	for _, line := range strings.Split(text, "\n") {
+		if s := strings.TrimSpace(line); strings.HasPrefix(s, "- apiGroups:") || strings.HasPrefix(s, "resources:") || strings.HasPrefix(s, "resourceNames:") || strings.HasPrefix(s, "verbs:") {
+			rules = append(rules, s)
+		}
+	}
+	want := []string{
+		"- apiGroups: ['']", "resources: [serviceaccounts]", "resourceNames: [md-runbook-cells]", "verbs: [impersonate]",
+		"- apiGroups: [authentication.k8s.io]", "resources: [userextras/" + auditExtra + "]", "verbs: [impersonate]",
+	}
+	if !reflect.DeepEqual(rules, want) {
+		t.Errorf("rules %q", rules)
+	}
+	if !strings.Contains(text, "kind: Role\nmetadata:\n  name: md-runbook-cells-impersonate-self\n  namespace: md-runbook-ops\n") {
+		t.Error("the self-impersonation isn't a Role in md-runbook-ops")
+	}
 }
 
 // The gate's own namespace enforces Pod Security restricted (security review of 0.31.1, lows).

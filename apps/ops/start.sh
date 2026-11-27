@@ -21,7 +21,17 @@ api_server() {
   case $host in *:*) host="[$host]" ;; esac
   echo "https://$host:${KUBERNETES_SERVICE_PORT:-443}"
 }
-in_cluster_kubeconfig() {
+# job_audit_who in gate.conf, in a session's Job only (the gate sets the env): kubectl
+# impersonates the Job's own service account (MD_RUNBOOK_KUBE_AS), with the person who logged in
+# (MD_RUNBOOK_KUBE_WHO: printable ASCII, the gate checks it) in the user extra
+# md-runbook.dev/operator. The Kubernetes audit log then names them. YAML single-quoted strings:
+# a ' doubles, nothing else is special.
+impersonation() {
+  [ "$1" = cells ] && [ -n "${MD_RUNBOOK_KUBE_AS:-}" ] || return 0
+  printf "    as: '%s'\n    as-user-extra:\n      md-runbook.dev/operator:\n      - '%s'\n" \
+    "$MD_RUNBOOK_KUBE_AS" "$(printf '%s' "${MD_RUNBOOK_KUBE_WHO:-}" | sed "s/'/''/g")"
+}
+in_cluster_kubeconfig() { # USER [cells]
   cluster=${CLUSTER_NAME:-in-cluster}
   cat >"$HOME/.kube/config" <<EOF
 apiVersion: v1
@@ -35,6 +45,7 @@ users:
 - name: $1
   user:
     tokenFile: $sa/token
+$(impersonation "${2:-}")
 contexts:
 - name: $cluster
   context:
@@ -74,7 +85,7 @@ if [ "${1:-}" = cells ]; then
     exit 1
   fi
   wait_for_api
-  in_cluster_kubeconfig md-runbook-cells
+  in_cluster_kubeconfig md-runbook-cells cells
   # Ready (the Job's readiness probe looks for the kubeconfig); stops with the Pod.
   exec sleep infinity
 fi

@@ -22,6 +22,7 @@ import (
 	"github.com/smojon/md-runbook/apps/gate/internal/procs"
 	"github.com/smojon/md-runbook/apps/gate/internal/proto"
 	"github.com/smojon/md-runbook/apps/gate/internal/report"
+	"github.com/smojon/md-runbook/apps/gate/internal/sshcert"
 	"github.com/smojon/md-runbook/apps/gate/internal/textutil"
 )
 
@@ -98,6 +99,9 @@ type kubeJob struct {
 	exe     string  // this program, in the Job's image too
 
 	ns, context, opsPod, opsUID, opsSA, image, sa, name string
+	// job_audit_who: the user the Job's kubectl impersonates (its own service account's), and
+	// who in its extra; both "" without it.
+	as, who string
 	// workloads: why md-runbook-ops-workloads isn't in force ("" when it is), asked before the
 	// Job (so the pod's wait has no call more); it counts once the cells may change workloads.
 	workloads string
@@ -180,11 +184,17 @@ func runnerProblem(c config.Config, configPath string) string {
 		if c.JobServiceAccount != "" || c.JobImage != "" {
 			return "job_service_account and job_image are for cells_runner = kubernetes-job only: add it, or remove them"
 		}
+		if c.JobAuditWho {
+			return "job_audit_who is for cells_runner = kubernetes-job only: add it, or remove job_audit_who"
+		}
 		return ""
 	}
 	switch {
 	case c.JobServiceAccount == "":
 		return "cells_runner = kubernetes-job needs job_service_account = NAME: the service account the cells' Jobs run as"
+	case c.JobAuditWho && c.Kubeconfig != "":
+		// The impersonation is in the kubeconfig the Job's start writes (~/.kube/config).
+		return "job_audit_who = yes doesn't go with kubeconfig =: the Job's own kubeconfig carries who. Remove kubeconfig"
 	case len(c.CellsPool()) > 0:
 		return "cells_runner = kubernetes-job and " + c.CellsKey() + " don't go together: the Job's pod keeps the cells apart. Remove " + c.CellsKey()
 	case c.Isolation == "scope" || c.Isolation == "bwrap":
@@ -216,6 +226,13 @@ func (g *Gate) setupJob() {
 	}
 	if j.exe == "" {
 		g.fatal("cells_runner = kubernetes-job: can't find this program's own path")
+	}
+	if g.cfg.JobAuditWho {
+		if p := auditWhoProblem(g.who); p != "" {
+			msg := "cells_runner = kubernetes-job: job_audit_who = yes, but " + p + ": no session"
+			g.log.Event("event", "self-check", "status", "refused", "reason", msg)
+			g.fatal(msg)
+		}
 	}
 	out, err := j.run(j.kc("config", "view", "--minify", "-o", "json"), j.env, nil)
 	if err == nil {
@@ -256,6 +273,10 @@ func (g *Gate) setupJob() {
 	g.sweepJobs(j)
 	j.name = "md-runbook-cells-" + randHex(5)
 	spec := jobSpec{Name: j.name, NS: j.ns, OpsPod: j.opsPod, OpsUID: j.opsUID, Image: j.image, SA: j.sa, Context: j.context, GateID: gateID(os.Getpid())}
+	if g.cfg.JobAuditWho {
+		j.as, j.who = saUser(j.ns, j.sa), g.who
+		spec.As, spec.Who = j.as, j.who
+	}
 	if _, err := j.run(j.kc("create", "-f", "-", "-o", "name"), j.env, jobManifest(spec)); err != nil {
 		g.fatal("cells_runner = kubernetes-job: " + createProblem(err))
 	}
@@ -263,8 +284,87 @@ func (g *Gate) setupJob() {
 	g.exitsPath = jobExits
 	g.sepRuns = map[string]sepRun{}
 	g.sepExits = map[string]report.Exit{}
-	g.log.Event("event", "job", "status", "created", "job", j.name, "namespace", j.ns, "image", j.image, "service_account", j.sa)
+	kv := []string{"event", "job", "status", "created", "job", j.name, "namespace", j.ns, "image", j.image, "service_account", j.sa}
+	if j.as != "" {
+		kv = append(kv, "kube_as", j.as)
+	}
+	g.log.Event(kv...)
 	go g.prepareJob(j)
+}
+
+// ---- job_audit_who: the Kubernetes audit log names the person ----
+// The Job's kubectl impersonates its own service account (the same user name, the same groups:
+// the same rights, and the admission policies still match it), with who in the user extra
+// md-runbook.dev/operator. The audit event then has user (the pod's service account, with the
+// pod's name in its extra: the API server's word) and impersonatedUser (the same account, with
+// who). The RBAC (apps/ops/kubernetes/impersonation.yaml) lets the account impersonate itself
+// and set that one extra key, nothing else. A block can drop the impersonation or set another
+// value: the extra is a claim, the gate's log stays the authority (docs/features/kubernetes.md,
+// "Who in the Kubernetes audit log").
+
+// auditExtra: the user extra key that carries who.
+const auditExtra = "md-runbook.dev/operator"
+
+// saUser: a service account's user name.
+func saUser(ns, sa string) string { return "system:serviceaccount:" + ns + ":" + sa }
+
+// auditWhoProblem: "" when who can go into the impersonation's extra (an HTTP header value, and
+// a YAML string in the Job's kubeconfig): printable ASCII, no space at either end, at most 256
+// bytes. A key ID is (sshcert.Name), a fingerprint too; a --who= of the key line may not be.
+func auditWhoProblem(who string) string {
+	switch {
+	case who == "":
+		return "no name for this login (who)"
+	case len(who) > sshcert.MaxKeyID:
+		return "who is longer than " + itoa(sshcert.MaxKeyID) + " bytes"
+	case who[0] == ' ' || who[len(who)-1] == ' ':
+		return "who has a space at either end"
+	}
+	for i := 0; i < len(who); i++ {
+		if who[i] < 0x20 || who[i] > 0x7e {
+			return "who has a character other than printable ASCII"
+		}
+	}
+	return ""
+}
+
+// checkAuditWho: in the Job's pod, before any block, kubectl's user as the API server sees it
+// (kubectl auth whoami): the cells' service account, with who and nothing else as its extra.
+// Else the RBAC is missing (the API server refuses the impersonation), or the Job's kubeconfig
+// doesn't carry it (a job_image older than job_audit_who).
+func (j *kubeJob) checkAuditWho(pod string) string {
+	out, err := j.kubectlAs(pod, nil, "auth", "whoami", "-o", "json")
+	if err != nil {
+		return "job_audit_who: the cells' service account can't impersonate itself with who (" + err.Error() + "). Apply apps/ops/kubernetes/impersonation.yaml, or remove job_audit_who"
+	}
+	return auditWhoAnswer(out, j.as, j.who)
+}
+
+// auditWhoAnswer: "" when kubectl auth whoami's output is user as with only the extra who.
+func auditWhoAnswer(out []byte, as, who string) string {
+	var r struct {
+		Kind   string `json:"kind"`
+		Status struct {
+			UserInfo struct {
+				Username string              `json:"username"`
+				Extra    map[string][]string `json:"extra"`
+			} `json:"userInfo"`
+		} `json:"status"`
+	}
+	if json.Unmarshal(out, &r) != nil || r.Kind != "SelfSubjectReview" {
+		return "job_audit_who: can't read kubectl auth whoami in the Job's pod"
+	}
+	u := r.Status.UserInfo
+	got := u.Extra[auditExtra]
+	switch {
+	case u.Username != as:
+		return "job_audit_who: kubectl in the Job's pod is " + u.Username + ", not " + as
+	case len(got) != 1 || got[0] != who:
+		return "job_audit_who: kubectl in the Job's pod doesn't carry who in the extra " + auditExtra + ": is job_image older than the gate?"
+	case len(u.Extra) != 1:
+		return "job_audit_who: kubectl in the Job's pod has other extras than " + auditExtra + " (is it impersonating?)"
+	}
+	return ""
 }
 
 // prepareJob: the pod Ready, the cells' service account checked in it (before any block), the
@@ -273,7 +373,15 @@ func (g *Gate) prepareJob(j *kubeJob) {
 	t0 := time.Now()
 	pod, why := j.waitPod(time.Sleep, time.Now)
 	if why == "" {
-		p := j.check(cellsReviews(j.ns), pod, "the cells' service account "+j.sa)
+		var p []string
+		if j.as != "" {
+			if w := j.checkAuditWho(pod); w != "" {
+				p = []string{w}
+			}
+		}
+		if len(p) == 0 {
+			p = j.check(cellsReviews(j.ns, j.sa, j.opsSA), pod, "the cells' service account "+j.sa)
+		}
 		if len(p) == 0 {
 			p = j.checkNamespaces(pod)
 		}
@@ -1474,6 +1582,9 @@ func followPaths(req cellsReq) []string {
 // jobSpec: what the Job is made of.
 type jobSpec struct {
 	Name, NS, OpsPod, OpsUID, Image, SA, Context, GateID string
+	// job_audit_who: the user the Job's kubeconfig impersonates, and who for its extra ("" for
+	// none). md-runbook-ops-start cells writes them into the kubeconfig (apps/ops/start.sh).
+	As, Who string
 }
 
 // jobManifest: the cells' Job, as JSON for kubectl create. Pod Security "restricted": non-root,
@@ -1484,12 +1595,16 @@ func jobManifest(s jobSpec) []byte {
 	labels := obj{"app.kubernetes.io/name": "md-runbook-cells", "app.kubernetes.io/managed-by": "md-runbook-gate", "md-runbook-job": s.Name, "md-runbook-ops-pod": s.OpsUID, "md-runbook-gate-id": s.GateID}
 	mounts := []obj{{"name": "home", "mountPath": "/home/ops"}, {"name": "tmp", "mountPath": "/tmp"}, {"name": "log", "mountPath": "/var/log/md-runbook"}}
 	volumes := []obj{{"name": "home", "emptyDir": obj{}}, {"name": "tmp", "emptyDir": obj{}}, {"name": "log", "emptyDir": obj{}}}
+	env := []obj{{"name": "CLUSTER_NAME", "value": s.Context}}
+	if s.As != "" {
+		env = append(env, obj{"name": "MD_RUNBOOK_KUBE_AS", "value": s.As}, obj{"name": "MD_RUNBOOK_KUBE_WHO", "value": s.Who})
+	}
 	container := obj{
 		"name":            jobContainer,
 		"image":           s.Image,
 		"imagePullPolicy": "IfNotPresent",
 		"command":         []string{"/usr/bin/tini", "--", "/usr/local/bin/md-runbook-ops-start", "cells"},
-		"env":             []obj{{"name": "CLUSTER_NAME", "value": s.Context}},
+		"env":             env,
 		"securityContext": obj{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "runAsNonRoot": true, "capabilities": obj{"drop": []string{"ALL"}}},
 		"readinessProbe":  obj{"exec": obj{"command": []string{"/bin/sh", "-c", `test -s "$HOME/.kube/config"`}}, "periodSeconds": 1},
 		"resources":       obj{"requests": obj{"cpu": "50m", "memory": "64Mi"}, "limits": obj{"cpu": "1", "memory": "512Mi", "ephemeral-storage": "1Gi"}},
@@ -1748,20 +1863,25 @@ func orphanJobs(out []byte, alive func(id string) bool) []string {
 }
 
 // review: may the account VERB GROUP/RESOURCE/SUB in NS ("" for every namespace, or a
-// cluster-wide resource)? want is the answer the gate needs.
+// cluster-wide resource)? want is the answer the gate needs. name: of one object ("" for any:
+// a rule limited to resourceNames doesn't allow that).
 type review struct {
 	verb, group, resource, sub, ns string
 	want                           bool
+	name                           string
 }
 
 func (r review) key() string {
-	return r.verb + "|" + r.group + "|" + r.resource + "|" + r.sub + "|" + r.ns
+	return r.verb + "|" + r.group + "|" + r.resource + "|" + r.sub + "|" + r.ns + "|" + r.name
 }
 
 func (r review) String() string {
 	s := r.verb + " " + r.resource
 	if r.sub != "" {
 		s += "/" + r.sub
+	}
+	if r.name != "" {
+		s += " " + r.name
 	}
 	if r.group != "" {
 		s += " (" + r.group + ")"
@@ -1786,6 +1906,9 @@ func reviewList(rs []review) []byte {
 		if r.ns != "" {
 			attrs["namespace"] = r.ns
 		}
+		if r.name != "" {
+			attrs["name"] = r.name
+		}
 		items = append(items, map[string]any{"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview", "spec": map[string]any{"resourceAttributes": attrs}})
 	}
 	data, _ := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "List", "items": items})
@@ -1804,7 +1927,7 @@ func reviewProblems(out []byte, rs []review, who string) []string {
 		if o.Kind != "SelfSubjectAccessReview" || a == nil {
 			continue
 		}
-		r := review{verb: a["verb"], group: a["group"], resource: a["resource"], sub: a["subresource"], ns: a["namespace"]}
+		r := review{verb: a["verb"], group: a["group"], resource: a["resource"], sub: a["subresource"], ns: a["namespace"], name: a["name"]}
 		got[r.key()] = o.Status.Allowed
 	}
 	var p []string
@@ -1833,7 +1956,7 @@ func opsReviews(ns string) []review {
 	var policies []review
 	for _, res := range []string{"validatingadmissionpolicies", "validatingadmissionpolicybindings"} {
 		for _, verb := range []string{"get", "list", "create", "update", "patch", "delete"} {
-			policies = append(policies, review{verb, "admissionregistration.k8s.io", res, "", "", false})
+			policies = append(policies, review{verb, "admissionregistration.k8s.io", res, "", "", false, ""})
 		}
 	}
 	change := []string{"create", "update", "patch", "delete"}
@@ -1847,36 +1970,36 @@ func opsReviews(ns string) []review {
 		{"roles", append([]string{"list", "bind", "escalate"}, change...)},
 	} {
 		for _, verb := range c.verbs {
-			policies = append(policies, review{verb, "rbac.authorization.k8s.io", c.resource, "", "", false})
+			policies = append(policies, review{verb, "rbac.authorization.k8s.io", c.resource, "", "", false, ""})
 		}
 	}
 	return append([]review{
-		{"create", "batch", "jobs", "", ns, true},
-		{"list", "batch", "jobs", "", ns, true},
-		{"delete", "batch", "jobs", "", ns, true},
-		{"get", "", "pods", "", ns, true},
-		{"list", "", "pods", "", ns, true},
-		{"create", "", "pods", "exec", ns, true},
-		{"list", "", "serviceaccounts", "", ns, true},
-		{"list", "", "pods", "", "", false},
-		{"get", "", "secrets", "", ns, false},
-		{"create", "", "pods", "", ns, false},
-		{"patch", "", "pods", "", ns, false},
+		{"create", "batch", "jobs", "", ns, true, ""},
+		{"list", "batch", "jobs", "", ns, true, ""},
+		{"delete", "batch", "jobs", "", ns, true, ""},
+		{"get", "", "pods", "", ns, true, ""},
+		{"list", "", "pods", "", ns, true, ""},
+		{"create", "", "pods", "exec", ns, true, ""},
+		{"list", "", "serviceaccounts", "", ns, true, ""},
+		{"list", "", "pods", "", "", false, ""},
+		{"get", "", "secrets", "", ns, false, ""},
+		{"create", "", "pods", "", ns, false, ""},
+		{"patch", "", "pods", "", ns, false, ""},
 		// Other ways to start a pod here (the policy md-runbook-ops-jobs holds only Jobs), or to
 		// reach one (md-runbook-ops-exec holds these two, not ephemeral containers).
-		{"create", "apps", "deployments", "", ns, false},
-		{"create", "apps", "statefulsets", "", ns, false},
-		{"create", "apps", "daemonsets", "", ns, false},
-		{"create", "apps", "replicasets", "", ns, false},
-		{"create", "", "replicationcontrollers", "", ns, false},
-		{"create", "batch", "cronjobs", "", ns, false},
-		{"patch", "apps", "deployments", "", ns, false},
-		{"patch", "", "pods", "ephemeralcontainers", ns, false},
-		{"create", "", "pods", "attach", ns, false},
-		{"create", "", "pods", "portforward", ns, false},
-		{"create", "", "serviceaccounts", "token", ns, false},
-		{"create", "rbac.authorization.k8s.io", "rolebindings", "", ns, false},
-		{"impersonate", "", "serviceaccounts", "", "", false},
+		{"create", "apps", "deployments", "", ns, false, ""},
+		{"create", "apps", "statefulsets", "", ns, false, ""},
+		{"create", "apps", "daemonsets", "", ns, false, ""},
+		{"create", "apps", "replicasets", "", ns, false, ""},
+		{"create", "", "replicationcontrollers", "", ns, false, ""},
+		{"create", "batch", "cronjobs", "", ns, false, ""},
+		{"patch", "apps", "deployments", "", ns, false, ""},
+		{"patch", "", "pods", "ephemeralcontainers", ns, false, ""},
+		{"create", "", "pods", "attach", ns, false, ""},
+		{"create", "", "pods", "portforward", ns, false, ""},
+		{"create", "", "serviceaccounts", "token", ns, false, ""},
+		{"create", "rbac.authorization.k8s.io", "rolebindings", "", ns, false, ""},
+		{"impersonate", "", "serviceaccounts", "", "", false, ""},
 	}, policies...)
 }
 
@@ -1886,11 +2009,36 @@ func opsReviews(ns string) []review {
 // Jobs, tokens, roles); nowhere can it impersonate, bind or escalate roles, change the admission
 // policies, or reach a node's kubelet. Impersonation and bindings are asked with the namespace
 // too: a RoleBinding is invisible to a review without one.
-func cellsReviews(ns string) []review {
-	no := func(verb, group, resource, sub string) review { return review{verb, group, resource, sub, ns, false} }
-	anywhere := func(verb, group, resource, sub string) review { return review{verb, group, resource, sub, "", false} }
+//
+// Impersonation: job_audit_who's RBAC (impersonation.yaml) lets the account impersonate itself
+// (resourceNames, a Role in its namespace) and set the extra md-runbook.dev/operator. A review
+// without a name doesn't match a rule limited to resourceNames, so the reviews without one
+// refuse anything broader. The named ones refuse a list that names the gate's account (sa: the
+// cells', ops: the gate's), system:masters, or the cells' name in another namespace (a
+// ClusterRoleBinding); and other extras (the pod's, which the API server sets) and uids.
+func cellsReviews(ns, sa, ops string) []review {
+	no := func(verb, group, resource, sub string) review {
+		return review{verb, group, resource, sub, ns, false, ""}
+	}
+	anywhere := func(verb, group, resource, sub string) review {
+		return review{verb, group, resource, sub, "", false, ""}
+	}
 	rbac := "rbac.authorization.k8s.io"
-	return []review{
+	other := "default"
+	if ns == other {
+		other = "kube-system"
+	}
+	named := []review{
+		{"impersonate", "", "groups", "", "", false, "system:masters"},
+		{"impersonate", "", "serviceaccounts", "", other, false, sa},
+		anywhere("impersonate", "authentication.k8s.io", "uids", ""),
+		anywhere("impersonate", "authentication.k8s.io", "userextras", "authentication.kubernetes.io/pod-name"),
+		anywhere("impersonate", "authentication.k8s.io", "userextras", "authentication.kubernetes.io/credential-id"),
+	}
+	if ops != "" {
+		named = append(named, review{"impersonate", "", "serviceaccounts", "", ns, false, ops})
+	}
+	return append([]review{
 		no("create", "", "pods", "exec"),
 		no("get", "", "pods", "exec"),
 		no("create", "", "pods", "attach"),
@@ -1943,7 +2091,7 @@ func cellsReviews(ns string) []review {
 		no("impersonate", "", "users", ""),
 		no("impersonate", "", "groups", ""),
 		no("impersonate", "", "serviceaccounts", ""),
-	}
+	}, named...)
 }
 
 // kubeRule: a rule of a SelfSubjectRulesReview.

@@ -126,8 +126,16 @@ func TestCellsRunner(t *testing.T) {
 		t.Errorf("defaults: %+v %v", c, err)
 	}
 	c, err = read(t, "cells_runner = kubernetes-job\njob_service_account = md-runbook-cells\njob_image = ghcr.io/smojon/md-runbook-ops:0.29.0\n")
-	if err != nil || c.CellsRunner != "kubernetes-job" || c.JobServiceAccount != "md-runbook-cells" || c.JobImage != "ghcr.io/smojon/md-runbook-ops:0.29.0" {
+	if err != nil || c.CellsRunner != "kubernetes-job" || c.JobServiceAccount != "md-runbook-cells" || c.JobImage != "ghcr.io/smojon/md-runbook-ops:0.29.0" || c.JobAuditWho {
 		t.Errorf("read: %+v %v", c, err)
+	}
+	c, err = read(t, "job_audit_who = yes\n")
+	if err != nil || !c.JobAuditWho {
+		t.Errorf("job_audit_who = yes: %+v %v", c, err)
+	}
+	c, err = read(t, "job_audit_who = no\n")
+	if err != nil || c.JobAuditWho {
+		t.Errorf("job_audit_who = no: %+v %v", c, err)
 	}
 	for text, want := range map[string]string{
 		"cells_runner = kubernetes\n":      "cells_runner = kubernetes: expected local or kubernetes-job",
@@ -138,6 +146,8 @@ func TestCellsRunner(t *testing.T) {
 		"job_service_account = -cells\n":   "job_service_account = -cells: expected a Kubernetes service account name",
 		"job_service_account = a..b\n":     "job_service_account = a..b: expected a Kubernetes service account name",
 		"job_image =\n":                    "job_image = : expected an image reference (leave the line out for the gate's own pod's image)",
+		"job_audit_who = true\n":           "job_audit_who = true: expected yes or no",
+		"job_audit_who =\n":                "job_audit_who = : expected yes or no",
 		"job_image = x:1 $(id)\n":          "job_image = x:1 $(id): expected an image reference (leave the line out for the gate's own pod's image)",
 		"job_image = -x\n":                 "job_image = -x: expected an image reference (leave the line out for the gate's own pod's image)",
 		"job_image = \"md-runbook-ops\"\n": "job_image = \"md-runbook-ops\": expected an image reference (leave the line out for the gate's own pod's image)",
