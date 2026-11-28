@@ -12,7 +12,7 @@ import * as path from 'node:path';
 import { isCodeMeta, locateCodeCells, parse, shellKindForLanguage } from '@md-runbook/core';
 import { callRefs, fillRefs, parseCall } from '@md-runbook/core/call';
 import { parseCellOptions } from '@md-runbook/core/cellOptions';
-import { callTarget, samePath } from '@md-runbook/core/node';
+import { callTarget, manifestHash, samePath } from '@md-runbook/core/node';
 import { cliSshVerify } from './allowedSignersFile';
 import { v1FrontMatterProblems } from '@md-runbook/core/frontMatterRun';
 import { currentOs } from '@md-runbook/core/os';
@@ -68,6 +68,83 @@ export interface SignedCheck {
 }
 
 /**
+ * What a gate's gate.conf would also require, for `md-runbook run` (review, 2026-11-28): each
+ * applies to the runbook run and to those its calls run, except `name`, which only the runbook
+ * named on the command line must have.
+ */
+export interface SignedPolicy {
+  /** `--signers N`: that many distinct trusted signers (gate.conf `signers`). */
+  signers?: number;
+  /** `--name NAME`: the signed name must be this. */
+  name?: string;
+  /** `--revoked FILE`: manifest hashes withdrawn, one per line (gate.conf `revoked`). */
+  revoked?: string;
+  /** `--floors FILE`: `NAME LOWEST` per line; lower versions are withdrawn (gate.conf `floors`). */
+  floors?: string;
+  /** `--scope S`: the scopes accepted, or `*` (gate.conf `scopes`). */
+  scopes?: string[];
+}
+
+/**
+ * Whether the manifest's sha256 is in a revoked list, as md-runbook-gate reads it (requests.go
+ * revoked): one hash per line, blanks, CR, upper case and a `sha256:` prefix tolerated.
+ */
+export function isRevoked(list: string, hash: string): boolean {
+  return list.split('\n').some((l) => l.replace(/[\r \t]/g, '').toLowerCase().replace(/^sha256:/, '') === hash);
+}
+
+/**
+ * The lowest version of `name` in a floors list, as md-runbook-gate reads it (requests.go
+ * floorOf): `NAME LOWEST` per line, `#` starts a comment, the first such line counts. undefined
+ * for none; a string that isn't digits never matches (as on the gate).
+ */
+export function floorOf(list: string, name: string): string | undefined {
+  for (const raw of list.replace(/\r/g, '').split('\n')) {
+    const f = raw.replace(/#.*$/, '').trim().split(/[ \t]+/);
+    if (f.length >= 2 && f[0] === name && /^[0-9]*$/.test(f[1]!)) return f[1];
+  }
+  return undefined;
+}
+
+/**
+ * Whether a server accepting `accepted` (`*`: any) runs a manifest with these scopes, as
+ * md-runbook-gate decides (requests.go): one shared scope; a manifest without scopes only where
+ * any is accepted.
+ */
+export function scopeAccepted(accepted: readonly string[], scopes: readonly string[]): boolean {
+  if (accepted.includes('*')) return true;
+  return scopes.some((s) => accepted.includes(s));
+}
+
+/** The policy's problems with a manifest (`hash`: its sha256; `signers`: the distinct trusted principals). */
+function policyProblems(p: SignedPolicy, m: { name: string; version: number; scopes: string[] }, hash: string, signers: number): string[] {
+  const out: string[] = [];
+  const which = `${m.name} version ${m.version}`;
+  if (p.name !== undefined && m.name !== p.name) out.push(`it is signed as ${m.name}, not ${p.name} (--name)`);
+  if (p.signers !== undefined && signers < p.signers) out.push(`${which} needs ${p.signers} signers (--signers); signed by ${signers} trusted`);
+  const read = (file: string, what: string): string | undefined => {
+    try {
+      return fs.readFileSync(file, 'utf8');
+    } catch {
+      out.push(`can't read the ${what} list ${file}`);
+      return undefined;
+    }
+  };
+  if (p.revoked !== undefined) {
+    const list = read(p.revoked, 'revoked');
+    if (list !== undefined && isRevoked(list, hash)) out.push(`${which} was withdrawn (revoked in ${p.revoked})`);
+  }
+  if (p.floors !== undefined) {
+    const list = read(p.floors, 'floors');
+    const floor = list === undefined ? undefined : floorOf(list, m.name);
+    if (floor !== undefined && floor !== '' && m.version < Number(floor)) out.push(`${which} is older than the lowest version allowed (${floor}, in ${p.floors})`);
+  }
+  if (p.scopes !== undefined && !scopeAccepted(p.scopes, m.scopes))
+    out.push(`${m.name} is for ${m.scopes.length ? m.scopes.join(' ') : 'no scope'}; this run accepts ${p.scopes.join(' ')} (--scope)`);
+  return out;
+}
+
+/**
  * The checks of a signed run of `file` with these parameter values (undefined: not known yet).
  * `shown` names it in messages; `depth` limits how far calls are followed (they are checked again
  * when they run). `opts.text`: the file as the run will use it (else it is read here).
@@ -77,7 +154,7 @@ export async function checkSignedRun(
   params: Readonly<Record<string, string | undefined>>,
   allowedSigners: string,
   root: string,
-  opts: { shown?: string; depth?: number; sshKeygen?: string; text?: string } = {},
+  opts: { shown?: string; depth?: number; sshKeygen?: string; text?: string; policy?: SignedPolicy } = {},
 ): Promise<SignedCheck> {
   const shown = opts.shown ?? path.basename(file);
   const problems: string[] = [];
@@ -89,18 +166,21 @@ export async function checkSignedRun(
     return { problems };
   }
   const m = status.manifest;
-  // The signature, by a key the allowed signers file names.
-  let signer: string | undefined;
+  // The signature, by a key the allowed signers file names. Each one counts once per principal,
+  // as on the gate (--signers N); without it the first good one is enough.
+  const principals = new Set<string>();
   const why: string[] = [];
   for (const sig of allSignatures(status.block)) {
     try {
-      signer = await cliSshVerify(status.block.manifest, sig, allowedSigners, opts.sshKeygen);
-      break;
+      principals.add(await cliSshVerify(status.block.manifest, sig, allowedSigners, opts.sshKeygen));
+      if (opts.policy?.signers === undefined) break;
     } catch (e) {
       why.push(e instanceof Error ? e.message : String(e));
     }
   }
+  const signer = [...principals][0];
   if (!signer) say(`its signature is not good: ${why.join('; ')}`);
+  else if (opts.policy) for (const p of policyProblems(opts.policy, m, manifestHash(status.block.manifest), principals.size)) say(p);
   if (m.expires && m.expires < today()) say(`its signature expired on ${m.expires}`);
   const lines = new Map(locateCodeCells(parse(text)).map((l) => [l.cellIndex, l.line + 1]));
   for (const i of status.changed) say(`line ${lines.get(i) ?? '?'}: changed since signing (or never signed)`);
@@ -157,7 +237,9 @@ export async function checkSignedRun(
       if (samePath(target, file)) continue; // a cycle: the run refuses it
       const passed: Record<string, string> = {};
       for (const a of c.args) passed[a.name] = fill(a.value);
-      const child = await checkSignedRun(target, passed, allowedSigners, root, { ...opts, text: undefined, shown: path.relative(path.dirname(file), target).split(path.sep).join('/'), depth: (opts.depth ?? 0) + 1 });
+      // The policy holds for the runbooks called too, but not --name: they have their own.
+      const policy = opts.policy ? { ...opts.policy, name: undefined } : undefined;
+      const child = await checkSignedRun(target, passed, allowedSigners, root, { ...opts, policy, text: undefined, shown: path.relative(path.dirname(file), target).split(path.sep).join('/'), depth: (opts.depth ?? 0) + 1 });
       problems.push(...child.problems);
     }
   }

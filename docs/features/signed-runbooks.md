@@ -261,8 +261,8 @@ The gate never runs a call itself. The md-runbook app runs the steps of the runb
 checked against that runbook's own signature. It tells the gate which call loaded it, for the log
 (see [The log](#the-log)).
 
-On a machine, `md-runbook run --allowed-signers FILE` runs a signed runbook only as signed, as
-the gate would. Before anything runs, it refuses (exit `2`) when:
+On a machine, `md-runbook run --allowed-signers FILE` runs a signed runbook only as signed.
+Before anything runs, it refuses (exit `2`) when:
 
 - the signature is not good by a key in `FILE`, or has expired;
 - a block or a call changed, moved or was removed since signing;
@@ -280,6 +280,20 @@ is refused too, as the gate refuses it.
 A call whose `src=` uses `${out:}` or `${input:}` is checked when it runs.
 `md-runbook verify --allowed-signers FILE` checks a runbook's calls with fixed `src=` too, and
 lists the others.
+
+What a server's `gate.conf` adds is checked only when you ask for it, with the same file formats:
+
+| Option | Refuses | Like `gate.conf` |
+| --- | --- | --- |
+| `--signers N` | fewer than N distinct trusted signers | `signers` |
+| `--revoked FILE` | a manifest whose sha256 is in `FILE` | `revoked` |
+| `--floors FILE` | a version below the `NAME LOWEST` line for its name | `floors` |
+| `--scope SCOPE` | a runbook signed for none of these scopes (repeatable; `*`: any) | `scopes` |
+| `--name NAME` | a runbook signed under another name | none |
+
+- They hold for the runbooks its calls run too. `--name` holds only for the runbook you name.
+- Without them, those checks are skipped: a revoked version, or one below a floor, runs.
+- The gate's own limits, such as a key's scopes in `authorized_keys`, don't apply on a machine.
 
 ## Setting up a server
 

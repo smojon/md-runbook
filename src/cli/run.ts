@@ -60,7 +60,7 @@ import { ManualStep, PlannedBlock, RunUsageError, formatSteps, headingsOf, missi
 import { taskItems } from '@md-runbook/core';
 import { RunbookPart, partOf, runbookParts } from '@md-runbook/core/parts';
 import { runbookTitle } from '@md-runbook/core/title';
-import { checkSignedRun, insideRoot, repositoryRoot, signedValueProblem } from './signedRun';
+import { SignedPolicy, checkSignedRun, insideRoot, repositoryRoot, signedValueProblem } from './signedRun';
 import { signedStatus } from '@md-runbook/core/signing';
 import { LINE_RE } from '@md-runbook/core/lines';
 
@@ -115,6 +115,8 @@ export interface CliOptions {
    * allowed signers file, and the runbooks its calls run too.
    */
   allowedSigners?: string;
+  /** For a signed run: what a gate's gate.conf would require too (--signers, --name, --revoked, --floors, --scope). */
+  signedPolicy?: SignedPolicy;
   /** For a signed run: the repository the runbooks it calls must be in (default: the runbook's). */
   signedRoot?: string;
   /** Pass over blocks whose output says they are done or skipped (a call continuing its copy). */
@@ -191,7 +193,9 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
   // A signed run: refused before anything runs unless all of it is as signed (the text that runs).
   const signedRoot = o.allowedSigners ? (o.signedRoot ?? repositoryRoot(o.file)) : undefined;
   if (o.allowedSigners && signedRoot) {
-    const check = await checkSignedRun(o.file, o.params, o.allowedSigners, signedRoot, { text: original });
+    // --name is the runbook's named on the command line, not the ones its calls run.
+    const policy = o.signedPolicy && o.callers ? { ...o.signedPolicy, name: undefined } : o.signedPolicy;
+    const check = await checkSignedRun(o.file, o.params, o.allowedSigners, signedRoot, { text: original, ...(policy ? { policy } : {}) });
     if (check.problems.length > 0) throw new RunUsageError(`not run as signed (--allowed-signers ${o.allowedSigners}); nothing ran:\n${check.problems.map((p) => `  ${p}`).join('\n')}`);
     io.log(`✓ signed${check.signer ? ` by ${check.signer}` : ''}, unchanged, parameters as signed`);
   }

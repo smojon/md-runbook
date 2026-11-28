@@ -31,6 +31,14 @@ describe('cli: arguments', () => {
     assert.ok(typeof j === 'object' && j.options.json === 'r.json');
   });
 
+  it('parses the signed run policy, only with --allowed-signers', () => {
+    const p = parseArgs(['run', 'x.md', '--allowed-signers', 'a', '--signers', '2', '--name', 'ops/x', '--revoked', 'r', '--floors', 'f', '--scope', 'web', '--scope', 'db,eu']);
+    assert.ok(typeof p === 'object');
+    assert.deepEqual(p.options.signedPolicy, { signers: 2, name: 'ops/x', revoked: 'r', floors: 'f', scopes: ['web', 'db', 'eu'] });
+    assert.throws(() => parseArgs(['run', 'x.md', '--name', 'ops/x']), /add --allowed-signers FILE/);
+    assert.throws(() => parseArgs(['run', 'x.md', '--allowed-signers', 'a', '--signers', '0']), /--signers expects a number/);
+  });
+
   it('help, version and usage errors', () => {
     assert.equal(parseArgs([]), 'help');
     assert.equal(parseArgs(['--help']), 'help');

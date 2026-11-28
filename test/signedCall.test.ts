@@ -11,11 +11,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { ShellSettings } from '@md-runbook/core';
-import { nodeShellEnv, resolveShell } from '@md-runbook/core/node';
+import { manifestHash, nodeShellEnv, resolveShell } from '@md-runbook/core/node';
 import { buildManifest, formatManifest, parseManifest, readSignature, signedStatus } from '@md-runbook/core/signing';
 import { lintRunbook } from '@md-runbook/core/lint';
 import { runRunbook } from '../src/cli/run';
-import { signedValueProblem } from '../src/cli/signedRun';
+import { SignedPolicy, floorOf, isRevoked, scopeAccepted, signedValueProblem } from '../src/cli/signedRun';
 import { signCommand, verifyCommand } from '../src/cli/sign';
 
 // The command line's record of the call copies it wrote: in a folder of these tests, not yours.
@@ -106,6 +106,36 @@ describe('signed runbook calls: sign, verify, run --allowed-signers', { skip: (!
     assert.ok(signedStatus(fs.readFileSync(edited, 'utf8'))!.changed.length === 1);
     assert.ok(lintRunbook(fs.readFileSync(edited, 'utf8')).some((p) => /changed since the runbook was signed/.test(p.message)));
     await assert.rejects(run(edited, { TO: '1', STAGE: 'dev' }), /edited\.md: line \d+: changed since signing/);
+  });
+
+  it('--signers, --name, --revoked, --floors and --scope refuse as gate.conf would (review, 2026-11-28)', async () => {
+    const parent = path.join(dir, 'repo/upgrade.md');
+    const runAs = (signedPolicy: SignedPolicy) =>
+      runRunbook(
+        { file: parent, write: false, params: { TO: '1', STAGE: 'dev' }, inputs: {}, yes: false, keepGoing: false, shell: settings, env: process.env, allowedSigners: allowed, signedPolicy },
+        { out: () => undefined, log: (l) => void lines.push(l) },
+      );
+    const hash = manifestHash(readSignature(fs.readFileSync(parent, 'utf8'))!.manifest);
+    await assert.rejects(runAs({ name: 'ops/other' }), /upgrade\.md: it is signed as upgrade, not ops\/other \(--name\)/);
+    await assert.rejects(runAs({ signers: 2 }), /upgrade version 1 needs 2 signers \(--signers\); signed by 1 trusted/);
+    const revoked = put('revoked', `# withdrawn\r\nSHA256:${hash.toUpperCase()}\r\n`);
+    await assert.rejects(runAs({ revoked }), /upgrade version 1 was withdrawn \(revoked in/);
+    await assert.rejects(runAs({ revoked: path.join(dir, 'missing') }), /can't read the revoked list/);
+    const floors = put('floors', 'other 9\nupgrade 2 # since the fix\n');
+    await assert.rejects(runAs({ floors }), /upgrade version 1 is older than the lowest version allowed \(2, in/);
+    await assert.rejects(runAs({ scopes: ['prod'] }), /upgrade is for no scope; this run accepts prod \(--scope\)/);
+    // The runbook called (signed as "1") is checked too, but not against --name.
+    await assert.rejects(runAs({ floors: put('floors1', '1 3\n') }), /releases\/1\.md: 1 version 1 is older than the lowest version allowed/);
+    lines.length = 0;
+    assert.ok((await runAs({ name: 'upgrade', signers: 1, scopes: ['*'], revoked: put('revoked2', 'ab\n'), floors: put('floors2', 'upgrade 1\n') })).ok, lines.join('\n'));
+    // The list formats, as md-runbook-gate reads them.
+    assert.equal(isRevoked(` sha256:${hash}\t\r\n`, hash), true);
+    assert.equal(isRevoked(hash.slice(1), hash), false);
+    assert.equal(floorOf('# x 9\nops/a 1x\nops/a 4\nops/a 5\n', 'ops/a'), '4');
+    assert.equal(floorOf('ops/ab 4\n', 'ops/a'), undefined);
+    assert.equal(scopeAccepted(['web', 'db'], ['db']), true);
+    assert.equal(scopeAccepted(['web'], []), false);
+    assert.equal(scopeAccepted(['*'], []), true);
   });
 
   it('checks inputs and captured values against their signed patterns, as the gate does (review, 2026-11-28)', async () => {

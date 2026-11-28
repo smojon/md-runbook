@@ -36,6 +36,14 @@
 - Now:
   - signing refuses them in bash blocks, runbook calls and fence lines;
   - lint warns about them. Write them as escapes, such as `$'\u202e'`.
+- **`md-runbook run --allowed-signers` didn't check what `gate.conf` adds.** Before:
+  - a revoked or floored version ran, whatever its scopes or number of signers;
+  - the docs said it checks "as the gate would".
+- Now:
+  - new options `--signers N`, `--revoked FILE`, `--floors FILE` and `--scope SCOPE` check what
+    the gate's settings of those names check, with the same file formats;
+  - `--name NAME` refuses a runbook signed under another name;
+  - the docs list what the command line checks, and what it doesn't.
 
 ### Relay, web app and library server: hardening
 

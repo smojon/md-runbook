@@ -74,10 +74,16 @@ Options:
   --copy-folder DIR    Where runbook calls (\`\`\`runbook blocks) write the copies of the runbooks
                        they run, relative to each one (default: next to it)
   --allowed-signers FILE
-                       Run only as signed, as a server with md-runbook-gate would: the
-                       runbook's signature is good by a key in FILE, nothing changed since
-                       signing, parameters match their patterns, and the runbooks its calls
-                       run are signed and in its repository; else nothing runs (exit 2)
+                       Run only as signed: the runbook's signature is good by a key in FILE,
+                       nothing changed since signing, parameters, inputs and captured values
+                       match their patterns, and the runbooks its calls run are signed and in
+                       its repository; else nothing runs (exit 2)
+  With --allowed-signers, also as gate.conf would (each for the runbooks its calls run too):
+  --signers N          At least N distinct trusted signers (co-signatures)
+  --name NAME          The runbook must be signed as NAME (only the runbook named here)
+  --revoked FILE       Refuse a manifest whose sha256 is in FILE (one per line)
+  --floors FILE        Refuse versions below NAME LOWEST lines in FILE
+  --scope SCOPE        Run only runbooks signed for SCOPE (repeatable; * = any, also none)
   --fresh-copy         A runbook call that failed before starts a new copy, instead of
                        continuing the one it ran (keeping the steps done there)
   --session            Run all blocks of a shell in one process (like session mode)
@@ -244,6 +250,17 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
       case '--copy-folder': o.copyFolder = value(a); break;
       case '--fresh-copy': o.freshCopy = true; break;
       case '--allowed-signers': o.allowedSigners = value(a); break;
+      // What a gate's gate.conf would require too (signedRun.ts SignedPolicy).
+      case '--signers': {
+        const v = value(a);
+        if (!/^[1-9][0-9]{0,2}$/.test(v)) throw new UsageError(`--signers expects a number of signers (1, 2, …), got "${v}"`);
+        (o.signedPolicy ??= {}).signers = Number(v);
+        break;
+      }
+      case '--name': (o.signedPolicy ??= {}).name = value(a); break;
+      case '--revoked': (o.signedPolicy ??= {}).revoked = value(a); break;
+      case '--floors': (o.signedPolicy ??= {}).floors = value(a); break;
+      case '--scope': ((o.signedPolicy ??= {}).scopes ??= []).push(...value(a).split(/[\s,]+/).filter(Boolean)); break;
       case '--report-to-allowed': reportAllowed.push(value(a)); break;
       case '--key': key = value(a); break;
       default:
@@ -253,6 +270,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs | 'help' | 'versi
     }
   }
   if (!o.file) throw new UsageError('missing the runbook file');
+  if (o.signedPolicy && !o.allowedSigners) throw new UsageError('--signers, --name, --revoked, --floors and --scope check a signed run: add --allowed-signers FILE');
   if (o.from !== undefined && o.to !== undefined && o.from > o.to) throw new UsageError(`--from ${o.from} is after --to ${o.to}`);
   return { options: o, reportAllowed, ...(key ? { key } : {}), ...(pdf ? { pdf } : {}), ...(browser ? { browser } : {}), ...(notify ? { notify } : {}), ...(notifyOn ? { notifyOn } : {}), quiet, ...(noProgressBar ? { noProgressBar } : {}) };
 }
