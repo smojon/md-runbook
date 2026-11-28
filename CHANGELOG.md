@@ -45,6 +45,13 @@
     the gate's settings of those names check, with the same file formats;
   - `--name NAME` refuses a runbook signed under another name;
   - the docs list what the command line checks, and what it doesn't.
+- **The signing workflow in the docs kept its key as a repository secret.** Before:
+  - anyone with write access could push a workflow that reads it.
+- Now [the recipe](docs/features/signed-runbooks.md#from-a-repository):
+  - keeps the key in an environment, limited to protected branches, with required reviewers;
+  - writes it under `$RUNNER_TEMP` and removes it after the step.
+- **Upgrade:** move `RUNBOOK_SIGNING_KEY` to such an environment, and delete the repository
+  secret.
 
 ### Relay, web app and library server: hardening
 

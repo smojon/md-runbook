@@ -101,17 +101,46 @@ Sign in VS Code or on the command line for that check.
 ### From a repository
 
 Runbooks are reviewed in pull requests. On merge to a protected branch, a workflow signs them
-with a key from the repository's secrets and publishes them. Servers trust only that key, so the
-review becomes the release (the [command line](cli.md#getting-it) on the runner):
+and publishes them. Servers trust only that workflow's key, so the review becomes the release
+(the [command line](cli.md#getting-it) on the runner).
+
+Keep the key out of the repository's secrets. Anyone with write access can read those: they can
+push a workflow on a branch that prints them
+([Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)).
+Instead, under **Settings → Environments**, make an environment such as `runbook-signing`:
+
+- **Deployment branches and tags:** *Protected branches only*, or *Selected branches* with your
+  release branch;
+- **Required reviewers:** the people who release runbooks, with **Prevent self-review**;
+- **Environment secrets:** the key, as `RUNBOOK_SIGNING_KEY`.
+
+Only jobs that name the environment get its secrets, after a reviewer approves them
+([Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)).
 
 ```yaml
-- run: |
-    printf '%s\n' "$SIGNING_KEY" > key && chmod 600 key
-    for f in runbooks/*.md; do md-runbook sign "$f" --key key; done
-    rm key
-  env:
-    SIGNING_KEY: ${{ secrets.RUNBOOK_SIGNING_KEY }}
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    environment: runbook-signing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          key="$RUNNER_TEMP/runbook-signing-key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$SIGNING_KEY" > "$key")
+          for f in runbooks/*.md; do md-runbook sign "$f" --key "$key"; done
+        env:
+          SIGNING_KEY: ${{ secrets.RUNBOOK_SIGNING_KEY }}
+      # then publish the signed runbooks (a commit, a release, `md-runbook publish`)
 ```
+
+- The key goes to `$RUNNER_TEMP`, outside the checkout, and is removed when the step ends.
+- Signing again keeps the name, scopes and patterns only from a signature by this key. A pull
+  request that edits them in the file fails here: give them with `--name`, `--scope` and
+  `--pattern`.
+- Don't pass `--allowed-signers` a file from the repository: a pull request can change it.
 
 ## What is signed
 
