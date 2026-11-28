@@ -60,7 +60,8 @@ import { ManualStep, PlannedBlock, RunUsageError, formatSteps, headingsOf, missi
 import { taskItems } from '@md-runbook/core';
 import { RunbookPart, partOf, runbookParts } from '@md-runbook/core/parts';
 import { runbookTitle } from '@md-runbook/core/title';
-import { checkSignedRun, insideRoot, repositoryRoot } from './signedRun';
+import { checkSignedRun, insideRoot, repositoryRoot, signedValueProblem } from './signedRun';
+import { signedStatus } from '@md-runbook/core/signing';
 import { LINE_RE } from '@md-runbook/core/lines';
 
 export interface CliOptions {
@@ -194,6 +195,11 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
     if (check.problems.length > 0) throw new RunUsageError(`not run as signed (--allowed-signers ${o.allowedSigners}); nothing ran:\n${check.problems.map((p) => `  ${p}`).join('\n')}`);
     io.log(`✓ signed${check.signer ? ` by ${check.signer}` : ''}, unchanged, parameters as signed`);
   }
+  // A signed run: every value a signed block gets is checked against its signed pattern, as the
+  // gate checks them: inputs and captured values too, not only parameters (review, 2026-11-28).
+  const signedPatterns = signedRoot ? (signedStatus(original)?.manifest.patterns ?? {}) : undefined;
+  const signedProblem = (ref: VarRef, value: string): string | undefined =>
+    signedPatterns && ref.kind !== 'secret' ? signedValueProblem(signedPatterns, ref, value) : undefined;
   const fileName = path.basename(o.file);
   const mdDir = path.dirname(path.resolve(o.file));
   const parsedFm = parseFrontMatter(original);
@@ -326,6 +332,25 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
       captures: (opts.checks?.captures ?? []).map((c) => c.name),
     };
   });
+  if (signedPatterns) {
+    // Inputs are known before the first step: one that doesn't match stops the run before it starts.
+    const bad = new Set<string>();
+    for (const b of blocks) {
+      if (!b.runs) continue;
+      let refs: VarRef[] = [];
+      try {
+        refs = isCallLanguage(b.loc.language) ? callRefs(parseCall(b.loc.info, b.loc.source)) : shellKindForLanguage(b.loc.language) ? findRefs(b.loc.source) : [];
+      } catch {
+        continue; // reported when the step runs
+      }
+      for (const ref of refs) {
+        const v = ref.kind === 'input' ? givenValue(ref) : undefined;
+        const why = v ? signedProblem(ref, v.value) : undefined;
+        if (why) bad.add(`  Step ${b.n} · ${fileName}:${b.loc.line + 1}: ${redact(why)}`);
+      }
+    }
+    if (bad.size > 0) throw new RunUsageError(`not run as signed (--allowed-signers ${o.allowedSigners}); nothing ran:\n${[...bad].join('\n')}`);
+  }
   const uncaptured = missingCaptures(blocks, fileName);
   if (uncaptured.length > 0) {
     throw new RunUsageError(`${uncaptured.join('\n')}\nselect the step that captures it too (a run starts without captured values); nothing ran`);
@@ -644,6 +669,11 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
             missing = v.missing;
             break;
           }
+          const unsigned = signedProblem(ref, v.value);
+          if (unsigned) {
+            missing = redact(unsigned);
+            break;
+          }
           values.set(ref.name, v);
           if (v.secret) addSecret(v.value);
         }
@@ -853,10 +883,17 @@ export async function runRunbook(o: CliOptions, io: CliIO): Promise<RunSummary> 
         notRun(e instanceof Error ? e.message : String(e), 'error');
         continue;
       }
+      // The values the code gets go to the gate in a signed run (the checks' stay here).
+      const codeNames = signedPatterns ? new Set(findRefs(loc.source).map((r) => `${r.kind}:${r.name}`)) : undefined;
       for (const ref of refs) {
         const v = lookup(ref);
         if ('missing' in v) {
           missing = v.missing;
+          break;
+        }
+        const unsigned = codeNames?.has(`${ref.kind}:${ref.name}`) ? signedProblem(ref, v.value) : undefined;
+        if (unsigned) {
+          missing = redact(unsigned);
           break;
         }
         env[ref.name] = v.value;

@@ -262,10 +262,15 @@ the gate would. Before anything runs, it refuses (exit `2`) when:
 - the signature is not good by a key in `FILE`, or has expired;
 - a block or a call changed, moved or was removed since signing;
 - a block that would run is not signed (only bash/sh blocks are);
-- a parameter doesn't match its signed pattern;
+- a parameter, or an input given with `--input` or the environment, doesn't match its signed
+  pattern;
 - a call's runbook is outside the repository (the folder with `.git`), doesn't exist, or is not
   signed;
 - a call's runbook fails these same checks with the values the call passes.
+
+A captured value (`${out:NAME}`) is checked when the step that uses it would run. When it doesn't
+match its signed pattern, that step doesn't run and the run fails. A value with no signed pattern
+is refused too, as the gate refuses it.
 
 A call whose `src=` uses `${out:}` or `${input:}` is checked when it runs.
 `md-runbook verify --allowed-signers FILE` checks a runbook's calls with fixed `src=` too, and

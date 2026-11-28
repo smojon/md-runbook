@@ -15,6 +15,7 @@ import { nodeShellEnv, resolveShell } from '@md-runbook/core/node';
 import { buildManifest, formatManifest, parseManifest, readSignature, signedStatus } from '@md-runbook/core/signing';
 import { lintRunbook } from '@md-runbook/core/lint';
 import { runRunbook } from '../src/cli/run';
+import { signedValueProblem } from '../src/cli/signedRun';
 import { signCommand, verifyCommand } from '../src/cli/sign';
 
 // The command line's record of the call copies it wrote: in a folder of these tests, not yours.
@@ -105,6 +106,34 @@ describe('signed runbook calls: sign, verify, run --allowed-signers', { skip: (!
     assert.ok(signedStatus(fs.readFileSync(edited, 'utf8'))!.changed.length === 1);
     assert.ok(lintRunbook(fs.readFileSync(edited, 'utf8')).some((p) => /changed since the runbook was signed/.test(p.message)));
     await assert.rejects(run(edited, { TO: '1', STAGE: 'dev' }), /edited\.md: line \d+: changed since signing/);
+  });
+
+  it('checks inputs and captured values against their signed patterns, as the gate does (review, 2026-11-28)', async () => {
+    const runWith = (file: string, inputs: Record<string, string>) =>
+      runRunbook(
+        { file, write: false, params: {}, inputs, yes: false, keepGoing: false, shell: settings, env: {}, allowedSigners: allowed },
+        { out: () => undefined, log: (l) => void lines.push(l) },
+      );
+    const input = put('repo/input.md', '# Input\n\n```bash\necho "pod [${input:POD}]"\n```\n');
+    assert.equal(await signCommand([input, '--key', key, '--pattern', 'POD=[a-z]+'], out), 0, lines.join('\n'));
+    // Known before the run: refused before anything runs.
+    await assert.rejects(runWith(input, { POD: 'x; rm -rf /' }), /nothing ran:\n {2}Step 1 · input\.md:3: POD="x; rm -rf \/" doesn't match its signed pattern \[a-z\]\+/);
+    lines.length = 0;
+    assert.ok((await runWith(input, { POD: 'web' })).ok, lines.join('\n'));
+
+    // Captured by an earlier step: refused when the step that uses it would run.
+    const captured = put('repo/captured.md', '# Out\n\n```bash capture=POD\necho "not a pod!"\n```\n\n```bash\necho "pod [${out:POD}]"\n```\n');
+    assert.equal(await signCommand([captured, '--key', key, '--pattern', 'POD=[a-z]+'], out), 0, lines.join('\n'));
+    lines.length = 0;
+    const r = await runWith(captured, {});
+    assert.equal(r.ok, false);
+    assert.deepEqual(r.steps.map((s) => s.status), ['passed', 'not run']);
+    assert.match(r.steps[1]!.message ?? '', /POD="not a pod!" doesn't match its signed pattern \[a-z\]\+/);
+
+    // A name with no signed pattern: the gate refuses it, so does the run.
+    assert.equal(signedValueProblem({}, { kind: 'input', name: 'POD' }, 'web'), '${input:POD} has no signed pattern, so a signed run takes no value for it');
+    assert.equal(signedValueProblem({ POD: '[a-z]+' }, { kind: 'out', name: 'POD' }, 'web'), undefined);
+    assert.match(signedValueProblem({ POD: '[a-z]+' }, { kind: 'out', name: 'POD' }, 'web\nx') ?? '', /doesn't match/);
   });
 
   it('refuses a front matter changed after signing: env:, cwd: and shell: change how every cell runs (security review, 2026-11-16)', async () => {

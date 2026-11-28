@@ -15,6 +15,12 @@
   - the result lists the scopes and patterns signed.
 - **Upgrade:** a workflow that signs with another key than the last signature needs
   `--allowed-signers`, or `--name`, `--scope` and `--pattern` again.
+- **`md-runbook run --allowed-signers` checked only parameters.** Before:
+  - `${input:NAME}` and `${out:NAME}` values reached signed blocks unchecked, unlike on a gate.
+- Now:
+  - an input that doesn't match its signed pattern stops the run before anything runs;
+  - a captured value that doesn't match stops the step that uses it;
+  - a value with no signed pattern is refused, as the gate refuses it.
 
 ### Relay, web app and library server: hardening
 

@@ -46,6 +46,18 @@ export function matchesPattern(value: string, pattern: string): boolean {
   return matchesSignedPattern(pattern, value);
 }
 
+/**
+ * Why a signed block can't get this value, as the gate checks the values it is given: no pattern
+ * is signed under the name (the gate refuses a name its manifest has none for), or the value
+ * doesn't match it. undefined when it matches. Inputs and captured values too: before, a signed
+ * run checked only parameters (review, 2026-11-28).
+ */
+export function signedValueProblem(patterns: Readonly<Record<string, string>>, ref: { kind: string; name: string }, value: string): string | undefined {
+  const re = Object.prototype.hasOwnProperty.call(patterns, ref.name) ? patterns[ref.name] : undefined;
+  if (re === undefined) return `\${${ref.kind}:${ref.name}} has no signed pattern, so a signed run takes no value for it`;
+  return matchesPattern(value, re) ? undefined : `${ref.name}=${JSON.stringify(value)} doesn't match its signed pattern ${re}`;
+}
+
 const today = (): string => new Date().toISOString().slice(0, 10);
 
 export interface SignedCheck {
