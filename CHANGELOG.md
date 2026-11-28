@@ -26,6 +26,10 @@ Low findings of the 2026-11-27 security review.
   privileges. The library's and the web README's also send HSTS.
 - **The library server could rewrite `allowed_signers`.** It sat in the folder the server
   writes. Now the compose example mounts it read-only.
+- **The web image's headers.** Now nginx:
+  - sends the page's own Content-Security-Policy as a header, plus `frame-ancestors 'none'`;
+  - sends `Permissions-Policy` (the camera only) and `Cross-Origin-Opener-Policy: same-origin`;
+  - names no version (`server_tokens off`).
 
 ## 0.36.0
 

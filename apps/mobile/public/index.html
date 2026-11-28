@@ -13,7 +13,8 @@
       connect-src: https and wss anywhere, as the relay, the team library and the assistant
       (api.anthropic.com) are addresses set in the app, not at build time; ws and http only on
       this machine (a relay on localhost, as the app allows).
-      The web container (apps/web/nginx.conf) also sends frame-ancestors 'none' as a header.
+      The web container (apps/web/nginx.conf) sends this policy as a header too, plus
+      frame-ancestors 'none': change both together (the Web image workflow compares them).
     -->
     <meta
       http-equiv="Content-Security-Policy"

@@ -31,11 +31,20 @@ jobs:
           # A runbook link (/open?...) and a runbook's page are the app too, with status 200.
           curl -fsS 'http://127.0.0.1:8080/open?url=https%3A%2F%2Fexample.net%2Fr.md' | cmp - index.html
           curl -fsS http://127.0.0.1:8080/runbook/x | cmp - index.html
+          # The page's policy, as its meta tag says it: the header must say the same, plus frame-ancestors.
+          meta="$(tr '\n' ' ' < index.html | grep -o 'http-equiv="Content-Security-Policy"[[:space:]]*content="[^"]*"' | sed 's/.*content="//; s/"$//')"
+          test -n "$meta"
           # No other site may frame the app (a page could make you click Run on it).
           for page in / '/open?url=https%3A%2F%2Fexample.net%2Fr.md'; do
             curl -fsS -o /dev/null -D frame.txt "http://127.0.0.1:8080$page"
-            grep -qi "^content-security-policy: frame-ancestors 'none'" frame.txt
+            csp="$(grep -i '^content-security-policy:' frame.txt | sed 's/^[^:]*: *//' | tr -d '\r')"
+            test "$csp" = "$meta; frame-ancestors 'none'"
             grep -qi '^x-frame-options: DENY' frame.txt
+            grep -qi '^permissions-policy: camera=(self), microphone=()' frame.txt
+            grep -qi '^cross-origin-opener-policy: same-origin' frame.txt
+            # No version in the Server header; no HSTS from plain http (the https front sends it).
+            grep -qiE '^server: nginx'$'\r''?$' frame.txt
+            if grep -qi '^strict-transport-security' frame.txt; then echo 'HSTS from plain http'; exit 1; fi
           done
           bundle="$(grep -o '/_expo/static/js/[^"]*\.js' index.html | head -1)"
           curl -fsSI "http://127.0.0.1:8080$bundle" | tee headers.txt
