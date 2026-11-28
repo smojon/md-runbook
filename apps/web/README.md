@@ -97,6 +97,12 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
+      - caddy-config:/config
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ['no-new-privileges:true']
 
 secrets:
   relay_token:
@@ -104,16 +110,35 @@ secrets:
 
 volumes:
   caddy-data:
+  caddy-config:
 ```
 
 and the `Caddyfile` next to it:
 
 ```caddyfile
 runbooks.example.net {
+	header Strict-Transport-Security "max-age=31536000"
 	reverse_proxy /v1/* relay:8022
 	reverse_proxy web:8080
+
+	log {
+		format filter {
+			request>headers>Sec-Websocket-Protocol replace REDACTED
+		}
+	}
 }
 ```
+
+- **Caddy** writes only to its `/data` (certificates) and `/config` volumes. It needs no
+  capability but binding ports 80 and 443.
+- **HSTS** (`Strict-Transport-Security`) comes from Caddy, the https front:
+  - browsers then refuse plain http on that name for a year;
+  - the container doesn't send it: only the front knows that https is in place;
+  - browsers ignore HSTS over plain http anyway, as on `http://localhost`.
+- **The access log** hides the relay token:
+  - the browser sends it in the `Sec-WebSocket-Protocol` header, which Caddy doesn't hide by itself;
+  - write the name as above, `Websocket` with a small `s`: that is how Caddy names the header;
+  - remove the `log` block for no access log.
 
 With a Cloudflare quick tunnel instead of Caddy, the tunnel's address changes on every start.
 Set `MD_RUNBOOK_PUBLIC_URL` to it and restart the web container. Or set it in the app under

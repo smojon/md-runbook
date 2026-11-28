@@ -57,7 +57,11 @@ services:
     ports: ['80:80', '443:443']
     volumes:
       - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
+      # Caddy writes its certificates to /data and its last config to /config: the rest is read-only.
       - caddy-data:/data
+      - caddy-config:/config
+    read_only: true
+    tmpfs: [/tmp]
     # Caddy needs no capability but binding ports 80 and 443 (Docker allows that anyway, other runtimes may not).
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
@@ -69,4 +73,5 @@ secrets:
 
 volumes:
   caddy-data:
+  caddy-config:
   ops-state:

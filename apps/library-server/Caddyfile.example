@@ -1,4 +1,8 @@
 runbooks.example.net {
+	# Browsers that came here once over https never try plain http on this name again, for a year.
+	# Not includeSubDomains: other names under yours may still serve http.
+	header Strict-Transport-Security "max-age=31536000"
+
 	# The library server's paths only. Not /v1/server-info: on the web app's own address that
 	# is the relay's question (the web app asks it to find a relay).
 	@library path /v1/library/* /v1/runs /v1/runs/* /v1/alerts /v1/alerts/* /v1/devices /v1/devices/*
@@ -8,4 +12,6 @@ runbooks.example.net {
 	handle {
 		reverse_proxy web:8080
 	}
+	# With an access log (`log`), Caddy writes the Authorization header, which holds the tokens,
+	# as REDACTED by itself.
 }

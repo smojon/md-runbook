@@ -282,8 +282,19 @@ docker compose -f compose.example.yml up -d
 curl https://runbooks.example.net/runbooks/index.json
 ```
 
-The web container reads `library/` read-only; only this server writes it. Without Docker, with
-Node 22 and OpenSSH 8.2 or newer:
+The web container reads `library/` read-only; only this server writes it.
+
+`library/allowed_signers` is mounted read-only over that folder, so the server can't change who
+may publish:
+
+- Docker mounts the file itself, not its name.
+- Edit it in place, or restart the server after replacing it.
+- A file replaced without a restart leaves the server reading the old one.
+
+Caddy runs with a read-only root and only the capability to bind ports 80 and 443. It writes to
+its `/data` and `/config` volumes only.
+
+Without Docker, with Node 22 and OpenSSH 8.2 or newer:
 
 ```sh
 npm ci && npm run build
@@ -370,6 +381,7 @@ LIBRARY_DIR=/srv/runbooks LIBRARY_UPLOAD_TOKENS=… npm start
 - **The library folder** is written only by this server, only below `LIBRARY_DIR`, and
   atomically. It is never written through a symbolic link, and never as a hidden file. The web
   container mounts it read-only.
+  - In the compose example, `allowed_signers` is read-only for this server too.
 - **Limits:** body sizes, requests per client per minute, 30 seconds per request.
 - **The container** runs as `node` (uid 1000), with all capabilities dropped. Its root is
   read-only, with `/tmp` as tmpfs (for ssh-keygen's temporary files). It needs no outbound network,

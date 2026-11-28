@@ -19,6 +19,13 @@ Low findings of the 2026-11-27 security review.
   Now each setting has a range, and the relay refuses to start outside it.
 - **Relay logs didn't say which token a session used.** Now they name it by a short hash, such
   as `token-3f9a1b2c`. Never the token itself.
+- **A Caddy access log would have held the relay token.** The browser sends it in the
+  `Sec-WebSocket-Protocol` header, which Caddy doesn't redact. Now the relay's Caddyfile and the
+  web README's log it as `REDACTED`.
+- **Caddy in the compose examples:** a read-only root, no capability but binding ports, no new
+  privileges. The library's and the web README's also send HSTS.
+- **The library server could rewrite `allowed_signers`.** It sat in the folder the server
+  writes. Now the compose example mounts it read-only.
 
 ## 0.36.0
 

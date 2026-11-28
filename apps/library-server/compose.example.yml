@@ -56,6 +56,10 @@ services:
     secrets: [upload, runs, gate, read, alerts] # with pushes: fcm, apns, devices
     volumes:
       - ./library:/library
+      # The signers read-only, over the writable folder: the server can't change who may publish.
+      # Docker mounts the file itself, so edit it in place, or restart this service after
+      # replacing it (an editor that saves to a new file leaves the old one mounted).
+      - ./library/allowed_signers:/library/allowed_signers:ro
       - ./config:/config:ro
       - library-data:/data
     read_only: true
@@ -76,7 +80,15 @@ services:
     ports: ['80:80', '443:443']
     volumes:
       - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
+      # Caddy writes its certificates to /data and its last config to /config: the rest is read-only.
       - caddy-data:/data
+      - caddy-config:/config
+    read_only: true
+    tmpfs: [/tmp]
+    # Caddy needs no capability but binding ports 80 and 443 (Docker allows that anyway, other runtimes may not).
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ['no-new-privileges:true']
 
 secrets:
   upload:
@@ -99,3 +111,4 @@ secrets:
 volumes:
   library-data:
   caddy-data:
+  caddy-config:
