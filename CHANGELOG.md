@@ -30,6 +30,10 @@ Low findings of the 2026-11-27 security review.
   - sends the page's own Content-Security-Policy as a header, plus `frame-ancestors 'none'`;
   - sends `Permissions-Policy` (the camera only) and `Cross-Origin-Opener-Policy: same-origin`;
   - names no version (`server_tokens off`).
+- **The web app printed reports in a window of its own origin.** Now:
+  - it prints them from a hidden frame that can't run script;
+  - the report already escaped the runbook's text and blocked script: the frame is a second wall;
+  - no popup to allow either.
 
 ## 0.36.0
 

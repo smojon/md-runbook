@@ -15,15 +15,45 @@ function download(name: string, text: string, type: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+const PRINT_FRAME = 'md-runbook-print-frame';
+
+/**
+ * Prints the report from a hidden frame that can't run script: `sandbox` without allow-scripts.
+ * The report escapes the runbook's text and forbids script itself (its own CSP). The frame is a
+ * second wall: even a report that slipped through could not reach the app's window or storage.
+ * Before, the report was written into a new same-origin window (threat-model review, 2026-11-27).
+ * allow-same-origin lets this page call the frame's print(); allow-modals lets the dialog open.
+ */
+function printHtml(html: string): Promise<void> {
+  // The last report's frame goes only now: a print preview may still read it after print() returns.
+  document.getElementById(PRINT_FRAME)?.remove();
+  const frame = document.createElement('iframe');
+  frame.id = PRINT_FRAME;
+  frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
+  frame.setAttribute('aria-hidden', 'true');
+  frame.tabIndex = -1;
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  return new Promise((resolve, reject) => {
+    frame.addEventListener(
+      'load',
+      () => {
+        const w = frame.contentWindow;
+        if (!w) return reject(new Error('the browser did not open the print frame'));
+        w.focus();
+        w.print();
+        resolve();
+      },
+      { once: true },
+    );
+    frame.srcdoc = html;
+    document.body.appendChild(frame);
+  });
+}
+
 export async function exportReport(runbook: Runbook, kind: 'html' | 'pdf'): Promise<void> {
   const html = reportHtml(runbook);
   if (kind === 'html') return download(`${baseName(runbook)}.report.html`, html, 'text/html');
-  const w = window.open('', '_blank');
-  if (!w) throw new Error('the browser blocked the print window');
-  w.document.write(html);
-  w.document.close();
-  w.focus();
-  w.print();
+  await printHtml(html);
 }
 
 export async function shareRunbook(runbook: Runbook): Promise<void> {
