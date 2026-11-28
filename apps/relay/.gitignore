@@ -4,3 +4,5 @@
 /compose.yml
 /Caddyfile
 /ops/
+/relay-connectors.txt
+/relay-clients.txt

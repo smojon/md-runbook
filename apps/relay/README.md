@@ -97,14 +97,122 @@ little: one CPU and 1 GB of memory.
 To update the relay: `git pull && sudo docker compose up -d --build`. Git ignores your
 `compose.yml`, `Caddyfile` and `relay-token.txt`.
 
+## Pairing mode
+
+In pairing mode an ops host needs no inbound port:
+
+1. A connector next to its sshd dials out to the relay and waits.
+2. A client asks the relay for the ops host by name.
+3. The relay pairs the two WebSockets.
+
+- SSH still runs end to end: the relay sees encrypted SSH traffic only.
+- Pairing mode and `RELAY_TARGETS` work side by side. With connectors set, `RELAY_TARGETS` is
+  optional.
+- The design and the wire protocol: [docs/design/relay-pairing.md](../../docs/design/relay-pairing.md).
+
+### Tokens
+
+Pairing mode adds two files, one line per token. Lines starting with `#` and empty lines don't
+count.
+
+`RELAY_CONNECTORS_FILE`: the connectors, as `name token [ranges]`.
+
+```text
+# name   token                                     ranges (optional)
+prod-eu  mdrbc-replace-me-with-openssl-rand-hex-32   203.0.113.0/24,2001:db8:5::/48
+staging  mdrbc-another-one-for-staging-replace-me
+```
+
+- A connector token registers only its own name. With ranges, only from those source addresses.
+- A connector token must start with `mdrbc-`. No other token may.
+- A name: lowercase letters, digits and `-`, up to 63 characters, not starting with `-`.
+- A name may have several lines, for example to rotate its token.
+
+`RELAY_CLIENTS_FILE`: the clients, as `token names`.
+
+```text
+# token                                   names
+replace-me-alice-openssl-rand-hex-32     prod-eu,staging
+replace-me-on-call-team-token-hex-32     *
+```
+
+- `*` allows every name.
+- Tokens from `RELAY_TOKEN`, `RELAY_TOKENS` and `RELAY_TOKEN_FILE` count as client tokens for
+  every name, too.
+- A client token on a connector's endpoint gets 401. So does a connector token on a client's.
+  Both count as failed checks.
+
+Rules for every token, checked at start:
+
+- at least 24 characters, letters and digits (`openssl rand -hex 32`; prefix `mdrbc-` for a
+  connector);
+- the same token twice, in any file or variable, stops the relay.
+
+Make a connector token with `printf 'mdrbc-%s\n' "$(openssl rand -hex 32)"`.
+
+### Limits
+
+- `RELAY_MAX_CONNECTIONS` and `RELAY_MAX_PER_CLIENT` count client sessions of both modes.
+  A client waiting for its connector counts too.
+- `RELAY_MAX_PER_NAME` caps the client sessions of one name.
+- `RELAY_MAX_CONNECTORS_PER_NAME` caps the connectors of one name: 2 by default, for a rollout.
+- New sessions go to the oldest connector of a name. A second one logs `connector-duplicate`.
+- Connectors count per name, not per address: a cluster's connectors may share one address.
+
+A client waits at most 10 s for the connector. It gets an HTTP answer before any SSH byte:
+
+| Status | Meaning |
+|---|---|
+| 503 | No connector for that name, or it refused the session, or it went away. |
+| 504 | The connector didn't answer within 10 s. |
+
+### With Docker Compose
+
+Keep both files next to `compose.example.yml`, as Docker secrets. Git ignores
+`relay-connectors.txt` and `relay-clients.txt`.
+
+```yaml
+services:
+  relay:
+    environment:
+      RELAY_TOKEN_FILE: /run/secrets/relay_token
+      RELAY_CONNECTORS_FILE: /run/secrets/relay_connectors
+      RELAY_CLIENTS_FILE: /run/secrets/relay_clients
+    secrets: [relay_token, relay_connectors, relay_clients]
+
+secrets:
+  relay_token:
+    file: ./relay-token.txt
+  relay_connectors:
+    file: ./relay-connectors.txt
+  relay_clients:
+    file: ./relay-clients.txt
+```
+
+The relay runs as user `node`: each file must be readable by it. To revoke a token, remove its
+line and restart the relay.
+
+### Logs in pairing mode
+
+- `connector-up` and `connector-down`: the name, the token's name, the connector's address, and
+  why it went.
+- `connector-duplicate`: a second connector of a name, with both addresses.
+- `open` and `close` gain `"mode":"pair"`, the name, the session and the connector's address.
+- The session is the first 8 characters of its id. The relay never logs a token or a whole id.
+
 ## Settings
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RELAY_TOKEN` | required | The token clients send. At least 24 characters, letters and digits (`openssl rand -hex 32`): the browser sends it in a header, so base64's `/` and `=` are refused. |
+| `RELAY_TOKEN` | required | The token clients send. At least 24 characters, letters and digits (`openssl rand -hex 32`): the browser sends it in a header, so base64's `/` and `=` are refused. In pairing mode, `RELAY_CLIENTS_FILE` may replace it. |
 | `RELAY_TOKENS` | | More tokens, comma-separated, for example one per person. |
 | `RELAY_TOKEN_FILE` | | A file with tokens, one per line, for Docker secrets. |
-| `RELAY_TARGETS` | required | `host:port` pairs, comma-separated. `*:22` allows any public host on port 22; a server on the relay itself or a private network (127.x, 10.x, 192.168.x, …) must be listed by name or address. |
+| `RELAY_TARGETS` | required | `host:port` pairs, comma-separated. `*:22` allows any public host on port 22; a server on the relay itself or a private network (127.x, 10.x, 192.168.x, …) must be listed by name or address. Optional with `RELAY_CONNECTORS_FILE`. |
+| `RELAY_CONNECTORS_FILE` | | Pairing mode: the connectors' names, tokens and source ranges (see [Pairing mode](#pairing-mode)). |
+| `RELAY_CLIENTS_FILE` | | Pairing mode: client tokens and the names each may reach. Needs `RELAY_CONNECTORS_FILE`. |
+| `RELAY_MAX_PER_NAME` | `32` | Client sessions per connector name, waiting ones included, 1 or more. |
+| `RELAY_MAX_CONNECTORS_PER_NAME` | `2` | Connectors per name, 1 or more. |
+| `RELAY_ID` | the host name | The relay's name in its `hello` to connectors, for their logs. |
 | `RELAY_ORIGINS` | any | Page origins allowed to connect, such as `https://runbooks.example.net`. |
 | `RELAY_HOST` | `127.0.0.1` | Address to listen on. The container uses `0.0.0.0`. |
 | `RELAY_PORT` | `8022` | Port to listen on, 0 to 65535. 0: a port the system picks. |
@@ -134,6 +242,8 @@ Version 1:
   `token.<token>`. Binary frames carry the SSH bytes.
 - A frame from the browser holds at most 257 KiB: one SSH packet. OpenSSH refuses a packet
   over 256 KiB anyway. A larger frame closes the session (code 1009).
+- In pairing mode the capabilities are `["ssh","pair.v1"]`, and three more WebSockets exist:
+  `/v1/connect`, `/v1/connector` and `/v1/connector/accept`. The protocol number stays 1.
 
 A future protocol gets a new path and subprotocol, and the relay keeps serving the old one for a
 while. Update the relay before the app.
