@@ -55,12 +55,19 @@ updates:
       compose:
         patterns: ['*']
   # The relay's and library server's npm packages (the relay pinned a ws with an advisory).
+  # @types/node stays on the images' Node major (22), and a TypeScript major is a change of
+  # its own, like a new Node major.
   - package-ecosystem: npm
     directories: [/apps/relay, /apps/library-server]
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
     groups:
       servers:
         patterns: ['*']
