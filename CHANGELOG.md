@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Signed runbooks: review fixes
+
+- **Signing again trusted an edited manifest.** Before:
+  - `md-runbook sign` and **Sign Runbook** kept the old signature's name, version, scopes and
+    patterns without checking that signature;
+  - so a pull request could loosen a pattern in the file, and the signing workflow signed it.
+- Now:
+  - they are kept only when the old signature is by the key signing now, or by a trusted signer
+    (`--allowed-signers FILE`; in VS Code `mdRunbook.signing.allowedSigners`);
+  - otherwise nothing is kept, and it says so;
+  - the result lists the scopes and patterns signed.
+- **Upgrade:** a workflow that signs with another key than the last signature needs
+  `--allowed-signers`, or `--name`, `--scope` and `--pattern` again.
+
 ### Relay, web app and library server: hardening
 
 Low findings of the 2026-11-27 security review.

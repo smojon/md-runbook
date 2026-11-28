@@ -15,12 +15,14 @@ import { recordDigest, recordSigners, recordStatement, recordStatus, withRecordC
 import { formatRunbookLink } from '@md-runbook/core/runbookLink';
 import { pushedRunbook } from './openInApp';
 import { findRefs } from '@md-runbook/core/secrets';
-import { checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign } from '@md-runbook/core/node';
+import { checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, signedByKey, sshSign } from '@md-runbook/core/node';
+import { checkSigner } from './signerCheck';
 import { executionConfig } from './config';
 import {
   ManifestMeta,
   RUNBOOK_NAME_RE,
   SCOPE_RE,
+  allSignatures,
   buildManifest,
   cosignProblem,
   cosignRulesText,
@@ -67,11 +69,42 @@ async function signRunbook(uri?: unknown): Promise<void> {
   await saveIfOpen(target);
   const text = decoder.decode(await vscode.workspace.fs.readFile(target));
   const prevBlock = readSignature(text);
-  let prev: ReturnType<typeof parseManifest> | undefined;
+  let found: ReturnType<typeof parseManifest> | undefined;
   try {
-    prev = prevBlock ? parseManifest(prevBlock.manifest) : undefined;
+    found = prevBlock ? parseManifest(prevBlock.manifest) : undefined;
   } catch {
-    prev = undefined;
+    found = undefined;
+  }
+  // The old signature's name, scopes and patterns count only when it verifies: by a trusted signer
+  // (mdRunbook.signing.allowedSigners) or by the key signing now. Anyone can edit the manifest in
+  // the file: a pull request could loosen a pattern there (review, 2026-11-28).
+  let key: string | undefined;
+  let prev: typeof found;
+  if (prevBlock && found) {
+    const allowed = vscode.workspace.getConfiguration('mdRunbook').get<string>('signing.allowedSigners', '').trim().replace(/^~(?=$|[\\/])/, os.homedir());
+    let trusted = allowed !== '' && (await checkSigner(text, allowed)).signer !== undefined;
+    if (!trusted) {
+      key = await pickKey();
+      if (!key) return;
+      trusted = await signedByKey(prevBlock.manifest, allSignatures(prevBlock), key);
+    }
+    if (trusted) prev = found;
+    else {
+      const go = await vscode.window.showWarningMessage(
+        "md-runbook: the old signature can't be verified",
+        {
+          modal: true,
+          detail:
+            [
+              '- Not by your key, nor by a signer in mdRunbook.signing.allowedSigners.',
+              '- Its name, version, scopes and patterns are not used: you give them again.',
+              '- The version starts at 1: servers that saw a higher one refuse it.',
+            ].join('\n'),
+        },
+        'Sign as New',
+      );
+      if (go !== 'Sign as New') return;
+    }
   }
 
   // First signing: the name and where it may run. Later ones keep them and count the version up.
@@ -144,7 +177,7 @@ async function signRunbook(uri?: unknown): Promise<void> {
       { modal: true },
     );
   }
-  const key = await pickKey();
+  key ??= await pickKey();
   if (!key) return;
   const manifest = formatManifest(built.manifest);
   let signature: string;
@@ -159,13 +192,18 @@ async function signRunbook(uri?: unknown): Promise<void> {
       `md-runbook: ${why}. A key with a passphrase signs through the SSH agent: add it (ssh-add) and choose its .pub file.`,
     );
   }
-  const signer = keyComment(key) ?? prevBlock?.signer ?? os.userInfo().username;
+  const signer = keyComment(key) ?? (prev ? prevBlock?.signer : undefined) ?? os.userInfo().username;
   const signed = withSignature(text, { signer, signed: new Date().toISOString().slice(0, 10), manifest, signature });
   await vscode.workspace.fs.writeFile(target, encoder.encode(signed));
   const hash = manifestHash(manifest);
   const m = built.manifest;
+  // What servers will allow, always: a scope or pattern carried over shows here.
+  const allowedText = [
+    `scopes: ${m.scopes.length ? m.scopes.join(' ') : 'none'}`,
+    ...Object.entries(m.patterns).map(([p, re]) => `${p}: ${re}`),
+  ].join('; ');
   const choice = await vscode.window.showInformationMessage(
-    `md-runbook: ${m.name} version ${m.version} signed by ${signer} (${m.cells.length} block${m.cells.length === 1 ? '' : 's'}${m.expires ? `, until ${m.expires}` : ''}).`,
+    `md-runbook: ${m.name} version ${m.version} signed by ${signer} (${m.cells.length} block${m.cells.length === 1 ? '' : 's'}${m.expires ? `, until ${m.expires}` : ''}). ${allowedText}.`,
     'Copy Manifest Hash',
   );
   if (choice) await vscode.env.clipboard.writeText(hash);

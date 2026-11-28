@@ -231,12 +231,13 @@ the runner and the summary, and exits 0 when the signature is good.
 | --- | --- |
 | `--key KEY` | Private key, or a `.pub` whose key is in the SSH agent (`ssh-keygen -Y sign`) |
 | `--signer NAME` | Name shown as the signer (default: the key's comment) |
-| `--name NAME` | Runbook name, e.g. `ops/restart-api` (default: the file name) |
-| `--version N` | Version (default: one more than the file's signed version, or than the `--out` file's when it is the same runbook signed already, else 1) |
+| `--name NAME` | Runbook name, e.g. `ops/restart-api` (default: the old signature's, else the file name) |
+| `--version N` | Version (default: one more than the old signature's, or than the `--out` file's when it is the same runbook signed already, else 1) |
 | `--expires DATE`, `--expires-in DAYS` | Last day it may run (UTC) |
 | `--scope NAME` | Where it may run (repeatable) |
 | `--pattern NAME=RE` | What `${param:NAME}` may be: a POSIX extended regex for the whole value |
 | `--out FILE` | Write the signed runbook to FILE instead |
+| `--allowed-signers FILE` | Signing again: also trust an old signature by a signer in `FILE`, so its name, version, scopes and patterns are kept. Without it, only an old signature by `--key` counts |
 | `--record` | Sign the run record instead (outputs, notes and all: an incident, a drill); `verify` then says whether it changed since and, with `--allowed-signers`, checks each signature |
 | `--cosign` | Add your signature to the signed runbook (or, with `--record`, the signed record) as it is |
 

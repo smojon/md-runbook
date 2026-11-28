@@ -121,6 +121,60 @@ export async function checkSignedSteps(m: Manifest, bash: string): Promise<strin
   return problems;
 }
 
+/** `type base64` of an OpenSSH public key line, or undefined. */
+function publicKeyOf(line: string): string | undefined {
+  const [type, b64] = line.trim().split(/\s+/);
+  return type && b64 && /^[A-Za-z0-9@._-]+$/.test(type) && /^[A-Za-z0-9+/]+={0,2}$/.test(b64) ? `${type} ${b64}` : undefined;
+}
+
+/**
+ * The public key of `key` (`type base64`): from the private key (`ssh-keygen -y`, never asking
+ * for a passphrase), else its `.pub` file (a key in the agent, or one with a passphrase).
+ * undefined when neither works.
+ */
+export async function keyPublicKey(key: string, sshKeygen = 'ssh-keygen'): Promise<string | undefined> {
+  if (!key.endsWith('.pub')) {
+    try {
+      const r = await run(sshKeygen, ['-y', '-P', '', '-f', key], '');
+      const got = r.code === 0 ? publicKeyOf(r.stdout) : undefined;
+      if (got) return got;
+    } catch {
+      // no ssh-keygen: the .pub file below
+    }
+  }
+  try {
+    return publicKeyOf(fs.readFileSync(key.endsWith('.pub') ? key : key + '.pub', 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether `key` made one of `signatures` of `manifest` (checked with ssh-keygen against its own
+ * public key). Signing again reuses the old signature's name, scopes and patterns only then, or
+ * when a trusted signer made it: anyone can edit the manifest in the file (review, 2026-11-28).
+ */
+export async function signedByKey(manifest: string, signatures: readonly string[], key: string, sshKeygen = 'ssh-keygen'): Promise<boolean> {
+  const pub = await keyPublicKey(key, sshKeygen);
+  if (!pub) return false;
+  const dir = tempDir();
+  try {
+    const file = path.join(dir, 'allowed_signers');
+    fs.writeFileSync(file, `signing-key namespaces="${SIGNATURE_NAMESPACE}" ${pub}\n`, 'utf8');
+    for (const sig of signatures) {
+      try {
+        await sshVerify(manifest, sig, file, sshKeygen);
+        return true;
+      } catch {
+        // the next one (a co-signer's)
+      }
+    }
+    return false;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** The comment of a key's public half (`… user@host`), the default signer name; undefined if none. */
 export function keyComment(key: string): string | undefined {
   const pub = key.endsWith('.pub') ? key : key + '.pub';

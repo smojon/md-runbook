@@ -9,7 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { formatLocalIso, locateCodeCells, parse } from '@md-runbook/core';
 import { recordDigest, recordSigners, recordStatement, recordStatus, withRecordCosigner, withRecordSignature } from '@md-runbook/core/record';
-import { callTarget, checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, sshSign } from '@md-runbook/core/node';
+import { callTarget, checkSignedSteps, keyComment, manifestHash, nodeShellEnv, resolveShell, signedByKey, sshSign } from '@md-runbook/core/node';
 import { cliSshVerify } from './allowedSignersFile';
 import {
   ManifestMeta,
@@ -32,19 +32,23 @@ export const SIGN_USAGE = `Usage: md-runbook sign <file.md> --key KEY [options]
 
 sign writes a signature block at the end of the runbook: its bash blocks as servers with
 md-runbook-gate run them, signed with ssh-keygen. Signing again keeps the name, scopes and
-patterns and counts the version up.
+patterns and counts the version up, when the old signature verifies: by --key, or by a signer
+in --allowed-signers. Otherwise give them again.
 
   --key KEY            Private key, or a .pub whose key is in the SSH agent (ssh-keygen -Y sign)
   --signer NAME        Name shown as the signer (default: the key's comment)
-  --name NAME          Runbook name, e.g. ops/restart-api (default: the file name)
-  --version N          Version (default: one more than the file's signed version, or than the
-                       --out file's when it is the same runbook signed already, else 1)
+  --name NAME          Runbook name, e.g. ops/restart-api (default: the old signature's, else
+                       the file name)
+  --version N          Version (default: one more than the old signature's, or than the --out
+                       file's when it is the same runbook signed already, else 1)
   --expires DATE       Last day it may run, YYYY-MM-DD (UTC)
   --expires-in DAYS    The same, counted from today
   --scope NAME         Where it may run (repeatable; servers and keys accept scopes)
   --pattern NAME=RE    What \${param:NAME}, \${input:NAME} or \${out:NAME} may be: a POSIX
                        extended regex for the whole value
   --out FILE           Write the signed runbook to FILE instead
+  --allowed-signers F  Signing again: also trust an old signature by a signer in F (OpenSSH
+                       allowed_signers), so its name, version, scopes and patterns are kept
   --record             Sign the run record instead (outputs, notes and all: an incident, a
                        drill), so a report can tell it was not changed afterwards
   --cosign             Add your signature to the signed runbook as it is (a reviewer's, for
@@ -79,6 +83,8 @@ interface SignArgs {
   record?: boolean;
   /** Add a signature to the manifest as it is (a reviewer's), instead of signing a new version. */
   cosign?: boolean;
+  /** Signing again: an old signature by one of these signers counts too (else only one by --key). */
+  allowedSigners?: string;
 }
 
 export function parseSignArgs(argv: readonly string[]): SignArgs {
@@ -98,6 +104,7 @@ export function parseSignArgs(argv: readonly string[]): SignArgs {
       case '--out': a.out = value(f); break;
       case '--cosign': a.cosign = true; break;
       case '--record': a.record = true; break;
+      case '--allowed-signers': a.allowedSigners = value(f); break;
       case '--version': {
         const n = Number(value(f));
         if (!Number.isInteger(n) || n < 1) throw new SignUsageError('--version expects a positive whole number');
@@ -163,15 +170,26 @@ export async function signCommand(argv: readonly string[], out: Out = stdout, ss
   const prev = previousSignature(text);
   if (a.record) return signRecordCommand(a, text, out, sshKeygen);
   if (a.cosign) return cosignCommand(a, text, prev?.block, out, sshKeygen);
-  const name = a.name ?? prev?.manifest.name ?? defaultName(a.file);
+  // The old signature's name, version, scopes and patterns count only when it verifies: by this
+  // key, or by a signer of --allowed-signers. Anyone can edit the manifest in the file: a pull
+  // request that loosened a pattern there was signed again on merge (review, 2026-11-28).
+  const trusted = prev && (await previousTrusted(prev.block, a, sshKeygen)) ? prev : undefined;
+  if (prev && !trusted) {
+    out(`  note: the old signature in ${a.file} is not by this key${a.allowedSigners ? ` or a signer in ${a.allowedSigners}` : ''}: its name, version, scopes and patterns are not used`);
+    out('    give them again (--name, --version, --scope, --pattern), or add --allowed-signers FILE to trust your team');
+  }
+  const name = a.name ?? trusted?.manifest.name ?? defaultName(a.file);
   // Signed again into an existing signed copy (--out): its version counts too, when it is the same
   // runbook, so an unsigned source doesn't start over at version 1 below a version already seen.
-  const outPrev =
+  // Only a copy whose signature verifies: an edited version there would count on from any number.
+  const outFound =
     a.out && path.resolve(a.out) !== path.resolve(a.file) && fs.existsSync(a.out)
       ? previousSignature(fs.readFileSync(a.out, 'utf8'))
       : undefined;
+  const outPrev = outFound && (await previousTrusted(outFound.block, a, sshKeygen)) ? outFound : undefined;
+  if (outFound && !outPrev) out(`  note: the signature in ${a.out} is not by this key${a.allowedSigners ? ` or a signer in ${a.allowedSigners}` : ''}: its version is not counted on from`);
   const outVersion = outPrev && outPrev.manifest.name === name ? outPrev.manifest.version : undefined;
-  const previous = Math.max(prev?.manifest.version ?? 0, outVersion ?? 0);
+  const previous = Math.max(trusted?.manifest.version ?? 0, outVersion ?? 0);
   if (a.version !== undefined && outVersion !== undefined && a.version <= outVersion)
     out(
       `  note: ${a.out} already has ${name} version ${outVersion}: servers and team libraries that saw it refuse version ${a.version}`,
@@ -180,8 +198,8 @@ export async function signCommand(argv: readonly string[], out: Out = stdout, ss
     name,
     version: a.version ?? previous + 1,
     ...(a.expires ? { expires: a.expires } : {}),
-    scopes: a.scopes ?? prev?.manifest.scopes ?? [],
-    patterns: { ...(prev?.manifest.patterns ?? {}), ...a.patterns },
+    scopes: a.scopes ?? trusted?.manifest.scopes ?? [],
+    patterns: { ...(trusted?.manifest.patterns ?? {}), ...a.patterns },
   };
   const built = buildManifest(text, meta);
   if ('errors' in built) {
@@ -205,19 +223,38 @@ export async function signCommand(argv: readonly string[], out: Out = stdout, ss
     out(`✗ ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
-  const signer = a.signer ?? keyComment(a.key) ?? prev?.block.signer ?? 'unknown';
+  const signer = a.signer ?? keyComment(a.key) ?? trusted?.block.signer ?? 'unknown';
   const target = a.out ?? a.file;
   fs.writeFileSync(target, withSignature(text, { signer, signed: today(), manifest, signature }), 'utf8');
   const m = built.manifest;
   // Where a counted-up version comes from, so a surprise shows (none when --version is given).
-  const fromOut = outVersion !== undefined && outVersion > (prev?.manifest.version ?? 0);
+  const fromOut = outVersion !== undefined && outVersion > (trusted?.manifest.version ?? 0);
   const from = a.version !== undefined || previous === 0 ? '' : fromOut ? ` (previous: ${previous} in ${a.out})` : ` (previous: ${previous})`;
   out(
     `✓ ${m.name} version ${m.version}${from} signed by ${signer}: ${m.cells.length} block${m.cells.length === 1 ? '' : 's'}` +
       `${m.scopes.length ? `, scopes ${m.scopes.join(' ')}` : ''}${m.expires ? `, until ${m.expires}` : ''} · written to ${target}`,
   );
+  // What servers will allow, always: a scope or pattern carried over shows here.
+  out(`  scopes: ${m.scopes.length ? m.scopes.join(' ') : 'none (only servers that accept any scope)'}`);
+  for (const [p, re] of Object.entries(m.patterns)) out(`  pattern ${p}: ${re}`);
   out(`  manifest sha256 ${manifestHash(manifest)} (list it in a server's revoked file to withdraw this version)`);
   return 0;
+}
+
+/** Whether an old signature block verifies: by the signing key, or by a signer of --allowed-signers. */
+async function previousTrusted(block: SignatureBlock, a: SignArgs, sshKeygen?: string): Promise<boolean> {
+  const sigs = allSignatures(block);
+  if (await signedByKey(block.manifest, sigs, a.key, sshKeygen)) return true;
+  if (!a.allowedSigners) return false;
+  for (const sig of sigs) {
+    try {
+      await cliSshVerify(block.manifest, sig, a.allowedSigners, sshKeygen);
+      return true;
+    } catch {
+      // the next one (a co-signer's)
+    }
+  }
+  return false;
 }
 
 /** `sign --cosign`: one more signature of the signed manifest, unchanged (author and reviewer). */

@@ -74,6 +74,13 @@ Sign in VS Code or on the command line for that check.
   sign on the command line (it asks), or through the agent in VS Code.
 - **Signing again** keeps the name, scopes and patterns and counts the version up. Options given
   now win. `--expires` is not carried over.
+  - It keeps them only when the old signature verifies. It must be by the key signing now, or
+    by a signer in `--allowed-signers FILE` (in VS Code: `mdRunbook.signing.allowedSigners`).
+  - Otherwise it says so and keeps nothing: give `--name`, `--scope` and `--pattern` again. The
+    version starts at 1 unless you give `--version`.
+  - Anyone can edit the manifest in the file. A pull request could loosen a pattern there, and
+    a signing workflow would then sign it.
+  - The result lists the scopes and patterns signed.
 - Signing an unsigned source into a signed copy (`--out signed/deploy.md`) counts on from that
   copy's version. It does so when it is the same runbook (the same signed name), and the result
   line says so: `version 3 (previous: 2 in signed/deploy.md)`.

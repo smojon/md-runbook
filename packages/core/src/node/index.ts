@@ -8,7 +8,7 @@ export { cellEnv, executeCell, nodeShellEnv, shellEnvOn, withPythonUtf8 } from '
 export { RegQuery, expandWindowsVars, freshenPath, mergePath, parseRegQuery, registryPath } from './freshPath';
 export { gitBashCandidates, pwshWrapper, resolveShell } from './shell';
 export { KubeconfigPins, NO_PATH_CONVERSION, RunbookEnvOptions, runbookEnv, userKubeconfig, withRunbookEnv } from './runbookEnv';
-export { SignOptions, checkSignedSteps, keyComment, manifestHash, sshSign, sshVerify } from './sign';
+export { SignOptions, checkSignedSteps, keyComment, keyPublicKey, manifestHash, signedByKey, sshSign, sshVerify } from './sign';
 export { runbookSignerCheck, signRunSummary, trustedRunbookSigner, verifyRunEnvelope } from './runReport';
 export { MAX_TRANSCRIPT_BYTES, TranscriptFile } from './transcript';
 export { callEstimateSeconds, callTarget, calledRunbookFile,copyTextProblem, fileSha256, matchRunbooks, recordValues, relativeToCaller, resumeProblem, runbookReader, samePath, writeCallCopy } from './call';

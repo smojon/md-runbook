@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { parseManifest, readSignature } from '@md-runbook/core/signing';
+import { parseManifest, readSignature, toBase64, withSignature } from '@md-runbook/core/signing';
 import { checkSignedSteps, nodeShellEnv, resolveShell } from '@md-runbook/core/node';
 import { parseSignArgs, signCommand, verifyCommand } from '../src/cli/sign';
 
@@ -50,6 +50,45 @@ describe('cli: sign and verify', () => {
     const m = parseManifest(readSignature(fs.readFileSync(f, 'utf8'))!.manifest);
     assert.deepEqual([m.name, m.version, m.scopes, m.patterns, m.expires], ['restart-api', 2, ['web'], { SERVICE: '[a-z-]+' }, undefined]);
     assert.equal(fs.readFileSync(f, 'utf8').match(/md-runbook:signature/g)?.length, 1);
+  });
+
+  it('signing again reuses the old metadata only when the old signature verifies (by --key or --allowed-signers)', async () => {
+    const f = file('rp.md', '# Restart\n\n' + fence('bash', 'kubectl delete pod ${param:POD}'));
+    assert.equal(await signCommand([f, '--key', key, '--name', 'ops/rp', '--scope', 'staging', '--pattern', 'POD=[a-z]+'], out), 0, lines.join('\n'));
+    const signed = fs.readFileSync(f, 'utf8');
+    const block = readSignature(signed)!;
+    // A pull request edits only the manifest in the file: a looser pattern, a scope, a high version.
+    const edited = block.manifest
+      .replace(/^version \d+$/m, 'version 900000')
+      .replace(/^scope .*$/m, 'scope staging prod')
+      .replace(/^param POD \S+$/m, `param POD ${toBase64('.*')}`);
+    const tampered = withSignature(signed, { ...block, manifest: edited });
+    fs.writeFileSync(f, tampered);
+    lines.length = 0;
+    assert.equal(await signCommand([f, '--key', key], out), 1, lines.join('\n'));
+    assert.match(lines.join('\n'), /note: the old signature in .*rp\.md is not by this key: its name, version, scopes and patterns are not used/);
+    assert.match(lines.join('\n'), /\$\{param:POD\} needs a pattern/);
+    assert.equal(fs.readFileSync(f, 'utf8'), tampered, 'nothing written');
+    // Given again: signed with only what was given, from version 1; the scopes and patterns are printed.
+    lines.length = 0;
+    assert.equal(await signCommand([f, '--key', key, '--name', 'ops/rp', '--pattern', 'POD=[a-z]+'], out), 0, lines.join('\n'));
+    const m = parseManifest(readSignature(fs.readFileSync(f, 'utf8'))!.manifest);
+    assert.deepEqual([m.name, m.version, m.scopes, m.patterns], ['ops/rp', 1, [], { POD: '[a-z]+' }]);
+    assert.match(lines.join('\n'), /^ {2}scopes: none/m);
+    assert.match(lines.join('\n'), /^ {2}pattern POD: \[a-z\]\+$/m);
+
+    // Signed by another key: kept only with --allowed-signers naming the old signer.
+    const other = path.join(dir, 'bob');
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'bob@example.net', '-f', other]);
+    const good = fs.readFileSync(f, 'utf8');
+    lines.length = 0;
+    assert.equal(await signCommand([f, '--key', other], out), 1, lines.join('\n'));
+    assert.match(lines.join('\n'), /not by this key: its name/);
+    fs.writeFileSync(f, good);
+    lines.length = 0;
+    assert.equal(await signCommand([f, '--key', other, '--allowed-signers', allowed], out), 0, lines.join('\n'));
+    const m2 = parseManifest(readSignature(fs.readFileSync(f, 'utf8'))!.manifest);
+    assert.deepEqual([m2.name, m2.version, m2.patterns], ['ops/rp', 2, { POD: '[a-z]+' }]);
   });
 
   it('signing an unsigned source into a signed copy (--out) counts on from the copy, when it is the same runbook', async () => {
