@@ -15,7 +15,14 @@ services:
       RELAY_ORIGINS: https://runbooks.example.net
       # Caddy is the only client the relay sees; the browser's address comes from Caddy's header.
       RELAY_TRUST_PROXY: '1'
+      # Pairing mode (README.md, "Pairing mode"): ops hosts dial out to the relay, no inbound port.
+      # One line per connector, "name token [ranges]", its token starting with mdrbc-:
+      # RELAY_CONNECTORS_FILE: /run/secrets/relay_connectors
+      # One line per client, "token names" (names comma-separated, or *):
+      # RELAY_CLIENTS_FILE: /run/secrets/relay_clients
+      # With connectors, RELAY_TARGETS may go.
     secrets: [relay_token]
+    # Pairing mode: secrets: [relay_token, relay_connectors, relay_clients]
     read_only: true
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
@@ -70,6 +77,11 @@ services:
 secrets:
   relay_token:
     file: ./relay-token.txt
+  # Pairing mode, next to this file (not in Git):
+  # relay_connectors:
+  #   file: ./relay-connectors.txt
+  # relay_clients:
+  #   file: ./relay-clients.txt
 
 volumes:
   caddy-data:

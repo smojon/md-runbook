@@ -146,7 +146,8 @@ Rules for every token, checked at start:
 
 - at least 24 characters, letters and digits (`openssl rand -hex 32`; prefix `mdrbc-` for a
   connector);
-- the same token twice, in any file or variable, stops the relay.
+- the same token in two places stops the relay. Only the v1 variables may repeat a token, as
+  before.
 
 Make a connector token with `printf 'mdrbc-%s\n' "$(openssl rand -hex 32)"`.
 
@@ -197,6 +198,7 @@ line and restart the relay.
 - `connector-up` and `connector-down`: the name, the token's name, the connector's address, and
   why it went.
 - `connector-duplicate`: a second connector of a name, with both addresses.
+- `left`: a client that went before its connector answered.
 - `open` and `close` gain `"mode":"pair"`, the name, the session and the connector's address.
 - The session is the first 8 characters of its id. The relay never logs a token or a whole id.
 

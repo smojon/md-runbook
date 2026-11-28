@@ -134,7 +134,7 @@ Three kinds of token:
 
 - A token of another kind gets 401 and counts as a failed check.
 - A connector token starts with `mdrbc-`; no other token may. The relay checks both at start.
-- A token twice, in any kinds or files: the relay won't start.
+- A token in two places stops the relay at start. Only the v1 variables may repeat one, as before.
 - Every token: at least 24 RFC 7230 token characters. The relay compares SHA-256 digests, with
   every entry, in constant time.
 
@@ -161,7 +161,7 @@ Storage:
 - `RELAY_MAX_PER_NAME` caps client sessions per name, 32 by default.
 - Control sockets count per name, not per address: a cluster's connectors may share one.
 - New events: `connector-up` and `connector-down` (name, token name, source, why), and
-  `connector-duplicate`.
+  `connector-duplicate`. A client that goes while held logs `left`.
 - `open` and `close` gain `mode: "pair"`, the name, the session and the connector's address.
 - The session is its id's first 8 characters. Never a token, a whole id or data.
 

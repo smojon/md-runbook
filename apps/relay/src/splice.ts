@@ -130,6 +130,8 @@ export interface Splice {
   stop(how: 'lifetime' | 'shutdown'): void;
   /** Bytes queued towards both peers. */
   buffered(): number;
+  /** Bytes read from both peers so far. */
+  moved(): number;
 }
 
 /**
@@ -180,5 +182,6 @@ export function splice(a: End, b: End, opts: { maxSessionMs: number; onEnd(why: 
   return {
     stop: (how) => done(how === 'lifetime' ? 'session lifetime' : 'relay stopping', undefined, how),
     buffered: () => a.buffered() + b.buffered(),
+    moved: () => up + down,
   };
 }

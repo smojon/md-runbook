@@ -22,6 +22,8 @@ relay.server.listen(config.port, config.host, () => {
       version,
       address: `${config.host}:${config.port}`,
       targets: config.targets.join(','),
+      // Pairing mode: the names connectors may register (never their tokens).
+      connectors: [...new Set((config.connectors ?? []).map((c) => c.name))].join(','),
       origins: config.origins.join(',') || '*',
     }),
   );
