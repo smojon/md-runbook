@@ -52,6 +52,10 @@
   - writes it under `$RUNNER_TEMP` and removes it after the step.
 - **Upgrade:** move `RUNBOOK_SIGNING_KEY` to such an environment, and delete the repository
   secret.
+- **The example workflows left the job's token in the checkout.** Before:
+  - `actions/checkout` kept it in `.git/config`, where every block of the runbook could read it.
+- Now the examples and the docs' workflow snippets check out with `persist-credentials: false`.
+  Copied workflows need the same line.
 
 ### Relay, web app and library server: hardening
 

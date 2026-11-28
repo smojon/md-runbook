@@ -22,7 +22,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # No token in the checkout: every block of the runbook could read it from .git/config.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: smojon/md-runbook@v0.36.0
         with:
           runbook: runbooks/health.md

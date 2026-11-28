@@ -46,7 +46,10 @@ jobs:
     runs-on: ${{ inputs.os }}
     # environment: production   # an environment with required reviewers approves each run
     steps:
+      # No token in the checkout: every block of the runbook could read it from .git/config.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       # "A=1; B=2" → one NAME=VALUE per line, as the action expects. Values come in through the
       # environment, never through the script text.
       - id: params

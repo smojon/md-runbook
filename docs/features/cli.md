@@ -417,6 +417,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # no token for the runbook's blocks to read
       - uses: smojon/md-runbook@v0.36.0
         with:
           runbook: runbooks/smoke.md
