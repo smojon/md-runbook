@@ -16,6 +16,8 @@ function download(name: string, text: string, type: string): void {
 }
 
 const PRINT_FRAME = 'md-runbook-print-frame';
+/** Settles the last print's promise when its frame is removed before it loaded. */
+let settleLast: (() => void) | undefined;
 
 /**
  * Prints the report from a hidden frame that can't run script: `sandbox` without allow-scripts.
@@ -26,6 +28,8 @@ const PRINT_FRAME = 'md-runbook-print-frame';
  */
 function printHtml(html: string): Promise<void> {
   // The last report's frame goes only now: a print preview may still read it after print() returns.
+  // A print whose frame never loaded ends here, without printing.
+  settleLast?.();
   document.getElementById(PRINT_FRAME)?.remove();
   const frame = document.createElement('iframe');
   frame.id = PRINT_FRAME;
@@ -34,9 +38,16 @@ function printHtml(html: string): Promise<void> {
   frame.tabIndex = -1;
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
   return new Promise((resolve, reject) => {
+    const done = (): void => {
+      if (settleLast === done) settleLast = undefined;
+      resolve();
+    };
+    settleLast = done;
     frame.addEventListener(
       'load',
       () => {
+        if (settleLast !== done) return; // replaced by a newer print meanwhile
+        settleLast = undefined;
         const w = frame.contentWindow;
         if (!w) return reject(new Error('the browser did not open the print frame'));
         w.focus();
