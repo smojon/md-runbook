@@ -21,6 +21,14 @@
   - an input that doesn't match its signed pattern stops the run before anything runs;
   - a captured value that doesn't match stops the step that uses it;
   - a value with no signed pattern is refused, as the gate refuses it.
+- **A bash block inside the front matter ran.** Before:
+  - a fence in a YAML block (`notes: |`) was a cell: signed, and run;
+  - GitHub shows the front matter as a table, so a reviewer didn't see it as code.
+- Now:
+  - such a fence is no cell: it never runs;
+  - signing refuses it, and lint warns about it.
+- **Upgrade:** a runbook signed with such a block no longer verifies: move the block below the
+  front matter and sign it again.
 
 ### Relay, web app and library server: hardening
 

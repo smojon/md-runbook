@@ -32,7 +32,8 @@ import { signedPatternProblem } from './signedPattern';
 import { splitSteps } from './steps';
 import { HISTORY_OPEN_RE } from './outputBlock';
 import { clearOutputBlocks } from './writer';
-import { LINE_RE, splitLines } from './lines';
+import { LINE_RE, frontMatterCloseLine, splitLines } from './lines';
+import { isRunnableFenceLang } from './languages';
 import { beforeComment } from './lineText';
 
 /** The `-n` namespace of every md-runbook signature: a signature for anything else doesn't verify. */
@@ -448,7 +449,16 @@ function hiddenFences(text: string): string[] {
   let html: ((l: string) => boolean) | undefined;
   /** The line before was a paragraph's (prose, not blank, no heading): a type 7 HTML block can't start. */
   let paragraph = false;
+  // The front matter is a table on GitHub: a fence in it (a YAML block scalar) is no code there.
+  // The parser makes no cell of it either; refused, so no older client signs or runs it.
+  const head = frontMatterCloseLine(text.replace(/^﻿/, '').split(LINE_RE));
   text.split(LINE_RE).forEach((line, i) => {
+    if (i <= head) {
+      const f = matchFenceOpen(line);
+      if (f && isRunnableFenceLang(langOf(f.info)))
+        problems.push(`line ${i + 1}: a code block inside the front matter (GitHub shows the front matter as a table, not as code): move it below the closing ---`);
+      return;
+    }
     // CommonMark sees no fence in an HTML block: its end counts on every line, fenced or not.
     const inHtml = html !== undefined;
     const after = paragraph;

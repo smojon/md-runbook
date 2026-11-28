@@ -5,7 +5,7 @@
 
 import { isFenceClose, langOf, matchFenceOpen, stripIndent } from './fence';
 import { isRunnableFenceLang, languageIdForFence } from './languages';
-import { BLANK_RE, Line, dominantEol, joinRaw, splitLines } from './lines';
+import { BLANK_RE, Line, dominantEol, frontMatterCloseLine, joinRaw, splitLines } from './lines';
 import type { CodeMeta, HistoryEntry, HistoryMeta, MarkupMeta, OutputMeta, ParsedCell, ParsedDocument, ParsedOutput } from './model';
 import { HISTORY_CLOSE_RE, HISTORY_OPEN_RE, OUTPUT_END_RE, OUTPUT_START_RE, parseAttrs } from './outputBlock';
 
@@ -52,7 +52,9 @@ export function parse(input: string): ParsedDocument {
   };
 
   let mdStart = 0;
-  let i = 0;
+  // The front matter is markup: a fence in it (a YAML block scalar) is no cell. GitHub shows it as
+  // a table, so a reviewer never sees such code as code; before, it was signed and ran (review, 2026-11-28).
+  let i = frontMatterCloseLine(lines.map((l) => l.text)) + 1;
   while (i < lines.length) {
     const open = matchFenceOpen(lines[i]!.text);
     if (!open) {

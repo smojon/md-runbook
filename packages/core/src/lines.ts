@@ -70,3 +70,14 @@ export function toLf(s: string): string {
 }
 
 export const BLANK_RE = /^[ \t]*$/;
+
+/**
+ * The index of the line that closes the front matter (`---` on the first line, up to the next
+ * `---` or `...`), as parseFrontMatter reads it; -1 without one. `lines` without a BOM. GitHub
+ * shows the front matter as a table, so nothing in it is code that runs (review, 2026-11-28).
+ */
+export function frontMatterCloseLine(lines: readonly string[]): number {
+  if (lines[0]?.trimEnd() !== '---') return -1;
+  for (let i = 1; i < lines.length; i++) if (/^(---|\.\.\.)\s*$/.test(lines[i]!)) return i;
+  return -1;
+}

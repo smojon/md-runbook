@@ -204,6 +204,7 @@ But the shell carries folders and variables from block to block. So the editor,
 GitHub's rendered view doesn't show some blocks as code that runs, so a reviewer reading a pull
 request there could miss them. Signing refuses them:
 
+- a code block inside the front matter (GitHub shows the front matter as a table);
 - a bash block inside an HTML comment;
 - a bash block inside another HTML block, such as `<script>`, `<pre>`, or a `<div>` with no
   blank line after it;

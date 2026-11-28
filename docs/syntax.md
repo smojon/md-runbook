@@ -343,6 +343,10 @@ needs `C:/Users/me/file`).
 The runbook view (VS Code and the app) doesn't draw the front matter, as VS Code's Markdown
 preview doesn't. Editing the first cell shows it.
 
+A code fence inside the front matter, such as in a `notes: |` block, is not a cell: it never
+runs. GitHub shows the front matter as a table, not as code. Lint warns about such a fence, and
+signing refuses it.
+
 In session mode one bash and one PowerShell process live for the whole runbook. So `cd`,
 exported variables and `oc login` carry over between cells. `cmd` cells always run alone.
 

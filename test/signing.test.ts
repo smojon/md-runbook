@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import { renderMarkdown, setCellOutput, DEFAULT_WRITE_OPTIONS } from '@md-runbook/core';
+import { parse, renderMarkdown, setCellOutput, DEFAULT_WRITE_OPTIONS } from '@md-runbook/core';
 import { lintRunbook } from '@md-runbook/core/lint';
 import {
   ManifestMeta,
@@ -142,6 +142,20 @@ describe('signing: the manifest', () => {
     // Comments around prose, fences in list items (indented less than 4) and the signature block itself are fine.
     assert.deepEqual(errorsOf('<!-- a note -->\n\n1. Step:\n   ```bash\n   echo ok\n   ```\n'), []);
     assert.deepEqual(errorsOf(sign(fence('bash', 'echo'))), []);
+  });
+
+  it('a fence inside the front matter is no cell and is refused: GitHub shows the front matter as a table (review, 2026-11-28)', () => {
+    const fm = '---\ntitle: Health check\nnotes: |\n  Example of what NOT to run:\n  ```bash\n  echo "from the front matter"\n  ```\n---\n\n# Health check\n\n' + fence('bash', 'echo ok');
+    // The parser: one code cell, below the front matter; the front matter stays markup, byte for byte.
+    const doc = parse(fm);
+    assert.deepEqual(doc.cells.filter((c) => c.kind === 'code').map((c) => c.value), ['echo ok']);
+    assert.equal(roundTrip(fm), fm);
+    assert.match(errorsOf(fm).join('\n'), /line 5: a code block inside the front matter/);
+    assert.ok(lintRunbook(fm).some((p) => p.line === 4 && /code block inside the front matter doesn't run/.test(p.message)));
+    // A YAML block without a runnable language is fine; so is a fence after the front matter, and an unclosed front matter.
+    assert.deepEqual(errorsOf('---\nnotes: |\n  ```yaml\n  a: 1\n  ```\n---\n' + fence('bash', 'echo ok')), []);
+    assert.deepEqual(errorsOf('---\ntitle: x\n---\n' + fence('bash', 'echo ok')), []);
+    assert.equal(parse('---\n```bash\necho\n```\n').cells.filter((c) => c.kind === 'code').length, 1);
   });
 
   it('refuses bash blocks in HTML blocks and behind lone CRs too (security review, round 4)', () => {

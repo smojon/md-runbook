@@ -7,7 +7,8 @@
  */
 
 import { INFO_LANG_RE, cellRefs, parseCellOptions, tokenizeInfo } from './cellOptions';
-import { FenceOpen, isFenceClose, matchFenceOpen } from './fence';
+import { FenceOpen, isFenceClose, langOf, matchFenceOpen } from './fence';
+import { isRunnableFenceLang } from './languages';
 import { isCodeMeta } from './model';
 import { parse } from './parser';
 import { CodeCellLocation, locateCodeCells } from './locate';
@@ -294,6 +295,12 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
         problems.push({ severity: 'warning', line: i, message });
       }
       for (const name of twice) problems.push({ severity: 'warning', line: i, message: `front matter shell: "${name}" is ignored: one shell per kind of cell, the first one counts` });
+    }
+    // A fence in the front matter (a YAML block scalar): GitHub shows it in a table, and it never runs.
+    for (let i = 1; i < end; i++) {
+      const f = matchFenceOpen(lines[i]!);
+      if (f && isRunnableFenceLang(langOf(f.info)))
+        problems.push({ severity: 'warning', line: i, message: "a code block inside the front matter doesn't run, and GitHub shows it in a table: move it below the closing ---" });
     }
     problems.push(...lintFrontMatterEnv(lines, end, signedStatus(text) !== undefined));
     problems.push(...lintReportRuns(text, lines, end));
