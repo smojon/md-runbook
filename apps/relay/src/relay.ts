@@ -12,6 +12,7 @@
  *
  * Not an open proxy: allowlisted targets only, a token, an origin list, caps on connections
  * (overall and per client), and clients that fail the token check too often are refused for a while.
+ * A session ends after a maximum lifetime. Logs name the token a session used by a short hash.
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { IncomingMessage, Server, createServer } from 'node:http';
@@ -25,6 +26,16 @@ export const PROTOCOL = 1;
 export const SUBPROTOCOL = 'mdrb-relay.v1';
 /** Bytes queued towards the browser above which reading from the SSH server pauses. */
 const HIGH_WATER = 1 << 20;
+/**
+ * The largest frame a browser may send. The web app's SSH library sends one SSH packet per
+ * frame: its length (4 bytes), the packet, and its MAC. OpenSSH refuses a packet over 256 KiB
+ * (PACKET_MAX_SIZE in its packet.c), so a larger frame is never good SSH. 1 KiB to spare.
+ */
+export const MAX_FRAME = (256 << 10) + 1024;
+/** Client addresses whose failed token checks are remembered at most (the oldest go first). */
+const MAX_FAILURE_CLIENTS = 10_000;
+/** How long a closing session may wait for the browser's answer before its socket is cut. */
+const CLOSE_GRACE_MS = 1000;
 /** How long a refused client may take to read the refusal before its socket is closed anyway. */
 const REFUSAL_LINGER_MS = 5000;
 const STATUS_TEXT: Record<number, string> = {
@@ -48,23 +59,59 @@ export interface Relay {
   server: Server;
   /** Connections open now. */
   open(): number;
+  /** Client addresses (or IPv6 /64s) with failed token checks remembered now. */
+  failureClients(): number;
   /** Stop accepting, close every connection. */
   close(): Promise<void>;
 }
 
 const digest = (s: string): Buffer => createHash('sha256').update(s).digest();
+/**
+ * Close with a code, and cut the socket if the browser hasn't answered within CLOSE_GRACE_MS
+ * (ws itself would wait 30 s for a peer that may be gone).
+ */
+function closeSoon(ws: WebSocket, code: number, reason?: string): void {
+  ws.close(code, reason);
+  setTimeout(() => ws.terminate(), CLOSE_GRACE_MS).unref();
+}
 function destroySocket(this: Duplex): void {
   this.destroy();
 }
 
+/**
+ * What a token is called in the log: `token-` and the first 8 hex digits of its SHA-256, as the
+ * library server names a token without a label. Says which token a session used, not the token.
+ */
+export function tokenName(token: string): string {
+  return `token-${digest(token).toString('hex').slice(0, 8)}`;
+}
+
+/**
+ * What the per-client limits count against. An IPv4-mapped IPv6 address (::ffff:192.0.2.1) is
+ * its IPv4 address. Any other IPv6 address counts by its /64: one host or one network usually
+ * holds a whole /64, so a client can't pass the limits by changing its address in it.
+ */
+export function clientKey(address: string): string {
+  const a = address.replace(/^\[(.*)\]$/, '$1');
+  if (isIP(a.replace(/%.*$/, '')) !== 6) return a;
+  const b = ipv6Bytes(a);
+  if (!b) return a;
+  if (b.slice(0, 10).every((x) => x === 0) && b[10] === 0xff && b[11] === 0xff) return b.slice(12).join('.');
+  return `${[0, 2, 4, 6].map((i) => ((b[i]! << 8) | b[i + 1]!).toString(16)).join(':')}::/64`;
+}
+
 export function createRelay(config: RelayConfig, version: string, log: (e: LogEvent) => void = defaultLog): Relay {
   const tokenDigests = config.tokens.map(digest);
-  const tokenOk = (given: string): boolean => {
+  const tokenNames = config.tokens.map(tokenName);
+  /** The name of the token that matches, or undefined. */
+  const tokenOk = (given: string): string | undefined => {
     const d = digest(given);
     // Compare with every token, always, so timing says nothing about which one matched.
-    let ok = false;
-    for (const t of tokenDigests) ok = timingSafeEqual(d, t) || ok;
-    return ok;
+    let match = -1;
+    tokenDigests.forEach((t, i) => {
+      if (timingSafeEqual(d, t)) match = i;
+    });
+    return match >= 0 ? tokenNames[match] : undefined;
   };
   /** 'listed': the host is named in the targets; 'any': only `*:port` allows it (public addresses only). */
   const targetOk = (target: string): 'listed' | 'any' | undefined => {
@@ -77,18 +124,30 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
     return rules.some(([th, tp]) => tp === port && th === '*') ? 'any' : undefined;
   };
 
+  // Failed token checks per client key, at most maxFailureClients keys and maxFailures times each
+  // (a client at the limit is refused before its token is checked). Expired entries are swept
+  // every window; when the map is full anyway (many addresses at once), the oldest key goes.
   const failures = new Map<string, number[]>();
-  const recordFailure = (client: string, now: number): void => {
-    // Many clients (rotating addresses): drop the expired entries before the map grows further.
-    if (failures.size >= 10_000) for (const c of [...failures.keys()]) failedRecently(c, now);
-    failures.set(client, [...(failures.get(client) ?? []), now]);
+  const maxFailureClients = config.maxFailureClients ?? MAX_FAILURE_CLIENTS;
+  const recordFailure = (key: string, now: number): void => {
+    if (!failures.has(key))
+      for (const oldest of failures.keys()) {
+        if (failures.size < maxFailureClients) break;
+        failures.delete(oldest);
+      }
+    failures.set(key, [...(failures.get(key) ?? []), now]);
   };
-  const failedRecently = (client: string, now: number): number => {
-    const list = (failures.get(client) ?? []).filter((t) => now - t < config.failWindowMs);
-    if (list.length > 0) failures.set(client, list);
-    else failures.delete(client);
+  const failedRecently = (key: string, now: number): number => {
+    const list = (failures.get(key) ?? []).filter((t) => now - t < config.failWindowMs);
+    if (list.length > 0) failures.set(key, list);
+    else failures.delete(key);
     return list.length;
   };
+  const sweep = setInterval(() => {
+    const now = Date.now();
+    for (const key of [...failures.keys()]) failedRecently(key, now);
+  }, config.failWindowMs);
+  sweep.unref();
   const perClient = new Map<string, number>();
   const sockets = new Set<{ ws: WebSocket; tcp: Socket }>();
 
@@ -133,7 +192,7 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
 
   const wss = new WebSocketServer({
     noServer: true,
-    maxPayload: 1 << 20,
+    maxPayload: MAX_FRAME,
     perMessageDeflate: false,
     handleProtocols: (protocols) => (protocols.has(SUBPROTOCOL) ? SUBPROTOCOL : false),
   });
@@ -143,8 +202,8 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
     // connection while being refused crashes the relay (threat-model review, 2026-11-27). As in the
     // ws README's "Client authentication" example.
     socket.on('error', destroySocket);
-    const refuse = (status: number, why: string, client: string): void => {
-      log({ event: 'refused', client, why, status });
+    const refuse = (status: number, why: string, client: string, token?: string): void => {
+      log({ event: 'refused', client, why, status, token });
       // Closed once the answer is out, as ws does: a client that keeps its side open can't hold
       // the socket. One that never reads is cut off after a while.
       socket.end(`HTTP/1.1 ${status} ${STATUS_TEXT[status]}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`, () => socket.destroy());
@@ -152,11 +211,12 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
       socket.once('close', () => clearTimeout(linger));
     };
     const client = clientOf(req);
+    const key = clientKey(client);
     const now = Date.now();
     const url = urlOf(req.url);
     if (!url) return refuse(400, 'url', client);
     if (url.pathname !== '/v1/ssh') return refuse(404, 'path', client);
-    if (failedRecently(client, now) >= config.maxFailures) return refuse(429, 'too many failed tokens', client);
+    if (failedRecently(key, now) >= config.maxFailures) return refuse(429, 'too many failed tokens', client);
     const origin = req.headers.origin;
     if (config.origins.length > 0 && !(origin && config.origins.includes(origin))) return refuse(403, `origin ${origin ?? '-'}`, client);
     const offered = String(req.headers['sec-websocket-protocol'] ?? '')
@@ -164,23 +224,24 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
       .map((p) => p.trim());
     if (!offered.includes(SUBPROTOCOL)) return refuse(400, 'protocol version', client);
     const given = offered.find((p) => p.startsWith('token.'))?.slice('token.'.length) ?? '';
-    if (!tokenOk(given)) {
-      recordFailure(client, now);
+    const token = tokenOk(given);
+    if (token === undefined) {
+      recordFailure(key, now);
       return refuse(401, 'token', client);
     }
     const target = url.searchParams.get('target') ?? '';
     const allowed = targetOk(target);
-    if (!allowed) return refuse(403, `target ${target}`, client);
+    if (!allowed) return refuse(403, `target ${target}`, client, token);
     const literal = target.slice(0, target.lastIndexOf(':')).replace(/^\[(.*)\]$/, '$1');
-    if (allowed === 'any' && isIP(literal) && isInternal(literal)) return refuse(403, `target ${target} (internal address)`, client);
-    if (sockets.size >= config.maxConnections) return refuse(429, 'relay full', client);
-    if ((perClient.get(client) ?? 0) >= config.maxPerClient) return refuse(429, 'client limit', client);
+    if (allowed === 'any' && isIP(literal) && isInternal(literal)) return refuse(403, `target ${target} (internal address)`, client, token);
+    if (sockets.size >= config.maxConnections) return refuse(429, 'relay full', client, token);
+    if ((perClient.get(key) ?? 0) >= config.maxPerClient) return refuse(429, 'client limit', client, token);
     // ws puts its own 'error' listener on the socket from here on.
     socket.removeListener('error', destroySocket);
-    wss.handleUpgrade(req, socket, head, (ws) => pipe(ws, client, target, allowed === 'any'));
+    wss.handleUpgrade(req, socket, head, (ws) => pipe(ws, client, key, token, target, allowed === 'any'));
   });
 
-  function pipe(ws: WebSocket, client: string, target: string, publicOnly: boolean): void {
+  function pipe(ws: WebSocket, client: string, key: string, token: string, target: string, publicOnly: boolean): void {
     const at = target.lastIndexOf(':');
     const host = target.slice(0, at).replace(/^\[(.*)\]$/, '$1');
     const started = Date.now();
@@ -196,22 +257,28 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
     const tcp = connect({ host, port: Number(target.slice(at + 1)), timeout: config.connectTimeoutMs, ...(publicOnly ? { lookup } : {}) });
     const pair = { ws, tcp };
     sockets.add(pair);
-    perClient.set(client, (perClient.get(client) ?? 0) + 1);
-    log({ event: 'open', client, target, open: sockets.size });
+    perClient.set(key, (perClient.get(key) ?? 0) + 1);
+    log({ event: 'open', client, token, target, open: sockets.size });
 
     let closed = false;
     const done = (why: string): void => {
       if (closed) return;
       closed = true;
       clearInterval(ping);
+      clearTimeout(lifetime);
       sockets.delete(pair);
-      const n = (perClient.get(client) ?? 1) - 1;
-      if (n > 0) perClient.set(client, n);
-      else perClient.delete(client);
+      const n = (perClient.get(key) ?? 1) - 1;
+      if (n > 0) perClient.set(key, n);
+      else perClient.delete(key);
       tcp.destroy();
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(why === 'target closed' ? 1000 : 1011);
-      log({ event: 'close', client, target, why, up, down, ms: Date.now() - started, open: sockets.size });
+      // A browser that missed a ping won't answer a close either: its socket is cut at once.
+      if (why === 'no pong') ws.terminate();
+      else if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) closeSoon(ws, why === 'target closed' || why === 'session lifetime' ? 1000 : 1011, why === 'session lifetime' ? why : undefined);
+      log({ event: 'close', client, token, target, why, up, down, ms: Date.now() - started, open: sockets.size });
     };
+    // However busy, a session ends after maxSessionMs: a leaked token's session can't last for ever.
+    const lifetime = setTimeout(() => done('session lifetime'), config.maxSessionMs);
+    lifetime.unref();
 
     tcp.on('connect', () => tcp.setTimeout(0));
     tcp.on('timeout', () => done('connect timeout'));
@@ -249,10 +316,12 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
   return {
     server,
     open: () => sockets.size,
+    failureClients: () => failures.size,
     close: () =>
       new Promise<void>((resolve) => {
+        clearInterval(sweep);
         for (const { ws, tcp } of sockets) {
-          ws.close(1001);
+          closeSoon(ws, 1001);
           tcp.destroy();
         }
         wss.close();

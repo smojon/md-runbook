@@ -3,7 +3,7 @@ import { AddressInfo, Server, connect as connectTcp, createServer } from 'node:n
 import { after, before, describe, it } from 'node:test';
 import { WebSocket } from 'ws';
 import { RelayConfig, isTargetSpec, loadConfig } from '../src/config';
-import { LogEvent, Relay, SUBPROTOCOL, createRelay, isInternal } from '../src/relay';
+import { LogEvent, MAX_FRAME, Relay, SUBPROTOCOL, clientKey, createRelay, isInternal, tokenName } from '../src/relay';
 
 const TOKEN = 'a-test-token-of-at-least-24-chars';
 
@@ -28,6 +28,7 @@ async function startRelay(over: Partial<RelayConfig>, logs: LogEvent[] = []): Pr
     trustProxy: false,
     connectTimeoutMs: 2000,
     pingIntervalMs: 30_000,
+    maxSessionMs: 60_000,
     ...over,
   };
   const relay = createRelay(config, '9.9.9', (e) => logs.push(e));
@@ -36,9 +37,16 @@ async function startRelay(over: Partial<RelayConfig>, logs: LogEvent[] = []): Pr
 }
 
 /** Opens a WebSocket; resolves with it, or with the HTTP status of the refusal. */
-function open(url: string, target: string, opts: { token?: string; origin?: string; protocols?: string[]; path?: string } = {}): Promise<WebSocket | number> {
+function open(
+  url: string,
+  target: string,
+  opts: { token?: string; origin?: string; protocols?: string[]; path?: string; from?: string; autoPong?: boolean } = {},
+): Promise<WebSocket | number> {
   const ws = new WebSocket(`${url.replace('http', 'ws')}${opts.path ?? '/v1/ssh'}?target=${encodeURIComponent(target)}`, opts.protocols ?? [SUBPROTOCOL, `token.${opts.token ?? TOKEN}`], {
     origin: opts.origin,
+    autoPong: opts.autoPong ?? true,
+    // With trustProxy: the client address the relay sees.
+    ...(opts.from ? { headers: { 'x-forwarded-for': opts.from } } : {}),
   });
   ws.binaryType = 'nodebuffer';
   return new Promise((resolve, reject) => {
@@ -96,6 +104,11 @@ describe('relay', () => {
       );
       assert.equal(logs[0]!.target, target);
       assert.ok(!JSON.stringify(logs).includes('SSH-2.0-test'));
+      // Which token, by a short hash of it: never the token itself.
+      assert.equal(logs[0]!.token, tokenName(TOKEN));
+      assert.equal(logs[1]!.token, tokenName(TOKEN));
+      assert.match(tokenName(TOKEN), /^token-[0-9a-f]{8}$/);
+      assert.ok(!JSON.stringify(logs).includes(TOKEN));
       assert.equal(logs[1]!.up, 14);
     } finally {
       await relay.close();
@@ -138,6 +151,102 @@ describe('relay', () => {
       assert.ok(first instanceof WebSocket);
       assert.equal(await open(url, target), 429);
       first.close();
+    } finally {
+      await relay.close();
+    }
+  });
+
+  it('counts an IPv6 client by its /64, and an IPv4-mapped one as its IPv4 address (threat-model review, 2026-11-27)', async () => {
+    const { relay, url } = await startRelay({ targets: [target], maxFailures: 2, maxPerClient: 1, trustProxy: true });
+    try {
+      const wrong = { token: 'wrong-token-of-24-characters' };
+      assert.equal(await open(url, target, { ...wrong, from: '2001:db8:1:2::1' }), 401);
+      assert.equal(await open(url, target, { ...wrong, from: '2001:db8:1:2:ffff::9' }), 401);
+      assert.equal(await open(url, target, { from: '2001:db8:1:2:abcd::1' }), 429, 'another address in the same /64');
+      const other = await open(url, target, { from: '2001:db8:1:3::1' });
+      assert.ok(other instanceof WebSocket, 'another /64');
+      assert.equal(await open(url, target, { from: '2001:db8:1:3::2' }), 429, 'one connection per /64 (maxPerClient 1)');
+      other.close();
+      assert.equal(await open(url, target, { ...wrong, from: '::ffff:192.0.2.1' }), 401);
+      assert.equal(await open(url, target, { ...wrong, from: '192.0.2.1' }), 401);
+      assert.equal(await open(url, target, { from: '::ffff:c000:201' }), 429, 'the same IPv4 address');
+    } finally {
+      await relay.close();
+    }
+  });
+
+  it('remembers failed tokens of a bounded number of clients, dropping the oldest', async () => {
+    const { relay, url } = await startRelay({ targets: [target], maxFailures: 1, maxFailureClients: 3, trustProxy: true });
+    try {
+      const wrong = { token: 'wrong-token-of-24-characters' };
+      for (const from of ['198.51.100.1', '198.51.100.2', '198.51.100.3']) assert.equal(await open(url, target, { ...wrong, from }), 401);
+      assert.equal(relay.failureClients(), 3);
+      assert.equal(await open(url, target, { from: '198.51.100.1' }), 429);
+      // A fourth address: the map stays at 3, and the oldest (198.51.100.1) is forgotten.
+      assert.equal(await open(url, target, { ...wrong, from: '198.51.100.4' }), 401);
+      assert.equal(relay.failureClients(), 3);
+      const back = await open(url, target, { from: '198.51.100.1' });
+      assert.ok(back instanceof WebSocket);
+      back.close();
+      assert.equal(await open(url, target, { from: '198.51.100.4' }), 429);
+    } finally {
+      await relay.close();
+    }
+  });
+
+  it('ends a session after its maximum lifetime, however busy', async () => {
+    const logs: LogEvent[] = [];
+    const { relay, url } = await startRelay({ targets: [target], maxSessionMs: 300 }, logs);
+    try {
+      const ws = await open(url, target);
+      assert.ok(ws instanceof WebSocket);
+      const busy = setInterval(() => ws.readyState === WebSocket.OPEN && ws.send(Buffer.from('x')), 20);
+      const code = await closed(ws);
+      clearInterval(busy);
+      assert.equal(code, 1000);
+      const close = logs.find((l) => l.event === 'close');
+      assert.equal(close?.why, 'session lifetime');
+      assert.ok(Number(close?.ms) >= 250, String(close?.ms));
+    } finally {
+      await relay.close();
+    }
+  });
+
+  it('cuts a browser that misses a ping at once, without waiting for a close handshake', async () => {
+    const logs: LogEvent[] = [];
+    const { relay, url } = await startRelay({ targets: [target], pingIntervalMs: 100 }, logs);
+    try {
+      const ws = await open(url, target, { autoPong: false });
+      assert.ok(ws instanceof WebSocket);
+      const t0 = Date.now();
+      // 1006: the socket was cut, no close frame (ws would otherwise wait 30 s for a dead peer).
+      assert.equal(await closed(ws), 1006);
+      assert.ok(Date.now() - t0 < 2000);
+      assert.equal(logs.find((l) => l.event === 'close')?.why, 'no pong');
+    } finally {
+      await relay.close();
+    }
+  });
+
+  it('takes frames as large as an SSH packet, and refuses larger ones', async () => {
+    const { relay, url } = await startRelay({ targets: [target] });
+    try {
+      const ws = await open(url, target);
+      assert.ok(ws instanceof WebSocket);
+      // OpenSSH's largest packet (256 KiB) with its length and a MAC.
+      const big = Buffer.alloc((256 << 10) + 4 + 64, 1);
+      let got = 0;
+      const all = new Promise<void>((r) =>
+        ws.on('message', (d: Buffer) => {
+          got += d.length;
+          if (got >= big.length + 5) r();
+        }),
+      );
+      ws.send(big);
+      await all;
+      const done = closed(ws);
+      ws.send(Buffer.alloc(MAX_FRAME + 1));
+      assert.equal(await done, 1009, 'message too big');
     } finally {
       await relay.close();
     }
@@ -265,6 +374,22 @@ describe('relay', () => {
     for (const a of ['8.8.8.8', '172.32.0.1', '100.128.0.1', '2a00:1450:4001::1', '::ffff:8.8.8.8', '2606:4700::1111', 'not-an-address']) assert.ok(!isInternal(a), a);
   });
 
+  it('groups client addresses for its limits', () => {
+    for (const [a, key] of [
+      ['192.0.2.1', '192.0.2.1'],
+      ['::ffff:192.0.2.1', '192.0.2.1'],
+      ['::FFFF:c000:201', '192.0.2.1'],
+      ['2001:db8:1:2::1', '2001:db8:1:2::/64'],
+      ['2001:0DB8:0001:0002:ffff:ffff:ffff:ffff', '2001:db8:1:2::/64'],
+      ['[2001:db8::1]', '2001:db8:0:0::/64'],
+      ['fe80::1%eth0', 'fe80:0:0:0::/64'],
+      ['::1', '0:0:0:0::/64'],
+      ['?', '?'],
+      ['not-an-address', 'not-an-address'],
+    ])
+      assert.equal(clientKey(a!), key, a);
+  });
+
   it('NAT64: judged by the IPv4 address it embeds, so a DNS64-only relay reaches public hosts', () => {
     // Public IPv4 hosts through the well-known prefix, and the /96 form of the local-use one.
     for (const a of ['64:ff9b::808:808', '64:ff9b::8.8.8.8', '64:ff9b:0:0:0:0:808:808', '64:FF9B::0808:0808', '64:ff9b:1::808:808', '64:ff9b:1::1.1.1.1'])
@@ -300,6 +425,30 @@ describe('relay settings', () => {
     assert.deepEqual(c.origins, ['https://a.example', 'https://b.example']);
     assert.equal(c.host, '127.0.0.1');
     assert.equal(c.trustProxy, false);
+    assert.equal(c.maxSessionMs, 24 * 3600 * 1000);
+    assert.equal(c.pingIntervalMs, 30_000);
+    assert.equal(loadConfig({ ...base, RELAY_MAX_SESSION_SECONDS: '3600' }).maxSessionMs, 3_600_000);
+  });
+
+  it('refuses a 0 or a value out of range, which would break the relay rather than turn a limit off', () => {
+    for (const [name, v] of [
+      ['RELAY_PING_SECONDS', '0'],
+      ['RELAY_PING_SECONDS', '4'],
+      ['RELAY_MAX_SESSION_SECONDS', '0'],
+      ['RELAY_MAX_SESSION_SECONDS', '59'],
+      ['RELAY_MAX_SESSION_SECONDS', '3000000'],
+      ['RELAY_MAX_CONNECTIONS', '0'],
+      ['RELAY_MAX_PER_CLIENT', '0'],
+      ['RELAY_MAX_FAILURES', '0'],
+      ['RELAY_FAIL_WINDOW_SECONDS', '0'],
+      ['RELAY_CONNECT_TIMEOUT_SECONDS', '0'],
+      ['RELAY_PORT', '0'],
+      ['RELAY_PORT', '65536'],
+      ['RELAY_PING_SECONDS', '-5'],
+      ['RELAY_PING_SECONDS', '7.5'],
+    ] as const)
+      assert.throws(() => loadConfig({ ...base, [name]: v }), new RegExp(name), `${name}=${v}`);
+    assert.equal(loadConfig({ ...base, RELAY_PING_SECONDS: '5' }).pingIntervalMs, 5000);
   });
 
   it('knows a target when it sees one', () => {

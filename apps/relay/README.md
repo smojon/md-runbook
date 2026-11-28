@@ -17,6 +17,11 @@ The phone apps connect directly and need no relay.
 - **Origins.** With `RELAY_ORIGINS` set, only pages from those origins may connect.
 - **Limits.** Connections are capped in total and per client address. An address that fails the
   token check 10 times in 10 minutes is refused for the rest of that window.
+  - An IPv6 address counts by its /64, so a client can't change address to get round the limits.
+  - An IPv4 address written as IPv6 (`::ffff:192.0.2.1`) counts as the IPv4 address.
+  - The relay remembers failed checks of at most 10,000 clients. When full, the oldest go first.
+- **Session lifetime.** A session ends after 24 hours by default, however busy it is. A leaked
+  token's session can't last for ever.
 
 ## Run it
 
@@ -102,7 +107,11 @@ To update the relay: `git pull && sudo docker compose up -d --build`. Git ignore
 | `RELAY_FAIL_WINDOW_SECONDS` | `600` | The window for failed token checks. |
 | `RELAY_TRUST_PROXY` | off | `1`: the client address is the last `X-Forwarded-For` entry. Only behind your own proxy. |
 | `RELAY_CONNECT_TIMEOUT_SECONDS` | `10` | Time to reach an SSH server. |
-| `RELAY_PING_SECONDS` | `30` | Ping interval. A browser that misses one ping is disconnected. |
+| `RELAY_PING_SECONDS` | `30` | Ping interval, 5 or more. A browser that misses one ping is disconnected at once. |
+| `RELAY_MAX_SESSION_SECONDS` | `86400` | A session's longest life, 60 or more. The next cell opens a new session, and the app warns that earlier folders and variables are gone. |
+
+A setting that is not a whole number, or is out of range, stops the relay at start. A 0 is
+refused for every limit: it would break the relay rather than turn the limit off.
 
 ## Protocol
 
@@ -112,6 +121,8 @@ Version 1:
 - `GET /healthz` answers `ok`.
 - The WebSocket is `/v1/ssh?target=host:port`, with the subprotocols `mdrb-relay.v1` and
   `token.<token>`. Binary frames carry the SSH bytes.
+- A frame from the browser holds at most 257 KiB: one SSH packet. OpenSSH refuses a packet
+  over 256 KiB anyway. A larger frame closes the session (code 1009).
 
 A future protocol gets a new path and subprotocol, and the relay keeps serving the old one for a
 while. Update the relay before the app.
@@ -121,3 +132,7 @@ Each log line is JSON:
 - `open` and `close` events, with the client address, the target, the bytes each way and the
   duration;
 - `refused` events, with the reason.
+
+Events after the token check also name the token: `token-` and the first 8 hex digits of its
+SHA-256. Find a token's name with `printf %s "$TOKEN" | sha256sum | cut -c1-8`. The token
+itself is never logged.

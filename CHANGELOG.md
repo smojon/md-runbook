@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Relay, web app and library server: hardening
+
+Low findings of the 2026-11-27 security review.
+
+- **Relay limits by address could be dodged with IPv6.** Before, each IPv6 address counted
+  alone, and a client could change it at will. Now:
+  - an IPv6 address counts by its /64;
+  - `::ffff:192.0.2.1` counts as `192.0.2.1`;
+  - failed token checks are kept for at most 10,000 clients, the oldest going first.
+- **Relay sessions could last for ever.** Now:
+  - a session ends after `RELAY_MAX_SESSION_SECONDS`, 24 hours by default;
+  - a browser that misses a ping is cut at once, without waiting 30 s for its answer;
+  - a frame from the browser holds at most one SSH packet (257 KiB, was 1 MiB).
+- **Relay settings of 0 broke it.** Before, `RELAY_PING_SECONDS=0` closed every session at once.
+  Now each setting has a range, and the relay refuses to start outside it.
+- **Relay logs didn't say which token a session used.** Now they name it by a short hash, such
+  as `token-3f9a1b2c`. Never the token itself.
+
 ## 0.36.0
 
 What's new:
