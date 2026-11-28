@@ -76,8 +76,8 @@ Sign in VS Code or on the command line for that check.
   now win. `--expires` is not carried over.
   - It keeps them only when the old signature verifies. It must be by the key signing now, or
     by a signer in `--allowed-signers FILE` (in VS Code: `mdRunbook.signing.allowedSigners`).
-  - Otherwise it says so and keeps nothing: give `--name`, `--scope` and `--pattern` again. The
-    version starts at 1 unless you give `--version`.
+  - Otherwise it says so and keeps nothing. It doesn't sign without `--name`: give `--name`,
+    `--scope` and `--pattern` again. The version starts at 1 unless you give `--version`.
   - Anyone can edit the manifest in the file. A pull request could loosen a pattern there, and
     a signing workflow would then sign it.
   - The result lists the scopes and patterns signed.

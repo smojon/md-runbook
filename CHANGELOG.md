@@ -11,7 +11,8 @@
 - Now:
   - they are kept only when the old signature is by the key signing now, or by a trusted signer
     (`--allowed-signers FILE`; in VS Code `mdRunbook.signing.allowedSigners`);
-  - otherwise nothing is kept, and it says so;
+  - otherwise nothing is kept: the command line signs only with `--name` given, and VS Code
+    asks again;
   - the result lists the scopes and patterns signed.
 - **Upgrade:** a workflow that signs with another key than the last signature needs
   `--allowed-signers`, or `--name`, `--scope` and `--pattern` again.

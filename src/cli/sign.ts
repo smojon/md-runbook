@@ -177,6 +177,12 @@ export async function signCommand(argv: readonly string[], out: Out = stdout, ss
   if (prev && !trusted) {
     out(`  note: the old signature in ${a.file} is not by this key${a.allowedSigners ? ` or a signer in ${a.allowedSigners}` : ''}: its name, version, scopes and patterns are not used`);
     out('    give them again (--name, --version, --scope, --pattern), or add --allowed-signers FILE to trust your team');
+    // Not silently as a new runbook (another name, version 1, no scopes): a workflow that signs on
+    // merge stops here instead.
+    if (a.name === undefined) {
+      out(`✗ not signed: give --name to sign it as new`);
+      return 1;
+    }
   }
   const name = a.name ?? trusted?.manifest.name ?? defaultName(a.file);
   // Signed again into an existing signed copy (--out): its version counts too, when it is the same

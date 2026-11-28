@@ -67,6 +67,11 @@ describe('cli: sign and verify', () => {
     lines.length = 0;
     assert.equal(await signCommand([f, '--key', key], out), 1, lines.join('\n'));
     assert.match(lines.join('\n'), /note: the old signature in .*rp\.md is not by this key: its name, version, scopes and patterns are not used/);
+    assert.match(lines.at(-1)!, /✗ not signed: give --name to sign it as new/);
+    assert.equal(fs.readFileSync(f, 'utf8'), tampered, 'nothing written');
+    // With --name only: the patterns are not taken from the file either.
+    lines.length = 0;
+    assert.equal(await signCommand([f, '--key', key, '--name', 'ops/rp'], out), 1, lines.join('\n'));
     assert.match(lines.join('\n'), /\$\{param:POD\} needs a pattern/);
     assert.equal(fs.readFileSync(f, 'utf8'), tampered, 'nothing written');
     // Given again: signed with only what was given, from version 1; the scopes and patterns are printed.
