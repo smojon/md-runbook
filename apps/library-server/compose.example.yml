@@ -58,8 +58,14 @@ services:
       - ./library:/library
       # The signers read-only, over the writable folder: the server can't change who may publish.
       # Docker mounts the file itself, so edit it in place, or restart this service after
-      # replacing it (an editor that saves to a new file leaves the old one mounted).
-      - ./library/allowed_signers:/library/allowed_signers:ro
+      # replacing it (an editor that saves to a new file leaves the old one mounted). Long syntax:
+      # without the file, compose stops with an error instead of making a folder of that name.
+      - type: bind
+        source: ./library/allowed_signers
+        target: /library/allowed_signers
+        read_only: true
+        bind:
+          create_host_path: false
       - ./config:/config:ro
       - library-data:/data
     read_only: true
