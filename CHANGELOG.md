@@ -9,14 +9,27 @@ Low findings of the 2026-11-27 security review.
 - **Relay limits by address could be dodged with IPv6.** Before, each IPv6 address counted
   alone, and a client could change it at will. Now:
   - an IPv6 address counts by its /64;
-  - `::ffff:192.0.2.1` counts as `192.0.2.1`;
-  - failed token checks are kept for at most 10,000 clients, the oldest going first.
+  - an IPv6 address that holds an IPv4 address counts as it: `::ffff:192.0.2.1`,
+    `::ffff:0:192.0.2.1`, `::192.0.2.1`, `64:ff9b::192.0.2.1`;
+  - failed token checks are kept for at most 10,000 clients: expired ones go first, then the
+    oldest.
+- **Upgrade: a whole IPv6 /64 is now one client,** as an office behind one IPv4 address is.
+  - A shared network may need a higher `RELAY_MAX_PER_CLIENT`.
+  - One old token used there 10 times locks the whole /64 out for the window.
 - **Relay sessions could last for ever.** Now:
   - a session ends after `RELAY_MAX_SESSION_SECONDS`, 24 hours by default;
   - a browser that misses a ping is cut at once, without waiting 30 s for its answer;
   - a frame from the browser holds at most one SSH packet (257 KiB, was 1 MiB).
-- **Relay settings of 0 broke it.** Before, `RELAY_PING_SECONDS=0` closed every session at once.
-  Now each setting has a range, and the relay refuses to start outside it.
+- **Some relay settings broke it.** For one, `RELAY_PING_SECONDS=0` closed every session at once.
+  Now:
+  - each setting has a range, listed in the relay's README;
+  - the relay refuses to start outside it.
+- **Upgrade: these values now stop the relay at start.** Each broke it before:
+  - 0 for `RELAY_MAX_CONNECTIONS`, `RELAY_MAX_PER_CLIENT` or `RELAY_MAX_FAILURES`: every
+    connection was refused;
+  - 0 for `RELAY_PING_SECONDS`: every session closed at once;
+  - over 2147483 seconds (24.8 days) for `RELAY_PING_SECONDS` or
+    `RELAY_CONNECT_TIMEOUT_SECONDS`: the timer went off after 1 ms.
 - **Relay logs didn't say which token a session used.** Now they name it by a short hash, such
   as `token-3f9a1b2c`. Never the token itself.
 - **A Caddy access log would have held the relay token.** The browser sends it in the

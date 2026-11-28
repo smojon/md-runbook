@@ -13,13 +13,20 @@ The phone apps connect directly and need no relay.
 
 - **Allowlist.** It only connects to the `host:port` pairs in `RELAY_TARGETS`.
 - **Token.** Each connection needs a token of at least 24 characters. The token travels as a
-  WebSocket subprotocol, so it never appears in URLs or access logs.
+  WebSocket subprotocol, so it never appears in URLs.
+  - [Caddyfile.example](Caddyfile.example) writes it as `REDACTED` in Caddy's access log.
+  - Caddy's global `debug` option logs the header elsewhere, unfiltered: leave it off.
 - **Origins.** With `RELAY_ORIGINS` set, only pages from those origins may connect.
 - **Limits.** Connections are capped in total and per client address. An address that fails the
   token check 10 times in 10 minutes is refused for the rest of that window.
   - An IPv6 address counts by its /64, so a client can't change address to get round the limits.
-  - An IPv4 address written as IPv6 (`::ffff:192.0.2.1`) counts as the IPv4 address.
-  - The relay remembers failed checks of at most 10,000 clients. When full, the oldest go first.
+  - A whole /64 is then one client, as an office behind one IPv4 address is. A shared network
+    may need a higher `RELAY_MAX_PER_CLIENT`.
+  - One old token used there 10 times locks the whole /64 out for the window.
+  - An IPv6 address that holds an IPv4 address counts as that address: `::ffff:192.0.2.1`,
+    `::ffff:0:192.0.2.1`, `::192.0.2.1` and `64:ff9b::192.0.2.1` (NAT64).
+  - The relay remembers failed checks of at most 10,000 clients. When full, expired ones go
+    first, then the oldest.
 - **Session lifetime.** A session ends after 24 hours by default, however busy it is. A leaked
   token's session can't last for ever.
 
@@ -100,18 +107,22 @@ To update the relay: `git pull && sudo docker compose up -d --build`. Git ignore
 | `RELAY_TARGETS` | required | `host:port` pairs, comma-separated. `*:22` allows any public host on port 22; a server on the relay itself or a private network (127.x, 10.x, 192.168.x, …) must be listed by name or address. |
 | `RELAY_ORIGINS` | any | Page origins allowed to connect, such as `https://runbooks.example.net`. |
 | `RELAY_HOST` | `127.0.0.1` | Address to listen on. The container uses `0.0.0.0`. |
-| `RELAY_PORT` | `8022` | Port to listen on. |
-| `RELAY_MAX_CONNECTIONS` | `50` | Open connections in total. |
-| `RELAY_MAX_PER_CLIENT` | `8` | Open connections per client address. |
-| `RELAY_MAX_FAILURES` | `10` | Failed token checks per client address per window. |
-| `RELAY_FAIL_WINDOW_SECONDS` | `600` | The window for failed token checks. |
+| `RELAY_PORT` | `8022` | Port to listen on, 0 to 65535. 0: a port the system picks. |
+| `RELAY_MAX_CONNECTIONS` | `50` | Open connections in total, 1 or more. |
+| `RELAY_MAX_PER_CLIENT` | `8` | Open connections per client address (IPv6: per /64), 1 or more. |
+| `RELAY_MAX_FAILURES` | `10` | Failed token checks per client address per window, 1 or more. |
+| `RELAY_FAIL_WINDOW_SECONDS` | `600` | The window for failed token checks, 0 or more. 0: failed checks are not counted. |
 | `RELAY_TRUST_PROXY` | off | `1`: the client address is the last `X-Forwarded-For` entry. Only behind your own proxy. |
-| `RELAY_CONNECT_TIMEOUT_SECONDS` | `10` | Time to reach an SSH server. |
-| `RELAY_PING_SECONDS` | `30` | Ping interval, 5 or more. A browser that misses one ping is disconnected at once. |
-| `RELAY_MAX_SESSION_SECONDS` | `86400` | A session's longest life, 60 or more. The next cell opens a new session, and the app warns that earlier folders and variables are gone. |
+| `RELAY_CONNECT_TIMEOUT_SECONDS` | `10` | Time to reach an SSH server, 0 to 2147483. 0: the system's own timeout. |
+| `RELAY_PING_SECONDS` | `30` | Ping interval, 1 to 2147483. A browser that misses one ping is disconnected at once. |
+| `RELAY_MAX_SESSION_SECONDS` | `86400` | A session's longest life, 60 to 2147483. The next cell opens a new session, and the app warns that earlier folders and variables are gone. |
 
-A setting that is not a whole number, or is out of range, stops the relay at start. A 0 is
-refused for every limit: it would break the relay rather than turn the limit off.
+A setting that is not a whole number, or is out of range, stops the relay at start. The ranges
+refuse only values that broke the relay:
+
+- a cap of 0 refused every connection;
+- a ping every 0 seconds closed every session;
+- a timer over 2147483 seconds (24.8 days) went off after 1 ms.
 
 ## Protocol
 

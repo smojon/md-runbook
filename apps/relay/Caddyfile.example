@@ -5,7 +5,9 @@ relay.example.net {
 	# An access log without the token: the browser sends it in the Sec-WebSocket-Protocol header,
 	# which Caddy does not redact by itself (only Authorization, Cookie and the like). The field
 	# name is the header as Go writes it, so "Websocket" with a small s. No access log at all:
-	# remove this block (the relay logs each session itself).
+	# remove this block (the relay logs each session itself). The filter covers the access log
+	# only: the global `debug` option logs the header unfiltered (reverse_proxy's "upstream
+	# roundtrip"), so leave it off.
 	log {
 		format filter {
 			request>headers>Sec-Websocket-Protocol replace REDACTED

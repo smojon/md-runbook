@@ -7,9 +7,15 @@ import { LogEvent, MAX_FRAME, Relay, SUBPROTOCOL, clientKey, createRelay, isInte
 
 const TOKEN = 'a-test-token-of-at-least-24-chars';
 
-/** A TCP server that answers every chunk with "echo:" + the chunk. */
+/**
+ * A TCP server that answers every chunk with "echo:" + the chunk. A reset from the relay (a
+ * session it cuts while the echo still writes) is not an error of the test.
+ */
 function echoServer(): Promise<Server> {
-  const s = createServer((sock) => sock.on('data', (b) => sock.write(Buffer.concat([Buffer.from('echo:'), b]))));
+  const s = createServer((sock) => {
+    sock.on('error', () => undefined);
+    sock.on('data', (b) => sock.write(Buffer.concat([Buffer.from('echo:'), b])));
+  });
   return new Promise((r) => s.listen(0, '127.0.0.1', () => r(s)));
 }
 const portOf = (s: { address(): unknown }): number => (s.address() as AddressInfo).port;
@@ -191,6 +197,61 @@ describe('relay', () => {
       assert.equal(await open(url, target, { from: '198.51.100.4' }), 429);
     } finally {
       await relay.close();
+    }
+  });
+
+  it('a full failure map drops expired entries first, and only then the oldest', async () => {
+    const { relay, url } = await startRelay({ targets: [target], maxFailures: 1, maxFailureClients: 3, failWindowMs: 400, trustProxy: true });
+    try {
+      const wrong = { token: 'wrong-token-of-24-characters' };
+      for (const from of ['198.51.100.1', '198.51.100.2']) assert.equal(await open(url, target, { ...wrong, from }), 401);
+      await new Promise((r) => setTimeout(r, 450)); // .1 and .2 expire (still in the map)
+      assert.equal(await open(url, target, { ...wrong, from: '198.51.100.3' }), 401);
+      assert.equal(relay.failureClients(), 3);
+      // Full: the two expired entries go, not .3 (live), and no live one is evicted.
+      assert.equal(await open(url, target, { ...wrong, from: '198.51.100.4' }), 401);
+      assert.equal(relay.failureClients(), 2);
+      assert.equal(await open(url, target, { from: '198.51.100.3' }), 429);
+      assert.equal(await open(url, target, { from: '198.51.100.4' }), 429);
+    } finally {
+      await relay.close();
+    }
+  });
+
+  it('delivers all of what the SSH server sent before it closed, then closes with 1000', async () => {
+    // The server's last output can sit in the relay's send buffer (up to HIGH_WATER and a chunk)
+    // when it closes: the close must wait for it (review of the hardening, 2026-11-28).
+    const size = 2 << 20;
+    const payload = Buffer.alloc(size, 7);
+    const talker = createServer((sock) => sock.on('error', () => undefined).end(payload));
+    await new Promise<void>((r) => talker.listen(0, '127.0.0.1', () => r()));
+    const where = `127.0.0.1:${portOf(talker)}`;
+    let got = 0;
+    let gotWhenTargetClosed = -1;
+    const logs: LogEvent[] = [];
+    const { relay, url } = await startRelay({ targets: [where] }, logs);
+    const push = logs.push.bind(logs);
+    logs.push = (...e: LogEvent[]): number => {
+      if (e.some((l) => l.event === 'close')) gotWhenTargetClosed = got;
+      return push(...e);
+    };
+    try {
+      const ws = await open(url, where);
+      assert.ok(ws instanceof WebSocket);
+      // A slow browser: a pause after each message, so the relay's buffer fills and stays full.
+      // The old 1 s cut-off then dropped the close frame (1006) and data (control run, 2026-11-28).
+      ws.on('message', (d: Buffer) => {
+        got += d.length;
+        ws.pause();
+        setTimeout(() => ws.resume(), 100);
+      });
+      const code = await closed(ws);
+      assert.ok(gotWhenTargetClosed >= 0 && gotWhenTargetClosed < size, `the SSH server closed first (${gotWhenTargetClosed} bytes in)`);
+      assert.equal(got, size);
+      assert.equal(code, 1000);
+    } finally {
+      await relay.close();
+      talker.close();
     }
   });
 
@@ -384,6 +445,15 @@ describe('relay', () => {
       ['[2001:db8::1]', '2001:db8:0:0::/64'],
       ['fe80::1%eth0', 'fe80:0:0:0::/64'],
       ['::1', '0:0:0:0::/64'],
+      ['::', '0:0:0:0::/64'],
+      // Other forms that embed an IPv4 address (review of the hardening, 2026-11-28).
+      ['::ffff:0:192.0.2.1', '192.0.2.1'], // IPv4-translated (SIIT)
+      ['::ffff:0:c000:201', '192.0.2.1'],
+      ['::192.0.2.1', '192.0.2.1'], // IPv4-compatible
+      ['::c000:201', '192.0.2.1'],
+      ['64:ff9b::192.0.2.1', '192.0.2.1'], // NAT64, well-known prefix
+      ['64:ff9b::c000:201', '192.0.2.1'],
+      ['64:ff9b:1::c000:201', '64:ff9b:1:0::/64'], // local-use NAT64: its own /64
       ['?', '?'],
       ['not-an-address', 'not-an-address'],
     ])
@@ -430,25 +500,44 @@ describe('relay settings', () => {
     assert.equal(loadConfig({ ...base, RELAY_MAX_SESSION_SECONDS: '3600' }).maxSessionMs, 3_600_000);
   });
 
-  it('refuses a 0 or a value out of range, which would break the relay rather than turn a limit off', () => {
+  it('refuses only values that would break the relay', () => {
     for (const [name, v] of [
       ['RELAY_PING_SECONDS', '0'],
-      ['RELAY_PING_SECONDS', '4'],
+      ['RELAY_PING_SECONDS', '3000000'],
       ['RELAY_MAX_SESSION_SECONDS', '0'],
       ['RELAY_MAX_SESSION_SECONDS', '59'],
       ['RELAY_MAX_SESSION_SECONDS', '3000000'],
       ['RELAY_MAX_CONNECTIONS', '0'],
       ['RELAY_MAX_PER_CLIENT', '0'],
       ['RELAY_MAX_FAILURES', '0'],
-      ['RELAY_FAIL_WINDOW_SECONDS', '0'],
-      ['RELAY_CONNECT_TIMEOUT_SECONDS', '0'],
-      ['RELAY_PORT', '0'],
+      ['RELAY_CONNECT_TIMEOUT_SECONDS', '3000000'],
       ['RELAY_PORT', '65536'],
       ['RELAY_PING_SECONDS', '-5'],
       ['RELAY_PING_SECONDS', '7.5'],
     ] as const)
       assert.throws(() => loadConfig({ ...base, [name]: v }), new RegExp(name), `${name}=${v}`);
-    assert.equal(loadConfig({ ...base, RELAY_PING_SECONDS: '5' }).pingIntervalMs, 5000);
+    // These worked before and still do (review of the hardening, 2026-11-28).
+    assert.equal(loadConfig({ ...base, RELAY_PING_SECONDS: '1' }).pingIntervalMs, 1000);
+    assert.equal(loadConfig({ ...base, RELAY_CONNECT_TIMEOUT_SECONDS: '0' }).connectTimeoutMs, 0);
+    assert.equal(loadConfig({ ...base, RELAY_FAIL_WINDOW_SECONDS: '0' }).failWindowMs, 0);
+    assert.equal(loadConfig({ ...base, RELAY_FAIL_WINDOW_SECONDS: '31536000' }).failWindowMs, 31_536_000_000);
+    assert.equal(loadConfig({ ...base, RELAY_PORT: '0' }).port, 0);
+  });
+
+  it('starts with a fail window longer than a timer can wait, or none, its sweep timer clamped', async () => {
+    const warnings: string[] = [];
+    const onWarning = (w: Error): number => warnings.push(w.name);
+    process.on('warning', onWarning);
+    try {
+      for (const failWindowMs of [31_536_000_000, 0]) {
+        const { relay } = await startRelay({ failWindowMs });
+        await relay.close();
+      }
+      await new Promise((r) => setTimeout(r, 20));
+      assert.ok(!warnings.includes('TimeoutOverflowWarning'), warnings.join());
+    } finally {
+      process.off('warning', onWarning);
+    }
   });
 
   it('knows a target when it sees one', () => {

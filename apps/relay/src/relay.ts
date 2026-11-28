@@ -87,16 +87,23 @@ export function tokenName(token: string): string {
 }
 
 /**
- * What the per-client limits count against. An IPv4-mapped IPv6 address (::ffff:192.0.2.1) is
- * its IPv4 address. Any other IPv6 address counts by its /64: one host or one network usually
- * holds a whole /64, so a client can't pass the limits by changing its address in it.
+ * What the per-client limits count against. An IPv6 address that embeds an IPv4 address counts
+ * as that IPv4 address: IPv4-mapped (::ffff:0:0/96), IPv4-translated (SIIT, ::ffff:0:0:0/96),
+ * IPv4-compatible (::/96, not :: or ::1) and NAT64's well-known prefix (64:ff9b::/96). Any other
+ * IPv6 address counts by its /64: one host or one network usually holds a whole /64, so a client
+ * can't pass the limits by changing its address in it.
  */
 export function clientKey(address: string): string {
   const a = address.replace(/^\[(.*)\]$/, '$1');
   if (isIP(a.replace(/%.*$/, '')) !== 6) return a;
   const b = ipv6Bytes(a);
   if (!b) return a;
-  if (b.slice(0, 10).every((x) => x === 0) && b[10] === 0xff && b[11] === 0xff) return b.slice(12).join('.');
+  const zero = (from: number, to: number): boolean => b.slice(from, to).every((x) => x === 0);
+  const v4 = b.slice(12).join('.');
+  if (zero(0, 10) && b[10] === 0xff && b[11] === 0xff) return v4; // ::ffff:a.b.c.d
+  if (zero(0, 8) && b[8] === 0xff && b[9] === 0xff && zero(10, 12)) return v4; // ::ffff:0:a.b.c.d
+  if (zero(0, 12) && v4 !== '0.0.0.0' && v4 !== '0.0.0.1') return v4; // ::a.b.c.d
+  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && zero(4, 12)) return v4; // 64:ff9b::a.b.c.d
   return `${[0, 2, 4, 6].map((i) => ((b[i]! << 8) | b[i + 1]!).toString(16)).join(':')}::/64`;
 }
 
@@ -126,15 +133,21 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
 
   // Failed token checks per client key, at most maxFailureClients keys and maxFailures times each
   // (a client at the limit is refused before its token is checked). Expired entries are swept
-  // every window; when the map is full anyway (many addresses at once), the oldest key goes.
+  // every window. When the map is full, expired entries go first; still full (many addresses
+  // at once), the oldest key goes.
   const failures = new Map<string, number[]>();
   const maxFailureClients = config.maxFailureClients ?? MAX_FAILURE_CLIENTS;
+  const sweepExpired = (now: number): void => {
+    for (const key of [...failures.keys()]) failedRecently(key, now);
+  };
   const recordFailure = (key: string, now: number): void => {
-    if (!failures.has(key))
+    if (!failures.has(key) && failures.size >= maxFailureClients) {
+      sweepExpired(now);
       for (const oldest of failures.keys()) {
         if (failures.size < maxFailureClients) break;
         failures.delete(oldest);
       }
+    }
     failures.set(key, [...(failures.get(key) ?? []), now]);
   };
   const failedRecently = (key: string, now: number): number => {
@@ -143,10 +156,8 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
     else failures.delete(key);
     return list.length;
   };
-  const sweep = setInterval(() => {
-    const now = Date.now();
-    for (const key of [...failures.keys()]) failedRecently(key, now);
-  }, config.failWindowMs);
+  // Node's timers take at most 2^31-1 ms; a window of 0 (no lockout) still sweeps once a second.
+  const sweep = setInterval(() => sweepExpired(Date.now()), Math.min(Math.max(config.failWindowMs, 1000), 2 ** 31 - 1));
   sweep.unref();
   const perClient = new Map<string, number>();
   const sockets = new Set<{ ws: WebSocket; tcp: Socket }>();
@@ -273,7 +284,11 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
       tcp.destroy();
       // A browser that missed a ping won't answer a close either: its socket is cut at once.
       if (why === 'no pong') ws.terminate();
-      else if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) closeSoon(ws, why === 'target closed' || why === 'session lifetime' ? 1000 : 1011, why === 'session lifetime' ? why : undefined);
+      // The session's time is up: cut after a short grace, whatever is still queued.
+      else if (why === 'session lifetime') closeSoon(ws, 1000, why);
+      // Otherwise the close frame goes after what is still queued (up to HIGH_WATER and a chunk,
+      // the SSH server's last output), and ws's own close timeout cuts a browser that never reads.
+      else if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(why === 'target closed' ? 1000 : 1011);
       log({ event: 'close', client, token, target, why, up, down, ms: Date.now() - started, open: sockets.size });
     };
     // However busy, a session ends after maxSessionMs: a leaked token's session can't last for ever.

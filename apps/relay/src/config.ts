@@ -35,8 +35,9 @@ const list = (v: string | undefined): string[] =>
     .filter(Boolean);
 
 /**
- * A whole number from `min` to `max`. A 0 would break the relay rather than turn a limit off:
- * a ping every 0 s closes every session at once, a cap of 0 refuses everyone.
+ * A whole number from `min` to `max`. Refused only where the value broke the relay: a ping every
+ * 0 s closes every session at once, a cap of 0 refuses everyone, and a timer over 2^31-1 ms
+ * fires after 1 ms. Values that worked before still do.
  */
 function num(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 1, max = Number.MAX_SAFE_INTEGER): number {
   const v = env[name];
@@ -47,8 +48,8 @@ function num(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 1, ma
   return n;
 }
 
-/** Node's timers take at most 2^31-1 ms (24.8 days); a longer one fires at once. */
-const MAX_TIMER_SECONDS = 2_000_000;
+/** Node's timers take at most 2^31-1 ms (24.8 days); a longer one fires after 1 ms. */
+const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000); // 2147483
 
 /** `host:port` with a port from 1 to 65535; IPv6 hosts in brackets (`[::1]:22`). */
 export function isTargetSpec(t: string): boolean {
@@ -77,17 +78,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
 
   return {
     host: env.RELAY_HOST ?? '127.0.0.1',
-    port: num(env, 'RELAY_PORT', 8022, 1, 65535),
+    // 0: a port the system picks.
+    port: num(env, 'RELAY_PORT', 8022, 0, 65535),
     tokens,
     targets,
     origins: list(env.RELAY_ORIGINS),
     maxConnections: num(env, 'RELAY_MAX_CONNECTIONS', 50),
     maxPerClient: num(env, 'RELAY_MAX_PER_CLIENT', 8),
     maxFailures: num(env, 'RELAY_MAX_FAILURES', 10),
-    failWindowMs: num(env, 'RELAY_FAIL_WINDOW_SECONDS', 600, 1, MAX_TIMER_SECONDS) * 1000,
+    // 0: failed checks are never counted. No upper bound: the sweep timer is clamped (relay.ts).
+    failWindowMs: num(env, 'RELAY_FAIL_WINDOW_SECONDS', 600, 0) * 1000,
     trustProxy: env.RELAY_TRUST_PROXY === '1' || env.RELAY_TRUST_PROXY === 'true',
-    connectTimeoutMs: num(env, 'RELAY_CONNECT_TIMEOUT_SECONDS', 10, 1, 3600) * 1000,
-    pingIntervalMs: num(env, 'RELAY_PING_SECONDS', 30, 5, 3600) * 1000,
+    // 0: no timeout of the relay's own (the system's connect timeout applies).
+    connectTimeoutMs: num(env, 'RELAY_CONNECT_TIMEOUT_SECONDS', 10, 0, MAX_TIMER_SECONDS) * 1000,
+    pingIntervalMs: num(env, 'RELAY_PING_SECONDS', 30, 1, MAX_TIMER_SECONDS) * 1000,
     maxSessionMs: num(env, 'RELAY_MAX_SESSION_SECONDS', 24 * 3600, 60, MAX_TIMER_SECONDS) * 1000,
   };
 }
