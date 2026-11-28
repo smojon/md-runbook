@@ -16,16 +16,15 @@
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { IncomingMessage, Server, createServer } from 'node:http';
-import { BlockList, LookupFunction, Socket, connect, isIP } from 'node:net';
+import { BlockList, LookupFunction, connect, isIP } from 'node:net';
 import { lookup as dnsLookup } from 'node:dns';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { RelayConfig } from './config';
+import { Splice, WsLabels, splice, tcpEnd, wsEnd } from './splice';
 
 export const PROTOCOL = 1;
 export const SUBPROTOCOL = 'mdrb-relay.v1';
-/** Bytes queued towards the browser above which reading from the SSH server pauses. */
-const HIGH_WATER = 1 << 20;
 /**
  * The largest frame a browser may send. The web app's SSH library sends one SSH packet per
  * frame: its length (4 bytes), the packet, and its MAC. OpenSSH refuses a packet over 256 KiB
@@ -34,8 +33,6 @@ const HIGH_WATER = 1 << 20;
 export const MAX_FRAME = (256 << 10) + 1024;
 /** Client addresses whose failed token checks are remembered at most (the oldest go first). */
 const MAX_FAILURE_CLIENTS = 10_000;
-/** How long a closing session may wait for the browser's answer before its socket is cut. */
-const CLOSE_GRACE_MS = 1000;
 /** How long a refused client may take to read the refusal before its socket is closed anyway. */
 const REFUSAL_LINGER_MS = 5000;
 const STATUS_TEXT: Record<number, string> = {
@@ -66,14 +63,8 @@ export interface Relay {
 }
 
 const digest = (s: string): Buffer => createHash('sha256').update(s).digest();
-/**
- * Close with a code, and cut the socket if the browser hasn't answered within CLOSE_GRACE_MS
- * (ws itself would wait 30 s for a peer that may be gone).
- */
-function closeSoon(ws: WebSocket, code: number, reason?: string): void {
-  ws.close(code, reason);
-  setTimeout(() => ws.terminate(), CLOSE_GRACE_MS).unref();
-}
+/** The browser's end of a session, in the log. */
+const CLIENT_LABELS: WsLabels = { closed: 'client closed', error: 'client error', text: 'text frame', pong: 'no pong' };
 function destroySocket(this: Duplex): void {
   this.destroy();
 }
@@ -160,7 +151,7 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
   const sweep = setInterval(() => sweepExpired(Date.now()), Math.min(Math.max(config.failWindowMs, 1000), 2 ** 31 - 1));
   sweep.unref();
   const perClient = new Map<string, number>();
-  const sockets = new Set<{ ws: WebSocket; tcp: Socket }>();
+  const sessions = new Set<Splice>();
 
   const clientOf = (req: IncomingMessage): string => {
     if (config.trustProxy) {
@@ -245,7 +236,7 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
     if (!allowed) return refuse(403, `target ${target}`, client, token);
     const literal = target.slice(0, target.lastIndexOf(':')).replace(/^\[(.*)\]$/, '$1');
     if (allowed === 'any' && isIP(literal) && isInternal(literal)) return refuse(403, `target ${target} (internal address)`, client, token);
-    if (sockets.size >= config.maxConnections) return refuse(429, 'relay full', client, token);
+    if (sessions.size >= config.maxConnections) return refuse(429, 'relay full', client, token);
     if ((perClient.get(key) ?? 0) >= config.maxPerClient) return refuse(429, 'client limit', client, token);
     // ws puts its own 'error' listener on the socket from here on.
     socket.removeListener('error', destroySocket);
@@ -256,8 +247,6 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
     const at = target.lastIndexOf(':');
     const host = target.slice(0, at).replace(/^\[(.*)\]$/, '$1');
     const started = Date.now();
-    let up = 0;
-    let down = 0;
     // Allowed only by `*:port`: a name that resolves to the relay's own or a private network is refused.
     const lookup: LookupFunction = (hostname, options, callback) =>
       dnsLookup(hostname, options, (err, address, family) => {
@@ -266,79 +255,29 @@ export function createRelay(config: RelayConfig, version: string, log: (e: LogEv
         callback(err, address, family);
       });
     const tcp = connect({ host, port: Number(target.slice(at + 1)), timeout: config.connectTimeoutMs, ...(publicOnly ? { lookup } : {}) });
-    const pair = { ws, tcp };
-    sockets.add(pair);
     perClient.set(key, (perClient.get(key) ?? 0) + 1);
-    log({ event: 'open', client, token, target, open: sockets.size });
-
-    let closed = false;
-    const done = (why: string): void => {
-      if (closed) return;
-      closed = true;
-      clearInterval(ping);
-      clearTimeout(lifetime);
-      sockets.delete(pair);
-      const n = (perClient.get(key) ?? 1) - 1;
-      if (n > 0) perClient.set(key, n);
-      else perClient.delete(key);
-      tcp.destroy();
-      // A browser that missed a ping won't answer a close either: its socket is cut at once.
-      if (why === 'no pong') ws.terminate();
-      // The session's time is up: cut after a short grace, whatever is still queued.
-      else if (why === 'session lifetime') closeSoon(ws, 1000, why);
-      // Otherwise the close frame goes after what is still queued (up to HIGH_WATER and a chunk,
-      // the SSH server's last output), and ws's own close timeout cuts a browser that never reads.
-      else if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(why === 'target closed' ? 1000 : 1011);
-      log({ event: 'close', client, token, target, why, up, down, ms: Date.now() - started, open: sockets.size });
-    };
-    // However busy, a session ends after maxSessionMs: a leaked token's session can't last for ever.
-    const lifetime = setTimeout(() => done('session lifetime'), config.maxSessionMs);
-    lifetime.unref();
-
-    tcp.on('connect', () => tcp.setTimeout(0));
-    tcp.on('timeout', () => done('connect timeout'));
-    tcp.on('error', (e: NodeJS.ErrnoException) => done(`target error ${e.code ?? e.message}`));
-    tcp.on('close', () => done('target closed'));
-    tcp.on('data', (b: Buffer) => {
-      down += b.length;
-      ws.send(b, () => {
-        if (ws.bufferedAmount < HIGH_WATER && tcp.isPaused()) tcp.resume();
-      });
-      if (ws.bufferedAmount >= HIGH_WATER) tcp.pause();
+    const session = splice(wsEnd(ws, CLIENT_LABELS, config.pingIntervalMs), tcpEnd(tcp), {
+      maxSessionMs: config.maxSessionMs,
+      onEnd: (why, up, down) => {
+        sessions.delete(session);
+        const n = (perClient.get(key) ?? 1) - 1;
+        if (n > 0) perClient.set(key, n);
+        else perClient.delete(key);
+        log({ event: 'close', client, token, target, why, up, down, ms: Date.now() - started, open: sessions.size });
+      },
     });
-    ws.on('message', (data: Buffer, isBinary: boolean) => {
-      if (!isBinary) return done('text frame');
-      up += data.length;
-      if (!tcp.write(data)) {
-        ws.pause();
-        tcp.once('drain', () => ws.resume());
-      }
-    });
-    ws.on('close', () => done('client closed'));
-    ws.on('error', () => done('client error'));
-
-    // Dead browsers (sleeping laptop, lost network) are noticed and their connection freed.
-    let alive = true;
-    ws.on('pong', () => (alive = true));
-    const ping = setInterval(() => {
-      if (!alive) return done('no pong');
-      alive = false;
-      ws.ping();
-    }, config.pingIntervalMs);
-    ping.unref();
+    sessions.add(session);
+    log({ event: 'open', client, token, target, open: sessions.size });
   }
 
   return {
     server,
-    open: () => sockets.size,
+    open: () => sessions.size,
     failureClients: () => failures.size,
     close: () =>
       new Promise<void>((resolve) => {
         clearInterval(sweep);
-        for (const { ws, tcp } of sockets) {
-          closeSoon(ws, 1001);
-          tcp.destroy();
-        }
+        for (const session of sessions) session.stop('shutdown');
         wss.close();
         server.close(() => resolve());
         server.closeAllConnections();
