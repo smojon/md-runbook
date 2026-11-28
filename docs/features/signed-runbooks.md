@@ -210,7 +210,11 @@ request there could miss them. Signing refuses them:
   blank line after it;
 - a bash block right after a tag alone on its line, such as `<span>`, unless a paragraph comes
   before the tag;
-- code fences indented 4 spaces or more.
+- code fences indented 4 spaces or more;
+- bidi controls and invisible characters in a block, a call or a fence line, such as U+202E
+  or U+200B. Write them as escapes (`$'\u202e'`).
+
+Lint also warns about a code block in the front matter, and about hidden characters.
 
 **Parameters.** `${param:NAME}` reaches the shell as an environment variable, never as text in
 the code.

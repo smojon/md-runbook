@@ -14,7 +14,7 @@ import { parse } from './parser';
 import { CodeCellLocation, locateCodeCells } from './locate';
 import { findRefs, frontMatterEnvEntry, parseFrontMatter, reportAddressProblem } from './secrets';
 import { POWERSHELLS, UNIX_SHELLS, parseShells, shellKindForLanguage } from './shellKind';
-import { readSignature, signedStatus } from './signing';
+import { hiddenCharacterProblems, readSignature, signedStatus } from './signing';
 import { CALL_OPTIONS, NOT_ON_A_CALL, callBodyComment, callRefs, checkCall, isCallLanguage, isDynamicSrc, isEmptyCallBody, parseCall, srcGlob } from './call';
 import { partProblems } from './parts';
 import { ProseOptions, markupCellAt, measureProse, proseLimits, sentenceMessage } from './prose';
@@ -333,6 +333,17 @@ export function lintRunbook(text: string, options: LintOptions = {}): LintProble
 
   for (const loc of locs) {
     const cell = doc.cells[loc.cellIndex]!;
+    // Bidi controls and invisible characters: a reviewer sees other code than runs (signing refuses them).
+    if (isCodeMeta(cell.meta) && (isCallLanguage(loc.language) || shellKindForLanguage(loc.language))) {
+      for (const h of hiddenCharacterProblems(loc.info, loc.source)) {
+        problems.push({
+          severity: 'warning',
+          message: `${h.message} (signing refuses it)`,
+          line: h.codeLine === undefined ? loc.line : loc.line + 1 + h.codeLine,
+          cell: { index: loc.cellIndex, ...(h.codeLine !== undefined ? { sourceLine: h.codeLine } : {}) },
+        });
+      }
+    }
     if (isCodeMeta(cell.meta) && isCallLanguage(loc.language)) {
       problems.push(...lintCall(loc, declared, captured, options));
       for (const c of parseCellOptions(loc.info).checks?.captures ?? []) captured.add(c.name);

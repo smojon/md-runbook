@@ -4,6 +4,8 @@
  * is served as: the rules the app and the server apply, for VS Code and the command line.
  */
 
+import { isBidiControl } from './shownText';
+
 /** Folders below the library at most (apps/library-server's MAX_DEPTH). */
 export const LIBRARY_MAX_DEPTH = 4;
 const SEGMENT_RE = /^[A-Za-z0-9_][A-Za-z0-9._ -]{0,99}$/;
@@ -120,7 +122,7 @@ export function parseAutoindex(v: unknown): { files: string[]; dirs: string[]; a
 const hasControl = (s: string): boolean =>
   [...s].some((c) => {
     const n = c.codePointAt(0)!;
-    return n < 0x20 || n === 0x7f || (n >= 0x200e && n <= 0x200f) || (n >= 0x202a && n <= 0x202e) || (n >= 0x2066 && n <= 0x2069);
+    return n < 0x20 || n === 0x7f || isBidiControl(n);
   });
 
 /**

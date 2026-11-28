@@ -29,6 +29,13 @@
   - signing refuses it, and lint warns about it.
 - **Upgrade:** a runbook signed with such a block no longer verifies: move the block below the
   front matter and sign it again.
+- **Hidden characters could be signed.** Before:
+  - bidi controls (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F) and invisible characters
+    (U+200B–U+200D, U+2060, U+FEFF) were signed in code;
+  - so the code a reviewer saw could differ from the code that runs.
+- Now:
+  - signing refuses them in bash blocks, runbook calls and fence lines;
+  - lint warns about them. Write them as escapes, such as `$'\u202e'`.
 
 ### Relay, web app and library server: hardening
 

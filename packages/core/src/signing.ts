@@ -34,6 +34,7 @@ import { HISTORY_OPEN_RE } from './outputBlock';
 import { clearOutputBlocks } from './writer';
 import { LINE_RE, frontMatterCloseLine, splitLines } from './lines';
 import { isRunnableFenceLang } from './languages';
+import { hiddenCharacter, shownText } from './shownText';
 import { beforeComment } from './lineText';
 
 /** The `-n` namespace of every md-runbook signature: a signature for anything else doesn't verify. */
@@ -490,6 +491,25 @@ function hiddenFences(text: string): string[] {
 }
 
 /**
+ * Bidi controls and invisible characters (shownText.ts) in a block's fence line or code, one
+ * problem per line: a reviewer would see other code than runs, or in another order (Trojan
+ * Source). Signing refuses them; lint warns (review, 2026-11-28).
+ */
+export function hiddenCharacterProblems(info: string, code: string): { message: string; codeLine?: number }[] {
+  const problems: { message: string; codeLine?: number }[] = [];
+  const say = (s: string, codeLine?: number): void => {
+    const h = hiddenCharacter(s);
+    if (!h) return;
+    const where = codeLine === undefined ? 'its fence line' : `line ${codeLine + 1}`;
+    const what = h.bidi ? 'a bidi control, which shows the code in another order' : 'an invisible character';
+    problems.push({ message: `${where} has ${h.code}, ${what}: write it as an escape, e.g. $'\\u${h.code.slice(2).toLowerCase()}'`, ...(codeLine !== undefined ? { codeLine } : {}) });
+  };
+  say(info);
+  code.split(LINE_RE).forEach((l, k) => say(l, k));
+  return problems;
+}
+
+/**
  * The manifest of a runbook, or the reasons it can't be signed (each names the cell). Version 2
  * (the whole text signed) unless `version: 1` (co-signing a manifest signed before).
  */
@@ -526,9 +546,10 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
   const runbookContext = parseFrontMatter(text)?.kubeContext;
   for (const c of bashCells(text)) {
     const n = cells.length + 1;
-    const where = `cell ${n} (${c.value.split('\n')[0]?.slice(0, 40) ?? ''})`;
+    const where = `cell ${n} (${shownText(c.value.split('\n')[0]?.slice(0, 40) ?? '')})`;
     const opts = parseCellOptions(c.info);
     for (const e of opts.errors) errors.push(`${where}: invalid option ${e}`);
+    for (const p of hiddenCharacterProblems(c.info, c.value)) errors.push(`${where}: ${p.message}`);
     // The gate checks a block's own kube-context= only (it never reads the front matter): a
     // runbook's kube-context: would guard the block in clients and not on the server.
     if (runbookContext !== undefined && opts.kubeContext === undefined && !opts.errors.some((e) => e.startsWith('kube-context'))) {
@@ -581,9 +602,10 @@ export function buildManifest(text: string, meta: ManifestMeta, opts: { version?
   const calls: ManifestCall[] = [];
   for (const c of callCells(text)) {
     const n = calls.length + 1;
-    const where = `runbook call ${n} (src=${parseCall(c.info, c.value).src ?? '?'})`;
+    const where = `runbook call ${n} (src=${shownText(parseCall(c.info, c.value).src ?? '?')})`;
     const call = parseCall(c.info, c.value);
     for (const p of call.problems) errors.push(`${where}: ${p.message}`);
+    for (const p of hiddenCharacterProblems(c.info, c.value)) errors.push(`${where}: ${p.message}`);
     for (const e of parseCellOptions(c.info).errors) errors.push(`${where}: invalid option ${e}`);
     if (call.src !== undefined && /^([A-Za-z]:)?[\\/]/.test(call.src)) errors.push(`${where}: src= must be relative: a signed runbook calls runbooks in its own repository`);
     const needs: string[] = [];

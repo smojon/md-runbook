@@ -144,6 +144,23 @@ describe('signing: the manifest', () => {
     assert.deepEqual(errorsOf(sign(fence('bash', 'echo'))), []);
   });
 
+  it('refuses bidi controls and invisible characters in signed code, fence lines and calls; lint warns (review, 2026-11-28)', () => {
+    const cases: [string, RegExp][] = [
+      [fence('bash', 'echo "ok \u202e \u2066# a comment\u2069 \u2066" ; echo ran'), /cell 1 \(echo "ok \\u\{202e\} .*\): line 1 has U\+202E, a bidi control/],
+      [fence('bash', 'echo one\nrm\u200b -rf /tmp/x'), /line 2 has U\+200B, an invisible character: write it as an escape, e\.g\. \$'\\u200b'/],
+      [fence('bash name="st\u200fep"', 'echo one'), /its fence line has U\+200F, a bidi control/],
+      [fence('bash', 'echo \u2060x'), /U\+2060, an invisible character/],
+      [fence('bash', 'echo x\ufeff'), /U\+FEFF, an invisible character/],
+      ['```runbook src="a.md"\nTO=\u202ex\n```\n', /runbook call 1 \(src=a\.md\): line 1 has U\+202E/],
+    ];
+    for (const [text, re] of cases) assert.match(errorsOf(text, { patterns: {} }).join('\n'), re, JSON.stringify(text));
+    // Lint: a warning on the line itself.
+    const lint = lintRunbook('# T\n\n' + fence('bash', 'echo one\necho \u202etwo'));
+    assert.ok(lint.some((p) => p.severity === 'warning' && p.line === 4 && /line 2 has U\+202E.*\(signing refuses it\)/.test(p.message)), JSON.stringify(lint));
+    // Other text is fine: accents, emoji without joiners, prose with a bidi control.
+    assert.deepEqual(errorsOf('Prose \u202e here.\n\n' + fence('bash', 'echo "café ✓ 🚀"')), []);
+  });
+
   it('a fence inside the front matter is no cell and is refused: GitHub shows the front matter as a table (review, 2026-11-28)', () => {
     const fm = '---\ntitle: Health check\nnotes: |\n  Example of what NOT to run:\n  ```bash\n  echo "from the front matter"\n  ```\n---\n\n# Health check\n\n' + fence('bash', 'echo ok');
     // The parser: one code cell, below the front matter; the front matter stays markup, byte for byte.
