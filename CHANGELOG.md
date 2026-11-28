@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.36.0
+
 What's new:
 - The guide to the ops host [without an open port](docs/features/ops-outbound.md) follows the
   gate's checks and the vendors' current docs. New: why not a sidecar, Pod Security, egress, phones.
